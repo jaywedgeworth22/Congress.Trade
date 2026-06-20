@@ -1,0 +1,12 @@
+# Copy to `.dev.vars` for local development (`wrangler dev`).
+# `.dev.vars` is gitignored — never commit real secrets.
+
+# Vision/LLM extraction for scanned PDFs (Google Gemini).
+GEMINI_API_KEY=""
+
+# Secondary extractor / arbitration provider key. When set AND the arbitration
+# feature flag is on, ArbitratingExtractor will run the secondary extractor.
+ARBITRATION_API_KEY=""
+
+# HMAC key used to sign outbound webhook payloads (X-Signature header).
+WEBHOOK_SIGNING_KEY=""

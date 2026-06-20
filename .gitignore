@@ -1,0 +1,17 @@
+# OS
+.DS_Store
+
+# Node
+node_modules/
+dist/
+.wrangler/
+
+# Secrets / local env
+.dev.vars
+.env
+.env.local
+*.local
+
+# Temp / scratch
+*.tmp.json
+app/tsconfig.*.tmp.json

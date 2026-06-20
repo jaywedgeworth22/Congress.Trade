@@ -1,0 +1,210 @@
+/**
+ * src/delivery/rows.ts
+ * OWNER: delivery agent (helper)
+ *
+ * Row <-> domain mappers shared by the delivery + admin modules. D1 stores
+ * SQLite scalars (TEXT/INTEGER/REAL); these helpers translate raw rows into the
+ * camelCase domain shapes declared in shared/types.ts and back again. Kept
+ * dependency-free and pure so they are trivially unit-testable.
+ */
+
+import type {
+  Chamber,
+  DeliveryChannel,
+  Filing,
+  Owner,
+  Subscription,
+  SubscriptionFilters,
+  Transaction,
+  TxSource,
+  TxType,
+} from '../shared/types';
+import { parseJson, toBool } from '../shared/db';
+
+// ---------------------------------------------------------------------------
+// Raw row shapes (mirror the D1 column names in migrations/0001_init.sql)
+// ---------------------------------------------------------------------------
+
+export interface TransactionRow {
+  id: string;
+  doc_id: string;
+  filer_id: string | null;
+  tx_date: string | null;
+  owner: string | null;
+  asset_name: string | null;
+  ticker: string | null;
+  asset_type: string | null;
+  tx_type: string | null;
+  amount_min: number | null;
+  amount_max: number | null;
+  is_option: number | null;
+  cap_gains_over_200: number | null;
+  raw_text: string | null;
+  confidence: number | null;
+  source: string | null;
+  created_at: string | null;
+  cursor_seq: number | null;
+}
+
+export interface SubscriptionRow {
+  id: string;
+  client_id: string | null;
+  delivery: string | null;
+  target_url: string | null;
+  secret: string | null;
+  filters: string | null;
+  cursor: number | null;
+  active: number | null;
+  created_at: string | null;
+}
+
+export interface FilingRow {
+  doc_id: string;
+  chamber: string | null;
+  filer_id: string | null;
+  filing_type: string | null;
+  filed_date: string | null;
+  source_url: string | null;
+  raw_object_key: string | null;
+  ingest_status: string | null;
+  doc_kind: string | null;
+  extractor: string | null;
+  model_version: string | null;
+  confidence: number | null;
+  first_seen_at: string | null;
+  source_updated_at: string | null;
+  error: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Mappers
+// ---------------------------------------------------------------------------
+
+export function mapTransaction(row: TransactionRow): Transaction {
+  return {
+    id: row.id,
+    docId: row.doc_id,
+    filerId: row.filer_id,
+    txDate: row.tx_date,
+    owner: (row.owner as Owner | null) ?? null,
+    assetName: row.asset_name ?? '',
+    ticker: row.ticker,
+    assetType: row.asset_type,
+    txType: (row.tx_type as TxType) ?? 'P',
+    amountMin: row.amount_min,
+    amountMax: row.amount_max,
+    isOption: toBool(row.is_option),
+    capGainsOver200: toBool(row.cap_gains_over_200),
+    rawText: row.raw_text ?? '',
+    confidence: row.confidence ?? 0,
+    source: (row.source as TxSource) ?? 'primary',
+    createdAt: row.created_at ?? '',
+    cursorSeq: row.cursor_seq ?? 0,
+  };
+}
+
+export function mapSubscription(row: SubscriptionRow): Subscription {
+  return {
+    id: row.id,
+    clientId: row.client_id ?? '',
+    delivery: (row.delivery as DeliveryChannel) ?? 'webhook',
+    targetUrl: row.target_url,
+    secret: row.secret,
+    filters: parseJson<SubscriptionFilters>(row.filters, {}),
+    cursor: row.cursor ?? 0,
+    active: toBool(row.active),
+    createdAt: row.created_at ?? '',
+  };
+}
+
+export function mapFiling(row: FilingRow): Filing {
+  return {
+    docId: row.doc_id,
+    chamber: (row.chamber as Chamber) ?? 'house',
+    filerId: row.filer_id,
+    filingType: row.filing_type ?? 'P',
+    filedDate: row.filed_date,
+    sourceUrl: row.source_url ?? '',
+    rawObjectKey: row.raw_object_key,
+    ingestStatus: (row.ingest_status as Filing['ingestStatus']) ?? 'new',
+    docKind: (row.doc_kind as Filing['docKind']) ?? 'unknown',
+    extractor: row.extractor,
+    modelVersion: row.model_version,
+    confidence: row.confidence,
+    firstSeenAt: row.first_seen_at ?? '',
+    sourceUpdatedAt: row.source_updated_at,
+    error: row.error,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Transactions query builder (the REST `?since=` cursor backstop)
+// ---------------------------------------------------------------------------
+
+export interface TxQueryParams {
+  since?: number;
+  ticker?: string;
+  member?: string;
+  chamber?: Chamber;
+  type?: TxType;
+  limit?: number;
+}
+
+export interface BuiltQuery {
+  sql: string;
+  params: Array<string | number>;
+  limit: number;
+}
+
+/** Default and hard-cap page sizes for the transactions endpoint. */
+export const DEFAULT_TX_LIMIT = 100;
+export const MAX_TX_LIMIT = 500;
+
+/**
+ * Build the parameterized SQL for `GET /transactions`. Always orders by
+ * cursor_seq ASC (so callers can use the max returned cursor to page forward)
+ * and only returns rows with cursor_seq > since (the reconciliation backstop).
+ *
+ * `chamber` is resolved via the owning filing (transactions has no chamber
+ * column), joined through filings.doc_id.
+ *
+ * Pure + deterministic so it can be unit-tested without a DB.
+ */
+export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
+  const where: string[] = [];
+  const params: Array<string | number> = [];
+
+  const since = Number.isFinite(p.since) ? Number(p.since) : 0;
+  where.push('t.cursor_seq > ?');
+  params.push(since);
+
+  if (p.ticker) {
+    where.push('t.ticker = ?');
+    params.push(p.ticker.toUpperCase());
+  }
+  if (p.member) {
+    where.push('t.filer_id = ?');
+    params.push(p.member);
+  }
+  if (p.type) {
+    where.push('t.tx_type = ?');
+    params.push(p.type);
+  }
+  if (p.chamber) {
+    where.push('f.chamber = ?');
+    params.push(p.chamber);
+  }
+
+  let limit = Number.isFinite(p.limit) ? Number(p.limit) : DEFAULT_TX_LIMIT;
+  if (limit <= 0) limit = DEFAULT_TX_LIMIT;
+  if (limit > MAX_TX_LIMIT) limit = MAX_TX_LIMIT;
+
+  const sql =
+    'SELECT t.* FROM transactions t ' +
+    'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
+    `WHERE ${where.join(' AND ')} ` +
+    'ORDER BY t.cursor_seq ASC ' +
+    `LIMIT ${limit}`;
+
+  return { sql, params, limit };
+}

@@ -1,0 +1,119 @@
+# congress-feed
+
+Cloudflare Workers service that ingests US congressional **STOCK Act** stock-trade
+disclosures (House + Senate), extracts structured trade events, and pushes them to
+clients via webhook / SSE / REST.
+
+> This repository is the **foundation scaffold**: shared contracts, DB schema,
+> config, the extractor framework, and typed module **stubs**. Scraping, OCR/LLM
+> extraction, delivery transport, and the UI are implemented by other agents
+> against the contracts defined here.
+
+---
+
+## Architecture
+
+```
+                 ┌──────────────┐   cron (* * * * *)
+                 │  scheduled() │──────────────┐
+                 └──────────────┘              ▼
+                                        ingestion/watcher  (shouldPollNow gate)
+                                               │  poll House + Senate indexes
+                                               │  insert filings(new) + ingest_log
+                                               ▼  enqueue filing.new
+   ┌────────────────────────── INGEST_QUEUE ───────────────────────────┐
+   │ filing.new   → ingestion/fetcher    (download raw → R2, status=fetched) │
+   │ filing.fetched → ingestion/classifier (detect docKind, run extractor)   │
+   │ filing.extracted → (persist chain)                                      │
+   │ tx.persisted  → enqueue delivery.dispatch                               │
+   └─────────────────────────────────────────────────────────────────┘
+                                               │
+        extractor pipeline (src/extractors)    │ normalizer (validate brackets,
+        senateHtml | textPdf | visionLlm  ─────┤ resolve ticker, confidence,
+        (ArbitratingExtractor wraps vision)    │ low-confidence → review_queue)
+                                               ▼ persist transactions(cursor_seq)
+   ┌──────────────────────── DELIVERY_QUEUE ──────────────────────────┐
+   │ delivery.dispatch → delivery/webhook  (sign + POST, record deliveries) │
+   └─────────────────────────────────────────────────────────────────┘
+                                               │
+                 fetch() Hono app ── /health (impl) ── /api (REST, SSE) ── /api/admin
+```
+
+### Data flow (end to end)
+
+`watcher → fetcher → classifier → extractor → normalizer → persist → deliver`
+
+1. **watcher** (cron, self-gated by `shouldPollNow`) discovers new filings, writes
+   `filings(status=new)` + `ingest_log`, enqueues `filing.new`.
+2. **fetcher** downloads the raw doc into **R2** (`RAW_FILES`), sets
+   `raw_object_key`, status `fetched`, enqueues `filing.fetched`.
+3. **classifier** inspects the raw object → `doc_kind`
+   (`senate_html|text_pdf|scanned_pdf|unknown`), selects the matching extractor.
+4. **extractor** (pluggable pipeline) parses rows into `ParsedTx[]`. The vision
+   extractor can be wrapped by `ArbitratingExtractor` (primary + optional
+   secondary, gated by `ARBITRATION_API_KEY` + flag).
+5. **normalizer** validates STOCK Act amount brackets, resolves tickers against
+   `securities_master`, computes confidence, routes low-confidence to
+   `review_queue`, and persists `transactions` (assigning monotonic `cursor_seq`).
+6. **persist** triggers `tx.persisted` → `delivery.dispatch`.
+7. **deliver** fans out to matching subscriptions (webhook signed with
+   `WEBHOOK_SIGNING_KEY`; SSE live stream; REST `?since=<cursor_seq>` pull).
+
+---
+
+## Where each module lives
+
+| Path | Owner | Responsibility |
+|------|-------|----------------|
+| `src/index.ts` | foundation | Worker entry: `fetch`/`scheduled`/`queue`; `/health` (impl); router mounts |
+| `src/shared/types.ts` | foundation | Canonical types/enums, `QueueMessage`, `Env` |
+| `src/shared/config.ts` | foundation | Poll schedule, `shouldPollNow` (DST-correct ET), get/set config + last poll |
+| `src/shared/brackets.ts` | foundation | STOCK Act bracket set, `matchBracket`, `isValidBracket` |
+| `src/shared/db.ts` | foundation | Typed D1 `get`/`all`/`run`/`batch` helpers |
+| `src/shared/ids.ts` | foundation | `uuid`, prefixed/monotonic ids, R2 key builder |
+| `src/extractors/types.ts` | foundation | `Extractor` interface, `ArbitratingExtractor`, `buildExtractorPipeline` |
+| `src/ingestion/watcher.ts` | ingestion | Cron poll loop (stub) |
+| `src/ingestion/fetcher.ts` | ingestion | Download raw → R2 (stub) |
+| `src/ingestion/classifier.ts` | ingestion | docKind detection (stub) |
+| `src/extraction/senateHtml.ts` | extraction | Senate HTML extractor (stub) |
+| `src/extraction/textPdf.ts` | extraction | Text-PDF extractor (stub) |
+| `src/extraction/visionLlm.ts` | extraction | Vision/LLM extractor (stub) |
+| `src/extraction/normalizer.ts` | extraction | Validate/normalize → `Transaction[]` (stub) |
+| `src/delivery/webhook.ts` | delivery | Signed webhook dispatch (stub) |
+| `src/delivery/sse.ts` | delivery | SSE streaming (stub) |
+| `src/delivery/rest.ts` | delivery | REST read API router (stub) |
+| `src/delivery/subscriptions.ts` | delivery | Subscription CRUD + filter matching (stub) |
+| `src/admin/routes.ts` | admin | poll-config / review-queue / subscriptions admin (stub) |
+| `src/backfill/seed.ts` | backfill | Seed open datasets, `source='seed_dataset'` (stub) |
+| `../dashboard-design.html` | ui | Visual spec the UI agent ports |
+
+---
+
+## Bindings (wrangler.toml)
+
+| Binding | Type | Purpose |
+|---------|------|---------|
+| `DB` | D1 | Structured store (filers, filings, transactions, …) |
+| `RAW_FILES` | R2 | Raw disclosure files (PDF/HTML) |
+| `INGEST_QUEUE` | Queue | Pipeline stage hand-off |
+| `DELIVERY_QUEUE` | Queue | Delivery fan-out |
+| `CONFIG_KV` | KV | Hot config cache (poll schedule, last-poll timestamps) |
+
+Secrets (`wrangler secret put …`, never committed): `GEMINI_API_KEY`,
+`ARBITRATION_API_KEY`, `WEBHOOK_SIGNING_KEY`. See `.dev.vars.example`.
+
+---
+
+## Commands
+
+```bash
+npm install
+npm run typecheck   # tsc --noEmit (must be clean)
+npm run test        # vitest run
+npm run migrate     # apply D1 migrations locally
+npm run dev         # wrangler dev
+npm run deploy      # wrangler deploy
+```
+
+Before deploying, replace the `PLACEHOLDER_*` ids in `wrangler.toml` with the
+real D1 database id and KV namespace id, and create the queues + R2 bucket.

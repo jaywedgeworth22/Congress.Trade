@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/ingestion/watcher.ts",
+    "src/ingestion/fetcher.ts",
+    "src/ingestion/classifier.ts",
+    "src/ingestion/houseSource.ts",
+    "src/ingestion/senateSource.ts"
+  ]
+}

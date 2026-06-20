@@ -1,0 +1,72 @@
+name = "congress-feed"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# ---------------------------------------------------------------------------
+# Cron Triggers
+# Fires every minute. The watcher decides INTERNALLY (via shouldPollNow) whether
+# to actually poll, based on poll_config schedule + last poll time. This keeps
+# the polling cadence hot-configurable without redeploying.
+# ---------------------------------------------------------------------------
+[triggers]
+crons = ["* * * * *"]
+
+# ---------------------------------------------------------------------------
+# D1 (SQLite) — primary structured store
+# ---------------------------------------------------------------------------
+[[d1_databases]]
+binding = "DB"
+database_name = "congress-feed-db"
+database_id = "PLACEHOLDER_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+# ---------------------------------------------------------------------------
+# R2 — raw disclosure file storage (PDFs / HTML snapshots)
+# ---------------------------------------------------------------------------
+[[r2_buckets]]
+binding = "RAW_FILES"
+bucket_name = "congress-feed-raw"
+
+# ---------------------------------------------------------------------------
+# Queues — producers + consumers
+# INGEST_QUEUE   : filing.new / filing.fetched / filing.extracted / tx.persisted
+# DELIVERY_QUEUE : delivery.dispatch
+# ---------------------------------------------------------------------------
+[[queues.producers]]
+binding = "INGEST_QUEUE"
+queue = "congress-feed-ingest"
+
+[[queues.producers]]
+binding = "DELIVERY_QUEUE"
+queue = "congress-feed-delivery"
+
+[[queues.consumers]]
+queue = "congress-feed-ingest"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 5
+dead_letter_queue = "congress-feed-ingest-dlq"
+
+[[queues.consumers]]
+queue = "congress-feed-delivery"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 8
+dead_letter_queue = "congress-feed-delivery-dlq"
+
+# ---------------------------------------------------------------------------
+# KV — hot config cache (poll schedule, feature flags)
+# ---------------------------------------------------------------------------
+[[kv_namespaces]]
+binding = "CONFIG_KV"
+id = "PLACEHOLDER_KV_NAMESPACE_ID"
+
+# ---------------------------------------------------------------------------
+# Secrets (set via `wrangler secret put <NAME>`) — DO NOT commit real values.
+#   GEMINI_API_KEY         — vision/LLM extraction (scanned PDFs)
+#   ARBITRATION_API_KEY    — secondary extractor / arbitration provider
+#   WEBHOOK_SIGNING_KEY    — HMAC signing of outbound webhook payloads
+# ---------------------------------------------------------------------------
+# [vars]
+# (non-secret vars go here)
