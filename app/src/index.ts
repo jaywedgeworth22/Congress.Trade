@@ -26,6 +26,7 @@ import { classifyFiling } from './ingestion/classifier';
 import { dispatchWebhook } from './delivery/webhook';
 import { buildRestRouter } from './delivery/rest';
 import { buildAdminRouter } from './admin/routes';
+import { buildUiRouter } from './ui/routes';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -50,6 +51,13 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
     root.route('/api/admin', buildAdminRouter());
   } catch (err) {
     console.warn('admin/routes router not mounted (stub):', (err as Error).message);
+  }
+  // Dashboard SPA at `/` and `/admin`. Registered after /health and /api so the
+  // exact UI paths never shadow the API routers.
+  try {
+    root.route('/', buildUiRouter());
+  } catch (err) {
+    console.warn('ui/routes router not mounted (stub):', (err as Error).message);
   }
 }
 
