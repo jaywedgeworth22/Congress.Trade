@@ -8,8 +8,11 @@ import {
   normalizeDate,
   passesSinceYear,
   seedFilerId,
+  runSeedBackfill,
+  runSeedBackfillFromEnv,
   type RawWatcherRecord,
 } from '../seed';
+import type { Env } from '../../shared/types';
 
 // Inline fixtures — no network.
 const SENATE_REC: RawWatcherRecord = {
@@ -134,5 +137,42 @@ describe('filters & helpers', () => {
     expect(passesSinceYear(tx, undefined)).toBe(true);
     expect(passesSinceYear(tx, 2026)).toBe(true);
     expect(passesSinceYear(tx, 2027)).toBe(false);
+  });
+});
+
+describe('runSeedBackfill source overrides (dryRun)', () => {
+  // dryRun never touches the DB, so a bare cast env is sufficient here.
+  const env = {} as Env;
+
+  function jsonFetch(rows: unknown[]): { fetchImpl: typeof fetch; urls: string[] } {
+    const urls: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify(rows), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    return { fetchImpl, urls };
+  }
+
+  it('uses opts.sourceUrls override instead of the hardcoded bucket', async () => {
+    const { fetchImpl, urls } = jsonFetch([SENATE_REC]);
+    const res = await runSeedBackfill(env, {
+      chambers: ['senate'],
+      dryRun: true,
+      fetchImpl,
+      sourceUrls: { senate: 'https://mirror.example/senate.json' },
+    });
+    expect(urls).toEqual(['https://mirror.example/senate.json']);
+    expect(res.inserted).toBe(1);
+    expect(res.bySource.senate).toBe(1);
+  });
+
+  it('runSeedBackfillFromEnv pulls SEED_SENATE_URL from env', async () => {
+    const { fetchImpl, urls } = jsonFetch([SENATE_REC]);
+    const envWithUrl = { SEED_SENATE_URL: 'https://env.example/senate.json' } as unknown as Env;
+    await runSeedBackfillFromEnv(envWithUrl, { chambers: ['senate'], dryRun: true, fetchImpl });
+    expect(urls).toEqual(['https://env.example/senate.json']);
   });
 });

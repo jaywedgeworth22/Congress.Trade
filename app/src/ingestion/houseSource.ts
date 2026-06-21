@@ -23,6 +23,7 @@
  */
 
 import { unzipSync } from 'fflate';
+import { CookieJar, delay } from './senateSource';
 
 /** A single filing row parsed out of the House yearly index XML. */
 export interface HouseFiling {
@@ -167,23 +168,165 @@ export async function fetchHouseIndex(year: number | string): Promise<HouseFilin
   return parseHouseIndexXml(xml, String(year));
 }
 
+// ---------------------------------------------------------------------------
+// INTRADAY live search.
+//
+// The yearly XML index refreshes ~once a day, so a PTR filed at 10am may not
+// appear in the ZIP until the next overnight rebuild. The interactive UI at
+// https://disclosures-clerk.house.gov/FinancialDisclosure is backed by a search
+// endpoint (POST to FinancialDisclosure/ViewMemberSearchResult) that surfaces
+// filings INTRADAY. We POST a year/last-name/filing-type body and parse the PTR
+// PDF links out of the returned HTML table. The result is merged with the bulk
+// index by the watcher; because persistence is INSERT OR IGNORE on docId, the
+// overlap between the two sources de-dupes for free.
+//
+// The endpoint is undocumented and lightly anti-bot-protected, so callers run
+// this fail-soft: any error leaves the stable bulk-XML diff as the source of
+// truth. The HTML parser below is pure + unit-testable.
+// ---------------------------------------------------------------------------
+
+const HOUSE_FD_BASE = 'https://disclosures-clerk.house.gov/FinancialDisclosure';
+const HOUSE_SEARCH_RESULT = `${HOUSE_FD_BASE}/ViewMemberSearchResult`;
+const HOUSE_UA = 'congress-feed/0.1 (+https://congress.trade)';
+const HOUSE_POLITE_DELAY_MS = 500;
+
+/** Strip HTML tags + collapse whitespace to recover a cell's visible text. */
+function stripHtml(s: string): string {
+  return decodeXmlText(s.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' '));
+}
+
 /**
- * TODO(ingestion-agent): INTRADAY live-search source.
- *
- * The yearly XML index refreshes ~once a day, so a PTR filed at 10am may not
- * appear in the ZIP until the next overnight rebuild. The live UI at
- * https://disclosures-clerk.house.gov/FinancialDisclosure is backed by a JSON
- * search endpoint (POST to the FinancialDisclosure/ViewMemberSearchResult-style
- * path with a year/last-name/filing-type body) that returns rows the same day.
- *
- * Wiring this in would let runWatcher() catch same-day House PTRs. It is left as
- * a hook because the live endpoint is undocumented/anti-bot-protected and needs
- * its own cookie/CSRF handling, so it is intentionally NOT on the hot path yet.
- * The XML diff implemented above is the correct, stable primary source for now.
- *
- * @returns the same HouseFiling[] shape so runWatcher can treat both uniformly.
+ * Split a House-style "Last, First" (or "First Last") display name into parts.
+ * The live search shows "Last, First M." in the member column.
  */
-export async function pollHouseLiveSearch(_year: number | string): Promise<HouseFiling[]> {
-  // Not implemented yet — return nothing so callers can opt in without breaking.
-  return [];
+function splitMemberName(name: string): { first: string; last: string } {
+  const clean = name.replace(/\s+/g, ' ').trim();
+  if (!clean) return { first: '', last: '' };
+  const comma = clean.indexOf(',');
+  if (comma >= 0) {
+    return { last: clean.slice(0, comma).trim(), first: clean.slice(comma + 1).trim() };
+  }
+  // No comma: treat the last whitespace-separated token as the surname.
+  const parts = clean.split(' ');
+  if (parts.length === 1) return { first: '', last: parts[0] };
+  return { first: parts.slice(0, -1).join(' '), last: parts[parts.length - 1] };
+}
+
+const PTR_PDF_HREF_RE =
+  /href=["']([^"']*\/ptr-pdfs\/(\d{4})\/(\d+)\.pdf)["']/i;
+const ROW_RE = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+const TD_RE = /<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi;
+const ANCHOR_PTR_RE =
+  /<a\b[^>]*href=["'][^"']*\/ptr-pdfs\/\d{4}\/\d+\.pdf["'][^>]*>([\s\S]*?)<\/a>/i;
+
+/**
+ * Parse the House live-search result HTML into HouseFiling[]. Only rows that
+ * link to a PTR PDF (`/public_disc/ptr-pdfs/{year}/{docId}.pdf`) are returned;
+ * the member name is taken from the linking anchor's text when meaningful, else
+ * the first table cell. Pure + unit-testable.
+ */
+export function parseHouseSearchHtml(html: string, defaultYear: string): HouseFiling[] {
+  const out: HouseFiling[] = [];
+  const seen = new Set<string>();
+  let row: RegExpExecArray | null;
+  ROW_RE.lastIndex = 0;
+  while ((row = ROW_RE.exec(html)) !== null) {
+    const chunk = row[1];
+    const link = PTR_PDF_HREF_RE.exec(chunk);
+    if (!link) continue; // not a PTR row
+    const href = link[1];
+    const year = link[2] || defaultYear;
+    const docId = link[3];
+    if (seen.has(docId)) continue;
+    seen.add(docId);
+
+    // Prefer the anchor's own text as the member name; fall back to the first
+    // non-empty cell (the anchor text is sometimes a generic "View"/"PDF").
+    let name = '';
+    const anchor = ANCHOR_PTR_RE.exec(chunk);
+    if (anchor) {
+      const t = stripHtml(anchor[1]);
+      if (t && !/^(view|pdf|ptr|report|download)\b/i.test(t)) name = t;
+    }
+    if (!name) {
+      TD_RE.lastIndex = 0;
+      let cell: RegExpExecArray | null;
+      while ((cell = TD_RE.exec(chunk)) !== null) {
+        const t = stripHtml(cell[1]);
+        if (t && !/^(view|pdf|ptr|report|download)\b/i.test(t)) {
+          name = t;
+          break;
+        }
+      }
+    }
+
+    const { first, last } = splitMemberName(name);
+    out.push({
+      docId,
+      filingType: 'P',
+      year,
+      first,
+      last,
+      stateDst: '',
+      isPtr: true,
+      pipelineDocId: houseDocId(year, docId),
+      sourceUrl: href.startsWith('http')
+        ? href
+        : `https://disclosures-clerk.house.gov${href.startsWith('/') ? '' : '/'}${href}`,
+    });
+  }
+  return out;
+}
+
+/** Build the POST body for the House live member search. */
+export function buildHouseSearchBody(year: number | string): URLSearchParams {
+  const body = new URLSearchParams();
+  // Empty name => all members; FilingYear scopes to the requested year. The form
+  // exposes a few more fields (State/District) that we intentionally leave blank.
+  body.set('LastName', '');
+  body.set('FilingYear', String(year));
+  body.set('State', '');
+  body.set('District', '');
+  return body;
+}
+
+/**
+ * Poll the House live member search for same-day PTRs. Mirrors fetchHouseIndex's
+ * HouseFiling[] shape so the watcher can treat both sources uniformly.
+ *
+ * Establishes a session cookie via a GET to the search page, then POSTs the
+ * form. Throws on transport/HTTP failure so the watcher's per-source guard can
+ * fail soft (the bulk XML diff remains authoritative).
+ */
+export async function pollHouseLiveSearch(
+  year: number | string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<HouseFiling[]> {
+  const jar = new CookieJar();
+
+  // 1) GET the search page to pick up any session cookie the result POST needs.
+  const landing = await fetchImpl(`${HOUSE_FD_BASE}/ViewSearch`, {
+    headers: { 'user-agent': HOUSE_UA, accept: 'text/html,*/*' },
+  });
+  if (landing.ok) jar.absorb(landing);
+
+  await delay(HOUSE_POLITE_DELAY_MS);
+
+  // 2) POST the member search; the response is an HTML results table.
+  const res = await fetchImpl(HOUSE_SEARCH_RESULT, {
+    method: 'POST',
+    headers: {
+      'user-agent': HOUSE_UA,
+      'content-type': 'application/x-www-form-urlencoded',
+      accept: 'text/html,application/xhtml+xml,*/*',
+      referer: `${HOUSE_FD_BASE}/ViewSearch`,
+      origin: 'https://disclosures-clerk.house.gov',
+      'x-requested-with': 'XMLHttpRequest',
+      ...(jar.header() ? { cookie: jar.header() } : {}),
+    },
+    body: buildHouseSearchBody(year).toString(),
+  });
+  if (!res.ok) throw new Error(`house live search -> HTTP ${res.status}`);
+  const html = await res.text();
+  return parseHouseSearchHtml(html, String(year));
 }
