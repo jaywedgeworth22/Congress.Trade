@@ -27,6 +27,7 @@ import { getConfig, setConfig } from '../shared/config';
 import { uuid } from '../shared/ids';
 import { listSubscriptions } from '../delivery/subscriptions';
 import { runSeedBackfillFromEnv } from '../backfill/seed';
+import { backfillHouseIndex } from '../ingestion/watcher';
 import type { Chamber } from '../shared/types';
 
 // Optional secret; not declared on Env (frozen). Read defensively.
@@ -374,6 +375,43 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ ok: result.errors.length === 0, ...result });
     } catch (err) {
       return c.json({ error: `backfill failed: ${(err as Error).message}` }, 500);
+    }
+  });
+
+  // --- POST /backfill/house-index ----------------------------------------
+  // High-fidelity House history from the official yearly bulk ZIP indexes.
+  // Feeds past-year PTRs through the live pipeline (fetch/extract/deliver).
+  // Body: { years: number[], dryRun?: boolean }  OR  { fromYear, toYear }.
+  r.post('/backfill/house-index', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const text = await c.req.text();
+      if (text) body = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+
+    let years: number[] = [];
+    if (Array.isArray(body.years)) {
+      years = body.years.filter((y): y is number => typeof y === 'number' && Number.isFinite(y));
+    } else if (typeof body.fromYear === 'number' && typeof body.toYear === 'number') {
+      const lo = Math.min(body.fromYear, body.toYear);
+      const hi = Math.max(body.fromYear, body.toYear);
+      for (let y = lo; y <= hi; y++) years.push(y);
+    }
+    if (years.length === 0) {
+      return c.json({ error: 'provide years[] or fromYear+toYear' }, 400);
+    }
+    if (years.length > 20) {
+      return c.json({ error: 'too many years (max 20 per call)' }, 400);
+    }
+    const dryRun = body.dryRun === true;
+
+    try {
+      const result = await backfillHouseIndex(c.env, { years, dryRun });
+      return c.json({ ok: result.errors.length === 0, dryRun, ...result });
+    } catch (err) {
+      return c.json({ error: `house-index backfill failed: ${(err as Error).message}` }, 500);
     }
   });
 

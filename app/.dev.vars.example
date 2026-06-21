@@ -21,9 +21,10 @@ WEBHOOK_SIGNING_KEY=""
 # local dev (a one-time warning is logged).
 ADMIN_TOKEN=""
 
-# Historic-backfill source overrides. The community house/senate-stock-watcher
-# S3 buckets are frequently gated (HTTP 403); point these at a working mirror to
-# repoint the backfill without a code change.
+# Historic-backfill source overrides. Senate defaults to a working GitHub mirror
+# (no override needed). The community House S3 bucket is gated (HTTP 403) — set
+# SEED_HOUSE_URL to a mirror, OR use the official House index backfill instead
+# (POST /api/admin/backfill/house-index), which needs no override.
 SEED_HOUSE_URL=""
 SEED_SENATE_URL=""
 

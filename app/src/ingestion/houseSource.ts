@@ -197,23 +197,33 @@ function stripHtml(s: string): string {
 
 /**
  * Split a House-style "Last, First" (or "First Last") display name into parts.
- * The live search shows "Last, First M." in the member column.
+ * The live search shows "Last, Hon.. First M." in the member column, so we strip
+ * a leading honorific ("Hon", "Mr", "Mrs", "Ms", "Dr", with stray dots) off the
+ * given-name half.
  */
+function stripHonorific(s: string): string {
+  return s.replace(/^(hon|mr|mrs|ms|dr|rep|sen)\.*\s+/i, '').trim();
+}
+
 function splitMemberName(name: string): { first: string; last: string } {
   const clean = name.replace(/\s+/g, ' ').trim();
   if (!clean) return { first: '', last: '' };
   const comma = clean.indexOf(',');
   if (comma >= 0) {
-    return { last: clean.slice(0, comma).trim(), first: clean.slice(comma + 1).trim() };
+    return {
+      last: clean.slice(0, comma).trim(),
+      first: stripHonorific(clean.slice(comma + 1).trim()),
+    };
   }
   // No comma: treat the last whitespace-separated token as the surname.
-  const parts = clean.split(' ');
+  const parts = stripHonorific(clean).split(' ');
   if (parts.length === 1) return { first: '', last: parts[0] };
   return { first: parts.slice(0, -1).join(' '), last: parts[parts.length - 1] };
 }
 
 const PTR_PDF_HREF_RE =
   /href=["']([^"']*\/ptr-pdfs\/(\d{4})\/(\d+)\.pdf)["']/i;
+const OFFICE_CELL_RE = /data-label=["']Office["'][^>]*>([\s\S]*?)<\/td>/i;
 const ROW_RE = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
 const TD_RE = /<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi;
 const ANCHOR_PTR_RE =
@@ -260,6 +270,10 @@ export function parseHouseSearchHtml(html: string, defaultYear: string): HouseFi
       }
     }
 
+    // The results table carries an "Office" cell (e.g. "AL04") = StateDst.
+    const office = OFFICE_CELL_RE.exec(chunk);
+    const stateDst = office ? stripHtml(office[1]) : '';
+
     const { first, last } = splitMemberName(name);
     out.push({
       docId,
@@ -267,7 +281,7 @@ export function parseHouseSearchHtml(html: string, defaultYear: string): HouseFi
       year,
       first,
       last,
-      stateDst: '',
+      stateDst,
       isPtr: true,
       pipelineDocId: houseDocId(year, docId),
       sourceUrl: href.startsWith('http')

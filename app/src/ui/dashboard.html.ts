@@ -283,10 +283,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <option value="">Both chambers</option><option value="house">House only</option><option value="senate">Senate only</option>
         </select>
         <button class="btn ghost sm" onclick="runBackfill(true)">Dry run</button>
-        <button class="btn" onclick="runBackfill(false)">Run backfill</button>
+        <button class="btn" onclick="runBackfill(false)">Run seed backfill</button>
         <span id="bfMsg" class="note"></span>
       </div>
-      <p class="note">API HOOK: <code>POST /api/admin/backfill</code>. The community house/senate-stock-watcher buckets are sometimes gated (HTTP 403) — set <code>SEED_HOUSE_URL</code> / <code>SEED_SENATE_URL</code> to point at a working mirror.</p>
+      <p class="note">API HOOK: <code>POST /api/admin/backfill</code>. Senate defaults to the GitHub mirror (works out of the box). The House community bucket is gated (HTTP 403) — set <code>SEED_HOUSE_URL</code>, or use the official House index backfill below.</p>
+      <div class="row-flex" style="margin-top:14px">
+        <label class="lbl">House history (official index)</label>
+        <input id="hiFrom" type="number" placeholder="from year" style="width:120px" />
+        <input id="hiTo" type="number" placeholder="to year" style="width:120px" />
+        <button class="btn ghost sm" onclick="runHouseIndex(true)">Dry run</button>
+        <button class="btn" onclick="runHouseIndex(false)">Backfill House index</button>
+        <span id="hiMsg" class="note"></span>
+      </div>
+      <p class="note">API HOOK: <code>POST /api/admin/backfill/house-index</code>. Pulls past-year House bulk ZIPs (official, always reachable) and runs each PTR through the live pipeline — high-fidelity, but heavier than the seed import.</p>
     </div>
     <div class="section">
       <h3>Source health</h3>
@@ -671,6 +680,28 @@ function runBackfill(dryRun) {
       if (!dryRun && j.inserted > 0) { cursor = 0; TRADES = []; realDataLoaded = false; loadFeed(); }
     })
     .catch(function (e) { el('bfMsg').textContent = 'Failed: ' + e.message; });
+}
+
+function runHouseIndex(dryRun) {
+  // API HOOK: POST /api/admin/backfill/house-index
+  var from = parseInt(el('hiFrom').value, 10);
+  var to = parseInt(el('hiTo').value, 10);
+  if (isNaN(from) || isNaN(to)) { el('hiMsg').textContent = 'Enter a from/to year.'; return; }
+  el('hiMsg').textContent = dryRun ? 'Counting…' : 'Enqueuing (this can take a while)…';
+  fetch('/api/admin/backfill/house-index', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ fromYear: from, toYear: to, dryRun: !!dryRun })
+  })
+    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
+    .then(function (j) {
+      var years = j.byYear || {};
+      var found = 0, enq = 0;
+      Object.keys(years).forEach(function (y) { found += years[y].found || 0; enq += years[y].enqueued || 0; });
+      el('hiMsg').textContent = dryRun
+        ? ('Found ' + found + ' PTRs across ' + Object.keys(years).length + ' year(s).')
+        : ('Enqueued ' + enq + ' new filing(s) from ' + found + ' PTRs.' + (j.errors && j.errors.length ? ' Errors: ' + j.errors.join('; ') : ''));
+    })
+    .catch(function (e) { el('hiMsg').textContent = 'Failed: ' + e.message; });
 }
 
 /* ============================ SOURCE HEALTH ============================ */
