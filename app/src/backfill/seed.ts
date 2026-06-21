@@ -35,23 +35,28 @@ import { nearestBracket } from '../shared/brackets';
 /**
  * Free, public, pre-aggregated disclosure datasets.
  *
- * - senate: the senate-stock-watcher S3 aggregate. URL is well-known/stable and
- *   was given by the task spec. CONFIDENT.
- * - house:  the house-stock-watcher aggregate. The project mirrors the senate
- *   bucket layout on its own S3 bucket. The exact bucket host is best-effort
- *   (UNCERTAIN — verify against https://housestockwatcher.com if it 404s); the
- *   backfill fails soft per-source, so a wrong House URL degrades to "Senate
- *   only" rather than breaking the run.
+ * The original house/senate-stock-watcher S3 buckets now return HTTP 403
+ * (AccessDenied), so the defaults below point at sources confirmed reachable as
+ * of 2026-06. Both are overridable via SEED_SENATE_URL / SEED_HOUSE_URL.
+ *
+ * - senate: the timothycarambat/senate-stock-watcher-data GitHub mirror (same
+ *   data as senatestockwatcher.com), served over raw.githubusercontent.com.
+ *   CONFIDENT — verified reachable and in the expected RawWatcherRecord shape.
+ * - house:  there is no maintained pre-parsed House JSON mirror; the community
+ *   S3 bucket is gated. The high-fidelity path for House history is
+ *   `backfillHouseIndex` (watcher.ts), which pulls the official, accessible
+ *   yearly bulk ZIP indexes and runs them through the live pipeline. This URL
+ *   remains as a hook for operators who host their own House aggregate.
+ *   UNCERTAIN — set SEED_HOUSE_URL or use the House index backfill instead.
  */
 export const SEED_SOURCES: Record<Chamber, { url: string; certain: boolean }> = {
   senate: {
-    // Given by task spec; stable. CONFIDENT.
-    url: 'https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/aggregate/all_transactions.json',
+    url: 'https://raw.githubusercontent.com/timothycarambat/senate-stock-watcher-data/master/aggregate/all_transactions.json',
     certain: true,
   },
   house: {
-    // house-stock-watcher aggregate, mirroring the senate bucket convention.
-    // UNCERTAIN — confirm bucket/host if this 404s.
+    // Legacy community bucket — currently gated (HTTP 403). Override via
+    // SEED_HOUSE_URL, or prefer backfillHouseIndex for official House history.
     url: 'https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json',
     certain: false,
   },

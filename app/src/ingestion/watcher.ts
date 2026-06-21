@@ -152,6 +152,59 @@ async function pollHouse(env: Env, now: Date): Promise<void> {
   await setLastPollAt(env, 'house', now);
 }
 
+/** Result of a House index backfill run. */
+export interface HouseIndexBackfillResult {
+  /** Per-year { found PTRs in the index, genuinely-new filings enqueued }. */
+  byYear: Record<number, { found: number; enqueued: number }>;
+  /** Total new filings enqueued across all years. */
+  totalEnqueued: number;
+  /** Soft, per-year errors. A failing year does not abort the others. */
+  errors: string[];
+}
+
+/**
+ * Backfill House history from the official, accessible yearly bulk ZIP indexes.
+ *
+ * This is the high-fidelity counterpart to the seed-dataset backfill for the
+ * House (whose community JSON mirror is gated): for each requested year it
+ * downloads `{YEAR}FD.ZIP`, filters PTRs, and feeds the GENUINELY-new ones into
+ * the normal pipeline via INSERT OR IGNORE + filing.new — so they get fetched,
+ * classified, extracted, and delivered exactly like live filings.
+ *
+ * `fetchIndex` is injectable for tests (defaults to the real network fetcher).
+ * Fails soft per-year; `dryRun` reports counts without writing/enqueuing.
+ */
+export async function backfillHouseIndex(
+  env: Env,
+  opts: { years: number[]; dryRun?: boolean } = { years: [] },
+  fetchIndex: (year: number | string) => Promise<Awaited<ReturnType<typeof fetchHouseIndex>>> = fetchHouseIndex,
+): Promise<HouseIndexBackfillResult> {
+  const nowIso = new Date().toISOString();
+  const result: HouseIndexBackfillResult = { byYear: {}, totalEnqueued: 0, errors: [] };
+
+  for (const year of opts.years) {
+    try {
+      const index = await fetchIndex(year);
+      const ptrs = index.filter((f) => f.isPtr);
+      if (opts.dryRun) {
+        result.byYear[year] = { found: ptrs.length, enqueued: 0 };
+        continue;
+      }
+      const discovered: DiscoveredFiling[] = ptrs.map((f) => ({
+        docId: f.pipelineDocId,
+        chamber: 'house',
+        sourceUrl: f.sourceUrl,
+      }));
+      const enqueued = await persistAndEnqueue(env, discovered, nowIso);
+      result.byYear[year] = { found: ptrs.length, enqueued };
+      result.totalEnqueued += enqueued;
+    } catch (err) {
+      result.errors.push(`${year}: ${(err as Error).message}`);
+    }
+  }
+  return result;
+}
+
 /**
  * Poll the Senate efdsearch DataTables API, diff against D1, enqueue new PTRs.
  * Throws on any failure (caught by the per-source guard in runWatcher).
