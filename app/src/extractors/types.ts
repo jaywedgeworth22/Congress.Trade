@@ -9,6 +9,98 @@
 import type { Env, Filing, ParsedTx } from '../shared/types';
 
 // ---------------------------------------------------------------------------
+// Arbitration merge helpers (pure, unit-testable)
+// ---------------------------------------------------------------------------
+
+/**
+ * Stable matching key for a parsed row: ticker (or asset name when no ticker) +
+ * transaction date + transaction type. Two extractors that read the same row
+ * should produce the same key even if other fields differ slightly.
+ */
+export function arbitrationRowKey(tx: ParsedTx): string {
+  const sym = (tx.ticker || tx.assetName || '').trim().toUpperCase();
+  return `${sym}|${tx.txDate ?? ''}|${tx.txType}`;
+}
+
+/** Count how many of the comparable fields two matched rows agree on, out of N. */
+export function fieldAgreement(a: ParsedTx, b: ParsedTx): { agree: number; total: number } {
+  const eqStr = (x: string | null, y: string | null) =>
+    (x ?? '').trim().toUpperCase() === (y ?? '').trim().toUpperCase();
+  const checks = [
+    a.txType === b.txType,
+    a.amountMin === b.amountMin && a.amountMax === b.amountMax,
+    eqStr(a.ticker, b.ticker),
+    a.owner === b.owner,
+    a.isOption === b.isOption,
+  ];
+  return { agree: checks.filter(Boolean).length, total: checks.length };
+}
+
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+/**
+ * Reconcile two extractor results into one. The PRIMARY row set stays
+ * authoritative (deterministic output), but per-row and document confidence are
+ * re-weighted by how well the secondary corroborates it:
+ *   - matched + all fields agree  -> confidence nudged UP toward agreement.
+ *   - matched + partial agreement -> confidence scaled DOWN by the agreement ratio.
+ *   - primary-only (no match)     -> confidence halved (only one extractor saw it).
+ * Rows the secondary found but the primary missed drag the DOCUMENT confidence
+ * down (so the normalizer routes contested docs to human review) without being
+ * blindly injected into the output.
+ */
+export function mergeResults(primary: ExtractorResult, secondary: ExtractorResult): ExtractorResult {
+  const secByKey = new Map<string, ParsedTx>();
+  for (const tx of secondary.transactions) secByKey.set(arbitrationRowKey(tx), tx);
+
+  const matchedKeys = new Set<string>();
+  const transactions: ParsedTx[] = primary.transactions.map((p) => {
+    const key = arbitrationRowKey(p);
+    const match = secByKey.get(key);
+    if (!match) {
+      // Only the primary saw this row — corroboration absent.
+      return { ...p, confidence: clamp01(p.confidence * 0.5) };
+    }
+    matchedKeys.add(key);
+    const { agree, total } = fieldAgreement(p, match);
+    if (agree === total) {
+      // Full agreement: average the two and nudge up, capped at 1.
+      const base = (p.confidence + match.confidence) / 2;
+      return { ...p, confidence: clamp01(base + 0.1) };
+    }
+    // Partial agreement: scale down by the agreement ratio.
+    return { ...p, confidence: clamp01(p.confidence * (agree / total)) };
+  });
+
+  // Rows present only in the secondary (primary missed them) = contested doc.
+  const secondaryOnly = secondary.transactions.filter(
+    (s) => !matchedKeys.has(arbitrationRowKey(s)),
+  ).length;
+  const primaryOnly = primary.transactions.length - matchedKeys.size;
+
+  const meanRowConf =
+    transactions.length > 0
+      ? transactions.reduce((s, t) => s + t.confidence, 0) / transactions.length
+      : Math.min(primary.confidence, secondary.confidence);
+
+  // Document agreement factor: matched rows / the larger of the two row counts.
+  const denom = Math.max(primary.transactions.length, secondary.transactions.length, 1);
+  const agreementFactor = matchedKeys.size / denom;
+  const docConfidence = clamp01(meanRowConf * (0.5 + 0.5 * agreementFactor));
+
+  return {
+    transactions,
+    confidence: docConfidence,
+    raw: `primary(${primary.extractor}):\n${primary.raw}\n\n---\nsecondary(${secondary.extractor}) [primaryOnly=${primaryOnly}, secondaryOnly=${secondaryOnly}]:\n${secondary.raw}`,
+    extractor: `arbitrating(${primary.extractor},${secondary.extractor})`,
+    modelVersion: primary.modelVersion,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Core contracts
 // ---------------------------------------------------------------------------
 
@@ -103,17 +195,14 @@ export class ArbitratingExtractor implements Extractor {
   }
 
   /**
-   * Compare/merge primary vs secondary results.
-   *
-   * TODO(extraction-agent): implement the real arbitration policy — e.g.
-   * row-by-row reconciliation, confidence-weighted field selection, and
-   * down-weighting overall confidence when the two extractors disagree, routing
-   * irreconcilable docs to review_queue. For now this is a documented stub that
-   * returns the PRIMARY result unchanged so the pipeline stays deterministic.
+   * Compare/merge primary vs secondary results via {@link mergeResults}:
+   * row-by-row reconciliation keyed on ticker/date/type, confidence-weighted by
+   * field agreement, with contested documents (rows seen by only one extractor)
+   * pushed toward the review queue through a lowered document confidence. The
+   * primary row set stays authoritative so output remains deterministic.
    */
-  private arbitrate(primary: ExtractorResult, _secondary: ExtractorResult): ExtractorResult {
-    // NOTE: wiring is live; merge logic is intentionally deferred.
-    return primary;
+  private arbitrate(primary: ExtractorResult, secondary: ExtractorResult): ExtractorResult {
+    return mergeResults(primary, secondary);
   }
 }
 
@@ -132,19 +221,26 @@ export class ArbitratingExtractor implements Extractor {
  *
  * The classifier picks a docKind; the queue handler iterates this pipeline and
  * uses the first extractor whose canHandle() returns true. The vision extractor
- * may be wrapped in an ArbitratingExtractor when a secondary is configured.
- *
- * TODO(extraction-agent): wire the real secondary for arbitration once a second
- * provider exists; the ArbitratingExtractor switch is already in place.
+ * is wrapped in an ArbitratingExtractor; when ARBITRATION_API_KEY is set (and
+ * ARBITRATION_ENABLED === 'true'), a second, independent vision extractor — a
+ * different model keyed by ARBITRATION_API_KEY — cross-checks every scanned doc.
  */
 export function buildExtractorPipeline(env: Env): Extractor[] {
   const senateHtml = new SenateHtmlExtractor();
   const textPdf = new TextPdfExtractor();
   const visionLlm = new VisionLlmExtractor(env);
 
-  // Vision extractor is arbitration-ready. No secondary configured yet, so the
-  // switch resolves to the primary until one is supplied here.
-  const visionArbitrated = new ArbitratingExtractor(visionLlm, env /*, secondary */);
+  // Build a secondary only when an arbitration key is present; otherwise the
+  // ArbitratingExtractor resolves to the primary result (see arbitrationEnabled).
+  const secondary = env.ARBITRATION_API_KEY
+    ? new VisionLlmExtractor(env, {
+        apiKey: env.ARBITRATION_API_KEY,
+        model: (env as { ARBITRATION_MODEL?: string }).ARBITRATION_MODEL || 'gemini-2.5-flash',
+        name: 'visionLlm-secondary',
+      })
+    : undefined;
+
+  const visionArbitrated = new ArbitratingExtractor(visionLlm, env, secondary);
 
   return [senateHtml, textPdf, visionArbitrated];
 }

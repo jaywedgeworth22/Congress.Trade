@@ -96,6 +96,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
   tr:last-child td { border-bottom: none; }
   tr.row:hover td { background: var(--panel-2); }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--text); }
+  th.sortable .arr { opacity: .4; font-size: 10px; margin-left: 4px; }
+  th.sortable.active { color: var(--text); }
+  th.sortable.active .arr { opacity: 1; color: var(--accent); }
+  /* fold-out advanced search */
+  .search-panel {
+    display: none; gap: 10px; flex-wrap: wrap; align-items: center;
+    margin: -4px 0 14px; padding: 12px 14px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: var(--radius);
+  }
+  .search-panel.open { display: flex; }
+  .search-panel .lbl { font-size: 12px; color: var(--text-dim); margin-right: 2px; }
+  .btn.ghost.sm.on { color: var(--accent); border-color: var(--accent); }
   td.state { text-align: center; color: var(--text-dim); padding: 22px 13px; }
   .tkr { font-family: var(--mono); font-weight: 700; }
   /* ---- ticker logos (ported from agentic-trading) ---- */
@@ -174,12 +188,31 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="transparent">Logos: plain</option>
         <option value="off">Logos: off</option>
       </select>
+      <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
       <button class="btn ghost sm" onclick="refreshFeed()">↻ Refresh</button>
     </div>
+    <div class="search-panel" id="searchPanel">
+      <span class="lbl">Search all</span>
+      <input id="qAll" placeholder="member, asset, ticker, source…" style="min-width:240px;flex:1" oninput="renderFeed()" />
+      <span class="lbl">Min $</span>
+      <input id="qMinAmt" type="number" min="0" placeholder="0" style="width:120px" oninput="renderFeed()" />
+      <span class="lbl">Source</span>
+      <select id="qSource" onchange="renderFeed()">
+        <option value="">Any</option><option value="primary">Live (primary)</option><option value="seed_dataset">Historic (seed)</option>
+      </select>
+      <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
+    </div>
     <table>
-      <thead><tr>
-        <th>Filed</th><th>Member</th><th>Asset</th><th>Type</th><th>Amount (STOCK Act bracket)</th>
-        <th>Tx date</th><th>Owner</th><th>Conf.</th><th>Source</th>
+      <thead><tr id="feedHead">
+        <th class="sortable" data-sort="filed">Filed<span class="arr"></span></th>
+        <th class="sortable" data-sort="member">Member<span class="arr"></span></th>
+        <th class="sortable" data-sort="asset">Asset<span class="arr"></span></th>
+        <th class="sortable" data-sort="type">Type<span class="arr"></span></th>
+        <th class="sortable" data-sort="min">Amount (STOCK Act bracket)<span class="arr"></span></th>
+        <th class="sortable" data-sort="txdate">Tx date<span class="arr"></span></th>
+        <th class="sortable" data-sort="owner">Owner<span class="arr"></span></th>
+        <th class="sortable" data-sort="conf">Conf.<span class="arr"></span></th>
+        <th class="sortable" data-sort="source">Source<span class="arr"></span></th>
       </tr></thead>
       <tbody id="feedBody"></tbody>
     </table>
@@ -239,6 +272,23 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <p class="note">API HOOK: <code>GET/PUT /api/admin/poll-config</code>. The Worker cron fires every minute and consults this schedule via <code>shouldPollNow()</code> — so changes take effect within ~60s, no redeploy.</p>
     </div>
     <div class="section">
+      <h3>Historic backfill</h3>
+      <p class="sub">Bulk-import pre-aggregated public datasets as <code>seed_dataset</code> rows to bootstrap back-history. Idempotent (safe to re-run); these rows are reference-only and never dispatched to subscribers.</p>
+      <div class="row-flex">
+        <label class="lbl">Since year</label>
+        <input id="bfSince" type="number" placeholder="e.g. 2020" style="width:120px" />
+        <label class="lbl">Row limit</label>
+        <input id="bfLimit" type="number" placeholder="(none)" style="width:120px" />
+        <select id="bfChambers">
+          <option value="">Both chambers</option><option value="house">House only</option><option value="senate">Senate only</option>
+        </select>
+        <button class="btn ghost sm" onclick="runBackfill(true)">Dry run</button>
+        <button class="btn" onclick="runBackfill(false)">Run backfill</button>
+        <span id="bfMsg" class="note"></span>
+      </div>
+      <p class="note">API HOOK: <code>POST /api/admin/backfill</code>. The community house/senate-stock-watcher buckets are sometimes gated (HTTP 403) — set <code>SEED_HOUSE_URL</code> / <code>SEED_SENATE_URL</code> to point at a working mirror.</p>
+    </div>
+    <div class="section">
       <h3>Source health</h3>
       <p class="sub">First-seen timestamps are logged per filing so real refresh cadence is measured, not assumed.</p>
       <table>
@@ -260,6 +310,9 @@ var aggressive = false;
 var cursor = 0;           // max cursor_seq seen
 var realDataLoaded = false;
 var es = null;            // EventSource handle
+var sortKey = 'filed';    // active feed sort column
+var sortDir = -1;         // 1 = ascending, -1 = descending (default: newest first)
+var NUMERIC_SORT = { min: 1, conf: 1 };   // columns compared numerically
 
 /* ============================ HELPERS ============================ */
 var fmt = function (n) { return n == null ? '—' : '$' + Number(n).toLocaleString(); };
@@ -316,14 +369,26 @@ function stateRow(cols, text) {
 function renderFeed() {
   var m = el('qMember').value.toLowerCase(), t = el('qTicker').value.toUpperCase(),
       ty = el('qType').value, ch = el('qChamber').value;
+  // Fold-out advanced search (panel may be collapsed; inputs still honored).
+  var qa = (el('qAll').value || '').toLowerCase().trim();
+  var minAmt = parseFloat(el('qMinAmt').value);
+  var src = el('qSource').value;
   var body = el('feedBody');
   if (!realDataLoaded) { body.innerHTML = stateRow(9, 'Loading live feed…'); return; }
   var rows = TRADES.filter(function (r) {
+    if (qa) {
+      var hay = ((r.member || '') + ' ' + (r.asset || '') + ' ' + (r.ticker || '') + ' ' +
+                 (r.source || '') + ' ' + (r.owner || '') + ' ' + (r.st || '')).toLowerCase();
+      if (hay.indexOf(qa) < 0) return false;
+    }
+    if (!isNaN(minAmt) && !((r.min != null ? r.min : 0) >= minAmt)) return false;
+    if (src && r.source !== src) return false;
     return (!m || (r.member || '').toLowerCase().indexOf(m) >= 0) &&
            (!t || (r.ticker || '').indexOf(t) >= 0) &&
            (!ty || r.type === ty) &&
            (!ch || r.chamber === ch);
   });
+  rows = sortRows(rows);
   if (rows.length === 0) { body.innerHTML = stateRow(9, 'No transactions match these filters.'); return; }
   body.innerHTML = rows.map(function (r) {
     return '<tr class="row">' +
@@ -340,6 +405,49 @@ function renderFeed() {
       '<td class="muted">' + esc(r.source) + '</td>' +
     '</tr>';
   }).join('');
+}
+
+/* ---- sorting ---- */
+function sortVal(r, key) {
+  if (key === 'asset') return (r.ticker || r.asset || '');
+  var v = r[key];
+  if (NUMERIC_SORT[key]) return (v == null ? -Infinity : Number(v));
+  return (v == null ? '' : String(v)).toLowerCase();
+}
+function sortRows(rows) {
+  var copy = rows.slice();
+  copy.sort(function (a, b) {
+    var av = sortVal(a, sortKey), bv = sortVal(b, sortKey);
+    if (av < bv) return -1 * sortDir;
+    if (av > bv) return 1 * sortDir;
+    return 0;
+  });
+  return copy;
+}
+function setSort(key) {
+  if (sortKey === key) { sortDir = -sortDir; }   // same column -> flip direction
+  else { sortKey = key; sortDir = (key === 'filed' || NUMERIC_SORT[key]) ? -1 : 1; }
+  updateSortIndicators();
+  renderFeed();
+}
+function updateSortIndicators() {
+  var ths = document.querySelectorAll('#feedHead th.sortable');
+  for (var i = 0; i < ths.length; i++) {
+    var th = ths[i], arr = th.querySelector('.arr');
+    if (th.dataset.sort === sortKey) { th.classList.add('active'); arr.textContent = sortDir > 0 ? '▲' : '▼'; }
+    else { th.classList.remove('active'); arr.textContent = ''; }
+  }
+}
+
+/* ---- fold-out search ---- */
+function toggleSearch() {
+  var open = el('searchPanel').classList.toggle('open');
+  el('searchToggle').classList.toggle('on', open);
+  if (open) el('qAll').focus();
+}
+function clearSearch() {
+  el('qAll').value = ''; el('qMinAmt').value = ''; el('qSource').value = '';
+  renderFeed();
 }
 
 /* Map an API transaction (shared/types Transaction) to a feed row. */
@@ -539,6 +647,32 @@ function saveSchedule() {
     .catch(function (e) { el('saveMsg').textContent = 'Failed: ' + e.message; });
 }
 
+/* ============================ HISTORIC BACKFILL ============================ */
+function runBackfill(dryRun) {
+  // API HOOK: POST /api/admin/backfill
+  var payload = { dryRun: !!dryRun };
+  var since = parseInt(el('bfSince').value, 10);
+  if (!isNaN(since)) payload.sinceYear = since;
+  var limit = parseInt(el('bfLimit').value, 10);
+  if (!isNaN(limit) && limit > 0) payload.limit = limit;
+  var ch = el('bfChambers').value;
+  if (ch) payload.chambers = [ch];
+  el('bfMsg').textContent = dryRun ? 'Counting…' : 'Running backfill…';
+  fetch('/api/admin/backfill', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload)
+  })
+    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
+    .then(function (j) {
+      var verb = dryRun ? 'Would import' : 'Imported';
+      var msg = verb + ' ' + j.inserted + ', skipped ' + j.skipped + '.';
+      if (j.errors && j.errors.length) msg += ' Errors: ' + j.errors.join('; ');
+      el('bfMsg').textContent = msg;
+      if (!dryRun && j.inserted > 0) { cursor = 0; TRADES = []; realDataLoaded = false; loadFeed(); }
+    })
+    .catch(function (e) { el('bfMsg').textContent = 'Failed: ' + e.message; });
+}
+
 /* ============================ SOURCE HEALTH ============================ */
 function loadHealth() {
   // API HOOK: GET /api/admin/sources/health
@@ -574,6 +708,12 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     if (b.dataset.view === 'admin') { loadPollConfig(); loadHealth(); }
   };
 });
+
+// Sortable feed headers: click a column to sort, click again to flip direction.
+document.querySelectorAll('#feedHead th.sortable').forEach(function (th) {
+  th.onclick = function () { setSort(th.dataset.sort); };
+});
+updateSortIndicators();
 
 // Initial loading states + boot.
 el('qLogo').value = logoDisplay;   // reflect persisted logo-style preference

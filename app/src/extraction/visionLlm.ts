@@ -36,23 +36,42 @@ const ENDPOINT = (model: string, key: string): string =>
 /** Default confidence floor for vision output (most route to review). */
 const DEFAULT_CONFIDENCE = 0.6;
 
-export class VisionLlmExtractor implements Extractor {
-  readonly name = 'visionLlm';
+/** Optional overrides for building a second, independent vision extractor. */
+export interface VisionLlmOptions {
+  /** API key to use instead of env.GEMINI_API_KEY (e.g. ARBITRATION_API_KEY). */
+  apiKey?: string;
+  /** Model id to use instead of the default (a different model = real cross-check). */
+  model?: string;
+  /** Override extractor name (so arbitration can tell the two apart). */
+  name?: string;
+}
 
-  constructor(private readonly env: Env) {}
+export class VisionLlmExtractor implements Extractor {
+  readonly name: string;
+  private readonly model: string;
+  private readonly apiKeyOverride?: string;
+
+  constructor(
+    private readonly env: Env,
+    options: VisionLlmOptions = {},
+  ) {
+    this.name = options.name ?? 'visionLlm';
+    this.model = options.model ?? MODEL;
+    this.apiKeyOverride = options.apiKey;
+  }
 
   canHandle(f: Filing): boolean {
     return f.docKind === 'scanned_pdf';
   }
 
   async extract(input: ExtractorInput): Promise<ExtractorResult> {
-    const key = this.env.GEMINI_API_KEY;
-    if (!key) throw new Error('visionLlm: GEMINI_API_KEY is not configured');
-    if (!input.bytes) throw new Error('visionLlm: no bytes provided on ExtractorInput');
+    const key = this.apiKeyOverride ?? this.env.GEMINI_API_KEY;
+    if (!key) throw new Error(`${this.name}: API key is not configured`);
+    if (!input.bytes) throw new Error(`${this.name}: no bytes provided on ExtractorInput`);
 
     const body = buildRequestBody(input.bytes);
 
-    const res = await fetch(ENDPOINT(MODEL, key), {
+    const res = await fetch(ENDPOINT(this.model, key), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
@@ -60,13 +79,13 @@ export class VisionLlmExtractor implements Extractor {
 
     if (!res.ok) {
       const detail = await safeText(res);
-      throw new Error(`visionLlm: Gemini API ${res.status} ${res.statusText} ${detail}`);
+      throw new Error(`${this.name}: Gemini API ${res.status} ${res.statusText} ${detail}`);
     }
 
     const payload = (await res.json()) as GeminiResponse;
     const jsonText = extractCandidateText(payload);
     if (!jsonText) {
-      throw new Error('visionLlm: Gemini returned no candidate text');
+      throw new Error(`${this.name}: Gemini returned no candidate text`);
     }
 
     const parsed = parseModelJson(jsonText);
@@ -83,7 +102,7 @@ export class VisionLlmExtractor implements Extractor {
       confidence: docConfidence,
       raw: jsonText,
       extractor: this.name,
-      modelVersion: MODEL,
+      modelVersion: this.model,
     };
   }
 }

@@ -20,8 +20,16 @@ import {
   setLastPollAt,
   shouldPollNow,
 } from '../shared/config';
-import { fetchHouseIndex } from './houseSource';
+import { fetchHouseIndex, pollHouseLiveSearch } from './houseSource';
 import { fetchSenatePtrFilings } from './senateSource';
+
+/** Env shape (read defensively — Env is the frozen foundation contract). */
+type EnvWithFlags = Env & { HOUSE_LIVE_SEARCH_ENABLED?: string };
+
+/** Live House search is on unless explicitly disabled (it is fail-soft). */
+function houseLiveSearchEnabled(env: Env): boolean {
+  return (env as EnvWithFlags).HOUSE_LIVE_SEARCH_ENABLED !== 'false';
+}
 
 /** One row to (maybe) insert + enqueue. */
 interface DiscoveredFiling {
@@ -109,11 +117,36 @@ async function pollHouse(env: Env, now: Date): Promise<void> {
   );
   const all = await fetchHouseIndex(year);
   const ptrs = all.filter((f) => f.isPtr);
-  const discovered: DiscoveredFiling[] = ptrs.map((f) => ({
-    docId: f.pipelineDocId,
-    chamber: 'house',
-    sourceUrl: f.sourceUrl,
-  }));
+
+  // Intraday overlay: catch same-day PTRs that the daily XML hasn't picked up
+  // yet. Fail-soft — a flaky/anti-bot live endpoint must never break the stable
+  // bulk path. INSERT OR IGNORE de-dupes the overlap with the bulk rows above.
+  const byDoc = new Map<string, DiscoveredFiling>();
+  for (const f of ptrs) {
+    byDoc.set(f.pipelineDocId, {
+      docId: f.pipelineDocId,
+      chamber: 'house',
+      sourceUrl: f.sourceUrl,
+    });
+  }
+  if (houseLiveSearchEnabled(env)) {
+    try {
+      const live = await pollHouseLiveSearch(year);
+      for (const f of live) {
+        if (!byDoc.has(f.pipelineDocId)) {
+          byDoc.set(f.pipelineDocId, {
+            docId: f.pipelineDocId,
+            chamber: 'house',
+            sourceUrl: f.sourceUrl,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('watcher: house live search failed (bulk index still used):', (err as Error).message);
+    }
+  }
+
+  const discovered: DiscoveredFiling[] = Array.from(byDoc.values());
   const newCount = await persistAndEnqueue(env, discovered, nowIso);
   await logPoll(env, 'house', nowIso, newCount, nowIso);
   await setLastPollAt(env, 'house', now);
