@@ -69,29 +69,32 @@ describe('parseHouseIndexXml', () => {
   });
 });
 
+// Shaped like the real disclosures-clerk.house.gov/FinancialDisclosure/
+// ViewMemberSearchResult markup: relative hrefs (no leading slash), an "Hon.."
+// honorific in the member name, and a data-label="Office" StateDst cell.
 const SEARCH_HTML = `
 <table><tbody>
-  <tr>
-    <td><a href="/public_disc/ptr-pdfs/2026/20026001.pdf" target="_blank">Smith, Jane</a></td>
-    <td>CA01</td><td>PTR</td><td>06/20/2026</td>
+  <tr role="row">
+    <td data-label="Name" class="memberName"><a href="public_disc/ptr-pdfs/2026/20026001.pdf" target="_blank">Smith, Hon.. Jane A. </a></td>
+    <td data-label="Office">CA01</td><td data-label="Filing Year">2026</td><td data-label="Filing">PTR</td>
   </tr>
-  <tr>
-    <td>O'Brien, Pat</td>
-    <td>NY10</td><td>PTR</td>
-    <td><a href="https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20026002.pdf">View</a></td>
+  <tr role="row">
+    <td data-label="Name" class="memberName">O'Brien, Hon.. Pat</td>
+    <td data-label="Office">NY10</td><td data-label="Filing Year">2026</td>
+    <td data-label="Filing"><a href="https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20026002.pdf">View</a></td>
   </tr>
-  <tr>
-    <td>Annual, Filer</td><td>TX05</td><td>FD</td>
-    <td><a href="/public_disc/financial-pdfs/2026/20026003.pdf">View</a></td>
+  <tr role="row">
+    <td data-label="Name"><a href="public_disc/financial-pdfs/2026/20026003.pdf" target="_blank">Annual, Hon.. Filer</a></td>
+    <td data-label="Office">TX05</td><td data-label="Filing Year">2026</td><td data-label="Filing">FD Original</td>
   </tr>
-  <tr>
-    <td><a href="/public_disc/ptr-pdfs/2026/20026001.pdf">Smith, Jane</a></td>
-    <td>CA01</td><td>PTR</td><td>06/20/2026</td>
+  <tr role="row">
+    <td data-label="Name"><a href="public_disc/ptr-pdfs/2026/20026001.pdf">Smith, Hon.. Jane A. </a></td>
+    <td data-label="Office">CA01</td><td data-label="Filing Year">2026</td><td data-label="Filing">PTR</td>
   </tr>
 </tbody></table>`;
 
 describe('parseHouseSearchHtml', () => {
-  it('extracts PTR rows, resolves names, dedupes, and ignores non-PTR links', () => {
+  it('extracts PTR rows, strips honorifics, captures office, dedupes, ignores non-PTR', () => {
     const rows = parseHouseSearchHtml(SEARCH_HTML, '2026');
     // Two distinct PTRs; the FD row and the duplicate docId are dropped.
     expect(rows).toHaveLength(2);
@@ -100,8 +103,10 @@ describe('parseHouseSearchHtml', () => {
     expect(a.docId).toBe('20026001');
     expect(a.isPtr).toBe(true);
     expect(a.last).toBe('Smith');
-    expect(a.first).toBe('Jane');
+    expect(a.first).toBe('Jane A.'); // "Hon.." honorific stripped
+    expect(a.stateDst).toBe('CA01'); // from the Office cell
     expect(a.pipelineDocId).toBe('H-2026-20026001');
+    // Relative href (no leading slash) is resolved to an absolute URL.
     expect(a.sourceUrl).toBe(
       'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20026001.pdf',
     );
@@ -111,6 +116,7 @@ describe('parseHouseSearchHtml', () => {
     // Anchor text "View" is generic -> name falls back to the first cell.
     expect(b.last).toBe("O'Brien");
     expect(b.first).toBe('Pat');
+    expect(b.stateDst).toBe('NY10');
     // Already-absolute href is preserved.
     expect(b.sourceUrl).toBe(
       'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20026002.pdf',
