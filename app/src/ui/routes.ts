@@ -13,7 +13,7 @@
 
 import { Hono } from 'hono';
 import type { Env } from '../shared/types';
-import { DASHBOARD_HTML } from './dashboard.html';
+import { DASHBOARD_HTML } from './dashboardHtml';
 
 export function buildUiRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
