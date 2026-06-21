@@ -72,6 +72,14 @@ export interface SeedBackfillOptions {
   dryRun?: boolean;
   /** Injectable fetch (tests). Defaults to global fetch. */
   fetchImpl?: typeof fetch;
+  /**
+   * Per-chamber source URL overrides. The hardcoded SEED_SOURCES point at the
+   * community house/senate-stock-watcher S3 buckets, which have historically
+   * gone offline / locked down (HTTP 403). Operators can point the backfill at
+   * a working mirror without a code change — `runSeedBackfillFromEnv` reads
+   * SEED_HOUSE_URL / SEED_SENATE_URL and forwards them here.
+   */
+  sourceUrls?: Partial<Record<Chamber, string>>;
 }
 
 export interface SeedBackfillResult {
@@ -365,8 +373,9 @@ async function insertSeedTransaction(env: Env, tx: Transaction): Promise<boolean
 async function fetchChamberRecords(
   chamber: Chamber,
   fetchImpl: typeof fetch,
+  urlOverride?: string,
 ): Promise<RawWatcherRecord[]> {
-  const { url } = SEED_SOURCES[chamber];
+  const url = urlOverride || SEED_SOURCES[chamber].url;
   const res = await fetchImpl(url, {
     headers: {
       'user-agent': 'congress-feed/0.1 (+https://congress.trade)',
@@ -412,7 +421,7 @@ export async function runSeedBackfill(
     result.bySource[chamber] = result.bySource[chamber] ?? 0;
     let records: RawWatcherRecord[];
     try {
-      records = await fetchChamberRecords(chamber, fetchImpl);
+      records = await fetchChamberRecords(chamber, fetchImpl, opts.sourceUrls?.[chamber]);
     } catch (err) {
       result.errors.push(`${chamber}: ${(err as Error).message}`);
       continue; // fail soft — move to the next chamber.
@@ -461,4 +470,24 @@ export async function runSeedBackfill(
   }
 
   return result;
+}
+
+/** Env shape (read defensively — Env is the frozen foundation contract). */
+type EnvWithSeed = Env & { SEED_HOUSE_URL?: string; SEED_SENATE_URL?: string };
+
+/**
+ * Convenience wrapper that layers SEED_HOUSE_URL / SEED_SENATE_URL env overrides
+ * onto an explicit set of options before running the backfill. This is the entry
+ * point the admin trigger route uses, so operators can repoint the (frequently
+ * gated) community datasets at a working mirror without redeploying code.
+ */
+export function runSeedBackfillFromEnv(
+  env: Env,
+  opts: SeedBackfillOptions = {},
+): Promise<SeedBackfillResult> {
+  const e = env as EnvWithSeed;
+  const sourceUrls: Partial<Record<Chamber, string>> = { ...opts.sourceUrls };
+  if (e.SEED_HOUSE_URL && sourceUrls.house === undefined) sourceUrls.house = e.SEED_HOUSE_URL;
+  if (e.SEED_SENATE_URL && sourceUrls.senate === undefined) sourceUrls.senate = e.SEED_SENATE_URL;
+  return runSeedBackfill(env, { ...opts, sourceUrls });
 }

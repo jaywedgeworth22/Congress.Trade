@@ -4,9 +4,29 @@
 # Vision/LLM extraction for scanned PDFs (Google Gemini).
 GEMINI_API_KEY=""
 
-# Secondary extractor / arbitration provider key. When set AND the arbitration
-# feature flag is on, ArbitratingExtractor will run the secondary extractor.
+# Secondary extractor / arbitration provider key. When set, buildExtractorPipeline
+# builds a second, independent vision extractor; with ARBITRATION_ENABLED="true"
+# it cross-checks every scanned doc and ArbitratingExtractor merges the results.
 ARBITRATION_API_KEY=""
+# "true" to actually run the secondary + arbitration when a key is present.
+ARBITRATION_ENABLED=""
+# Model id for the secondary vision extractor (default: gemini-2.5-flash).
+ARBITRATION_MODEL=""
 
 # HMAC key used to sign outbound webhook payloads (X-Signature header).
 WEBHOOK_SIGNING_KEY=""
+
+# Admin API bearer token. When set, EVERY /api/admin/* request must send
+# `Authorization: Bearer <ADMIN_TOKEN>` (deny-by-default). Leave unset for open
+# local dev (a one-time warning is logged).
+ADMIN_TOKEN=""
+
+# Historic-backfill source overrides. The community house/senate-stock-watcher
+# S3 buckets are frequently gated (HTTP 403); point these at a working mirror to
+# repoint the backfill without a code change.
+SEED_HOUSE_URL=""
+SEED_SENATE_URL=""
+
+# Set to "false" to disable the intraday House live-search overlay (the watcher
+# falls back to the daily bulk-XML diff, which is always used regardless).
+HOUSE_LIVE_SEARCH_ENABLED=""

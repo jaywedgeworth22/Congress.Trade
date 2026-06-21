@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseHouseIndexXml,
+  parseHouseSearchHtml,
+  buildHouseSearchBody,
   houseBulkZipUrl,
   housePtrPdfUrl,
   houseDocId,
@@ -64,6 +66,67 @@ describe('parseHouseIndexXml', () => {
     const rows = parseHouseIndexXml(xml, '2099');
     expect(rows[0].year).toBe('2099');
     expect(rows[0].pipelineDocId).toBe('H-2099-1');
+  });
+});
+
+const SEARCH_HTML = `
+<table><tbody>
+  <tr>
+    <td><a href="/public_disc/ptr-pdfs/2026/20026001.pdf" target="_blank">Smith, Jane</a></td>
+    <td>CA01</td><td>PTR</td><td>06/20/2026</td>
+  </tr>
+  <tr>
+    <td>O'Brien, Pat</td>
+    <td>NY10</td><td>PTR</td>
+    <td><a href="https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20026002.pdf">View</a></td>
+  </tr>
+  <tr>
+    <td>Annual, Filer</td><td>TX05</td><td>FD</td>
+    <td><a href="/public_disc/financial-pdfs/2026/20026003.pdf">View</a></td>
+  </tr>
+  <tr>
+    <td><a href="/public_disc/ptr-pdfs/2026/20026001.pdf">Smith, Jane</a></td>
+    <td>CA01</td><td>PTR</td><td>06/20/2026</td>
+  </tr>
+</tbody></table>`;
+
+describe('parseHouseSearchHtml', () => {
+  it('extracts PTR rows, resolves names, dedupes, and ignores non-PTR links', () => {
+    const rows = parseHouseSearchHtml(SEARCH_HTML, '2026');
+    // Two distinct PTRs; the FD row and the duplicate docId are dropped.
+    expect(rows).toHaveLength(2);
+
+    const a = rows[0];
+    expect(a.docId).toBe('20026001');
+    expect(a.isPtr).toBe(true);
+    expect(a.last).toBe('Smith');
+    expect(a.first).toBe('Jane');
+    expect(a.pipelineDocId).toBe('H-2026-20026001');
+    expect(a.sourceUrl).toBe(
+      'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20026001.pdf',
+    );
+
+    const b = rows[1];
+    expect(b.docId).toBe('20026002');
+    // Anchor text "View" is generic -> name falls back to the first cell.
+    expect(b.last).toBe("O'Brien");
+    expect(b.first).toBe('Pat');
+    // Already-absolute href is preserved.
+    expect(b.sourceUrl).toBe(
+      'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20026002.pdf',
+    );
+  });
+
+  it('returns nothing for HTML with no PTR links', () => {
+    expect(parseHouseSearchHtml('<table><tr><td>nope</td></tr></table>', '2026')).toEqual([]);
+  });
+});
+
+describe('buildHouseSearchBody', () => {
+  it('scopes the search to the requested filing year with a blank name', () => {
+    const body = buildHouseSearchBody(2026);
+    expect(body.get('FilingYear')).toBe('2026');
+    expect(body.get('LastName')).toBe('');
   });
 });
 

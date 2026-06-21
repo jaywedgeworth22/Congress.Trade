@@ -11,12 +11,13 @@
  *   GET   /sources/health           -> ingest_log aggregates per source
  *   GET   /subscriptions            -> admin list of subscriptions
  *
- * AUTH (documented stub):
- *   If env.ADMIN_TOKEN is set AND an Authorization header is present, we require
- *   `Authorization: Bearer <ADMIN_TOKEN>`. If no header is present we currently
- *   ALLOW the request (open admin surface) — TODO: flip to deny-by-default once
- *   the token is provisioned. ADMIN_TOKEN is referenced optionally and is NOT
- *   added to wrangler.toml / package.json by this module.
+ * AUTH (deny-by-default once provisioned):
+ *   If env.ADMIN_TOKEN is set, EVERY admin request must present a matching
+ *   `Authorization: Bearer <ADMIN_TOKEN>` — a missing or mismatched header is
+ *   rejected with 401. If ADMIN_TOKEN is NOT set the surface stays open (local
+ *   dev / unprovisioned deploys), and we emit a one-time console warning so an
+ *   accidentally-unprotected production deploy is visible in logs. Provision the
+ *   secret with `wrangler secret put ADMIN_TOKEN` to lock the surface down.
  */
 
 import { Hono } from 'hono';
@@ -25,18 +26,33 @@ import { all, get, run } from '../shared/db';
 import { getConfig, setConfig } from '../shared/config';
 import { uuid } from '../shared/ids';
 import { listSubscriptions } from '../delivery/subscriptions';
+import { runSeedBackfillFromEnv } from '../backfill/seed';
+import type { Chamber } from '../shared/types';
 
 // Optional secret; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & { ADMIN_TOKEN?: string };
 
+let warnedOpenAdmin = false;
+
 /**
- * Admin auth stub. Returns true (allowed) unless a token is configured AND the
- * caller supplied a mismatched bearer. Missing header => allowed (TODO: enforce).
+ * Admin auth. Deny-by-default once a token is provisioned:
+ *   - token configured  -> require an exact `Bearer <token>`; missing OR
+ *                          mismatched header is rejected.
+ *   - token absent       -> open (dev/unprovisioned), with a one-time warning.
  */
 function isAuthorized(env: EnvWithAdmin, authHeader: string | undefined): boolean {
   const token = env.ADMIN_TOKEN;
-  if (!token) return true; // no token configured -> open (stub)
-  if (!authHeader) return true; // TODO: enforce -> change to `return false`
+  if (!token) {
+    if (!warnedOpenAdmin) {
+      warnedOpenAdmin = true;
+      console.warn(
+        'admin: ADMIN_TOKEN is not set — the admin API is OPEN. ' +
+          'Run `wrangler secret put ADMIN_TOKEN` to require bearer auth.',
+      );
+    }
+    return true; // no token configured -> open (dev)
+  }
+  if (!authHeader) return false; // token set, no header -> deny
   return authHeader === `Bearer ${token}`;
 }
 
@@ -303,6 +319,62 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       });
     }
     return c.json({ sources, count: sources.length });
+  });
+
+  // --- POST /backfill -----------------------------------------------------
+  // Trigger the historic-trades seed backfill (runSeedBackfill). Pulls the
+  // pre-aggregated community datasets and idempotently upserts them as
+  // source='seed_dataset' rows. Body (all optional):
+  //   { chambers?: ('house'|'senate')[], sinceYear?: number,
+  //     limit?: number, dryRun?: boolean }
+  // SEED_HOUSE_URL / SEED_SENATE_URL env vars override the (often-gated) source
+  // URLs. Runs inline and returns the SeedBackfillResult; per-source failures
+  // are reported in `errors` rather than aborting the run.
+  r.post('/backfill', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const text = await c.req.text();
+      if (text) body = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+
+    const opts: Parameters<typeof runSeedBackfillFromEnv>[1] = {};
+
+    if (body.chambers !== undefined) {
+      if (
+        !Array.isArray(body.chambers) ||
+        !body.chambers.every((x) => x === 'house' || x === 'senate')
+      ) {
+        return c.json({ error: "chambers must be an array of 'house'|'senate'" }, 400);
+      }
+      opts.chambers = body.chambers as Chamber[];
+    }
+    if (body.sinceYear !== undefined) {
+      if (typeof body.sinceYear !== 'number' || !Number.isFinite(body.sinceYear)) {
+        return c.json({ error: 'sinceYear must be a number' }, 400);
+      }
+      opts.sinceYear = body.sinceYear;
+    }
+    if (body.limit !== undefined) {
+      if (typeof body.limit !== 'number' || body.limit <= 0) {
+        return c.json({ error: 'limit must be a positive number' }, 400);
+      }
+      opts.limit = body.limit;
+    }
+    if (body.dryRun !== undefined) {
+      if (typeof body.dryRun !== 'boolean') {
+        return c.json({ error: 'dryRun must be a boolean' }, 400);
+      }
+      opts.dryRun = body.dryRun;
+    }
+
+    try {
+      const result = await runSeedBackfillFromEnv(c.env, opts);
+      return c.json({ ok: result.errors.length === 0, ...result });
+    } catch (err) {
+      return c.json({ error: `backfill failed: ${(err as Error).message}` }, 500);
+    }
   });
 
   // --- GET /subscriptions -------------------------------------------------
