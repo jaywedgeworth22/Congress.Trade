@@ -98,6 +98,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   tr.row:hover td { background: var(--panel-2); }
   td.state { text-align: center; color: var(--text-dim); padding: 22px 13px; }
   .tkr { font-family: var(--mono); font-weight: 700; }
+  /* ---- ticker logos (ported from agentic-trading) ---- */
+  .asset-cell { display: flex; align-items: center; gap: 9px; }
+  .tkr-logo { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; overflow: hidden; }
+  .tkr-logo img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  /* "tile" = frosted-glass box; "transparent" = bare logo on the row surface. */
+  .tkr-logo.tile { border: 1px solid var(--border); background: color-mix(in srgb, var(--panel-2) 80%, transparent); border-radius: 6px; padding: 2px; }
+  .tkr-logo.transparent { border-radius: 4px; }
   .tag { font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; display:inline-block; }
   .tag.P { color: var(--buy); background: color-mix(in srgb, var(--buy) 14%, transparent); }
   .tag.S { color: var(--sell); background: color-mix(in srgb, var(--sell) 14%, transparent); }
@@ -161,6 +168,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </select>
       <select id="qChamber" onchange="renderFeed()">
         <option value="">Both chambers</option><option value="house">House</option><option value="senate">Senate</option>
+      </select>
+      <select id="qLogo" onchange="setLogoDisplay(this.value)" title="Company logo style">
+        <option value="tile">Logos: tile</option>
+        <option value="transparent">Logos: plain</option>
+        <option value="off">Logos: off</option>
       </select>
       <button class="btn ghost sm" onclick="refreshFeed()">↻ Refresh</button>
     </div>
@@ -259,6 +271,36 @@ function esc(s) {
   });
 }
 function el(id) { return document.getElementById(id); }
+
+/* ---- ticker logos (ported from agentic-trading) ---- */
+var LOGO_DISPLAY_KEY = 'ticker-logo-display';
+var LOGO_DISPLAYS = ['tile', 'transparent', 'off'];
+var SYMBOL_PATTERN = /^[A-Z0-9._-]{1,20}$/;
+var logoDisplay = (function () {
+  try { var v = localStorage.getItem(LOGO_DISPLAY_KEY); return LOGO_DISPLAYS.indexOf(v) >= 0 ? v : 'tile'; }
+  catch (e) { return 'tile'; }
+})();
+function normalizeLogoSymbol(v) {
+  var s = (v == null ? '' : String(v)).trim().replace(/^\\$/, '').toUpperCase();
+  return s && SYMBOL_PATTERN.test(s) ? s : null;
+}
+function setLogoDisplay(v) {
+  logoDisplay = LOGO_DISPLAYS.indexOf(v) >= 0 ? v : 'tile';
+  try { localStorage.setItem(LOGO_DISPLAY_KEY, logoDisplay); } catch (e) {}
+  renderFeed();
+}
+/* Build the logo <span><img></span>. Framing follows the display mode; the
+   company name rides along as a hover title; a broken/missing logo removes the
+   frame so the row falls back to the plain ticker text. */
+function tickerLogoHtml(ticker, company) {
+  var sym = normalizeLogoSymbol(ticker);
+  if (!sym || logoDisplay === 'off') return '';
+  var title = company ? ' title="' + esc(company) + '"' : '';
+  return '<span class="tkr-logo ' + logoDisplay + '"' + title + '>' +
+    '<img src="/api/logos/ticker?symbol=' + encodeURIComponent(sym) + '" alt="" ' +
+    'loading="lazy" decoding="async" onerror="this.parentNode.remove()" />' +
+  '</span>';
+}
 function setBanner(text, isErr) {
   var b = el('banner');
   if (!text) { b.style.display = 'none'; return; }
@@ -287,7 +329,9 @@ function renderFeed() {
     return '<tr class="row">' +
       '<td class="muted">' + esc(r.filed) + '</td>' +
       '<td>' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</td>' +
-      '<td>' + (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span> ' : '') + '<span class="muted">' + esc(r.asset) + '</span></td>' +
+      '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.asset) + '<div>' +
+        (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span> ' : '') +
+        '<span class="muted">' + esc(r.asset) + '</span></div></div></td>' +
       '<td><span class="tag ' + esc(r.type) + '">' + esc(typeName[r.type] || r.type) + '</span></td>' +
       '<td>' + (r.min == null && r.max == null ? '<span class="muted">—</span>' : fmt(r.min) + ' – ' + (r.max == null ? '+' : fmt(r.max))) + '</td>' +
       '<td class="muted">' + esc(r.txdate || '—') + '</td>' +
@@ -532,6 +576,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
 });
 
 // Initial loading states + boot.
+el('qLogo').value = logoDisplay;   // reflect persisted logo-style preference
 el('feedBody').innerHTML = stateRow(9, 'Loading live feed…');
 el('reviewBody').innerHTML = stateRow(5, 'Loading…');
 el('subsBody').innerHTML = stateRow(5, 'Loading…');
