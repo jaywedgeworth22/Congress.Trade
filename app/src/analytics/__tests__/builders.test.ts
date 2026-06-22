@@ -118,6 +118,8 @@ describe('buildTrendingQuery', () => {
   it('momentumOffsets returns a prior period of equal length', () => {
     expect(momentumOffsets('7d')).toEqual({ recent: '-7 days', priorStart: '-14 days' });
     expect(momentumOffsets('90d')).toEqual({ recent: '-90 days', priorStart: '-180 days' });
+    expect(momentumOffsets('180d')).toEqual({ recent: '-180 days', priorStart: '-360 days' });
+    expect(momentumOffsets('45d')).toEqual({ recent: '-45 days', priorStart: '-90 days' });
     expect(momentumOffsets('all')).toEqual({ recent: '-30 days', priorStart: '-60 days' });
   });
 });

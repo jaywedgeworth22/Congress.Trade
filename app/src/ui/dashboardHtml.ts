@@ -230,6 +230,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .dirpill.P { color: var(--buy); background: color-mix(in srgb, var(--buy) 16%, transparent); }
   .dirpill.S { color: var(--sell); background: color-mix(in srgb, var(--sell) 16%, transparent); }
   .chip { font-size:11px; color: var(--text-dim); }
+  .disclaimer { font-size:12px; color: var(--text-dim); line-height:1.6; border:1px solid var(--border); background: var(--panel); border-radius: var(--radius); padding:12px 15px; margin-bottom:16px; }
+  .disclaimer strong { color: var(--text); }
   /* modal */
   .modal { position:fixed; inset:0; background:rgba(2,6,18,.6); display:none; align-items:flex-start; justify-content:center; z-index:50; padding:40px 16px; overflow-y:auto; }
   .modal.open { display:flex; }
@@ -316,10 +318,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section class="view" id="view-trends">
     <div class="toolbar">
       <select id="trWindow" title="Time window (by trade date)">
-        <option value="7d">Last 7 days</option>
-        <option value="30d" selected>Last 30 days</option>
-        <option value="90d">Last 90 days</option>
-        <option value="365d">Last 12 months</option>
+        <option value="1d">Past day</option>
+        <option value="7d">Past week</option>
+        <option value="30d" selected>Past month</option>
+        <option value="90d">Past 3 months</option>
+        <option value="180d">Past 6 months</option>
+        <option value="365d">Past year</option>
+        <option value="1825d">Past 5 years</option>
         <option value="all">All time</option>
       </select>
       <select id="trChamber"><option value="">Both chambers</option><option value="house">House</option><option value="senate">Senate</option></select>
@@ -331,7 +336,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </select>
       <button class="btn ghost sm" onclick="loadTrends()">↻ Refresh</button>
     </div>
-    <p class="note" style="margin:-6px 0 14px">All dollar figures are <strong>estimates</strong> derived from STOCK Act amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor). “All data” may double-count a trade present in both the live and historic sets — switch to <em>Live only</em> for a de-duplicated dollar view. Party is only known for some members.</p>
+    <div class="disclaimer">
+      <strong>For education, not investment advice.</strong> Congress.Trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any member acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. “All data” can double-count a trade present in both the live and historic sets; use <em>Live only</em> for a de-duplicated dollar view. Party is known for only some members. Always do your own research.
+    </div>
 
     <!-- KPI strip -->
     <div class="grid-cards" id="trKpis">
@@ -355,8 +362,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="table-wrap"><table><tbody id="trTickers"></tbody></table></div>
       </div>
       <div class="section">
-        <h3>Heating up</h3>
-        <p class="sub">Tickers with the biggest jump in activity vs the prior equal period.</p>
+        <h3>Rising activity</h3>
+        <p class="sub">Tickers whose disclosed trade count rose most vs the prior equal period. A descriptive view of filing activity — not a forecast.</p>
         <div class="table-wrap"><table><tbody id="trTrending"></tbody></table></div>
       </div>
     </div>
@@ -364,7 +371,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Consensus / cluster buys -->
     <div class="section">
       <h3>Consensus moves <span class="chip" id="trClusterHint"></span></h3>
-      <p class="sub">Tickers where several different members moved the <strong>same direction</strong> in the window — the clearest signal through the noise.</p>
+      <p class="sub">Tickers where several different members happened to trade the <strong>same direction</strong> in the window. Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination.</p>
       <div class="cluster-grid" id="trClusters"></div>
     </div>
 
@@ -518,7 +525,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
   </section>
 
-  <footer>Congress.Trade · live feed · data sourced from public STOCK Act (2012) disclosures · not financial advice</footer>
+  <footer>Congress.Trade · an educational tool for exploring public STOCK Act (2012) disclosures · informational only — not financial advice, not trading signals · dollar figures are estimates from disclosed brackets</footer>
 </main>
 
 <div class="modal" id="tickerModal" onclick="if(event.target===this)closeTicker()">

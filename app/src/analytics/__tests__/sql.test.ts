@@ -24,13 +24,33 @@ import {
 } from '../sql';
 
 describe('validators', () => {
-  it('asWindow accepts known windows and falls back otherwise', () => {
+  it('asWindow accepts preset + custom <N>d windows and falls back otherwise', () => {
     expect(asWindow('7d')).toBe('7d');
     expect(asWindow('all')).toBe('all');
+    expect(asWindow('180d')).toBe('180d'); // preset (past 6 months)
+    expect(asWindow('1825d')).toBe('1825d'); // preset (past 5 years)
+    expect(asWindow('45d')).toBe('45d'); // custom age via API
     expect(asWindow('nonsense')).toBe('30d');
+    expect(asWindow('0d')).toBe('30d'); // must be >= 1 day
     expect(asWindow(undefined, '90d')).toBe('90d');
     expect(isWindow('365d')).toBe(true);
-    expect(isWindow('5y')).toBe(false);
+    expect(isWindow('5y')).toBe(false); // only <N>d or 'all'
+  });
+
+  it('windowToOffset handles presets and custom ages', () => {
+    expect(windowToOffset('1d')).toBe('-1 days');
+    expect(windowToOffset('180d')).toBe('-180 days');
+    expect(windowToOffset('1825d')).toBe('-1825 days');
+    expect(windowToOffset('45d')).toBe('-45 days');
+  });
+
+  it('autoGranularity scales the bucket to the window length', () => {
+    expect(autoGranularity('1d')).toBe('day');
+    expect(autoGranularity('30d')).toBe('day');
+    expect(autoGranularity('90d')).toBe('week');
+    expect(autoGranularity('180d')).toBe('month');
+    expect(autoGranularity('1825d')).toBe('month');
+    expect(autoGranularity('all')).toBe('month');
   });
 
   it('asPartyBucket maps first letter to D/R/O (I→O), else undefined', () => {

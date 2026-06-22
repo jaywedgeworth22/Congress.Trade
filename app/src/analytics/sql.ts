@@ -26,14 +26,33 @@ import type { SqlParam } from '../shared/db';
 // Enumerations + validators (closed sets → safe to interpolate as literals)
 // ---------------------------------------------------------------------------
 
-export const WINDOWS = ['7d', '30d', '90d', '365d', 'all'] as const;
-export type Window = (typeof WINDOWS)[number];
+/**
+ * A window is either 'all' or `<N>d` (N whole days, e.g. '90d'). The UI surfaces
+ * the presets below, but any positive `<N>d` is valid — so callers can request a
+ * custom age (e.g. ?window=45d) without enumerating it here.
+ */
+export const WINDOW_PRESETS = ['1d', '7d', '30d', '90d', '180d', '365d', '1825d', 'all'] as const;
+export type Window = string; // always produced via asWindow(): 'all' | `${number}d`
+const WINDOW_RE = /^(\d{1,5})d$/;
+const MAX_WINDOW_DAYS = 36500; // ~100y guardrail against absurd inputs
+
 export function isWindow(v: unknown): v is Window {
-  return typeof v === 'string' && (WINDOWS as readonly string[]).includes(v);
+  if (v === 'all') return true;
+  if (typeof v !== 'string') return false;
+  const m = WINDOW_RE.exec(v);
+  if (!m) return false;
+  const n = Number(m[1]);
+  return n >= 1 && n <= MAX_WINDOW_DAYS;
 }
 /** Coerce arbitrary input to a valid Window, falling back to `fallback`. */
 export function asWindow(v: unknown, fallback: Window = '30d'): Window {
-  return isWindow(v) ? v : fallback;
+  return isWindow(v) ? (v as Window) : fallback;
+}
+/** Number of days a window spans, or null for 'all'. Defaults to 30 on garbage. */
+export function windowDays(w: Window): number | null {
+  if (w === 'all') return null;
+  const m = WINDOW_RE.exec(w);
+  return m ? Number(m[1]) : 30;
 }
 
 export const SOURCE_FILTERS = ['primary', 'seed_dataset', 'all'] as const;
@@ -61,18 +80,8 @@ export function asChamber(v: unknown): Chamber | undefined {
  * closed set, never user input.
  */
 export function windowToOffset(w: Window): string | null {
-  switch (w) {
-    case '7d':
-      return '-7 days';
-    case '30d':
-      return '-30 days';
-    case '90d':
-      return '-90 days';
-    case '365d':
-      return '-365 days';
-    case 'all':
-      return null;
-  }
+  const d = windowDays(w);
+  return d == null ? null : `-${d} days`;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,9 +94,11 @@ export function isGranularity(v: unknown): v is Granularity {
 }
 /** Sensible default bucket size for a window when the caller doesn't override. */
 export function autoGranularity(w: Window): Granularity {
-  if (w === '7d' || w === '30d') return 'day';
-  if (w === '90d') return 'week';
-  return 'month'; // 365d, all
+  const d = windowDays(w);
+  if (d == null) return 'month'; // all
+  if (d <= 31) return 'day';
+  if (d <= 120) return 'week';
+  return 'month';
 }
 /** strftime() format string for a granularity. */
 export function granularityFormat(g: Granularity): string {

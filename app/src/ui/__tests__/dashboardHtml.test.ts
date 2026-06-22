@@ -43,8 +43,12 @@ describe('DASHBOARD_HTML', () => {
     }
   });
 
-  it('keeps the dollar-estimate disclaimer in the Trends view', () => {
+  it('keeps the educational + dollar-estimate disclaimers in the Trends view', () => {
     expect(DASHBOARD_HTML).toContain('estimates');
     expect(DASHBOARD_HTML.toLowerCase()).toContain('bracket');
+    // educational / liability framing must remain user-facing
+    expect(DASHBOARD_HTML).toContain('not investment advice');
+    expect(DASHBOARD_HTML.toLowerCase()).toContain('not financial advice');
+    expect(DASHBOARD_HTML.toLowerCase()).toContain('educational');
   });
 });

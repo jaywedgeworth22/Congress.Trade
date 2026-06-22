@@ -27,6 +27,7 @@ import {
   clampLimit,
   granularityFormat,
   whereSql,
+  windowDays,
   type CommonFilters,
   type Granularity,
   type Window,
@@ -197,21 +198,12 @@ export function buildClusterMembersQuery(
 // 5. Trending / momentum — recent period vs prior equal period
 // ---------------------------------------------------------------------------
 
-/** Map a window to (recentOffset, priorStartOffset) day modifiers. 'all' and
- *  windows without a natural prior period fall back to a 30-day comparison. */
+/** Map a window to (recentOffset, priorStartOffset) day modifiers: the recent
+ *  period is the window, the prior period is the equal-length span before it.
+ *  'all' has no natural prior period, so it falls back to a 30-day comparison. */
 export function momentumOffsets(w: Window): { recent: string; priorStart: string } {
-  switch (w) {
-    case '7d':
-      return { recent: '-7 days', priorStart: '-14 days' };
-    case '90d':
-      return { recent: '-90 days', priorStart: '-180 days' };
-    case '365d':
-      return { recent: '-365 days', priorStart: '-730 days' };
-    case '30d':
-    case 'all':
-    default:
-      return { recent: '-30 days', priorStart: '-60 days' };
-  }
+  const d = windowDays(w) ?? 30;
+  return { recent: `-${d} days`, priorStart: `-${2 * d} days` };
 }
 
 /**
