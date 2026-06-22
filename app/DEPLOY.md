@@ -64,6 +64,17 @@ Google OAuth client, Resend, and Cloudflare Access for the admin subdomain:
 see [`docs/wave4-auth-billing.md`](docs/wave4-auth-billing.md). All of it
 degrades gracefully until configured, so this is optional for a first deploy.
 
+> **⚠️ Migrations don't auto-apply.** Code auto-deploys (Cloudflare Workers
+> Builds on push to `main`), but D1 migrations do **not** run as part of that.
+> After any deploy that adds a migration, apply it or the new code will query
+> tables/columns that don't exist (→ HTTP 500). Two ways:
+> - `cd app && npx wrangler d1 migrations apply DB --remote`, **or**
+> - `curl -X POST https://<host>/api/admin/migrate -H "authorization: Bearer $ADMIN_TOKEN"`
+>   — an idempotent endpoint that runs every `CREATE TABLE IF NOT EXISTS` / `ALTER`
+>   (skips "duplicate column"/"already exists"), so it's safe to re-run and needs
+>   no local checkout. Keep its statement list in `src/admin/routes.ts` in sync
+>   when you add a migration file.
+
 ## 4. (Optional) Seed ticker resolution
 The normalizer resolves tickers against the `securities_master` table; unresolved
 tickers still pass through but with lower confidence. Load an equities list into
