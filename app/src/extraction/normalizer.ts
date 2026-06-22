@@ -20,7 +20,7 @@
 
 import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../shared/types';
 import { all, run, fromBool, parseJson } from '../shared/db';
-import { isValidBracket, matchBracket } from '../shared/brackets';
+import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets';
 import { uuid } from '../shared/ids';
 
 /**
@@ -50,6 +50,22 @@ export interface NormalizeResult {
 interface FlaggedTx {
   tx: Transaction;
   flags: string[];
+}
+
+/**
+ * Re-derive Transaction rows (with the current, recalibrated confidence rubric)
+ * from parsed rows WITHOUT any DB write or delivery fan-out. Shared by normalize()
+ * and the admin reprocess path, which recomputes confidence for already-persisted
+ * filings and updates the existing rows in place.
+ */
+export async function recomputeTransactions(
+  env: Env,
+  filing: Filing,
+  parsed: ParsedTx[],
+): Promise<FlaggedTx[]> {
+  const nowIso = new Date().toISOString();
+  const resolver = await loadResolver(env);
+  return parsed.map((p) => buildTransaction(p, filing, resolver, nowIso));
 }
 
 /** securities_master row shape. `aliases` is a JSON string array. */
@@ -83,13 +99,7 @@ export async function normalize(
   const extractorName = meta?.extractor ?? filing.extractor ?? null;
   const modelVersion = meta?.modelVersion ?? filing.modelVersion ?? null;
 
-  // Load the securities master once for in-memory resolution.
-  const secRows = await all<SecRow>(env.DB, 'SELECT ticker, name, aliases FROM securities_master');
-  const resolver = buildResolver(secRows);
-
-  const flagged: FlaggedTx[] = parsed.map((p) =>
-    buildTransaction(p, filing, resolver, nowIso),
-  );
+  const flagged: FlaggedTx[] = await recomputeTransactions(env, filing, parsed);
 
   const minConfidence = flagged.length
     ? Math.min(...flagged.map((f) => f.tx.confidence))
@@ -97,7 +107,10 @@ export async function normalize(
 
   // Hard structural failures force review regardless of the soft confidence.
   const hasHardFailure = flagged.some(
-    (f) => f.flags.includes('invalid_bracket') || f.flags.includes('bad_tx_type'),
+    (f) =>
+      f.flags.includes('no_amount') ||
+      f.flags.includes('invalid_amount') ||
+      f.flags.includes('bad_tx_type'),
   );
 
   const needsReview =
@@ -145,37 +158,127 @@ function buildTransaction(
   resolve: TickerResolver,
   nowIso: string,
 ): FlaggedTx {
+  const s = scoreFields(
+    p.confidence,
+    {
+      ticker: p.ticker,
+      assetName: p.assetName,
+      amountMin: p.amountMin,
+      amountMax: p.amountMax,
+      txType: p.txType,
+      txDate: p.txDate,
+    },
+    filing.filedDate,
+    resolve,
+  );
+
+  const tx: Transaction = {
+    id: uuid(),
+    docId: filing.docId,
+    filerId: filing.filerId,
+    txDate: p.txDate,
+    owner: normalizeOwner(p.owner),
+    assetName: p.assetName || s.ticker || '(unknown)',
+    ticker: s.ticker,
+    assetType: p.assetType,
+    txType: s.txType,
+    amountMin: s.amountMin,
+    amountMax: s.amountMax,
+    isOption: Boolean(p.isOption),
+    capGainsOver200: Boolean(p.capGainsOver200),
+    rawText: p.rawText ?? '',
+    confidence: s.confidence,
+    source: 'primary',
+    createdAt: nowIso,
+    // cursor_seq is assigned by the DB trigger on insert.
+    cursorSeq: 0,
+  };
+
+  return { tx, flags: s.flags };
+}
+
+/** Result of applying the shared validation rubric to one row's fields. */
+export interface ScoredFields {
+  confidence: number;
+  flags: string[];
+  ticker: string | null;
+  amountMin: number | null;
+  amountMax: number | null;
+  txType: TxType;
+}
+
+/**
+ * Apply the shared validation rubric to one row's fields, starting from `base`
+ * confidence and compounding penalties. Used by BOTH the live normalizer and the
+ * seed backfill so every source is scored identically — provenance (parsed by us
+ * vs imported) is tracked separately via transactions.source, NOT baked into
+ * this number.
+ *
+ * Penalizes only genuine problems: a supplied-but-unresolvable ticker, a
+ * missing/inverted amount, a bad tx_type, or a tx_date after the filing date.
+ * Ticker-less assets and plausible non-canonical amounts are accepted/snapped
+ * without penalty.
+ */
+export function scoreFields(
+  base: number,
+  fields: {
+    ticker: string | null;
+    assetName: string | null;
+    amountMin: number | null;
+    amountMax: number | null;
+    txType: string | null;
+    txDate: string | null;
+  },
+  filedDate: string | null,
+  resolve: TickerResolver,
+): ScoredFields {
   const flags: string[] = [];
-  let confidence = clamp01(p.confidence);
+  let confidence = clamp01(base);
 
   // --- ticker resolution: exact symbol, then alias/name lookup --------------
-  const resolved = resolve(p.ticker, p.assetName);
-  let ticker = p.ticker;
+  // Only PENALIZE when a ticker string was supplied but couldn't be resolved
+  // (a likely mis-parse). Many disclosures legitimately have no ticker — bonds,
+  // real estate, private funds — and that should NOT lower confidence.
+  const hadTickerInput = !!(fields.ticker && fields.ticker.trim());
+  const resolved = resolve(fields.ticker, fields.assetName);
+  let ticker = fields.ticker;
   if (resolved) {
     ticker = resolved;
-  } else {
-    // Unresolved: keep the raw ticker (may be null), flag + down-weight.
+  } else if (hadTickerInput) {
     flags.push('unresolved_ticker');
     confidence *= PENALTY_UNRESOLVED_TICKER;
+  } else {
+    ticker = null;
   }
 
-  // --- amount bracket validation -------------------------------------------
-  let amountMin = p.amountMin;
-  let amountMax = p.amountMax;
-  if (amountMin === null || !isValidBracket(amountMin, amountMax)) {
-    flags.push('invalid_bracket');
+  // --- amount validation ----------------------------------------------------
+  // Penalize only TRULY unusable amounts (missing, or a nonsensical range). A
+  // plausible range that isn't an exact canonical bracket is snapped to the
+  // nearest STOCK Act bracket WITHOUT penalty.
+  let amountMin = fields.amountMin;
+  let amountMax = fields.amountMax;
+  if (amountMin === null || amountMin === undefined) {
+    flags.push('no_amount');
     confidence *= PENALTY_INVALID_BRACKET;
-  } else {
-    // Snap to the canonical bounds (defensive; should already match).
+  } else if (isValidBracket(amountMin, amountMax)) {
     const b = matchBracket(amountMin, amountMax);
     if (b) {
       amountMin = b.min;
       amountMax = b.max;
     }
+  } else if (amountMin >= 0 && (amountMax === null || amountMax >= amountMin)) {
+    const b = nearestBracket(amountMin, amountMax);
+    if (b) {
+      amountMin = b.min;
+      amountMax = b.max;
+    }
+  } else {
+    flags.push('invalid_amount');
+    confidence *= PENALTY_INVALID_BRACKET;
   }
 
   // --- tx_type must be one of P / S / E ------------------------------------
-  let txType = p.txType;
+  let txType = fields.txType as TxType;
   if (!isTxType(txType)) {
     flags.push('bad_tx_type');
     confidence *= PENALTY_BAD_TX_TYPE;
@@ -183,42 +286,25 @@ function buildTransaction(
   }
 
   // --- tx_date sanity: must be <= filed_date -------------------------------
-  const txDate = p.txDate;
-  if (txDate && filing.filedDate && txDate > filing.filedDate) {
+  if (fields.txDate && filedDate && fields.txDate > filedDate) {
     flags.push('future_tx_date');
     confidence *= PENALTY_FUTURE_TX_DATE;
   }
 
-  const tx: Transaction = {
-    id: uuid(),
-    docId: filing.docId,
-    filerId: filing.filerId,
-    txDate,
-    owner: normalizeOwner(p.owner),
-    assetName: p.assetName || ticker || '(unknown)',
-    ticker,
-    assetType: p.assetType,
-    txType,
-    amountMin,
-    amountMax,
-    isOption: Boolean(p.isOption),
-    capGainsOver200: Boolean(p.capGainsOver200),
-    rawText: p.rawText ?? '',
-    confidence: clamp01(confidence),
-    source: 'primary',
-    createdAt: nowIso,
-    // cursor_seq is assigned by the DB trigger on insert.
-    cursorSeq: 0,
-  };
-
-  return { tx, flags };
+  return { confidence: clamp01(confidence), flags, ticker, amountMin, amountMax, txType };
 }
 
 // ---------------------------------------------------------------------------
 // Ticker resolution against securities_master
 // ---------------------------------------------------------------------------
 
-type TickerResolver = (ticker: string | null, assetName: string | null) => string | null;
+export type TickerResolver = (ticker: string | null, assetName: string | null) => string | null;
+
+/** Load securities_master once and return an in-memory ticker resolver. */
+export async function loadResolver(env: Env): Promise<TickerResolver> {
+  const secRows = await all<SecRow>(env.DB, 'SELECT ticker, name, aliases FROM securities_master');
+  return buildResolver(secRows);
+}
 
 /**
  * Build an in-memory resolver from securities_master rows. Resolution order:

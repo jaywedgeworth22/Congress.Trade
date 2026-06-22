@@ -25,8 +25,10 @@ import {
   buildTransactionsCountQuery,
   mapFiling,
   mapTransaction,
+  mapFeedTransaction,
   type FilingRow,
   type TransactionRow,
+  type FeedTransactionRow,
   type TxQueryParams,
 } from './rows';
 import {
@@ -69,17 +71,16 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       limit: parseIntOrUndef(q.limit),
     };
     const built = buildTransactionsQuery(params);
-    // The query SELECTs the resolved chamber + member name alongside t.* via
-    // `__chamber` / `__member_name` (see buildTransactionsQuery). These extra
-    // columns aren't part of the Transaction type, so we map the base row and
-    // then attach `chamber` / `memberName` to the returned JSON object.
-    const rows = await all<TransactionRow & { __chamber?: string | null; __member_name?: string | null }>(
-      c.env.DB,
-      built.sql,
-      built.params,
-    );
+    // The query SELECTs the resolved chamber + member name alongside the feed
+    // columns via `__chamber` / `__member_name` (see buildTransactionsQuery).
+    // mapFeedTransaction maps the filer/filing columns (fullName, state,
+    // photoUrl, dates); we then attach the resolved `chamber` / `memberName`,
+    // which aren't part of the base Transaction type.
+    const rows = await all<
+      FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null }
+    >(c.env.DB, built.sql, built.params);
     const transactions = rows.map((row) => ({
-      ...mapTransaction(row),
+      ...mapFeedTransaction(row),
       chamber: (row.__chamber as Chamber | null) ?? null,
       memberName: row.__member_name ?? null,
     }));

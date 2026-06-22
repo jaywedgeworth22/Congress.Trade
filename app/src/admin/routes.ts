@@ -11,13 +11,18 @@
  *   GET   /sources/health           -> ingest_log aggregates per source
  *   GET   /subscriptions            -> admin list of subscriptions
  *
- * AUTH (deny-by-default once provisioned):
- *   If env.ADMIN_TOKEN is set, EVERY admin request must present a matching
- *   `Authorization: Bearer <ADMIN_TOKEN>` — a missing or mismatched header is
- *   rejected with 401. If ADMIN_TOKEN is NOT set the surface stays open (local
- *   dev / unprovisioned deploys), and we emit a one-time console warning so an
- *   accidentally-unprotected production deploy is visible in logs. Provision the
- *   secret with `wrangler secret put ADMIN_TOKEN` to lock the surface down.
+ * AUTH (deny-by-default once provisioned). A request is authorized if EITHER:
+ *   1. Bearer token — env.ADMIN_TOKEN is set and the request carries a matching
+ *      `Authorization: Bearer <ADMIN_TOKEN>` (good for curl / cron / automation); OR
+ *   2. Cloudflare Access — an Access application fronts /api/admin/* and the
+ *      `Cf-Access-Jwt-Assertion` JWT verifies against the team keys with an
+ *      `aud` matching ACCESS_AUD and an authenticated email on ADMIN_EMAILS
+ *      (good for humans signing in with Google/SSO — no token to paste).
+ *
+ *   The surface stays OPEN only when NEITHER mechanism is configured (local dev
+ *   / unprovisioned deploys); a one-time console warning then flags the gap.
+ *   Provision `wrangler secret put ADMIN_TOKEN`, and/or set ADMIN_EMAILS +
+ *   ACCESS_AUD + ACCESS_TEAM_DOMAIN (with an Access app in front), to lock down.
  */
 
 import { Hono } from 'hono';
@@ -27,34 +32,69 @@ import { getConfig, setConfig } from '../shared/config';
 import { uuid } from '../shared/ids';
 import { listSubscriptions } from '../delivery/subscriptions';
 import { runSeedBackfillFromEnv } from '../backfill/seed';
-import { backfillHouseIndex } from '../ingestion/watcher';
+import { runHouseHistoricalBackfill } from '../backfill/houseCrawler';
+import { extractParsed } from '../extraction/orchestrator';
+import { normalize, recomputeTransactions, CONFIDENCE_THRESHOLD } from '../extraction/normalizer';
 import type { Chamber } from '../shared/types';
+import { verifyAccessJwt, certsUrl, parseEmailAllowlist } from './access';
+import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
 
-// Optional secret; not declared on Env (frozen). Read defensively.
-type EnvWithAdmin = Env & { ADMIN_TOKEN?: string };
+// Optional secrets/vars; not declared on Env (frozen). Read defensively.
+type EnvWithAdmin = Env & {
+  /** Shared bearer token for automation. */
+  ADMIN_TOKEN?: string;
+  /** Comma/space-separated email allowlist for Cloudflare Access sign-in. */
+  ADMIN_EMAILS?: string;
+  /** Access team name ("myteam") or hostname ("myteam.cloudflareaccess.com"). */
+  ACCESS_TEAM_DOMAIN?: string;
+  /** Cloudflare Access application AUD tag. */
+  ACCESS_AUD?: string;
+};
 
 let warnedOpenAdmin = false;
 
 /**
- * Admin auth. Deny-by-default once a token is provisioned:
- *   - token configured  -> require an exact `Bearer <token>`; missing OR
- *                          mismatched header is rejected.
- *   - token absent       -> open (dev/unprovisioned), with a one-time warning.
+ * Admin auth — authorized if a valid bearer token OR an allowlisted, verified
+ * Cloudflare Access identity is presented. Open only when neither is configured.
  */
-function isAuthorized(env: EnvWithAdmin, authHeader: string | undefined): boolean {
+async function isAuthorized(
+  env: EnvWithAdmin,
+  headers: { authorization?: string; accessJwt?: string },
+): Promise<boolean> {
   const token = env.ADMIN_TOKEN;
-  if (!token) {
+  const allow = parseEmailAllowlist(env.ADMIN_EMAILS);
+  const aud = env.ACCESS_AUD;
+  const teamDomain = env.ACCESS_TEAM_DOMAIN;
+  const tokenConfigured = !!token;
+  const accessConfigured = !!(aud && teamDomain && allow.size > 0);
+
+  if (!tokenConfigured && !accessConfigured) {
     if (!warnedOpenAdmin) {
       warnedOpenAdmin = true;
       console.warn(
-        'admin: ADMIN_TOKEN is not set — the admin API is OPEN. ' +
-          'Run `wrangler secret put ADMIN_TOKEN` to require bearer auth.',
+        'admin: neither ADMIN_TOKEN nor Cloudflare Access (ADMIN_EMAILS + ' +
+          'ACCESS_AUD + ACCESS_TEAM_DOMAIN) is configured — the admin API is OPEN. ' +
+          'Run `wrangler secret put ADMIN_TOKEN` and/or set the Access vars to lock it down.',
       );
     }
-    return true; // no token configured -> open (dev)
+    return true; // nothing configured -> open (dev)
   }
-  if (!authHeader) return false; // token set, no header -> deny
-  return authHeader === `Bearer ${token}`;
+
+  // 1) Bearer token (automation / curl).
+  if (tokenConfigured && headers.authorization === `Bearer ${token}`) return true;
+
+  // 2) Cloudflare Access identity (humans). Verify signature + aud + allowlist.
+  if (accessConfigured && headers.accessJwt) {
+    const res = await verifyAccessJwt(headers.accessJwt, {
+      aud: aud as string,
+      allow,
+      jwksUrl: certsUrl(teamDomain as string),
+    });
+    if (res.ok) return true;
+    console.warn(`admin: Cloudflare Access JWT rejected — ${res.reason}`);
+  }
+
+  return false;
 }
 
 /** Validate a PollWindow[] schedule shape. Returns an error string or null. */
@@ -110,15 +150,79 @@ interface EditedTx {
   confidence?: number;
 }
 
+// --- Member photo enrichment (name -> bioguide -> unitedstates/images CDN) ---
+
+const LEGISLATOR_SOURCES = [
+  'https://unitedstates.github.io/congress-legislators/legislators-current.json',
+  'https://unitedstates.github.io/congress-legislators/legislators-historical.json',
+];
+
+const NAME_SUFFIXES = new Set(['jr', 'sr', 'ii', 'iii', 'iv', 'v']);
+
+/**
+ * Normalize a member name for matching: lowercase, strip punctuation, drop
+ * middle initials (single letters) and suffixes. "Ron L Wyden" -> "ron wyden".
+ */
+function normName(s: string | null | undefined): string {
+  return (s ?? '')
+    .toLowerCase()
+    .replace(/[.,]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length > 1 && !NAME_SUFFIXES.has(t))
+    .join(' ')
+    .trim();
+}
+
+interface Legislator {
+  id?: { bioguide?: string };
+  name?: { first?: string; last?: string; official_full?: string; nickname?: string };
+}
+
+/** Build a normalized-name -> bioguide map from the congress-legislators data. */
+async function buildBioguideMap(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  for (const url of LEGISLATOR_SOURCES) {
+    const res = await fetch(url, {
+      headers: {
+        'user-agent': 'congress-feed/0.1 (+https://congress.trade)',
+        accept: 'application/json',
+      },
+    });
+    if (!res.ok) continue;
+    const list = (await res.json()) as Legislator[];
+    for (const leg of list) {
+      const bio = leg.id?.bioguide;
+      if (!bio) continue;
+      const n = leg.name ?? {};
+      const candidates = [
+        n.first && n.last ? `${n.first} ${n.last}` : '',
+        n.nickname && n.last ? `${n.nickname} ${n.last}` : '',
+        n.official_full ?? '',
+      ];
+      for (const raw of candidates) {
+        const k = normName(raw);
+        if (k && !map.has(k)) map.set(k, bio); // current list is loaded first; it wins
+      }
+    }
+  }
+  return map;
+}
+
+function photoUrlFor(bioguide: string): string {
+  return `https://unitedstates.github.io/images/congress/225x275/${bioguide}.jpg`;
+}
+
 export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
-  // Auth gate (documented stub) applied to every admin route.
+  // Auth gate applied to every admin route: bearer token OR Cloudflare Access.
   r.use('*', async (c, next) => {
     const env = c.env as EnvWithAdmin;
-    if (!isAuthorized(env, c.req.header('Authorization'))) {
-      return c.json({ error: 'unauthorized' }, 401);
-    }
+    const ok = await isAuthorized(env, {
+      authorization: c.req.header('Authorization'),
+      accessJwt: c.req.header('Cf-Access-Jwt-Assertion'),
+    });
+    if (!ok) return c.json({ error: 'unauthorized' }, 401);
     await next();
   });
 
@@ -317,9 +421,31 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         pollCount: row.poll_count,
         totalNew: row.total_new,
         avgIntervalSec: await observedAvgInterval(c.env, row.source),
+        avgReleasedToSeenSec: await observedReleasedToSeenLag(c.env, row.source),
+        avgSeenToImportedSec: await observedSeenToImportedLag(c.env, row.source),
       });
     }
     return c.json({ sources, count: sources.length });
+  });
+
+  // --- GET /ui-settings ---------------------------------------------------
+  // Site-wide UI settings the admin controls for ALL visitors (logo style).
+  r.get('/ui-settings', async (c) => {
+    return c.json({ logoDisplay: await getLogoDisplay(c.env) });
+  });
+
+  // --- PUT /ui-settings ---------------------------------------------------
+  // Update the site-wide logo style. Body: { logoDisplay: 'tile'|'transparent'|'off' }.
+  r.put('/ui-settings', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const text = await c.req.text();
+      if (text) body = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const logoDisplay = await setLogoDisplay(c.env, body.logoDisplay);
+    return c.json({ logoDisplay });
   });
 
   // --- POST /backfill -----------------------------------------------------
@@ -378,40 +504,220 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
   });
 
-  // --- POST /backfill/house-index ----------------------------------------
-  // High-fidelity House history from the official yearly bulk ZIP indexes.
-  // Feeds past-year PTRs through the live pipeline (fetch/extract/deliver).
-  // Body: { years: number[], dryRun?: boolean }  OR  { fromYear, toYear }.
-  r.post('/backfill/house-index', async (c) => {
+  // --- POST /house-backfill -----------------------------------------------
+  // High-fidelity House history from the official yearly bulk ZIP indexes:
+  // walks the House Clerk per-year indexes and feeds every PTR into the live
+  // ingestion pipeline (emits the same filing.new INGEST_QUEUE message the cron
+  // watcher does), populating House history into `transactions` with
+  // source='primary'.
+  // Body (all optional):
+  //   { fromYear?: number, toYear?: number, maxFilings?: number, dryRun?: boolean }
+  r.post('/house-backfill', async (c) => {
     let body: Record<string, unknown> = {};
     try {
-      const text = await c.req.text();
-      if (text) body = JSON.parse(text) as Record<string, unknown>;
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    try {
+      const result = await runHouseHistoricalBackfill(c.env, {
+        fromYear: typeof body.fromYear === 'number' ? body.fromYear : undefined,
+        toYear: typeof body.toYear === 'number' ? body.toYear : undefined,
+        maxFilings: typeof body.maxFilings === 'number' ? body.maxFilings : undefined,
+        dryRun: body.dryRun === true,
+      });
+      return c.json(result);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /reprocess ----------------------------------------------------
+  // Re-evaluate already-ingested filings under the CURRENT normalizer rubric,
+  // without re-fetching from the source (re-extracts from the stored R2 raw).
+  // Two cases per filing:
+  //   • already in the feed (primary rows exist): recompute confidence and
+  //     UPDATE those rows IN PLACE — same id + cursor_seq, so NO duplicate rows
+  //     and NO re-fired delivery webhooks. Matched in cursor_seq order (parsing
+  //     the same bytes is deterministic); a row-count mismatch is skipped, never
+  //     guessed.
+  //   • stuck in review (no primary rows): if it now clears the bar, persist +
+  //     deliver it (first-time delivery, which is correct) and mark its
+  //     review_queue row resolved. If it still fails, it's left in review.
+  // Body (all optional):
+  //   { chamber?: 'house'|'senate', limit?: number, dryRun?: boolean }
+  r.post('/reprocess', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
     } catch {
       return c.json({ error: 'invalid JSON body' }, 400);
     }
 
-    let years: number[] = [];
-    if (Array.isArray(body.years)) {
-      years = body.years.filter((y): y is number => typeof y === 'number' && Number.isFinite(y));
-    } else if (typeof body.fromYear === 'number' && typeof body.toYear === 'number') {
-      const lo = Math.min(body.fromYear, body.toYear);
-      const hi = Math.max(body.fromYear, body.toYear);
-      for (let y = lo; y <= hi; y++) years.push(y);
-    }
-    if (years.length === 0) {
-      return c.json({ error: 'provide years[] or fromYear+toYear' }, 400);
-    }
-    if (years.length > 20) {
-      return c.json({ error: 'too many years (max 20 per call)' }, 400);
+    const chamber = body.chamber === undefined ? 'house' : body.chamber;
+    if (chamber !== 'house' && chamber !== 'senate') {
+      return c.json({ error: "chamber must be 'house' or 'senate'" }, 400);
     }
     const dryRun = body.dryRun === true;
+    let limit = typeof body.limit === 'number' && body.limit > 0 ? Math.floor(body.limit) : 500;
+    if (limit > 2000) limit = 2000;
 
+    // Filings for this chamber that we can re-extract (have a raw R2 object).
+    const filings = await all<{ doc_id: string }>(
+      c.env.DB,
+      `SELECT doc_id FROM filings
+        WHERE chamber = ? AND raw_object_key IS NOT NULL
+        ORDER BY first_seen_at DESC
+        LIMIT ?`,
+      [chamber, limit],
+    );
+
+    const summary = {
+      chamber,
+      dryRun,
+      filingsScanned: 0,
+      rowsUpdatedInPlace: 0, // already-in-feed rows whose confidence changed
+      filingsPromoted: 0, //    review -> feed (now clears the bar)
+      rowsPromoted: 0,
+      filingsStillInReview: 0,
+      skippedNoExtract: 0,
+      skippedCountMismatch: 0,
+      errors: [] as string[],
+    };
+
+    for (const { doc_id } of filings) {
+      summary.filingsScanned += 1;
+      let extracted;
+      try {
+        extracted = await extractParsed(c.env, doc_id);
+      } catch (err) {
+        summary.errors.push(`${doc_id}: extract failed: ${(err as Error).message}`);
+        continue;
+      }
+      if (!extracted || extracted.transactions.length === 0) {
+        summary.skippedNoExtract += 1;
+        continue;
+      }
+
+      const flagged = await recomputeTransactions(c.env, extracted.filing, extracted.transactions);
+      const newMin = Math.min(...flagged.map((f) => f.tx.confidence));
+      const hasHardFailure = flagged.some(
+        (f) =>
+          f.flags.includes('no_amount') ||
+          f.flags.includes('invalid_amount') ||
+          f.flags.includes('bad_tx_type'),
+      );
+
+      const existing = await all<{ id: string }>(
+        c.env.DB,
+        `SELECT id FROM transactions WHERE doc_id = ? AND source = 'primary' ORDER BY cursor_seq ASC`,
+        [doc_id],
+      );
+
+      if (existing.length > 0) {
+        // Already in the feed: update confidence (+ snapped amount / resolved
+        // ticker) in place. Never touch id or cursor_seq -> no re-delivery.
+        if (existing.length !== flagged.length) {
+          summary.skippedCountMismatch += 1;
+          continue;
+        }
+        if (!dryRun) {
+          for (let i = 0; i < existing.length; i++) {
+            const { tx } = flagged[i];
+            await run(
+              c.env.DB,
+              `UPDATE transactions
+                  SET confidence = ?, amount_min = ?, amount_max = ?, ticker = ?
+                WHERE id = ?`,
+              [tx.confidence, tx.amountMin, tx.amountMax, tx.ticker, existing[i].id],
+            );
+          }
+          await run(c.env.DB, 'UPDATE filings SET confidence = ? WHERE doc_id = ?', [
+            newMin,
+            doc_id,
+          ]);
+        }
+        summary.rowsUpdatedInPlace += flagged.length;
+        continue;
+      }
+
+      // Not in the feed yet (sitting in review / error). Does it clear the bar now?
+      const passesNow = newMin >= CONFIDENCE_THRESHOLD && !hasHardFailure;
+      if (passesNow) {
+        if (!dryRun) {
+          // normalize() persists + sets ingest_status + fans out delivery
+          // (first-time delivery for these rows, which is correct).
+          await normalize(c.env, extracted.filing, extracted.transactions, {
+            extractor: extracted.extractor,
+            modelVersion: extracted.modelVersion ?? null,
+          });
+          await run(c.env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [doc_id]);
+        }
+        summary.filingsPromoted += 1;
+        summary.rowsPromoted += flagged.length;
+      } else {
+        summary.filingsStillInReview += 1;
+      }
+    }
+
+    return c.json({ ok: summary.errors.length === 0, ...summary });
+  });
+
+  // --- POST /migrate ------------------------------------------------------
+  // Apply schema changes via the Worker's D1 binding (sidesteps the wrangler
+  // CLI's --remote D1 auth issues). Idempotent: "duplicate column" is treated
+  // as already-applied.
+  r.post('/migrate', async (c) => {
+    const statements = ['ALTER TABLE filers ADD COLUMN photo_url TEXT'];
+    const applied: string[] = [];
+    const skipped: string[] = [];
+    for (const sql of statements) {
+      try {
+        await run(c.env.DB, sql);
+        applied.push(sql);
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (/duplicate column|already exists/i.test(msg)) {
+          skipped.push(sql);
+        } else {
+          return c.json({ error: msg, sql }, 500);
+        }
+      }
+    }
+    return c.json({ applied, skipped });
+  });
+
+  // --- POST /enrich-photos ------------------------------------------------
+  // Resolve each filer's name -> bioguide (congress-legislators) and store the
+  // public headshot URL. Safe to re-run; unmatched filers stay null (the UI
+  // falls back to initials).
+  r.post('/enrich-photos', async (c) => {
     try {
-      const result = await backfillHouseIndex(c.env, { years, dryRun });
-      return c.json({ ok: result.errors.length === 0, dryRun, ...result });
+      const map = await buildBioguideMap();
+      const filers = await all<{ bioguide_id: string; full_name: string | null }>(
+        c.env.DB,
+        'SELECT bioguide_id, full_name FROM filers',
+      );
+      const updates: D1PreparedStatement[] = [];
+      let matched = 0;
+      for (const f of filers) {
+        const bio = map.get(normName(f.full_name));
+        if (!bio) continue;
+        matched++;
+        updates.push(
+          c.env.DB
+            .prepare('UPDATE filers SET photo_url = ? WHERE bioguide_id = ?')
+            .bind(photoUrlFor(bio), f.bioguide_id),
+        );
+      }
+      for (let i = 0; i < updates.length; i += 50) {
+        await c.env.DB.batch(updates.slice(i, i + 50));
+      }
+      return c.json({ filers: filers.length, matched, unmatched: filers.length - matched });
     } catch (err) {
-      return c.json({ error: `house-index backfill failed: ${(err as Error).message}` }, 500);
+      return c.json({ error: (err as Error).message }, 500);
     }
   });
 
@@ -445,6 +751,54 @@ async function observedAvgInterval(env: Env, source: string): Promise<number | n
     }
   }
   return n > 0 ? Math.round(total / n) : null;
+}
+
+/**
+ * Average "Released → Seen" lag (seconds): from a filing's official release
+ * (filed_date) to when our watcher first recorded it (first_seen_at), per
+ * chamber. filed_date is day-granular (the disclosure systems publish no exact
+ * release time), so this is APPROXIMATE; we average only non-negative diffs over
+ * recent filings. Returns null when there isn't enough dated data.
+ */
+async function observedReleasedToSeenLag(env: Env, source: string): Promise<number | null> {
+  const row = await get<{ avg_sec: number | null }>(
+    env.DB,
+    `SELECT AVG((julianday(first_seen_at) - julianday(filed_date)) * 86400.0) AS avg_sec
+       FROM (
+         SELECT first_seen_at, filed_date
+           FROM filings
+          WHERE chamber = ?
+            AND filed_date IS NOT NULL
+            AND first_seen_at IS NOT NULL
+            AND julianday(first_seen_at) >= julianday(filed_date)
+          ORDER BY first_seen_at DESC
+          LIMIT 200
+       )`,
+    [source],
+  );
+  return row && row.avg_sec != null ? Math.round(row.avg_sec) : null;
+}
+
+/**
+ * Average "Seen → Imported" lag (seconds): from when our watcher first saw a
+ * filing (filings.first_seen_at) to when we wrote its parsed rows
+ * (transactions.created_at), per chamber. Both are our own timestamps, so this
+ * is PRECISE. Only live-pipeline rows (source='primary') are meaningful.
+ */
+async function observedSeenToImportedLag(env: Env, source: string): Promise<number | null> {
+  const row = await get<{ avg_sec: number | null }>(
+    env.DB,
+    `SELECT AVG((julianday(t.created_at) - julianday(f.first_seen_at)) * 86400.0) AS avg_sec
+       FROM transactions t
+       JOIN filings f ON f.doc_id = t.doc_id
+      WHERE f.chamber = ?
+        AND t.source = 'primary'
+        AND f.first_seen_at IS NOT NULL
+        AND t.created_at IS NOT NULL
+        AND julianday(t.created_at) >= julianday(f.first_seen_at)`,
+    [source],
+  );
+  return row && row.avg_sec != null ? Math.round(row.avg_sec) : null;
 }
 
 function safeJson(s: string): unknown {

@@ -27,6 +27,8 @@
 import type { Chamber, Owner, Transaction, TxType, Env } from '../shared/types';
 import { run } from '../shared/db';
 import { nearestBracket } from '../shared/brackets';
+import { sanitizeAssetName } from '../shared/text';
+import { scoreFields, loadResolver, type TickerResolver } from '../extraction/normalizer';
 
 // ---------------------------------------------------------------------------
 // Seed source URLs (centralized). Flag any uncertain ones here.
@@ -44,11 +46,23 @@ import { nearestBracket } from '../shared/brackets';
  *   CONFIDENT — verified reachable and in the expected RawWatcherRecord shape.
  * - house:  there is no maintained pre-parsed House JSON mirror; the community
  *   S3 bucket is gated. The high-fidelity path for House history is
- *   `backfillHouseIndex` (watcher.ts), which pulls the official, accessible
+ *   `runHouseHistoricalBackfill` (backfill/houseCrawler.ts, exposed as
+ *   POST /api/admin/house-backfill), which pulls the official, accessible
  *   yearly bulk ZIP indexes and runs them through the live pipeline. This URL
  *   remains as a hook for operators who host their own House aggregate.
- *   UNCERTAIN — set SEED_HOUSE_URL or use the House index backfill instead.
+ *   UNCERTAIN — set SEED_HOUSE_URL or use the House backfill instead.
  */
+/**
+ * Base confidence for seed (pre-aggregated, third-party) rows BEFORE the shared
+ * validation rubric is applied. Seed fields are clean and structured but are not
+ * a first-party parse of the source filing, so the base sits just under a clean
+ * House text extraction (CLEAN_CONFIDENCE = 0.97). The SAME rubric the live
+ * normalizer uses (scoreFields) is then applied, so a clean seed row lands ~0.95
+ * — directly comparable to a live-parsed row. Provenance (seed vs primary) is
+ * tracked by transactions.source, NOT baked into this number.
+ */
+export const SEED_BASE_CONFIDENCE = 0.95;
+
 export const SEED_SOURCES: Record<Chamber, { url: string; certain: boolean }> = {
   senate: {
     url: 'https://raw.githubusercontent.com/timothycarambat/senate-stock-watcher-data/master/aggregate/all_transactions.json',
@@ -56,7 +70,8 @@ export const SEED_SOURCES: Record<Chamber, { url: string; certain: boolean }> = 
   },
   house: {
     // Legacy community bucket — currently gated (HTTP 403). Override via
-    // SEED_HOUSE_URL, or prefer backfillHouseIndex for official House history.
+    // SEED_HOUSE_URL, or prefer POST /api/admin/house-backfill (houseCrawler.ts)
+    // for official House history.
     url: 'https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json',
     certain: false,
   },
@@ -255,23 +270,36 @@ export function mapRecordToTransaction(
   rec: RawWatcherRecord,
   chamber: Chamber,
   nowIso: string,
+  resolve: TickerResolver,
 ): Transaction | null {
-  const assetName = (rec.asset_description ?? '').trim();
-  const ticker = normalizeTicker(rec.ticker);
-  if (!assetName && !ticker) return null;
+  const assetName = sanitizeAssetName(rec.asset_description);
+  const rawTicker = normalizeTicker(rec.ticker);
+  if (!assetName && !rawTicker) return null;
 
   const filerName = pickFilerName(rec);
   const filerId = seedFilerId(chamber, filerName);
   const txDate = normalizeDate(rec.transaction_date);
-  const txType = mapTxType(rec.type);
+  const rawTxType = mapTxType(rec.type);
   const { min, max } = mapAmount(rec.amount);
   const source = 'seed_dataset' as const;
 
+  // Score with the SAME rubric the live normalizer uses, from a clean-import
+  // base. Seed rows have no filing document, so there's no filed_date to check
+  // tx_date against (filedDate = null skips that penalty).
+  const scored = scoreFields(
+    SEED_BASE_CONFIDENCE,
+    { ticker: rawTicker, assetName, amountMin: min, amountMax: max, txType: rawTxType, txDate },
+    null,
+    resolve,
+  );
+
+  // The id is derived from the RAW source fields (not the scored/snapped ones)
+  // so it stays stable across rubric changes — keeping re-imports idempotent.
   const id = deterministicTxId({
     source,
     filerId,
     txDate,
-    ticker,
+    ticker: rawTicker,
     amountMin: min,
     amountMax: max,
   });
@@ -282,12 +310,12 @@ export function mapRecordToTransaction(
     filerId,
     txDate,
     owner: mapOwner(rec.owner),
-    assetName: assetName || (ticker ?? ''),
-    ticker,
+    assetName: assetName || (scored.ticker ?? ''),
+    ticker: scored.ticker,
     assetType: (rec.asset_type ?? '').trim() || null,
-    txType,
-    amountMin: min,
-    amountMax: max,
+    txType: scored.txType,
+    amountMin: scored.amountMin,
+    amountMax: scored.amountMax,
     isOption: false,
     capGainsOver200: false,
     rawText: JSON.stringify({
@@ -295,7 +323,7 @@ export function mapRecordToTransaction(
       type: rec.type ?? null,
       amount: rec.amount ?? null,
     }),
-    confidence: 1,
+    confidence: scored.confidence,
     source,
     createdAt: nowIso,
     cursorSeq: 0,
@@ -337,19 +365,32 @@ async function upsertSeedFiler(
 }
 
 /**
- * Insert one seed transaction. INSERT OR IGNORE on the deterministic id makes
- * this idempotent and prevents clobbering a primary row sharing the identity.
- * cursor_seq is left NULL so trg_transactions_cursor assigns it. Returns true
- * when a new row was actually inserted.
+ * Upsert one seed transaction, keyed on the deterministic id. On conflict it
+ * refreshes the mutable, re-derivable columns (asset_name, ticker, amounts,
+ * tx_type, confidence, raw_text) so a re-run reconciles existing rows to the
+ * latest mapping/scoring WITHOUT creating duplicates — and preserves the
+ * original cursor_seq + created_at (feed ordering is stable). The
+ * `WHERE source='seed_dataset'` guard means it can never clobber a primary row
+ * that happens to share an id. Returns true when a row was inserted or updated.
  */
 async function insertSeedTransaction(env: Env, tx: Transaction): Promise<boolean> {
   const res = await run(
     env.DB,
-    `INSERT OR IGNORE INTO transactions (
+    `INSERT INTO transactions (
        id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
        tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
        raw_text, confidence, source, created_at, cursor_seq
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'seed_dataset', ?, NULL)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'seed_dataset', ?, NULL)
+     ON CONFLICT(id) DO UPDATE SET
+       asset_name = excluded.asset_name,
+       ticker = excluded.ticker,
+       asset_type = excluded.asset_type,
+       tx_type = excluded.tx_type,
+       amount_min = excluded.amount_min,
+       amount_max = excluded.amount_max,
+       raw_text = excluded.raw_text,
+       confidence = excluded.confidence
+     WHERE transactions.source = 'seed_dataset'`,
     [
       tx.id,
       tx.docId,
@@ -369,7 +410,7 @@ async function insertSeedTransaction(env: Env, tx: Transaction): Promise<boolean
       tx.createdAt,
     ],
   );
-  // D1 meta.changes is the number of rows written (0 when IGNORE-d).
+  // D1 meta.changes counts rows inserted OR updated by the upsert.
   const changes = (res as D1Result).meta?.changes ?? 0;
   return changes > 0;
 }
@@ -414,6 +455,12 @@ export async function runSeedBackfill(
   const limit = opts.limit ?? Number.POSITIVE_INFINITY;
   const nowIso = new Date().toISOString();
 
+  // Resolve tickers against securities_master with the same resolver the live
+  // normalizer uses, so seed rows score on identical footing. dryRun (and the
+  // bare-env unit tests) never touch the DB, so fall back to a no-op resolver.
+  const resolve: TickerResolver =
+    opts.dryRun || !env.DB ? () => null : await loadResolver(env);
+
   const result: SeedBackfillResult = {
     inserted: 0,
     skipped: 0,
@@ -437,7 +484,7 @@ export async function runSeedBackfill(
         result.skipped++;
         continue;
       }
-      const tx = mapRecordToTransaction(rec, chamber, nowIso);
+      const tx = mapRecordToTransaction(rec, chamber, nowIso, resolve);
       if (!tx) {
         result.skipped++;
         continue;
