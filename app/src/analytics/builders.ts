@@ -443,3 +443,68 @@ export function buildTickerRecentTradesQuery(
     `LIMIT ${limit}`;
   return { sql, params };
 }
+
+// ---------------------------------------------------------------------------
+// 11. Single-member (politician) deep dive
+// ---------------------------------------------------------------------------
+
+function memberFilters(filerId: string, p: CommonFilters): { where: string[]; params: SqlParam[] } {
+  const { where, params } = buildCommonFilters(p);
+  return { where: ['t.filer_id = ?', ...where], params: [filerId, ...params] };
+}
+
+/** Aggregate stats for one member: trade counts, distinct tickers, est volume +
+ *  net flow, and average disclosure lag. */
+export function buildMemberStatsQuery(filerId: string, p: CommonFilters): BuiltQuery {
+  const { where, params } = memberFilters(filerId, p);
+  const lag =
+    'AVG(CASE WHEN t.tx_date IS NOT NULL AND f.filed_date IS NOT NULL ' +
+    'AND julianday(f.filed_date) >= julianday(t.tx_date) ' +
+    'THEN julianday(f.filed_date) - julianday(t.tx_date) END)';
+  const sql =
+    'SELECT COUNT(*) AS total_trades, ' +
+    `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
+    `COUNT(DISTINCT CASE WHEN ${TICKER_RESOLVED_SQL} THEN t.ticker END) AS unique_tickers, ` +
+    `SUM(${MID}) AS est_volume, SUM(${SIGNED}) AS est_net_flow, ` +
+    `${lag} AS avg_lag_days, ` +
+    'MIN(t.tx_date) AS first_trade, MAX(t.tx_date) AS last_trade ' +
+    ANALYTICS_FROM_JOINS +
+    whereSql(where);
+  return { sql, params };
+}
+
+/** Most-traded tickers for one member. */
+export function buildMemberTopTickersQuery(
+  filerId: string,
+  p: CommonFilters & { limit?: number },
+): BuiltQuery {
+  const { where, params } = memberFilters(filerId, { ...p, tickerNotNull: true });
+  const limit = clampLimit(p.limit, 5, 50);
+  const sql =
+    'SELECT t.ticker AS ticker, sm.name AS name, COUNT(*) AS trade_count, ' +
+    `${BUY} AS buy_count, ${SELL} AS sell_count, SUM(${MID}) AS est_volume ` +
+    ANALYTICS_FROM_JOINS_SECURITIES +
+    whereSql(where) +
+    'GROUP BY t.ticker ORDER BY trade_count DESC, est_volume DESC ' +
+    `LIMIT ${limit}`;
+  return { sql, params };
+}
+
+/** Most-recent trades for one member (for the politician drawer's mini-list). */
+export function buildMemberRecentTradesQuery(
+  filerId: string,
+  p: CommonFilters & { limit?: number },
+): BuiltQuery {
+  const { where, params } = memberFilters(filerId, p);
+  const limit = clampLimit(p.limit, 10, 100);
+  const sql =
+    'SELECT t.id AS id, t.doc_id AS doc_id, t.ticker AS ticker, t.asset_name AS asset_name, ' +
+    't.tx_type AS tx_type, t.tx_date AS tx_date, t.owner AS owner, t.is_option AS is_option, ' +
+    't.amount_min AS amount_min, t.amount_max AS amount_max, sm.name AS name, ' +
+    'f.filed_date AS filed_date, f.source_url AS source_url ' +
+    ANALYTICS_FROM_JOINS_SECURITIES +
+    whereSql(where) +
+    'ORDER BY t.tx_date DESC, t.cursor_seq DESC ' +
+    `LIMIT ${limit}`;
+  return { sql, params };
+}

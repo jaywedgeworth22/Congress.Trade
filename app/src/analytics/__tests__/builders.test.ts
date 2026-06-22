@@ -15,6 +15,9 @@ import {
   buildFilingLagHistogramQuery,
   buildLateFilersQuery,
   buildMemberLeaderboardQuery,
+  buildMemberStatsQuery,
+  buildMemberTopTickersQuery,
+  buildMemberRecentTradesQuery,
   buildPartySplitQuery,
   buildPartySplitOverTimeQuery,
   buildSectorBreakdownQuery,
@@ -167,6 +170,28 @@ describe('filing-lag builders', () => {
     expect(q.sql).toContain('HAVING trade_count >= 3');
     expect(q.sql).toContain('ORDER BY avg_lag_days DESC');
     expect(q.sql).toContain('AS late_count');
+  });
+});
+
+describe('member deep-dive builders', () => {
+  it('stats filter by filer id (bound first) and average disclosure lag', () => {
+    const q = buildMemberStatsQuery('P000197', { window: 'all' });
+    expect(q.sql).toContain('t.filer_id = ?');
+    expect(q.sql).toContain('AS avg_lag_days');
+    expect(q.params).toEqual(['P000197']);
+  });
+  it('top tickers exclude null tickers and group by ticker', () => {
+    const q = buildMemberTopTickersQuery('P000197', { window: '365d' });
+    expect(q.sql).toContain("(t.ticker IS NOT NULL AND t.ticker <> '')");
+    expect(q.sql).toContain('GROUP BY t.ticker');
+    expect(q.params).toEqual(['P000197', '-365 days']);
+  });
+  it('recent trades order by date desc, carry the source link, clamp limit', () => {
+    const q = buildMemberRecentTradesQuery('P000197', { window: 'all', limit: 999 });
+    expect(q.sql).toContain('f.source_url AS source_url');
+    expect(q.sql).toContain('ORDER BY t.tx_date DESC, t.cursor_seq DESC');
+    expect(q.sql).toContain('LIMIT 100');
+    expect(q.params).toEqual(['P000197']);
   });
 });
 

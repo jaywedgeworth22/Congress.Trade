@@ -236,10 +236,31 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .disclaimer { font-size:12px; color: var(--text-dim); line-height:1.6; border:1px solid var(--border); background: var(--panel); border-radius: var(--radius); padding:12px 15px; margin-bottom:16px; }
   .disclaimer strong { color: var(--text); }
   /* modal */
-  .tkmodal { position:fixed; inset:0; background:rgba(2,6,18,.6); display:none; align-items:flex-start; justify-content:center; z-index:50; padding:40px 16px; overflow-y:auto; }
-  .tkmodal.open { display:flex; }
-  .tkmodal-card { background: var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:20px; width:100%; max-width:720px; }
-  .tkmodal-card .x { float:right; cursor:pointer; color: var(--text-dim); font-size:18px; border:none; background:none; }
+  /* ---- detail drawer (trade / asset / politician) ---- */
+  .drawer { position:fixed; inset:0; z-index:60; display:none; }
+  .drawer.open { display:block; }
+  .drawer-backdrop { position:absolute; inset:0; background:rgba(2,6,18,.55); }
+  .drawer-panel { position:absolute; top:0; right:0; height:100%; width:480px; max-width:92vw; background:var(--panel); border-left:1px solid var(--border); box-shadow:-12px 0 40px rgba(0,0,0,.4); overflow-y:auto; padding:20px 22px; }
+  .drawer-close { position:absolute; top:13px; right:15px; cursor:pointer; color:var(--text-dim); font-size:20px; border:none; background:none; line-height:1; }
+  .drawer h2 { margin:0 0 2px; font-size:19px; }
+  .drawer .dsub { color:var(--text-dim); font-size:13px; margin:0 0 6px; }
+  .drawer-section { border-top:1px solid var(--border); padding:14px 0; }
+  .drawer-section.first { border-top:none; padding-top:6px; }
+  .drawer-section h3 { margin:0 0 10px; font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.6px; }
+  .drawer-kv { display:grid; grid-template-columns:auto 1fr; gap:7px 14px; margin:0; font-size:13px; }
+  .drawer-kv dt { color:var(--text-dim); white-space:nowrap; }
+  .drawer-kv dd { margin:0; text-align:right; word-break:break-word; }
+  .tier-gate-note { font-size:12px; color:var(--text-dim); background:var(--panel-2); border:1px dashed var(--border); border-radius:8px; padding:9px 11px; line-height:1.5; }
+  .committee-tag { display:inline-block; font-size:11px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:2px 8px; margin:0 5px 5px 0; }
+  .drawer-all-link { display:block; margin-top:9px; font-size:13px; }
+  .source-link { display:inline-block; margin-top:9px; font-size:13px; }
+  .raw-notes { white-space:pre-wrap; word-break:break-word; max-height:150px; overflow:auto; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12px; font-family:var(--mono); color:var(--text-dim); margin:0; }
+  .perf-line { font-size:15px; font-weight:700; }
+  .mini-tbl td { padding:7px 6px; }
+  .clickable { cursor: pointer; }
+  .asset-cell.clickable:hover .tkr, .hlabel.clickable:hover .tkr, .tkr.clickable:hover { text-decoration: underline; }
+  .member-cell.clickable:hover { text-decoration: underline; }
+  @media (max-width:600px){ .drawer-panel { width:100%; max-width:100%; } }
   footer { text-align:center; color: var(--text-dim); font-size:11px; padding:26px; }
   /* ---- account control + auth/billing modals ---- */
   .acct { display:flex; align-items:center; gap:8px; }
@@ -574,8 +595,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <footer>Congress.Trade · an educational tool for exploring public STOCK Act (2012) disclosures · informational only — not financial advice, not trading signals · dollar figures are estimates from disclosed brackets</footer>
 </main>
 
-<div class="tkmodal" id="tickerModal" onclick="if(event.target===this)closeTicker()">
-  <div class="tkmodal-card"><button class="x" onclick="closeTicker()">✕</button><div id="tickerModalBody"></div></div>
+<div class="drawer" id="detailDrawer">
+  <div class="drawer-backdrop" onclick="closeDrawer()"></div>
+  <div class="drawer-panel"><button class="drawer-close" onclick="closeDrawer()" aria-label="Close">✕</button><div id="detailDrawerBody"></div></div>
 </div>
 
 <!-- ================= LOGIN MODAL ================= -->
@@ -799,14 +821,20 @@ function renderFeed() {
   rows = sortRows(rows);
   if (rows.length === 0) { body.innerHTML = stateRow(10, 'No transactions match these filters.'); updateFeedCountMsg(0); maybeInitResize(); return; }
   body.innerHTML = rows.map(function (r) {
-    return '<tr class="row">' +
+    var memberAttr = r.filerId
+      ? 'class="member-cell clickable" data-member="' + esc(r.filerId) + '"'
+      : 'class="member-cell"';
+    var assetInner = '<div title="' + esc((r.ticker ? r.ticker + ' · ' : '') + r.asset) + '">' +
+      (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span> ' : '') +
+      '<span class="muted">' + esc(r.asset) + '</span></div>';
+    var assetCell = r.ticker
+      ? '<div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, r.asset) + assetInner + '</div>'
+      : '<div class="asset-cell">' + assetInner + '</div>';
+    return '<tr class="row clickable" data-txid="' + esc(r.id) + '" title="Open trade details">' +
       '<td class="muted">' + esc(r.filed) + '</td>' +
-      '<td><div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl) +
+      '<td><div ' + memberAttr + '>' + memberAvatarHtml(r.member, r.photoUrl) +
         '<div>' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div></td>' +
-      '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.asset) +
-        '<div title="' + esc((r.ticker ? r.ticker + ' · ' : '') + r.asset) + '">' +
-        (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span> ' : '') +
-        '<span class="muted">' + esc(r.asset) + '</span></div></div></td>' +
+      '<td>' + assetCell + '</td>' +
       '<td><span class="tag ' + esc(r.type) + '">' + esc(typeName[r.type] || r.type) + '</span></td>' +
       '<td>' + (r.min == null && r.max == null ? '<span class="muted">—</span>' : fmt(r.min) + ' – ' + (r.max == null ? '+' : fmt(r.max))) + '</td>' +
       '<td class="muted">' + esc(r.txdate || '—') + '</td>' +
@@ -950,7 +978,13 @@ function txToRow(tx) {
     filedDate: tx.filedDate || '',
     firstSeenAt: tx.firstSeenAt || '',
     imported: tx.createdAt || '',
-    cursorSeq: tx.cursorSeq || 0
+    cursorSeq: tx.cursorSeq || 0,
+    // identifiers for the detail drawers (trade / asset / politician)
+    id: tx.id || '',
+    docId: tx.docId || '',
+    filerId: tx.filerId || '',
+    isOption: !!tx.isOption,
+    rawText: tx.rawText || ''
   };
 }
 
@@ -1627,13 +1661,32 @@ function loadTrLag() {
   });
 }
 
-/* ---- ticker deep-dive modal ---- */
-function openTicker(ticker) {
+/* ============================ DETAIL DRAWERS ============================ */
+/* One reusable right-side drawer, filled per type: trade / asset / politician.
+   Tier-1/2 (company profile, price, performance) are KEY-GATED and shown as a
+   quiet note until a market-data key is configured. */
+function openDrawer(html) { el('detailDrawerBody').innerHTML = html; el('detailDrawer').classList.add('open'); }
+function closeDrawer() { el('detailDrawer').classList.remove('open'); }
+var PERF_GATE = '<div class="tier-gate-note">📈 Price &amp; performance vs the S&amp;P 500 will appear here once a market-data API key is configured.</div>';
+var PROFILE_GATE = '<div class="tier-gate-note">🏢 Company details (sector, market cap, country, exchange) will appear here once a market-data API key is configured.</div>';
+function kvRow(k, v) { return '<dt>' + esc(k) + '</dt><dd>' + v + '</dd>'; }
+function actionBadge(type) { return '<span class="tag ' + esc(type) + '">' + esc(typeName[type] || type) + '</span>'; }
+function amountText(min, max) {
+  if (min == null && max == null) return '—';
+  return fmt(min) + ' – ' + (max == null ? '+' : fmt(max));
+}
+function daysBetween(aIso, bIso) {
+  var a = Date.parse(aIso), b = Date.parse(bIso);
+  if (!isFinite(a) || !isFinite(b)) return null;
+  return Math.round((b - a) / 86400000);
+}
+var PARTY_NAME = { D: 'Democrat', R: 'Republican', O: 'Other / Independent' };
+
+/* ---- asset drawer (reuses /api/analytics/ticker/:ticker) ---- */
+function openAsset(ticker) {
   if (!ticker) return;
-  var modal = el('tickerModal'), body = el('tickerModalBody');
-  body.innerHTML = '<div class="note">Loading ' + esc(ticker) + '…</div>';
-  modal.classList.add('open');
-  aGet('ticker/' + encodeURIComponent(ticker) + '?' + trParams()).then(function (d) {
+  openDrawer('<div class="note">Loading ' + esc(ticker) + '…</div>');
+  aGet('ticker/' + encodeURIComponent(ticker) + '?window=all').then(function (d) {
     var s = d.summary || {};
     var sent = s.netSentiment == null ? '—' : Math.round(s.netSentiment * 100) + '% buys';
     var ser = d.series || [];
@@ -1648,26 +1701,112 @@ function openTicker(ticker) {
       }).join('');
     }
     var recent = (d.recentTrades || []).map(function (t) {
-      var name = t.fullName || 'Unknown';
       return '<tr class="row"><td class="muted">' + esc((t.txDate || '').slice(0, 10)) + '</td>' +
-        '<td><span class="tag ' + esc(t.txType) + '">' + esc(typeName[t.txType] || t.txType) + '</span></td>' +
-        '<td>' + pdot(t.partyBucket) + esc(name) + '</td>' +
-        '<td class="muted">' + esc(ownerLabel(t.owner)) + (t.isOption ? ' · option' : '') + '</td>' +
+        '<td>' + actionBadge(t.txType) + '</td>' +
+        '<td>' + pdot(t.partyBucket) + esc(t.fullName || 'Unknown') + '</td>' +
         '<td class="est">' + estUsd(t.estValueUsd) + '</td></tr>';
     }).join('');
-    body.innerHTML =
-      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">' + tickerLogoHtml(d.ticker, '') +
-        '<h3 style="margin:0;font-size:20px">' + esc(d.ticker) + '</h3></div>' +
-      '<div class="grid-cards">' + kpi('Trades', s.totalTrades || 0) + kpi('Members', s.memberCount || 0) +
-        kpi('Est. volume', estUsd(s.estVolumeUsd)) + kpi('Net flow', netHtml(s.estNetFlowUsd)) + kpi('Buy pressure', sent) + '</div>' +
-      '<div class="legend" style="margin-top:6px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart +
-      '<div class="trend-grid2" style="margin-top:14px"><div><h3 style="font-size:13px">Top buyers</h3>' + traderList(d.topBuyers, 'buyers') + '</div>' +
-        '<div><h3 style="font-size:13px">Top sellers</h3>' + traderList(d.topSellers, 'sellers') + '</div></div>' +
-      '<h3 style="font-size:13px;margin-top:14px">Recent trades</h3><div class="table-wrap"><table><tbody>' +
-        (recent || '<tr><td class="state" colspan="5">No recent trades.</td></tr>') + '</tbody></table></div>';
-  }).catch(function (e) { body.innerHTML = '<div class="note">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>'; });
+    openDrawer(
+      '<h2><span class="tkr">' + esc(d.ticker) + '</span></h2>' +
+      '<p class="dsub">' + (s.totalTrades || 0) + ' trades · ' + (s.memberCount || 0) + ' members · ' + estUsd(s.estVolumeUsd) + ' est. volume</p>' +
+      '<div class="drawer-section first"><h3>Company</h3>' + PROFILE_GATE + '</div>' +
+      '<div class="drawer-section"><h3>Congressional activity (all time)</h3><div class="grid-cards">' +
+        kpi('Trades', s.totalTrades || 0) + kpi('Members', s.memberCount || 0) + kpi('Est. volume', estUsd(s.estVolumeUsd)) +
+        kpi('Net flow', netHtml(s.estNetFlowUsd)) + kpi('Buy pressure', sent) + '</div>' +
+        '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + '</div>' +
+      '<div class="drawer-section"><h3>Performance since trades</h3>' + PERF_GATE + '</div>' +
+      '<div class="trend-grid2"><div class="drawer-section"><h3>Top buyers</h3>' + traderList(d.topBuyers, 'buyers') + '</div>' +
+        '<div class="drawer-section"><h3>Top sellers</h3>' + traderList(d.topSellers, 'sellers') + '</div></div>' +
+      '<div class="drawer-section"><h3>Recent trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
+        (recent || '<tr><td class="state" colspan="4">No recent trades.</td></tr>') + '</tbody></table></div></div>'
+    );
+  }).catch(function (e) { openDrawer('<div class="note">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>'); });
 }
-function closeTicker() { el('tickerModal').classList.remove('open'); }
+
+/* ---- politician drawer (/api/analytics/member/:filerId) ---- */
+function openMember(filerId) {
+  if (!filerId) return;
+  openDrawer('<div class="note">Loading member…</div>');
+  aGet('member/' + encodeURIComponent(filerId) + '?window=all').then(function (d) {
+    var p = d.profile || {}, st = d.stats || {};
+    var name = p.fullName || filerId;
+    var partyName = PARTY_NAME[p.partyBucket || 'O'];
+    var meta = [p.chamber, p.state].filter(Boolean).join(' · ');
+    var committees = p.committees || [];
+    var commHtml = committees.length
+      ? committees.map(function (c) { return '<span class="committee-tag">' + esc(c) + '</span>'; }).join('')
+      : '<span class="muted">Not recorded</span>';
+    var top = (d.topTickers || []).map(function (t) {
+      return '<div class="hbar" style="margin:5px 0"><div class="hlabel clickable" data-asset="' + esc(t.ticker) + '" style="width:auto;flex:1">' +
+        '<span class="tkr">' + esc(t.ticker) + '</span>' + (t.name ? ' <span class="muted">' + esc(t.name) + '</span>' : '') +
+        '</div><div class="hval">' + t.tradeCount + ' · ' + estUsd(t.estVolumeUsd) + '</div></div>';
+    }).join('') || '<div class="note">—</div>';
+    var recent = (d.recentTrades || []).map(function (t) {
+      var assetCell = t.ticker
+        ? '<span class="tkr clickable" data-asset="' + esc(t.ticker) + '">' + esc(t.ticker) + '</span>'
+        : '<span class="muted">' + esc((t.assetName || '').slice(0, 30)) + '</span>';
+      return '<tr class="row"><td class="muted">' + esc((t.txDate || '').slice(0, 10)) + '</td>' +
+        '<td>' + actionBadge(t.txType) + '</td><td>' + assetCell + '</td>' +
+        '<td class="est">' + estUsd(t.estValueUsd) + '</td></tr>';
+    }).join('');
+    openDrawer(
+      '<div style="display:flex;align-items:center;gap:11px">' + memberAvatarHtml(name, p.photoUrl) +
+        '<div><h2 style="margin:0">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + pdot(p.partyBucket) + esc(partyName) +
+        (meta ? ' · ' + esc(meta) : '') + (p.district ? ' · District ' + esc(p.district) : '') + '</p></div></div>' +
+      '<div class="drawer-section"><h3>Trade stats</h3><dl class="drawer-kv">' +
+        kvRow('Total trades', st.totalTrades || 0) + kvRow('Buys / Sells', (st.buyCount || 0) + ' / ' + (st.sellCount || 0)) +
+        kvRow('Distinct tickers', st.uniqueTickers || 0) + kvRow('Est. volume', estUsd(st.estVolumeUsd)) +
+        kvRow('Avg. disclosure lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
+      '<div class="drawer-section"><h3>Committees</h3>' + commHtml + '</div>' +
+      '<div class="drawer-section"><h3>Performance vs S&amp;P 500</h3>' + PERF_GATE + '</div>' +
+      '<div class="drawer-section"><h3>Most-traded</h3>' + top + '</div>' +
+      '<div class="drawer-section"><h3>Recent trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
+        (recent || '<tr><td class="state" colspan="4">No trades.</td></tr>') + '</tbody></table></div></div>'
+    );
+  }).catch(function (e) { openDrawer('<div class="note">Could not load member: ' + esc(e.message) + '</div>'); });
+}
+
+/* ---- trade drawer (from the in-memory feed row + lazy source link) ---- */
+function openTrade(row) {
+  if (!row) return;
+  var lag = daysBetween(row.txdate, row.filedDate);
+  var memberVal = '<span class="clickable" ' + (row.filerId ? 'data-member="' + esc(row.filerId) + '"' : '') + '>' + esc(row.member) + '</span>';
+  var head =
+    '<h2>' + (row.ticker ? '<span class="tkr">' + esc(row.ticker) + '</span> ' : '') + esc(row.asset || 'Trade') + '</h2>' +
+    '<p class="dsub">' + actionBadge(row.type) + ' · ' + amountText(row.min, row.max) + ' <span class="muted">(est. bracket)</span></p>';
+  var summary =
+    '<div class="drawer-section first"><h3>Trade</h3><dl class="drawer-kv">' +
+      kvRow('Member', memberVal) +
+      kvRow('Traded', esc(row.txdate || '—')) +
+      kvRow('Filed', esc(row.filed || '—')) +
+      kvRow('Disclosure lag', lag == null ? '—' : (lag + ' day' + (lag === 1 ? '' : 's'))) +
+      kvRow('Owner', esc(ownerLabel(row.owner) || '—')) +
+      kvRow('Instrument', row.isOption ? 'Option' : 'Equity / other') +
+      kvRow('Imported', esc((row.imported || '').replace('T', ' ').slice(0, 16) || '—')) +
+      kvRow('Source', esc(sourceLabel(row.source))) +
+      '</dl><div id="tradeSource"></div></div>';
+  var perf = '<div class="drawer-section"><h3>Performance since ' + (row.type === 'S' ? 'sale' : 'trade') + '</h3>' + PERF_GATE + '</div>';
+  var profile = row.ticker ? '<div class="drawer-section"><h3>Company</h3>' + PROFILE_GATE + '</div>' : '';
+  var notes = row.rawText ? '<div class="drawer-section"><h3>Filing notes</h3><pre class="raw-notes">' + esc(row.rawText) + '</pre></div>' : '';
+  var links = '<div class="drawer-section">' +
+    (row.ticker ? '<a class="drawer-all-link clickable" data-asset="' + esc(row.ticker) + '">View all trades of ' + esc(row.ticker) + ' →</a>' : '') +
+    (row.filerId ? '<a class="drawer-all-link clickable" data-member="' + esc(row.filerId) + '">View all trades by ' + esc(row.member) + ' →</a>' : '') +
+    '</div>';
+  openDrawer(head + summary + perf + profile + notes + links);
+  // Lazy-load the source-filing link (live rows have one; seed rows usually don't).
+  if (row.docId) {
+    fetch('/api/filings/' + encodeURIComponent(row.docId))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        var sEl = el('tradeSource'); if (!sEl) return;
+        var url = d && d.filing && d.filing.sourceUrl;
+        sEl.innerHTML = url
+          ? '<a class="source-link" href="' + esc(url) + '" target="_blank" rel="noopener">🔗 View source filing</a>'
+          : '<div class="tier-gate-note" style="margin-top:9px">Source document not stored for this row (historic import).</div>';
+      })
+      .catch(function () {});
+  }
+}
 
 /* ============================ ACCOUNT (auth + billing) ============================ */
 var ME = { user: null, entitlement: { premium: false, status: null, plan: null, trialing: false } };
@@ -1831,7 +1970,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
   };
 });
 
-/* Trends controls: re-run on change; ticker rows/cards open the deep-dive modal. */
+/* Trends controls: re-run on change; ticker rows/cards open the asset drawer. */
 ['trWindow', 'trChamber', 'trParty', 'trSource'].forEach(function (id) {
   var e = el(id); if (e) e.addEventListener('change', loadTrends);
 });
@@ -1840,9 +1979,37 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
   var v = el('view-trends');
   if (v) v.addEventListener('click', function (e) {
     var t = e.target && e.target.closest ? e.target.closest('[data-ticker]') : null;
-    if (t && t.getAttribute('data-ticker')) openTicker(t.getAttribute('data-ticker'));
+    if (t && t.getAttribute('data-ticker')) openAsset(t.getAttribute('data-ticker'));
   });
 })();
+
+/* Feed rows open the trade drawer; the asset chip and member open their drawers. */
+(function () {
+  var fb = el('feedBody');
+  if (fb) fb.addEventListener('click', function (e) {
+    if (!e.target.closest) return;
+    var a = e.target.closest('[data-asset]'); if (a) { openAsset(a.getAttribute('data-asset')); return; }
+    var m = e.target.closest('[data-member]'); if (m) { openMember(m.getAttribute('data-member')); return; }
+    var tr = e.target.closest('tr[data-txid]'); if (!tr) return;
+    var id = tr.getAttribute('data-txid');
+    for (var i = 0; i < TRADES.length; i++) { if (TRADES[i].id === id) { openTrade(TRADES[i]); return; } }
+  });
+})();
+
+/* Inside a drawer, asset/member links drill into the next drawer. */
+(function () {
+  var db = el('detailDrawerBody');
+  if (db) db.addEventListener('click', function (e) {
+    if (!e.target.closest) return;
+    var a = e.target.closest('[data-asset]'); if (a) { openAsset(a.getAttribute('data-asset')); return; }
+    var m = e.target.closest('[data-member]'); if (m) { openMember(m.getAttribute('data-member')); return; }
+  });
+})();
+
+/* Escape closes the detail drawer. */
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') closeDrawer();
+});
 
 // Sortable feed headers: click a column to sort, click again to flip direction.
 document.querySelectorAll('#feedHead th.sortable').forEach(function (th) {

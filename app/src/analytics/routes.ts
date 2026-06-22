@@ -19,7 +19,7 @@
 
 import { Hono } from 'hono';
 import type { Env } from '../shared/types';
-import { all, get } from '../shared/db';
+import { all, get, parseJson } from '../shared/db';
 import {
   asChamber,
   asPartyBucket,
@@ -39,6 +39,9 @@ import {
   buildFilingLagHistogramQuery,
   buildLateFilersQuery,
   buildMemberLeaderboardQuery,
+  buildMemberStatsQuery,
+  buildMemberTopTickersQuery,
+  buildMemberRecentTradesQuery,
   buildPartySplitQuery,
   buildPartySplitOverTimeQuery,
   buildSectorBreakdownQuery,
@@ -505,6 +508,94 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           fullName: str(row.full_name),
           partyBucket: asPartyBucket(row.party) ?? 'O',
           photoUrl: str(row.photo_url),
+        })),
+      });
+    });
+    return c.json(data);
+  });
+
+  // --- GET /member/:filerId (politician deep dive) -----------------------
+  r.get('/member/:filerId', async (c) => {
+    const q = c.req.query();
+    // Member view defaults to the full history (window=all) unless overridden.
+    const f = { ...commonFromQuery(q), window: asWindow(q.window, 'all') };
+    const filerId = c.req.param('filerId') || '';
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(filerId)) {
+      return c.json({ error: 'invalid member id' }, 400);
+    }
+    const key = cacheKey(`member:${filerId}`, f as never);
+    const data = await cached(c.env, key, 300, async () => {
+      const statsQ = buildMemberStatsQuery(filerId, f);
+      const topQ = buildMemberTopTickersQuery(filerId, f);
+      const recentQ = buildMemberRecentTradesQuery(filerId, f);
+      const [profileRow, statsRow, topRows, recentRows] = await Promise.all([
+        get<Record<string, unknown>>(
+          c.env.DB,
+          'SELECT bioguide_id, chamber, full_name, party, state, district, committees, photo_url FROM filers WHERE bioguide_id = ?',
+          [filerId],
+        ),
+        get<Record<string, unknown>>(c.env.DB, statsQ.sql, statsQ.params),
+        all<Record<string, unknown>>(c.env.DB, topQ.sql, topQ.params),
+        all<Record<string, unknown>>(c.env.DB, recentQ.sql, recentQ.params),
+      ]);
+      const s = statsRow ?? {};
+      const buyCount = num(s.buy_count);
+      const sellCount = num(s.sell_count);
+      const committees = profileRow
+        ? parseJson<string[]>(profileRow.committees, [])
+        : [];
+      return meta(f, {
+        filerId,
+        profile: profileRow
+          ? {
+              fullName: str(profileRow.full_name),
+              party: str(profileRow.party),
+              partyBucket: asPartyBucket(profileRow.party) ?? 'O',
+              chamber: str(profileRow.chamber),
+              state: str(profileRow.state),
+              district: str(profileRow.district),
+              committees: Array.isArray(committees) ? committees : [],
+              photoUrl: str(profileRow.photo_url),
+            }
+          : null,
+        stats: {
+          totalTrades: num(s.total_trades),
+          buyCount,
+          sellCount,
+          uniqueTickers: num(s.unique_tickers),
+          estVolumeUsd: usd(s.est_volume),
+          estNetFlowUsd: usd(s.est_net_flow),
+          netSentiment: netSentiment(buyCount, sellCount),
+          avgLagDays: s.avg_lag_days == null ? null : round(num(s.avg_lag_days), 1),
+          firstTrade: str(s.first_trade),
+          lastTrade: str(s.last_trade),
+        },
+        topTickers: topRows.map((row) => ({
+          ticker: str(row.ticker),
+          name: str(row.name),
+          tradeCount: num(row.trade_count),
+          buyCount: num(row.buy_count),
+          sellCount: num(row.sell_count),
+          estVolumeUsd: usd(row.est_volume),
+        })),
+        recentTrades: recentRows.map((row) => ({
+          id: str(row.id),
+          docId: str(row.doc_id),
+          ticker: str(row.ticker),
+          name: str(row.name),
+          assetName: str(row.asset_name),
+          txType: str(row.tx_type),
+          txDate: str(row.tx_date),
+          filedDate: str(row.filed_date),
+          sourceUrl: str(row.source_url),
+          owner: str(row.owner),
+          isOption: num(row.is_option) === 1,
+          estValueUsd: Math.round(
+            bracketMidpoint(
+              row.amount_min == null ? null : num(row.amount_min),
+              row.amount_max == null ? null : num(row.amount_max),
+            ),
+          ),
         })),
       });
     });

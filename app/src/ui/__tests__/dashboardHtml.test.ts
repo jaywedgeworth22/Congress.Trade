@@ -43,6 +43,19 @@ describe('DASHBOARD_HTML', () => {
     }
   });
 
+  it('wires the detail drawer (trade / asset / politician)', () => {
+    expect(DASHBOARD_HTML).toContain('id="detailDrawer"');
+    expect(DASHBOARD_HTML).toContain('id="detailDrawerBody"');
+    expect(DASHBOARD_HTML).toContain('function openDrawer(');
+    expect(DASHBOARD_HTML).toContain('function openTrade(');
+    expect(DASHBOARD_HTML).toContain('function openAsset(');
+    expect(DASHBOARD_HTML).toContain('function openMember(');
+    // member drawer hits the per-member analytics endpoint
+    expect(DASHBOARD_HTML).toContain("aGet('member/");
+    // the old centered ticker modal is fully replaced by the drawer
+    expect(DASHBOARD_HTML).not.toContain('tickerModal');
+  });
+
   it('keeps the educational + dollar-estimate disclaimers in the Trends view', () => {
     expect(DASHBOARD_HTML).toContain('estimates');
     expect(DASHBOARD_HTML.toLowerCase()).toContain('bracket');
