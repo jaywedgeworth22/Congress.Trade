@@ -8,21 +8,21 @@ import { describe, it, expect } from 'vitest';
 import { priceRangeQuery, mapSecurityRef } from '../rest';
 
 describe('priceRangeQuery', () => {
-  it('price_eod requires the ticker and orders ascending', () => {
+  it('price_eod selects volume, requires the ticker, orders ascending', () => {
     const q = priceRangeQuery('price_eod', 'AAPL');
-    expect(q.sql).toBe('SELECT date, close FROM price_eod WHERE ticker = ? ORDER BY date ASC');
+    expect(q.sql).toBe('SELECT date, close, volume FROM price_eod WHERE ticker = ? ORDER BY date ASC');
     expect(q.params).toEqual(['AAPL']);
   });
 
   it('applies inclusive from/to bounds (date-only) for a ticker', () => {
     const q = priceRangeQuery('price_eod', 'MSFT', '2025-01-01T00:00:00Z', '2025-06-30');
     expect(q.sql).toBe(
-      'SELECT date, close FROM price_eod WHERE ticker = ? AND date >= ? AND date <= ? ORDER BY date ASC',
+      'SELECT date, close, volume FROM price_eod WHERE ticker = ? AND date >= ? AND date <= ? ORDER BY date ASC',
     );
     expect(q.params).toEqual(['MSFT', '2025-01-01', '2025-06-30']);
   });
 
-  it('spx_eod has no ticker predicate', () => {
+  it('spx_eod has no ticker predicate and no volume column', () => {
     const q = priceRangeQuery('spx_eod', null, '2025-01-01');
     expect(q.sql).toBe('SELECT date, close FROM spx_eod WHERE date >= ? ORDER BY date ASC');
     expect(q.params).toEqual(['2025-01-01']);

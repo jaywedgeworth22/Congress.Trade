@@ -81,6 +81,21 @@ function csvCell(value: unknown): string {
 export function buildRestRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
+  // --- GET /health --------------------------------------------------------
+  // Liveness + D1 connectivity probe. Returns 200 always (so it's a usable
+  // healthcheck), with db:false when the database is unreachable/unmigrated.
+  r.get('/health', async (c) => {
+    let db = false;
+    let error: string | undefined;
+    try {
+      await get(c.env.DB, 'SELECT 1 AS ok');
+      db = true;
+    } catch (e) {
+      error = (e as Error).message;
+    }
+    return c.json({ ok: true, db, ...(error ? { error } : {}), time: new Date().toISOString() });
+  });
+
   // --- GET /transactions --------------------------------------------------
   // Reconciliation backstop: rows with cursor_seq > since, ASC, plus the max
   // cursor in the page so clients can poll forward deterministically.
@@ -267,7 +282,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   r.get('/market/prices/:ticker', async (c) => {
     const ticker = c.req.param('ticker').toUpperCase();
     const { sql, params } = priceRangeQuery('price_eod', ticker, c.req.query('from'), c.req.query('to'));
-    const closes = await all<{ date: string; close: number }>(c.env.DB, sql, params);
+    const closes = await all<{ date: string; close: number; volume?: number | null }>(c.env.DB, sql, params);
     const ref = await get<{ current_price: number | null; current_price_date: string | null }>(
       c.env.DB,
       'SELECT current_price, current_price_date FROM securities_ref WHERE ticker = ?',
@@ -278,6 +293,60 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       closes,
       currentPrice: ref?.current_price ?? null,
       currentPriceDate: ref?.current_price_date ?? null,
+    });
+  });
+
+  // GET /market/insider/:ticker?from=&to= -> insider (Form 4) daily aggregates.
+  r.get('/market/insider/:ticker', async (c) => {
+    const ticker = c.req.param('ticker').toUpperCase();
+    const where = ['ticker = ?'];
+    const params: (string | number)[] = [ticker];
+    const from = c.req.query('from');
+    const to = c.req.query('to');
+    if (from) { where.push('date >= ?'); params.push(from.slice(0, 10)); }
+    if (to) { where.push('date <= ?'); params.push(to.slice(0, 10)); }
+    const rows = await all<{
+      date: string; sentiment: number | null; buy_filings: number | null;
+      sell_filings: number | null; buy_shares: number | null; sell_shares: number | null;
+      owners: string | null;
+    }>(
+      c.env.DB,
+      `SELECT date, sentiment, buy_filings, sell_filings, buy_shares, sell_shares, owners
+         FROM insider_eod WHERE ${where.join(' AND ')} ORDER BY date ASC`,
+      params,
+    );
+    return c.json({
+      ticker,
+      rows: rows.map((r2) => ({
+        date: r2.date,
+        sentiment: r2.sentiment,
+        buyFilings: r2.buy_filings,
+        sellFilings: r2.sell_filings,
+        buyShares: r2.buy_shares,
+        sellShares: r2.sell_shares,
+        owners: r2.owners ? (safeParse(r2.owners) ?? []) : [],
+      })),
+    });
+  });
+
+  // GET /market/short-volume/:ticker?from=&to= -> FINRA short-volume daily.
+  r.get('/market/short-volume/:ticker', async (c) => {
+    const ticker = c.req.param('ticker').toUpperCase();
+    const where = ['ticker = ?'];
+    const params: (string | number)[] = [ticker];
+    const from = c.req.query('from');
+    const to = c.req.query('to');
+    if (from) { where.push('date >= ?'); params.push(from.slice(0, 10)); }
+    if (to) { where.push('date <= ?'); params.push(to.slice(0, 10)); }
+    const rows = await all<{ date: string; short_volume_ratio: number | null; elevated: number }>(
+      c.env.DB,
+      `SELECT date, short_volume_ratio, elevated FROM short_volume_eod
+        WHERE ${where.join(' AND ')} ORDER BY date ASC`,
+      params,
+    );
+    return c.json({
+      ticker,
+      rows: rows.map((r2) => ({ date: r2.date, ratio: r2.short_volume_ratio, elevated: r2.elevated === 1 })),
     });
   });
 
@@ -295,7 +364,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const to = c.req.query('to');
     const refRow = await get<SecurityRefRow>(c.env.DB, 'SELECT * FROM securities_ref WHERE ticker = ?', [ticker]);
     const pq = priceRangeQuery('price_eod', ticker, from, to);
-    const closes = await all<{ date: string; close: number }>(c.env.DB, pq.sql, pq.params);
+    const closes = await all<{ date: string; close: number; volume?: number | null }>(c.env.DB, pq.sql, pq.params);
     const sq = priceRangeQuery('spx_eod', null, from, to);
     const spx = await all<{ date: string; close: number }>(c.env.DB, sq.sql, sq.params);
     return c.json({
@@ -520,5 +589,16 @@ export function priceRangeQuery(
     params.push(to.slice(0, 10));
   }
   const clause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
-  return { sql: `SELECT date, close FROM ${table}${clause} ORDER BY date ASC`, params };
+  // price_eod carries a daily volume column; spx_eod does not.
+  const cols = table === 'price_eod' ? 'date, close, volume' : 'date, close';
+  return { sql: `SELECT ${cols} FROM ${table}${clause} ORDER BY date ASC`, params };
+}
+
+/** JSON.parse that returns null instead of throwing. */
+function safeParse(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
 }

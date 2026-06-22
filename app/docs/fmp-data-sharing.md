@@ -55,21 +55,31 @@ arrays. Send whichever you have:
   ],
   // S&P 500 daily closes (from FMP /v3/historical-price-full/%5EGSPC). Send once/day.
   "spx": [ { "date": "2026-06-15", "close": 5400.2 } ],
-  // Per-ticker daily closes (from FMP /v3/historical-price-full/{symbol})
+  // Per-ticker daily closes (+ optional volume) from your OHLC source
   "prices": [
     {
       "ticker": "AAPL",
-      "closes": [ { "date": "2026-06-15", "close": 210.1 } ],
+      "closes": [ { "date": "2026-06-15", "close": 210.1, "volume": 41230000 } ],
       "currentPrice": 210.1,
       "currentPriceDate": "2026-06-15"
     }
-  ]
+  ],
+  // Insider (SEC Form 4) daily aggregates, keyed by ticker+date
+  "insider": [
+    { "ticker": "AAPL", "date": "2026-06-15", "sentiment": 62,
+      "buyFilings": 3, "sellFilings": 1, "buyShares": 12000, "sellShares": 2000,
+      "owners": ["Jane Director", "John Officer"] }
+  ],
+  // FINRA short-volume daily, keyed by ticker+date
+  "shortVolume": [ { "ticker": "AAPL", "date": "2026-06-15", "ratio": 48.3, "elevated": false } ]
 }
 ```
 
-App A upserts `securities_ref` / `spx_eod` / `price_eod` and recomputes per-trade
-performance anchors for any imported ticker. Response: `{ ok, refs, spxRows,
-pricedTickers, priceRows, perfTickers, errors }`.
+App A upserts `securities_ref` / `spx_eod` / `price_eod` / `insider_eod` /
+`short_volume_eod` and recomputes per-trade performance anchors for any imported
+ticker. Response: `{ ok, refs, spxRows, pricedTickers, priceRows, perfTickers,
+insiderRows, shortVolumeRows, errors }`. All upserts are non-destructive (an
+incoming null never overwrites an existing value).
 
 **Partial refs are fine.** If the sending app only has some columns (e.g.
 `companyName` / `sector` / `industry` / `marketCap` but no `cik` / `exchange` /
@@ -163,7 +173,11 @@ GET /api/market/refs?tickers=AAPL,MSFT,...        -> { refs: [...] }   (≤500)
 GET /api/market/prices/{TICKER}?from=&to=         -> { ticker, closes:[{date,close}], currentPrice, currentPriceDate }
 GET /api/market/spx?from=&to=                     -> { closes:[{date,close}] }
 GET /api/market/bundle/{TICKER}?from=&to=         -> { ref, prices, spx }   (one round-trip)
+GET /api/market/insider/{TICKER}?from=&to=        -> { ticker, rows:[{date,sentiment,buyFilings,sellFilings,buyShares,sellShares,owners}] }
+GET /api/market/short-volume/{TICKER}?from=&to=   -> { ticker, rows:[{date,ratio,elevated}] }
 ```
+
+`price` closes now include `volume` (null until populated).
 
 `from` / `to` are optional inclusive `YYYY-MM-DD` bounds. No auth required (reads
 are safe). Suggested App B flow per symbol:
@@ -186,3 +200,52 @@ if (ref && prices.closes.length) {
 - Reads are public and safe to call from anywhere.
 
 ---
+
+## Congressional trades feed (App A is the system of record)
+
+Stop scraping congressional disclosures elsewhere — read them from App A:
+
+```
+GET https://congress.trade/api/transactions?since={cursor}&ticker=&member=&chamber=&type=&limit=
+    -> { transactions:[...], cursor, count, total, limit, premium, gated, freeWindowDays }
+GET https://congress.trade/api/analytics/...   (leaderboards, cluster buys, sector mix, per-ticker, …)
+```
+
+Poll forward with the returned `cursor` (pass it as the next `since`).
+
+**The feed is fully public** — no token, no row gating. Page forward by cursor to
+cover any window (e.g. a rolling 90 days); pass `limit` for page size. (The
+freemium boundary is only the premium-only full-history CSV export + analytics,
+not the feed rows.)
+
+Per-transaction object (each item in `transactions[]`):
+
+```
+{ id, docId, filerId, txDate, owner, assetName, ticker, assetType, txType,
+  amountMin, amountMax, isOption, capGainsOver200, rawText, confidence,
+  source, createdAt, cursorSeq,
+  fullName, state, photoUrl, filedDate, firstSeenAt,
+  chamber, memberName, refSector, refMarketCap, refCountry, refExchangeShort }
+```
+
+Mapping to a typical `CongressTrade`:
+
+| CongressTrade | from |
+|---|---|
+| `symbol` | `ticker` |
+| `member` | `memberName` (or `fullName`) |
+| `chamber` | `chamber` (`"house"｜"senate"`) |
+| `side` | `txType`: `P`→buy, `S`/`S_partial`→sell (ignore others) |
+| `amountLow` / `amountHigh` | `amountMin` / `amountMax` |
+| `owner` | `owner` (Self/Joint/Spouse/Child) |
+| `tradedAt` | `txDate` (date-only `YYYY-MM-DD`) |
+| `disclosedAt` | `filedDate` (date-only `YYYY-MM-DD`) |
+| `source` | `source` (`primary`｜`seed_dataset`) |
+
+## Ops / health
+
+- `GET /api/health` → `{ ok, db, time }` — liveness + D1 connectivity (`db:false`
+  means the database is unreachable or unmigrated).
+- **Apply migrations to production** (the common cause of 500s on DB-backed
+  routes): `npm run migrate:remote` (or `npm run deploy:full` to migrate + deploy
+  in one step). The plain `npm run migrate` is **local-only**.
