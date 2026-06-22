@@ -106,6 +106,15 @@ export interface Transaction {
   createdAt: string;
   /** Monotonic cursor for REST `?since=` paging. Assigned at insert. */
   cursorSeq: number;
+  // --- Optional resolved filer identity (feed/stream only) -----------------
+  // Populated only on the dashboard feed + SSE paths (LEFT JOIN filers); absent
+  // on the webhook/normalizer paths, hence optional. null when unresolved.
+  /** Filer's full name resolved from the filers table. */
+  fullName?: string | null;
+  /** Filer's state (e.g. 'CA') resolved from the filers table. */
+  state?: string | null;
+  /** Filer's headshot URL (unitedstates/images CDN); null = show initials. */
+  photoUrl?: string | null;
 }
 
 /**

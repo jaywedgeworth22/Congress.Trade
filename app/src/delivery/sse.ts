@@ -32,7 +32,7 @@
 
 import type { Env, Subscription, Transaction } from '../shared/types';
 import { all, get } from '../shared/db';
-import { mapSubscription, mapTransaction, type SubscriptionRow, type TransactionRow } from './rows';
+import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows';
 import { matchesFiltersWithChamber } from './subscriptions';
 
 /** How often to poll D1 for new rows. */
@@ -148,11 +148,14 @@ async function drain(
   let hwm = cursor;
   // Loop pages until a short page (fewer than PAGE_SIZE rows) is returned.
   for (;;) {
-    const rows = await all<TransactionRow & { __chamber: string | null }>(
+    const rows = await all<FeedTransactionRow & { __chamber: string | null }>(
       env.DB,
-      `SELECT t.*, f.chamber AS __chamber
+      `SELECT t.*, f.chamber AS __chamber,
+              fl.full_name AS filer_full_name, fl.state AS filer_state,
+              fl.photo_url AS filer_photo_url
          FROM transactions t
          LEFT JOIN filings f ON f.doc_id = t.doc_id
+         LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id
         WHERE t.cursor_seq > ?
         ORDER BY t.cursor_seq ASC
         LIMIT ?`,
@@ -161,7 +164,7 @@ async function drain(
     if (rows.length === 0) break;
 
     for (const row of rows) {
-      const tx: Transaction = mapTransaction(row);
+      const tx: Transaction = mapFeedTransaction(row);
       const chamber = row.__chamber ?? null;
       hwm = Math.max(hwm, tx.cursorSeq);
       if (!matchesFiltersWithChamber(tx, sub.filters, chamber)) continue;
