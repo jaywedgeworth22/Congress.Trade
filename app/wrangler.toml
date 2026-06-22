@@ -18,7 +18,7 @@ crons = ["* * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "congress-feed-db"
-database_id = "PLACEHOLDER_D1_DATABASE_ID"
+database_id = "b4618a12-5c2d-4384-9762-61ad792db5af"
 migrations_dir = "migrations"
 
 # ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ dead_letter_queue = "congress-feed-delivery-dlq"
 # ---------------------------------------------------------------------------
 [[kv_namespaces]]
 binding = "CONFIG_KV"
-id = "PLACEHOLDER_KV_NAMESPACE_ID"
+id = "b5554a8cd8b04347baeb80cd160bf1e0"
 
 # ---------------------------------------------------------------------------
 # Secrets (set via `wrangler secret put <NAME>`) — DO NOT commit real values.

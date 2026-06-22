@@ -1,5 +1,5 @@
 /**
- * src/ui/dashboard.html.ts
+ * src/ui/dashboardHtml.ts
  * OWNER: dashboard agent
  *
  * The full dashboard document as a single exported template string, ported from
