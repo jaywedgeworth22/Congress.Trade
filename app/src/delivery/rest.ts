@@ -22,6 +22,7 @@ import type { Chamber, Env, SubscriptionFilters, TxType } from '../shared/types'
 import { all, get } from '../shared/db';
 import {
   buildTransactionsQuery,
+  buildTransactionsCountQuery,
   mapFiling,
   mapTransaction,
   mapFeedTransaction,
@@ -70,16 +71,33 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       limit: parseIntOrUndef(q.limit),
     };
     const built = buildTransactionsQuery(params);
-    const rows = await all<FeedTransactionRow>(c.env.DB, built.sql, built.params);
-    const transactions = rows.map(mapFeedTransaction);
+    // The query SELECTs the resolved chamber + member name alongside the feed
+    // columns via `__chamber` / `__member_name` (see buildTransactionsQuery).
+    // mapFeedTransaction maps the filer/filing columns (fullName, state,
+    // photoUrl, dates); we then attach the resolved `chamber` / `memberName`,
+    // which aren't part of the base Transaction type.
+    const rows = await all<
+      FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null }
+    >(c.env.DB, built.sql, built.params);
+    const transactions = rows.map((row) => ({
+      ...mapFeedTransaction(row),
+      chamber: (row.__chamber as Chamber | null) ?? null,
+      memberName: row.__member_name ?? null,
+    }));
     const maxCursor = transactions.reduce(
       (m, t) => (t.cursorSeq > m ? t.cursorSeq : m),
       params.since ?? 0,
     );
+    // Total = ALL rows matching the same ticker/member/type/chamber filters,
+    // ignoring the cursor backstop (so the UI can show "showing X of N").
+    const countQuery = buildTransactionsCountQuery(params);
+    const countRow = await get<{ total: number }>(c.env.DB, countQuery.sql, countQuery.params);
+    const total = countRow?.total ?? transactions.length;
     return c.json({
       transactions,
       cursor: maxCursor,
       count: transactions.length,
+      total,
       limit: built.limit,
     });
   });

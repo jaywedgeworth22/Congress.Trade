@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildTransactionsQuery,
+  buildTransactionsCountQuery,
   mapFeedTransaction,
   DEFAULT_TX_LIMIT,
   MAX_TX_LIMIT,
@@ -47,11 +48,21 @@ describe('buildTransactionsQuery', () => {
     expect(q.params).toEqual([0, 'S']);
   });
 
-  it('joins filings to filter by chamber', () => {
+  it('resolves chamber via the filers table (authoritative for seed data)', () => {
     const q = buildTransactionsQuery({ chamber: 'senate' });
+    // filers is the authoritative chamber source; seed trades have a filers
+    // row but no filings row. We still LEFT JOIN filings and COALESCE so live
+    // rows resolve when filer meta is missing.
+    expect(q.sql).toContain('LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id');
     expect(q.sql).toContain('LEFT JOIN filings f ON f.doc_id = t.doc_id');
-    expect(q.sql).toContain('f.chamber = ?');
+    expect(q.sql).toContain('COALESCE(fl.chamber, f.chamber) = ?');
     expect(q.params).toEqual([0, 'senate']);
+  });
+
+  it('selects the resolved chamber + member name alongside t.*', () => {
+    const q = buildTransactionsQuery({});
+    expect(q.sql).toContain('SELECT t.*, COALESCE(fl.chamber, f.chamber) AS __chamber');
+    expect(q.sql).toContain('fl.full_name AS __member_name');
   });
 
   it('joins filers to project the member name/state/headshot for the feed', () => {
@@ -99,6 +110,42 @@ describe('buildTransactionsQuery', () => {
     // The malicious string must appear only as a bound parameter, never in SQL.
     expect(q.sql).not.toContain('DROP TABLE');
     expect(q.params).toContain("'; DROP TABLE TRANSACTIONS;--");
+  });
+});
+
+describe('buildTransactionsCountQuery', () => {
+  it('counts ALL rows ignoring the cursor backstop', () => {
+    const q = buildTransactionsCountQuery({ since: 1234 });
+    expect(q.sql).toContain('SELECT COUNT(*) AS total');
+    // No cursor clause and no since param: total spans the whole filtered set.
+    expect(q.sql).not.toContain('cursor_seq');
+    expect(q.params).toEqual([]);
+  });
+
+  it('reuses the same ticker/member/type filters (minus the cursor)', () => {
+    const q = buildTransactionsCountQuery({
+      since: 99,
+      ticker: 'msft',
+      member: 'M000001',
+      type: 'P',
+    });
+    expect(q.sql).toContain('t.ticker = ?');
+    expect(q.sql).toContain('t.filer_id = ?');
+    expect(q.sql).toContain('t.tx_type = ?');
+    expect(q.params).toEqual(['MSFT', 'M000001', 'P']);
+  });
+
+  it('filters chamber via the filers table (COALESCE), same as the page query', () => {
+    const q = buildTransactionsCountQuery({ chamber: 'senate' });
+    expect(q.sql).toContain('LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id');
+    expect(q.sql).toContain('COALESCE(fl.chamber, f.chamber) = ?');
+    expect(q.params).toEqual(['senate']);
+  });
+
+  it('emits no WHERE clause when there are no filters', () => {
+    const q = buildTransactionsCountQuery({});
+    expect(q.sql).not.toContain('WHERE');
+    expect(q.params).toEqual([]);
   });
 });
 
