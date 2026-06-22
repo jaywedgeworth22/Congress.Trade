@@ -4,7 +4,6 @@ import {
   buildTransactionsCountQuery,
   buildTransactionsExportQuery,
   MAX_EXPORT_ROWS,
-  FREE_WINDOW_DAYS,
 } from '../rows';
 import { buildRestRouter } from '../rest';
 import type { Env } from '../../shared/types';
@@ -65,15 +64,16 @@ function fakeEnv(): Env {
   } as unknown as Env;
 }
 
-describe('GET /transactions gating for anonymous visitors', () => {
-  it('returns gated:true, premium:false, and the free window size', async () => {
+describe('GET /transactions is public (ungated)', () => {
+  it('returns a transactions array with no gating flags for anonymous visitors', async () => {
     const app = buildRestRouter();
     const res = await app.request('http://localhost/transactions', {}, fakeEnv());
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { premium: boolean; gated: boolean; freeWindowDays?: number };
-    expect(body.premium).toBe(false);
-    expect(body.gated).toBe(true);
-    expect(body.freeWindowDays).toBe(FREE_WINDOW_DAYS);
+    const body = (await res.json()) as { transactions: unknown[]; gated?: boolean; premium?: boolean };
+    expect(Array.isArray(body.transactions)).toBe(true);
+    // No freemium gate on the feed itself — premium is enforced on export.
+    expect(body.gated).toBeUndefined();
+    expect(body.premium).toBeUndefined();
   });
 });
 

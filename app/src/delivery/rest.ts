@@ -27,8 +27,6 @@ import {
   mapFiling,
   mapTransaction,
   mapFeedTransaction,
-  FREE_WINDOW_DAYS,
-  FREE_TX_LIMIT,
   type FilingRow,
   type TransactionRow,
   type FeedTransactionRow,
@@ -88,7 +86,11 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // cursor in the page so clients can poll forward deterministically.
   r.get('/transactions', async (c) => {
     const q = c.req.query();
-    const premium = isPremiumUser(await getCurrentUser(c));
+    // The live feed is fully public — it's the site's SEO/discovery hook. The
+    // freemium boundary is premium-only *full-history export* + analytics (see
+    // /export/transactions.csv), not hiding feed rows. (Earlier this gated the
+    // feed to the last 30 days for logged-out visitors, which emptied the page
+    // on datasets without recent filings.)
     const params: TxQueryParams = {
       since: parseIntOrUndef(q.since),
       ticker: q.ticker || undefined,
@@ -97,13 +99,6 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       type: asTxType(q.type),
       limit: parseIntOrUndef(q.limit),
     };
-    // Freemium gate: non-premium visitors see only the recent window and a
-    // smaller page. The count query honors `filedSince` too, so "X of N" and the
-    // Load-more affordance reflect exactly what the visitor can access.
-    if (!premium) {
-      params.filedSince = isoDateDaysAgo(FREE_WINDOW_DAYS);
-      params.limit = Math.min(params.limit ?? FREE_TX_LIMIT, FREE_TX_LIMIT);
-    }
     const built = buildTransactionsQuery(params);
     // The query SELECTs the resolved chamber + member name alongside the feed
     // columns via `__chamber` / `__member_name` (see buildTransactionsQuery).
@@ -133,10 +128,6 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       count: transactions.length,
       total,
       limit: built.limit,
-      premium,
-      // When gated, tell the client why so it can surface an upgrade CTA.
-      gated: !premium,
-      ...(premium ? {} : { freeWindowDays: FREE_WINDOW_DAYS }),
     });
   });
 
