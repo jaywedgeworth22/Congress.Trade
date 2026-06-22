@@ -324,6 +324,8 @@ export interface Env {
   /** Resend API key + verified from-address for magic-link sign-in emails. */
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
+  /** Recipient for operational alert emails (e.g. FMP tier failures); reuses RESEND_API_KEY + EMAIL_FROM. */
+  ALERT_EMAIL?: string;
   /** Public base URL (e.g. https://congress.trade) for OAuth redirects + links. */
   APP_BASE_URL?: string;
 
