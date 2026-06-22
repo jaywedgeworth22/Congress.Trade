@@ -1,0 +1,48 @@
+/**
+ * src/admin/__tests__/ingestToken.test.ts
+ *
+ * The scoped INGEST_TOKEN must unlock ONLY POST /securities/import — never any
+ * other admin route — and must not weaken the existing ADMIN_TOKEN gate.
+ */
+import { describe, it, expect } from 'vitest';
+import { buildAdminRouter } from '../routes';
+
+const app = buildAdminRouter();
+
+function post(path: string, token: string | null, env: Record<string, unknown>) {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return app.request(path, { method: 'POST', headers, body: '{}' }, env as never);
+}
+
+describe('scoped INGEST_TOKEN', () => {
+  const env = { ADMIN_TOKEN: 'admin-secret', INGEST_TOKEN: 'ingest-secret' };
+
+  it('unlocks /securities/import with the ingest token (empty body is a no-op)', async () => {
+    const res = await post('/securities/import', 'ingest-secret', env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; refs: number };
+    expect(body.ok).toBe(true);
+    expect(body.refs).toBe(0);
+  });
+
+  it('does NOT unlock other admin routes with the ingest token', async () => {
+    const res = await post('/reprocess', 'ingest-secret', env);
+    expect(res.status).toBe(401);
+  });
+
+  it('still rejects a bad token on the import endpoint', async () => {
+    const res = await post('/securities/import', 'nope', env);
+    expect(res.status).toBe(401);
+  });
+
+  it('admin token continues to work on the import endpoint', async () => {
+    const res = await post('/securities/import', 'admin-secret', env);
+    expect(res.status).toBe(200);
+  });
+
+  it('ignores the ingest path when INGEST_TOKEN is unset', async () => {
+    const res = await post('/securities/import', 'ingest-secret', { ADMIN_TOKEN: 'admin-secret' });
+    expect(res.status).toBe(401);
+  });
+});

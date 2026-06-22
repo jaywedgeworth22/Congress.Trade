@@ -119,6 +119,14 @@ export interface Transaction {
   filedDate?: string | null;
   /** When our watcher first saw the filing (timestamp). Feed only. */
   firstSeenAt?: string | null;
+  // --- Optional cross-referenced asset data (securities_ref; feed only) ------
+  // Populated when the ticker has been enriched; null/absent otherwise.
+  refSector?: string | null;
+  refMarketCap?: number | null;
+  refMarketCapBucket?: string | null;
+  refCountry?: string | null;
+  refExchangeShort?: string | null;
+  refAssetClass?: string | null;
 }
 
 /**
@@ -302,6 +310,10 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   /** OpenAI API key — GPT vision candidates in the extractor bake-off. */
   OPENAI_API_KEY?: string;
+  /** Financial Modeling Prep key — enables asset enrichment + price/performance. */
+  FMP_API_KEY?: string;
+  /** Daily FMP call budget (stringified int); defaults to 230 when unset. */
+  FMP_DAILY_CALL_CAP?: string;
   /** HMAC key for signing outbound webhook payloads. */
   WEBHOOK_SIGNING_KEY?: string;
 

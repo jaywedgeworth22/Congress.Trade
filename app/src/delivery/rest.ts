@@ -236,6 +236,90 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
+  // --- Market cache reads (cross-app sharing, reverse direction) ----------
+  // App A is the always-on system of record; these public, read-only endpoints
+  // let a sibling app reuse the FMP-derived data App A has already pulled
+  // (cache-aside) instead of spending its own FMP quota. Shapes mirror the
+  // POST /api/admin/securities/import payload, so the two apps are symmetric.
+
+  // GET /market/ref/:ticker -> the cached securities_ref row (or 404).
+  r.get('/market/ref/:ticker', async (c) => {
+    const ticker = c.req.param('ticker').toUpperCase();
+    const row = await get<SecurityRefRow>(
+      c.env.DB,
+      'SELECT * FROM securities_ref WHERE ticker = ?',
+      [ticker],
+    );
+    if (!row) return c.json({ error: 'ticker not found' }, 404);
+    return c.json({ ref: mapSecurityRef(row) });
+  });
+
+  // GET /market/refs?tickers=AAPL,MSFT,... -> cached refs for many tickers.
+  r.get('/market/refs', async (c) => {
+    const tickers = (c.req.query('tickers') || '')
+      .split(',')
+      .map((t) => t.trim().toUpperCase())
+      .filter(Boolean)
+      .slice(0, 500);
+    if (tickers.length === 0) return c.json({ refs: [] });
+    const placeholders = tickers.map(() => '?').join(',');
+    const rows = await all<SecurityRefRow>(
+      c.env.DB,
+      `SELECT * FROM securities_ref WHERE ticker IN (${placeholders})`,
+      tickers,
+    );
+    return c.json({ refs: rows.map(mapSecurityRef) });
+  });
+
+  // GET /market/prices/:ticker?from=YYYY-MM-DD&to=YYYY-MM-DD
+  //   -> { ticker, closes:[{date,close}], currentPrice, currentPriceDate }.
+  r.get('/market/prices/:ticker', async (c) => {
+    const ticker = c.req.param('ticker').toUpperCase();
+    const { sql, params } = priceRangeQuery('price_eod', ticker, c.req.query('from'), c.req.query('to'));
+    const closes = await all<{ date: string; close: number }>(c.env.DB, sql, params);
+    const ref = await get<{ current_price: number | null; current_price_date: string | null }>(
+      c.env.DB,
+      'SELECT current_price, current_price_date FROM securities_ref WHERE ticker = ?',
+      [ticker],
+    );
+    return c.json({
+      ticker,
+      closes,
+      currentPrice: ref?.current_price ?? null,
+      currentPriceDate: ref?.current_price_date ?? null,
+    });
+  });
+
+  // GET /market/spx?from=YYYY-MM-DD&to=YYYY-MM-DD -> S&P 500 cached closes.
+  r.get('/market/spx', async (c) => {
+    const { sql, params } = priceRangeQuery('spx_eod', null, c.req.query('from'), c.req.query('to'));
+    const closes = await all<{ date: string; close: number }>(c.env.DB, sql, params);
+    return c.json({ closes });
+  });
+
+  // GET /market/bundle/:ticker?from=&to= -> ref + prices + spx in one call.
+  r.get('/market/bundle/:ticker', async (c) => {
+    const ticker = c.req.param('ticker').toUpperCase();
+    const from = c.req.query('from');
+    const to = c.req.query('to');
+    const refRow = await get<SecurityRefRow>(c.env.DB, 'SELECT * FROM securities_ref WHERE ticker = ?', [ticker]);
+    const pq = priceRangeQuery('price_eod', ticker, from, to);
+    const closes = await all<{ date: string; close: number }>(c.env.DB, pq.sql, pq.params);
+    const sq = priceRangeQuery('spx_eod', null, from, to);
+    const spx = await all<{ date: string; close: number }>(c.env.DB, sq.sql, sq.params);
+    return c.json({
+      ticker,
+      ref: refRow ? mapSecurityRef(refRow) : null,
+      prices: {
+        ticker,
+        closes,
+        currentPrice: refRow?.current_price ?? null,
+        currentPriceDate: refRow?.current_price_date ?? null,
+      },
+      spx,
+    });
+  });
+
   // --- GET /members -------------------------------------------------------
   // Filers that actually appear in the transaction feed, joined to filer meta.
   r.get('/members', async (c) => {
@@ -361,4 +445,89 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   });
 
   return r;
+}
+
+// --- Market cache read helpers (cross-app sharing) ------------------------
+
+interface SecurityRefRow {
+  ticker: string;
+  company_name: string | null;
+  sector: string | null;
+  industry: string | null;
+  asset_class: string | null;
+  is_etf: number | null;
+  is_adr: number | null;
+  country: string | null;
+  state_hq: string | null;
+  state_of_incorp: string | null;
+  exchange: string | null;
+  exchange_short: string | null;
+  currency: string | null;
+  market_cap: number | null;
+  market_cap_bucket: string | null;
+  ipo_date: string | null;
+  cik: string | null;
+  sic_code: string | null;
+  sic_description: string | null;
+  source: string | null;
+  enriched_at: string | null;
+  current_price: number | null;
+  current_price_date: string | null;
+}
+
+/** Map a securities_ref row to the camelCase shape the import API accepts. */
+export function mapSecurityRef(row: SecurityRefRow) {
+  return {
+    ticker: row.ticker,
+    companyName: row.company_name,
+    sector: row.sector,
+    industry: row.industry,
+    assetClass: row.asset_class,
+    isEtf: row.is_etf === 1,
+    isAdr: row.is_adr === 1,
+    country: row.country,
+    stateHq: row.state_hq,
+    stateOfIncorp: row.state_of_incorp,
+    exchange: row.exchange,
+    exchangeShort: row.exchange_short,
+    currency: row.currency,
+    marketCap: row.market_cap,
+    marketCapBucket: row.market_cap_bucket,
+    ipoDate: row.ipo_date,
+    cik: row.cik,
+    sicCode: row.sic_code,
+    sicDescription: row.sic_description,
+    source: row.source,
+    enrichedAt: row.enriched_at,
+    currentPrice: row.current_price,
+    currentPriceDate: row.current_price_date,
+  };
+}
+
+/**
+ * Build an ascending close-series query for price_eod (needs a ticker) or
+ * spx_eod (no ticker), with optional inclusive from/to date bounds.
+ */
+export function priceRangeQuery(
+  table: 'price_eod' | 'spx_eod',
+  ticker: string | null,
+  from?: string,
+  to?: string,
+): { sql: string; params: (string | number)[] } {
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+  if (table === 'price_eod' && ticker) {
+    where.push('ticker = ?');
+    params.push(ticker);
+  }
+  if (from) {
+    where.push('date >= ?');
+    params.push(from.slice(0, 10));
+  }
+  if (to) {
+    where.push('date <= ?');
+    params.push(to.slice(0, 10));
+  }
+  const clause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
+  return { sql: `SELECT date, close FROM ${table}${clause} ORDER BY date ASC`, params };
 }

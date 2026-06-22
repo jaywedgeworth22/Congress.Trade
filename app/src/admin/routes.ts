@@ -46,6 +46,10 @@ import {
   type CandidateDocResult,
   type Provider,
 } from '../extraction/bakeoff';
+import { runEnrichment, getDailyUsed, importSecurityRef } from '../enrichment/service';
+import { mergeRefs } from '../enrichment/compute';
+import type { SecurityRef } from '../enrichment/types';
+import { runPriceRefresh } from '../prices/service';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -57,7 +61,23 @@ type EnvWithAdmin = Env & {
   ACCESS_TEAM_DOMAIN?: string;
   /** Cloudflare Access application AUD tag. */
   ACCESS_AUD?: string;
+  /**
+   * Scoped bearer token that unlocks ONLY POST /securities/import (the
+   * cross-app data-sharing endpoint). Lets a sibling app push FMP data without
+   * holding the full ADMIN_TOKEN. Optional; ignored if unset.
+   */
+  INGEST_TOKEN?: string;
 };
+
+/** True when the request is a bearer-authenticated call to the import endpoint. */
+function isAuthorizedIngest(env: EnvWithAdmin, path: string, authorization?: string): boolean {
+  const token = env.INGEST_TOKEN;
+  return (
+    !!token &&
+    path.endsWith('/securities/import') &&
+    authorization === `Bearer ${token}`
+  );
+}
 
 let warnedOpenAdmin = false;
 
@@ -223,11 +243,15 @@ function photoUrlFor(bioguide: string): string {
 export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
-  // Auth gate applied to every admin route: bearer token OR Cloudflare Access.
+  // Auth gate applied to every admin route: full admin (bearer token OR
+  // Cloudflare Access), or — for /securities/import only — the scoped
+  // INGEST_TOKEN so a sibling app can push shared data without admin rights.
   r.use('*', async (c, next) => {
     const env = c.env as EnvWithAdmin;
+    const authorization = c.req.header('Authorization');
+    if (isAuthorizedIngest(env, c.req.path, authorization)) return next();
     const ok = await isAuthorized(env, {
-      authorization: c.req.header('Authorization'),
+      authorization,
       accessJwt: c.req.header('Cf-Access-Jwt-Assertion'),
     });
     if (!ok) return c.json({ error: 'unauthorized' }, 401);
@@ -797,6 +821,32 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'ALTER TABLE users ADD COLUMN cancel_at_period_end INTEGER NOT NULL DEFAULT 0',
       'ALTER TABLE users ADD COLUMN trial_end TEXT',
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_stripe_customer ON users (stripe_customer_id)',
+      // 0005_securities_ref.sql — asset reference data (sector, market cap, …).
+      `CREATE TABLE IF NOT EXISTS securities_ref (
+         ticker            TEXT PRIMARY KEY,
+         company_name      TEXT, sector TEXT, industry TEXT, asset_class TEXT,
+         is_etf INTEGER NOT NULL DEFAULT 0, is_adr INTEGER NOT NULL DEFAULT 0,
+         country TEXT, state_hq TEXT, state_of_incorp TEXT,
+         exchange TEXT, exchange_short TEXT, currency TEXT,
+         market_cap INTEGER, market_cap_bucket TEXT, ipo_date TEXT,
+         cik TEXT, sic_code TEXT, sic_description TEXT,
+         source TEXT, enriched_at TEXT, enrichment_error TEXT
+       )`,
+      'CREATE INDEX IF NOT EXISTS idx_secref_sector ON securities_ref (sector)',
+      'CREATE INDEX IF NOT EXISTS idx_secref_bucket ON securities_ref (market_cap_bucket)',
+      'CREATE INDEX IF NOT EXISTS idx_secref_enriched ON securities_ref (enriched_at)',
+      // 0006_prices.sql — price history + per-trade performance vs S&P 500.
+      `CREATE TABLE IF NOT EXISTS price_eod (
+         ticker TEXT NOT NULL, date TEXT NOT NULL, close REAL NOT NULL,
+         PRIMARY KEY (ticker, date)
+       )`,
+      'CREATE INDEX IF NOT EXISTS idx_price_eod_ticker_date ON price_eod (ticker, date DESC)',
+      'CREATE TABLE IF NOT EXISTS spx_eod (date TEXT PRIMARY KEY, close REAL NOT NULL)',
+      `CREATE TABLE IF NOT EXISTS tx_performance (
+         tx_id TEXT PRIMARY KEY, price_at_trade REAL, spx_at_trade REAL, computed_at TEXT
+       )`,
+      'ALTER TABLE securities_ref ADD COLUMN current_price REAL',
+      'ALTER TABLE securities_ref ADD COLUMN current_price_date TEXT',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -814,6 +864,234 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
     }
     return c.json({ applied, skipped });
+  });
+
+  // --- POST /enrich-securities --------------------------------------------
+  // Budgeted asset enrichment: SEC EDGAR (free) + FMP (key-gated). Processes the
+  // tickers that most need it (newest-traded first, then backfilling older ones),
+  // spending at most the day's remaining FMP budget. Body (optional):
+  //   { max?: number, dryRun?: boolean }
+  // Re-run daily (or wire to cron) to slowly backfill history within the cap.
+  r.post('/enrich-securities', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const opts: { max?: number; dryRun?: boolean; maxPerMinute?: number } = {};
+    if (typeof body.max === 'number' && body.max > 0) opts.max = Math.floor(body.max);
+    if (typeof body.maxPerMinute === 'number' && body.maxPerMinute > 0) opts.maxPerMinute = Math.floor(body.maxPerMinute);
+    if (body.dryRun === true) opts.dryRun = true;
+    try {
+      const result = await runEnrichment(c.env, opts);
+      return c.json({ ok: result.errors.length === 0, ...result });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- GET /enrich-securities/status --------------------------------------
+  // Today's FMP call usage + how many tickers still need enrichment.
+  r.get('/enrich-securities/status', async (c) => {
+    const used = await getDailyUsed(c.env);
+    const row = await get<{ pending: number }>(
+      c.env.DB,
+      `SELECT COUNT(*) AS pending FROM (
+         SELECT t.ticker FROM transactions t
+         LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+         WHERE t.ticker IS NOT NULL AND t.ticker <> ''
+           AND (sr.ticker IS NULL OR sr.enriched_at IS NULL)
+         GROUP BY t.ticker)`,
+    );
+    const enriched = await get<{ n: number }>(
+      c.env.DB,
+      'SELECT COUNT(*) AS n FROM securities_ref WHERE enriched_at IS NOT NULL',
+    );
+    const pending = await marketPending(c.env);
+    return c.json({
+      fmpCallsToday: used,
+      pendingTickers: row?.pending ?? 0,
+      pricePendingTickers: pending.prices,
+      enrichedTickers: enriched?.n ?? 0,
+      hasFmpKey: !!(c.env as Env & { FMP_API_KEY?: string }).FMP_API_KEY,
+    });
+  });
+
+  // --- POST /refresh-prices -----------------------------------------------
+  // Budgeted price + performance refresh (FMP-only): updates the S&P series and,
+  // for tickers needing it, caches daily closes + computes per-trade anchors.
+  // Shares the daily FMP budget with enrichment. Body: { max?, dryRun? }.
+  r.post('/refresh-prices', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const opts: { max?: number; dryRun?: boolean; maxPerMinute?: number } = {};
+    if (typeof body.max === 'number' && body.max > 0) opts.max = Math.floor(body.max);
+    if (typeof body.maxPerMinute === 'number' && body.maxPerMinute > 0) opts.maxPerMinute = Math.floor(body.maxPerMinute);
+    if (body.dryRun === true) opts.dryRun = true;
+    try {
+      const result = await runPriceRefresh(c.env, opts);
+      return c.json({ ok: result.errors.length === 0, ...result });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /backfill-market ----------------------------------------------
+  // One bounded pass of enrichment + price refresh in a single call, for fast
+  // paid-tier history backfilling. A single Worker invocation is capped by
+  // Cloudflare's per-request subrequest/CPU limits, so this does ONE safe batch
+  // and reports what's left — loop it (see scripts/backfill-market.sh) until
+  // `done` is true. Body (all optional):
+  //   { max?: number,           // tickers per pass for EACH of enrich + prices (default 40)
+  //     maxPerMinute?: number,  // throttle FMP calls/min (paid tier ~300; avoids 429s)
+  //     dryRun?: boolean }
+  r.post('/backfill-market', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const max = typeof body.max === 'number' && body.max > 0 ? Math.floor(body.max) : 40;
+    const maxPerMinute =
+      typeof body.maxPerMinute === 'number' && body.maxPerMinute > 0 ? Math.floor(body.maxPerMinute) : undefined;
+    const dryRun = body.dryRun === true;
+    try {
+      const enrich = await runEnrichment(c.env, { max, maxPerMinute, dryRun });
+      const prices = await runPriceRefresh(c.env, { max, maxPerMinute, dryRun });
+      const pending = await marketPending(c.env);
+      return c.json({
+        ok: enrich.errors.length === 0 && prices.errors.length === 0,
+        done: pending.enrich === 0 && pending.prices === 0,
+        pending,
+        enrich,
+        prices,
+      });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /securities/import --------------------------------------------
+  // Share FMP data fetched by ANOTHER app (e.g. a local Next.js app) into this
+  // Worker's cache, so a fetch by either app serves both — no duplicate FMP
+  // calls here. Body (all optional):
+  //   { refs?: [{ ticker, sector?, marketCap?, country?, exchangeShort?, ... }],
+  //     spx?: [{ date, close }],
+  //     prices?: [{ ticker, closes?: [{date,close}], currentPrice?, currentPriceDate? }] }
+  // Upserts securities_ref / spx_eod / price_eod and recomputes per-trade
+  // performance anchors for imported tickers. Idempotent. Authorized by the
+  // full ADMIN_TOKEN/Access OR the scoped INGEST_TOKEN (this endpoint only).
+  r.post('/securities/import', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const summary = { refs: 0, spxRows: 0, pricedTickers: 0, priceRows: 0, perfTickers: 0, errors: [] as string[] };
+    const nowIso = new Date().toISOString();
+    const REF_KEYS = [
+      'companyName', 'sector', 'industry', 'assetClass', 'isEtf', 'isAdr', 'country',
+      'stateHq', 'stateOfIncorp', 'exchange', 'exchangeShort', 'currency', 'marketCap',
+      'ipoDate', 'cik', 'sicCode', 'sicDescription',
+    ] as const;
+
+    // 1) Company reference rows.
+    if (Array.isArray(body.refs)) {
+      for (const raw of (body.refs as unknown[]).slice(0, 5000)) {
+        const o = raw as Record<string, unknown>;
+        const ticker = typeof o.ticker === 'string' ? o.ticker.toUpperCase() : null;
+        if (!ticker) continue;
+        const partial: Partial<SecurityRef> = { source: 'imported' };
+        for (const k of REF_KEYS) if (o[k] !== undefined) (partial as Record<string, unknown>)[k] = o[k];
+        try {
+          await importSecurityRef(c.env, mergeRefs(ticker, [partial]));
+          summary.refs++;
+        } catch (e) {
+          summary.errors.push(ticker + ' ref: ' + (e as Error).message);
+        }
+      }
+    }
+
+    // 2) S&P 500 closes.
+    if (Array.isArray(body.spx)) {
+      const rows = (body.spx as Array<{ date?: unknown; close?: unknown }>)
+        .filter((x) => typeof x.date === 'string' && typeof x.close === 'number')
+        .slice(0, 20000);
+      for (let i = 0; i < rows.length; i += 100) {
+        await c.env.DB.batch(
+          rows.slice(i, i + 100).map((x) =>
+            c.env.DB.prepare(
+              'INSERT INTO spx_eod (date, close) VALUES (?, ?) ON CONFLICT(date) DO UPDATE SET close=excluded.close',
+            ).bind((x.date as string).slice(0, 10), x.close as number),
+          ),
+        );
+      }
+      summary.spxRows += rows.length;
+    }
+
+    // 3) Per-ticker price history (+ current price), then recompute anchors.
+    if (Array.isArray(body.prices)) {
+      for (const raw of (body.prices as unknown[]).slice(0, 2000)) {
+        const o = raw as { ticker?: unknown; closes?: unknown; currentPrice?: unknown; currentPriceDate?: unknown };
+        const ticker = typeof o.ticker === 'string' ? o.ticker.toUpperCase() : null;
+        if (!ticker) continue;
+        const closes = Array.isArray(o.closes)
+          ? (o.closes as Array<{ date?: unknown; close?: unknown }>)
+              .filter((x) => typeof x.date === 'string' && typeof x.close === 'number')
+              .slice(0, 20000)
+          : [];
+        try {
+          for (let i = 0; i < closes.length; i += 100) {
+            await c.env.DB.batch(
+              closes.slice(i, i + 100).map((x) =>
+                c.env.DB.prepare(
+                  'INSERT INTO price_eod (ticker, date, close) VALUES (?, ?, ?) ON CONFLICT(ticker, date) DO UPDATE SET close=excluded.close',
+                ).bind(ticker, (x.date as string).slice(0, 10), x.close as number),
+              ),
+            );
+          }
+          summary.priceRows += closes.length;
+          if (typeof o.currentPrice === 'number') {
+            await run(
+              c.env.DB,
+              `INSERT INTO securities_ref (ticker, current_price, current_price_date) VALUES (?, ?, ?)
+               ON CONFLICT(ticker) DO UPDATE SET current_price=excluded.current_price, current_price_date=excluded.current_price_date`,
+              [ticker, o.currentPrice, typeof o.currentPriceDate === 'string' ? o.currentPriceDate : nowIso.slice(0, 10)],
+            );
+          }
+          // Recompute per-trade anchors for this ticker from the cached series.
+          await run(
+            c.env.DB,
+            `INSERT INTO tx_performance (tx_id, price_at_trade, spx_at_trade, computed_at)
+             SELECT t.id,
+               (SELECT close FROM price_eod p WHERE p.ticker = t.ticker AND p.date <= t.tx_date ORDER BY p.date DESC LIMIT 1),
+               (SELECT close FROM spx_eod s WHERE s.date <= t.tx_date ORDER BY s.date DESC LIMIT 1),
+               ?
+             FROM transactions t
+             WHERE t.ticker = ? AND t.tx_date IS NOT NULL AND t.tx_date <> ''
+             ON CONFLICT(tx_id) DO UPDATE SET price_at_trade=excluded.price_at_trade, spx_at_trade=excluded.spx_at_trade, computed_at=excluded.computed_at`,
+            [nowIso, ticker],
+          );
+          summary.pricedTickers++;
+          summary.perfTickers++;
+        } catch (e) {
+          summary.errors.push(ticker + ' price: ' + (e as Error).message);
+        }
+      }
+    }
+
+    return c.json({ ok: summary.errors.length === 0, ...summary });
   });
 
   // --- POST /enrich-photos ------------------------------------------------
@@ -856,6 +1134,33 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   return r;
+}
+
+/**
+ * Count tickers still needing work: `enrich` = traded tickers with no enriched
+ * securities_ref row; `prices` = traded (dated) tickers with no cached price_eod.
+ * Drives the `done` flag for the backfill-market loop.
+ */
+async function marketPending(env: Env): Promise<{ enrich: number; prices: number }> {
+  const e = await get<{ n: number }>(
+    env.DB,
+    `SELECT COUNT(*) AS n FROM (
+       SELECT t.ticker FROM transactions t
+       LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+       WHERE t.ticker IS NOT NULL AND t.ticker <> ''
+         AND (sr.ticker IS NULL OR sr.enriched_at IS NULL)
+       GROUP BY t.ticker)`,
+  );
+  const p = await get<{ n: number }>(
+    env.DB,
+    `SELECT COUNT(*) AS n FROM (
+       SELECT t.ticker FROM transactions t
+       LEFT JOIN price_eod pe ON pe.ticker = t.ticker
+       WHERE t.ticker IS NOT NULL AND t.ticker <> '' AND t.tx_date IS NOT NULL
+         AND pe.ticker IS NULL
+       GROUP BY t.ticker)`,
+  );
+  return { enrich: e?.n ?? 0, prices: p?.n ?? 0 };
 }
 
 /** Observed average seconds between the most recent polls for a source. */

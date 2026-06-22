@@ -150,7 +150,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   td.state { text-align: center; color: var(--text-dim); padding: 22px 13px; }
   .tkr { font-family: var(--mono); font-weight: 700; }
   /* ---- ticker logos (ported from agentic-trading) ---- */
-  .asset-cell { display: flex; align-items: center; gap: 9px; }
+  .asset-cell { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  /* let the text shrink inside the (resizable, fixed-layout) cell and clip with
+     an ellipsis instead of wrapping or hard-clipping mid-word */
+  .asset-cell > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tkr-logo { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; overflow: hidden; }
   .tkr-logo img { width: 100%; height: 100%; object-fit: contain; display: block; }
   /* "tile" = frosted-glass box; "transparent" = bare logo on the row surface. */
@@ -188,6 +191,78 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sched-row .lbl { font-size:12px; color: var(--text-dim); }
   .note { font-size:12px; color: var(--text-dim); margin-top:8px; line-height:1.5; }
   code { font-family: var(--mono); background: var(--bg); padding:1px 6px; border-radius:5px; font-size:12px; color: var(--accent); }
+  /* ================= TRENDS / ANALYTICS ================= */
+  .trend-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 860px) { .trend-grid2 { grid-template-columns: 1fr; } }
+  .est { color: var(--text-dim); }
+  .pdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; background: var(--text-dim); }
+  .pdot.D { background:#3b82f6; } .pdot.R { background:#ef4444; } .pdot.O { background:#a78bfa; }
+  .rank { color: var(--text-dim); font-family: var(--mono); font-size:12px; width:22px; text-align:right; }
+  .net.pos { color: var(--buy); } .net.neg { color: var(--sell); }
+  /* buy/sell split bar */
+  .split { display:inline-flex; width:120px; height:9px; border-radius:5px; overflow:hidden; background: var(--panel-2); border:1px solid var(--border); vertical-align:middle; }
+  .split .seg { height:100%; } .split .seg.buy { background: var(--buy); } .split .seg.sell { background: var(--sell); }
+  .split-wrap { display:flex; align-items:center; gap:8px; }
+  .split-wrap small { color: var(--text-dim); font-family: var(--mono); font-size:11px; white-space:nowrap; }
+  tr.clickable { cursor: pointer; }
+  /* horizontal proportion bar (sectors / lag / party) */
+  .hbar { display:flex; align-items:center; gap:10px; margin:7px 0; }
+  .hbar .hlabel { width:130px; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .hbar .htrack { flex:1; height:14px; background: var(--panel-2); border:1px solid var(--border); border-radius:7px; overflow:hidden; }
+  .hbar .hfill { height:100%; background: color-mix(in srgb, var(--accent) 70%, transparent); }
+  .hbar .hfill.buy { background: var(--buy); } .hbar .hfill.warn { background: var(--warn); } .hbar .hfill.sell { background: var(--sell); }
+  .hbar .hval { width:120px; text-align:right; font-family: var(--mono); font-size:12px; color: var(--text-dim); }
+  /* time chart (CSS columns, no chart lib) */
+  .tchart { display:flex; align-items:flex-end; gap:3px; height:180px; overflow-x:auto; padding-top:6px; }
+  .tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:0 0 auto; }
+  .tbars { display:flex; align-items:flex-end; gap:2px; height:150px; }
+  .tbars i { display:block; width:7px; border-radius:2px 2px 0 0; min-height:0; }
+  .tbars i.buy { background: var(--buy); } .tbars i.sell { background: var(--sell); }
+  .tlbl { font-size:9px; color: var(--text-dim); font-family: var(--mono); white-space:nowrap; }
+  .legend { display:flex; gap:14px; font-size:12px; color: var(--text-dim); margin-bottom:6px; }
+  .legend .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:middle; }
+  .legend .sw.buy { background: var(--buy); } .legend .sw.sell { background: var(--sell); }
+  /* cluster cards */
+  .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:12px; }
+  .ccard { background: var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:13px 14px; }
+  .ccard .chead { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .ccard .big { font-size:18px; font-weight:700; }
+  .ccard .faces { display:flex; margin-top:9px; }
+  .ccard .faces .avatar { margin-right:-7px; box-shadow:0 0 0 2px var(--panel-2); }
+  .dirpill { font-size:10px; font-weight:700; padding:2px 7px; border-radius:6px; letter-spacing:.4px; }
+  .dirpill.P { color: var(--buy); background: color-mix(in srgb, var(--buy) 16%, transparent); }
+  .dirpill.S { color: var(--sell); background: color-mix(in srgb, var(--sell) 16%, transparent); }
+  .chip { font-size:11px; color: var(--text-dim); }
+  .disclaimer { font-size:12px; color: var(--text-dim); line-height:1.6; border:1px solid var(--border); background: var(--panel); border-radius: var(--radius); padding:12px 15px; margin-bottom:16px; }
+  .disclaimer strong { color: var(--text); }
+  /* modal */
+  /* ---- detail drawer (trade / asset / politician) ---- */
+  .drawer { position:fixed; inset:0; z-index:60; display:none; }
+  .drawer.open { display:block; }
+  .drawer-backdrop { position:absolute; inset:0; background:rgba(2,6,18,.55); }
+  .drawer-panel { position:absolute; top:0; right:0; height:100%; width:480px; max-width:92vw; background:var(--panel); border-left:1px solid var(--border); box-shadow:-12px 0 40px rgba(0,0,0,.4); overflow-y:auto; padding:20px 22px; }
+  .drawer-close { position:absolute; top:13px; right:15px; cursor:pointer; color:var(--text-dim); font-size:20px; border:none; background:none; line-height:1; }
+  .drawer h2 { margin:0 0 2px; font-size:19px; }
+  .drawer .dsub { color:var(--text-dim); font-size:13px; margin:0 0 6px; }
+  .drawer-section { border-top:1px solid var(--border); padding:14px 0; }
+  .drawer-section.first { border-top:none; padding-top:6px; }
+  .drawer-section h3 { margin:0 0 10px; font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.6px; }
+  .drawer-kv { display:grid; grid-template-columns:auto 1fr; gap:7px 14px; margin:0; font-size:13px; }
+  .drawer-kv dt { color:var(--text-dim); white-space:nowrap; }
+  .drawer-kv dd { margin:0; text-align:right; word-break:break-word; }
+  .tier-gate-note { font-size:12px; color:var(--text-dim); background:var(--panel-2); border:1px dashed var(--border); border-radius:8px; padding:9px 11px; line-height:1.5; }
+  .committee-tag { display:inline-block; font-size:11px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:2px 8px; margin:0 5px 5px 0; }
+  .drawer-all-link { display:block; margin-top:9px; font-size:13px; }
+  .source-link { display:inline-block; margin-top:9px; font-size:13px; }
+  .raw-notes { white-space:pre-wrap; word-break:break-word; max-height:150px; overflow:auto; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12px; font-family:var(--mono); color:var(--text-dim); margin:0; }
+  .perf-line { font-size:15px; font-weight:700; }
+  .mini-tbl td { padding:7px 6px; }
+  .colopts { display:flex; flex-wrap:wrap; gap:6px 4px; flex:1; }
+  .colopt { font-size:13px; color:var(--text); display:inline-flex; align-items:center; gap:5px; margin-right:12px; white-space:nowrap; cursor:pointer; }
+  .clickable { cursor: pointer; }
+  .asset-cell.clickable:hover .tkr, .hlabel.clickable:hover .tkr, .tkr.clickable:hover { text-decoration: underline; }
+  .member-cell.clickable:hover { text-decoration: underline; }
+  @media (max-width:600px){ .drawer-panel { width:100%; max-width:100%; } }
   footer { text-align:center; color: var(--text-dim); font-size:11px; padding:26px; }
   /* ---- account control + auth/billing modals ---- */
   .acct { display:flex; align-items:center; gap:8px; }
@@ -235,6 +310,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <span class="pill" id="srcPill">House + Senate</span>
   <nav class="tabs">
     <button data-view="feed" class="active">Live Feed</button>
+    <button data-view="trends">Trends</button>
     <button data-view="review">Review Queue <span id="reviewCount"></span></button>
     <button data-view="subs">Subscriptions</button>
     <button data-view="admin">Admin · Cadence</button>
@@ -266,8 +342,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="">Both Chambers</option><option value="house">House</option><option value="senate">Senate</option>
       </select>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
+      <button class="btn ghost sm" onclick="toggleColChooser()" title="Show / hide columns">⚙ Columns</button>
       <button class="btn ghost sm" onclick="refreshFeed()">↻ Refresh</button>
       <button class="btn ghost sm" onclick="exportCsv()" title="Download the filtered feed as CSV (premium)">⤓ Export CSV</button>
+    </div>
+    <div class="search-panel" id="colChooser">
+      <span class="lbl">Columns</span>
+      <div id="colChooserBody" class="colopts"></div>
+      <button class="btn ghost sm" onclick="resetCols()">Reset</button>
     </div>
     <div class="search-panel" id="searchPanel">
       <span class="lbl">Search all</span>
@@ -282,18 +364,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
     <div class="table-wrap">
     <table id="feedTable">
-      <thead><tr id="feedHead">
-        <th class="sortable" data-sort="filed">Filed<span class="arr"></span></th>
-        <th class="sortable" data-sort="member">Member<span class="arr"></span></th>
-        <th class="sortable" data-sort="asset">Asset<span class="arr"></span></th>
-        <th class="sortable" data-sort="type">Type<span class="arr"></span></th>
-        <th class="sortable" data-sort="min">Amount (STOCK Act bracket)<span class="arr"></span></th>
-        <th class="sortable" data-sort="txdate">Tx date<span class="arr"></span></th>
-        <th class="sortable" data-sort="owner">Owner<span class="arr"></span></th>
-        <th class="sortable" data-sort="conf">Conf.<span class="arr"></span></th>
-        <th class="sortable" data-sort="source">Source<span class="arr"></span></th>
-        <th data-sort="latency" title="Released→Seen (approx, disclosure date → our watcher) · Seen→Imported (precise, our watcher → parsed rows). Live rows only.">Latency</th>
-      </tr></thead>
+      <thead><tr id="feedHead"></tr></thead>
       <tbody id="feedBody"></tbody>
     </table>
     </div>
@@ -304,6 +375,104 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center;display:none">
       <span class="gate-note">🔒 Free view shows the last 30 days. Unlock full history, alerts & CSV export.
         <button class="btn sm" onclick="openPricing()">Upgrade</button></span>
+    </div>
+  </section>
+
+  <!-- ================= TRENDS / ANALYTICS ================= -->
+  <section class="view" id="view-trends">
+    <div class="toolbar">
+      <select id="trWindow" title="Time window (by trade date)">
+        <option value="1d">Past day</option>
+        <option value="7d">Past week</option>
+        <option value="30d" selected>Past month</option>
+        <option value="90d">Past 3 months</option>
+        <option value="180d">Past 6 months</option>
+        <option value="365d">Past year</option>
+        <option value="1825d">Past 5 years</option>
+        <option value="all">All time</option>
+      </select>
+      <select id="trChamber"><option value="">Both chambers</option><option value="house">House</option><option value="senate">Senate</option></select>
+      <select id="trParty"><option value="">All parties</option><option value="D">Democrat</option><option value="R">Republican</option><option value="O">Other / Ind.</option></select>
+      <select id="trSource" title="Provenance of the underlying rows">
+        <option value="all" selected>All data</option>
+        <option value="primary">Live (primary) only</option>
+        <option value="seed_dataset">Historic (seed) only</option>
+      </select>
+      <button class="btn ghost sm" onclick="loadTrends()">↻ Refresh</button>
+    </div>
+    <div class="disclaimer">
+      <strong>For education, not investment advice.</strong> Congress.Trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any member acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. “All data” can double-count a trade present in both the live and historic sets; use <em>Live only</em> for a de-duplicated dollar view. Party is known for only some members. Always do your own research.
+    </div>
+
+    <!-- KPI strip -->
+    <div class="grid-cards" id="trKpis">
+      <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
+    </div>
+
+    <!-- What Congress is trading + Heating up -->
+    <div class="trend-grid2">
+      <div class="section">
+        <h3>What Congress is trading</h3>
+        <p class="sub">Most-traded tickers in the window. Click a row for a deep dive. Bar = buy / sell mix.</p>
+        <div class="row-flex" style="margin:-6px 0 12px">
+          <label class="lbl">Rank by</label>
+          <select id="trTickerSort">
+            <option value="trades">Trades</option>
+            <option value="members">Distinct members</option>
+            <option value="volume">Est. volume</option>
+            <option value="netflow">Net $ flow</option>
+          </select>
+        </div>
+        <div class="table-wrap"><table><tbody id="trTickers"></tbody></table></div>
+      </div>
+      <div class="section">
+        <h3>Rising activity</h3>
+        <p class="sub">Tickers whose disclosed trade count rose most vs the prior equal period. A descriptive view of filing activity — not a forecast.</p>
+        <div class="table-wrap"><table><tbody id="trTrending"></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- Consensus / cluster buys -->
+    <div class="section">
+      <h3>Consensus moves <span class="chip" id="trClusterHint"></span></h3>
+      <p class="sub">Tickers where several different members happened to trade the <strong>same direction</strong> in the window. Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination.</p>
+      <div class="cluster-grid" id="trClusters"></div>
+    </div>
+
+    <!-- Buys vs sells over time -->
+    <div class="section">
+      <h3>Buys vs sells over time</h3>
+      <p class="sub">Trade counts bucketed by period. The <em>shape</em> — a surge of buying or selling — is the trend.</p>
+      <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
+      <div id="trTime"></div>
+    </div>
+
+    <!-- Members + Party -->
+    <div class="trend-grid2">
+      <div class="section">
+        <h3>Most active members</h3>
+        <p class="sub">Who is trading the most in the window.</p>
+        <div class="table-wrap"><table><tbody id="trMembers"></tbody></table></div>
+      </div>
+      <div class="section">
+        <h3>By party</h3>
+        <p class="sub">Buy / sell mix and estimated net flow per party (where party is known).</p>
+        <div id="trParties"></div>
+        <h3 style="margin-top:18px">By asset type</h3>
+        <p class="sub">Share of estimated volume by instrument type.</p>
+        <div id="trSectors"></div>
+      </div>
+    </div>
+
+    <!-- Disclosure timeliness -->
+    <div class="section">
+      <h3>Disclosure timeliness</h3>
+      <p class="sub">Days from trade to filing. The STOCK Act sets a 45-day deadline; this is a data-quality + accountability lens.</p>
+      <div class="grid-cards" id="trLagKpis"></div>
+      <div class="trend-grid2" style="margin-top:6px">
+        <div><h3 style="font-size:13px">Lag distribution</h3><div id="trLagDist"></div></div>
+        <div><h3 style="font-size:13px">Slowest filers (avg lag)</h3><div class="table-wrap"><table><tbody id="trLateFilers"></tbody></table></div></div>
+      </div>
     </div>
   </section>
 
@@ -420,8 +589,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
   </section>
 
-  <footer>Congress.Trade · live feed · data sourced from public STOCK Act (2012) disclosures · not financial advice</footer>
+  <footer>Congress.Trade · an educational tool for exploring public STOCK Act (2012) disclosures · informational only — not financial advice, not trading signals · dollar figures are estimates from disclosed brackets</footer>
 </main>
+
+<div class="drawer" id="detailDrawer">
+  <div class="drawer-backdrop" onclick="closeDrawer()"></div>
+  <div class="drawer-panel"><button class="drawer-close" onclick="closeDrawer()" aria-label="Close">✕</button><div id="detailDrawerBody"></div></div>
+</div>
 
 <!-- ================= LOGIN MODAL ================= -->
 <div class="overlay" id="loginOverlay" onclick="if(event.target===this)closeLogin()">
@@ -485,12 +659,25 @@ var POLL_LIMIT = 500;     // matches MAX_TX_LIMIT in delivery/rows.ts
 var POLL_INTERVAL_MS = 30000;  // graceful polling cadence when SSE is unavailable
 var sortKey = 'filed';    // active feed sort column
 var sortDir = -1;         // 1 = ascending, -1 = descending (default: newest first)
-var NUMERIC_SORT = { min: 1, conf: 1 };   // columns compared numerically
+var NUMERIC_SORT = { min: 1, conf: 1, refMarketCap: 1 };   // columns compared numerically
 
 /* ============================ HELPERS ============================ */
 var fmt = function (n) { return n == null ? '—' : '$' + Number(n).toLocaleString(); };
 var confClass = function (c) { return c >= 0.9 ? 'hi' : c >= 0.7 ? 'mid' : 'lo'; };
 var typeName = { P: 'Purchase', S: 'Sale', E: 'Exchange' };
+/* Capitalize a beneficial-owner code for display (self -> Self, joint -> Joint). */
+function ownerLabel(o) { var s = String(o == null ? '' : o); return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
+/* Normalize a date string to YYYY-MM-DD without timezone drift. Accepts ISO
+   ("2026-06-15...") and US ("6/15/2026") forms (Senate filings use the latter). */
+function toISODate(s) {
+  if (!s) return '';
+  s = String(s).trim();
+  var iso = /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(s);
+  if (iso) return iso[1] + '-' + iso[2] + '-' + iso[3];
+  var us = /^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/.exec(s);
+  if (us) return us[3] + '-' + ('0' + us[1]).slice(-2) + '-' + ('0' + us[2]).slice(-2);
+  return s.slice(0, 10);
+}
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, function (ch) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
@@ -606,6 +793,92 @@ function okOrThrow(r) {
 function isAuthError(e) { return !!(e && e.isAuth); }
 
 /* ============================ FEED ============================ */
+/* Column registry — single source of truth for the header, body cells, sorting,
+   and the column chooser. def:true columns are visible by default; lock:true
+   columns can't be hidden. Each cell(r) returns the inner HTML for that td. */
+function memberCellHtml(r) {
+  var attr = r.filerId
+    ? 'class="member-cell clickable" data-member="' + esc(r.filerId) + '"'
+    : 'class="member-cell"';
+  return '<div ' + attr + '>' + memberAvatarHtml(r.member, r.photoUrl) +
+    '<div>' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div>';
+}
+function assetCellHtml(r) {
+  var inner = '<div title="' + esc((r.ticker ? r.ticker + ' · ' : '') + r.asset) + '">' +
+    (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span> ' : '') +
+    '<span class="muted">' + esc(r.asset) + '</span></div>';
+  return r.ticker
+    ? '<div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, r.asset) + inner + '</div>'
+    : '<div class="asset-cell">' + inner + '</div>';
+}
+function lagDays(r) { return daysBetween(r.txdate, r.filedDate); }
+function lagCellHtml(r) {
+  var d = lagDays(r);
+  if (d == null) return '<span class="muted">—</span>';
+  var over = d > 45 ? ' style="color:var(--sell)"' : '';
+  return '<span' + over + ' title="Days from trade to filing (STOCK Act limit: 45)">' + d + '</span>';
+}
+var FEED_COLS = [
+  { id: 'filed', label: 'Filed', sort: 'filed', def: true, cls: 'muted', tip: 'Official disclosure (report) date. Seed rows fall back to import date.', cell: function (r) { return esc(r.filed || '—'); } },
+  { id: 'member', label: 'Member', sort: 'member', def: true, lock: true, cell: memberCellHtml },
+  { id: 'asset', label: 'Asset', sort: 'asset', def: true, lock: true, cell: assetCellHtml },
+  { id: 'type', label: 'Type', sort: 'type', def: true, cell: function (r) { return actionBadge(r.type); } },
+  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return esc(r.txdate || '—'); } },
+  { id: 'lag', label: 'Lag', sort: 'lag', def: true, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
+  { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket — an estimate, not an exact figure.', cell: function (r) { return (r.min == null && r.max == null) ? '<span class="muted">—</span>' : esc(amountText(r.min, r.max)); } },
+  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced (FMP / SEC EDGAR). "—" until the ticker is enriched.', cell: function (r) { return r.refSector ? esc(r.refSector) : '<span class="muted">—</span>'; } },
+  { id: 'marketcap', label: 'Mkt cap', sort: 'refMarketCap', def: false, tip: 'Market-cap size tier (cross-referenced).', cell: function (r) { return r.refMarketCapBucket ? esc(ownerLabel(r.refMarketCapBucket)) : '<span class="muted">—</span>'; } },
+  { id: 'country', label: 'Country', sort: 'refCountry', def: false, cls: 'muted', tip: 'Country of issue (cross-referenced).', cell: function (r) { return r.refCountry ? esc(r.refCountry) : '<span class="muted">—</span>'; } },
+  { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', cell: function (r) { return esc(ownerLabel(r.owner) || '—'); } },
+  { id: 'published', label: 'Published', sort: 'imported', def: false, cls: 'muted', tip: 'When our feed received this filing.', cell: function (r) { return esc((r.imported || '').replace('T', ' ').slice(0, 16) || '—'); } },
+  { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', cell: function (r) { return esc(r.chamber || '—'); } },
+  { id: 'conf', label: 'Conf.', sort: 'conf', def: false, cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">' + (r.conf * 100).toFixed(0) + '%</span>'; } },
+  { id: 'source', label: 'Source', sort: 'source', def: false, cell: function (r) { return '<span class="muted" title="' + esc(r.source) + '">' + esc(sourceLabel(r.source)) + '</span>'; } },
+  { id: 'latency', label: 'Latency', sort: null, def: false, cls: 'latency', tip: 'Released→Seen · Seen→Imported (live rows).', cell: function (r) { return rowLatencyHtml(r); } }
+];
+var COL_HIDDEN_KEY = 'feed-cols-hidden';
+function defaultHidden() { return FEED_COLS.filter(function (c) { return !c.def; }).map(function (c) { return c.id; }); }
+function loadHiddenCols() { try { var v = JSON.parse(localStorage.getItem(COL_HIDDEN_KEY)); return v && v.length !== undefined ? v : defaultHidden(); } catch (e) { return defaultHidden(); } }
+function saveHiddenCols(h) { try { localStorage.setItem(COL_HIDDEN_KEY, JSON.stringify(h)); } catch (e) {} }
+var hiddenCols = loadHiddenCols();
+function isColVisible(id) { return hiddenCols.indexOf(id) < 0; }
+function visibleCols() { return FEED_COLS.filter(function (c) { return c.lock || isColVisible(c.id); }); }
+
+/* Render the header from the registry, (re)attach sort handlers, and reset the
+   resize state so widths re-freeze for the now-visible columns. */
+function renderFeedHeader() {
+  var head = el('feedHead'); if (!head) return;
+  head.innerHTML = visibleCols().map(function (c) {
+    var cls = (c.sort ? 'sortable ' : '') + 'c-' + c.id;
+    var ds = c.sort ? ' data-sort="' + c.sort + '"' : '';
+    var tip = c.tip ? ' title="' + esc(c.tip) + '"' : '';
+    return '<th class="' + cls + '" data-col="' + c.id + '"' + ds + tip + '>' + esc(c.label) + (c.sort ? '<span class="arr"></span>' : '') + '</th>';
+  }).join('');
+  var ths = head.querySelectorAll('th.sortable');
+  for (var i = 0; i < ths.length; i++) { (function (th) { th.onclick = function () { setSort(th.dataset.sort); }; })(ths[i]); }
+  // Re-init the resizable columns for the new header.
+  var table = el('feedTable'); if (table) table.classList.remove('resizable');
+  colResizeInit = false;
+  updateSortIndicators();
+}
+
+/* Column chooser (the ⚙ Columns panel). */
+function renderColChooser() {
+  var box = el('colChooserBody'); if (!box) return;
+  box.innerHTML = FEED_COLS.filter(function (c) { return !c.lock; }).map(function (c) {
+    return '<label class="colopt"><input type="checkbox" data-colid="' + c.id + '"' + (isColVisible(c.id) ? ' checked' : '') + ' /> ' + esc(c.label) + '</label>';
+  }).join('');
+}
+function toggleColChooser() { var p = el('colChooser'); var open = p.classList.toggle('open'); if (open) renderColChooser(); }
+function onColToggle(id, visible) {
+  var i = hiddenCols.indexOf(id);
+  if (visible && i >= 0) hiddenCols.splice(i, 1);
+  else if (!visible && i < 0) hiddenCols.push(id);
+  saveHiddenCols(hiddenCols);
+  renderFeedHeader(); renderFeed();
+}
+function resetCols() { hiddenCols = defaultHidden(); saveHiddenCols(hiddenCols); renderColChooser(); renderFeedHeader(); renderFeed(); }
+
 function renderFeed() {
   var m = el('qMember').value.toLowerCase(), t = el('qTicker').value.toUpperCase(),
       ty = el('qType').value, ch = el('qChamber').value;
@@ -614,7 +887,8 @@ function renderFeed() {
   var minAmt = parseFloat(el('qMinAmt').value);
   var src = el('qSource').value;
   var body = el('feedBody');
-  if (!realDataLoaded) { body.innerHTML = stateRow(10, 'Loading live feed…'); return; }
+  var cols = visibleCols();
+  if (!realDataLoaded) { body.innerHTML = stateRow(cols.length, 'Loading live feed…'); return; }
   var rows = TRADES.filter(function (r) {
     if (qa) {
       var hay = ((r.member || '') + ' ' + (r.asset || '') + ' ' + (r.ticker || '') + ' ' +
@@ -629,23 +903,12 @@ function renderFeed() {
            (!ch || r.chamber === ch);
   });
   rows = sortRows(rows);
-  if (rows.length === 0) { body.innerHTML = stateRow(10, 'No transactions match these filters.'); updateFeedCountMsg(0); maybeInitResize(); return; }
+  if (rows.length === 0) { body.innerHTML = stateRow(cols.length, 'No transactions match these filters.'); updateFeedCountMsg(0); maybeInitResize(); return; }
   body.innerHTML = rows.map(function (r) {
-    return '<tr class="row">' +
-      '<td class="muted">' + esc(r.filed) + '</td>' +
-      '<td><div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl) +
-        '<div>' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div></td>' +
-      '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.asset) + '<div>' +
-        (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span> ' : '') +
-        '<span class="muted">' + esc(r.asset) + '</span></div></div></td>' +
-      '<td><span class="tag ' + esc(r.type) + '">' + esc(typeName[r.type] || r.type) + '</span></td>' +
-      '<td>' + (r.min == null && r.max == null ? '<span class="muted">—</span>' : fmt(r.min) + ' – ' + (r.max == null ? '+' : fmt(r.max))) + '</td>' +
-      '<td class="muted">' + esc(r.txdate || '—') + '</td>' +
-      '<td class="muted">' + esc(r.owner || '—') + '</td>' +
-      '<td><span class="conf ' + confClass(r.conf) + '">' + (r.conf * 100).toFixed(0) + '%</span></td>' +
-      '<td class="muted" title="' + esc(r.source) + '">' + esc(sourceLabel(r.source)) + '</td>' +
-      '<td class="latency">' + rowLatencyHtml(r) + '</td>' +
-    '</tr>';
+    var tds = cols.map(function (c) {
+      return '<td class="c-' + c.id + (c.cls ? ' ' + c.cls : '') + '">' + c.cell(r) + '</td>';
+    }).join('');
+    return '<tr class="row clickable" data-txid="' + esc(r.id) + '" title="Open trade details">' + tds + '</tr>';
   }).join('');
   updateFeedCountMsg(rows.length);
   maybeInitResize();
@@ -675,10 +938,15 @@ function initColumnResize() {
   var ths = document.querySelectorAll('#feedHead th');
   var saved = loadColWidths();
   // Freeze current auto widths (or restore saved ones) so switching the table to
-  // fixed layout doesn't visually jump.
+  // fixed layout doesn't visually jump. Wide auto-sized columns are capped to a
+  // compact default (Asset fits the longest name otherwise) — short entries then
+  // show in full, long ones clip to an ellipsis, and any column stays draggable.
+  var DEFAULT_CAP = { asset: 200 };
   for (var i = 0; i < ths.length; i++) {
-    var k = ths[i].dataset.sort;
-    ths[i].style.width = ((k && saved[k]) ? saved[k] : ths[i].offsetWidth) + 'px';
+    var k = ths[i].dataset.col;
+    var w = (k && saved[k]) ? saved[k] : ths[i].offsetWidth;
+    if (!(k && saved[k]) && k && DEFAULT_CAP[k] && w > DEFAULT_CAP[k]) w = DEFAULT_CAP[k];
+    ths[i].style.width = w + 'px';
   }
   table.classList.add('resizable');
   for (var j = 0; j < ths.length; j++) addColResizer(ths[j]);
@@ -695,7 +963,7 @@ function addColResizer(th) {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
       document.body.style.userSelect = '';
-      var w = loadColWidths(); w[th.dataset.sort] = th.offsetWidth; saveColWidths(w);
+      var w = loadColWidths(); w[th.dataset.col] = th.offsetWidth; saveColWidths(w);
     }
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
@@ -707,6 +975,7 @@ function addColResizer(th) {
 /* ---- sorting ---- */
 function sortVal(r, key) {
   if (key === 'asset') return (r.ticker || r.asset || '');
+  if (key === 'lag') { var d = lagDays(r); return d == null ? -Infinity : d; }
   var v = r[key];
   if (NUMERIC_SORT[key]) return (v == null ? -Infinity : Number(v));
   return (v == null ? '' : String(v)).toLowerCase();
@@ -723,7 +992,7 @@ function sortRows(rows) {
 }
 function setSort(key) {
   if (sortKey === key) { sortDir = -sortDir; }   // same column -> flip direction
-  else { sortKey = key; sortDir = (key === 'filed' || NUMERIC_SORT[key]) ? -1 : 1; }
+  else { sortKey = key; sortDir = (key === 'filed' || key === 'txdate' || key === 'imported' || key === 'lag' || NUMERIC_SORT[key]) ? -1 : 1; }
   updateSortIndicators();
   renderFeed();
 }
@@ -757,7 +1026,10 @@ function sourceLabel(src) { return sourceLabelMap[src] || (src || ''); }
    filer id when the name is missing. */
 function txToRow(tx) {
   return {
-    filed: (tx.createdAt || '').replace('T', ' ').slice(0, 16),
+    // "Filed" = the official disclosure (report) date. Live rows carry the
+    // filing's filed_date; historic seed rows (no filing) fall back to the date
+    // we imported them. The raw ingestion timestamp lives in imported (latency).
+    filed: toISODate(tx.filedDate) || (tx.createdAt || '').slice(0, 10),
     member: tx.fullName || tx.memberName || tx.filerId || 'Unknown',
     photoUrl: tx.photoUrl || '',
     st: tx.state || '',
@@ -773,7 +1045,20 @@ function txToRow(tx) {
     filedDate: tx.filedDate || '',
     firstSeenAt: tx.firstSeenAt || '',
     imported: tx.createdAt || '',
-    cursorSeq: tx.cursorSeq || 0
+    cursorSeq: tx.cursorSeq || 0,
+    // identifiers for the detail drawers (trade / asset / politician)
+    id: tx.id || '',
+    docId: tx.docId || '',
+    filerId: tx.filerId || '',
+    isOption: !!tx.isOption,
+    rawText: tx.rawText || '',
+    // cross-referenced asset reference data (null until the ticker is enriched)
+    refSector: tx.refSector || '',
+    refMarketCap: tx.refMarketCap != null ? tx.refMarketCap : null,
+    refMarketCapBucket: tx.refMarketCapBucket || '',
+    refCountry: tx.refCountry || '',
+    refExchangeShort: tx.refExchangeShort || '',
+    refAssetClass: tx.refAssetClass || ''
   };
 }
 
@@ -817,7 +1102,7 @@ function fetchPage() {
       setBanner('');                       // drop the illustrative banner
       el('kpiTotal').textContent = totalRows || TRADES.length;
       var today = new Date().toISOString().slice(0, 10);
-      el('kpiToday').textContent = TRADES.filter(function (r) { return (r.filed || '').slice(0, 10) === today; }).length;
+      el('kpiToday').textContent = TRADES.filter(function (r) { return (r.imported || '').slice(0, 10) === today; }).length;
       var primary = TRADES.filter(function (r) { return r.source === 'primary'; }).length;
       el('kpiAuto').innerHTML = (TRADES.length ? Math.round(100 * primary / TRADES.length) : 0) + '<small>%</small>';
       renderFeed();
@@ -1220,6 +1505,427 @@ function loadHealth() {
     });
 }
 
+/* ============================ TRENDS / ANALYTICS ============================ */
+/* All views read /api/analytics/* — read-only aggregates over the corpus. Dollar
+   values are ESTIMATES from STOCK Act bracket midpoints (labelled with ~). */
+function trParams() {
+  var p = 'window=' + encodeURIComponent(el('trWindow').value);
+  var ch = el('trChamber').value; if (ch) p += '&chamber=' + ch;
+  var pa = el('trParty').value; if (pa) p += '&party=' + pa;
+  var src = el('trSource').value; if (src && src !== 'all') p += '&source=' + src;
+  return p;
+}
+function aGet(path) {
+  return fetch('/api/analytics/' + path).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
+  });
+}
+/* Compact USD: 1234567 -> $1.2M, 3.2e12 -> $3.2T. */
+function usdC(n) {
+  n = Number(n || 0); var s = n < 0 ? '-' : ''; n = Math.abs(n); var o;
+  if (n >= 1e12) o = (n / 1e12).toFixed(1) + 'T';
+  else if (n >= 1e9) o = (n / 1e9).toFixed(1) + 'B';
+  else if (n >= 1e6) o = (n / 1e6).toFixed(1) + 'M';
+  else if (n >= 1e3) o = (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'K';
+  else o = String(Math.round(n));
+  return s + '$' + o;
+}
+function estUsd(n) { return '~' + usdC(n); }
+function netHtml(n) {
+  n = Number(n || 0);
+  var cls = n > 0 ? 'pos' : n < 0 ? 'neg' : '';
+  return '<span class="net ' + cls + '">' + (n > 0 ? '+' : '') + usdC(n) + '</span>';
+}
+function splitBar(buys, sells) {
+  buys = Number(buys || 0); sells = Number(sells || 0);
+  var tot = buys + sells, bp = tot ? Math.round(100 * buys / tot) : 0, sp = tot ? 100 - bp : 0;
+  return '<span class="split-wrap"><span class="split">' +
+    '<span class="seg buy" style="width:' + bp + '%"></span>' +
+    '<span class="seg sell" style="width:' + sp + '%"></span></span>' +
+    '<small>' + buys + 'B / ' + sells + 'S</small></span>';
+}
+function pdot(b) { return '<span class="pdot ' + esc(b || 'O') + '"></span>'; }
+function kpi(k, v) { return '<div class="card"><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>'; }
+/* Mini CSS-column time chart of buys vs sells (no chart library). */
+function timeChartHtml(series, labelStep) {
+  var max = 1; series.forEach(function (p) { max = Math.max(max, p.buys, p.sells); });
+  var step = labelStep || Math.max(1, Math.ceil(series.length / 14));
+  return '<div class="tchart">' + series.map(function (p, i) {
+    var bh = p.buys > 0 ? Math.max(3, Math.round(100 * p.buys / max)) : 0;
+    var sh = p.sells > 0 ? Math.max(3, Math.round(100 * p.sells / max)) : 0;
+    var lbl = (i % step === 0) ? esc(p.period || '') : '';
+    var title = esc((p.period || '') + ': ' + p.buys + ' buys / ' + p.sells + ' sells');
+    return '<div class="tcol" title="' + title + '"><div class="tbars">' +
+      '<i class="buy" style="height:' + bh + '%"></i><i class="sell" style="height:' + sh + '%"></i>' +
+      '</div><span class="tlbl">' + lbl + '</span></div>';
+  }).join('') + '</div>';
+}
+
+function loadTrends() {
+  loadTrSummary(); loadTrTickers(); loadTrTrending(); loadTrClusters();
+  loadTrTime(); loadTrMembers(); loadTrParties(); loadTrSectors(); loadTrLag();
+}
+
+function loadTrSummary() {
+  var box = el('trKpis');
+  box.innerHTML = kpi('Loading…', '—');
+  aGet('summary?' + trParams()).then(function (d) {
+    var sent = d.netSentiment == null ? '—' : Math.round(d.netSentiment * 100) + '<small>% buys</small>';
+    box.innerHTML =
+      kpi('Trades', d.totalTrades) + kpi('Members', d.uniqueMembers) + kpi('Tickers', d.uniqueTickers) +
+      kpi('Est. volume', estUsd(d.estimatedVolumeUsd)) + kpi('Net flow', netHtml(d.estimatedNetFlowUsd)) +
+      kpi('Buy pressure', sent);
+  }).catch(function (e) { box.innerHTML = kpi('Summary', '<span style="font-size:13px">' + esc(e.message) + '</span>'); });
+}
+
+function loadTrTickers() {
+  var body = el('trTickers');
+  body.innerHTML = stateRow(6, 'Loading…');
+  aGet('ticker-leaderboard?' + trParams() + '&sort=' + el('trTickerSort').value + '&limit=15').then(function (d) {
+    var rows = d.tickers || [];
+    if (!rows.length) { body.innerHTML = stateRow(6, 'No trades in this window.'); return; }
+    body.innerHTML = rows.map(function (r, i) {
+      return '<tr class="row clickable" data-ticker="' + esc(r.ticker) + '">' +
+        '<td class="rank">' + (i + 1) + '</td>' +
+        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' +
+          esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(r.name) + '</span>' : '') + '</div></div></td>' +
+        '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
+        '<td class="muted">' + r.memberCount + ' mbr</td>' +
+        '<td class="est">' + estUsd(r.estVolumeUsd) + '</td>' +
+        '<td>' + netHtml(r.estNetFlowUsd) + '</td></tr>';
+    }).join('');
+  }).catch(function (e) { body.innerHTML = stateRow(6, 'Could not load: ' + e.message); });
+}
+
+function loadTrTrending() {
+  var body = el('trTrending');
+  body.innerHTML = stateRow(4, 'Loading…');
+  aGet('trending?' + trParams() + '&limit=12').then(function (d) {
+    var rows = (d.trending || []).filter(function (r) { return r.deltaCount > 0; });
+    if (!rows.length) { body.innerHTML = stateRow(4, 'Not enough history to rank momentum.'); return; }
+    body.innerHTML = rows.map(function (r) {
+      return '<tr class="row clickable" data-ticker="' + esc(r.ticker) + '">' +
+        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' + esc(r.ticker) + '</span></div></div></td>' +
+        '<td class="muted">' + r.priorCount + ' → ' + r.recentCount + '</td>' +
+        '<td class="net pos">▲ ' + r.deltaCount + '</td>' +
+        '<td class="muted">' + r.recentMembers + ' mbr</td></tr>';
+    }).join('');
+  }).catch(function (e) { body.innerHTML = stateRow(4, 'Could not load: ' + e.message); });
+}
+
+function loadTrClusters() {
+  var box = el('trClusters');
+  box.innerHTML = '<div class="chip">Loading…</div>';
+  aGet('cluster-buys?' + trParams() + '&limit=12&minMembers=2').then(function (d) {
+    var cs = d.clusters || [];
+    el('trClusterHint').textContent = '· ' + cs.length + ' found';
+    if (!cs.length) { box.innerHTML = '<div class="chip">No multi-member consensus in this window — try a longer window or “All data”.</div>'; return; }
+    box.innerHTML = cs.map(function (c) {
+      var faces = (c.topMembers || []).slice(0, 5).map(function (m) { return memberAvatarHtml(m.fullName, m.photoUrl); }).join('');
+      var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
+      var parties = 'D ' + c.parties.D + ' · R ' + c.parties.R + (c.parties.O ? ' · O ' + c.parties.O : '');
+      var bip = (c.parties.D > 0 && c.parties.R > 0) ? ' <span class="chip" title="Both parties traded">· bipartisan</span>' : '';
+      var range = (c.firstSeen || '').slice(0, 10) + (c.lastSeen && c.lastSeen !== c.firstSeen ? ' → ' + (c.lastSeen || '').slice(0, 10) : '');
+      return '<div class="ccard clickable" data-ticker="' + esc(c.ticker) + '">' +
+        '<div class="chead">' + tickerLogoHtml(c.ticker, c.name) + '<span class="big">' + esc(c.ticker) +
+          '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
+        '<div><strong>' + c.memberCount + '</strong> members · ' + c.tradeCount + ' trades' + bip + '</div>' +
+        '<div class="chip">' + esc(parties) + '</div>' +
+        '<div class="chip">' + esc(range) + ' · ' + estUsd(c.estVolumeUsd) + '</div>' +
+        '<div class="faces">' + faces + '</div></div>';
+    }).join('');
+  }).catch(function (e) { box.innerHTML = '<div class="chip">Could not load: ' + esc(e.message) + '</div>'; });
+}
+
+function loadTrTime() {
+  var box = el('trTime');
+  box.innerHTML = '<div class="note">Loading…</div>';
+  aGet('volume-over-time?' + trParams()).then(function (d) {
+    var s = d.series || [];
+    if (!s.length) { box.innerHTML = '<div class="note">No dated trades in this window.</div>'; return; }
+    box.innerHTML = timeChartHtml(s);
+  }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
+}
+
+function loadTrMembers() {
+  var body = el('trMembers');
+  body.innerHTML = stateRow(5, 'Loading…');
+  aGet('member-leaderboard?' + trParams() + '&limit=15').then(function (d) {
+    var rows = d.members || [];
+    if (!rows.length) { body.innerHTML = stateRow(5, 'No member activity in this window.'); return; }
+    body.innerHTML = rows.map(function (r, i) {
+      var name = r.fullName || r.filerId || 'Unknown';
+      var metaBits = [r.chamber, r.state].filter(Boolean).join(' · ');
+      return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
+        '<td><div class="member-cell">' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.partyBucket) +
+          esc(name) + (metaBits ? ' <span class="muted">· ' + esc(metaBits) + '</span>' : '') + '</div></div></td>' +
+        '<td class="muted">' + r.tradeCount + '</td>' +
+        '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
+        '<td class="est">' + estUsd(r.estVolumeUsd) + '</td></tr>';
+    }).join('');
+  }).catch(function (e) { body.innerHTML = stateRow(5, 'Could not load: ' + e.message); });
+}
+
+function loadTrParties() {
+  var box = el('trParties');
+  box.innerHTML = '<div class="note">Loading…</div>';
+  aGet('party-split?' + trParams()).then(function (d) {
+    var o = d.overall || {}, names = { D: 'Democrat', R: 'Republican', O: 'Other / Ind.' }, keys = ['D', 'R', 'O'];
+    var maxVol = 1, any = false;
+    keys.forEach(function (k) { if (o[k]) { maxVol = Math.max(maxVol, o[k].estVolumeUsd); if (o[k].buys + o[k].sells > 0) any = true; } });
+    if (!any) { box.innerHTML = '<div class="note">No party-attributed trades in this window.</div>'; return; }
+    box.innerHTML = keys.map(function (k) {
+      var v = o[k] || { buys: 0, sells: 0, estVolumeUsd: 0, estNetFlowUsd: 0, members: 0 };
+      var w = Math.round(100 * v.estVolumeUsd / maxVol);
+      return '<div class="hbar"><div class="hlabel">' + pdot(k) + esc(names[k]) + '</div>' +
+        '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
+        '<div class="hval">' + estUsd(v.estVolumeUsd) + '</div></div>' +
+        '<div class="chip" style="margin:-3px 0 9px 130px">' + v.buys + 'B / ' + v.sells + 'S · ' + v.members + ' mbr · net ' + netHtml(v.estNetFlowUsd) + '</div>';
+    }).join('');
+  }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
+}
+
+function loadTrSectors() {
+  var box = el('trSectors');
+  box.innerHTML = '<div class="note">Loading…</div>';
+  aGet('sector-breakdown?' + trParams() + '&limit=8').then(function (d) {
+    var rows = d.sectors || [];
+    if (!rows.length) { box.innerHTML = '<div class="note">No data in this window.</div>'; return; }
+    var max = 1; rows.forEach(function (r) { max = Math.max(max, r.estVolumeUsd); });
+    box.innerHTML = rows.map(function (r) {
+      var w = Math.round(100 * r.estVolumeUsd / max);
+      return '<div class="hbar"><div class="hlabel" title="' + esc(r.assetType) + '">' + esc(r.assetType) + '</div>' +
+        '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
+        '<div class="hval">' + estUsd(r.estVolumeUsd) + '</div></div>';
+    }).join('');
+  }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
+}
+
+function loadTrLag() {
+  var kbox = el('trLagKpis'), dbox = el('trLagDist'), lbox = el('trLateFilers');
+  kbox.innerHTML = ''; dbox.innerHTML = '<div class="note">Loading…</div>'; lbox.innerHTML = stateRow(4, 'Loading…');
+  aGet('filing-lag?' + trParams()).then(function (d) {
+    var s = d.summary || {};
+    kbox.innerHTML =
+      kpi('Median lag', (s.medianLagDays == null ? '—' : s.medianLagDays + '<small> days</small>')) +
+      kpi('90th pct', (s.p90LagDays == null ? '—' : s.p90LagDays + '<small> days</small>')) +
+      kpi('Filed >45d', (s.overFortyFivePct == null ? '—' : Math.round(s.overFortyFivePct * 100) + '<small>%</small>')) +
+      kpi('Disclosures', s.count || 0);
+    var dist = s.distribution || [], max = 1; dist.forEach(function (b) { max = Math.max(max, b.count); });
+    if (!dist.length || !s.count) { dbox.innerHTML = '<div class="note">No dated filings in this window.</div>'; }
+    else dbox.innerHTML = dist.map(function (b) {
+      var w = Math.round(100 * b.count / max);
+      var cls = (b.bucket === '46–60d' || b.bucket === '60d+') ? ' warn' : ' buy';
+      return '<div class="hbar"><div class="hlabel">' + esc(b.bucket) + '</div>' +
+        '<div class="htrack"><div class="hfill' + cls + '" style="width:' + w + '%"></div></div>' +
+        '<div class="hval">' + b.count + '</div></div>';
+    }).join('');
+    var lf = d.topLateFilers || [];
+    if (!lf.length) { lbox.innerHTML = stateRow(4, 'Not enough dated filings.'); }
+    else lbox.innerHTML = lf.slice(0, 10).map(function (m) {
+      var name = m.fullName || m.filerId || 'Unknown';
+      return '<tr class="row"><td><div class="member-cell">' + memberAvatarHtml(name, m.photoUrl) + '<div>' +
+        pdot(m.partyBucket) + esc(name) + '</div></div></td>' +
+        '<td class="muted">' + Math.round(m.avgLagDays) + 'd avg</td>' +
+        '<td class="muted">' + m.maxLagDays + 'd max</td>' +
+        '<td class="muted">' + m.lateCount + ' late</td></tr>';
+    }).join('');
+  }).catch(function (e) {
+    dbox.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>';
+    lbox.innerHTML = stateRow(4, 'Could not load.');
+  });
+}
+
+/* ============================ DETAIL DRAWERS ============================ */
+/* One reusable right-side drawer, filled per type: trade / asset / politician.
+   Tier-1/2 (company profile, price, performance) are KEY-GATED and shown as a
+   quiet note until a market-data key is configured. */
+function openDrawer(html) { el('detailDrawerBody').innerHTML = html; el('detailDrawer').classList.add('open'); }
+function closeDrawer() { el('detailDrawer').classList.remove('open'); }
+var PERF_GATE = '<div class="tier-gate-note">📈 Price &amp; performance vs the S&amp;P 500 will appear here once a market-data API key is configured.</div>';
+var PROFILE_GATE = '<div class="tier-gate-note">🏢 Company details (sector, market cap, country, exchange) will appear here once a market-data API key is configured.</div>';
+var OPTION_PERF_NOTE = '<div class="tier-gate-note">Performance isn\\'t shown for options — the return depends on strike, expiry, and exercise, which the filing doesn\\'t disclose.</div>';
+/* Render the performance line from /api/analytics/performance. Frames a sale as
+   "since sold" (a price observation, not profit/loss). */
+function perfPct(x) { return x == null ? '—' : (x > 0 ? '▲ ' : x < 0 ? '▼ ' : '') + (x * 100).toFixed(1) + '%'; }
+function perfLineHtml(d, txType) {
+  if (!d || !d.available) return (d && d.isOption) ? OPTION_PERF_NOTE : PERF_GATE;
+  var verb = txType === 'S' ? 'since sold' : 'since traded';
+  var cls = d.assetReturn > 0 ? 'pos' : d.assetReturn < 0 ? 'neg' : '';
+  var excess = d.excessReturn == null ? '—' : (d.excessReturn > 0 ? '+' : '') + (d.excessReturn * 100).toFixed(1) + '% vs S&amp;P';
+  var prices = (d.priceAtTrade != null && d.currentPrice != null)
+    ? '<div class="chip muted">$' + Number(d.priceAtTrade).toFixed(2) + ' → $' + Number(d.currentPrice).toFixed(2) + (d.currentPriceDate ? ' (' + esc(d.currentPriceDate) + ')' : '') + '</div>'
+    : '';
+  return '<div class="perf-line net ' + cls + '">' + perfPct(d.assetReturn) + ' ' + verb + '</div>' +
+    '<div class="chip">S&amp;P 500 ' + perfPct(d.spxReturn) + ' · ' + excess + '</div>' + prices;
+}
+function kvRow(k, v) { return '<dt>' + esc(k) + '</dt><dd>' + v + '</dd>'; }
+function actionBadge(type) { return '<span class="tag ' + esc(type) + '">' + esc(typeName[type] || type) + '</span>'; }
+function amountText(min, max) {
+  if (min == null && max == null) return '—';
+  return fmt(min) + ' – ' + (max == null ? '+' : fmt(max));
+}
+function daysBetween(aIso, bIso) {
+  var a = Date.parse(aIso), b = Date.parse(bIso);
+  if (!isFinite(a) || !isFinite(b)) return null;
+  return Math.round((b - a) / 86400000);
+}
+var PARTY_NAME = { D: 'Democrat', R: 'Republican', O: 'Other / Independent' };
+
+/* Company section for a drawer: real cross-referenced data when present, else the
+   key-gated placeholder. Accepts a ref object with any subset of the fields. */
+function companySectionHtml(ref) {
+  if (!ref || (!ref.sector && ref.marketCap == null && !ref.marketCapBucket && !ref.country && !ref.exchangeShort && !ref.assetClass)) {
+    return PROFILE_GATE;
+  }
+  var rows = '';
+  if (ref.sector) rows += kvRow('Sector', esc(ref.sector));
+  if (ref.industry) rows += kvRow('Industry', esc(ref.industry));
+  if (ref.assetClass) rows += kvRow('Class', esc(ownerLabel(ref.assetClass)));
+  if (ref.marketCapBucket || ref.marketCap != null) {
+    rows += kvRow('Market cap', (ref.marketCapBucket ? esc(ownerLabel(ref.marketCapBucket)) : '') + (ref.marketCap != null ? ' · ' + estUsd(ref.marketCap) : ''));
+  }
+  if (ref.exchangeShort) rows += kvRow('Exchange', esc(ref.exchangeShort));
+  if (ref.country) rows += kvRow('Country', esc(ref.country));
+  if (ref.currency) rows += kvRow('Currency', esc(ref.currency));
+  if (ref.ipoDate) rows += kvRow('IPO', esc(ref.ipoDate));
+  return '<dl class="drawer-kv">' + rows + '</dl>';
+}
+
+/* ---- asset drawer (reuses /api/analytics/ticker/:ticker) ---- */
+function openAsset(ticker) {
+  if (!ticker) return;
+  openDrawer('<div class="note">Loading ' + esc(ticker) + '…</div>');
+  aGet('ticker/' + encodeURIComponent(ticker) + '?window=all').then(function (d) {
+    var s = d.summary || {};
+    var sent = s.netSentiment == null ? '—' : Math.round(s.netSentiment * 100) + '% buys';
+    var ser = d.series || [];
+    var chart = ser.length ? timeChartHtml(ser) : '<div class="note">No dated trades.</div>';
+    function traderList(arr, label) {
+      if (!arr || !arr.length) return '<div class="note">No ' + label + '.</div>';
+      return arr.map(function (m) {
+        var name = m.fullName || m.filerId || 'Unknown';
+        return '<div class="hbar" style="margin:5px 0"><div class="hlabel" style="width:auto;flex:1">' +
+          memberAvatarHtml(name, m.photoUrl) + ' ' + pdot(m.partyBucket) + esc(name) + '</div>' +
+          '<div class="hval">' + estUsd(m.estVolumeUsd) + '</div></div>';
+      }).join('');
+    }
+    var recent = (d.recentTrades || []).map(function (t) {
+      return '<tr class="row"><td class="muted">' + esc((t.txDate || '').slice(0, 10)) + '</td>' +
+        '<td>' + actionBadge(t.txType) + '</td>' +
+        '<td>' + pdot(t.partyBucket) + esc(t.fullName || 'Unknown') + '</td>' +
+        '<td class="est">' + estUsd(t.estValueUsd) + '</td></tr>';
+    }).join('');
+    openDrawer(
+      '<h2><span class="tkr">' + esc(d.ticker) + '</span></h2>' +
+      '<p class="dsub">' + (s.totalTrades || 0) + ' trades · ' + (s.memberCount || 0) + ' members · ' + estUsd(s.estVolumeUsd) + ' est. volume</p>' +
+      '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
+      '<div class="drawer-section"><h3>Congressional activity (all time)</h3><div class="grid-cards">' +
+        kpi('Trades', s.totalTrades || 0) + kpi('Members', s.memberCount || 0) + kpi('Est. volume', estUsd(s.estVolumeUsd)) +
+        kpi('Net flow', netHtml(s.estNetFlowUsd)) + kpi('Buy pressure', sent) + '</div>' +
+        '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + '</div>' +
+      '<div class="drawer-section"><h3>Performance since trades</h3>' + PERF_GATE + '</div>' +
+      '<div class="trend-grid2"><div class="drawer-section"><h3>Top buyers</h3>' + traderList(d.topBuyers, 'buyers') + '</div>' +
+        '<div class="drawer-section"><h3>Top sellers</h3>' + traderList(d.topSellers, 'sellers') + '</div></div>' +
+      '<div class="drawer-section"><h3>Recent trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
+        (recent || '<tr><td class="state" colspan="4">No recent trades.</td></tr>') + '</tbody></table></div></div>'
+    );
+  }).catch(function (e) { openDrawer('<div class="note">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>'); });
+}
+
+/* ---- politician drawer (/api/analytics/member/:filerId) ---- */
+function openMember(filerId) {
+  if (!filerId) return;
+  openDrawer('<div class="note">Loading member…</div>');
+  aGet('member/' + encodeURIComponent(filerId) + '?window=all').then(function (d) {
+    var p = d.profile || {}, st = d.stats || {};
+    var name = p.fullName || filerId;
+    var partyName = PARTY_NAME[p.partyBucket || 'O'];
+    var meta = [p.chamber, p.state].filter(Boolean).join(' · ');
+    var committees = p.committees || [];
+    var commHtml = committees.length
+      ? committees.map(function (c) { return '<span class="committee-tag">' + esc(c) + '</span>'; }).join('')
+      : '<span class="muted">Not recorded</span>';
+    var top = (d.topTickers || []).map(function (t) {
+      return '<div class="hbar" style="margin:5px 0"><div class="hlabel clickable" data-asset="' + esc(t.ticker) + '" style="width:auto;flex:1">' +
+        '<span class="tkr">' + esc(t.ticker) + '</span>' + (t.name ? ' <span class="muted">' + esc(t.name) + '</span>' : '') +
+        '</div><div class="hval">' + t.tradeCount + ' · ' + estUsd(t.estVolumeUsd) + '</div></div>';
+    }).join('') || '<div class="note">—</div>';
+    var recent = (d.recentTrades || []).map(function (t) {
+      var assetCell = t.ticker
+        ? '<span class="tkr clickable" data-asset="' + esc(t.ticker) + '">' + esc(t.ticker) + '</span>'
+        : '<span class="muted">' + esc((t.assetName || '').slice(0, 30)) + '</span>';
+      return '<tr class="row"><td class="muted">' + esc((t.txDate || '').slice(0, 10)) + '</td>' +
+        '<td>' + actionBadge(t.txType) + '</td><td>' + assetCell + '</td>' +
+        '<td class="est">' + estUsd(t.estValueUsd) + '</td></tr>';
+    }).join('');
+    openDrawer(
+      '<div style="display:flex;align-items:center;gap:11px">' + memberAvatarHtml(name, p.photoUrl) +
+        '<div><h2 style="margin:0">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + pdot(p.partyBucket) + esc(partyName) +
+        (meta ? ' · ' + esc(meta) : '') + (p.district ? ' · District ' + esc(p.district) : '') + '</p></div></div>' +
+      '<div class="drawer-section"><h3>Trade stats</h3><dl class="drawer-kv">' +
+        kvRow('Total trades', st.totalTrades || 0) + kvRow('Buys / Sells', (st.buyCount || 0) + ' / ' + (st.sellCount || 0)) +
+        kvRow('Distinct tickers', st.uniqueTickers || 0) + kvRow('Est. volume', estUsd(st.estVolumeUsd)) +
+        kvRow('Avg. disclosure lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
+      '<div class="drawer-section"><h3>Committees</h3>' + commHtml + '</div>' +
+      '<div class="drawer-section"><h3>Performance vs S&amp;P 500</h3>' + PERF_GATE + '</div>' +
+      '<div class="drawer-section"><h3>Most-traded</h3>' + top + '</div>' +
+      '<div class="drawer-section"><h3>Recent trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
+        (recent || '<tr><td class="state" colspan="4">No trades.</td></tr>') + '</tbody></table></div></div>'
+    );
+  }).catch(function (e) { openDrawer('<div class="note">Could not load member: ' + esc(e.message) + '</div>'); });
+}
+
+/* ---- trade drawer (from the in-memory feed row + lazy source link) ---- */
+function openTrade(row) {
+  if (!row) return;
+  var lag = daysBetween(row.txdate, row.filedDate);
+  var memberVal = '<span class="clickable" ' + (row.filerId ? 'data-member="' + esc(row.filerId) + '"' : '') + '>' + esc(row.member) + '</span>';
+  var head =
+    '<h2>' + (row.ticker ? '<span class="tkr">' + esc(row.ticker) + '</span> ' : '') + esc(row.asset || 'Trade') + '</h2>' +
+    '<p class="dsub">' + actionBadge(row.type) + ' · ' + amountText(row.min, row.max) + ' <span class="muted">(est. bracket)</span></p>';
+  var summary =
+    '<div class="drawer-section first"><h3>Trade</h3><dl class="drawer-kv">' +
+      kvRow('Member', memberVal) +
+      kvRow('Traded', esc(row.txdate || '—')) +
+      kvRow('Filed', esc(row.filed || '—')) +
+      kvRow('Disclosure lag', lag == null ? '—' : (lag + ' day' + (lag === 1 ? '' : 's'))) +
+      kvRow('Owner', esc(ownerLabel(row.owner) || '—')) +
+      kvRow('Instrument', row.isOption ? 'Option' : 'Equity / other') +
+      kvRow('Imported', esc((row.imported || '').replace('T', ' ').slice(0, 16) || '—')) +
+      kvRow('Source', esc(sourceLabel(row.source))) +
+      '</dl><div id="tradeSource"></div></div>';
+  var perfInit = row.isOption ? OPTION_PERF_NOTE : PERF_GATE;
+  var perf = '<div class="drawer-section"><h3>Performance since ' + (row.type === 'S' ? 'sale' : 'trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>';
+  var rowRef = { sector: row.refSector, marketCap: row.refMarketCap, marketCapBucket: row.refMarketCapBucket, country: row.refCountry, exchangeShort: row.refExchangeShort, assetClass: row.refAssetClass };
+  var profile = row.ticker ? '<div class="drawer-section"><h3>Company</h3>' + companySectionHtml(rowRef) + '</div>' : '';
+  var notes = row.rawText ? '<div class="drawer-section"><h3>Filing notes</h3><pre class="raw-notes">' + esc(row.rawText) + '</pre></div>' : '';
+  var links = '<div class="drawer-section">' +
+    (row.ticker ? '<a class="drawer-all-link clickable" data-asset="' + esc(row.ticker) + '">View all trades of ' + esc(row.ticker) + ' →</a>' : '') +
+    (row.filerId ? '<a class="drawer-all-link clickable" data-member="' + esc(row.filerId) + '">View all trades by ' + esc(row.member) + ' →</a>' : '') +
+    '</div>';
+  openDrawer(head + summary + perf + profile + notes + links);
+  // Lazy-load the performance line (FMP-gated; "—"/note when unavailable).
+  if (row.id && !row.isOption) {
+    aGet('performance/' + encodeURIComponent(row.id)).then(function (d) {
+      var pEl = el('tradePerf'); if (pEl) pEl.innerHTML = perfLineHtml(d, row.type);
+    }).catch(function () {});
+  }
+  // Lazy-load the source-filing link (live rows have one; seed rows usually don't).
+  if (row.docId) {
+    fetch('/api/filings/' + encodeURIComponent(row.docId))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        var sEl = el('tradeSource'); if (!sEl) return;
+        var url = d && d.filing && d.filing.sourceUrl;
+        sEl.innerHTML = url
+          ? '<a class="source-link" href="' + esc(url) + '" target="_blank" rel="noopener">🔗 View source filing</a>'
+          : '<div class="tier-gate-note" style="margin-top:9px">Source document not stored for this row (historic import).</div>';
+      })
+      .catch(function () {});
+  }
+}
+
 /* ============================ ACCOUNT (auth + billing) ============================ */
 var ME = { user: null, entitlement: { premium: false, status: null, plan: null, trialing: false } };
 var selectedPlan = 'monthly';
@@ -1375,23 +2081,73 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); });
     b.classList.add('active');
     el('view-' + b.dataset.view).classList.add('active');
+    if (b.dataset.view === 'trends') loadTrends();
     if (b.dataset.view === 'review') loadReview();
     if (b.dataset.view === 'subs') loadSubs();
     if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); }
   };
 });
 
-// Sortable feed headers: click a column to sort, click again to flip direction.
-document.querySelectorAll('#feedHead th.sortable').forEach(function (th) {
-  th.onclick = function () { setSort(th.dataset.sort); };
+/* Trends controls: re-run on change; ticker rows/cards open the asset drawer. */
+['trWindow', 'trChamber', 'trParty', 'trSource'].forEach(function (id) {
+  var e = el(id); if (e) e.addEventListener('change', loadTrends);
 });
-updateSortIndicators();
+(function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
+(function () {
+  var v = el('view-trends');
+  if (v) v.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest ? e.target.closest('[data-ticker]') : null;
+    if (t && t.getAttribute('data-ticker')) openAsset(t.getAttribute('data-ticker'));
+  });
+})();
+
+/* Feed rows open the trade drawer; the asset chip and member open their drawers. */
+(function () {
+  var fb = el('feedBody');
+  if (fb) fb.addEventListener('click', function (e) {
+    if (!e.target.closest) return;
+    var a = e.target.closest('[data-asset]'); if (a) { openAsset(a.getAttribute('data-asset')); return; }
+    var m = e.target.closest('[data-member]'); if (m) { openMember(m.getAttribute('data-member')); return; }
+    var tr = e.target.closest('tr[data-txid]'); if (!tr) return;
+    var id = tr.getAttribute('data-txid');
+    for (var i = 0; i < TRADES.length; i++) { if (TRADES[i].id === id) { openTrade(TRADES[i]); return; } }
+  });
+})();
+
+/* Inside a drawer, asset/member links drill into the next drawer. */
+(function () {
+  var db = el('detailDrawerBody');
+  if (db) db.addEventListener('click', function (e) {
+    if (!e.target.closest) return;
+    var a = e.target.closest('[data-asset]'); if (a) { openAsset(a.getAttribute('data-asset')); return; }
+    var m = e.target.closest('[data-member]'); if (m) { openMember(m.getAttribute('data-member')); return; }
+  });
+})();
+
+/* Escape closes the detail drawer. */
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') closeDrawer();
+});
+
+// Build the feed header from the column registry (also attaches sort handlers).
+renderFeedHeader();
+
+// Column chooser: toggle a column's visibility when its checkbox changes.
+(function () {
+  var box = el('colChooserBody');
+  if (box) box.addEventListener('change', function (e) {
+    var cb = e.target;
+    if (cb && cb.getAttribute && cb.getAttribute('data-colid')) {
+      onColToggle(cb.getAttribute('data-colid'), cb.checked);
+    }
+  });
+})();
 
 // Reflect the persisted theme on the toggle button.
 applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
 
 // Initial loading states + boot.
-el('feedBody').innerHTML = stateRow(10, 'Loading live feed…');
+el('feedBody').innerHTML = stateRow(visibleCols().length, 'Loading live feed…');
 el('reviewBody').innerHTML = stateRow(5, 'Loading…');
 el('subsBody').innerHTML = stateRow(5, 'Loading…');
 el('healthBody').innerHTML = stateRow(7, 'Loading…');
