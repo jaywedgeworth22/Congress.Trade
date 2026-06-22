@@ -43,6 +43,18 @@ describe('DASHBOARD_HTML', () => {
     }
   });
 
+  it('wires the configurable column registry + chooser', () => {
+    expect(DASHBOARD_HTML).toContain('var FEED_COLS');
+    expect(DASHBOARD_HTML).toContain('function renderFeedHeader(');
+    expect(DASHBOARD_HTML).toContain('id="colChooser"');
+    expect(DASHBOARD_HTML).toContain('id="colChooserBody"');
+    expect(DASHBOARD_HTML).toContain('function resetCols(');
+    // the new date/lag columns the user asked for
+    expect(DASHBOARD_HTML).toContain("id: 'traded'");
+    expect(DASHBOARD_HTML).toContain("id: 'lag'");
+    expect(DASHBOARD_HTML).toContain("id: 'published'");
+  });
+
   it('wires the detail drawer (trade / asset / politician)', () => {
     expect(DASHBOARD_HTML).toContain('id="detailDrawer"');
     expect(DASHBOARD_HTML).toContain('id="detailDrawerBody"');

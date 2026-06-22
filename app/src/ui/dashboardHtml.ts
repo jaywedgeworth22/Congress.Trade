@@ -257,6 +257,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .raw-notes { white-space:pre-wrap; word-break:break-word; max-height:150px; overflow:auto; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12px; font-family:var(--mono); color:var(--text-dim); margin:0; }
   .perf-line { font-size:15px; font-weight:700; }
   .mini-tbl td { padding:7px 6px; }
+  .colopts { display:flex; flex-wrap:wrap; gap:6px 4px; flex:1; }
+  .colopt { font-size:13px; color:var(--text); display:inline-flex; align-items:center; gap:5px; margin-right:12px; white-space:nowrap; cursor:pointer; }
   .clickable { cursor: pointer; }
   .asset-cell.clickable:hover .tkr, .hlabel.clickable:hover .tkr, .tkr.clickable:hover { text-decoration: underline; }
   .member-cell.clickable:hover { text-decoration: underline; }
@@ -340,8 +342,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="">Both Chambers</option><option value="house">House</option><option value="senate">Senate</option>
       </select>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
+      <button class="btn ghost sm" onclick="toggleColChooser()" title="Show / hide columns">⚙ Columns</button>
       <button class="btn ghost sm" onclick="refreshFeed()">↻ Refresh</button>
       <button class="btn ghost sm" onclick="exportCsv()" title="Download the filtered feed as CSV (premium)">⤓ Export CSV</button>
+    </div>
+    <div class="search-panel" id="colChooser">
+      <span class="lbl">Columns</span>
+      <div id="colChooserBody" class="colopts"></div>
+      <button class="btn ghost sm" onclick="resetCols()">Reset</button>
     </div>
     <div class="search-panel" id="searchPanel">
       <span class="lbl">Search all</span>
@@ -356,18 +364,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
     <div class="table-wrap">
     <table id="feedTable">
-      <thead><tr id="feedHead">
-        <th class="sortable" data-sort="filed" title="Official disclosure (report) date the filing was submitted to Congress. Historic seed rows without a filing fall back to their import date; raw ingest timing is in the Latency column.">Filed<span class="arr"></span></th>
-        <th class="sortable" data-sort="member">Member<span class="arr"></span></th>
-        <th class="sortable" data-sort="asset">Asset<span class="arr"></span></th>
-        <th class="sortable" data-sort="type">Type<span class="arr"></span></th>
-        <th class="sortable" data-sort="min">Amount (STOCK Act bracket)<span class="arr"></span></th>
-        <th class="sortable" data-sort="txdate">Tx date<span class="arr"></span></th>
-        <th class="sortable" data-sort="owner">Owner<span class="arr"></span></th>
-        <th class="sortable" data-sort="conf">Conf.<span class="arr"></span></th>
-        <th class="sortable" data-sort="source">Source<span class="arr"></span></th>
-        <th data-sort="latency" title="Released→Seen (approx, disclosure date → our watcher) · Seen→Imported (precise, our watcher → parsed rows). Live rows only.">Latency</th>
-      </tr></thead>
+      <thead><tr id="feedHead"></tr></thead>
       <tbody id="feedBody"></tbody>
     </table>
     </div>
@@ -796,6 +793,89 @@ function okOrThrow(r) {
 function isAuthError(e) { return !!(e && e.isAuth); }
 
 /* ============================ FEED ============================ */
+/* Column registry — single source of truth for the header, body cells, sorting,
+   and the column chooser. def:true columns are visible by default; lock:true
+   columns can't be hidden. Each cell(r) returns the inner HTML for that td. */
+function memberCellHtml(r) {
+  var attr = r.filerId
+    ? 'class="member-cell clickable" data-member="' + esc(r.filerId) + '"'
+    : 'class="member-cell"';
+  return '<div ' + attr + '>' + memberAvatarHtml(r.member, r.photoUrl) +
+    '<div>' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div>';
+}
+function assetCellHtml(r) {
+  var inner = '<div title="' + esc((r.ticker ? r.ticker + ' · ' : '') + r.asset) + '">' +
+    (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span> ' : '') +
+    '<span class="muted">' + esc(r.asset) + '</span></div>';
+  return r.ticker
+    ? '<div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, r.asset) + inner + '</div>'
+    : '<div class="asset-cell">' + inner + '</div>';
+}
+function lagDays(r) { return daysBetween(r.txdate, r.filedDate); }
+function lagCellHtml(r) {
+  var d = lagDays(r);
+  if (d == null) return '<span class="muted">—</span>';
+  var over = d > 45 ? ' style="color:var(--sell)"' : '';
+  return '<span' + over + ' title="Days from trade to filing (STOCK Act limit: 45)">' + d + '</span>';
+}
+var FEED_COLS = [
+  { id: 'filed', label: 'Filed', sort: 'filed', def: true, cls: 'muted', tip: 'Official disclosure (report) date. Seed rows fall back to import date.', cell: function (r) { return esc(r.filed || '—'); } },
+  { id: 'member', label: 'Member', sort: 'member', def: true, lock: true, cell: memberCellHtml },
+  { id: 'asset', label: 'Asset', sort: 'asset', def: true, lock: true, cell: assetCellHtml },
+  { id: 'type', label: 'Type', sort: 'type', def: true, cell: function (r) { return actionBadge(r.type); } },
+  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return esc(r.txdate || '—'); } },
+  { id: 'lag', label: 'Lag', sort: 'lag', def: true, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
+  { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket — an estimate, not an exact figure.', cell: function (r) { return (r.min == null && r.max == null) ? '<span class="muted">—</span>' : esc(amountText(r.min, r.max)); } },
+  { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', cell: function (r) { return esc(ownerLabel(r.owner) || '—'); } },
+  { id: 'published', label: 'Published', sort: 'imported', def: false, cls: 'muted', tip: 'When our feed received this filing.', cell: function (r) { return esc((r.imported || '').replace('T', ' ').slice(0, 16) || '—'); } },
+  { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', cell: function (r) { return esc(r.chamber || '—'); } },
+  { id: 'conf', label: 'Conf.', sort: 'conf', def: false, cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">' + (r.conf * 100).toFixed(0) + '%</span>'; } },
+  { id: 'source', label: 'Source', sort: 'source', def: false, cell: function (r) { return '<span class="muted" title="' + esc(r.source) + '">' + esc(sourceLabel(r.source)) + '</span>'; } },
+  { id: 'latency', label: 'Latency', sort: null, def: false, cls: 'latency', tip: 'Released→Seen · Seen→Imported (live rows).', cell: function (r) { return rowLatencyHtml(r); } }
+];
+var COL_HIDDEN_KEY = 'feed-cols-hidden';
+function defaultHidden() { return FEED_COLS.filter(function (c) { return !c.def; }).map(function (c) { return c.id; }); }
+function loadHiddenCols() { try { var v = JSON.parse(localStorage.getItem(COL_HIDDEN_KEY)); return v && v.length !== undefined ? v : defaultHidden(); } catch (e) { return defaultHidden(); } }
+function saveHiddenCols(h) { try { localStorage.setItem(COL_HIDDEN_KEY, JSON.stringify(h)); } catch (e) {} }
+var hiddenCols = loadHiddenCols();
+function isColVisible(id) { return hiddenCols.indexOf(id) < 0; }
+function visibleCols() { return FEED_COLS.filter(function (c) { return c.lock || isColVisible(c.id); }); }
+
+/* Render the header from the registry, (re)attach sort handlers, and reset the
+   resize state so widths re-freeze for the now-visible columns. */
+function renderFeedHeader() {
+  var head = el('feedHead'); if (!head) return;
+  head.innerHTML = visibleCols().map(function (c) {
+    var cls = (c.sort ? 'sortable ' : '') + 'c-' + c.id;
+    var ds = c.sort ? ' data-sort="' + c.sort + '"' : '';
+    var tip = c.tip ? ' title="' + esc(c.tip) + '"' : '';
+    return '<th class="' + cls + '" data-col="' + c.id + '"' + ds + tip + '>' + esc(c.label) + (c.sort ? '<span class="arr"></span>' : '') + '</th>';
+  }).join('');
+  var ths = head.querySelectorAll('th.sortable');
+  for (var i = 0; i < ths.length; i++) { (function (th) { th.onclick = function () { setSort(th.dataset.sort); }; })(ths[i]); }
+  // Re-init the resizable columns for the new header.
+  var table = el('feedTable'); if (table) table.classList.remove('resizable');
+  colResizeInit = false;
+  updateSortIndicators();
+}
+
+/* Column chooser (the ⚙ Columns panel). */
+function renderColChooser() {
+  var box = el('colChooserBody'); if (!box) return;
+  box.innerHTML = FEED_COLS.filter(function (c) { return !c.lock; }).map(function (c) {
+    return '<label class="colopt"><input type="checkbox" data-colid="' + c.id + '"' + (isColVisible(c.id) ? ' checked' : '') + ' /> ' + esc(c.label) + '</label>';
+  }).join('');
+}
+function toggleColChooser() { var p = el('colChooser'); var open = p.classList.toggle('open'); if (open) renderColChooser(); }
+function onColToggle(id, visible) {
+  var i = hiddenCols.indexOf(id);
+  if (visible && i >= 0) hiddenCols.splice(i, 1);
+  else if (!visible && i < 0) hiddenCols.push(id);
+  saveHiddenCols(hiddenCols);
+  renderFeedHeader(); renderFeed();
+}
+function resetCols() { hiddenCols = defaultHidden(); saveHiddenCols(hiddenCols); renderColChooser(); renderFeedHeader(); renderFeed(); }
+
 function renderFeed() {
   var m = el('qMember').value.toLowerCase(), t = el('qTicker').value.toUpperCase(),
       ty = el('qType').value, ch = el('qChamber').value;
@@ -804,7 +884,8 @@ function renderFeed() {
   var minAmt = parseFloat(el('qMinAmt').value);
   var src = el('qSource').value;
   var body = el('feedBody');
-  if (!realDataLoaded) { body.innerHTML = stateRow(10, 'Loading live feed…'); return; }
+  var cols = visibleCols();
+  if (!realDataLoaded) { body.innerHTML = stateRow(cols.length, 'Loading live feed…'); return; }
   var rows = TRADES.filter(function (r) {
     if (qa) {
       var hay = ((r.member || '') + ' ' + (r.asset || '') + ' ' + (r.ticker || '') + ' ' +
@@ -819,30 +900,12 @@ function renderFeed() {
            (!ch || r.chamber === ch);
   });
   rows = sortRows(rows);
-  if (rows.length === 0) { body.innerHTML = stateRow(10, 'No transactions match these filters.'); updateFeedCountMsg(0); maybeInitResize(); return; }
+  if (rows.length === 0) { body.innerHTML = stateRow(cols.length, 'No transactions match these filters.'); updateFeedCountMsg(0); maybeInitResize(); return; }
   body.innerHTML = rows.map(function (r) {
-    var memberAttr = r.filerId
-      ? 'class="member-cell clickable" data-member="' + esc(r.filerId) + '"'
-      : 'class="member-cell"';
-    var assetInner = '<div title="' + esc((r.ticker ? r.ticker + ' · ' : '') + r.asset) + '">' +
-      (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span> ' : '') +
-      '<span class="muted">' + esc(r.asset) + '</span></div>';
-    var assetCell = r.ticker
-      ? '<div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, r.asset) + assetInner + '</div>'
-      : '<div class="asset-cell">' + assetInner + '</div>';
-    return '<tr class="row clickable" data-txid="' + esc(r.id) + '" title="Open trade details">' +
-      '<td class="muted">' + esc(r.filed) + '</td>' +
-      '<td><div ' + memberAttr + '>' + memberAvatarHtml(r.member, r.photoUrl) +
-        '<div>' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div></td>' +
-      '<td>' + assetCell + '</td>' +
-      '<td><span class="tag ' + esc(r.type) + '">' + esc(typeName[r.type] || r.type) + '</span></td>' +
-      '<td>' + (r.min == null && r.max == null ? '<span class="muted">—</span>' : fmt(r.min) + ' – ' + (r.max == null ? '+' : fmt(r.max))) + '</td>' +
-      '<td class="muted">' + esc(r.txdate || '—') + '</td>' +
-      '<td class="muted">' + esc(ownerLabel(r.owner) || '—') + '</td>' +
-      '<td><span class="conf ' + confClass(r.conf) + '">' + (r.conf * 100).toFixed(0) + '%</span></td>' +
-      '<td class="muted" title="' + esc(r.source) + '">' + esc(sourceLabel(r.source)) + '</td>' +
-      '<td class="latency">' + rowLatencyHtml(r) + '</td>' +
-    '</tr>';
+    var tds = cols.map(function (c) {
+      return '<td class="c-' + c.id + (c.cls ? ' ' + c.cls : '') + '">' + c.cell(r) + '</td>';
+    }).join('');
+    return '<tr class="row clickable" data-txid="' + esc(r.id) + '" title="Open trade details">' + tds + '</tr>';
   }).join('');
   updateFeedCountMsg(rows.length);
   maybeInitResize();
@@ -877,7 +940,7 @@ function initColumnResize() {
   // show in full, long ones clip to an ellipsis, and any column stays draggable.
   var DEFAULT_CAP = { asset: 200 };
   for (var i = 0; i < ths.length; i++) {
-    var k = ths[i].dataset.sort;
+    var k = ths[i].dataset.col;
     var w = (k && saved[k]) ? saved[k] : ths[i].offsetWidth;
     if (!(k && saved[k]) && k && DEFAULT_CAP[k] && w > DEFAULT_CAP[k]) w = DEFAULT_CAP[k];
     ths[i].style.width = w + 'px';
@@ -897,7 +960,7 @@ function addColResizer(th) {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
       document.body.style.userSelect = '';
-      var w = loadColWidths(); w[th.dataset.sort] = th.offsetWidth; saveColWidths(w);
+      var w = loadColWidths(); w[th.dataset.col] = th.offsetWidth; saveColWidths(w);
     }
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
@@ -909,6 +972,7 @@ function addColResizer(th) {
 /* ---- sorting ---- */
 function sortVal(r, key) {
   if (key === 'asset') return (r.ticker || r.asset || '');
+  if (key === 'lag') { var d = lagDays(r); return d == null ? -Infinity : d; }
   var v = r[key];
   if (NUMERIC_SORT[key]) return (v == null ? -Infinity : Number(v));
   return (v == null ? '' : String(v)).toLowerCase();
@@ -925,7 +989,7 @@ function sortRows(rows) {
 }
 function setSort(key) {
   if (sortKey === key) { sortDir = -sortDir; }   // same column -> flip direction
-  else { sortKey = key; sortDir = (key === 'filed' || NUMERIC_SORT[key]) ? -1 : 1; }
+  else { sortKey = key; sortDir = (key === 'filed' || key === 'txdate' || key === 'imported' || key === 'lag' || NUMERIC_SORT[key]) ? -1 : 1; }
   updateSortIndicators();
   renderFeed();
 }
@@ -2011,17 +2075,25 @@ document.addEventListener('keydown', function (e) {
   if (e.key === 'Escape') closeDrawer();
 });
 
-// Sortable feed headers: click a column to sort, click again to flip direction.
-document.querySelectorAll('#feedHead th.sortable').forEach(function (th) {
-  th.onclick = function () { setSort(th.dataset.sort); };
-});
-updateSortIndicators();
+// Build the feed header from the column registry (also attaches sort handlers).
+renderFeedHeader();
+
+// Column chooser: toggle a column's visibility when its checkbox changes.
+(function () {
+  var box = el('colChooserBody');
+  if (box) box.addEventListener('change', function (e) {
+    var cb = e.target;
+    if (cb && cb.getAttribute && cb.getAttribute('data-colid')) {
+      onColToggle(cb.getAttribute('data-colid'), cb.checked);
+    }
+  });
+})();
 
 // Reflect the persisted theme on the toggle button.
 applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
 
 // Initial loading states + boot.
-el('feedBody').innerHTML = stateRow(10, 'Loading live feed…');
+el('feedBody').innerHTML = stateRow(visibleCols().length, 'Loading live feed…');
 el('reviewBody').innerHTML = stateRow(5, 'Loading…');
 el('subsBody').innerHTML = stateRow(5, 'Loading…');
 el('healthBody').innerHTML = stateRow(7, 'Loading…');
