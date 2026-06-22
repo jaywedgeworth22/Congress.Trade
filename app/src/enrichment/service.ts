@@ -164,6 +164,49 @@ export async function upsertSecurityRef(env: Env, ref: SecurityRef): Promise<voi
   return upsertRef(env, ref);
 }
 
+/**
+ * Non-destructive upsert for SHARED data from another app (the import API).
+ * Unlike upsertRef, this never overwrites an existing non-null column with an
+ * incoming null (so a partial ref — e.g. only company/sector/marketCap — fills
+ * gaps without erasing fields App A already enriched), and it does NOT set
+ * enriched_at: an imported partial leaves the ticker eligible for App A's own
+ * FMP/SEC enrichment to complete (CIK, exchange, country, …). is_etf/is_adr and
+ * source are preserved on conflict (set only when first inserting the row).
+ */
+export async function importSecurityRef(env: Env, ref: SecurityRef): Promise<void> {
+  await run(
+    env.DB,
+    `INSERT INTO securities_ref (
+       ticker, company_name, sector, industry, asset_class, is_etf, is_adr,
+       country, state_hq, state_of_incorp, exchange, exchange_short, currency,
+       market_cap, market_cap_bucket, ipo_date, cik, sic_code, sic_description, source
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(ticker) DO UPDATE SET
+       company_name=COALESCE(excluded.company_name, securities_ref.company_name),
+       sector=COALESCE(excluded.sector, securities_ref.sector),
+       industry=COALESCE(excluded.industry, securities_ref.industry),
+       asset_class=COALESCE(excluded.asset_class, securities_ref.asset_class),
+       country=COALESCE(excluded.country, securities_ref.country),
+       state_hq=COALESCE(excluded.state_hq, securities_ref.state_hq),
+       state_of_incorp=COALESCE(excluded.state_of_incorp, securities_ref.state_of_incorp),
+       exchange=COALESCE(excluded.exchange, securities_ref.exchange),
+       exchange_short=COALESCE(excluded.exchange_short, securities_ref.exchange_short),
+       currency=COALESCE(excluded.currency, securities_ref.currency),
+       market_cap=COALESCE(excluded.market_cap, securities_ref.market_cap),
+       market_cap_bucket=COALESCE(excluded.market_cap_bucket, securities_ref.market_cap_bucket),
+       ipo_date=COALESCE(excluded.ipo_date, securities_ref.ipo_date),
+       cik=COALESCE(excluded.cik, securities_ref.cik),
+       sic_code=COALESCE(excluded.sic_code, securities_ref.sic_code),
+       sic_description=COALESCE(excluded.sic_description, securities_ref.sic_description)`,
+    [
+      ref.ticker, ref.companyName, ref.sector, ref.industry, ref.assetClass,
+      ref.isEtf ? 1 : 0, ref.isAdr ? 1 : 0, ref.country, ref.stateHq, ref.stateOfIncorp,
+      ref.exchange, ref.exchangeShort, ref.currency, ref.marketCap, ref.marketCapBucket,
+      ref.ipoDate, ref.cik, ref.sicCode, ref.sicDescription, ref.source,
+    ],
+  );
+}
+
 async function upsertRef(env: Env, ref: SecurityRef): Promise<void> {
   await run(
     env.DB,

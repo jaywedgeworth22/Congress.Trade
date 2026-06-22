@@ -66,6 +66,15 @@ App A upserts `securities_ref` / `spx_eod` / `price_eod` and recomputes per-trad
 performance anchors for any imported ticker. Response: `{ ok, refs, spxRows,
 pricedTickers, priceRows, perfTickers, errors }`.
 
+**Partial refs are fine.** If the sending app only has some columns (e.g.
+`companyName` / `sector` / `industry` / `marketCap` but no `cik` / `exchange` /
+`country` / `ipoDate` / `sicCode`), send what you have. The ref import is
+non-destructive: it fills gaps via `COALESCE` (never overwrites an existing
+non-null value with null) and does **not** mark the ticker enriched, so App A's
+own FMP/SEC enrichment still completes the missing fields later. Prices/spx are
+the expensive FMP calls and are fully shareable, so partial refs still capture
+the bulk of the savings.
+
 ### Mapping FMP responses → this payload
 
 - **`GET /v3/profile/{symbol}`** (array, take `[0]`) → one `refs` entry:

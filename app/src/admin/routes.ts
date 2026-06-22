@@ -46,7 +46,7 @@ import {
   type CandidateDocResult,
   type Provider,
 } from '../extraction/bakeoff';
-import { runEnrichment, getDailyUsed, upsertSecurityRef } from '../enrichment/service';
+import { runEnrichment, getDailyUsed, importSecurityRef } from '../enrichment/service';
 import { mergeRefs } from '../enrichment/compute';
 import type { SecurityRef } from '../enrichment/types';
 import { runPriceRefresh } from '../prices/service';
@@ -994,7 +994,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         const partial: Partial<SecurityRef> = { source: 'imported' };
         for (const k of REF_KEYS) if (o[k] !== undefined) (partial as Record<string, unknown>)[k] = o[k];
         try {
-          await upsertSecurityRef(c.env, mergeRefs(ticker, [partial]));
+          await importSecurityRef(c.env, mergeRefs(ticker, [partial]));
           summary.refs++;
         } catch (e) {
           summary.errors.push(ticker + ' ref: ' + (e as Error).message);
