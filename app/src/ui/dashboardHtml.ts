@@ -256,6 +256,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <!-- ================= ADMIN · CADENCE ================= -->
   <section class="view" id="view-admin">
     <div class="section">
+      <h3>Admin access</h3>
+      <p class="sub">The admin endpoints (poll cadence, review queue, backfill) are gated by a bearer token. Paste your <code>ADMIN_TOKEN</code> once — it's kept in this browser only (localStorage) and sent as <code>Authorization: Bearer …</code> on admin requests. Leave blank if the server has no token set. (Tip: if you sign in via Cloudflare Access, you don't need a token here.)</p>
+      <div class="row-flex">
+        <input id="adminToken" type="password" autocomplete="off" placeholder="ADMIN_TOKEN" style="flex:1;min-width:240px" />
+        <button class="btn" onclick="saveAdminToken()">Save token</button>
+        <button class="btn ghost sm" onclick="clearAdminToken()">Clear</button>
+        <span id="adminTokenMsg" class="note"></span>
+      </div>
+    </div>
+    <div class="section">
       <h3>Poll cadence</h3>
       <p class="sub">Filings land almost entirely during US-Eastern business hours on weekdays. Adaptive windows keep latency low when it matters and stay polite to gov servers overnight.</p>
       <div class="row-flex" style="margin-bottom:16px">
@@ -532,8 +542,8 @@ function startStream() {
 /* ============================ REVIEW ============================ */
 function loadReview() {
   // API HOOK: GET /api/admin/review-queue
-  return fetch('/api/admin/review-queue')
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  return fetch('/api/admin/review-queue', { headers: adminHeaders() })
+    .then(adminOk).then(function (r) { return r.json(); })
     .then(function (data) { REVIEW = data.items || []; renderReview(); })
     .catch(function (e) { el('reviewBody').innerHTML = stateRow(5, 'Could not load review queue: ' + e.message); });
 }
@@ -561,10 +571,10 @@ function resolveReview(docId, decision) {
   var rowEl = el('rv-' + docId);
   if (rowEl) rowEl.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
   fetch('/api/admin/review/' + encodeURIComponent(docId), {
-    method: 'POST', headers: { 'content-type': 'application/json' },
+    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ decision: decision, edits: [] })
   })
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(adminOk).then(function (r) { return r.json(); })
     .then(function () { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); renderReview(); loadFeed(); })
     .catch(function (e) {
       if (rowEl) rowEl.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
@@ -619,11 +629,53 @@ function createSubscription() {
     .catch(function (e) { el('subsMsg').textContent = 'Failed: ' + e.message; });
 }
 
+/* ============================ ADMIN AUTH ============================ */
+var ADMIN_TOKEN_KEY = 'congresstrade.adminToken';
+function getAdminToken() {
+  try { return localStorage.getItem(ADMIN_TOKEN_KEY) || ''; } catch (e) { return ''; }
+}
+// Build request headers for /api/admin/* calls, attaching the bearer token if set.
+function adminHeaders(extra) {
+  var h = extra || {};
+  var t = getAdminToken();
+  if (t) h['Authorization'] = 'Bearer ' + t;
+  return h;
+}
+// Turn a 401 into an actionable message instead of a bare "HTTP 401".
+function adminOk(r) {
+  if (r.status === 401) throw new Error('Unauthorized — paste your admin token in the Admin access box above.');
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r;
+}
+// Like adminOk but only intercepts 401 — lets the caller parse a JSON {error} body for other statuses.
+function admin401(r) {
+  if (r.status === 401) throw new Error('Unauthorized — paste your admin token in the Admin access box above.');
+  return r;
+}
+function saveAdminToken() {
+  var v = el('adminToken').value.trim();
+  try { if (v) localStorage.setItem(ADMIN_TOKEN_KEY, v); else localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
+  el('adminTokenMsg').textContent = v ? 'Saved in this browser.' : 'Cleared.';
+  setTimeout(function () { el('adminTokenMsg').textContent = ''; }, 2500);
+  loadPollConfig(); loadHealth();
+}
+function clearAdminToken() {
+  try { localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
+  if (el('adminToken')) el('adminToken').value = '';
+  el('adminTokenMsg').textContent = 'Cleared.';
+  setTimeout(function () { el('adminTokenMsg').textContent = ''; }, 2500);
+}
+// Populate the field from storage when the Admin tab opens.
+function initAdminToken() {
+  var t = getAdminToken();
+  if (t && el('adminToken')) el('adminToken').value = t;
+}
+
 /* ============================ ADMIN · CADENCE ============================ */
 function loadPollConfig() {
   // API HOOK: GET /api/admin/poll-config
-  return fetch('/api/admin/poll-config')
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  return fetch('/api/admin/poll-config', { headers: adminHeaders() })
+    .then(adminOk).then(function (r) { return r.json(); })
     .then(function (cfg) {
       SCHEDULE = Array.isArray(cfg.schedule) ? cfg.schedule : [];
       aggressive = !!cfg.aggressiveMode;
@@ -648,10 +700,10 @@ function saveSchedule() {
   // API HOOK: PUT /api/admin/poll-config
   el('saveMsg').textContent = 'Saving…';
   fetch('/api/admin/poll-config', {
-    method: 'PUT', headers: { 'content-type': 'application/json' },
+    method: 'PUT', headers: adminHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ schedule: SCHEDULE, aggressiveMode: aggressive })
   })
-    .then(function (r) { if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ('HTTP ' + r.status)); }); return r.json(); })
+    .then(admin401).then(function (r) { if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ('HTTP ' + r.status)); }); return r.json(); })
     .then(function () { el('saveMsg').textContent = 'Saved — effective within ~60s.'; setTimeout(function () { el('saveMsg').textContent = ''; }, 2500); })
     .catch(function (e) { el('saveMsg').textContent = 'Failed: ' + e.message; });
 }
@@ -668,10 +720,10 @@ function runBackfill(dryRun) {
   if (ch) payload.chambers = [ch];
   el('bfMsg').textContent = dryRun ? 'Counting…' : 'Running backfill…';
   fetch('/api/admin/backfill', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
+    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify(payload)
   })
-    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
+    .then(admin401).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
     .then(function (j) {
       var verb = dryRun ? 'Would import' : 'Imported';
       var msg = verb + ' ' + j.inserted + ', skipped ' + j.skipped + '.';
@@ -689,10 +741,10 @@ function runHouseIndex(dryRun) {
   if (isNaN(from) || isNaN(to)) { el('hiMsg').textContent = 'Enter a from/to year.'; return; }
   el('hiMsg').textContent = dryRun ? 'Counting…' : 'Enqueuing (this can take a while)…';
   fetch('/api/admin/backfill/house-index', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
+    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ fromYear: from, toYear: to, dryRun: !!dryRun })
   })
-    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
+    .then(admin401).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
     .then(function (j) {
       var years = j.byYear || {};
       var found = 0, enq = 0;
@@ -707,8 +759,8 @@ function runHouseIndex(dryRun) {
 /* ============================ SOURCE HEALTH ============================ */
 function loadHealth() {
   // API HOOK: GET /api/admin/sources/health
-  return fetch('/api/admin/sources/health')
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+  return fetch('/api/admin/sources/health', { headers: adminHeaders() })
+    .then(adminOk).then(function (r) { return r.json(); })
     .then(function (data) {
       var sources = data.sources || [];
       var body = el('healthBody');
@@ -736,7 +788,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     el('view-' + b.dataset.view).classList.add('active');
     if (b.dataset.view === 'review') loadReview();
     if (b.dataset.view === 'subs') loadSubs();
-    if (b.dataset.view === 'admin') { loadPollConfig(); loadHealth(); }
+    if (b.dataset.view === 'admin') { initAdminToken(); loadPollConfig(); loadHealth(); }
   };
 });
 
