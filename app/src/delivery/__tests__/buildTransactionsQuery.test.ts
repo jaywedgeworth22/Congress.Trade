@@ -126,6 +126,8 @@ describe('mapFeedTransaction', () => {
       filer_full_name: 'Nancy Pelosi',
       filer_state: 'CA',
       filer_photo_url: 'https://unitedstates.github.io/images/congress/225x275/P000197.jpg',
+      filing_filed_date: '2024-01-01',
+      filing_first_seen_at: '2024-01-02T12:00:00Z',
       ...over,
     };
   }
@@ -135,6 +137,9 @@ describe('mapFeedTransaction', () => {
     expect(tx.fullName).toBe('Nancy Pelosi');
     expect(tx.state).toBe('CA');
     expect(tx.photoUrl).toContain('P000197.jpg');
+    // filing timestamps for the per-row latency column
+    expect(tx.filedDate).toBe('2024-01-01');
+    expect(tx.firstSeenAt).toBe('2024-01-02T12:00:00Z');
     // base transaction mapping still applies
     expect(tx.ticker).toBe('ACME');
     expect(tx.cursorSeq).toBe(5);

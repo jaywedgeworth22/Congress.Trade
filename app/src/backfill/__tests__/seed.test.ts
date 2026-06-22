@@ -77,7 +77,7 @@ describe('mapRecordToTransaction', () => {
     expect(tx.docId).toBe('seed-senate');
     expect(tx.filerId).toBe('seed-senate-jane-a-smith');
     expect(tx.isOption).toBe(false);
-    expect(tx.confidence).toBe(1);
+    expect(tx.confidence).toBe(0.8); // SEED_CONFIDENCE (down-ranked from a flat 1.0)
   });
 
   it('returns null when there is no asset and no ticker', () => {

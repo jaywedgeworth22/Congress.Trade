@@ -115,6 +115,10 @@ export interface Transaction {
   state?: string | null;
   /** Filer's headshot URL (unitedstates/images CDN); null = show initials. */
   photoUrl?: string | null;
+  /** Filing's official disclosure date (date-only) from the source. Feed only. */
+  filedDate?: string | null;
+  /** When our watcher first saw the filing (timestamp). Feed only. */
+  firstSeenAt?: string | null;
 }
 
 /**
