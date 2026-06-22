@@ -69,6 +69,12 @@ RESEND_API_KEY=""
 EMAIL_FROM=""
 APP_BASE_URL=""
 
+# Operational alerts. If set (and RESEND_API_KEY + EMAIL_FROM are configured),
+# the daily job emails this address when FMP enrichment/price refresh fails with
+# key/plan errors (401/402/403/429) — i.e. the paid tier stopped working.
+# Throttled to at most one alert per 12h.
+ALERT_EMAIL=""
+
 # Billing (Stripe) — freemium paywall. Premium unlocks full history + CSV export.
 #   - STRIPE_SECRET_KEY: sk_live_… / sk_test_… (enables billing; absent => 503)
 #   - STRIPE_WEBHOOK_SECRET: whsec_… from the webhook endpoint you create for

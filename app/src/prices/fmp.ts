@@ -7,6 +7,7 @@
  * as the index ^GSPC (URL-encoded %5EGSPC), the free-tier benchmark.
  */
 
+import { assertFmpTierOk } from '../shared/fmpStatus';
 import type { Close } from './compute';
 
 /**
@@ -48,7 +49,10 @@ export function buildFmpPriceClient(apiKey: string, fetchImpl: typeof fetch = fe
     const res = await fetchImpl(url, {
       headers: { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json' },
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      assertFmpTierOk(res.status); // throws on 401/402/403/429 (key/plan broken)
+      return []; // other non-OK (404, …) => treat as "no data"
+    }
     return parseEodHistory(await res.json());
   }
   return {

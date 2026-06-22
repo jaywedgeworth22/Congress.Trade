@@ -8,6 +8,7 @@
  */
 
 import { marketCapBucket } from './compute';
+import { assertFmpTierOk } from '../shared/fmpStatus';
 import type { EnrichmentProvider, SecurityRef } from './types';
 
 function str(v: unknown): string | null {
@@ -63,7 +64,10 @@ export function buildFmpProvider(
       const res = await fetchImpl(url, {
         headers: { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json' },
       });
-      if (!res.ok) return null;
+      if (!res.ok) {
+        assertFmpTierOk(res.status); // throws on 401/402/403/429 (key/plan broken)
+        return null; // other non-OK (404, …) => treat as "no data"
+      }
       return parseFmpProfile(await res.json());
     },
   };
