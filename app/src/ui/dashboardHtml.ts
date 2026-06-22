@@ -188,6 +188,53 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sched-row .lbl { font-size:12px; color: var(--text-dim); }
   .note { font-size:12px; color: var(--text-dim); margin-top:8px; line-height:1.5; }
   code { font-family: var(--mono); background: var(--bg); padding:1px 6px; border-radius:5px; font-size:12px; color: var(--accent); }
+  /* ================= TRENDS / ANALYTICS ================= */
+  .trend-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 860px) { .trend-grid2 { grid-template-columns: 1fr; } }
+  .est { color: var(--text-dim); }
+  .pdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; background: var(--text-dim); }
+  .pdot.D { background:#3b82f6; } .pdot.R { background:#ef4444; } .pdot.O { background:#a78bfa; }
+  .rank { color: var(--text-dim); font-family: var(--mono); font-size:12px; width:22px; text-align:right; }
+  .net.pos { color: var(--buy); } .net.neg { color: var(--sell); }
+  /* buy/sell split bar */
+  .split { display:inline-flex; width:120px; height:9px; border-radius:5px; overflow:hidden; background: var(--panel-2); border:1px solid var(--border); vertical-align:middle; }
+  .split .seg { height:100%; } .split .seg.buy { background: var(--buy); } .split .seg.sell { background: var(--sell); }
+  .split-wrap { display:flex; align-items:center; gap:8px; }
+  .split-wrap small { color: var(--text-dim); font-family: var(--mono); font-size:11px; white-space:nowrap; }
+  tr.clickable { cursor: pointer; }
+  /* horizontal proportion bar (sectors / lag / party) */
+  .hbar { display:flex; align-items:center; gap:10px; margin:7px 0; }
+  .hbar .hlabel { width:130px; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .hbar .htrack { flex:1; height:14px; background: var(--panel-2); border:1px solid var(--border); border-radius:7px; overflow:hidden; }
+  .hbar .hfill { height:100%; background: color-mix(in srgb, var(--accent) 70%, transparent); }
+  .hbar .hfill.buy { background: var(--buy); } .hbar .hfill.warn { background: var(--warn); } .hbar .hfill.sell { background: var(--sell); }
+  .hbar .hval { width:120px; text-align:right; font-family: var(--mono); font-size:12px; color: var(--text-dim); }
+  /* time chart (CSS columns, no chart lib) */
+  .tchart { display:flex; align-items:flex-end; gap:3px; height:180px; overflow-x:auto; padding-top:6px; }
+  .tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:0 0 auto; }
+  .tbars { display:flex; align-items:flex-end; gap:2px; height:150px; }
+  .tbars i { display:block; width:7px; border-radius:2px 2px 0 0; min-height:0; }
+  .tbars i.buy { background: var(--buy); } .tbars i.sell { background: var(--sell); }
+  .tlbl { font-size:9px; color: var(--text-dim); font-family: var(--mono); white-space:nowrap; }
+  .legend { display:flex; gap:14px; font-size:12px; color: var(--text-dim); margin-bottom:6px; }
+  .legend .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:middle; }
+  .legend .sw.buy { background: var(--buy); } .legend .sw.sell { background: var(--sell); }
+  /* cluster cards */
+  .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:12px; }
+  .ccard { background: var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:13px 14px; }
+  .ccard .chead { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .ccard .big { font-size:18px; font-weight:700; }
+  .ccard .faces { display:flex; margin-top:9px; }
+  .ccard .faces .avatar { margin-right:-7px; box-shadow:0 0 0 2px var(--panel-2); }
+  .dirpill { font-size:10px; font-weight:700; padding:2px 7px; border-radius:6px; letter-spacing:.4px; }
+  .dirpill.P { color: var(--buy); background: color-mix(in srgb, var(--buy) 16%, transparent); }
+  .dirpill.S { color: var(--sell); background: color-mix(in srgb, var(--sell) 16%, transparent); }
+  .chip { font-size:11px; color: var(--text-dim); }
+  /* modal */
+  .modal { position:fixed; inset:0; background:rgba(2,6,18,.6); display:none; align-items:flex-start; justify-content:center; z-index:50; padding:40px 16px; overflow-y:auto; }
+  .modal.open { display:flex; }
+  .modal-card { background: var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:20px; width:100%; max-width:720px; }
+  .modal-card .x { float:right; cursor:pointer; color: var(--text-dim); font-size:18px; border:none; background:none; }
   footer { text-align:center; color: var(--text-dim); font-size:11px; padding:26px; }
 </style>
 </head>
@@ -198,6 +245,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <span class="pill" id="srcPill">House + Senate</span>
   <nav class="tabs">
     <button data-view="feed" class="active">Live Feed</button>
+    <button data-view="trends">Trends</button>
     <button data-view="review">Review Queue <span id="reviewCount"></span></button>
     <button data-view="subs">Subscriptions</button>
     <button data-view="admin">Admin · Cadence</button>
@@ -261,6 +309,99 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="row-flex" style="margin-top:14px;justify-content:center">
       <button class="btn ghost sm" id="loadMoreBtn" onclick="loadMore()" style="display:none">Load more</button>
       <span class="note" id="feedCountMsg"></span>
+    </div>
+  </section>
+
+  <!-- ================= TRENDS / ANALYTICS ================= -->
+  <section class="view" id="view-trends">
+    <div class="toolbar">
+      <select id="trWindow" title="Time window (by trade date)">
+        <option value="7d">Last 7 days</option>
+        <option value="30d" selected>Last 30 days</option>
+        <option value="90d">Last 90 days</option>
+        <option value="365d">Last 12 months</option>
+        <option value="all">All time</option>
+      </select>
+      <select id="trChamber"><option value="">Both chambers</option><option value="house">House</option><option value="senate">Senate</option></select>
+      <select id="trParty"><option value="">All parties</option><option value="D">Democrat</option><option value="R">Republican</option><option value="O">Other / Ind.</option></select>
+      <select id="trSource" title="Provenance of the underlying rows">
+        <option value="all" selected>All data</option>
+        <option value="primary">Live (primary) only</option>
+        <option value="seed_dataset">Historic (seed) only</option>
+      </select>
+      <button class="btn ghost sm" onclick="loadTrends()">↻ Refresh</button>
+    </div>
+    <p class="note" style="margin:-6px 0 14px">All dollar figures are <strong>estimates</strong> derived from STOCK Act amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor). “All data” may double-count a trade present in both the live and historic sets — switch to <em>Live only</em> for a de-duplicated dollar view. Party is only known for some members.</p>
+
+    <!-- KPI strip -->
+    <div class="grid-cards" id="trKpis">
+      <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
+    </div>
+
+    <!-- What Congress is trading + Heating up -->
+    <div class="trend-grid2">
+      <div class="section">
+        <h3>What Congress is trading</h3>
+        <p class="sub">Most-traded tickers in the window. Click a row for a deep dive. Bar = buy / sell mix.</p>
+        <div class="row-flex" style="margin:-6px 0 12px">
+          <label class="lbl">Rank by</label>
+          <select id="trTickerSort">
+            <option value="trades">Trades</option>
+            <option value="members">Distinct members</option>
+            <option value="volume">Est. volume</option>
+            <option value="netflow">Net $ flow</option>
+          </select>
+        </div>
+        <div class="table-wrap"><table><tbody id="trTickers"></tbody></table></div>
+      </div>
+      <div class="section">
+        <h3>Heating up</h3>
+        <p class="sub">Tickers with the biggest jump in activity vs the prior equal period.</p>
+        <div class="table-wrap"><table><tbody id="trTrending"></tbody></table></div>
+      </div>
+    </div>
+
+    <!-- Consensus / cluster buys -->
+    <div class="section">
+      <h3>Consensus moves <span class="chip" id="trClusterHint"></span></h3>
+      <p class="sub">Tickers where several different members moved the <strong>same direction</strong> in the window — the clearest signal through the noise.</p>
+      <div class="cluster-grid" id="trClusters"></div>
+    </div>
+
+    <!-- Buys vs sells over time -->
+    <div class="section">
+      <h3>Buys vs sells over time</h3>
+      <p class="sub">Trade counts bucketed by period. The <em>shape</em> — a surge of buying or selling — is the trend.</p>
+      <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
+      <div id="trTime"></div>
+    </div>
+
+    <!-- Members + Party -->
+    <div class="trend-grid2">
+      <div class="section">
+        <h3>Most active members</h3>
+        <p class="sub">Who is trading the most in the window.</p>
+        <div class="table-wrap"><table><tbody id="trMembers"></tbody></table></div>
+      </div>
+      <div class="section">
+        <h3>By party</h3>
+        <p class="sub">Buy / sell mix and estimated net flow per party (where party is known).</p>
+        <div id="trParties"></div>
+        <h3 style="margin-top:18px">By asset type</h3>
+        <p class="sub">Share of estimated volume by instrument type.</p>
+        <div id="trSectors"></div>
+      </div>
+    </div>
+
+    <!-- Disclosure timeliness -->
+    <div class="section">
+      <h3>Disclosure timeliness</h3>
+      <p class="sub">Days from trade to filing. The STOCK Act sets a 45-day deadline; this is a data-quality + accountability lens.</p>
+      <div class="grid-cards" id="trLagKpis"></div>
+      <div class="trend-grid2" style="margin-top:6px">
+        <div><h3 style="font-size:13px">Lag distribution</h3><div id="trLagDist"></div></div>
+        <div><h3 style="font-size:13px">Slowest filers (avg lag)</h3><div class="table-wrap"><table><tbody id="trLateFilers"></tbody></table></div></div>
+      </div>
     </div>
   </section>
 
@@ -379,6 +520,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   <footer>Congress.Trade · live feed · data sourced from public STOCK Act (2012) disclosures · not financial advice</footer>
 </main>
+
+<div class="modal" id="tickerModal" onclick="if(event.target===this)closeTicker()">
+  <div class="modal-card"><button class="x" onclick="closeTicker()">✕</button><div id="tickerModalBody"></div></div>
+</div>
 
 <script>
 /* ============================ STATE ============================ */
@@ -1129,6 +1274,278 @@ function loadHealth() {
     });
 }
 
+/* ============================ TRENDS / ANALYTICS ============================ */
+/* All views read /api/analytics/* — read-only aggregates over the corpus. Dollar
+   values are ESTIMATES from STOCK Act bracket midpoints (labelled with ~). */
+function trParams() {
+  var p = 'window=' + encodeURIComponent(el('trWindow').value);
+  var ch = el('trChamber').value; if (ch) p += '&chamber=' + ch;
+  var pa = el('trParty').value; if (pa) p += '&party=' + pa;
+  var src = el('trSource').value; if (src && src !== 'all') p += '&source=' + src;
+  return p;
+}
+function aGet(path) {
+  return fetch('/api/analytics/' + path).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
+  });
+}
+/* Compact USD: 1234567 -> $1.2M. */
+function usdC(n) {
+  n = Number(n || 0); var s = n < 0 ? '-' : ''; n = Math.abs(n); var o;
+  if (n >= 1e9) o = (n / 1e9).toFixed(1) + 'B';
+  else if (n >= 1e6) o = (n / 1e6).toFixed(1) + 'M';
+  else if (n >= 1e3) o = (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'K';
+  else o = String(Math.round(n));
+  return s + '$' + o;
+}
+function estUsd(n) { return '~' + usdC(n); }
+function netHtml(n) {
+  n = Number(n || 0);
+  var cls = n > 0 ? 'pos' : n < 0 ? 'neg' : '';
+  return '<span class="net ' + cls + '">' + (n > 0 ? '+' : '') + usdC(n) + '</span>';
+}
+function splitBar(buys, sells) {
+  buys = Number(buys || 0); sells = Number(sells || 0);
+  var tot = buys + sells, bp = tot ? Math.round(100 * buys / tot) : 0, sp = tot ? 100 - bp : 0;
+  return '<span class="split-wrap"><span class="split">' +
+    '<span class="seg buy" style="width:' + bp + '%"></span>' +
+    '<span class="seg sell" style="width:' + sp + '%"></span></span>' +
+    '<small>' + buys + 'B / ' + sells + 'S</small></span>';
+}
+function pdot(b) { return '<span class="pdot ' + esc(b || 'O') + '"></span>'; }
+function kpi(k, v) { return '<div class="card"><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>'; }
+/* Mini CSS-column time chart of buys vs sells (no chart library). */
+function timeChartHtml(series, labelStep) {
+  var max = 1; series.forEach(function (p) { max = Math.max(max, p.buys, p.sells); });
+  var step = labelStep || Math.max(1, Math.ceil(series.length / 14));
+  return '<div class="tchart">' + series.map(function (p, i) {
+    var bh = p.buys > 0 ? Math.max(3, Math.round(100 * p.buys / max)) : 0;
+    var sh = p.sells > 0 ? Math.max(3, Math.round(100 * p.sells / max)) : 0;
+    var lbl = (i % step === 0) ? esc(p.period || '') : '';
+    var title = esc((p.period || '') + ': ' + p.buys + ' buys / ' + p.sells + ' sells');
+    return '<div class="tcol" title="' + title + '"><div class="tbars">' +
+      '<i class="buy" style="height:' + bh + '%"></i><i class="sell" style="height:' + sh + '%"></i>' +
+      '</div><span class="tlbl">' + lbl + '</span></div>';
+  }).join('') + '</div>';
+}
+
+function loadTrends() {
+  loadTrSummary(); loadTrTickers(); loadTrTrending(); loadTrClusters();
+  loadTrTime(); loadTrMembers(); loadTrParties(); loadTrSectors(); loadTrLag();
+}
+
+function loadTrSummary() {
+  var box = el('trKpis');
+  box.innerHTML = kpi('Loading…', '—');
+  aGet('summary?' + trParams()).then(function (d) {
+    var sent = d.netSentiment == null ? '—' : Math.round(d.netSentiment * 100) + '<small>% buys</small>';
+    box.innerHTML =
+      kpi('Trades', d.totalTrades) + kpi('Members', d.uniqueMembers) + kpi('Tickers', d.uniqueTickers) +
+      kpi('Est. volume', estUsd(d.estimatedVolumeUsd)) + kpi('Net flow', netHtml(d.estimatedNetFlowUsd)) +
+      kpi('Buy pressure', sent);
+  }).catch(function (e) { box.innerHTML = kpi('Summary', '<span style="font-size:13px">' + esc(e.message) + '</span>'); });
+}
+
+function loadTrTickers() {
+  var body = el('trTickers');
+  body.innerHTML = stateRow(6, 'Loading…');
+  aGet('ticker-leaderboard?' + trParams() + '&sort=' + el('trTickerSort').value + '&limit=15').then(function (d) {
+    var rows = d.tickers || [];
+    if (!rows.length) { body.innerHTML = stateRow(6, 'No trades in this window.'); return; }
+    body.innerHTML = rows.map(function (r, i) {
+      return '<tr class="row clickable" data-ticker="' + esc(r.ticker) + '">' +
+        '<td class="rank">' + (i + 1) + '</td>' +
+        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' +
+          esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(r.name) + '</span>' : '') + '</div></div></td>' +
+        '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
+        '<td class="muted">' + r.memberCount + ' mbr</td>' +
+        '<td class="est">' + estUsd(r.estVolumeUsd) + '</td>' +
+        '<td>' + netHtml(r.estNetFlowUsd) + '</td></tr>';
+    }).join('');
+  }).catch(function (e) { body.innerHTML = stateRow(6, 'Could not load: ' + e.message); });
+}
+
+function loadTrTrending() {
+  var body = el('trTrending');
+  body.innerHTML = stateRow(4, 'Loading…');
+  aGet('trending?' + trParams() + '&limit=12').then(function (d) {
+    var rows = (d.trending || []).filter(function (r) { return r.deltaCount > 0; });
+    if (!rows.length) { body.innerHTML = stateRow(4, 'Not enough history to rank momentum.'); return; }
+    body.innerHTML = rows.map(function (r) {
+      return '<tr class="row clickable" data-ticker="' + esc(r.ticker) + '">' +
+        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' + esc(r.ticker) + '</span></div></div></td>' +
+        '<td class="muted">' + r.priorCount + ' → ' + r.recentCount + '</td>' +
+        '<td class="net pos">▲ ' + r.deltaCount + '</td>' +
+        '<td class="muted">' + r.recentMembers + ' mbr</td></tr>';
+    }).join('');
+  }).catch(function (e) { body.innerHTML = stateRow(4, 'Could not load: ' + e.message); });
+}
+
+function loadTrClusters() {
+  var box = el('trClusters');
+  box.innerHTML = '<div class="chip">Loading…</div>';
+  aGet('cluster-buys?' + trParams() + '&limit=12&minMembers=2').then(function (d) {
+    var cs = d.clusters || [];
+    el('trClusterHint').textContent = '· ' + cs.length + ' found';
+    if (!cs.length) { box.innerHTML = '<div class="chip">No multi-member consensus in this window — try a longer window or “All data”.</div>'; return; }
+    box.innerHTML = cs.map(function (c) {
+      var faces = (c.topMembers || []).slice(0, 5).map(function (m) { return memberAvatarHtml(m.fullName, m.photoUrl); }).join('');
+      var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
+      var parties = 'D ' + c.parties.D + ' · R ' + c.parties.R + (c.parties.O ? ' · O ' + c.parties.O : '');
+      var bip = (c.parties.D > 0 && c.parties.R > 0) ? ' <span class="chip" title="Both parties traded">· bipartisan</span>' : '';
+      var range = (c.firstSeen || '').slice(0, 10) + (c.lastSeen && c.lastSeen !== c.firstSeen ? ' → ' + (c.lastSeen || '').slice(0, 10) : '');
+      return '<div class="ccard clickable" data-ticker="' + esc(c.ticker) + '">' +
+        '<div class="chead">' + tickerLogoHtml(c.ticker, c.name) + '<span class="big">' + esc(c.ticker) +
+          '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
+        '<div><strong>' + c.memberCount + '</strong> members · ' + c.tradeCount + ' trades' + bip + '</div>' +
+        '<div class="chip">' + esc(parties) + '</div>' +
+        '<div class="chip">' + esc(range) + ' · ' + estUsd(c.estVolumeUsd) + '</div>' +
+        '<div class="faces">' + faces + '</div></div>';
+    }).join('');
+  }).catch(function (e) { box.innerHTML = '<div class="chip">Could not load: ' + esc(e.message) + '</div>'; });
+}
+
+function loadTrTime() {
+  var box = el('trTime');
+  box.innerHTML = '<div class="note">Loading…</div>';
+  aGet('volume-over-time?' + trParams()).then(function (d) {
+    var s = d.series || [];
+    if (!s.length) { box.innerHTML = '<div class="note">No dated trades in this window.</div>'; return; }
+    box.innerHTML = timeChartHtml(s);
+  }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
+}
+
+function loadTrMembers() {
+  var body = el('trMembers');
+  body.innerHTML = stateRow(5, 'Loading…');
+  aGet('member-leaderboard?' + trParams() + '&limit=15').then(function (d) {
+    var rows = d.members || [];
+    if (!rows.length) { body.innerHTML = stateRow(5, 'No member activity in this window.'); return; }
+    body.innerHTML = rows.map(function (r, i) {
+      var name = r.fullName || r.filerId || 'Unknown';
+      var metaBits = [r.chamber, r.state].filter(Boolean).join(' · ');
+      return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
+        '<td><div class="member-cell">' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.partyBucket) +
+          esc(name) + (metaBits ? ' <span class="muted">· ' + esc(metaBits) + '</span>' : '') + '</div></div></td>' +
+        '<td class="muted">' + r.tradeCount + '</td>' +
+        '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
+        '<td class="est">' + estUsd(r.estVolumeUsd) + '</td></tr>';
+    }).join('');
+  }).catch(function (e) { body.innerHTML = stateRow(5, 'Could not load: ' + e.message); });
+}
+
+function loadTrParties() {
+  var box = el('trParties');
+  box.innerHTML = '<div class="note">Loading…</div>';
+  aGet('party-split?' + trParams()).then(function (d) {
+    var o = d.overall || {}, names = { D: 'Democrat', R: 'Republican', O: 'Other / Ind.' }, keys = ['D', 'R', 'O'];
+    var maxVol = 1, any = false;
+    keys.forEach(function (k) { if (o[k]) { maxVol = Math.max(maxVol, o[k].estVolumeUsd); if (o[k].buys + o[k].sells > 0) any = true; } });
+    if (!any) { box.innerHTML = '<div class="note">No party-attributed trades in this window.</div>'; return; }
+    box.innerHTML = keys.map(function (k) {
+      var v = o[k] || { buys: 0, sells: 0, estVolumeUsd: 0, estNetFlowUsd: 0, members: 0 };
+      var w = Math.round(100 * v.estVolumeUsd / maxVol);
+      return '<div class="hbar"><div class="hlabel">' + pdot(k) + esc(names[k]) + '</div>' +
+        '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
+        '<div class="hval">' + estUsd(v.estVolumeUsd) + '</div></div>' +
+        '<div class="chip" style="margin:-3px 0 9px 130px">' + v.buys + 'B / ' + v.sells + 'S · ' + v.members + ' mbr · net ' + netHtml(v.estNetFlowUsd) + '</div>';
+    }).join('');
+  }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
+}
+
+function loadTrSectors() {
+  var box = el('trSectors');
+  box.innerHTML = '<div class="note">Loading…</div>';
+  aGet('sector-breakdown?' + trParams() + '&limit=8').then(function (d) {
+    var rows = d.sectors || [];
+    if (!rows.length) { box.innerHTML = '<div class="note">No data in this window.</div>'; return; }
+    var max = 1; rows.forEach(function (r) { max = Math.max(max, r.estVolumeUsd); });
+    box.innerHTML = rows.map(function (r) {
+      var w = Math.round(100 * r.estVolumeUsd / max);
+      return '<div class="hbar"><div class="hlabel" title="' + esc(r.assetType) + '">' + esc(r.assetType) + '</div>' +
+        '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
+        '<div class="hval">' + estUsd(r.estVolumeUsd) + '</div></div>';
+    }).join('');
+  }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
+}
+
+function loadTrLag() {
+  var kbox = el('trLagKpis'), dbox = el('trLagDist'), lbox = el('trLateFilers');
+  kbox.innerHTML = ''; dbox.innerHTML = '<div class="note">Loading…</div>'; lbox.innerHTML = stateRow(4, 'Loading…');
+  aGet('filing-lag?' + trParams()).then(function (d) {
+    var s = d.summary || {};
+    kbox.innerHTML =
+      kpi('Median lag', (s.medianLagDays == null ? '—' : s.medianLagDays + '<small> days</small>')) +
+      kpi('90th pct', (s.p90LagDays == null ? '—' : s.p90LagDays + '<small> days</small>')) +
+      kpi('Filed >45d', (s.overFortyFivePct == null ? '—' : Math.round(s.overFortyFivePct * 100) + '<small>%</small>')) +
+      kpi('Disclosures', s.count || 0);
+    var dist = s.distribution || [], max = 1; dist.forEach(function (b) { max = Math.max(max, b.count); });
+    if (!dist.length || !s.count) { dbox.innerHTML = '<div class="note">No dated filings in this window.</div>'; }
+    else dbox.innerHTML = dist.map(function (b) {
+      var w = Math.round(100 * b.count / max);
+      var cls = (b.bucket === '46–60d' || b.bucket === '60d+') ? ' warn' : ' buy';
+      return '<div class="hbar"><div class="hlabel">' + esc(b.bucket) + '</div>' +
+        '<div class="htrack"><div class="hfill' + cls + '" style="width:' + w + '%"></div></div>' +
+        '<div class="hval">' + b.count + '</div></div>';
+    }).join('');
+    var lf = d.topLateFilers || [];
+    if (!lf.length) { lbox.innerHTML = stateRow(4, 'Not enough dated filings.'); }
+    else lbox.innerHTML = lf.slice(0, 10).map(function (m) {
+      var name = m.fullName || m.filerId || 'Unknown';
+      return '<tr class="row"><td><div class="member-cell">' + memberAvatarHtml(name, m.photoUrl) + '<div>' +
+        pdot(m.partyBucket) + esc(name) + '</div></div></td>' +
+        '<td class="muted">' + Math.round(m.avgLagDays) + 'd avg</td>' +
+        '<td class="muted">' + m.maxLagDays + 'd max</td>' +
+        '<td class="muted">' + m.lateCount + ' late</td></tr>';
+    }).join('');
+  }).catch(function (e) {
+    dbox.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>';
+    lbox.innerHTML = stateRow(4, 'Could not load.');
+  });
+}
+
+/* ---- ticker deep-dive modal ---- */
+function openTicker(ticker) {
+  if (!ticker) return;
+  var modal = el('tickerModal'), body = el('tickerModalBody');
+  body.innerHTML = '<div class="note">Loading ' + esc(ticker) + '…</div>';
+  modal.classList.add('open');
+  aGet('ticker/' + encodeURIComponent(ticker) + '?' + trParams()).then(function (d) {
+    var s = d.summary || {};
+    var sent = s.netSentiment == null ? '—' : Math.round(s.netSentiment * 100) + '% buys';
+    var ser = d.series || [];
+    var chart = ser.length ? timeChartHtml(ser) : '<div class="note">No dated trades.</div>';
+    function traderList(arr, label) {
+      if (!arr || !arr.length) return '<div class="note">No ' + label + '.</div>';
+      return arr.map(function (m) {
+        var name = m.fullName || m.filerId || 'Unknown';
+        return '<div class="hbar" style="margin:5px 0"><div class="hlabel" style="width:auto;flex:1">' +
+          memberAvatarHtml(name, m.photoUrl) + ' ' + pdot(m.partyBucket) + esc(name) + '</div>' +
+          '<div class="hval">' + estUsd(m.estVolumeUsd) + '</div></div>';
+      }).join('');
+    }
+    var recent = (d.recentTrades || []).map(function (t) {
+      var name = t.fullName || 'Unknown';
+      return '<tr class="row"><td class="muted">' + esc((t.txDate || '').slice(0, 10)) + '</td>' +
+        '<td><span class="tag ' + esc(t.txType) + '">' + esc(typeName[t.txType] || t.txType) + '</span></td>' +
+        '<td>' + pdot(t.partyBucket) + esc(name) + '</td>' +
+        '<td class="muted">' + esc(t.owner || '') + (t.isOption ? ' · option' : '') + '</td>' +
+        '<td class="est">' + estUsd(t.estValueUsd) + '</td></tr>';
+    }).join('');
+    body.innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">' + tickerLogoHtml(d.ticker, '') +
+        '<h3 style="margin:0;font-size:20px">' + esc(d.ticker) + '</h3></div>' +
+      '<div class="grid-cards">' + kpi('Trades', s.totalTrades || 0) + kpi('Members', s.memberCount || 0) +
+        kpi('Est. volume', estUsd(s.estVolumeUsd)) + kpi('Net flow', netHtml(s.estNetFlowUsd)) + kpi('Buy pressure', sent) + '</div>' +
+      '<div class="legend" style="margin-top:6px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart +
+      '<div class="trend-grid2" style="margin-top:14px"><div><h3 style="font-size:13px">Top buyers</h3>' + traderList(d.topBuyers, 'buyers') + '</div>' +
+        '<div><h3 style="font-size:13px">Top sellers</h3>' + traderList(d.topSellers, 'sellers') + '</div></div>' +
+      '<h3 style="font-size:13px;margin-top:14px">Recent trades</h3><div class="table-wrap"><table><tbody>' +
+        (recent || '<tr><td class="state" colspan="5">No recent trades.</td></tr>') + '</tbody></table></div>';
+  }).catch(function (e) { body.innerHTML = '<div class="note">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>'; });
+}
+function closeTicker() { el('tickerModal').classList.remove('open'); }
+
 /* ============================ TABS + BOOT ============================ */
 document.querySelectorAll('nav.tabs button').forEach(function (b) {
   b.onclick = function () {
@@ -1136,11 +1553,25 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); });
     b.classList.add('active');
     el('view-' + b.dataset.view).classList.add('active');
+    if (b.dataset.view === 'trends') loadTrends();
     if (b.dataset.view === 'review') loadReview();
     if (b.dataset.view === 'subs') loadSubs();
     if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); }
   };
 });
+
+/* Trends controls: re-run on change; ticker rows/cards open the deep-dive modal. */
+['trWindow', 'trChamber', 'trParty', 'trSource'].forEach(function (id) {
+  var e = el(id); if (e) e.addEventListener('change', loadTrends);
+});
+(function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
+(function () {
+  var v = el('view-trends');
+  if (v) v.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest ? e.target.closest('[data-ticker]') : null;
+    if (t && t.getAttribute('data-ticker')) openTicker(t.getAttribute('data-ticker'));
+  });
+})();
 
 // Sortable feed headers: click a column to sort, click again to flip direction.
 document.querySelectorAll('#feedHead th.sortable').forEach(function (th) {

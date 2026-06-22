@@ -36,7 +36,7 @@ clients via webhook / SSE / REST.
    │ delivery.dispatch → delivery/webhook  (sign + POST, record deliveries) │
    └─────────────────────────────────────────────────────────────────┘
                                                │
-                 fetch() Hono app ── /health (impl) ── /api (REST, SSE) ── /api/admin
+                 fetch() Hono app ── /health ── /api (REST, SSE) ── /api/analytics ── /api/admin
 ```
 
 ### Data flow (end to end)
@@ -83,11 +83,46 @@ clients via webhook / SSE / REST.
 | `src/delivery/sse.ts` | delivery | SSE streaming (stub) |
 | `src/delivery/rest.ts` | delivery | REST read API router (stub) |
 | `src/delivery/subscriptions.ts` | delivery | Subscription CRUD + filter matching (stub) |
+| `src/analytics/sql.ts` | analytics | Shared SQL fragments + common filter builder |
+| `src/analytics/compute.ts` | analytics | Pure post-processing (bracket midpoint, lag stats) |
+| `src/analytics/builders.ts` | analytics | Pure per-endpoint aggregation query builders |
+| `src/analytics/routes.ts` | analytics | `/api/analytics/*` read API (KV-cached) |
 | `src/admin/routes.ts` | admin | poll-config / review-queue / subscriptions admin (stub) |
 | `src/backfill/seed.ts` | backfill | Seed open datasets, `source='seed_dataset'` (stub) |
 | `../dashboard-design.html` | ui | Visual spec the UI agent ports |
 
 ---
+
+## Analytics API (`/api/analytics/*`)
+
+Read-only trend aggregates over the transaction corpus — the data behind the
+dashboard **Trends** tab. All are GET, public (no auth), and KV-cached for a few
+minutes. Pure SQL builders live in `src/analytics/builders.ts` and are unit-tested
+without a DB (mirroring `src/delivery/rows.ts`).
+
+| Endpoint | What it answers |
+|----------|-----------------|
+| `GET /summary` | KPI strip: trades, members, tickers, est. volume, net flow, buy pressure |
+| `GET /ticker-leaderboard` | Most-traded tickers (sort `trades\|members\|volume\|netflow`) |
+| `GET /member-leaderboard` | Most active members (sort `trades\|volume\|tickers`) |
+| `GET /cluster-buys` | Consensus: ≥N distinct members trading the **same direction** |
+| `GET /trending` | Momentum: tickers up most vs the prior equal period |
+| `GET /volume-over-time` | Buys vs sells bucketed by day/week/month |
+| `GET /party-split` | Buy/sell + net flow per party (D/R/Other) |
+| `GET /sector-breakdown` | Volume by `asset_type` |
+| `GET /filing-lag` | Disclosure timeliness distribution + slowest filers |
+| `GET /ticker/:ticker` | Single-ticker deep dive (series, top buyers/sellers, recent) |
+
+**Common query params:** `window=7d\|30d\|90d\|365d\|all` (default `30d`, by
+`tx_date`), `chamber=house\|senate`, `party=D\|R\|O`, `source=all\|primary\|seed_dataset`
+(default `all`), `minConf=0..1`, plus per-endpoint `limit` / `sort` / `granularity`
+/ `minMembers`.
+
+> **Dollars are estimates.** STOCK Act amounts are disclosed only as *brackets*,
+> so every `$` metric uses the bracket **midpoint** (the open `$50M+` tier uses
+> its floor) via the single `BRACKET_MIDPOINT_SQL` expression. With `source=all`
+> a trade present in both the live and seed sets can be double-counted — use
+> `source=primary` for a de-duplicated dollar view.
 
 ## Bindings (wrangler.toml)
 
