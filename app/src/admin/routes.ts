@@ -847,6 +847,17 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
        )`,
       'ALTER TABLE securities_ref ADD COLUMN current_price REAL',
       'ALTER TABLE securities_ref ADD COLUMN current_price_date TEXT',
+      // 0007_market_extras.sql — daily volume + insider / short-volume datasets.
+      'ALTER TABLE price_eod ADD COLUMN volume INTEGER',
+      `CREATE TABLE IF NOT EXISTS insider_eod (
+         ticker TEXT NOT NULL, date TEXT NOT NULL, sentiment REAL,
+         buy_filings INTEGER, sell_filings INTEGER, buy_shares REAL, sell_shares REAL,
+         owners TEXT, PRIMARY KEY (ticker, date)
+       )`,
+      `CREATE TABLE IF NOT EXISTS short_volume_eod (
+         ticker TEXT NOT NULL, date TEXT NOT NULL, short_volume_ratio REAL,
+         elevated INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (ticker, date)
+       )`,
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -986,8 +997,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // calls here. Body (all optional):
   //   { refs?: [{ ticker, sector?, marketCap?, country?, exchangeShort?, ... }],
   //     spx?: [{ date, close }],
-  //     prices?: [{ ticker, closes?: [{date,close}], currentPrice?, currentPriceDate? }] }
-  // Upserts securities_ref / spx_eod / price_eod and recomputes per-trade
+  //     prices?: [{ ticker, closes?: [{date,close,volume?}], currentPrice?, currentPriceDate? }],
+  //     insider?: [{ ticker, date, sentiment?, buyFilings?, sellFilings?, buyShares?, sellShares?, owners? }],
+  //     shortVolume?: [{ ticker, date, ratio, elevated? }] }
+  // Upserts securities_ref / spx_eod / price_eod / insider_eod / short_volume_eod
+  // and recomputes per-trade
   // performance anchors for imported tickers. Idempotent. Authorized by the
   // full ADMIN_TOKEN/Access OR the scoped INGEST_TOKEN (this endpoint only).
   r.post('/securities/import', async (c) => {
@@ -998,7 +1012,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     } catch {
       return c.json({ error: 'invalid JSON body' }, 400);
     }
-    const summary = { refs: 0, spxRows: 0, pricedTickers: 0, priceRows: 0, perfTickers: 0, errors: [] as string[] };
+    const summary = {
+      refs: 0, spxRows: 0, pricedTickers: 0, priceRows: 0, perfTickers: 0,
+      insiderRows: 0, shortVolumeRows: 0, errors: [] as string[],
+    };
     const nowIso = new Date().toISOString();
     const REF_KEYS = [
       'companyName', 'sector', 'industry', 'assetClass', 'isEtf', 'isAdr', 'country',
@@ -1047,7 +1064,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         const ticker = typeof o.ticker === 'string' ? o.ticker.toUpperCase() : null;
         if (!ticker) continue;
         const closes = Array.isArray(o.closes)
-          ? (o.closes as Array<{ date?: unknown; close?: unknown }>)
+          ? (o.closes as Array<{ date?: unknown; close?: unknown; volume?: unknown }>)
               .filter((x) => typeof x.date === 'string' && typeof x.close === 'number')
               .slice(0, 20000)
           : [];
@@ -1056,8 +1073,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             await c.env.DB.batch(
               closes.slice(i, i + 100).map((x) =>
                 c.env.DB.prepare(
-                  'INSERT INTO price_eod (ticker, date, close) VALUES (?, ?, ?) ON CONFLICT(ticker, date) DO UPDATE SET close=excluded.close',
-                ).bind(ticker, (x.date as string).slice(0, 10), x.close as number),
+                  `INSERT INTO price_eod (ticker, date, close, volume) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(ticker, date) DO UPDATE SET close=excluded.close,
+                     volume=COALESCE(excluded.volume, price_eod.volume)`,
+                ).bind(
+                  ticker,
+                  (x.date as string).slice(0, 10),
+                  x.close as number,
+                  typeof x.volume === 'number' ? Math.round(x.volume) : null,
+                ),
               ),
             );
           }
@@ -1089,6 +1113,67 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           summary.errors.push(ticker + ' price: ' + (e as Error).message);
         }
       }
+    }
+
+    // 4) Insider (SEC Form 4) daily aggregates: [{ ticker, date, sentiment?,
+    //    buyFilings?, sellFilings?, buyShares?, sellShares?, owners?:[...] }].
+    if (Array.isArray(body.insider)) {
+      const rows = (body.insider as Array<Record<string, unknown>>)
+        .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
+        .slice(0, 20000);
+      for (let i = 0; i < rows.length; i += 100) {
+        await c.env.DB.batch(
+          rows.slice(i, i + 100).map((o) =>
+            c.env.DB.prepare(
+              `INSERT INTO insider_eod (ticker, date, sentiment, buy_filings, sell_filings, buy_shares, sell_shares, owners)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(ticker, date) DO UPDATE SET
+                 sentiment=COALESCE(excluded.sentiment, insider_eod.sentiment),
+                 buy_filings=COALESCE(excluded.buy_filings, insider_eod.buy_filings),
+                 sell_filings=COALESCE(excluded.sell_filings, insider_eod.sell_filings),
+                 buy_shares=COALESCE(excluded.buy_shares, insider_eod.buy_shares),
+                 sell_shares=COALESCE(excluded.sell_shares, insider_eod.sell_shares),
+                 owners=COALESCE(excluded.owners, insider_eod.owners)`,
+            ).bind(
+              (o.ticker as string).toUpperCase(),
+              (o.date as string).slice(0, 10),
+              numOrNull(o.sentiment),
+              intOrNull(o.buyFilings),
+              intOrNull(o.sellFilings),
+              numOrNull(o.buyShares),
+              numOrNull(o.sellShares),
+              Array.isArray(o.owners) ? JSON.stringify(o.owners) : null,
+            ),
+          ),
+        );
+      }
+      summary.insiderRows += rows.length;
+    }
+
+    // 5) FINRA short-volume daily: [{ ticker, date, ratio, elevated? }].
+    if (Array.isArray(body.shortVolume)) {
+      const rows = (body.shortVolume as Array<Record<string, unknown>>)
+        .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
+        .slice(0, 20000);
+      for (let i = 0; i < rows.length; i += 100) {
+        await c.env.DB.batch(
+          rows.slice(i, i + 100).map((o) =>
+            c.env.DB.prepare(
+              `INSERT INTO short_volume_eod (ticker, date, short_volume_ratio, elevated)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(ticker, date) DO UPDATE SET
+                 short_volume_ratio=COALESCE(excluded.short_volume_ratio, short_volume_eod.short_volume_ratio),
+                 elevated=excluded.elevated`,
+            ).bind(
+              (o.ticker as string).toUpperCase(),
+              (o.date as string).slice(0, 10),
+              numOrNull(o.ratio),
+              o.elevated ? 1 : 0,
+            ),
+          ),
+        );
+      }
+      summary.shortVolumeRows += rows.length;
     }
 
     return c.json({ ok: summary.errors.length === 0, ...summary });
@@ -1239,4 +1324,13 @@ function safeJson(s: string): unknown {
   } catch {
     return s;
   }
+}
+
+/** Coerce an unknown to a finite number or null (for defensive ingest). */
+function numOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+/** Coerce an unknown to a rounded integer or null. */
+function intOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? Math.round(v) : null;
 }
