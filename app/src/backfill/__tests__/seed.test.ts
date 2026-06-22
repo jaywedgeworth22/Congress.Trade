@@ -13,6 +13,11 @@ import {
   type RawWatcherRecord,
 } from '../seed';
 import type { Env } from '../../shared/types';
+import type { TickerResolver } from '../../extraction/normalizer';
+
+// A resolver that treats every supplied ticker as known (resolves to itself),
+// simulating a securities_master hit so clean rows aren't ticker-penalized.
+const resolveAll: TickerResolver = (t) => (t && t.trim() ? t.trim().toUpperCase() : null);
 
 // Inline fixtures — no network.
 const SENATE_REC: RawWatcherRecord = {
@@ -63,7 +68,7 @@ describe('field mappers', () => {
 
 describe('mapRecordToTransaction', () => {
   it('maps a full senate record to a seed_dataset Transaction', () => {
-    const tx = mapRecordToTransaction(SENATE_REC, 'senate', '2026-06-20T00:00:00.000Z');
+    const tx = mapRecordToTransaction(SENATE_REC, 'senate', '2026-06-20T00:00:00.000Z', resolveAll);
     expect(tx).not.toBeNull();
     if (!tx) return;
     expect(tx.source).toBe('seed_dataset');
@@ -77,7 +82,9 @@ describe('mapRecordToTransaction', () => {
     expect(tx.docId).toBe('seed-senate');
     expect(tx.filerId).toBe('seed-senate-jane-a-smith');
     expect(tx.isOption).toBe(false);
-    expect(tx.confidence).toBe(0.8); // SEED_CONFIDENCE (down-ranked from a flat 1.0)
+    // Same rubric as the live normalizer: clean seed row = SEED_BASE_CONFIDENCE,
+    // no penalties (ticker resolves, amount canonical, valid type/date).
+    expect(tx.confidence).toBe(0.95);
   });
 
   it('returns null when there is no asset and no ticker', () => {
@@ -85,6 +92,7 @@ describe('mapRecordToTransaction', () => {
       { senator: 'Nobody', type: 'Purchase' },
       'senate',
       '2026-06-20T00:00:00.000Z',
+      resolveAll,
     );
     expect(tx).toBeNull();
   });
@@ -94,16 +102,25 @@ describe('mapRecordToTransaction', () => {
       { representative: 'Hon. Pat Q. Example', ticker: 'AAPL', type: 'sale' },
       'house',
       '2026-06-20T00:00:00.000Z',
+      resolveAll,
     );
     expect(tx?.filerId).toBe('seed-house-hon-pat-q-example');
     expect(tx?.txType).toBe('S');
+  });
+
+  it('applies the same ticker penalty to seed rows when the ticker is unresolved', () => {
+    const noResolve: TickerResolver = () => null;
+    const tx = mapRecordToTransaction(SENATE_REC, 'senate', '2026-06-20T00:00:00.000Z', noResolve)!;
+    // Same rubric: base 0.95 * 0.85 (unresolved_ticker) = 0.8075.
+    expect(tx.confidence).toBeCloseTo(0.8075, 4);
+    expect(tx.ticker).toBe('NVDA'); // raw ticker retained when unresolved
   });
 });
 
 describe('deterministic id', () => {
   it('is stable for identical inputs (idempotent re-runs)', () => {
-    const a = mapRecordToTransaction(SENATE_REC, 'senate', '2026-06-20T00:00:00.000Z');
-    const b = mapRecordToTransaction(SENATE_REC, 'senate', '2999-01-01T00:00:00.000Z');
+    const a = mapRecordToTransaction(SENATE_REC, 'senate', '2026-06-20T00:00:00.000Z', resolveAll);
+    const b = mapRecordToTransaction(SENATE_REC, 'senate', '2999-01-01T00:00:00.000Z', resolveAll);
     // createdAt differs but id must not — it excludes timestamp.
     expect(a?.id).toBe(b?.id);
     expect(a?.id).toMatch(/^seed_[0-9a-f]{16}$/);
@@ -133,7 +150,7 @@ describe('filters & helpers', () => {
   });
 
   it('passesSinceYear filters by tx_date year', () => {
-    const tx = mapRecordToTransaction(SENATE_REC, 'senate', '2026-06-20T00:00:00.000Z')!;
+    const tx = mapRecordToTransaction(SENATE_REC, 'senate', '2026-06-20T00:00:00.000Z', resolveAll)!;
     expect(passesSinceYear(tx, undefined)).toBe(true);
     expect(passesSinceYear(tx, 2026)).toBe(true);
     expect(passesSinceYear(tx, 2027)).toBe(false);
