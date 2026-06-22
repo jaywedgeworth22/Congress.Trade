@@ -26,6 +26,11 @@ Headers:
   Content-Type: application/json
 ```
 
+> **Token:** use a **scoped `INGEST_TOKEN`** (set via `wrangler secret put
+> INGEST_TOKEN` on App A) so the sending app never holds the full `ADMIN_TOKEN`.
+> The ingest token authorizes *only* this endpoint; the full admin token still
+> works too. App B stores whichever value as its `CONGRESS_TRADE_TOKEN`.
+
 The endpoint is **idempotent** (safe to resend) and accepts any subset of three
 arrays. Send whichever you have:
 

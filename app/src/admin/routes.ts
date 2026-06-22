@@ -61,7 +61,23 @@ type EnvWithAdmin = Env & {
   ACCESS_TEAM_DOMAIN?: string;
   /** Cloudflare Access application AUD tag. */
   ACCESS_AUD?: string;
+  /**
+   * Scoped bearer token that unlocks ONLY POST /securities/import (the
+   * cross-app data-sharing endpoint). Lets a sibling app push FMP data without
+   * holding the full ADMIN_TOKEN. Optional; ignored if unset.
+   */
+  INGEST_TOKEN?: string;
 };
+
+/** True when the request is a bearer-authenticated call to the import endpoint. */
+function isAuthorizedIngest(env: EnvWithAdmin, path: string, authorization?: string): boolean {
+  const token = env.INGEST_TOKEN;
+  return (
+    !!token &&
+    path.endsWith('/securities/import') &&
+    authorization === `Bearer ${token}`
+  );
+}
 
 let warnedOpenAdmin = false;
 
@@ -227,11 +243,15 @@ function photoUrlFor(bioguide: string): string {
 export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
-  // Auth gate applied to every admin route: bearer token OR Cloudflare Access.
+  // Auth gate applied to every admin route: full admin (bearer token OR
+  // Cloudflare Access), or — for /securities/import only — the scoped
+  // INGEST_TOKEN so a sibling app can push shared data without admin rights.
   r.use('*', async (c, next) => {
     const env = c.env as EnvWithAdmin;
+    const authorization = c.req.header('Authorization');
+    if (isAuthorizedIngest(env, c.req.path, authorization)) return next();
     const ok = await isAuthorized(env, {
-      authorization: c.req.header('Authorization'),
+      authorization,
       accessJwt: c.req.header('Cf-Access-Jwt-Assertion'),
     });
     if (!ok) return c.json({ error: 'unauthorized' }, 401);
@@ -968,7 +988,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   //     spx?: [{ date, close }],
   //     prices?: [{ ticker, closes?: [{date,close}], currentPrice?, currentPriceDate? }] }
   // Upserts securities_ref / spx_eod / price_eod and recomputes per-trade
-  // performance anchors for imported tickers. Idempotent.
+  // performance anchors for imported tickers. Idempotent. Authorized by the
+  // full ADMIN_TOKEN/Access OR the scoped INGEST_TOKEN (this endpoint only).
   r.post('/securities/import', async (c) => {
     let body: Record<string, unknown> = {};
     try {
