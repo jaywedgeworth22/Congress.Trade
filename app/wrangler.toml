@@ -4,6 +4,16 @@ compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
 # ---------------------------------------------------------------------------
+# Custom domains. The congress.trade zone must be active on this Cloudflare
+# account (it is). `wrangler deploy` provisions the cert + DNS automatically.
+# Remove a line / set workers_dev=false later if you want to lock to the domain.
+# ---------------------------------------------------------------------------
+routes = [
+  { pattern = "congress.trade", custom_domain = true },
+  { pattern = "www.congress.trade", custom_domain = true }
+]
+
+# ---------------------------------------------------------------------------
 # Cron Triggers
 # Fires every minute. The watcher decides INTERNALLY (via shouldPollNow) whether
 # to actually poll, based on poll_config schedule + last poll time. This keeps
