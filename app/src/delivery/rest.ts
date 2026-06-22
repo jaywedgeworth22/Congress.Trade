@@ -8,7 +8,7 @@
  *
  * Routes (all relative to /api):
  *   GET   /transactions      cursor-paged transaction feed (reconciliation backstop)
- *   GET   /stream            SSE live stream (delegates to openSseStream)
+ *   GET   /stream            SSE live stream (?since= or Last-Event-ID resume)
  *   GET   /filings/:docId    single filing (+ its transactions) for the dashboard
  *   GET   /members           distinct filers seen in transactions
  *   POST  /subscriptions     create a subscription
@@ -47,6 +47,22 @@ function parseIntOrUndef(v: string | undefined): number | undefined {
   if (v === undefined || v === '') return undefined;
   const n = Number(v);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Resolve the SSE resume cursor. An explicit `?since=` wins (manual override for
+ * tooling/curl); otherwise we honor the standard EventSource `Last-Event-ID`
+ * header, which clients resend automatically on reconnect. Each `trade.new`
+ * event is emitted with `id: <cursorSeq>`, so the header value is the last
+ * cursor the client saw — replaying cursor_seq > that value resumes gap-free.
+ * Returns undefined when neither is a finite number (openSseStream treats that
+ * as "from the beginning").
+ */
+export function resolveResumeCursor(
+  sinceParam: string | undefined,
+  lastEventId: string | undefined,
+): number | undefined {
+  return parseIntOrUndef(sinceParam) ?? parseIntOrUndef(lastEventId);
 }
 
 function asChamber(v: string | undefined): Chamber | undefined {
@@ -207,12 +223,17 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /stream --------------------------------------------------------
+  // SSE live stream. Resume point comes from ?since=<cursor_seq> or, on an
+  // automatic EventSource reconnect, the Last-Event-ID header (each trade event
+  // carries id:<cursorSeq>). The backlog replay is sourced from the full
+  // transactions table, so resume is gap-free regardless of how long the client
+  // was disconnected.
   r.get('/stream', async (c) => {
     const subscription = c.req.query('subscription');
     if (!subscription) {
       return c.json({ error: 'missing ?subscription=' }, 400);
     }
-    const since = parseIntOrUndef(c.req.query('since'));
+    const since = resolveResumeCursor(c.req.query('since'), c.req.header('Last-Event-ID'));
     return openSseStream(c.env, subscription, since);
   });
 
