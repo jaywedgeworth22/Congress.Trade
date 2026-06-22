@@ -33,6 +33,8 @@ import { uuid } from '../shared/ids';
 import { listSubscriptions } from '../delivery/subscriptions';
 import { runSeedBackfillFromEnv } from '../backfill/seed';
 import { runHouseHistoricalBackfill } from '../backfill/houseCrawler';
+import { extractParsed } from '../extraction/orchestrator';
+import { normalize, recomputeTransactions, CONFIDENCE_THRESHOLD } from '../extraction/normalizer';
 import type { Chamber } from '../shared/types';
 import { verifyAccessJwt, certsUrl, parseEmailAllowlist } from './access';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
@@ -529,6 +531,138 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }
+  });
+
+  // --- POST /reprocess ----------------------------------------------------
+  // Re-evaluate already-ingested filings under the CURRENT normalizer rubric,
+  // without re-fetching from the source (re-extracts from the stored R2 raw).
+  // Two cases per filing:
+  //   • already in the feed (primary rows exist): recompute confidence and
+  //     UPDATE those rows IN PLACE — same id + cursor_seq, so NO duplicate rows
+  //     and NO re-fired delivery webhooks. Matched in cursor_seq order (parsing
+  //     the same bytes is deterministic); a row-count mismatch is skipped, never
+  //     guessed.
+  //   • stuck in review (no primary rows): if it now clears the bar, persist +
+  //     deliver it (first-time delivery, which is correct) and mark its
+  //     review_queue row resolved. If it still fails, it's left in review.
+  // Body (all optional):
+  //   { chamber?: 'house'|'senate', limit?: number, dryRun?: boolean }
+  r.post('/reprocess', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+
+    const chamber = body.chamber === undefined ? 'house' : body.chamber;
+    if (chamber !== 'house' && chamber !== 'senate') {
+      return c.json({ error: "chamber must be 'house' or 'senate'" }, 400);
+    }
+    const dryRun = body.dryRun === true;
+    let limit = typeof body.limit === 'number' && body.limit > 0 ? Math.floor(body.limit) : 500;
+    if (limit > 2000) limit = 2000;
+
+    // Filings for this chamber that we can re-extract (have a raw R2 object).
+    const filings = await all<{ doc_id: string }>(
+      c.env.DB,
+      `SELECT doc_id FROM filings
+        WHERE chamber = ? AND raw_object_key IS NOT NULL
+        ORDER BY first_seen_at DESC
+        LIMIT ?`,
+      [chamber, limit],
+    );
+
+    const summary = {
+      chamber,
+      dryRun,
+      filingsScanned: 0,
+      rowsUpdatedInPlace: 0, // already-in-feed rows whose confidence changed
+      filingsPromoted: 0, //    review -> feed (now clears the bar)
+      rowsPromoted: 0,
+      filingsStillInReview: 0,
+      skippedNoExtract: 0,
+      skippedCountMismatch: 0,
+      errors: [] as string[],
+    };
+
+    for (const { doc_id } of filings) {
+      summary.filingsScanned += 1;
+      let extracted;
+      try {
+        extracted = await extractParsed(c.env, doc_id);
+      } catch (err) {
+        summary.errors.push(`${doc_id}: extract failed: ${(err as Error).message}`);
+        continue;
+      }
+      if (!extracted || extracted.transactions.length === 0) {
+        summary.skippedNoExtract += 1;
+        continue;
+      }
+
+      const flagged = await recomputeTransactions(c.env, extracted.filing, extracted.transactions);
+      const newMin = Math.min(...flagged.map((f) => f.tx.confidence));
+      const hasHardFailure = flagged.some(
+        (f) =>
+          f.flags.includes('no_amount') ||
+          f.flags.includes('invalid_amount') ||
+          f.flags.includes('bad_tx_type'),
+      );
+
+      const existing = await all<{ id: string }>(
+        c.env.DB,
+        `SELECT id FROM transactions WHERE doc_id = ? AND source = 'primary' ORDER BY cursor_seq ASC`,
+        [doc_id],
+      );
+
+      if (existing.length > 0) {
+        // Already in the feed: update confidence (+ snapped amount / resolved
+        // ticker) in place. Never touch id or cursor_seq -> no re-delivery.
+        if (existing.length !== flagged.length) {
+          summary.skippedCountMismatch += 1;
+          continue;
+        }
+        if (!dryRun) {
+          for (let i = 0; i < existing.length; i++) {
+            const { tx } = flagged[i];
+            await run(
+              c.env.DB,
+              `UPDATE transactions
+                  SET confidence = ?, amount_min = ?, amount_max = ?, ticker = ?
+                WHERE id = ?`,
+              [tx.confidence, tx.amountMin, tx.amountMax, tx.ticker, existing[i].id],
+            );
+          }
+          await run(c.env.DB, 'UPDATE filings SET confidence = ? WHERE doc_id = ?', [
+            newMin,
+            doc_id,
+          ]);
+        }
+        summary.rowsUpdatedInPlace += flagged.length;
+        continue;
+      }
+
+      // Not in the feed yet (sitting in review / error). Does it clear the bar now?
+      const passesNow = newMin >= CONFIDENCE_THRESHOLD && !hasHardFailure;
+      if (passesNow) {
+        if (!dryRun) {
+          // normalize() persists + sets ingest_status + fans out delivery
+          // (first-time delivery for these rows, which is correct).
+          await normalize(c.env, extracted.filing, extracted.transactions, {
+            extractor: extracted.extractor,
+            modelVersion: extracted.modelVersion ?? null,
+          });
+          await run(c.env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [doc_id]);
+        }
+        summary.filingsPromoted += 1;
+        summary.rowsPromoted += flagged.length;
+      } else {
+        summary.filingsStillInReview += 1;
+      }
+    }
+
+    return c.json({ ok: summary.errors.length === 0, ...summary });
   });
 
   // --- POST /migrate ------------------------------------------------------

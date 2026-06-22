@@ -13,7 +13,7 @@
  * for that message.
  */
 
-import type { Env, Filing, DocKind, Chamber } from '../shared/types';
+import type { Env, Filing, DocKind, Chamber, ParsedTx } from '../shared/types';
 import { get, run } from '../shared/db';
 import { buildExtractorPipeline } from '../extractors/types';
 import { normalize } from './normalizer';
@@ -74,6 +74,32 @@ async function markError(env: Env, docId: string, message: string): Promise<void
  * than retried forever.
  */
 export async function extractAndNormalize(env: Env, docId: string): Promise<void> {
+  const extracted = await extractParsed(env, docId);
+  if (!extracted) return; // missing row / raw object: already recorded as error.
+
+  await normalize(env, extracted.filing, extracted.transactions, {
+    extractor: extracted.extractor,
+    modelVersion: extracted.modelVersion ?? null,
+  });
+}
+
+/** Result of re-running extraction (no normalize/persist). */
+export interface ExtractedFiling {
+  filing: Filing;
+  transactions: ParsedTx[];
+  extractor: string;
+  modelVersion: string | null;
+}
+
+/**
+ * Run only the extraction half: load the filing + its raw R2 object and route it
+ * to the matching extractor, returning the parsed rows WITHOUT normalizing or
+ * persisting. Returns null (after recording an error on the filing) when the row
+ * or raw object is missing. Shared by extractAndNormalize() and the admin
+ * reprocess path, which re-extracts from the already-stored R2 raw — so it never
+ * re-fetches from the source — then recomputes confidence in place.
+ */
+export async function extractParsed(env: Env, docId: string): Promise<ExtractedFiling | null> {
   const row = await get<FilingRow>(
     env.DB,
     `SELECT doc_id, chamber, filer_id, filing_type, filed_date, source_url,
@@ -84,20 +110,20 @@ export async function extractAndNormalize(env: Env, docId: string): Promise<void
   );
   if (!row) {
     console.warn(`orchestrator: no filings row for ${docId}; skipping`);
-    return;
+    return null;
   }
 
   const filing = rowToFiling(row);
 
   if (!filing.rawObjectKey) {
     await markError(env, docId, 'orchestrator: missing raw_object_key');
-    return;
+    return null;
   }
 
   const obj = await env.RAW_FILES.get(filing.rawObjectKey);
   if (!obj) {
     await markError(env, docId, `orchestrator: R2 object ${filing.rawObjectKey} not found`);
-    return;
+    return null;
   }
 
   const bytes = await obj.arrayBuffer();
@@ -111,11 +137,9 @@ export async function extractAndNormalize(env: Env, docId: string): Promise<void
   const extractor = pipeline.find((e) => e.canHandle(filing));
 
   if (!extractor) {
-    // Unknown / unsupported doc form (e.g. an ambiguous scan): surface it for a
-    // human rather than dropping it. normalize([]) writes a review_queue row and
-    // marks the filing needs_review.
-    await normalize(env, filing, [], { extractor: 'none', modelVersion: null });
-    return;
+    // Unknown / unsupported doc form (e.g. an ambiguous scan): no extractor, no
+    // parsed rows. Callers decide what to do (normalize([]) routes to review).
+    return { filing, transactions: [], extractor: 'none', modelVersion: null };
   }
 
   let result;
@@ -128,8 +152,10 @@ export async function extractAndNormalize(env: Env, docId: string): Promise<void
     throw err;
   }
 
-  await normalize(env, filing, result.transactions, {
+  return {
+    filing,
+    transactions: result.transactions,
     extractor: result.extractor,
     modelVersion: result.modelVersion ?? null,
-  });
+  };
 }
