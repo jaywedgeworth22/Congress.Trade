@@ -115,5 +115,11 @@ npm run dev         # wrangler dev
 npm run deploy      # wrangler deploy
 ```
 
-Before deploying, replace the `PLACEHOLDER_*` ids in `wrangler.toml` with the
-real D1 database id and KV namespace id, and create the queues + R2 bucket.
+Deployment is automated via **Cloudflare Workers Builds** (connected to this
+repo): pushes to `main` run `npm run build` then `npx wrangler deploy` with the
+**Root directory** set to `app`. The real D1 `database_id` and `CONFIG_KV` id are
+committed in `wrangler.toml`; the queues (`congress-feed-ingest`,
+`congress-feed-delivery`, + `*-dlq`) and the R2 bucket (`congress-feed-raw`) must
+already exist on the account. Runtime secrets (`ADMIN_TOKEN`, `GEMINI_API_KEY`,
+`ARBITRATION_API_KEY`, `WEBHOOK_SIGNING_KEY`) are set out-of-band via
+`wrangler secret put` and are NOT committed.
