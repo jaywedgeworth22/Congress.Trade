@@ -193,3 +193,57 @@ describe('runSeedBackfill source overrides (dryRun)', () => {
     expect(urls).toEqual(['https://env.example/senate.json']);
   });
 });
+
+describe('runSeedBackfill batched writes (subrequest cap)', () => {
+  // Fake D1: prepare().all() feeds an empty securities_master to the resolver;
+  // batch() records how many statements landed in each call (= one subrequest).
+  function fakeDb() {
+    const batchSizes: number[] = [];
+    const db = {
+      prepare() {
+        return {
+          bind() {
+            return this;
+          },
+          async all() {
+            return { results: [] };
+          },
+          async run() {
+            return { meta: { changes: 1 } };
+          },
+        };
+      },
+      async batch(stmts: unknown[]) {
+        batchSizes.push(stmts.length);
+        return stmts.map(() => ({ meta: { changes: 1 } }));
+      },
+    };
+    return { db, batchSizes };
+  }
+
+  it('groups upserts into bounded batches instead of one write per row', async () => {
+    const { db, batchSizes } = fakeDb();
+    const env = { DB: db } as unknown as Env;
+    // 120 distinct members => 120 filer upserts + 120 tx upserts = 240 statements.
+    const rows = Array.from({ length: 120 }, (_, i) => ({
+      ...SENATE_REC,
+      senator: `Member Number ${i}`,
+    }));
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify(rows), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as unknown as typeof fetch;
+
+    const res = await runSeedBackfill(env, { chambers: ['senate'], fetchImpl });
+
+    expect(res.errors).toEqual([]);
+    expect(res.inserted).toBe(120); // only tx statements are counted, not filers
+    // Batched, not one-subrequest-per-statement: many fewer batches than 240,
+    // and no single batch exceeds the cap-friendly chunk size.
+    expect(batchSizes.length).toBeGreaterThan(1);
+    expect(batchSizes.length).toBeLessThan(20);
+    expect(Math.max(...batchSizes)).toBeLessThanOrEqual(51);
+    expect(batchSizes.reduce((a, b) => a + b, 0)).toBe(240);
+  });
+});
