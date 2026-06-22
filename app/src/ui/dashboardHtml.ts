@@ -297,7 +297,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="table-wrap">
     <table id="feedTable">
       <thead><tr id="feedHead">
-        <th class="sortable" data-sort="filed">Filed<span class="arr"></span></th>
+        <th class="sortable" data-sort="filed" title="Official disclosure (report) date the filing was submitted to Congress. Historic seed rows without a filing fall back to their import date; raw ingest timing is in the Latency column.">Filed<span class="arr"></span></th>
         <th class="sortable" data-sort="member">Member<span class="arr"></span></th>
         <th class="sortable" data-sort="asset">Asset<span class="arr"></span></th>
         <th class="sortable" data-sort="type">Type<span class="arr"></span></th>
@@ -559,6 +559,17 @@ var confClass = function (c) { return c >= 0.9 ? 'hi' : c >= 0.7 ? 'mid' : 'lo';
 var typeName = { P: 'Purchase', S: 'Sale', E: 'Exchange' };
 /* Capitalize a beneficial-owner code for display (self -> Self, joint -> Joint). */
 function ownerLabel(o) { var s = String(o == null ? '' : o); return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
+/* Normalize a date string to YYYY-MM-DD without timezone drift. Accepts ISO
+   ("2026-06-15...") and US ("6/15/2026") forms (Senate filings use the latter). */
+function toISODate(s) {
+  if (!s) return '';
+  s = String(s).trim();
+  var iso = /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(s);
+  if (iso) return iso[1] + '-' + iso[2] + '-' + iso[3];
+  var us = /^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/.exec(s);
+  if (us) return us[3] + '-' + ('0' + us[1]).slice(-2) + '-' + ('0' + us[2]).slice(-2);
+  return s.slice(0, 10);
+}
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, function (ch) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
@@ -831,7 +842,10 @@ function sourceLabel(src) { return sourceLabelMap[src] || (src || ''); }
    filer id when the name is missing. */
 function txToRow(tx) {
   return {
-    filed: (tx.createdAt || '').replace('T', ' ').slice(0, 16),
+    // "Filed" = the official disclosure (report) date. Live rows carry the
+    // filing's filed_date; historic seed rows (no filing) fall back to the date
+    // we imported them. The raw ingestion timestamp lives in imported (latency).
+    filed: toISODate(tx.filedDate) || (tx.createdAt || '').slice(0, 10),
     member: tx.fullName || tx.memberName || tx.filerId || 'Unknown',
     photoUrl: tx.photoUrl || '',
     st: tx.state || '',
@@ -889,7 +903,7 @@ function fetchPage() {
       setBanner('');                       // drop the illustrative banner
       el('kpiTotal').textContent = totalRows || TRADES.length;
       var today = new Date().toISOString().slice(0, 10);
-      el('kpiToday').textContent = TRADES.filter(function (r) { return (r.filed || '').slice(0, 10) === today; }).length;
+      el('kpiToday').textContent = TRADES.filter(function (r) { return (r.imported || '').slice(0, 10) === today; }).length;
       var primary = TRADES.filter(function (r) { return r.source === 'primary'; }).length;
       el('kpiAuto').innerHTML = (TRADES.length ? Math.round(100 * primary / TRADES.length) : 0) + '<small>%</small>';
       renderFeed();
