@@ -8,9 +8,11 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildTransactionsQuery,
+  mapFeedTransaction,
   DEFAULT_TX_LIMIT,
   MAX_TX_LIMIT,
   type TxQueryParams,
+  type FeedTransactionRow,
 } from '../rows';
 
 describe('buildTransactionsQuery', () => {
@@ -52,6 +54,14 @@ describe('buildTransactionsQuery', () => {
     expect(q.params).toEqual([0, 'senate']);
   });
 
+  it('joins filers to project the member name/state/headshot for the feed', () => {
+    const q = buildTransactionsQuery({});
+    expect(q.sql).toContain('LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id');
+    expect(q.sql).toContain('fl.full_name AS filer_full_name');
+    expect(q.sql).toContain('fl.state AS filer_state');
+    expect(q.sql).toContain('fl.photo_url AS filer_photo_url');
+  });
+
   it('composes all filters in a stable param order (since, ticker, member, type, chamber)', () => {
     const params: TxQueryParams = {
       since: 10,
@@ -89,5 +99,53 @@ describe('buildTransactionsQuery', () => {
     // The malicious string must appear only as a bound parameter, never in SQL.
     expect(q.sql).not.toContain('DROP TABLE');
     expect(q.params).toContain("'; DROP TABLE TRANSACTIONS;--");
+  });
+});
+
+describe('mapFeedTransaction', () => {
+  function feedRow(over: Partial<FeedTransactionRow> = {}): FeedTransactionRow {
+    return {
+      id: 't1',
+      doc_id: 'H-2024-1',
+      filer_id: 'P000197',
+      tx_date: '2024-01-02',
+      owner: 'self',
+      asset_name: 'Acme',
+      ticker: 'ACME',
+      asset_type: 'stock',
+      tx_type: 'P',
+      amount_min: 1001,
+      amount_max: 15000,
+      is_option: 0,
+      cap_gains_over_200: 0,
+      raw_text: '',
+      confidence: 0.9,
+      source: 'primary',
+      created_at: '2024-01-03T00:00:00Z',
+      cursor_seq: 5,
+      filer_full_name: 'Nancy Pelosi',
+      filer_state: 'CA',
+      filer_photo_url: 'https://unitedstates.github.io/images/congress/225x275/P000197.jpg',
+      ...over,
+    };
+  }
+
+  it('carries the joined filer identity onto the Transaction', () => {
+    const tx = mapFeedTransaction(feedRow());
+    expect(tx.fullName).toBe('Nancy Pelosi');
+    expect(tx.state).toBe('CA');
+    expect(tx.photoUrl).toContain('P000197.jpg');
+    // base transaction mapping still applies
+    expect(tx.ticker).toBe('ACME');
+    expect(tx.cursorSeq).toBe(5);
+  });
+
+  it('tolerates an unresolved filer (nulls pass through, never throws)', () => {
+    const tx = mapFeedTransaction(
+      feedRow({ filer_full_name: null, filer_state: null, filer_photo_url: null }),
+    );
+    expect(tx.fullName).toBeNull();
+    expect(tx.state).toBeNull();
+    expect(tx.photoUrl).toBeNull();
   });
 });

@@ -32,16 +32,52 @@ function houseLiveSearchEnabled(env: Env): boolean {
 }
 
 /** One row to (maybe) insert + enqueue. */
-interface DiscoveredFiling {
+export interface DiscoveredFiling {
   docId: string;
   chamber: 'house' | 'senate';
   sourceUrl: string;
 }
 
 /**
+ * INSERT OR IGNORE one discovered filing as a 'new' row. Returns true iff the
+ * row was GENUINELY new — D1's `meta.changes` > 0 means a row was actually
+ * written (we'd never seen this doc_id), with no read-back race.
+ *
+ * This is the single source of truth for the filings-row write, shared by the
+ * cron watcher (below) and the historical House backfill crawler
+ * (src/backfill/houseCrawler.ts) so the INSERT column list never drifts.
+ */
+export async function insertFilingIfNew(
+  env: Env,
+  f: DiscoveredFiling,
+  nowIso: string,
+): Promise<boolean> {
+  const res = await run(
+    env.DB,
+    `INSERT OR IGNORE INTO filings
+       (doc_id, chamber, filer_id, filing_type, filed_date, source_url,
+        raw_object_key, ingest_status, doc_kind, extractor, model_version,
+        confidence, first_seen_at, source_updated_at, error)
+     VALUES (?, ?, NULL, 'P', NULL, ?, NULL, 'new', 'unknown', NULL, NULL,
+             NULL, ?, NULL, NULL)`,
+    [f.docId, f.chamber, f.sourceUrl, nowIso],
+  );
+  return (res.meta?.changes ?? 0) > 0;
+}
+
+/** Enqueue the canonical filing.new INGEST_QUEUE message for a discovered filing. */
+export async function enqueueFilingNew(env: Env, f: DiscoveredFiling): Promise<void> {
+  await env.INGEST_QUEUE.send({
+    type: 'filing.new',
+    docId: f.docId,
+    chamber: f.chamber,
+    sourceUrl: f.sourceUrl,
+  });
+}
+
+/**
  * Insert discovered filings with INSERT OR IGNORE and enqueue a filing.new
- * message for each GENUINELY-new row (i.e. rows that were actually inserted,
- * meaning we'd never seen the docId before). Returns the count of new filings.
+ * message for each GENUINELY-new row. Returns the count of new filings.
  */
 async function persistAndEnqueue(
   env: Env,
@@ -50,28 +86,10 @@ async function persistAndEnqueue(
 ): Promise<number> {
   let newCount = 0;
   for (const f of filings) {
-    // INSERT OR IGNORE: only inserts when doc_id is unseen. D1's `meta.changes`
-    // tells us whether a row was actually written, which is our "genuinely new"
-    // signal — no read-back race.
-    const res = await run(
-      env.DB,
-      `INSERT OR IGNORE INTO filings
-         (doc_id, chamber, filer_id, filing_type, filed_date, source_url,
-          raw_object_key, ingest_status, doc_kind, extractor, model_version,
-          confidence, first_seen_at, source_updated_at, error)
-       VALUES (?, ?, NULL, 'P', NULL, ?, NULL, 'new', 'unknown', NULL, NULL,
-               NULL, ?, NULL, NULL)`,
-      [f.docId, f.chamber, f.sourceUrl, nowIso],
-    );
-    const changed = (res.meta?.changes ?? 0) > 0;
-    if (!changed) continue;
-    newCount += 1;
-    await env.INGEST_QUEUE.send({
-      type: 'filing.new',
-      docId: f.docId,
-      chamber: f.chamber,
-      sourceUrl: f.sourceUrl,
-    });
+    if (await insertFilingIfNew(env, f, nowIso)) {
+      await enqueueFilingNew(env, f);
+      newCount += 1;
+    }
   }
   return newCount;
 }
@@ -150,59 +168,6 @@ async function pollHouse(env: Env, now: Date): Promise<void> {
   const newCount = await persistAndEnqueue(env, discovered, nowIso);
   await logPoll(env, 'house', nowIso, newCount, nowIso);
   await setLastPollAt(env, 'house', now);
-}
-
-/** Result of a House index backfill run. */
-export interface HouseIndexBackfillResult {
-  /** Per-year { found PTRs in the index, genuinely-new filings enqueued }. */
-  byYear: Record<number, { found: number; enqueued: number }>;
-  /** Total new filings enqueued across all years. */
-  totalEnqueued: number;
-  /** Soft, per-year errors. A failing year does not abort the others. */
-  errors: string[];
-}
-
-/**
- * Backfill House history from the official, accessible yearly bulk ZIP indexes.
- *
- * This is the high-fidelity counterpart to the seed-dataset backfill for the
- * House (whose community JSON mirror is gated): for each requested year it
- * downloads `{YEAR}FD.ZIP`, filters PTRs, and feeds the GENUINELY-new ones into
- * the normal pipeline via INSERT OR IGNORE + filing.new — so they get fetched,
- * classified, extracted, and delivered exactly like live filings.
- *
- * `fetchIndex` is injectable for tests (defaults to the real network fetcher).
- * Fails soft per-year; `dryRun` reports counts without writing/enqueuing.
- */
-export async function backfillHouseIndex(
-  env: Env,
-  opts: { years: number[]; dryRun?: boolean } = { years: [] },
-  fetchIndex: (year: number | string) => Promise<Awaited<ReturnType<typeof fetchHouseIndex>>> = fetchHouseIndex,
-): Promise<HouseIndexBackfillResult> {
-  const nowIso = new Date().toISOString();
-  const result: HouseIndexBackfillResult = { byYear: {}, totalEnqueued: 0, errors: [] };
-
-  for (const year of opts.years) {
-    try {
-      const index = await fetchIndex(year);
-      const ptrs = index.filter((f) => f.isPtr);
-      if (opts.dryRun) {
-        result.byYear[year] = { found: ptrs.length, enqueued: 0 };
-        continue;
-      }
-      const discovered: DiscoveredFiling[] = ptrs.map((f) => ({
-        docId: f.pipelineDocId,
-        chamber: 'house',
-        sourceUrl: f.sourceUrl,
-      }));
-      const enqueued = await persistAndEnqueue(env, discovered, nowIso);
-      result.byYear[year] = { found: ptrs.length, enqueued };
-      result.totalEnqueued += enqueued;
-    } catch (err) {
-      result.errors.push(`${year}: ${(err as Error).message}`);
-    }
-  }
-  return result;
 }
 
 /**

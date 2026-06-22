@@ -44,10 +44,11 @@ import { nearestBracket } from '../shared/brackets';
  *   CONFIDENT — verified reachable and in the expected RawWatcherRecord shape.
  * - house:  there is no maintained pre-parsed House JSON mirror; the community
  *   S3 bucket is gated. The high-fidelity path for House history is
- *   `backfillHouseIndex` (watcher.ts), which pulls the official, accessible
+ *   `runHouseHistoricalBackfill` (backfill/houseCrawler.ts, exposed as
+ *   POST /api/admin/house-backfill), which pulls the official, accessible
  *   yearly bulk ZIP indexes and runs them through the live pipeline. This URL
  *   remains as a hook for operators who host their own House aggregate.
- *   UNCERTAIN — set SEED_HOUSE_URL or use the House index backfill instead.
+ *   UNCERTAIN — set SEED_HOUSE_URL or use the House backfill instead.
  */
 export const SEED_SOURCES: Record<Chamber, { url: string; certain: boolean }> = {
   senate: {
@@ -56,7 +57,8 @@ export const SEED_SOURCES: Record<Chamber, { url: string; certain: boolean }> = 
   },
   house: {
     // Legacy community bucket — currently gated (HTTP 403). Override via
-    // SEED_HOUSE_URL, or prefer backfillHouseIndex for official House history.
+    // SEED_HOUSE_URL, or prefer POST /api/admin/house-backfill (houseCrawler.ts)
+    // for official House history.
     url: 'https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json',
     certain: false,
   },

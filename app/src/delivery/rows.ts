@@ -46,6 +46,18 @@ export interface TransactionRow {
   cursor_seq: number | null;
 }
 
+/**
+ * A transaction row with the filer's identity joined in (LEFT JOIN filers).
+ * Used by the dashboard feed + SSE stream so each row can show a resolved
+ * member name + headshot. The filer columns are nullable: transactions.filer_id
+ * may be null or may not resolve to a filers row (e.g. seed/backfill rows).
+ */
+export interface FeedTransactionRow extends TransactionRow {
+  filer_full_name: string | null;
+  filer_state: string | null;
+  filer_photo_url: string | null;
+}
+
 export interface SubscriptionRow {
   id: string;
   client_id: string | null;
@@ -100,6 +112,21 @@ export function mapTransaction(row: TransactionRow): Transaction {
     source: (row.source as TxSource) ?? 'primary',
     createdAt: row.created_at ?? '',
     cursorSeq: row.cursor_seq ?? 0,
+  };
+}
+
+/**
+ * Map a feed row (transaction + joined filer identity) to a Transaction,
+ * carrying the resolved member name/state/headshot. Kept separate from
+ * mapTransaction so the webhook/normalizer paths (which never join filers) are
+ * unaffected.
+ */
+export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
+  return {
+    ...mapTransaction(row),
+    fullName: row.filer_full_name,
+    state: row.filer_state,
+    photoUrl: row.filer_photo_url,
   };
 }
 
@@ -200,8 +227,10 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
   if (limit > MAX_TX_LIMIT) limit = MAX_TX_LIMIT;
 
   const sql =
-    'SELECT t.* FROM transactions t ' +
+    'SELECT t.*, fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
+    'fl.photo_url AS filer_photo_url FROM transactions t ' +
     'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
+    'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
     `WHERE ${where.join(' AND ')} ` +
     'ORDER BY t.cursor_seq ASC ' +
     `LIMIT ${limit}`;

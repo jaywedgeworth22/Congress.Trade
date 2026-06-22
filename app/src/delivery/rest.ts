@@ -24,8 +24,10 @@ import {
   buildTransactionsQuery,
   mapFiling,
   mapTransaction,
+  mapFeedTransaction,
   type FilingRow,
   type TransactionRow,
+  type FeedTransactionRow,
   type TxQueryParams,
 } from './rows';
 import {
@@ -68,8 +70,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       limit: parseIntOrUndef(q.limit),
     };
     const built = buildTransactionsQuery(params);
-    const rows = await all<TransactionRow>(c.env.DB, built.sql, built.params);
-    const transactions = rows.map(mapTransaction);
+    const rows = await all<FeedTransactionRow>(c.env.DB, built.sql, built.params);
+    const transactions = rows.map(mapFeedTransaction);
     const maxCursor = transactions.reduce(
       (m, t) => (t.cursorSeq > m ? t.cursorSeq : m),
       params.since ?? 0,
