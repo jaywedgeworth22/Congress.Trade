@@ -774,7 +774,21 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // CLI's --remote D1 auth issues). Idempotent: "duplicate column" is treated
   // as already-applied.
   r.post('/migrate', async (c) => {
-    const statements = ['ALTER TABLE filers ADD COLUMN photo_url TEXT'];
+    const statements = [
+      'ALTER TABLE filers ADD COLUMN photo_url TEXT',
+      // 0003_users.sql — end-user accounts (public-site auth). Idempotent.
+      `CREATE TABLE IF NOT EXISTS users (
+         id             TEXT PRIMARY KEY,
+         email          TEXT NOT NULL UNIQUE,
+         name           TEXT,
+         picture        TEXT,
+         google_sub     TEXT UNIQUE,
+         email_verified INTEGER NOT NULL DEFAULT 0,
+         created_at     TEXT NOT NULL,
+         last_login_at  TEXT
+       )`,
+      'CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)',
+    ];
     const applied: string[] = [];
     const skipped: string[] = [];
     for (const sql of statements) {

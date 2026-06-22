@@ -190,6 +190,27 @@ export interface ReviewItem {
 }
 
 // ---------------------------------------------------------------------------
+// End-user accounts (public-site auth: Google OAuth + email magic-link)
+// ---------------------------------------------------------------------------
+
+/**
+ * A public-site end user. Distinct from the admin surface and from delivery
+ * `Subscription`s (webhook/SSE targets). Billing/subscription fields are layered
+ * on in a later migration.
+ */
+export interface User {
+  id: string;
+  email: string;
+  name: string | null;
+  picture: string | null;
+  /** Google `sub` claim when the user has linked Google sign-in; null otherwise. */
+  googleSub: string | null;
+  emailVerified: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Poll configuration (adaptive scheduling)
 // ---------------------------------------------------------------------------
 
@@ -247,6 +268,16 @@ export interface Env {
   OPENAI_API_KEY?: string;
   /** HMAC key for signing outbound webhook payloads. */
   WEBHOOK_SIGNING_KEY?: string;
+
+  // --- End-user auth (public-site sign-in) ---
+  /** Google OAuth client credentials for "Sign in with Google". */
+  GOOGLE_OAUTH_CLIENT_ID?: string;
+  GOOGLE_OAUTH_CLIENT_SECRET?: string;
+  /** Resend API key + verified from-address for magic-link sign-in emails. */
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
+  /** Public base URL (e.g. https://congress.trade) for OAuth redirects + links. */
+  APP_BASE_URL?: string;
 
   // --- Plain vars (.dev.vars / [vars]) ---
   /** "true" to force arbitration on when configured. */

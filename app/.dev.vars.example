@@ -45,3 +45,17 @@ SEED_SENATE_URL=""
 # Set to "false" to disable the intraday House live-search overlay (the watcher
 # falls back to the daily bulk-XML diff, which is always used regardless).
 HOUSE_LIVE_SEARCH_ENABLED=""
+
+# End-user sign-in (public site). Google OAuth + email magic-link.
+#   - GOOGLE_OAUTH_CLIENT_ID / _SECRET: from Google Cloud console (OAuth 2.0
+#     client). Authorized redirect URI: <APP_BASE_URL>/auth/google/callback
+#   - RESEND_API_KEY + EMAIL_FROM: transactional email for magic links
+#     (EMAIL_FROM must be a verified Resend sender, e.g. "Congress.Trade <login@congress.trade>")
+#   - APP_BASE_URL: public origin used to build OAuth redirects + magic links
+#     (e.g. https://congress.trade). Falls back to the request origin if unset.
+# Sessions + magic tokens live in CONFIG_KV (TTL-managed); no extra binding needed.
+GOOGLE_OAUTH_CLIENT_ID=""
+GOOGLE_OAUTH_CLIENT_SECRET=""
+RESEND_API_KEY=""
+EMAIL_FROM=""
+APP_BASE_URL=""
