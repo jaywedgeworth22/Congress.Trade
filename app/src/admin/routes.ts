@@ -35,6 +35,7 @@ import { runSeedBackfillFromEnv } from '../backfill/seed';
 import { runHouseHistoricalBackfill } from '../backfill/houseCrawler';
 import type { Chamber } from '../shared/types';
 import { verifyAccessJwt, certsUrl, parseEmailAllowlist } from './access';
+import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -418,9 +419,30 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         pollCount: row.poll_count,
         totalNew: row.total_new,
         avgIntervalSec: await observedAvgInterval(c.env, row.source),
+        avgReleaseToDbSec: await observedReleaseToDbLag(c.env, row.source),
       });
     }
     return c.json({ sources, count: sources.length });
+  });
+
+  // --- GET /ui-settings ---------------------------------------------------
+  // Site-wide UI settings the admin controls for ALL visitors (logo style).
+  r.get('/ui-settings', async (c) => {
+    return c.json({ logoDisplay: await getLogoDisplay(c.env) });
+  });
+
+  // --- PUT /ui-settings ---------------------------------------------------
+  // Update the site-wide logo style. Body: { logoDisplay: 'tile'|'transparent'|'off' }.
+  r.put('/ui-settings', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const text = await c.req.text();
+      if (text) body = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const logoDisplay = await setLogoDisplay(c.env, body.logoDisplay);
+    return c.json({ logoDisplay });
   });
 
   // --- POST /backfill -----------------------------------------------------
@@ -594,6 +616,31 @@ async function observedAvgInterval(env: Env, source: string): Promise<number | n
     }
   }
   return n > 0 ? Math.round(total / n) : null;
+}
+
+/**
+ * Average lag (seconds) between a filing's official release (filed_date) and
+ * when our DB first recorded it (first_seen_at), per chamber. filed_date is
+ * day-granular, so this is approximate; we average only non-negative diffs over
+ * recent filings. Returns null when there isn't enough dated data.
+ */
+async function observedReleaseToDbLag(env: Env, source: string): Promise<number | null> {
+  const row = await get<{ avg_sec: number | null }>(
+    env.DB,
+    `SELECT AVG((julianday(first_seen_at) - julianday(filed_date)) * 86400.0) AS avg_sec
+       FROM (
+         SELECT first_seen_at, filed_date
+           FROM filings
+          WHERE chamber = ?
+            AND filed_date IS NOT NULL
+            AND first_seen_at IS NOT NULL
+            AND julianday(first_seen_at) >= julianday(filed_date)
+          ORDER BY first_seen_at DESC
+          LIMIT 200
+       )`,
+    [source],
+  );
+  return row && row.avg_sec != null ? Math.round(row.avg_sec) : null;
 }
 
 function safeJson(s: string): unknown {

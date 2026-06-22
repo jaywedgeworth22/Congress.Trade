@@ -26,6 +26,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Congress.Trade — Congress Trade Feed</title>
+<script>
+  // Admin-controlled, site-wide logo style (injected at serve time).
+  window.__LOGO_DISPLAY__ = "%LOGO_DISPLAY%";
+  // Apply the persisted theme before first paint to avoid a flash.
+  try { if (localStorage.getItem('ui-theme') === 'light') document.documentElement.setAttribute('data-theme', 'light'); } catch (e) {}
+</script>
 <style>
   :root {
     /* ---- THEME ---- */
@@ -46,6 +52,37 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     --mono:      ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --sans:      system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
   }
+  /* ---- light theme (toggled via html[data-theme="light"]) ---- */
+  html[data-theme="light"] {
+    --bg:        #f4f7fb;
+    --bg-2:      #e9eef6;
+    --panel:     #ffffff;
+    --panel-2:   #eef3fa;
+    --border:    #d3dced;
+    --text:      #142036;
+    --text-dim:  #5a6b86;
+    --accent:    #2563eb;
+    --buy:       #15803d;
+    --sell:      #dc2626;
+    --exch:      #b45309;
+    --warn:      #b45309;
+    --good:      #15803d;
+  }
+  html[data-theme="light"] header.top { background: rgba(255,255,255,.72); }
+  /* ---- theme toggle ---- */
+  .theme-toggle { background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; line-height: 1; }
+  .theme-toggle:hover { color: var(--text); background: var(--panel); }
+  /* ---- resizable feed columns ---- */
+  .table-wrap { overflow-x: auto; }
+  #feedTable.resizable { table-layout: fixed; width: max-content; min-width: 100%; }
+  #feedTable.resizable td { overflow: hidden; }
+  #feedHead th { position: relative; }
+  .col-resizer { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; user-select: none; touch-action: none; }
+  .col-resizer:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+  /* ---- monogram backup logo (shown when a ticker's real logo is missing) ---- */
+  .tkr-logo.mono img { display: none; }
+  .tkr-logo.mono { font-family: var(--mono); font-size: 9px; font-weight: 700; color: var(--text-dim); background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
+  .tkr-logo.mono::after { content: attr(data-mono); }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: radial-gradient(1200px 600px at 70% -10%, var(--bg-2), var(--bg));
@@ -165,6 +202,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <button data-view="subs">Subscriptions</button>
     <button data-view="admin">Admin · Cadence</button>
   </nav>
+  <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light / dark">🌙</button>
 </header>
 
 <main>
@@ -189,11 +227,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <select id="qChamber" onchange="renderFeed()">
         <option value="">Both chambers</option><option value="house">House</option><option value="senate">Senate</option>
       </select>
-      <select id="qLogo" onchange="setLogoDisplay(this.value)" title="Company logo style">
-        <option value="tile">Logos: tile</option>
-        <option value="transparent">Logos: plain</option>
-        <option value="off">Logos: off</option>
-      </select>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
       <button class="btn ghost sm" onclick="refreshFeed()">↻ Refresh</button>
     </div>
@@ -208,7 +241,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </select>
       <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
     </div>
-    <table>
+    <div class="table-wrap">
+    <table id="feedTable">
       <thead><tr id="feedHead">
         <th class="sortable" data-sort="filed">Filed<span class="arr"></span></th>
         <th class="sortable" data-sort="member">Member<span class="arr"></span></th>
@@ -222,6 +256,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </tr></thead>
       <tbody id="feedBody"></tbody>
     </table>
+    </div>
   </section>
 
   <!-- ================= REVIEW QUEUE ================= -->
@@ -272,6 +307,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
     </div>
     <div class="section">
+      <h3>Logos</h3>
+      <p class="sub">Company-logo style shown on the live feed for <strong>all visitors</strong>. "Plain" shows bare logos; "Tile" frames them; "Off" hides them. When a logo is on but a ticker's image isn't available, a monogram (the ticker's first letters) is shown as a backup.</p>
+      <div class="row-flex">
+        <label class="lbl">Logo style</label>
+        <select id="adminLogo">
+          <option value="transparent">Logos: Plain</option>
+          <option value="tile">Logos: Tile</option>
+          <option value="off">Logos: Off</option>
+        </select>
+        <button class="btn" onclick="saveLogoDisplay()">Save for everyone</button>
+        <span id="logoMsg" class="note"></span>
+      </div>
+    </div>
+    <div class="section">
       <h3>Poll cadence</h3>
       <p class="sub">Filings land almost entirely during US-Eastern business hours on weekdays. Adaptive windows keep latency low when it matters and stay polite to gov servers overnight.</p>
       <div class="row-flex" style="margin-bottom:16px">
@@ -317,7 +366,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <h3>Source health</h3>
       <p class="sub">First-seen timestamps are logged per filing so real refresh cadence is measured, not assumed.</p>
       <table>
-        <thead><tr><th>Source</th><th>Last poll</th><th>Last new filing</th><th>Polls</th><th>Avg refresh (observed)</th></tr></thead>
+        <thead><tr><th>Source</th><th>Last poll</th><th>Last new filing</th><th>Polls</th><th>Avg refresh (observed)</th><th>Avg release→DB</th></tr></thead>
         <tbody id="healthBody"></tbody>
       </table>
     </div>
@@ -350,33 +399,71 @@ function esc(s) {
 }
 function el(id) { return document.getElementById(id); }
 
+/* Strip stray HTML/entities some upstream datasets embed in asset descriptions
+   (e.g. "<div class=text-muted><em>Rate/Coupon:</em> 3.875%<br>…</div>"). */
+function cleanAsset(s) {
+  if (s == null) return '';
+  var t = String(s).replace(/<[^>]*>/g, ' ');
+  t = t.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
+       .replace(/&gt;/gi, '>').replace(/&#0*39;|&apos;/gi, "'").replace(/&quot;/gi, '"');
+  return t.replace(/\\s+/g, ' ').trim();
+}
+
+/* Human duration: 45s, 3m 12s, 2h 5m, 1d 4h. */
+function fmtDuration(sec) {
+  if (sec == null) return '—';
+  sec = Math.round(sec);
+  if (sec < 60) return sec + 's';
+  var m = Math.floor(sec / 60), s = sec % 60;
+  if (m < 60) return m + 'm ' + s + 's';
+  var h = Math.floor(m / 60); m = m % 60;
+  if (h < 24) return h + 'h ' + m + 'm';
+  var d = Math.floor(h / 24); h = h % 24;
+  return d + 'd ' + h + 'h';
+}
+
+/* ---- light / dark theme (per-visitor preference) ---- */
+function applyTheme(t) {
+  if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+  else document.documentElement.removeAttribute('data-theme');
+  var btn = el('themeToggle'); if (btn) btn.textContent = (t === 'light') ? '☀️' : '🌙';
+}
+function toggleTheme() {
+  var cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  var next = cur === 'light' ? 'dark' : 'light';
+  try { localStorage.setItem('ui-theme', next); } catch (e) {}
+  applyTheme(next);
+}
+
 /* ---- ticker logos (ported from agentic-trading) ---- */
-var LOGO_DISPLAY_KEY = 'ticker-logo-display';
+/* logoDisplay is a SITE-WIDE setting the admin controls; the value is injected
+   server-side as window.__LOGO_DISPLAY__ so every visitor gets the same style. */
 var LOGO_DISPLAYS = ['tile', 'transparent', 'off'];
 var SYMBOL_PATTERN = /^[A-Z0-9._-]{1,20}$/;
-var logoDisplay = (function () {
-  try { var v = localStorage.getItem(LOGO_DISPLAY_KEY); return LOGO_DISPLAYS.indexOf(v) >= 0 ? v : 'tile'; }
-  catch (e) { return 'tile'; }
-})();
+function normalizeLogoDisplay(v) { return LOGO_DISPLAYS.indexOf(v) >= 0 ? v : 'transparent'; }
+var logoDisplay = normalizeLogoDisplay(window.__LOGO_DISPLAY__);
 function normalizeLogoSymbol(v) {
   var s = (v == null ? '' : String(v)).trim().replace(/^\\$/, '').toUpperCase();
   return s && SYMBOL_PATTERN.test(s) ? s : null;
 }
-function setLogoDisplay(v) {
-  logoDisplay = LOGO_DISPLAYS.indexOf(v) >= 0 ? v : 'tile';
-  try { localStorage.setItem(LOGO_DISPLAY_KEY, logoDisplay); } catch (e) {}
-  renderFeed();
+/* Backup logo: when a real logo image 404s, swap the frame to a monogram of the
+   ticker's first letters instead of dropping it (CSS hides the <img>). */
+function logoFallback(img, mono) {
+  var span = img.parentNode; if (!span) return;
+  span.classList.add('mono');
+  span.setAttribute('data-mono', mono);
 }
-/* Build the logo <span><img></span>. Framing follows the display mode; the
-   company name rides along as a hover title; a broken/missing logo removes the
-   frame so the row falls back to the plain ticker text. */
+/* Build the logo <span><img></span>. Framing follows the site-wide display mode;
+   the company name rides along as a hover title; a missing logo falls back to a
+   monogram via logoFallback(). */
 function tickerLogoHtml(ticker, company) {
   var sym = normalizeLogoSymbol(ticker);
   if (!sym || logoDisplay === 'off') return '';
   var title = company ? ' title="' + esc(company) + '"' : '';
+  var mono = esc(sym.slice(0, 2));
   return '<span class="tkr-logo ' + logoDisplay + '"' + title + '>' +
     '<img src="/api/logos/ticker?symbol=' + encodeURIComponent(sym) + '" alt="" ' +
-    'loading="lazy" decoding="async" onerror="this.parentNode.remove()" />' +
+    'loading="lazy" decoding="async" onerror="logoFallback(this,\\'' + mono + '\\')" />' +
   '</span>';
 }
 /* Two-letter initials from a member name, for the avatar fallback. */
@@ -430,7 +517,7 @@ function renderFeed() {
            (!ch || r.chamber === ch);
   });
   rows = sortRows(rows);
-  if (rows.length === 0) { body.innerHTML = stateRow(9, 'No transactions match these filters.'); return; }
+  if (rows.length === 0) { body.innerHTML = stateRow(9, 'No transactions match these filters.'); maybeInitResize(); return; }
   body.innerHTML = rows.map(function (r) {
     return '<tr class="row">' +
       '<td class="muted">' + esc(r.filed) + '</td>' +
@@ -447,6 +534,47 @@ function renderFeed() {
       '<td class="muted">' + esc(r.source) + '</td>' +
     '</tr>';
   }).join('');
+  maybeInitResize();
+}
+
+/* ---- resizable feed columns (drag the right edge of a header) ---- */
+var COL_WIDTH_KEY = 'feed-col-widths';
+var colResizeInit = false;
+function loadColWidths() { try { return JSON.parse(localStorage.getItem(COL_WIDTH_KEY) || '{}') || {}; } catch (e) { return {}; } }
+function saveColWidths(w) { try { localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w)); } catch (e) {} }
+function maybeInitResize() { if (!colResizeInit && realDataLoaded) { colResizeInit = true; initColumnResize(); } }
+function initColumnResize() {
+  var table = el('feedTable'); if (!table) return;
+  var ths = document.querySelectorAll('#feedHead th');
+  var saved = loadColWidths();
+  // Freeze current auto widths (or restore saved ones) so switching the table to
+  // fixed layout doesn't visually jump.
+  for (var i = 0; i < ths.length; i++) {
+    var k = ths[i].dataset.sort;
+    ths[i].style.width = ((k && saved[k]) ? saved[k] : ths[i].offsetWidth) + 'px';
+  }
+  table.classList.add('resizable');
+  for (var j = 0; j < ths.length; j++) addColResizer(ths[j]);
+}
+function addColResizer(th) {
+  var grip = document.createElement('span');
+  grip.className = 'col-resizer';
+  grip.addEventListener('click', function (e) { e.stopPropagation(); }); // don't sort
+  grip.addEventListener('mousedown', function (e) {
+    e.preventDefault(); e.stopPropagation();
+    var startX = e.pageX, startW = th.offsetWidth;
+    function move(ev) { th.style.width = Math.max(56, startW + (ev.pageX - startX)) + 'px'; }
+    function up() {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      document.body.style.userSelect = '';
+      var w = loadColWidths(); w[th.dataset.sort] = th.offsetWidth; saveColWidths(w);
+    }
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+    document.body.style.userSelect = 'none';
+  });
+  th.appendChild(grip);
 }
 
 /* ---- sorting ---- */
@@ -500,7 +628,7 @@ function txToRow(tx) {
     photoUrl: tx.photoUrl || '',
     st: tx.state || '',
     chamber: tx.chamber || '',
-    asset: tx.assetName || '',
+    asset: cleanAsset(tx.assetName || ''),
     ticker: tx.ticker || '',
     type: tx.txType || 'P',
     min: tx.amountMin, max: tx.amountMax,
@@ -571,18 +699,49 @@ function loadReview() {
     .then(function (data) { REVIEW = data.items || []; renderReview(); })
     .catch(function (e) { el('reviewBody').innerHTML = stateRow(5, 'Could not load review queue: ' + e.message); });
 }
+/* Translate review reason codes + payload into plain English for non-engineers. */
+var REASON_LABELS = {
+  low_confidence: 'Low confidence in the automated read',
+  no_transactions_extracted: 'No transactions could be read from the document',
+  unresolved_ticker: 'Ticker symbol could not be matched to a known company',
+  invalid_bracket: 'Dollar amount didn’t match a standard disclosure range',
+  future_tx_date: 'Trade date is after the filing date',
+  bad_tx_type: 'Transaction type was unclear (not buy / sell / exchange)'
+};
+function reasonText(reason) {
+  if (!reason) return 'Needs a human check';
+  return String(reason).split(',').map(function (c) {
+    c = c.trim(); return REASON_LABELS[c] || c.replace(/_/g, ' ');
+  }).filter(Boolean).join('; ');
+}
+function payloadText(payload) {
+  var p = payload;
+  if (p == null) return '';
+  try { if (typeof p === 'string') p = JSON.parse(p); } catch (e) { return String(payload); }
+  if (typeof p !== 'object') return String(payload);
+  var bits = [];
+  if (typeof p.minConfidence === 'number') bits.push('Confidence ' + Math.round(p.minConfidence * 100) + '%');
+  var txs = p.transactions || [];
+  if (txs.length) {
+    bits.push(txs.length + ' transaction' + (txs.length === 1 ? '' : 's'));
+    var t0 = txs[0] || {};
+    var label = cleanAsset(t0.ticker || t0.assetName || '');
+    if (label) bits.push('e.g. ' + label + (typeName[t0.txType] ? ' (' + typeName[t0.txType] + ')' : ''));
+  }
+  return bits.join(' · ');
+}
 function renderReview() {
   var body = el('reviewBody');
   el('reviewCount').textContent = REVIEW.length ? '(' + REVIEW.length + ')' : '';
   el('kpiReview').textContent = REVIEW.length;
   if (REVIEW.length === 0) { body.innerHTML = stateRow(5, 'Nothing awaiting review — queue is clear.'); return; }
   body.innerHTML = REVIEW.map(function (r) {
-    var payload = r.payload ? JSON.stringify(r.payload) : '';
+    var payload = payloadText(r.payload);
     return '<tr class="row" id="rv-' + esc(r.docId) + '">' +
       '<td class="muted">' + esc((r.createdAt || '').replace('T', ' ').slice(0, 16)) + '</td>' +
       '<td class="tkr">' + esc(r.docId) + '</td>' +
-      '<td class="muted">' + esc(r.reason) + '</td>' +
-      '<td class="muted" style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(payload) + '</td>' +
+      '<td class="muted">' + esc(reasonText(r.reason)) + '</td>' +
+      '<td class="muted" style="max-width:360px">' + esc(payload) + '</td>' +
       '<td>' +
         '<button class="btn sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'confirm\\')">Confirm</button> ' +
         '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'reject\\')">Reject</button>' +
@@ -695,6 +854,36 @@ function initAdminToken() {
   if (t && el('adminToken')) el('adminToken').value = t;
 }
 
+/* ============================ ADMIN · LOGOS (site-wide) ============================ */
+function loadLogoSetting() {
+  // API HOOK: GET /api/admin/ui-settings
+  return fetch('/api/admin/ui-settings', { headers: adminHeaders() })
+    .then(adminOk).then(function (r) { return r.json(); })
+    .then(function (j) {
+      logoDisplay = normalizeLogoDisplay(j.logoDisplay);
+      if (el('adminLogo')) el('adminLogo').value = logoDisplay;
+      renderFeed();
+    })
+    .catch(function (e) { if (el('logoMsg')) el('logoMsg').textContent = 'Could not load: ' + e.message; });
+}
+function saveLogoDisplay() {
+  // API HOOK: PUT /api/admin/ui-settings
+  var v = el('adminLogo').value;
+  el('logoMsg').textContent = 'Saving…';
+  fetch('/api/admin/ui-settings', {
+    method: 'PUT', headers: adminHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ logoDisplay: v })
+  })
+    .then(admin401).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
+    .then(function (j) {
+      logoDisplay = normalizeLogoDisplay(j.logoDisplay);
+      renderFeed();
+      el('logoMsg').textContent = 'Saved — applies to all visitors.';
+      setTimeout(function () { el('logoMsg').textContent = ''; }, 3000);
+    })
+    .catch(function (e) { el('logoMsg').textContent = 'Failed: ' + e.message; });
+}
+
 /* ============================ ADMIN · CADENCE ============================ */
 function loadPollConfig() {
   // API HOOK: GET /api/admin/poll-config
@@ -786,19 +975,21 @@ function loadHealth() {
     .then(function (data) {
       var sources = data.sources || [];
       var body = el('healthBody');
-      if (sources.length === 0) { body.innerHTML = stateRow(5, 'No poll activity logged yet.'); return; }
+      if (sources.length === 0) { body.innerHTML = stateRow(6, 'No poll activity logged yet.'); return; }
       body.innerHTML = sources.map(function (s) {
-        var avg = s.avgIntervalSec == null ? '—' : '~' + Math.round(s.avgIntervalSec) + 's';
+        var avg = s.avgIntervalSec == null ? '—' : '~' + fmtDuration(s.avgIntervalSec);
+        var lag = s.avgReleaseToDbSec == null ? '—' : '~' + fmtDuration(s.avgReleaseToDbSec);
         return '<tr class="row">' +
           '<td>' + esc(s.source) + '</td>' +
           '<td class="muted">' + esc((s.lastPolledAt || '').replace('T', ' ').slice(0, 19) || '—') + '</td>' +
           '<td class="muted">' + esc((s.lastNewFilingAt || '').replace('T', ' ').slice(0, 19) || '—') + '</td>' +
           '<td class="muted">' + esc(s.pollCount != null ? s.pollCount : '—') + '</td>' +
           '<td class="latency">' + esc(avg) + '</td>' +
+          '<td class="latency">' + esc(lag) + '</td>' +
         '</tr>';
       }).join('');
     })
-    .catch(function (e) { el('healthBody').innerHTML = stateRow(5, 'Could not load source health: ' + e.message); });
+    .catch(function (e) { el('healthBody').innerHTML = stateRow(6, 'Could not load source health: ' + e.message); });
 }
 
 /* ============================ TABS + BOOT ============================ */
@@ -810,7 +1001,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     el('view-' + b.dataset.view).classList.add('active');
     if (b.dataset.view === 'review') loadReview();
     if (b.dataset.view === 'subs') loadSubs();
-    if (b.dataset.view === 'admin') { initAdminToken(); loadPollConfig(); loadHealth(); }
+    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); }
   };
 });
 
@@ -820,12 +1011,14 @@ document.querySelectorAll('#feedHead th.sortable').forEach(function (th) {
 });
 updateSortIndicators();
 
+// Reflect the persisted theme on the toggle button.
+applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
+
 // Initial loading states + boot.
-el('qLogo').value = logoDisplay;   // reflect persisted logo-style preference
 el('feedBody').innerHTML = stateRow(9, 'Loading live feed…');
 el('reviewBody').innerHTML = stateRow(5, 'Loading…');
 el('subsBody').innerHTML = stateRow(5, 'Loading…');
-el('healthBody').innerHTML = stateRow(5, 'Loading…');
+el('healthBody').innerHTML = stateRow(6, 'Loading…');
 
 loadFeed().then(function () { startStream(); });
 loadReview();      // for the tab badge / KPI
