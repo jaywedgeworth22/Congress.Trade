@@ -181,7 +181,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="S">Sale</option><option value="E">Exchange</option>
       </select>
       <select id="qChamber" onchange="renderFeed()">
-        <option value="">Both chambers</option><option value="house">House</option><option value="senate">Senate</option>
+        <option value="">Both Chambers</option><option value="house">House</option><option value="senate">Senate</option>
       </select>
       <select id="qLogo" onchange="setLogoDisplay(this.value)" title="Company logo style">
         <option value="tile">Logos: tile</option>
@@ -216,6 +216,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </tr></thead>
       <tbody id="feedBody"></tbody>
     </table>
+    <div class="row-flex" style="margin-top:14px;justify-content:center">
+      <button class="btn ghost sm" id="loadMoreBtn" onclick="loadMore()" style="display:none">Load more</button>
+      <span class="note" id="feedCountMsg"></span>
+    </div>
   </section>
 
   <!-- ================= REVIEW QUEUE ================= -->
@@ -317,8 +321,13 @@ var REVIEW = [];          // review-queue items
 var SCHEDULE = [];        // PollWindow[]
 var aggressive = false;
 var cursor = 0;           // max cursor_seq seen
+var totalRows = 0;        // server-reported total matching rows (for "X of N")
+var loadingPage = false;  // guards against overlapping page fetches
 var realDataLoaded = false;
 var es = null;            // EventSource handle
+var pollTimer = null;     // setInterval handle for the polling fallback
+var POLL_LIMIT = 500;     // matches MAX_TX_LIMIT in delivery/rows.ts
+var POLL_INTERVAL_MS = 30000;  // graceful polling cadence when SSE is unavailable
 var sortKey = 'filed';    // active feed sort column
 var sortDir = -1;         // 1 = ascending, -1 = descending (default: newest first)
 var NUMERIC_SORT = { min: 1, conf: 1 };   // columns compared numerically
@@ -374,6 +383,19 @@ function stateRow(cols, text) {
   return '<tr><td class="state" colspan="' + cols + '">' + esc(text) + '</td></tr>';
 }
 
+/* Admin surfaces (Review Queue / Subscriptions / Admin · Cadence) call
+   /api/admin/* which returns 401 on the public site. Detect that cleanly and
+   show a friendly notice instead of a scary "HTTP 401". */
+var ADMIN_MOVED_MSG = 'Admin tools have moved to admin.congress.trade (sign-in required).';
+/* Throw a tagged error when a response is an auth failure so callers can
+   distinguish it from generic network/HTTP errors. */
+function okOrThrow(r) {
+  if (r.status === 401 || r.status === 403) { var e = new Error(ADMIN_MOVED_MSG); e.isAuth = true; throw e; }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+function isAuthError(e) { return !!(e && e.isAuth); }
+
 /* ============================ FEED ============================ */
 function renderFeed() {
   var m = el('qMember').value.toLowerCase(), t = el('qTicker').value.toUpperCase(),
@@ -398,7 +420,7 @@ function renderFeed() {
            (!ch || r.chamber === ch);
   });
   rows = sortRows(rows);
-  if (rows.length === 0) { body.innerHTML = stateRow(9, 'No transactions match these filters.'); return; }
+  if (rows.length === 0) { body.innerHTML = stateRow(9, 'No transactions match these filters.'); updateFeedCountMsg(0); return; }
   body.innerHTML = rows.map(function (r) {
     return '<tr class="row">' +
       '<td class="muted">' + esc(r.filed) + '</td>' +
@@ -411,9 +433,23 @@ function renderFeed() {
       '<td class="muted">' + esc(r.txdate || '—') + '</td>' +
       '<td class="muted">' + esc(r.owner || '—') + '</td>' +
       '<td><span class="conf ' + confClass(r.conf) + '">' + (r.conf * 100).toFixed(0) + '%</span></td>' +
-      '<td class="muted">' + esc(r.source) + '</td>' +
+      '<td class="muted" title="' + esc(r.source) + '">' + esc(sourceLabel(r.source)) + '</td>' +
     '</tr>';
   }).join('');
+  updateFeedCountMsg(rows.length);
+}
+
+/* "Showing X of N" + Load-more visibility. X = rows currently displayed (after
+   client-side filters); N = server total. The button shows only while more
+   rows remain to be fetched from the server (loaded < total). */
+function updateFeedCountMsg(shown) {
+  var msg = el('feedCountMsg');
+  var more = el('loadMoreBtn');
+  if (!realDataLoaded) { if (msg) msg.textContent = ''; if (more) more.style.display = 'none'; return; }
+  var loaded = TRADES.length;
+  var total = totalRows || loaded;
+  if (msg) msg.textContent = 'Showing ' + shown + ' of ' + total + (loaded < total ? ' (' + loaded + ' loaded)' : '');
+  if (more) more.style.display = (loaded < total) ? '' : 'none';
 }
 
 /* ---- sorting ---- */
@@ -459,11 +495,18 @@ function clearSearch() {
   renderFeed();
 }
 
-/* Map an API transaction (shared/types Transaction) to a feed row. */
+/* Friendly, human-readable label for a transaction's provenance. The raw value
+   ('seed_dataset' | 'primary') rides along as a tooltip via sourceTitle. */
+var sourceLabelMap = { seed_dataset: 'Historical', primary: 'Live' };
+function sourceLabel(src) { return sourceLabelMap[src] || (src || ''); }
+
+/* Map an API transaction (shared/types Transaction) to a feed row. Member name
+   prefers filers.full_name (memberName from the API); falls back to the raw
+   filer id when the name is missing. */
 function txToRow(tx) {
   return {
     filed: (tx.createdAt || '').replace('T', ' ').slice(0, 16),
-    member: tx.filerId || 'Unknown',
+    member: tx.memberName || tx.filerId || 'Unknown',
     st: '',
     chamber: tx.chamber || '',
     asset: tx.assetName || '',
@@ -478,9 +521,15 @@ function txToRow(tx) {
   };
 }
 
-function loadFeed() {
-  // API HOOK: GET /api/transactions?since=<cursor>
-  return fetch('/api/transactions?since=' + cursor + '&limit=200')
+/* Fetch one page of transactions from the cursor and merge it newest-first.
+   The API orders by cursor_seq ASC and pages via since=<max cursor>; we reverse
+   each page so the UI keeps its newest-first display ordering. Returns the
+   number of rows appended (0 when there is nothing new). */
+function fetchPage() {
+  if (loadingPage) return Promise.resolve(0);
+  loadingPage = true;
+  // API HOOK: GET /api/transactions?since=<cursor>&limit=<MAX_TX_LIMIT>
+  return fetch('/api/transactions?since=' + cursor + '&limit=' + POLL_LIMIT)
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function (data) {
       var txs = (data.transactions || []).map(txToRow);
@@ -488,44 +537,88 @@ function loadFeed() {
       txs.reverse();
       TRADES = txs.concat(TRADES);
       if (typeof data.cursor === 'number' && data.cursor > cursor) cursor = data.cursor;
+      if (typeof data.total === 'number') totalRows = data.total;
       realDataLoaded = true;
       setBanner('');                       // drop the illustrative banner
-      el('kpiTotal').textContent = TRADES.length;
+      el('kpiTotal').textContent = totalRows || TRADES.length;
       var today = new Date().toISOString().slice(0, 10);
       el('kpiToday').textContent = TRADES.filter(function (r) { return (r.filed || '').slice(0, 10) === today; }).length;
       var primary = TRADES.filter(function (r) { return r.source === 'primary'; }).length;
       el('kpiAuto').innerHTML = (TRADES.length ? Math.round(100 * primary / TRADES.length) : 0) + '<small>%</small>';
       renderFeed();
+      return txs.length;
     })
     .catch(function (e) {
       if (!realDataLoaded) setBanner('Could not load the live feed: ' + e.message, true);
-    });
+      return 0;
+    })
+    .then(function (n) { loadingPage = false; return n; });
 }
+
+/* Initial / full reload: fetches the first page from the current cursor. */
+function loadFeed() { return fetchPage(); }
+
+/* "Load more": pull the next page using the returned cursor and append it. */
+function loadMore() {
+  var more = el('loadMoreBtn');
+  if (more) more.disabled = true;
+  return fetchPage().then(function () { if (more) more.disabled = false; });
+}
+
 function refreshFeed() { loadFeed(); }
 
-/* SSE live push. API HOOK: EventSource('/api/stream?subscription=<id>'). */
+/* Live updates. We try SSE first, but the public dashboard does NOT hard-depend
+   on it: the /api/stream?subscription=dashboard endpoint isn't available on the
+   public site (webhooks/SSE are a future paid feature). If the EventSource
+   errors or closes we tear it down (no infinite "reconnecting…") and fall back
+   to a calm 30s poll of /api/transactions using the cursor. */
+function setLivePill(cls, text) { var p = el('livePill'); p.className = 'pill ' + cls; p.textContent = text; }
+
+/* Periodic polling fallback. API HOOK: GET /api/transactions?since=<cursor>. */
+function startPolling() {
+  if (pollTimer) return;          // already polling
+  setLivePill('live', 'live');    // calm state — not "reconnecting…"
+  pollTimer = setInterval(function () {
+    fetchPage().then(function (n) {
+      if (n > 0) {
+        setLivePill('live', 'updated');
+        setTimeout(function () { if (pollTimer) setLivePill('live', 'live'); }, 1800);
+      }
+    });
+  }, POLL_INTERVAL_MS);
+}
+
+function stopStream() {
+  if (es) { try { es.close(); } catch (e) {} es = null; }
+}
+
 function startStream() {
+  // EventSource is optional; if unavailable, poll immediately.
+  if (typeof EventSource === 'undefined') { startPolling(); return; }
   try {
     es = new EventSource('/api/stream?subscription=dashboard');
-    es.onopen = function () { var p = el('livePill'); p.className = 'pill live'; p.textContent = 'live feed'; };
+    es.onopen = function () { setLivePill('live', 'live feed'); };
     es.onmessage = function (e) {
       try {
         var tx = JSON.parse(e.data);
         if (!tx || !tx.id) return;
         TRADES.unshift(txToRow(tx));
         if (tx.cursorSeq && tx.cursorSeq > cursor) cursor = tx.cursorSeq;
-        el('kpiTotal').textContent = TRADES.length;
+        if (totalRows) totalRows += 1;
+        el('kpiTotal').textContent = totalRows || TRADES.length;
         renderFeed();
-        var p = el('livePill'); p.textContent = 'new filing ↑';
-        setTimeout(function () { if (es && es.readyState === 1) p.textContent = 'live feed'; }, 1800);
+        setLivePill('live', 'new filing ↑');
+        setTimeout(function () { if (es && es.readyState === 1) setLivePill('live', 'live feed'); }, 1800);
       } catch (err) { /* ignore malformed frame */ }
     };
     es.onerror = function () {
-      var p = el('livePill'); p.className = 'pill off'; p.textContent = 'reconnecting…';
-      // EventSource auto-reconnects; nothing else to do.
+      // SSE is unavailable (e.g. 404 on the public site). Stop reconnecting and
+      // fall back to gentle polling rather than sticking on "reconnecting…".
+      stopStream();
+      startPolling();
     };
   } catch (err) {
-    var p = el('livePill'); p.className = 'pill off'; p.textContent = 'no stream';
+    startPolling();
   }
 }
 
@@ -533,9 +626,11 @@ function startStream() {
 function loadReview() {
   // API HOOK: GET /api/admin/review-queue
   return fetch('/api/admin/review-queue')
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(okOrThrow)
     .then(function (data) { REVIEW = data.items || []; renderReview(); })
-    .catch(function (e) { el('reviewBody').innerHTML = stateRow(5, 'Could not load review queue: ' + e.message); });
+    .catch(function (e) {
+      el('reviewBody').innerHTML = stateRow(5, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load review queue: ' + e.message));
+    });
 }
 function renderReview() {
   var body = el('reviewBody');
@@ -564,11 +659,11 @@ function resolveReview(docId, decision) {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ decision: decision, edits: [] })
   })
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(okOrThrow)
     .then(function () { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); renderReview(); loadFeed(); })
     .catch(function (e) {
       if (rowEl) rowEl.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
-      alert('Review action failed: ' + e.message);
+      alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review action failed: ' + e.message));
     });
 }
 
@@ -576,9 +671,11 @@ function resolveReview(docId, decision) {
 function loadSubs() {
   // API HOOK: GET /api/subscriptions
   return fetch('/api/subscriptions')
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(okOrThrow)
     .then(function (data) { renderSubs(data.subscriptions || []); })
-    .catch(function (e) { el('subsBody').innerHTML = stateRow(5, 'Could not load subscriptions: ' + e.message); });
+    .catch(function (e) {
+      el('subsBody').innerHTML = stateRow(5, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load subscriptions: ' + e.message));
+    });
 }
 function renderSubs(subs) {
   var body = el('subsBody');
@@ -610,27 +707,33 @@ function createSubscription() {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ clientId: clientId, delivery: delivery, targetUrl: targetUrl || null, filters: {} })
   })
-    .then(function (r) { if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ('HTTP ' + r.status)); }); return r.json(); })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) { var ae = new Error(ADMIN_MOVED_MSG); ae.isAuth = true; throw ae; }
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ('HTTP ' + r.status)); });
+      return r.json();
+    })
     .then(function () {
       el('subsMsg').textContent = 'Created.';
       el('newClientId').value = ''; el('newTarget').value = '';
       loadSubs(); setTimeout(function () { el('subsMsg').textContent = ''; }, 2500);
     })
-    .catch(function (e) { el('subsMsg').textContent = 'Failed: ' + e.message; });
+    .catch(function (e) { el('subsMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
 }
 
 /* ============================ ADMIN · CADENCE ============================ */
 function loadPollConfig() {
   // API HOOK: GET /api/admin/poll-config
   return fetch('/api/admin/poll-config')
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(okOrThrow)
     .then(function (cfg) {
       SCHEDULE = Array.isArray(cfg.schedule) ? cfg.schedule : [];
       aggressive = !!cfg.aggressiveMode;
       el('aggToggle').checked = aggressive;
       renderSchedule();
     })
-    .catch(function (e) { el('schedRows').innerHTML = '<div class="note">Could not load poll config: ' + esc(e.message) + '</div>'; });
+    .catch(function (e) {
+      el('schedRows').innerHTML = '<div class="note">' + esc(isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load poll config: ' + e.message)) + '</div>';
+    });
 }
 function renderSchedule() {
   el('schedRows').innerHTML = SCHEDULE.map(function (w, i) {
@@ -651,9 +754,9 @@ function saveSchedule() {
     method: 'PUT', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ schedule: SCHEDULE, aggressiveMode: aggressive })
   })
-    .then(function (r) { if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ('HTTP ' + r.status)); }); return r.json(); })
+    .then(okOrThrow)
     .then(function () { el('saveMsg').textContent = 'Saved — effective within ~60s.'; setTimeout(function () { el('saveMsg').textContent = ''; }, 2500); })
-    .catch(function (e) { el('saveMsg').textContent = 'Failed: ' + e.message; });
+    .catch(function (e) { el('saveMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
 }
 
 /* ============================ HISTORIC BACKFILL ============================ */
@@ -671,15 +774,18 @@ function runBackfill(dryRun) {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload)
   })
-    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) { var ae = new Error(ADMIN_MOVED_MSG); ae.isAuth = true; throw ae; }
+      return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
+    })
     .then(function (j) {
       var verb = dryRun ? 'Would import' : 'Imported';
       var msg = verb + ' ' + j.inserted + ', skipped ' + j.skipped + '.';
       if (j.errors && j.errors.length) msg += ' Errors: ' + j.errors.join('; ');
       el('bfMsg').textContent = msg;
-      if (!dryRun && j.inserted > 0) { cursor = 0; TRADES = []; realDataLoaded = false; loadFeed(); }
+      if (!dryRun && j.inserted > 0) { cursor = 0; TRADES = []; totalRows = 0; realDataLoaded = false; loadFeed(); }
     })
-    .catch(function (e) { el('bfMsg').textContent = 'Failed: ' + e.message; });
+    .catch(function (e) { el('bfMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
 }
 
 function runHouseIndex(dryRun) {
@@ -692,7 +798,10 @@ function runHouseIndex(dryRun) {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ fromYear: from, toYear: to, dryRun: !!dryRun })
   })
-    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) { var ae = new Error(ADMIN_MOVED_MSG); ae.isAuth = true; throw ae; }
+      return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
+    })
     .then(function (j) {
       var years = j.byYear || {};
       var found = 0, enq = 0;
@@ -701,14 +810,14 @@ function runHouseIndex(dryRun) {
         ? ('Found ' + found + ' PTRs across ' + Object.keys(years).length + ' year(s).')
         : ('Enqueued ' + enq + ' new filing(s) from ' + found + ' PTRs.' + (j.errors && j.errors.length ? ' Errors: ' + j.errors.join('; ') : ''));
     })
-    .catch(function (e) { el('hiMsg').textContent = 'Failed: ' + e.message; });
+    .catch(function (e) { el('hiMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
 }
 
 /* ============================ SOURCE HEALTH ============================ */
 function loadHealth() {
   // API HOOK: GET /api/admin/sources/health
   return fetch('/api/admin/sources/health')
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(okOrThrow)
     .then(function (data) {
       var sources = data.sources || [];
       var body = el('healthBody');
@@ -724,7 +833,9 @@ function loadHealth() {
         '</tr>';
       }).join('');
     })
-    .catch(function (e) { el('healthBody').innerHTML = stateRow(5, 'Could not load source health: ' + e.message); });
+    .catch(function (e) {
+      el('healthBody').innerHTML = stateRow(5, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load source health: ' + e.message));
+    });
 }
 
 /* ============================ TABS + BOOT ============================ */

@@ -161,22 +161,39 @@ export const DEFAULT_TX_LIMIT = 100;
 export const MAX_TX_LIMIT = 500;
 
 /**
- * Build the parameterized SQL for `GET /transactions`. Always orders by
- * cursor_seq ASC (so callers can use the max returned cursor to page forward)
- * and only returns rows with cursor_seq > since (the reconciliation backstop).
- *
- * `chamber` is resolved via the owning filing (transactions has no chamber
- * column), joined through filings.doc_id.
- *
- * Pure + deterministic so it can be unit-tested without a DB.
+ * Shared FROM/JOIN clause for the transactions feed. Chamber + member name are
+ * resolved primarily through the `filers` table (joined on bioguide_id), which
+ * is the authoritative source for the seed dataset — those rows have no owning
+ * `filings` row, so a filings-only chamber join would silently drop them. We
+ * also LEFT JOIN `filings` and COALESCE the chamber so live pipeline rows
+ * (which DO have a filing) still resolve when the filer meta is missing.
  */
-export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
+const TX_FROM_JOINS =
+  'FROM transactions t ' +
+  'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
+  'LEFT JOIN filings f ON f.doc_id = t.doc_id ';
+
+/** SQL expression resolving the chamber, preferring the filers table. */
+const CHAMBER_EXPR = 'COALESCE(fl.chamber, f.chamber)';
+
+/**
+ * Build the shared WHERE clauses + bound params for the transactions feed.
+ * `includeCursor` controls whether the `cursor_seq > since` backstop clause is
+ * added — the count query omits it so it reports ALL rows matching the
+ * ticker/member/type/chamber filters (independent of paging position).
+ */
+function buildTxFilters(
+  p: TxQueryParams,
+  includeCursor: boolean,
+): { where: string[]; params: Array<string | number> } {
   const where: string[] = [];
   const params: Array<string | number> = [];
 
-  const since = Number.isFinite(p.since) ? Number(p.since) : 0;
-  where.push('t.cursor_seq > ?');
-  params.push(since);
+  if (includeCursor) {
+    const since = Number.isFinite(p.since) ? Number(p.since) : 0;
+    where.push('t.cursor_seq > ?');
+    params.push(since);
+  }
 
   if (p.ticker) {
     where.push('t.ticker = ?');
@@ -191,20 +208,55 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
     params.push(p.type);
   }
   if (p.chamber) {
-    where.push('f.chamber = ?');
+    where.push(`${CHAMBER_EXPR} = ?`);
     params.push(p.chamber);
   }
+
+  return { where, params };
+}
+
+/**
+ * Build the parameterized SQL for `GET /transactions`. Always orders by
+ * cursor_seq ASC (so callers can use the max returned cursor to page forward)
+ * and only returns rows with cursor_seq > since (the reconciliation backstop).
+ *
+ * `chamber` is resolved via the `filers` table (authoritative for seed data),
+ * falling back to the owning filing's chamber. The member's full name and
+ * resolved chamber are SELECTed alongside `t.*` as `__member_name`/`__chamber`
+ * so the REST handler can attach them without changing the Transaction type.
+ *
+ * Pure + deterministic so it can be unit-tested without a DB.
+ */
+export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
+  const { where, params } = buildTxFilters(p, true);
 
   let limit = Number.isFinite(p.limit) ? Number(p.limit) : DEFAULT_TX_LIMIT;
   if (limit <= 0) limit = DEFAULT_TX_LIMIT;
   if (limit > MAX_TX_LIMIT) limit = MAX_TX_LIMIT;
 
   const sql =
-    'SELECT t.* FROM transactions t ' +
-    'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
+    `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name ` +
+    TX_FROM_JOINS +
     `WHERE ${where.join(' AND ')} ` +
     'ORDER BY t.cursor_seq ASC ' +
     `LIMIT ${limit}`;
 
   return { sql, params, limit };
+}
+
+/**
+ * Build the COUNT(*) companion query for `GET /transactions`. Uses the SAME
+ * ticker/member/type/chamber filters as {@link buildTransactionsQuery} but
+ * deliberately drops the cursor backstop so the total reflects every matching
+ * row, not just the unseen tail. Returned as `total` in the API response.
+ */
+export function buildTransactionsCountQuery(
+  p: TxQueryParams,
+): { sql: string; params: Array<string | number> } {
+  const { where, params } = buildTxFilters(p, false);
+  const sql =
+    'SELECT COUNT(*) AS total ' +
+    TX_FROM_JOINS +
+    (where.length ? `WHERE ${where.join(' AND ')}` : '');
+  return { sql, params };
 }
