@@ -150,11 +150,33 @@ Worker's per-request limits) and `maxPerMinute` throttles FMP to stay under your
 plan's rate. `GET /api/admin/enrich-securities/status` reports
 `pendingTickers` / `pricePendingTickers` as it drains.
 
-### Reverse direction (optional)
+### Reverse direction — read App A's cache (cache-aside)
 
-App B can also **read** App A's public, no-auth endpoints to avoid its own FMP
-calls — e.g. `GET https://congress.trade/api/analytics/ticker/{TICKER}` returns a
-`ref` object (sector, market cap, country, exchange) for that ticker.
+App A also pulls FMP (its own key + daily cron + backfill), so App B can reuse
+that instead of spending its own quota. These public, read-only endpoints mirror
+the import payload shapes, so App B can check App A first and only call FMP on a
+miss (then push the result back via the import endpoint, closing the loop):
+
+```
+GET /api/market/ref/{TICKER}                      -> { ref }
+GET /api/market/refs?tickers=AAPL,MSFT,...        -> { refs: [...] }   (≤500)
+GET /api/market/prices/{TICKER}?from=&to=         -> { ticker, closes:[{date,close}], currentPrice, currentPriceDate }
+GET /api/market/spx?from=&to=                     -> { closes:[{date,close}] }
+GET /api/market/bundle/{TICKER}?from=&to=         -> { ref, prices, spx }   (one round-trip)
+```
+
+`from` / `to` are optional inclusive `YYYY-MM-DD` bounds. No auth required (reads
+are safe). Suggested App B flow per symbol:
+
+```js
+const r = await fetch(`https://congress.trade/api/market/bundle/${sym}`);
+const { ref, prices } = await r.json();
+if (ref && prices.closes.length) {
+  // cache hit — use App A's data, skip FMP entirely
+} else {
+  // miss — call FMP, then POST it back to /api/admin/securities/import
+}
+```
 
 ### Security
 
