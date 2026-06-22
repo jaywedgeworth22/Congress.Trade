@@ -4,7 +4,8 @@
  *
  * Read-only REST API over transactions + subscription CRUD. Exposes a Hono
  * router mounted under /api by index.ts. Supports cursor pagination via
- * ?since=<cursor_seq> and filtering by ticker / member / chamber / type.
+ * ?since=<cursor_seq>, a rolling trade-date window via ?from=/?to=
+ * (YYYY-MM-DD), and filtering by ticker / member / chamber / type.
  *
  * Routes (all relative to /api):
  *   GET   /transactions      cursor-paged transaction feed (reconciliation backstop)
@@ -69,6 +70,8 @@ function filtersFromQuery(q: Record<string, string>): TxQueryParams {
     member: q.member || undefined,
     chamber: asChamber(q.chamber),
     type: asTxType(q.type),
+    txDateMin: q.from || q.txDateMin || undefined,
+    txDateMax: q.to || q.txDateMax || undefined,
   };
 }
 
@@ -99,6 +102,12 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // --- GET /transactions --------------------------------------------------
   // Reconciliation backstop: rows with cursor_seq > since, ASC, plus the max
   // cursor in the page so clients can poll forward deterministically.
+  //
+  // Rolling-window pulls: pass ?from=YYYY-MM-DD (and optionally ?to=) to bound
+  // the trade date. A consumer fetching the last N days passes from=today-Nd so
+  // the server drops out-of-window rows up front — without it, a bounded pager
+  // would have to page through all historical rows (oldest first) to reach
+  // recent trades. `txDateMin`/`txDateMax` are accepted as aliases of from/to.
   r.get('/transactions', async (c) => {
     const q = c.req.query();
     // The live feed is fully public — it's the site's SEO/discovery hook. The
@@ -112,6 +121,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       member: q.member || undefined,
       chamber: asChamber(q.chamber),
       type: asTxType(q.type),
+      txDateMin: q.from || q.txDateMin || undefined,
+      txDateMax: q.to || q.txDateMax || undefined,
       limit: parseIntOrUndef(q.limit),
     };
     const built = buildTransactionsQuery(params);
