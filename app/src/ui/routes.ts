@@ -14,13 +14,24 @@
 import { Hono } from 'hono';
 import type { Env } from '../shared/types';
 import { DASHBOARD_HTML } from './dashboardHtml';
+import { getLogoDisplay } from '../shared/settings';
+
+/**
+ * Render the dashboard, injecting the admin-controlled site-wide settings the
+ * client needs at boot (currently the global logo style) so every visitor gets
+ * the admin's choice with no extra request / no flash.
+ */
+async function renderDashboard(env: Env): Promise<string> {
+  const logoDisplay = await getLogoDisplay(env);
+  return DASHBOARD_HTML.split('%LOGO_DISPLAY%').join(logoDisplay);
+}
 
 export function buildUiRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
   // Dashboard SPA. Hono's c.html() sets `content-type: text/html; charset=UTF-8`.
-  r.get('/', (c) => c.html(DASHBOARD_HTML));
-  r.get('/admin', (c) => c.html(DASHBOARD_HTML));
+  r.get('/', async (c) => c.html(await renderDashboard(c.env)));
+  r.get('/admin', async (c) => c.html(await renderDashboard(c.env)));
 
   return r;
 }
