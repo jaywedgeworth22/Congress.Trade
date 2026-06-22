@@ -57,6 +57,13 @@ Arbitration is **off** until both the key above is set **and** the var
 `.dev.vars`). Flipping it on makes the vision extractor run primary + secondary
 and reconcile. For local dev, copy `.dev.vars.example` → `.dev.vars`.
 
+## 3b. End-user auth + Stripe paywall (Wave 4)
+The public-site account system (Google OAuth + email magic-link) and freemium
+paywall (Stripe) have their own copy-paste runbook — Stripe products/webhook,
+Google OAuth client, Resend, and Cloudflare Access for the admin subdomain:
+see [`docs/wave4-auth-billing.md`](docs/wave4-auth-billing.md). All of it
+degrades gracefully until configured, so this is optional for a first deploy.
+
 ## 4. (Optional) Seed ticker resolution
 The normalizer resolves tickers against the `securities_master` table; unresolved
 tickers still pass through but with lower confidence. Load an equities list into
