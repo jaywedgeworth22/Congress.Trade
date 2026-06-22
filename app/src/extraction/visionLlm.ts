@@ -23,10 +23,10 @@ import { parseAmountRange } from './amounts';
 /**
  * Gemini model id. Centralized + documented so it is trivial to bump.
  * NOTE: Flash model ids rotate; if calls start 404-ing, update this to the
- * current Flash generation (e.g. 'gemini-2.5-flash') — the request/response
- * contract below is unchanged across Flash generations.
+ * current Flash generation — the request/response contract below is unchanged
+ * across Flash generations. Current as of 2026-06: 'gemini-3.5-flash'.
  */
-const MODEL = 'gemini-2.0-flash';
+const MODEL = 'gemini-3.5-flash';
 
 const ENDPOINT = (model: string, key: string): string =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(

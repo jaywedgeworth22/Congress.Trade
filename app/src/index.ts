@@ -23,6 +23,7 @@ import type { Env, QueueMessage } from './shared/types';
 import { runWatcher } from './ingestion/watcher';
 import { fetchFiling } from './ingestion/fetcher';
 import { classifyFiling } from './ingestion/classifier';
+import { extractAndNormalize } from './extraction/orchestrator';
 import { dispatchWebhook } from './delivery/webhook';
 import { buildRestRouter } from './delivery/rest';
 import { buildAdminRouter } from './admin/routes';
@@ -73,8 +74,10 @@ async function handleIngestMessage(env: Env, msg: QueueMessage): Promise<void> {
       await classifyFiling(env, msg.docId);
       return;
     case 'filing.extracted':
-      // Post-extraction persistence/fan-out is handled downstream by the
-      // classifier/normalizer chain; no-op routing hook for now.
+      // Run the extractor pipeline + normalizer for this classified filing.
+      // normalize() persists transactions (or routes to review) and enqueues
+      // delivery.dispatch for each published row.
+      await extractAndNormalize(env, msg.docId);
       return;
     case 'tx.persisted':
       // Enqueue delivery fan-out for the newly persisted transaction.
