@@ -25,7 +25,7 @@
  */
 
 import type { Chamber, Owner, Transaction, TxType, Env } from '../shared/types';
-import { run } from '../shared/db';
+import { batch } from '../shared/db';
 import { nearestBracket } from '../shared/brackets';
 import { sanitizeAssetName } from '../shared/text';
 import { scoreFields, loadResolver, type TickerResolver } from '../extraction/normalizer';
@@ -62,6 +62,13 @@ import { scoreFields, loadResolver, type TickerResolver } from '../extraction/no
  * tracked by transactions.source, NOT baked into this number.
  */
 export const SEED_BASE_CONFIDENCE = 0.95;
+
+/**
+ * Statements per D1 batch() call. Each batch is ONE Worker subrequest, so this
+ * keeps a full ~8k-row refresh well under Cloudflare's per-invocation subrequest
+ * cap (~1000). Kept modest so a single batch payload stays small.
+ */
+const SEED_BATCH_SIZE = 50;
 
 export const SEED_SOURCES: Record<Chamber, { url: string; certain: boolean }> = {
   senate: {
@@ -349,19 +356,15 @@ export function passesSinceYear(tx: Transaction, sinceYear: number | undefined):
 // Persistence (idempotent upserts)
 // ---------------------------------------------------------------------------
 
-/** Upsert a synthetic seed filer (INSERT OR IGNORE — never clobbers real meta). */
-async function upsertSeedFiler(
-  env: Env,
-  filerId: string,
-  chamber: Chamber,
-  fullName: string,
-): Promise<void> {
-  await run(
-    env.DB,
+type SqlStatement = [string, Array<string | number | null>];
+
+/** Statement to upsert a synthetic seed filer (INSERT OR IGNORE — never clobbers real meta). */
+function buildSeedFilerStatement(filerId: string, chamber: Chamber, fullName: string): SqlStatement {
+  return [
     `INSERT OR IGNORE INTO filers (bioguide_id, chamber, full_name, party, state, district, committees)
      VALUES (?, ?, ?, '', '', '', '[]')`,
     [filerId, chamber, fullName],
-  );
+  ];
 }
 
 /**
@@ -373,9 +376,8 @@ async function upsertSeedFiler(
  * `WHERE source='seed_dataset'` guard means it can never clobber a primary row
  * that happens to share an id. Returns true when a row was inserted or updated.
  */
-async function insertSeedTransaction(env: Env, tx: Transaction): Promise<boolean> {
-  const res = await run(
-    env.DB,
+function buildSeedTxStatement(tx: Transaction): SqlStatement {
+  return [
     `INSERT INTO transactions (
        id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
        tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
@@ -409,10 +411,7 @@ async function insertSeedTransaction(env: Env, tx: Transaction): Promise<boolean
       tx.confidence,
       tx.createdAt,
     ],
-  );
-  // D1 meta.changes counts rows inserted OR updated by the upsert.
-  const changes = (res as D1Result).meta?.changes ?? 0;
-  return changes > 0;
+  ];
 }
 
 /** Fetch + parse one chamber's aggregate JSON. Throws on transport/parse error. */
@@ -469,6 +468,38 @@ export async function runSeedBackfill(
   };
   const seenFilers = new Set<string>();
 
+  // Writes are grouped into D1 batches: one batch() call = one Worker subrequest,
+  // so ~8k upserts collapse from ~8k subrequests (over Cloudflare's per-invocation
+  // cap) to a few hundred. `pending` records the chamber for each *tx* statement
+  // (null for filer statements) so we can attribute changes after the batch runs.
+  let queued: SqlStatement[] = [];
+  let pending: Array<Chamber | null> = [];
+  let queuedTxCount = 0;
+
+  const flush = async () => {
+    if (queued.length === 0) return;
+    try {
+      const results = await batch(env.DB, queued);
+      results.forEach((r, i) => {
+        const chamber = pending[i];
+        if (!chamber) return; // filer upsert — not counted as a tx row.
+        const changes = (r as D1Result).meta?.changes ?? 0;
+        if (changes > 0) {
+          result.inserted++;
+          result.bySource[chamber] = (result.bySource[chamber] ?? 0) + 1;
+        } else {
+          result.skipped++; // upsert WHERE-guarded out (e.g. a primary row owns the id).
+        }
+      });
+    } catch (err) {
+      result.errors.push(`batch upsert: ${(err as Error).message}`);
+      for (const chamber of pending) if (chamber) result.skipped++;
+    } finally {
+      queued = [];
+      pending = [];
+    }
+  };
+
   for (const chamber of chambers) {
     result.bySource[chamber] = result.bySource[chamber] ?? 0;
     let records: RawWatcherRecord[];
@@ -480,7 +511,7 @@ export async function runSeedBackfill(
     }
 
     for (const rec of records) {
-      if (result.inserted >= limit) {
+      if (queuedTxCount >= limit) {
         result.skipped++;
         continue;
       }
@@ -500,27 +531,21 @@ export async function runSeedBackfill(
         continue;
       }
 
-      try {
-        // Upsert the synthetic filer once per id per run.
-        if (tx.filerId && !seenFilers.has(tx.filerId)) {
-          const name = pickFilerName(rec);
-          await upsertSeedFiler(env, tx.filerId, chamber, name);
-          seenFilers.add(tx.filerId);
-        }
-        const wrote = await insertSeedTransaction(env, tx);
-        if (wrote) {
-          result.inserted++;
-          result.bySource[chamber]++;
-        } else {
-          result.skipped++; // already present (idempotent re-run / primary wins).
-        }
-      } catch (err) {
-        result.errors.push(`${chamber} row insert: ${(err as Error).message}`);
-        result.skipped++;
+      // Queue the synthetic filer upsert once per id per run, then the tx upsert.
+      if (tx.filerId && !seenFilers.has(tx.filerId)) {
+        queued.push(buildSeedFilerStatement(tx.filerId, chamber, pickFilerName(rec)));
+        pending.push(null);
+        seenFilers.add(tx.filerId);
       }
+      queued.push(buildSeedTxStatement(tx));
+      pending.push(chamber);
+      queuedTxCount++;
+
+      if (queued.length >= SEED_BATCH_SIZE) await flush();
     }
   }
 
+  await flush();
   return result;
 }
 
