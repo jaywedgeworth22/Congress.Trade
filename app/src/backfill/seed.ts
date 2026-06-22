@@ -27,6 +27,7 @@
 import type { Chamber, Owner, Transaction, TxType, Env } from '../shared/types';
 import { run } from '../shared/db';
 import { nearestBracket } from '../shared/brackets';
+import { sanitizeAssetName } from '../shared/text';
 
 // ---------------------------------------------------------------------------
 // Seed source URLs (centralized). Flag any uncertain ones here.
@@ -258,7 +259,7 @@ export function mapRecordToTransaction(
   chamber: Chamber,
   nowIso: string,
 ): Transaction | null {
-  const assetName = (rec.asset_description ?? '').trim();
+  const assetName = sanitizeAssetName(rec.asset_description);
   const ticker = normalizeTicker(rec.ticker);
   if (!assetName && !ticker) return null;
 
