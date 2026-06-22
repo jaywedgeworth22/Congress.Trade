@@ -16,10 +16,24 @@ ARBITRATION_MODEL=""
 # HMAC key used to sign outbound webhook payloads (X-Signature header).
 WEBHOOK_SIGNING_KEY=""
 
-# Admin API bearer token. When set, EVERY /api/admin/* request must send
-# `Authorization: Bearer <ADMIN_TOKEN>` (deny-by-default). Leave unset for open
-# local dev (a one-time warning is logged).
+# Admin API bearer token. When set, /api/admin/* accepts a request carrying
+# `Authorization: Bearer <ADMIN_TOKEN>` (good for curl / cron / automation).
+# Leave unset for open local dev (a one-time warning is logged).
 ADMIN_TOKEN=""
+
+# Cloudflare Access (Zero Trust) sign-in for humans — an ALTERNATIVE/ADDITION to
+# the bearer token. With these set AND an Access application fronting
+# /api/admin/*, a request is authorized when its `Cf-Access-Jwt-Assertion` JWT
+# verifies against the team keys, its `aud` equals ACCESS_AUD, and its
+# authenticated email is on ADMIN_EMAILS. A request is admitted if EITHER the
+# token OR a verified Access email matches; the surface is open only when
+# NEITHER mechanism is configured.
+#   ADMIN_EMAILS        — comma/space-separated allowlist, e.g. "a@x.com, b@x.com"
+#   ACCESS_AUD          — the Access application's Audience (AUD) tag
+#   ACCESS_TEAM_DOMAIN  — team name ("myteam") or host ("myteam.cloudflareaccess.com")
+ADMIN_EMAILS=""
+ACCESS_AUD=""
+ACCESS_TEAM_DOMAIN=""
 
 # Historic-backfill source overrides. Senate defaults to a working GitHub mirror
 # (no override needed). The community House S3 bucket is gated (HTTP 403) — set
