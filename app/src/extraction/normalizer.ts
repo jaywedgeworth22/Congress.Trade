@@ -52,6 +52,22 @@ interface FlaggedTx {
   flags: string[];
 }
 
+/**
+ * Re-derive Transaction rows (with the current, recalibrated confidence rubric)
+ * from parsed rows WITHOUT any DB write or delivery fan-out. Shared by normalize()
+ * and the admin reprocess path, which recomputes confidence for already-persisted
+ * filings and updates the existing rows in place.
+ */
+export async function recomputeTransactions(
+  env: Env,
+  filing: Filing,
+  parsed: ParsedTx[],
+): Promise<FlaggedTx[]> {
+  const nowIso = new Date().toISOString();
+  const resolver = await loadResolver(env);
+  return parsed.map((p) => buildTransaction(p, filing, resolver, nowIso));
+}
+
 /** securities_master row shape. `aliases` is a JSON string array. */
 interface SecRow {
   ticker: string;
@@ -83,12 +99,7 @@ export async function normalize(
   const extractorName = meta?.extractor ?? filing.extractor ?? null;
   const modelVersion = meta?.modelVersion ?? filing.modelVersion ?? null;
 
-  // Load the securities master once for in-memory resolution.
-  const resolver = await loadResolver(env);
-
-  const flagged: FlaggedTx[] = parsed.map((p) =>
-    buildTransaction(p, filing, resolver, nowIso),
-  );
+  const flagged: FlaggedTx[] = await recomputeTransactions(env, filing, parsed);
 
   const minConfidence = flagged.length
     ? Math.min(...flagged.map((f) => f.tx.confidence))
