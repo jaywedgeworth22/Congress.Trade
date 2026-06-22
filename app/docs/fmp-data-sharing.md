@@ -118,6 +118,24 @@ function fmpHistToPrices(symbol, hist) {
 }
 ```
 
+### Backfilling history fast (paid FMP tier)
+
+If congress.trade has its own `FMP_API_KEY` (set via `wrangler secret put`), you
+can fill all history quickly without App B. Raise the daily cap
+(`wrangler secret put FMP_DAILY_CALL_CAP` → e.g. `100000`) and loop the bounded
+backfill until it reports `done: true`:
+
+```bash
+cd app
+BASE=https://congress.trade TOKEN=your_admin_token ./scripts/backfill-market.sh 40 250
+#                                                                            ^max ^calls/min
+```
+
+Each pass runs one safe batch of enrichment + price refresh (bounded by the
+Worker's per-request limits) and `maxPerMinute` throttles FMP to stay under your
+plan's rate. `GET /api/admin/enrich-securities/status` reports
+`pendingTickers` / `pricePendingTickers` as it drains.
+
 ### Reverse direction (optional)
 
 App B can also **read** App A's public, no-auth endpoints to avoid its own FMP

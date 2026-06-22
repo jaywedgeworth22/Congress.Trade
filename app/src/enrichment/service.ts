@@ -15,6 +15,7 @@ import { all, run } from '../shared/db';
 import { mergeRefs, remainingBudget } from './compute';
 import { buildFmpProvider } from './fmp';
 import { buildSecProvider } from './sec';
+import { createPacer } from '../shared/pace';
 import type { SecurityRef } from './types';
 
 const DEFAULT_DAILY_CAP = 230;
@@ -88,7 +89,7 @@ export interface EnrichResult {
  */
 export async function runEnrichment(
   env: Env,
-  opts: { max?: number; dryRun?: boolean } = {},
+  opts: { max?: number; dryRun?: boolean; maxPerMinute?: number } = {},
 ): Promise<EnrichResult> {
   const envx = env as EnvX;
   const dryRun = opts.dryRun === true;
@@ -117,6 +118,7 @@ export async function runEnrichment(
   const tickers = await selectTickersToEnrich(env, selectLimit);
   const sec = buildSecProvider();
   const fmp = hasFmp ? buildFmpProvider(envx.FMP_API_KEY as string) : null;
+  const pace = createPacer(opts.maxPerMinute);
   let fmpCalls = 0;
 
   for (const ticker of tickers) {
@@ -130,6 +132,7 @@ export async function runEnrichment(
     }
     if (fmp && fmpCalls < fmpBudget) {
       try {
+        await pace();
         const fmpRef = await fmp.fetchRef(ticker);
         fmpCalls++;
         if (fmpRef) partials.push(fmpRef);

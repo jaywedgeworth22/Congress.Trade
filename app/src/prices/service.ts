@@ -14,6 +14,7 @@ import type { Env } from '../shared/types';
 import { all, get, run } from '../shared/db';
 import { remainingBudget } from '../enrichment/compute';
 import { getDailyUsed, addDailyUsed } from '../enrichment/service';
+import { createPacer } from '../shared/pace';
 import { buildFmpPriceClient } from './fmp';
 import { nearestClose, type Close } from './compute';
 
@@ -58,7 +59,7 @@ async function selectTickersNeedingPrices(env: Env, limit: number): Promise<stri
 
 export async function runPriceRefresh(
   env: Env,
-  opts: { max?: number; dryRun?: boolean } = {},
+  opts: { max?: number; dryRun?: boolean; maxPerMinute?: number } = {},
 ): Promise<PriceRefreshResult> {
   const envx = env as EnvX;
   const dryRun = opts.dryRun === true;
@@ -81,6 +82,7 @@ export async function runPriceRefresh(
   if (budget <= 0) return result;
 
   const client = buildFmpPriceClient(envx.FMP_API_KEY);
+  const pace = createPacer(opts.maxPerMinute);
   let calls = 0;
 
   // 1) Refresh the S&P 500 series (one call), covering the oldest trade onward.
@@ -91,6 +93,7 @@ export async function runPriceRefresh(
   const spxFrom = oldest?.d ? isoDaysAgo(7, new Date(oldest.d)) : isoDaysAgo(365 * 5);
   let spx: Close[] = [];
   try {
+    await pace();
     spx = await client.spxHistory(spxFrom, today());
     calls++;
     budget--;
@@ -124,6 +127,7 @@ export async function runPriceRefresh(
     for (const t of trades) if (t.tx_date < from) from = t.tx_date;
     let hist: Close[] = [];
     try {
+      await pace();
       hist = await client.eodHistory(ticker, isoDaysAgo(7, new Date(from)), today());
       calls++;
       budget--;

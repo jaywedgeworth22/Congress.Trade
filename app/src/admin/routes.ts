@@ -860,8 +860,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     } catch {
       return c.json({ error: 'invalid JSON body' }, 400);
     }
-    const opts: { max?: number; dryRun?: boolean } = {};
+    const opts: { max?: number; dryRun?: boolean; maxPerMinute?: number } = {};
     if (typeof body.max === 'number' && body.max > 0) opts.max = Math.floor(body.max);
+    if (typeof body.maxPerMinute === 'number' && body.maxPerMinute > 0) opts.maxPerMinute = Math.floor(body.maxPerMinute);
     if (body.dryRun === true) opts.dryRun = true;
     try {
       const result = await runEnrichment(c.env, opts);
@@ -888,9 +889,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       c.env.DB,
       'SELECT COUNT(*) AS n FROM securities_ref WHERE enriched_at IS NOT NULL',
     );
+    const pending = await marketPending(c.env);
     return c.json({
       fmpCallsToday: used,
       pendingTickers: row?.pending ?? 0,
+      pricePendingTickers: pending.prices,
       enrichedTickers: enriched?.n ?? 0,
       hasFmpKey: !!(c.env as Env & { FMP_API_KEY?: string }).FMP_API_KEY,
     });
@@ -908,12 +911,50 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     } catch {
       return c.json({ error: 'invalid JSON body' }, 400);
     }
-    const opts: { max?: number; dryRun?: boolean } = {};
+    const opts: { max?: number; dryRun?: boolean; maxPerMinute?: number } = {};
     if (typeof body.max === 'number' && body.max > 0) opts.max = Math.floor(body.max);
+    if (typeof body.maxPerMinute === 'number' && body.maxPerMinute > 0) opts.maxPerMinute = Math.floor(body.maxPerMinute);
     if (body.dryRun === true) opts.dryRun = true;
     try {
       const result = await runPriceRefresh(c.env, opts);
       return c.json({ ok: result.errors.length === 0, ...result });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /backfill-market ----------------------------------------------
+  // One bounded pass of enrichment + price refresh in a single call, for fast
+  // paid-tier history backfilling. A single Worker invocation is capped by
+  // Cloudflare's per-request subrequest/CPU limits, so this does ONE safe batch
+  // and reports what's left — loop it (see scripts/backfill-market.sh) until
+  // `done` is true. Body (all optional):
+  //   { max?: number,           // tickers per pass for EACH of enrich + prices (default 40)
+  //     maxPerMinute?: number,  // throttle FMP calls/min (paid tier ~300; avoids 429s)
+  //     dryRun?: boolean }
+  r.post('/backfill-market', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const max = typeof body.max === 'number' && body.max > 0 ? Math.floor(body.max) : 40;
+    const maxPerMinute =
+      typeof body.maxPerMinute === 'number' && body.maxPerMinute > 0 ? Math.floor(body.maxPerMinute) : undefined;
+    const dryRun = body.dryRun === true;
+    try {
+      const enrich = await runEnrichment(c.env, { max, maxPerMinute, dryRun });
+      const prices = await runPriceRefresh(c.env, { max, maxPerMinute, dryRun });
+      const pending = await marketPending(c.env);
+      return c.json({
+        ok: enrich.errors.length === 0 && prices.errors.length === 0,
+        done: pending.enrich === 0 && pending.prices === 0,
+        pending,
+        enrich,
+        prices,
+      });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }
@@ -1072,6 +1113,33 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   return r;
+}
+
+/**
+ * Count tickers still needing work: `enrich` = traded tickers with no enriched
+ * securities_ref row; `prices` = traded (dated) tickers with no cached price_eod.
+ * Drives the `done` flag for the backfill-market loop.
+ */
+async function marketPending(env: Env): Promise<{ enrich: number; prices: number }> {
+  const e = await get<{ n: number }>(
+    env.DB,
+    `SELECT COUNT(*) AS n FROM (
+       SELECT t.ticker FROM transactions t
+       LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+       WHERE t.ticker IS NOT NULL AND t.ticker <> ''
+         AND (sr.ticker IS NULL OR sr.enriched_at IS NULL)
+       GROUP BY t.ticker)`,
+  );
+  const p = await get<{ n: number }>(
+    env.DB,
+    `SELECT COUNT(*) AS n FROM (
+       SELECT t.ticker FROM transactions t
+       LEFT JOIN price_eod pe ON pe.ticker = t.ticker
+       WHERE t.ticker IS NOT NULL AND t.ticker <> '' AND t.tx_date IS NOT NULL
+         AND pe.ticker IS NULL
+       GROUP BY t.ticker)`,
+  );
+  return { enrich: e?.n ?? 0, prices: p?.n ?? 0 };
 }
 
 /** Observed average seconds between the most recent polls for a source. */
