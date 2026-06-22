@@ -46,6 +46,7 @@ import {
   type CandidateDocResult,
   type Provider,
 } from '../extraction/bakeoff';
+import { runEnrichment, getDailyUsed } from '../enrichment/service';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -797,6 +798,20 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'ALTER TABLE users ADD COLUMN cancel_at_period_end INTEGER NOT NULL DEFAULT 0',
       'ALTER TABLE users ADD COLUMN trial_end TEXT',
       'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_stripe_customer ON users (stripe_customer_id)',
+      // 0005_securities_ref.sql — asset reference data (sector, market cap, …).
+      `CREATE TABLE IF NOT EXISTS securities_ref (
+         ticker            TEXT PRIMARY KEY,
+         company_name      TEXT, sector TEXT, industry TEXT, asset_class TEXT,
+         is_etf INTEGER NOT NULL DEFAULT 0, is_adr INTEGER NOT NULL DEFAULT 0,
+         country TEXT, state_hq TEXT, state_of_incorp TEXT,
+         exchange TEXT, exchange_short TEXT, currency TEXT,
+         market_cap INTEGER, market_cap_bucket TEXT, ipo_date TEXT,
+         cik TEXT, sic_code TEXT, sic_description TEXT,
+         source TEXT, enriched_at TEXT, enrichment_error TEXT
+       )`,
+      'CREATE INDEX IF NOT EXISTS idx_secref_sector ON securities_ref (sector)',
+      'CREATE INDEX IF NOT EXISTS idx_secref_bucket ON securities_ref (market_cap_bucket)',
+      'CREATE INDEX IF NOT EXISTS idx_secref_enriched ON securities_ref (enriched_at)',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -814,6 +829,56 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
     }
     return c.json({ applied, skipped });
+  });
+
+  // --- POST /enrich-securities --------------------------------------------
+  // Budgeted asset enrichment: SEC EDGAR (free) + FMP (key-gated). Processes the
+  // tickers that most need it (newest-traded first, then backfilling older ones),
+  // spending at most the day's remaining FMP budget. Body (optional):
+  //   { max?: number, dryRun?: boolean }
+  // Re-run daily (or wire to cron) to slowly backfill history within the cap.
+  r.post('/enrich-securities', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const opts: { max?: number; dryRun?: boolean } = {};
+    if (typeof body.max === 'number' && body.max > 0) opts.max = Math.floor(body.max);
+    if (body.dryRun === true) opts.dryRun = true;
+    try {
+      const result = await runEnrichment(c.env, opts);
+      return c.json({ ok: result.errors.length === 0, ...result });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- GET /enrich-securities/status --------------------------------------
+  // Today's FMP call usage + how many tickers still need enrichment.
+  r.get('/enrich-securities/status', async (c) => {
+    const used = await getDailyUsed(c.env);
+    const row = await get<{ pending: number }>(
+      c.env.DB,
+      `SELECT COUNT(*) AS pending FROM (
+         SELECT t.ticker FROM transactions t
+         LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+         WHERE t.ticker IS NOT NULL AND t.ticker <> ''
+           AND (sr.ticker IS NULL OR sr.enriched_at IS NULL)
+         GROUP BY t.ticker)`,
+    );
+    const enriched = await get<{ n: number }>(
+      c.env.DB,
+      'SELECT COUNT(*) AS n FROM securities_ref WHERE enriched_at IS NOT NULL',
+    );
+    return c.json({
+      fmpCallsToday: used,
+      pendingTickers: row?.pending ?? 0,
+      enrichedTickers: enriched?.n ?? 0,
+      hasFmpKey: !!(c.env as Env & { FMP_API_KEY?: string }).FMP_API_KEY,
+    });
   });
 
   // --- POST /enrich-photos ------------------------------------------------

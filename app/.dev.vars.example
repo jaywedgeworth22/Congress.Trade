@@ -4,6 +4,15 @@
 # Vision/LLM extraction for scanned PDFs (Google Gemini).
 GEMINI_API_KEY=""
 
+# Financial Modeling Prep — enables asset enrichment (sector, market cap, country,
+# exchange) and, later, price + performance-vs-S&P. Without it, the SEC-EDGAR
+# free fallback still fills a subset and the rest shows "—". Rate limit is per
+# key (not per IP), so a dedicated key here is isolated from other apps.
+FMP_API_KEY=""
+# Daily FMP call budget (the enrichment job spends today's needs first, then
+# backfills history with the remainder). Defaults to 230 when unset.
+FMP_DAILY_CALL_CAP=""
+
 # Secondary extractor / arbitration provider key. When set, buildExtractorPipeline
 # builds a second, independent vision extractor; with ARBITRATION_ENABLED="true"
 # it cross-checks every scanned doc and ArbitratingExtractor merges the results.
