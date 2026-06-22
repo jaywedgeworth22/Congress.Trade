@@ -455,12 +455,17 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const buyersQ = buildTickerTopTradersQuery(tickerParam, 'P', f);
       const sellersQ = buildTickerTopTradersQuery(tickerParam, 'S', f);
       const recentQ = buildTickerRecentTradesQuery(tickerParam, f);
-      const [sumRow, tsRows, buyerRows, sellerRows, recentRows] = await Promise.all([
+      const [sumRow, tsRows, buyerRows, sellerRows, recentRows, refRow] = await Promise.all([
         get<Record<string, unknown>>(c.env.DB, sumQ.sql, sumQ.params),
         all<Record<string, unknown>>(c.env.DB, tsQ.sql, tsQ.params),
         all<Record<string, unknown>>(c.env.DB, buyersQ.sql, buyersQ.params),
         all<Record<string, unknown>>(c.env.DB, sellersQ.sql, sellersQ.params),
         all<Record<string, unknown>>(c.env.DB, recentQ.sql, recentQ.params),
+        get<Record<string, unknown>>(
+          c.env.DB,
+          'SELECT company_name, sector, industry, asset_class, country, exchange_short, currency, market_cap, market_cap_bucket, ipo_date FROM securities_ref WHERE ticker = ?',
+          [tickerParam],
+        ),
       ]);
       const s = sumRow ?? {};
       const buyCount = num(s.buy_count);
@@ -473,9 +478,24 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         tradeCount: num(row.trade_count),
         estVolumeUsd: usd(row.est_volume),
       });
+      const ref = refRow
+        ? {
+            companyName: str(refRow.company_name),
+            sector: str(refRow.sector),
+            industry: str(refRow.industry),
+            assetClass: str(refRow.asset_class),
+            country: str(refRow.country),
+            exchangeShort: str(refRow.exchange_short),
+            currency: str(refRow.currency),
+            marketCap: refRow.market_cap == null ? null : num(refRow.market_cap),
+            marketCapBucket: str(refRow.market_cap_bucket),
+            ipoDate: str(refRow.ipo_date),
+          }
+        : null;
       return meta(f, {
         ticker: tickerParam,
         granularity,
+        ref,
         summary: {
           totalTrades: num(s.total_trades),
           buyCount,

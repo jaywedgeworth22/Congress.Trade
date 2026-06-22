@@ -119,6 +119,14 @@ export interface Transaction {
   filedDate?: string | null;
   /** When our watcher first saw the filing (timestamp). Feed only. */
   firstSeenAt?: string | null;
+  // --- Optional cross-referenced asset data (securities_ref; feed only) ------
+  // Populated when the ticker has been enriched; null/absent otherwise.
+  refSector?: string | null;
+  refMarketCap?: number | null;
+  refMarketCapBucket?: string | null;
+  refCountry?: string | null;
+  refExchangeShort?: string | null;
+  refAssetClass?: string | null;
 }
 
 /**

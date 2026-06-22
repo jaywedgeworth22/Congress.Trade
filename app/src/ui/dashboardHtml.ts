@@ -659,7 +659,7 @@ var POLL_LIMIT = 500;     // matches MAX_TX_LIMIT in delivery/rows.ts
 var POLL_INTERVAL_MS = 30000;  // graceful polling cadence when SSE is unavailable
 var sortKey = 'filed';    // active feed sort column
 var sortDir = -1;         // 1 = ascending, -1 = descending (default: newest first)
-var NUMERIC_SORT = { min: 1, conf: 1 };   // columns compared numerically
+var NUMERIC_SORT = { min: 1, conf: 1, refMarketCap: 1 };   // columns compared numerically
 
 /* ============================ HELPERS ============================ */
 var fmt = function (n) { return n == null ? '—' : '$' + Number(n).toLocaleString(); };
@@ -826,6 +826,9 @@ var FEED_COLS = [
   { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return esc(r.txdate || '—'); } },
   { id: 'lag', label: 'Lag', sort: 'lag', def: true, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket — an estimate, not an exact figure.', cell: function (r) { return (r.min == null && r.max == null) ? '<span class="muted">—</span>' : esc(amountText(r.min, r.max)); } },
+  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced (FMP / SEC EDGAR). "—" until the ticker is enriched.', cell: function (r) { return r.refSector ? esc(r.refSector) : '<span class="muted">—</span>'; } },
+  { id: 'marketcap', label: 'Mkt cap', sort: 'refMarketCap', def: false, tip: 'Market-cap size tier (cross-referenced).', cell: function (r) { return r.refMarketCapBucket ? esc(ownerLabel(r.refMarketCapBucket)) : '<span class="muted">—</span>'; } },
+  { id: 'country', label: 'Country', sort: 'refCountry', def: false, cls: 'muted', tip: 'Country of issue (cross-referenced).', cell: function (r) { return r.refCountry ? esc(r.refCountry) : '<span class="muted">—</span>'; } },
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', cell: function (r) { return esc(ownerLabel(r.owner) || '—'); } },
   { id: 'published', label: 'Published', sort: 'imported', def: false, cls: 'muted', tip: 'When our feed received this filing.', cell: function (r) { return esc((r.imported || '').replace('T', ' ').slice(0, 16) || '—'); } },
   { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', cell: function (r) { return esc(r.chamber || '—'); } },
@@ -1048,7 +1051,14 @@ function txToRow(tx) {
     docId: tx.docId || '',
     filerId: tx.filerId || '',
     isOption: !!tx.isOption,
-    rawText: tx.rawText || ''
+    rawText: tx.rawText || '',
+    // cross-referenced asset reference data (null until the ticker is enriched)
+    refSector: tx.refSector || '',
+    refMarketCap: tx.refMarketCap != null ? tx.refMarketCap : null,
+    refMarketCapBucket: tx.refMarketCapBucket || '',
+    refCountry: tx.refCountry || '',
+    refExchangeShort: tx.refExchangeShort || '',
+    refAssetClass: tx.refAssetClass || ''
   };
 }
 
@@ -1510,10 +1520,11 @@ function aGet(path) {
     if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
   });
 }
-/* Compact USD: 1234567 -> $1.2M. */
+/* Compact USD: 1234567 -> $1.2M, 3.2e12 -> $3.2T. */
 function usdC(n) {
   n = Number(n || 0); var s = n < 0 ? '-' : ''; n = Math.abs(n); var o;
-  if (n >= 1e9) o = (n / 1e9).toFixed(1) + 'B';
+  if (n >= 1e12) o = (n / 1e12).toFixed(1) + 'T';
+  else if (n >= 1e9) o = (n / 1e9).toFixed(1) + 'B';
   else if (n >= 1e6) o = (n / 1e6).toFixed(1) + 'M';
   else if (n >= 1e3) o = (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'K';
   else o = String(Math.round(n));
@@ -1746,6 +1757,26 @@ function daysBetween(aIso, bIso) {
 }
 var PARTY_NAME = { D: 'Democrat', R: 'Republican', O: 'Other / Independent' };
 
+/* Company section for a drawer: real cross-referenced data when present, else the
+   key-gated placeholder. Accepts a ref object with any subset of the fields. */
+function companySectionHtml(ref) {
+  if (!ref || (!ref.sector && ref.marketCap == null && !ref.marketCapBucket && !ref.country && !ref.exchangeShort && !ref.assetClass)) {
+    return PROFILE_GATE;
+  }
+  var rows = '';
+  if (ref.sector) rows += kvRow('Sector', esc(ref.sector));
+  if (ref.industry) rows += kvRow('Industry', esc(ref.industry));
+  if (ref.assetClass) rows += kvRow('Class', esc(ownerLabel(ref.assetClass)));
+  if (ref.marketCapBucket || ref.marketCap != null) {
+    rows += kvRow('Market cap', (ref.marketCapBucket ? esc(ownerLabel(ref.marketCapBucket)) : '') + (ref.marketCap != null ? ' · ' + estUsd(ref.marketCap) : ''));
+  }
+  if (ref.exchangeShort) rows += kvRow('Exchange', esc(ref.exchangeShort));
+  if (ref.country) rows += kvRow('Country', esc(ref.country));
+  if (ref.currency) rows += kvRow('Currency', esc(ref.currency));
+  if (ref.ipoDate) rows += kvRow('IPO', esc(ref.ipoDate));
+  return '<dl class="drawer-kv">' + rows + '</dl>';
+}
+
 /* ---- asset drawer (reuses /api/analytics/ticker/:ticker) ---- */
 function openAsset(ticker) {
   if (!ticker) return;
@@ -1773,7 +1804,7 @@ function openAsset(ticker) {
     openDrawer(
       '<h2><span class="tkr">' + esc(d.ticker) + '</span></h2>' +
       '<p class="dsub">' + (s.totalTrades || 0) + ' trades · ' + (s.memberCount || 0) + ' members · ' + estUsd(s.estVolumeUsd) + ' est. volume</p>' +
-      '<div class="drawer-section first"><h3>Company</h3>' + PROFILE_GATE + '</div>' +
+      '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
       '<div class="drawer-section"><h3>Congressional activity (all time)</h3><div class="grid-cards">' +
         kpi('Trades', s.totalTrades || 0) + kpi('Members', s.memberCount || 0) + kpi('Est. volume', estUsd(s.estVolumeUsd)) +
         kpi('Net flow', netHtml(s.estNetFlowUsd)) + kpi('Buy pressure', sent) + '</div>' +
@@ -1850,7 +1881,8 @@ function openTrade(row) {
       kvRow('Source', esc(sourceLabel(row.source))) +
       '</dl><div id="tradeSource"></div></div>';
   var perf = '<div class="drawer-section"><h3>Performance since ' + (row.type === 'S' ? 'sale' : 'trade') + '</h3>' + PERF_GATE + '</div>';
-  var profile = row.ticker ? '<div class="drawer-section"><h3>Company</h3>' + PROFILE_GATE + '</div>' : '';
+  var rowRef = { sector: row.refSector, marketCap: row.refMarketCap, marketCapBucket: row.refMarketCapBucket, country: row.refCountry, exchangeShort: row.refExchangeShort, assetClass: row.refAssetClass };
+  var profile = row.ticker ? '<div class="drawer-section"><h3>Company</h3>' + companySectionHtml(rowRef) + '</div>' : '';
   var notes = row.rawText ? '<div class="drawer-section"><h3>Filing notes</h3><pre class="raw-notes">' + esc(row.rawText) + '</pre></div>' : '';
   var links = '<div class="drawer-section">' +
     (row.ticker ? '<a class="drawer-all-link clickable" data-asset="' + esc(row.ticker) + '">View all trades of ' + esc(row.ticker) + ' →</a>' : '') +
