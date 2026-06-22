@@ -150,7 +150,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   td.state { text-align: center; color: var(--text-dim); padding: 22px 13px; }
   .tkr { font-family: var(--mono); font-weight: 700; }
   /* ---- ticker logos (ported from agentic-trading) ---- */
-  .asset-cell { display: flex; align-items: center; gap: 9px; }
+  .asset-cell { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  /* let the text shrink inside the (resizable, fixed-layout) cell and clip with
+     an ellipsis instead of wrapping or hard-clipping mid-word */
+  .asset-cell > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tkr-logo { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; overflow: hidden; }
   .tkr-logo img { width: 100%; height: 100%; object-fit: contain; display: block; }
   /* "tile" = frosted-glass box; "transparent" = bare logo on the row surface. */
@@ -554,6 +557,8 @@ var NUMERIC_SORT = { min: 1, conf: 1 };   // columns compared numerically
 var fmt = function (n) { return n == null ? '—' : '$' + Number(n).toLocaleString(); };
 var confClass = function (c) { return c >= 0.9 ? 'hi' : c >= 0.7 ? 'mid' : 'lo'; };
 var typeName = { P: 'Purchase', S: 'Sale', E: 'Exchange' };
+/* Capitalize a beneficial-owner code for display (self -> Self, joint -> Joint). */
+function ownerLabel(o) { var s = String(o == null ? '' : o); return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, function (ch) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
@@ -698,13 +703,14 @@ function renderFeed() {
       '<td class="muted">' + esc(r.filed) + '</td>' +
       '<td><div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl) +
         '<div>' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div></td>' +
-      '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.asset) + '<div>' +
+      '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.asset) +
+        '<div title="' + esc((r.ticker ? r.ticker + ' · ' : '') + r.asset) + '">' +
         (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span> ' : '') +
         '<span class="muted">' + esc(r.asset) + '</span></div></div></td>' +
       '<td><span class="tag ' + esc(r.type) + '">' + esc(typeName[r.type] || r.type) + '</span></td>' +
       '<td>' + (r.min == null && r.max == null ? '<span class="muted">—</span>' : fmt(r.min) + ' – ' + (r.max == null ? '+' : fmt(r.max))) + '</td>' +
       '<td class="muted">' + esc(r.txdate || '—') + '</td>' +
-      '<td class="muted">' + esc(r.owner || '—') + '</td>' +
+      '<td class="muted">' + esc(ownerLabel(r.owner) || '—') + '</td>' +
       '<td><span class="conf ' + confClass(r.conf) + '">' + (r.conf * 100).toFixed(0) + '%</span></td>' +
       '<td class="muted" title="' + esc(r.source) + '">' + esc(sourceLabel(r.source)) + '</td>' +
       '<td class="latency">' + rowLatencyHtml(r) + '</td>' +
@@ -738,10 +744,15 @@ function initColumnResize() {
   var ths = document.querySelectorAll('#feedHead th');
   var saved = loadColWidths();
   // Freeze current auto widths (or restore saved ones) so switching the table to
-  // fixed layout doesn't visually jump.
+  // fixed layout doesn't visually jump. Wide auto-sized columns are capped to a
+  // compact default (Asset fits the longest name otherwise) — short entries then
+  // show in full, long ones clip to an ellipsis, and any column stays draggable.
+  var DEFAULT_CAP = { asset: 200 };
   for (var i = 0; i < ths.length; i++) {
     var k = ths[i].dataset.sort;
-    ths[i].style.width = ((k && saved[k]) ? saved[k] : ths[i].offsetWidth) + 'px';
+    var w = (k && saved[k]) ? saved[k] : ths[i].offsetWidth;
+    if (!(k && saved[k]) && k && DEFAULT_CAP[k] && w > DEFAULT_CAP[k]) w = DEFAULT_CAP[k];
+    ths[i].style.width = w + 'px';
   }
   table.classList.add('resizable');
   for (var j = 0; j < ths.length; j++) addColResizer(ths[j]);
@@ -1536,7 +1547,7 @@ function openTicker(ticker) {
       return '<tr class="row"><td class="muted">' + esc((t.txDate || '').slice(0, 10)) + '</td>' +
         '<td><span class="tag ' + esc(t.txType) + '">' + esc(typeName[t.txType] || t.txType) + '</span></td>' +
         '<td>' + pdot(t.partyBucket) + esc(name) + '</td>' +
-        '<td class="muted">' + esc(t.owner || '') + (t.isOption ? ' · option' : '') + '</td>' +
+        '<td class="muted">' + esc(ownerLabel(t.owner)) + (t.isOption ? ' · option' : '') + '</td>' +
         '<td class="est">' + estUsd(t.estValueUsd) + '</td></tr>';
     }).join('');
     body.innerHTML =
