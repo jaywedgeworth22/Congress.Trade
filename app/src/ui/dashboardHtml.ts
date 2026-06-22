@@ -189,6 +189,43 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .note { font-size:12px; color: var(--text-dim); margin-top:8px; line-height:1.5; }
   code { font-family: var(--mono); background: var(--bg); padding:1px 6px; border-radius:5px; font-size:12px; color: var(--accent); }
   footer { text-align:center; color: var(--text-dim); font-size:11px; padding:26px; }
+  /* ---- account control + auth/billing modals ---- */
+  .acct { display:flex; align-items:center; gap:8px; }
+  .acct .email { font-size:12px; color:var(--text-dim); max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .badge { font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; padding:2px 7px; border-radius:999px; border:1px solid var(--border); color:var(--text-dim); }
+  .badge.premium { color:var(--good); border-color:color-mix(in srgb,var(--good) 45%,transparent); background:color-mix(in srgb,var(--good) 12%,transparent); }
+  .acct .avatar.lg { width:28px; height:28px; cursor:pointer; }
+  .menu { position:relative; }
+  .menu-pop { position:absolute; right:0; top:38px; background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:6px; min-width:190px; box-shadow:0 12px 32px rgba(0,0,0,.38); display:none; z-index:30; }
+  .menu-pop.open { display:block; }
+  .menu-pop button { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--text); padding:8px 10px; border-radius:7px; cursor:pointer; font-size:13px; font-family:var(--sans); }
+  .menu-pop button:hover { background:var(--panel-2); }
+  .menu-pop .who { padding:6px 10px 8px; font-size:12px; color:var(--text-dim); border-bottom:1px solid var(--border); margin-bottom:5px; word-break:break-all; }
+  .overlay { position:fixed; inset:0; background:rgba(4,8,16,.62); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; z-index:50; padding:18px; }
+  .overlay.open { display:flex; }
+  .modal { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:26px; width:100%; max-width:430px; box-shadow:0 24px 60px rgba(0,0,0,.45); }
+  .modal h2 { margin:0 0 6px; font-size:19px; }
+  .modal p.sub { margin:0 0 18px; color:var(--text-dim); font-size:13px; }
+  .modal .close { float:right; background:transparent; border:none; color:var(--text-dim); font-size:20px; cursor:pointer; line-height:1; }
+  .gbtn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; padding:11px; border-radius:10px; border:1px solid var(--border); background:var(--panel-2); color:var(--text); font-weight:600; font-size:14px; cursor:pointer; }
+  .gbtn:hover { border-color:var(--accent); }
+  .gbtn svg { width:18px; height:18px; }
+  .divider { display:flex; align-items:center; gap:10px; color:var(--text-dim); font-size:12px; margin:16px 0; }
+  .divider::before, .divider::after { content:""; flex:1; height:1px; background:var(--border); }
+  .field { display:flex; gap:8px; margin-top:6px; }
+  .field input { flex:1; }
+  .plan-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:8px 0; }
+  .plan { border:1px solid var(--border); border-radius:12px; padding:16px 14px; cursor:pointer; position:relative; transition:border-color .15s; }
+  .plan:hover, .plan.sel { border-color:var(--accent); background:color-mix(in srgb,var(--accent) 7%,transparent); }
+  .plan .price { font-size:23px; font-weight:800; }
+  .plan .per { font-size:12px; color:var(--text-dim); }
+  .plan .cad { font-size:13px; font-weight:600; margin-bottom:6px; }
+  .plan .save { position:absolute; top:-9px; right:10px; font-size:10px; font-weight:700; color:#06231a; background:var(--good); padding:2px 7px; border-radius:999px; }
+  .trial-note { font-size:12px; color:var(--text-dim); text-align:center; margin:8px 0 2px; }
+  .toast { position:fixed; left:50%; bottom:24px; transform:translateX(-50%); background:var(--panel-2); border:1px solid var(--border); color:var(--text); padding:11px 16px; border-radius:10px; font-size:13px; z-index:60; box-shadow:0 8px 24px rgba(0,0,0,.35); display:none; max-width:90vw; }
+  .toast.show { display:block; }
+  .toast.err { border-color:color-mix(in srgb,var(--sell) 55%,transparent); color:var(--sell); }
+  .gate-note { font-size:12px; color:var(--warn); display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
 </style>
 </head>
 <body>
@@ -202,6 +239,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <button data-view="subs">Subscriptions</button>
     <button data-view="admin">Admin · Cadence</button>
   </nav>
+  <div id="acct" class="acct"></div>
   <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light / dark">🌙</button>
 </header>
 
@@ -229,6 +267,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </select>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
       <button class="btn ghost sm" onclick="refreshFeed()">↻ Refresh</button>
+      <button class="btn ghost sm" onclick="exportCsv()" title="Download the filtered feed as CSV (premium)">⤓ Export CSV</button>
     </div>
     <div class="search-panel" id="searchPanel">
       <span class="lbl">Search all</span>
@@ -261,6 +300,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="row-flex" style="margin-top:14px;justify-content:center">
       <button class="btn ghost sm" id="loadMoreBtn" onclick="loadMore()" style="display:none">Load more</button>
       <span class="note" id="feedCountMsg"></span>
+    </div>
+    <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center;display:none">
+      <span class="gate-note">🔒 Free view shows the last 30 days. Unlock full history, alerts & CSV export.
+        <button class="btn sm" onclick="openPricing()">Upgrade</button></span>
     </div>
   </section>
 
@@ -380,6 +423,51 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <footer>Congress.Trade · live feed · data sourced from public STOCK Act (2012) disclosures · not financial advice</footer>
 </main>
 
+<!-- ================= LOGIN MODAL ================= -->
+<div class="overlay" id="loginOverlay" onclick="if(event.target===this)closeLogin()">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Sign in">
+    <button class="close" onclick="closeLogin()" aria-label="Close">×</button>
+    <h2>Sign in to Congress.Trade</h2>
+    <p class="sub">Save filters, manage your subscription, and unlock full history.</p>
+    <button class="gbtn" onclick="loginGoogle()">
+      <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.7 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.9 6.1C12.3 13.2 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.5 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-3.9 6.8-9.7 6.8-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.6 2.3-8.6 2.3-6.4 0-11.7-3.7-13.6-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
+      Continue with Google
+    </button>
+    <div class="divider">or</div>
+    <label class="lbl" for="magicEmail">Email me a one-click sign-in link</label>
+    <div class="field">
+      <input id="magicEmail" type="email" autocomplete="email" placeholder="you@example.com" onkeydown="if(event.key==='Enter')sendMagicLink()" />
+      <button class="btn" onclick="sendMagicLink()">Send link</button>
+    </div>
+    <p class="note" id="loginMsg"></p>
+  </div>
+</div>
+
+<!-- ================= PRICING MODAL ================= -->
+<div class="overlay" id="pricingOverlay" onclick="if(event.target===this)closePricing()">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Upgrade to Premium">
+    <button class="close" onclick="closePricing()" aria-label="Close">×</button>
+    <h2>Go Premium</h2>
+    <p class="sub">Full trade history, CSV export, and (soon) real-time alerts. Cancel anytime.</p>
+    <div class="plan-grid">
+      <div class="plan sel" id="planMonthly" onclick="selectPlan('monthly')">
+        <div class="cad">Monthly</div>
+        <div class="price">$15<span class="per">/mo</span></div>
+      </div>
+      <div class="plan" id="planAnnual" onclick="selectPlan('annual')">
+        <span class="save">SAVE ~22%</span>
+        <div class="cad">Annual</div>
+        <div class="price">$140<span class="per">/yr</span></div>
+      </div>
+    </div>
+    <p class="trial-note">✨ Starts with a 7-day free trial — you won't be charged today.</p>
+    <button class="btn" style="width:100%;padding:11px" id="subscribeBtn" onclick="startCheckout()">Start free trial</button>
+    <p class="note" id="pricingMsg"></p>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
 <script>
 /* ============================ STATE ============================ */
 var TRADES = [];          // live transactions (newest first)
@@ -390,6 +478,7 @@ var cursor = 0;           // max cursor_seq seen
 var totalRows = 0;        // server-reported total matching rows (for "X of N")
 var loadingPage = false;  // guards against overlapping page fetches
 var realDataLoaded = false;
+var feedGated = false;     // server says this visitor sees the limited free window
 var es = null;            // EventSource handle
 var pollTimer = null;     // setInterval handle for the polling fallback
 var POLL_LIMIT = 500;     // matches MAX_TX_LIMIT in delivery/rows.ts
@@ -722,6 +811,8 @@ function fetchPage() {
       TRADES = txs.concat(TRADES);
       if (typeof data.cursor === 'number' && data.cursor > cursor) cursor = data.cursor;
       if (typeof data.total === 'number') totalRows = data.total;
+      feedGated = !!data.gated;             // freemium: limited recent window
+      updateGateRow();
       realDataLoaded = true;
       setBanner('');                       // drop the illustrative banner
       el('kpiTotal').textContent = totalRows || TRADES.length;
@@ -1129,6 +1220,154 @@ function loadHealth() {
     });
 }
 
+/* ============================ ACCOUNT (auth + billing) ============================ */
+var ME = { user: null, entitlement: { premium: false, status: null, plan: null, trialing: false } };
+var selectedPlan = 'monthly';
+
+function isPremium() { return !!(ME.entitlement && ME.entitlement.premium); }
+
+/* Bootstrap identity + entitlement in one call (GET /auth/me). */
+function loadMe() {
+  return fetch('/auth/me', { headers: { accept: 'application/json' } })
+    .then(function (r) { return r.ok ? r.json() : { user: null, entitlement: { premium: false } }; })
+    .then(function (d) {
+      ME.user = d.user || null;
+      ME.entitlement = d.entitlement || { premium: false };
+      renderAccount();
+    })
+    .catch(function () { renderAccount(); });
+}
+
+function renderAccount() {
+  var box = el('acct'); if (!box) return;
+  if (!ME.user) {
+    box.innerHTML = '<button class="btn ghost sm" onclick="openLogin()">Sign in</button>' +
+      '<button class="btn sm" onclick="openPricing()">Upgrade</button>';
+    return;
+  }
+  var ent = ME.entitlement || {};
+  var badge = ent.premium ? '<span class="badge premium">' + (ent.trialing ? 'Trial' : 'Premium') + '</span>' : '';
+  var upgrade = ent.premium ? '' : '<button class="btn sm" onclick="openPricing()">Upgrade</button>';
+  var label = ME.user.name || ME.user.email || 'Account';
+  box.innerHTML = badge + upgrade +
+    '<div class="menu">' +
+      '<span class="avatar lg" id="acctAvatar" title="' + esc(label) + '" onclick="toggleAcctMenu()">' + esc(initials(label)) +
+        (ME.user.picture ? '<img src="' + esc(ME.user.picture) + '" alt="" onerror="this.remove()"/>' : '') +
+      '</span>' +
+      '<div class="menu-pop" id="acctMenu">' +
+        '<div class="who">' + esc(ME.user.email || '') + '</div>' +
+        (ent.premium
+          ? '<button onclick="manageBilling()">Manage subscription</button>'
+          : '<button onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>') +
+        '<button onclick="logout()">Sign out</button>' +
+      '</div>' +
+    '</div>';
+}
+function toggleAcctMenu() { var m = el('acctMenu'); if (m) m.classList.toggle('open'); }
+function closeAcctMenu() { var m = el('acctMenu'); if (m) m.classList.remove('open'); }
+document.addEventListener('click', function (e) {
+  var menu = el('acctMenu'), av = el('acctAvatar');
+  if (menu && menu.classList.contains('open') && !menu.contains(e.target) && e.target !== av) {
+    menu.classList.remove('open');
+  }
+});
+
+/* ---- login modal ---- */
+function openLogin() { el('loginOverlay').classList.add('open'); el('loginMsg').textContent = ''; var i = el('magicEmail'); if (i) setTimeout(function () { i.focus(); }, 50); }
+function closeLogin() { el('loginOverlay').classList.remove('open'); }
+function loginGoogle() { window.location.href = '/auth/google/start'; }
+function sendMagicLink() {
+  var email = (el('magicEmail').value || '').trim();
+  if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) { el('loginMsg').textContent = 'Enter a valid email.'; return; }
+  el('loginMsg').textContent = 'Sending…';
+  fetch('/auth/magic/request', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: email }) })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (res) {
+      if (!res.ok) { el('loginMsg').textContent = (res.j && res.j.error) || 'Could not send link.'; return; }
+      el('loginMsg').textContent = (res.j && res.j.sent === false)
+        ? 'Email isn’t configured yet — try Google sign-in.'
+        : 'Check your inbox for a sign-in link (expires in 15 min).';
+    })
+    .catch(function () { el('loginMsg').textContent = 'Network error — try again.'; });
+}
+function logout() {
+  fetch('/auth/logout', { method: 'POST' })
+    .then(function () { window.location.reload(); })
+    .catch(function () { window.location.reload(); });
+}
+
+/* ---- pricing / checkout ---- */
+function openPricing() { closeAcctMenu(); selectPlan(selectedPlan); el('pricingMsg').textContent = ''; el('pricingOverlay').classList.add('open'); }
+function closePricing() { el('pricingOverlay').classList.remove('open'); }
+function selectPlan(p) {
+  selectedPlan = (p === 'annual') ? 'annual' : 'monthly';
+  var m = el('planMonthly'), a = el('planAnnual');
+  if (m) m.classList.toggle('sel', selectedPlan === 'monthly');
+  if (a) a.classList.toggle('sel', selectedPlan === 'annual');
+}
+function startCheckout() {
+  if (!ME.user) { closePricing(); openLogin(); el('loginMsg').textContent = 'Sign in first, then we’ll start your trial.'; return; }
+  var btn = el('subscribeBtn'); if (btn) btn.disabled = true;
+  el('pricingMsg').textContent = 'Starting secure checkout…';
+  fetch('/billing/checkout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ plan: selectedPlan }) })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }); })
+    .then(function (res) {
+      if (res.ok && res.j && res.j.url) { window.location.href = res.j.url; return; }
+      if (res.status === 401) { closePricing(); openLogin(); return; }
+      el('pricingMsg').textContent = (res.j && res.j.error) || 'Could not start checkout.';
+      if (btn) btn.disabled = false;
+    })
+    .catch(function () { el('pricingMsg').textContent = 'Network error — try again.'; if (btn) btn.disabled = false; });
+}
+function manageBilling() {
+  closeAcctMenu();
+  showToast('Opening billing portal…');
+  fetch('/billing/portal', { method: 'POST' })
+    .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (res) {
+      if (res.ok && res.j && res.j.url) { window.location.href = res.j.url; }
+      else { showToast((res.j && res.j.error) || 'Could not open billing portal.', true); }
+    })
+    .catch(function () { showToast('Network error — try again.', true); });
+}
+
+/* ---- CSV export (premium) ---- */
+function exportCsv() {
+  if (!isPremium()) { openPricing(); return; }
+  var p = new URLSearchParams();
+  var t = el('qTicker').value.trim(); if (t) p.set('ticker', t);
+  var ty = el('qType').value; if (ty) p.set('type', ty);
+  var ch = el('qChamber').value; if (ch) p.set('chamber', ch);
+  var qs = p.toString();
+  window.location.href = '/api/export/transactions.csv' + (qs ? ('?' + qs) : '');
+}
+
+/* ---- gated feed CTA + post-redirect toasts ---- */
+function updateGateRow() { var g = el('gateRow'); if (g) g.style.display = feedGated ? '' : 'none'; }
+var TOAST_TIMER = null;
+function showToast(text, isErr) {
+  var t = el('toast'); if (!t) return;
+  t.textContent = text; t.className = 'toast show' + (isErr ? ' err' : '');
+  if (TOAST_TIMER) clearTimeout(TOAST_TIMER);
+  TOAST_TIMER = setTimeout(function () { t.className = 'toast'; }, 4200);
+}
+/* Surface ?login= / ?checkout= / ?billing= outcomes after a hosted redirect,
+   then scrub them from the URL so a refresh doesn't re-toast. */
+function handleAuthQueryParams() {
+  var p = new URLSearchParams(window.location.search);
+  var login = p.get('login'), checkout = p.get('checkout');
+  if (login === 'ok') showToast('Signed in.');
+  else if (login === 'error') showToast('Sign-in failed — please try again.', true);
+  else if (login === 'expired') showToast('That sign-in link expired — request a new one.', true);
+  if (checkout === 'success') showToast('🎉 You’re in! Your premium trial is active.');
+  else if (checkout === 'cancel') showToast('Checkout canceled — no charge was made.');
+  if (login || checkout || p.get('billing')) {
+    p.delete('login'); p.delete('checkout'); p.delete('billing');
+    var qs = p.toString();
+    window.history.replaceState({}, '', window.location.pathname + (qs ? ('?' + qs) : ''));
+  }
+}
+
 /* ============================ TABS + BOOT ============================ */
 document.querySelectorAll('nav.tabs button').forEach(function (b) {
   b.onclick = function () {
@@ -1157,6 +1396,8 @@ el('reviewBody').innerHTML = stateRow(5, 'Loading…');
 el('subsBody').innerHTML = stateRow(5, 'Loading…');
 el('healthBody').innerHTML = stateRow(7, 'Loading…');
 
+loadMe();              // account state (Sign in / avatar / premium badge)
+handleAuthQueryParams(); // toast + scrub ?login= / ?checkout= after redirects
 loadFeed().then(function () { startStream(); });
 loadReview();      // for the tab badge / KPI
 loadPollConfig();  // for the poll-mode KPI

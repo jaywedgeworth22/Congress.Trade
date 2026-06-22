@@ -23,14 +23,19 @@ import { all, get } from '../shared/db';
 import {
   buildTransactionsQuery,
   buildTransactionsCountQuery,
+  buildTransactionsExportQuery,
   mapFiling,
   mapTransaction,
   mapFeedTransaction,
+  FREE_WINDOW_DAYS,
+  FREE_TX_LIMIT,
   type FilingRow,
   type TransactionRow,
   type FeedTransactionRow,
   type TxQueryParams,
 } from './rows';
+import { getCurrentUser } from '../auth/session';
+import { isPremiumUser } from '../billing/entitlement';
 import {
   createSubscription,
   getSubscription,
@@ -54,6 +59,27 @@ function asTxType(v: string | undefined): TxType | undefined {
   return v === 'P' || v === 'S' || v === 'E' ? v : undefined;
 }
 
+/** `YYYY-MM-DD` for `days` ago (UTC), for the freemium recency gate. */
+function isoDateDaysAgo(days: number): string {
+  return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** Parse the shared ticker/member/type/chamber filters from the query string. */
+function filtersFromQuery(q: Record<string, string>): TxQueryParams {
+  return {
+    ticker: q.ticker || undefined,
+    member: q.member || undefined,
+    chamber: asChamber(q.chamber),
+    type: asTxType(q.type),
+  };
+}
+
+/** CSV-escape a single cell (RFC 4180: wrap in quotes, double embedded quotes). */
+function csvCell(value: unknown): string {
+  const s = value == null ? '' : String(value);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
 export function buildRestRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
@@ -62,6 +88,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // cursor in the page so clients can poll forward deterministically.
   r.get('/transactions', async (c) => {
     const q = c.req.query();
+    const premium = isPremiumUser(await getCurrentUser(c));
     const params: TxQueryParams = {
       since: parseIntOrUndef(q.since),
       ticker: q.ticker || undefined,
@@ -70,6 +97,13 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       type: asTxType(q.type),
       limit: parseIntOrUndef(q.limit),
     };
+    // Freemium gate: non-premium visitors see only the recent window and a
+    // smaller page. The count query honors `filedSince` too, so "X of N" and the
+    // Load-more affordance reflect exactly what the visitor can access.
+    if (!premium) {
+      params.filedSince = isoDateDaysAgo(FREE_WINDOW_DAYS);
+      params.limit = Math.min(params.limit ?? FREE_TX_LIMIT, FREE_TX_LIMIT);
+    }
     const built = buildTransactionsQuery(params);
     // The query SELECTs the resolved chamber + member name alongside the feed
     // columns via `__chamber` / `__member_name` (see buildTransactionsQuery).
@@ -99,6 +133,70 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       count: transactions.length,
       total,
       limit: built.limit,
+      premium,
+      // When gated, tell the client why so it can surface an upgrade CTA.
+      gated: !premium,
+      ...(premium ? {} : { freeWindowDays: FREE_WINDOW_DAYS }),
+    });
+  });
+
+  // --- GET /export/transactions.csv ---------------------------------------
+  // Premium-only full-history CSV download. Honors the same ticker/member/
+  // type/chamber filters as the feed; non-premium callers get 402 + an upgrade
+  // hint so the UI can route them to checkout.
+  r.get('/export/transactions.csv', async (c) => {
+    if (!isPremiumUser(await getCurrentUser(c))) {
+      return c.json({ error: 'premium subscription required', upgradeRequired: true }, 402);
+    }
+    const built = buildTransactionsExportQuery(filtersFromQuery(c.req.query()));
+    const rows = await all<
+      FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null }
+    >(c.env.DB, built.sql, built.params);
+
+    const header = [
+      'filed_at',
+      'tx_date',
+      'member',
+      'chamber',
+      'ticker',
+      'asset',
+      'type',
+      'amount_min',
+      'amount_max',
+      'owner',
+      'source',
+      'confidence',
+      'doc_id',
+    ];
+    const lines = [header.join(',')];
+    for (const row of rows) {
+      const t = mapFeedTransaction(row);
+      lines.push(
+        [
+          t.createdAt,
+          t.txDate ?? '',
+          row.__member_name ?? t.fullName ?? t.filerId ?? '',
+          (row.__chamber as string | null) ?? '',
+          t.ticker ?? '',
+          t.assetName ?? '',
+          t.txType,
+          t.amountMin ?? '',
+          t.amountMax ?? '',
+          t.owner ?? '',
+          t.source,
+          t.confidence,
+          t.docId,
+        ]
+          .map(csvCell)
+          .join(','),
+      );
+    }
+    const csv = lines.join('\r\n');
+    return new Response(csv, {
+      headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="congress-trades-${isoDateDaysAgo(0)}.csv"`,
+      },
     });
   });
 

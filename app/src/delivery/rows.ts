@@ -179,6 +179,12 @@ export interface TxQueryParams {
   chamber?: Chamber;
   type?: TxType;
   limit?: number;
+  /**
+   * Freemium gate: only rows whose filing date (or, lacking a filing, trade
+   * date) is on/after this `YYYY-MM-DD` are returned. Applied to both the feed
+   * and the count, so non-premium visitors see a consistent recent window.
+   */
+  filedSince?: string;
 }
 
 export interface BuiltQuery {
@@ -190,6 +196,14 @@ export interface BuiltQuery {
 /** Default and hard-cap page sizes for the transactions endpoint. */
 export const DEFAULT_TX_LIMIT = 100;
 export const MAX_TX_LIMIT = 500;
+
+/**
+ * Freemium gate for non-premium visitors: only the most recent
+ * FREE_WINDOW_DAYS of trades, capped at FREE_TX_LIMIT rows per page. Premium
+ * subscribers get full history up to MAX_TX_LIMIT. See delivery/rest.ts.
+ */
+export const FREE_WINDOW_DAYS = 30;
+export const FREE_TX_LIMIT = 50;
 
 /**
  * Shared FROM/JOIN clause for the transactions feed. Chamber + member name are
@@ -242,6 +256,11 @@ function buildTxFilters(
     where.push(`${CHAMBER_EXPR} = ?`);
     params.push(p.chamber);
   }
+  if (p.filedSince) {
+    // Prefer the filing date; seed rows without a filing fall back to tx_date.
+    where.push('COALESCE(f.filed_date, t.tx_date) >= ?');
+    params.push(p.filedSince);
+  }
 
   return { where, params };
 }
@@ -293,4 +312,33 @@ export function buildTransactionsCountQuery(
     TX_FROM_JOINS +
     (where.length ? `WHERE ${where.join(' AND ')}` : '');
   return { sql, params };
+}
+
+/** Hard cap on rows in a single CSV export (premium full-history download). */
+export const MAX_EXPORT_ROWS = 50000;
+
+/**
+ * Build the query backing the premium CSV export. Unlike the paged feed it
+ * drops the cursor backstop (exports the full matching set), orders newest-first
+ * for a readable download, and allows up to `maxRows` (>> MAX_TX_LIMIT). The
+ * same ticker/member/type/chamber filters apply; `filedSince` is normally unset
+ * for premium callers but is honored if provided.
+ */
+export function buildTransactionsExportQuery(
+  p: TxQueryParams,
+  maxRows = MAX_EXPORT_ROWS,
+): BuiltQuery {
+  const { where, params } = buildTxFilters(p, false);
+  let limit = Number.isFinite(maxRows) ? Number(maxRows) : MAX_EXPORT_ROWS;
+  if (limit <= 0 || limit > MAX_EXPORT_ROWS) limit = MAX_EXPORT_ROWS;
+  const sql =
+    `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, ` +
+    'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
+    'fl.photo_url AS filer_photo_url, ' +
+    'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at ' +
+    TX_FROM_JOINS +
+    (where.length ? `WHERE ${where.join(' AND ')} ` : '') +
+    'ORDER BY t.cursor_seq DESC ' +
+    `LIMIT ${limit}`;
+  return { sql, params, limit };
 }
