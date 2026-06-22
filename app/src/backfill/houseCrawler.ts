@@ -26,8 +26,8 @@
  */
 
 import type { Env } from '../shared/types';
-import { run } from '../shared/db';
 import { fetchHouseIndex, type HouseFiling } from '../ingestion/houseSource';
+import { insertFilingIfNew, enqueueFilingNew, type DiscoveredFiling } from '../ingestion/watcher';
 
 // ---------------------------------------------------------------------------
 // Public contract (mirrors the *BackfillOptions/*BackfillResult conventions in
@@ -79,11 +79,11 @@ export interface HouseBackfillResult {
  * each, and enqueue a `filing.new` message for every genuinely-new PTR (subject
  * to the global `maxFilings` cap). Fails soft per-year.
  *
- * The persist + enqueue logic is a 1:1 mirror of ingestion/watcher.ts's
- * persistAndEnqueue(): identical 15-column INSERT OR IGNORE, identical
- * meta.changes "genuinely new" gate, identical filing.new message shape — so a
- * historical PTR is indistinguishable from a live one to the rest of the
- * pipeline.
+ * The persist + enqueue uses the SAME shared primitives the cron watcher uses
+ * (insertFilingIfNew + enqueueFilingNew in ingestion/watcher.ts): one INSERT OR
+ * IGNORE with the meta.changes "genuinely new" gate, then the canonical
+ * filing.new message — so a historical PTR is indistinguishable from a live one
+ * to the rest of the pipeline, and the INSERT column list lives in one place.
  */
 export async function runHouseHistoricalBackfill(
   env: Env,
@@ -126,38 +126,26 @@ export async function runHouseHistoricalBackfill(
       // Derive docId + sourceUrl exactly as watcher.ts does: the canonical
       // pipeline doc id `H-{year}-{DocID}` (houseDocId) and the direct PTR PDF
       // url (housePtrPdfUrl), both precomputed on HouseFiling.
-      const docId = f.pipelineDocId;
-      const sourceUrl = f.sourceUrl;
+      const discoveredFiling: DiscoveredFiling = {
+        docId: f.pipelineDocId,
+        chamber: 'house',
+        sourceUrl: f.sourceUrl,
+      };
 
       const nowIso = new Date().toISOString();
-      // INSERT OR IGNORE: only writes when doc_id is unseen. D1 meta.changes is
-      // the "genuinely new" signal (no read-back race). Column list/order/values
-      // are identical to watcher.ts persistAndEnqueue().
-      const res = await run(
-        env.DB,
-        `INSERT OR IGNORE INTO filings
-           (doc_id, chamber, filer_id, filing_type, filed_date, source_url,
-            raw_object_key, ingest_status, doc_kind, extractor, model_version,
-            confidence, first_seen_at, source_updated_at, error)
-         VALUES (?, ?, NULL, 'P', NULL, ?, NULL, 'new', 'unknown', NULL, NULL,
-                 NULL, ?, NULL, NULL)`,
-        [docId, 'house', sourceUrl, nowIso],
-      );
+      // Shared INSERT OR IGNORE + meta.changes "genuinely new" gate (watcher.ts).
+      // NOTE: we persist even in dryRun (only the enqueue is gated below), so a
+      // dry run still records which PTRs exist without triggering the pipeline.
+      const isNew = await insertFilingIfNew(env, discoveredFiling, nowIso);
       result.discovered += 1;
 
-      const changed = (res.meta?.changes ?? 0) > 0;
-      // Skip when: not new (dup), dryRun, or we've hit the global enqueue cap.
-      if (!changed || dryRun || result.enqueued >= maxFilings) {
+      // Skip the enqueue when: not new (dup), dryRun, or over the global cap.
+      if (!isNew || dryRun || result.enqueued >= maxFilings) {
         result.skipped += 1;
         continue;
       }
 
-      await env.INGEST_QUEUE.send({
-        type: 'filing.new',
-        docId,
-        chamber: 'house',
-        sourceUrl,
-      });
+      await enqueueFilingNew(env, discoveredFiling);
       result.enqueued += 1;
       result.byYear[yearKey] += 1;
     }

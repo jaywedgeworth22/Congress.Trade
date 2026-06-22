@@ -119,6 +119,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* "tile" = frosted-glass box; "transparent" = bare logo on the row surface. */
   .tkr-logo.tile { border: 1px solid var(--border); background: color-mix(in srgb, var(--panel-2) 80%, transparent); border-radius: 6px; padding: 2px; }
   .tkr-logo.transparent { border-radius: 4px; }
+  /* ---- member headshots (mirrors the ticker-logo image+fallback pattern) ---- */
+  .member-cell { display: flex; align-items: center; gap: 9px; }
+  /* The avatar shows initials by default; a successful headshot <img> overlays
+     them, and onerror="this.remove()" drops the <img> to reveal initials. */
+  .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
+  .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: var(--panel-2); }
   .tag { font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; display:inline-block; }
   .tag.P { color: var(--buy); background: color-mix(in srgb, var(--buy) 14%, transparent); }
   .tag.S { color: var(--sell); background: color-mix(in srgb, var(--sell) 14%, transparent); }
@@ -305,7 +311,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button class="btn" onclick="runHouseIndex(false)">Backfill House index</button>
         <span id="hiMsg" class="note"></span>
       </div>
-      <p class="note">API HOOK: <code>POST /api/admin/backfill/house-index</code>. Pulls past-year House bulk ZIPs (official, always reachable) and runs each PTR through the live pipeline — high-fidelity, but heavier than the seed import.</p>
+      <p class="note">API HOOK: <code>POST /api/admin/house-backfill</code>. Pulls past-year House bulk ZIPs (official, always reachable) and runs each PTR through the live pipeline — high-fidelity, but heavier than the seed import.</p>
     </div>
     <div class="section">
       <h3>Source health</h3>
@@ -373,6 +379,22 @@ function tickerLogoHtml(ticker, company) {
     'loading="lazy" decoding="async" onerror="this.parentNode.remove()" />' +
   '</span>';
 }
+/* Two-letter initials from a member name, for the avatar fallback. */
+function initials(name) {
+  var parts = String(name || '').trim().split(' ').filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2);
+  return parts[0].charAt(0) + parts[parts.length - 1].charAt(0);
+}
+/* Build the member avatar: an initials chip with the headshot overlaid when a
+   photoUrl is present. A broken/missing image removes itself (this.remove()),
+   revealing the initials underneath — mirrors the ticker-logo onerror pattern. */
+function memberAvatarHtml(name, photoUrl) {
+  var img = photoUrl
+    ? '<img src="' + esc(photoUrl) + '" alt="" loading="lazy" decoding="async" onerror="this.remove()" />'
+    : '';
+  return '<span class="avatar">' + esc(initials(name)) + img + '</span>';
+}
 function setBanner(text, isErr) {
   var b = el('banner');
   if (!text) { b.style.display = 'none'; return; }
@@ -412,7 +434,8 @@ function renderFeed() {
   body.innerHTML = rows.map(function (r) {
     return '<tr class="row">' +
       '<td class="muted">' + esc(r.filed) + '</td>' +
-      '<td>' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</td>' +
+      '<td><div class="member-cell">' + memberAvatarHtml(r.member, r.photoUrl) +
+        '<div>' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div></td>' +
       '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.asset) + '<div>' +
         (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span> ' : '') +
         '<span class="muted">' + esc(r.asset) + '</span></div></div></td>' +
@@ -473,8 +496,9 @@ function clearSearch() {
 function txToRow(tx) {
   return {
     filed: (tx.createdAt || '').replace('T', ' ').slice(0, 16),
-    member: tx.filerId || 'Unknown',
-    st: '',
+    member: tx.fullName || tx.filerId || 'Unknown',
+    photoUrl: tx.photoUrl || '',
+    st: tx.state || '',
     chamber: tx.chamber || '',
     asset: tx.assetName || '',
     ticker: tx.ticker || '',
@@ -735,23 +759,21 @@ function runBackfill(dryRun) {
 }
 
 function runHouseIndex(dryRun) {
-  // API HOOK: POST /api/admin/backfill/house-index
+  // API HOOK: POST /api/admin/house-backfill
   var from = parseInt(el('hiFrom').value, 10);
   var to = parseInt(el('hiTo').value, 10);
   if (isNaN(from) || isNaN(to)) { el('hiMsg').textContent = 'Enter a from/to year.'; return; }
   el('hiMsg').textContent = dryRun ? 'Counting…' : 'Enqueuing (this can take a while)…';
-  fetch('/api/admin/backfill/house-index', {
+  fetch('/api/admin/house-backfill', {
     method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ fromYear: from, toYear: to, dryRun: !!dryRun })
   })
     .then(admin401).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
     .then(function (j) {
-      var years = j.byYear || {};
-      var found = 0, enq = 0;
-      Object.keys(years).forEach(function (y) { found += years[y].found || 0; enq += years[y].enqueued || 0; });
+      var years = Object.keys(j.byYear || {}).length;
       el('hiMsg').textContent = dryRun
-        ? ('Found ' + found + ' PTRs across ' + Object.keys(years).length + ' year(s).')
-        : ('Enqueued ' + enq + ' new filing(s) from ' + found + ' PTRs.' + (j.errors && j.errors.length ? ' Errors: ' + j.errors.join('; ') : ''));
+        ? ('Found ' + (j.discovered || 0) + ' PTRs across ' + years + ' year(s).')
+        : ('Enqueued ' + (j.enqueued || 0) + ' new filing(s) from ' + (j.discovered || 0) + ' PTRs.' + (j.errors && j.errors.length ? ' Errors: ' + j.errors.join('; ') : ''));
     })
     .catch(function (e) { el('hiMsg').textContent = 'Failed: ' + e.message; });
 }
