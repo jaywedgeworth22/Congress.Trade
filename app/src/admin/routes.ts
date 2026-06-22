@@ -28,6 +28,7 @@ import { uuid } from '../shared/ids';
 import { listSubscriptions } from '../delivery/subscriptions';
 import { runSeedBackfillFromEnv } from '../backfill/seed';
 import { backfillHouseIndex } from '../ingestion/watcher';
+import { runHouseHistoricalBackfill } from '../backfill/houseCrawler';
 import type { Chamber } from '../shared/types';
 
 // Optional secret; not declared on Env (frozen). Read defensively.
@@ -108,6 +109,68 @@ interface EditedTx {
   capGainsOver200?: boolean;
   rawText?: string;
   confidence?: number;
+}
+
+// --- Member photo enrichment (name -> bioguide -> unitedstates/images CDN) ---
+
+const LEGISLATOR_SOURCES = [
+  'https://unitedstates.github.io/congress-legislators/legislators-current.json',
+  'https://unitedstates.github.io/congress-legislators/legislators-historical.json',
+];
+
+const NAME_SUFFIXES = new Set(['jr', 'sr', 'ii', 'iii', 'iv', 'v']);
+
+/**
+ * Normalize a member name for matching: lowercase, strip punctuation, drop
+ * middle initials (single letters) and suffixes. "Ron L Wyden" -> "ron wyden".
+ */
+function normName(s: string | null | undefined): string {
+  return (s ?? '')
+    .toLowerCase()
+    .replace(/[.,]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length > 1 && !NAME_SUFFIXES.has(t))
+    .join(' ')
+    .trim();
+}
+
+interface Legislator {
+  id?: { bioguide?: string };
+  name?: { first?: string; last?: string; official_full?: string; nickname?: string };
+}
+
+/** Build a normalized-name -> bioguide map from the congress-legislators data. */
+async function buildBioguideMap(): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  for (const url of LEGISLATOR_SOURCES) {
+    const res = await fetch(url, {
+      headers: {
+        'user-agent': 'congress-feed/0.1 (+https://congress.trade)',
+        accept: 'application/json',
+      },
+    });
+    if (!res.ok) continue;
+    const list = (await res.json()) as Legislator[];
+    for (const leg of list) {
+      const bio = leg.id?.bioguide;
+      if (!bio) continue;
+      const n = leg.name ?? {};
+      const candidates = [
+        n.first && n.last ? `${n.first} ${n.last}` : '',
+        n.nickname && n.last ? `${n.nickname} ${n.last}` : '',
+        n.official_full ?? '',
+      ];
+      for (const raw of candidates) {
+        const k = normName(raw);
+        if (k && !map.has(k)) map.set(k, bio); // current list is loaded first; it wins
+      }
+    }
+  }
+  return map;
+}
+
+function photoUrlFor(bioguide: string): string {
+  return `https://unitedstates.github.io/images/congress/225x275/${bioguide}.jpg`;
 }
 
 export function buildAdminRouter(): Hono<{ Bindings: Env }> {
@@ -412,6 +475,90 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ ok: result.errors.length === 0, dryRun, ...result });
     } catch (err) {
       return c.json({ error: `house-index backfill failed: ${(err as Error).message}` }, 500);
+    }
+  });
+
+  // --- POST /house-backfill -----------------------------------------------
+  // Full-fidelity complement to /backfill/house-index: walks the House Clerk
+  // yearly bulk indexes and feeds every PTR into the live ingestion pipeline
+  // (emits the same filing.new INGEST_QUEUE message the cron watcher does),
+  // populating House history into `transactions` with source='primary'.
+  // Body (all optional):
+  //   { fromYear?: number, toYear?: number, maxFilings?: number, dryRun?: boolean }
+  r.post('/house-backfill', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    try {
+      const result = await runHouseHistoricalBackfill(c.env, {
+        fromYear: typeof body.fromYear === 'number' ? body.fromYear : undefined,
+        toYear: typeof body.toYear === 'number' ? body.toYear : undefined,
+        maxFilings: typeof body.maxFilings === 'number' ? body.maxFilings : undefined,
+        dryRun: body.dryRun === true,
+      });
+      return c.json(result);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /migrate ------------------------------------------------------
+  // Apply schema changes via the Worker's D1 binding (sidesteps the wrangler
+  // CLI's --remote D1 auth issues). Idempotent: "duplicate column" is treated
+  // as already-applied.
+  r.post('/migrate', async (c) => {
+    const statements = ['ALTER TABLE filers ADD COLUMN photo_url TEXT'];
+    const applied: string[] = [];
+    const skipped: string[] = [];
+    for (const sql of statements) {
+      try {
+        await run(c.env.DB, sql);
+        applied.push(sql);
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (/duplicate column|already exists/i.test(msg)) {
+          skipped.push(sql);
+        } else {
+          return c.json({ error: msg, sql }, 500);
+        }
+      }
+    }
+    return c.json({ applied, skipped });
+  });
+
+  // --- POST /enrich-photos ------------------------------------------------
+  // Resolve each filer's name -> bioguide (congress-legislators) and store the
+  // public headshot URL. Safe to re-run; unmatched filers stay null (the UI
+  // falls back to initials).
+  r.post('/enrich-photos', async (c) => {
+    try {
+      const map = await buildBioguideMap();
+      const filers = await all<{ bioguide_id: string; full_name: string | null }>(
+        c.env.DB,
+        'SELECT bioguide_id, full_name FROM filers',
+      );
+      const updates: D1PreparedStatement[] = [];
+      let matched = 0;
+      for (const f of filers) {
+        const bio = map.get(normName(f.full_name));
+        if (!bio) continue;
+        matched++;
+        updates.push(
+          c.env.DB
+            .prepare('UPDATE filers SET photo_url = ? WHERE bioguide_id = ?')
+            .bind(photoUrlFor(bio), f.bioguide_id),
+        );
+      }
+      for (let i = 0; i < updates.length; i += 50) {
+        await c.env.DB.batch(updates.slice(i, i + 50));
+      }
+      return c.json({ filers: filers.length, matched, unmatched: filers.length - matched });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
     }
   });
 
