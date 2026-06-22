@@ -4,7 +4,16 @@
  *
  * Server-Sent Events streaming for 'sse' subscriptions. Holds an open Response
  * stream and pushes new transactions (filtered per subscription) as they are
- * persisted, resuming from a client-supplied cursor (?since=).
+ * persisted, resuming from a client-supplied cursor (?since= or the standard
+ * EventSource Last-Event-ID header; see resolveResumeCursor in rest.ts).
+ *
+ * BACKLOG / GAP-FREE RESUME:
+ *   The catch-up replay reads straight from the `transactions` table (which is
+ *   the durable system of record), so the available backlog is the full feed
+ *   history — not a bounded in-memory window. A client that reconnects with the
+ *   last cursor it saw (via Last-Event-ID) gets every row it missed, in order,
+ *   before the live tail attaches. Each emitted trade carries `id:<cursorSeq>`,
+ *   so EventSource tracks the resume point automatically across reconnects.
  *
  * APPROACH (Workers-friendly poll loop):
  *   We back the Response with a ReadableStream. On open we replay the catch-up
