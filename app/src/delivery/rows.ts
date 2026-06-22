@@ -58,6 +58,14 @@ export interface FeedTransactionRow extends TransactionRow {
   filer_photo_url: string | null;
   filing_filed_date: string | null;
   filing_first_seen_at: string | null;
+  // Cross-referenced asset reference data (securities_ref); null until enriched,
+  // optional so callers/tests that build a feed row needn't supply them.
+  ref_sector?: string | null;
+  ref_market_cap?: number | null;
+  ref_market_cap_bucket?: string | null;
+  ref_country?: string | null;
+  ref_exchange_short?: string | null;
+  ref_asset_class?: string | null;
 }
 
 export interface SubscriptionRow {
@@ -131,6 +139,12 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     photoUrl: row.filer_photo_url,
     filedDate: row.filing_filed_date,
     firstSeenAt: row.filing_first_seen_at,
+    refSector: row.ref_sector,
+    refMarketCap: row.ref_market_cap,
+    refMarketCapBucket: row.ref_market_cap_bucket,
+    refCountry: row.ref_country,
+    refExchangeShort: row.ref_exchange_short,
+    refAssetClass: row.ref_asset_class,
   };
 }
 
@@ -216,7 +230,14 @@ export const FREE_TX_LIMIT = 50;
 const TX_FROM_JOINS =
   'FROM transactions t ' +
   'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
-  'LEFT JOIN filings f ON f.doc_id = t.doc_id ';
+  'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
+  'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ';
+
+/** Cross-referenced asset fields (securities_ref) carried on each feed row. */
+const REF_SELECT =
+  'sr.sector AS ref_sector, sr.market_cap AS ref_market_cap, ' +
+  'sr.market_cap_bucket AS ref_market_cap_bucket, sr.country AS ref_country, ' +
+  'sr.exchange_short AS ref_exchange_short, sr.asset_class AS ref_asset_class, ';
 
 /** SQL expression resolving the chamber, preferring the filers table. */
 const CHAMBER_EXPR = 'COALESCE(fl.chamber, f.chamber)';
@@ -288,6 +309,7 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
     `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, ` +
     'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
     'fl.photo_url AS filer_photo_url, ' +
+    REF_SELECT +
     'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at ' +
     TX_FROM_JOINS +
     `WHERE ${where.join(' AND ')} ` +
@@ -335,6 +357,7 @@ export function buildTransactionsExportQuery(
     `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, ` +
     'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
     'fl.photo_url AS filer_photo_url, ' +
+    REF_SELECT +
     'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at ' +
     TX_FROM_JOINS +
     (where.length ? `WHERE ${where.join(' AND ')} ` : '') +

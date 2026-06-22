@@ -27,9 +27,11 @@ import { extractAndNormalize } from './extraction/orchestrator';
 import { dispatchWebhook } from './delivery/webhook';
 import { buildRestRouter } from './delivery/rest';
 import { buildAdminRouter } from './admin/routes';
+import { buildAnalyticsRouter } from './analytics/routes';
 import { buildAuthRouter } from './auth/routes';
 import { buildBillingRouter } from './billing/routes';
 import { buildUiRouter } from './ui/routes';
+import { maybeRunDailyJobs } from './jobs';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -54,6 +56,12 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
     root.route('/api/admin', buildAdminRouter());
   } catch (err) {
     console.warn('admin/routes router not mounted (stub):', (err as Error).message);
+  }
+  try {
+    // Read-only trend analytics over the transaction corpus.
+    root.route('/api/analytics', buildAnalyticsRouter());
+  } catch (err) {
+    console.warn('analytics/routes router not mounted (stub):', (err as Error).message);
   }
   // End-user auth (Google OAuth + magic-link) at /auth/*. Mounted before the UI
   // catch-all so its routes are not shadowed by the dashboard.
@@ -121,9 +129,11 @@ export default {
     return app.fetch(request, env, ctx);
   },
 
-  /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow. */
-  async scheduled(_event: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+  /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow.
+   *  Daily enrichment + price refresh self-gate via a KV date stamp. */
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     await runWatcher(env, new Date());
+    ctx.waitUntil(maybeRunDailyJobs(env));
   },
 
   /**
