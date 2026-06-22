@@ -130,12 +130,31 @@ describe('normalize', () => {
     expect(String(cap.reviewRows[0][1])).toContain('unresolved_ticker');
   });
 
-  it('routes to review on an invalid amount bracket regardless of confidence', async () => {
+  it('snaps a plausible non-canonical amount to the nearest bracket without penalty', async () => {
     const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
-    const result = await normalize(env, filing(), [tx({ amountMin: 1000, amountMax: 14000 })]);
+    // 1200–14000 isn't an exact STOCK Act bracket but is a sane range -> snap, no penalty.
+    const result = await normalize(env, filing(), [tx({ amountMin: 1200, amountMax: 14000 })]);
+    expect(result.needsReview).toBe(false);
+    expect(result.minConfidence).toBeGreaterThanOrEqual(CONFIDENCE_THRESHOLD);
+    expect(cap.insertedTx).toHaveLength(1);
+  });
+
+  it('routes to review when the amount is missing entirely', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    const result = await normalize(env, filing(), [tx({ amountMin: null, amountMax: null })]);
     expect(result.needsReview).toBe(true);
     expect(cap.reviewRows).toHaveLength(1);
-    expect(String(cap.reviewRows[0][1])).toContain('invalid_bracket');
+    expect(String(cap.reviewRows[0][1])).toContain('no_amount');
+  });
+
+  it('does not penalize a legitimately ticker-less asset (no ticker supplied)', async () => {
+    const { env, cap } = makeEnv([]); // empty securities_master
+    const result = await normalize(env, filing(), [
+      tx({ ticker: null, assetName: 'US Treasury Bond 2.5% 2030' }),
+    ]);
+    expect(result.needsReview).toBe(false);
+    expect(result.minConfidence).toBeGreaterThanOrEqual(CONFIDENCE_THRESHOLD);
+    expect(cap.insertedTx).toHaveLength(1);
   });
 
   it('flags a tx_date after the filing filed_date', async () => {

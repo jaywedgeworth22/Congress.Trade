@@ -419,7 +419,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         pollCount: row.poll_count,
         totalNew: row.total_new,
         avgIntervalSec: await observedAvgInterval(c.env, row.source),
-        avgReleaseToDbSec: await observedReleaseToDbLag(c.env, row.source),
+        avgReleasedToSeenSec: await observedReleasedToSeenLag(c.env, row.source),
+        avgSeenToImportedSec: await observedSeenToImportedLag(c.env, row.source),
       });
     }
     return c.json({ sources, count: sources.length });
@@ -619,12 +620,13 @@ async function observedAvgInterval(env: Env, source: string): Promise<number | n
 }
 
 /**
- * Average lag (seconds) between a filing's official release (filed_date) and
- * when our DB first recorded it (first_seen_at), per chamber. filed_date is
- * day-granular, so this is approximate; we average only non-negative diffs over
+ * Average "Released → Seen" lag (seconds): from a filing's official release
+ * (filed_date) to when our watcher first recorded it (first_seen_at), per
+ * chamber. filed_date is day-granular (the disclosure systems publish no exact
+ * release time), so this is APPROXIMATE; we average only non-negative diffs over
  * recent filings. Returns null when there isn't enough dated data.
  */
-async function observedReleaseToDbLag(env: Env, source: string): Promise<number | null> {
+async function observedReleasedToSeenLag(env: Env, source: string): Promise<number | null> {
   const row = await get<{ avg_sec: number | null }>(
     env.DB,
     `SELECT AVG((julianday(first_seen_at) - julianday(filed_date)) * 86400.0) AS avg_sec
@@ -638,6 +640,28 @@ async function observedReleaseToDbLag(env: Env, source: string): Promise<number 
           ORDER BY first_seen_at DESC
           LIMIT 200
        )`,
+    [source],
+  );
+  return row && row.avg_sec != null ? Math.round(row.avg_sec) : null;
+}
+
+/**
+ * Average "Seen → Imported" lag (seconds): from when our watcher first saw a
+ * filing (filings.first_seen_at) to when we wrote its parsed rows
+ * (transactions.created_at), per chamber. Both are our own timestamps, so this
+ * is PRECISE. Only live-pipeline rows (source='primary') are meaningful.
+ */
+async function observedSeenToImportedLag(env: Env, source: string): Promise<number | null> {
+  const row = await get<{ avg_sec: number | null }>(
+    env.DB,
+    `SELECT AVG((julianday(t.created_at) - julianday(f.first_seen_at)) * 86400.0) AS avg_sec
+       FROM transactions t
+       JOIN filings f ON f.doc_id = t.doc_id
+      WHERE f.chamber = ?
+        AND t.source = 'primary'
+        AND f.first_seen_at IS NOT NULL
+        AND t.created_at IS NOT NULL
+        AND julianday(t.created_at) >= julianday(f.first_seen_at)`,
     [source],
   );
   return row && row.avg_sec != null ? Math.round(row.avg_sec) : null;

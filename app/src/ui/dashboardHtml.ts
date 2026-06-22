@@ -253,6 +253,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <th class="sortable" data-sort="owner">Owner<span class="arr"></span></th>
         <th class="sortable" data-sort="conf">Conf.<span class="arr"></span></th>
         <th class="sortable" data-sort="source">Source<span class="arr"></span></th>
+        <th data-sort="latency" title="Released→Seen (approx, disclosure date → our watcher) · Seen→Imported (precise, our watcher → parsed rows). Live rows only.">Latency</th>
       </tr></thead>
       <tbody id="feedBody"></tbody>
     </table>
@@ -366,7 +367,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <h3>Source health</h3>
       <p class="sub">First-seen timestamps are logged per filing so real refresh cadence is measured, not assumed.</p>
       <table>
-        <thead><tr><th>Source</th><th>Last poll</th><th>Last new filing</th><th>Polls</th><th>Avg refresh (observed)</th><th>Avg release→DB</th></tr></thead>
+        <thead><tr><th>Source</th><th>Last poll</th><th>Last new filing</th><th>Polls</th><th>Avg refresh (observed)</th><th title="Official disclosure date → when our watcher first saw it. Approximate: the disclosure systems publish a date, not an exact release time.">Released→Seen ≈</th><th title="When we first saw the filing → when we wrote its parsed rows. Precise (both are our timestamps).">Seen→Imported</th></tr></thead>
         <tbody id="healthBody"></tbody>
       </table>
     </div>
@@ -502,7 +503,7 @@ function renderFeed() {
   var minAmt = parseFloat(el('qMinAmt').value);
   var src = el('qSource').value;
   var body = el('feedBody');
-  if (!realDataLoaded) { body.innerHTML = stateRow(9, 'Loading live feed…'); return; }
+  if (!realDataLoaded) { body.innerHTML = stateRow(10, 'Loading live feed…'); return; }
   var rows = TRADES.filter(function (r) {
     if (qa) {
       var hay = ((r.member || '') + ' ' + (r.asset || '') + ' ' + (r.ticker || '') + ' ' +
@@ -517,7 +518,7 @@ function renderFeed() {
            (!ch || r.chamber === ch);
   });
   rows = sortRows(rows);
-  if (rows.length === 0) { body.innerHTML = stateRow(9, 'No transactions match these filters.'); maybeInitResize(); return; }
+  if (rows.length === 0) { body.innerHTML = stateRow(10, 'No transactions match these filters.'); maybeInitResize(); return; }
   body.innerHTML = rows.map(function (r) {
     return '<tr class="row">' +
       '<td class="muted">' + esc(r.filed) + '</td>' +
@@ -532,6 +533,7 @@ function renderFeed() {
       '<td class="muted">' + esc(r.owner || '—') + '</td>' +
       '<td><span class="conf ' + confClass(r.conf) + '">' + (r.conf * 100).toFixed(0) + '%</span></td>' +
       '<td class="muted">' + esc(r.source) + '</td>' +
+      '<td class="latency">' + rowLatencyHtml(r) + '</td>' +
     '</tr>';
   }).join('');
   maybeInitResize();
@@ -636,8 +638,28 @@ function txToRow(tx) {
     owner: tx.owner || '',
     conf: typeof tx.confidence === 'number' ? tx.confidence : 1,
     source: tx.source || 'primary',
+    filedDate: tx.filedDate || '',
+    firstSeenAt: tx.firstSeenAt || '',
+    imported: tx.createdAt || '',
     cursorSeq: tx.cursorSeq || 0
   };
+}
+
+/* Per-row ingestion latency: "Released→Seen (approx) · Seen→Imported (precise)".
+   Only meaningful for live-pipeline (primary) rows. */
+function diffSec(aIso, bIso) {
+  var a = Date.parse(aIso), b = Date.parse(bIso);
+  if (!isFinite(a) || !isFinite(b)) return null;
+  return (a - b) / 1000;
+}
+function rowLatencyHtml(r) {
+  if (r.source !== 'primary') return '<span class="muted">—</span>';
+  var rts = null, sti = null, d;
+  if (r.filedDate && r.firstSeenAt) { d = diffSec(r.firstSeenAt, r.filedDate); if (d != null && d >= 0) rts = d; }
+  if (r.firstSeenAt && r.imported) { d = diffSec(r.imported, r.firstSeenAt); if (d != null && d >= 0) sti = d; }
+  var a = rts == null ? '—' : '≈' + fmtDuration(rts);
+  var b = sti == null ? '—' : fmtDuration(sti);
+  return '<span class="muted" title="Released→Seen (approx) · Seen→Imported (precise)">' + esc(a + ' · ' + b) + '</span>';
 }
 
 function loadFeed() {
@@ -705,6 +727,8 @@ var REASON_LABELS = {
   no_transactions_extracted: 'No transactions could be read from the document',
   unresolved_ticker: 'Ticker symbol could not be matched to a known company',
   invalid_bracket: 'Dollar amount didn’t match a standard disclosure range',
+  no_amount: 'No dollar amount could be read',
+  invalid_amount: 'Dollar amount looked malformed (couldn’t be read as a range)',
   future_tx_date: 'Trade date is after the filing date',
   bad_tx_type: 'Transaction type was unclear (not buy / sell / exchange)'
 };
@@ -975,21 +999,23 @@ function loadHealth() {
     .then(function (data) {
       var sources = data.sources || [];
       var body = el('healthBody');
-      if (sources.length === 0) { body.innerHTML = stateRow(6, 'No poll activity logged yet.'); return; }
+      if (sources.length === 0) { body.innerHTML = stateRow(7, 'No poll activity logged yet.'); return; }
       body.innerHTML = sources.map(function (s) {
         var avg = s.avgIntervalSec == null ? '—' : '~' + fmtDuration(s.avgIntervalSec);
-        var lag = s.avgReleaseToDbSec == null ? '—' : '~' + fmtDuration(s.avgReleaseToDbSec);
+        var rts = s.avgReleasedToSeenSec == null ? '—' : '~' + fmtDuration(s.avgReleasedToSeenSec);
+        var sti = s.avgSeenToImportedSec == null ? '—' : fmtDuration(s.avgSeenToImportedSec);
         return '<tr class="row">' +
           '<td>' + esc(s.source) + '</td>' +
           '<td class="muted">' + esc((s.lastPolledAt || '').replace('T', ' ').slice(0, 19) || '—') + '</td>' +
           '<td class="muted">' + esc((s.lastNewFilingAt || '').replace('T', ' ').slice(0, 19) || '—') + '</td>' +
           '<td class="muted">' + esc(s.pollCount != null ? s.pollCount : '—') + '</td>' +
           '<td class="latency">' + esc(avg) + '</td>' +
-          '<td class="latency">' + esc(lag) + '</td>' +
+          '<td class="latency">' + esc(rts) + '</td>' +
+          '<td class="latency">' + esc(sti) + '</td>' +
         '</tr>';
       }).join('');
     })
-    .catch(function (e) { el('healthBody').innerHTML = stateRow(6, 'Could not load source health: ' + e.message); });
+    .catch(function (e) { el('healthBody').innerHTML = stateRow(7, 'Could not load source health: ' + e.message); });
 }
 
 /* ============================ TABS + BOOT ============================ */
@@ -1015,10 +1041,10 @@ updateSortIndicators();
 applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
 
 // Initial loading states + boot.
-el('feedBody').innerHTML = stateRow(9, 'Loading live feed…');
+el('feedBody').innerHTML = stateRow(10, 'Loading live feed…');
 el('reviewBody').innerHTML = stateRow(5, 'Loading…');
 el('subsBody').innerHTML = stateRow(5, 'Loading…');
-el('healthBody').innerHTML = stateRow(6, 'Loading…');
+el('healthBody').innerHTML = stateRow(7, 'Loading…');
 
 loadFeed().then(function () { startStream(); });
 loadReview();      // for the tab badge / KPI

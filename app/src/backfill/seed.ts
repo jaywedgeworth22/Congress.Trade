@@ -51,6 +51,13 @@ import { sanitizeAssetName } from '../shared/text';
  *   remains as a hook for operators who host their own House aggregate.
  *   UNCERTAIN — set SEED_HOUSE_URL or use the House backfill instead.
  */
+/**
+ * Confidence assigned to seed (pre-aggregated, third-party) rows. Not 1.0:
+ * these are imported, not independently verified, so this keeps them on a
+ * comparable footing with live-parsed `primary` rows.
+ */
+export const SEED_CONFIDENCE = 0.8;
+
 export const SEED_SOURCES: Record<Chamber, { url: string; certain: boolean }> = {
   senate: {
     url: 'https://raw.githubusercontent.com/timothycarambat/senate-stock-watcher-data/master/aggregate/all_transactions.json',
@@ -298,7 +305,10 @@ export function mapRecordToTransaction(
       type: rec.type ?? null,
       amount: rec.amount ?? null,
     }),
-    confidence: 1,
+    // Seed rows are pre-aggregated third-party data we did NOT independently
+    // parse/verify, so they carry a high-but-not-perfect confidence rather than
+    // a flat 1.0 — keeps them comparable to live-parsed (primary) rows.
+    confidence: SEED_CONFIDENCE,
     source,
     createdAt: nowIso,
     cursorSeq: 0,

@@ -56,6 +56,8 @@ export interface FeedTransactionRow extends TransactionRow {
   filer_full_name: string | null;
   filer_state: string | null;
   filer_photo_url: string | null;
+  filing_filed_date: string | null;
+  filing_first_seen_at: string | null;
 }
 
 export interface SubscriptionRow {
@@ -127,6 +129,8 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     fullName: row.filer_full_name,
     state: row.filer_state,
     photoUrl: row.filer_photo_url,
+    filedDate: row.filing_filed_date,
+    firstSeenAt: row.filing_first_seen_at,
   };
 }
 
@@ -228,7 +232,9 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
 
   const sql =
     'SELECT t.*, fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
-    'fl.photo_url AS filer_photo_url FROM transactions t ' +
+    'fl.photo_url AS filer_photo_url, ' +
+    'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at ' +
+    'FROM transactions t ' +
     'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
     'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
     `WHERE ${where.join(' AND ')} ` +

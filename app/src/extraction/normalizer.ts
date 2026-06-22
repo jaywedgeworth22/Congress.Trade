@@ -20,7 +20,7 @@
 
 import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../shared/types';
 import { all, run, fromBool, parseJson } from '../shared/db';
-import { isValidBracket, matchBracket } from '../shared/brackets';
+import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets';
 import { uuid } from '../shared/ids';
 
 /**
@@ -149,29 +149,48 @@ function buildTransaction(
   let confidence = clamp01(p.confidence);
 
   // --- ticker resolution: exact symbol, then alias/name lookup --------------
+  // Only PENALIZE when a ticker string was supplied but couldn't be resolved
+  // (a likely mis-parse). Many disclosures legitimately have no ticker — bonds,
+  // real estate, private funds — and that should NOT lower confidence.
+  const hadTickerInput = !!(p.ticker && p.ticker.trim());
   const resolved = resolve(p.ticker, p.assetName);
   let ticker = p.ticker;
   if (resolved) {
     ticker = resolved;
-  } else {
-    // Unresolved: keep the raw ticker (may be null), flag + down-weight.
+  } else if (hadTickerInput) {
     flags.push('unresolved_ticker');
     confidence *= PENALTY_UNRESOLVED_TICKER;
+  } else {
+    // Legitimately ticker-less asset — no ticker to resolve, no penalty.
+    ticker = null;
   }
 
-  // --- amount bracket validation -------------------------------------------
+  // --- amount validation ----------------------------------------------------
+  // Penalize only TRULY unusable amounts (missing, or a nonsensical range).
+  // A plausible range that isn't an exact canonical bracket is snapped to the
+  // nearest STOCK Act bracket WITHOUT penalty — common for House free-form amounts.
   let amountMin = p.amountMin;
   let amountMax = p.amountMax;
-  if (amountMin === null || !isValidBracket(amountMin, amountMax)) {
-    flags.push('invalid_bracket');
+  if (amountMin === null || amountMin === undefined) {
+    flags.push('no_amount');
     confidence *= PENALTY_INVALID_BRACKET;
-  } else {
-    // Snap to the canonical bounds (defensive; should already match).
+  } else if (isValidBracket(amountMin, amountMax)) {
     const b = matchBracket(amountMin, amountMax);
     if (b) {
       amountMin = b.min;
       amountMax = b.max;
     }
+  } else if (amountMin >= 0 && (amountMax === null || amountMax >= amountMin)) {
+    // Plausible but non-canonical range -> snap to nearest bracket, no penalty.
+    const b = nearestBracket(amountMin, amountMax);
+    if (b) {
+      amountMin = b.min;
+      amountMax = b.max;
+    }
+  } else {
+    // Negative / inverted range -> genuinely bad parse.
+    flags.push('invalid_amount');
+    confidence *= PENALTY_INVALID_BRACKET;
   }
 
   // --- tx_type must be one of P / S / E ------------------------------------
