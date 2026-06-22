@@ -38,6 +38,14 @@ import { normalize, recomputeTransactions, CONFIDENCE_THRESHOLD } from '../extra
 import type { Chamber } from '../shared/types';
 import { verifyAccessJwt, certsUrl, parseEmailAllowlist } from './access';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
+import {
+  DEFAULT_CANDIDATES,
+  runCandidateOnDoc,
+  summarizeModels,
+  type BakeoffCandidate,
+  type CandidateDocResult,
+  type Provider,
+} from '../extraction/bakeoff';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -663,6 +671,102 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
 
     return c.json({ ok: summary.errors.length === 0, ...summary });
+  });
+
+  // --- POST /bakeoff ------------------------------------------------------
+  // Run N House PTR PDFs through several vision models (Gemini/OpenAI/Anthropic)
+  // and report row recall, failures, latency, and cross-model agreement so we
+  // can pick the best extractor before reprocessing the whole corpus. Read-only:
+  // it never writes transactions. Body: { n?, models?: [{provider,model}], docIds? }.
+  r.post('/bakeoff', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+
+    // Candidate lineup (default provider-neutral set, overridable).
+    let candidates: BakeoffCandidate[] = DEFAULT_CANDIDATES;
+    if (Array.isArray(body.models)) {
+      const valid: Provider[] = ['gemini', 'openai', 'anthropic'];
+      const parsed: BakeoffCandidate[] = [];
+      for (const m of body.models) {
+        const o = m as { provider?: unknown; model?: unknown };
+        if (!valid.includes(o.provider as Provider) || typeof o.model !== 'string') {
+          return c.json({ error: 'each model must be {provider:gemini|openai|anthropic, model:string}' }, 400);
+        }
+        parsed.push({ provider: o.provider as Provider, model: o.model });
+      }
+      if (parsed.length === 0) return c.json({ error: 'models must be a non-empty array' }, 400);
+      candidates = parsed;
+    }
+
+    let n = typeof body.n === 'number' && body.n > 0 ? Math.floor(body.n) : 20;
+    if (n > 50) n = 50; // cap fan-out (n docs * candidates LLM calls)
+
+    // Pick the documents: explicit docIds, else the most recent House PTRs with a raw PDF.
+    let docs: Array<{ doc_id: string; raw_object_key: string | null }>;
+    if (Array.isArray(body.docIds) && body.docIds.length > 0) {
+      const ids = body.docIds.filter((x): x is string => typeof x === 'string').slice(0, n);
+      docs = [];
+      for (const id of ids) {
+        const row = await get<{ doc_id: string; raw_object_key: string | null }>(
+          c.env.DB,
+          'SELECT doc_id, raw_object_key FROM filings WHERE doc_id = ?',
+          [id],
+        );
+        if (row) docs.push(row);
+      }
+    } else {
+      docs = await all<{ doc_id: string; raw_object_key: string | null }>(
+        c.env.DB,
+        `SELECT doc_id, raw_object_key FROM filings
+          WHERE chamber = 'house' AND raw_object_key IS NOT NULL
+          ORDER BY first_seen_at DESC
+          LIMIT ?`,
+        [n],
+      );
+    }
+
+    if (docs.length === 0) {
+      return c.json({ error: 'no House filings with a stored PDF were found to test' }, 404);
+    }
+
+    const results: CandidateDocResult[] = [];
+    const skipped: string[] = [];
+    for (const { doc_id, raw_object_key } of docs) {
+      if (!raw_object_key) {
+        skipped.push(`${doc_id}: no raw_object_key`);
+        continue;
+      }
+      const obj = await c.env.RAW_FILES.get(raw_object_key);
+      if (!obj) {
+        skipped.push(`${doc_id}: R2 object ${raw_object_key} missing`);
+        continue;
+      }
+      const bytes = await obj.arrayBuffer();
+      // Sequential per doc keeps memory + provider rate-limits sane.
+      for (const candidate of candidates) {
+        results.push(await runCandidateOnDoc(c.env, candidate, doc_id, bytes));
+      }
+    }
+
+    // Per-document row-count matrix (model label -> rowCount | "ERR").
+    const perDoc: Record<string, Record<string, number | string>> = {};
+    for (const r of results) {
+      const lbl = `${r.provider}:${r.model}`;
+      (perDoc[r.docId] ??= {})[lbl] = r.ok ? r.rowCount : 'ERR';
+    }
+
+    return c.json({
+      ok: true,
+      docsTested: docs.length - skipped.length,
+      skipped,
+      models: summarizeModels(candidates, results),
+      perDoc,
+    });
   });
 
   // --- POST /migrate ------------------------------------------------------
