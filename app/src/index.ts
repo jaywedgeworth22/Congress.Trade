@@ -31,6 +31,7 @@ import { buildAnalyticsRouter } from './analytics/routes';
 import { buildAuthRouter } from './auth/routes';
 import { buildBillingRouter } from './billing/routes';
 import { buildUiRouter } from './ui/routes';
+import { maybeRunDailyJobs } from './jobs';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -128,9 +129,11 @@ export default {
     return app.fetch(request, env, ctx);
   },
 
-  /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow. */
-  async scheduled(_event: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+  /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow.
+   *  Daily enrichment + price refresh self-gate via a KV date stamp. */
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     await runWatcher(env, new Date());
+    ctx.waitUntil(maybeRunDailyJobs(env));
   },
 
   /**

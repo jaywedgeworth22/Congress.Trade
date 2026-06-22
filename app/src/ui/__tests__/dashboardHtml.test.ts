@@ -68,6 +68,13 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('tickerModal');
   });
 
+  it('wires the per-trade performance line (price vs S&P)', () => {
+    expect(DASHBOARD_HTML).toContain('function perfLineHtml(');
+    expect(DASHBOARD_HTML).toContain("aGet('performance/");
+    expect(DASHBOARD_HTML).toContain('id="tradePerf"');
+    expect(DASHBOARD_HTML).toContain('function companySectionHtml(');
+  });
+
   it('keeps the educational + dollar-estimate disclaimers in the Trends view', () => {
     expect(DASHBOARD_HTML).toContain('estimates');
     expect(DASHBOARD_HTML.toLowerCase()).toContain('bracket');

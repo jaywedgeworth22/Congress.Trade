@@ -1744,6 +1744,21 @@ function openDrawer(html) { el('detailDrawerBody').innerHTML = html; el('detailD
 function closeDrawer() { el('detailDrawer').classList.remove('open'); }
 var PERF_GATE = '<div class="tier-gate-note">📈 Price &amp; performance vs the S&amp;P 500 will appear here once a market-data API key is configured.</div>';
 var PROFILE_GATE = '<div class="tier-gate-note">🏢 Company details (sector, market cap, country, exchange) will appear here once a market-data API key is configured.</div>';
+var OPTION_PERF_NOTE = '<div class="tier-gate-note">Performance isn\\'t shown for options — the return depends on strike, expiry, and exercise, which the filing doesn\\'t disclose.</div>';
+/* Render the performance line from /api/analytics/performance. Frames a sale as
+   "since sold" (a price observation, not profit/loss). */
+function perfPct(x) { return x == null ? '—' : (x > 0 ? '▲ ' : x < 0 ? '▼ ' : '') + (x * 100).toFixed(1) + '%'; }
+function perfLineHtml(d, txType) {
+  if (!d || !d.available) return (d && d.isOption) ? OPTION_PERF_NOTE : PERF_GATE;
+  var verb = txType === 'S' ? 'since sold' : 'since traded';
+  var cls = d.assetReturn > 0 ? 'pos' : d.assetReturn < 0 ? 'neg' : '';
+  var excess = d.excessReturn == null ? '—' : (d.excessReturn > 0 ? '+' : '') + (d.excessReturn * 100).toFixed(1) + '% vs S&amp;P';
+  var prices = (d.priceAtTrade != null && d.currentPrice != null)
+    ? '<div class="chip muted">$' + Number(d.priceAtTrade).toFixed(2) + ' → $' + Number(d.currentPrice).toFixed(2) + (d.currentPriceDate ? ' (' + esc(d.currentPriceDate) + ')' : '') + '</div>'
+    : '';
+  return '<div class="perf-line net ' + cls + '">' + perfPct(d.assetReturn) + ' ' + verb + '</div>' +
+    '<div class="chip">S&amp;P 500 ' + perfPct(d.spxReturn) + ' · ' + excess + '</div>' + prices;
+}
 function kvRow(k, v) { return '<dt>' + esc(k) + '</dt><dd>' + v + '</dd>'; }
 function actionBadge(type) { return '<span class="tag ' + esc(type) + '">' + esc(typeName[type] || type) + '</span>'; }
 function amountText(min, max) {
@@ -1880,7 +1895,8 @@ function openTrade(row) {
       kvRow('Imported', esc((row.imported || '').replace('T', ' ').slice(0, 16) || '—')) +
       kvRow('Source', esc(sourceLabel(row.source))) +
       '</dl><div id="tradeSource"></div></div>';
-  var perf = '<div class="drawer-section"><h3>Performance since ' + (row.type === 'S' ? 'sale' : 'trade') + '</h3>' + PERF_GATE + '</div>';
+  var perfInit = row.isOption ? OPTION_PERF_NOTE : PERF_GATE;
+  var perf = '<div class="drawer-section"><h3>Performance since ' + (row.type === 'S' ? 'sale' : 'trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>';
   var rowRef = { sector: row.refSector, marketCap: row.refMarketCap, marketCapBucket: row.refMarketCapBucket, country: row.refCountry, exchangeShort: row.refExchangeShort, assetClass: row.refAssetClass };
   var profile = row.ticker ? '<div class="drawer-section"><h3>Company</h3>' + companySectionHtml(rowRef) + '</div>' : '';
   var notes = row.rawText ? '<div class="drawer-section"><h3>Filing notes</h3><pre class="raw-notes">' + esc(row.rawText) + '</pre></div>' : '';
@@ -1889,6 +1905,12 @@ function openTrade(row) {
     (row.filerId ? '<a class="drawer-all-link clickable" data-member="' + esc(row.filerId) + '">View all trades by ' + esc(row.member) + ' →</a>' : '') +
     '</div>';
   openDrawer(head + summary + perf + profile + notes + links);
+  // Lazy-load the performance line (FMP-gated; "—"/note when unavailable).
+  if (row.id && !row.isOption) {
+    aGet('performance/' + encodeURIComponent(row.id)).then(function (d) {
+      var pEl = el('tradePerf'); if (pEl) pEl.innerHTML = perfLineHtml(d, row.type);
+    }).catch(function () {});
+  }
   // Lazy-load the source-filing link (live rows have one; seed rows usually don't).
   if (row.docId) {
     fetch('/api/filings/' + encodeURIComponent(row.docId))

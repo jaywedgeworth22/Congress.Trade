@@ -43,6 +43,14 @@ async function setDailyUsed(env: Env, n: number): Promise<void> {
   }
 }
 
+/** Add `n` to today's FMP call counter (shared by enrichment + price refresh). */
+export async function addDailyUsed(env: Env, n: number): Promise<number> {
+  const used = await getDailyUsed(env);
+  const next = used + Math.max(0, Math.floor(n));
+  await setDailyUsed(env, next);
+  return next;
+}
+
 /** Distinct tickers that still need enrichment, newest-traded first. */
 export async function selectTickersToEnrich(env: Env, limit: number): Promise<string[]> {
   if (limit <= 0) return [];

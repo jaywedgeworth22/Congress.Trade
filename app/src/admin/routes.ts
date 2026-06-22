@@ -47,6 +47,7 @@ import {
   type Provider,
 } from '../extraction/bakeoff';
 import { runEnrichment, getDailyUsed } from '../enrichment/service';
+import { runPriceRefresh } from '../prices/service';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -812,6 +813,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'CREATE INDEX IF NOT EXISTS idx_secref_sector ON securities_ref (sector)',
       'CREATE INDEX IF NOT EXISTS idx_secref_bucket ON securities_ref (market_cap_bucket)',
       'CREATE INDEX IF NOT EXISTS idx_secref_enriched ON securities_ref (enriched_at)',
+      // 0006_prices.sql — price history + per-trade performance vs S&P 500.
+      `CREATE TABLE IF NOT EXISTS price_eod (
+         ticker TEXT NOT NULL, date TEXT NOT NULL, close REAL NOT NULL,
+         PRIMARY KEY (ticker, date)
+       )`,
+      'CREATE INDEX IF NOT EXISTS idx_price_eod_ticker_date ON price_eod (ticker, date DESC)',
+      'CREATE TABLE IF NOT EXISTS spx_eod (date TEXT PRIMARY KEY, close REAL NOT NULL)',
+      `CREATE TABLE IF NOT EXISTS tx_performance (
+         tx_id TEXT PRIMARY KEY, price_at_trade REAL, spx_at_trade REAL, computed_at TEXT
+       )`,
+      'ALTER TABLE securities_ref ADD COLUMN current_price REAL',
+      'ALTER TABLE securities_ref ADD COLUMN current_price_date TEXT',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -879,6 +892,29 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       enrichedTickers: enriched?.n ?? 0,
       hasFmpKey: !!(c.env as Env & { FMP_API_KEY?: string }).FMP_API_KEY,
     });
+  });
+
+  // --- POST /refresh-prices -----------------------------------------------
+  // Budgeted price + performance refresh (FMP-only): updates the S&P series and,
+  // for tickers needing it, caches daily closes + computes per-trade anchors.
+  // Shares the daily FMP budget with enrichment. Body: { max?, dryRun? }.
+  r.post('/refresh-prices', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const opts: { max?: number; dryRun?: boolean } = {};
+    if (typeof body.max === 'number' && body.max > 0) opts.max = Math.floor(body.max);
+    if (body.dryRun === true) opts.dryRun = true;
+    try {
+      const result = await runPriceRefresh(c.env, opts);
+      return c.json({ ok: result.errors.length === 0, ...result });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
   });
 
   // --- POST /enrich-photos ------------------------------------------------

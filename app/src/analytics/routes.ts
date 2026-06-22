@@ -62,6 +62,8 @@ import {
   topPerGroup,
   type LagRow,
 } from './compute';
+import { computePerformance } from '../prices/compute';
+import { latestSpxClose } from '../prices/service';
 
 // ---------------------------------------------------------------------------
 // Small coercion + envelope helpers
@@ -532,6 +534,44 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       });
     });
     return c.json(data);
+  });
+
+  // --- GET /performance/:txId --------------------------------------------
+  // Per-trade performance: % since the trade date, the S&P 500 over the same
+  // window, and the excess return. Reads cached price anchors; returns
+  // { available:false } for options, missing price data, or no FMP key.
+  r.get('/performance/:txId', async (c) => {
+    const txId = c.req.param('txId') || '';
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(txId)) return c.json({ error: 'invalid id' }, 400);
+    const row = await get<Record<string, unknown>>(
+      c.env.DB,
+      `SELECT t.tx_type, t.is_option, txp.price_at_trade, txp.spx_at_trade,
+              sr.current_price, sr.current_price_date
+         FROM transactions t
+         LEFT JOIN tx_performance txp ON txp.tx_id = t.id
+         LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+        WHERE t.id = ?`,
+      [txId],
+    );
+    if (!row) return c.json({ available: false });
+    const isOption = num(row.is_option) === 1;
+    const priceAtTrade = row.price_at_trade == null ? null : num(row.price_at_trade);
+    const currentPrice = row.current_price == null ? null : num(row.current_price);
+    const spxAtTrade = row.spx_at_trade == null ? null : num(row.spx_at_trade);
+    if (isOption || priceAtTrade == null || currentPrice == null) {
+      return c.json({ available: false, isOption });
+    }
+    const currentSpx = await latestSpxClose(c.env);
+    const perf = computePerformance(priceAtTrade, currentPrice, spxAtTrade, currentSpx);
+    return c.json({
+      available: true,
+      txType: str(row.tx_type),
+      priceAtTrade,
+      currentPrice,
+      currentPriceDate: str(row.current_price_date),
+      ...perf,
+      estimatedAmounts: true,
+    });
   });
 
   // --- GET /member/:filerId (politician deep dive) -----------------------
