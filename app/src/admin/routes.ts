@@ -46,7 +46,9 @@ import {
   type CandidateDocResult,
   type Provider,
 } from '../extraction/bakeoff';
-import { runEnrichment, getDailyUsed } from '../enrichment/service';
+import { runEnrichment, getDailyUsed, upsertSecurityRef } from '../enrichment/service';
+import { mergeRefs } from '../enrichment/compute';
+import type { SecurityRef } from '../enrichment/types';
 import { runPriceRefresh } from '../prices/service';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
@@ -915,6 +917,119 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }
+  });
+
+  // --- POST /securities/import --------------------------------------------
+  // Share FMP data fetched by ANOTHER app (e.g. a local Next.js app) into this
+  // Worker's cache, so a fetch by either app serves both — no duplicate FMP
+  // calls here. Body (all optional):
+  //   { refs?: [{ ticker, sector?, marketCap?, country?, exchangeShort?, ... }],
+  //     spx?: [{ date, close }],
+  //     prices?: [{ ticker, closes?: [{date,close}], currentPrice?, currentPriceDate? }] }
+  // Upserts securities_ref / spx_eod / price_eod and recomputes per-trade
+  // performance anchors for imported tickers. Idempotent.
+  r.post('/securities/import', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const summary = { refs: 0, spxRows: 0, pricedTickers: 0, priceRows: 0, perfTickers: 0, errors: [] as string[] };
+    const nowIso = new Date().toISOString();
+    const REF_KEYS = [
+      'companyName', 'sector', 'industry', 'assetClass', 'isEtf', 'isAdr', 'country',
+      'stateHq', 'stateOfIncorp', 'exchange', 'exchangeShort', 'currency', 'marketCap',
+      'ipoDate', 'cik', 'sicCode', 'sicDescription',
+    ] as const;
+
+    // 1) Company reference rows.
+    if (Array.isArray(body.refs)) {
+      for (const raw of (body.refs as unknown[]).slice(0, 5000)) {
+        const o = raw as Record<string, unknown>;
+        const ticker = typeof o.ticker === 'string' ? o.ticker.toUpperCase() : null;
+        if (!ticker) continue;
+        const partial: Partial<SecurityRef> = { source: 'imported' };
+        for (const k of REF_KEYS) if (o[k] !== undefined) (partial as Record<string, unknown>)[k] = o[k];
+        try {
+          await upsertSecurityRef(c.env, mergeRefs(ticker, [partial]));
+          summary.refs++;
+        } catch (e) {
+          summary.errors.push(ticker + ' ref: ' + (e as Error).message);
+        }
+      }
+    }
+
+    // 2) S&P 500 closes.
+    if (Array.isArray(body.spx)) {
+      const rows = (body.spx as Array<{ date?: unknown; close?: unknown }>)
+        .filter((x) => typeof x.date === 'string' && typeof x.close === 'number')
+        .slice(0, 20000);
+      for (let i = 0; i < rows.length; i += 100) {
+        await c.env.DB.batch(
+          rows.slice(i, i + 100).map((x) =>
+            c.env.DB.prepare(
+              'INSERT INTO spx_eod (date, close) VALUES (?, ?) ON CONFLICT(date) DO UPDATE SET close=excluded.close',
+            ).bind((x.date as string).slice(0, 10), x.close as number),
+          ),
+        );
+      }
+      summary.spxRows += rows.length;
+    }
+
+    // 3) Per-ticker price history (+ current price), then recompute anchors.
+    if (Array.isArray(body.prices)) {
+      for (const raw of (body.prices as unknown[]).slice(0, 2000)) {
+        const o = raw as { ticker?: unknown; closes?: unknown; currentPrice?: unknown; currentPriceDate?: unknown };
+        const ticker = typeof o.ticker === 'string' ? o.ticker.toUpperCase() : null;
+        if (!ticker) continue;
+        const closes = Array.isArray(o.closes)
+          ? (o.closes as Array<{ date?: unknown; close?: unknown }>)
+              .filter((x) => typeof x.date === 'string' && typeof x.close === 'number')
+              .slice(0, 20000)
+          : [];
+        try {
+          for (let i = 0; i < closes.length; i += 100) {
+            await c.env.DB.batch(
+              closes.slice(i, i + 100).map((x) =>
+                c.env.DB.prepare(
+                  'INSERT INTO price_eod (ticker, date, close) VALUES (?, ?, ?) ON CONFLICT(ticker, date) DO UPDATE SET close=excluded.close',
+                ).bind(ticker, (x.date as string).slice(0, 10), x.close as number),
+              ),
+            );
+          }
+          summary.priceRows += closes.length;
+          if (typeof o.currentPrice === 'number') {
+            await run(
+              c.env.DB,
+              `INSERT INTO securities_ref (ticker, current_price, current_price_date) VALUES (?, ?, ?)
+               ON CONFLICT(ticker) DO UPDATE SET current_price=excluded.current_price, current_price_date=excluded.current_price_date`,
+              [ticker, o.currentPrice, typeof o.currentPriceDate === 'string' ? o.currentPriceDate : nowIso.slice(0, 10)],
+            );
+          }
+          // Recompute per-trade anchors for this ticker from the cached series.
+          await run(
+            c.env.DB,
+            `INSERT INTO tx_performance (tx_id, price_at_trade, spx_at_trade, computed_at)
+             SELECT t.id,
+               (SELECT close FROM price_eod p WHERE p.ticker = t.ticker AND p.date <= t.tx_date ORDER BY p.date DESC LIMIT 1),
+               (SELECT close FROM spx_eod s WHERE s.date <= t.tx_date ORDER BY s.date DESC LIMIT 1),
+               ?
+             FROM transactions t
+             WHERE t.ticker = ? AND t.tx_date IS NOT NULL AND t.tx_date <> ''
+             ON CONFLICT(tx_id) DO UPDATE SET price_at_trade=excluded.price_at_trade, spx_at_trade=excluded.spx_at_trade, computed_at=excluded.computed_at`,
+            [nowIso, ticker],
+          );
+          summary.pricedTickers++;
+          summary.perfTickers++;
+        } catch (e) {
+          summary.errors.push(ticker + ' price: ' + (e as Error).message);
+        }
+      }
+    }
+
+    return c.json({ ok: summary.errors.length === 0, ...summary });
   });
 
   // --- POST /enrich-photos ------------------------------------------------

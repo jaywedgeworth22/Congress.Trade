@@ -156,6 +156,11 @@ export async function runEnrichment(
   return result;
 }
 
+/** Upsert one fully-formed SecurityRef (used by the runner + the import API). */
+export async function upsertSecurityRef(env: Env, ref: SecurityRef): Promise<void> {
+  return upsertRef(env, ref);
+}
+
 async function upsertRef(env: Env, ref: SecurityRef): Promise<void> {
   await run(
     env.DB,
