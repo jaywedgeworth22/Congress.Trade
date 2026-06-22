@@ -11,13 +11,18 @@
  *   GET   /sources/health           -> ingest_log aggregates per source
  *   GET   /subscriptions            -> admin list of subscriptions
  *
- * AUTH (deny-by-default once provisioned):
- *   If env.ADMIN_TOKEN is set, EVERY admin request must present a matching
- *   `Authorization: Bearer <ADMIN_TOKEN>` — a missing or mismatched header is
- *   rejected with 401. If ADMIN_TOKEN is NOT set the surface stays open (local
- *   dev / unprovisioned deploys), and we emit a one-time console warning so an
- *   accidentally-unprotected production deploy is visible in logs. Provision the
- *   secret with `wrangler secret put ADMIN_TOKEN` to lock the surface down.
+ * AUTH (deny-by-default once provisioned). A request is authorized if EITHER:
+ *   1. Bearer token — env.ADMIN_TOKEN is set and the request carries a matching
+ *      `Authorization: Bearer <ADMIN_TOKEN>` (good for curl / cron / automation); OR
+ *   2. Cloudflare Access — an Access application fronts /api/admin/* and the
+ *      `Cf-Access-Jwt-Assertion` JWT verifies against the team keys with an
+ *      `aud` matching ACCESS_AUD and an authenticated email on ADMIN_EMAILS
+ *      (good for humans signing in with Google/SSO — no token to paste).
+ *
+ *   The surface stays OPEN only when NEITHER mechanism is configured (local dev
+ *   / unprovisioned deploys); a one-time console warning then flags the gap.
+ *   Provision `wrangler secret put ADMIN_TOKEN`, and/or set ADMIN_EMAILS +
+ *   ACCESS_AUD + ACCESS_TEAM_DOMAIN (with an Access app in front), to lock down.
  */
 
 import { Hono } from 'hono';
@@ -30,32 +35,64 @@ import { runSeedBackfillFromEnv } from '../backfill/seed';
 import { backfillHouseIndex } from '../ingestion/watcher';
 import { runHouseHistoricalBackfill } from '../backfill/houseCrawler';
 import type { Chamber } from '../shared/types';
+import { verifyAccessJwt, certsUrl, parseEmailAllowlist } from './access';
 
-// Optional secret; not declared on Env (frozen). Read defensively.
-type EnvWithAdmin = Env & { ADMIN_TOKEN?: string };
+// Optional secrets/vars; not declared on Env (frozen). Read defensively.
+type EnvWithAdmin = Env & {
+  /** Shared bearer token for automation. */
+  ADMIN_TOKEN?: string;
+  /** Comma/space-separated email allowlist for Cloudflare Access sign-in. */
+  ADMIN_EMAILS?: string;
+  /** Access team name ("myteam") or hostname ("myteam.cloudflareaccess.com"). */
+  ACCESS_TEAM_DOMAIN?: string;
+  /** Cloudflare Access application AUD tag. */
+  ACCESS_AUD?: string;
+};
 
 let warnedOpenAdmin = false;
 
 /**
- * Admin auth. Deny-by-default once a token is provisioned:
- *   - token configured  -> require an exact `Bearer <token>`; missing OR
- *                          mismatched header is rejected.
- *   - token absent       -> open (dev/unprovisioned), with a one-time warning.
+ * Admin auth — authorized if a valid bearer token OR an allowlisted, verified
+ * Cloudflare Access identity is presented. Open only when neither is configured.
  */
-function isAuthorized(env: EnvWithAdmin, authHeader: string | undefined): boolean {
+async function isAuthorized(
+  env: EnvWithAdmin,
+  headers: { authorization?: string; accessJwt?: string },
+): Promise<boolean> {
   const token = env.ADMIN_TOKEN;
-  if (!token) {
+  const allow = parseEmailAllowlist(env.ADMIN_EMAILS);
+  const aud = env.ACCESS_AUD;
+  const teamDomain = env.ACCESS_TEAM_DOMAIN;
+  const tokenConfigured = !!token;
+  const accessConfigured = !!(aud && teamDomain && allow.size > 0);
+
+  if (!tokenConfigured && !accessConfigured) {
     if (!warnedOpenAdmin) {
       warnedOpenAdmin = true;
       console.warn(
-        'admin: ADMIN_TOKEN is not set — the admin API is OPEN. ' +
-          'Run `wrangler secret put ADMIN_TOKEN` to require bearer auth.',
+        'admin: neither ADMIN_TOKEN nor Cloudflare Access (ADMIN_EMAILS + ' +
+          'ACCESS_AUD + ACCESS_TEAM_DOMAIN) is configured — the admin API is OPEN. ' +
+          'Run `wrangler secret put ADMIN_TOKEN` and/or set the Access vars to lock it down.',
       );
     }
-    return true; // no token configured -> open (dev)
+    return true; // nothing configured -> open (dev)
   }
-  if (!authHeader) return false; // token set, no header -> deny
-  return authHeader === `Bearer ${token}`;
+
+  // 1) Bearer token (automation / curl).
+  if (tokenConfigured && headers.authorization === `Bearer ${token}`) return true;
+
+  // 2) Cloudflare Access identity (humans). Verify signature + aud + allowlist.
+  if (accessConfigured && headers.accessJwt) {
+    const res = await verifyAccessJwt(headers.accessJwt, {
+      aud: aud as string,
+      allow,
+      jwksUrl: certsUrl(teamDomain as string),
+    });
+    if (res.ok) return true;
+    console.warn(`admin: Cloudflare Access JWT rejected — ${res.reason}`);
+  }
+
+  return false;
 }
 
 /** Validate a PollWindow[] schedule shape. Returns an error string or null. */
@@ -176,12 +213,14 @@ function photoUrlFor(bioguide: string): string {
 export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
-  // Auth gate (documented stub) applied to every admin route.
+  // Auth gate applied to every admin route: bearer token OR Cloudflare Access.
   r.use('*', async (c, next) => {
     const env = c.env as EnvWithAdmin;
-    if (!isAuthorized(env, c.req.header('Authorization'))) {
-      return c.json({ error: 'unauthorized' }, 401);
-    }
+    const ok = await isAuthorized(env, {
+      authorization: c.req.header('Authorization'),
+      accessJwt: c.req.header('Cf-Access-Jwt-Assertion'),
+    });
+    if (!ok) return c.json({ error: 'unauthorized' }, 401);
     await next();
   });
 
