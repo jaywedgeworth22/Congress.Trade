@@ -241,6 +241,10 @@ export interface Env {
   GEMINI_API_KEY?: string;
   /** Secondary arbitration extractor key. Presence enables arbitration. */
   ARBITRATION_API_KEY?: string;
+  /** Anthropic API key — Claude vision candidates in the extractor bake-off. */
+  ANTHROPIC_API_KEY?: string;
+  /** OpenAI API key — GPT vision candidates in the extractor bake-off. */
+  OPENAI_API_KEY?: string;
   /** HMAC key for signing outbound webhook payloads. */
   WEBHOOK_SIGNING_KEY?: string;
 

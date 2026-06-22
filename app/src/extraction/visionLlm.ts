@@ -111,7 +111,7 @@ export class VisionLlmExtractor implements Extractor {
 // Request construction
 // ---------------------------------------------------------------------------
 
-const SYSTEM_PROMPT = `You are a meticulous data-extraction engine for U.S. congressional STOCK Act
+export const SYSTEM_PROMPT = `You are a meticulous data-extraction engine for U.S. congressional STOCK Act
 Periodic Transaction Reports (PTRs). The attached document is a scanned PTR.
 Extract EVERY disclosed transaction row. For each transaction return:
 - txDate: the transaction date in YYYY-MM-DD (use the transaction/trade date, not the notification date). null if illegible.
@@ -188,7 +188,7 @@ interface ModelTx {
   confidence?: number;
 }
 
-function parseModelJson(text: string): ModelTx[] {
+export function parseModelJson(text: string): ModelTx[] {
   let cleaned = text.trim();
   // Strip ```json ... ``` fences if the model wrapped them despite the schema.
   cleaned = cleaned.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
@@ -209,7 +209,7 @@ function parseModelJson(text: string): ModelTx[] {
   throw new Error('visionLlm: model JSON was not a transaction array');
 }
 
-function toParsedTx(m: ModelTx): ParsedTx {
+export function toParsedTx(m: ModelTx): ParsedTx {
   const { min, max } = parseAmountRange(m.amountRange ?? '');
   const modelConf = typeof m.confidence === 'number' ? clamp01(m.confidence) : DEFAULT_CONFIDENCE;
   // Cap vision confidence at the conservative default so scanned docs lean to review.
@@ -279,7 +279,7 @@ function extractCandidateText(payload: GeminiResponse): string | null {
   return text || null;
 }
 
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
+export function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   let binary = '';
   const chunk = 0x8000;
