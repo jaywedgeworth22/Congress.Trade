@@ -195,8 +195,8 @@ export interface ReviewItem {
 
 /**
  * A public-site end user. Distinct from the admin surface and from delivery
- * `Subscription`s (webhook/SSE targets). Billing/subscription fields are layered
- * on in a later migration.
+ * `Subscription`s (webhook/SSE targets). Billing fields (Stripe) were layered on
+ * in migration 0004 and are null until the user starts a checkout.
  */
 export interface User {
   id: string;
@@ -208,6 +208,42 @@ export interface User {
   emailVerified: boolean;
   createdAt: string;
   lastLoginAt: string | null;
+
+  // --- Billing (Stripe). Null until the user starts a checkout. ---
+  /** Stripe customer id (`cus_…`), created lazily on first checkout. */
+  stripeCustomerId: string | null;
+  /** Stripe subscription id (`sub_…`) for the active/most-recent subscription. */
+  stripeSubscriptionId: string | null;
+  /** Raw Stripe subscription status: trialing | active | past_due | canceled | … */
+  subscriptionStatus: string | null;
+  /** Billing cadence of the current subscription. */
+  plan: BillingPlan | null;
+  /** ISO end of the current billing period (access end on cancel). */
+  currentPeriodEnd: string | null;
+  /** True when the subscription is set to cancel at period end. */
+  cancelAtPeriodEnd: boolean;
+  /** ISO end of the free trial, when trialing. */
+  trialEnd: string | null;
+}
+
+/** Subscription billing cadence. */
+export type BillingPlan = 'monthly' | 'annual';
+
+/**
+ * Resolved access level for a user (or anonymous visitor). Derived purely from
+ * the user's billing fields by billing/entitlement.ts — never stored.
+ */
+export interface Entitlement {
+  /** True when the visitor may access premium features (full history, export). */
+  premium: boolean;
+  /** Raw Stripe status, or null for anonymous / never-subscribed users. */
+  status: string | null;
+  plan: BillingPlan | null;
+  /** True while in the free trial window. */
+  trialing: boolean;
+  trialEnd: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +314,17 @@ export interface Env {
   EMAIL_FROM?: string;
   /** Public base URL (e.g. https://congress.trade) for OAuth redirects + links. */
   APP_BASE_URL?: string;
+
+  // --- Billing (Stripe) ---
+  /** Stripe secret key (`sk_…`) for the REST API. Presence enables billing. */
+  STRIPE_SECRET_KEY?: string;
+  /** Stripe webhook signing secret (`whsec_…`) for verifying webhook events. */
+  STRIPE_WEBHOOK_SECRET?: string;
+  /** Stripe Price ids for the premium tier (one per cadence). */
+  STRIPE_PRICE_MONTHLY?: string;
+  STRIPE_PRICE_ANNUAL?: string;
+  /** Free-trial length in days for new subscriptions (default 7). */
+  STRIPE_TRIAL_DAYS?: string;
 
   // --- Plain vars (.dev.vars / [vars]) ---
   /** "true" to force arbitration on when configured. */

@@ -28,6 +28,7 @@ import { dispatchWebhook } from './delivery/webhook';
 import { buildRestRouter } from './delivery/rest';
 import { buildAdminRouter } from './admin/routes';
 import { buildAuthRouter } from './auth/routes';
+import { buildBillingRouter } from './billing/routes';
 import { buildUiRouter } from './ui/routes';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -60,6 +61,13 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
     root.route('/auth', buildAuthRouter());
   } catch (err) {
     console.warn('auth/routes router not mounted:', (err as Error).message);
+  }
+  // Stripe billing (checkout / portal / webhook) at /billing/*. Also before the
+  // UI catch-all.
+  try {
+    root.route('/billing', buildBillingRouter());
+  } catch (err) {
+    console.warn('billing/routes router not mounted:', (err as Error).message);
   }
   // Dashboard SPA at `/` and `/admin`. Registered after /health and /api so the
   // exact UI paths never shadow the API routers.

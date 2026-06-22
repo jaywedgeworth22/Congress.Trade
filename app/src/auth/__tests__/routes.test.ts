@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildAuthRouter } from '../routes';
+import { ANONYMOUS_ENTITLEMENT } from '../../billing/entitlement';
 import type { Env } from '../../shared/types';
 
 function fakeEnv(over: Record<string, unknown> = {}): Env {
@@ -35,11 +36,11 @@ function fakeEnv(over: Record<string, unknown> = {}): Env {
 }
 
 describe('auth router', () => {
-  it('GET /me returns null when not signed in', async () => {
+  it('GET /me returns a null user + anonymous entitlement when not signed in', async () => {
     const app = buildAuthRouter();
     const res = await app.request('http://localhost/me', {}, fakeEnv());
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ user: null });
+    expect(await res.json()).toEqual({ user: null, entitlement: ANONYMOUS_ENTITLEMENT });
   });
 
   it('GET /google/start is 503 when Google is not configured', async () => {

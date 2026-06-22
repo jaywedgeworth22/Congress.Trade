@@ -59,3 +59,17 @@ GOOGLE_OAUTH_CLIENT_SECRET=""
 RESEND_API_KEY=""
 EMAIL_FROM=""
 APP_BASE_URL=""
+
+# Billing (Stripe) — freemium paywall. Premium unlocks full history + CSV export.
+#   - STRIPE_SECRET_KEY: sk_live_… / sk_test_… (enables billing; absent => 503)
+#   - STRIPE_WEBHOOK_SECRET: whsec_… from the webhook endpoint you create for
+#     <APP_BASE_URL>/billing/webhook (events: checkout.session.completed,
+#     customer.subscription.created/updated/deleted)
+#   - STRIPE_PRICE_MONTHLY / _ANNUAL: recurring Price ids (price_…) for the
+#     $15/mo and $140/yr premium tier
+#   - STRIPE_TRIAL_DAYS: free-trial length for new subscriptions (default 7)
+STRIPE_SECRET_KEY=""
+STRIPE_WEBHOOK_SECRET=""
+STRIPE_PRICE_MONTHLY=""
+STRIPE_PRICE_ANNUAL=""
+STRIPE_TRIAL_DAYS="7"

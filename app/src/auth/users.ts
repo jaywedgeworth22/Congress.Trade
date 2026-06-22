@@ -19,6 +19,15 @@ interface UserRow {
   email_verified: number;
   created_at: string;
   last_login_at: string | null;
+  // Billing columns (migration 0004). Absent on rows read before the migration
+  // is applied, hence the `?`-guarded coercions in mapUser.
+  stripe_customer_id?: string | null;
+  stripe_subscription_id?: string | null;
+  subscription_status?: string | null;
+  plan?: string | null;
+  current_period_end?: string | null;
+  cancel_at_period_end?: number | null;
+  trial_end?: string | null;
 }
 
 function mapUser(r: UserRow): User {
@@ -31,6 +40,13 @@ function mapUser(r: UserRow): User {
     emailVerified: r.email_verified === 1,
     createdAt: r.created_at,
     lastLoginAt: r.last_login_at,
+    stripeCustomerId: r.stripe_customer_id ?? null,
+    stripeSubscriptionId: r.stripe_subscription_id ?? null,
+    subscriptionStatus: r.subscription_status ?? null,
+    plan: (r.plan as User['plan']) ?? null,
+    currentPeriodEnd: r.current_period_end ?? null,
+    cancelAtPeriodEnd: r.cancel_at_period_end === 1,
+    trialEnd: r.trial_end ?? null,
   };
 }
 

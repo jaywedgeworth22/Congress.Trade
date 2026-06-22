@@ -30,6 +30,7 @@ import { upsertUserFromGoogle, upsertUserByEmail } from './users';
 import { issueMagicToken, consumeMagicToken, magicLinkEmail } from './magic';
 import { sendEmail } from './email';
 import { randomToken } from './tokens';
+import { entitlementOf } from '../billing/entitlement';
 
 const OAUTH_STATE_COOKIE = 'ct_oauth_state';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -50,9 +51,10 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
   // --- GET /auth/me -------------------------------------------------------
+  // One bootstrap call for the client: identity + derived access level.
   r.get('/me', async (c) => {
     const user = await getCurrentUser(c);
-    return c.json({ user: user ? publicUser(user) : null });
+    return c.json({ user: user ? publicUser(user) : null, entitlement: entitlementOf(user) });
   });
 
   // --- POST /auth/logout --------------------------------------------------
