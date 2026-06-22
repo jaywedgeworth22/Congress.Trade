@@ -27,8 +27,6 @@ import {
   mapFiling,
   mapTransaction,
   mapFeedTransaction,
-  FREE_WINDOW_DAYS,
-  FREE_TX_LIMIT,
   type FilingRow,
   type TransactionRow,
   type FeedTransactionRow,
@@ -103,9 +101,11 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // cursor in the page so clients can poll forward deterministically.
   r.get('/transactions', async (c) => {
     const q = c.req.query();
-    // Ungated when the caller is a premium user OR presents the scoped
-    // INGEST_TOKEN (sibling-app full-feed access; reuses the import credential).
-    const premium = isPremiumUser(await getCurrentUser(c)) || hasIngestToken(c.env, c.req.header('Authorization'));
+    // The live feed is fully public — it's the site's SEO/discovery hook. The
+    // freemium boundary is premium-only *full-history export* + analytics (see
+    // /export/transactions.csv), not hiding feed rows. (Earlier this gated the
+    // feed to the last 30 days for logged-out visitors, which emptied the page
+    // on datasets without recent filings.)
     const params: TxQueryParams = {
       since: parseIntOrUndef(q.since),
       ticker: q.ticker || undefined,
@@ -114,13 +114,6 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       type: asTxType(q.type),
       limit: parseIntOrUndef(q.limit),
     };
-    // Freemium gate: non-premium visitors see only the recent window and a
-    // smaller page. The count query honors `filedSince` too, so "X of N" and the
-    // Load-more affordance reflect exactly what the visitor can access.
-    if (!premium) {
-      params.filedSince = isoDateDaysAgo(FREE_WINDOW_DAYS);
-      params.limit = Math.min(params.limit ?? FREE_TX_LIMIT, FREE_TX_LIMIT);
-    }
     const built = buildTransactionsQuery(params);
     // The query SELECTs the resolved chamber + member name alongside the feed
     // columns via `__chamber` / `__member_name` (see buildTransactionsQuery).
@@ -150,10 +143,6 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       count: transactions.length,
       total,
       limit: built.limit,
-      premium,
-      // When gated, tell the client why so it can surface an upgrade CTA.
-      gated: !premium,
-      ...(premium ? {} : { freeWindowDays: FREE_WINDOW_DAYS }),
     });
   });
 
@@ -603,12 +592,6 @@ export function priceRangeQuery(
   // price_eod carries a daily volume column; spx_eod does not.
   const cols = table === 'price_eod' ? 'date, close, volume' : 'date, close';
   return { sql: `SELECT ${cols} FROM ${table}${clause} ORDER BY date ASC`, params };
-}
-
-/** True when the request bears the scoped INGEST_TOKEN (sibling-app access). */
-export function hasIngestToken(env: Env, authorization?: string): boolean {
-  const t = (env as Env & { INGEST_TOKEN?: string }).INGEST_TOKEN;
-  return !!t && authorization === `Bearer ${t}`;
 }
 
 /** JSON.parse that returns null instead of throwing. */

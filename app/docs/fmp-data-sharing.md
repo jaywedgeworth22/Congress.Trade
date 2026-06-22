@@ -213,10 +213,10 @@ GET https://congress.trade/api/analytics/...   (leaderboards, cluster buys, sect
 
 Poll forward with the returned `cursor` (pass it as the next `since`).
 
-**Full feed:** the public tier is gated (30-day window, 50 rows/page). For a
-complete rolling window with gap-free cursor paging, send the **`INGEST_TOKEN`**
-as `Authorization: Bearer …` — that returns the feed **ungated** (full history,
-your requested page size).
+**The feed is fully public** — no token, no row gating. Page forward by cursor to
+cover any window (e.g. a rolling 90 days); pass `limit` for page size. (The
+freemium boundary is only the premium-only full-history CSV export + analytics,
+not the feed rows.)
 
 Per-transaction object (each item in `transactions[]`):
 

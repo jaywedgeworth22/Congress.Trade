@@ -5,8 +5,7 @@
  * cross-app sharing): SQL range building and securities_ref row mapping.
  */
 import { describe, it, expect } from 'vitest';
-import { priceRangeQuery, mapSecurityRef, hasIngestToken } from '../rest';
-import type { Env } from '../../shared/types';
+import { priceRangeQuery, mapSecurityRef } from '../rest';
 
 describe('priceRangeQuery', () => {
   it('price_eod selects volume, requires the ticker, orders ascending', () => {
@@ -27,20 +26,6 @@ describe('priceRangeQuery', () => {
     const q = priceRangeQuery('spx_eod', null, '2025-01-01');
     expect(q.sql).toBe('SELECT date, close FROM spx_eod WHERE date >= ? ORDER BY date ASC');
     expect(q.params).toEqual(['2025-01-01']);
-  });
-});
-
-describe('hasIngestToken', () => {
-  const env = { INGEST_TOKEN: 'ingest-secret' } as unknown as Env;
-  it('matches the exact bearer token', () => {
-    expect(hasIngestToken(env, 'Bearer ingest-secret')).toBe(true);
-  });
-  it('rejects a wrong/absent token', () => {
-    expect(hasIngestToken(env, 'Bearer nope')).toBe(false);
-    expect(hasIngestToken(env, undefined)).toBe(false);
-  });
-  it('is false when INGEST_TOKEN is unset', () => {
-    expect(hasIngestToken({} as Env, 'Bearer anything')).toBe(false);
   });
 });
 
