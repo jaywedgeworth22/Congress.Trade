@@ -305,7 +305,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button class="btn" onclick="runHouseIndex(false)">Backfill House index</button>
         <span id="hiMsg" class="note"></span>
       </div>
-      <p class="note">API HOOK: <code>POST /api/admin/backfill/house-index</code>. Pulls past-year House bulk ZIPs (official, always reachable) and runs each PTR through the live pipeline — high-fidelity, but heavier than the seed import.</p>
+      <p class="note">API HOOK: <code>POST /api/admin/house-backfill</code>. Pulls past-year House bulk ZIPs (official, always reachable) and runs each PTR through the live pipeline — high-fidelity, but heavier than the seed import.</p>
     </div>
     <div class="section">
       <h3>Source health</h3>
@@ -735,23 +735,21 @@ function runBackfill(dryRun) {
 }
 
 function runHouseIndex(dryRun) {
-  // API HOOK: POST /api/admin/backfill/house-index
+  // API HOOK: POST /api/admin/house-backfill
   var from = parseInt(el('hiFrom').value, 10);
   var to = parseInt(el('hiTo').value, 10);
   if (isNaN(from) || isNaN(to)) { el('hiMsg').textContent = 'Enter a from/to year.'; return; }
   el('hiMsg').textContent = dryRun ? 'Counting…' : 'Enqueuing (this can take a while)…';
-  fetch('/api/admin/backfill/house-index', {
+  fetch('/api/admin/house-backfill', {
     method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ fromYear: from, toYear: to, dryRun: !!dryRun })
   })
     .then(admin401).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; }); })
     .then(function (j) {
-      var years = j.byYear || {};
-      var found = 0, enq = 0;
-      Object.keys(years).forEach(function (y) { found += years[y].found || 0; enq += years[y].enqueued || 0; });
+      var years = Object.keys(j.byYear || {}).length;
       el('hiMsg').textContent = dryRun
-        ? ('Found ' + found + ' PTRs across ' + Object.keys(years).length + ' year(s).')
-        : ('Enqueued ' + enq + ' new filing(s) from ' + found + ' PTRs.' + (j.errors && j.errors.length ? ' Errors: ' + j.errors.join('; ') : ''));
+        ? ('Found ' + (j.discovered || 0) + ' PTRs across ' + years + ' year(s).')
+        : ('Enqueued ' + (j.enqueued || 0) + ' new filing(s) from ' + (j.discovered || 0) + ' PTRs.' + (j.errors && j.errors.length ? ' Errors: ' + j.errors.join('; ') : ''));
     })
     .catch(function (e) { el('hiMsg').textContent = 'Failed: ' + e.message; });
 }
