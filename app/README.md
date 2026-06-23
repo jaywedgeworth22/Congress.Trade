@@ -4,10 +4,10 @@ Cloudflare Workers service that ingests US congressional **STOCK Act** stock-tra
 disclosures (House + Senate), extracts structured trade events, and pushes them to
 clients via webhook / SSE / REST.
 
-> This repository is the **foundation scaffold**: shared contracts, DB schema,
-> config, the extractor framework, and typed module **stubs**. Scraping, OCR/LLM
-> extraction, delivery transport, and the UI are implemented by other agents
-> against the contracts defined here.
+> This is the production Worker app. The original scaffold has grown into
+> implemented ingestion, extraction, delivery, admin, auth, billing, analytics,
+> enrichment, price-refresh, backfill, and UI surfaces. See `../AGENTS.md` for
+> branch/worktree coordination rules before continuing work.
 
 ---
 
@@ -72,24 +72,29 @@ clients via webhook / SSE / REST.
 | `src/shared/db.ts` | foundation | Typed D1 `get`/`all`/`run`/`batch` helpers |
 | `src/shared/ids.ts` | foundation | `uuid`, prefixed/monotonic ids, R2 key builder |
 | `src/extractors/types.ts` | foundation | `Extractor` interface, `ArbitratingExtractor`, `buildExtractorPipeline` |
-| `src/ingestion/watcher.ts` | ingestion | Cron poll loop (stub) |
-| `src/ingestion/fetcher.ts` | ingestion | Download raw → R2 (stub) |
-| `src/ingestion/classifier.ts` | ingestion | docKind detection (stub) |
-| `src/extraction/senateHtml.ts` | extraction | Senate HTML extractor (stub) |
-| `src/extraction/textPdf.ts` | extraction | Text-PDF extractor (stub) |
-| `src/extraction/visionLlm.ts` | extraction | Vision/LLM extractor (stub) |
-| `src/extraction/normalizer.ts` | extraction | Validate/normalize → `Transaction[]` (stub) |
-| `src/delivery/webhook.ts` | delivery | Signed webhook dispatch (stub) |
-| `src/delivery/sse.ts` | delivery | SSE streaming (stub) |
-| `src/delivery/rest.ts` | delivery | REST read API router (stub) |
-| `src/delivery/subscriptions.ts` | delivery | Subscription CRUD + filter matching (stub) |
+| `src/ingestion/watcher.ts` | ingestion | Cron poll loop, source discovery, enqueue |
+| `src/ingestion/fetcher.ts` | ingestion | Download raw disclosures → R2 |
+| `src/ingestion/classifier.ts` | ingestion | docKind detection and extraction handoff |
+| `src/extraction/senateHtml.ts` | extraction | Senate HTML extractor |
+| `src/extraction/textPdf.ts` | extraction | Text-layer PDF extractor |
+| `src/extraction/visionLlm.ts` | extraction | Vision/LLM extractor for scanned PDFs |
+| `src/extraction/normalizer.ts` | extraction | Validate/normalize/persist `Transaction[]` |
+| `src/delivery/webhook.ts` | delivery | Signed webhook dispatch + retry metadata |
+| `src/delivery/sse.ts` | delivery | SSE streaming |
+| `src/delivery/rest.ts` | delivery | Public REST/market/export API router |
+| `src/delivery/subscriptions.ts` | delivery | Subscription CRUD + filter matching |
 | `src/analytics/sql.ts` | analytics | Shared SQL fragments + common filter builder |
 | `src/analytics/compute.ts` | analytics | Pure post-processing (bracket midpoint, lag stats) |
 | `src/analytics/builders.ts` | analytics | Pure per-endpoint aggregation query builders |
 | `src/analytics/routes.ts` | analytics | `/api/analytics/*` read API (KV-cached) |
-| `src/admin/routes.ts` | admin | poll-config / review-queue / subscriptions admin (stub) |
-| `src/backfill/seed.ts` | backfill | Seed open datasets, `source='seed_dataset'` (stub) |
-| `../dashboard-design.html` | ui | Visual spec the UI agent ports |
+| `src/admin/routes.ts` | admin | Secured admin operations, migrations, backfills, enrichment |
+| `src/auth/` | auth | Google OAuth, magic-link email, KV sessions |
+| `src/billing/` | billing | Stripe checkout, portal, webhook, entitlement |
+| `src/enrichment/` | enrichment | SEC/FMP asset reference enrichment |
+| `src/prices/` | prices | FMP EOD prices, S&P series, trade performance anchors |
+| `src/backfill/` | backfill | Seed/open-data and House historical backfill |
+| `src/ui/` | ui | Server-rendered dashboard/admin HTML and browser scripts |
+| `../dashboard-design.html` | ui | Historical/static visual design artifact |
 
 ---
 
@@ -134,8 +139,21 @@ without a DB (mirroring `src/delivery/rows.ts`).
 | `DELIVERY_QUEUE` | Queue | Delivery fan-out |
 | `CONFIG_KV` | KV | Hot config cache (poll schedule, last-poll timestamps) |
 
-Secrets (`wrangler secret put …`, never committed): `GEMINI_API_KEY`,
-`ARBITRATION_API_KEY`, `WEBHOOK_SIGNING_KEY`. See `.dev.vars.example`.
+Local development variables are documented in `.dev.vars.example`; copy it to
+`.dev.vars` and keep the real file untracked. Production secrets are set with
+`wrangler secret put`. Important groups:
+
+| Group | Variables |
+|-------|-----------|
+| Admin | `ADMIN_TOKEN`, `INGEST_TOKEN`, `ADMIN_EMAILS`, `ACCESS_AUD`, `ACCESS_TEAM_DOMAIN`, `ADMIN_OPEN_IN_DEV` |
+| Extraction | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ARBITRATION_API_KEY`, `ARBITRATION_ENABLED`, `ARBITRATION_MODEL` |
+| Market data | `FMP_API_KEY`, `FMP_DAILY_CALL_CAP`, `SEED_HOUSE_URL`, `SEED_SENATE_URL`, `HOUSE_LIVE_SEARCH_ENABLED` |
+| Delivery | `WEBHOOK_SIGNING_KEY` |
+| Public auth/email | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, `APP_BASE_URL`, `ALERT_EMAIL` |
+| Billing | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_ANNUAL`, `STRIPE_TRIAL_DAYS` |
+
+The admin API fails closed unless `ADMIN_TOKEN` or Cloudflare Access is
+configured. `ADMIN_OPEN_IN_DEV=true` is a local-only escape hatch.
 
 ---
 
@@ -147,7 +165,7 @@ npm run typecheck   # tsc --noEmit (must be clean)
 npm run test        # vitest run
 npm run migrate     # apply D1 migrations locally
 npm run dev         # wrangler dev
-npm run deploy      # wrangler deploy
+npm run deploy      # production Worker deploy using wrangler.toml
 ```
 
 Deployment is automated via **Cloudflare Workers Builds** (connected to this
@@ -155,6 +173,8 @@ repo): pushes to `main` run `npm run build` then `npx wrangler deploy` with the
 **Root directory** set to `app`. The real D1 `database_id` and `CONFIG_KV` id are
 committed in `wrangler.toml`; the queues (`congress-feed-ingest`,
 `congress-feed-delivery`, + `*-dlq`) and the R2 bucket (`congress-feed-raw`) must
-already exist on the account. Runtime secrets (`ADMIN_TOKEN`, `GEMINI_API_KEY`,
-`ARBITRATION_API_KEY`, `WEBHOOK_SIGNING_KEY`) are set out-of-band via
+already exist on the account. Runtime secrets are set out-of-band via
 `wrangler secret put` and are NOT committed.
+
+Plain deploys do not apply D1 migrations. Use the deployment runbook before any
+schema change reaches production.

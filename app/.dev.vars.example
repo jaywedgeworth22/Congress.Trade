@@ -3,6 +3,9 @@
 
 # Vision/LLM extraction for scanned PDFs (Google Gemini).
 GEMINI_API_KEY=""
+# Optional extractor bake-off candidates used by /api/admin/extractor-bakeoff.
+ANTHROPIC_API_KEY=""
+OPENAI_API_KEY=""
 
 # Financial Modeling Prep — enables asset enrichment (sector, market cap, country,
 # exchange) and, later, price + performance-vs-S&P. Without it, the SEC-EDGAR
@@ -27,8 +30,13 @@ WEBHOOK_SIGNING_KEY=""
 
 # Admin API bearer token. When set, /api/admin/* accepts a request carrying
 # `Authorization: Bearer <ADMIN_TOKEN>` (good for curl / cron / automation).
-# Leave unset for open local dev (a one-time warning is logged).
+# The admin API fails closed when no bearer token or Cloudflare Access config is
+# present. For local dev only, set ADMIN_OPEN_IN_DEV="true" to open it.
 ADMIN_TOKEN=""
+ADMIN_OPEN_IN_DEV=""
+# Scoped token that authorizes only POST /api/admin/securities/import for
+# cross-app FMP data sharing. Prefer this over ADMIN_TOKEN in sibling apps.
+INGEST_TOKEN=""
 
 # Cloudflare Access (Zero Trust) sign-in for humans — an ALTERNATIVE/ADDITION to
 # the bearer token. With these set AND an Access application fronting

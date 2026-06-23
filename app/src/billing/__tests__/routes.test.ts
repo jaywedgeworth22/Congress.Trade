@@ -156,4 +156,55 @@ describe('billing router', () => {
     expect(rows.get('u1')!.subscription_status).toBe('active');
     expect(rows.get('u1')!.plan).toBe('monthly');
   });
+
+  it('POST /webhook returns 500 when verified subscription persistence fails', async () => {
+    const seed: URow = {
+      id: 'u1', stripe_customer_id: 'cus_1', subscription_status: null, plan: null,
+      stripe_subscription_id: null, current_period_end: null, cancel_at_period_end: 0, trial_end: null,
+      email: 'u1@x.com', name: null, picture: null, google_sub: null, email_verified: 1,
+      created_at: 'now', last_login_at: null,
+    };
+    const base = fakeEnv({ STRIPE_WEBHOOK_SECRET: 'whsec' }, [seed]);
+    const env = {
+      ...base.env,
+      DB: {
+        prepare: (sql: string) => ({
+          _p: [] as unknown[],
+          bind(...p: unknown[]) {
+            this._p = p;
+            return this;
+          },
+          async first<T>() {
+            if (/SELECT id FROM users WHERE stripe_customer_id/i.test(sql)) return { id: 'u1' } as T;
+            if (/SELECT \* FROM users WHERE id/i.test(sql)) return seed as unknown as T;
+            return null as T | null;
+          },
+          async run() {
+            throw new Error('d1 unavailable');
+          },
+          async all<T>() {
+            return { results: [] as T[] };
+          },
+        }),
+      } as unknown as D1Database,
+    } as Env;
+    const body = JSON.stringify({
+      type: 'customer.subscription.updated',
+      data: {
+        object: {
+          id: 'sub_1', status: 'active', customer: 'cus_1',
+          items: { data: [{ price: { id: 'price_m' } }] },
+        },
+      },
+    });
+    const ts = Math.floor(Date.now() / 1000);
+    const header = `t=${ts},v1=${await sign('whsec', ts, body)}`;
+    const app = buildBillingRouter();
+    const res = await app.request(
+      'http://localhost/webhook',
+      { method: 'POST', body, headers: { 'stripe-signature': header, 'content-type': 'application/json' } },
+      env,
+    );
+    expect(res.status).toBe(500);
+  });
 });

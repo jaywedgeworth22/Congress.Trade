@@ -166,9 +166,8 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
           break; // ignore unrelated events
       }
     } catch (err) {
-      // Log and still 200 so Stripe doesn't hammer retries on a transient DB blip;
-      // subscription.* events are re-derivable from later updates.
       console.error('webhook handling error:', (err as Error).message);
+      return c.json({ error: 'webhook handling failed' }, 500);
     }
     return c.json({ received: true });
   });

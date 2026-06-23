@@ -6,6 +6,12 @@ node_modules/
 dist/
 .wrangler/
 
+# Python / local watcher state
+__pycache__/
+.venv/
+venv/
+ptr_state/
+
 # Secrets / local env
 .dev.vars
 .env
@@ -14,4 +20,7 @@ dist/
 
 # Temp / scratch
 *.tmp.json
+*.log
+.__probe
 app/tsconfig.*.tmp.json
+app/scripts/securities_master.sql

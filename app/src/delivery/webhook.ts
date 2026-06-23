@@ -17,9 +17,9 @@
  *
  *   The base QueueMessage union (shared/types.ts, frozen) only declares
  *   `{type:'delivery.dispatch'; txId}`. We extend it at the wire level with two
- *   OPTIONAL fields (`attempt`, `subscriptionId`); the frozen consumer in
- *   index.ts still routes it to dispatchWebhook(env, txId) untouched, and the
- *   extra fields are read here defensively. This keeps the contract additive.
+ *   OPTIONAL fields (`attempt`, `subscriptionId`); index.ts preserves the whole
+ *   message object so the retry can target one subscription and increment the
+ *   attempt counter. This keeps the contract additive.
  *
  * IDEMPOTENCY:
  *   deliveries is keyed (subscription_id, tx_id). Before POSTing we check for an
@@ -91,10 +91,8 @@ function backoffSeconds(attempt: number): number {
  * When called with a retry message (subscriptionId set), only that subscription
  * is (re)attempted.
  *
- * The frozen consumer calls `dispatchWebhook(env, msg.txId)`. To carry the retry
- * counter we accept the whole message body via an overload-friendly second arg;
- * index.ts passes only txId, so retries are enqueued with the richer shape and
- * re-enter here through the same path.
+ * The normal queue path may pass only the transaction id. Retry messages pass
+ * the whole body so the optional subscriptionId and attempt fields are preserved.
  */
 export async function dispatchWebhook(
   env: Env,

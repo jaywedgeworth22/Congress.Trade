@@ -49,6 +49,12 @@ describe('entitlementOf', () => {
     expect(entitlementOf(user()).premium).toBe(false);
   });
 
+  it('denies premium when an active subscription has no recognized app plan', () => {
+    const e = entitlementOf(user({ subscriptionStatus: 'active', plan: null }));
+    expect(e.premium).toBe(false);
+    expect(e.status).toBe('active');
+  });
+
   it('passes through cancel_at_period_end + period end', () => {
     const e = entitlementOf(
       user({ subscriptionStatus: 'active', cancelAtPeriodEnd: true, currentPeriodEnd: 'P' }),
@@ -58,7 +64,7 @@ describe('entitlementOf', () => {
   });
 
   it('isPremiumUser mirrors entitlement.premium', () => {
-    expect(isPremiumUser(user({ subscriptionStatus: 'active' }))).toBe(true);
+    expect(isPremiumUser(user({ subscriptionStatus: 'active', plan: 'monthly' }))).toBe(true);
     expect(isPremiumUser(user({ subscriptionStatus: 'past_due' }))).toBe(false);
     expect(isPremiumUser(null)).toBe(false);
   });

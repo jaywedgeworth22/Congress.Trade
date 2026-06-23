@@ -130,7 +130,7 @@ npx wrangler d1 migrations apply DB --remote
 # …or, if the CLI's remote D1 auth is fussy, hit the idempotent endpoint:
 #   curl -X POST https://<APP_BASE_URL>/api/admin/migrate -H "authorization: Bearer $ADMIN_TOKEN"
 
-npm run typecheck && npm run test    # 215 tests
+npm run typecheck && npm run test
 npm run deploy
 ```
 
@@ -146,7 +146,7 @@ Smoke test:
 
 ## 6. Historic backfill
 
-Once deployed (model is `gemini-3.5-flash`), seed back-history — see
+Once deployed, seed back-history — see
 [`DEPLOY.md`](../DEPLOY.md) §5, e.g.:
 
 ```bash
