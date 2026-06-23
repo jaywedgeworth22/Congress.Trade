@@ -5,6 +5,10 @@ Read `AGENTS.md` first and follow it as the source of truth for this repo.
 Key reminders:
 
 - Work from `app/` for the Cloudflare Worker application.
+- Treat the backend as the source of truth. The planned Next.js/PWA and SwiftUI
+  clients must share one `/api/client/*` contract and one server-side
+  command/status model; do not create client-only scraping, provider-secret, or
+  MCP orchestration paths.
 - Use a separate branch, normally `claude/<short-topic>`, before non-trivial
   edits.
 - Check open PRs and worktrees before editing shared files:

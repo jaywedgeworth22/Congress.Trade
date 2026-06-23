@@ -13,6 +13,8 @@ This repo is worked by multiple agents. Read this before editing.
   - `dashboard-design.html` is a historical/static design artifact.
 - Current app surfaces include ingestion, extraction, normalization, delivery,
   admin, auth, billing, analytics, enrichment, prices, backfill, and UI.
+- Planned client apps are a phone-first Next.js/PWA and a SwiftUI iPhone app.
+  Both must use the same backend-owned client API and command/status model.
 
 ## Branch And Worktree Policy
 
@@ -83,6 +85,10 @@ change a migration:
 - Webhook delivery uses a unique `(subscription_id, tx_id)` row and claims a
   pending attempt before POSTing. Recipients must still dedupe on
   `X-Subscription-Id` + `X-Tx-Id` because external webhooks are at-least-once.
+- Backend remains the source of truth for all clients. Next.js/PWA and SwiftUI
+  work must share one `/api/client/*` contract, one auth/session model, and one
+  server-side command/status gateway. Do not put scraping, calculations,
+  provider secrets, admin tokens, or MCP orchestration in either client.
 - Keep `main` protected through GitHub branch protection or a ruleset: PRs
   required, `typecheck + test` required, stale reviews dismissed, no force push
   or deletion.
