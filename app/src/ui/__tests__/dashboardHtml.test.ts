@@ -62,6 +62,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function handleFeedOpenEvent(');
     expect(DASHBOARD_HTML).toContain('@media (max-width: 720px)');
     expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom)');
+    expect(DASHBOARD_HTML).toContain('grid-template-columns: minmax(0, 1fr)');
   });
 
   it('renders a dedicated one-time subscription secret panel', () => {
