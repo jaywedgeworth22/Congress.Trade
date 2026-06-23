@@ -7,12 +7,12 @@ truth; this file is the short operational snapshot for the current integration.
 
 ## Active Integration
 
-- Integration branch: `codex/audit-app-structure-and-docs`.
-- Integration PR: `#29` after push.
-- Claude PRs integrated here: `#26` (`claude/transactions-from-filter`), `#27`
-  (`claude/sse-backlog`), and `#28` (`feat/managed-payments`).
-- After `#29` lands, treat `#26`, `#27`, and `#28` as superseded unless GitHub
-  already marks them merged.
+- Main already includes integration PR `#29`, which superseded Claude PRs `#26`
+  (`claude/transactions-from-filter`), `#27` (`claude/sse-backlog`), and `#28`
+  (`feat/managed-payments`).
+- Current Codex branch: `codex/production-mobile-readiness`.
+- Current scope: mobile dashboard polish, shared Next.js/PWA + SwiftUI client
+  roadmap, and production-readiness follow-up.
 
 ## Decisions Now Implemented
 
@@ -25,6 +25,17 @@ truth; this file is the short operational snapshot for the current integration.
 - Webhook delivery claims a unique `(subscription_id, tx_id)` row before POSTing.
 - Stripe Managed Payments support is present but off by default through
   `STRIPE_MANAGED_PAYMENTS = "false"`.
+- Backend is the source of truth for future clients. The phone-first Next.js/PWA
+  and SwiftUI iPhone app must share one backend `/api/client/*` contract and one
+  server-side command/status model.
+
+## Production Follow-Up
+
+- Public reads at `congress.trade` are live.
+- Public subscription listing is closed in production.
+- Remote D1 migration application was attempted on 2026-06-23 but blocked by
+  Cloudflare authorization for the configured account. Apply migration `0008`
+  before relying on live primary ingestion idempotency.
 
 ## Required Verification
 

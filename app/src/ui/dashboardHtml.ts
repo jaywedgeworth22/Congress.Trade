@@ -172,6 +172,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .conf { font-family: var(--mono); font-size: 12px; }
   .conf.hi { color: var(--good); } .conf.mid { color: var(--warn); } .conf.lo { color: var(--sell); }
   .muted { color: var(--text-dim); }
+  .mobile-only { display: none; }
+  .feed-cards { display: none; gap: 10px; }
+  .feed-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 13px; cursor: pointer; }
+  .feed-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .feed-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+  .feed-card-member { display: flex; align-items: center; gap: 9px; min-width: 0; margin-bottom: 10px; }
+  .feed-card-member > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .feed-card-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+  .feed-card-meta .mkey { display: block; color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 2px; }
+  .feed-card-meta .mval { font-size: 12px; }
   .latency { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
   .btn { background: var(--accent); color: #fff; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
   .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
@@ -262,6 +272,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .clickable { cursor: pointer; }
   .asset-cell.clickable:hover .tkr, .hlabel.clickable:hover .tkr, .tkr.clickable:hover { text-decoration: underline; }
   .member-cell.clickable:hover { text-decoration: underline; }
+  .subs-msg { flex-basis: 100%; margin-top: 10px; }
+  .secret-panel { display:grid; gap:8px; align-items:start; background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:12px; color:var(--text); max-width:100%; }
+  .secret-panel strong { font-size:13px; }
+  .secret-panel code { display:block; overflow:auto; white-space:nowrap; padding:8px; }
+  .secret-actions { display:flex; gap:8px; flex-wrap:wrap; }
   @media (max-width:600px){ .drawer-panel { width:100%; max-width:100%; } }
   footer { text-align:center; color: var(--text-dim); font-size:11px; padding:26px; }
   /* ---- account control + auth/billing modals ---- */
@@ -301,6 +316,62 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .toast.show { display:block; }
   .toast.err { border-color:color-mix(in srgb,var(--sell) 55%,transparent); color:var(--sell); }
   .gate-note { font-size:12px; color:var(--warn); display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
+  @media (max-width: 720px) {
+    body { background: var(--bg); font-size: 13px; }
+    header.top {
+      display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
+      padding: 10px 12px; align-items: center; backdrop-filter: none;
+    }
+    .brand { font-size: 15px; }
+    #srcPill { display: none; }
+    .pill { padding: 3px 7px; }
+    .theme-toggle { padding: 7px 9px; }
+    nav.tabs {
+      position: fixed; left: 0; right: 0; bottom: 0; margin: 0;
+      display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 4px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+      background: color-mix(in srgb, var(--panel) 94%, transparent);
+      border-top: 1px solid var(--border); backdrop-filter: blur(10px); z-index: 45;
+    }
+    nav.tabs button { padding: 8px 4px; font-size: 0; min-width: 0; border-radius: 9px; }
+    nav.tabs button::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
+    nav.tabs button::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .acct { justify-content: flex-end; }
+    .acct .email, .acct .badge { display: none; }
+    main { max-width: none; padding: 12px; padding-bottom: calc(86px + env(safe-area-inset-bottom)); }
+    .banner, .disclaimer { margin-bottom: 12px; }
+    .grid-cards { display: flex; gap: 10px; overflow-x: auto; margin: 0 -12px 14px; padding: 0 12px 4px; scroll-snap-type: x mandatory; }
+    .grid-cards .card { min-width: 148px; scroll-snap-align: start; padding: 12px; border-radius: 10px; }
+    .card .v { font-size: 20px; }
+    .section { border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+    .toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: stretch; }
+    .toolbar input, .toolbar select, .toolbar .btn { width: 100%; min-height: 40px; }
+    .toolbar #qMember { grid-column: 1 / -1; }
+    .search-panel.open {
+      position: fixed; left: 10px; right: 10px; bottom: calc(70px + env(safe-area-inset-bottom));
+      display: grid; grid-template-columns: 1fr; z-index: 44; max-height: 58vh; overflow:auto;
+      box-shadow: 0 18px 44px rgba(0,0,0,.45);
+    }
+    #view-feed .table-wrap { display: none; }
+    #view-feed .feed-cards { display: grid; }
+    .col-resizer { display: none; }
+    .row-flex { align-items: stretch; gap: 9px; }
+    .row-flex > input, .row-flex > select, .row-flex > button { width: 100%; min-height: 40px; }
+    .sched-row { grid-template-columns: 1fr 1fr; }
+    .trend-grid2 { gap: 12px; }
+    .cluster-grid { grid-template-columns: 1fr; }
+    .drawer-panel { top: auto; bottom: 0; height: 88vh; width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }
+    .drawer-kv { grid-template-columns: 1fr; gap: 3px; }
+    .drawer-kv dd { text-align: left; }
+    .plan-grid { grid-template-columns: 1fr; }
+    .toast { bottom: calc(78px + env(safe-area-inset-bottom)); width: calc(100vw - 24px); max-width: 420px; }
+  }
+  @media (max-width: 420px) {
+    .feed-card-meta { grid-template-columns: 1fr; }
+    .toolbar { grid-template-columns: 1fr; }
+    nav.tabs button::after { font-size: 9px; }
+    th, td { padding: 9px 10px; }
+  }
 </style>
 </head>
 <body>
@@ -309,11 +380,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <span class="pill off" id="livePill">connecting…</span>
   <span class="pill" id="srcPill">House + Senate</span>
   <nav class="tabs">
-    <button data-view="feed" class="active">Live Feed</button>
-    <button data-view="trends">Trends</button>
-    <button data-view="review">Review Queue <span id="reviewCount"></span></button>
-    <button data-view="subs">Subscriptions</button>
-    <button data-view="admin">Admin · Cadence</button>
+    <button data-view="feed" data-mobile="Feed" data-icon="▦" class="active">Live Feed</button>
+    <button data-view="trends" data-mobile="Trends" data-icon="⌁">Trends</button>
+    <button data-view="review" data-mobile="Review" data-icon="✓">Review Queue <span id="reviewCount"></span></button>
+    <button data-view="subs" data-mobile="Alerts" data-icon="↗">Subscriptions</button>
+    <button data-view="admin" data-mobile="Admin" data-icon="⚙">Admin · Cadence</button>
   </nav>
   <div id="acct" class="acct"></div>
   <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light / dark">🌙</button>
@@ -368,6 +439,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <tbody id="feedBody"></tbody>
     </table>
     </div>
+    <div id="feedCards" class="feed-cards mobile-only" aria-live="polite"></div>
     <div class="row-flex" style="margin-top:14px;justify-content:center">
       <button class="btn ghost sm" id="loadMoreBtn" onclick="loadMore()" style="display:none">Load more</button>
       <span class="note" id="feedCountMsg"></span>
@@ -505,7 +577,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </select>
         <input id="newTarget" placeholder="target URL (webhook only)" style="width:240px" />
         <button class="btn sm" onclick="createSubscription()">+ New subscription</button>
-        <span id="subsMsg" class="note"></span>
+        <div id="subsMsg" class="note subs-msg" aria-live="polite"></div>
       </div>
       <p class="note">API HOOK: GET <code>/api/admin/subscriptions</code>; POST <code>/api/subscriptions</code></p>
     </div>
@@ -778,6 +850,9 @@ function setBanner(text, isErr) {
 function stateRow(cols, text) {
   return '<tr><td class="state" colspan="' + cols + '">' + esc(text) + '</td></tr>';
 }
+function stateCards(text) {
+  return '<div class="feed-card state">' + esc(text) + '</div>';
+}
 
 /* Admin surfaces (Review Queue / Subscriptions / Admin · Cadence) call
    /api/admin/* which returns 401 on the public site. Detect that cleanly and
@@ -810,6 +885,27 @@ function assetCellHtml(r) {
   return r.ticker
     ? '<div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, r.asset) + inner + '</div>'
     : '<div class="asset-cell">' + inner + '</div>';
+}
+function feedCardHtml(r) {
+  var lag = lagDays(r);
+  var amount = (r.min == null && r.max == null) ? '—' : amountText(r.min, r.max);
+  var filed = r.filed || '—';
+  var traded = r.txdate || '—';
+  var source = sourceLabel(r.source);
+  return '<article class="feed-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + r.member) + '">' +
+    '<div class="feed-card-top">' + assetCellHtml(r) + actionBadge(r.type) + '</div>' +
+    '<div class="feed-card-member ' + (r.filerId ? 'clickable' : '') + '"' + (r.filerId ? ' data-member="' + esc(r.filerId) + '"' : '') + '>' +
+      memberAvatarHtml(r.member, r.photoUrl) + '<div>' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div>' +
+    '</div>' +
+    '<div class="feed-card-meta">' +
+      '<div><span class="mkey">Amount</span><span class="mval">' + esc(amount) + '</span></div>' +
+      '<div><span class="mkey">Source</span><span class="mval">' + esc(source) + '</span></div>' +
+      '<div><span class="mkey">Traded</span><span class="mval">' + esc(traded) + '</span></div>' +
+      '<div><span class="mkey">Filed</span><span class="mval">' + esc(filed) + '</span></div>' +
+      '<div><span class="mkey">Lag</span><span class="mval">' + esc(lag == null ? '—' : lag + 'd') + '</span></div>' +
+      '<div><span class="mkey">Chamber</span><span class="mval">' + esc(r.chamber || '—') + '</span></div>' +
+    '</div>' +
+  '</article>';
 }
 function lagDays(r) { return daysBetween(r.txdate, r.filedDate); }
 function lagCellHtml(r) {
@@ -887,8 +983,13 @@ function renderFeed() {
   var minAmt = parseFloat(el('qMinAmt').value);
   var src = el('qSource').value;
   var body = el('feedBody');
+  var cards = el('feedCards');
   var cols = visibleCols();
-  if (!realDataLoaded) { body.innerHTML = stateRow(cols.length, 'Loading live feed…'); return; }
+  if (!realDataLoaded) {
+    body.innerHTML = stateRow(cols.length, 'Loading live feed…');
+    if (cards) cards.innerHTML = stateCards('Loading live feed…');
+    return;
+  }
   var rows = TRADES.filter(function (r) {
     if (qa) {
       var hay = ((r.member || '') + ' ' + (r.asset || '') + ' ' + (r.ticker || '') + ' ' +
@@ -903,13 +1004,18 @@ function renderFeed() {
            (!ch || r.chamber === ch);
   });
   rows = sortRows(rows);
-  if (rows.length === 0) { body.innerHTML = stateRow(cols.length, 'No transactions match these filters.'); updateFeedCountMsg(0); maybeInitResize(); return; }
+  if (rows.length === 0) {
+    body.innerHTML = stateRow(cols.length, 'No transactions match these filters.');
+    if (cards) cards.innerHTML = stateCards('No transactions match these filters.');
+    updateFeedCountMsg(0); maybeInitResize(); return;
+  }
   body.innerHTML = rows.map(function (r) {
     var tds = cols.map(function (c) {
       return '<td class="c-' + c.id + (c.cls ? ' ' + c.cls : '') + '">' + c.cell(r) + '</td>';
     }).join('');
     return '<tr class="row clickable" data-txid="' + esc(r.id) + '" title="Open trade details">' + tds + '</tr>';
   }).join('');
+  if (cards) cards.innerHTML = rows.map(feedCardHtml).join('');
   updateFeedCountMsg(rows.length);
   maybeInitResize();
 }
@@ -1314,9 +1420,21 @@ function createSubscription() {
       return r.json();
     })
     .then(function (data) {
-      var msg = data && data.secret ? ('Created. Save secret now: ' + data.secret) : 'Created.';
-      if (data && data.streamUrl) msg += ' Stream URL: ' + data.streamUrl;
-      el('subsMsg').textContent = msg;
+      if (data && data.secret) {
+        var stream = data.streamUrl || '';
+        el('subsMsg').innerHTML =
+          '<div class="secret-panel">' +
+            '<strong>Created. Save this secret now; it will not be shown again.</strong>' +
+            '<div><span class="muted">Secret</span><code class="secret-value">' + esc(data.secret) + '</code></div>' +
+            (stream ? '<div><span class="muted">SSE URL</span><code class="secret-value">' + esc(stream) + '</code></div>' : '') +
+            '<div class="secret-actions">' +
+              '<button class="btn ghost sm" data-copy="' + esc(data.secret) + '" onclick="copyFromData(this)">Copy secret</button>' +
+              (stream ? '<button class="btn ghost sm" data-copy="' + esc(stream) + '" onclick="copyFromData(this)">Copy SSE URL</button>' : '') +
+            '</div>' +
+          '</div>';
+      } else {
+        el('subsMsg').textContent = 'Created.';
+      }
       el('newClientId').value = ''; el('newTarget').value = '';
       loadSubs();
     })
@@ -2067,6 +2185,21 @@ function showToast(text, isErr) {
   if (TOAST_TIMER) clearTimeout(TOAST_TIMER);
   TOAST_TIMER = setTimeout(function () { t.className = 'toast'; }, 4200);
 }
+function copyText(text) {
+  if (!text) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () {
+      showToast('Copied.');
+    }).catch(function () {
+      showToast('Copy failed. Select and copy the value manually.', true);
+    });
+  } else {
+    showToast('Clipboard unavailable. Select and copy the value manually.', true);
+  }
+}
+function copyFromData(btn) {
+  copyText(btn && btn.getAttribute ? (btn.getAttribute('data-copy') || '') : '');
+}
 /* Surface ?login= / ?checkout= / ?billing= outcomes after a hosted redirect,
    then scrub them from the URL so a refresh doesn't re-toast. */
 function handleAuthQueryParams() {
@@ -2112,16 +2245,32 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
 })();
 
 /* Feed rows open the trade drawer; the asset chip and member open their drawers. */
+function openTradeById(id) {
+  for (var i = 0; i < TRADES.length; i++) {
+    if (TRADES[i].id === id) { openTrade(TRADES[i]); return; }
+  }
+}
+function handleFeedOpenEvent(e) {
+  if (!e.target.closest) return;
+  var a = e.target.closest('[data-asset]'); if (a) { openAsset(a.getAttribute('data-asset')); return; }
+  var m = e.target.closest('[data-member]'); if (m) { openMember(m.getAttribute('data-member')); return; }
+  var row = e.target.closest('[data-txid]'); if (!row) return;
+  openTradeById(row.getAttribute('data-txid'));
+}
 (function () {
   var fb = el('feedBody');
   if (fb) fb.addEventListener('click', function (e) {
-    if (!e.target.closest) return;
-    var a = e.target.closest('[data-asset]'); if (a) { openAsset(a.getAttribute('data-asset')); return; }
-    var m = e.target.closest('[data-member]'); if (m) { openMember(m.getAttribute('data-member')); return; }
-    var tr = e.target.closest('tr[data-txid]'); if (!tr) return;
-    var id = tr.getAttribute('data-txid');
-    for (var i = 0; i < TRADES.length; i++) { if (TRADES[i].id === id) { openTrade(TRADES[i]); return; } }
+    handleFeedOpenEvent(e);
   });
+  var fc = el('feedCards');
+  if (fc) {
+    fc.addEventListener('click', handleFeedOpenEvent);
+    fc.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      handleFeedOpenEvent(e);
+    });
+  }
 })();
 
 /* Inside a drawer, asset/member links drill into the next drawer. */

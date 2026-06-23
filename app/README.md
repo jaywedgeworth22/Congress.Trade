@@ -8,6 +8,11 @@ clients via webhook / SSE / REST.
 > implemented ingestion, extraction, delivery, admin, auth, billing, analytics,
 > enrichment, price-refresh, backfill, and UI surfaces. See `../AGENTS.md` for
 > branch/worktree coordination rules before continuing work.
+>
+> PWA/iOS planning lives in `docs/mobile-app-roadmap.md`. It treats the planned
+> Next.js/PWA and SwiftUI app as peer clients over one backend client API and
+> command/status model, not as places to run scraping, provider credentials, or
+> MCP orchestration.
 
 ---
 
