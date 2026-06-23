@@ -38,7 +38,7 @@ interface RawStripeSubscription {
   current_period_end?: number | null;
   cancel_at_period_end?: boolean;
   trial_end?: number | null;
-  items?: { data?: Array<{ price?: { id?: string } }> };
+  items?: { data?: Array<{ price?: { id?: string }; current_period_end?: number | null }> };
   metadata?: { userId?: string };
 }
 
@@ -56,7 +56,8 @@ export function parseSubscription(raw: RawStripeSubscription): ParsedSubscriptio
     customerId,
     status: raw.status,
     priceId: raw.items?.data?.[0]?.price?.id ?? null,
-    currentPeriodEnd: isoFromUnix(raw.current_period_end),
+    // API >=2025-03-31.basil moved current_period_end onto the subscription item.
+    currentPeriodEnd: isoFromUnix(raw.items?.data?.[0]?.current_period_end ?? raw.current_period_end),
     cancelAtPeriodEnd: !!raw.cancel_at_period_end,
     trialEnd: isoFromUnix(raw.trial_end),
     metadataUserId: raw.metadata?.userId ?? null,
