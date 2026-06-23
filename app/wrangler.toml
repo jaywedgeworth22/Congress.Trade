@@ -82,5 +82,10 @@ id = "b5554a8cd8b04347baeb80cd160bf1e0"
 #   GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / RESEND_API_KEY / EMAIL_FROM
 #   STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / STRIPE_PRICE_*
 # ---------------------------------------------------------------------------
-# [vars]
-# (non-secret vars go here)
+[vars]
+APP_BASE_URL = "https://congress.trade"
+# Stripe premium price ids (not secret) — created 2026-06-22 on the live account.
+STRIPE_PRICE_MONTHLY = "price_1TlHYBEUQUPhZj0SEzG2Qx68"
+STRIPE_PRICE_ANNUAL = "price_1TlHYCEUQUPhZj0SpNVoPb3Z"
+# Flip to "true" only after the account is approved for Managed Payments.
+STRIPE_MANAGED_PAYMENTS = "false"
