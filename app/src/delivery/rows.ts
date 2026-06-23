@@ -42,6 +42,7 @@ export interface TransactionRow {
   raw_text: string | null;
   confidence: number | null;
   source: string | null;
+  row_key?: string | null;
   created_at: string | null;
   cursor_seq: number | null;
 }
@@ -120,6 +121,7 @@ export function mapTransaction(row: TransactionRow): Transaction {
     rawText: row.raw_text ?? '',
     confidence: row.confidence ?? 0,
     source: (row.source as TxSource) ?? 'primary',
+    rowKey: row.row_key ?? null,
     createdAt: row.created_at ?? '',
     cursorSeq: row.cursor_seq ?? 0,
   };
@@ -199,6 +201,18 @@ export interface TxQueryParams {
    * and the count, so non-premium visitors see a consistent recent window.
    */
   filedSince?: string;
+  /**
+   * Rolling-window bounds on the *trade* date (`transactions.tx_date`), each a
+   * `YYYY-MM-DD`. Exposed on the public feed as `?from=`/`?to=` so a consumer
+   * pulling, say, the last 90 days can pass `from = today-90d` and have the
+   * server drop out-of-window rows. This matters because the feed is ordered by
+   * cursor_seq ASC (oldest first): without a server-side floor, a bounded pager
+   * would have to walk every historical row before reaching recent trades.
+   * Filters on tx_date specifically (not filed_date) so the window matches the
+   * trade itself; rows with a null tx_date are excluded when a bound is set.
+   */
+  txDateMin?: string;
+  txDateMax?: string;
 }
 
 export interface BuiltQuery {
@@ -281,6 +295,17 @@ function buildTxFilters(
     // Prefer the filing date; seed rows without a filing fall back to tx_date.
     where.push('COALESCE(f.filed_date, t.tx_date) >= ?');
     params.push(p.filedSince);
+  }
+  // Rolling-window bounds on the trade date itself. A row with a null tx_date
+  // can't satisfy a date comparison, so it's naturally excluded once a bound is
+  // set (the comparison is NULL -> not true), which is the intended behavior.
+  if (p.txDateMin) {
+    where.push('t.tx_date >= ?');
+    params.push(p.txDateMin.slice(0, 10));
+  }
+  if (p.txDateMax) {
+    where.push('t.tx_date <= ?');
+    params.push(p.txDateMax.slice(0, 10));
   }
 
   return { where, params };

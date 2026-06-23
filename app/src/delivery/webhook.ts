@@ -17,14 +17,16 @@
  *
  *   The base QueueMessage union (shared/types.ts, frozen) only declares
  *   `{type:'delivery.dispatch'; txId}`. We extend it at the wire level with two
- *   OPTIONAL fields (`attempt`, `subscriptionId`); the frozen consumer in
- *   index.ts still routes it to dispatchWebhook(env, txId) untouched, and the
- *   extra fields are read here defensively. This keeps the contract additive.
+ *   OPTIONAL fields (`attempt`, `subscriptionId`); index.ts preserves the whole
+ *   message object so the retry can target one subscription and increment the
+ *   attempt counter. This keeps the contract additive.
  *
  * IDEMPOTENCY:
- *   deliveries is keyed (subscription_id, tx_id). Before POSTing we check for an
- *   existing 'delivered' row and skip if present, so retries / duplicate queue
- *   messages never double-deliver.
+ *   deliveries is keyed (subscription_id, tx_id). We claim a pending row before
+ *   POSTing and skip already delivered/pending attempts, so retries / duplicate
+ *   queue messages do not concurrently double-deliver. Recipients should still
+ *   dedupe on X-Subscription-Id + X-Tx-Id because no HTTP webhook sender can be
+ *   exactly-once if it crashes after POST but before recording success.
  */
 
 import type { Env, Subscription, Transaction } from '../shared/types';
@@ -91,10 +93,8 @@ function backoffSeconds(attempt: number): number {
  * When called with a retry message (subscriptionId set), only that subscription
  * is (re)attempted.
  *
- * The frozen consumer calls `dispatchWebhook(env, msg.txId)`. To carry the retry
- * counter we accept the whole message body via an overload-friendly second arg;
- * index.ts passes only txId, so retries are enqueued with the richer shape and
- * re-enter here through the same path.
+ * The normal queue path may pass only the transaction id. Retry messages pass
+ * the whole body so the optional subscriptionId and attempt fields are preserved.
  */
 export async function dispatchWebhook(
   env: Env,
@@ -158,13 +158,8 @@ async function deliverToSubscription(
   tx: Transaction,
   attempt: number,
 ): Promise<void> {
-  // Idempotency: skip if already delivered for this (subscription, tx).
-  const existing = await get<{ status: string; attempts: number; id: string }>(
-    env.DB,
-    'SELECT id, status, attempts FROM deliveries WHERE subscription_id = ? AND tx_id = ?',
-    [sub.id, tx.id],
-  );
-  if (existing?.status === 'delivered') return;
+  const claim = await claimDelivery(env, sub.id, tx.id, attempt);
+  if (!claim) return;
 
   const deliveredAt = new Date().toISOString();
   const payload = {
@@ -196,7 +191,7 @@ async function deliverToSubscription(
     lastError = (err as Error).message ?? 'fetch failed';
   }
 
-  await recordDelivery(env, existing?.id ?? null, sub.id, tx.id, ok, attempt, lastError);
+  await recordDelivery(env, claim.id, ok, attempt, lastError);
 
   if (ok) {
     // Advance the subscription cursor to the high-water mark we just delivered.
@@ -229,30 +224,70 @@ async function deliverToSubscription(
   }
 }
 
-/** Upsert the deliveries row for a (subscription, tx) attempt. */
-async function recordDelivery(
+interface DeliveryClaim {
+  id: string;
+}
+
+/**
+ * Claim the single deliveries row for this subscription/transaction before
+ * sending the webhook. Returns null when another worker already delivered or is
+ * already processing the same/later attempt.
+ */
+async function claimDelivery(
   env: Env,
-  existingId: string | null,
   subscriptionId: string,
   txId: string,
+  attempt: number,
+): Promise<DeliveryClaim | null> {
+  const existing = await get<{ status: string; attempts: number; id: string }>(
+    env.DB,
+    'SELECT id, status, attempts FROM deliveries WHERE subscription_id = ? AND tx_id = ?',
+    [subscriptionId, txId],
+  );
+  if (existing?.status === 'delivered') return null;
+  if (existing?.status === 'pending' && existing.attempts >= attempt) return null;
+
+  const updatedAt = new Date().toISOString();
+  if (existing) {
+    const res = await run(
+      env.DB,
+      `UPDATE deliveries
+          SET status = 'pending', attempts = ?, last_error = NULL, updated_at = ?
+        WHERE id = ? AND status != 'delivered'`,
+      [attempt, updatedAt, existing.id],
+    );
+    if ((res.meta?.changes ?? 1) === 0) return null;
+    return { id: existing.id };
+  }
+
+  const id = prefixedId('dlv');
+  try {
+    await run(
+      env.DB,
+      `INSERT INTO deliveries (id, subscription_id, tx_id, status, attempts, last_error, updated_at)
+         VALUES (?, ?, ?, 'pending', ?, NULL, ?)`,
+      [id, subscriptionId, txId, attempt, updatedAt],
+    );
+    return { id };
+  } catch (err) {
+    if (!/unique|constraint/i.test((err as Error).message)) throw err;
+    return null;
+  }
+}
+
+/** Update the claimed deliveries row with the final result for this attempt. */
+async function recordDelivery(
+  env: Env,
+  deliveryId: string,
   ok: boolean,
   attempt: number,
   lastError: string | null,
 ): Promise<void> {
   const status = ok ? 'delivered' : 'failed';
   const updatedAt = new Date().toISOString();
-  if (existingId) {
-    await run(
-      env.DB,
-      'UPDATE deliveries SET status = ?, attempts = ?, last_error = ?, updated_at = ? WHERE id = ?',
-      [status, attempt, ok ? null : lastError, updatedAt, existingId],
-    );
-  } else {
-    await run(
-      env.DB,
-      `INSERT INTO deliveries (id, subscription_id, tx_id, status, attempts, last_error, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [prefixedId('dlv'), subscriptionId, txId, status, attempt, ok ? null : lastError, updatedAt],
-    );
-  }
+  await run(
+    env.DB,
+    'UPDATE deliveries SET status = ?, attempts = ?, last_error = ?, updated_at = ? WHERE id = ?',
+    [status, attempt, ok ? null : lastError, updatedAt, deliveryId],
+  );
 }

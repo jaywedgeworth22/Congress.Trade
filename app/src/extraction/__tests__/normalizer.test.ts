@@ -17,6 +17,7 @@ interface Captured {
 
 function makeEnv(securities: Array<{ ticker: string; name: string | null; aliases: string | null }>) {
   const cap: Captured = { insertedTx: [], reviewRows: [], filingUpdates: [], enqueued: [] };
+  const insertedRowKeys = new Set<string>();
 
   const prepare = (sql: string) => {
     const stmt = {
@@ -35,10 +36,18 @@ function makeEnv(securities: Array<{ ticker: string; name: string | null; aliase
         return null as T | null;
       },
       async run() {
-        if (/INSERT INTO transactions/i.test(sql)) cap.insertedTx.push(this._params);
-        else if (/INSERT INTO review_queue/i.test(sql)) cap.reviewRows.push(this._params);
+        let changes = 1;
+        if (/INSERT(?: OR IGNORE)? INTO transactions/i.test(sql)) {
+          const rowKey = String(this._params[14] ?? '');
+          if (insertedRowKeys.has(rowKey)) {
+            changes = 0;
+          } else {
+            insertedRowKeys.add(rowKey);
+            cap.insertedTx.push(this._params);
+          }
+        } else if (/INSERT INTO review_queue/i.test(sql)) cap.reviewRows.push(this._params);
         else if (/UPDATE filings/i.test(sql)) cap.filingUpdates.push(this._params);
-        return { success: true } as unknown;
+        return { success: true, meta: { changes } } as unknown;
       },
     };
     return stmt;
@@ -104,10 +113,23 @@ describe('normalize', () => {
 
     // Persisted + delivery fan-out happened; no review row.
     expect(cap.insertedTx).toHaveLength(1);
+    expect(cap.insertedTx[0][14]).toEqual(expect.stringMatching(/^v1:primary:0:/));
     expect(cap.reviewRows).toHaveLength(0);
     expect(cap.enqueued).toEqual([{ type: 'delivery.dispatch', txId: result.transactions[0].id }]);
     // filings updated (metadata + persisted status).
     expect(cap.filingUpdates.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('does not insert or enqueue duplicates when the same filing is normalized twice', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '["Apple"]' }]);
+    const first = await normalize(env, filing(), [tx()]);
+    const second = await normalize(env, filing(), [tx()]);
+
+    expect(first.needsReview).toBe(false);
+    expect(second.needsReview).toBe(false);
+    expect(cap.insertedTx).toHaveLength(1);
+    expect(cap.enqueued).toHaveLength(1);
+    expect(cap.enqueued[0]).toEqual({ type: 'delivery.dispatch', txId: first.transactions[0].id });
   });
 
   it('resolves ticker via alias when raw ticker is missing', async () => {

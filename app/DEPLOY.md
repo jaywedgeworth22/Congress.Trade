@@ -3,16 +3,29 @@
 Cloudflare Workers service that ingests US congressional STOCK Act disclosures
 (House + Senate), extracts/normalizes trades, and pushes them to clients via
 webhook + SSE, with a dashboard and admin panel. This runbook takes a fresh
-Cloudflare account to a running deployment.
+checkout to a running deployment.
+
+`wrangler.toml` in this repository currently contains the live `congress.trade`
+custom domains and real Cloudflare resource IDs. Treat `npm run deploy`,
+`npm run deploy:full`, `scripts/ship.sh`, and remote D1 commands as production
+operations unless you have intentionally changed the config or selected another
+environment.
 
 ## 0. Prerequisites
 - Node 18+ and npm.
 - A Cloudflare account; `npx wrangler login` (or set `CLOUDFLARE_API_TOKEN`).
 - `cd app && npm install`.
-- Verify locally before deploying: `npm run typecheck && npm run test` (95 tests).
+- Verify locally before deploying: `npm run typecheck && npm run test`.
 
 ## 1. Provision Cloudflare resources
-Run from `app/`. Each command prints an ID — copy it into `wrangler.toml`.
+For the existing production app, the D1 database and KV namespace IDs are already
+committed in `wrangler.toml`, and the R2 bucket / queues are named there. Do not
+run provisioning against production unless you are intentionally recreating
+resources.
+
+For a fresh Cloudflare account or staging environment, run from `app/`. Each
+command prints an ID to copy into a separate config or environment-specific
+`wrangler.toml`.
 
 ```bash
 # D1 database  -> copy database_id
@@ -31,9 +44,8 @@ npx wrangler queues create congress-feed-ingest-dlq
 npx wrangler queues create congress-feed-delivery-dlq
 ```
 
-Then edit `wrangler.toml` and replace the two placeholders:
-- `database_id = "PLACEHOLDER_D1_DATABASE_ID"`
-- `id = "PLACEHOLDER_KV_NAMESPACE_ID"` (the CONFIG_KV binding)
+If you use `scripts/provision.sh`, read the script header first. It creates
+resources, patches placeholder IDs when present, and applies remote migrations.
 
 ## 2. Apply the database schema
 ```bash
@@ -57,6 +69,10 @@ Arbitration is **off** until both the key above is set **and** the var
 `.dev.vars`). Flipping it on makes the vision extractor run primary + secondary
 and reconcile. For local dev, copy `.dev.vars.example` → `.dev.vars`.
 
+Admin auth fails closed by default. Set `ADMIN_TOKEN` or configure Cloudflare
+Access (`ADMIN_EMAILS`, `ACCESS_AUD`, `ACCESS_TEAM_DOMAIN`). Only local
+development should use `ADMIN_OPEN_IN_DEV="true"`.
+
 ## 3b. End-user auth + Stripe paywall (Wave 4)
 The public-site account system (Google OAuth + email magic-link) and freemium
 paywall (Stripe) have their own copy-paste runbook — Stripe products/webhook,
@@ -64,7 +80,7 @@ Google OAuth client, Resend, and Cloudflare Access for the admin subdomain:
 see [`docs/wave4-auth-billing.md`](docs/wave4-auth-billing.md). All of it
 degrades gracefully until configured, so this is optional for a first deploy.
 
-> **⚠️ Migrations don't auto-apply.** Code auto-deploys (Cloudflare Workers
+> **Migrations don't auto-apply.** Code auto-deploys (Cloudflare Workers
 > Builds on push to `main`), but D1 migrations do **not** run as part of that.
 > After any deploy that adds a migration, apply it or the new code will query
 > tables/columns that don't exist (→ HTTP 500). Two ways:
@@ -74,6 +90,10 @@ degrades gracefully until configured, so this is optional for a first deploy.
 >   (skips "duplicate column"/"already exists"), so it's safe to re-run and needs
 >   no local checkout. Keep its statement list in `src/admin/routes.ts` in sync
 >   when you add a migration file.
+>
+> `scripts/ship.sh` deploys and then calls the admin migration endpoint. Use it
+> when you deliberately want that production path. `npm run deploy:full` uses
+> remote Wrangler D1 migration first, then deploys.
 
 ## 4. (Optional) Seed ticker resolution
 The normalizer resolves tickers against the `securities_master` table; unresolved
@@ -105,11 +125,13 @@ within ~60s without a redeploy.
 ## Endpoint reference
 Public API (`/api`):
 - `GET /api/transactions?since=<cursor>&ticker=&member=&chamber=&type=&limit=` — cursor feed (reconciliation backstop)
-- `GET /api/stream?subscription=&since=` — SSE live push
+- `GET /api/stream?subscription=&token=&since=` — SSE live push (subscription secret required)
 - `GET /api/filings/:docId`, `GET /api/members`
-- `GET/POST /api/subscriptions`, `GET/PATCH /api/subscriptions/:id`
+- `POST /api/subscriptions` — create and return the subscription secret once
+- `GET/PATCH /api/subscriptions/:id` — secret-scoped management
+- `GET /api/subscriptions` is disabled publicly; use the admin endpoint below.
 
-Admin (`/api/admin`, bearer-auth stub — set `ADMIN_TOKEN` and enforce before prod):
+Admin (`/api/admin`, bearer token or Cloudflare Access; fails closed unless configured):
 - `GET/PUT /api/admin/poll-config`, `GET /api/admin/poll-config/aggressive`
 - `GET /api/admin/review-queue`, `POST /api/admin/review/:docId` `{decision:'confirm'|'reject', edits?}`
 - `GET /api/admin/sources/health`, `GET /api/admin/subscriptions`
@@ -129,11 +151,12 @@ cron → watcher (House XML diff + Senate eFD) → INGEST_QUEUE
 ```
 
 ## Notes / TODO before production
-- **Admin auth** is a documented stub (open unless `ADMIN_TOKEN` set); enforce it.
+- **Branch protection/rulesets** should remain enforced on `main`: use PRs,
+  require the `typecheck + test` check, and prohibit force pushes/deletions.
 - **Senate eFD** scraping depends on the agreement-gate + CSRF flow; if Senate
   changes its markup, `src/ingestion/senateSource.ts` is the place to adjust.
 - **House bulk XML** refreshes ~daily; the intraday live-search hook
   (`pollHouseLiveSearch()`) is stubbed for when you want sub-day House latency.
-- **Vision model** id is `gemini-2.0-flash` in `src/extraction/visionLlm.ts` —
-  bump to the current Flash model as needed.
+- **Vision model** id lives in `src/extraction/visionLlm.ts`; review that
+  constant before changing extraction cost/quality.
 - Confirm the `SEED_SOURCES` URLs in `src/backfill/seed.ts` resolve (flagged in code).

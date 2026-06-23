@@ -214,9 +214,9 @@ GET https://congress.trade/api/analytics/...   (leaderboards, cluster buys, sect
 Poll forward with the returned `cursor` (pass it as the next `since`).
 
 **The feed is fully public** — no token, no row gating. Page forward by cursor to
-cover any window (e.g. a rolling 90 days); pass `limit` for page size. (The
-freemium boundary is only the premium-only full-history CSV export + analytics,
-not the feed rows.)
+cover any window (e.g. a rolling 90 days); pass `limit` for page size. The
+freemium boundary is currently the premium-only full-history CSV export, not the
+feed rows or public analytics.
 
 Per-transaction object (each item in `transactions[]`):
 
@@ -247,5 +247,6 @@ Mapping to a typical `CongressTrade`:
 - `GET /api/health` → `{ ok, db, time }` — liveness + D1 connectivity (`db:false`
   means the database is unreachable or unmigrated).
 - **Apply migrations to production** (the common cause of 500s on DB-backed
-  routes): `npm run migrate:remote` (or `npm run deploy:full` to migrate + deploy
-  in one step). The plain `npm run migrate` is **local-only**.
+  routes): use `npm run migrate:remote`, `npm run deploy:full`, or
+  `ADMIN_TOKEN=... bash scripts/ship.sh` depending on the production path chosen
+  in `DEPLOY.md`. The plain `npm run migrate` is **local-only**.
