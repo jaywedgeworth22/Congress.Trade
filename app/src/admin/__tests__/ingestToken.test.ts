@@ -45,4 +45,14 @@ describe('scoped INGEST_TOKEN', () => {
     const res = await post('/securities/import', 'ingest-secret', { ADMIN_TOKEN: 'admin-secret' });
     expect(res.status).toBe(401);
   });
+
+  it('fails closed when no admin auth mechanism is configured', async () => {
+    const res = await post('/securities/import', null, {});
+    expect(res.status).toBe(401);
+  });
+
+  it('opens only when the local dev override is explicit', async () => {
+    const res = await post('/securities/import', null, { ADMIN_OPEN_IN_DEV: 'true' });
+    expect(res.status).toBe(200);
+  });
 });

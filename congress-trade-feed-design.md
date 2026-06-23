@@ -1,6 +1,11 @@
 # Congressional Trade Feed — Design & Build-vs-Buy
 
-_Author: Jay · Date: 2026-06-19 · Status: draft for decision_
+_Author: Jay · Date: 2026-06-19 · Status: historical design context_
+
+> Current implementation lives in `app/`. Use `README.md`, `AGENTS.md`,
+> `app/README.md`, and `app/DEPLOY.md` for present-day onboarding and runbooks.
+> This document is still useful for product rationale and original build-vs-buy
+> decisions, but some implementation details have since shipped or changed.
 
 A low-latency, low-cost service that watches US House and Senate STOCK Act
 disclosures, ingests new filings (including scanned/handwritten PDFs) within

@@ -3,12 +3,11 @@
  * OWNER: foundation (this scaffold)
  *
  * Worker entrypoint. Wires together:
- *   - fetch():      Hono app. IMPLEMENTED GET /health. Mounts /api delivery +
- *                   /api/admin routers (built by other agents; mounted lazily so
- *                   a not-yet-implemented router doesn't break /health).
- *   - scheduled():  cron handler -> runWatcher() (ingestion stub).
+ *   - fetch():      Hono app. Mounts health, REST/SSE, admin, analytics, auth,
+ *                   billing, and UI routers.
+ *   - scheduled():  cron handler -> runWatcher() + daily enrichment/price jobs.
  *   - queue():      consumer routing INGEST_QUEUE / DELIVERY_QUEUE messages to
- *                   the appropriate stub handlers by message type.
+ *                   the appropriate stage handlers by message type.
  *
  * Data flow:
  *   watcher --(filing.new)--> fetcher --(filing.fetched)--> classifier
@@ -19,7 +18,7 @@
 import { Hono } from 'hono';
 import type { Env, QueueMessage } from './shared/types';
 
-// Stage handlers (stubs owned by other agents).
+// Stage handlers owned by their feature modules.
 import { runWatcher } from './ingestion/watcher';
 import { fetchFiling } from './ingestion/fetcher';
 import { classifyFiling } from './ingestion/classifier';
@@ -39,29 +38,25 @@ const app = new Hono<{ Bindings: Env }>();
 app.get('/health', (c) => c.json({ ok: true }));
 
 /**
- * Mount the /api routers (delivery REST + admin). These are built by other
- * agents and currently throw NOT_IMPLEMENTED from their builder functions, so we
- * mount them defensively: a build failure is logged and does NOT take down the
- * worker or the /health route.
+ * Mount the app routers defensively: a build failure is logged and does not take
+ * down the worker or the /health route.
  */
 function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
   try {
-    // Builders currently throw NOT_IMPLEMENTED; mount defensively so a stub
-    // does not take down the worker or the implemented /health route.
     root.route('/api', buildRestRouter());
   } catch (err) {
-    console.warn('delivery/rest router not mounted (stub):', (err as Error).message);
+    console.warn('delivery/rest router not mounted:', (err as Error).message);
   }
   try {
     root.route('/api/admin', buildAdminRouter());
   } catch (err) {
-    console.warn('admin/routes router not mounted (stub):', (err as Error).message);
+    console.warn('admin/routes router not mounted:', (err as Error).message);
   }
   try {
     // Read-only trend analytics over the transaction corpus.
     root.route('/api/analytics', buildAnalyticsRouter());
   } catch (err) {
-    console.warn('analytics/routes router not mounted (stub):', (err as Error).message);
+    console.warn('analytics/routes router not mounted:', (err as Error).message);
   }
   // End-user auth (Google OAuth + magic-link) at /auth/*. Mounted before the UI
   // catch-all so its routes are not shadowed by the dashboard.
@@ -82,7 +77,7 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
   try {
     root.route('/', buildUiRouter());
   } catch (err) {
-    console.warn('ui/routes router not mounted (stub):', (err as Error).message);
+    console.warn('ui/routes router not mounted:', (err as Error).message);
   }
 }
 
@@ -116,7 +111,7 @@ async function handleIngestMessage(env: Env, msg: QueueMessage): Promise<void> {
 async function handleDeliveryMessage(env: Env, msg: QueueMessage): Promise<void> {
   switch (msg.type) {
     case 'delivery.dispatch':
-      await dispatchWebhook(env, msg.txId);
+      await dispatchWebhook(env, msg);
       return;
     default:
       console.warn('DELIVERY_QUEUE: unexpected message type', (msg as { type?: string }).type);

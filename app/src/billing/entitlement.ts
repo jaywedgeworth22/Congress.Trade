@@ -5,10 +5,11 @@
  * the billing routes — and is trivially unit-testable.
  *
  * A visitor is "premium" while their Stripe subscription is `trialing` or
- * `active`. We deliberately do NOT extend premium to `past_due`/`unpaid`: Stripe
- * keeps the subscription in `active` during its smart-retry grace window and
- * only flips to `past_due` once retries are failing, at which point access
- * should lapse until payment succeeds (which returns it to `active`).
+ * `active` for one of this app's configured prices. We deliberately do NOT
+ * extend premium to `past_due`/`unpaid`: Stripe keeps the subscription in
+ * `active` during its smart-retry grace window and only flips to `past_due` once
+ * retries are failing, at which point access should lapse until payment
+ * succeeds (which returns it to `active`).
  */
 
 import type { Entitlement, User } from '../shared/types';
@@ -31,8 +32,9 @@ export const ANONYMOUS_ENTITLEMENT: Entitlement = {
 export function entitlementOf(user: User | null | undefined): Entitlement {
   if (!user) return ANONYMOUS_ENTITLEMENT;
   const status = user.subscriptionStatus;
+  const hasKnownPlan = user.plan === 'monthly' || user.plan === 'annual';
   return {
-    premium: status != null && PREMIUM_STATUSES.has(status),
+    premium: hasKnownPlan && status != null && PREMIUM_STATUSES.has(status),
     status: status ?? null,
     plan: user.plan ?? null,
     trialing: status === 'trialing',

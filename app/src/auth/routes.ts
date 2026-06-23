@@ -29,7 +29,7 @@ import { buildGoogleAuthUrl, exchangeGoogleCode, fetchGoogleProfile } from './go
 import { upsertUserFromGoogle, upsertUserByEmail } from './users';
 import { issueMagicToken, consumeMagicToken, magicLinkEmail } from './magic';
 import { sendEmail } from './email';
-import { randomToken } from './tokens';
+import { constantTimeEqual, randomToken } from './tokens';
 import { entitlementOf } from '../billing/entitlement';
 
 const OAUTH_STATE_COOKIE = 'ct_oauth_state';
@@ -86,7 +86,7 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     const state = url.searchParams.get('state');
     const cookieState = getCookie(c, OAUTH_STATE_COOKIE);
     deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/' });
-    if (!code || !state || !cookieState || state !== cookieState) {
+    if (!code || !state || !cookieState || !(await constantTimeEqual(state, cookieState))) {
       return c.redirect(`${baseUrl(c)}/?login=error`);
     }
     try {

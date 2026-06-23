@@ -102,8 +102,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   r.get('/transactions', async (c) => {
     const q = c.req.query();
     // The live feed is fully public — it's the site's SEO/discovery hook. The
-    // freemium boundary is premium-only *full-history export* + analytics (see
-    // /export/transactions.csv), not hiding feed rows. (Earlier this gated the
+    // freemium boundary is premium-only *full-history export* (see
+    // /export/transactions.csv), not hiding feed rows or public analytics.
+    // (Earlier this gated the
     // feed to the last 30 days for logged-out visitors, which emptied the page
     // on datasets without recent filings.)
     const params: TxQueryParams = {
