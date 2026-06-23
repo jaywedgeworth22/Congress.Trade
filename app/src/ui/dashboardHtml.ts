@@ -11,7 +11,7 @@
  *                 EventSource('/api/stream?subscription=<id>')
  *   Review        GET /api/admin/review-queue
  *                 POST /api/admin/review/:docId  {decision}
- *   Subscriptions GET/POST /api/subscriptions
+ *   Subscriptions GET /api/admin/subscriptions, POST /api/subscriptions
  *   Admin cadence GET/PUT /api/admin/poll-config
  *   Source health GET /api/admin/sources/health
  *
@@ -507,7 +507,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button class="btn sm" onclick="createSubscription()">+ New subscription</button>
         <span id="subsMsg" class="note"></span>
       </div>
-      <p class="note">API HOOK: GET/POST <code>/api/subscriptions</code></p>
+      <p class="note">API HOOK: GET <code>/api/admin/subscriptions</code>; POST <code>/api/subscriptions</code></p>
     </div>
   </section>
 
@@ -1158,7 +1158,7 @@ function startStream() {
   try {
     es = new EventSource('/api/stream?subscription=dashboard');
     es.onopen = function () { setLivePill('live', 'live feed'); };
-    es.onmessage = function (e) {
+    es.addEventListener('trade.new', function (e) {
       try {
         var tx = JSON.parse(e.data);
         if (!tx || !tx.id) return;
@@ -1170,7 +1170,15 @@ function startStream() {
         setLivePill('live', 'new filing ↑');
         setTimeout(function () { if (es && es.readyState === 1) setLivePill('live', 'live feed'); }, 1800);
       } catch (err) { /* ignore malformed frame */ }
-    };
+    });
+    es.addEventListener('reconnect', function (e) {
+      try {
+        var msg = JSON.parse(e.data || '{}');
+        if (typeof msg.since === 'number' && msg.since > cursor) cursor = msg.since;
+      } catch (err) { /* ignore malformed frame */ }
+      stopStream();
+      startPolling();
+    });
     es.onerror = function () {
       // SSE is unavailable (e.g. 404 on the public site). Stop reconnecting and
       // fall back to gentle polling rather than sticking on "reconnecting…".
@@ -1262,8 +1270,8 @@ function resolveReview(docId, decision) {
 
 /* ============================ SUBSCRIPTIONS ============================ */
 function loadSubs() {
-  // API HOOK: GET /api/subscriptions
-  return fetch('/api/subscriptions')
+  // API HOOK: GET /api/admin/subscriptions
+  return fetch('/api/admin/subscriptions', { headers: adminHeaders() })
     .then(okOrThrow)
     .then(function (data) { renderSubs(data.subscriptions || []); })
     .catch(function (e) {
@@ -1305,10 +1313,12 @@ function createSubscription() {
       if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ('HTTP ' + r.status)); });
       return r.json();
     })
-    .then(function () {
-      el('subsMsg').textContent = 'Created.';
+    .then(function (data) {
+      var msg = data && data.secret ? ('Created. Save secret now: ' + data.secret) : 'Created.';
+      if (data && data.streamUrl) msg += ' Stream URL: ' + data.streamUrl;
+      el('subsMsg').textContent = msg;
       el('newClientId').value = ''; el('newTarget').value = '';
-      loadSubs(); setTimeout(function () { el('subsMsg').textContent = ''; }, 2500);
+      loadSubs();
     })
     .catch(function (e) { el('subsMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
 }

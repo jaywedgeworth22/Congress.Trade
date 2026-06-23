@@ -40,7 +40,7 @@ const subRow = {
   created_at: '2026-06-20T00:00:00.000Z',
 };
 
-function fakeEnv() {
+function fakeEnv(deliveryStatus: 'failed' | 'delivered' | null = 'failed') {
   const sent: Array<{ body: unknown; options: unknown }> = [];
   const prepares: string[] = [];
 
@@ -59,7 +59,9 @@ function fakeEnv() {
         }
         if (/FROM subscriptions WHERE id = \?/i.test(sql)) return subRow as T;
         if (/FROM deliveries WHERE subscription_id = \? AND tx_id = \?/i.test(sql)) {
-          return { id: 'dlv_1', status: 'failed', attempts: 2 } as T;
+          return deliveryStatus
+            ? ({ id: 'dlv_1', status: deliveryStatus, attempts: 2 } as T)
+            : (null as T | null);
         }
         return null as T | null;
       },
@@ -125,6 +127,32 @@ describe('delivery queue retry routing', () => {
       attempt: 4,
     });
     expect(sent[0].options).toMatchObject({ delaySeconds: expect.any(Number) });
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it('skips webhook POST when delivery already succeeded', async () => {
+    const { env, sent } = fakeEnv('delivered');
+    const fetchMock = vi.fn(async () => new Response('ok', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const body = {
+      type: 'delivery.dispatch',
+      txId: 'tx_1',
+      subscriptionId: 'sub_retry',
+      attempt: 3,
+    } as QueueMessage & { subscriptionId: string; attempt: number };
+    const batch = {
+      queue: 'congress-feed-delivery',
+      messages: [{ body, ack, retry }],
+    } as unknown as MessageBatch<QueueMessage>;
+
+    await worker.queue(batch, env, {} as ExecutionContext);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(sent).toHaveLength(0);
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
   });

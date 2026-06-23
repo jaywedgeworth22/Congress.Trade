@@ -12,14 +12,14 @@
  *   GET   /stream            SSE live stream (?since= or Last-Event-ID resume)
  *   GET   /filings/:docId    single filing (+ its transactions) for the dashboard
  *   GET   /members           distinct filers seen in transactions
- *   POST  /subscriptions     create a subscription
- *   GET   /subscriptions     list subscriptions
- *   GET   /subscriptions/:id fetch one subscription
- *   PATCH /subscriptions/:id update a subscription
+ *   POST  /subscriptions     create a subscription; returns its secret once
+ *   GET   /subscriptions     disabled publicly; use /api/admin/subscriptions
+ *   GET   /subscriptions/:id fetch one subscription with its secret
+ *   PATCH /subscriptions/:id update a subscription with its secret
  */
 
-import { Hono } from 'hono';
-import type { Chamber, Env, SubscriptionFilters, TxType } from '../shared/types';
+import { Hono, type Context } from 'hono';
+import type { Chamber, Env, Subscription, SubscriptionFilters, TxType } from '../shared/types';
 import { all, get } from '../shared/db';
 import {
   buildTransactionsQuery,
@@ -38,11 +38,11 @@ import { isPremiumUser } from '../billing/entitlement';
 import {
   createSubscription,
   getSubscription,
-  listSubscriptions,
   updateSubscription,
 } from './subscriptions';
 import { openSseStream } from './sse';
 import { handleTickerLogoRequest } from '../ui/tickerLogos';
+import { constantTimeEqual } from '../auth/tokens';
 
 function parseIntOrUndef(v: string | undefined): number | undefined {
   if (v === undefined || v === '') return undefined;
@@ -64,6 +64,80 @@ export function resolveResumeCursor(
   lastEventId: string | undefined,
 ): number | undefined {
   return parseIntOrUndef(sinceParam) ?? parseIntOrUndef(lastEventId);
+}
+
+type RestContext = Context<{ Bindings: Env }>;
+
+interface PublicSubscription extends Omit<Subscription, 'secret'> {
+  hasSecret: boolean;
+  /** Returned only once, on creation or explicit secret rotation. */
+  secret?: string;
+  /** Browser EventSource helper for SSE subscriptions. Contains the one-time secret. */
+  streamUrl?: string;
+}
+
+function toPublicSubscription(
+  sub: Subscription,
+  opts: { includeSecret?: boolean; basePath?: string } = {},
+): PublicSubscription {
+  const { secret, ...rest } = sub;
+  const out: PublicSubscription = {
+    ...rest,
+    hasSecret: Boolean(secret),
+  };
+  if (opts.includeSecret && secret) {
+    out.secret = secret;
+    if (sub.delivery === 'sse') {
+      const path = opts.basePath ?? '/api/stream';
+      out.streamUrl = `${path}?subscription=${encodeURIComponent(sub.id)}&token=${encodeURIComponent(secret)}`;
+    }
+  }
+  return out;
+}
+
+function bearerToken(value: string | undefined): string | null {
+  const prefix = 'Bearer ';
+  if (!value || !value.startsWith(prefix)) return null;
+  const token = value.slice(prefix.length).trim();
+  return token || null;
+}
+
+function subscriptionSecretFromRequest(c: RestContext, allowQueryToken = false): string | null {
+  return (
+    bearerToken(c.req.header('Authorization')) ??
+    c.req.header('X-Subscription-Secret') ??
+    (allowQueryToken ? c.req.query('token') ?? null : null)
+  );
+}
+
+async function isAuthorizedForSubscription(
+  c: RestContext,
+  sub: Subscription,
+  allowQueryToken = false,
+): Promise<boolean> {
+  const provided = subscriptionSecretFromRequest(c, allowQueryToken);
+  return Boolean(sub.secret && provided && (await constantTimeEqual(provided, sub.secret)));
+}
+
+function isLocalHttpUrl(url: URL): boolean {
+  return (
+    url.protocol === 'http:' &&
+    (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1')
+  );
+}
+
+function validateWebhookTargetUrl(targetUrl: string | null): string | null {
+  if (!targetUrl) return 'targetUrl is required for webhook subscriptions';
+  let url: URL;
+  try {
+    url = new URL(targetUrl);
+  } catch {
+    return 'targetUrl must be a valid absolute URL';
+  }
+  if (url.protocol !== 'https:' && !isLocalHttpUrl(url)) {
+    return 'targetUrl must use https:// outside localhost development';
+  }
+  return null;
 }
 
 function asChamber(v: string | undefined): Chamber | undefined {
@@ -246,7 +320,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'missing ?subscription=' }, 400);
     }
     const since = resolveResumeCursor(c.req.query('since'), c.req.header('Last-Event-ID'));
-    return openSseStream(c.env, subscription, since);
+    const token = subscriptionSecretFromRequest(c, true) ?? undefined;
+    return openSseStream(c.env, subscription, since, token);
   });
 
   // --- GET /logos/ticker --------------------------------------------------
@@ -469,8 +544,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
 
     const targetUrl =
       typeof body.targetUrl === 'string' && body.targetUrl.length > 0 ? body.targetUrl : null;
-    if (delivery === 'webhook' && !targetUrl) {
-      return c.json({ error: 'targetUrl is required for webhook subscriptions' }, 400);
+    if (delivery === 'webhook') {
+      const targetUrlError = validateWebhookTargetUrl(targetUrl);
+      if (targetUrlError) return c.json({ error: targetUrlError }, 400);
     }
 
     const filters: SubscriptionFilters =
@@ -478,6 +554,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
         ? (body.filters as SubscriptionFilters)
         : {};
     const secret = typeof body.secret === 'string' ? body.secret : undefined;
+    if (secret !== undefined && secret.length < 16) {
+      return c.json({ error: 'secret must be at least 16 characters' }, 400);
+    }
 
     const sub = await createSubscription(c.env, {
       clientId,
@@ -486,21 +565,25 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       secret: secret ?? null,
       filters,
     });
-    return c.json(sub, 201);
+    return c.json(toPublicSubscription(sub, { includeSecret: true }), 201);
   });
 
   // --- GET /subscriptions -------------------------------------------------
   r.get('/subscriptions', async (c) => {
-    const activeOnly = c.req.query('active') === 'true';
-    const subs = await listSubscriptions(c.env, activeOnly);
-    return c.json({ subscriptions: subs, count: subs.length });
+    return c.json(
+      { error: 'public subscription listing is disabled; use /api/admin/subscriptions' },
+      401,
+    );
   });
 
   // --- GET /subscriptions/:id ---------------------------------------------
   r.get('/subscriptions/:id', async (c) => {
     const sub = await getSubscription(c.env, c.req.param('id'));
     if (!sub) return c.json({ error: 'subscription not found' }, 404);
-    return c.json(sub);
+    if (!(await isAuthorizedForSubscription(c, sub))) {
+      return c.json({ error: 'subscription secret required' }, 401);
+    }
+    return c.json(toPublicSubscription(sub));
   });
 
   // --- PATCH /subscriptions/:id -------------------------------------------
@@ -508,6 +591,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const id = c.req.param('id');
     const existing = await getSubscription(c.env, id);
     if (!existing) return c.json({ error: 'subscription not found' }, 404);
+    if (!(await isAuthorizedForSubscription(c, existing))) {
+      return c.json({ error: 'subscription secret required' }, 401);
+    }
 
     let body: Record<string, unknown>;
     try {
@@ -522,9 +608,18 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     }
     if (typeof body.targetUrl === 'string' || body.targetUrl === null) {
       patch.targetUrl = body.targetUrl as string | null;
+      if (existing.delivery === 'webhook') {
+        const targetUrlError = validateWebhookTargetUrl(patch.targetUrl);
+        if (targetUrlError) return c.json({ error: targetUrlError }, 400);
+      }
     }
-    if (typeof body.secret === 'string' || body.secret === null) {
-      patch.secret = body.secret as string | null;
+    if (typeof body.secret === 'string') {
+      if (body.secret.length < 16) {
+        return c.json({ error: 'secret must be at least 16 characters' }, 400);
+      }
+      patch.secret = body.secret;
+    } else if (body.secret === null) {
+      return c.json({ error: 'secret cannot be cleared' }, 400);
     }
     if (typeof body.active === 'boolean') {
       patch.active = body.active;
@@ -534,7 +629,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     }
 
     const updated = await updateSubscription(c.env, id, patch);
-    return c.json(updated);
+    return c.json(toPublicSubscription(updated, { includeSecret: patch.secret !== undefined }));
   });
 
   return r;

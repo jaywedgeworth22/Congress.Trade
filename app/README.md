@@ -54,8 +54,9 @@ clients via webhook / SSE / REST.
    secondary, gated by `ARBITRATION_API_KEY` + flag).
 5. **normalizer** validates STOCK Act amount brackets, resolves tickers against
    `securities_master`, computes confidence, routes low-confidence to
-   `review_queue`, and persists `transactions` (assigning monotonic `cursor_seq`).
-6. **persist** triggers `tx.persisted` → `delivery.dispatch`.
+   `review_queue`, and persists `transactions` (assigning stable `row_key` +
+   monotonic `cursor_seq`).
+6. **persist** enqueues `delivery.dispatch` only for newly inserted rows.
 7. **deliver** fans out to matching subscriptions (webhook signed with
    `WEBHOOK_SIGNING_KEY`; SSE live stream; REST `?since=<cursor_seq>` pull).
 
@@ -128,6 +129,29 @@ without a DB (mirroring `src/delivery/rows.ts`).
 > its floor) via the single `BRACKET_MIDPOINT_SQL` expression. With `source=all`
 > a trade present in both the live and seed sets can be double-counted — use
 > `source=primary` for a de-duplicated dollar view.
+
+## Delivery subscriptions
+
+Subscription ids are identifiers, not credentials.
+
+- `POST /api/subscriptions` creates a webhook or SSE subscription and returns
+  its generated secret exactly once. Store it immediately.
+- `GET /api/subscriptions` is intentionally disabled publicly. Use
+  `GET /api/admin/subscriptions` from the secured admin API for operator lists.
+- `GET/PATCH /api/subscriptions/:id` require the per-subscription secret via
+  `Authorization: Bearer <secret>` or `X-Subscription-Secret`. Responses redact
+  the secret unless the request is explicitly rotating it.
+- `GET /api/stream?subscription=<id>&token=<secret>` opens an SSE stream. Native
+  browser `EventSource` cannot set authorization headers, so browser clients use
+  a scoped query token and must treat stream URLs as sensitive.
+- Webhook delivery is at-least-once. The Worker claims a unique
+  `(subscription_id, tx_id)` row before POSTing, and recipients should still
+  dedupe on `X-Subscription-Id` + `X-Tx-Id`.
+
+Live normalization is also idempotent after migration `0008`: each primary row
+gets a stable `row_key`, and D1 enforces unique `(doc_id, source, row_key)`.
+Retries or duplicate queue messages should not create duplicate live rows or
+duplicate delivery fan-out.
 
 ## Bindings (wrangler.toml)
 
