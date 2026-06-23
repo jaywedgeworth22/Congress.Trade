@@ -19,8 +19,8 @@
  *      `aud` matching ACCESS_AUD and an authenticated email on ADMIN_EMAILS
  *      (good for humans signing in with Google/SSO — no token to paste).
  *
- *   The surface stays OPEN only when NEITHER mechanism is configured (local dev
- *   / unprovisioned deploys); a one-time console warning then flags the gap.
+ *   The surface fails closed when no auth mechanism is configured. For local
+ *   development only, set ADMIN_OPEN_IN_DEV=true to open it explicitly.
  *   Provision `wrangler secret put ADMIN_TOKEN`, and/or set ADMIN_EMAILS +
  *   ACCESS_AUD + ACCESS_TEAM_DOMAIN (with an Access app in front), to lock down.
  */
@@ -34,10 +34,16 @@ import { listSubscriptions } from '../delivery/subscriptions';
 import { runSeedBackfillFromEnv } from '../backfill/seed';
 import { runHouseHistoricalBackfill } from '../backfill/houseCrawler';
 import { extractParsed } from '../extraction/orchestrator';
-import { normalize, recomputeTransactions, CONFIDENCE_THRESHOLD } from '../extraction/normalizer';
+import {
+  normalize,
+  recomputeTransactions,
+  transactionRowKey,
+  CONFIDENCE_THRESHOLD,
+} from '../extraction/normalizer';
 import type { Chamber } from '../shared/types';
 import { verifyAccessJwt, certsUrl, parseEmailAllowlist } from './access';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
+import { constantTimeEqual } from '../auth/tokens';
 import {
   DEFAULT_CANDIDATES,
   runCandidateOnDoc,
@@ -61,6 +67,8 @@ type EnvWithAdmin = Env & {
   ACCESS_TEAM_DOMAIN?: string;
   /** Cloudflare Access application AUD tag. */
   ACCESS_AUD?: string;
+  /** Local-only escape hatch. Production should leave this unset/false. */
+  ADMIN_OPEN_IN_DEV?: string;
   /**
    * Scoped bearer token that unlocks ONLY POST /securities/import (the
    * cross-app data-sharing endpoint). Lets a sibling app push FMP data without
@@ -70,16 +78,25 @@ type EnvWithAdmin = Env & {
 };
 
 /** True when the request is a bearer-authenticated call to the import endpoint. */
-function isAuthorizedIngest(env: EnvWithAdmin, path: string, authorization?: string): boolean {
+async function isAuthorizedIngest(
+  env: EnvWithAdmin,
+  path: string,
+  authorization?: string,
+): Promise<boolean> {
   const token = env.INGEST_TOKEN;
   return (
     !!token &&
     path.endsWith('/securities/import') &&
-    authorization === `Bearer ${token}`
+    (await constantTimeEqual(authorization ?? '', `Bearer ${token}`))
   );
 }
 
 let warnedOpenAdmin = false;
+let warnedClosedAdmin = false;
+
+function isExplicitOpenAdmin(env: EnvWithAdmin): boolean {
+  return env.ADMIN_OPEN_IN_DEV === 'true';
+}
 
 /**
  * Admin auth — authorized if a valid bearer token OR an allowlisted, verified
@@ -97,19 +114,35 @@ async function isAuthorized(
   const accessConfigured = !!(aud && teamDomain && allow.size > 0);
 
   if (!tokenConfigured && !accessConfigured) {
-    if (!warnedOpenAdmin) {
-      warnedOpenAdmin = true;
+    if (isExplicitOpenAdmin(env)) {
+      if (!warnedOpenAdmin) {
+        warnedOpenAdmin = true;
+        console.warn(
+          'admin: ADMIN_OPEN_IN_DEV=true and no ADMIN_TOKEN/Access config is present — ' +
+            'the admin API is OPEN. Do not set this in production.',
+        );
+      }
+      return true;
+    }
+    if (!warnedClosedAdmin) {
+      warnedClosedAdmin = true;
       console.warn(
         'admin: neither ADMIN_TOKEN nor Cloudflare Access (ADMIN_EMAILS + ' +
-          'ACCESS_AUD + ACCESS_TEAM_DOMAIN) is configured — the admin API is OPEN. ' +
-          'Run `wrangler secret put ADMIN_TOKEN` and/or set the Access vars to lock it down.',
+          'ACCESS_AUD + ACCESS_TEAM_DOMAIN) is configured — the admin API is CLOSED. ' +
+          'Run `wrangler secret put ADMIN_TOKEN`, set Access vars, or set ' +
+          'ADMIN_OPEN_IN_DEV=true for local-only development.',
       );
     }
-    return true; // nothing configured -> open (dev)
+    return false;
   }
 
   // 1) Bearer token (automation / curl).
-  if (tokenConfigured && headers.authorization === `Bearer ${token}`) return true;
+  if (
+    tokenConfigured &&
+    (await constantTimeEqual(headers.authorization ?? '', `Bearer ${token}`))
+  ) {
+    return true;
+  }
 
   // 2) Cloudflare Access identity (humans). Verify signature + aud + allowlist.
   if (accessConfigured && headers.accessJwt) {
@@ -249,7 +282,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.use('*', async (c, next) => {
     const env = c.env as EnvWithAdmin;
     const authorization = c.req.header('Authorization');
-    if (isAuthorizedIngest(env, c.req.path, authorization)) return next();
+    if (await isAuthorizedIngest(env, c.req.path, authorization)) return next();
     const ok = await isAuthorized(env, {
       authorization,
       accessJwt: c.req.header('Cf-Access-Jwt-Assertion'),
@@ -345,6 +378,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       [docId],
     );
     if (!review) return c.json({ error: 'review item not found' }, 404);
+    if (review.resolved === 1) {
+      return c.json({ error: 'review item already resolved' }, 409);
+    }
 
     if (decision === 'reject') {
       await run(c.env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [docId]);
@@ -366,16 +402,31 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
     const insertedIds: string[] = [];
     const nowIso = new Date().toISOString();
-    for (const e of edits) {
+    for (const [rowIndex, e] of edits.entries()) {
       const id = uuid();
+      const rowKey = transactionRowKey('primary', rowIndex, {
+        txDate: e.txDate ?? null,
+        owner: e.owner === 'self' || e.owner === 'spouse' || e.owner === 'joint' || e.owner === 'dependent'
+          ? e.owner
+          : null,
+        assetName: e.assetName ?? '',
+        ticker: e.ticker ?? null,
+        assetType: e.assetType ?? null,
+        txType: (e.txType as TxType) ?? 'P',
+        amountMin: e.amountMin ?? null,
+        amountMax: e.amountMax ?? null,
+        isOption: Boolean(e.isOption),
+        capGainsOver200: Boolean(e.capGainsOver200),
+        rawText: e.rawText ?? '',
+      });
       // cursor_seq is DB-assigned by trg_transactions_cursor (insert with NULL).
-      await run(
+      const res = await run(
         c.env.DB,
-        `INSERT INTO transactions (
+        `INSERT OR IGNORE INTO transactions (
            id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
            tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
-           raw_text, confidence, source, created_at, cursor_seq
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'primary', ?, NULL)`,
+           raw_text, row_key, confidence, source, created_at, cursor_seq
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'primary', ?, NULL)`,
         [
           id,
           docId,
@@ -391,11 +442,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           e.isOption ? 1 : 0,
           e.capGainsOver200 ? 1 : 0,
           e.rawText ?? '',
+          rowKey,
           e.confidence ?? 1,
           nowIso,
         ],
       );
-      insertedIds.push(id);
+      if ((res.meta?.changes ?? 1) > 0) insertedIds.push(id);
     }
 
     // Mark review resolved + filing persisted.
@@ -858,6 +910,19 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          ticker TEXT NOT NULL, date TEXT NOT NULL, short_volume_ratio REAL,
          elevated INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (ticker, date)
        )`,
+      // 0008_idempotency_keys.sql — at-least-once retry guards.
+      'ALTER TABLE transactions ADD COLUMN row_key TEXT',
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_doc_source_rowkey
+         ON transactions (doc_id, source, row_key)
+         WHERE row_key IS NOT NULL`,
+      `DELETE FROM deliveries
+         WHERE rowid NOT IN (
+           SELECT MAX(rowid)
+             FROM deliveries
+            GROUP BY subscription_id, tx_id
+         )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_deliveries_subscription_tx
+         ON deliveries (subscription_id, tx_id)`,
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

@@ -87,6 +87,25 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain(' AND ');
   });
 
+  it('bounds the trade date with txDateMin (?from=) after the other filters', () => {
+    const q = buildTransactionsQuery({ since: 7, ticker: 'aapl', txDateMin: '2026-03-24' });
+    expect(q.sql).toContain('t.tx_date >= ?');
+    // Stable order: cursor, ticker, then the trade-date floor.
+    expect(q.params).toEqual([7, 'AAPL', '2026-03-24']);
+  });
+
+  it('bounds the trade date on both sides with txDateMin/txDateMax', () => {
+    const q = buildTransactionsQuery({ txDateMin: '2026-01-01', txDateMax: '2026-03-31' });
+    expect(q.sql).toContain('t.tx_date >= ?');
+    expect(q.sql).toContain('t.tx_date <= ?');
+    expect(q.params).toEqual([0, '2026-01-01', '2026-03-31']);
+  });
+
+  it('normalizes a full ISO timestamp down to YYYY-MM-DD', () => {
+    const q = buildTransactionsQuery({ txDateMin: '2026-03-24T12:34:56Z' });
+    expect(q.params).toEqual([0, '2026-03-24']);
+  });
+
   it('applies the default limit when none/invalid is given', () => {
     expect(buildTransactionsQuery({}).limit).toBe(DEFAULT_TX_LIMIT);
     expect(buildTransactionsQuery({ limit: 0 }).limit).toBe(DEFAULT_TX_LIMIT);
@@ -146,6 +165,14 @@ describe('buildTransactionsCountQuery', () => {
     const q = buildTransactionsCountQuery({});
     expect(q.sql).not.toContain('WHERE');
     expect(q.params).toEqual([]);
+  });
+
+  it('honors the trade-date window so the total reflects the windowed set', () => {
+    const q = buildTransactionsCountQuery({ txDateMin: '2026-03-24', txDateMax: '2026-06-22' });
+    expect(q.sql).toContain('t.tx_date >= ?');
+    expect(q.sql).toContain('t.tx_date <= ?');
+    // No cursor backstop in the count query.
+    expect(q.params).toEqual(['2026-03-24', '2026-06-22']);
   });
 });
 

@@ -52,6 +52,47 @@ interface FlaggedTx {
   flags: string[];
 }
 
+type RowKeyFields = Pick<
+  ParsedTx,
+  | 'txDate'
+  | 'owner'
+  | 'assetName'
+  | 'ticker'
+  | 'assetType'
+  | 'txType'
+  | 'amountMin'
+  | 'amountMax'
+  | 'isOption'
+  | 'capGainsOver200'
+  | 'rawText'
+>;
+
+/**
+ * Stable identity for one parsed row within one filing. The row index keeps
+ * duplicate disclosed rows distinct; the fingerprint catches changed edits at
+ * the same position. The unique DB key is (doc_id, source, row_key).
+ */
+export function transactionRowKey(
+  source: Transaction['source'],
+  rowIndex: number,
+  fields: RowKeyFields,
+): string {
+  const payload = [
+    fields.txDate ?? '',
+    fields.owner ?? '',
+    normalizeText(fields.assetName),
+    (fields.ticker ?? '').toUpperCase(),
+    normalizeText(fields.assetType),
+    fields.txType ?? '',
+    fields.amountMin ?? '',
+    fields.amountMax ?? '',
+    fields.isOption ? '1' : '0',
+    fields.capGainsOver200 ? '1' : '0',
+    normalizeText(fields.rawText),
+  ].join('\u001f');
+  return `v1:${source}:${rowIndex}:${fnv1a32(payload)}`;
+}
+
 /**
  * Re-derive Transaction rows (with the current, recalibrated confidence rubric)
  * from parsed rows WITHOUT any DB write or delivery fan-out. Shared by normalize()
@@ -65,7 +106,7 @@ export async function recomputeTransactions(
 ): Promise<FlaggedTx[]> {
   const nowIso = new Date().toISOString();
   const resolver = await loadResolver(env);
-  return parsed.map((p) => buildTransaction(p, filing, resolver, nowIso));
+  return parsed.map((p, rowIndex) => buildTransaction(p, filing, resolver, nowIso, rowIndex));
 }
 
 /** securities_master row shape. `aliases` is a JSON string array. */
@@ -130,17 +171,20 @@ export async function normalize(
     return { transactions, minConfidence, needsReview: true };
   }
 
-  await persistTransactions(env, transactions);
   await run(env.DB, "UPDATE filings SET ingest_status = 'persisted', error = NULL WHERE doc_id = ?", [
     filing.docId,
   ]);
 
-  // Fan out delivery for each newly persisted transaction.
-  for (const tx of transactions) {
+  const insertedIds = await persistTransactions(env, transactions);
+
+  // Fan out delivery only for rows D1 actually inserted. Retries/concurrent
+  // normalizations hit the unique row key and are ignored without duplicate
+  // webhook/SSE delivery.
+  for (const txId of insertedIds) {
     try {
-      await env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId: tx.id });
+      await env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId });
     } catch (err) {
-      console.error('normalize: delivery enqueue failed', tx.id, (err as Error).message);
+      console.error('normalize: delivery enqueue failed', txId, (err as Error).message);
     }
   }
 
@@ -157,6 +201,7 @@ function buildTransaction(
   filing: Filing,
   resolve: TickerResolver,
   nowIso: string,
+  rowIndex: number,
 ): FlaggedTx {
   const s = scoreFields(
     p.confidence,
@@ -189,6 +234,13 @@ function buildTransaction(
     rawText: p.rawText ?? '',
     confidence: s.confidence,
     source: 'primary',
+    rowKey: transactionRowKey('primary', rowIndex, {
+      ...p,
+      ticker: s.ticker,
+      txType: s.txType,
+      amountMin: s.amountMin,
+      amountMax: s.amountMax,
+    }),
     createdAt: nowIso,
     // cursor_seq is assigned by the DB trigger on insert.
     cursorSeq: 0,
@@ -346,16 +398,17 @@ function buildResolver(rows: SecRow[]): TickerResolver {
 // Persistence
 // ---------------------------------------------------------------------------
 
-const INSERT_TX_SQL = `INSERT INTO transactions (
+const INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
   id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
   tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
-  raw_text, confidence, source, created_at, cursor_seq
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`;
+  raw_text, row_key, confidence, source, created_at, cursor_seq
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`;
 
 /** Insert each validated transaction. cursor_seq is assigned by the DB trigger. */
-async function persistTransactions(env: Env, transactions: Transaction[]): Promise<void> {
+async function persistTransactions(env: Env, transactions: Transaction[]): Promise<string[]> {
+  const insertedIds: string[] = [];
   for (const tx of transactions) {
-    await run(env.DB, INSERT_TX_SQL, [
+    const res = await run(env.DB, INSERT_TX_SQL, [
       tx.id,
       tx.docId,
       tx.filerId,
@@ -370,11 +423,14 @@ async function persistTransactions(env: Env, transactions: Transaction[]): Promi
       fromBool(tx.isOption),
       fromBool(tx.capGainsOver200),
       tx.rawText,
+      tx.rowKey ?? null,
       tx.confidence,
       tx.source,
       tx.createdAt,
     ]);
+    if ((res.meta?.changes ?? 1) > 0) insertedIds.push(tx.id);
   }
+  return insertedIds;
 }
 
 /** Write (or upsert) a review_queue row and flag the filing needs_review. */
@@ -433,4 +489,17 @@ function normalizeOwner(o: Owner | null): Owner | null {
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(1, n));
+}
+
+function normalizeText(value: string | null): string {
+  return (value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function fnv1a32(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
 }

@@ -73,10 +73,19 @@ binding = "CONFIG_KV"
 id = "b5554a8cd8b04347baeb80cd160bf1e0"
 
 # ---------------------------------------------------------------------------
-# Secrets (set via `wrangler secret put <NAME>`) — DO NOT commit real values.
-#   GEMINI_API_KEY         — vision/LLM extraction (scanned PDFs)
-#   ARBITRATION_API_KEY    — secondary extractor / arbitration provider
-#   WEBHOOK_SIGNING_KEY    — HMAC signing of outbound webhook payloads
+# Secrets / vars (set via `wrangler secret put <NAME>` or `.dev.vars` locally)
+# — DO NOT commit real values. See `.dev.vars.example` for the full matrix:
+#   ADMIN_TOKEN / INGEST_TOKEN and optional Cloudflare Access vars
+#   GEMINI_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY / ARBITRATION_API_KEY
+#   FMP_API_KEY / FMP_DAILY_CALL_CAP
+#   WEBHOOK_SIGNING_KEY
+#   GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET / RESEND_API_KEY / EMAIL_FROM
+#   STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / STRIPE_PRICE_*
 # ---------------------------------------------------------------------------
-# [vars]
-# (non-secret vars go here)
+[vars]
+APP_BASE_URL = "https://congress.trade"
+# Stripe premium price ids (not secret) — created 2026-06-22 on the live account.
+STRIPE_PRICE_MONTHLY = "price_1TlHYBEUQUPhZj0SEzG2Qx68"
+STRIPE_PRICE_ANNUAL = "price_1TlHYCEUQUPhZj0SpNVoPb3Z"
+# Flip to "true" only after the account is approved for Managed Payments.
+STRIPE_MANAGED_PAYMENTS = "false"

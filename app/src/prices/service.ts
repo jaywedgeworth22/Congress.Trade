@@ -39,20 +39,38 @@ export interface PriceRefreshResult {
   errors: string[];
 }
 
-/** Tickers that have trades but no cached prices yet (newest-traded first). */
-async function selectTickersNeedingPrices(env: Env, limit: number): Promise<string[]> {
+/**
+ * Tickers that have trades and missing or stale cached prices, newest-traded
+ * first. A one-day cutoff avoids repeated same-day refetches before market data
+ * providers publish today's close, while still keeping current prices fresh.
+ */
+async function selectTickersNeedingPrices(
+  env: Env,
+  limit: number,
+  staleBefore = isoDaysAgo(1),
+): Promise<string[]> {
   if (limit <= 0) return [];
   const rows = await all<{ ticker: string }>(
     env.DB,
     `SELECT t.ticker AS ticker
        FROM transactions t
-       LEFT JOIN price_eod p ON p.ticker = t.ticker
+       LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+       LEFT JOIN (
+         SELECT ticker, MAX(date) AS latest_price_date
+           FROM price_eod
+          GROUP BY ticker
+       ) p ON p.ticker = t.ticker
       WHERE t.ticker IS NOT NULL AND t.ticker <> '' AND t.tx_date IS NOT NULL
-        AND p.ticker IS NULL
+        AND (
+          p.latest_price_date IS NULL OR
+          sr.current_price_date IS NULL OR
+          p.latest_price_date < ? OR
+          sr.current_price_date < ?
+        )
       GROUP BY t.ticker
       ORDER BY MAX(t.cursor_seq) DESC
       LIMIT ?`,
-    [limit],
+    [staleBefore, staleBefore, limit],
   );
   return rows.map((r) => r.ticker);
 }

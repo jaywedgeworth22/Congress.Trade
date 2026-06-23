@@ -14,6 +14,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../shared/types';
 import { DASHBOARD_HTML } from './dashboardHtml';
+import { TOS_HTML, PRIVACY_HTML } from './legalHtml';
 import { getLogoDisplay } from '../shared/settings';
 
 /**
@@ -32,6 +33,10 @@ export function buildUiRouter(): Hono<{ Bindings: Env }> {
   // Dashboard SPA. Hono's c.html() sets `content-type: text/html; charset=UTF-8`.
   r.get('/', async (c) => c.html(await renderDashboard(c.env)));
   r.get('/admin', async (c) => c.html(await renderDashboard(c.env)));
+
+  // Static legal pages (required for Stripe Checkout: ToS + Privacy URLs).
+  r.get('/terms-of-service', (c) => c.html(TOS_HTML));
+  r.get('/privacy-policy', (c) => c.html(PRIVACY_HTML));
 
   return r;
 }

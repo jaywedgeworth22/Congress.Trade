@@ -103,6 +103,11 @@ export interface Transaction {
   confidence: number;
   /** Provenance: live pipeline ('primary') vs backfill ('seed_dataset'). */
   source: TxSource;
+  /**
+   * Stable per-filing row identity used to make live normalization idempotent.
+   * Historical rows may be null/absent until backfilled.
+   */
+  rowKey?: string | null;
   createdAt: string;
   /** Monotonic cursor for REST `?since=` paging. Assigned at insert. */
   cursorSeq: number;
@@ -169,7 +174,7 @@ export interface Subscription {
   delivery: DeliveryChannel;
   /** Webhook target URL; null/empty for sse subscriptions. */
   targetUrl: string | null;
-  /** Per-subscription HMAC secret (webhook signing). */
+  /** Per-subscription credential: webhook HMAC key and SSE/management bearer secret. */
   secret: string | null;
   filters: SubscriptionFilters;
   /** Last delivered transactions.cursorSeq. */
@@ -339,6 +344,10 @@ export interface Env {
   STRIPE_PRICE_ANNUAL?: string;
   /** Free-trial length in days for new subscriptions (default 7). */
   STRIPE_TRIAL_DAYS?: string;
+  /** "true" to enable Stripe Managed Payments (merchant-of-record) on Checkout.
+   *  Leave off until the account is approved for Managed Payments and products
+   *  carry an eligible digital tax code. */
+  STRIPE_MANAGED_PAYMENTS?: string;
 
   // --- Plain vars (.dev.vars / [vars]) ---
   /** "true" to force arbitration on when configured. */
