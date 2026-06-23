@@ -78,5 +78,10 @@ id = "b5554a8cd8b04347baeb80cd160bf1e0"
 #   ARBITRATION_API_KEY    — secondary extractor / arbitration provider
 #   WEBHOOK_SIGNING_KEY    — HMAC signing of outbound webhook payloads
 # ---------------------------------------------------------------------------
-# [vars]
-# (non-secret vars go here)
+[vars]
+APP_BASE_URL = "https://congress.trade"
+# Stripe premium price ids (not secret) — created 2026-06-22 on the live account.
+STRIPE_PRICE_MONTHLY = "price_1TlHYBEUQUPhZj0SEzG2Qx68"
+STRIPE_PRICE_ANNUAL = "price_1TlHYCEUQUPhZj0SpNVoPb3Z"
+# Flip to "true" only after the account is approved for Managed Payments.
+STRIPE_MANAGED_PAYMENTS = "false"
