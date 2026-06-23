@@ -125,9 +125,11 @@ within ~60s without a redeploy.
 ## Endpoint reference
 Public API (`/api`):
 - `GET /api/transactions?since=<cursor>&ticker=&member=&chamber=&type=&limit=` — cursor feed (reconciliation backstop)
-- `GET /api/stream?subscription=&since=` — SSE live push
+- `GET /api/stream?subscription=&token=&since=` — SSE live push (subscription secret required)
 - `GET /api/filings/:docId`, `GET /api/members`
-- `GET/POST /api/subscriptions`, `GET/PATCH /api/subscriptions/:id`
+- `POST /api/subscriptions` — create and return the subscription secret once
+- `GET/PATCH /api/subscriptions/:id` — secret-scoped management
+- `GET /api/subscriptions` is disabled publicly; use the admin endpoint below.
 
 Admin (`/api/admin`, bearer token or Cloudflare Access; fails closed unless configured):
 - `GET/PUT /api/admin/poll-config`, `GET /api/admin/poll-config/aggressive`
@@ -149,8 +151,8 @@ cron → watcher (House XML diff + Senate eFD) → INGEST_QUEUE
 ```
 
 ## Notes / TODO before production
-- **Branch protection/rulesets** are not currently enforced on `main`; use PRs
-  and require CI before merging production changes.
+- **Branch protection/rulesets** should remain enforced on `main`: use PRs,
+  require the `typecheck + test` check, and prohibit force pushes/deletions.
 - **Senate eFD** scraping depends on the agreement-gate + CSRF flow; if Senate
   changes its markup, `src/ingestion/senateSource.ts` is the place to adjust.
 - **House bulk XML** refreshes ~daily; the intraday live-search hook

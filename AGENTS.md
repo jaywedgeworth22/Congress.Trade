@@ -23,6 +23,9 @@ This repo is worked by multiple agents. Read this before editing.
 - Do not edit another agent's branch unless asked.
 - Do not push, deploy, apply remote migrations, or run production scripts unless
   the user explicitly asks.
+- To resolve another agent's PR, use a separate integration branch unless the
+  user explicitly asks you to take over that branch. Merge or cherry-pick the
+  PR intentionally, run verification, and leave a clear PR comment/closeout.
 
 Before editing, run:
 
@@ -33,7 +36,8 @@ gh pr list --state open
 ```
 
 If another branch or PR is touching the same files, either choose a disjoint
-slice or stop and report the overlap.
+slice, build on an integration branch that includes that work, or stop and
+report the overlap.
 
 ## Development Commands
 
@@ -68,18 +72,27 @@ change a migration:
 - Document whether production should use `npm run migrate:remote`,
   `npm run deploy:full`, or `scripts/ship.sh`.
 
+## Implemented Safety Decisions
+
+- Public subscription listing is disabled. Public creation returns the generated
+  per-subscription secret once; `GET/PATCH /api/subscriptions/:id` and SSE
+  streams require that secret. Admin listing is `/api/admin/subscriptions`.
+- Live transaction persistence uses `transactions.row_key` plus a unique
+  `(doc_id, source, row_key)` index. Retries should use `INSERT OR IGNORE` and
+  enqueue delivery only for newly inserted rows.
+- Webhook delivery uses a unique `(subscription_id, tx_id)` row and claims a
+  pending attempt before POSTing. Recipients must still dedupe on
+  `X-Subscription-Id` + `X-Tx-Id` because external webhooks are at-least-once.
+- Keep `main` protected through GitHub branch protection or a ruleset: PRs
+  required, `typecheck + test` required, stale reviews dismissed, no force push
+  or deletion.
+
 ## Open Decisions To Preserve
 
-- Subscription CRUD is currently public and returns operational subscription
-  objects. Before tightening it, decide the client ownership/auth model and
-  whether webhook secrets should be returned only once on creation.
-- Transaction persistence needs a durable row identity policy for at-least-once
-  queue retries. Decide between deterministic transaction IDs or a unique
-  `(doc_id, row_key)` schema before changing existing data.
 - Analytics routes are public today. If analytics should become premium-only,
   add entitlement middleware and update UI/tests/docs together.
-- `main` has no branch protection/ruleset at the time of this audit. Prefer PRs
-  with CI required before merges.
+- Decide whether public subscription creation should eventually require a signed
+  in account rather than just returning a bearer secret.
 
 ## Verification Standard
 

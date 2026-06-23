@@ -19,6 +19,7 @@ webhook, and SSE workflows.
 | `dashboard-design.html` | Historical/static UI design artifact. Current UI lives in `app/src/ui/`. |
 | `AGENTS.md` | Collaboration rules for Codex, Claude, and other agents. |
 | `CLAUDE.md` | Claude entrypoint that points to the same rules. |
+| `STATUS.md` | Current integration snapshot and handoff checklist. |
 
 ## Daily Development
 

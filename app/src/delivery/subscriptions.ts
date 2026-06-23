@@ -28,8 +28,9 @@ export function generateSecret(): string {
 }
 
 /**
- * Create a new subscription. Generates the id and (for webhook subscriptions
- * without an explicit secret) a signing secret. Defaults `active` to true,
+ * Create a new subscription. Generates the id and a per-subscription secret
+ * unless the caller supplies one. Webhooks use it for HMAC signing; SSE and
+ * management routes use it as the bearer credential. Defaults `active` to true,
  * `cursor` to 0, and stamps createdAt.
  */
 export async function createSubscription(
@@ -41,9 +42,7 @@ export async function createSubscription(
   const createdAt = new Date().toISOString();
   const cursor = input.cursor ?? 0;
   const active = input.active ?? true;
-  // Webhook deliveries are signed; mint a secret if the caller did not supply one.
-  const secret =
-    input.secret ?? (input.delivery === 'webhook' ? generateSecret() : null);
+  const secret = input.secret ?? generateSecret();
 
   const sub: Subscription = {
     id,

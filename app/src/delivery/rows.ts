@@ -42,6 +42,7 @@ export interface TransactionRow {
   raw_text: string | null;
   confidence: number | null;
   source: string | null;
+  row_key?: string | null;
   created_at: string | null;
   cursor_seq: number | null;
 }
@@ -120,6 +121,7 @@ export function mapTransaction(row: TransactionRow): Transaction {
     rawText: row.raw_text ?? '',
     confidence: row.confidence ?? 0,
     source: (row.source as TxSource) ?? 'primary',
+    rowKey: row.row_key ?? null,
     createdAt: row.created_at ?? '',
     cursorSeq: row.cursor_seq ?? 0,
   };

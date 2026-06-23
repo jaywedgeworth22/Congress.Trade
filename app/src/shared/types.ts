@@ -103,6 +103,11 @@ export interface Transaction {
   confidence: number;
   /** Provenance: live pipeline ('primary') vs backfill ('seed_dataset'). */
   source: TxSource;
+  /**
+   * Stable per-filing row identity used to make live normalization idempotent.
+   * Historical rows may be null/absent until backfilled.
+   */
+  rowKey?: string | null;
   createdAt: string;
   /** Monotonic cursor for REST `?since=` paging. Assigned at insert. */
   cursorSeq: number;
@@ -169,7 +174,7 @@ export interface Subscription {
   delivery: DeliveryChannel;
   /** Webhook target URL; null/empty for sse subscriptions. */
   targetUrl: string | null;
-  /** Per-subscription HMAC secret (webhook signing). */
+  /** Per-subscription credential: webhook HMAC key and SSE/management bearer secret. */
   secret: string | null;
   filters: SubscriptionFilters;
   /** Last delivered transactions.cursorSeq. */

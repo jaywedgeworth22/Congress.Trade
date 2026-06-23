@@ -34,7 +34,12 @@ import { listSubscriptions } from '../delivery/subscriptions';
 import { runSeedBackfillFromEnv } from '../backfill/seed';
 import { runHouseHistoricalBackfill } from '../backfill/houseCrawler';
 import { extractParsed } from '../extraction/orchestrator';
-import { normalize, recomputeTransactions, CONFIDENCE_THRESHOLD } from '../extraction/normalizer';
+import {
+  normalize,
+  recomputeTransactions,
+  transactionRowKey,
+  CONFIDENCE_THRESHOLD,
+} from '../extraction/normalizer';
 import type { Chamber } from '../shared/types';
 import { verifyAccessJwt, certsUrl, parseEmailAllowlist } from './access';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
@@ -373,6 +378,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       [docId],
     );
     if (!review) return c.json({ error: 'review item not found' }, 404);
+    if (review.resolved === 1) {
+      return c.json({ error: 'review item already resolved' }, 409);
+    }
 
     if (decision === 'reject') {
       await run(c.env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [docId]);
@@ -394,16 +402,31 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
     const insertedIds: string[] = [];
     const nowIso = new Date().toISOString();
-    for (const e of edits) {
+    for (const [rowIndex, e] of edits.entries()) {
       const id = uuid();
+      const rowKey = transactionRowKey('primary', rowIndex, {
+        txDate: e.txDate ?? null,
+        owner: e.owner === 'self' || e.owner === 'spouse' || e.owner === 'joint' || e.owner === 'dependent'
+          ? e.owner
+          : null,
+        assetName: e.assetName ?? '',
+        ticker: e.ticker ?? null,
+        assetType: e.assetType ?? null,
+        txType: (e.txType as TxType) ?? 'P',
+        amountMin: e.amountMin ?? null,
+        amountMax: e.amountMax ?? null,
+        isOption: Boolean(e.isOption),
+        capGainsOver200: Boolean(e.capGainsOver200),
+        rawText: e.rawText ?? '',
+      });
       // cursor_seq is DB-assigned by trg_transactions_cursor (insert with NULL).
-      await run(
+      const res = await run(
         c.env.DB,
-        `INSERT INTO transactions (
+        `INSERT OR IGNORE INTO transactions (
            id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
            tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
-           raw_text, confidence, source, created_at, cursor_seq
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'primary', ?, NULL)`,
+           raw_text, row_key, confidence, source, created_at, cursor_seq
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'primary', ?, NULL)`,
         [
           id,
           docId,
@@ -419,11 +442,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           e.isOption ? 1 : 0,
           e.capGainsOver200 ? 1 : 0,
           e.rawText ?? '',
+          rowKey,
           e.confidence ?? 1,
           nowIso,
         ],
       );
-      insertedIds.push(id);
+      if ((res.meta?.changes ?? 1) > 0) insertedIds.push(id);
     }
 
     // Mark review resolved + filing persisted.
@@ -886,6 +910,19 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          ticker TEXT NOT NULL, date TEXT NOT NULL, short_volume_ratio REAL,
          elevated INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (ticker, date)
        )`,
+      // 0008_idempotency_keys.sql — at-least-once retry guards.
+      'ALTER TABLE transactions ADD COLUMN row_key TEXT',
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_doc_source_rowkey
+         ON transactions (doc_id, source, row_key)
+         WHERE row_key IS NOT NULL`,
+      `DELETE FROM deliveries
+         WHERE rowid NOT IN (
+           SELECT MAX(rowid)
+             FROM deliveries
+            GROUP BY subscription_id, tx_id
+         )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_deliveries_subscription_tx
+         ON deliveries (subscription_id, tx_id)`,
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

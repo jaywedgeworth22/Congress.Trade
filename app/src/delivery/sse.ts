@@ -5,7 +5,10 @@
  * Server-Sent Events streaming for 'sse' subscriptions. Holds an open Response
  * stream and pushes new transactions (filtered per subscription) as they are
  * persisted, resuming from a client-supplied cursor (?since= or the standard
- * EventSource Last-Event-ID header; see resolveResumeCursor in rest.ts).
+ * EventSource Last-Event-ID header; see resolveResumeCursor in rest.ts). Native
+ * browser EventSource cannot send Authorization headers, so public clients pass
+ * the per-subscription stream token in the query string and should reconnect
+ * with a fresh URL when the server emits `event: reconnect`.
  *
  * BACKLOG / GAP-FREE RESUME:
  *   The catch-up replay reads straight from the `transactions` table (which is
@@ -43,6 +46,7 @@ import type { Env, Subscription, Transaction } from '../shared/types';
 import { all, get } from '../shared/db';
 import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows';
 import { matchesFiltersWithChamber } from './subscriptions';
+import { constantTimeEqual } from '../auth/tokens';
 
 /** How often to poll D1 for new rows. */
 const POLL_INTERVAL_MS = 5_000;
@@ -56,7 +60,12 @@ const PAGE_SIZE = 200;
  * Returns a `text/event-stream` Response. If the subscription is missing or not
  * an SSE subscription, returns a 404/409 JSON error instead.
  */
-export async function openSseStream(env: Env, subscriptionId: string, since?: number): Promise<Response> {
+export async function openSseStream(
+  env: Env,
+  subscriptionId: string,
+  since?: number,
+  streamToken?: string,
+): Promise<Response> {
   const subRow = await get<SubscriptionRow>(
     env.DB,
     'SELECT id, client_id, delivery, target_url, secret, filters, cursor, active, created_at FROM subscriptions WHERE id = ?',
@@ -72,6 +81,18 @@ export async function openSseStream(env: Env, subscriptionId: string, since?: nu
   if (!sub.active) {
     return new Response(JSON.stringify({ error: 'subscription inactive' }), {
       status: 409,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (sub.delivery !== 'sse') {
+    return new Response(JSON.stringify({ error: 'subscription is not an SSE subscription' }), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (!sub.secret || !streamToken || !(await constantTimeEqual(streamToken, sub.secret))) {
+    return new Response(JSON.stringify({ error: 'subscription stream token required' }), {
+      status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
   }
