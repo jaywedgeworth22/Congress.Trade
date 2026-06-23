@@ -55,6 +55,22 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("id: 'published'");
   });
 
+  it('contains mobile-first feed and navigation hooks', () => {
+    expect(DASHBOARD_HTML).toContain('data-mobile="Feed"');
+    expect(DASHBOARD_HTML).toContain('id="feedCards"');
+    expect(DASHBOARD_HTML).toContain('function feedCardHtml(');
+    expect(DASHBOARD_HTML).toContain('function handleFeedOpenEvent(');
+    expect(DASHBOARD_HTML).toContain('@media (max-width: 720px)');
+    expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom)');
+  });
+
+  it('renders a dedicated one-time subscription secret panel', () => {
+    expect(DASHBOARD_HTML).toContain('class="secret-panel"');
+    expect(DASHBOARD_HTML).toContain('Save this secret now');
+    expect(DASHBOARD_HTML).toContain('function copyFromData(');
+    expect(DASHBOARD_HTML).toContain('Copy SSE URL');
+  });
+
   it('wires the detail drawer (trade / asset / politician)', () => {
     expect(DASHBOARD_HTML).toContain('id="detailDrawer"');
     expect(DASHBOARD_HTML).toContain('id="detailDrawerBody"');
