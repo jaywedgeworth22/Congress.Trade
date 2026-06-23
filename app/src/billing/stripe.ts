@@ -13,7 +13,7 @@ import type { Env } from '../shared/types';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
 // Pin an API version so server-side behaviour/field shapes are stable.
-const STRIPE_API_VERSION = '2024-06-20';
+const STRIPE_API_VERSION = '2025-03-31.basil'; // Managed Payments requires basil+
 
 /** True when the secret key is present (billing can operate). */
 export function stripeConfigured(env: Env): boolean {
@@ -101,6 +101,9 @@ export function createCheckoutSession(
     cancel_url: args.cancelUrl,
     client_reference_id: args.clientReferenceId,
     allow_promotion_codes: true,
+    // Stripe Managed Payments (merchant-of-record). Gated by env so it only
+    // turns on once the account is approved + prices carry an eligible tax code.
+    ...(env.STRIPE_MANAGED_PAYMENTS === 'true' ? { managed_payments: { enabled: true } } : {}),
     // Carry the user id on the subscription too, so subscription.* webhooks can
     // resolve the user even before the customer<->user link is persisted.
     subscription_data: {
