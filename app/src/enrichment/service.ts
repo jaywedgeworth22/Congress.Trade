@@ -133,6 +133,8 @@ export interface EnrichResult {
   budgetRemaining: number;
   dryRun: boolean;
   errors: string[];
+  /** Refs THIS run enriched (for the App B outbound push — our own fetches only). */
+  shareRefs: SecurityRef[];
 }
 
 /**
@@ -164,6 +166,7 @@ export async function runEnrichment(
     budgetRemaining: fmpBudget,
     dryRun,
     errors: [],
+    shareRefs: [],
   };
   if (selectLimit <= 0) return result;
 
@@ -202,7 +205,10 @@ export async function runEnrichment(
     // mergeRefs is last-wins; the chain is best-first, so reverse so the best
     // provider's non-null fields win.
     const merged = mergeRefs(ticker, [...collected].reverse());
-    if (!dryRun) await upsertRef(env, merged);
+    if (!dryRun) {
+      await upsertRef(env, merged);
+      result.shareRefs.push(merged);
+    }
     result.enriched++;
   }
 
