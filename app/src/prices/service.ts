@@ -37,6 +37,9 @@ export interface PriceRefreshResult {
   budgetRemaining: number;
   dryRun: boolean;
   errors: string[];
+  /** What THIS run actually fetched (for the App B outbound push — our delta only). */
+  shareSpx: Close[];
+  sharePrices: Array<{ ticker: string; closes: Close[]; currentPrice: number; currentPriceDate: string }>;
 }
 
 /**
@@ -90,6 +93,8 @@ export async function runPriceRefresh(
     budgetRemaining: 0,
     dryRun,
     errors: [],
+    shareSpx: [],
+    sharePrices: [],
   };
   if (!envx.FMP_API_KEY) return result; // price data is FMP-only
 
@@ -126,6 +131,7 @@ export async function runPriceRefresh(
         );
       }
       result.spxUpdated = true;
+      result.shareSpx = spx;
     }
   } catch (e) {
     result.errors.push('spx: ' + (e as Error).message);
@@ -176,6 +182,7 @@ export async function runPriceRefresh(
        ON CONFLICT(ticker) DO UPDATE SET current_price=excluded.current_price, current_price_date=excluded.current_price_date`,
       [ticker, latest.close, latest.date],
     );
+    result.sharePrices.push({ ticker, closes: hist, currentPrice: latest.close, currentPriceDate: latest.date });
     // Per-trade anchors.
     const nowIso = new Date().toISOString();
     const stmts = trades.map((t) =>

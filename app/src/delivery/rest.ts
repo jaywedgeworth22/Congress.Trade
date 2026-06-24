@@ -353,7 +353,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // --- GET /logos/ticker --------------------------------------------------
   // Cached company-logo proxy (see ui/tickerLogos.ts). Reachable at
   // /api/logos/ticker?symbol=AAPL, matching the dashboard's <img> src.
-  r.get('/logos/ticker', (c) => handleTickerLogoRequest(new URL(c.req.url)));
+  r.get('/logos/ticker', (c) =>
+    handleTickerLogoRequest(new URL(c.req.url), (c.env as { LOGODEV_PUBLISHABLE_KEY?: string }).LOGODEV_PUBLISHABLE_KEY),
+  );
 
   // --- GET /filings/:docId ------------------------------------------------
   r.get('/filings/:docId', async (c) => {

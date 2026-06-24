@@ -16,6 +16,7 @@ import { runEnrichment } from './enrichment/service';
 import { runPriceRefresh } from './prices/service';
 import { hasFmpTierFailure } from './shared/fmpStatus';
 import { notifyAdmin } from './alerts/notify';
+import { shareWithPeer, type PeerShareInput } from './share/outbound';
 
 const DAILY_KEY = 'jobs:daily:lastdate';
 
@@ -32,11 +33,13 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
 
   const errors: string[] = [];
   let hadFmpKey = false;
+  const share: PeerShareInput = {};
 
   try {
     const r = await runEnrichment(env, {});
     hadFmpKey = hadFmpKey || r.hasFmpKey;
     errors.push(...r.errors);
+    share.refs = r.shareRefs;
   } catch (err) {
     console.warn('daily enrichment failed:', (err as Error).message);
     errors.push('enrichment: ' + (err as Error).message);
@@ -45,9 +48,24 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     const r = await runPriceRefresh(env, {});
     hadFmpKey = hadFmpKey || r.hasFmpKey;
     errors.push(...r.errors);
+    share.prices = r.sharePrices;
+    share.spx = r.shareSpx;
   } catch (err) {
     console.warn('daily price refresh failed:', (err as Error).message);
     errors.push('prices: ' + (err as Error).message);
+  }
+
+  // Return half of the cross-app share: push what WE fetched this run to App B
+  // (no-op unless APP_B_IMPORT_URL + APP_B_INGEST_TOKEN are set). Our delta only,
+  // so data App B sent us is never echoed back.
+  try {
+    const res = await shareWithPeer(env, share);
+    if (res.sent) console.log('shared to peer:', JSON.stringify(res.counts));
+    else if (res.reason && !/not configured|nothing to share/.test(res.reason)) {
+      console.warn('peer share failed:', res.reason);
+    }
+  } catch (err) {
+    console.warn('peer share error:', (err as Error).message);
   }
 
   // Only alert when a key is configured (so we don't email about an intentional
