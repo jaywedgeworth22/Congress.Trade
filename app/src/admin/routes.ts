@@ -9,6 +9,7 @@
  *   GET   /review-queue             -> list unresolved review items
  *   POST  /review/:docId            -> {decision:'confirm'|'reject', edits?}
  *   GET   /sources/health           -> ingest_log aggregates per source
+ *   GET   /diagnostics              -> connection status + recent app errors
  *   GET   /subscriptions            -> admin list of subscriptions
  *
  * AUTH (deny-by-default once provisioned). A request is authorized if EITHER:
@@ -27,7 +28,7 @@
 
 import { Hono } from 'hono';
 import type { Env, PollConfig, PollWindow, TxType } from '../shared/types';
-import { all, get, run } from '../shared/db';
+import { all, get, run, type SqlParam } from '../shared/db';
 import { getConfig, setConfig } from '../shared/config';
 import { uuid } from '../shared/ids';
 import { listSubscriptions } from '../delivery/subscriptions';
@@ -196,6 +197,56 @@ interface ReviewRow {
   source_url: string | null;
   raw_object_key: string | null;
   doc_kind: string | null;
+}
+
+interface DiagnosticConnection {
+  id: string;
+  label: string;
+  status: 'ok' | 'warn' | 'error' | 'unknown';
+  configured: boolean | null;
+  lastUsedAt: string | null;
+  callsTotal: number;
+  callsLast24h: number;
+  callsToday: number;
+  errorsLast24h: number;
+  note: string | null;
+}
+
+interface DiagnosticError {
+  at: string | null;
+  area: string;
+  severity: 'warning' | 'error';
+  subject: string;
+  message: string;
+}
+
+function dayStartIso(now = new Date()): string {
+  return `${now.toISOString().slice(0, 10)}T00:00:00.000Z`;
+}
+
+function hoursAgoIso(hours: number, now = new Date()): string {
+  return new Date(now.getTime() - hours * 60 * 60 * 1000).toISOString();
+}
+
+async function optionalAll<T>(env: Env, sql: string, params: SqlParam[] = []): Promise<T[]> {
+  try {
+    return await all<T>(env.DB, sql, params);
+  } catch (err) {
+    const msg = (err as Error).message;
+    if (/no such table|no such column/i.test(msg)) return [];
+    throw err;
+  }
+}
+
+function connectionStatus(
+  configured: boolean | null,
+  errorsLast24h: number,
+  lastUsedAt: string | null,
+): DiagnosticConnection['status'] {
+  if (configured === false) return 'warn';
+  if (errorsLast24h > 0) return 'error';
+  if (!lastUsedAt) return 'unknown';
+  return 'ok';
 }
 
 interface EditedTx {
@@ -528,6 +579,297 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       });
     }
     return c.json({ sources, count: sources.length });
+  });
+
+  // --- GET /diagnostics ---------------------------------------------------
+  // Admin operational snapshot: provider/source connection status, usage counts,
+  // and recent errors collected from existing D1 tables. This intentionally
+  // reports only whether secrets are configured, never their values.
+  r.get('/diagnostics', async (c) => {
+    const now = new Date();
+    const last24 = hoursAgoIso(24, now);
+    const today = dayStartIso(now);
+    const env = c.env as Env & {
+      GEMINI_API_KEY?: string;
+      FMP_API_KEY?: string;
+      WEBHOOK_SIGNING_KEY?: string;
+      GOOGLE_OAUTH_CLIENT_ID?: string;
+      RESEND_API_KEY?: string;
+      EMAIL_FROM?: string;
+      STRIPE_SECRET_KEY?: string;
+    };
+
+    const connections: DiagnosticConnection[] = [];
+
+    const sourceRows = await optionalAll<{
+      source: string;
+      last_used_at: string | null;
+      calls_total: number;
+      calls_last_24h: number;
+      calls_today: number;
+    }>(
+      c.env,
+      `SELECT source,
+              MAX(polled_at) AS last_used_at,
+              COUNT(*) AS calls_total,
+              SUM(CASE WHEN polled_at >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
+              SUM(CASE WHEN polled_at >= ? THEN 1 ELSE 0 END) AS calls_today
+         FROM ingest_log
+        GROUP BY source`,
+      [last24, today],
+    );
+    for (const row of sourceRows) {
+      connections.push({
+        id: `source:${row.source}`,
+        label: `${row.source[0]?.toUpperCase() ?? ''}${row.source.slice(1)} Source`,
+        status: connectionStatus(true, 0, row.last_used_at),
+        configured: true,
+        lastUsedAt: row.last_used_at,
+        callsTotal: row.calls_total,
+        callsLast24h: row.calls_last_24h,
+        callsToday: row.calls_today,
+        errorsLast24h: 0,
+        note: 'Polls recorded by ingest_log',
+      });
+    }
+
+    const gemini = await get<{
+      calls_total: number;
+      calls_last_24h: number;
+      calls_today: number;
+      last_used_at: string | null;
+      errors_last_24h: number;
+    }>(
+      c.env.DB,
+      `SELECT COUNT(*) AS calls_total,
+              SUM(CASE WHEN first_seen_at >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
+              SUM(CASE WHEN first_seen_at >= ? THEN 1 ELSE 0 END) AS calls_today,
+              MAX(first_seen_at) AS last_used_at,
+              SUM(CASE WHEN error IS NOT NULL AND error != '' AND first_seen_at >= ? THEN 1 ELSE 0 END) AS errors_last_24h
+         FROM filings
+        WHERE extractor = 'visionLlm'
+           OR model_version LIKE 'gemini%'
+           OR error LIKE '%Gemini%'
+           OR error LIKE '%visionLlm%'`,
+      [last24, today, last24],
+    );
+    connections.push({
+      id: 'provider:gemini',
+      label: 'Gemini OCR',
+      status: connectionStatus(!!env.GEMINI_API_KEY, gemini?.errors_last_24h ?? 0, gemini?.last_used_at ?? null),
+      configured: !!env.GEMINI_API_KEY,
+      lastUsedAt: gemini?.last_used_at ?? null,
+      callsTotal: gemini?.calls_total ?? 0,
+      callsLast24h: gemini?.calls_last_24h ?? 0,
+      callsToday: gemini?.calls_today ?? 0,
+      errorsLast24h: gemini?.errors_last_24h ?? 0,
+      note: env.GEMINI_API_KEY ? 'Scanned House PDFs only' : 'GEMINI_API_KEY is not configured',
+    });
+
+    const fmp = await optionalAll<{
+      calls_total: number;
+      calls_last_24h: number;
+      calls_today: number;
+      last_used_at: string | null;
+      errors_last_24h: number;
+    }>(
+      c.env,
+      `SELECT COUNT(*) AS calls_total,
+              SUM(CASE WHEN enriched_at >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
+              SUM(CASE WHEN enriched_at >= ? THEN 1 ELSE 0 END) AS calls_today,
+              MAX(enriched_at) AS last_used_at,
+              SUM(CASE WHEN enrichment_error IS NOT NULL AND enrichment_error != '' AND enriched_at >= ? THEN 1 ELSE 0 END) AS errors_last_24h
+         FROM securities_ref`,
+      [last24, today, last24],
+    );
+    const fmpRow = fmp[0];
+    connections.push({
+      id: 'provider:fmp',
+      label: 'FMP Market Data',
+      status: connectionStatus(!!env.FMP_API_KEY, fmpRow?.errors_last_24h ?? 0, fmpRow?.last_used_at ?? null),
+      configured: !!env.FMP_API_KEY,
+      lastUsedAt: fmpRow?.last_used_at ?? null,
+      callsTotal: fmpRow?.calls_total ?? 0,
+      callsLast24h: fmpRow?.calls_last_24h ?? 0,
+      callsToday: fmpRow?.calls_today ?? 0,
+      errorsLast24h: fmpRow?.errors_last_24h ?? 0,
+      note: env.FMP_API_KEY ? 'Enrichment rows refreshed' : 'FMP_API_KEY is not configured',
+    });
+
+    const webhooks = await optionalAll<{
+      calls_total: number;
+      calls_last_24h: number;
+      calls_today: number;
+      last_used_at: string | null;
+      errors_last_24h: number;
+    }>(
+      c.env,
+      `SELECT COUNT(*) AS calls_total,
+              SUM(CASE WHEN updated_at >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
+              SUM(CASE WHEN updated_at >= ? THEN 1 ELSE 0 END) AS calls_today,
+              MAX(updated_at) AS last_used_at,
+              SUM(CASE WHEN last_error IS NOT NULL AND last_error != '' AND updated_at >= ? THEN 1 ELSE 0 END) AS errors_last_24h
+         FROM deliveries`,
+      [last24, today, last24],
+    );
+    const wh = webhooks[0];
+    connections.push({
+      id: 'delivery:webhook',
+      label: 'Webhook Delivery',
+      status: connectionStatus(!!env.WEBHOOK_SIGNING_KEY, wh?.errors_last_24h ?? 0, wh?.last_used_at ?? null),
+      configured: !!env.WEBHOOK_SIGNING_KEY,
+      lastUsedAt: wh?.last_used_at ?? null,
+      callsTotal: wh?.calls_total ?? 0,
+      callsLast24h: wh?.calls_last_24h ?? 0,
+      callsToday: wh?.calls_today ?? 0,
+      errorsLast24h: wh?.errors_last_24h ?? 0,
+      note: env.WEBHOOK_SIGNING_KEY ? 'Delivery attempts recorded' : 'WEBHOOK_SIGNING_KEY fallback is not configured',
+    });
+
+    connections.push({
+      id: 'auth:google',
+      label: 'Google Sign-In',
+      status: env.GOOGLE_OAUTH_CLIENT_ID ? 'ok' : 'warn',
+      configured: !!env.GOOGLE_OAUTH_CLIENT_ID,
+      lastUsedAt: null,
+      callsTotal: 0,
+      callsLast24h: 0,
+      callsToday: 0,
+      errorsLast24h: 0,
+      note: env.GOOGLE_OAUTH_CLIENT_ID ? 'Client id configured' : 'GOOGLE_OAUTH_CLIENT_ID is not configured',
+    });
+    connections.push({
+      id: 'email:resend',
+      label: 'Email',
+      status: env.RESEND_API_KEY && env.EMAIL_FROM ? 'ok' : 'warn',
+      configured: !!(env.RESEND_API_KEY && env.EMAIL_FROM),
+      lastUsedAt: null,
+      callsTotal: 0,
+      callsLast24h: 0,
+      callsToday: 0,
+      errorsLast24h: 0,
+      note: env.RESEND_API_KEY && env.EMAIL_FROM ? 'Resend sender configured' : 'RESEND_API_KEY/EMAIL_FROM incomplete',
+    });
+    connections.push({
+      id: 'billing:stripe',
+      label: 'Stripe Billing',
+      status: env.STRIPE_SECRET_KEY ? 'ok' : 'warn',
+      configured: !!env.STRIPE_SECRET_KEY,
+      lastUsedAt: null,
+      callsTotal: 0,
+      callsLast24h: 0,
+      callsToday: 0,
+      errorsLast24h: 0,
+      note: env.STRIPE_SECRET_KEY ? 'Secret key configured' : 'STRIPE_SECRET_KEY is not configured',
+    });
+
+    const errors: DiagnosticError[] = [];
+    const filingErrors = await optionalAll<{
+      first_seen_at: string | null;
+      doc_id: string;
+      error: string;
+    }>(
+      c.env,
+      `SELECT first_seen_at, doc_id, error
+         FROM filings
+        WHERE error IS NOT NULL AND error != ''
+        ORDER BY first_seen_at DESC
+        LIMIT 40`,
+    );
+    for (const e of filingErrors) {
+      errors.push({ at: e.first_seen_at, area: 'Filing', severity: 'error', subject: e.doc_id, message: e.error });
+    }
+
+    const reviewErrors = await optionalAll<{
+      created_at: string | null;
+      doc_id: string;
+      reason: string | null;
+    }>(
+      c.env,
+      `SELECT created_at, doc_id, reason
+         FROM review_queue
+        WHERE resolved = 0
+        ORDER BY created_at DESC
+        LIMIT 40`,
+    );
+    for (const e of reviewErrors) {
+      errors.push({
+        at: e.created_at,
+        area: 'Review Queue',
+        severity: 'warning',
+        subject: e.doc_id,
+        message: e.reason ?? 'Needs review',
+      });
+    }
+
+    const deliveryErrors = await optionalAll<{
+      updated_at: string | null;
+      id: string;
+      last_error: string | null;
+    }>(
+      c.env,
+      `SELECT updated_at, id, last_error
+         FROM deliveries
+        WHERE last_error IS NOT NULL AND last_error != ''
+        ORDER BY updated_at DESC
+        LIMIT 40`,
+    );
+    for (const e of deliveryErrors) {
+      errors.push({ at: e.updated_at, area: 'Delivery', severity: 'error', subject: e.id, message: e.last_error ?? '' });
+    }
+
+    const enrichmentErrors = await optionalAll<{
+      enriched_at: string | null;
+      ticker: string;
+      enrichment_error: string | null;
+    }>(
+      c.env,
+      `SELECT enriched_at, ticker, enrichment_error
+         FROM securities_ref
+        WHERE enrichment_error IS NOT NULL AND enrichment_error != ''
+        ORDER BY enriched_at DESC
+        LIMIT 40`,
+    );
+    for (const e of enrichmentErrors) {
+      errors.push({
+        at: e.enriched_at,
+        area: 'Enrichment',
+        severity: 'error',
+        subject: e.ticker,
+        message: e.enrichment_error ?? '',
+      });
+    }
+
+    const commandErrors = await optionalAll<{
+      updated_at: string | null;
+      id: string;
+      type: string;
+      error: string | null;
+    }>(
+      c.env,
+      `SELECT updated_at, id, type, error
+         FROM client_commands
+        WHERE error IS NOT NULL AND error != ''
+        ORDER BY updated_at DESC
+        LIMIT 40`,
+    );
+    for (const e of commandErrors) {
+      errors.push({
+        at: e.updated_at,
+        area: 'Client Command',
+        severity: 'error',
+        subject: `${e.type} ${e.id}`,
+        message: e.error ?? '',
+      });
+    }
+
+    errors.sort((a, b) => Date.parse(b.at ?? '') - Date.parse(a.at ?? ''));
+    return c.json({
+      generatedAt: now.toISOString(),
+      connections,
+      errors: errors.slice(0, 75),
+      errorCount: errors.length,
+    });
   });
 
   // --- GET /ui-settings ---------------------------------------------------
