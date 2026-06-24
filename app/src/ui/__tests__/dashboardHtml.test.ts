@@ -150,6 +150,15 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('Dry Run only counts');
   });
 
+  it('surfaces admin diagnostics for connections and app errors', () => {
+    expect(DASHBOARD_HTML).toContain('Connection Status');
+    expect(DASHBOARD_HTML).toContain('Recent App Errors');
+    expect(DASHBOARD_HTML).toContain('id="diagConnections"');
+    expect(DASHBOARD_HTML).toContain('id="diagErrors"');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/diagnostics'");
+    expect(DASHBOARD_HTML).toContain('function loadDiagnostics(');
+  });
+
   it('keeps the educational + dollar-estimate disclaimers in the Trends view', () => {
     expect(DASHBOARD_HTML).toContain('estimates');
     expect(DASHBOARD_HTML.toLowerCase()).toContain('bracket');
