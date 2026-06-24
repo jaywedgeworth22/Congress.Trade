@@ -359,6 +359,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   @media (max-width: 720px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
     html, body { width:100%; max-width:100%; overflow-x:hidden; }
     body { background: var(--bg); font-size: 13px; }
+    body::after {
+      content:""; position:fixed; left:0; right:0; bottom:0;
+      height:calc(28px + env(safe-area-inset-bottom));
+      background:var(--panel); z-index:44; pointer-events:none;
+    }
+    html[data-theme="light"] body::after { background:#fff; }
     header.top {
       display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
       padding: 10px 12px; align-items: center; backdrop-filter: none;
@@ -372,10 +378,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       width: 100vw; max-width: 100vw;
       display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 4px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
-      background: color-mix(in srgb, var(--panel) 94%, transparent);
-      border-top: 1px solid var(--border); backdrop-filter: blur(10px); z-index: 45;
+      background: var(--panel);
+      border-top: 1px solid var(--border); backdrop-filter: none; z-index: 45;
       box-shadow: 0 -8px 24px rgba(0,0,0,.18); transform: translateZ(0);
     }
+    html[data-theme="light"] nav.tabs { background:#fff; }
     nav.tabs button { padding: 8px 4px; font-size: 0; min-width: 0; border-radius: 9px; }
     nav.tabs button::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
     nav.tabs button::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
