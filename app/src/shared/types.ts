@@ -203,6 +203,79 @@ export interface ReviewItem {
 }
 
 // ---------------------------------------------------------------------------
+// Client API contracts (shared PWA + SwiftUI backend surface)
+// ---------------------------------------------------------------------------
+
+export interface ClientTrade {
+  id: string;
+  cursor: number;
+  docId: string;
+  member: {
+    id: string | null;
+    name: string | null;
+    chamber: Chamber | null;
+    party: string | null;
+    state: string | null;
+    photoUrl: string | null;
+  };
+  asset: {
+    name: string;
+    ticker: string | null;
+    type: string | null;
+    sector: string | null;
+    marketCapBucket: string | null;
+  };
+  transaction: {
+    date: string | null;
+    type: TxType;
+    owner: Owner | null;
+    amountMin: number | null;
+    amountMax: number | null;
+    isOption: boolean;
+  };
+  filing: {
+    filedDate: string | null;
+    firstSeenAt: string | null;
+    sourceUrl?: string;
+  };
+  confidence: number;
+  source: TxSource;
+}
+
+export interface ClientPreferences {
+  userId: string;
+  savedFilters: Record<string, unknown>;
+  watchlist: string[];
+  notificationSettings: Record<string, unknown>;
+  defaultWindow: string | null;
+  updatedAt: string;
+}
+
+export type ClientCommandType =
+  | 'update_preferences'
+  | 'create_subscription'
+  | 'update_subscription'
+  | 'start_checkout'
+  | 'request_export';
+
+export type ClientCommandStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
+
+export interface ClientCommand {
+  id: string;
+  userId: string;
+  type: ClientCommandType;
+  status: ClientCommandStatus;
+  idempotencyKey: string | null;
+  payload: unknown;
+  result: unknown | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // End-user accounts (public-site auth: Google OAuth + email magic-link)
 // ---------------------------------------------------------------------------
 

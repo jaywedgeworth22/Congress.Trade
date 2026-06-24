@@ -23,6 +23,8 @@ This repo is worked by multiple agents. Read this before editing.
 - Claude branches: `claude/<short-topic>`.
 - Shared feature branches are acceptable when explicitly coordinated.
 - Do not edit another agent's branch unless asked.
+- Treat a dirty worktree as owned by the agent that created those edits. Do not
+  reformat, revert, stage, or "clean up" files outside your assigned slice.
 - Do not push, deploy, apply remote migrations, or run production scripts unless
   the user explicitly asks.
 - To resolve another agent's PR, use a separate integration branch unless the
@@ -41,6 +43,17 @@ If another branch or PR is touching the same files, either choose a disjoint
 slice, build on an integration branch that includes that work, or stop and
 report the overlap.
 
+When a PR is open, inspect its changed files and check status before starting
+overlapping work:
+
+```bash
+gh pr view <number> --json headRefName,baseRefName,files,statusCheckRollup
+gh pr checks <number>
+```
+
+If checks are failing, fix them on the owning branch only when explicitly asked;
+otherwise coordinate through a new integration branch.
+
 ## Development Commands
 
 Run from `app/`:
@@ -54,6 +67,10 @@ npm test
 Use `npm run dev` for local Wrangler development. Treat `npm run deploy`,
 `npm run deploy:full`, `scripts/ship.sh`, `scripts/provision.sh`, and remote D1
 commands as production-affecting until proven otherwise.
+
+Backfill and ingestion commands can mutate queues, D1, KV, R2, or provider
+state. Do not run remote backfills, queue drains, production crawlers, or
+production ingestion jobs unless the user explicitly asks.
 
 ## Environment Rules
 
@@ -86,9 +103,12 @@ change a migration:
   pending attempt before POSTing. Recipients must still dedupe on
   `X-Subscription-Id` + `X-Tx-Id` because external webhooks are at-least-once.
 - Backend remains the source of truth for all clients. Next.js/PWA and SwiftUI
-  work must share one `/api/client/*` contract, one auth/session model, and one
+  work must share one `/api/client/v1/*` contract, one auth/session model, and one
   server-side command/status gateway. Do not put scraping, calculations,
   provider secrets, admin tokens, or MCP orchestration in either client.
+- The phone-first Next.js/PWA and SwiftUI iPhone app are peer clients, not
+  separate products. Keep DTOs, command names, command statuses, entitlement
+  behavior, and account-owned alert semantics aligned across both.
 - Keep `main` protected through GitHub branch protection or a ruleset: PRs
   required, `typecheck + test` required, stale reviews dismissed, no force push
   or deletion.

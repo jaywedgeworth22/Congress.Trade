@@ -32,7 +32,7 @@ manages webhooks/SSE or premium features.
   Data for iOS. Both caches should key feed progress by `cursorSeq`.
 - **Session storage:** secure HTTP-only cookies for the PWA; Keychain-stored
   refresh tokens and short-lived access tokens for iOS.
-- **Backend client API:** purpose-built `/api/client/*` endpoints that return
+- **Backend client API:** purpose-built `/api/client/v1/*` endpoints that return
   stable DTOs for both clients instead of exposing every web/admin route
   directly.
 - **Command gateway:** every client mutation posts a command that is validated,
@@ -68,40 +68,40 @@ Not ready as production client primitives:
 
 Read endpoints:
 
-- `GET /api/client/bootstrap`
+- `GET /api/client/v1/bootstrap`
   - user, entitlement, feature flags, latest cursor, default filters.
-- `GET /api/client/feed?since=&limit=&filters=...`
+- `GET /api/client/v1/feed?since=&limit=&filters=...`
   - phone-shaped trade cards and next cursor.
-- `GET /api/client/trades/:id`
+- `GET /api/client/v1/trades/:id`
   - trade detail, filing, company/member summaries, legal/educational notices.
-- `GET /api/client/tickers/:ticker`
+- `GET /api/client/v1/tickers/:ticker`
   - market bundle + congressional activity.
-- `GET /api/client/members/:id`
+- `GET /api/client/v1/members/:id`
   - member profile + activity.
-- `GET /api/client/analytics/summary`
+- `GET /api/client/v1/analytics/summary`
   - compact KPI and trend cards for phone dashboards.
 
 Command endpoints:
 
-- `POST /api/client/commands`
+- `POST /api/client/v1/commands`
   - body: `{ type, payload, idempotencyKey }`
   - returns: `{ commandId, status }`
-- `GET /api/client/commands/:id`
+- `GET /api/client/v1/commands/:id`
   - status, audit trail, validation errors, resulting resource ids.
-- `GET /api/client/commands/stream`
+- `GET /api/client/v1/commands/stream`
   - foreground status stream for pending commands when supported.
 
 Account-owned alert endpoints:
 
-- `GET /api/client/alerts`
-- `POST /api/client/alerts`
-- `PATCH /api/client/alerts/:id`
-- `POST /api/client/devices`
+- `GET /api/client/v1/alerts`
+- `POST /api/client/v1/alerts`
+- `PATCH /api/client/v1/alerts/:id`
+- `POST /api/client/v1/devices`
   - APNs and web-push device registration.
 
 Advanced developer delivery:
 
-- `GET/POST/PATCH /api/client/delivery-subscriptions`
+- `GET/POST/PATCH /api/client/v1/delivery-subscriptions`
   - account-owned wrapper around current webhook/SSE subscriptions.
   - includes target verification, rate limits, rotate secret, pause/resume, and
     test delivery.
@@ -112,38 +112,33 @@ Use the same command lifecycle for the PWA and SwiftUI app.
 
 Statuses:
 
-- `accepted`
-- `validating`
 - `queued`
 - `running`
 - `succeeded`
 - `failed`
-- `cancelled`
+- `canceled`
 
 Minimum command fields:
 
-- `commandId`
+- `id`
 - `type`
 - `status`
 - `createdAt`
 - `updatedAt`
 - `idempotencyKey`
-- `requestedBy`
-- `payloadSummary`
-- `validationErrors`
+- `userId`
+- `payload`
+- `error`
 - `result`
 - `audit`
 
 Initial command types:
 
-- `alert.create`
-- `alert.update`
-- `alert.pause`
-- `deliverySubscription.create`
-- `deliverySubscription.update`
-- `deliverySubscription.rotateSecret`
-- `deliverySubscription.testDelivery`
-- `device.register`
+- Implemented: `update_preferences`, `create_subscription`,
+  `update_subscription`.
+- Next: `alert.create`, `alert.update`, `alert.pause`,
+  `deliverySubscription.rotateSecret`, `deliverySubscription.testDelivery`,
+  `device.register`.
 
 Policy:
 
@@ -239,7 +234,7 @@ Security requirements before broad mobile exposure:
 ## Phased Build
 
 1. **Shared client contract**
-   - Define `/api/client/*` DTOs, command statuses, idempotency rules, and typed
+   - Define `/api/client/v1/*` DTOs, command statuses, idempotency rules, and typed
      clients for TypeScript and Swift.
 2. **Phone-first Next.js/PWA**
    - Feed, search/filter, ticker/member details, analytics summary, offline

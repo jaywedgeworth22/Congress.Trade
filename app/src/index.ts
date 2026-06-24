@@ -29,6 +29,7 @@ import { buildAdminRouter } from './admin/routes';
 import { buildAnalyticsRouter } from './analytics/routes';
 import { buildAuthRouter } from './auth/routes';
 import { buildBillingRouter } from './billing/routes';
+import { buildClientRouter } from './client/routes';
 import { buildUiRouter } from './ui/routes';
 import { maybeRunDailyJobs } from './jobs';
 
@@ -57,6 +58,12 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
     root.route('/api/analytics', buildAnalyticsRouter());
   } catch (err) {
     console.warn('analytics/routes router not mounted:', (err as Error).message);
+  }
+  try {
+    // Shared backend-owned contract for the phone-first PWA and SwiftUI app.
+    root.route('/api/client/v1', buildClientRouter());
+  } catch (err) {
+    console.warn('client/routes router not mounted:', (err as Error).message);
   }
   // End-user auth (Google OAuth + magic-link) at /auth/*. Mounted before the UI
   // catch-all so its routes are not shadowed by the dashboard.

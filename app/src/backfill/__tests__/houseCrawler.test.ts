@@ -139,8 +139,8 @@ describe('runHouseHistoricalBackfill', () => {
     ]);
   });
 
-  it('does not enqueue in dryRun (still discovers + persists)', async () => {
-    const { env, sent } = fakeEnv();
+  it('does not write or enqueue in dryRun', async () => {
+    const { env, sent, seen } = fakeEnv();
     const data: Record<number, HouseFiling[]> = { 2014: [filing(2014, '1', 'P')] };
 
     const res = await runHouseHistoricalBackfill(env, {
@@ -154,6 +154,7 @@ describe('runHouseHistoricalBackfill', () => {
     expect(res.enqueued).toBe(0);
     expect(res.skipped).toBe(1);
     expect(sent).toHaveLength(0);
+    expect(seen.size).toBe(0);
   });
 
   it('is idempotent: a second run never double-enqueues already-seen PTRs', async () => {

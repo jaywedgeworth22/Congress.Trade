@@ -151,6 +151,18 @@ Once deployed, seed back-history — see
 
 ```bash
 curl -X POST https://<APP_BASE_URL>/api/admin/backfill \
+  -H 'authorization: Bearer <ADMIN_TOKEN>' \
   -H 'content-type: application/json' \
   -d '{"chambers":["house","senate"],"sinceYear":2014}'   # add "dryRun":true to preview
+```
+
+For higher-fidelity House history, use the official House index backfill in
+bounded batches. `dryRun` counts matching PTRs without writing rows or enqueueing
+work; non-dry runs default to `maxFilings: 500` unless a different cap is sent.
+
+```bash
+curl -X POST https://<APP_BASE_URL>/api/admin/house-backfill \
+  -H 'authorization: Bearer <ADMIN_TOKEN>' \
+  -H 'content-type: application/json' \
+  -d '{"fromYear":2024,"toYear":2026,"maxFilings":500,"dryRun":true}'
 ```

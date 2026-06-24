@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { createSession, resolveSession, destroySession } from '../session';
+import { Hono } from 'hono';
+import { createSession, resolveSession, destroySession, getCurrentUserFromRequest } from '../session';
 import type { Env } from '../../shared/types';
 
 function fakeEnv(user?: { id: string }) {
@@ -69,5 +70,16 @@ describe('sessions', () => {
     const token = await createSession(env, 'user-1');
     await destroySession(env, token);
     expect(await resolveSession(env, token)).toBeNull();
+  });
+
+  it('resolves bearer sessions for native clients', async () => {
+    const { env } = fakeEnv({ id: 'user-1' });
+    const token = await createSession(env, 'user-1');
+    const app = new Hono<{ Bindings: Env }>();
+    app.get('/me', async (c) => c.json({ user: await getCurrentUserFromRequest(c) }));
+
+    const res = await app.request('http://localhost/me', { headers: { authorization: `Bearer ${token}` } }, env);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { user: { id: string } }).user.id).toBe('user-1');
   });
 });

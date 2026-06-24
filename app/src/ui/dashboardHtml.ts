@@ -144,8 +144,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     margin: -4px 0 14px; padding: 12px 14px; background: var(--panel);
     border: 1px solid var(--border); border-radius: var(--radius);
   }
-  .search-panel.open { display: flex; }
+  .search-panel.open { display: flex; position:relative; z-index:44; }
   .search-panel .lbl { font-size: 12px; color: var(--text-dim); margin-right: 2px; }
+  .panel-backdrop { display:none; position:fixed; inset:0; z-index:43; background:rgba(2,6,18,.46); }
+  .panel-backdrop.open { display:block; }
+  .panel-head { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; }
+  .panel-title { color:var(--text-dim); font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; }
+  .panel-close {
+    display:inline-flex; align-items:center; justify-content:center; width:38px; height:38px;
+    margin:-8px -8px -8px 0; border-radius:999px; border:1px solid transparent;
+    background:transparent; color:var(--text-dim); cursor:pointer; font-size:20px; line-height:1;
+  }
+  .panel-close:hover { color:var(--text); background:var(--panel-2); border-color:var(--border); }
   .btn.ghost.sm.on { color: var(--accent); border-color: var(--accent); }
   td.state { text-align: center; color: var(--text-dim); padding: 22px 13px; }
   .tkr { font-family: var(--mono); font-weight: 700; }
@@ -160,7 +170,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .tkr-logo.tile { border: 1px solid var(--border); background: color-mix(in srgb, var(--panel-2) 80%, transparent); border-radius: 6px; padding: 2px; }
   .tkr-logo.transparent { border-radius: 4px; }
   /* ---- member headshots (mirrors the ticker-logo image+fallback pattern) ---- */
-  .member-cell { display: flex; align-items: center; gap: 9px; }
+  .member-cell { display: flex; align-items: center; gap: 9px; min-width:0; }
+  .member-cell > div { min-width:0; line-height:1.25; }
   /* The avatar shows initials by default; a successful headshot <img> overlays
      them, and onerror="this.remove()" drops the <img> to reveal initials. */
   .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
@@ -254,7 +265,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer.open { display:block; }
   .drawer-backdrop { position:absolute; inset:0; background:rgba(2,6,18,.55); }
   .drawer-panel { position:absolute; top:0; right:0; height:100%; width:480px; max-width:92vw; background:var(--panel); border-left:1px solid var(--border); box-shadow:-12px 0 40px rgba(0,0,0,.4); overflow-y:auto; padding:20px 22px; }
-  .drawer-close { position:absolute; top:13px; right:15px; cursor:pointer; color:var(--text-dim); font-size:20px; border:none; background:none; line-height:1; }
+  .drawer-topbar {
+    position:sticky; top:0; z-index:4; display:flex; justify-content:flex-end;
+    min-height:44px; margin:-10px -10px 0 -10px; padding:0 0 0 44px;
+    pointer-events:none; background:linear-gradient(var(--panel) 68%, transparent);
+  }
+  .drawer-close {
+    pointer-events:auto; display:inline-flex; align-items:center; justify-content:center;
+    width:48px; height:48px; margin:0; cursor:pointer; color:var(--text-dim);
+    font-size:20px; border:1px solid transparent; border-radius:999px;
+    background:color-mix(in srgb, var(--panel) 92%, transparent); line-height:1; touch-action:manipulation;
+  }
+  .drawer-close:hover { color:var(--text); background:var(--panel-2); border-color:var(--border); }
+  #detailDrawerBody { margin-top:-34px; padding-top:2px; padding-right:36px; }
+  .drawer-title-line { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; padding-right:4px; }
+  .drawer-title-line .tkr { color:var(--accent); }
+  .drawer-title-line .company-name { min-width:0; overflow-wrap:anywhere; }
   .drawer h2 { margin:0 0 2px; font-size:19px; }
   .drawer .dsub { color:var(--text-dim); font-size:13px; margin:0 0 6px; }
   .drawer-section { border-top:1px solid var(--border); padding:14px 0; }
@@ -267,13 +293,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .committee-tag { display:inline-block; font-size:11px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:2px 8px; margin:0 5px 5px 0; }
   .drawer-all-link { display:block; margin-top:9px; font-size:13px; }
   .source-link { display:inline-block; margin-top:9px; font-size:13px; }
-  .raw-notes { white-space:pre-wrap; word-break:break-word; max-height:150px; overflow:auto; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12px; font-family:var(--mono); color:var(--text-dim); margin:0; }
+  .filing-note { background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12px; line-height:1.5; color:var(--text-dim); margin:0; }
+  .filing-note-kv { background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12px; }
+  .filing-note-kv dd { text-align:left; }
   .perf-line { font-size:15px; font-weight:700; }
   .mini-tbl td { padding:7px 6px; }
   .colopts { display:flex; flex-wrap:wrap; gap:6px 4px; flex:1; }
   .colopt { font-size:13px; color:var(--text); display:inline-flex; align-items:center; gap:5px; margin-right:12px; white-space:nowrap; cursor:pointer; }
   .clickable { cursor: pointer; }
-  .asset-cell.clickable:hover .tkr, .hlabel.clickable:hover .tkr, .tkr.clickable:hover { text-decoration: underline; }
+  .asset-cell.clickable:hover .tkr, .hlabel.clickable:hover .tkr, .drawer-title-line.clickable:hover .tkr, .tkr.clickable:hover { text-decoration: underline; }
   .member-cell.clickable:hover { text-decoration: underline; }
   .subs-msg { flex-basis: 100%; margin-top: 10px; }
   .secret-panel { display:grid; gap:8px; align-items:start; background:var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:12px; color:var(--text); max-width:100%; }
@@ -299,7 +327,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .modal { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:26px; width:100%; max-width:430px; box-shadow:0 24px 60px rgba(0,0,0,.45); }
   .modal h2 { margin:0 0 6px; font-size:19px; }
   .modal p.sub { margin:0 0 18px; color:var(--text-dim); font-size:13px; }
-  .modal .close { float:right; background:transparent; border:none; color:var(--text-dim); font-size:20px; cursor:pointer; line-height:1; }
+  .modal .close { float:right; display:inline-flex; align-items:center; justify-content:center; width:40px; height:40px; margin:-10px -10px 0 6px; background:transparent; border:1px solid transparent; border-radius:999px; color:var(--text-dim); font-size:20px; cursor:pointer; line-height:1; }
+  .modal .close:hover { color:var(--text); background:var(--panel-2); border-color:var(--border); }
   .gbtn { display:flex; align-items:center; justify-content:center; gap:10px; width:100%; padding:11px; border-radius:10px; border:1px solid var(--border); background:var(--panel-2); color:var(--text); font-weight:600; font-size:14px; cursor:pointer; }
   .gbtn:hover { border-color:var(--accent); }
   .gbtn svg { width:18px; height:18px; }
@@ -319,7 +348,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .toast.show { display:block; }
   .toast.err { border-color:color-mix(in srgb,var(--sell) 55%,transparent); color:var(--sell); }
   .gate-note { font-size:12px; color:var(--warn); display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
-  @media (max-width: 720px) {
+  @media (max-width: 720px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
+    html, body { width:100%; max-width:100%; overflow-x:hidden; }
     body { background: var(--bg); font-size: 13px; }
     header.top {
       display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
@@ -328,33 +358,48 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .brand { font-size: 15px; }
     #srcPill { display: none; }
     .pill { padding: 3px 7px; }
-    .theme-toggle { padding: 7px 9px; }
+    .theme-toggle { display:none; }
     nav.tabs {
       position: fixed; left: 0; right: 0; bottom: 0; margin: 0;
+      width: 100vw; max-width: 100vw;
       display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 4px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
       background: color-mix(in srgb, var(--panel) 94%, transparent);
       border-top: 1px solid var(--border); backdrop-filter: blur(10px); z-index: 45;
+      box-shadow: 0 -8px 24px rgba(0,0,0,.18); transform: translateZ(0);
     }
     nav.tabs button { padding: 8px 4px; font-size: 0; min-width: 0; border-radius: 9px; }
     nav.tabs button::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
     nav.tabs button::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .acct { justify-content: flex-end; }
     .acct .email, .acct .badge { display: none; }
-    main { max-width: none; padding: 12px; padding-bottom: calc(86px + env(safe-area-inset-bottom)); }
+    main { max-width: none; min-width:0; overflow-x:hidden; padding: 12px; padding-bottom: calc(86px + env(safe-area-inset-bottom)); }
+    .view, .section, .toolbar, .row-flex, .sched-row { min-width:0; max-width:100%; }
+    .section { overflow:hidden; }
+    .section p.sub { font-size:12px; line-height:1.45; }
+    .note, .section p.sub, .disclaimer, code { overflow-wrap:anywhere; }
+    .section > table { display:block; max-width:100%; overflow-x:auto; }
+    .table-wrap { max-width:100%; overflow-x:auto; }
     .banner, .disclaimer { margin-bottom: 12px; }
-    .grid-cards { display: flex; gap: 10px; overflow-x: auto; margin: 0 -12px 14px; padding: 0 12px 4px; scroll-snap-type: x mandatory; }
-    .grid-cards .card { min-width: 148px; scroll-snap-align: start; padding: 12px; border-radius: 10px; }
-    .card .v { font-size: 20px; }
+    .disclaimer { font-size:11px; line-height:1.45; padding:10px 11px; }
+    input, select, .btn { font-size:16px; }
+    #view-feed > .grid-cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; overflow:visible; margin:0 0 10px; padding:0; }
+    #view-feed > .grid-cards .card { min-width:0; padding:10px 11px; border-radius:8px; }
+    .grid-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; overflow:visible; margin:0 0 14px; padding:0; }
+    .grid-cards .card { min-width:0; padding:11px 12px; border-radius:10px; }
+    .card .k { font-size:11px; line-height:1.25; }
+    .card .v { font-size:18px; }
     .section { border-radius: 10px; padding: 14px; margin-bottom: 12px; }
-    .toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: stretch; }
-    .toolbar input, .toolbar select, .toolbar .btn { width: 100%; min-height: 40px; }
-    .toolbar #qMember { grid-column: 1 / -1; }
+    .toolbar { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; align-items: stretch; }
+    .toolbar input, .toolbar select, .toolbar .btn { width: 100%; min-width:0; min-height: 40px; padding:8px 9px; }
+    .toolbar #qMember { grid-column: span 2; }
+    .toolbar #qTicker { width:100% !important; }
     .search-panel.open {
       position: fixed; left: 10px; right: 10px; bottom: calc(70px + env(safe-area-inset-bottom));
       display: grid; grid-template-columns: 1fr; z-index: 44; max-height: 58vh; overflow:auto;
       box-shadow: 0 18px 44px rgba(0,0,0,.45);
     }
+    .panel-close { width:44px; height:44px; margin:-10px -10px -10px 0; }
     #view-feed .table-wrap { display: none; }
     #view-feed .feed-cards { display: grid; grid-template-columns: minmax(0, 1fr); }
     .col-resizer { display: none; }
@@ -369,18 +414,35 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .plan-grid { grid-template-columns: 1fr; }
     .toast { bottom: calc(78px + env(safe-area-inset-bottom)); width: calc(100vw - 24px); max-width: 420px; }
   }
-  @media (max-width: 420px) {
+  @media (max-width: 460px) {
     .feed-card-meta { grid-template-columns: 1fr; }
-    .toolbar { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 420px) {
+    #view-feed > .grid-cards { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .toolbar { grid-template-columns: repeat(2,minmax(0,1fr)); }
+    .toolbar #qMember { grid-column:1 / -1; }
     nav.tabs button::after { font-size: 9px; }
     th, td { padding: 9px 10px; }
+  }
+  @media (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
+    header.top { padding:8px 10px; }
+    main { padding:8px 10px; padding-bottom:calc(72px + env(safe-area-inset-bottom)); }
+    .disclaimer { font-size:10px; line-height:1.35; max-height:78px; overflow:auto; padding:8px 10px; }
+    .section p.sub { font-size:11px; line-height:1.35; }
+    #view-feed > .grid-cards { grid-template-columns:repeat(5,minmax(0,1fr)); }
+    #view-feed > .grid-cards .card { padding:8px 9px; }
+    .toolbar { grid-template-columns: 1.45fr .65fr 1fr 1fr; }
+    .toolbar #qMember { grid-column:auto; }
+    .feed-card-meta { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    .drawer-panel { height:92vh; }
+    nav.tabs { padding-top:6px; padding-bottom:calc(6px + env(safe-area-inset-bottom)); }
   }
 </style>
 </head>
 <body>
 <header class="top">
   <div class="brand">Congress<span class="dot">.</span>Trade</div>
-  <span class="pill off" id="livePill">connecting…</span>
+  <span class="pill off" id="livePill">Connecting…</span>
   <span class="pill" id="srcPill">House + Senate</span>
   <nav class="tabs">
     <button data-view="feed" data-mobile="Feed" data-icon="▦" class="active">Live Feed</button>
@@ -399,40 +461,42 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <!-- ================= LIVE FEED ================= -->
   <section class="view active" id="view-feed">
     <div class="grid-cards">
-      <div class="card"><div class="k">New filings today</div><div class="v" id="kpiToday">—</div></div>
-      <div class="card"><div class="k">Total in feed</div><div class="v" id="kpiTotal">—</div></div>
-      <div class="card"><div class="k">Auto-parsed (no LLM)</div><div class="v" id="kpiAuto">—<small>%</small></div></div>
-      <div class="card"><div class="k">Needs review</div><div class="v" id="kpiReview">—</div></div>
-      <div class="card"><div class="k">Poll mode</div><div class="v" id="kpiMode">—</div></div>
+      <div class="card"><div class="k">New Filings Today</div><div class="v" id="kpiToday">—</div></div>
+      <div class="card"><div class="k">Total in Feed</div><div class="v" id="kpiTotal">—</div></div>
+      <div class="card"><div class="k">Auto-Parsed (No LLM)</div><div class="v" id="kpiAuto">—<small>%</small></div></div>
+      <div class="card"><div class="k">Needs Review</div><div class="v" id="kpiReview">—</div></div>
+      <div class="card"><div class="k">Poll Mode</div><div class="v" id="kpiMode">—</div></div>
     </div>
     <div class="toolbar">
-      <input id="qMember" placeholder="Filter member…" oninput="renderFeed()" />
+      <input id="qMember" placeholder="Filter Member…" oninput="renderFeed()" />
       <input id="qTicker" placeholder="Ticker…" oninput="renderFeed()" style="width:120px" />
       <select id="qType" onchange="renderFeed()">
-        <option value="">All types</option><option value="P">Purchase</option>
+        <option value="">All Types</option><option value="P">Purchase</option>
         <option value="S">Sale</option><option value="E">Exchange</option>
       </select>
       <select id="qChamber" onchange="renderFeed()">
         <option value="">Both Chambers</option><option value="house">House</option><option value="senate">Senate</option>
       </select>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
-      <button class="btn ghost sm" onclick="toggleColChooser()" title="Show / hide columns">⚙ Columns</button>
+      <button class="btn ghost sm" onclick="toggleColChooser()" title="Show / Hide Columns">⚙ Columns</button>
       <button class="btn ghost sm" onclick="refreshFeed()">↻ Refresh</button>
       <button class="btn ghost sm" onclick="exportCsv()" title="Download the filtered feed as CSV (premium)">⤓ Export CSV</button>
     </div>
+    <div class="panel-backdrop" id="panelBackdrop" onclick="closePanels()"></div>
     <div class="search-panel" id="colChooser">
-      <span class="lbl">Columns</span>
+      <div class="panel-head"><span class="panel-title">Columns</span><button class="panel-close" onclick="closePanels()" aria-label="Close columns">×</button></div>
       <div id="colChooserBody" class="colopts"></div>
       <button class="btn ghost sm" onclick="resetCols()">Reset</button>
     </div>
     <div class="search-panel" id="searchPanel">
-      <span class="lbl">Search all</span>
-      <input id="qAll" placeholder="member, asset, ticker, source…" style="min-width:240px;flex:1" oninput="renderFeed()" />
+      <div class="panel-head"><span class="panel-title">Search</span><button class="panel-close" onclick="closePanels()" aria-label="Close search">×</button></div>
+      <span class="lbl">Search All</span>
+      <input id="qAll" placeholder="Member, Asset, Ticker, Source…" style="min-width:240px;flex:1" oninput="renderFeed()" />
       <span class="lbl">Min $</span>
       <input id="qMinAmt" type="number" min="0" placeholder="0" style="width:120px" oninput="renderFeed()" />
       <span class="lbl">Source</span>
       <select id="qSource" onchange="renderFeed()">
-        <option value="">Any</option><option value="primary">Live (primary)</option><option value="seed_dataset">Historic (seed)</option>
+        <option value="">Any</option><option value="primary">Live (Primary)</option><option value="seed_dataset">Historic (Seed)</option>
       </select>
       <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
     </div>
@@ -444,7 +508,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
     <div id="feedCards" class="feed-cards mobile-only" aria-live="polite"></div>
     <div class="row-flex" style="margin-top:14px;justify-content:center">
-      <button class="btn ghost sm" id="loadMoreBtn" onclick="loadMore()" style="display:none">Load more</button>
+      <button class="btn ghost sm" id="loadMoreBtn" onclick="loadMore()" style="display:none">Load More</button>
       <span class="note" id="feedCountMsg"></span>
     </div>
     <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center;display:none">
@@ -457,26 +521,26 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section class="view" id="view-trends">
     <div class="toolbar">
       <select id="trWindow" title="Time window (by trade date)">
-        <option value="1d">Past day</option>
-        <option value="7d">Past week</option>
-        <option value="30d" selected>Past month</option>
-        <option value="90d">Past 3 months</option>
-        <option value="180d">Past 6 months</option>
-        <option value="365d">Past year</option>
-        <option value="1825d">Past 5 years</option>
-        <option value="all">All time</option>
+        <option value="1d">Past Day</option>
+        <option value="7d">Past Week</option>
+        <option value="30d">Past Month</option>
+        <option value="90d">Past 3 Months</option>
+        <option value="180d">Past 6 Months</option>
+        <option value="365d">Past Year</option>
+        <option value="1825d">Past 5 Years</option>
+        <option value="all" selected>All Time</option>
       </select>
-      <select id="trChamber"><option value="">Both chambers</option><option value="house">House</option><option value="senate">Senate</option></select>
-      <select id="trParty"><option value="">All parties</option><option value="D">Democrat</option><option value="R">Republican</option><option value="O">Other / Ind.</option></select>
+      <select id="trChamber"><option value="">Both Chambers</option><option value="house">House</option><option value="senate">Senate</option></select>
+      <select id="trParty"><option value="">All Parties</option><option value="D">Democrat</option><option value="R">Republican</option><option value="O">Other / Ind.</option></select>
       <select id="trSource" title="Provenance of the underlying rows">
-        <option value="all" selected>All data</option>
-        <option value="primary">Live (primary) only</option>
-        <option value="seed_dataset">Historic (seed) only</option>
+        <option value="all" selected>All Data</option>
+        <option value="primary">Live (Primary) Only</option>
+        <option value="seed_dataset">Historic (Seed) Only</option>
       </select>
       <button class="btn ghost sm" onclick="loadTrends()">↻ Refresh</button>
     </div>
     <div class="disclaimer">
-      <strong>For education, not investment advice.</strong> Congress.Trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any member acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. “All data” can double-count a trade present in both the live and historic sets; use <em>Live only</em> for a de-duplicated dollar view. Party is known for only some members. Always do your own research.
+      <strong>For education, not investment advice.</strong> Congress.Trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any member acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. “All Data” can double-count a trade present in both the live and historic sets; use <em>Live Only</em> for a de-duplicated dollar view. Party is known for only some members. Always do your own research.
     </div>
 
     <!-- KPI strip -->
@@ -487,21 +551,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- What Congress is trading + Heating up -->
     <div class="trend-grid2">
       <div class="section">
-        <h3>What Congress is trading</h3>
+        <h3>What Congress Is Trading</h3>
         <p class="sub">Most-traded tickers in the window. Click a row for a deep dive. Bar = buy / sell mix.</p>
         <div class="row-flex" style="margin:-6px 0 12px">
-          <label class="lbl">Rank by</label>
+          <label class="lbl">Rank By</label>
           <select id="trTickerSort">
             <option value="trades">Trades</option>
-            <option value="members">Distinct members</option>
-            <option value="volume">Est. volume</option>
-            <option value="netflow">Net $ flow</option>
+            <option value="members">Distinct Members</option>
+            <option value="volume">Est. Volume</option>
+            <option value="netflow">Net $ Flow</option>
           </select>
         </div>
         <div class="table-wrap"><table><tbody id="trTickers"></tbody></table></div>
       </div>
       <div class="section">
-        <h3>Rising activity</h3>
+        <h3>Rising Activity</h3>
         <p class="sub">Tickers whose disclosed trade count rose most vs the prior equal period. A descriptive view of filing activity — not a forecast.</p>
         <div class="table-wrap"><table><tbody id="trTrending"></tbody></table></div>
       </div>
@@ -509,14 +573,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Consensus / cluster buys -->
     <div class="section">
-      <h3>Consensus moves <span class="chip" id="trClusterHint"></span></h3>
+      <h3>Consensus Moves <span class="chip" id="trClusterHint"></span></h3>
       <p class="sub">Tickers where several different members happened to trade the <strong>same direction</strong> in the window. Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination.</p>
       <div class="cluster-grid" id="trClusters"></div>
     </div>
 
     <!-- Buys vs sells over time -->
     <div class="section">
-      <h3>Buys vs sells over time</h3>
+      <h3>Buys vs Sells Over Time</h3>
       <p class="sub">Trade counts bucketed by period. The <em>shape</em> — a surge of buying or selling — is the trend.</p>
       <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
       <div id="trTime"></div>
@@ -525,15 +589,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Members + Party -->
     <div class="trend-grid2">
       <div class="section">
-        <h3>Most active members</h3>
+        <h3>Most Active Members</h3>
         <p class="sub">Who is trading the most in the window.</p>
         <div class="table-wrap"><table><tbody id="trMembers"></tbody></table></div>
       </div>
       <div class="section">
-        <h3>By party</h3>
+        <h3>By Party</h3>
         <p class="sub">Buy / sell mix and estimated net flow per party (where party is known).</p>
         <div id="trParties"></div>
-        <h3 style="margin-top:18px">By asset type</h3>
+        <h3 style="margin-top:18px">By Asset Type</h3>
         <p class="sub">Share of estimated volume by instrument type.</p>
         <div id="trSectors"></div>
       </div>
@@ -541,12 +605,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Disclosure timeliness -->
     <div class="section">
-      <h3>Disclosure timeliness</h3>
+      <h3>Disclosure Timeliness</h3>
       <p class="sub">Days from trade to filing. The STOCK Act sets a 45-day deadline; this is a data-quality + accountability lens.</p>
       <div class="grid-cards" id="trLagKpis"></div>
       <div class="trend-grid2" style="margin-top:6px">
-        <div><h3 style="font-size:13px">Lag distribution</h3><div id="trLagDist"></div></div>
-        <div><h3 style="font-size:13px">Slowest filers (avg lag)</h3><div class="table-wrap"><table><tbody id="trLateFilers"></tbody></table></div></div>
+        <div><h3 style="font-size:13px">Lag Distribution</h3><div id="trLagDist"></div></div>
+        <div><h3 style="font-size:13px">Slowest Filers (Avg Lag)</h3><div class="table-wrap"><table><tbody id="trLateFilers"></tbody></table></div></div>
       </div>
     </div>
   </section>
@@ -554,7 +618,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <!-- ================= REVIEW QUEUE ================= -->
   <section class="view" id="view-review">
     <div class="section">
-      <h3>Low-confidence parses</h3>
+      <h3>Low-Confidence Parses</h3>
       <p class="sub">Scanned / handwritten filings below the confidence threshold are held here and never hit the live webhook until a human confirms.</p>
       <table>
         <thead><tr><th>Filed</th><th>Doc</th><th>Reason</th><th>Payload</th><th></th></tr></thead>
@@ -567,7 +631,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <!-- ================= SUBSCRIPTIONS ================= -->
   <section class="view" id="view-subs">
     <div class="section">
-      <h3>Delivery subscriptions</h3>
+      <h3>Delivery Subscriptions</h3>
       <p class="sub">Push new trades to your trading app (webhook) or a browser (SSE). All webhook payloads are HMAC-signed; consumers dedupe on <code>docId</code>.</p>
       <table>
         <thead><tr><th>Client</th><th>Channel</th><th>Target</th><th>Filters</th><th>Status</th></tr></thead>
@@ -589,11 +653,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <!-- ================= ADMIN · CADENCE ================= -->
   <section class="view" id="view-admin">
     <div class="section">
-      <h3>Admin access</h3>
+      <h3>Admin Access</h3>
       <p class="sub">The admin endpoints (poll cadence, review queue, backfill) are gated by a bearer token. Paste your <code>ADMIN_TOKEN</code> once — it's kept in this browser only (localStorage) and sent as <code>Authorization: Bearer …</code> on admin requests. Leave blank if the server has no token set. (Tip: if you sign in via Cloudflare Access, you don't need a token here.)</p>
       <div class="row-flex">
         <input id="adminToken" type="password" autocomplete="off" placeholder="ADMIN_TOKEN" style="flex:1;min-width:240px" />
-        <button class="btn" onclick="saveAdminToken()">Save token</button>
+        <button class="btn" onclick="saveAdminToken()">Save Token</button>
         <button class="btn ghost sm" onclick="clearAdminToken()">Clear</button>
         <span id="adminTokenMsg" class="note"></span>
       </div>
@@ -602,63 +666,64 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <h3>Logos</h3>
       <p class="sub">Company-logo style shown on the live feed for <strong>all visitors</strong>. "Plain" shows bare logos; "Tile" frames them; "Off" hides them. When a logo is on but a ticker's image isn't available, a monogram (the ticker's first letters) is shown as a backup.</p>
       <div class="row-flex">
-        <label class="lbl">Logo style</label>
+        <label class="lbl">Logo Style</label>
         <select id="adminLogo">
           <option value="transparent">Logos: Plain</option>
           <option value="tile">Logos: Tile</option>
           <option value="off">Logos: Off</option>
         </select>
-        <button class="btn" onclick="saveLogoDisplay()">Save for everyone</button>
+        <button class="btn" onclick="saveLogoDisplay()">Save for Everyone</button>
         <span id="logoMsg" class="note"></span>
       </div>
     </div>
     <div class="section">
-      <h3>Poll cadence</h3>
+      <h3>Poll Cadence</h3>
       <p class="sub">Filings land almost entirely during US-Eastern business hours on weekdays. Adaptive windows keep latency low when it matters and stay polite to gov servers overnight.</p>
       <div class="row-flex" style="margin-bottom:16px">
         <label class="switch"><input type="checkbox" id="aggToggle" onchange="toggleAggressive()"><span></span></label>
-        <div><strong>Aggressive mode</strong><div class="note" style="margin-top:2px">Drops business-hours interval for front-running edge vs higher-latency trackers.</div></div>
+        <div><strong>Aggressive Mode</strong><div class="note" style="margin-top:2px">Drops business-hours interval for front-running edge vs higher-latency trackers.</div></div>
       </div>
       <div class="sched-row"><div class="lbl">Days (0=Sun…6=Sat)</div><div class="lbl">Start ET</div><div class="lbl">End ET</div><div class="lbl">Interval (s)</div></div>
       <div id="schedRows"></div>
       <div class="row-flex" style="margin-top:14px">
-        <button class="btn" onclick="saveSchedule()">Save cadence</button>
+        <button class="btn" onclick="saveSchedule()">Save Cadence</button>
         <button class="btn ghost" onclick="loadPollConfig()">Reload</button>
         <span id="saveMsg" class="note"></span>
       </div>
       <p class="note">API HOOK: <code>GET/PUT /api/admin/poll-config</code>. The Worker cron fires every minute and consults this schedule via <code>shouldPollNow()</code> — so changes take effect within ~60s, no redeploy.</p>
     </div>
     <div class="section">
-      <h3>Historic backfill</h3>
+      <h3>Historic Backfill</h3>
       <p class="sub">Bulk-import pre-aggregated public datasets as <code>seed_dataset</code> rows to bootstrap back-history. Idempotent (safe to re-run); these rows are reference-only and never dispatched to subscribers.</p>
       <div class="row-flex">
-        <label class="lbl">Since year</label>
+        <label class="lbl">Since Year</label>
         <input id="bfSince" type="number" placeholder="e.g. 2020" style="width:120px" />
-        <label class="lbl">Row limit</label>
+        <label class="lbl">Row Limit</label>
         <input id="bfLimit" type="number" placeholder="(none)" style="width:120px" />
         <select id="bfChambers">
-          <option value="">Both chambers</option><option value="house">House only</option><option value="senate">Senate only</option>
+          <option value="">Both Chambers</option><option value="house">House Only</option><option value="senate">Senate Only</option>
         </select>
-        <button class="btn ghost sm" onclick="runBackfill(true)">Dry run</button>
-        <button class="btn" onclick="runBackfill(false)">Run seed backfill</button>
+        <button class="btn ghost sm" onclick="runBackfill(true)">Dry Run</button>
+        <button class="btn" onclick="runBackfill(false)">Run Seed Backfill</button>
         <span id="bfMsg" class="note"></span>
       </div>
       <p class="note">API HOOK: <code>POST /api/admin/backfill</code>. Senate defaults to the GitHub mirror (works out of the box). The House community bucket is gated (HTTP 403) — set <code>SEED_HOUSE_URL</code>, or use the official House index backfill below.</p>
       <div class="row-flex" style="margin-top:14px">
-        <label class="lbl">House history (official index)</label>
+        <label class="lbl">House History (Official Index)</label>
         <input id="hiFrom" type="number" placeholder="from year" style="width:120px" />
         <input id="hiTo" type="number" placeholder="to year" style="width:120px" />
-        <button class="btn ghost sm" onclick="runHouseIndex(true)">Dry run</button>
-        <button class="btn" onclick="runHouseIndex(false)">Backfill House index</button>
+        <input id="hiMax" type="number" min="1" max="5000" value="500" title="Maximum filings to enqueue in this run" style="width:120px" />
+        <button class="btn ghost sm" onclick="runHouseIndex(true)">Dry Run</button>
+        <button class="btn" onclick="runHouseIndex(false)">Backfill House Index</button>
         <span id="hiMsg" class="note"></span>
       </div>
-      <p class="note">API HOOK: <code>POST /api/admin/house-backfill</code>. Pulls past-year House bulk ZIPs (official, always reachable) and runs each PTR through the live pipeline — high-fidelity, but heavier than the seed import.</p>
+      <p class="note">API HOOK: <code>POST /api/admin/house-backfill</code>. Pulls past-year House bulk ZIPs (official, always reachable) and runs each PTR through the live pipeline — high-fidelity, but heavier than the seed import. Dry Run only counts; Backfill is capped by Max filings.</p>
     </div>
     <div class="section">
-      <h3>Source health</h3>
+      <h3>Source Health</h3>
       <p class="sub">First-seen timestamps are logged per filing so real refresh cadence is measured, not assumed.</p>
       <table>
-        <thead><tr><th>Source</th><th>Last poll</th><th>Last new filing</th><th>Polls</th><th>Avg refresh (observed)</th><th title="Official disclosure date → when our watcher first saw it. Approximate: the disclosure systems publish a date, not an exact release time.">Released→Seen ≈</th><th title="When we first saw the filing → when we wrote its parsed rows. Precise (both are our timestamps).">Seen→Imported</th></tr></thead>
+        <thead><tr><th>Source</th><th>Last Poll</th><th>Last New Filing</th><th>Polls</th><th>Avg Refresh (Observed)</th><th title="Official disclosure date → when our watcher first saw it. Approximate: the disclosure systems publish a date, not an exact release time.">Released→Seen ≈</th><th title="When we first saw the filing → when we wrote its parsed rows. Precise (both are our timestamps).">Seen→Imported</th></tr></thead>
         <tbody id="healthBody"></tbody>
       </table>
     </div>
@@ -669,14 +734,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 <div class="drawer" id="detailDrawer">
   <div class="drawer-backdrop" onclick="closeDrawer()"></div>
-  <div class="drawer-panel"><button class="drawer-close" onclick="closeDrawer()" aria-label="Close">✕</button><div id="detailDrawerBody"></div></div>
+  <div class="drawer-panel"><div class="drawer-topbar"><button class="drawer-close" onclick="closeDrawer()" aria-label="Close">✕</button></div><div id="detailDrawerBody"></div></div>
 </div>
 
 <!-- ================= LOGIN MODAL ================= -->
 <div class="overlay" id="loginOverlay" onclick="if(event.target===this)closeLogin()">
-  <div class="modal" role="dialog" aria-modal="true" aria-label="Sign in">
+  <div class="modal" role="dialog" aria-modal="true" aria-label="Sign In">
     <button class="close" onclick="closeLogin()" aria-label="Close">×</button>
-    <h2>Sign in to Congress.Trade</h2>
+    <h2>Sign In to Congress.Trade</h2>
     <p class="sub">Save filters, manage your subscription, and unlock full history.</p>
     <button class="gbtn" onclick="loginGoogle()">
       <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.7 2.4 30.2 0 24 0 14.6 0 6.5 5.4 2.5 13.2l7.9 6.1C12.3 13.2 17.6 9.5 24 9.5z"/><path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.5 3-2.2 5.5-4.7 7.2l7.3 5.7c4.3-3.9 6.8-9.7 6.8-17.4z"/><path fill="#FBBC05" d="M10.4 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.8l7.9-6.1z"/><path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.3-5.7c-2 1.4-4.6 2.3-8.6 2.3-6.4 0-11.7-3.7-13.6-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/></svg>
@@ -686,7 +751,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <label class="lbl" for="magicEmail">Email me a one-click sign-in link</label>
     <div class="field">
       <input id="magicEmail" type="email" autocomplete="email" placeholder="you@example.com" onkeydown="if(event.key==='Enter')sendMagicLink()" />
-      <button class="btn" onclick="sendMagicLink()">Send link</button>
+      <button class="btn" onclick="sendMagicLink()">Send Link</button>
     </div>
     <p class="note" id="loginMsg"></p>
   </div>
@@ -710,7 +775,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
     </div>
     <p class="trial-note">✨ Starts with a 7-day free trial — you won't be charged today.</p>
-    <button class="btn" style="width:100%;padding:11px" id="subscribeBtn" onclick="startCheckout()">Start free trial</button>
+    <button class="btn" style="width:100%;padding:11px" id="subscribeBtn" onclick="startCheckout()">Start Free Trial</button>
     <p class="note" id="pricingMsg"></p>
   </div>
 </div>
@@ -752,6 +817,20 @@ function toISODate(s) {
   var us = /^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})/.exec(s);
   if (us) return us[3] + '-' + ('0' + us[1]).slice(-2) + '-' + ('0' + us[2]).slice(-2);
   return s.slice(0, 10);
+}
+var MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function dateText(s) {
+  var iso = toISODate(s);
+  var m = /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(iso);
+  if (!m) return s ? String(s) : '—';
+  var mon = MONTH_ABBR[Number(m[2]) - 1];
+  return mon ? mon + ' ' + Number(m[3]) + ', ' + m[1] : String(s || '—');
+}
+function dateTimeText(s) {
+  if (!s) return '—';
+  var base = dateText(s);
+  var t = /(?:T|\\s)(\\d{2}:\\d{2})/.exec(String(s));
+  return t ? base + ' ' + t[1] : base;
 }
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, function (ch) {
@@ -892,8 +971,8 @@ function assetCellHtml(r) {
 function feedCardHtml(r) {
   var lag = lagDays(r);
   var amount = (r.min == null && r.max == null) ? '—' : amountText(r.min, r.max);
-  var filed = r.filed || '—';
-  var traded = r.txdate || '—';
+  var filed = shortFiledText(r);
+  var traded = dateText(r.txdate);
   var source = sourceLabel(r.source);
   return '<article class="feed-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + r.member) + '">' +
     '<div class="feed-card-top">' + assetCellHtml(r) + actionBadge(r.type) + '</div>' +
@@ -905,32 +984,48 @@ function feedCardHtml(r) {
       '<div><span class="mkey">Source</span><span class="mval">' + esc(source) + '</span></div>' +
       '<div><span class="mkey">Traded</span><span class="mval">' + esc(traded) + '</span></div>' +
       '<div><span class="mkey">Filed</span><span class="mval">' + esc(filed) + '</span></div>' +
-      '<div><span class="mkey">Lag</span><span class="mval">' + esc(lag == null ? '—' : lag + 'd') + '</span></div>' +
-      '<div><span class="mkey">Chamber</span><span class="mval">' + esc(r.chamber || '—') + '</span></div>' +
+      '<div><span class="mkey">Lag</span><span class="mval">' + esc(lag == null ? shortLagText(r) : lag + 'd') + '</span></div>' +
+      '<div><span class="mkey">Chamber</span><span class="mval">' + esc(ownerLabel(r.chamber) || '—') + '</span></div>' +
     '</div>' +
   '</article>';
 }
 function lagDays(r) { return daysBetween(r.txdate, r.filedDate); }
+function missingFiledReason(r) {
+  if (r && r.source === 'seed_dataset') return 'Historical seed rows do not include the original official filing date yet. Run the official historical backfill to replace these with primary filing records.';
+  return 'Official filing date is not available for this row.';
+}
+function shortFiledText(r) { return r && r.filed ? dateText(r.filed) : 'Unavailable'; }
+function filedDetailText(r) { return r && r.filed ? dateText(r.filed) : 'Official Filing Date Unavailable'; }
+function shortLagText(r) { return lagDays(r) == null ? 'Unavailable' : lagDays(r) + 'd'; }
+function lagDetailText(r) {
+  var d = lagDays(r);
+  if (d == null) return 'Official Filing Date Unavailable';
+  return d + ' day' + (d === 1 ? '' : 's');
+}
+function filedCellHtml(r) {
+  if (r.filed) return esc(dateText(r.filed));
+  return '<span class="muted" title="' + esc(missingFiledReason(r)) + '">Unavailable</span>';
+}
 function lagCellHtml(r) {
   var d = lagDays(r);
-  if (d == null) return '<span class="muted">—</span>';
+  if (d == null) return '<span class="muted" title="' + esc(missingFiledReason(r)) + '">Unavailable</span>';
   var over = d > 45 ? ' style="color:var(--sell)"' : '';
   return '<span' + over + ' title="Days from trade to filing (STOCK Act limit: 45)">' + d + '</span>';
 }
 var FEED_COLS = [
-  { id: 'filed', label: 'Filed', sort: 'filed', def: true, cls: 'muted', tip: 'Official disclosure (report) date. Seed rows fall back to import date.', cell: function (r) { return esc(r.filed || '—'); } },
+  { id: 'filed', label: 'Filed', sort: 'filed', def: true, cls: 'muted', tip: 'Official disclosure (report) date. Historical seed rows may not include it.', cell: filedCellHtml },
   { id: 'member', label: 'Member', sort: 'member', def: true, lock: true, cell: memberCellHtml },
   { id: 'asset', label: 'Asset', sort: 'asset', def: true, lock: true, cell: assetCellHtml },
   { id: 'type', label: 'Type', sort: 'type', def: true, cell: function (r) { return actionBadge(r.type); } },
-  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return esc(r.txdate || '—'); } },
+  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return esc(dateText(r.txdate)); } },
   { id: 'lag', label: 'Lag', sort: 'lag', def: true, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket — an estimate, not an exact figure.', cell: function (r) { return (r.min == null && r.max == null) ? '<span class="muted">—</span>' : esc(amountText(r.min, r.max)); } },
   { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced (FMP / SEC EDGAR). "—" until the ticker is enriched.', cell: function (r) { return r.refSector ? esc(r.refSector) : '<span class="muted">—</span>'; } },
   { id: 'marketcap', label: 'Mkt cap', sort: 'refMarketCap', def: false, tip: 'Market-cap size tier (cross-referenced).', cell: function (r) { return r.refMarketCapBucket ? esc(ownerLabel(r.refMarketCapBucket)) : '<span class="muted">—</span>'; } },
   { id: 'country', label: 'Country', sort: 'refCountry', def: false, cls: 'muted', tip: 'Country of issue (cross-referenced).', cell: function (r) { return r.refCountry ? esc(r.refCountry) : '<span class="muted">—</span>'; } },
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', cell: function (r) { return esc(ownerLabel(r.owner) || '—'); } },
-  { id: 'published', label: 'Published', sort: 'imported', def: false, cls: 'muted', tip: 'When our feed received this filing.', cell: function (r) { return esc((r.imported || '').replace('T', ' ').slice(0, 16) || '—'); } },
-  { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', cell: function (r) { return esc(r.chamber || '—'); } },
+  { id: 'published', label: 'Published', sort: 'imported', def: false, cls: 'muted', tip: 'When our feed received this filing.', cell: function (r) { return esc(dateTimeText(r.imported)); } },
+  { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', cell: function (r) { return esc(ownerLabel(r.chamber) || '—'); } },
   { id: 'conf', label: 'Conf.', sort: 'conf', def: false, cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">' + (r.conf * 100).toFixed(0) + '%</span>'; } },
   { id: 'source', label: 'Source', sort: 'source', def: false, cell: function (r) { return '<span class="muted" title="' + esc(r.source) + '">' + esc(sourceLabel(r.source)) + '</span>'; } },
   { id: 'latency', label: 'Latency', sort: null, def: false, cls: 'latency', tip: 'Released→Seen · Seen→Imported (live rows).', cell: function (r) { return rowLatencyHtml(r); } }
@@ -962,13 +1057,37 @@ function renderFeedHeader() {
 }
 
 /* Column chooser (the ⚙ Columns panel). */
+function panelIds() { return ['searchPanel', 'colChooser']; }
+function anyPanelOpen() {
+  return panelIds().some(function (id) { var p = el(id); return !!(p && p.classList.contains('open')); });
+}
+function syncPanelBackdrop() {
+  var b = el('panelBackdrop');
+  if (b) b.classList.toggle('open', anyPanelOpen());
+}
+function closePanels() {
+  panelIds().forEach(function (id) { var p = el(id); if (p) p.classList.remove('open'); });
+  var st = el('searchToggle'); if (st) st.classList.remove('on');
+  syncPanelBackdrop();
+}
+function setPanelOpen(id, open) {
+  panelIds().forEach(function (pid) {
+    var p = el(pid); if (p) p.classList.toggle('open', pid === id && open);
+  });
+  var st = el('searchToggle'); if (st) st.classList.toggle('on', id === 'searchPanel' && open);
+  if (id === 'colChooser' && open) renderColChooser();
+  syncPanelBackdrop();
+}
 function renderColChooser() {
   var box = el('colChooserBody'); if (!box) return;
   box.innerHTML = FEED_COLS.filter(function (c) { return !c.lock; }).map(function (c) {
     return '<label class="colopt"><input type="checkbox" data-colid="' + c.id + '"' + (isColVisible(c.id) ? ' checked' : '') + ' /> ' + esc(c.label) + '</label>';
   }).join('');
 }
-function toggleColChooser() { var p = el('colChooser'); var open = p.classList.toggle('open'); if (open) renderColChooser(); }
+function toggleColChooser() {
+  var p = el('colChooser');
+  setPanelOpen('colChooser', !(p && p.classList.contains('open')));
+}
 function onColToggle(id, visible) {
   var i = hiddenCols.indexOf(id);
   if (visible && i >= 0) hiddenCols.splice(i, 1);
@@ -1042,6 +1161,24 @@ var colResizeInit = false;
 function loadColWidths() { try { return JSON.parse(localStorage.getItem(COL_WIDTH_KEY) || '{}') || {}; } catch (e) { return {}; } }
 function saveColWidths(w) { try { localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w)); } catch (e) {} }
 function maybeInitResize() { if (!colResizeInit && realDataLoaded) { colResizeInit = true; initColumnResize(); } }
+function clampNum(n, min, max) { return Math.max(min, Math.min(max, n)); }
+function estimatedColWidth(key, fallback, min, max) {
+  var selector = key === 'asset'
+    ? '#feedBody .c-asset .asset-cell > div'
+    : key === 'member'
+      ? '#feedBody .c-member .member-cell > div'
+      : '';
+  if (!selector) return fallback;
+  var nodes = Array.prototype.slice.call(document.querySelectorAll(selector), 0, 80);
+  var lens = nodes.map(function (n) { return (n.textContent || '').trim().length; }).filter(function (n) { return n > 0; }).sort(function (a, b) { return a - b; });
+  if (!lens.length) return fallback;
+  var med = lens[Math.floor(lens.length / 2)];
+  var px = key === 'asset' ? 46 + Math.ceil(med * 7.2) : 54 + Math.ceil(med * 7.4);
+  return clampNum(px, min, max);
+}
+function minColWidth(key) {
+  return key === 'asset' ? 126 : key === 'member' ? 168 : 56;
+}
 function initColumnResize() {
   var table = el('feedTable'); if (!table) return;
   var ths = document.querySelectorAll('#feedHead th');
@@ -1050,7 +1187,10 @@ function initColumnResize() {
   // fixed layout doesn't visually jump. Wide auto-sized columns are capped to a
   // compact default (Asset fits the longest name otherwise) — short entries then
   // show in full, long ones clip to an ellipsis, and any column stays draggable.
-  var DEFAULT_CAP = { asset: 200 };
+  var DEFAULT_CAP = {
+    asset: estimatedColWidth('asset', 176, 138, 224),
+    member: estimatedColWidth('member', 220, 188, 286)
+  };
   for (var i = 0; i < ths.length; i++) {
     var k = ths[i].dataset.col;
     var w = (k && saved[k]) ? saved[k] : ths[i].offsetWidth;
@@ -1067,7 +1207,7 @@ function addColResizer(th) {
   grip.addEventListener('mousedown', function (e) {
     e.preventDefault(); e.stopPropagation();
     var startX = e.pageX, startW = th.offsetWidth;
-    function move(ev) { th.style.width = Math.max(56, startW + (ev.pageX - startX)) + 'px'; }
+    function move(ev) { th.style.width = Math.max(minColWidth(th.dataset.col), startW + (ev.pageX - startX)) + 'px'; }
     function up() {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
@@ -1116,9 +1256,10 @@ function updateSortIndicators() {
 
 /* ---- fold-out search ---- */
 function toggleSearch() {
-  var open = el('searchPanel').classList.toggle('open');
-  el('searchToggle').classList.toggle('on', open);
-  if (open) el('qAll').focus();
+  var p = el('searchPanel');
+  var open = !(p && p.classList.contains('open'));
+  setPanelOpen('searchPanel', open);
+  if (open) setTimeout(function () { el('qAll').focus(); }, 0);
 }
 function clearSearch() {
   el('qAll').value = ''; el('qMinAmt').value = ''; el('qSource').value = '';
@@ -1135,10 +1276,10 @@ function sourceLabel(src) { return sourceLabelMap[src] || (src || ''); }
    filer id when the name is missing. */
 function txToRow(tx) {
   return {
-    // "Filed" = the official disclosure (report) date. Live rows carry the
-    // filing's filed_date; historic seed rows (no filing) fall back to the date
-    // we imported them. The raw ingestion timestamp lives in imported (latency).
-    filed: toISODate(tx.filedDate) || (tx.createdAt || '').slice(0, 10),
+    // "Filed" = the official disclosure/report date. Historic seed rows often
+    // do not carry it; keep that missing state visible instead of using import
+    // time as a stand-in.
+    filed: toISODate(tx.filedDate) || '',
     member: tx.fullName || tx.memberName || tx.filerId || 'Unknown',
     photoUrl: tx.photoUrl || '',
     st: tx.state || '',
@@ -1147,7 +1288,7 @@ function txToRow(tx) {
     ticker: tx.ticker || '',
     type: tx.txType || 'P',
     min: tx.amountMin, max: tx.amountMax,
-    txdate: tx.txDate || '',
+    txdate: toISODate(tx.txDate) || '',
     owner: tx.owner || '',
     conf: typeof tx.confidence === 'number' ? tx.confidence : 1,
     source: tx.source || 'primary',
@@ -1350,7 +1491,7 @@ function renderReview() {
   body.innerHTML = REVIEW.map(function (r) {
     var payload = payloadText(r.payload);
     return '<tr class="row" id="rv-' + esc(r.docId) + '">' +
-      '<td class="muted">' + esc((r.createdAt || '').replace('T', ' ').slice(0, 16)) + '</td>' +
+      '<td class="muted">' + esc(dateTimeText(r.createdAt)) + '</td>' +
       '<td class="tkr">' + esc(r.docId) + '</td>' +
       '<td class="muted">' + esc(reasonText(r.reason)) + '</td>' +
       '<td class="muted" style="max-width:360px">' + esc(payload) + '</td>' +
@@ -1540,7 +1681,7 @@ function renderSchedule() {
       '<input type="number" value="' + esc(w.intervalSec) + '" onchange="SCHEDULE[' + i + '].intervalSec=+this.value" />' +
     '</div>';
   }).join('');
-  el('kpiMode').innerHTML = aggressive ? 'Aggressive<small> · fast</small>' : 'Standard';
+    el('kpiMode').innerHTML = aggressive ? 'Aggressive<small> · Fast</small>' : 'Standard';
 }
 function toggleAggressive() { aggressive = el('aggToggle').checked; renderSchedule(); }
 function saveSchedule() {
@@ -1588,11 +1729,13 @@ function runHouseIndex(dryRun) {
   // API HOOK: POST /api/admin/house-backfill
   var from = parseInt(el('hiFrom').value, 10);
   var to = parseInt(el('hiTo').value, 10);
+  var max = parseInt(el('hiMax').value, 10);
   if (isNaN(from) || isNaN(to)) { el('hiMsg').textContent = 'Enter a from/to year.'; return; }
+  if (isNaN(max) || max < 1) max = 500;
   el('hiMsg').textContent = dryRun ? 'Counting…' : 'Enqueuing (this can take a while)…';
   fetch('/api/admin/house-backfill', {
     method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify({ fromYear: from, toYear: to, dryRun: !!dryRun })
+    body: JSON.stringify({ fromYear: from, toYear: to, maxFilings: max, dryRun: !!dryRun })
   })
     .then(function (r) {
       if (r.status === 401 || r.status === 403) { var ae = new Error(ADMIN_MOVED_MSG); ae.isAuth = true; throw ae; }
@@ -1622,8 +1765,8 @@ function loadHealth() {
         var sti = s.avgSeenToImportedSec == null ? '—' : fmtDuration(s.avgSeenToImportedSec);
         return '<tr class="row">' +
           '<td>' + esc(s.source) + '</td>' +
-          '<td class="muted">' + esc((s.lastPolledAt || '').replace('T', ' ').slice(0, 19) || '—') + '</td>' +
-          '<td class="muted">' + esc((s.lastNewFilingAt || '').replace('T', ' ').slice(0, 19) || '—') + '</td>' +
+          '<td class="muted">' + esc(dateTimeText(s.lastPolledAt)) + '</td>' +
+          '<td class="muted">' + esc(dateTimeText(s.lastNewFilingAt)) + '</td>' +
           '<td class="muted">' + esc(s.pollCount != null ? s.pollCount : '—') + '</td>' +
           '<td class="latency">' + esc(avg) + '</td>' +
           '<td class="latency">' + esc(rts) + '</td>' +
@@ -1675,7 +1818,7 @@ function splitBar(buys, sells) {
     '<span class="seg sell" style="width:' + sp + '%"></span></span>' +
     '<small>' + buys + 'B / ' + sells + 'S</small></span>';
 }
-function pdot(b) { return '<span class="pdot ' + esc(b || 'O') + '"></span>'; }
+function pdot(b) { return b ? '<span class="pdot ' + esc(b) + '"></span>' : ''; }
 function kpi(k, v) { return '<div class="card"><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>'; }
 /* Mini CSS-column time chart of buys vs sells (no chart library). */
 function timeChartHtml(series, labelStep) {
@@ -1704,8 +1847,8 @@ function loadTrSummary() {
     var sent = d.netSentiment == null ? '—' : Math.round(d.netSentiment * 100) + '<small>% buys</small>';
     box.innerHTML =
       kpi('Trades', d.totalTrades) + kpi('Members', d.uniqueMembers) + kpi('Tickers', d.uniqueTickers) +
-      kpi('Est. volume', estUsd(d.estimatedVolumeUsd)) + kpi('Net flow', netHtml(d.estimatedNetFlowUsd)) +
-      kpi('Buy pressure', sent);
+      kpi('Est. Volume', estUsd(d.estimatedVolumeUsd)) + kpi('Net Flow', netHtml(d.estimatedNetFlowUsd)) +
+      kpi('Buy Pressure', sent);
   }).catch(function (e) { box.innerHTML = kpi('Summary', '<span style="font-size:13px">' + esc(e.message) + '</span>'); });
 }
 
@@ -1750,13 +1893,13 @@ function loadTrClusters() {
   aGet('cluster-buys?' + trParams() + '&limit=12&minMembers=2').then(function (d) {
     var cs = d.clusters || [];
     el('trClusterHint').textContent = '· ' + cs.length + ' found';
-    if (!cs.length) { box.innerHTML = '<div class="chip">No multi-member consensus in this window — try a longer window or “All data”.</div>'; return; }
+    if (!cs.length) { box.innerHTML = '<div class="chip">No multi-member consensus in this window — try a longer window or “All Data”.</div>'; return; }
     box.innerHTML = cs.map(function (c) {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) { return memberAvatarHtml(m.fullName, m.photoUrl); }).join('');
       var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
       var parties = 'D ' + c.parties.D + ' · R ' + c.parties.R + (c.parties.O ? ' · O ' + c.parties.O : '');
       var bip = (c.parties.D > 0 && c.parties.R > 0) ? ' <span class="chip" title="Both parties traded">· bipartisan</span>' : '';
-      var range = (c.firstSeen || '').slice(0, 10) + (c.lastSeen && c.lastSeen !== c.firstSeen ? ' → ' + (c.lastSeen || '').slice(0, 10) : '');
+      var range = dateText(c.firstSeen) + (c.lastSeen && c.lastSeen !== c.firstSeen ? ' → ' + dateText(c.lastSeen) : '');
       return '<div class="ccard clickable" data-ticker="' + esc(c.ticker) + '">' +
         '<div class="chead">' + tickerLogoHtml(c.ticker, c.name) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
@@ -1787,8 +1930,9 @@ function loadTrMembers() {
     body.innerHTML = rows.map(function (r, i) {
       var name = r.fullName || r.filerId || 'Unknown';
       var metaBits = [r.chamber, r.state].filter(Boolean).join(' · ');
+      var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
-        '<td><div class="member-cell">' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.partyBucket) +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.partyBucket) +
           esc(name) + (metaBits ? ' <span class="muted">· ' + esc(metaBits) + '</span>' : '') + '</div></div></td>' +
         '<td class="muted">' + r.tradeCount + '</td>' +
         '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
@@ -1838,8 +1982,8 @@ function loadTrLag() {
   aGet('filing-lag?' + trParams()).then(function (d) {
     var s = d.summary || {};
     kbox.innerHTML =
-      kpi('Median lag', (s.medianLagDays == null ? '—' : s.medianLagDays + '<small> days</small>')) +
-      kpi('90th pct', (s.p90LagDays == null ? '—' : s.p90LagDays + '<small> days</small>')) +
+      kpi('Median Lag', (s.medianLagDays == null ? '—' : s.medianLagDays + '<small> days</small>')) +
+      kpi('90th Pct', (s.p90LagDays == null ? '—' : s.p90LagDays + '<small> days</small>')) +
       kpi('Filed >45d', (s.overFortyFivePct == null ? '—' : Math.round(s.overFortyFivePct * 100) + '<small>%</small>')) +
       kpi('Disclosures', s.count || 0);
     var dist = s.distribution || [], max = 1; dist.forEach(function (b) { max = Math.max(max, b.count); });
@@ -1855,7 +1999,8 @@ function loadTrLag() {
     if (!lf.length) { lbox.innerHTML = stateRow(4, 'Not enough dated filings.'); }
     else lbox.innerHTML = lf.slice(0, 10).map(function (m) {
       var name = m.fullName || m.filerId || 'Unknown';
-      return '<tr class="row"><td><div class="member-cell">' + memberAvatarHtml(name, m.photoUrl) + '<div>' +
+      var memberAttr = m.filerId ? ' class="member-cell clickable" data-member="' + esc(m.filerId) + '"' : ' class="member-cell"';
+      return '<tr class="row"><td><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl) + '<div>' +
         pdot(m.partyBucket) + esc(name) + '</div></div></td>' +
         '<td class="muted">' + Math.round(m.avgLagDays) + 'd avg</td>' +
         '<td class="muted">' + m.maxLagDays + 'd max</td>' +
@@ -1871,7 +2016,13 @@ function loadTrLag() {
 /* One reusable right-side drawer, filled per type: trade / asset / politician.
    Tier-1/2 (company profile, price, performance) are KEY-GATED and shown as a
    quiet note until a market-data key is configured. */
-function openDrawer(html) { el('detailDrawerBody').innerHTML = html; el('detailDrawer').classList.add('open'); }
+function openDrawer(html) {
+  closePanels();
+  el('detailDrawerBody').innerHTML = html;
+  el('detailDrawer').classList.add('open');
+  var p = document.querySelector('#detailDrawer .drawer-panel');
+  if (p) p.scrollTop = 0;
+}
 function closeDrawer() { el('detailDrawer').classList.remove('open'); }
 var PERF_GATE = '<div class="tier-gate-note">📈 Price &amp; performance vs the S&amp;P 500 will appear here once a market-data API key is configured.</div>';
 var PROFILE_GATE = '<div class="tier-gate-note">🏢 Company details (sector, market cap, country, exchange) will appear here once a market-data API key is configured.</div>';
@@ -1901,7 +2052,42 @@ function daysBetween(aIso, bIso) {
   if (!isFinite(a) || !isFinite(b)) return null;
   return Math.round((b - a) / 86400000);
 }
-var PARTY_NAME = { D: 'Democrat', R: 'Republican', O: 'Other / Independent' };
+var PARTY_NAME = { D: 'Democrat', R: 'Republican', O: 'Independent / Other' };
+function partyLabel(b) { return PARTY_NAME[b] || ''; }
+function friendlyKey(k) {
+  return String(k || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\b\w/g, function (ch) { return ch.toUpperCase(); });
+}
+function cleanNoteValue(v) {
+  if (v == null || v === '') return '';
+  return String(v).replace(/\s+/g, ' ').trim();
+}
+function filingNotesHtml(raw) {
+  if (!raw) return '';
+  var text = cleanNoteValue(raw);
+  var parsed = null;
+  if (text && (text[0] === '{' || text[0] === '[')) {
+    try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+  }
+  if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') {
+    var member = cleanNoteValue(parsed.member);
+    var type = cleanNoteValue(parsed.type);
+    var amount = cleanNoteValue(parsed.amount);
+    if (member || type || amount) {
+      var who = member ? member + ' reported ' : 'Reported ';
+      var what = type || 'a transaction';
+      var amt = amount ? ' in the ' + amount + ' amount bracket' : '';
+      return '<p class="filing-note">Historical source note: ' + esc(who + what + amt + '.') + '</p>';
+    }
+    var rows = Object.keys(parsed).filter(function (k) { return cleanNoteValue(parsed[k]); }).map(function (k) {
+      return kvRow(friendlyKey(k), esc(cleanNoteValue(parsed[k])));
+    }).join('');
+    if (rows) return '<dl class="drawer-kv filing-note-kv">' + rows + '</dl>';
+  }
+  return '<p class="filing-note">' + esc(text) + '</p>';
+}
 
 /* Company section for a drawer: real cross-referenced data when present, else the
    key-gated placeholder. Accepts a ref object with any subset of the fields. */
@@ -1922,6 +2108,14 @@ function companySectionHtml(ref) {
   if (ref.ipoDate) rows += kvRow('IPO', esc(ref.ipoDate));
   return '<dl class="drawer-kv">' + rows + '</dl>';
 }
+function drawerCompanyTitle(ticker, name) {
+  var label = name || ticker || 'Company';
+  var attr = ticker ? ' data-asset="' + esc(ticker) + '"' : '';
+  var cls = ticker ? 'drawer-title-line clickable' : 'drawer-title-line';
+  return '<h2 class="' + cls + '"' + attr + '>' +
+    (ticker ? '<span class="tkr">' + esc(ticker) + '</span>' : '') +
+    '<span class="company-name">' + esc(label) + '</span></h2>';
+}
 
 /* ---- asset drawer (reuses /api/analytics/ticker/:ticker) ---- */
 function openAsset(ticker) {
@@ -1929,6 +2123,7 @@ function openAsset(ticker) {
   openDrawer('<div class="note">Loading ' + esc(ticker) + '…</div>');
   aGet('ticker/' + encodeURIComponent(ticker) + '?window=all').then(function (d) {
     var s = d.summary || {};
+    var companyName = (d.ref && d.ref.companyName) || d.name || '';
     var sent = s.netSentiment == null ? '—' : Math.round(s.netSentiment * 100) + '% buys';
     var ser = d.series || [];
     var chart = ser.length ? timeChartHtml(ser) : '<div class="note">No dated trades.</div>';
@@ -1936,29 +2131,35 @@ function openAsset(ticker) {
       if (!arr || !arr.length) return '<div class="note">No ' + label + '.</div>';
       return arr.map(function (m) {
         var name = m.fullName || m.filerId || 'Unknown';
-        return '<div class="hbar" style="margin:5px 0"><div class="hlabel" style="width:auto;flex:1">' +
+        var memberAttr = m.filerId ? ' data-member="' + esc(m.filerId) + '"' : '';
+        var labelCls = m.filerId ? 'hlabel clickable' : 'hlabel';
+        return '<div class="hbar" style="margin:5px 0"><div class="' + labelCls + '"' + memberAttr + ' style="width:auto;flex:1">' +
           memberAvatarHtml(name, m.photoUrl) + ' ' + pdot(m.partyBucket) + esc(name) + '</div>' +
           '<div class="hval">' + estUsd(m.estVolumeUsd) + '</div></div>';
       }).join('');
     }
     var recent = (d.recentTrades || []).map(function (t) {
-      return '<tr class="row"><td class="muted">' + esc((t.txDate || '').slice(0, 10)) + '</td>' +
+      var name = t.fullName || 'Unknown';
+      var member = t.filerId
+        ? '<span class="member-cell clickable" data-member="' + esc(t.filerId) + '">' + pdot(t.partyBucket) + esc(name) + '</span>'
+        : pdot(t.partyBucket) + esc(name);
+      return '<tr class="row"><td class="muted">' + esc(dateText(t.txDate)) + '</td>' +
         '<td>' + actionBadge(t.txType) + '</td>' +
-        '<td>' + pdot(t.partyBucket) + esc(t.fullName || 'Unknown') + '</td>' +
+        '<td>' + member + '</td>' +
         '<td class="est">' + estUsd(t.estValueUsd) + '</td></tr>';
     }).join('');
     openDrawer(
-      '<h2><span class="tkr">' + esc(d.ticker) + '</span></h2>' +
+      drawerCompanyTitle(d.ticker, companyName || d.ticker) +
       '<p class="dsub">' + (s.totalTrades || 0) + ' trades · ' + (s.memberCount || 0) + ' members · ' + estUsd(s.estVolumeUsd) + ' est. volume</p>' +
       '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
-      '<div class="drawer-section"><h3>Congressional activity (all time)</h3><div class="grid-cards">' +
-        kpi('Trades', s.totalTrades || 0) + kpi('Members', s.memberCount || 0) + kpi('Est. volume', estUsd(s.estVolumeUsd)) +
-        kpi('Net flow', netHtml(s.estNetFlowUsd)) + kpi('Buy pressure', sent) + '</div>' +
+      '<div class="drawer-section"><h3>Congressional Activity (All Time)</h3><div class="grid-cards">' +
+        kpi('Trades', s.totalTrades || 0) + kpi('Members', s.memberCount || 0) + kpi('Est. Volume', estUsd(s.estVolumeUsd)) +
+        kpi('Net Flow', netHtml(s.estNetFlowUsd)) + kpi('Buy Pressure', sent) + '</div>' +
         '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + '</div>' +
-      '<div class="drawer-section"><h3>Performance since trades</h3>' + PERF_GATE + '</div>' +
-      '<div class="trend-grid2"><div class="drawer-section"><h3>Top buyers</h3>' + traderList(d.topBuyers, 'buyers') + '</div>' +
-        '<div class="drawer-section"><h3>Top sellers</h3>' + traderList(d.topSellers, 'sellers') + '</div></div>' +
-      '<div class="drawer-section"><h3>Recent trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
+      '<div class="drawer-section"><h3>Performance Since Trades</h3>' + PERF_GATE + '</div>' +
+      '<div class="trend-grid2"><div class="drawer-section"><h3>Top Buyers</h3>' + traderList(d.topBuyers, 'buyers') + '</div>' +
+        '<div class="drawer-section"><h3>Top Sellers</h3>' + traderList(d.topSellers, 'sellers') + '</div></div>' +
+      '<div class="drawer-section"><h3>Recent Trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
         (recent || '<tr><td class="state" colspan="4">No recent trades.</td></tr>') + '</tbody></table></div></div>'
     );
   }).catch(function (e) { openDrawer('<div class="note">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>'); });
@@ -1971,8 +2172,13 @@ function openMember(filerId) {
   aGet('member/' + encodeURIComponent(filerId) + '?window=all').then(function (d) {
     var p = d.profile || {}, st = d.stats || {};
     var name = p.fullName || filerId;
-    var partyName = PARTY_NAME[p.partyBucket || 'O'];
+    var partyName = partyLabel(p.partyBucket);
     var meta = [p.chamber, p.state].filter(Boolean).join(' · ');
+    var subBits = [];
+    if (meta) subBits.push(esc(meta));
+    if (p.district) subBits.push('District ' + esc(p.district));
+    var partyHtml = partyName ? pdot(p.partyBucket) + esc(partyName) : '';
+    var subline = partyHtml + (subBits.length ? (partyHtml ? ' · ' : '') + subBits.join(' · ') : '');
     var committees = p.committees || [];
     var commHtml = committees.length
       ? committees.map(function (c) { return '<span class="committee-tag">' + esc(c) + '</span>'; }).join('')
@@ -1986,22 +2192,21 @@ function openMember(filerId) {
       var assetCell = t.ticker
         ? '<span class="tkr clickable" data-asset="' + esc(t.ticker) + '">' + esc(t.ticker) + '</span>'
         : '<span class="muted">' + esc((t.assetName || '').slice(0, 30)) + '</span>';
-      return '<tr class="row"><td class="muted">' + esc((t.txDate || '').slice(0, 10)) + '</td>' +
+      return '<tr class="row"><td class="muted">' + esc(dateText(t.txDate)) + '</td>' +
         '<td>' + actionBadge(t.txType) + '</td><td>' + assetCell + '</td>' +
         '<td class="est">' + estUsd(t.estValueUsd) + '</td></tr>';
     }).join('');
     openDrawer(
       '<div style="display:flex;align-items:center;gap:11px">' + memberAvatarHtml(name, p.photoUrl) +
-        '<div><h2 style="margin:0">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + pdot(p.partyBucket) + esc(partyName) +
-        (meta ? ' · ' + esc(meta) : '') + (p.district ? ' · District ' + esc(p.district) : '') + '</p></div></div>' +
-      '<div class="drawer-section"><h3>Trade stats</h3><dl class="drawer-kv">' +
-        kvRow('Total trades', st.totalTrades || 0) + kvRow('Buys / Sells', (st.buyCount || 0) + ' / ' + (st.sellCount || 0)) +
-        kvRow('Distinct tickers', st.uniqueTickers || 0) + kvRow('Est. volume', estUsd(st.estVolumeUsd)) +
-        kvRow('Avg. disclosure lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
+        '<div><h2 style="margin:0">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
+      '<div class="drawer-section"><h3>Trade Stats</h3><dl class="drawer-kv">' +
+        kvRow('Total Trades', st.totalTrades || 0) + kvRow('Buys / Sells', (st.buyCount || 0) + ' / ' + (st.sellCount || 0)) +
+        kvRow('Distinct Tickers', st.uniqueTickers || 0) + kvRow('Est. Volume', estUsd(st.estVolumeUsd)) +
+        kvRow('Avg. Disclosure Lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
       '<div class="drawer-section"><h3>Committees</h3>' + commHtml + '</div>' +
       '<div class="drawer-section"><h3>Performance vs S&amp;P 500</h3>' + PERF_GATE + '</div>' +
-      '<div class="drawer-section"><h3>Most-traded</h3>' + top + '</div>' +
-      '<div class="drawer-section"><h3>Recent trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
+      '<div class="drawer-section"><h3>Most-Traded</h3>' + top + '</div>' +
+      '<div class="drawer-section"><h3>Recent Trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
         (recent || '<tr><td class="state" colspan="4">No trades.</td></tr>') + '</tbody></table></div></div>'
     );
   }).catch(function (e) { openDrawer('<div class="note">Could not load member: ' + esc(e.message) + '</div>'); });
@@ -2010,30 +2215,31 @@ function openMember(filerId) {
 /* ---- trade drawer (from the in-memory feed row + lazy source link) ---- */
 function openTrade(row) {
   if (!row) return;
-  var lag = daysBetween(row.txdate, row.filedDate);
-  var memberVal = '<span class="clickable" ' + (row.filerId ? 'data-member="' + esc(row.filerId) + '"' : '') + '>' + esc(row.member) + '</span>';
+  var memberVal = row.filerId
+    ? '<span class="clickable" data-member="' + esc(row.filerId) + '">' + esc(row.member) + '</span>'
+    : esc(row.member);
   var head =
-    '<h2>' + (row.ticker ? '<span class="tkr">' + esc(row.ticker) + '</span> ' : '') + esc(row.asset || 'Trade') + '</h2>' +
+    drawerCompanyTitle(row.ticker, row.asset || 'Trade') +
     '<p class="dsub">' + actionBadge(row.type) + ' · ' + amountText(row.min, row.max) + ' <span class="muted">(est. bracket)</span></p>';
   var summary =
     '<div class="drawer-section first"><h3>Trade</h3><dl class="drawer-kv">' +
       kvRow('Member', memberVal) +
-      kvRow('Traded', esc(row.txdate || '—')) +
-      kvRow('Filed', esc(row.filed || '—')) +
-      kvRow('Disclosure lag', lag == null ? '—' : (lag + ' day' + (lag === 1 ? '' : 's'))) +
+      kvRow('Traded', esc(dateText(row.txdate))) +
+      kvRow('Filed', esc(filedDetailText(row))) +
+      kvRow('Disclosure Lag', esc(lagDetailText(row))) +
       kvRow('Owner', esc(ownerLabel(row.owner) || '—')) +
       kvRow('Instrument', row.isOption ? 'Option' : 'Equity / other') +
-      kvRow('Imported', esc((row.imported || '').replace('T', ' ').slice(0, 16) || '—')) +
+      kvRow('Imported', esc(dateTimeText(row.imported))) +
       kvRow('Source', esc(sourceLabel(row.source))) +
       '</dl><div id="tradeSource"></div></div>';
   var perfInit = row.isOption ? OPTION_PERF_NOTE : PERF_GATE;
-  var perf = '<div class="drawer-section"><h3>Performance since ' + (row.type === 'S' ? 'sale' : 'trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>';
+  var perf = '<div class="drawer-section"><h3>Performance Since ' + (row.type === 'S' ? 'Sale' : 'Trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>';
   var rowRef = { sector: row.refSector, marketCap: row.refMarketCap, marketCapBucket: row.refMarketCapBucket, country: row.refCountry, exchangeShort: row.refExchangeShort, assetClass: row.refAssetClass };
   var profile = row.ticker ? '<div class="drawer-section"><h3>Company</h3>' + companySectionHtml(rowRef) + '</div>' : '';
-  var notes = row.rawText ? '<div class="drawer-section"><h3>Filing notes</h3><pre class="raw-notes">' + esc(row.rawText) + '</pre></div>' : '';
+  var notes = row.rawText ? '<div class="drawer-section"><h3>Filing Notes</h3>' + filingNotesHtml(row.rawText) + '</div>' : '';
   var links = '<div class="drawer-section">' +
-    (row.ticker ? '<a class="drawer-all-link clickable" data-asset="' + esc(row.ticker) + '">View all trades of ' + esc(row.ticker) + ' →</a>' : '') +
-    (row.filerId ? '<a class="drawer-all-link clickable" data-member="' + esc(row.filerId) + '">View all trades by ' + esc(row.member) + ' →</a>' : '') +
+    (row.ticker ? '<a class="drawer-all-link clickable" data-asset="' + esc(row.ticker) + '">View All Trades of ' + esc(row.ticker) + ' →</a>' : '') +
+    (row.filerId ? '<a class="drawer-all-link clickable" data-member="' + esc(row.filerId) + '">View All Trades by ' + esc(row.member) + ' →</a>' : '') +
     '</div>';
   openDrawer(head + summary + perf + profile + notes + links);
   // Lazy-load the performance line (FMP-gated; "—"/note when unavailable).
@@ -2078,7 +2284,7 @@ function loadMe() {
 function renderAccount() {
   var box = el('acct'); if (!box) return;
   if (!ME.user) {
-    box.innerHTML = '<button class="btn ghost sm" onclick="openLogin()">Sign in</button>' +
+    box.innerHTML = '<button class="btn ghost sm" onclick="openLogin()">Sign In</button>' +
       '<button class="btn sm" onclick="openPricing()">Upgrade</button>';
     return;
   }
@@ -2094,9 +2300,9 @@ function renderAccount() {
       '<div class="menu-pop" id="acctMenu">' +
         '<div class="who">' + esc(ME.user.email || '') + '</div>' +
         (ent.premium
-          ? '<button onclick="manageBilling()">Manage subscription</button>'
+          ? '<button onclick="manageBilling()">Manage Subscription</button>'
           : '<button onclick="closeAcctMenu();openPricing()">Upgrade to Premium</button>') +
-        '<button onclick="logout()">Sign out</button>' +
+        '<button onclick="logout()">Sign Out</button>' +
       '</div>' +
     '</div>';
 }
@@ -2242,7 +2448,10 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
 (function () {
   var v = el('view-trends');
   if (v) v.addEventListener('click', function (e) {
-    var t = e.target && e.target.closest ? e.target.closest('[data-ticker]') : null;
+    if (!e.target.closest) return;
+    var m = e.target.closest('[data-member]');
+    if (m && m.getAttribute('data-member')) { openMember(m.getAttribute('data-member')); return; }
+    var t = e.target.closest('[data-ticker]');
     if (t && t.getAttribute('data-ticker')) openAsset(t.getAttribute('data-ticker'));
   });
 })();
@@ -2286,9 +2495,9 @@ function handleFeedOpenEvent(e) {
   });
 })();
 
-/* Escape closes the detail drawer. */
+/* Escape closes transient overlays. */
 document.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape') closeDrawer();
+  if (e.key === 'Escape') { closePanels(); closeDrawer(); closeLogin(); closePricing(); }
 });
 
 // Build the feed header from the column registry (also attaches sort handlers).
