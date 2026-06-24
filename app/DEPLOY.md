@@ -146,6 +146,10 @@ Admin (`/api/admin`, bearer token or Cloudflare Access; fails closed unless conf
 
 UI: `GET /` (dashboard) and `/admin`. `GET /health` → `{ok:true}`.
 
+Admin custom domain: `admin.congress.trade` is routed to the same Worker. Protect
+it with Cloudflare Access before exposing admin workflows there; see
+`docs/wave4-auth-billing.md`.
+
 ## Pipeline (how a filing flows)
 ```
 cron → watcher (House XML diff + Senate eFD) → INGEST_QUEUE
@@ -166,4 +170,7 @@ cron → watcher (House XML diff + Senate eFD) → INGEST_QUEUE
   (`pollHouseLiveSearch()`) is stubbed for when you want sub-day House latency.
 - **Vision model** id lives in `src/extraction/visionLlm.ts`; review that
   constant before changing extraction cost/quality.
+- **Observability and Smart Placement** are configured in `wrangler.toml`.
+  Dashboard-only changes will drift on the next deploy if the config is not kept
+  in sync.
 - Confirm the `SEED_SOURCES` URLs in `src/backfill/seed.ts` resolve (flagged in code).

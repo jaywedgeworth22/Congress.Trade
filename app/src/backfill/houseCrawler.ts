@@ -138,6 +138,15 @@ export async function runHouseHistoricalBackfill(
         chamber: 'house',
         sourceUrl: f.sourceUrl,
         filedDate: f.filingDate,
+        filerId: `house-${f.stateDst.toLowerCase()}-${[f.first, f.last]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')}`,
+        filerName: [f.first, f.last].filter(Boolean).join(' ').trim() || null,
+        state: f.stateDst.slice(0, 2).toUpperCase() || null,
+        district: f.stateDst.length > 2 ? String(Number(f.stateDst.slice(2))) : null,
       };
 
       const nowIso = new Date().toISOString();

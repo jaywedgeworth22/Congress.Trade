@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildTransactionsQuery,
   buildTransactionsCountQuery,
+  buildTransactionsTodayFilingsQuery,
   mapFeedTransaction,
   DEFAULT_TX_LIMIT,
   MAX_TX_LIMIT,
@@ -17,7 +18,7 @@ import {
 } from '../rows';
 
 describe('buildTransactionsQuery', () => {
-  it('always filters cursor_seq > since (defaulting since to 0) and orders ASC', () => {
+  it('always filters cursor_seq > since (defaulting since to 0) and orders by cursor ASC', () => {
     const q = buildTransactionsQuery({});
     expect(q.sql).toContain('t.cursor_seq > ?');
     expect(q.sql).toContain('ORDER BY t.cursor_seq ASC');
@@ -40,6 +41,12 @@ describe('buildTransactionsQuery', () => {
     const q = buildTransactionsQuery({ member: 'M000001' });
     expect(q.sql).toContain('t.filer_id = ?');
     expect(q.params).toEqual([0, 'M000001']);
+  });
+
+  it('filters by fuzzy member name server-side', () => {
+    const q = buildTransactionsQuery({ memberName: 'Pelo' });
+    expect(q.sql).toContain("LOWER(COALESCE(fl.full_name, t.filer_id, '')) LIKE ?");
+    expect(q.params).toEqual([0, '%pelo%']);
   });
 
   it('filters by tx type', () => {
@@ -116,7 +123,22 @@ describe('buildTransactionsQuery', () => {
   it('honors a valid explicit limit and embeds it in the SQL', () => {
     const q = buildTransactionsQuery({ limit: 25 });
     expect(q.limit).toBe(25);
+    expect(q.offset).toBe(0);
     expect(q.sql).toContain('LIMIT 25');
+  });
+
+  it('honors a non-negative offset for snapshot page navigation', () => {
+    const q = buildTransactionsQuery({ limit: 25, offset: 50, order: 'desc' });
+    expect(q.limit).toBe(25);
+    expect(q.offset).toBe(50);
+    expect(q.sql).toContain('ORDER BY t.cursor_seq DESC');
+    expect(q.sql).toContain('LIMIT 25 OFFSET 50');
+  });
+
+  it('clamps negative offsets to zero and omits OFFSET 0', () => {
+    const q = buildTransactionsQuery({ offset: -10 });
+    expect(q.offset).toBe(0);
+    expect(q.sql).not.toContain('OFFSET');
   });
 
   it('caps the limit at MAX_TX_LIMIT', () => {
@@ -149,6 +171,12 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain('ORDER BY t.cursor_seq DESC');
     // order adds no bound param; same param order as the asc path.
     expect(q.params).toEqual([7, 'AAPL']);
+  });
+
+  it('can sort snapshot pages by published/imported time', () => {
+    const q = buildTransactionsQuery({ sort: 'published', order: 'desc', limit: 25 });
+    expect(q.sql).toContain('ORDER BY COALESCE(f.first_seen_at, f.filed_date, t.created_at, t.cursor_seq) DESC, t.cursor_seq DESC');
+    expect(q.params).toEqual([0]);
   });
 
   it('does not interpolate untrusted values directly (ticker/member are bound, not inlined)', () => {
@@ -200,6 +228,20 @@ describe('buildTransactionsCountQuery', () => {
     expect(q.sql).toContain('t.tx_date <= ?');
     // No cursor backstop in the count query.
     expect(q.params).toEqual(['2026-03-24', '2026-06-22']);
+  });
+});
+
+describe('buildTransactionsTodayFilingsQuery', () => {
+  it('counts distinct docs imported today with the same feed filters', () => {
+    const q = buildTransactionsTodayFilingsQuery(
+      { ticker: 'aapl', chamber: 'house' },
+      '2026-06-24T12:00:00Z',
+    );
+    expect(q.sql).toContain('COUNT(DISTINCT t.doc_id) AS total');
+    expect(q.sql).toContain('t.ticker = ?');
+    expect(q.sql).toContain('COALESCE(fl.chamber, f.chamber) = ?');
+    expect(q.sql).toContain('substr(COALESCE(f.first_seen_at, t.created_at), 1, 10) = ?');
+    expect(q.params).toEqual(['AAPL', 'house', '2026-06-24']);
   });
 });
 

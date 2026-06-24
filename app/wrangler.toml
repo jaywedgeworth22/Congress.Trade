@@ -10,8 +10,38 @@ compatibility_flags = ["nodejs_compat"]
 # ---------------------------------------------------------------------------
 routes = [
   { pattern = "congress.trade", custom_domain = true },
-  { pattern = "www.congress.trade", custom_domain = true }
+  { pattern = "www.congress.trade", custom_domain = true },
+  { pattern = "admin.congress.trade", custom_domain = true }
 ]
+
+# ---------------------------------------------------------------------------
+# Observability
+# Keep this in config so dashboard changes are not overwritten on deploy.
+# Invocation logs are useful while the app is ingesting/backfilling and while
+# the error rate is being investigated.
+# ---------------------------------------------------------------------------
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = true
+persist = true
+head_sampling_rate = 0.05
+
+# ---------------------------------------------------------------------------
+# Smart Placement
+# The Worker makes round trips to D1 plus external filing/market/email APIs.
+# Let Cloudflare place invocations where those round trips are fastest.
+# ---------------------------------------------------------------------------
+[placement]
+mode = "smart"
 
 # ---------------------------------------------------------------------------
 # Cron Triggers

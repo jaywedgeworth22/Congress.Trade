@@ -1,0 +1,49 @@
+name = "congress-feed-preview"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Preview deliberately has no custom-domain routes and no cron trigger. It is
+# for branch review only; production remains configured in wrangler.toml.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "congress-feed-preview-db"
+database_id = "PREVIEW_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "RAW_FILES"
+bucket_name = "congress-feed-preview-raw"
+
+[[queues.producers]]
+binding = "INGEST_QUEUE"
+queue = "congress-feed-preview-ingest"
+
+[[queues.producers]]
+binding = "DELIVERY_QUEUE"
+queue = "congress-feed-preview-delivery"
+
+[[queues.consumers]]
+queue = "congress-feed-preview-ingest"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 5
+dead_letter_queue = "congress-feed-preview-ingest-dlq"
+
+[[queues.consumers]]
+queue = "congress-feed-preview-delivery"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 8
+dead_letter_queue = "congress-feed-preview-delivery-dlq"
+
+[[kv_namespaces]]
+binding = "CONFIG_KV"
+id = "PREVIEW_KV_NAMESPACE_ID"
+
+[vars]
+APP_BASE_URL = "https://congress-feed-preview.<your-workers-subdomain>.workers.dev"
+STRIPE_MANAGED_PAYMENTS = "false"
+PREVIEW_DEPLOYMENT = "true"

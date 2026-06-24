@@ -288,14 +288,35 @@ function normName(s: string | null | undefined): string {
     .trim();
 }
 
+interface LegislatorTerm {
+  type?: string;
+  party?: string;
+  state?: string;
+  district?: number | string | null;
+  start?: string;
+  end?: string;
+}
+
 interface Legislator {
   id?: { bioguide?: string };
   name?: { first?: string; last?: string; official_full?: string; nickname?: string };
+  terms?: LegislatorTerm[];
 }
 
-/** Build a normalized-name -> bioguide map from the congress-legislators data. */
-async function buildBioguideMap(): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+interface LegislatorMatch {
+  bioguide: string;
+  party: string | null;
+  state: string | null;
+  district: string | null;
+}
+
+function latestLegislatorTerm(terms: LegislatorTerm[] | undefined): LegislatorTerm | undefined {
+  return (terms ?? []).slice().sort((a, b) => String(b.start ?? '').localeCompare(String(a.start ?? '')))[0];
+}
+
+/** Build a normalized-name -> legislator metadata map from congress-legislators. */
+async function buildLegislatorMap(): Promise<Map<string, LegislatorMatch>> {
+  const map = new Map<string, LegislatorMatch>();
   for (const url of LEGISLATOR_SOURCES) {
     const res = await fetch(url, {
       headers: {
@@ -308,6 +329,13 @@ async function buildBioguideMap(): Promise<Map<string, string>> {
     for (const leg of list) {
       const bio = leg.id?.bioguide;
       if (!bio) continue;
+      const term = latestLegislatorTerm(leg.terms);
+      const match: LegislatorMatch = {
+        bioguide: bio,
+        party: term?.party ?? null,
+        state: term?.state ?? null,
+        district: term?.district == null ? null : String(term.district),
+      };
       const n = leg.name ?? {};
       const candidates = [
         n.first && n.last ? `${n.first} ${n.last}` : '',
@@ -316,7 +344,7 @@ async function buildBioguideMap(): Promise<Map<string, string>> {
       ];
       for (const raw of candidates) {
         const k = normName(raw);
-        if (k && !map.has(k)) map.set(k, bio); // current list is loaded first; it wins
+        if (k && !map.has(k)) map.set(k, match); // current list is loaded first; it wins
       }
     }
   }
@@ -1314,6 +1342,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       `CREATE INDEX IF NOT EXISTS idx_client_commands_user_created
          ON client_commands (user_id, created_at DESC)`,
       'CREATE INDEX IF NOT EXISTS idx_client_commands_status ON client_commands (status)',
+      // 0011_transaction_row_details.sql — row-specific House PTR details.
+      'ALTER TABLE transactions ADD COLUMN asset_type_name TEXT',
+      'ALTER TABLE transactions ADD COLUMN filing_status TEXT',
+      'ALTER TABLE transactions ADD COLUMN subholding TEXT',
+      'ALTER TABLE transactions ADD COLUMN location TEXT',
+      'ALTER TABLE transactions ADD COLUMN description TEXT',
+      'ALTER TABLE transactions ADD COLUMN supplemental_text TEXT',
+      'CREATE INDEX IF NOT EXISTS idx_tx_asset_type_name ON transactions (asset_type_name)',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -1461,6 +1497,29 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // performance anchors for imported tickers. Idempotent. Authorized by the
   // full ADMIN_TOKEN/Access OR the scoped INGEST_TOKEN (this endpoint only).
   r.post('/securities/import', async (c) => {
+    // This endpoint runs inside a normal Worker request. Keep callers honest:
+    // oversize JSON imports can exceed the CPU limit before useful work starts.
+    const MAX_IMPORT_BYTES = 300_000;
+    const contentLength = Number(c.req.header('content-length') ?? 0);
+    if (contentLength > MAX_IMPORT_BYTES) {
+      return c.json(
+        {
+          error: 'import payload too large; split into smaller batches',
+          maxBytes: MAX_IMPORT_BYTES,
+          receivedBytes: contentLength,
+          suggestedLimits: {
+            refs: 500,
+            spx: 1000,
+            prices: 25,
+            closesPerTicker: 750,
+            insider: 1000,
+            shortVolume: 1000,
+          },
+        },
+        413,
+      );
+    }
+
     let body: Record<string, unknown> = {};
     try {
       const raw = await c.req.text();
@@ -1473,6 +1532,31 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       insiderRows: 0, shortVolumeRows: 0, errors: [] as string[],
     };
     const nowIso = new Date().toISOString();
+    const oversized =
+      countArray(body.refs) > 500 ||
+      countArray(body.spx) > 1000 ||
+      countArray(body.prices) > 25 ||
+      countArray(body.insider) > 1000 ||
+      countArray(body.shortVolume) > 1000 ||
+      (Array.isArray(body.prices) &&
+        (body.prices as Array<{ closes?: unknown }>).some((p) => countArray(p.closes) > 750));
+    if (oversized) {
+      return c.json(
+        {
+          error: 'import batch too large; split into smaller batches',
+          limits: {
+            refs: 500,
+            spx: 1000,
+            prices: 25,
+            closesPerTicker: 750,
+            insider: 1000,
+            shortVolume: 1000,
+          },
+        },
+        413,
+      );
+    }
+
     const REF_KEYS = [
       'companyName', 'sector', 'industry', 'assetClass', 'isEtf', 'isAdr', 'country',
       'stateHq', 'stateOfIncorp', 'exchange', 'exchangeShort', 'currency', 'marketCap',
@@ -1481,7 +1565,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
     // 1) Company reference rows.
     if (Array.isArray(body.refs)) {
-      for (const raw of (body.refs as unknown[]).slice(0, 5000)) {
+      for (const raw of body.refs as unknown[]) {
         const o = raw as Record<string, unknown>;
         const ticker = typeof o.ticker === 'string' ? o.ticker.toUpperCase() : null;
         if (!ticker) continue;
@@ -1500,7 +1584,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     if (Array.isArray(body.spx)) {
       const rows = (body.spx as Array<{ date?: unknown; close?: unknown }>)
         .filter((x) => typeof x.date === 'string' && typeof x.close === 'number')
-        .slice(0, 20000);
+        .slice(0, 1000);
       for (let i = 0; i < rows.length; i += 100) {
         await c.env.DB.batch(
           rows.slice(i, i + 100).map((x) =>
@@ -1515,14 +1599,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
     // 3) Per-ticker price history (+ current price), then recompute anchors.
     if (Array.isArray(body.prices)) {
-      for (const raw of (body.prices as unknown[]).slice(0, 2000)) {
+      for (const raw of body.prices as unknown[]) {
         const o = raw as { ticker?: unknown; closes?: unknown; currentPrice?: unknown; currentPriceDate?: unknown };
         const ticker = typeof o.ticker === 'string' ? o.ticker.toUpperCase() : null;
         if (!ticker) continue;
         const closes = Array.isArray(o.closes)
           ? (o.closes as Array<{ date?: unknown; close?: unknown; volume?: unknown }>)
               .filter((x) => typeof x.date === 'string' && typeof x.close === 'number')
-              .slice(0, 20000)
+              .slice(0, 750)
           : [];
         try {
           for (let i = 0; i < closes.length; i += 100) {
@@ -1576,7 +1660,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     if (Array.isArray(body.insider)) {
       const rows = (body.insider as Array<Record<string, unknown>>)
         .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
-        .slice(0, 20000);
+        .slice(0, 1000);
       for (let i = 0; i < rows.length; i += 100) {
         await c.env.DB.batch(
           rows.slice(i, i + 100).map((o) =>
@@ -1610,7 +1694,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     if (Array.isArray(body.shortVolume)) {
       const rows = (body.shortVolume as Array<Record<string, unknown>>)
         .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
-        .slice(0, 20000);
+        .slice(0, 1000);
       for (let i = 0; i < rows.length; i += 100) {
         await c.env.DB.batch(
           rows.slice(i, i + 100).map((o) =>
@@ -1641,7 +1725,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // falls back to initials).
   r.post('/enrich-photos', async (c) => {
     try {
-      const map = await buildBioguideMap();
+      const map = await buildLegislatorMap();
       const filers = await all<{ bioguide_id: string; full_name: string | null }>(
         c.env.DB,
         'SELECT bioguide_id, full_name FROM filers',
@@ -1649,13 +1733,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       const updates: D1PreparedStatement[] = [];
       let matched = 0;
       for (const f of filers) {
-        const bio = map.get(normName(f.full_name));
-        if (!bio) continue;
+        const match = map.get(normName(f.full_name));
+        if (!match) continue;
         matched++;
         updates.push(
           c.env.DB
-            .prepare('UPDATE filers SET photo_url = ? WHERE bioguide_id = ?')
-            .bind(photoUrlFor(bio), f.bioguide_id),
+            .prepare('UPDATE filers SET photo_url = ?, party = COALESCE(NULLIF(party, \'\'), ?), state = COALESCE(NULLIF(state, \'\'), ?), district = COALESCE(NULLIF(district, \'\'), ?) WHERE bioguide_id = ?')
+            .bind(photoUrlFor(match.bioguide), match.party, match.state, match.district, f.bioguide_id),
         );
       }
       for (let i = 0; i < updates.length; i += 50) {
@@ -1780,6 +1864,10 @@ function safeJson(s: string): unknown {
   } catch {
     return s;
   }
+}
+
+function countArray(v: unknown): number {
+  return Array.isArray(v) ? v.length : 0;
 }
 
 /** Coerce an unknown to a finite number or null (for defensive ingest). */
