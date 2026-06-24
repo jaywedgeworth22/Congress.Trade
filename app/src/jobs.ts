@@ -34,9 +34,15 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   const errors: string[] = [];
   let hadFmpKey = false;
   const share: PeerShareInput = {};
+  // Paid FMP tiers are rate-limited per MINUTE (Starter ~300/min), not per day —
+  // so pace calls to use that headroom without tripping 429s. Configurable via
+  // FMP_MAX_PER_MINUTE; unset = no pacing (prior behavior). The per-day ceiling
+  // is FMP_DAILY_CALL_CAP (raise it on a paid plan so enrichment isn't throttled).
+  const maxPerMinute =
+    parseInt((env as { FMP_MAX_PER_MINUTE?: string }).FMP_MAX_PER_MINUTE || '', 10) || undefined;
 
   try {
-    const r = await runEnrichment(env, {});
+    const r = await runEnrichment(env, { maxPerMinute });
     hadFmpKey = hadFmpKey || r.hasFmpKey;
     errors.push(...r.errors);
     share.refs = r.shareRefs;
@@ -45,7 +51,7 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     errors.push('enrichment: ' + (err as Error).message);
   }
   try {
-    const r = await runPriceRefresh(env, {});
+    const r = await runPriceRefresh(env, { maxPerMinute });
     hadFmpKey = hadFmpKey || r.hasFmpKey;
     errors.push(...r.errors);
     share.prices = r.sharePrices;

@@ -137,6 +137,13 @@ IMPORT_MAX_PRICES = "100"
 IMPORT_MAX_CLOSES_PER_TICKER = "1500"
 IMPORT_MAX_INSIDER = "5000"
 IMPORT_MAX_SHORT_VOLUME = "5000"
+# FMP paid tier (Starter = 300 calls/min). Raise the daily enrichment/price
+# ceiling well above the free-tier default (230) and pace under the per-minute
+# limit, so the daily job uses the paid headroom without tripping 429s. Each
+# run stays within Cloudflare's per-invocation subrequest budget; the backlog
+# clears across at most a couple runs.
+FMP_DAILY_CALL_CAP = "1000"
+FMP_MAX_PER_MINUTE = "250"
 # Stripe premium price ids (not secret) — created 2026-06-22 on the live account.
 STRIPE_PRICE_MONTHLY = "price_1TlHYBEUQUPhZj0SEzG2Qx68"
 STRIPE_PRICE_ANNUAL = "price_1TlHYCEUQUPhZj0SpNVoPb3Z"
