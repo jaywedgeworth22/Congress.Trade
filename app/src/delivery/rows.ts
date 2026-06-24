@@ -74,7 +74,6 @@ export interface FeedTransactionRow extends TransactionRow {
   ref_country?: string | null;
   ref_exchange_short?: string | null;
   ref_asset_class?: string | null;
-  ref_logo_url?: string | null;
 }
 
 export interface SubscriptionRow {
@@ -162,7 +161,6 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     refCountry: row.ref_country,
     refExchangeShort: row.ref_exchange_short,
     refAssetClass: row.ref_asset_class,
-    refLogoUrl: row.ref_logo_url,
   };
 }
 
@@ -288,8 +286,7 @@ const TX_FROM_JOINS =
 const REF_SELECT =
   'sr.sector AS ref_sector, sr.market_cap AS ref_market_cap, ' +
   'sr.market_cap_bucket AS ref_market_cap_bucket, sr.country AS ref_country, ' +
-  'sr.exchange_short AS ref_exchange_short, sr.asset_class AS ref_asset_class, ' +
-  'sr.logo_url AS ref_logo_url, ';
+  'sr.exchange_short AS ref_exchange_short, sr.asset_class AS ref_asset_class, ';
 
 /** SQL expression resolving the chamber, preferring the filers table. */
 const CHAMBER_EXPR = 'COALESCE(fl.chamber, f.chamber)';

@@ -42,7 +42,6 @@ export function parseMassiveTicker(json: unknown): Partial<SecurityRef> | null {
   const isAdr = type.indexOf('ADR') >= 0;
   const mc = num(r.market_cap);
   const sic = str(r.sic_code);
-  const brand = (r.branding as Record<string, unknown>) || {};
   return {
     companyName: str(r.name),
     sector: sicToSector(sic),
@@ -58,7 +57,6 @@ export function parseMassiveTicker(json: unknown): Partial<SecurityRef> | null {
     cik: str(r.cik),
     sicCode: sic,
     sicDescription: str(r.sic_description),
-    logoUrl: str(brand.icon_url) ?? str(brand.logo_url),
     source: 'massive',
   };
 }
@@ -91,7 +89,6 @@ export function parseFinnhubProfile(json: unknown): Partial<SecurityRef> | null 
     marketCap: mc,
     marketCapBucket: marketCapBucket(mc),
     ipoDate: str(j.ipo),
-    logoUrl: str(j.logo),
     source: 'finnhub',
   };
 }

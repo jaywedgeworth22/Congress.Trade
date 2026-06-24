@@ -178,17 +178,13 @@ export async function runEnrichment(
     // Quality-ranked chain (best first). Each provider fills only what better
     // ones missed; we stop early once the display-critical fields are covered.
     const collected: Array<Partial<SecurityRef>> = [];
-    let finnhubLogo: string | null = null;
     for (const entry of chain) {
       if (entry.budgeted && fmpCalls >= fmpBudget) continue; // out of FMP budget
       try {
         if (entry.name !== 'edgar') await pace(); // EDGAR is free + unmetered
         const ref = await entry.provider.fetchRef(ticker);
         if (entry.budgeted) fmpCalls++;
-        if (ref) {
-          collected.push(ref);
-          if (entry.name === 'finnhub' && ref.logoUrl) finnhubLogo = ref.logoUrl;
-        }
+        if (ref) collected.push(ref);
       } catch (e) {
         if (entry.budgeted) fmpCalls++; // a failed call still consumes quota
         result.errors.push(ticker + ' ' + entry.name + ': ' + (e as Error).message);
@@ -204,9 +200,8 @@ export async function runEnrichment(
       continue;
     }
     // mergeRefs is last-wins; the chain is best-first, so reverse so the best
-    // provider's non-null fields win. Prefer Finnhub's directly-displayable logo.
+    // provider's non-null fields win.
     const merged = mergeRefs(ticker, [...collected].reverse());
-    if (finnhubLogo) merged.logoUrl = finnhubLogo;
     if (!dryRun) await upsertRef(env, merged);
     result.enriched++;
   }
@@ -237,8 +232,8 @@ export async function importSecurityRef(env: Env, ref: SecurityRef): Promise<voi
     `INSERT INTO securities_ref (
        ticker, company_name, sector, industry, asset_class, is_etf, is_adr,
        country, state_hq, state_of_incorp, exchange, exchange_short, currency,
-       market_cap, market_cap_bucket, ipo_date, cik, sic_code, sic_description, logo_url, source
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       market_cap, market_cap_bucket, ipo_date, cik, sic_code, sic_description, source
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(ticker) DO UPDATE SET
        company_name=COALESCE(excluded.company_name, securities_ref.company_name),
        sector=COALESCE(excluded.sector, securities_ref.sector),
@@ -255,13 +250,12 @@ export async function importSecurityRef(env: Env, ref: SecurityRef): Promise<voi
        ipo_date=COALESCE(excluded.ipo_date, securities_ref.ipo_date),
        cik=COALESCE(excluded.cik, securities_ref.cik),
        sic_code=COALESCE(excluded.sic_code, securities_ref.sic_code),
-       sic_description=COALESCE(excluded.sic_description, securities_ref.sic_description),
-       logo_url=COALESCE(excluded.logo_url, securities_ref.logo_url)`,
+       sic_description=COALESCE(excluded.sic_description, securities_ref.sic_description)`,
     [
       ref.ticker, ref.companyName, ref.sector, ref.industry, ref.assetClass,
       ref.isEtf ? 1 : 0, ref.isAdr ? 1 : 0, ref.country, ref.stateHq, ref.stateOfIncorp,
       ref.exchange, ref.exchangeShort, ref.currency, ref.marketCap, ref.marketCapBucket,
-      ref.ipoDate, ref.cik, ref.sicCode, ref.sicDescription, ref.logoUrl, ref.source,
+      ref.ipoDate, ref.cik, ref.sicCode, ref.sicDescription, ref.source,
     ],
   );
 }
@@ -273,8 +267,8 @@ async function upsertRef(env: Env, ref: SecurityRef): Promise<void> {
        ticker, company_name, sector, industry, asset_class, is_etf, is_adr,
        country, state_hq, state_of_incorp, exchange, exchange_short, currency,
        market_cap, market_cap_bucket, ipo_date, cik, sic_code, sic_description,
-       logo_url, source, enriched_at, enrichment_error
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
+       source, enriched_at, enrichment_error
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
      ON CONFLICT(ticker) DO UPDATE SET
        company_name=excluded.company_name, sector=excluded.sector, industry=excluded.industry,
        asset_class=excluded.asset_class, is_etf=excluded.is_etf, is_adr=excluded.is_adr,
@@ -282,12 +276,12 @@ async function upsertRef(env: Env, ref: SecurityRef): Promise<void> {
        exchange=excluded.exchange, exchange_short=excluded.exchange_short, currency=excluded.currency,
        market_cap=excluded.market_cap, market_cap_bucket=excluded.market_cap_bucket, ipo_date=excluded.ipo_date,
        cik=excluded.cik, sic_code=excluded.sic_code, sic_description=excluded.sic_description,
-       logo_url=excluded.logo_url, source=excluded.source, enriched_at=excluded.enriched_at, enrichment_error=NULL`,
+       source=excluded.source, enriched_at=excluded.enriched_at, enrichment_error=NULL`,
     [
       ref.ticker, ref.companyName, ref.sector, ref.industry, ref.assetClass,
       ref.isEtf ? 1 : 0, ref.isAdr ? 1 : 0, ref.country, ref.stateHq, ref.stateOfIncorp,
       ref.exchange, ref.exchangeShort, ref.currency, ref.marketCap, ref.marketCapBucket,
-      ref.ipoDate, ref.cik, ref.sicCode, ref.sicDescription, ref.logoUrl, ref.source,
+      ref.ipoDate, ref.cik, ref.sicCode, ref.sicDescription, ref.source,
       new Date().toISOString(),
     ],
   );

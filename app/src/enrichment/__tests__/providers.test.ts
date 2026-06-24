@@ -26,7 +26,6 @@ describe('parseMassiveTicker (Polygon)', () => {
     expect(ref?.marketCap).toBe(4.377e12);
     expect(ref?.marketCapBucket).toBe('mega');
     expect(ref?.isEtf).toBe(false);
-    expect(ref?.logoUrl).toContain('icon.png');
     expect(ref?.source).toBe('massive');
   });
   it('flags ETFs from the type field', () => {
@@ -49,7 +48,6 @@ describe('parseFinnhubProfile', () => {
     });
     expect(ref?.marketCap).toBe(4322488000000);
     expect(ref?.sector).toBe('Technology');
-    expect(ref?.logoUrl).toContain('static.finnhub.io');
   });
   it('returns null without a name', () => expect(parseFinnhubProfile({})).toBeNull());
 });
