@@ -16,7 +16,8 @@
  *     open-ended top tier ($50,000,001+) has amount_max IS NULL and falls back
  *     to the bracket floor (amount_min). All $ figures are therefore ESTIMATES.
  *   - party is frequently empty in the data (seed filers store party=''), so it
- *     is bucketed into D / R / O(ther) by first letter — never assumed present.
+ *     is bucketed into D / R / O(ther) by first letter only when known. Unknown
+ *     party stays NULL rather than being treated as Independent.
  */
 
 import type { Chamber, TxType } from '../shared/types';
@@ -130,10 +131,12 @@ export const SIGNED_MIDPOINT_SQL =
 /** Chamber resolved from the filers table, falling back to the owning filing. */
 export const CHAMBER_EXPR = 'COALESCE(fl.chamber, f.chamber)';
 
-/** Party bucketed to 'D' | 'R' | 'O' by first letter (tolerant of empty/null). */
+/** Party bucketed to 'D' | 'R' | 'O' by first letter; unknown stays NULL. */
 export const PARTY_BUCKET_SQL =
-  "(CASE WHEN UPPER(SUBSTR(COALESCE(fl.party, ''), 1, 1)) = 'D' THEN 'D' " +
-  "WHEN UPPER(SUBSTR(COALESCE(fl.party, ''), 1, 1)) = 'R' THEN 'R' ELSE 'O' END)";
+  "(CASE WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'D' THEN 'D' " +
+  "WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'R' THEN 'R' " +
+  "WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) IN ('I', 'O') THEN 'O' " +
+  'ELSE NULL END)';
 
 /** A non-null, non-empty ticker (the analytics definition of "a resolved asset"). */
 export const TICKER_RESOLVED_SQL = "(t.ticker IS NOT NULL AND t.ticker <> '')";

@@ -4,6 +4,9 @@
 # Node
 node_modules/
 dist/
+.next/
+out/
+*.tsbuildinfo
 .wrangler/
 
 # Python / local watcher state

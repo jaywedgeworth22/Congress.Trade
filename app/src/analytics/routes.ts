@@ -221,7 +221,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           filerId: str(row.filer_id),
           fullName: str(row.full_name),
           party: str(row.party),
-          partyBucket: asPartyBucket(row.party) ?? 'O',
+          partyBucket: asPartyBucket(row.party) ?? null,
           chamber: str(row.chamber),
           state: str(row.state),
           photoUrl: str(row.photo_url),
@@ -262,7 +262,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         const topMembers = (byKey.get(k) ?? []).map((m) => ({
           filerId: str(m.filer_id),
           fullName: str(m.full_name),
-          partyBucket: asPartyBucket(m.party) ?? 'O',
+          partyBucket: asPartyBucket(m.party) ?? null,
           photoUrl: str(m.photo_url),
           tradeCount: num(m.trade_count),
         }));
@@ -350,7 +350,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const empty = () => ({ buys: 0, sells: 0, estVolumeUsd: 0, estNetFlowUsd: 0, members: 0 });
       const overall: Record<string, ReturnType<typeof empty>> = { D: empty(), R: empty(), O: empty() };
       for (const row of overallRows) {
-        const p = (str(row.party) ?? 'O') as 'D' | 'R' | 'O';
+        const p = asPartyBucket(row.party);
+        if (!p) continue;
         if (!overall[p]) overall[p] = empty();
         overall[p] = {
           buys: num(row.buys),
@@ -364,7 +365,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const byPeriod = new Map<string, Record<string, number | string | null>>();
       for (const row of periodRows) {
         const period = str(row.period) ?? '';
-        const p = str(row.party) ?? 'O';
+        const p = asPartyBucket(row.party);
+        if (!p) continue;
         const rec = byPeriod.get(period) ?? {
           period,
           D_buys: 0,
@@ -428,7 +430,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const topLateFilers = lateRows.map((row) => ({
         filerId: str(row.filer_id),
         fullName: str(row.full_name),
-        partyBucket: asPartyBucket(row.party) ?? 'O',
+        partyBucket: asPartyBucket(row.party) ?? null,
         chamber: str(row.chamber),
         photoUrl: str(row.photo_url),
         avgLagDays: round(num(row.avg_lag_days), 1),
@@ -475,7 +477,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const mapTrader = (row: Record<string, unknown>) => ({
         filerId: str(row.filer_id),
         fullName: str(row.full_name),
-        partyBucket: asPartyBucket(row.party) ?? 'O',
+        partyBucket: asPartyBucket(row.party) ?? null,
         photoUrl: str(row.photo_url),
         tradeCount: num(row.trade_count),
         estVolumeUsd: usd(row.est_volume),
@@ -527,8 +529,9 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
               row.amount_max == null ? null : num(row.amount_max),
             ),
           ),
+          filerId: str(row.filer_id),
           fullName: str(row.full_name),
-          partyBucket: asPartyBucket(row.party) ?? 'O',
+          partyBucket: asPartyBucket(row.party) ?? null,
           photoUrl: str(row.photo_url),
         })),
       });
@@ -610,7 +613,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           ? {
               fullName: str(profileRow.full_name),
               party: str(profileRow.party),
-              partyBucket: asPartyBucket(profileRow.party) ?? 'O',
+              partyBucket: asPartyBucket(profileRow.party) ?? null,
               chamber: str(profileRow.chamber),
               state: str(profileRow.state),
               district: str(profileRow.district),

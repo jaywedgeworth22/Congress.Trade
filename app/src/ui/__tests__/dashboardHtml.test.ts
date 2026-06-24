@@ -61,6 +61,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function feedCardHtml(');
     expect(DASHBOARD_HTML).toContain('function handleFeedOpenEvent(');
     expect(DASHBOARD_HTML).toContain('@media (max-width: 720px)');
+    expect(DASHBOARD_HTML).toContain('(orientation: landscape) and (max-width: 950px)');
     expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom)');
     expect(DASHBOARD_HTML).toContain('grid-template-columns: minmax(0, 1fr)');
   });
@@ -75,6 +76,7 @@ describe('DASHBOARD_HTML', () => {
   it('wires the detail drawer (trade / asset / politician)', () => {
     expect(DASHBOARD_HTML).toContain('id="detailDrawer"');
     expect(DASHBOARD_HTML).toContain('id="detailDrawerBody"');
+    expect(DASHBOARD_HTML).toContain('class="drawer-topbar"');
     expect(DASHBOARD_HTML).toContain('function openDrawer(');
     expect(DASHBOARD_HTML).toContain('function openTrade(');
     expect(DASHBOARD_HTML).toContain('function openAsset(');
@@ -85,11 +87,45 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('tickerModal');
   });
 
+  it('keeps mobile overlay controls dismissible and tap-safe', () => {
+    expect(DASHBOARD_HTML).toContain('id="panelBackdrop"');
+    expect(DASHBOARD_HTML).toContain('function closePanels(');
+    expect(DASHBOARD_HTML).toContain('function setPanelOpen(');
+    expect(DASHBOARD_HTML).toContain('font-size:16px');
+    expect(DASHBOARD_HTML).toContain('width:44px; height:44px');
+  });
+
+  it('formats dates and does not default unknown party to Independent', () => {
+    expect(DASHBOARD_HTML).toContain('function dateText(');
+    expect(DASHBOARD_HTML).toContain('function dateTimeText(');
+    expect(DASHBOARD_HTML).toContain('function filedDetailText(');
+    expect(DASHBOARD_HTML).toContain('Official Filing Date Unavailable');
+    expect(DASHBOARD_HTML).toContain('function partyLabel(');
+    expect(DASHBOARD_HTML).toContain("PARTY_NAME = { D: 'Democrat', R: 'Republican', O: 'Independent / Other' }");
+    expect(DASHBOARD_HTML).not.toContain("p.partyBucket || 'O'");
+    expect(DASHBOARD_HTML).not.toContain("esc(b || 'O')");
+  });
+
   it('wires the per-trade performance line (price vs S&P)', () => {
     expect(DASHBOARD_HTML).toContain('function perfLineHtml(');
     expect(DASHBOARD_HTML).toContain("aGet('performance/");
     expect(DASHBOARD_HTML).toContain('id="tradePerf"');
     expect(DASHBOARD_HTML).toContain('function companySectionHtml(');
+  });
+
+  it('renders plain-English filing notes and clickable drawer entities', () => {
+    expect(DASHBOARD_HTML).toContain('function filingNotesHtml(');
+    expect(DASHBOARD_HTML).toContain('Historical source note:');
+    expect(DASHBOARD_HTML).toContain("e.target.closest('[data-member]')");
+    expect(DASHBOARD_HTML).toContain('drawer-title-line clickable');
+    expect(DASHBOARD_HTML).not.toContain('<pre class="raw-notes">');
+  });
+
+  it('keeps House history backfill bounded from the admin UI', () => {
+    expect(DASHBOARD_HTML).toContain('id="hiMax"');
+    expect(DASHBOARD_HTML).toContain('value="500"');
+    expect(DASHBOARD_HTML).toContain('maxFilings: max');
+    expect(DASHBOARD_HTML).toContain('Dry Run only counts');
   });
 
   it('keeps the educational + dollar-estimate disclaimers in the Trends view', () => {
