@@ -16,8 +16,14 @@ function str(v: unknown): string | null {
 }
 
 /**
- * Parse an FMP `/v3/profile/{symbol}` response (an array with a single object)
- * into a partial SecurityRef. Returns null when the symbol isn't found.
+ * Parse an FMP `/stable/profile?symbol=` response (an array with a single
+ * object) into a partial SecurityRef. Returns null when the symbol isn't found
+ * — including FMP's `{ "Error Message": … }` shape, which isn't an array.
+ *
+ * Tolerates both the current `/stable/` field names (`marketCap`; `exchange` is
+ * the short code, `exchangeFullName` the full name) and the retired `/v3/` ones
+ * (`mktCap`; `exchange` was the full name, `exchangeShortName` the short code),
+ * so the parser stays source-agnostic.
  */
 export function parseFmpProfile(json: unknown): Partial<SecurityRef> | null {
   const arr = Array.isArray(json) ? json : null;
@@ -37,8 +43,10 @@ export function parseFmpProfile(json: unknown): Partial<SecurityRef> | null {
     isAdr,
     country: str(p.country),
     stateHq: str(p.state),
-    exchange: str(p.exchange),
-    exchangeShort: str(p.exchangeShortName),
+    // `/stable/` reports the full venue in `exchangeFullName` and the short code
+    // in `exchange`; `/v3/` was the reverse. Coalesce so either source maps right.
+    exchange: str(p.exchangeFullName) ?? str(p.exchange),
+    exchangeShort: str(p.exchangeShortName) ?? str(p.exchange),
     currency: str(p.currency),
     marketCap: mc,
     marketCapBucket: marketCapBucket(mc),
@@ -56,10 +64,12 @@ export function buildFmpProvider(
   return {
     name: 'fmp',
     async fetchRef(ticker: string): Promise<Partial<SecurityRef> | null> {
+      // `/stable/profile` — the `/v3/profile/{symbol}` path was retired by FMP on
+      // 2025-08-31 (non-legacy keys get `{ "Error Message": "Legacy Endpoint …" }`).
       const url =
-        'https://financialmodelingprep.com/api/v3/profile/' +
+        'https://financialmodelingprep.com/stable/profile?symbol=' +
         encodeURIComponent(ticker) +
-        '?apikey=' +
+        '&apikey=' +
         encodeURIComponent(apiKey);
       const res = await fetchImpl(url, {
         headers: { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json' },
