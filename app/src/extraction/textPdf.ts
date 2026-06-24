@@ -96,9 +96,9 @@ const TICKER_RE = /\(([A-Z][A-Z0-9.\-]{0,9})\)/;
  * candidate holding blocks, then pull fields from each block.
  */
 export function parseHousePtrText(text: string): ParsedTx[] {
-  const lines = text
+  const lines = cleanPdfText(text)
     .split(/\r?\n/)
-    .map((l) => l.replace(/ /g, ' ').replace(/\s+/g, ' ').trim())
+    .map((l) => l.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
 
   // Group lines into blocks that each start at an owner code or a ticker line.
@@ -111,6 +111,14 @@ export function parseHousePtrText(text: string): ParsedTx[] {
   return rows;
 }
 
+function cleanPdfText(text: string): string {
+  return text
+    // Some House PDFs expose a text layer with NUL bytes between letters.
+    // Remove them before line grouping so "S\0P" is parsed as owner code "SP".
+    .replace(/\u0000/g, '')
+    .replace(/\u00a0/g, ' ');
+}
+
 function startsNewHolding(line: string): boolean {
   const ownerStart = /^(SP|DC|JT|SELF)\b/.test(line);
   const hasTicker = TICKER_RE.test(line);
@@ -121,15 +129,22 @@ function startsNewHolding(line: string): boolean {
 function groupBlocks(lines: string[]): string[][] {
   const blocks: string[][] = [];
   let current: string[] = [];
+  let seenHolding = false;
   for (const line of lines) {
-    if (startsNewHolding(line) && current.length > 0) {
-      blocks.push(current);
+    if (startsNewHolding(line)) {
+      if (current.length > 0 && seenHolding) {
+        blocks.push(current);
+      }
+      seenHolding = true;
       current = [line];
-    } else {
-      current.push(line);
+      continue;
     }
+    if (!seenHolding) {
+      continue;
+    }
+    current.push(line);
   }
-  if (current.length) blocks.push(current);
+  if (current.length && seenHolding) blocks.push(current);
   // Keep only blocks that look like a transaction (must have an amount).
   return blocks.filter((b) => AMOUNT_RE.test(b.join(' ')));
 }
