@@ -71,6 +71,7 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain('fl.full_name AS filer_full_name');
     expect(q.sql).toContain('fl.state AS filer_state');
     expect(q.sql).toContain('fl.photo_url AS filer_photo_url');
+    expect(q.sql).toContain('f.source_url AS filing_source_url');
   });
 
   it('composes all filters in a stable param order (since, ticker, member, type, chamber)', () => {
@@ -228,6 +229,7 @@ describe('mapFeedTransaction', () => {
       filer_photo_url: 'https://unitedstates.github.io/images/congress/225x275/P000197.jpg',
       filing_filed_date: '2024-01-01',
       filing_first_seen_at: '2024-01-02T12:00:00Z',
+      filing_source_url: 'https://disclosures.example/doc.pdf',
       ...over,
     };
   }
@@ -240,6 +242,7 @@ describe('mapFeedTransaction', () => {
     // filing timestamps for the per-row latency column
     expect(tx.filedDate).toBe('2024-01-01');
     expect(tx.firstSeenAt).toBe('2024-01-02T12:00:00Z');
+    expect(tx.sourceUrl).toBe('https://disclosures.example/doc.pdf');
     // base transaction mapping still applies
     expect(tx.ticker).toBe('ACME');
     expect(tx.cursorSeq).toBe(5);

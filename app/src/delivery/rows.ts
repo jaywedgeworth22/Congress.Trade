@@ -59,6 +59,7 @@ export interface FeedTransactionRow extends TransactionRow {
   filer_photo_url: string | null;
   filing_filed_date: string | null;
   filing_first_seen_at: string | null;
+  filing_source_url?: string | null;
   // Cross-referenced asset reference data (securities_ref); null until enriched,
   // optional so callers/tests that build a feed row needn't supply them.
   ref_sector?: string | null;
@@ -141,6 +142,7 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     photoUrl: row.filer_photo_url,
     filedDate: row.filing_filed_date,
     firstSeenAt: row.filing_first_seen_at,
+    sourceUrl: row.filing_source_url ?? undefined,
     refSector: row.ref_sector,
     refMarketCap: row.ref_market_cap,
     refMarketCapBucket: row.ref_market_cap_bucket,
@@ -352,7 +354,7 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
     'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
     'fl.photo_url AS filer_photo_url, ' +
     REF_SELECT +
-    'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at ' +
+    'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url ' +
     TX_FROM_JOINS +
     `WHERE ${where.join(' AND ')} ` +
     `ORDER BY t.cursor_seq ${direction} ` +
@@ -400,7 +402,7 @@ export function buildTransactionsExportQuery(
     'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
     'fl.photo_url AS filer_photo_url, ' +
     REF_SELECT +
-    'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at ' +
+    'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url ' +
     TX_FROM_JOINS +
     (where.length ? `WHERE ${where.join(' AND ')} ` : '') +
     'ORDER BY t.cursor_seq DESC ' +

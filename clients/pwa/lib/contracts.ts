@@ -28,7 +28,7 @@ export type ClientTrade = {
   filing: {
     filedDate: string | null;
     firstSeenAt: string | null;
-    sourceUrl?: string;
+    sourceUrl: string | null;
   };
   confidence: number;
   source: 'primary' | 'seed_dataset';

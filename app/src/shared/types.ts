@@ -124,6 +124,8 @@ export interface Transaction {
   filedDate?: string | null;
   /** When our watcher first saw the filing (timestamp). Feed only. */
   firstSeenAt?: string | null;
+  /** Original public disclosure document URL. Feed only. */
+  sourceUrl?: string | null;
   // --- Optional cross-referenced asset data (securities_ref; feed only) ------
   // Populated when the ticker has been enriched; null/absent otherwise.
   refSector?: string | null;
@@ -239,7 +241,7 @@ export interface ClientTrade {
   filing: {
     filedDate: string | null;
     firstSeenAt: string | null;
-    sourceUrl?: string;
+    sourceUrl: string | null;
   };
   confidence: number;
   source: TxSource;
