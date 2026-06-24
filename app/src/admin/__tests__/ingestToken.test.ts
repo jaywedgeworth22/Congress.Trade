@@ -9,10 +9,10 @@ import { buildAdminRouter } from '../routes';
 
 const app = buildAdminRouter();
 
-function post(path: string, token: string | null, env: Record<string, unknown>) {
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
+function post(path: string, token: string | null, env: Record<string, unknown>, body = '{}', extraHeaders: Record<string, string> = {}) {
+  const headers: Record<string, string> = { 'content-type': 'application/json', ...extraHeaders };
   if (token) headers.Authorization = `Bearer ${token}`;
-  return app.request(path, { method: 'POST', headers, body: '{}' }, env as never);
+  return app.request(path, { method: 'POST', headers, body }, env as never);
 }
 
 describe('scoped INGEST_TOKEN', () => {
@@ -54,5 +54,24 @@ describe('scoped INGEST_TOKEN', () => {
   it('opens only when the local dev override is explicit', async () => {
     const res = await post('/securities/import', null, { ADMIN_OPEN_IN_DEV: 'true' });
     expect(res.status).toBe(200);
+  });
+
+  it('uses paid-plan import size defaults unless overridden', async () => {
+    const res = await post(
+      '/securities/import',
+      'ingest-secret',
+      env,
+      '{}',
+      { 'content-length': '1000000' },
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('lets env vars lower import caps for a lean profile', async () => {
+    const body = JSON.stringify({ prices: [{ ticker: 'A' }, { ticker: 'B' }, { ticker: 'C' }, { ticker: 'D' }] });
+    const res = await post('/securities/import', 'ingest-secret', { ...env, IMPORT_MAX_PRICES: '3' }, body);
+    expect(res.status).toBe(413);
+    const json = (await res.json()) as { limits: { prices: number } };
+    expect(json.limits.prices).toBe(3);
   });
 });

@@ -2,6 +2,19 @@ name = "congress-feed"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+# ---------------------------------------------------------------------------
+# Worker runtime limits
+# Paid Workers can run materially larger admin/import jobs than the free plan.
+# Keep explicit ceilings so a bad import cannot turn into an unbounded bill.
+# To run this same Worker on a lean/free-compatible profile later, lower or
+# remove this block and set the IMPORT_* vars below to smaller batches.
+# ---------------------------------------------------------------------------
+[limits]
+cpu_ms = 300_000
+subrequests = 10_000
 
 # ---------------------------------------------------------------------------
 # Custom domains. The congress.trade zone must be active on this Cloudflare
@@ -114,6 +127,16 @@ id = "b5554a8cd8b04347baeb80cd160bf1e0"
 # ---------------------------------------------------------------------------
 [vars]
 APP_BASE_URL = "https://congress.trade"
+# Paid-plan import guardrails. These are deliberately below platform maximums:
+# large enough to avoid tiny cross-app chunks, still bounded against runaway
+# JSON parse/DB-batch cost. Lower these vars for a lean/free-compatible profile.
+IMPORT_MAX_BYTES = "1500000"
+IMPORT_MAX_REFS = "2000"
+IMPORT_MAX_SPX = "5000"
+IMPORT_MAX_PRICES = "100"
+IMPORT_MAX_CLOSES_PER_TICKER = "1500"
+IMPORT_MAX_INSIDER = "5000"
+IMPORT_MAX_SHORT_VOLUME = "5000"
 # Stripe premium price ids (not secret) — created 2026-06-22 on the live account.
 STRIPE_PRICE_MONTHLY = "price_1TlHYBEUQUPhZj0SEzG2Qx68"
 STRIPE_PRICE_ANNUAL = "price_1TlHYCEUQUPhZj0SpNVoPb3Z"
