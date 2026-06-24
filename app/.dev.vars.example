@@ -45,6 +45,17 @@ INGEST_TOKEN=""
 APP_B_IMPORT_URL=""
 APP_B_INGEST_TOKEN=""
 
+# Cross-app import guardrails. Production wrangler.toml uses paid-plan defaults.
+# Lower these values to run a lean/free-compatible profile while keeping the
+# same code path and smaller upstream chunks.
+IMPORT_MAX_BYTES="1500000"
+IMPORT_MAX_REFS="2000"
+IMPORT_MAX_SPX="5000"
+IMPORT_MAX_PRICES="100"
+IMPORT_MAX_CLOSES_PER_TICKER="1500"
+IMPORT_MAX_INSIDER="5000"
+IMPORT_MAX_SHORT_VOLUME="5000"
+
 # Cloudflare Access (Zero Trust) sign-in for humans — an ALTERNATIVE/ADDITION to
 # the bearer token. With these set AND an Access application fronting
 # /api/admin/*, a request is authorized when its `Cf-Access-Jwt-Assertion` JWT

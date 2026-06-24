@@ -1497,24 +1497,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // performance anchors for imported tickers. Idempotent. Authorized by the
   // full ADMIN_TOKEN/Access OR the scoped INGEST_TOKEN (this endpoint only).
   r.post('/securities/import', async (c) => {
-    // This endpoint runs inside a normal Worker request. Keep callers honest:
-    // oversize JSON imports can exceed the CPU limit before useful work starts.
-    const MAX_IMPORT_BYTES = 300_000;
+    // This endpoint runs inside a normal Worker request. Keep callers honest.
+    // Paid Workers allow larger batches, but the cap remains configurable so
+    // the app can be dialed back without code changes.
+    const limits = importLimits(c.env);
     const contentLength = Number(c.req.header('content-length') ?? 0);
-    if (contentLength > MAX_IMPORT_BYTES) {
+    if (contentLength > limits.bytes) {
       return c.json(
         {
           error: 'import payload too large; split into smaller batches',
-          maxBytes: MAX_IMPORT_BYTES,
+          maxBytes: limits.bytes,
           receivedBytes: contentLength,
-          suggestedLimits: {
-            refs: 500,
-            spx: 1000,
-            prices: 25,
-            closesPerTicker: 750,
-            insider: 1000,
-            shortVolume: 1000,
-          },
+          suggestedLimits: importLimitResponse(limits),
         },
         413,
       );
@@ -1533,25 +1527,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     };
     const nowIso = new Date().toISOString();
     const oversized =
-      countArray(body.refs) > 500 ||
-      countArray(body.spx) > 1000 ||
-      countArray(body.prices) > 25 ||
-      countArray(body.insider) > 1000 ||
-      countArray(body.shortVolume) > 1000 ||
+      countArray(body.refs) > limits.refs ||
+      countArray(body.spx) > limits.spx ||
+      countArray(body.prices) > limits.prices ||
+      countArray(body.insider) > limits.insider ||
+      countArray(body.shortVolume) > limits.shortVolume ||
       (Array.isArray(body.prices) &&
-        (body.prices as Array<{ closes?: unknown }>).some((p) => countArray(p.closes) > 750));
+        (body.prices as Array<{ closes?: unknown }>).some((p) => countArray(p.closes) > limits.closesPerTicker));
     if (oversized) {
       return c.json(
         {
           error: 'import batch too large; split into smaller batches',
-          limits: {
-            refs: 500,
-            spx: 1000,
-            prices: 25,
-            closesPerTicker: 750,
-            insider: 1000,
-            shortVolume: 1000,
-          },
+          limits: importLimitResponse(limits),
         },
         413,
       );
@@ -1584,7 +1571,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     if (Array.isArray(body.spx)) {
       const rows = (body.spx as Array<{ date?: unknown; close?: unknown }>)
         .filter((x) => typeof x.date === 'string' && typeof x.close === 'number')
-        .slice(0, 1000);
+        .slice(0, limits.spx);
       for (let i = 0; i < rows.length; i += 100) {
         await c.env.DB.batch(
           rows.slice(i, i + 100).map((x) =>
@@ -1606,7 +1593,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         const closes = Array.isArray(o.closes)
           ? (o.closes as Array<{ date?: unknown; close?: unknown; volume?: unknown }>)
               .filter((x) => typeof x.date === 'string' && typeof x.close === 'number')
-              .slice(0, 750)
+              .slice(0, limits.closesPerTicker)
           : [];
         try {
           for (let i = 0; i < closes.length; i += 100) {
@@ -1660,7 +1647,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     if (Array.isArray(body.insider)) {
       const rows = (body.insider as Array<Record<string, unknown>>)
         .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
-        .slice(0, 1000);
+        .slice(0, limits.insider);
       for (let i = 0; i < rows.length; i += 100) {
         await c.env.DB.batch(
           rows.slice(i, i + 100).map((o) =>
@@ -1694,7 +1681,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     if (Array.isArray(body.shortVolume)) {
       const rows = (body.shortVolume as Array<Record<string, unknown>>)
         .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
-        .slice(0, 1000);
+        .slice(0, limits.shortVolume);
       for (let i = 0; i < rows.length; i += 100) {
         await c.env.DB.batch(
           rows.slice(i, i + 100).map((o) =>
@@ -1864,6 +1851,73 @@ function safeJson(s: string): unknown {
   } catch {
     return s;
   }
+}
+
+type ImportLimits = {
+  bytes: number;
+  refs: number;
+  spx: number;
+  prices: number;
+  closesPerTicker: number;
+  insider: number;
+  shortVolume: number;
+};
+
+const DEFAULT_IMPORT_LIMITS: ImportLimits = {
+  bytes: 1_500_000,
+  refs: 2_000,
+  spx: 5_000,
+  prices: 100,
+  closesPerTicker: 1_500,
+  insider: 5_000,
+  shortVolume: 5_000,
+};
+
+const MAX_IMPORT_LIMITS: ImportLimits = {
+  bytes: 3_000_000,
+  refs: 5_000,
+  spx: 10_000,
+  prices: 250,
+  closesPerTicker: 3_000,
+  insider: 10_000,
+  shortVolume: 10_000,
+};
+
+function positiveIntSetting(raw: string | undefined, fallback: number, max: number): number {
+  const n = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(Math.floor(n), max);
+}
+
+function importLimits(env: Env): ImportLimits {
+  return {
+    bytes: positiveIntSetting(env.IMPORT_MAX_BYTES, DEFAULT_IMPORT_LIMITS.bytes, MAX_IMPORT_LIMITS.bytes),
+    refs: positiveIntSetting(env.IMPORT_MAX_REFS, DEFAULT_IMPORT_LIMITS.refs, MAX_IMPORT_LIMITS.refs),
+    spx: positiveIntSetting(env.IMPORT_MAX_SPX, DEFAULT_IMPORT_LIMITS.spx, MAX_IMPORT_LIMITS.spx),
+    prices: positiveIntSetting(env.IMPORT_MAX_PRICES, DEFAULT_IMPORT_LIMITS.prices, MAX_IMPORT_LIMITS.prices),
+    closesPerTicker: positiveIntSetting(
+      env.IMPORT_MAX_CLOSES_PER_TICKER,
+      DEFAULT_IMPORT_LIMITS.closesPerTicker,
+      MAX_IMPORT_LIMITS.closesPerTicker,
+    ),
+    insider: positiveIntSetting(env.IMPORT_MAX_INSIDER, DEFAULT_IMPORT_LIMITS.insider, MAX_IMPORT_LIMITS.insider),
+    shortVolume: positiveIntSetting(
+      env.IMPORT_MAX_SHORT_VOLUME,
+      DEFAULT_IMPORT_LIMITS.shortVolume,
+      MAX_IMPORT_LIMITS.shortVolume,
+    ),
+  };
+}
+
+function importLimitResponse(limits: ImportLimits): Omit<ImportLimits, 'bytes'> {
+  return {
+    refs: limits.refs,
+    spx: limits.spx,
+    prices: limits.prices,
+    closesPerTicker: limits.closesPerTicker,
+    insider: limits.insider,
+    shortVolume: limits.shortVolume,
+  };
 }
 
 function countArray(v: unknown): number {

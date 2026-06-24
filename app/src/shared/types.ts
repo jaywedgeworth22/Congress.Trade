@@ -443,4 +443,12 @@ export interface Env {
   // --- Plain vars (.dev.vars / [vars]) ---
   /** "true" to force arbitration on when configured. */
   ARBITRATION_ENABLED?: string;
+  /** Cross-app import guardrails. Tune down for lean/free-compatible runs. */
+  IMPORT_MAX_BYTES?: string;
+  IMPORT_MAX_REFS?: string;
+  IMPORT_MAX_SPX?: string;
+  IMPORT_MAX_PRICES?: string;
+  IMPORT_MAX_CLOSES_PER_TICKER?: string;
+  IMPORT_MAX_INSIDER?: string;
+  IMPORT_MAX_SHORT_VOLUME?: string;
 }
