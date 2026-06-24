@@ -52,6 +52,12 @@ Usable today for a read-only PWA/iOS MVP:
 - `GET /api/members`
 - `GET /api/analytics/*`
 - `GET /api/market/bundle/:ticker`
+- `GET /api/client/v1/bootstrap`
+- `GET /api/client/v1/me`
+- `GET /api/client/v1/feed`
+- `GET /api/client/v1/preferences`
+- `GET /api/client/v1/subscriptions`
+- `GET /api/client/v1/commands`
 
 Not ready as production client primitives:
 
@@ -69,9 +75,11 @@ Not ready as production client primitives:
 Read endpoints:
 
 - `GET /api/client/v1/bootstrap`
-  - user, entitlement, feature flags, latest cursor, default filters.
-- `GET /api/client/v1/feed?since=&limit=&filters=...`
-  - phone-shaped trade cards and next cursor.
+  - `serverTime`, user, entitlement, capability flags, and endpoint pointers.
+- `GET /api/client/v1/me`
+  - user and entitlement payload for authenticated clients.
+- `GET /api/client/v1/feed?since=&limit=&ticker=&member=&chamber=&type=&from=&to=&order=...`
+  - phone-shaped trade cards plus cursor/count/total metadata.
 - `GET /api/client/v1/trades/:id`
   - trade detail, filing, company/member summaries, legal/educational notices.
 - `GET /api/client/v1/tickers/:ticker`
@@ -80,16 +88,21 @@ Read endpoints:
   - member profile + activity.
 - `GET /api/client/v1/analytics/summary`
   - compact KPI and trend cards for phone dashboards.
+- `GET /api/client/v1/preferences`
+  - account preferences for the signed-in user.
+- `GET /api/client/v1/subscriptions`
+  - account-owned delivery subscriptions.
 
 Command endpoints:
 
 - `POST /api/client/v1/commands`
   - body: `{ type, payload, idempotencyKey }`
-  - returns: `{ commandId, status }`
+  - returns `{ command, result }` on success, `{ command, error }` on failure,
+    and `{ command, replayed: true }` for idempotency replays.
 - `GET /api/client/v1/commands/:id`
   - status, audit trail, validation errors, resulting resource ids.
 - `GET /api/client/v1/commands/stream`
-  - foreground status stream for pending commands when supported.
+  - not implemented yet; clients should poll `GET /api/client/v1/commands/:id`.
 
 Account-owned alert endpoints:
 
@@ -136,6 +149,8 @@ Initial command types:
 
 - Implemented: `update_preferences`, `create_subscription`,
   `update_subscription`.
+- Defined in shared types but not yet routed through the client API:
+  `start_checkout`, `request_export`.
 - Next: `alert.create`, `alert.update`, `alert.pause`,
   `deliverySubscription.rotateSecret`, `deliverySubscription.testDelivery`,
   `device.register`.
@@ -146,9 +161,11 @@ Policy:
   directly.
 - The backend validates account ownership and entitlement before a command is
   queued.
-- Commands are idempotent by `requestedBy + idempotencyKey`.
+- Commands are idempotent by authenticated `userId + idempotencyKey`.
 - Long-running commands report status through polling and, where supported,
   foreground streaming.
+- Current clients should poll because the command stream route is not
+  implemented yet.
 
 ## PWA UX Direction
 

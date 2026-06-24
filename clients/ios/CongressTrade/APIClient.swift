@@ -6,32 +6,78 @@ protocol SessionTokenStore {
     func clear() throws
 }
 
-final class CongressTradeAPI: ObservableObject {
+struct FeedQuery: Equatable {
+    var limit: Int = 30
+    var since: Int?
+    var ticker: String?
+    var member: String?
+    var chamber: String?
+    var type: String?
+    var from: String?
+    var to: String?
+    var order: String?
+
+    var queryItems: [URLQueryItem] {
+        var items = [URLQueryItem(name: "limit", value: String(limit))]
+        if let since { items.append(URLQueryItem(name: "since", value: String(since))) }
+        if let ticker, !ticker.isEmpty { items.append(URLQueryItem(name: "ticker", value: ticker)) }
+        if let member, !member.isEmpty { items.append(URLQueryItem(name: "member", value: member)) }
+        if let chamber, !chamber.isEmpty { items.append(URLQueryItem(name: "chamber", value: chamber)) }
+        if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
+        if let from, !from.isEmpty { items.append(URLQueryItem(name: "from", value: from)) }
+        if let to, !to.isEmpty { items.append(URLQueryItem(name: "to", value: to)) }
+        if let order, !order.isEmpty { items.append(URLQueryItem(name: "order", value: order)) }
+        return items
+    }
+}
+
+final class CongressTradeAPIClient {
     private let baseURL: URL
     private let tokenStore: SessionTokenStore
     private let session: URLSession
-    private let decoder = JSONDecoder()
+    private let decoder: JSONDecoder
 
     init(
-        baseURL: URL = URL(string: "https://congress.trade/api/client/v1")!,
-        tokenStore: SessionTokenStore,
+        baseURL: URL = CongressTradeAPIClient.defaultBaseURL,
+        tokenStore: SessionTokenStore = KeychainTokenStore(),
         session: URLSession = .shared
     ) {
         self.baseURL = baseURL
         self.tokenStore = tokenStore
         self.session = session
+        self.decoder = JSONDecoder()
+    }
+
+    static var defaultBaseURL: URL {
+        if let raw = ProcessInfo.processInfo.environment["CONGRESS_TRADE_API_BASE_URL"],
+           let url = URL(string: raw) {
+            return url
+        }
+        return URL(string: "https://congress.trade/api/client/v1")!
     }
 
     func bootstrap() async throws -> BootstrapResponse {
         try await get("bootstrap")
     }
 
-    func feed(limit: Int = 50, since: Int? = nil) async throws -> ClientFeedResponse {
-        var components = URLComponents(url: baseURL.appending(path: "feed"), resolvingAgainstBaseURL: false)!
-        var items = [URLQueryItem(name: "limit", value: String(limit))]
-        if let since { items.append(URLQueryItem(name: "since", value: String(since))) }
-        components.queryItems = items
+    func feed(query: FeedQuery = .init()) async throws -> ClientFeedResponse {
+        var components = URLComponents(url: endpointURL("feed"), resolvingAgainstBaseURL: false)!
+        components.queryItems = query.queryItems
         return try await request(components.url!)
+    }
+
+    func subscriptions() async throws -> SubscriptionListResponse {
+        try await get("subscriptions")
+    }
+
+    func commands(limit: Int = 20) async throws -> CommandListResponse {
+        var components = URLComponents(url: endpointURL("commands"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        return try await request(components.url!)
+    }
+
+    func command(id: String) async throws -> ClientCommandResponse<JSONValue> {
+        try await get("commands/\(id)")
     }
 
     func createSSESubscription(tickers: [String]) async throws -> ClientCommandResponse<SubscriptionCommandResult> {
@@ -61,17 +107,56 @@ final class CongressTradeAPI: ObservableObject {
         )
     }
 
+    func updatePreferences(tickers: [String]) async throws -> ClientCommandResponse<JSONValue> {
+        try await postCommand(
+            idempotencyKey: "ios-prefs-\(tickers.map { $0.uppercased() }.joined(separator: "-"))",
+            body: [
+                "type": "update_preferences",
+                "payload": [
+                    "watchlist": tickers,
+                    "defaultWindow": "all"
+                ]
+            ]
+        )
+    }
+
+    func updateSubscription(
+        id: String,
+        active: Bool?,
+        targetURL: String?,
+        tickers: [String]
+    ) async throws -> ClientCommandResponse<SubscriptionCommandResult> {
+        var payload: [String: Any] = ["id": id]
+        if let active {
+            payload["active"] = active
+        }
+        if let targetURL {
+            payload["targetUrl"] = targetURL
+        }
+        payload["filters"] = ["tickers": tickers]
+        return try await postCommand(
+            idempotencyKey: "ios-update-\(id)-\(active.map(String.init) ?? "noop")-\(tickers.joined(separator: "-"))",
+            body: [
+                "type": "update_subscription",
+                "payload": payload
+            ]
+        )
+    }
+
+    private func endpointURL(_ path: String) -> URL {
+        baseURL.appendingPathComponent(path)
+    }
+
     private func get<T: Decodable>(_ path: String) async throws -> T {
-        try await request(baseURL.appending(path: path))
+        try await request(endpointURL(path))
     }
 
     private func postCommand<T: Decodable>(idempotencyKey: String, body: [String: Any]) async throws -> T {
-        let url = baseURL.appending(path: "commands")
-        var request = try makeRequest(url)
+        var request = try makeRequest(endpointURL("commands"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
         return try await send(request)
     }
 
@@ -83,7 +168,10 @@ final class CongressTradeAPI: ObservableObject {
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "accept")
         if let token = try tokenStore.load() {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "authorization")
+            let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                request.setValue("Bearer \(trimmed)", forHTTPHeaderField: "authorization")
+            }
         }
         return request
     }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildClientRouter } from '../routes';
 import { createSession } from '../../auth/session';
 import type { Env, QueueMessage } from '../../shared/types';
-import type { SubscriptionRow } from '../../delivery/rows';
+import type { FeedTransactionRow, SubscriptionRow } from '../../delivery/rows';
 import type { CommandRow } from '../state';
 
 type PrefRow = {
@@ -32,6 +32,7 @@ function makeEnv() {
   const subscriptions = new Map<string, SubscriptionRow>();
   const commands = new Map<string, CommandRow>();
   const preferences = new Map<string, PrefRow>();
+  const feedRows: FeedTransactionRow[] = [];
 
   const prepare = (sql: string) => ({
     params: [] as unknown[],
@@ -60,7 +61,7 @@ function makeEnv() {
         return (subscriptions.get(String(this.params[0])) ?? null) as T | null;
       }
       if (/COUNT\(\*\) AS total/i.test(sql)) {
-        return { total: 0 } as T;
+        return { total: feedRows.length } as T;
       }
       return null as T | null;
     },
@@ -74,6 +75,9 @@ function makeEnv() {
         return {
           results: Array.from(subscriptions.values()).filter((row) => row.client_id === this.params[0]) as T[],
         };
+      }
+      if (/FROM transactions t/i.test(sql)) {
+        return { results: feedRows as T[] };
       }
       return { results: [] as T[] };
     },
@@ -148,7 +152,7 @@ function makeEnv() {
     DELIVERY_QUEUE: { send: async (_msg: QueueMessage) => {} },
   } as unknown as Env;
 
-  return { env, subscriptions, commands, preferences };
+  return { env, subscriptions, commands, preferences, feedRows };
 }
 
 async function bearer(env: Env): Promise<string> {
@@ -162,7 +166,26 @@ describe('client API routes', () => {
 
     const bootstrap = await app.request('http://localhost/bootstrap', {}, env);
     expect(bootstrap.status).toBe(200);
-    expect(((await bootstrap.json()) as { auth: { user: unknown } }).auth.user).toBeNull();
+    expect((await bootstrap.json()) as {
+      auth: { user: unknown };
+      capabilities: Record<string, boolean>;
+      endpoints: Record<string, string>;
+    }).toMatchObject({
+      auth: { user: null },
+      capabilities: {
+        feed: true,
+        sse: true,
+        webhooks: false,
+        commands: false,
+        preferences: false,
+      },
+      endpoints: {
+        feed: '/api/client/v1/feed',
+        commands: '/api/client/v1/commands',
+        preferences: '/api/client/v1/preferences',
+        subscriptions: '/api/client/v1/subscriptions',
+      },
+    });
 
     const feed = await app.request('http://localhost/feed?limit=5', {}, env);
     expect(feed.status).toBe(200);
@@ -175,6 +198,53 @@ describe('client API routes', () => {
     const res = await app.request('http://localhost/me', { headers: { authorization: await bearer(env) } }, env);
     expect(res.status).toBe(200);
     expect(((await res.json()) as { user: { email: string } }).user.email).toBe('mobile@example.com');
+  });
+
+  it('returns source document URLs in phone-shaped feed rows', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push({
+      id: 'tx_1',
+      doc_id: 'H-2026-20034784',
+      filer_id: 'P000197',
+      tx_date: '2026-05-05',
+      owner: 'spouse',
+      asset_name: 'Austin TX ARPT SYS TRAN',
+      ticker: null,
+      asset_type: 'GS',
+      tx_type: 'P',
+      amount_min: 50001,
+      amount_max: 100000,
+      is_option: 0,
+      cap_gains_over_200: 0,
+      raw_text: 'SP Austin TX ARPT SYS TRAN [GS] P 05/05/2026 05/31/2026 $50,001 - $100,000',
+      confidence: 0.9,
+      source: 'primary',
+      row_key: 'v1:primary:0:example',
+      created_at: '2026-06-22T13:01:49.646Z',
+      cursor_seq: 7472,
+      filer_full_name: 'Scott Peters',
+      filer_state: 'CA',
+      filer_photo_url: null,
+      filing_filed_date: '2026-06-19',
+      filing_first_seen_at: '2026-06-22T13:01:15.667Z',
+      filing_source_url: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034784.pdf',
+      __chamber: 'house',
+      __member_name: 'Scott Peters',
+      __party: null,
+    } as FeedTransactionRow & { __chamber: string; __member_name: string; __party: null });
+
+    const app = buildClientRouter();
+    const res = await app.request('http://localhost/feed?limit=1', {}, env);
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { items: Array<{ filing: { sourceUrl: string } }> }).toMatchObject({
+      items: [
+        {
+          filing: {
+            sourceUrl: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034784.pdf',
+          },
+        },
+      ],
+    });
   });
 
   it('updates preferences through an authenticated command', async () => {
@@ -226,5 +296,27 @@ describe('client API routes', () => {
     expect(((await replay.json()) as { replayed: boolean }).replayed).toBe(true);
     expect(subscriptions.size).toBe(1);
     expect(commands.size).toBe(1);
+  });
+
+  it('rejects unsupported client command types with 501', async () => {
+    const { env } = makeEnv();
+    const app = buildClientRouter();
+    const res = await app.request(
+      'http://localhost/commands',
+      {
+        method: 'POST',
+        headers: { authorization: await bearer(env), 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'start_checkout',
+          payload: {},
+          idempotencyKey: 'checkout-1',
+        }),
+      },
+      env,
+    );
+    expect(res.status).toBe(501);
+    expect((await res.json()) as { error: string }).toMatchObject({
+      error: 'start_checkout is not implemented yet',
+    });
   });
 });

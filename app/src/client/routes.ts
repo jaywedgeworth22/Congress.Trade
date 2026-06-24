@@ -220,6 +220,7 @@ function clientTradeFromRow(row: FeedTransactionRow & { __chamber?: string | nul
     filing: {
       filedDate: tx.filedDate ?? null,
       firstSeenAt: tx.firstSeenAt ?? null,
+      sourceUrl: tx.sourceUrl ?? null,
     },
     confidence: tx.confidence,
     source: tx.source,
