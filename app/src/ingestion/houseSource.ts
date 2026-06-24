@@ -37,6 +37,8 @@ export interface HouseFiling {
   last: string;
   /** State + district string, e.g. "CA01" (StateDst element). */
   stateDst: string;
+  /** Filing/report date as published by the House index, usually M/D/YYYY. */
+  filingDate: string;
   /** True when this is a PTR (filingType 'P'). */
   isPtr: boolean;
   /** Canonical pipeline doc id: `H-{year}-{DocID}`. */
@@ -116,6 +118,7 @@ export function parseHouseIndexXml(xml: string, defaultYear: string): HouseFilin
     const first = tagText(chunk, 'First');
     const last = tagText(chunk, 'Last');
     const stateDst = tagText(chunk, 'StateDst');
+    const filingDate = tagText(chunk, 'FilingDate');
     const isPtr = filingType.toUpperCase() === 'P';
     out.push({
       docId,
@@ -124,6 +127,7 @@ export function parseHouseIndexXml(xml: string, defaultYear: string): HouseFilin
       first,
       last,
       stateDst,
+      filingDate,
       isPtr,
       pipelineDocId: houseDocId(year, docId),
       sourceUrl: housePtrPdfUrl(year, docId),
@@ -282,6 +286,7 @@ export function parseHouseSearchHtml(html: string, defaultYear: string): HouseFi
       first,
       last,
       stateDst,
+      filingDate: '',
       isPtr: true,
       pipelineDocId: houseDocId(year, docId),
       sourceUrl: href.startsWith('http')

@@ -36,6 +36,18 @@ export interface DiscoveredFiling {
   docId: string;
   chamber: 'house' | 'senate';
   sourceUrl: string;
+  /** Official filing/report date when the source index provides it. */
+  filedDate?: string | null;
+}
+
+function normalizeFilingDate(raw: string | null | undefined): string | null {
+  const s = (raw ?? '').trim();
+  if (!s) return null;
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s);
+  if (us) return `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`;
+  return s.slice(0, 10);
 }
 
 /**
@@ -58,9 +70,9 @@ export async function insertFilingIfNew(
        (doc_id, chamber, filer_id, filing_type, filed_date, source_url,
         raw_object_key, ingest_status, doc_kind, extractor, model_version,
         confidence, first_seen_at, source_updated_at, error)
-     VALUES (?, ?, NULL, 'P', NULL, ?, NULL, 'new', 'unknown', NULL, NULL,
+     VALUES (?, ?, NULL, 'P', ?, ?, NULL, 'new', 'unknown', NULL, NULL,
              NULL, ?, NULL, NULL)`,
-    [f.docId, f.chamber, f.sourceUrl, nowIso],
+    [f.docId, f.chamber, normalizeFilingDate(f.filedDate), f.sourceUrl, nowIso],
   );
   return (res.meta?.changes ?? 0) > 0;
 }
@@ -145,6 +157,7 @@ async function pollHouse(env: Env, now: Date): Promise<void> {
       docId: f.pipelineDocId,
       chamber: 'house',
       sourceUrl: f.sourceUrl,
+      filedDate: f.filingDate,
     });
   }
   if (houseLiveSearchEnabled(env)) {
@@ -156,6 +169,7 @@ async function pollHouse(env: Env, now: Date): Promise<void> {
             docId: f.pipelineDocId,
             chamber: 'house',
             sourceUrl: f.sourceUrl,
+            filedDate: f.filingDate,
           });
         }
       }
@@ -181,6 +195,7 @@ async function pollSenate(env: Env, now: Date): Promise<void> {
     docId: f.pipelineDocId,
     chamber: 'senate',
     sourceUrl: f.sourceUrl,
+    filedDate: f.filedDate,
   }));
   const newCount = await persistAndEnqueue(env, discovered, nowIso);
   await logPoll(env, 'senate', nowIso, newCount, nowIso);

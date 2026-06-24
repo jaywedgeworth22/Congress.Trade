@@ -213,7 +213,11 @@ describe('ticker deep-dive builders', () => {
   });
   it('recent trades order by date desc and clamp the limit', () => {
     const q = buildTickerRecentTradesQuery('AAPL', { window: 'all', limit: 999 });
+    expect(q.sql).toContain('t.id AS id');
+    expect(q.sql).toContain('t.doc_id AS doc_id');
     expect(q.sql).toContain('t.filer_id AS filer_id');
+    expect(q.sql).toContain('f.filed_date AS filed_date');
+    expect(q.sql).toContain('f.source_url AS source_url');
     expect(q.sql).toContain('ORDER BY t.tx_date DESC, t.cursor_seq DESC');
     expect(q.sql).toContain('LIMIT 100');
   });

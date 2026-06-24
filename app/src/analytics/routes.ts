@@ -519,6 +519,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         topBuyers: buyerRows.map(mapTrader),
         topSellers: sellerRows.map(mapTrader),
         recentTrades: recentRows.map((row) => ({
+          id: str(row.id),
+          docId: str(row.doc_id),
           txDate: str(row.tx_date),
           txType: str(row.tx_type),
           owner: str(row.owner),
@@ -533,6 +535,10 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           fullName: str(row.full_name),
           partyBucket: asPartyBucket(row.party) ?? null,
           photoUrl: str(row.photo_url),
+          filedDate: str(row.filed_date),
+          firstSeenAt: str(row.first_seen_at),
+          sourceUrl: str(row.source_url),
+          createdAt: str(row.created_at),
         })),
       });
     });
@@ -650,6 +656,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           txType: str(row.tx_type),
           txDate: str(row.tx_date),
           filedDate: str(row.filed_date),
+          firstSeenAt: str(row.first_seen_at),
+          createdAt: str(row.created_at),
           sourceUrl: str(row.source_url),
           owner: str(row.owner),
           isOption: num(row.is_option) === 1,

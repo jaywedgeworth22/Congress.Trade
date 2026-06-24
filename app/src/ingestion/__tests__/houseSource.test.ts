@@ -51,6 +51,7 @@ describe('parseHouseIndexXml', () => {
     expect(ptr.first).toBe('Jane');
     expect(ptr.last).toBe('Smith');
     expect(ptr.stateDst).toBe('CA01');
+    expect(ptr.filingDate).toBe('1/2/2024');
     expect(ptr.pipelineDocId).toBe('H-2024-20012345');
     expect(ptr.sourceUrl).toBe(
       'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2024/20012345.pdf',

@@ -20,6 +20,7 @@ function filing(year: number, docId: string, filingType: string): HouseFiling {
     first: 'Test',
     last: 'Member',
     stateDst: 'CA01',
+    filingDate: `1/2/${year}`,
     isPtr,
     pipelineDocId: `H-${year}-${docId}`,
     sourceUrl: `https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/${year}/${docId}.pdf`,
@@ -31,9 +32,10 @@ function filing(year: number, docId: string, filingType: string): HouseFiling {
  * new) UNLESS the doc_id has been seen before in this run — mirroring real
  * INSERT OR IGNORE de-duplication so we can assert idempotency.
  */
-function fakeEnv(): { env: Env; sent: QueueMessage[]; seen: Set<string> } {
+function fakeEnv(): { env: Env; sent: QueueMessage[]; seen: Set<string>; writes: unknown[][] } {
   const sent: QueueMessage[] = [];
   const seen = new Set<string>();
+  const writes: unknown[][] = [];
 
   const db = {
     prepare(_sql: string) {
@@ -45,6 +47,7 @@ function fakeEnv(): { env: Env; sent: QueueMessage[]; seen: Set<string> } {
         },
         run() {
           // First bound param is doc_id in the crawler's INSERT.
+          writes.push(bound);
           const docId = String(bound[0]);
           const isNew = !seen.has(docId);
           if (isNew) seen.add(docId);
@@ -65,7 +68,7 @@ function fakeEnv(): { env: Env; sent: QueueMessage[]; seen: Set<string> } {
     },
   } as unknown as Env;
 
-  return { env, sent, seen };
+  return { env, sent, seen, writes };
 }
 
 /** Build an injectable index impl from a year->filings map. */
@@ -77,7 +80,7 @@ function indexImpl(byYear: Record<number, HouseFiling[]>): HouseBackfillOptions[
 
 describe('runHouseHistoricalBackfill', () => {
   it('iterates the inclusive year range and only enqueues PTRs (FilingType P)', async () => {
-    const { env, sent } = fakeEnv();
+    const { env, sent, writes } = fakeEnv();
     const data: Record<number, HouseFiling[]> = {
       2014: [filing(2014, '100', 'P'), filing(2014, '101', 'O') /* annual, not PTR */],
       2015: [filing(2015, '200', 'P'), filing(2015, '201', 'A') /* amendment */],
@@ -96,6 +99,7 @@ describe('runHouseHistoricalBackfill', () => {
     expect(res.enqueued).toBe(2);
     expect(res.skipped).toBe(0);
     expect(res.byYear).toEqual({ '2014': 1, '2015': 1 });
+    expect(writes.map((w) => w[2])).toEqual(['2014-01-02', '2015-01-02']);
 
     // Exactly the two PTR doc ids, with the watcher-identical message shape.
     expect(sent).toEqual([
