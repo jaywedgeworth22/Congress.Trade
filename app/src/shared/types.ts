@@ -94,12 +94,18 @@ export interface Transaction {
   assetName: string;
   ticker: string | null;
   assetType: string | null;
+  assetTypeName?: string | null;
   txType: TxType;
   amountMin: number | null;
   amountMax: number | null;
   isOption: boolean;
   capGainsOver200: boolean;
   rawText: string;
+  filingStatus?: string | null;
+  subholding?: string | null;
+  location?: string | null;
+  description?: string | null;
+  supplementalText?: string | null;
   confidence: number;
   /** Provenance: live pipeline ('primary') vs backfill ('seed_dataset'). */
   source: TxSource;
@@ -148,6 +154,7 @@ export interface ParsedTx {
   /** Raw ticker as seen in the document; may be null/garbage pre-resolution. */
   ticker: string | null;
   assetType: string | null;
+  assetTypeName?: string | null;
   txType: TxType;
   amountMin: number | null;
   amountMax: number | null;
@@ -155,6 +162,12 @@ export interface ParsedTx {
   capGainsOver200: boolean;
   /** Verbatim source text for this row, for audit/review. */
   rawText: string;
+  /** Structured/detail text that belongs to this filing row, not page chrome. */
+  filingStatus?: string | null;
+  subholding?: string | null;
+  location?: string | null;
+  description?: string | null;
+  supplementalText?: string | null;
   /** Per-row extractor confidence in [0,1]. */
   confidence: number;
 }

@@ -24,6 +24,7 @@ import { all, get } from '../shared/db';
 import {
   buildTransactionsQuery,
   buildTransactionsCountQuery,
+  buildTransactionsTodayFilingsQuery,
   buildTransactionsExportQuery,
   mapFiling,
   mapTransaction,
@@ -158,11 +159,16 @@ function asOrder(v: string | undefined): 'asc' | 'desc' | undefined {
   return v === 'desc' ? 'desc' : v === 'asc' ? 'asc' : undefined;
 }
 
+function asTxSort(v: string | undefined): TxQueryParams['sort'] {
+  return v === 'published' ? 'published' : v === 'cursor' ? 'cursor' : undefined;
+}
+
 /** Parse the shared ticker/member/type/chamber filters from the query string. */
 function filtersFromQuery(q: Record<string, string>): TxQueryParams {
   return {
     ticker: q.ticker || undefined,
     member: q.member || undefined,
+    memberName: q.memberName || undefined,
     chamber: asChamber(q.chamber),
     type: asTxType(q.type),
     txDateMin: q.from || q.txDateMin || undefined,
@@ -219,13 +225,16 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // on datasets without recent filings.)
     const params: TxQueryParams = {
       since: parseIntOrUndef(q.since),
+      offset: parseIntOrUndef(q.offset),
       ticker: q.ticker || undefined,
       member: q.member || undefined,
+      memberName: q.memberName || undefined,
       chamber: asChamber(q.chamber),
       type: asTxType(q.type),
       txDateMin: q.from || q.txDateMin || undefined,
       txDateMax: q.to || q.txDateMax || undefined,
       order: asOrder(q.order),
+      sort: asTxSort(q.sort),
       limit: parseIntOrUndef(q.limit),
     };
     const built = buildTransactionsQuery(params);
@@ -251,12 +260,17 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const countQuery = buildTransactionsCountQuery(params);
     const countRow = await get<{ total: number }>(c.env.DB, countQuery.sql, countQuery.params);
     const total = countRow?.total ?? transactions.length;
+    const today = new Date().toISOString().slice(0, 10);
+    const todayQuery = buildTransactionsTodayFilingsQuery(params, today);
+    const todayRow = await get<{ total: number }>(c.env.DB, todayQuery.sql, todayQuery.params);
     return c.json({
       transactions,
       cursor: maxCursor,
       count: transactions.length,
       total,
+      filingsImportedToday: todayRow?.total ?? 0,
       limit: built.limit,
+      offset: built.offset,
     });
   });
 

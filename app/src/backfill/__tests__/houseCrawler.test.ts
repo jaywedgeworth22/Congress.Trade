@@ -38,7 +38,7 @@ function fakeEnv(): { env: Env; sent: QueueMessage[]; seen: Set<string>; writes:
   const writes: unknown[][] = [];
 
   const db = {
-    prepare(_sql: string) {
+    prepare(sql: string) {
       let bound: unknown[] = [];
       const stmt = {
         bind(...args: unknown[]) {
@@ -46,8 +46,11 @@ function fakeEnv(): { env: Env; sent: QueueMessage[]; seen: Set<string>; writes:
           return stmt;
         },
         run() {
-          // First bound param is doc_id in the crawler's INSERT.
           writes.push(bound);
+          if (!/INSERT OR IGNORE INTO filings/i.test(sql)) {
+            return Promise.resolve({ meta: { changes: 1 } } as unknown as D1Result);
+          }
+          // First bound param is doc_id in the crawler's filings INSERT.
           const docId = String(bound[0]);
           const isNew = !seen.has(docId);
           if (isNew) seen.add(docId);
@@ -99,7 +102,12 @@ describe('runHouseHistoricalBackfill', () => {
     expect(res.enqueued).toBe(2);
     expect(res.skipped).toBe(0);
     expect(res.byYear).toEqual({ '2014': 1, '2015': 1 });
-    expect(writes.map((w) => w[2])).toEqual(['2014-01-02', '2015-01-02']);
+    const filingWrites = writes.filter((w) => String(w[0]).startsWith('H-'));
+    expect(filingWrites.map((w) => w[3])).toEqual(['2014-01-02', '2015-01-02']);
+    expect(filingWrites.map((w) => w[2])).toEqual([
+      'house-ca01-test-member',
+      'house-ca01-test-member',
+    ]);
 
     // Exactly the two PTR doc ids, with the watcher-identical message shape.
     expect(sent).toEqual([
