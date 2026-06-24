@@ -213,6 +213,18 @@ export interface TxQueryParams {
    */
   txDateMin?: string;
   txDateMax?: string;
+  /**
+   * Sort direction on `cursor_seq`. Defaults to `'asc'` (oldest-first), which
+   * preserves the forward-cursor reconciliation contract: callers page by
+   * feeding the returned max `cursor` back as the next `since`, so an
+   * incremental sync resumes gap-free. Pass `'desc'` for a newest-first
+   * "latest trades" snapshot (e.g. a sibling app rendering the most recent N) —
+   * pair it with `?from=` to bound the window. DESC is a snapshot, not a
+   * resumable forward pager, so incremental-sync consumers should keep the
+   * default. Only the closed `'asc'|'desc'` literal reaches the SQL, never raw
+   * caller text.
+   */
+  order?: 'asc' | 'desc';
 }
 
 export interface BuiltQuery {
@@ -312,9 +324,10 @@ function buildTxFilters(
 }
 
 /**
- * Build the parameterized SQL for `GET /transactions`. Always orders by
- * cursor_seq ASC (so callers can use the max returned cursor to page forward)
- * and only returns rows with cursor_seq > since (the reconciliation backstop).
+ * Build the parameterized SQL for `GET /transactions`. Orders by cursor_seq
+ * ASC by default (so callers can use the max returned cursor to page forward),
+ * or DESC when `order: 'desc'` for a newest-first snapshot; always returns only
+ * rows with cursor_seq > since (the reconciliation backstop).
  *
  * `chamber` is resolved via the `filers` table (authoritative for seed data),
  * falling back to the owning filing's chamber. The member's full name and
@@ -330,6 +343,10 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
   if (limit <= 0) limit = DEFAULT_TX_LIMIT;
   if (limit > MAX_TX_LIMIT) limit = MAX_TX_LIMIT;
 
+  // Closed enum -> only the literal 'ASC'/'DESC' is interpolated, never caller
+  // text. ASC stays the default to keep the forward-cursor paging contract.
+  const direction = p.order === 'desc' ? 'DESC' : 'ASC';
+
   const sql =
     `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, fl.party AS __party, ` +
     'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
@@ -338,7 +355,7 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
     'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at ' +
     TX_FROM_JOINS +
     `WHERE ${where.join(' AND ')} ` +
-    'ORDER BY t.cursor_seq ASC ' +
+    `ORDER BY t.cursor_seq ${direction} ` +
     `LIMIT ${limit}`;
 
   return { sql, params, limit };
