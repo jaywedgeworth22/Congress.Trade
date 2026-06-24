@@ -65,6 +65,11 @@ async function markError(env: Env, docId: string, message: string): Promise<void
   );
 }
 
+function isProviderRateLimit(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /\b(429|too many requests|quota exceeded|rate[- ]?limit)\b/i.test(message);
+}
+
 /**
  * Extract + normalize a classified filing.
  *
@@ -146,9 +151,13 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
   try {
     result = await extractor.extract({ filing, bytes, html });
   } catch (err) {
-    const message = `orchestrator: ${extractor.name} failed: ${(err as Error).message}`;
+    const detail = (err as Error).message;
+    const message = isProviderRateLimit(err)
+      ? `orchestrator: ${extractor.name} temporarily unavailable: provider quota/rate limit. Reprocess this filing later.`
+      : `orchestrator: ${extractor.name} failed: ${detail}`;
     await markError(env, docId, message);
-    // Re-throw so the queue retries transient failures (LLM rate limits etc.).
+    if (isProviderRateLimit(err)) return null;
+    // Re-throw so the queue retries non-quota transient failures.
     throw err;
   }
 
