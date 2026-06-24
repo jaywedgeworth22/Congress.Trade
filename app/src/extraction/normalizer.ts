@@ -41,7 +41,7 @@ const PENALTY_BAD_TX_TYPE = 0.5; //       tx_type not in {P,S,E}
 export interface NormalizeResult {
   /** Rows that passed validation and were persisted (or staged for review). */
   transactions: Transaction[];
-  /** The minimum per-tx confidence across the filing (1 when no rows). */
+  /** The minimum per-tx confidence across the filing (0 when no rows were read). */
   minConfidence: number;
   /** Whether the filing was routed to review_queue rather than published. */
   needsReview: boolean;
@@ -144,7 +144,7 @@ export async function normalize(
 
   const minConfidence = flagged.length
     ? Math.min(...flagged.map((f) => f.tx.confidence))
-    : 1;
+    : 0;
 
   // Hard structural failures force review regardless of the soft confidence.
   const hasHardFailure = flagged.some(

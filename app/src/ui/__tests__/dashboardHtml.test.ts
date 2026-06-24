@@ -121,6 +121,14 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('<pre class="raw-notes">');
   });
 
+  it('makes review documents linkable without showing false confidence for empty reads', () => {
+    expect(DASHBOARD_HTML).toContain('function safeDocUrl(');
+    expect(DASHBOARD_HTML).toContain('function reviewDocHtml(');
+    expect(DASHBOARD_HTML).toContain('View Document');
+    expect(DASHBOARD_HTML).toContain('No readable transactions');
+    expect(DASHBOARD_HTML).toContain('rel="noopener noreferrer"');
+  });
+
   it('keeps House history backfill bounded from the admin UI', () => {
     expect(DASHBOARD_HTML).toContain('id="hiMax"');
     expect(DASHBOARD_HTML).toContain('value="500"');
