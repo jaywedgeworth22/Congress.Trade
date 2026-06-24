@@ -20,6 +20,7 @@ final class FeedModel: ObservableObject {
     @Published var feed: ClientFeedResponse?
     @Published var error: String?
     @Published var isLoading = false
+    @Published var tickers = "AAPL, MSFT, NVDA"
 
     private let api: CongressTradeAPI
 
@@ -53,7 +54,6 @@ final class FeedModel: ObservableObject {
 
 struct FeedView: View {
     @EnvironmentObject private var model: FeedModel
-    @State private var tickers = "AAPL, MSFT, NVDA"
 
     var body: some View {
         NavigationStack {
@@ -74,10 +74,10 @@ struct FeedView: View {
                 }
 
                 Section("Delivery") {
-                    TextField("Tickers", text: $tickers)
+                    TextField("Tickers", text: $model.tickers)
                     Button("Create SSE Subscription") {
                         Task {
-                            await model.createSSE(tickers: tickers.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) })
+                            await model.createSSE(tickers: tickerList)
                         }
                     }
                 }
@@ -118,6 +118,13 @@ struct FeedView: View {
                 .font(.headline)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var tickerList: [String] {
+        model.tickers
+            .split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
+            .filter { !$0.isEmpty }
     }
 }
 
