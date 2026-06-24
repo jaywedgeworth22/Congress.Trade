@@ -137,6 +137,7 @@ export async function runHouseHistoricalBackfill(
         docId: f.pipelineDocId,
         chamber: 'house',
         sourceUrl: f.sourceUrl,
+        filedDate: f.filingDate,
       };
 
       const nowIso = new Date().toISOString();
