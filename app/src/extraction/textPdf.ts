@@ -143,14 +143,16 @@ function parseInlineRecords(text: string): ParsedTx[] {
   INLINE_RECORD_RE.lastIndex = 0;
   while ((m = INLINE_RECORD_RE.exec(normalized)) !== null) {
     const groups = m.groups ?? {};
-    const assetName = cleanInlineAssetName(groups.asset ?? '');
+    const rawAssetName = cleanInlineAssetName(groups.asset ?? '');
+    const owner = parseOwner(rawAssetName);
+    const assetName = stripLeadingOwnerCode(rawAssetName);
     const ticker = normalizeTicker(groups.parenTicker ?? groups.exchangeTicker ?? null);
     const assetType = groups.assetType?.toUpperCase() ?? null;
     const txType = parseTxType(groups.txType ?? '') ?? 'P';
     const { min, max } = parseAmountRange(groups.amount ?? '');
     rows.push({
       txDate: toIsoDate(groups.txDate ?? ''),
-      owner: 'self',
+      owner,
       assetName: assetName || ticker || '(unknown)',
       ticker,
       assetType,
@@ -196,6 +198,10 @@ function cleanInlineAssetName(value: string): string {
     .replace(/\bD:\s+.*$/i, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function stripLeadingOwnerCode(value: string): string {
+  return value.replace(/^(SP|DC|JT|SELF)\b\s*/i, '').trim();
 }
 
 function normalizeTicker(value: string | null): string | null {

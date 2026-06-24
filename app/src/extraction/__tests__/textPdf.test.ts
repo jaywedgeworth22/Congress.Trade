@@ -49,12 +49,13 @@ describe('parseHousePtrText', () => {
   it('parses single-line House text without treating the PTR header as an asset', () => {
     const rows = parseHousePtrText(
       'P T R Clerk of the House of Representatives T ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200? ' +
-        'Amazon.com, Inc. - Common Stock (AMZN) [ST] S (partial) 03/16/2026 03/16/2026 $1,001 - $15,000 F S: New S O: Putnam Investments D: details with AAPL and QQQ shares ' +
-        'Apple Inc. - Common Stock (AAPL) [ST] S (partial) 03/16/2026 03/16/2026 $1,001 - $15,000 F S: New',
+        'SP Amazon.com, Inc. - Common Stock (AMZN) [ST] S (partial) 03/16/2026 03/16/2026 $1,001 - $15,000 F S: New S O: Putnam Investments D: details with AAPL and QQQ shares ' +
+        'DC Apple Inc. - Common Stock (AAPL) [ST] S (partial) 03/16/2026 03/16/2026 $1,001 - $15,000 F S: New',
     );
 
     expect(rows).toHaveLength(2);
     expect(rows[0]).toMatchObject({
+      owner: 'spouse',
       assetName: 'Amazon.com, Inc. - Common Stock',
       ticker: 'AMZN',
       assetType: 'ST',
@@ -64,6 +65,7 @@ describe('parseHousePtrText', () => {
       amountMax: 15000,
     });
     expect(rows[1]).toMatchObject({
+      owner: 'dependent',
       assetName: 'Apple Inc. - Common Stock',
       ticker: 'AAPL',
     });
