@@ -206,6 +206,36 @@ export class ArbitratingExtractor implements Extractor {
   }
 }
 
+/**
+ * House PDFs often have extractable text even when the cheap byte-sniff
+ * classifier misses it. Prefer deterministic text parsing, then fall back to
+ * vision only when text extraction produces no usable transaction rows.
+ */
+export class HousePdfExtractor implements Extractor {
+  readonly name: string;
+
+  constructor(
+    private readonly textPdf: Extractor,
+    private readonly visionPdf: Extractor,
+  ) {
+    this.name = `housePdf(${textPdf.name},${visionPdf.name})`;
+  }
+
+  canHandle(f: Filing): boolean {
+    return f.chamber === 'house' && (f.docKind === 'text_pdf' || f.docKind === 'scanned_pdf');
+  }
+
+  async extract(input: ExtractorInput): Promise<ExtractorResult> {
+    try {
+      const textResult = await this.textPdf.extract(input);
+      if (textResult.transactions.length > 0) return textResult;
+    } catch {
+      // Text-layer parsing can fail on image-only or malformed PDFs; vision is the fallback.
+    }
+    return this.visionPdf.extract(input);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Pipeline construction
 // ---------------------------------------------------------------------------
@@ -241,8 +271,9 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
     : undefined;
 
   const visionArbitrated = new ArbitratingExtractor(visionLlm, env, secondary);
+  const housePdf = new HousePdfExtractor(textPdf, visionArbitrated);
 
-  return [senateHtml, textPdf, visionArbitrated];
+  return [senateHtml, housePdf, textPdf, visionArbitrated];
 }
 
 // ---------------------------------------------------------------------------

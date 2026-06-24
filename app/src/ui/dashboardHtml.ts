@@ -98,9 +98,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .brand .dot { color: var(--accent); }
   .pill { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-dim); }
   .pill.live { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
-  .pill.live::before { content:"●"; margin-right:5px; animation: pulse 1.6s infinite; }
+  .pill.live::before { content:"●"; margin-right:5px; }
+  .pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+  .pill.warn::before { content:"●"; margin-right:5px; }
   .pill.off { color: var(--text-dim); }
-  .pill.off::before { content:"○"; margin-right:5px; }
+  .pill.off::before { content:"●"; margin-right:5px; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
   nav.tabs { display: flex; gap: 4px; margin-left: auto; flex-wrap: wrap; }
   nav.tabs button {
@@ -136,7 +138,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   tr.row:hover td { background: var(--panel-2); }
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   th.sortable:hover { color: var(--text); }
-  th.sortable .arr { opacity: .4; font-size: 10px; margin-left: 4px; }
+  th.sortable .arr { opacity: .18; font-size: 10px; margin-left: 4px; color:var(--text-dim); }
   th.sortable.active { color: var(--text); }
   th.sortable.active .arr { opacity: 1; color: var(--accent); }
   /* fold-out advanced search */
@@ -172,7 +174,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .tkr-logo.transparent { border-radius: 4px; }
   /* ---- member headshots (mirrors the ticker-logo image+fallback pattern) ---- */
   .member-cell { display: flex; align-items: center; gap: 9px; min-width:0; }
-  .member-cell > div { min-width:0; line-height:1.25; }
+  .member-cell > div { min-width:0; line-height:1.25; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .member-cell .fit-sm { font-size:12px; }
+  .member-cell .fit-xs { font-size:11px; }
+  .date-short { display:none; }
+  #feedTable.narrow-published .c-published .date-full,
+  #feedTable.narrow-traded .c-traded .date-full,
+  #feedTable.narrow-filed .c-filed .date-full,
+  #feedTable.narrow-imported .c-imported .date-full { display:none; }
+  #feedTable.narrow-published .c-published .date-short,
+  #feedTable.narrow-traded .c-traded .date-short,
+  #feedTable.narrow-filed .c-filed .date-short,
+  #feedTable.narrow-imported .c-imported .date-short { display:inline; }
+  #feedTable.tiny-published .c-published,
+  #feedTable.tiny-traded .c-traded,
+  #feedTable.tiny-filed .c-filed,
+  #feedTable.tiny-imported .c-imported { font-size:12px; }
   /* The avatar shows initials by default; a successful headshot <img> overlays
      them, and onerror="this.remove()" drops the <img> to reveal initials. */
   .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
@@ -206,6 +223,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .section h3 { margin: 0 0 4px; font-size: 15px; }
   .section p.sub { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; }
   .row-flex { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .pager { margin-top:14px; justify-content:space-between; }
+  .pager-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .pager select { padding:5px 9px; font-size:12px; }
   .switch { position: relative; width: 46px; height: 26px; }
   .switch input { display: none; }
   .switch span { position:absolute; inset:0; background: var(--panel-2); border:1px solid var(--border); border-radius:999px; cursor:pointer; transition:.2s; }
@@ -266,10 +286,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer { position:fixed; inset:0; z-index:60; display:none; }
   .drawer.open { display:block; }
   .drawer-backdrop { position:absolute; inset:0; background:rgba(2,6,18,.55); }
-  .drawer-panel { position:absolute; top:0; right:0; height:100%; width:480px; max-width:92vw; background:var(--panel); border-left:1px solid var(--border); box-shadow:-12px 0 40px rgba(0,0,0,.4); overflow-y:auto; padding:20px 22px; }
+  .drawer-panel { position:absolute; top:0; right:0; height:100%; width:480px; max-width:92vw; background:var(--panel); border-left:1px solid var(--border); box-shadow:-12px 0 40px rgba(0,0,0,.4); overflow-y:auto; padding:0 22px 20px; }
   .drawer-topbar {
     position:sticky; top:0; z-index:4; display:flex; justify-content:flex-end;
-    min-height:44px; margin:-10px -10px 0 -10px; padding:0 0 0 44px;
+    min-height:54px; margin:0 -10px; padding:8px 0 6px 44px;
     pointer-events:none; background:linear-gradient(var(--panel) 68%, transparent);
   }
   .drawer-close {
@@ -279,7 +299,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     background:color-mix(in srgb, var(--panel) 92%, transparent); line-height:1; touch-action:manipulation;
   }
   .drawer-close:hover { color:var(--text); background:var(--panel-2); border-color:var(--border); }
-  #detailDrawerBody { margin-top:-34px; padding-top:2px; padding-right:36px; }
+  #detailDrawerBody { margin-top:0; padding-top:8px; padding-right:36px; }
   .drawer-title-line { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; padding-right:4px; }
   .drawer-title-line .tkr { color:var(--accent); }
   .drawer-title-line .company-name { min-width:0; overflow-wrap:anywhere; color:var(--text); }
@@ -437,7 +457,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .sched-row { grid-template-columns: 1fr 1fr; }
     .trend-grid2 { gap: 12px; }
     .cluster-grid { grid-template-columns: 1fr; }
-    .drawer-panel { top: auto; bottom: 0; height: 88vh; width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); }
+    .drawer-panel { top: auto; bottom: 0; height: 88vh; width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; padding: 0 16px calc(18px + env(safe-area-inset-bottom)); }
     .drawer-kv { grid-template-columns: 1fr; gap: 3px; }
     .drawer-kv dd { text-align: left; }
     .plan-grid { grid-template-columns: 1fr; }
@@ -471,7 +491,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <body>
 <header class="top">
   <div class="brand">Congress<span class="dot">.</span>Trade</div>
-  <span class="pill off" id="livePill">Connecting…</span>
+  <span class="pill off" id="livePill">Status</span>
   <span class="pill" id="srcPill">House + Senate</span>
   <nav class="tabs">
     <button data-view="feed" data-mobile="Feed" data-icon="▦" class="active">Live Feed</button>
@@ -490,26 +510,27 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <!-- ================= LIVE FEED ================= -->
   <section class="view active" id="view-feed">
     <div class="grid-cards">
-      <div class="card"><div class="k">New Filings Today</div><div class="v" id="kpiToday">—</div></div>
-      <div class="card"><div class="k">Total in Feed</div><div class="v" id="kpiTotal">—</div></div>
+      <div class="card"><div class="k">Filings Imported Today</div><div class="v" id="kpiToday">—</div></div>
+      <div class="card"><div class="k">Trades</div><div class="v" id="kpiTotal">—</div></div>
       <div class="card"><div class="k">Auto-Parsed (No LLM)</div><div class="v" id="kpiAuto">—<small>%</small></div></div>
-      <div class="card"><div class="k">Needs Review</div><div class="v" id="kpiReview">—</div></div>
-      <div class="card"><div class="k">Poll Mode</div><div class="v" id="kpiMode">—</div></div>
     </div>
     <div class="toolbar">
-      <input id="qMember" placeholder="Filter Member…" oninput="renderFeed()" />
-      <input id="qTicker" placeholder="Ticker…" oninput="renderFeed()" style="width:120px" />
-      <select id="qType" onchange="renderFeed()">
+      <input id="qMember" placeholder="Filter Member…" oninput="handleFeedTextFilter()" />
+      <input id="qTicker" placeholder="Ticker…" oninput="handleFeedTextFilter()" style="width:120px" />
+      <select id="qType" onchange="resetFeedPage()">
         <option value="">All Types</option><option value="P">Purchase</option>
         <option value="S">Sale</option><option value="E">Exchange</option>
       </select>
-      <select id="qChamber" onchange="renderFeed()">
+      <select id="qChamber" onchange="resetFeedPage()">
         <option value="">Both Chambers</option><option value="house">House</option><option value="senate">Senate</option>
       </select>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
       <button class="btn ghost sm" onclick="toggleColChooser()" title="Show / Hide Columns">⚙ Columns</button>
-      <button class="btn ghost sm" onclick="refreshFeed()">↻ Refresh</button>
       <button class="btn ghost sm" onclick="exportCsv()" title="Download the filtered feed as CSV (premium)">⤓ Export CSV</button>
+      <label class="lbl" for="pageSize">Rows</label>
+      <select id="pageSize" onchange="setPageSize(this.value)" title="Rows shown per page">
+        <option value="25">25</option><option value="50" selected>50</option><option value="100">100</option><option value="250">250</option>
+      </select>
     </div>
     <div class="panel-backdrop" id="panelBackdrop" onclick="closePanels()"></div>
     <div class="search-panel" id="colChooser">
@@ -525,7 +546,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <input id="qMinAmt" type="number" min="0" placeholder="0" style="width:120px" oninput="renderFeed()" />
       <span class="lbl">Source</span>
       <select id="qSource" onchange="renderFeed()">
-        <option value="">Any</option><option value="primary">Live (Primary)</option><option value="seed_dataset">Historic (Seed)</option>
+        <option value="">Any</option><option value="primary">Primary</option><option value="seed_dataset">Historical</option>
       </select>
       <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
     </div>
@@ -536,9 +557,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </table>
     </div>
     <div id="feedCards" class="feed-cards mobile-only" aria-live="polite"></div>
-    <div class="row-flex" style="margin-top:14px;justify-content:center">
-      <button class="btn ghost sm" id="loadMoreBtn" onclick="loadMore()" style="display:none">Load More</button>
+    <div class="row-flex pager">
       <span class="note" id="feedCountMsg"></span>
+      <div class="pager-controls">
+        <button class="btn ghost sm" id="prevPageBtn" onclick="prevFeedPage()" title="Previous page">&lt;</button>
+        <span class="note" id="feedPageMsg"></span>
+        <button class="btn ghost sm" id="nextPageBtn" onclick="nextFeedPage()" title="Next page">&gt;</button>
+      </div>
     </div>
     <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center;display:none">
       <span class="gate-note">🔒 Free view shows the last 30 days. Unlock full history, alerts & CSV export.
@@ -563,7 +588,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <select id="trParty"><option value="">All Parties</option><option value="D">Democrat</option><option value="R">Republican</option><option value="O">Other / Ind.</option></select>
       <select id="trSource" title="Provenance of the underlying rows">
         <option value="all" selected>All Data</option>
-        <option value="primary">Live (Primary) Only</option>
+        <option value="primary">Primary Only</option>
         <option value="seed_dataset">Historic (Seed) Only</option>
       </select>
       <button class="btn ghost sm" onclick="loadTrends()">↻ Refresh</button>
@@ -829,12 +854,17 @@ var SCHEDULE = [];        // PollWindow[]
 var aggressive = false;
 var cursor = 0;           // max cursor_seq seen
 var totalRows = 0;        // server-reported total matching rows (for "X of N")
+var filingsImportedToday = 0;
+var feedPage = 0;         // zero-based page in newest-first snapshot mode
+var feedPageSize = Number(localStorage.getItem('feed-page-size') || 50);
 var loadingPage = false;  // guards against overlapping page fetches
+var feedRequestSeq = 0;
+var feedAbort = null;
+var feedSearchTimer = null;
 var realDataLoaded = false;
 var feedGated = false;     // server says this visitor sees the limited free window
 var es = null;            // EventSource handle
 var pollTimer = null;     // setInterval handle for the polling fallback
-var POLL_LIMIT = 500;     // matches MAX_TX_LIMIT in delivery/rows.ts
 var POLL_INTERVAL_MS = 30000;  // graceful polling cadence when SSE is unavailable
 var sortKey = 'published'; // active feed sort column
 var sortDir = -1;         // 1 = ascending, -1 = descending (default: newest first)
@@ -842,6 +872,17 @@ var NUMERIC_SORT = { min: 1, conf: 1, refMarketCap: 1 };   // columns compared n
 
 /* ============================ HELPERS ============================ */
 var fmt = function (n) { return n == null ? '—' : '$' + Number(n).toLocaleString(); };
+function fmtBracketAmount(n) {
+  if (n == null) return '—';
+  n = Number(n);
+  if (!Number.isFinite(n)) return '—';
+  var abs = Math.abs(n), sign = n < 0 ? '-' : '';
+  function clean(v) { return String(v).replace(/\\.0$/, ''); }
+  if (abs >= 1e9) return sign + '$' + clean((abs / 1e9).toFixed(abs >= 10e9 ? 0 : 1)).toLowerCase() + 'b';
+  if (abs >= 1e6) return sign + '$' + clean((abs / 1e6).toFixed(abs >= 10e6 ? 0 : 1)).toLowerCase() + 'm';
+  if (abs >= 1e3) return sign + '$' + clean((abs / 1e3).toFixed(abs >= 10e3 ? 0 : 1)).toLowerCase() + 'k';
+  return sign + '$' + Math.round(abs);
+}
 var confClass = function (c) { return c >= 0.9 ? 'hi' : c >= 0.7 ? 'mid' : 'lo'; };
 var typeName = { P: 'Purchase', S: 'Sale', E: 'Exchange' };
 /* Capitalize a beneficial-owner code for display (self -> Self, joint -> Joint). */
@@ -865,11 +906,38 @@ function dateText(s) {
   var mon = MONTH_ABBR[Number(m[2]) - 1];
   return mon ? mon + ' ' + Number(m[3]) + ', ' + m[1] : String(s || '—');
 }
+function compactDateText(s) {
+  var iso = toISODate(s);
+  var m = /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(iso);
+  if (!m) return s ? String(s) : '—';
+  return Number(m[2]) + '-' + Number(m[3]) + '-' + m[1].slice(2);
+}
+function timeText(s) {
+  var t = /(?:T|\\s)(\\d{2}):(\\d{2})/.exec(String(s || ''));
+  if (!t) return '';
+  var h = Number(t[1]);
+  var ampm = h >= 12 ? 'pm' : 'am';
+  h = h % 12 || 12;
+  return h + (t[2] === '00' ? '' : ':' + t[2]) + ampm;
+}
 function dateTimeText(s) {
   if (!s) return '—';
   var base = dateText(s);
-  var t = /(?:T|\\s)(\\d{2}:\\d{2})/.exec(String(s));
-  return t ? base + ' ' + t[1] : base;
+  var time = timeText(s);
+  return time ? base + ' · ' + time : base;
+}
+function dateCellHtml(s, title) {
+  if (!s) return '<span class="muted">Unavailable</span>';
+  var attr = title ? ' title="' + esc(title) + '"' : '';
+  return '<span' + attr + '><span class="date-full">' + esc(dateText(s)) + '</span><span class="date-short">' + esc(compactDateText(s)) + '</span></span>';
+}
+function dateTimeCellHtml(s, title) {
+  if (!s) return '<span class="muted">Unavailable</span>';
+  var attr = title ? ' title="' + esc(title) + '"' : '';
+  var t = timeText(s);
+  var full = dateTimeText(s);
+  var compact = compactDateText(s) + (t ? ' ' + t : '');
+  return '<span' + attr + '><span class="date-full">' + esc(full) + '</span><span class="date-short">' + esc(compact) + '</span></span>';
 }
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, function (ch) {
@@ -996,8 +1064,9 @@ function memberCellHtml(r) {
   var attr = r.filerId
     ? 'class="member-cell clickable" data-member="' + esc(r.filerId) + '"'
     : 'class="member-cell"';
+  var nameClass = (r.member || '').length > 28 ? 'fit-xs' : (r.member || '').length > 22 ? 'fit-sm' : '';
   return '<div ' + attr + '>' + memberAvatarHtml(r.member, r.photoUrl) +
-    '<div>' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div>';
+    '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div>';
 }
 function assetCellHtml(r) {
   var inner = '<div title="' + esc((r.ticker ? r.ticker + ' · ' : '') + r.asset) + '">' +
@@ -1023,12 +1092,13 @@ function feedCardHtml(r) {
       '<div><span class="mkey">Source</span><span class="mval">' + esc(source) + '</span></div>' +
       '<div><span class="mkey">Traded</span><span class="mval">' + esc(traded) + '</span></div>' +
       '<div><span class="mkey">Published</span><span class="mval">' + esc(published) + '</span></div>' +
-      '<div><span class="mkey">Lag</span><span class="mval">' + esc(lag == null ? shortLagText(r) : lag + 'd') + '</span></div>' +
+      '<div><span class="mkey">Lag</span><span class="mval">' + esc(shortLagText(r)) + '</span></div>' +
       '<div><span class="mkey">Chamber</span><span class="mval">' + esc(ownerLabel(r.chamber) || '—') + '</span></div>' +
     '</div>' +
   '</article>';
 }
-function lagDays(r) { return daysBetween(r.txdate, r.filedDate); }
+function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }
+function lagDays(r) { return daysBetween(r.txdate, lagBasisDate(r)); }
 function missingFiledReason(r) {
   if (r && r.source === 'seed_dataset') return 'Historical seed rows do not include the original official filing date yet. Run the official historical backfill to replace these with primary filing records.';
   return 'Official filing date is not available for this row.';
@@ -1047,44 +1117,53 @@ function publishedCellHtml(r) {
   var s = publishedRaw(r);
   if (!s) return '<span class="muted">Unavailable</span>';
   var title = r.filed ? 'Official filing date is available in the details drawer.' : missingFiledReason(r);
-  return '<span title="' + esc(title) + '">' + esc(dateText(s)) + '</span>';
+  return dateCellHtml(s, title);
 }
 function filedCellHtml(r) {
-  if (r.filed) return esc(dateText(r.filed));
+  if (r.filed) return dateCellHtml(r.filed);
   return '<span class="muted" title="' + esc(missingFiledReason(r)) + '">Unavailable</span>';
 }
 function lagCellHtml(r) {
   var d = lagDays(r);
   if (d == null) return '<span class="muted" title="' + esc(missingFiledReason(r)) + '">Unavailable</span>';
   var over = d > 45 ? ' style="color:var(--sell)"' : '';
-  return '<span' + over + ' title="Days from trade to filing (STOCK Act limit: 45)">' + d + '</span>';
+  return '<span' + over + ' title="Days from trade to official filing date (STOCK Act limit: 45)">' + d + '</span>';
 }
 var FEED_COLS = [
-  { id: 'published', label: 'Published', sort: 'published', def: true, cls: 'muted', tip: 'When the disclosure was seen or imported by this feed. Official filed date appears in details when available.', cell: publishedCellHtml },
-  { id: 'member', label: 'Member', sort: 'member', def: true, lock: true, cell: memberCellHtml },
-  { id: 'asset', label: 'Asset', sort: 'asset', def: true, lock: true, cell: assetCellHtml },
-  { id: 'type', label: 'Type', sort: 'type', def: true, cell: function (r) { return actionBadge(r.type); } },
-  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return esc(dateText(r.txdate)); } },
+  { id: 'published', label: 'Published', sort: 'published', def: true, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
+  { id: 'member', label: 'Member', sort: 'member', def: true, tip: 'Member who filed the disclosure.', cell: memberCellHtml },
+  { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
+  { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
+  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
   { id: 'lag', label: 'Lag', sort: 'lag', def: true, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
-  { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket — an estimate, not an exact figure.', cell: function (r) { return (r.min == null && r.max == null) ? '<span class="muted">—</span>' : esc(amountText(r.min, r.max)); } },
-  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced (FMP / SEC EDGAR). "—" until the ticker is enriched.', cell: function (r) { return r.refSector ? esc(r.refSector) : '<span class="muted">—</span>'; } },
-  { id: 'marketcap', label: 'Mkt cap', sort: 'refMarketCap', def: false, tip: 'Market-cap size tier (cross-referenced).', cell: function (r) { return r.refMarketCapBucket ? esc(ownerLabel(r.refMarketCapBucket)) : '<span class="muted">—</span>'; } },
-  { id: 'country', label: 'Country', sort: 'refCountry', def: false, cls: 'muted', tip: 'Country of issue (cross-referenced).', cell: function (r) { return r.refCountry ? esc(r.refCountry) : '<span class="muted">—</span>'; } },
-  { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', cell: function (r) { return esc(ownerLabel(r.owner) || '—'); } },
-  { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
-  { id: 'imported', label: 'Imported', sort: 'imported', def: false, cls: 'muted', tip: 'When our feed persisted this trade row.', cell: function (r) { return esc(dateTimeText(r.imported)); } },
-  { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', cell: function (r) { return esc(ownerLabel(r.chamber) || '—'); } },
-  { id: 'conf', label: 'Conf.', sort: 'conf', def: false, cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">' + (r.conf * 100).toFixed(0) + '%</span>'; } },
-  { id: 'source', label: 'Source', sort: 'source', def: false, cell: function (r) { return '<span class="muted" title="' + esc(r.source) + '">' + esc(sourceLabel(r.source)) + '</span>'; } },
-  { id: 'latency', label: 'Latency', sort: null, def: false, cls: 'latency', tip: 'Released→Seen · Seen→Imported (live rows).', cell: function (r) { return rowLatencyHtml(r); } }
+  { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: function (r) { return (r.min == null && r.max == null) ? '<span class="muted">—</span>' : esc(amountText(r.min, r.max)); } },
+  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the ticker is enriched.', cell: function (r) { return r.refSector ? esc(r.refSector) : '<span class="muted">—</span>'; } },
+  { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: false, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return r.refMarketCapBucket ? esc(ownerLabel(r.refMarketCapBucket)) : '<span class="muted">—</span>'; } },
+  { id: 'country', label: 'Country', sort: 'refCountry', def: false, cls: 'muted', tier: 'premium', tip: 'Country of issue from enriched reference data.', cell: function (r) { return r.refCountry ? esc(r.refCountry) : '<span class="muted">—</span>'; } },
+  { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tier: 'premium', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return esc(ownerLabel(r.owner) || '—'); } },
+  { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tier: 'premium', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
+  { id: 'imported', label: 'Imported', sort: 'imported', def: false, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
+  { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return esc(ownerLabel(r.chamber) || '—'); } },
+  { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
+  { id: 'source', label: 'Source', sort: 'source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return '<span class="muted" title="' + esc(sourceTitle(r.source)) + '">' + esc(sourceLabel(r.source)) + '</span>'; } },
+  { id: 'latency', label: 'Latency', sort: null, def: false, cls: 'latency', tier: 'admin', tip: 'Released to seen, then seen to imported for primary rows.', cell: function (r) { return rowLatencyHtml(r); } }
 ];
 var COL_HIDDEN_KEY = 'feed-cols-hidden-v2';
-function defaultHidden() { return FEED_COLS.filter(function (c) { return !c.def; }).map(function (c) { return c.id; }); }
+function isAdminView() {
+  return /^admin\\./i.test(location.hostname) || !!getAdminToken();
+}
+function canUseColumn(c) {
+  if (c.tier === 'admin') return isAdminView();
+  if (c.tier === 'premium') return isAdminView() || (typeof ME !== 'undefined' && isPremium());
+  return true;
+}
+function availableCols() { return FEED_COLS.filter(canUseColumn); }
+function defaultHidden() { return availableCols().filter(function (c) { return !c.def; }).map(function (c) { return c.id; }); }
 function loadHiddenCols() { try { var v = JSON.parse(localStorage.getItem(COL_HIDDEN_KEY)); return v && v.length !== undefined ? v : defaultHidden(); } catch (e) { return defaultHidden(); } }
 function saveHiddenCols(h) { try { localStorage.setItem(COL_HIDDEN_KEY, JSON.stringify(h)); } catch (e) {} }
 var hiddenCols = loadHiddenCols();
 function isColVisible(id) { return hiddenCols.indexOf(id) < 0; }
-function visibleCols() { return FEED_COLS.filter(function (c) { return c.lock || isColVisible(c.id); }); }
+function visibleCols() { return availableCols().filter(function (c) { return isColVisible(c.id); }); }
 
 /* Render the header from the registry, (re)attach sort handlers, and reset the
    resize state so widths re-freeze for the now-visible columns. */
@@ -1128,8 +1207,9 @@ function setPanelOpen(id, open) {
 }
 function renderColChooser() {
   var box = el('colChooserBody'); if (!box) return;
-  box.innerHTML = FEED_COLS.filter(function (c) { return !c.lock; }).map(function (c) {
-    return '<label class="colopt"><input type="checkbox" data-colid="' + c.id + '"' + (isColVisible(c.id) ? ' checked' : '') + ' /> ' + esc(c.label) + '</label>';
+  box.innerHTML = availableCols().filter(function (c) { return !c.lock; }).map(function (c) {
+    var tip = c.tip ? ' title="' + esc(c.tip) + '"' : '';
+    return '<label class="colopt"' + tip + '><input type="checkbox" data-colid="' + c.id + '"' + (isColVisible(c.id) ? ' checked' : '') + ' /> ' + esc(c.label) + '</label>';
   }).join('');
 }
 function toggleColChooser() {
@@ -1155,6 +1235,11 @@ function renderFeed() {
   var body = el('feedBody');
   var cards = el('feedCards');
   var cols = visibleCols();
+  if (!cols.length) {
+    body.innerHTML = stateRow(1, 'No columns are visible. Open Columns and enable at least one column.');
+    if (cards) cards.innerHTML = stateCards('No columns are visible. Open Columns and enable at least one column.');
+    updateFeedCountMsg(0); return;
+  }
   if (!realDataLoaded) {
     body.innerHTML = stateRow(cols.length, 'Loading live feed…');
     if (cards) cards.innerHTML = stateCards('Loading live feed…');
@@ -1190,21 +1275,30 @@ function renderFeed() {
   maybeInitResize();
 }
 
-/* "Showing X of N" + Load-more visibility. X = rows currently displayed (after
-   client-side filters); N = server total. The button shows only while more
-   rows remain to be fetched from the server (loaded < total). */
+/* "Showing X-Y of N" + previous/next controls for the bounded table page. */
 function updateFeedCountMsg(shown) {
   var msg = el('feedCountMsg');
-  var more = el('loadMoreBtn');
-  if (!realDataLoaded) { if (msg) msg.textContent = ''; if (more) more.style.display = 'none'; return; }
-  var loaded = TRADES.length;
-  var total = totalRows || loaded;
-  if (msg) msg.textContent = 'Showing ' + shown + ' of ' + total + (loaded < total ? ' (' + loaded + ' loaded)' : '');
-  if (more) more.style.display = (loaded < total) ? '' : 'none';
+  var pageMsg = el('feedPageMsg');
+  var prev = el('prevPageBtn');
+  var next = el('nextPageBtn');
+  if (!realDataLoaded) {
+    if (msg) msg.textContent = '';
+    if (pageMsg) pageMsg.textContent = '';
+    if (prev) prev.disabled = true;
+    if (next) next.disabled = true;
+    return;
+  }
+  var total = totalRows || shown;
+  var start = total === 0 ? 0 : feedPage * feedPageSize + 1;
+  var end = Math.min(feedPage * feedPageSize + shown, total);
+  if (msg) msg.textContent = 'Showing ' + start + '-' + end + ' of ' + total + ' trades';
+  if (pageMsg) pageMsg.textContent = 'Page ' + (feedPage + 1) + ' of ' + Math.max(1, Math.ceil(total / feedPageSize));
+  if (prev) prev.disabled = feedPage <= 0 || loadingPage;
+  if (next) next.disabled = end >= total || loadingPage;
 }
 
 /* ---- resizable feed columns (drag the right edge of a header) ---- */
-var COL_WIDTH_KEY = 'feed-col-widths-v2';
+var COL_WIDTH_KEY = 'feed-col-widths-v4';
 var colResizeInit = false;
 function loadColWidths() { try { return JSON.parse(localStorage.getItem(COL_WIDTH_KEY) || '{}') || {}; } catch (e) { return {}; } }
 function saveColWidths(w) { try { localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w)); } catch (e) {} }
@@ -1225,7 +1319,21 @@ function estimatedColWidth(key, fallback, min, max) {
   return clampNum(px, min, max);
 }
 function minColWidth(key) {
-  return key === 'asset' ? 112 : key === 'member' ? 168 : 56;
+  return key === 'asset' ? 64 : key === 'member' ? 92 : 54;
+}
+function applyColumnWidthClasses() {
+  var table = el('feedTable'); if (!table) return;
+  var keys = ['published', 'traded', 'filed', 'imported'];
+  for (var i = 0; i < keys.length; i++) {
+    table.classList.remove('narrow-' + keys[i], 'tiny-' + keys[i]);
+  }
+  var ths = document.querySelectorAll('#feedHead th');
+  for (var j = 0; j < ths.length; j++) {
+    var key = ths[j].dataset.col, w = ths[j].offsetWidth;
+    if (keys.indexOf(key) < 0) continue;
+    if (w < 132) table.classList.add('narrow-' + key);
+    if (w < 92) table.classList.add('tiny-' + key);
+  }
 }
 function initColumnResize() {
   var table = el('feedTable'); if (!table) return;
@@ -1236,8 +1344,8 @@ function initColumnResize() {
   // compact default (Asset fits the longest name otherwise) — short entries then
   // show in full, long ones clip to an ellipsis, and any column stays draggable.
   var DEFAULT_CAP = {
-    asset: estimatedColWidth('asset', 164, 124, 198),
-    member: estimatedColWidth('member', 220, 188, 286)
+    asset: 180,
+    member: estimatedColWidth('member', 220, 160, 286)
   };
   for (var i = 0; i < ths.length; i++) {
     var k = ths[i].dataset.col;
@@ -1247,6 +1355,7 @@ function initColumnResize() {
   }
   table.classList.add('resizable');
   for (var j = 0; j < ths.length; j++) addColResizer(ths[j]);
+  applyColumnWidthClasses();
 }
 function addColResizer(th) {
   var grip = document.createElement('span');
@@ -1255,12 +1364,16 @@ function addColResizer(th) {
   grip.addEventListener('mousedown', function (e) {
     e.preventDefault(); e.stopPropagation();
     var startX = e.pageX, startW = th.offsetWidth;
-    function move(ev) { th.style.width = Math.max(minColWidth(th.dataset.col), startW + (ev.pageX - startX)) + 'px'; }
+    function move(ev) {
+      th.style.width = Math.max(minColWidth(th.dataset.col), startW + (ev.pageX - startX)) + 'px';
+      applyColumnWidthClasses();
+    }
     function up() {
       document.removeEventListener('mousemove', move);
       document.removeEventListener('mouseup', up);
       document.body.style.userSelect = '';
       var w = loadColWidths(); w[th.dataset.col] = th.offsetWidth; saveColWidths(w);
+      applyColumnWidthClasses();
     }
     document.addEventListener('mousemove', move);
     document.addEventListener('mouseup', up);
@@ -1299,7 +1412,7 @@ function updateSortIndicators() {
   for (var i = 0; i < ths.length; i++) {
     var th = ths[i], arr = th.querySelector('.arr');
     if (th.dataset.sort === sortKey) { th.classList.add('active'); arr.textContent = sortDir > 0 ? '▲' : '▼'; }
-    else { th.classList.remove('active'); arr.textContent = ''; }
+    else { th.classList.remove('active'); arr.textContent = '↕'; }
   }
 }
 
@@ -1317,8 +1430,13 @@ function clearSearch() {
 
 /* Friendly, human-readable label for a transaction's provenance. The raw value
    ('seed_dataset' | 'primary') rides along as a tooltip via sourceTitle. */
-var sourceLabelMap = { seed_dataset: 'Historical', primary: 'Live' };
+var sourceLabelMap = { seed_dataset: 'Historical', primary: 'Primary' };
 function sourceLabel(src) { return sourceLabelMap[src] || (src || ''); }
+function sourceTitle(src) {
+  if (src === 'primary') return 'Parsed from an official filing by the Congress.Trade ingestion pipeline.';
+  if (src === 'seed_dataset') return 'Imported from a historical seed dataset.';
+  return src || 'Unknown source';
+}
 
 /* Map an API transaction (shared/types Transaction) to a feed row. Member name
    prefers filers.full_name (memberName from the API); falls back to the raw
@@ -1378,70 +1496,144 @@ function rowLatencyHtml(r) {
   return '<span class="muted" title="Released→Seen (approx) · Seen→Imported (precise)">' + esc(a + ' · ' + b) + '</span>';
 }
 
-/* Fetch one page of transactions from the cursor and merge it newest-first.
-   The API orders by cursor_seq ASC and pages via since=<max cursor>; we reverse
-   each page so the UI keeps its newest-first display ordering. Returns the
-   number of rows appended (0 when there is nothing new). */
+function currentPageSize() {
+  var n = Number(feedPageSize);
+  return [25, 50, 100, 250].indexOf(n) >= 0 ? n : 50;
+}
+function syncPageSizeControl() {
+  feedPageSize = currentPageSize();
+  var s = el('pageSize'); if (s) s.value = String(feedPageSize);
+}
+function feedQueryParams() {
+  var p = new URLSearchParams();
+  p.set('since', '0');
+  p.set('sort', 'published');
+  p.set('order', 'desc');
+  p.set('limit', String(feedPageSize));
+  p.set('offset', String(feedPage * feedPageSize));
+  var t = el('qTicker').value.trim(); if (t) p.set('ticker', t);
+  var m = el('qMember').value.trim(); if (m) p.set('memberName', m);
+  var ty = el('qType').value; if (ty) p.set('type', ty);
+  var ch = el('qChamber').value; if (ch) p.set('chamber', ch);
+  return p;
+}
+function setFeedKpis() {
+  el('kpiTotal').textContent = totalRows || TRADES.length;
+  el('kpiToday').textContent = filingsImportedToday;
+  var primary = TRADES.filter(function (r) { return r.source === 'primary'; }).length;
+  el('kpiAuto').innerHTML = (TRADES.length ? Math.round(100 * primary / TRADES.length) : 0) + '<small>%</small>';
+}
+/* Fetch one bounded newest-first feed page. */
 function fetchPage() {
-  if (loadingPage) return Promise.resolve(0);
+  if (loadingPage && feedAbort) feedAbort.abort();
   loadingPage = true;
-  // API HOOK: GET /api/transactions?since=<cursor>&limit=<MAX_TX_LIMIT>
-  return fetch('/api/transactions?since=' + cursor + '&limit=' + POLL_LIMIT)
+  var seq = ++feedRequestSeq;
+  feedAbort = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  updateFeedCountMsg(TRADES.length);
+  // API HOOK: GET /api/transactions?order=desc&limit=<pageSize>&offset=<pageOffset>
+  return fetch('/api/transactions?' + feedQueryParams().toString(), feedAbort ? { signal: feedAbort.signal } : undefined)
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function (data) {
+      if (seq !== feedRequestSeq) return 0;
       var txs = (data.transactions || []).map(txToRow);
-      // newest first; merge ahead of existing
-      txs.reverse();
-      TRADES = txs.concat(TRADES);
+      TRADES = txs;
       if (typeof data.cursor === 'number' && data.cursor > cursor) cursor = data.cursor;
       if (typeof data.total === 'number') totalRows = data.total;
+      if (typeof data.filingsImportedToday === 'number') filingsImportedToday = data.filingsImportedToday;
       feedGated = !!data.gated;             // freemium: limited recent window
       updateGateRow();
       realDataLoaded = true;
       setBanner('');                       // drop the illustrative banner
-      el('kpiTotal').textContent = totalRows || TRADES.length;
-      var today = new Date().toISOString().slice(0, 10);
-      el('kpiToday').textContent = TRADES.filter(function (r) { return (r.imported || '').slice(0, 10) === today; }).length;
-      var primary = TRADES.filter(function (r) { return r.source === 'primary'; }).length;
-      el('kpiAuto').innerHTML = (TRADES.length ? Math.round(100 * primary / TRADES.length) : 0) + '<small>%</small>';
+      setFeedKpis();
       renderFeed();
       return txs.length;
     })
     .catch(function (e) {
+      if (e && e.name === 'AbortError') return 0;
       if (!realDataLoaded) setBanner('Could not load the live feed: ' + e.message, true);
       return 0;
     })
-    .then(function (n) { loadingPage = false; return n; });
+    .then(function (n) {
+      if (seq === feedRequestSeq) {
+        loadingPage = false;
+        feedAbort = null;
+        updateFeedCountMsg(TRADES.length);
+      }
+      return n;
+    });
 }
 
 /* Initial / full reload: fetches the first page from the current cursor. */
-function loadFeed() { return fetchPage(); }
+function loadFeed() { syncPageSizeControl(); return fetchPage(); }
 
-/* "Load more": pull the next page using the returned cursor and append it. */
-function loadMore() {
-  var more = el('loadMoreBtn');
-  if (more) more.disabled = true;
-  return fetchPage().then(function () { if (more) more.disabled = false; });
+function setPageSize(value) {
+  var n = Number(value);
+  feedPageSize = [25, 50, 100, 250].indexOf(n) >= 0 ? n : 50;
+  try { localStorage.setItem('feed-page-size', String(feedPageSize)); } catch (e) {}
+  feedPage = 0;
+  return fetchPage();
 }
 
-function refreshFeed() { loadFeed(); }
+function handleFeedTextFilter() {
+  feedPage = 0;
+  renderFeed();
+  if (feedSearchTimer) clearTimeout(feedSearchTimer);
+  feedSearchTimer = setTimeout(function () { fetchPage(); }, 250);
+}
+
+function resetFeedPage() { feedPage = 0; return fetchPage(); }
+function prevFeedPage() { if (feedPage <= 0) return; feedPage -= 1; fetchPage(); }
+function nextFeedPage() {
+  if ((feedPage + 1) * feedPageSize >= totalRows) return;
+  feedPage += 1;
+  fetchPage();
+}
+
+/* Incremental poll path: fetch only rows newer than the latest cursor and fold
+   them into page 1 without changing the user's current page. */
+function fetchUpdates() {
+  if (loadingPage || feedPage !== 0) return Promise.resolve(0);
+  return fetch('/api/transactions?since=' + cursor + '&limit=' + feedPageSize)
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function (data) {
+      var txs = (data.transactions || []).map(txToRow);
+      if (!txs.length) return 0;
+      txs.reverse();
+      var today = new Date().toISOString().slice(0, 10);
+      var seenDocs = {};
+      TRADES.forEach(function (r) { if (r.docId) seenDocs[r.docId] = true; });
+      txs.forEach(function (r) {
+        if ((r.imported || '').slice(0, 10) === today && r.docId && !seenDocs[r.docId]) {
+          filingsImportedToday += 1;
+          seenDocs[r.docId] = true;
+        }
+      });
+      TRADES = txs.concat(TRADES).slice(0, feedPageSize);
+      if (typeof data.cursor === 'number' && data.cursor > cursor) cursor = data.cursor;
+      if (totalRows) totalRows += txs.length;
+      setFeedKpis();
+      renderFeed();
+      return txs.length;
+    })
+    .catch(function () { return 0; });
+}
 
 /* Live updates. We try SSE first, but the public dashboard does NOT hard-depend
    on it: the /api/stream?subscription=dashboard endpoint isn't available on the
    public site (webhooks/SSE are a future paid feature). If the EventSource
    errors or closes we tear it down (no infinite "reconnecting…") and fall back
    to a calm 30s poll of /api/transactions using the cursor. */
-function setLivePill(cls, text) { var p = el('livePill'); p.className = 'pill ' + cls; p.textContent = text; }
+function setLivePill(cls, text) { var p = el('livePill'); p.className = 'pill ' + cls; p.textContent = text || 'Status'; }
 
 /* Periodic polling fallback. API HOOK: GET /api/transactions?since=<cursor>. */
 function startPolling() {
   if (pollTimer) return;          // already polling
-  setLivePill('live', 'live');    // calm state — not "reconnecting…"
+  setLivePill('live', 'Status');  // calm state
   pollTimer = setInterval(function () {
-    fetchPage().then(function (n) {
+    fetchUpdates().then(function (n) {
       if (n > 0) {
-        setLivePill('live', 'updated');
-        setTimeout(function () { if (pollTimer) setLivePill('live', 'live'); }, 1800);
+        setLivePill('live', 'Updated');
+        setTimeout(function () { if (pollTimer) setLivePill('live', 'Status'); }, 1800);
       }
     });
   }, POLL_INTERVAL_MS);
@@ -1456,18 +1648,24 @@ function startStream() {
   if (typeof EventSource === 'undefined') { startPolling(); return; }
   try {
     es = new EventSource('/api/stream?subscription=dashboard');
-    es.onopen = function () { setLivePill('live', 'live feed'); };
+    es.onopen = function () { setLivePill('live', 'Status'); };
     es.addEventListener('trade.new', function (e) {
       try {
         var tx = JSON.parse(e.data);
         if (!tx || !tx.id) return;
-        TRADES.unshift(txToRow(tx));
+        if (feedPage !== 0) return;
+        var row = txToRow(tx);
+        var today = new Date().toISOString().slice(0, 10);
+        var alreadyDoc = TRADES.some(function (r) { return r.docId && r.docId === row.docId; });
+        if ((row.imported || '').slice(0, 10) === today && row.docId && !alreadyDoc) filingsImportedToday += 1;
+        TRADES.unshift(row);
+        TRADES = TRADES.slice(0, feedPageSize);
         if (tx.cursorSeq && tx.cursorSeq > cursor) cursor = tx.cursorSeq;
         if (totalRows) totalRows += 1;
-        el('kpiTotal').textContent = totalRows || TRADES.length;
+        setFeedKpis();
         renderFeed();
-        setLivePill('live', 'new filing ↑');
-        setTimeout(function () { if (es && es.readyState === 1) setLivePill('live', 'live feed'); }, 1800);
+        setLivePill('live', 'Updated');
+        setTimeout(function () { if (es && es.readyState === 1) setLivePill('live', 'Status'); }, 1800);
       } catch (err) { /* ignore malformed frame */ }
     });
     es.addEventListener('reconnect', function (e) {
@@ -1501,7 +1699,7 @@ function loadReview() {
 }
 /* Translate review reason codes + payload into plain English for non-engineers. */
 var REASON_LABELS = {
-  low_confidence: 'Low confidence in the automated read',
+  low_confidence: 'Automated read below publish threshold',
   no_transactions_extracted: 'No transactions could be read from the document',
   unresolved_ticker: 'Ticker symbol could not be matched to a known company',
   invalid_bracket: 'Dollar amount didn’t match a standard disclosure range',
@@ -1510,16 +1708,30 @@ var REASON_LABELS = {
   future_tx_date: 'Trade date is after the filing date',
   bad_tx_type: 'Transaction type was unclear (not buy / sell / exchange)'
 };
-function reasonText(reason) {
+function parseReviewPayload(payload) {
+  if (payload == null) return null;
+  try {
+    var p = typeof payload === 'string' ? JSON.parse(payload) : payload;
+    return p && typeof p === 'object' ? p : null;
+  } catch (e) {
+    return null;
+  }
+}
+function reasonText(reason, payload) {
   if (!reason) return 'Needs a human check';
-  return String(reason).split(',').map(function (c) {
+  var codes = String(reason).split(',').map(function (c) { return c.trim(); }).filter(Boolean);
+  var p = parseReviewPayload(payload);
+  var extractor = p && p.extractor ? String(p.extractor) : '';
+  if (codes.length === 1 && codes[0] === 'low_confidence' && /vision/i.test(extractor)) {
+    return 'Vision-read filing held for review';
+  }
+  return codes.map(function (c) {
     c = c.trim(); return REASON_LABELS[c] || c.replace(/_/g, ' ');
   }).filter(Boolean).join('; ');
 }
 function payloadText(payload) {
-  var p = payload;
-  if (p == null) return '';
-  try { if (typeof p === 'string') p = JSON.parse(p); } catch (e) { return String(payload); }
+  var p = parseReviewPayload(payload);
+  if (p == null) return payload == null ? '' : String(payload);
   if (typeof p !== 'object') return String(payload);
   var bits = [];
   var txs = p.transactions || [];
@@ -1556,7 +1768,7 @@ function reviewDocHtml(r) {
 function renderReview() {
   var body = el('reviewBody');
   el('reviewCount').textContent = REVIEW.length ? '(' + REVIEW.length + ')' : '';
-  el('kpiReview').textContent = REVIEW.length;
+  if (el('kpiReview')) el('kpiReview').textContent = REVIEW.length;
   if (REVIEW.length === 0) { body.innerHTML = stateRow(5, 'Nothing awaiting review — queue is clear.'); return; }
   body.innerHTML = REVIEW.map(function (r) {
     var payload = payloadText(r.payload);
@@ -1565,7 +1777,7 @@ function renderReview() {
     return '<tr class="row" id="rv-' + esc(r.docId) + '">' +
       '<td class="muted">' + esc(dateTimeText(r.createdAt)) + '</td>' +
       '<td>' + reviewDocHtml(r) + '</td>' +
-      '<td class="muted">' + esc(reasonText(r.reason)) + '</td>' +
+      '<td class="muted">' + esc(reasonText(r.reason, r.payload)) + '</td>' +
       '<td class="muted" style="max-width:360px">' + esc(payload) + docAction + '</td>' +
       '<td>' +
         '<button class="btn sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'confirm\\')">Confirm</button> ' +
@@ -1685,6 +1897,7 @@ function saveAdminToken() {
   try { if (v) localStorage.setItem(ADMIN_TOKEN_KEY, v); else localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
   el('adminTokenMsg').textContent = v ? 'Saved in this browser.' : 'Cleared.';
   setTimeout(function () { el('adminTokenMsg').textContent = ''; }, 2500);
+  renderFeedHeader(); renderColChooser(); renderFeed();
   loadPollConfig(); loadHealth(); loadDiagnostics();
 }
 function clearAdminToken() {
@@ -1692,6 +1905,7 @@ function clearAdminToken() {
   if (el('adminToken')) el('adminToken').value = '';
   el('adminTokenMsg').textContent = 'Cleared.';
   setTimeout(function () { el('adminTokenMsg').textContent = ''; }, 2500);
+  renderFeedHeader(); renderColChooser(); renderFeed();
 }
 // Populate the field from storage when the Admin tab opens.
 function initAdminToken() {
@@ -1753,7 +1967,7 @@ function renderSchedule() {
       '<input type="number" value="' + esc(w.intervalSec) + '" onchange="SCHEDULE[' + i + '].intervalSec=+this.value" />' +
     '</div>';
   }).join('');
-    el('kpiMode').innerHTML = aggressive ? 'Aggressive<small> · Fast</small>' : 'Standard';
+    if (el('kpiMode')) el('kpiMode').innerHTML = aggressive ? 'Aggressive<small> · Fast</small>' : 'Standard';
 }
 function toggleAggressive() { aggressive = el('aggToggle').checked; renderSchedule(); }
 function saveSchedule() {
@@ -2169,19 +2383,28 @@ function perfPct(x) { return x == null ? '—' : (x > 0 ? '▲ ' : x < 0 ? '▼ 
 function perfLineHtml(d, txType) {
   if (!d || !d.available) return (d && d.isOption) ? OPTION_PERF_NOTE : PERF_GATE;
   var verb = txType === 'S' ? 'since sold' : 'since traded';
-  var cls = d.assetReturn > 0 ? 'pos' : d.assetReturn < 0 ? 'neg' : '';
-  var excess = d.excessReturn == null ? '—' : (d.excessReturn > 0 ? '+' : '') + (d.excessReturn * 100).toFixed(1) + '% vs S&amp;P';
-  var prices = (d.priceAtTrade != null && d.currentPrice != null)
-    ? '<div class="chip muted">$' + Number(d.priceAtTrade).toFixed(2) + ' → $' + Number(d.currentPrice).toFixed(2) + (d.currentPriceDate ? ' (' + esc(d.currentPriceDate) + ')' : '') + '</div>'
+  function perfBlock(label, perf, anchorPrice) {
+    if (!perf) return '';
+    var cls = perf.assetReturn > 0 ? 'pos' : perf.assetReturn < 0 ? 'neg' : '';
+    var excess = perf.excessReturn == null ? '—' : (perf.excessReturn > 0 ? '+' : '') + (perf.excessReturn * 100).toFixed(1) + '% vs S&amp;P';
+    var prices = (anchorPrice != null && d.currentPrice != null)
+      ? '<div class="chip muted">$' + Number(anchorPrice).toFixed(2) + ' → $' + Number(d.currentPrice).toFixed(2) + (d.currentPriceDate ? ' (' + esc(d.currentPriceDate) + ')' : '') + '</div>'
+      : '';
+    return '<div class="perf-line net ' + cls + '">' + perfPct(perf.assetReturn) + ' ' + label + '</div>' +
+      '<div class="chip">S&amp;P 500 ' + perfPct(perf.spxReturn) + ' · ' + excess + '</div>' + prices;
+  }
+  var tradePerf = d.tradeDatePerformance || d;
+  var tradeHtml = perfBlock(verb, tradePerf, d.priceAtTrade);
+  var filingHtml = d.filingDatePerformance
+    ? '<div style="height:10px"></div>' + perfBlock(txType === 'S' ? 'since reported' : 'since filing', d.filingDatePerformance, d.filingDatePerformance.priceAt)
     : '';
-  return '<div class="perf-line net ' + cls + '">' + perfPct(d.assetReturn) + ' ' + verb + '</div>' +
-    '<div class="chip">S&amp;P 500 ' + perfPct(d.spxReturn) + ' · ' + excess + '</div>' + prices;
+  return tradeHtml + filingHtml;
 }
 function kvRow(k, v) { return '<dt>' + esc(k) + '</dt><dd>' + v + '</dd>'; }
 function actionBadge(type) { return '<span class="tag ' + esc(type) + '">' + esc(typeName[type] || type) + '</span>'; }
 function amountText(min, max) {
   if (min == null && max == null) return '—';
-  return fmt(min) + ' – ' + (max == null ? '+' : fmt(max));
+  return fmtBracketAmount(min) + ' - ' + (max == null ? '+' : fmtBracketAmount(max));
 }
 function daysBetween(aIso, bIso) {
   var a = Date.parse(aIso), b = Date.parse(bIso);
@@ -2424,6 +2647,12 @@ function loadMe() {
       ME.user = d.user || null;
       ME.entitlement = d.entitlement || { premium: false };
       renderAccount();
+      hiddenCols = hiddenCols.filter(function (id) {
+        return availableCols().some(function (c) { return c.id === id; });
+      });
+      renderFeedHeader();
+      renderColChooser();
+      renderFeed();
     })
     .catch(function () { renderAccount(); });
 }
@@ -2580,6 +2809,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); });
     b.classList.add('active');
     el('view-' + b.dataset.view).classList.add('active');
+    if (b.dataset.view === 'feed') window.scrollTo({ top: 0, behavior: 'auto' });
     if (b.dataset.view === 'trends') loadTrends();
     if (b.dataset.view === 'review') loadReview();
     if (b.dataset.view === 'subs') loadSubs();

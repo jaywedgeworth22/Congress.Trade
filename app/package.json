@@ -12,7 +12,9 @@
     "test": "vitest run",
     "migrate": "wrangler d1 migrations apply DB --local",
     "migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "deploy:full": "wrangler d1 migrations apply DB --remote && wrangler deploy"
+    "deploy:full": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "preview:provision": "bash scripts/provision-preview.sh",
+    "preview:deploy": "bash scripts/deploy-preview.sh"
   },
   "dependencies": {
     "fflate": "^0.8.3",

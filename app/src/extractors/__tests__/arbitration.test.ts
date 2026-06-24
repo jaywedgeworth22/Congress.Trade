@@ -2,10 +2,12 @@ import { describe, it, expect } from 'vitest';
 import {
   arbitrationRowKey,
   fieldAgreement,
+  HousePdfExtractor,
   mergeResults,
+  type Extractor,
   type ExtractorResult,
 } from '../types';
-import type { ParsedTx } from '../../shared/types';
+import type { Filing, ParsedTx } from '../../shared/types';
 
 function tx(over: Partial<ParsedTx> = {}): ParsedTx {
   return {
@@ -32,6 +34,33 @@ function result(rows: ParsedTx[], over: Partial<ExtractorResult> = {}): Extracto
     raw: 'raw',
     extractor: 'primary',
     ...over,
+  };
+}
+
+const filing = (over: Partial<Filing> = {}): Filing => ({
+  docId: 'H-1',
+  chamber: 'house',
+  filerId: 'F1',
+  filingType: 'P',
+  filedDate: '2026-06-24',
+  sourceUrl: 'https://example.test/doc.pdf',
+  rawObjectKey: 'raw/doc.pdf',
+  ingestStatus: 'classified',
+  docKind: 'scanned_pdf',
+  extractor: null,
+  modelVersion: null,
+  confidence: null,
+  firstSeenAt: '2026-06-24T00:00:00.000Z',
+  sourceUpdatedAt: null,
+  error: null,
+  ...over,
+});
+
+function extractor(name: string, out: ExtractorResult): Extractor {
+  return {
+    name,
+    canHandle: () => true,
+    extract: async () => out,
   };
 }
 
@@ -91,5 +120,38 @@ describe('mergeResults', () => {
     // ...but the secondary-only row drags doc confidence below the row confidence.
     expect(merged.confidence).toBeLessThan(merged.transactions[0].confidence);
     expect(merged.raw).toContain('secondaryOnly=1');
+  });
+});
+
+describe('HousePdfExtractor', () => {
+  it('uses text extraction first for House scanned PDFs when rows are found', async () => {
+    const text = extractor('textPdf', result([tx({ confidence: 0.9 })], { extractor: 'textPdf' }));
+    const vision = extractor('vision', result([tx({ ticker: 'MSFT' })], { extractor: 'vision' }));
+    const house = new HousePdfExtractor(text, vision);
+
+    const out = await house.extract({ filing: filing() });
+
+    expect(house.canHandle(filing())).toBe(true);
+    expect(out.extractor).toBe('textPdf');
+    expect(out.transactions[0].ticker).toBe('AAPL');
+  });
+
+  it('falls back to vision when House text extraction returns no rows', async () => {
+    const text = extractor('textPdf', result([], { extractor: 'textPdf' }));
+    const vision = extractor('vision', result([tx({ ticker: 'INTC' })], { extractor: 'vision' }));
+    const house = new HousePdfExtractor(text, vision);
+
+    const out = await house.extract({ filing: filing() });
+
+    expect(out.extractor).toBe('vision');
+    expect(out.transactions[0].ticker).toBe('INTC');
+  });
+
+  it('does not claim non-House scanned PDFs', () => {
+    const text = extractor('textPdf', result([]));
+    const vision = extractor('vision', result([]));
+    const house = new HousePdfExtractor(text, vision);
+
+    expect(house.canHandle(filing({ chamber: 'senate' }))).toBe(false);
   });
 });

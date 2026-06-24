@@ -141,7 +141,12 @@ describe('normalize', () => {
 
   it('routes to review when ticker is unresolved (confidence penalty pushes below threshold)', async () => {
     const { env, cap } = makeEnv([]); // empty securities_master => unresolved
-    const result = await normalize(env, filing(), [tx({ ticker: 'ZZZZ', assetName: 'Mystery Co' })]);
+    const result = await normalize(
+      env,
+      filing(),
+      [tx({ ticker: 'ZZZZ', assetName: 'Mystery Co' })],
+      { extractor: 'visionLlm', modelVersion: 'gemini-test' },
+    );
 
     // 0.97 * 0.85 (unresolved) = 0.8245 < 0.85 threshold.
     expect(result.minConfidence).toBeLessThan(CONFIDENCE_THRESHOLD);
@@ -150,6 +155,10 @@ describe('normalize', () => {
     expect(cap.reviewRows).toHaveLength(1);
     expect(cap.enqueued).toHaveLength(0);
     expect(String(cap.reviewRows[0][1])).toContain('unresolved_ticker');
+    expect(JSON.parse(String(cap.reviewRows[0][2]))).toMatchObject({
+      extractor: 'visionLlm',
+      modelVersion: 'gemini-test',
+    });
   });
 
   it('snaps a plausible non-canonical amount to the nearest bracket without penalty', async () => {
