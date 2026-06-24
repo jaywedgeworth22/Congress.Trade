@@ -34,12 +34,18 @@ export interface TransactionRow {
   asset_name: string | null;
   ticker: string | null;
   asset_type: string | null;
+  asset_type_name?: string | null;
   tx_type: string | null;
   amount_min: number | null;
   amount_max: number | null;
   is_option: number | null;
   cap_gains_over_200: number | null;
   raw_text: string | null;
+  filing_status?: string | null;
+  subholding?: string | null;
+  location?: string | null;
+  description?: string | null;
+  supplemental_text?: string | null;
   confidence: number | null;
   source: string | null;
   row_key?: string | null;
@@ -114,12 +120,18 @@ export function mapTransaction(row: TransactionRow): Transaction {
     assetName: row.asset_name ?? '',
     ticker: row.ticker,
     assetType: row.asset_type,
+    assetTypeName: row.asset_type_name ?? null,
     txType: (row.tx_type as TxType) ?? 'P',
     amountMin: row.amount_min,
     amountMax: row.amount_max,
     isOption: toBool(row.is_option),
     capGainsOver200: toBool(row.cap_gains_over_200),
     rawText: row.raw_text ?? '',
+    filingStatus: row.filing_status ?? null,
+    subholding: row.subholding ?? null,
+    location: row.location ?? null,
+    description: row.description ?? null,
+    supplementalText: row.supplemental_text ?? null,
     confidence: row.confidence ?? 0,
     source: (row.source as TxSource) ?? 'primary',
     rowKey: row.row_key ?? null,

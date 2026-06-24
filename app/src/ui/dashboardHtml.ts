@@ -128,6 +128,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .card .k { color: var(--text-dim); font-size: 12px; }
   .card .v { font-size: 22px; font-weight: 700; margin-top: 4px; }
   .card .v small { font-size: 12px; font-weight: 500; color: var(--text-dim); }
+  .info-tip { color: var(--text-dim); cursor: help; border-bottom: 1px dotted var(--text-dim); }
   table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
   th, td { text-align: left; padding: 11px 13px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
   th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
@@ -218,7 +219,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* ================= TRENDS / ANALYTICS ================= */
   .trend-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
   @media (max-width: 860px) { .trend-grid2 { grid-template-columns: 1fr; } }
-  .est { color: var(--text-dim); }
+  .est, .est-money { color: var(--text-dim); }
   .pdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; background: var(--text-dim); }
   .pdot.D { background:#3b82f6; } .pdot.R { background:#ef4444; } .pdot.O { background:#a78bfa; }
   .rank { color: var(--text-dim); font-family: var(--mono); font-size:12px; width:22px; text-align:right; }
@@ -236,6 +237,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .hbar .hfill { height:100%; background: color-mix(in srgb, var(--accent) 70%, transparent); }
   .hbar .hfill.buy { background: var(--buy); } .hbar .hfill.warn { background: var(--warn); } .hbar .hfill.sell { background: var(--sell); }
   .hbar .hval { width:120px; text-align:right; font-family: var(--mono); font-size:12px; color: var(--text-dim); }
+  .hbar .hval .est-money { font-family: var(--mono); }
   /* time chart (CSS columns, no chart lib) */
   .tchart { display:flex; align-items:flex-end; gap:3px; height:180px; overflow-x:auto; padding-top:6px; }
   .tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:0 0 auto; }
@@ -563,10 +565,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <p class="sub">Most-traded tickers in the window. Click a row for a deep dive. Bar = buy / sell mix.</p>
         <div class="row-flex" style="margin:-6px 0 12px">
           <label class="lbl">Rank By</label>
-          <select id="trTickerSort">
+          <select id="trTickerSort" title="Estimated volume uses STOCK Act bracket midpoints">
             <option value="trades">Trades</option>
             <option value="members">Distinct Members</option>
-            <option value="volume">Est. Volume</option>
+	            <option value="volume">Est. Volume</option>
             <option value="netflow">Net $ Flow</option>
           </select>
         </div>
@@ -1822,7 +1824,8 @@ function loadHealth() {
 
 /* ============================ TRENDS / ANALYTICS ============================ */
 /* All views read /api/analytics/* — read-only aggregates over the corpus. Dollar
-   values are ESTIMATES from STOCK Act bracket midpoints (labelled with ~). */
+	   values are ESTIMATES from STOCK Act bracket midpoints (labelled with ~). */
+	var EST_VOLUME_TIP = 'Estimated from STOCK Act amount ranges: closed ranges use the midpoint; the open $50M+ range uses its $50,000,001 floor.';
 function trParams() {
   var p = 'window=' + encodeURIComponent(el('trWindow').value);
   var ch = el('trChamber').value; if (ch) p += '&chamber=' + ch;
@@ -1845,7 +1848,9 @@ function usdC(n) {
   else o = String(Math.round(n));
   return s + '$' + o;
 }
-function estUsd(n) { return '~' + usdC(n); }
+	function estUsd(n) {
+	  return '<span class="est-money" title="' + esc(EST_VOLUME_TIP) + '">~' + usdC(n) + '</span>';
+	}
 function netHtml(n) {
   n = Number(n || 0);
   var cls = n > 0 ? 'pos' : n < 0 ? 'neg' : '';
@@ -1860,7 +1865,13 @@ function splitBar(buys, sells) {
     '<small>' + buys + 'B / ' + sells + 'S</small></span>';
 }
 function pdot(b) { return b ? '<span class="pdot ' + esc(b) + '"></span>' : ''; }
-function kpi(k, v) { return '<div class="card"><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>'; }
+	function kpi(k, v) { return '<div class="card"><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>'; }
+	function infoLabel(text, tip) {
+	  return esc(text) + ' <span class="info-tip" tabindex="0" aria-label="' + esc(tip) + '" title="' + esc(tip) + '">ⓘ</span>';
+	}
+	function kpiInfo(k, v, tip) {
+	  return '<div class="card"><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + '</div></div>';
+	}
 /* Mini CSS-column time chart of buys vs sells (no chart library). */
 function timeChartHtml(series, labelStep) {
   var max = 1; series.forEach(function (p) { max = Math.max(max, p.buys, p.sells); });
@@ -1888,7 +1899,7 @@ function loadTrSummary() {
     var sent = d.netSentiment == null ? '—' : Math.round(d.netSentiment * 100) + '<small>% buys</small>';
     box.innerHTML =
       kpi('Trades', d.totalTrades) + kpi('Members', d.uniqueMembers) + kpi('Tickers', d.uniqueTickers) +
-      kpi('Est. Volume', estUsd(d.estimatedVolumeUsd)) + kpi('Net Flow', netHtml(d.estimatedNetFlowUsd)) +
+	      kpiInfo('Est. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP) + kpi('Net Flow', netHtml(d.estimatedNetFlowUsd)) +
       kpi('Buy Pressure', sent);
   }).catch(function (e) { box.innerHTML = kpi('Summary', '<span style="font-size:13px">' + esc(e.message) + '</span>'); });
 }
@@ -2201,10 +2212,10 @@ function openAsset(ticker) {
     }).join('');
     openDrawer(
       drawerCompanyTitle(d.ticker, companyName || d.ticker) +
-      '<p class="dsub">' + (s.totalTrades || 0) + ' trades · ' + (s.memberCount || 0) + ' members · ' + estUsd(s.estVolumeUsd) + ' est. volume</p>' +
+	      '<p class="dsub">' + (s.totalTrades || 0) + ' trades · ' + (s.memberCount || 0) + ' members · ' + estUsd(s.estVolumeUsd) + ' est. volume</p>' +
       '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
       '<div class="drawer-section"><h3>Congressional Activity (All Time)</h3><div class="grid-cards">' +
-        kpi('Trades', s.totalTrades || 0) + kpi('Members', s.memberCount || 0) + kpi('Est. Volume', estUsd(s.estVolumeUsd)) +
+	        kpi('Trades', s.totalTrades || 0) + kpi('Members', s.memberCount || 0) + kpiInfo('Est. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP) +
         kpi('Net Flow', netHtml(s.estNetFlowUsd)) + kpi('Buy Pressure', sent) + '</div>' +
         '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + '</div>' +
       '<div class="drawer-section"><h3>Performance Since Trades</h3>' + PERF_GATE + '</div>' +
@@ -2252,7 +2263,7 @@ function openMember(filerId) {
         '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
       '<div class="drawer-section"><h3>Trade Stats</h3><dl class="drawer-kv">' +
         kvRow('Total Trades', st.totalTrades || 0) + kvRow('Buys / Sells', (st.buyCount || 0) + ' / ' + (st.sellCount || 0)) +
-        kvRow('Distinct Tickers', st.uniqueTickers || 0) + kvRow('Est. Volume', estUsd(st.estVolumeUsd)) +
+	        kvRow('Distinct Tickers', st.uniqueTickers || 0) + kvRow('Est. Volume', estUsd(st.estVolumeUsd)) +
         kvRow('Avg. Disclosure Lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
       '<div class="drawer-section"><h3>Committees</h3>' + commHtml + '</div>' +
       '<div class="drawer-section"><h3>Performance vs S&amp;P 500</h3>' + PERF_GATE + '</div>' +

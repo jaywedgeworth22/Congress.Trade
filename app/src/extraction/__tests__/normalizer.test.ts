@@ -113,7 +113,7 @@ describe('normalize', () => {
 
     // Persisted + delivery fan-out happened; no review row.
     expect(cap.insertedTx).toHaveLength(1);
-    expect(cap.insertedTx[0][14]).toEqual(expect.stringMatching(/^v1:primary:0:/));
+    expect(cap.insertedTx[0][20]).toEqual(expect.stringMatching(/^v1:primary:0:/));
     expect(cap.reviewRows).toHaveLength(0);
     expect(cap.enqueued).toEqual([{ type: 'delivery.dispatch', txId: result.transactions[0].id }]);
     // filings updated (metadata + persisted status).

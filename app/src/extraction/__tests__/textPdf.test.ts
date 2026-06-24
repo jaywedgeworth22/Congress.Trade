@@ -59,6 +59,7 @@ describe('parseHousePtrText', () => {
       assetName: 'Amazon.com, Inc. - Common Stock',
       ticker: 'AMZN',
       assetType: 'ST',
+      assetTypeName: 'Stocks (including ADRs)',
       txType: 'S',
       txDate: '2026-03-16',
       amountMin: 1001,
@@ -103,5 +104,36 @@ describe('parseHousePtrText', () => {
     });
     expect(rows[0].assetName).not.toContain('Clerk');
     expect(rows[3].assetName).not.toContain('Kent Street Group');
+  });
+
+  it('preserves row-specific House PTR detail text and checked capital gains flags', () => {
+    const rows = parseHousePtrText(`
+      Filer Information
+      Name: Hon. Josh Gottheimer
+      ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200?
+      JT Abbott Laboratories Common Stock (ABT) [ST]
+      S (partial) 05/27/2026 06/02/2026 $1,001 - $15,000
+      Filing Status: New
+      Subholding Of: Morgan Stanley - Select UMA Account # 1
+      Location: US
+      Description: Common Stock
+      Cap. Gains > $200? checked
+    `);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      owner: 'joint',
+      ticker: 'ABT',
+      assetType: 'ST',
+      assetTypeName: 'Stocks (including ADRs)',
+      filingStatus: 'New',
+      subholding: 'Morgan Stanley - Select UMA Account # 1',
+      location: 'US',
+      description: 'Common Stock',
+      supplementalText:
+        'New | Morgan Stanley - Select UMA Account # 1 | US | Common Stock',
+      capGainsOver200: true,
+    });
+    expect(rows[0].supplementalText).not.toContain('Hon. Josh');
   });
 });

@@ -82,6 +82,56 @@ const OWNER_CODES: Record<string, Owner> = {
 
 // Asset-type bracket codes used by the House template, e.g. [ST] [OP] [GS].
 const ASSET_TYPE_RE = /\[([A-Z]{2,3})\]/;
+const HOUSE_ASSET_TYPE_NAMES: Record<string, string> = {
+  '4K': '401K and Other Non-Federal Retirement Accounts',
+  '5C': '529 College Savings Plan',
+  '5F': '529 Portfolio',
+  '5P': '529 Prepaid Tuition Plan',
+  AB: 'Asset-Backed Securities',
+  BA: 'Bank Accounts, Money Market Accounts and CDs',
+  BK: 'Brokerage Accounts',
+  CO: 'Collectibles',
+  CS: 'Corporate Securities (Bonds and Notes)',
+  CT: 'Cryptocurrency',
+  DB: 'Defined Benefit Pension',
+  DO: 'Debts Owed to the Filer',
+  DS: 'Delaware Statutory Trust',
+  EF: 'Exchange Traded Funds (ETF)',
+  EQ: 'Excepted/Qualified Blind Trust',
+  ET: 'Exchange Traded Notes',
+  FA: 'Farms',
+  FE: 'Foreign Exchange Position (Currency)',
+  FN: 'Fixed Annuity',
+  FU: 'Futures',
+  GS: 'Government Securities and Agency Debt',
+  HE: 'Hedge Funds & Private Equity Funds (EIF)',
+  HN: 'Hedge Funds & Private Equity Funds (non-EIF)',
+  IC: 'Investment Club',
+  IH: 'IRA (Held in Cash)',
+  IP: 'Intellectual Property & Royalties',
+  IR: 'IRA',
+  MA: 'Managed Accounts (e.g., SMA and UMA)',
+  MF: 'Mutual Funds',
+  MO: 'Mineral/Oil/Solar Energy Rights',
+  OI: 'Ownership Interest (Holding Investments)',
+  OL: 'Ownership Interest (Engaged in a Trade or Business)',
+  OP: 'Options',
+  OT: 'Other',
+  PE: 'Pensions',
+  PM: 'Precious Metals',
+  PS: 'Stock (Not Publicly Traded)',
+  RE: 'Real Estate Invest. Trust (REIT)',
+  RF: 'REIT (EIF)',
+  RN: 'REIT (non-EIF)',
+  RP: 'Real Property',
+  RS: 'Restricted Stock Units (RSUs)',
+  SA: 'Stock Appreciation Right',
+  ST: 'Stocks (including ADRs)',
+  TR: 'Trust',
+  VA: 'Variable Annuity',
+  VI: 'Variable Insurance',
+  WU: 'Whole/Universal Insurance',
+};
 // A date in MM/DD/YYYY.
 const DATE_RE = /\b(\d{1,2}\/\d{1,2}\/\d{2,4})\b/g;
 // An amount bracket like "$1,001 - $15,000" or "$50,000,001 +".
@@ -137,17 +187,26 @@ function stripHouseTableHeaders(text: string): string {
 }
 
 function parseInlineRecords(text: string): ParsedTx[] {
-  const normalized = stripInlineDetailSpans(stripHouseTableHeaders(text).replace(/\s+/g, ' ').trim());
-  const rows: ParsedTx[] = [];
+  const normalized = stripHouseTableHeaders(text).replace(/\s+/g, ' ').trim();
+  const matches: RegExpExecArray[] = [];
   let m: RegExpExecArray | null;
   INLINE_RECORD_RE.lastIndex = 0;
   while ((m = INLINE_RECORD_RE.exec(normalized)) !== null) {
+    matches.push(m);
+  }
+
+  const rows: ParsedTx[] = [];
+  for (let i = 0; i < matches.length; i += 1) {
+    m = matches[i];
+    const next = matches[i + 1];
+    const rawText = normalized.slice(m.index, next ? next.index : undefined).trim();
     const groups = m.groups ?? {};
     const rawAssetName = cleanInlineAssetName(groups.asset ?? '');
     const owner = parseOwner(groups.owner ?? '');
     const assetName = rawAssetName;
     const ticker = normalizeTicker(groups.parenTicker ?? groups.exchangeTicker ?? null);
     const assetType = groups.assetType?.toUpperCase() ?? null;
+    const details = parseHouseRowDetails(rawText);
     const txType = parseTxType(groups.txType ?? '') ?? 'P';
     const { min, max } = parseAmountRange(groups.amount ?? '');
     rows.push({
@@ -156,12 +215,14 @@ function parseInlineRecords(text: string): ParsedTx[] {
       assetName: assetName || ticker || '(unknown)',
       ticker,
       assetType,
+      assetTypeName: assetType ? HOUSE_ASSET_TYPE_NAMES[assetType] ?? null : null,
       txType,
       amountMin: min,
       amountMax: max,
-      isOption: assetType === 'OP' || detectOption(m[0]),
-      capGainsOver200: false,
-      rawText: m[0],
+      isOption: assetType === 'OP' || detectOption(rawText),
+      capGainsOver200: parseCapGainsOver200(rawText),
+      rawText,
+      ...details,
       confidence: BASE_CONFIDENCE,
     });
   }
@@ -246,6 +307,7 @@ function blockToParsedTx(block: string[]): ParsedTx | null {
   const owner = parseOwner(joined);
   const ticker = parseTicker(joined);
   const assetType = parseAssetType(joined);
+  const details = parseHouseRowDetails(joined);
   const assetName = parseAssetName(block, ticker);
   const txType = parseTxType(joined);
   const dates = parseDates(joined);
@@ -269,14 +331,51 @@ function blockToParsedTx(block: string[]): ParsedTx | null {
     assetName: assetName || ticker || '(unknown)',
     ticker,
     assetType,
+    assetTypeName: assetType ? HOUSE_ASSET_TYPE_NAMES[assetType] ?? null : null,
     txType: txType ?? 'P',
     amountMin: min,
     amountMax: max,
     isOption: detectOption(joined) || assetType === 'OP',
-    capGainsOver200: /(>|over|exceed).{0,8}\$?\s*200/i.test(joined),
+    capGainsOver200: parseCapGainsOver200(joined),
     rawText: joined,
+    ...details,
     confidence,
   };
+}
+
+function parseHouseRowDetails(text: string): Pick<
+  ParsedTx,
+  'filingStatus' | 'subholding' | 'location' | 'description' | 'supplementalText'
+> {
+  const filingStatus = cleanDetailValue(extractDetail(text, /\bFiling\s+Status:\s*/i));
+  const subholding = cleanDetailValue(extractDetail(text, /\bSubholding\s+Of:\s*/i));
+  const location = cleanDetailValue(extractDetail(text, /\bLocation:\s*/i) ?? extractDetail(text, /\bL:\s*/i));
+  const description = cleanDetailValue(extractDetail(text, /\bDescription:\s*/i) ?? extractDetail(text, /\bD:\s*/i));
+  const supplementalText = [filingStatus, subholding, location, description].filter(Boolean).join(' | ') || null;
+  return { filingStatus, subholding, location, description, supplementalText };
+}
+
+function extractDetail(text: string, label: RegExp): string | null {
+  const m = label.exec(text);
+  if (!m) return null;
+  const start = m.index + m[0].length;
+  const rest = text.slice(start);
+  const stop = rest.search(
+    /\b(?:Filing\s+Status|Subholding\s+Of|Location|Description):|\bCap\.?\s*Gains\b|\b(?:S\s+O|L|D):|\s+(?:SP|DC|JT|SELF)\b/i,
+  );
+  return stop >= 0 ? rest.slice(0, stop) : rest;
+}
+
+function cleanDetailValue(value: string | null): string | null {
+  const cleaned = (value ?? '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+\b(?:P|S|E|F)\s*$/i, '')
+    .trim();
+  return cleaned || null;
+}
+
+function parseCapGainsOver200(text: string): boolean {
+  return /\bCap\.?\s*Gains\b.{0,30}(?:checked|true|yes)|(?:☑|✓)\s*$|\bcapGainsOver200\b.{0,10}true/i.test(text);
 }
 
 function parseOwner(text: string): Owner | null {
