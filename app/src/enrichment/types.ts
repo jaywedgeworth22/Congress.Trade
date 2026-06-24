@@ -33,6 +33,8 @@ export interface SecurityRef {
   cik: string | null;
   sicCode: string | null;
   sicDescription: string | null;
+  /** Company logo URL for display (Finnhub CDN preferred, Massive branding fallback). */
+  logoUrl: string | null;
   /** Which provider(s) produced this row. */
   source: string | null;
 }

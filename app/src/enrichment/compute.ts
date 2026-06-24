@@ -67,7 +67,7 @@ export function mergeRefs(ticker: string, partials: Array<Partial<SecurityRef> |
     isEtf: false, isAdr: false, country: null, stateHq: null, stateOfIncorp: null,
     exchange: null, exchangeShort: null, currency: null, marketCap: null,
     marketCapBucket: null, ipoDate: null, cik: null, sicCode: null,
-    sicDescription: null, source: null,
+    sicDescription: null, logoUrl: null, source: null,
   };
   const sources: string[] = [];
   for (const p of partials) {

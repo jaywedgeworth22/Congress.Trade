@@ -1277,6 +1277,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'CREATE INDEX IF NOT EXISTS idx_secref_sector ON securities_ref (sector)',
       'CREATE INDEX IF NOT EXISTS idx_secref_bucket ON securities_ref (market_cap_bucket)',
       'CREATE INDEX IF NOT EXISTS idx_secref_enriched ON securities_ref (enriched_at)',
+      // 0008_logos.sql — company logo URL for the feed (enrichment chain).
+      'ALTER TABLE securities_ref ADD COLUMN logo_url TEXT',
       // 0006_prices.sql — price history + per-trade performance vs S&P 500.
       `CREATE TABLE IF NOT EXISTS price_eod (
          ticker TEXT NOT NULL, date TEXT NOT NULL, close REAL NOT NULL,

@@ -140,6 +140,7 @@ export interface Transaction {
   refCountry?: string | null;
   refExchangeShort?: string | null;
   refAssetClass?: string | null;
+  refLogoUrl?: string | null;
 }
 
 /**
