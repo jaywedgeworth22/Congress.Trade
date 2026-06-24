@@ -53,6 +53,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("id: 'traded'");
     expect(DASHBOARD_HTML).toContain("id: 'lag'");
     expect(DASHBOARD_HTML).toContain("id: 'published'");
+    expect(DASHBOARD_HTML).toContain("id: 'filed'");
+    expect(DASHBOARD_HTML).toContain("id: 'imported'");
   });
 
   it('contains mobile-first feed and navigation hooks', () => {
@@ -118,7 +120,19 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('Historical source note:');
     expect(DASHBOARD_HTML).toContain("e.target.closest('[data-member]')");
     expect(DASHBOARD_HTML).toContain('drawer-title-line clickable');
+    expect(DASHBOARD_HTML).toContain('drawer-member-title');
+    expect(DASHBOARD_HTML).toContain('color:var(--text)');
     expect(DASHBOARD_HTML).not.toContain('<pre class="raw-notes">');
+  });
+
+  it('uses published timing, tighter asset defaults, and source links in drawers', () => {
+    expect(DASHBOARD_HTML).toContain("var sortKey = 'published'");
+    expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v2'");
+    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v2'");
+    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 164, 124, 198)");
+    expect(DASHBOARD_HTML).toContain('function publishedDetailText(');
+    expect(DASHBOARD_HTML).toContain('function miniSourceLinkHtml(');
+    expect(DASHBOARD_HTML).toContain('Official Filed');
   });
 
   it('makes review documents linkable without showing false confidence for empty reads', () => {

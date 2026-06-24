@@ -280,8 +280,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #detailDrawerBody { margin-top:-34px; padding-top:2px; padding-right:36px; }
   .drawer-title-line { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; padding-right:4px; }
   .drawer-title-line .tkr { color:var(--accent); }
-  .drawer-title-line .company-name { min-width:0; overflow-wrap:anywhere; }
-  .drawer h2 { margin:0 0 2px; font-size:19px; }
+  .drawer-title-line .company-name { min-width:0; overflow-wrap:anywhere; color:var(--text); }
+  .drawer h2 { margin:0 0 2px; font-size:19px; color:var(--text); }
+  .drawer-member-title { display:flex; align-items:center; gap:11px; min-width:0; }
+  .drawer-member-title > div:last-child { min-width:0; }
+  .drawer-member-name { margin:0; color:var(--text); overflow-wrap:anywhere; }
   .drawer .dsub { color:var(--text-dim); font-size:13px; margin:0 0 6px; }
   .drawer-section { border-top:1px solid var(--border); padding:14px 0; }
   .drawer-section.first { border-top:none; padding-top:6px; }
@@ -300,6 +303,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .filing-note-kv dd { text-align:left; }
   .perf-line { font-size:15px; font-weight:700; }
   .mini-tbl td { padding:7px 6px; }
+  .mini-date { display:flex; flex-direction:column; gap:2px; line-height:1.25; }
+  .mini-date .subline { color:var(--text-dim); font-size:11px; }
+  .mini-source-link { display:block; margin-top:2px; font-size:11px; font-weight:600; }
   .colopts { display:flex; flex-wrap:wrap; gap:6px 4px; flex:1; }
   .colopt { font-size:13px; color:var(--text); display:inline-flex; align-items:center; gap:5px; margin-right:12px; white-space:nowrap; cursor:pointer; }
   .clickable { cursor: pointer; }
@@ -799,7 +805,7 @@ var es = null;            // EventSource handle
 var pollTimer = null;     // setInterval handle for the polling fallback
 var POLL_LIMIT = 500;     // matches MAX_TX_LIMIT in delivery/rows.ts
 var POLL_INTERVAL_MS = 30000;  // graceful polling cadence when SSE is unavailable
-var sortKey = 'filed';    // active feed sort column
+var sortKey = 'published'; // active feed sort column
 var sortDir = -1;         // 1 = ascending, -1 = descending (default: newest first)
 var NUMERIC_SORT = { min: 1, conf: 1, refMarketCap: 1 };   // columns compared numerically
 
@@ -973,7 +979,7 @@ function assetCellHtml(r) {
 function feedCardHtml(r) {
   var lag = lagDays(r);
   var amount = (r.min == null && r.max == null) ? '—' : amountText(r.min, r.max);
-  var filed = shortFiledText(r);
+  var published = publishedText(r);
   var traded = dateText(r.txdate);
   var source = sourceLabel(r.source);
   return '<article class="feed-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + r.member) + '">' +
@@ -985,7 +991,7 @@ function feedCardHtml(r) {
       '<div><span class="mkey">Amount</span><span class="mval">' + esc(amount) + '</span></div>' +
       '<div><span class="mkey">Source</span><span class="mval">' + esc(source) + '</span></div>' +
       '<div><span class="mkey">Traded</span><span class="mval">' + esc(traded) + '</span></div>' +
-      '<div><span class="mkey">Filed</span><span class="mval">' + esc(filed) + '</span></div>' +
+      '<div><span class="mkey">Published</span><span class="mval">' + esc(published) + '</span></div>' +
       '<div><span class="mkey">Lag</span><span class="mval">' + esc(lag == null ? shortLagText(r) : lag + 'd') + '</span></div>' +
       '<div><span class="mkey">Chamber</span><span class="mval">' + esc(ownerLabel(r.chamber) || '—') + '</span></div>' +
     '</div>' +
@@ -996,13 +1002,21 @@ function missingFiledReason(r) {
   if (r && r.source === 'seed_dataset') return 'Historical seed rows do not include the original official filing date yet. Run the official historical backfill to replace these with primary filing records.';
   return 'Official filing date is not available for this row.';
 }
-function shortFiledText(r) { return r && r.filed ? dateText(r.filed) : 'Unavailable'; }
+function publishedRaw(r) { return (r && (r.firstSeenAt || r.imported || r.filed || r.filedDate)) || ''; }
+function publishedText(r) { var s = publishedRaw(r); return s ? dateText(s) : 'Unavailable'; }
+function publishedDetailText(r) { var s = publishedRaw(r); return s ? dateTimeText(s) : 'Unavailable'; }
 function filedDetailText(r) { return r && r.filed ? dateText(r.filed) : 'Official Filing Date Unavailable'; }
 function shortLagText(r) { return lagDays(r) == null ? 'Unavailable' : lagDays(r) + 'd'; }
 function lagDetailText(r) {
   var d = lagDays(r);
-  if (d == null) return 'Official Filing Date Unavailable';
+  if (d == null) return 'Unavailable until official filing date is collected';
   return d + ' day' + (d === 1 ? '' : 's');
+}
+function publishedCellHtml(r) {
+  var s = publishedRaw(r);
+  if (!s) return '<span class="muted">Unavailable</span>';
+  var title = r.filed ? 'Official filing date is available in the details drawer.' : missingFiledReason(r);
+  return '<span title="' + esc(title) + '">' + esc(dateText(s)) + '</span>';
 }
 function filedCellHtml(r) {
   if (r.filed) return esc(dateText(r.filed));
@@ -1015,7 +1029,7 @@ function lagCellHtml(r) {
   return '<span' + over + ' title="Days from trade to filing (STOCK Act limit: 45)">' + d + '</span>';
 }
 var FEED_COLS = [
-  { id: 'filed', label: 'Filed', sort: 'filed', def: true, cls: 'muted', tip: 'Official disclosure (report) date. Historical seed rows may not include it.', cell: filedCellHtml },
+  { id: 'published', label: 'Published', sort: 'published', def: true, cls: 'muted', tip: 'When the disclosure was seen or imported by this feed. Official filed date appears in details when available.', cell: publishedCellHtml },
   { id: 'member', label: 'Member', sort: 'member', def: true, lock: true, cell: memberCellHtml },
   { id: 'asset', label: 'Asset', sort: 'asset', def: true, lock: true, cell: assetCellHtml },
   { id: 'type', label: 'Type', sort: 'type', def: true, cell: function (r) { return actionBadge(r.type); } },
@@ -1026,13 +1040,14 @@ var FEED_COLS = [
   { id: 'marketcap', label: 'Mkt cap', sort: 'refMarketCap', def: false, tip: 'Market-cap size tier (cross-referenced).', cell: function (r) { return r.refMarketCapBucket ? esc(ownerLabel(r.refMarketCapBucket)) : '<span class="muted">—</span>'; } },
   { id: 'country', label: 'Country', sort: 'refCountry', def: false, cls: 'muted', tip: 'Country of issue (cross-referenced).', cell: function (r) { return r.refCountry ? esc(r.refCountry) : '<span class="muted">—</span>'; } },
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', cell: function (r) { return esc(ownerLabel(r.owner) || '—'); } },
-  { id: 'published', label: 'Published', sort: 'imported', def: false, cls: 'muted', tip: 'When our feed received this filing.', cell: function (r) { return esc(dateTimeText(r.imported)); } },
+  { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
+  { id: 'imported', label: 'Imported', sort: 'imported', def: false, cls: 'muted', tip: 'When our feed persisted this trade row.', cell: function (r) { return esc(dateTimeText(r.imported)); } },
   { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', cell: function (r) { return esc(ownerLabel(r.chamber) || '—'); } },
   { id: 'conf', label: 'Conf.', sort: 'conf', def: false, cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">' + (r.conf * 100).toFixed(0) + '%</span>'; } },
   { id: 'source', label: 'Source', sort: 'source', def: false, cell: function (r) { return '<span class="muted" title="' + esc(r.source) + '">' + esc(sourceLabel(r.source)) + '</span>'; } },
   { id: 'latency', label: 'Latency', sort: null, def: false, cls: 'latency', tip: 'Released→Seen · Seen→Imported (live rows).', cell: function (r) { return rowLatencyHtml(r); } }
 ];
-var COL_HIDDEN_KEY = 'feed-cols-hidden';
+var COL_HIDDEN_KEY = 'feed-cols-hidden-v2';
 function defaultHidden() { return FEED_COLS.filter(function (c) { return !c.def; }).map(function (c) { return c.id; }); }
 function loadHiddenCols() { try { var v = JSON.parse(localStorage.getItem(COL_HIDDEN_KEY)); return v && v.length !== undefined ? v : defaultHidden(); } catch (e) { return defaultHidden(); } }
 function saveHiddenCols(h) { try { localStorage.setItem(COL_HIDDEN_KEY, JSON.stringify(h)); } catch (e) {} }
@@ -1158,7 +1173,7 @@ function updateFeedCountMsg(shown) {
 }
 
 /* ---- resizable feed columns (drag the right edge of a header) ---- */
-var COL_WIDTH_KEY = 'feed-col-widths';
+var COL_WIDTH_KEY = 'feed-col-widths-v2';
 var colResizeInit = false;
 function loadColWidths() { try { return JSON.parse(localStorage.getItem(COL_WIDTH_KEY) || '{}') || {}; } catch (e) { return {}; } }
 function saveColWidths(w) { try { localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w)); } catch (e) {} }
@@ -1175,11 +1190,11 @@ function estimatedColWidth(key, fallback, min, max) {
   var lens = nodes.map(function (n) { return (n.textContent || '').trim().length; }).filter(function (n) { return n > 0; }).sort(function (a, b) { return a - b; });
   if (!lens.length) return fallback;
   var med = lens[Math.floor(lens.length / 2)];
-  var px = key === 'asset' ? 46 + Math.ceil(med * 7.2) : 54 + Math.ceil(med * 7.4);
+  var px = key === 'asset' ? 42 + Math.ceil(med * 6.4) : 54 + Math.ceil(med * 7.4);
   return clampNum(px, min, max);
 }
 function minColWidth(key) {
-  return key === 'asset' ? 126 : key === 'member' ? 168 : 56;
+  return key === 'asset' ? 112 : key === 'member' ? 168 : 56;
 }
 function initColumnResize() {
   var table = el('feedTable'); if (!table) return;
@@ -1190,7 +1205,7 @@ function initColumnResize() {
   // compact default (Asset fits the longest name otherwise) — short entries then
   // show in full, long ones clip to an ellipsis, and any column stays draggable.
   var DEFAULT_CAP = {
-    asset: estimatedColWidth('asset', 176, 138, 224),
+    asset: estimatedColWidth('asset', 164, 124, 198),
     member: estimatedColWidth('member', 220, 188, 286)
   };
   for (var i = 0; i < ths.length; i++) {
@@ -1226,6 +1241,7 @@ function addColResizer(th) {
 /* ---- sorting ---- */
 function sortVal(r, key) {
   if (key === 'asset') return (r.ticker || r.asset || '');
+  if (key === 'published') return publishedRaw(r);
   if (key === 'lag') { var d = lagDays(r); return d == null ? -Infinity : d; }
   var v = r[key];
   if (NUMERIC_SORT[key]) return (v == null ? -Infinity : Number(v));
@@ -1243,7 +1259,7 @@ function sortRows(rows) {
 }
 function setSort(key) {
   if (sortKey === key) { sortDir = -sortDir; }   // same column -> flip direction
-  else { sortKey = key; sortDir = (key === 'filed' || key === 'txdate' || key === 'imported' || key === 'lag' || NUMERIC_SORT[key]) ? -1 : 1; }
+  else { sortKey = key; sortDir = (key === 'published' || key === 'filed' || key === 'txdate' || key === 'imported' || key === 'lag' || NUMERIC_SORT[key]) ? -1 : 1; }
   updateSortIndicators();
   renderFeed();
 }
@@ -2141,6 +2157,16 @@ function drawerCompanyTitle(ticker, name) {
     (ticker ? '<span class="tkr">' + esc(ticker) + '</span>' : '') +
     '<span class="company-name">' + esc(label) + '</span></h2>';
 }
+function miniTradeDateHtml(t) {
+  var traded = dateText(t.txDate);
+  var pub = t.filedDate || t.firstSeenAt || t.createdAt || '';
+  var sub = pub ? 'Published ' + dateText(pub) : 'Published unavailable';
+  return '<div class="mini-date"><span>' + esc(traded) + '</span><span class="subline">' + esc(sub) + '</span></div>';
+}
+function miniSourceLinkHtml(url) {
+  var safe = safeDocUrl(url);
+  return safe ? '<a class="mini-source-link" href="' + esc(safe) + '" target="_blank" rel="noopener noreferrer">Source</a>' : '';
+}
 
 /* ---- asset drawer (reuses /api/analytics/ticker/:ticker) ---- */
 function openAsset(ticker) {
@@ -2168,10 +2194,10 @@ function openAsset(ticker) {
       var member = t.filerId
         ? '<span class="member-cell clickable" data-member="' + esc(t.filerId) + '">' + pdot(t.partyBucket) + esc(name) + '</span>'
         : pdot(t.partyBucket) + esc(name);
-      return '<tr class="row"><td class="muted">' + esc(dateText(t.txDate)) + '</td>' +
+      return '<tr class="row"><td class="muted">' + miniTradeDateHtml(t) + '</td>' +
         '<td>' + actionBadge(t.txType) + '</td>' +
         '<td>' + member + '</td>' +
-        '<td class="est">' + estUsd(t.estValueUsd) + '</td></tr>';
+        '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.sourceUrl) + '</td></tr>';
     }).join('');
     openDrawer(
       drawerCompanyTitle(d.ticker, companyName || d.ticker) +
@@ -2217,13 +2243,13 @@ function openMember(filerId) {
       var assetCell = t.ticker
         ? '<span class="tkr clickable" data-asset="' + esc(t.ticker) + '">' + esc(t.ticker) + '</span>'
         : '<span class="muted">' + esc((t.assetName || '').slice(0, 30)) + '</span>';
-      return '<tr class="row"><td class="muted">' + esc(dateText(t.txDate)) + '</td>' +
+      return '<tr class="row"><td class="muted">' + miniTradeDateHtml(t) + '</td>' +
         '<td>' + actionBadge(t.txType) + '</td><td>' + assetCell + '</td>' +
-        '<td class="est">' + estUsd(t.estValueUsd) + '</td></tr>';
+        '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.sourceUrl) + '</td></tr>';
     }).join('');
     openDrawer(
-      '<div style="display:flex;align-items:center;gap:11px">' + memberAvatarHtml(name, p.photoUrl) +
-        '<div><h2 style="margin:0">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
+      '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl) +
+        '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
       '<div class="drawer-section"><h3>Trade Stats</h3><dl class="drawer-kv">' +
         kvRow('Total Trades', st.totalTrades || 0) + kvRow('Buys / Sells', (st.buyCount || 0) + ' / ' + (st.sellCount || 0)) +
         kvRow('Distinct Tickers', st.uniqueTickers || 0) + kvRow('Est. Volume', estUsd(st.estVolumeUsd)) +
@@ -2250,7 +2276,8 @@ function openTrade(row) {
     '<div class="drawer-section first"><h3>Trade</h3><dl class="drawer-kv">' +
       kvRow('Member', memberVal) +
       kvRow('Traded', esc(dateText(row.txdate))) +
-      kvRow('Filed', esc(filedDetailText(row))) +
+      kvRow('Published', esc(publishedDetailText(row))) +
+      kvRow('Official Filed', esc(filedDetailText(row))) +
       kvRow('Disclosure Lag', esc(lagDetailText(row))) +
       kvRow('Owner', esc(ownerLabel(row.owner) || '—')) +
       kvRow('Instrument', row.isOption ? 'Option' : 'Equity / other') +
