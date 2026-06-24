@@ -174,6 +174,7 @@ export async function normalize(
   await run(env.DB, "UPDATE filings SET ingest_status = 'persisted', error = NULL WHERE doc_id = ?", [
     filing.docId,
   ]);
+  await run(env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [filing.docId]);
 
   const insertedIds = await persistTransactions(env, transactions);
 
