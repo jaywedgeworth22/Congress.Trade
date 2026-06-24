@@ -316,6 +316,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .secret-panel strong { font-size:13px; }
   .secret-panel code { display:block; overflow:auto; white-space:nowrap; padding:8px; }
   .secret-actions { display:flex; gap:8px; flex-wrap:wrap; }
+  .diag-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:10px; margin:10px 0 14px; }
+  .diag-card { border:1px solid var(--border); border-radius:10px; background:var(--panel-2); padding:11px 12px; min-width:0; }
+  .diag-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:7px; }
+  .diag-title { font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .diag-status { font-size:10px; font-weight:800; text-transform:uppercase; border-radius:999px; padding:2px 7px; border:1px solid var(--border); }
+  .diag-status.ok { color:var(--buy); background:color-mix(in srgb,var(--buy) 13%,transparent); }
+  .diag-status.warn, .diag-status.unknown { color:var(--warn); background:color-mix(in srgb,var(--warn) 13%,transparent); }
+  .diag-status.error { color:var(--sell); background:color-mix(in srgb,var(--sell) 13%,transparent); }
+  .diag-meta { display:grid; grid-template-columns:1fr 1fr; gap:5px 10px; color:var(--text-dim); font-size:11px; }
+  .diag-note { margin-top:8px; color:var(--text-dim); font-size:11px; line-height:1.35; overflow-wrap:anywhere; }
+  .diag-error { color:var(--sell); font-weight:700; }
+  .diag-warning { color:var(--warn); font-weight:700; }
   @media (max-width:600px){ .drawer-panel { width:100%; max-width:100%; } }
   footer { text-align:center; color: var(--text-dim); font-size:11px; padding:26px; }
   /* ---- account control + auth/billing modals ---- */
@@ -740,6 +752,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <table>
         <thead><tr><th>Source</th><th>Last Poll</th><th>Last New Filing</th><th>Polls</th><th>Avg Refresh (Observed)</th><th title="Official disclosure date → when our watcher first saw it. Approximate: the disclosure systems publish a date, not an exact release time.">Released→Seen ≈</th><th title="When we first saw the filing → when we wrote its parsed rows. Precise (both are our timestamps).">Seen→Imported</th></tr></thead>
         <tbody id="healthBody"></tbody>
+      </table>
+    </div>
+    <div class="section">
+      <h3>Connection Status</h3>
+      <p class="sub">Provider and integration status from production data. Secret values are never shown.</p>
+      <div id="diagConnections" class="diag-grid" aria-live="polite"></div>
+      <h3 style="margin-top:14px">Recent App Errors</h3>
+      <table>
+        <thead><tr><th>When</th><th>Area</th><th>Subject</th><th>Message</th></tr></thead>
+        <tbody id="diagErrors"></tbody>
       </table>
     </div>
   </section>
@@ -1661,7 +1683,7 @@ function saveAdminToken() {
   try { if (v) localStorage.setItem(ADMIN_TOKEN_KEY, v); else localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
   el('adminTokenMsg').textContent = v ? 'Saved in this browser.' : 'Cleared.';
   setTimeout(function () { el('adminTokenMsg').textContent = ''; }, 2500);
-  loadPollConfig(); loadHealth();
+  loadPollConfig(); loadHealth(); loadDiagnostics();
 }
 function clearAdminToken() {
   try { localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
@@ -1824,6 +1846,61 @@ function loadHealth() {
     })
     .catch(function (e) {
       el('healthBody').innerHTML = stateRow(7, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load source health: ' + e.message));
+    });
+}
+
+function loadDiagnostics() {
+  // API HOOK: GET /api/admin/diagnostics
+  var cards = el('diagConnections');
+  var errors = el('diagErrors');
+  if (cards) cards.innerHTML = '<div class="state">Loading connection status…</div>';
+  if (errors) errors.innerHTML = stateRow(4, 'Loading recent errors…');
+  return fetch('/api/admin/diagnostics', { headers: adminHeaders() })
+    .then(okOrThrow)
+    .then(function (data) {
+      var connections = data.connections || [];
+      if (cards) {
+        if (connections.length === 0) {
+          cards.innerHTML = '<div class="state">No connection status available yet.</div>';
+        } else {
+          cards.innerHTML = connections.map(function (c) {
+            var st = c.status || 'unknown';
+            var configured = c.configured == null ? '—' : (c.configured ? 'Yes' : 'No');
+            return '<div class="diag-card">' +
+              '<div class="diag-head"><div class="diag-title">' + esc(c.label || c.id || 'Connection') + '</div>' +
+                '<span class="diag-status ' + esc(st) + '">' + esc(st) + '</span></div>' +
+              '<div class="diag-meta">' +
+                '<span>Configured</span><strong>' + esc(configured) + '</strong>' +
+                '<span>Last Used</span><strong>' + esc(dateTimeText(c.lastUsedAt)) + '</strong>' +
+                '<span>Total</span><strong>' + esc(c.callsTotal != null ? c.callsTotal : 0) + '</strong>' +
+                '<span>24h / Today</span><strong>' + esc((c.callsLast24h || 0) + ' / ' + (c.callsToday || 0)) + '</strong>' +
+                '<span>Errors 24h</span><strong class="' + (c.errorsLast24h ? 'diag-error' : '') + '">' + esc(c.errorsLast24h || 0) + '</strong>' +
+              '</div>' +
+              (c.note ? '<div class="diag-note">' + esc(c.note) + '</div>' : '') +
+            '</div>';
+          }).join('');
+        }
+      }
+      var rows = data.errors || [];
+      if (errors) {
+        if (rows.length === 0) {
+          errors.innerHTML = stateRow(4, 'No recent app errors found.');
+        } else {
+          errors.innerHTML = rows.map(function (e) {
+            var sev = e.severity === 'warning' ? 'diag-warning' : 'diag-error';
+            return '<tr class="row">' +
+              '<td class="muted">' + esc(dateTimeText(e.at)) + '</td>' +
+              '<td class="' + sev + '">' + esc(e.area || 'App') + '</td>' +
+              '<td class="muted">' + esc(e.subject || '—') + '</td>' +
+              '<td>' + esc(e.message || '—') + '</td>' +
+            '</tr>';
+          }).join('');
+        }
+      }
+    })
+    .catch(function (e) {
+      if (cards) cards.innerHTML = '<div class="state">' + esc(isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load diagnostics: ' + e.message)) + '</div>';
+      if (errors) errors.innerHTML = stateRow(4, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load diagnostics: ' + e.message));
     });
 }
 
@@ -2495,7 +2572,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     if (b.dataset.view === 'trends') loadTrends();
     if (b.dataset.view === 'review') loadReview();
     if (b.dataset.view === 'subs') loadSubs();
-    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); }
+    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadDiagnostics(); }
   };
 });
 
@@ -2581,6 +2658,8 @@ el('feedBody').innerHTML = stateRow(visibleCols().length, 'Loading live feed…'
 el('reviewBody').innerHTML = stateRow(5, 'Loading…');
 el('subsBody').innerHTML = stateRow(5, 'Loading…');
 el('healthBody').innerHTML = stateRow(7, 'Loading…');
+el('diagConnections').innerHTML = '<div class="state">Loading connection status…</div>';
+el('diagErrors').innerHTML = stateRow(4, 'Loading…');
 
 loadMe();              // account state (Sign in / avatar / premium badge)
 handleAuthQueryParams(); // toast + scrub ?login= / ?checkout= after redirects
