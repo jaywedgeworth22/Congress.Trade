@@ -972,6 +972,19 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       `CREATE INDEX IF NOT EXISTS idx_client_commands_user_created
          ON client_commands (user_id, created_at DESC)`,
       'CREATE INDEX IF NOT EXISTS idx_client_commands_status ON client_commands (status)',
+      // 0010_fundamentals.sql — sibling-app fundamentals + analyst consensus cache.
+      `CREATE TABLE IF NOT EXISTS fundamentals_eod (
+         ticker TEXT NOT NULL, date TEXT NOT NULL, pe_ratio REAL, eps REAL, beta REAL,
+         dividend_yield REAL, week52_high REAL, week52_low REAL, fcf_yield REAL,
+         debt_to_equity REAL, eps_growth REAL, source TEXT, updated_at TEXT NOT NULL,
+         PRIMARY KEY (ticker, date)
+       )`,
+      `CREATE TABLE IF NOT EXISTS analyst_consensus (
+         ticker TEXT NOT NULL, date TEXT NOT NULL, rating TEXT, target_mean REAL,
+         target_high REAL, target_low REAL, target_median REAL, analyst_count INTEGER,
+         strong_buy INTEGER, buy INTEGER, hold INTEGER, sell INTEGER, strong_sell INTEGER,
+         source TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (ticker, date)
+       )`,
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -1113,9 +1126,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   //     spx?: [{ date, close }],
   //     prices?: [{ ticker, closes?: [{date,close,volume?}], currentPrice?, currentPriceDate? }],
   //     insider?: [{ ticker, date, sentiment?, buyFilings?, sellFilings?, buyShares?, sellShares?, owners? }],
-  //     shortVolume?: [{ ticker, date, ratio, elevated? }] }
-  // Upserts securities_ref / spx_eod / price_eod / insider_eod / short_volume_eod
-  // and recomputes per-trade
+  //     shortVolume?: [{ ticker, date, ratio, elevated? }],
+  //     fundamentals?: [{ ticker, date, peRatio?, eps?, beta?, dividendYield?,
+  //                       week52High?, week52Low?, fcfYield?, debtToEquity?, epsGrowth? }],
+  //     analyst?: [{ ticker, date, rating?, targetMean?, targetHigh?, targetLow?,
+  //                  targetMedian?, analystCount?, strongBuy?, buy?, hold?, sell?, strongSell? }] }
+  // Upserts securities_ref / spx_eod / price_eod / insider_eod / short_volume_eod /
+  // fundamentals_eod / analyst_consensus and recomputes per-trade
   // performance anchors for imported tickers. Idempotent. Authorized by the
   // full ADMIN_TOKEN/Access OR the scoped INGEST_TOKEN (this endpoint only).
   r.post('/securities/import', async (c) => {
@@ -1128,7 +1145,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
     const summary = {
       refs: 0, spxRows: 0, pricedTickers: 0, priceRows: 0, perfTickers: 0,
-      insiderRows: 0, shortVolumeRows: 0, errors: [] as string[],
+      insiderRows: 0, shortVolumeRows: 0, fundamentalsRows: 0, analystRows: 0,
+      errors: [] as string[],
     };
     const nowIso = new Date().toISOString();
     const REF_KEYS = [
@@ -1288,6 +1306,102 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         );
       }
       summary.shortVolumeRows += rows.length;
+    }
+
+    // 6) Fundamentals daily snapshot pushed by a sibling app (saves our FMP
+    //    quota). [{ ticker, date, peRatio?, eps?, beta?, dividendYield?,
+    //    week52High?, week52Low?, fcfYield?, debtToEquity?, epsGrowth? }].
+    //    week52High/Low also accept the `52wHigh`/`52wLow` aliases.
+    if (Array.isArray(body.fundamentals)) {
+      const rows = (body.fundamentals as Array<Record<string, unknown>>)
+        .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
+        .slice(0, 20000);
+      for (let i = 0; i < rows.length; i += 100) {
+        await c.env.DB.batch(
+          rows.slice(i, i + 100).map((o) =>
+            c.env.DB.prepare(
+              `INSERT INTO fundamentals_eod (ticker, date, pe_ratio, eps, beta, dividend_yield,
+                 week52_high, week52_low, fcf_yield, debt_to_equity, eps_growth, source, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'imported', ?)
+               ON CONFLICT(ticker, date) DO UPDATE SET
+                 pe_ratio=COALESCE(excluded.pe_ratio, fundamentals_eod.pe_ratio),
+                 eps=COALESCE(excluded.eps, fundamentals_eod.eps),
+                 beta=COALESCE(excluded.beta, fundamentals_eod.beta),
+                 dividend_yield=COALESCE(excluded.dividend_yield, fundamentals_eod.dividend_yield),
+                 week52_high=COALESCE(excluded.week52_high, fundamentals_eod.week52_high),
+                 week52_low=COALESCE(excluded.week52_low, fundamentals_eod.week52_low),
+                 fcf_yield=COALESCE(excluded.fcf_yield, fundamentals_eod.fcf_yield),
+                 debt_to_equity=COALESCE(excluded.debt_to_equity, fundamentals_eod.debt_to_equity),
+                 eps_growth=COALESCE(excluded.eps_growth, fundamentals_eod.eps_growth),
+                 source=excluded.source, updated_at=excluded.updated_at`,
+            ).bind(
+              (o.ticker as string).toUpperCase(),
+              (o.date as string).slice(0, 10),
+              numOrNull(o.peRatio),
+              numOrNull(o.eps),
+              numOrNull(o.beta),
+              numOrNull(o.dividendYield),
+              numOrNull(o.week52High ?? o['52wHigh']),
+              numOrNull(o.week52Low ?? o['52wLow']),
+              numOrNull(o.fcfYield),
+              numOrNull(o.debtToEquity),
+              numOrNull(o.epsGrowth),
+              nowIso,
+            ),
+          ),
+        );
+      }
+      summary.fundamentalsRows += rows.length;
+    }
+
+    // 7) Analyst consensus snapshot. [{ ticker, date, rating?, targetMean?,
+    //    targetHigh?, targetLow?, targetMedian?, analystCount?, strongBuy?,
+    //    buy?, hold?, sell?, strongSell? }].
+    if (Array.isArray(body.analyst)) {
+      const rows = (body.analyst as Array<Record<string, unknown>>)
+        .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
+        .slice(0, 20000);
+      for (let i = 0; i < rows.length; i += 100) {
+        await c.env.DB.batch(
+          rows.slice(i, i + 100).map((o) =>
+            c.env.DB.prepare(
+              `INSERT INTO analyst_consensus (ticker, date, rating, target_mean, target_high,
+                 target_low, target_median, analyst_count, strong_buy, buy, hold, sell, strong_sell,
+                 source, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'imported', ?)
+               ON CONFLICT(ticker, date) DO UPDATE SET
+                 rating=COALESCE(excluded.rating, analyst_consensus.rating),
+                 target_mean=COALESCE(excluded.target_mean, analyst_consensus.target_mean),
+                 target_high=COALESCE(excluded.target_high, analyst_consensus.target_high),
+                 target_low=COALESCE(excluded.target_low, analyst_consensus.target_low),
+                 target_median=COALESCE(excluded.target_median, analyst_consensus.target_median),
+                 analyst_count=COALESCE(excluded.analyst_count, analyst_consensus.analyst_count),
+                 strong_buy=COALESCE(excluded.strong_buy, analyst_consensus.strong_buy),
+                 buy=COALESCE(excluded.buy, analyst_consensus.buy),
+                 hold=COALESCE(excluded.hold, analyst_consensus.hold),
+                 sell=COALESCE(excluded.sell, analyst_consensus.sell),
+                 strong_sell=COALESCE(excluded.strong_sell, analyst_consensus.strong_sell),
+                 source=excluded.source, updated_at=excluded.updated_at`,
+            ).bind(
+              (o.ticker as string).toUpperCase(),
+              (o.date as string).slice(0, 10),
+              typeof o.rating === 'string' ? o.rating : null,
+              numOrNull(o.targetMean),
+              numOrNull(o.targetHigh),
+              numOrNull(o.targetLow),
+              numOrNull(o.targetMedian),
+              intOrNull(o.analystCount),
+              intOrNull(o.strongBuy),
+              intOrNull(o.buy),
+              intOrNull(o.hold),
+              intOrNull(o.sell),
+              intOrNull(o.strongSell),
+              nowIso,
+            ),
+          ),
+        );
+      }
+      summary.analystRows += rows.length;
     }
 
     return c.json({ ok: summary.errors.length === 0, ...summary });
