@@ -124,7 +124,7 @@ within ~60s without a redeploy.
 
 ## Endpoint reference
 Public API (`/api`):
-- `GET /api/transactions?since=<cursor>&ticker=&member=&chamber=&type=&limit=` — cursor feed (reconciliation backstop)
+- `GET /api/transactions?since=<cursor>&ticker=&member=&chamber=&type=&from=&to=&order=&limit=` — cursor feed (reconciliation backstop). `from=`/`to=` (YYYY-MM-DD) bound the trade date for rolling-window pulls; `order=asc` (default, oldest-first — page forward with the returned `cursor` as the next `since`) or `order=desc` (newest-first "latest trades" snapshot, pair with `from=`).
 - `GET /api/stream?subscription=&token=&since=` — SSE live push (subscription secret required)
 - `GET /api/filings/:docId`, `GET /api/members`
 - `POST /api/subscriptions` — create and return the subscription secret once
@@ -133,7 +133,7 @@ Public API (`/api`):
 
 Client API (`/api/client/v1`, shared by the PWA and SwiftUI app):
 - `GET /api/client/v1/bootstrap`, `GET /api/client/v1/me`
-- `GET /api/client/v1/feed?since=&limit=&ticker=&member=&chamber=&type=&from=&to=`
+- `GET /api/client/v1/feed?since=&limit=&ticker=&member=&chamber=&type=&from=&to=&order=`
 - `GET/PUT /api/client/v1/preferences` — signed-in users only
 - `GET /api/client/v1/subscriptions` — signed-in user's webhook/SSE configs
 - `POST /api/client/v1/commands`, `GET /api/client/v1/commands/:id` — command/status gateway

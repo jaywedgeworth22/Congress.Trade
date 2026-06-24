@@ -77,6 +77,11 @@ function asTxType(v: string | undefined): TxType | undefined {
   return v === 'P' || v === 'S' || v === 'E' ? v : undefined;
 }
 
+/** Whitelist the sort direction; anything other than 'desc' falls back to asc. */
+function asOrder(v: string | undefined): 'asc' | 'desc' | undefined {
+  return v === 'desc' ? 'desc' : v === 'asc' ? 'asc' : undefined;
+}
+
 function asDelivery(v: unknown): DeliveryChannel {
   if (v === 'sse' || v === undefined || v === null || v === '') return 'sse';
   if (v === 'webhook') return 'webhook';
@@ -178,6 +183,7 @@ function filtersFromQuery(q: Record<string, string>): TxQueryParams {
     type: asTxType(q.type),
     txDateMin: q.from || q.txDateMin || undefined,
     txDateMax: q.to || q.txDateMax || undefined,
+    order: asOrder(q.order),
     limit: parseIntOrUndef(q.limit),
   };
 }
