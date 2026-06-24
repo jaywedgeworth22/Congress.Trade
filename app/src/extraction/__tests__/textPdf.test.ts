@@ -72,6 +72,36 @@ describe('parseHousePtrText', () => {
     expect(rows[0].assetName).not.toContain('Clerk');
   });
 
+  it('parses Pelosi-style option rows from House PTR text at text confidence', () => {
+    const rows = parseHousePtrText(
+      'Periodic Transaction Report ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200? ' +
+        'SP Intel Corporation - Common Stock (INTC) [OP] P 05/29/2026 05/29/2026 $1,000,001 - $5,000,000 F S: New D: Purchased 200 call options with a strike price of $50 and an expiration date of 3/19/27. ' +
+        'SP Uber Technologies, Inc. Common Stock (UBER) [OP] P 05/29/2026 05/29/2026 $500,001 - $1,000,000 F S: New D: Purchased 200 call options with a strike price of $50 and an expiration date of 3/19/27.',
+    );
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      owner: 'spouse',
+      assetName: 'Intel Corporation - Common Stock',
+      ticker: 'INTC',
+      assetType: 'OP',
+      txType: 'P',
+      txDate: '2026-05-29',
+      amountMin: 1000001,
+      amountMax: 5000000,
+      isOption: true,
+      confidence: 0.9,
+    });
+    expect(rows[1]).toMatchObject({
+      assetName: 'Uber Technologies, Inc. Common Stock',
+      ticker: 'UBER',
+      amountMin: 500001,
+      amountMax: 1000000,
+      isOption: true,
+      confidence: 0.9,
+    });
+  });
+
   it('anchors inline House rows at owner codes instead of the PTR header', () => {
     const rows = parseHousePtrText(
       'P T R Clerk of the House of Representatives T ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200? ' +

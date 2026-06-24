@@ -111,6 +111,8 @@ describe('DASHBOARD_HTML', () => {
   it('wires the per-trade performance line (price vs S&P)', () => {
     expect(DASHBOARD_HTML).toContain('function perfLineHtml(');
     expect(DASHBOARD_HTML).toContain("aGet('performance/");
+    expect(DASHBOARD_HTML).toContain('tradeDatePerformance');
+    expect(DASHBOARD_HTML).toContain('filingDatePerformance');
     expect(DASHBOARD_HTML).toContain('id="tradePerf"');
     expect(DASHBOARD_HTML).toContain('function companySectionHtml(');
   });
@@ -128,8 +130,13 @@ describe('DASHBOARD_HTML', () => {
   it('uses published timing, tighter asset defaults, and source links in drawers', () => {
     expect(DASHBOARD_HTML).toContain("var sortKey = 'published'");
     expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v2'");
-    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v2'");
-    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 164, 124, 198)");
+    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v4'");
+    expect(DASHBOARD_HTML).toContain('asset: 180');
+    expect(DASHBOARD_HTML).toContain("p.set('sort', 'published')");
+    expect(DASHBOARD_HTML).toContain("p.set('memberName', m)");
+    expect(DASHBOARD_HTML).toContain('function handleFeedTextFilter(');
+    expect(DASHBOARD_HTML).toContain('feedRequestSeq');
+    expect(DASHBOARD_HTML).toContain("arr.textContent = '↕'");
     expect(DASHBOARD_HTML).toContain('function publishedDetailText(');
     expect(DASHBOARD_HTML).toContain('function miniSourceLinkHtml(');
     expect(DASHBOARD_HTML).toContain('Official Filed');
@@ -140,6 +147,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function reviewDocHtml(');
     expect(DASHBOARD_HTML).toContain('View Document');
     expect(DASHBOARD_HTML).toContain('No readable transactions');
+    expect(DASHBOARD_HTML).toContain('Vision-read filing held for review');
+    expect(DASHBOARD_HTML).toContain('Automated read below publish threshold');
     expect(DASHBOARD_HTML).toContain('rel="noopener noreferrer"');
   });
 
@@ -166,5 +175,16 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('not investment advice');
     expect(DASHBOARD_HTML.toLowerCase()).toContain('not financial advice');
     expect(DASHBOARD_HTML.toLowerCase()).toContain('educational');
+  });
+
+  it('formats trade amount brackets compactly', () => {
+    expect(DASHBOARD_HTML).toContain('function fmtBracketAmount(');
+    expect(DASHBOARD_HTML).toContain("fmtBracketAmount(min) + ' - '");
+  });
+
+  it('does not use imported/published time as disclosure lag', () => {
+    expect(DASHBOARD_HTML).toContain("function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }");
+    expect(DASHBOARD_HTML).not.toContain('r.filedDate || r.filed || publishedRaw(r)');
+    expect(DASHBOARD_HTML).not.toContain('using Congress.Trade import date');
   });
 });

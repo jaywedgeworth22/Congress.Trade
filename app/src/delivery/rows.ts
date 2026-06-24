@@ -192,8 +192,10 @@ export function mapFiling(row: FilingRow): Filing {
 
 export interface TxQueryParams {
   since?: number;
+  offset?: number;
   ticker?: string;
   member?: string;
+  memberName?: string;
   chamber?: Chamber;
   type?: TxType;
   limit?: number;
@@ -216,7 +218,13 @@ export interface TxQueryParams {
   txDateMin?: string;
   txDateMax?: string;
   /**
-   * Sort direction on `cursor_seq`. Defaults to `'asc'` (oldest-first), which
+   * Sort expression for snapshot reads. Defaults to cursor_seq so incremental
+   * consumers keep the forward-cursor contract; the public UI can request
+   * `published` to sort by filing/import time instead of insertion order.
+   */
+  sort?: 'cursor' | 'published';
+  /**
+   * Sort direction. Defaults to `'asc'` (oldest-first), which
    * preserves the forward-cursor reconciliation contract: callers page by
    * feeding the returned max `cursor` back as the next `since`, so an
    * incremental sync resumes gap-free. Pass `'desc'` for a newest-first
@@ -233,6 +241,7 @@ export interface BuiltQuery {
   sql: string;
   params: Array<string | number>;
   limit: number;
+  offset: number;
 }
 
 /** Default and hard-cap page sizes for the transactions endpoint. */
@@ -297,6 +306,10 @@ function buildTxFilters(
     where.push('t.filer_id = ?');
     params.push(p.member);
   }
+  if (p.memberName) {
+    where.push('LOWER(COALESCE(fl.full_name, t.filer_id, \'\')) LIKE ?');
+    params.push(`%${p.memberName.toLowerCase()}%`);
+  }
   if (p.type) {
     where.push('t.tx_type = ?');
     params.push(p.type);
@@ -344,10 +357,20 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
   let limit = Number.isFinite(p.limit) ? Number(p.limit) : DEFAULT_TX_LIMIT;
   if (limit <= 0) limit = DEFAULT_TX_LIMIT;
   if (limit > MAX_TX_LIMIT) limit = MAX_TX_LIMIT;
+  let offset = Number.isFinite(p.offset) ? Math.floor(Number(p.offset)) : 0;
+  if (offset < 0) offset = 0;
 
   // Closed enum -> only the literal 'ASC'/'DESC' is interpolated, never caller
   // text. ASC stays the default to keep the forward-cursor paging contract.
   const direction = p.order === 'desc' ? 'DESC' : 'ASC';
+  const orderExpr =
+    p.sort === 'published'
+      ? 'COALESCE(f.first_seen_at, f.filed_date, t.created_at, t.cursor_seq)'
+      : 't.cursor_seq';
+  const orderClause =
+    orderExpr === 't.cursor_seq'
+      ? `t.cursor_seq ${direction}`
+      : `${orderExpr} ${direction}, t.cursor_seq ${direction}`;
 
   const sql =
     `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, fl.party AS __party, ` +
@@ -357,10 +380,11 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
     'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url ' +
     TX_FROM_JOINS +
     `WHERE ${where.join(' AND ')} ` +
-    `ORDER BY t.cursor_seq ${direction} ` +
-    `LIMIT ${limit}`;
+    `ORDER BY ${orderClause} ` +
+    `LIMIT ${limit}` +
+    (offset > 0 ? ` OFFSET ${offset}` : '');
 
-  return { sql, params, limit };
+  return { sql, params, limit, offset };
 }
 
 /**
@@ -378,6 +402,20 @@ export function buildTransactionsCountQuery(
     TX_FROM_JOINS +
     (where.length ? `WHERE ${where.join(' AND ')}` : '');
   return { sql, params };
+}
+
+/** Count distinct filings first imported today for the same feed filters. */
+export function buildTransactionsTodayFilingsQuery(
+  p: TxQueryParams,
+  todayIso: string,
+): { sql: string; params: Array<string | number> } {
+  const { where, params } = buildTxFilters(p, false);
+  const allWhere = [...where, 'substr(COALESCE(f.first_seen_at, t.created_at), 1, 10) = ?'];
+  const sql =
+    'SELECT COUNT(DISTINCT t.doc_id) AS total ' +
+    TX_FROM_JOINS +
+    `WHERE ${allWhere.join(' AND ')}`;
+  return { sql, params: [...params, todayIso.slice(0, 10)] };
 }
 
 /** Hard cap on rows in a single CSV export (premium full-history download). */
@@ -407,5 +445,5 @@ export function buildTransactionsExportQuery(
     (where.length ? `WHERE ${where.join(' AND ')} ` : '') +
     'ORDER BY t.cursor_seq DESC ' +
     `LIMIT ${limit}`;
-  return { sql, params, limit };
+  return { sql, params, limit, offset: 0 };
 }

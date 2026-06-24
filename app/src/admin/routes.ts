@@ -288,14 +288,35 @@ function normName(s: string | null | undefined): string {
     .trim();
 }
 
+interface LegislatorTerm {
+  type?: string;
+  party?: string;
+  state?: string;
+  district?: number | string | null;
+  start?: string;
+  end?: string;
+}
+
 interface Legislator {
   id?: { bioguide?: string };
   name?: { first?: string; last?: string; official_full?: string; nickname?: string };
+  terms?: LegislatorTerm[];
 }
 
-/** Build a normalized-name -> bioguide map from the congress-legislators data. */
-async function buildBioguideMap(): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+interface LegislatorMatch {
+  bioguide: string;
+  party: string | null;
+  state: string | null;
+  district: string | null;
+}
+
+function latestLegislatorTerm(terms: LegislatorTerm[] | undefined): LegislatorTerm | undefined {
+  return (terms ?? []).slice().sort((a, b) => String(b.start ?? '').localeCompare(String(a.start ?? '')))[0];
+}
+
+/** Build a normalized-name -> legislator metadata map from congress-legislators. */
+async function buildLegislatorMap(): Promise<Map<string, LegislatorMatch>> {
+  const map = new Map<string, LegislatorMatch>();
   for (const url of LEGISLATOR_SOURCES) {
     const res = await fetch(url, {
       headers: {
@@ -308,6 +329,13 @@ async function buildBioguideMap(): Promise<Map<string, string>> {
     for (const leg of list) {
       const bio = leg.id?.bioguide;
       if (!bio) continue;
+      const term = latestLegislatorTerm(leg.terms);
+      const match: LegislatorMatch = {
+        bioguide: bio,
+        party: term?.party ?? null,
+        state: term?.state ?? null,
+        district: term?.district == null ? null : String(term.district),
+      };
       const n = leg.name ?? {};
       const candidates = [
         n.first && n.last ? `${n.first} ${n.last}` : '',
@@ -316,7 +344,7 @@ async function buildBioguideMap(): Promise<Map<string, string>> {
       ];
       for (const raw of candidates) {
         const k = normName(raw);
-        if (k && !map.has(k)) map.set(k, bio); // current list is loaded first; it wins
+        if (k && !map.has(k)) map.set(k, match); // current list is loaded first; it wins
       }
     }
   }
@@ -1641,7 +1669,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // falls back to initials).
   r.post('/enrich-photos', async (c) => {
     try {
-      const map = await buildBioguideMap();
+      const map = await buildLegislatorMap();
       const filers = await all<{ bioguide_id: string; full_name: string | null }>(
         c.env.DB,
         'SELECT bioguide_id, full_name FROM filers',
@@ -1649,13 +1677,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       const updates: D1PreparedStatement[] = [];
       let matched = 0;
       for (const f of filers) {
-        const bio = map.get(normName(f.full_name));
-        if (!bio) continue;
+        const match = map.get(normName(f.full_name));
+        if (!match) continue;
         matched++;
         updates.push(
           c.env.DB
-            .prepare('UPDATE filers SET photo_url = ? WHERE bioguide_id = ?')
-            .bind(photoUrlFor(bio), f.bioguide_id),
+            .prepare('UPDATE filers SET photo_url = ?, party = COALESCE(NULLIF(party, \'\'), ?), state = COALESCE(NULLIF(state, \'\'), ?), district = COALESCE(NULLIF(district, \'\'), ?) WHERE bioguide_id = ?')
+            .bind(photoUrlFor(match.bioguide), match.party, match.state, match.district, f.bioguide_id),
         );
       }
       for (let i = 0; i < updates.length; i += 50) {

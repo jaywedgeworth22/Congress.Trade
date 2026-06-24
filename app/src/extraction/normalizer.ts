@@ -167,7 +167,10 @@ export async function normalize(
   );
 
   if (needsReview) {
-    await routeToReview(env, filing, flagged, minConfidence, nowIso);
+    await routeToReview(env, filing, flagged, minConfidence, nowIso, {
+      extractor: extractorName,
+      modelVersion,
+    });
     return { transactions, minConfidence, needsReview: true };
   }
 
@@ -441,6 +444,7 @@ async function routeToReview(
   flagged: FlaggedTx[],
   minConfidence: number,
   nowIso: string,
+  meta: { extractor: string | null; modelVersion: string | null },
 ): Promise<void> {
   const reasons = new Set<string>();
   for (const f of flagged) for (const flag of f.flags) reasons.add(flag);
@@ -450,8 +454,8 @@ async function routeToReview(
   const reason = Array.from(reasons).join(',') || 'needs_review';
   const payload = JSON.stringify({
     minConfidence,
-    extractor: filing.extractor,
-    modelVersion: filing.modelVersion,
+    extractor: meta.extractor,
+    modelVersion: meta.modelVersion,
     transactions: flagged.map((f) => ({ ...f.tx, flags: f.flags })),
   });
 

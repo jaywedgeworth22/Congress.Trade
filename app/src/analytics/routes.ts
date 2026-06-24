@@ -81,6 +81,28 @@ function str(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
+async function closeOnOrBefore(
+  env: Env,
+  table: 'price_eod' | 'spx_eod',
+  date: string | null,
+  ticker?: string | null,
+): Promise<number | null> {
+  if (!date) return null;
+  const row =
+    table === 'price_eod'
+      ? await get<{ close: number }>(
+          env.DB,
+          'SELECT close FROM price_eod WHERE ticker = ? AND date <= ? ORDER BY date DESC LIMIT 1',
+          [String(ticker ?? '').toUpperCase(), date.slice(0, 10)],
+        )
+      : await get<{ close: number }>(
+          env.DB,
+          'SELECT close FROM spx_eod WHERE date <= ? ORDER BY date DESC LIMIT 1',
+          [date.slice(0, 10)],
+        );
+  return row?.close == null ? null : num(row.close);
+}
+
 interface CommonQuery extends CommonFilters {
   window: Window;
 }
@@ -554,10 +576,12 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(txId)) return c.json({ error: 'invalid id' }, 400);
     const row = await get<Record<string, unknown>>(
       c.env.DB,
-      `SELECT t.tx_type, t.is_option, txp.price_at_trade, txp.spx_at_trade,
+      `SELECT t.tx_type, t.is_option, t.ticker, t.tx_date, f.filed_date,
+              txp.price_at_trade, txp.spx_at_trade,
               sr.current_price, sr.current_price_date
          FROM transactions t
          LEFT JOIN tx_performance txp ON txp.tx_id = t.id
+         LEFT JOIN filings f ON f.doc_id = t.doc_id
          LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
         WHERE t.id = ?`,
       [txId],
@@ -572,13 +596,26 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     }
     const currentSpx = await latestSpxClose(c.env);
     const perf = computePerformance(priceAtTrade, currentPrice, spxAtTrade, currentSpx);
+    const filedDate = str(row.filed_date);
+    const priceAtFiling = await closeOnOrBefore(c.env, 'price_eod', filedDate, str(row.ticker));
+    const spxAtFiling = await closeOnOrBefore(c.env, 'spx_eod', filedDate);
+    const filingPerf =
+      priceAtFiling == null || currentSpx == null
+        ? null
+        : computePerformance(priceAtFiling, currentPrice, spxAtFiling, currentSpx);
     return c.json({
       available: true,
       txType: str(row.tx_type),
+      ticker: str(row.ticker),
+      txDate: str(row.tx_date),
+      filedDate,
       priceAtTrade,
       currentPrice,
       currentPriceDate: str(row.current_price_date),
       ...perf,
+      tradeDatePerformance: { priceAt: priceAtTrade, spxAt: spxAtTrade, ...perf },
+      filingDatePerformance:
+        filingPerf == null ? null : { priceAt: priceAtFiling, spxAt: spxAtFiling, ...filingPerf },
       estimatedAmounts: true,
     });
   });

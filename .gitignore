@@ -27,3 +27,4 @@ ptr_state/
 .__probe
 app/tsconfig.*.tmp.json
 app/scripts/securities_master.sql
+app/wrangler.preview.toml

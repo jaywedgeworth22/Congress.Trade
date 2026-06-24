@@ -38,6 +38,10 @@ export interface DiscoveredFiling {
   sourceUrl: string;
   /** Official filing/report date when the source index provides it. */
   filedDate?: string | null;
+  filerId?: string | null;
+  filerName?: string | null;
+  state?: string | null;
+  district?: string | null;
 }
 
 function normalizeFilingDate(raw: string | null | undefined): string | null {
@@ -48,6 +52,41 @@ function normalizeFilingDate(raw: string | null | undefined): string | null {
   const us = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(s);
   if (us) return `${us[3]}-${us[1].padStart(2, '0')}-${us[2].padStart(2, '0')}`;
   return s.slice(0, 10);
+}
+
+function slugPart(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function houseFilerId(first: string, last: string, stateDst: string): string | null {
+  const name = slugPart([first, last].filter(Boolean).join(' '));
+  if (!name) return null;
+  const district = slugPart(stateDst || 'house');
+  return `house-${district}-${name}`;
+}
+
+function splitStateDistrict(stateDst: string): { state: string | null; district: string | null } {
+  const m = /^([A-Z]{2})(\d{1,2})$/i.exec((stateDst || '').trim());
+  if (!m) return { state: null, district: null };
+  return { state: m[1].toUpperCase(), district: String(Number(m[2])) };
+}
+
+function houseDiscovery(f: { pipelineDocId: string; sourceUrl: string; filingDate: string; first: string; last: string; stateDst: string }): DiscoveredFiling {
+  const sd = splitStateDistrict(f.stateDst);
+  const fullName = [f.first, f.last].filter(Boolean).join(' ').trim() || null;
+  return {
+    docId: f.pipelineDocId,
+    chamber: 'house',
+    sourceUrl: f.sourceUrl,
+    filedDate: f.filingDate,
+    filerId: houseFilerId(f.first, f.last, f.stateDst),
+    filerName: fullName,
+    state: sd.state,
+    district: sd.district,
+  };
 }
 
 /**
@@ -64,16 +103,34 @@ export async function insertFilingIfNew(
   f: DiscoveredFiling,
   nowIso: string,
 ): Promise<boolean> {
+  if (f.filerId && f.filerName) {
+    await run(
+      env.DB,
+      `INSERT OR IGNORE INTO filers (bioguide_id, chamber, full_name, party, state, district, committees)
+       VALUES (?, ?, ?, NULL, ?, ?, NULL)`,
+      [f.filerId, f.chamber, f.filerName, f.state ?? null, f.district ?? null],
+    );
+  }
   const res = await run(
     env.DB,
     `INSERT OR IGNORE INTO filings
        (doc_id, chamber, filer_id, filing_type, filed_date, source_url,
         raw_object_key, ingest_status, doc_kind, extractor, model_version,
         confidence, first_seen_at, source_updated_at, error)
-     VALUES (?, ?, NULL, 'P', ?, ?, NULL, 'new', 'unknown', NULL, NULL,
+     VALUES (?, ?, ?, 'P', ?, ?, NULL, 'new', 'unknown', NULL, NULL,
              NULL, ?, NULL, NULL)`,
-    [f.docId, f.chamber, normalizeFilingDate(f.filedDate), f.sourceUrl, nowIso],
+    [f.docId, f.chamber, f.filerId ?? null, normalizeFilingDate(f.filedDate), f.sourceUrl, nowIso],
   );
+  if (f.filerId) {
+    await run(env.DB, 'UPDATE filings SET filer_id = COALESCE(filer_id, ?) WHERE doc_id = ?', [
+      f.filerId,
+      f.docId,
+    ]);
+    await run(env.DB, 'UPDATE transactions SET filer_id = COALESCE(filer_id, ?) WHERE doc_id = ?', [
+      f.filerId,
+      f.docId,
+    ]);
+  }
   return (res.meta?.changes ?? 0) > 0;
 }
 
@@ -153,24 +210,14 @@ async function pollHouse(env: Env, now: Date): Promise<void> {
   // bulk path. INSERT OR IGNORE de-dupes the overlap with the bulk rows above.
   const byDoc = new Map<string, DiscoveredFiling>();
   for (const f of ptrs) {
-    byDoc.set(f.pipelineDocId, {
-      docId: f.pipelineDocId,
-      chamber: 'house',
-      sourceUrl: f.sourceUrl,
-      filedDate: f.filingDate,
-    });
+    byDoc.set(f.pipelineDocId, houseDiscovery(f));
   }
   if (houseLiveSearchEnabled(env)) {
     try {
       const live = await pollHouseLiveSearch(year);
       for (const f of live) {
         if (!byDoc.has(f.pipelineDocId)) {
-          byDoc.set(f.pipelineDocId, {
-            docId: f.pipelineDocId,
-            chamber: 'house',
-            sourceUrl: f.sourceUrl,
-            filedDate: f.filingDate,
-          });
+          byDoc.set(f.pipelineDocId, houseDiscovery(f));
         }
       }
     } catch (err) {
