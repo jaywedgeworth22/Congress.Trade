@@ -200,6 +200,9 @@ export interface ReviewItem {
   payload: unknown;
   createdAt: string;
   resolved: boolean;
+  sourceUrl?: string;
+  rawObjectKey?: string;
+  docKind?: string;
 }
 
 // ---------------------------------------------------------------------------
