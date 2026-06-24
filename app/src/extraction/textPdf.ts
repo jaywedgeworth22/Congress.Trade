@@ -90,13 +90,21 @@ const AMOUNT_RE = /\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?/i;
 const TXTYPE_RE = /\b(P|S|E)\b|\b(purchase|sale|exchange)\b/i;
 // A ticker in parentheses, e.g. "(AAPL)".
 const TICKER_RE = /\(([A-Z][A-Z0-9.\-]{0,9})\)/;
+const INLINE_RECORD_RE =
+  /(?<asset>[A-Z0-9][^$]{1,240}?)\s+(?:(?:\((?<parenTicker>[A-Z][A-Z0-9.\/-]{0,9})\))|(?:NYSE[A-Z]*:\s*(?<exchangeTicker>[A-Z][A-Z0-9.\/-]{0,9})))?\s*\[(?<assetType>[A-Z]{2,3})\]\s+(?<txType>P|S|E|purchase|sale|exchange)(?:\s*\([^)]*\))?\s+(?<txDate>\d{1,2}\/\d{1,2}\/\d{2,4})\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+(?<amount>\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?)/gi;
 
 /**
  * Parse the merged House PTR text into ParsedTx[]. We segment the text into
  * candidate holding blocks, then pull fields from each block.
  */
 export function parseHousePtrText(text: string): ParsedTx[] {
-  const lines = cleanPdfText(text)
+  const cleaned = cleanPdfText(text);
+  if (/\bID Owner Asset Transaction Type Date Notification Date Amount Cap\. Gains > \$200\?/i.test(cleaned)) {
+    const inlineRows = parseInlineRecords(cleaned);
+    if (inlineRows.length > 0) return inlineRows;
+  }
+
+  const lines = cleaned
     .split(/\r?\n/)
     .map((l) => l.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
@@ -117,6 +125,83 @@ function cleanPdfText(text: string): string {
     // Remove them before line grouping so "S\0P" is parsed as owner code "SP".
     .replace(/\u0000/g, '')
     .replace(/\u00a0/g, ' ');
+}
+
+function stripHouseTableHeaders(text: string): string {
+  return text
+    .replace(/^.*?\bID Owner Asset Transaction Type Date Notification Date Amount Cap\. Gains > \$200\?\s*/i, '')
+    .replace(
+      /\bFiling ID\s*#?\d+\s+ID Owner Asset Transaction Type Date Notification Date Amount Cap\. Gains > \$200\?\s*/gi,
+      ' ',
+    );
+}
+
+function parseInlineRecords(text: string): ParsedTx[] {
+  const normalized = stripInlineDetailSpans(stripHouseTableHeaders(text).replace(/\s+/g, ' ').trim());
+  const rows: ParsedTx[] = [];
+  let m: RegExpExecArray | null;
+  INLINE_RECORD_RE.lastIndex = 0;
+  while ((m = INLINE_RECORD_RE.exec(normalized)) !== null) {
+    const groups = m.groups ?? {};
+    const assetName = cleanInlineAssetName(groups.asset ?? '');
+    const ticker = normalizeTicker(groups.parenTicker ?? groups.exchangeTicker ?? null);
+    const assetType = groups.assetType?.toUpperCase() ?? null;
+    const txType = parseTxType(groups.txType ?? '') ?? 'P';
+    const { min, max } = parseAmountRange(groups.amount ?? '');
+    rows.push({
+      txDate: toIsoDate(groups.txDate ?? ''),
+      owner: 'self',
+      assetName: assetName || ticker || '(unknown)',
+      ticker,
+      assetType,
+      txType,
+      amountMin: min,
+      amountMax: max,
+      isOption: assetType === 'OP' || detectOption(m[0]),
+      capGainsOver200: false,
+      rawText: m[0],
+      confidence: BASE_CONFIDENCE,
+    });
+  }
+  return rows;
+}
+
+function stripInlineDetailSpans(text: string): string {
+  const nextRecord =
+    /\s+[A-Z][A-Za-z0-9&.,'’:/ -]{2,180}\s+(?:(?:\([A-Z][A-Z0-9.\/-]{0,9}\)\s*)|(?:NYSE[A-Z]*:\s*[A-Z][A-Z0-9.\/-]{0,9}\s*)|)\[[A-Z]{2,3}\]\s+(?:P|S|E|purchase|sale|exchange)\b/i;
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const detail = /\s+F\s+S:\s+New\b/i.exec(text.slice(i));
+    if (!detail) {
+      out += text.slice(i);
+      break;
+    }
+    const start = i + detail.index;
+    out += text.slice(i, start);
+    const restStart = start + detail[0].length;
+    const next = nextRecord.exec(text.slice(restStart));
+    if (!next) break;
+    i = restStart + next.index;
+  }
+  return out.replace(/\s+/g, ' ').trim();
+}
+
+function cleanInlineAssetName(value: string): string {
+  return value
+    .replace(/^.*(?:\/share|shares)\s+/i, '')
+    .replace(/\b(F|T)\s*ID Owner Asset Transaction Type Date Notification Date Amount Cap\. Gains > \$200\?/gi, ' ')
+    .replace(/\b(S|P|E|F)\s+S:\s+New\b.*$/i, '')
+    .replace(/\b(S|P|E|F)\s+O:\s+.*$/i, '')
+    .replace(/\bD:\s+.*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeTicker(value: string | null): string | null {
+  if (!value) return null;
+  const ticker = value.toUpperCase().replace('/', '.');
+  return ticker === 'N/A' ? null : ticker;
 }
 
 function startsNewHolding(line: string): boolean {

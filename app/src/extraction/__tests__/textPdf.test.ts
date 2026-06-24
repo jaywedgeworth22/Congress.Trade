@@ -45,4 +45,28 @@ describe('parseHousePtrText', () => {
     });
     expect(rows[0].assetName).not.toContain('Clerk');
   });
+
+  it('parses single-line House text without treating the PTR header as an asset', () => {
+    const rows = parseHousePtrText(
+      'P T R Clerk of the House of Representatives T ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200? ' +
+        'Amazon.com, Inc. - Common Stock (AMZN) [ST] S (partial) 03/16/2026 03/16/2026 $1,001 - $15,000 F S: New S O: Putnam Investments D: details with AAPL and QQQ shares ' +
+        'Apple Inc. - Common Stock (AAPL) [ST] S (partial) 03/16/2026 03/16/2026 $1,001 - $15,000 F S: New',
+    );
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      assetName: 'Amazon.com, Inc. - Common Stock',
+      ticker: 'AMZN',
+      assetType: 'ST',
+      txType: 'S',
+      txDate: '2026-03-16',
+      amountMin: 1001,
+      amountMax: 15000,
+    });
+    expect(rows[1]).toMatchObject({
+      assetName: 'Apple Inc. - Common Stock',
+      ticker: 'AAPL',
+    });
+    expect(rows[0].assetName).not.toContain('Clerk');
+  });
 });
