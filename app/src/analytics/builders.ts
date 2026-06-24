@@ -436,7 +436,7 @@ export function buildTickerRecentTradesQuery(
   const sql =
     'SELECT t.tx_date AS tx_date, t.tx_type AS tx_type, t.owner AS owner, ' +
     't.amount_min AS amount_min, t.amount_max AS amount_max, t.is_option AS is_option, ' +
-    'fl.full_name AS full_name, fl.party AS party, fl.photo_url AS photo_url ' +
+    't.filer_id AS filer_id, fl.full_name AS full_name, fl.party AS party, fl.photo_url AS photo_url ' +
     ANALYTICS_FROM_JOINS +
     whereSql(where) +
     'ORDER BY t.tx_date DESC, t.cursor_seq DESC ' +

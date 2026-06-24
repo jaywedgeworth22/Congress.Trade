@@ -40,9 +40,9 @@ export interface HouseBackfillOptions {
   fromYear?: number;
   /** Last disclosure year to crawl (inclusive). Defaults to the current UTC year. */
   toYear?: number;
-  /** Global cap on `filing.new` messages enqueued in this run. Defaults to Infinity. */
+  /** Global cap on `filing.new` messages enqueued in this run. Defaults to 500. */
   maxFilings?: number;
-  /** If true, discover + persist nothing-new is still counted, but never enqueue. */
+  /** If true, count matching PTRs without writing filings rows or enqueueing work. */
   dryRun?: boolean;
   /**
    * Injectable index fetcher (tests). Defaults to the real
@@ -77,7 +77,8 @@ export interface HouseBackfillResult {
  * Crawl the House Clerk yearly bulk indexes from `fromYear` to `toYear`
  * (inclusive), filter each year's filings to PTRs, persist a `filings` row for
  * each, and enqueue a `filing.new` message for every genuinely-new PTR (subject
- * to the global `maxFilings` cap). Fails soft per-year.
+ * to the global `maxFilings` cap). A dry run only counts matching PTRs; it does
+ * not write D1 rows or enqueue work. Fails soft per-year.
  *
  * The persist + enqueue uses the SAME shared primitives the cron watcher uses
  * (insertFilingIfNew + enqueueFilingNew in ingestion/watcher.ts): one INSERT OR
@@ -91,7 +92,7 @@ export async function runHouseHistoricalBackfill(
 ): Promise<HouseBackfillResult> {
   const toYear = opts.toYear ?? new Date().getUTCFullYear();
   const fromYear = opts.fromYear ?? 2014;
-  const maxFilings = opts.maxFilings ?? Number.POSITIVE_INFINITY;
+  const maxFilings = opts.maxFilings ?? 500;
   const dryRun = opts.dryRun ?? false;
   const fetchIndex = opts.fetchIndexImpl ?? fetchHouseIndex;
 
@@ -123,6 +124,12 @@ export async function runHouseHistoricalBackfill(
     const ptrs = filings.filter((f) => f.isPtr);
 
     for (const f of ptrs) {
+      result.discovered += 1;
+      if (dryRun) {
+        result.skipped += 1;
+        continue;
+      }
+
       // Derive docId + sourceUrl exactly as watcher.ts does: the canonical
       // pipeline doc id `H-{year}-{DocID}` (houseDocId) and the direct PTR PDF
       // url (housePtrPdfUrl), both precomputed on HouseFiling.
@@ -134,13 +141,10 @@ export async function runHouseHistoricalBackfill(
 
       const nowIso = new Date().toISOString();
       // Shared INSERT OR IGNORE + meta.changes "genuinely new" gate (watcher.ts).
-      // NOTE: we persist even in dryRun (only the enqueue is gated below), so a
-      // dry run still records which PTRs exist without triggering the pipeline.
       const isNew = await insertFilingIfNew(env, discoveredFiling, nowIso);
-      result.discovered += 1;
 
-      // Skip the enqueue when: not new (dup), dryRun, or over the global cap.
-      if (!isNew || dryRun || result.enqueued >= maxFilings) {
+      // Skip the enqueue when: not new (dup) or over the global cap.
+      if (!isNew || result.enqueued >= maxFilings) {
         result.skipped += 1;
         continue;
       }

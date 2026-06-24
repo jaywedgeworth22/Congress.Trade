@@ -331,7 +331,7 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
   if (limit > MAX_TX_LIMIT) limit = MAX_TX_LIMIT;
 
   const sql =
-    `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, ` +
+    `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, fl.party AS __party, ` +
     'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
     'fl.photo_url AS filer_photo_url, ' +
     REF_SELECT +
@@ -379,7 +379,7 @@ export function buildTransactionsExportQuery(
   let limit = Number.isFinite(maxRows) ? Number(maxRows) : MAX_EXPORT_ROWS;
   if (limit <= 0 || limit > MAX_EXPORT_ROWS) limit = MAX_EXPORT_ROWS;
   const sql =
-    `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, ` +
+    `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, fl.party AS __party, ` +
     'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
     'fl.photo_url AS filer_photo_url, ' +
     REF_SELECT +

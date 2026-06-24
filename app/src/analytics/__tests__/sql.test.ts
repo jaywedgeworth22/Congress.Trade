@@ -99,10 +99,11 @@ describe('SQL fragments', () => {
     expect(BRACKET_MIDPOINT_SQL).toContain('(t.amount_min + t.amount_max) / 2.0');
   });
 
-  it('party bucket classifies by first letter into D/R/O', () => {
+  it('party bucket classifies known parties and leaves unknown as NULL', () => {
     expect(PARTY_BUCKET_SQL).toContain("= 'D'");
     expect(PARTY_BUCKET_SQL).toContain("= 'R'");
-    expect(PARTY_BUCKET_SQL).toContain("ELSE 'O'");
+    expect(PARTY_BUCKET_SQL).toContain("IN ('I', 'O') THEN 'O'");
+    expect(PARTY_BUCKET_SQL).toContain('ELSE NULL');
   });
 });
 

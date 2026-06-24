@@ -80,7 +80,26 @@ export function getSessionToken(c: Context): string | undefined {
   return getCookie(c, SESSION_COOKIE);
 }
 
+function bearerSessionToken(c: Context): string | undefined {
+  const value = c.req.header('Authorization');
+  const prefix = 'Bearer ';
+  if (!value || !value.startsWith(prefix)) return undefined;
+  const token = value.slice(prefix.length).trim();
+  return token || undefined;
+}
+
+/** Resolve a session from the httpOnly cookie first, then a bearer token.
+ * Native clients use the bearer path; browser/PWA clients keep the cookie path. */
+export function getSessionTokenFromRequest(c: Context): string | undefined {
+  return getSessionToken(c) ?? bearerSessionToken(c);
+}
+
 /** Resolve the current end user from the request cookie (or null). */
 export async function getCurrentUser(c: Context<{ Bindings: Env }>): Promise<User | null> {
   return resolveSession(c.env, getSessionToken(c));
+}
+
+/** Resolve the current end user from cookie or Authorization bearer token. */
+export async function getCurrentUserFromRequest(c: Context<{ Bindings: Env }>): Promise<User | null> {
+  return resolveSession(c.env, getSessionTokenFromRequest(c));
 }

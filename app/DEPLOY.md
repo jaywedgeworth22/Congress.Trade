@@ -131,6 +131,13 @@ Public API (`/api`):
 - `GET/PATCH /api/subscriptions/:id` — secret-scoped management
 - `GET /api/subscriptions` is disabled publicly; use the admin endpoint below.
 
+Client API (`/api/client/v1`, shared by the PWA and SwiftUI app):
+- `GET /api/client/v1/bootstrap`, `GET /api/client/v1/me`
+- `GET /api/client/v1/feed?since=&limit=&ticker=&member=&chamber=&type=&from=&to=`
+- `GET/PUT /api/client/v1/preferences` — signed-in users only
+- `GET /api/client/v1/subscriptions` — signed-in user's webhook/SSE configs
+- `POST /api/client/v1/commands`, `GET /api/client/v1/commands/:id` — command/status gateway
+
 Admin (`/api/admin`, bearer token or Cloudflare Access; fails closed unless configured):
 - `GET/PUT /api/admin/poll-config`, `GET /api/admin/poll-config/aggressive`
 - `GET /api/admin/review-queue`, `POST /api/admin/review/:docId` `{decision:'confirm'|'reject', edits?}`
