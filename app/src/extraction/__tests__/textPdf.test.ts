@@ -71,4 +71,37 @@ describe('parseHousePtrText', () => {
     });
     expect(rows[0].assetName).not.toContain('Clerk');
   });
+
+  it('anchors inline House rows at owner codes instead of the PTR header', () => {
+    const rows = parseHousePtrText(
+      'P T R Clerk of the House of Representatives T ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200? ' +
+        'SP Austin TX ARPT SYS TRAN [GS] P 05/05/2026 05/31/2026 $50,001 - $100,000 F S: New ' +
+        'SP Bonita CA UNI SCH [GS] P 05/05/2026 05/31/2026 $50,001 - $100,000 F S: New ' +
+        'SP East Bay CA Muni Util [GS] P 05/06/2026 05/31/2026 $250,001 - Filing ID #20034784 ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200? $500,000 F S: New ' +
+        'SP EEMA O&M Services Group [OL] P 05/15/2026 05/31/2026 $250,001 - $500,000 F S: New S O: Kent Street Group LLC L: Elverson, PA, US D: Water/Wastewater O&M ' +
+        'SP Energy Northwest WA PWR UTIL [GS] P 05/20/2026 05/31/2026 $500,001 - $1,000,000 F S: New',
+    );
+
+    expect(rows).toHaveLength(5);
+    expect(rows[0]).toMatchObject({
+      owner: 'spouse',
+      assetName: 'Austin TX ARPT SYS TRAN',
+      assetType: 'GS',
+      txType: 'P',
+      txDate: '2026-05-05',
+      amountMin: 50001,
+      amountMax: 100000,
+    });
+    expect(rows[2]).toMatchObject({
+      assetName: 'East Bay CA Muni Util',
+      amountMin: 250001,
+      amountMax: 500000,
+    });
+    expect(rows[3]).toMatchObject({
+      assetName: 'EEMA O&M Services Group',
+      assetType: 'OL',
+    });
+    expect(rows[0].assetName).not.toContain('Clerk');
+    expect(rows[3].assetName).not.toContain('Kent Street Group');
+  });
 });
