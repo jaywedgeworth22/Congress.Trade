@@ -153,6 +153,11 @@ function isoDateDaysAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 }
 
+/** Whitelist the sort direction; anything other than 'desc' falls back to asc. */
+function asOrder(v: string | undefined): 'asc' | 'desc' | undefined {
+  return v === 'desc' ? 'desc' : v === 'asc' ? 'asc' : undefined;
+}
+
 /** Parse the shared ticker/member/type/chamber filters from the query string. */
 function filtersFromQuery(q: Record<string, string>): TxQueryParams {
   return {
@@ -198,6 +203,12 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // the server drops out-of-window rows up front — without it, a bounded pager
   // would have to page through all historical rows (oldest first) to reach
   // recent trades. `txDateMin`/`txDateMax` are accepted as aliases of from/to.
+  //
+  // Ordering: defaults to oldest-first (cursor_seq ASC) so a consumer can sync
+  // incrementally by feeding the returned `cursor` back as the next `since`.
+  // Pass ?order=desc for a newest-first "latest trades" snapshot (pair with
+  // ?from= to bound the window); DESC is a snapshot, not a resumable forward
+  // pager, so incremental-sync consumers should keep the asc default.
   r.get('/transactions', async (c) => {
     const q = c.req.query();
     // The live feed is fully public — it's the site's SEO/discovery hook. The
@@ -214,6 +225,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       type: asTxType(q.type),
       txDateMin: q.from || q.txDateMin || undefined,
       txDateMax: q.to || q.txDateMax || undefined,
+      order: asOrder(q.order),
       limit: parseIntOrUndef(q.limit),
     };
     const built = buildTransactionsQuery(params);
