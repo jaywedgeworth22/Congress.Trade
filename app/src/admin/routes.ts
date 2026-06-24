@@ -193,6 +193,9 @@ interface ReviewRow {
   payload: string | null;
   created_at: string | null;
   resolved: number | null;
+  source_url: string | null;
+  raw_object_key: string | null;
+  doc_kind: string | null;
 }
 
 interface EditedTx {
@@ -341,7 +344,19 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.get('/review-queue', async (c) => {
     const rows = await all<ReviewRow>(
       c.env.DB,
-      'SELECT doc_id, reason, payload, created_at, resolved FROM review_queue WHERE resolved = 0 ORDER BY created_at ASC',
+      `SELECT
+          rq.doc_id,
+          rq.reason,
+          rq.payload,
+          rq.created_at,
+          rq.resolved,
+          f.source_url,
+          f.raw_object_key,
+          f.doc_kind
+        FROM review_queue rq
+        LEFT JOIN filings f ON f.doc_id = rq.doc_id
+        WHERE rq.resolved = 0
+        ORDER BY rq.created_at ASC`,
     );
     const items = rows.map((row) => ({
       docId: row.doc_id,
@@ -349,6 +364,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       payload: row.payload ? safeJson(row.payload) : null,
       createdAt: row.created_at ?? '',
       resolved: row.resolved === 1,
+      sourceUrl: row.source_url ?? '',
+      rawObjectKey: row.raw_object_key ?? '',
+      docKind: row.doc_kind ?? '',
     }));
     return c.json({ items, count: items.length });
   });

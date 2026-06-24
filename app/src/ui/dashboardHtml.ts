@@ -293,6 +293,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .committee-tag { display:inline-block; font-size:11px; background:var(--panel-2); border:1px solid var(--border); border-radius:6px; padding:2px 8px; margin:0 5px 5px 0; }
   .drawer-all-link { display:block; margin-top:9px; font-size:13px; }
   .source-link { display:inline-block; margin-top:9px; font-size:13px; }
+  .review-doc-link { display:block; margin-top:5px; font-size:12px; font-family:var(--sans); font-weight:600; white-space:nowrap; }
+  .review-doc-link.inline { display:inline-block; margin:0 0 0 10px; }
   .filing-note { background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12px; line-height:1.5; color:var(--text-dim); margin:0; }
   .filing-note-kv { background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12px; }
   .filing-note-kv dd { text-align:left; }
@@ -1473,8 +1475,12 @@ function payloadText(payload) {
   try { if (typeof p === 'string') p = JSON.parse(p); } catch (e) { return String(payload); }
   if (typeof p !== 'object') return String(payload);
   var bits = [];
-  if (typeof p.minConfidence === 'number') bits.push('Confidence ' + Math.round(p.minConfidence * 100) + '%');
   var txs = p.transactions || [];
+  if (!txs.length) {
+    bits.push('No readable transactions');
+  } else if (typeof p.minConfidence === 'number') {
+    bits.push('Confidence ' + Math.round(p.minConfidence * 100) + '%');
+  }
   if (txs.length) {
     bits.push(txs.length + ' transaction' + (txs.length === 1 ? '' : 's'));
     var t0 = txs[0] || {};
@@ -1483,6 +1489,23 @@ function payloadText(payload) {
   }
   return bits.join(' · ');
 }
+function safeDocUrl(url) {
+  if (!url) return '';
+  try {
+    var u = new URL(String(url), window.location.origin);
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.href : '';
+  } catch (e) {
+    return '';
+  }
+}
+function reviewDocHtml(r) {
+  var docId = r.docId || '';
+  var url = safeDocUrl(r.sourceUrl);
+  var idHtml = '<span class="tkr">' + esc(docId) + '</span>';
+  if (!url) return idHtml;
+  return '<a class="tkr" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="Open source filing">' + esc(docId) + '</a>' +
+    '<a class="review-doc-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">View Document</a>';
+}
 function renderReview() {
   var body = el('reviewBody');
   el('reviewCount').textContent = REVIEW.length ? '(' + REVIEW.length + ')' : '';
@@ -1490,11 +1513,13 @@ function renderReview() {
   if (REVIEW.length === 0) { body.innerHTML = stateRow(5, 'Nothing awaiting review — queue is clear.'); return; }
   body.innerHTML = REVIEW.map(function (r) {
     var payload = payloadText(r.payload);
+    var url = safeDocUrl(r.sourceUrl);
+    var docAction = url ? '<a class="review-doc-link inline" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Document</a>' : '';
     return '<tr class="row" id="rv-' + esc(r.docId) + '">' +
       '<td class="muted">' + esc(dateTimeText(r.createdAt)) + '</td>' +
-      '<td class="tkr">' + esc(r.docId) + '</td>' +
+      '<td>' + reviewDocHtml(r) + '</td>' +
       '<td class="muted">' + esc(reasonText(r.reason)) + '</td>' +
-      '<td class="muted" style="max-width:360px">' + esc(payload) + '</td>' +
+      '<td class="muted" style="max-width:360px">' + esc(payload) + docAction + '</td>' +
       '<td>' +
         '<button class="btn sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'confirm\\')">Confirm</button> ' +
         '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'reject\\')">Reject</button>' +

@@ -193,8 +193,9 @@ describe('normalize', () => {
     const { env, cap } = makeEnv([]);
     const result = await normalize(env, filing(), []);
     expect(result.needsReview).toBe(true);
-    expect(result.minConfidence).toBe(1);
+    expect(result.minConfidence).toBe(0);
     expect(cap.reviewRows).toHaveLength(1);
     expect(String(cap.reviewRows[0][1])).toContain('no_transactions_extracted');
+    expect(String(cap.reviewRows[0][1])).toContain('low_confidence');
   });
 });
