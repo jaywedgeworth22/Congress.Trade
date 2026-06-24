@@ -91,7 +91,7 @@ const TXTYPE_RE = /\b(P|S|E)\b|\b(purchase|sale|exchange)\b/i;
 // A ticker in parentheses, e.g. "(AAPL)".
 const TICKER_RE = /\(([A-Z][A-Z0-9.\-]{0,9})\)/;
 const INLINE_RECORD_RE =
-  /(?<asset>[A-Z0-9][^$]{1,240}?)\s+(?:(?:\((?<parenTicker>[A-Z][A-Z0-9.\/-]{0,9})\))|(?:NYSE[A-Z]*:\s*(?<exchangeTicker>[A-Z][A-Z0-9.\/-]{0,9})))?\s*\[(?<assetType>[A-Z]{2,3})\]\s+(?<txType>P|S|E|purchase|sale|exchange)(?:\s*\([^)]*\))?\s+(?<txDate>\d{1,2}\/\d{1,2}\/\d{2,4})\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+(?<amount>\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?)/gi;
+  /\b(?<owner>SP|DC|JT|SELF)\s+(?<asset>[^$]{1,220}?)\s+(?:(?:\((?<parenTicker>[A-Z][A-Z0-9.\/-]{0,9})\))|(?:NYSE[A-Z]*:\s*(?<exchangeTicker>[A-Z][A-Z0-9.\/-]{0,9})))?\s*\[(?<assetType>[A-Z]{2,3})\]\s+(?<txType>P|S|E|purchase|sale|exchange)(?:\s*\([^)]*\))?\s+(?<txDate>\d{1,2}\/\d{1,2}\/\d{2,4})\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+(?<amount>\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?)/gi;
 
 /**
  * Parse the merged House PTR text into ParsedTx[]. We segment the text into
@@ -144,8 +144,8 @@ function parseInlineRecords(text: string): ParsedTx[] {
   while ((m = INLINE_RECORD_RE.exec(normalized)) !== null) {
     const groups = m.groups ?? {};
     const rawAssetName = cleanInlineAssetName(groups.asset ?? '');
-    const owner = parseOwner(rawAssetName);
-    const assetName = stripLeadingOwnerCode(rawAssetName);
+    const owner = parseOwner(groups.owner ?? '');
+    const assetName = rawAssetName;
     const ticker = normalizeTicker(groups.parenTicker ?? groups.exchangeTicker ?? null);
     const assetType = groups.assetType?.toUpperCase() ?? null;
     const txType = parseTxType(groups.txType ?? '') ?? 'P';
