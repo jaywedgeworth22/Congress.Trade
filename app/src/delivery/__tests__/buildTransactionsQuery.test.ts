@@ -124,6 +124,32 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain(`LIMIT ${MAX_TX_LIMIT}`);
   });
 
+  it('defaults to oldest-first (ORDER BY cursor_seq ASC) when order is omitted', () => {
+    const q = buildTransactionsQuery({});
+    expect(q.sql).toContain('ORDER BY t.cursor_seq ASC');
+    expect(q.sql).not.toContain('DESC');
+  });
+
+  it('orders newest-first (ORDER BY cursor_seq DESC) when order is "desc"', () => {
+    const q = buildTransactionsQuery({ order: 'desc' });
+    expect(q.sql).toContain('ORDER BY t.cursor_seq DESC');
+    // The direction is a SQL literal, never a bound param — params unchanged.
+    expect(q.params).toEqual([0]);
+  });
+
+  it('treats order: "asc" the same as the default (ASC)', () => {
+    const q = buildTransactionsQuery({ order: 'asc' });
+    expect(q.sql).toContain('ORDER BY t.cursor_seq ASC');
+  });
+
+  it('keeps the cursor backstop + filters intact in desc (snapshot) mode', () => {
+    const q = buildTransactionsQuery({ since: 7, ticker: 'aapl', order: 'desc' });
+    expect(q.sql).toContain('t.cursor_seq > ?');
+    expect(q.sql).toContain('ORDER BY t.cursor_seq DESC');
+    // order adds no bound param; same param order as the asc path.
+    expect(q.params).toEqual([7, 'AAPL']);
+  });
+
   it('does not interpolate untrusted values directly (ticker/member are bound, not inlined)', () => {
     const q = buildTransactionsQuery({ ticker: "'; DROP TABLE transactions;--" });
     // The malicious string must appear only as a bound parameter, never in SQL.
