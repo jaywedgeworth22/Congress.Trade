@@ -27,13 +27,13 @@ the implementation mounted at `/api/client/v1/*`.
 
 ## Command And Status Model
 
-Every client mutation should go through a backend command:
+Client mutations go through a backend command when the route supports it:
 
 - `POST /api/client/v1/commands` with `{ type, payload, idempotencyKey }`.
 - `GET /api/client/v1/commands/:id` for status, validation errors, audit trail,
   and resulting resource IDs.
-- Optional foreground status streaming can use
-  `GET /api/client/v1/commands/stream` when supported.
+- `GET /api/client/v1/commands/stream` is not implemented yet; clients should
+  poll `GET /api/client/v1/commands/:id`.
 
 Use the shared statuses:
 
@@ -44,15 +44,25 @@ Use the shared statuses:
 - `canceled`
 
 Command writes must validate account ownership and entitlement before queueing,
-be idempotent by `requestedBy + idempotencyKey`, and leave an audit trail.
+be idempotent by authenticated `userId + idempotencyKey`, and leave an audit
+trail.
+The current router implements `update_preferences`, `create_subscription`, and
+`update_subscription`; `start_checkout` and `request_export` are defined in the
+shared type set but still return `501`.
 
 ## Initial Surface
 
-- Implemented now: bootstrap, `me`, feed, preferences, subscription listing,
-  and command-backed preference/subscription create/update.
+- Implemented now: bootstrap, `me`, feed, `preferences` GET/PUT, subscription
+  listing, and command-backed preference/subscription create/update.
+- `bootstrap` currently returns `serverTime`, `auth`, `capabilities`, and an
+  `endpoints` map for the current client surface.
+- `feed` currently accepts query params like `since`, `ticker`, `member`,
+  `chamber`, `type`, `from`, `to`, `order`, and `limit`, and returns the
+  cursor/count/total metadata used by polling clients.
 - Next: trade detail, ticker detail, member detail, analytics summary, alert
   create/update/pause commands, device registration for APNs and web push,
-  rotate secret, test delivery, and delivery history.
+  rotate secret, test delivery, delivery history, and foreground command
+  streaming.
 
 ## Production Boundaries
 
