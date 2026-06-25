@@ -65,6 +65,13 @@ describe('buildTickerLeaderboardQuery', () => {
     expect(q.sql).toContain('ORDER BY est_volume DESC');
     expect(q.sql).toContain('LIMIT 200');
   });
+
+  it('exposes directional + per-side distinct-member counts (for conviction breadth)', () => {
+    const q = buildTickerLeaderboardQuery({ window: 'all' });
+    expect(q.sql).toContain("CASE WHEN t.tx_type IN ('P', 'S') THEN t.filer_id END) AS directional_member_count");
+    expect(q.sql).toContain("CASE WHEN t.tx_type = 'P' THEN t.filer_id END) AS buy_member_count");
+    expect(q.sql).toContain("CASE WHEN t.tx_type = 'S' THEN t.filer_id END) AS sell_member_count");
+  });
 });
 
 describe('buildMemberLeaderboardQuery', () => {

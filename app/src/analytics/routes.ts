@@ -262,7 +262,10 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const pool = Math.min(POOL_MAX, Math.max(60, limit * 3));
       const lbQ = buildTickerLeaderboardQuery({ ...f, sort: 'trades', limit: pool });
       const clQ = buildClusterBuysQuery({ ...f, minMembers: 2, limit: POOL_MAX });
-      const trQ = buildTrendingQuery({ ...f, limit: POOL_MAX });
+      // Momentum is restricted to directional (P/S) rows: a burst of non-directional
+      // exchange/type-change rows must not feed deltaCount/recentMembers into a
+      // BUY/SELL conviction.
+      const trQ = buildTrendingQuery({ ...f, txTypes: ['P', 'S'], limit: POOL_MAX });
       const [lbRows, clRows, trRows] = await Promise.all([
         all<Record<string, unknown>>(c.env.DB, lbQ.sql, lbQ.params),
         all<Record<string, unknown>>(c.env.DB, clQ.sql, clQ.params),
@@ -298,18 +301,25 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           const sides = ticker ? clByTickerSide.get(ticker) : undefined;
           const cl = sides ? (direction === 'SELL' ? sides.S : sides.P) : undefined;
           const tr = ticker ? trByTicker.get(ticker) : undefined;
-          // Breadth and trade count use DIRECTIONAL (P/S) activity only — purely
-          // non-directional rows (exchanges, type-changes) must not manufacture
-          // a BUY/SELL conviction.
+          // Breadth and trade count reflect ONLY the resolved side: a concentrated
+          // SELL must not borrow breadth from opposing BUY members (and vice
+          // versa), so it can't dodge the single-member cap. Purely non-directional
+          // rows (exchanges, type-changes) never count. For a no-direction ticker
+          // (capped at 20 anyway) fall back to the directional union.
+          const buyMembers = num(row.buy_member_count);
+          const sellMembers = num(row.sell_member_count);
           const directionalMembers = num(row.directional_member_count);
-          const directionalTrades = buyCount + sellCount;
+          const sameSideMembers =
+            direction === 'BUY' ? buyMembers : direction === 'SELL' ? sellMembers : directionalMembers;
+          const sameSideTrades =
+            direction === 'BUY' ? buyCount : direction === 'SELL' ? sellCount : buyCount + sellCount;
           const res = computeConvictionScore({
-            memberCount: directionalMembers,
+            memberCount: sameSideMembers,
             buyCount,
             sellCount,
             netSentiment: sentiment,
             estNetFlowUsd: estNetFlow,
-            tradeCount: directionalTrades,
+            tradeCount: sameSideTrades,
             dMembers: cl ? num(cl.d_members) : 0,
             rMembers: cl ? num(cl.r_members) : 0,
             deltaCount: tr ? num(tr.recent_count) - num(tr.prior_count) : null,
@@ -323,8 +333,12 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
             convictionScore: res.score,
             direction: res.direction,
             fallback: res.fallback,
-            memberCount: directionalMembers,
-            tradeCount: directionalTrades,
+            // memberCount / tradeCount reflect the SCORED side (what the score is
+            // built from); directionalMembers/Trades give the both-side totals.
+            memberCount: sameSideMembers,
+            tradeCount: sameSideTrades,
+            directionalMembers,
+            directionalTrades: buyCount + sellCount,
             netSentiment: sentiment,
             estNetFlowUsd: usd(row.est_net_flow),
             parties: { D: cl ? num(cl.d_members) : 0, R: cl ? num(cl.r_members) : 0 },
