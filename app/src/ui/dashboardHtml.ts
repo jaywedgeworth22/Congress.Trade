@@ -494,8 +494,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <span class="pill off" id="livePill">Status</span>
   <span class="pill" id="srcPill">House + Senate</span>
   <nav class="tabs">
-    <button data-view="feed" data-mobile="Feed" data-icon="▦" class="active">Live Feed</button>
-    <button data-view="trends" data-mobile="Trends" data-icon="⌁">Trends</button>
+    <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active">Trends</button>
+    <button data-view="feed" data-mobile="Trades" data-icon="▦">Trades</button>
     <button data-view="review" data-mobile="Review" data-icon="✓">Review Queue <span id="reviewCount"></span></button>
     <button data-view="subs" data-mobile="Alerts" data-icon="↗">Subscriptions</button>
     <button data-view="admin" data-mobile="Admin" data-icon="⚙">Admin · Cadence</button>
@@ -507,8 +507,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <main>
   <div class="banner" id="banner">Connecting to the live feed…</div>
 
-  <!-- ================= LIVE FEED ================= -->
-  <section class="view active" id="view-feed">
+  <!-- ================= TRADES (LIVE FEED) ================= -->
+  <section class="view" id="view-feed">
     <div class="grid-cards">
       <div class="card"><div class="k">Filings Imported Today</div><div class="v" id="kpiToday">—</div></div>
       <div class="card"><div class="k">Trades</div><div class="v" id="kpiTotal">—</div></div>
@@ -572,7 +572,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   </section>
 
   <!-- ================= TRENDS / ANALYTICS ================= -->
-  <section class="view" id="view-trends">
+  <section class="view active" id="view-trends">
     <div class="toolbar">
       <select id="trWindow" title="Time window (by trade date)">
         <option value="1d">Past Day</option>
@@ -638,6 +638,27 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <p class="sub">Trade counts bucketed by period. The <em>shape</em> — a surge of buying or selling — is the trend.</p>
       <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
       <div id="trTime"></div>
+    </div>
+
+    <!-- Real GICS sector flow + market-cap size tilt (securities_ref-backed) -->
+    <div class="trend-grid2">
+      <div class="section">
+        <h3>Net Flow by Sector</h3>
+        <p class="sub">Real <strong>GICS sectors</strong> (from enriched security reference data), ranked by estimated volume. Bar = volume; chip shows buy/sell mix, breadth, and signed net $ flow.</p>
+        <div id="trSectorFlow"></div>
+      </div>
+      <div class="section">
+        <h3>By Market Cap</h3>
+        <p class="sub">The size tilt — net flow and activity across market-cap buckets (mega → nano). Cap tracks the daily close, so it stays current as price moves.</p>
+        <div id="trCapFlow"></div>
+      </div>
+    </div>
+
+    <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
+    <div class="section">
+      <h3>Top Performers <span class="info-tip" tabindex="0" aria-label="Excess return vs the S&P 500 measured from each trade's public FILING date — what a follower could actually have captured, not trade-date hindsight. Buys only, options excluded, members with few scored trades are filtered out." title="Excess return vs the S&P 500 measured from each trade's public FILING date — what a follower could actually have captured, not trade-date hindsight. Buys only, options excluded, members with few scored trades are filtered out.">ⓘ</span></h3>
+      <p class="sub">Members whose disclosed <strong>buys</strong> beat the S&amp;P 500 since the trade became <em>public</em> (filing-date anchored — the return a follower could realistically capture). A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
+      <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
     </div>
 
     <!-- Members + Party -->
@@ -2187,7 +2208,69 @@ function timeChartHtml(series, labelStep) {
 
 function loadTrends() {
   loadTrSummary(); loadTrTickers(); loadTrTrending(); loadTrClusters();
-  loadTrTime(); loadTrMembers(); loadTrParties(); loadTrSectors(); loadTrLag();
+  loadTrTime(); loadTrSectorFlow(); loadTrCapFlow(); loadTrPerformers();
+  loadTrMembers(); loadTrParties(); loadTrSectors(); loadTrLag();
+}
+
+/* Volume bar + buy/sell/breadth/net chip — shared by the sector & cap views. */
+function flowRowHtml(label, r, maxVol, title) {
+  var w = Math.round(100 * Number(r.estVolumeUsd || 0) / (maxVol || 1));
+  var breadth = (r.uniqueMembers || 0) + ' mbr · ' + (r.uniqueTickers || 0) + ' tkr';
+  return '<div class="hbar"><div class="hlabel" title="' + esc(title || label) + '">' + esc(label) + '</div>' +
+    '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
+    '<div class="hval">' + estUsd(r.estVolumeUsd) + '</div></div>' +
+    '<div class="chip" style="margin:-3px 0 9px 130px">' + (r.buyCount || 0) + 'B / ' + (r.sellCount || 0) +
+      'S · ' + esc(breadth) + ' · net ' + netHtml(r.estNetFlowUsd) + '</div>';
+}
+
+function loadTrSectorFlow() {
+  var box = el('trSectorFlow');
+  box.innerHTML = '<div class="note">Loading…</div>';
+  aGet('sector-flow?' + trParams() + '&limit=12').then(function (d) {
+    var rows = (d.sectors || []).filter(function (r) { return r.sector && r.sector !== 'Unknown'; });
+    if (!rows.length) { box.innerHTML = '<div class="note">No sector-classified trades in this window yet (security reference data fills in as enrichment runs).</div>'; return; }
+    var max = 1; rows.forEach(function (r) { max = Math.max(max, r.estVolumeUsd); });
+    box.innerHTML = rows.map(function (r) { return flowRowHtml(r.sector, r, max); }).join('');
+  }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
+}
+
+var CAP_NAMES = { mega: 'Mega Cap', large: 'Large Cap', mid: 'Mid Cap', small: 'Small Cap', micro: 'Micro Cap', nano: 'Nano Cap', unknown: 'Unclassified' };
+var CAP_ORDER = ['mega', 'large', 'mid', 'small', 'micro', 'nano', 'unknown'];
+function loadTrCapFlow() {
+  var box = el('trCapFlow');
+  box.innerHTML = '<div class="note">Loading…</div>';
+  aGet('market-cap-breakdown?' + trParams()).then(function (d) {
+    var rows = (d.buckets || []).filter(function (r) { return (r.buyCount + r.sellCount) > 0; });
+    if (!rows.length) { box.innerHTML = '<div class="note">No market-cap-classified trades in this window yet.</div>'; return; }
+    rows.sort(function (a, b) { return CAP_ORDER.indexOf(a.bucket) - CAP_ORDER.indexOf(b.bucket); });
+    var max = 1; rows.forEach(function (r) { max = Math.max(max, r.estVolumeUsd); });
+    box.innerHTML = rows.map(function (r) { return flowRowHtml(CAP_NAMES[r.bucket] || r.bucket, r, max); }).join('');
+  }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
+}
+
+/* Signed percent: 0.0532 -> +5.3%, -0.12 -> -12.0%. */
+function pctSigned(n) {
+  if (n == null || isNaN(n)) return '—';
+  var v = Number(n) * 100, cls = v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+  return '<span class="net ' + cls + '">' + (v > 0 ? '+' : '') + v.toFixed(1) + '%</span>';
+}
+function loadTrPerformers() {
+  var body = el('trPerformers');
+  body.innerHTML = stateRow(5, 'Loading…');
+  aGet('member-performance?' + trParams() + '&limit=15').then(function (d) {
+    var rows = d.members || [];
+    if (!rows.length) { body.innerHTML = stateRow(5, 'Not enough priced, filing-anchored buys to rank yet — this fills in as the price cache backfills.'); return; }
+    body.innerHTML = rows.map(function (r, i) {
+      var name = r.fullName || r.filerId || 'Unknown';
+      var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
+      return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.party) +
+          esc(name) + '</div></div></td>' +
+        '<td class="muted">' + r.tradeCount + ' buys</td>' +
+        '<td class="muted">' + Math.round(100 * (r.winRate || 0)) + '% win</td>' +
+        '<td>' + pctSigned(r.avgExcessReturn) + '</td></tr>';
+    }).join('');
+  }).catch(function (e) { body.innerHTML = stateRow(5, 'Could not load: ' + e.message); });
 }
 
 function loadTrSummary() {
@@ -2904,7 +2987,8 @@ el('diagErrors').innerHTML = stateRow(4, 'Loading…');
 
 loadMe();              // account state (Sign in / avatar / premium badge)
 handleAuthQueryParams(); // toast + scrub ?login= / ?checkout= after redirects
-loadFeed().then(function () { startStream(); });
+loadTrends();      // Trends is the default landing view
+loadFeed().then(function () { startStream(); }); // warm the Trades feed + live SSE pill
 loadReview();      // for the tab badge / KPI
 loadPollConfig();  // for the poll-mode KPI
 </script>

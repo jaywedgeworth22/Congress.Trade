@@ -43,6 +43,34 @@ describe('DASHBOARD_HTML', () => {
     }
   });
 
+  it('makes Trends the first, default-active view and renames Live Feed to Trades', () => {
+    // Trends nav button comes before the feed (Trades) button and is the active one.
+    const trendsIdx = DASHBOARD_HTML.indexOf('data-view="trends"');
+    const feedIdx = DASHBOARD_HTML.indexOf('data-view="feed"');
+    expect(trendsIdx).toBeGreaterThan(0);
+    expect(trendsIdx).toBeLessThan(feedIdx);
+    expect(DASHBOARD_HTML).toContain('data-view="trends" data-mobile="Trends" data-icon="⌁" class="active"');
+    // The Trends section is the default-active view; the feed section is not.
+    expect(DASHBOARD_HTML).toContain('<section class="view active" id="view-trends">');
+    expect(DASHBOARD_HTML).toContain('<section class="view" id="view-feed">');
+    // The former "Live Feed" tab is now labelled "Trades".
+    expect(DASHBOARD_HTML).toContain('data-view="feed" data-mobile="Trades" data-icon="▦">Trades</button>');
+    // Trends is warmed on boot since it is the landing view.
+    expect(DASHBOARD_HTML).toContain('loadTrends();      // Trends is the default landing view');
+  });
+
+  it('surfaces the GICS sector flow, market-cap, and performer analytics in Trends', () => {
+    for (const id of ['trSectorFlow', 'trCapFlow', 'trPerformers']) {
+      expect(DASHBOARD_HTML).toContain('id="' + id + '"');
+    }
+    for (const fn of ['function loadTrSectorFlow(', 'function loadTrCapFlow(', 'function loadTrPerformers(']) {
+      expect(DASHBOARD_HTML).toContain(fn);
+    }
+    expect(DASHBOARD_HTML).toContain("aGet('sector-flow?'");
+    expect(DASHBOARD_HTML).toContain("aGet('market-cap-breakdown?'");
+    expect(DASHBOARD_HTML).toContain("aGet('member-performance?'");
+  });
+
   it('wires the configurable column registry + chooser', () => {
     expect(DASHBOARD_HTML).toContain('var FEED_COLS');
     expect(DASHBOARD_HTML).toContain('function renderFeedHeader(');
@@ -58,7 +86,7 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('contains mobile-first feed and navigation hooks', () => {
-    expect(DASHBOARD_HTML).toContain('data-mobile="Feed"');
+    expect(DASHBOARD_HTML).toContain('data-mobile="Trades"');
     expect(DASHBOARD_HTML).toContain('id="feedCards"');
     expect(DASHBOARD_HTML).toContain('function feedCardHtml(');
     expect(DASHBOARD_HTML).toContain('function handleFeedOpenEvent(');
