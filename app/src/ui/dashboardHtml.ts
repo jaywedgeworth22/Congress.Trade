@@ -353,10 +353,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .disclaimer-toggle { display:none; }
   .disclaimer.collapsed { padding:0; }
   .disclaimer.collapsed .disclaimer-toggle { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; background:transparent; border:none; color:var(--text-dim); font-size:12px; font-weight:600; padding:9px 14px; cursor:pointer; }
-  .disclaimer.collapsed .dt-chevron { transition: transform .15s ease; }
   .disclaimer:not(.collapsed) .disclaimer-toggle { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; background:transparent; border:none; color:var(--text-dim); font-size:12px; font-weight:600; padding:0 0 8px; cursor:pointer; }
-  .disclaimer:not(.collapsed) .dt-chevron { transform: rotate(180deg); }
   .disclaimer.collapsed .disclaimer-body { display:none; }
+  .dt-label { font-weight:600; letter-spacing:.01em; }
+  .dt-more { font-weight:400; font-size:11px; opacity:.75; white-space:nowrap; }
   /* modal */
   /* ---- detail drawer (trade / asset / politician) ---- */
   .drawer { position:fixed; inset:0; z-index:60; display:none; }
@@ -1105,8 +1105,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </select>
       <button class="btn ghost sm" onclick="loadTrends()">↻ Refresh</button>
     </div>
-    <div class="disclaimer collapsed" id="trDisclaimer">
-      <button class="disclaimer-toggle" type="button" onclick="toggleDisclaimer()" aria-expanded="false" aria-controls="trDisclaimerBody"><span class="dt-label">Disclaimer</span><span class="dt-chevron" aria-hidden="true">▾</span></button>
+    <div class="disclaimer" id="trDisclaimer">
+      <button class="disclaimer-toggle" type="button" onclick="toggleDisclaimer()" aria-expanded="true" aria-controls="trDisclaimerBody"><span class="dt-label">For Educational Use, Not Investment Advice</span><span class="dt-more">More Info ↓</span></button>
       <div class="disclaimer-body" id="trDisclaimerBody">
       <strong>For education, not investment advice.</strong> Congress.Trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any member acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. “All Data” can double-count a trade present in both the live and historic sets; use <em>Live Only</em> for a de-duplicated dollar view. Party is known for only some members. Always do your own research.
       </div>
@@ -3737,7 +3737,9 @@ function handleAuthQueryParams() {
 }
 
 /* Collapse / expand the Trends disclaimer to reclaim screen space. */
+var _disclaimerAutoTimer = null;
 function toggleDisclaimer() {
+  if (_disclaimerAutoTimer) { clearTimeout(_disclaimerAutoTimer); _disclaimerAutoTimer = null; }
   var d = el('trDisclaimer'); if (!d) return;
   var collapsed = d.classList.toggle('collapsed');
   var btn = d.querySelector('.disclaimer-toggle');
@@ -3745,8 +3747,16 @@ function toggleDisclaimer() {
   try { localStorage.setItem('tr-disclaimer-collapsed', collapsed ? '1' : '0'); } catch (e) {}
 }
 (function () {
-  // Default collapsed; honor the saved preference.
-  try { if (localStorage.getItem('tr-disclaimer-collapsed') === '0') { var d = el('trDisclaimer'); if (d) { d.classList.remove('collapsed'); var b = d.querySelector('.disclaimer-toggle'); if (b) b.setAttribute('aria-expanded', 'true'); } } } catch (e) {}
+  // Start expanded; auto-collapse after 4 s.
+  _disclaimerAutoTimer = setTimeout(function () {
+    _disclaimerAutoTimer = null;
+    var d = el('trDisclaimer');
+    if (d && !d.classList.contains('collapsed')) {
+      d.classList.add('collapsed');
+      var b = d.querySelector('.disclaimer-toggle');
+      if (b) b.setAttribute('aria-expanded', 'false');
+    }
+  }, 4000);
 })();
 
 /* Tap-to-reveal tooltips: phones/tablets can't hover, so tapping any element that
