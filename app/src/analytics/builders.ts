@@ -503,32 +503,52 @@ export function buildMemberPerformanceLeaderboardQuery(
 // ---------------------------------------------------------------------------
 
 /**
- * Distinct (ticker, member) pairs for the directional trades on a candidate
- * ticker set in the window — i.e. "who traded each candidate". Feeds the
- * per-ticker member-skill rollup for the conviction score.
+ * Distinct (ticker, side, member) rows for the directional trades on a candidate
+ * ticker set in the window — i.e. "who traded each candidate, on which side".
+ * Keyed by tx_type so the conviction rollup can use ONLY the members on the side
+ * the signal resolves to. Caller must chunk `tickers` under D1's 100-bind cap.
  */
 export function buildConvictionMemberLinksQuery(tickers: string[], p: CommonFilters): BuiltQuery {
   const { where, params } = buildCommonFilters({ ...p, tickers, txTypes: ['P', 'S'] });
   const allWhere = ['t.filer_id IS NOT NULL', ...where];
   const sql =
-    'SELECT DISTINCT t.ticker AS ticker, t.filer_id AS filer_id ' +
+    'SELECT DISTINCT t.ticker AS ticker, t.tx_type AS tx_type, t.filer_id AS filer_id ' +
     ANALYTICS_FROM_JOINS +
     whereSql(allWhere);
   return { sql, params };
 }
 
 /**
- * Per-member realized "skill" over their FULL track record (all-time, not the
- * conviction window): scored buy count, wins (filing-anchored excess vs the S&P
- * > 0), and average excess. Same EXCESS basis as the performance leaderboard.
- * Restricted to the given members; only those with >= 5 scored buys are returned
- * (the conviction rollup needs a meaningful sample). `filerIds` is bounded by the
- * number of members of Congress, so a single IN-list is safe.
+ * Per-member realized "skill" over their FULL track record (all-time): scored buy
+ * count, wins (filing-anchored excess vs the S&P > 0), and average excess. Same
+ * EXCESS basis as the performance leaderboard. The window is intentionally OMITTED
+ * (skill is a career track record), but the trade-level source / minConf filters
+ * ARE honored so the skill matches the requested analytics slice (e.g.
+ * ?source=primary won't let seed-dataset buys leak in). Only members with >= 5
+ * scored buys are returned. Caller must chunk `filerIds` under D1's 100-bind cap.
  */
-export function buildMemberSkillQuery(filerIds: string[]): BuiltQuery {
-  const placeholders = filerIds.map(() => '?').join(', ');
+export function buildMemberSkillQuery(filerIds: string[], p: CommonFilters): BuiltQuery {
   const EXCESS =
     '((sr.current_price / p.price_at_filing) - 1.0) - ((sx.spx_now / p.spx_at_filing) - 1.0)';
+  const where = [
+    't.deprecated_at IS NULL',
+    "t.tx_type = 'P'",
+    't.is_option = 0',
+    'p.price_at_filing IS NOT NULL AND p.price_at_filing > 0',
+    'p.spx_at_filing IS NOT NULL AND p.spx_at_filing > 0',
+    'sr.current_price IS NOT NULL',
+  ];
+  const params: SqlParam[] = [];
+  if (p.source && p.source !== 'all') {
+    where.push('t.source = ?');
+    params.push(p.source);
+  }
+  if (typeof p.minConf === 'number' && Number.isFinite(p.minConf)) {
+    where.push('t.confidence >= ?');
+    params.push(p.minConf);
+  }
+  where.push(`t.filer_id IN (${filerIds.map(() => '?').join(', ')})`);
+  for (const id of filerIds) params.push(id);
   const sql =
     'SELECT t.filer_id AS filer_id, COUNT(*) AS scored, ' +
     `SUM(CASE WHEN ${EXCESS} > 0 THEN 1 ELSE 0 END) AS wins, ` +
@@ -537,14 +557,10 @@ export function buildMemberSkillQuery(filerIds: string[]): BuiltQuery {
     'JOIN tx_performance p ON p.tx_id = t.id ' +
     'JOIN securities_ref sr ON sr.ticker = t.ticker ' +
     'CROSS JOIN (SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1) sx ' +
-    "WHERE t.deprecated_at IS NULL AND t.tx_type = 'P' AND t.is_option = 0 " +
-    'AND p.price_at_filing IS NOT NULL AND p.price_at_filing > 0 ' +
-    'AND p.spx_at_filing IS NOT NULL AND p.spx_at_filing > 0 ' +
-    'AND sr.current_price IS NOT NULL ' +
-    `AND t.filer_id IN (${placeholders}) ` +
+    whereSql(where) +
     'GROUP BY t.filer_id ' +
     'HAVING scored >= 5';
-  return { sql, params: filerIds };
+  return { sql, params };
 }
 
 // ---------------------------------------------------------------------------

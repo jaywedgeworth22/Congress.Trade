@@ -202,9 +202,9 @@ describe('buildMarketCapBreakdownQuery', () => {
 });
 
 describe('conviction realized-skill inputs', () => {
-  it('buildConvictionMemberLinksQuery: distinct (ticker, member) for the candidate set, P/S only', () => {
+  it('buildConvictionMemberLinksQuery: distinct (ticker, side, member) for the candidate set', () => {
     const q = buildConvictionMemberLinksQuery(['AAPL', 'MSFT'], { window: '90d' });
-    expect(q.sql).toContain('SELECT DISTINCT t.ticker AS ticker, t.filer_id AS filer_id');
+    expect(q.sql).toContain('SELECT DISTINCT t.ticker AS ticker, t.tx_type AS tx_type, t.filer_id AS filer_id');
     expect(q.sql).toContain('t.ticker IN (?, ?)');
     expect(q.sql).toContain('t.tx_type IN (?, ?)');
     expect(q.sql).toContain('t.filer_id IS NOT NULL');
@@ -213,7 +213,7 @@ describe('conviction realized-skill inputs', () => {
   });
 
   it('buildMemberSkillQuery: per-member scored/wins/avg-excess for the given filers (>=5)', () => {
-    const q = buildMemberSkillQuery(['A1', 'B2', 'C3']);
+    const q = buildMemberSkillQuery(['A1', 'B2', 'C3'], { window: 'all' });
     expect(q.sql).toContain('JOIN tx_performance p ON p.tx_id = t.id');
     expect(q.sql).toContain('COUNT(*) AS scored');
     expect(q.sql).toContain('AS wins');
@@ -221,7 +221,16 @@ describe('conviction realized-skill inputs', () => {
     expect(q.sql).toContain("t.tx_type = 'P'");
     expect(q.sql).toContain('t.filer_id IN (?, ?, ?)');
     expect(q.sql).toContain('HAVING scored >= 5');
+    // window is intentionally omitted (career track record); no date bind.
+    expect(q.sql).not.toContain("tx_date >=");
     expect(q.params).toEqual(['A1', 'B2', 'C3']);
+  });
+
+  it('buildMemberSkillQuery: honors source + minConf (trade-level), binds before the filer IN-list', () => {
+    const q = buildMemberSkillQuery(['A1'], { window: 'all', source: 'primary', minConf: 0.7 });
+    expect(q.sql).toContain('t.source = ?');
+    expect(q.sql).toContain('t.confidence >= ?');
+    expect(q.params).toEqual(['primary', 0.7, 'A1']);
   });
 });
 
