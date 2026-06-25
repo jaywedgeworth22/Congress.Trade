@@ -129,6 +129,15 @@ describe('buildTrendingQuery', () => {
     expect(q.params).toEqual([]);
   });
 
+  it('bySide groups momentum by ticker + tx_type for per-direction reads', () => {
+    const def = buildTrendingQuery({ window: '30d' });
+    expect(def.sql).toContain('GROUP BY t.ticker ');
+    expect(def.sql).not.toContain('t.tx_type AS tx_type');
+    const sided = buildTrendingQuery({ window: '30d', bySide: true });
+    expect(sided.sql).toContain('t.tx_type AS tx_type');
+    expect(sided.sql).toContain('GROUP BY t.ticker, t.tx_type');
+  });
+
   it('momentumOffsets returns a prior period of equal length', () => {
     expect(momentumOffsets('7d')).toEqual({ recent: '-7 days', priorStart: '-14 days' });
     expect(momentumOffsets('90d')).toEqual({ recent: '-90 days', priorStart: '-180 days' });

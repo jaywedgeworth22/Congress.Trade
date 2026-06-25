@@ -262,10 +262,11 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const pool = Math.min(POOL_MAX, Math.max(60, limit * 3));
       const lbQ = buildTickerLeaderboardQuery({ ...f, sort: 'trades', limit: pool });
       const clQ = buildClusterBuysQuery({ ...f, minMembers: 2, limit: POOL_MAX });
-      // Momentum is restricted to directional (P/S) rows: a burst of non-directional
-      // exchange/type-change rows must not feed deltaCount/recentMembers into a
-      // BUY/SELL conviction.
-      const trQ = buildTrendingQuery({ ...f, txTypes: ['P', 'S'], limit: POOL_MAX });
+      // Momentum is computed PER SIDE (bySide → grouped by ticker, tx_type) and
+      // restricted to directional (P/S) rows: rising purchases must not feed a
+      // SELL conviction's momentum, and non-directional exchange/type-change rows
+      // never count.
+      const trQ = buildTrendingQuery({ ...f, txTypes: ['P', 'S'], bySide: true, limit: POOL_MAX });
       const [lbRows, clRows, trRows] = await Promise.all([
         all<Record<string, unknown>>(c.env.DB, lbQ.sql, lbQ.params),
         all<Record<string, unknown>>(c.env.DB, clQ.sql, clQ.params),
@@ -284,10 +285,14 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         cur[side] = row;
         clByTickerSide.set(t, cur);
       }
-      const trByTicker = new Map<string, Record<string, unknown>>();
+      // Trending is keyed by ticker+side (P/S) so momentum is read for the
+      // resolved direction, not a buy/sell mix.
+      const trByTickerSide = new Map<string, Record<string, unknown>>();
       for (const row of trRows) {
         const t = str(row.ticker);
-        if (t) trByTicker.set(t, row);
+        if (!t) continue;
+        const side = str(row.tx_type) === 'S' ? 'S' : 'P';
+        trByTickerSide.set(`${t}|${side}`, row);
       }
       const tickers = lbRows
         .map((row) => {
@@ -300,7 +305,10 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           const direction = convictionDirection(sentiment, estNetFlow);
           const sides = ticker ? clByTickerSide.get(ticker) : undefined;
           const cl = sides ? (direction === 'SELL' ? sides.S : sides.P) : undefined;
-          const tr = ticker ? trByTicker.get(ticker) : undefined;
+          // Momentum for the resolved side (default to the BUY side when there's
+          // no direction — it's capped at 20 anyway).
+          const momentumSide = direction === 'SELL' ? 'S' : 'P';
+          const tr = ticker ? trByTickerSide.get(`${ticker}|${momentumSide}`) : undefined;
           // Breadth and trade count reflect ONLY the resolved side: a concentrated
           // SELL must not borrow breadth from opposing BUY members (and vice
           // versa), so it can't dodge the single-member cap. Purely non-directional

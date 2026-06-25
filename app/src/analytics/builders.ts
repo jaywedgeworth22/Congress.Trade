@@ -218,7 +218,7 @@ export function momentumOffsets(w: Window): { recent: string; priorStart: string
  * keeps the many SELECT-side date references from scrambling param order.
  */
 export function buildTrendingQuery(
-  p: Omit<CommonFilters, 'window'> & { window?: Window; limit?: number },
+  p: Omit<CommonFilters, 'window'> & { window?: Window; limit?: number; bySide?: boolean },
 ): BuiltQuery {
   const w = p.window ?? '30d';
   const { recent, priorStart } = momentumOffsets(w);
@@ -236,8 +236,16 @@ export function buildTrendingQuery(
   const recentVol = `SUM(CASE WHEN t.tx_date >= ${recentLit} THEN ${MID} ELSE 0 END)`;
   const recentNet = `SUM(CASE WHEN t.tx_date >= ${recentLit} THEN ${SIGNED} ELSE 0 END)`;
 
+  // `bySide` groups by (ticker, tx_type) so a caller can read momentum for ONE
+  // direction (purchases vs sales) instead of the combined ticker total — the
+  // conviction score needs the rising/falling activity for the side it resolved
+  // to, not a mix where rising buys could feed a SELL signal.
+  const sideSelect = p.bySide ? 't.tx_type AS tx_type, ' : '';
+  const groupBy = p.bySide ? 'GROUP BY t.ticker, t.tx_type ' : 'GROUP BY t.ticker ';
+
   const sql =
     'SELECT t.ticker AS ticker, sm.name AS name, ' +
+    sideSelect +
     `${recentCount} AS recent_count, ` +
     `${priorCount} AS prior_count, ` +
     `${recentMembers} AS recent_members, ` +
@@ -245,7 +253,7 @@ export function buildTrendingQuery(
     `${recentNet} AS recent_net_flow ` +
     ANALYTICS_FROM_JOINS_SECURITIES +
     whereSql(allWhere) +
-    'GROUP BY t.ticker ' +
+    groupBy +
     // Require >=2 recent trades so a single new trade doesn't read as "rising".
     'HAVING recent_count >= 2 ' +
     'ORDER BY (recent_count - prior_count) DESC, recent_count DESC ' +
