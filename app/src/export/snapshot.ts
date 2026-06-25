@@ -33,15 +33,21 @@
  */
 
 import type { Env } from '../shared/types';
-import { all } from '../shared/db';
+import { all, type SqlParam } from '../shared/db';
 
-/** Tables included in the snapshot, with a stable ORDER BY for paged reads. */
+/**
+ * Tables included in the snapshot. `keyCols` is each table's unique key in sort
+ * order — used BOTH as the stable ORDER BY and as the keyset cursor, so paging
+ * survives concurrent inserts: an import / price-refresh landing mid-dump can't
+ * shift an OFFSET and make a row repeat or be skipped. Each keyCols tuple is
+ * unique per row (the tables' primary keys), so the cursor never stalls on ties.
+ */
 export const SNAPSHOT_TABLES = [
-  { name: 'price_eod', orderBy: 'ticker ASC, date ASC' },
-  { name: 'spx_eod', orderBy: 'date ASC' },
-  { name: 'securities_ref', orderBy: 'ticker ASC' },
-  { name: 'fundamentals_eod', orderBy: 'ticker ASC, date ASC' },
-  { name: 'analyst_consensus', orderBy: 'ticker ASC, date ASC' },
+  { name: 'price_eod', keyCols: ['ticker', 'date'] },
+  { name: 'spx_eod', keyCols: ['date'] },
+  { name: 'securities_ref', keyCols: ['ticker'] },
+  { name: 'fundamentals_eod', keyCols: ['ticker', 'date'] },
+  { name: 'analyst_consensus', keyCols: ['ticker', 'date'] },
 ] as const;
 
 export type SnapshotTableName = (typeof SNAPSHOT_TABLES)[number]['name'];
@@ -117,46 +123,87 @@ export function manifestObjectKey(date: string): string {
 }
 
 /**
- * Page one table out of D1 and stream it to R2 as NDJSON. Cuts the UTF-8 byte
- * stream into fixed PART_SIZE multipart parts (R2 requires equal-sized non-final
- * parts); the trailing remainder is the final part. Tables smaller than one part
- * are written in a single PUT. Returns the row count written.
+ * Build the keyset WHERE predicate + binds for "key tuple strictly after the
+ * cursor", e.g. for [ticker, date]: `(ticker > ?) OR (ticker = ? AND date > ?)`.
+ * Returns null clause for the first page (no cursor).
  */
-async function writeTableNdjson(env: Env, key: string, table: string, orderBy: string): Promise<number> {
-  let offset = 0;
+function keysetAfter(keyCols: readonly string[], cursor: SqlParam[] | null): { clause: string; params: SqlParam[] } {
+  if (!cursor) return { clause: '', params: [] };
+  const ors: string[] = [];
+  const params: SqlParam[] = [];
+  for (let i = 0; i < keyCols.length; i++) {
+    const ands: string[] = [];
+    for (let j = 0; j < i; j++) {
+      ands.push(`${keyCols[j]} = ?`);
+      params.push(cursor[j]);
+    }
+    ands.push(`${keyCols[i]} > ?`);
+    params.push(cursor[i]);
+    ors.push(`(${ands.join(' AND ')})`);
+  }
+  return { clause: `WHERE ${ors.join(' OR ')} `, params };
+}
+
+/**
+ * Page one table out of D1 and stream it to R2 as NDJSON. Uses KEYSET pagination
+ * (cursor on the table's unique key) rather than OFFSET, so a concurrent insert
+ * between pages can't shift the window and duplicate/skip a row — the dump stays
+ * a consistent forward scan for bootstrap consumers. Cuts the UTF-8 byte stream
+ * into fixed PART_SIZE multipart parts (R2 requires equal-sized non-final parts);
+ * the remainder is the final part; tables under one part use a single PUT. On any
+ * failure mid-upload the multipart upload is aborted so no orphaned parts linger.
+ * Returns the row count written.
+ */
+async function writeTableNdjson(
+  env: Env,
+  key: string,
+  table: string,
+  keyCols: readonly string[],
+): Promise<number> {
   let rowCount = 0;
   let carry: Uint8Array = new Uint8Array(0); // bytes not yet flushed as a part
+  let cursor: SqlParam[] | null = null; // last emitted row's key values
   let mpu: R2MultipartUpload | null = null;
   const parts: R2UploadedPart[] = [];
+  const orderBy = keyCols.map((c) => `${c} ASC`).join(', ');
 
-  for (;;) {
-    // table + orderBy come from the SNAPSHOT_TABLES closed set, never user input.
-    const rows = await all<Record<string, unknown>>(
-      env.DB,
-      `SELECT * FROM ${table} ORDER BY ${orderBy} LIMIT ${PAGE} OFFSET ${offset}`,
-    );
-    if (rows.length === 0) break;
-    let chunk = '';
-    for (const row of rows) chunk += JSON.stringify(row) + '\n';
-    rowCount += rows.length;
-    offset += rows.length;
-    carry = concatBytes(carry, encoder.encode(chunk));
-    // Flush as many full, equal-sized parts as the carry now holds.
-    while (carry.length >= PART_SIZE) {
-      mpu ??= await env.RAW_FILES.createMultipartUpload(key);
-      parts.push(await mpu.uploadPart(parts.length + 1, toArrayBuffer(carry.subarray(0, PART_SIZE))));
-      carry = carry.slice(PART_SIZE);
+  try {
+    for (;;) {
+      // table / keyCols come from the SNAPSHOT_TABLES closed set, never user input.
+      const ks = keysetAfter(keyCols, cursor);
+      const rows = await all<Record<string, unknown>>(
+        env.DB,
+        `SELECT * FROM ${table} ${ks.clause}ORDER BY ${orderBy} LIMIT ${PAGE}`,
+        ks.params,
+      );
+      if (rows.length === 0) break;
+      let chunk = '';
+      for (const row of rows) chunk += JSON.stringify(row) + '\n';
+      rowCount += rows.length;
+      carry = concatBytes(carry, encoder.encode(chunk));
+      const last = rows[rows.length - 1];
+      cursor = keyCols.map((c) => last[c] as SqlParam);
+      // Flush as many full, equal-sized parts as the carry now holds.
+      while (carry.length >= PART_SIZE) {
+        mpu ??= await env.RAW_FILES.createMultipartUpload(key);
+        parts.push(await mpu.uploadPart(parts.length + 1, toArrayBuffer(carry.subarray(0, PART_SIZE))));
+        carry = carry.slice(PART_SIZE);
+      }
+      if (rows.length < PAGE) break;
     }
-    if (rows.length < PAGE) break;
-  }
 
-  if (mpu) {
-    // Final part carries the remainder (< PART_SIZE; the only part allowed to differ).
-    if (carry.length > 0) parts.push(await mpu.uploadPart(parts.length + 1, toArrayBuffer(carry)));
-    await mpu.complete(parts);
-  } else {
-    // Small (or empty) table — a single PUT, no multipart ceremony.
-    await env.RAW_FILES.put(key, toArrayBuffer(carry));
+    if (mpu) {
+      // Final part carries the remainder (< PART_SIZE; the only part allowed to differ).
+      if (carry.length > 0) parts.push(await mpu.uploadPart(parts.length + 1, toArrayBuffer(carry)));
+      await mpu.complete(parts);
+    } else {
+      // Small (or empty) table — a single PUT, no multipart ceremony.
+      await env.RAW_FILES.put(key, toArrayBuffer(carry));
+    }
+  } catch (err) {
+    // Don't leave a dangling multipart upload (+ its parts) behind on failure.
+    if (mpu) await mpu.abort().catch(() => {});
+    throw err;
   }
   return rowCount;
 }
@@ -176,7 +223,7 @@ export async function runBulkSnapshot(
   const tables: Record<string, SnapshotTableInfo> = {};
   for (const spec of SNAPSHOT_TABLES) {
     const key = snapshotObjectKey(date, runId, spec.name);
-    const rowCount = await writeTableNdjson(env, key, spec.name, spec.orderBy);
+    const rowCount = await writeTableNdjson(env, key, spec.name, spec.keyCols);
     tables[spec.name] = { objectKey: key, rowCount };
   }
   const manifest: SnapshotManifest = {

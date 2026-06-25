@@ -19,16 +19,20 @@ const RUN = 'run-1';
 const decode = (v: unknown): string =>
   typeof v === 'string' ? v : new TextDecoder().decode(v as Uint8Array);
 
-/** In-memory D1 paging fake (same shape as snapshot.test). */
+/** In-memory D1 with KEYSET paging (same shape as snapshot.test). */
 function fakeDb(data: Record<string, Array<Record<string, unknown>>> = {}) {
+  const read = new Map<string, number>();
   function makeStmt(sql: string) {
     const stmt = {
       bind: () => stmt,
       async all<T>() {
-        const m = /FROM (\w+) .*LIMIT (\d+) OFFSET (\d+)/.exec(sql);
-        if (!m) return { results: [] as T[] };
-        const [, table, limit, offset] = m;
-        const rows = (data[table] ?? []).slice(Number(offset), Number(offset) + Number(limit));
+        const m = /FROM (\w+)/.exec(sql);
+        const lm = /LIMIT (\d+)/.exec(sql);
+        if (!m || !lm) return { results: [] as T[] };
+        const table = m[1];
+        const start = read.get(table) ?? 0;
+        const rows = (data[table] ?? []).slice(start, start + Number(lm[1]));
+        read.set(table, start + rows.length);
         return { results: rows as unknown as T[] };
       },
     };
@@ -123,7 +127,7 @@ describe('GET /api/export/bulk-snapshot — manifest', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { snapshotDate: string; tables: Record<string, { downloadPath: string; rowCount: number }> };
     expect(body.snapshotDate).toBe('2026-06-24');
-    expect(body.tables.price_eod.downloadPath).toBe('/api/export/bulk-snapshot/file?date=2026-06-24&table=price_eod');
+    expect(body.tables.price_eod.downloadPath).toBe(`/api/export/bulk-snapshot/file?date=2026-06-24&runId=${RUN}&table=price_eod`);
     expect(body.tables.price_eod.rowCount).toBe(3);
   });
 
@@ -154,22 +158,24 @@ describe('GET /api/export/bulk-snapshot — manifest', () => {
 });
 
 describe('GET /api/export/bulk-snapshot/file — download', () => {
-  it('streams the NDJSON object resolved through the manifest', async () => {
-    const seed = manifestSeed('2026-06-24');
-    seed[snapshotObjectKey('2026-06-24', RUN, 'price_eod')] = '{"ticker":"AAPL"}\n';
-    const env = baseEnv({ RAW_FILES: fakeR2(seed) });
-    const res = await req('/bulk-snapshot/file?date=2026-06-24&table=price_eod', env, TOKEN);
+  const fileUrl = `/bulk-snapshot/file?date=2026-06-24&runId=${RUN}&table=price_eod`;
+  it('streams the NDJSON object for the pinned run', async () => {
+    const env = baseEnv({ RAW_FILES: fakeR2({ [snapshotObjectKey('2026-06-24', RUN, 'price_eod')]: '{"ticker":"AAPL"}\n' }) });
+    const res = await req(fileUrl, env, TOKEN);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('application/x-ndjson');
     expect(await res.text()).toBe('{"ticker":"AAPL"}\n');
   });
   it('401 without a token', async () => {
-    expect((await req('/bulk-snapshot/file?date=2026-06-24&table=price_eod', baseEnv())).status).toBe(401);
+    expect((await req(fileUrl, baseEnv())).status).toBe(401);
   });
   it('400 on an unknown table', async () => {
-    expect((await req('/bulk-snapshot/file?date=2026-06-24&table=bogus', baseEnv(), TOKEN)).status).toBe(400);
+    expect((await req(`/bulk-snapshot/file?date=2026-06-24&runId=${RUN}&table=bogus`, baseEnv(), TOKEN)).status).toBe(400);
   });
-  it('404 when the manifest (and thus the file) is absent', async () => {
-    expect((await req('/bulk-snapshot/file?date=2026-06-24&table=price_eod', baseEnv(), TOKEN)).status).toBe(404);
+  it('400 when runId is missing', async () => {
+    expect((await req('/bulk-snapshot/file?date=2026-06-24&table=price_eod', baseEnv(), TOKEN)).status).toBe(400);
+  });
+  it('404 when the run file is absent', async () => {
+    expect((await req(fileUrl, baseEnv(), TOKEN)).status).toBe(404);
   });
 });

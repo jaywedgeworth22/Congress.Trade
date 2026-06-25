@@ -30,15 +30,19 @@ const byteLen = (v: unknown): number =>
 /** In-memory D1: pages `SELECT * FROM <table> ... LIMIT n OFFSET m` from seeded arrays. */
 function fakeDb(data: Record<string, Array<Record<string, unknown>>>) {
   const pageSql: string[] = [];
+  const read = new Map<string, number>();
   function makeStmt(sql: string) {
     const stmt = {
       bind: () => stmt,
       async all<T>() {
         pageSql.push(sql);
-        const m = /FROM (\w+) .*LIMIT (\d+) OFFSET (\d+)/.exec(sql);
-        if (!m) return { results: [] as T[] };
-        const [, table, limit, offset] = m;
-        const rows = (data[table] ?? []).slice(Number(offset), Number(offset) + Number(limit));
+        const m = /FROM (\w+)/.exec(sql);
+        const lm = /LIMIT (\d+)/.exec(sql);
+        if (!m || !lm) return { results: [] as T[] };
+        const table = m[1];
+        const start = read.get(table) ?? 0;
+        const rows = (data[table] ?? []).slice(start, start + Number(lm[1]));
+        read.set(table, start + rows.length);
         return { results: rows as unknown as T[] };
       },
     };
@@ -141,8 +145,13 @@ describe('runBulkSnapshot', () => {
     expect(r2.store.get(snapshotObjectKey('2026-06-25', RUN, 'spx_eod'))).toBe('');
   });
 
-  it('pages a multi-page table in 10k chunks (line count preserved across pages)', async () => {
-    const rows = Array.from({ length: 25_001 }, (_, i) => ({ ticker: 'T' + (i % 10), date: '2026-06-24', close: i, volume: i }));
+  it('pages a multi-page table via KEYSET (no OFFSET; cursor on later pages)', async () => {
+    const rows = Array.from({ length: 25_001 }, (_, i) => ({
+      ticker: 'T' + String(i).padStart(6, '0'),
+      date: '2026-06-24',
+      close: i,
+      volume: i,
+    }));
     const { db, pageSql } = fakeDb({
       price_eod: rows, spx_eod: [], securities_ref: [], fundamentals_eod: [], analyst_consensus: [],
     });
@@ -152,8 +161,13 @@ describe('runBulkSnapshot', () => {
     expect(manifest.tables.price_eod.rowCount).toBe(25_001);
     const lines = (r2.store.get(snapshotObjectKey('2026-06-25', RUN, 'price_eod')) as string).split('\n').filter(Boolean);
     expect(lines).toHaveLength(25_001);
-    const priceOffsets = pageSql.filter((s) => s.includes('FROM price_eod')).map((s) => Number(/OFFSET (\d+)/.exec(s)![1]));
-    expect(priceOffsets).toEqual([0, 10_000, 20_000]);
+    const pricePages = pageSql.filter((s) => s.includes('FROM price_eod'));
+    expect(pricePages).toHaveLength(3); // 10k + 10k + 5001
+    expect(pricePages.every((s) => !s.includes('OFFSET'))).toBe(true);
+    expect(pricePages[0]).toContain('ORDER BY ticker ASC, date ASC');
+    expect(pricePages[0]).not.toContain('WHERE'); // first page has no cursor
+    // Later pages carry the keyset cursor predicate.
+    expect(pricePages[1]).toContain('(ticker > ?) OR (ticker = ? AND date > ?)');
   });
 
   it('uploads EQUAL-sized non-final multipart parts (R2 requirement) for a big table', async () => {
@@ -179,6 +193,33 @@ describe('runBulkSnapshot', () => {
     expect((r2.store.get(key) as string).split('\n').filter(Boolean)).toHaveLength(30_000);
     // The small spx table stays a single PUT (no recorded parts).
     expect(r2.partSizes.has(snapshotObjectKey('2026-06-25', RUN, 'spx_eod'))).toBe(false);
+  });
+
+  it('aborts the multipart upload (no orphaned parts) when a part fails mid-stream', async () => {
+    const pad = 'x'.repeat(600);
+    const rows = Array.from({ length: 30_000 }, () => ({ ticker: 'AAAA', date: '2026-01-01', close: 1, volume: 1, pad }));
+    const { db } = fakeDb({
+      price_eod: rows, spx_eod: [], securities_ref: [], fundamentals_eod: [], analyst_consensus: [],
+    });
+    let aborted = false;
+    const failingR2 = {
+      async put() { /* unused for the big table */ },
+      async get() { return null; },
+      async createMultipartUpload() {
+        let calls = 0;
+        return {
+          async uploadPart() {
+            calls += 1;
+            if (calls >= 2) throw new Error('R2 uploadPart failed');
+            return { partNumber: calls, etag: 'e' };
+          },
+          async complete() { /* never reached */ },
+          async abort() { aborted = true; },
+        };
+      },
+    };
+    await expect(runBulkSnapshot(envWith(db, failingR2), '2026-06-25', NOW, RUN)).rejects.toThrow('uploadPart failed');
+    expect(aborted).toBe(true);
   });
 
   it('readManifest round-trips the written manifest', async () => {

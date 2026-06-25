@@ -306,21 +306,24 @@ schema, and a per-table `downloadPath`:
 {
   "generatedAt": "2026-06-25T04:01:00.000Z",
   "snapshotDate": "2026-06-25",
+  "snapshotDate": "2026-06-25",
+  "runId": "9f3c…",                                  // unique per run; pinned into downloadPath
   "format": "ndjson",
   "tables": {
-    "price_eod":  { "objectKey": "bulk/2026-06-25/price_eod.ndjson",  "rowCount": 412000,
-                    "downloadPath": "/api/export/bulk-snapshot/file?date=2026-06-25&table=price_eod" },
-    "spx_eod":    { "objectKey": "bulk/2026-06-25/spx_eod.ndjson",    "rowCount": 9500,  "downloadPath": "…" },
+    "price_eod":  { "objectKey": "bulk/2026-06-25/runs/9f3c…/price_eod.ndjson", "rowCount": 412000,
+                    "downloadPath": "/api/export/bulk-snapshot/file?date=2026-06-25&runId=9f3c…&table=price_eod" },
+    "spx_eod":    { "objectKey": "bulk/2026-06-25/runs/9f3c…/spx_eod.ndjson",   "rowCount": 9500,  "downloadPath": "…" },
     "securities_ref":   { /* … */ }, "fundamentals_eod": { /* … */ }, "analyst_consensus": { /* … */ }
   },
   "schema": { "price_eod": ["ticker","date","close","volume"], /* … all five … */ }
 }
 ```
 
-Then download each table's NDJSON (one JSON object per line) and stream-parse it:
+Then download each table's NDJSON (one JSON object per line) and stream-parse it.
+Use the `downloadPath` from the manifest verbatim — it pins the `runId`:
 
 ```
-GET /api/export/bulk-snapshot/file?date=2026-06-25&table=price_eod
+GET /api/export/bulk-snapshot/file?date=2026-06-25&runId=9f3c…&table=price_eod
 Headers: Authorization: Bearer <INGEST_TOKEN>
 → application/x-ndjson  (stream line-by-line; each line is one row object)
 ```
@@ -328,10 +331,14 @@ Headers: Authorization: Bearer <INGEST_TOKEN>
 Notes for App B:
 - **No presigned URLs.** The R2 binding in the Workers runtime can't sign URLs, so
   downloads go through the token-gated `downloadPath` (same `INGEST_TOKEN`).
-- **Idempotent + watermarked.** Re-running a date overwrites the same keys.
-  Compare the manifest's `snapshotDate` + per-table `rowCount` against your own
-  watermarks and only download tables that moved; store `snapshotDate` so repeated
-  pulls skip already-ingested data.
+- **Pin the run, then download.** Each run writes to a unique `runId` prefix and the
+  manifest's `downloadPath` carries that `runId`, so the row counts you read and the
+  bytes you download are always from the **same** run — even if a later same-day run
+  republishes the manifest while you're mid-download.
+- **Watermark by run identity, not row count.** A rerun can change prices/fundamentals
+  without changing the row count, so don't skip a table on `rowCount` alone. Persist the
+  manifest's `runId` (or `generatedAt`, or each table's `objectKey`) and re-pull a table
+  when that changes; `snapshotDate` alone is not enough to detect a refreshed run.
 - **A missing past date is `404`**; today's snapshot is generated inline on first
   request if the cron hasn't written it yet.
 - **What's NOT here:** the congressional-trade corpus (use the paged

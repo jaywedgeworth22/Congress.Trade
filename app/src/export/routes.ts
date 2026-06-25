@@ -31,6 +31,7 @@ import { constantTimeEqual } from '../auth/tokens';
 import {
   runBulkSnapshot,
   readManifest,
+  snapshotObjectKey,
   SNAPSHOT_TABLES,
   type SnapshotManifest,
   type SnapshotTableName,
@@ -40,6 +41,7 @@ import {
 type ExportEnv = Env & { INGEST_TOKEN?: string };
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const RUN_ID_RE = /^[A-Za-z0-9-]{1,64}$/; // crypto.randomUUID() shape (hex + dashes)
 const VALID_TABLES = new Set<string>(SNAPSHOT_TABLES.map((t) => t.name));
 
 function todayUtc(now = new Date()): string {
@@ -70,13 +72,16 @@ function shapeManifest(manifest: SnapshotManifest, tables: SnapshotTableName[]):
     if (!info) continue;
     outTables[name] = {
       ...info,
-      downloadPath: `/api/export/bulk-snapshot/file?date=${manifest.snapshotDate}&table=${name}`,
+      // downloadPath pins the runId so a client that read THIS manifest always
+      // downloads THIS run's files, even if a later same-day run republishes.
+      downloadPath: `/api/export/bulk-snapshot/file?date=${manifest.snapshotDate}&runId=${manifest.runId}&table=${name}`,
     };
     if (manifest.schema[name]) outSchema[name] = manifest.schema[name];
   }
   return {
     generatedAt: manifest.generatedAt,
     snapshotDate: manifest.snapshotDate,
+    runId: manifest.runId,
     format: manifest.format,
     tables: outTables,
     schema: outSchema,
@@ -126,17 +131,17 @@ export function buildExportRouter(): Hono<{ Bindings: ExportEnv }> {
     const q = c.req.query();
     const date = q.date ?? '';
     const table = q.table ?? '';
+    const runId = q.runId ?? '';
     if (!DATE_RE.test(date)) return c.json({ error: 'date must be YYYY-MM-DD', date }, 400);
     if (!VALID_TABLES.has(table)) return c.json({ error: 'unknown table', table }, 400);
+    if (!RUN_ID_RE.test(runId)) return c.json({ error: 'runId required (from the manifest downloadPath)', runId }, 400);
 
-    // Resolve the actual (run-scoped) object key through the published manifest
-    // so downloads always point at the committed run's files, never a key a
-    // racing rerun may have rewritten.
-    const manifest = await readManifest(c.env, date);
-    const info = manifest?.tables[table];
-    if (!info) return c.json({ error: 'snapshot file not available', date, table }, 404);
-    const obj = await c.env.RAW_FILES.get(info.objectKey);
-    if (!obj) return c.json({ error: 'snapshot file not available', date, table }, 404);
+    // Serve the EXACT run named in the manifest the client read (the runId is
+    // pinned in downloadPath). Old runs aren't deleted, so a client that fetched
+    // run A's manifest keeps downloading run A's files even after a later run B
+    // republishes — consistent row counts ↔ bytes.
+    const obj = await c.env.RAW_FILES.get(snapshotObjectKey(date, runId, table));
+    if (!obj) return c.json({ error: 'snapshot file not available', date, runId, table }, 404);
     return new Response(obj.body, {
       headers: {
         'content-type': 'application/x-ndjson; charset=utf-8',
