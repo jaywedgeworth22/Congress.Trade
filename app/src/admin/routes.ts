@@ -1429,6 +1429,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'ALTER TABLE transactions ADD COLUMN deprecated_at TEXT',
       'ALTER TABLE transactions ADD COLUMN deprecated_reason TEXT',
       'CREATE INDEX IF NOT EXISTS idx_tx_deprecated_at ON transactions (deprecated_at)',
+      // 0014_tx_perf_filing_anchors.sql — disclosure-date performance anchors.
+      'ALTER TABLE tx_performance ADD COLUMN price_at_filing REAL',
+      'ALTER TABLE tx_performance ADD COLUMN spx_at_filing REAL',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

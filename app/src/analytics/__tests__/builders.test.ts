@@ -24,6 +24,7 @@ import {
   buildSectorBreakdownQuery,
   buildSectorFlowQuery,
   buildMarketCapBreakdownQuery,
+  buildMemberPerformanceLeaderboardQuery,
   buildSummaryQuery,
   buildTickerLeaderboardQuery,
   buildTickerRecentTradesQuery,
@@ -179,6 +180,30 @@ describe('buildMarketCapBreakdownQuery', () => {
     expect(q.sql).toContain('LEFT JOIN securities_ref sr ON sr.ticker = t.ticker');
     expect(q.sql).toContain('AS est_net_flow');
     expect(q.sql).toContain('GROUP BY bucket');
+  });
+});
+
+describe('buildMemberPerformanceLeaderboardQuery', () => {
+  it('anchors excess return at the filing date, buys only, options excluded, small-N guarded', () => {
+    const q = buildMemberPerformanceLeaderboardQuery({ window: 'all', minTrades: 5, limit: 10 });
+    expect(q.sql).toContain('JOIN tx_performance p ON p.tx_id = t.id');
+    // Excess uses the FILING anchors, not the trade-date ones.
+    expect(q.sql).toContain('p.price_at_filing');
+    expect(q.sql).toContain('p.spx_at_filing');
+    expect(q.sql).not.toContain('price_at_trade');
+    // Latest SPX brought in via a one-row cross join.
+    expect(q.sql).toContain('SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1');
+    expect(q.sql).toContain("t.tx_type = 'P'");
+    expect(q.sql).toContain('t.is_option = 0');
+    expect(q.sql).toContain('GROUP BY t.filer_id');
+    expect(q.sql).toContain('HAVING trade_count >= 5');
+    expect(q.sql).toContain('ORDER BY avg_excess DESC');
+  });
+
+  it('defaults and clamps the small-N guard + limit', () => {
+    const q = buildMemberPerformanceLeaderboardQuery({ window: 'all' });
+    expect(q.sql).toContain('HAVING trade_count >= 5'); // default minTrades
+    expect(q.sql).toContain('LIMIT 20'); // default limit
   });
 });
 

@@ -171,9 +171,13 @@ export async function runPriceRefresh(
   const tickers = await selectTickersNeedingPrices(env, budget);
   for (const ticker of tickers) {
     if (budget <= 0) break;
-    const trades = await all<{ id: string; tx_date: string }>(
+    const trades = await all<{ id: string; tx_date: string; filed_date: string | null }>(
       env.DB,
-      "SELECT id, tx_date FROM transactions WHERE ticker = ? AND tx_date IS NOT NULL AND tx_date <> ''",
+      `SELECT t.id AS id, t.tx_date AS tx_date,
+              COALESCE(f.filed_date, f.first_seen_at) AS filed_date
+         FROM transactions t
+         LEFT JOIN filings f ON f.doc_id = t.doc_id
+        WHERE t.ticker = ? AND t.tx_date IS NOT NULL AND t.tx_date <> ''`,
       [ticker],
     );
     if (trades.length === 0) continue;
@@ -233,13 +237,28 @@ export async function runPriceRefresh(
     result.sharePrices.push({ ticker, closes: hist, currentPrice: latest.close, currentPriceDate: latest.date });
     // Per-trade anchors.
     const nowIso = new Date().toISOString();
-    const stmts = trades.map((t) =>
-      env.DB.prepare(
-        `INSERT INTO tx_performance (tx_id, price_at_trade, spx_at_trade, computed_at)
-           VALUES (?, ?, ?, ?)
-         ON CONFLICT(tx_id) DO UPDATE SET price_at_trade=excluded.price_at_trade, spx_at_trade=excluded.spx_at_trade, computed_at=excluded.computed_at`,
-      ).bind(t.id, nearestClose(hist, t.tx_date), spx.length ? nearestClose(spx, t.tx_date) : null, nowIso),
-    );
+    const stmts = trades.map((t) => {
+      // Filing-date anchors: the close on/before the disclosure date (the only
+      // price a copy-trader could have acted on). Fall back to the trade date
+      // when no filing date is known, so the anchor is never null for a priced
+      // trade that has a trade date.
+      const filedDate = t.filed_date || t.tx_date;
+      return env.DB.prepare(
+        `INSERT INTO tx_performance (tx_id, price_at_trade, spx_at_trade, price_at_filing, spx_at_filing, computed_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(tx_id) DO UPDATE SET
+           price_at_trade=excluded.price_at_trade, spx_at_trade=excluded.spx_at_trade,
+           price_at_filing=excluded.price_at_filing, spx_at_filing=excluded.spx_at_filing,
+           computed_at=excluded.computed_at`,
+      ).bind(
+        t.id,
+        nearestClose(hist, t.tx_date),
+        spx.length ? nearestClose(spx, t.tx_date) : null,
+        nearestClose(hist, filedDate),
+        spx.length ? nearestClose(spx, filedDate) : null,
+        nowIso,
+      );
+    });
     for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
     result.tradesComputed += trades.length;
   }
