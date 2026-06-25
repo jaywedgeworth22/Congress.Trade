@@ -193,6 +193,9 @@ export function buildCommonFilters(p: CommonFilters): { where: string[]; params:
   const where: string[] = [];
   const params: SqlParam[] = [];
 
+  // Retracted (un-published) rows never appear in any analytics aggregate.
+  where.push('t.deprecated_at IS NULL');
+
   const offset = windowToOffset(p.window ?? '30d');
   if (offset) {
     where.push("t.tx_date >= date('now', ?)");

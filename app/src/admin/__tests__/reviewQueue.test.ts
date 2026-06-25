@@ -66,4 +66,78 @@ describe('review queue admin API', () => {
       payload: { minConfidence: 0, transactions: [] },
     });
   });
+
+  it('lists already-reviewed items with ?resolved=1 and surfaces ingest status', async () => {
+    const res = await app.request(
+      '/review-queue?resolved=1',
+      { headers: { Authorization: 'Bearer admin-secret' } },
+      {
+        ADMIN_TOKEN: 'admin-secret',
+        DB: fakeDb([
+          {
+            doc_id: 'H-2026-2003695',
+            reason: 'no_transactions_extracted',
+            payload: null,
+            created_at: '2026-06-24T02:53:00.000Z',
+            resolved: 1,
+            ingest_status: 'persisted',
+            source_url: 'https://example/doc',
+            raw_object_key: 'raw/x',
+            doc_kind: 'scanned_pdf',
+          },
+        ]),
+      } as never,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      resolved: boolean;
+      items: Array<{ resolved: boolean; ingestStatus: string }>;
+    };
+    expect(body.resolved).toBe(true);
+    expect(body.items[0]).toMatchObject({ resolved: true, ingestStatus: 'persisted' });
+  });
+
+  it('unpublishes a persisted filing: soft-deletes rows, reverts, re-opens review', async () => {
+    // fakeDb whose filing lookup resolves and whose UPDATE reports 3 retracted rows.
+    const db = {
+      prepare() {
+        return {
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return { results: [] as T[] };
+          },
+          async first<T>() {
+            return { ingest_status: 'persisted' } as T;
+          },
+          async run() {
+            return { success: true, meta: { changes: 3 } };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const res = await app.request(
+      '/review/H-2026-2003695/unpublish',
+      { method: 'POST', headers: { Authorization: 'Bearer admin-secret' }, body: '{"reason":"bad parse"}' },
+      { ADMIN_TOKEN: 'admin-secret', DB: db } as never,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      unpublished: boolean;
+      deprecatedTransactions: number;
+      reason: string;
+    };
+    expect(body).toMatchObject({ unpublished: true, deprecatedTransactions: 3, reason: 'bad parse' });
+  });
+
+  it('unpublish 404s when the filing does not exist', async () => {
+    const res = await app.request(
+      '/review/NOPE/unpublish',
+      { method: 'POST', headers: { Authorization: 'Bearer admin-secret' }, body: '' },
+      { ADMIN_TOKEN: 'admin-secret', DB: fakeDb([]) } as never,
+    );
+    expect(res.status).toBe(404);
+  });
 });

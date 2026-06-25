@@ -304,6 +304,9 @@ function buildTxFilters(
   const where: string[] = [];
   const params: Array<string | number> = [];
 
+  // Retracted (un-published) rows are never served on the feed.
+  where.push('t.deprecated_at IS NULL');
+
   if (includeCursor) {
     const since = Number.isFinite(p.since) ? Number(p.since) : 0;
     where.push('t.cursor_seq > ?');
