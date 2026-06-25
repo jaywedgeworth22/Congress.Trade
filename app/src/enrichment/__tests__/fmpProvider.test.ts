@@ -50,6 +50,22 @@ describe('buildFmpProvider fetchRef — tier-error surfacing', () => {
     expect(ref?.exchange).toBe('NASDAQ Global Select');
   });
 
+  it('derives shares outstanding from marketCap / price (no extra call)', async () => {
+    const ref = await buildFmpProvider(
+      'k',
+      fetchWith(200, [{ symbol: 'AAPL', companyName: 'Apple Inc.', marketCap: 3_000_000_000_000, price: 200 }]),
+    ).fetchRef('AAPL');
+    expect(ref?.sharesOutstanding).toBe(15_000_000_000); // 3e12 / 200
+  });
+
+  it('leaves shares outstanding null when price is missing or zero', async () => {
+    const ref = await buildFmpProvider(
+      'k',
+      fetchWith(200, [{ symbol: 'AAPL', companyName: 'Apple Inc.', marketCap: 3_000_000_000_000, price: 0 }]),
+    ).fetchRef('AAPL');
+    expect(ref?.sharesOutstanding ?? null).toBeNull();
+  });
+
   it('treats FMP\'s { "Error Message" } object (non-array) as no data', async () => {
     const ref = await buildFmpProvider(
       'k',

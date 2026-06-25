@@ -238,8 +238,8 @@ export async function importSecurityRef(env: Env, ref: SecurityRef): Promise<voi
     `INSERT INTO securities_ref (
        ticker, company_name, sector, industry, asset_class, is_etf, is_adr,
        country, state_hq, state_of_incorp, exchange, exchange_short, currency,
-       market_cap, market_cap_bucket, ipo_date, cik, sic_code, sic_description, source
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       market_cap, market_cap_bucket, shares_outstanding, ipo_date, cik, sic_code, sic_description, source
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(ticker) DO UPDATE SET
        company_name=COALESCE(excluded.company_name, securities_ref.company_name),
        sector=COALESCE(excluded.sector, securities_ref.sector),
@@ -253,6 +253,7 @@ export async function importSecurityRef(env: Env, ref: SecurityRef): Promise<voi
        currency=COALESCE(excluded.currency, securities_ref.currency),
        market_cap=COALESCE(excluded.market_cap, securities_ref.market_cap),
        market_cap_bucket=COALESCE(excluded.market_cap_bucket, securities_ref.market_cap_bucket),
+       shares_outstanding=COALESCE(excluded.shares_outstanding, securities_ref.shares_outstanding),
        ipo_date=COALESCE(excluded.ipo_date, securities_ref.ipo_date),
        cik=COALESCE(excluded.cik, securities_ref.cik),
        sic_code=COALESCE(excluded.sic_code, securities_ref.sic_code),
@@ -261,7 +262,7 @@ export async function importSecurityRef(env: Env, ref: SecurityRef): Promise<voi
       ref.ticker, ref.companyName, ref.sector, ref.industry, ref.assetClass,
       ref.isEtf ? 1 : 0, ref.isAdr ? 1 : 0, ref.country, ref.stateHq, ref.stateOfIncorp,
       ref.exchange, ref.exchangeShort, ref.currency, ref.marketCap, ref.marketCapBucket,
-      ref.ipoDate, ref.cik, ref.sicCode, ref.sicDescription, ref.source,
+      ref.sharesOutstanding ?? null, ref.ipoDate, ref.cik, ref.sicCode, ref.sicDescription, ref.source,
     ],
   );
 }
@@ -272,22 +273,24 @@ async function upsertRef(env: Env, ref: SecurityRef): Promise<void> {
     `INSERT INTO securities_ref (
        ticker, company_name, sector, industry, asset_class, is_etf, is_adr,
        country, state_hq, state_of_incorp, exchange, exchange_short, currency,
-       market_cap, market_cap_bucket, ipo_date, cik, sic_code, sic_description,
+       market_cap, market_cap_bucket, shares_outstanding, ipo_date, cik, sic_code, sic_description,
        source, enriched_at, enrichment_error
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
      ON CONFLICT(ticker) DO UPDATE SET
        company_name=excluded.company_name, sector=excluded.sector, industry=excluded.industry,
        asset_class=excluded.asset_class, is_etf=excluded.is_etf, is_adr=excluded.is_adr,
        country=excluded.country, state_hq=excluded.state_hq, state_of_incorp=excluded.state_of_incorp,
        exchange=excluded.exchange, exchange_short=excluded.exchange_short, currency=excluded.currency,
-       market_cap=excluded.market_cap, market_cap_bucket=excluded.market_cap_bucket, ipo_date=excluded.ipo_date,
+       market_cap=excluded.market_cap, market_cap_bucket=excluded.market_cap_bucket,
+       shares_outstanding=COALESCE(excluded.shares_outstanding, securities_ref.shares_outstanding),
+       ipo_date=excluded.ipo_date,
        cik=excluded.cik, sic_code=excluded.sic_code, sic_description=excluded.sic_description,
        source=excluded.source, enriched_at=excluded.enriched_at, enrichment_error=NULL`,
     [
       ref.ticker, ref.companyName, ref.sector, ref.industry, ref.assetClass,
       ref.isEtf ? 1 : 0, ref.isAdr ? 1 : 0, ref.country, ref.stateHq, ref.stateOfIncorp,
       ref.exchange, ref.exchangeShort, ref.currency, ref.marketCap, ref.marketCapBucket,
-      ref.ipoDate, ref.cik, ref.sicCode, ref.sicDescription, ref.source,
+      ref.sharesOutstanding ?? null, ref.ipoDate, ref.cik, ref.sicCode, ref.sicDescription, ref.source,
       new Date().toISOString(),
     ],
   );

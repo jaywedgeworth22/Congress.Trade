@@ -29,6 +29,8 @@ export interface SecurityRef {
   currency: string | null;
   marketCap: number | null;
   marketCapBucket: MktCapBucket | null;
+  /** Shares outstanding, so market cap can be recomputed from the latest close. */
+  sharesOutstanding: number | null;
   ipoDate: string | null;
   cik: string | null;
   sicCode: string | null;

@@ -31,6 +31,11 @@ export function parseFmpProfile(json: unknown): Partial<SecurityRef> | null {
   if (!p || !p.symbol) return null;
   const mc =
     typeof p.mktCap === 'number' ? p.mktCap : typeof p.marketCap === 'number' ? p.marketCap : null;
+  // FMP's profile carries both marketCap and price, so shares outstanding is
+  // implied (cap / price) with no extra call — lets the price refresh keep cap
+  // current off the daily close.
+  const price = typeof p.price === 'number' ? p.price : null;
+  const sharesOutstanding = mc != null && price != null && price > 0 ? mc / price : null;
   const isEtf = p.isEtf === true;
   const isAdr = p.isAdr === true;
   const isFund = p.isFund === true;
@@ -50,6 +55,7 @@ export function parseFmpProfile(json: unknown): Partial<SecurityRef> | null {
     currency: str(p.currency),
     marketCap: mc,
     marketCapBucket: marketCapBucket(mc),
+    sharesOutstanding,
     ipoDate: str(p.ipoDate),
     cik: str(p.cik),
     source: 'fmp',
