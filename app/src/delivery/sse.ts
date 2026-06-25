@@ -45,7 +45,7 @@
 import type { Env, Subscription, Transaction } from '../shared/types';
 import { all, get } from '../shared/db';
 import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows';
-import { matchesFiltersWithChamber } from './subscriptions';
+import { matchesFiltersWithContext } from './subscriptions';
 import { constantTimeEqual } from '../auth/tokens';
 
 /** How often to poll D1 for new rows. */
@@ -178,15 +178,19 @@ async function drain(
   let hwm = cursor;
   // Loop pages until a short page (fewer than PAGE_SIZE rows) is returned.
   for (;;) {
-    const rows = await all<FeedTransactionRow & { __chamber: string | null }>(
+    const rows = await all<
+      FeedTransactionRow & { __chamber: string | null; __sector: string | null; __bucket: string | null }
+    >(
       env.DB,
       `SELECT t.*, f.chamber AS __chamber,
+              sr.sector AS __sector, sr.market_cap_bucket AS __bucket,
               fl.full_name AS filer_full_name, fl.state AS filer_state,
               fl.photo_url AS filer_photo_url
          FROM transactions t
          LEFT JOIN filings f ON f.doc_id = t.doc_id
+         LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
          LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id
-        WHERE t.cursor_seq > ?
+        WHERE t.cursor_seq > ? AND t.deprecated_at IS NULL
         ORDER BY t.cursor_seq ASC
         LIMIT ?`,
       [hwm, PAGE_SIZE],
@@ -195,9 +199,13 @@ async function drain(
 
     for (const row of rows) {
       const tx: Transaction = mapFeedTransaction(row);
-      const chamber = row.__chamber ?? null;
+      const ctx = {
+        chamber: row.__chamber ?? null,
+        sector: row.__sector ?? null,
+        marketCapBucket: row.__bucket ?? null,
+      };
       hwm = Math.max(hwm, tx.cursorSeq);
-      if (!matchesFiltersWithChamber(tx, sub.filters, chamber)) continue;
+      if (!matchesFiltersWithContext(tx, sub.filters, ctx)) continue;
       send(`id: ${tx.cursorSeq}\nevent: trade.new\ndata: ${JSON.stringify(tx)}\n\n`);
     }
 
