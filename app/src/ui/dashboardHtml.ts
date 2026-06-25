@@ -415,8 +415,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       background: var(--panel);
       border-top: 1px solid var(--border); backdrop-filter: none; z-index: 45;
       box-shadow: 0 -8px 24px rgba(0,0,0,.18); transform: translateZ(0);
+      overflow: visible;
+    }
+    nav.tabs::after {
+      content:""; position:absolute; left:0; right:0; top:100%;
+      height:calc(120px + env(safe-area-inset-bottom));
+      background:var(--panel); pointer-events:none;
     }
     html[data-theme="light"] nav.tabs { background:#fff; }
+    html[data-theme="light"] nav.tabs::after { background:#fff; }
     nav.tabs button { padding: 8px 4px; font-size: 0; min-width: 0; border-radius: 9px; }
     nav.tabs button::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
     nav.tabs button::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
