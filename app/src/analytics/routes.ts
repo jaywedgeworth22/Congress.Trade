@@ -39,6 +39,7 @@ import {
   buildFilingLagHistogramQuery,
   buildLateFilersQuery,
   buildMemberLeaderboardQuery,
+  buildMemberPerformanceQuery,
   buildMemberStatsQuery,
   buildMemberTopTickersQuery,
   buildMemberRecentTradesQuery,
@@ -55,6 +56,7 @@ import {
   buildVolumeOverTimeQuery,
 } from './builders';
 import {
+  aggregateMemberPerformance,
   bracketMidpoint,
   netSentiment,
   round,
@@ -706,6 +708,35 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           ),
         })),
       });
+    });
+    return c.json(data);
+  });
+
+  // --- GET /member/:filerId/performance (realized "skill" aggregate) ------
+  // Aggregates the member's trades' realized return + alpha vs S&P from the
+  // cached price anchors (tx_performance + securities_ref.current_price). All
+  // returns are fractions (0.18 = +18%); winRate is the share (0..1) beating
+  // the market. Lights up as filer_id resolves and prices populate; until then
+  // scoredCount stays low. Defaults to full history (window=all).
+  r.get('/member/:filerId/performance', async (c) => {
+    const q = c.req.query();
+    const f = { ...commonFromQuery(q), window: asWindow(q.window, 'all') };
+    const filerId = c.req.param('filerId') || '';
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(filerId)) {
+      return c.json({ error: 'invalid member id' }, 400);
+    }
+    const key = cacheKey(`member-perf:${filerId}`, f as never);
+    const data = await cached(c.env, key, 300, async () => {
+      const built = buildMemberPerformanceQuery(filerId, f);
+      const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
+      const currentSpx = await latestSpxClose(c.env);
+      const perfRows = rows.map((row) => ({
+        isOption: num(row.is_option) === 1,
+        priceAtTrade: row.price_at_trade == null ? null : num(row.price_at_trade),
+        spxAtTrade: row.spx_at_trade == null ? null : num(row.spx_at_trade),
+        currentPrice: row.current_price == null ? null : num(row.current_price),
+      }));
+      return meta(f, { filerId, performance: aggregateMemberPerformance(perfRows, currentSpx) });
     });
     return c.json(data);
   });

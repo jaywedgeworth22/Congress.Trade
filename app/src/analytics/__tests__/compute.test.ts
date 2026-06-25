@@ -6,6 +6,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  aggregateMemberPerformance,
   bracketMidpoint,
   lagBucket,
   netSentiment,
@@ -14,6 +15,7 @@ import {
   summarizeLag,
   topPerGroup,
   type LagRow,
+  type MemberPerfRow,
 } from '../compute';
 
 describe('bracketMidpoint', () => {
@@ -115,5 +117,65 @@ describe('topPerGroup', () => {
     const out = topPerGroup(items, (x) => x.k, 2);
     expect(out.get('a')!.map((x) => x.v)).toEqual([1, 2]);
     expect(out.get('b')!.map((x) => x.v)).toEqual([9]);
+  });
+});
+
+describe('aggregateMemberPerformance', () => {
+  const row = (over: Partial<MemberPerfRow> = {}): MemberPerfRow => ({
+    isOption: false,
+    priceAtTrade: 100,
+    currentPrice: 120,
+    spxAtTrade: 100,
+    ...over,
+  });
+
+  it('returns all-null stats for an empty / unpriced set', () => {
+    const empty = aggregateMemberPerformance([], 110);
+    expect(empty).toMatchObject({
+      tradeCount: 0,
+      scoredCount: 0,
+      winRate: null,
+      medianReturn: null,
+      medianExcess: null,
+    });
+    // Rows present but no usable price anchors -> counted but not scored.
+    const unpriced = aggregateMemberPerformance(
+      [row({ priceAtTrade: null }), row({ currentPrice: null })],
+      110,
+    );
+    expect(unpriced.tradeCount).toBe(2);
+    expect(unpriced.scoredCount).toBe(0);
+    expect(unpriced.medianReturn).toBeNull();
+  });
+
+  it('excludes options from the scored set but counts them in tradeCount', () => {
+    const out = aggregateMemberPerformance([row(), row({ isOption: true })], 100);
+    expect(out.tradeCount).toBe(2);
+    expect(out.scoredCount).toBe(1);
+  });
+
+  it('computes return, alpha vs S&P, and win-rate as fractions', () => {
+    // S&P flat (100->100) so excess == asset return for both trades.
+    // Trade A: stock +20% (100->120) => excess +0.20 (win)
+    // Trade B: stock -10% (200->180) => excess -0.10 (loss)
+    const out = aggregateMemberPerformance(
+      [
+        row({ priceAtTrade: 100, currentPrice: 120, spxAtTrade: 100 }),
+        row({ priceAtTrade: 200, currentPrice: 180, spxAtTrade: 100 }),
+      ],
+      100,
+    );
+    expect(out.scoredCount).toBe(2);
+    expect(out.medianReturn).toBeCloseTo(0.05, 5); // median of +0.20 and -0.10
+    expect(out.winRate).toBeCloseTo(0.5, 5); // 1 of 2 beat the market
+    expect(out.medianExcess).toBeCloseTo(0.05, 5); // median of +0.20 and -0.10
+  });
+
+  it('leaves excess null (but still scores the return) when no S&P anchor exists', () => {
+    const out = aggregateMemberPerformance([row({ spxAtTrade: null })], null);
+    expect(out.scoredCount).toBe(1);
+    expect(out.medianReturn).toBeCloseTo(0.2, 5);
+    expect(out.winRate).toBeNull();
+    expect(out.medianExcess).toBeNull();
   });
 });
