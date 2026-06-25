@@ -1778,6 +1778,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          result_summary TEXT, error TEXT)`,
       'CREATE INDEX IF NOT EXISTS idx_batch_jobs_status ON batch_jobs (status)',
       'CREATE INDEX IF NOT EXISTS idx_batch_jobs_submitted ON batch_jobs (submitted_at)',
+      // 0017_fb_meta_remap.sql — Facebook's old "FB" ticker was reassigned by the
+      // SEC to a ProShares ETF after Meta moved to "META", so congressional FB
+      // trades were showing the ProShares name. Remap stored FB rows to META and
+      // fix the cached names. Idempotent (UPDATEs).
+      "UPDATE transactions SET ticker = 'META' WHERE ticker = 'FB' AND deprecated_at IS NULL",
+      "UPDATE securities_ref SET company_name = 'Meta Platforms, Inc.' WHERE ticker = 'META' AND (company_name IS NULL OR company_name = '' OR company_name LIKE '%ProShares%')",
+      "UPDATE securities_master SET name = 'Meta Platforms, Inc.' WHERE ticker = 'META'",
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

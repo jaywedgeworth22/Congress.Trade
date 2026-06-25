@@ -22,7 +22,7 @@ import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../share
 import { all, run, fromBool, parseJson } from '../shared/db';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets';
 import { uuid } from '../shared/ids';
-import { isPlaceholderTicker, resolveTickerDeterministic } from './tickerNormalize';
+import { isPlaceholderTicker, resolveTickerDeterministic, TICKER_ALIASES } from './tickerNormalize';
 
 /**
  * Per-tx confidence at or above this threshold is trusted for auto-publish. If a
@@ -422,6 +422,10 @@ function buildResolver(rows: SecRow[]): TickerResolver {
 
   return (ticker, assetName) => {
     const t = (ticker || '').trim().toUpperCase();
+    // Curated stale→current aliases (e.g. FB→META) take precedence over the
+    // master, because the master can carry a STALE row for a reassigned ticker
+    // (SEC reassigned FB to a ProShares ETF after Meta moved to META).
+    if (t && TICKER_ALIASES[t] && byTicker.has(TICKER_ALIASES[t])) return byTicker.get(TICKER_ALIASES[t])!;
     if (t && byTicker.has(t)) return byTicker.get(t)!;
     const name = (assetName || '').trim().toLowerCase();
     if (name && byAlias.has(name)) return byAlias.get(name)!;
