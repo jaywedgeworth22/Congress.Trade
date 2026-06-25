@@ -700,13 +700,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <!-- ================= REVIEW QUEUE ================= -->
   <section class="view" id="view-review">
     <div class="section">
-      <h3>Low-Confidence Parses</h3>
-      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here and never hit the live webhook until a human confirms.</p>
+      <h3>Document Review &amp; Model Comparison</h3>
+      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts. Switch to <strong>Reviewed</strong> to see what was published / rejected / modified, and expand <strong>Models</strong> on any row to compare each model's confidence and reading.</p>
+      <div style="display:flex;gap:6px;margin:8px 0">
+        <button class="btn sm" id="revTabPending" onclick="setReviewTab(0)">Pending</button>
+        <button class="btn ghost sm" id="revTabReviewed" onclick="setReviewTab(1)">Reviewed</button>
+      </div>
       <table>
-        <thead><tr><th>Filed</th><th>Doc</th><th>Reason</th><th>Payload</th><th></th></tr></thead>
+        <thead><tr><th>Filed</th><th>Doc</th><th>Status</th><th>Reason</th><th>Payload</th><th></th></tr></thead>
         <tbody id="reviewBody"></tbody>
       </table>
-      <p class="note">Confirm promotes the read to the live feed; Manual lets you hand-key the rows (recorded as <code>source=manual</code>) when the automated read is wrong or too low-confidence; Reject discards it. <code>POST /api/admin/review/:docId {decision}</code></p>
+      <p class="note">Confirm promotes the read to the live feed; Manual lets you hand-key the rows (recorded as <code>source=manual</code>) when the automated read is wrong or too low-confidence; Reject discards it. Models / readings come from <code>extraction_runs</code> (populated by <code>POST /api/admin/bakeoff</code>). <code>POST /api/admin/review/:docId {decision}</code></p>
     </div>
   </section>
 
@@ -1716,13 +1720,21 @@ function startStream() {
 }
 
 /* ============================ REVIEW ============================ */
+var REVIEW_RESOLVED = 0; // 0 = pending tab, 1 = reviewed/history tab
+function setReviewTab(resolved) {
+  REVIEW_RESOLVED = resolved ? 1 : 0;
+  var p = el('revTabPending'), rv = el('revTabReviewed');
+  if (p) p.className = 'btn sm' + (REVIEW_RESOLVED ? ' ghost' : '');
+  if (rv) rv.className = 'btn sm' + (REVIEW_RESOLVED ? '' : ' ghost');
+  loadReview();
+}
 function loadReview() {
-  // API HOOK: GET /api/admin/review-queue
-  return fetch('/api/admin/review-queue', { headers: adminHeaders() })
+  // API HOOK: GET /api/admin/review-queue?resolved=
+  return fetch('/api/admin/review-queue?resolved=' + REVIEW_RESOLVED, { headers: adminHeaders() })
     .then(okOrThrow)
     .then(function (data) { REVIEW = data.items || []; renderReview(); })
     .catch(function (e) {
-      el('reviewBody').innerHTML = stateRow(5, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load review queue: ' + e.message));
+      el('reviewBody').innerHTML = stateRow(6, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load review queue: ' + e.message));
     });
 }
 /* Translate review reason codes + payload into plain English for non-engineers. */
@@ -1793,38 +1805,125 @@ function reviewDocHtml(r) {
   return '<a class="tkr" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="Open source filing">' + esc(docId) + '</a>' +
     '<a class="review-doc-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">View Document</a>';
 }
+/* Coloured status pill for a review document. */
+var STATUS_COLORS = { pending: '#b08900', published: '#1a7f37', rejected: '#c0362c', modified: '#6f42c1', resolved: '#57606a' };
+function statusBadge(status) {
+  var s = status || 'pending';
+  var c = STATUS_COLORS[s] || '#57606a';
+  return '<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;color:#fff;background:' + c + '">' + esc(s) + '</span>';
+}
+/* One-line per-model confidence chips for the row (full readings load on demand). */
+function modelsSummaryHtml(models) {
+  if (!models || !models.length) return '<span class="muted">—</span>';
+  return models.map(function (m) {
+    var conf = (typeof m.avgConfidence === 'number') ? Math.round(m.avgConfidence * 100) + '%' : '—';
+    var label = m.provider + ':' + m.model;
+    var color = m.ok ? '#1a7f37' : '#c0362c';
+    var title = label + ' · ' + (m.ok ? (m.rowCount + ' rows, conf ' + conf + (m.latencyMs ? ', ' + m.latencyMs + 'ms' : '')) : ('ERROR: ' + (m.error || 'failed')));
+    return '<span title="' + esc(title) + '" style="display:inline-block;margin:1px 3px 1px 0;padding:0 5px;border-radius:8px;font-size:11px;border:1px solid ' + color + ';color:' + color + '">' +
+      esc(m.provider) + ' ' + (m.ok ? esc(conf) : 'ERR') + '</span>';
+  }).join('');
+}
 function renderReview() {
   var body = el('reviewBody');
   el('reviewCount').textContent = REVIEW.length ? '(' + REVIEW.length + ')' : '';
-  if (el('kpiReview')) el('kpiReview').textContent = REVIEW.length;
-  if (REVIEW.length === 0) { body.innerHTML = stateRow(5, 'Nothing awaiting review — queue is clear.'); return; }
+  if (el('kpiReview') && REVIEW_RESOLVED === 0) el('kpiReview').textContent = REVIEW.length;
+  if (REVIEW.length === 0) {
+    body.innerHTML = stateRow(6, REVIEW_RESOLVED ? 'No reviewed documents yet.' : 'Nothing awaiting review — queue is clear.');
+    return;
+  }
   body.innerHTML = REVIEW.map(function (r) {
     var payload = payloadText(r.payload);
     var url = safeDocUrl(r.sourceUrl);
     var docAction = url ? '<a class="review-doc-link inline" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Document</a>' : '';
+    var nModels = (r.models && r.models.length) || 0;
+    var modelsBtn = '<button class="btn ghost sm" onclick="toggleModels(\\'' + esc(r.docId) + '\\')">Models (' + nModels + ')</button>';
+    var actions = REVIEW_RESOLVED
+      ? (r.status === 'published' || r.status === 'modified'
+          ? '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'unpublish\\')">Unpublish</button> ' : '') + modelsBtn
+      : '<button class="btn sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'confirm\\')">Confirm</button> ' +
+        '<button class="btn ghost sm" onclick="manualEntry(\\'' + esc(r.docId) + '\\')">Manual</button> ' +
+        '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'reject\\')">Reject</button> ' + modelsBtn;
     return '<tr class="row" id="rv-' + esc(r.docId) + '">' +
       '<td class="muted">' + esc(dateTimeText(r.createdAt)) + '</td>' +
       '<td>' + reviewDocHtml(r) + '</td>' +
-      '<td class="muted">' + esc(reasonText(r.reason, r.payload)) + '</td>' +
-      '<td class="muted" style="max-width:360px">' + esc(payload) + docAction + '</td>' +
-      '<td>' +
-        '<button class="btn sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'confirm\\')">Confirm</button> ' +
-        '<button class="btn ghost sm" onclick="manualEntry(\\'' + esc(r.docId) + '\\')">Manual</button> ' +
-        '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'reject\\')">Reject</button>' +
-      '</td>' +
+      '<td>' + statusBadge(r.status) + '</td>' +
+      '<td class="muted">' + esc(reasonText(r.reason, r.payload)) + '<div style="margin-top:3px">' + modelsSummaryHtml(r.models) + '</div></td>' +
+      '<td class="muted" style="max-width:320px">' + esc(payload) + docAction + '</td>' +
+      '<td>' + actions + '</td>' +
     '</tr>';
   }).join('');
 }
+/* Expand/collapse a per-document model-comparison panel beneath its row. */
+function toggleModels(docId) {
+  var existing = el('mdl-' + docId);
+  if (existing) { existing.parentNode.removeChild(existing); return; }
+  var rowEl = el('rv-' + docId);
+  if (!rowEl) return;
+  var item = null;
+  for (var i = 0; i < REVIEW.length; i++) { if (REVIEW[i].docId === docId) { item = REVIEW[i]; break; } }
+  var models = (item && item.models) || [];
+  var head = '<tr id="mdl-' + esc(docId) + '"><td colspan="6" style="background:rgba(127,127,127,.06)">' +
+    '<div style="padding:6px 4px"><strong>Per-model readings</strong> ' +
+    '<button class="btn ghost sm" onclick="viewReadings(\\'' + esc(docId) + '\\')">Load full readings</button>' +
+    '<div id="mdlBody-' + esc(docId) + '" style="margin-top:6px">' + modelsTableHtml(models) + '</div></div>' +
+    '</td></tr>';
+  rowEl.insertAdjacentHTML('afterend', head);
+}
+function modelsTableHtml(models) {
+  if (!models || !models.length) return '<span class="muted">No model runs stored for this document yet. Run a bake-off (POST /api/admin/bakeoff) to populate.</span>';
+  var rows = models.map(function (m) {
+    var conf = (typeof m.avgConfidence === 'number') ? Math.round(m.avgConfidence * 100) + '%' : '—';
+    return '<tr><td>' + esc(m.provider + ':' + m.model) + '</td><td>' + esc(m.kind || '') + '</td>' +
+      '<td>' + (m.ok ? 'ok' : '<span style="color:#c0362c">ERR</span>') + '</td>' +
+      '<td style="text-align:right">' + (m.ok ? m.rowCount : '—') + '</td>' +
+      '<td style="text-align:right">' + (m.ok ? esc(conf) : '—') + '</td>' +
+      '<td style="text-align:right">' + (m.latencyMs != null ? m.latencyMs + 'ms' : '—') + '</td>' +
+      (m.error ? '<td class="muted">' + esc(String(m.error).slice(0, 80)) + '</td>' : '<td></td>') + '</tr>';
+  }).join('');
+  return '<table style="font-size:12px;width:100%"><thead><tr><th>Model</th><th>Kind</th><th>OK</th><th style="text-align:right">Rows</th><th style="text-align:right">Conf</th><th style="text-align:right">Latency</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table>';
+}
+/* Fetch + render the full stored readings (extracted rows) for each model. */
+function viewReadings(docId) {
+  var target = el('mdlBody-' + docId);
+  if (target) target.innerHTML = '<span class="muted">Loading readings…</span>';
+  fetch('/api/admin/review/' + encodeURIComponent(docId) + '/extractions', { headers: adminHeaders() })
+    .then(okOrThrow)
+    .then(function (data) {
+      var runs = data.runs || [];
+      if (!runs.length) { if (target) target.innerHTML = '<span class="muted">No stored readings.</span>'; return; }
+      if (target) target.innerHTML = runs.map(function (run) {
+        var conf = (typeof run.avgConfidence === 'number') ? Math.round(run.avgConfidence * 100) + '%' : '—';
+        var header = '<div style="margin:8px 0 2px"><strong>' + esc(run.provider + ':' + run.model) + '</strong> ' +
+          '<span class="muted">· ' + (run.ok ? (run.rowCount + ' rows · conf ' + conf + (run.latencyMs ? ' · ' + run.latencyMs + 'ms' : '')) : ('ERROR: ' + esc(String(run.error || 'failed')))) + '</span></div>';
+        var rowsHtml = (run.rows && run.rows.length)
+          ? '<table style="font-size:12px;width:100%"><thead><tr><th>Ticker</th><th>Asset</th><th>Type</th><th>Date</th><th style="text-align:right">Amt min</th><th style="text-align:right">Amt max</th></tr></thead><tbody>' +
+            run.rows.map(function (t) {
+              return '<tr><td>' + esc(t.ticker || '—') + '</td><td>' + esc(String(t.assetName || '').slice(0, 50)) + '</td><td>' + esc(t.txType || '') + '</td><td>' + esc(t.txDate || '') + '</td>' +
+                '<td style="text-align:right">' + esc(t.amountMin == null ? '—' : t.amountMin) + '</td><td style="text-align:right">' + esc(t.amountMax == null ? '—' : t.amountMax) + '</td></tr>';
+            }).join('') + '</tbody></table>'
+          : '<span class="muted">No rows.</span>';
+        return header + rowsHtml;
+      }).join('');
+    })
+    .catch(function (e) { if (target) target.innerHTML = '<span class="muted">' + (isAuthError(e) ? 'Admin auth required' : ('Could not load readings: ' + esc(e.message))) + '</span>'; });
+}
 function resolveReview(docId, decision) {
-  // API HOOK: POST /api/admin/review/:docId {decision}
+  // API HOOK: POST /api/admin/review/:docId {decision}  (unpublish uses /review/:docId/unpublish)
   var rowEl = el('rv-' + docId);
   if (rowEl) rowEl.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
-  fetch('/api/admin/review/' + encodeURIComponent(docId), {
+  var isUnpublish = decision === 'unpublish';
+  var url = '/api/admin/review/' + encodeURIComponent(docId) + (isUnpublish ? '/unpublish' : '');
+  fetch(url, {
     method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify({ decision: decision, edits: [] })
+    body: isUnpublish ? JSON.stringify({ reason: 'admin unpublish from dashboard' }) : JSON.stringify({ decision: decision, edits: [] })
   })
     .then(okOrThrow)
-    .then(function () { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); renderReview(); loadFeed(); })
+    .then(function () {
+      if (isUnpublish) { loadReview(); } // item returns to pending; reload current tab
+      else { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); renderReview(); }
+      loadFeed();
+    })
     .catch(function (e) {
       if (rowEl) rowEl.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
       alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review action failed: ' + e.message));
