@@ -34,6 +34,7 @@ import {
   updateSubscription,
 } from '../delivery/subscriptions';
 import { mapSubscription, type SubscriptionRow } from '../delivery/rows';
+import { normalizeTickerLogoSymbol } from '../ui/tickerLogos';
 import {
   createCommand,
   findCommandByIdempotencyKey,
@@ -188,6 +189,18 @@ function filtersFromQuery(q: Record<string, string>): TxQueryParams {
   };
 }
 
+/**
+ * Same-origin cached logo URL for a ticker, or null when the symbol can't be
+ * resolved. Points at the shared `/api/logos/ticker` proxy (see ui/tickerLogos.ts)
+ * so every client — web, PWA, Swift — renders the identical logo and benefits
+ * from the edge cache. The symbol is normalized (uppercased, `$`-stripped,
+ * validated) so we never emit a URL the proxy would reject.
+ */
+function clientLogoUrl(ticker: string | null): string | null {
+  const symbol = normalizeTickerLogoSymbol(ticker);
+  return symbol ? `/api/logos/ticker?symbol=${encodeURIComponent(symbol)}` : null;
+}
+
 function clientTradeFromRow(row: FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null; __party?: string | null }): ClientTrade {
   const tx = mapFeedTransaction(row);
   return {
@@ -205,6 +218,8 @@ function clientTradeFromRow(row: FeedTransactionRow & { __chamber?: string | nul
     asset: {
       name: tx.assetName,
       ticker: tx.ticker,
+      companyName: tx.refCompanyName ?? null,
+      logoUrl: clientLogoUrl(tx.ticker),
       type: tx.assetType,
       sector: tx.refSector ?? null,
       marketCapBucket: tx.refMarketCapBucket ?? null,
