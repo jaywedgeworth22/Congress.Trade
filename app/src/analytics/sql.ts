@@ -56,7 +56,7 @@ export function windowDays(w: Window): number | null {
   return m ? Number(m[1]) : 30;
 }
 
-export const SOURCE_FILTERS = ['primary', 'seed_dataset', 'all'] as const;
+export const SOURCE_FILTERS = ['primary', 'seed_dataset', 'manual', 'all'] as const;
 export type SourceFilter = (typeof SOURCE_FILTERS)[number];
 export function asSourceFilter(v: unknown, fallback: SourceFilter = 'all'): SourceFilter {
   return typeof v === 'string' && (SOURCE_FILTERS as readonly string[]).includes(v)
