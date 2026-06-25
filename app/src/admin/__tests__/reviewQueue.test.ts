@@ -140,4 +140,51 @@ describe('review queue admin API', () => {
     );
     expect(res.status).toBe(404);
   });
+
+  it("decision='manual' records hand-entered rows as source='manual'", async () => {
+    // Capture the INSERT bind params so we can assert the source column = 'manual'.
+    const binds: unknown[][] = [];
+    const db = {
+      prepare(sql: string) {
+        return {
+          _sql: sql,
+          bind(...args: unknown[]) {
+            if (/INSERT OR IGNORE INTO transactions/.test(sql)) binds.push(args);
+            return this;
+          },
+          async all<T>() {
+            return { results: [] as T[] };
+          },
+          async first<T>() {
+            // review lookup (unresolved) + filing filer_id lookup share this shape.
+            return { doc_id: 'H-1', resolved: 0, filer_id: 'P000001' } as T;
+          },
+          async run() {
+            return { success: true, meta: { changes: 1 } };
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const env = {
+      ADMIN_TOKEN: 'admin-secret',
+      DB: db,
+      DELIVERY_QUEUE: { send: async () => {} },
+    } as never;
+
+    const res = await app.request(
+      '/review/H-1',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ decision: 'manual', edits: [{ ticker: 'AAPL', txType: 'P', amountMin: 1001, amountMax: 15000, txDate: '2026-06-01' }] }),
+      },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { decision: string; source: string; inserted: number };
+    expect(body).toMatchObject({ decision: 'manual', source: 'manual', inserted: 1 });
+    // The transactions INSERT bound source='manual' (it's the 17th positional bind).
+    expect(binds.length).toBe(1);
+    expect(binds[0]).toContain('manual');
+  });
 });

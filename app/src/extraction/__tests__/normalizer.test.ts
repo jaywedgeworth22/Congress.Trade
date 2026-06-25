@@ -139,12 +139,14 @@ describe('normalize', () => {
     expect(result.needsReview).toBe(false);
   });
 
-  it('routes to review when ticker is unresolved (confidence penalty pushes below threshold)', async () => {
-    const { env, cap } = makeEnv([]); // empty securities_master => unresolved
+  it('routes to review when ticker is malformed/contaminated (confidence penalty pushes below threshold)', async () => {
+    const { env, cap } = makeEnv([]); // empty securities_master
+    // A header-contaminated, non-symbol string (spaces) is NOT a well-formed
+    // ticker, so it stays unresolved and routes to review.
     const result = await normalize(
       env,
       filing(),
-      [tx({ ticker: 'ZZZZ', assetName: 'Mystery Co' })],
+      [tx({ ticker: 'Bank of America Mystery', assetName: 'Mystery Co' })],
       { extractor: 'visionLlm', modelVersion: 'gemini-test' },
     );
 
@@ -159,6 +161,44 @@ describe('normalize', () => {
       extractor: 'visionLlm',
       modelVersion: 'gemini-test',
     });
+  });
+
+  it('publishes a well-formed symbol the master does not list yet (no false review)', async () => {
+    const { env, cap } = makeEnv([]); // empty securities_master
+    // "CTRA" (Coterra) is a valid current symbol absent from our master — the
+    // deterministic fallback accepts it instead of penalizing it into review.
+    const result = await normalize(env, filing(), [tx({ ticker: 'CTRA', assetName: 'Coterra Energy Inc.' })]);
+    expect(result.needsReview).toBe(false);
+    expect(result.minConfidence).toBeGreaterThanOrEqual(CONFIDENCE_THRESHOLD);
+    expect(result.transactions[0].ticker).toBe('CTRA');
+    expect(cap.insertedTx).toHaveLength(1);
+    expect(cap.reviewRows).toHaveLength(0);
+  });
+
+  it('resolves preferred/depositary $-series and stale tickers to the master symbol', async () => {
+    const { env } = makeEnv([
+      { ticker: 'T', name: 'AT&T Inc.', aliases: '[]' },
+      { ticker: 'AVGO', name: 'Broadcom Inc.', aliases: '[]' },
+      { ticker: 'BRK-B', name: 'Berkshire Hathaway', aliases: '[]' },
+    ]);
+    const pref = await normalize(env, filing(), [tx({ ticker: 'T$A', assetName: 'AT&T Inc. Pfd A' })]);
+    expect(pref.transactions[0].ticker).toBe('T'); // $-series stripped to issuer
+    expect(pref.needsReview).toBe(false);
+
+    const stale = await normalize(env, filing(), [tx({ ticker: 'BRCM', assetName: 'Broadcom' })]);
+    expect(stale.transactions[0].ticker).toBe('AVGO'); // stale alias → current
+
+    const klass = await normalize(env, filing(), [tx({ ticker: 'BRK.B', assetName: 'Berkshire' })]);
+    expect(klass.transactions[0].ticker).toBe('BRK-B'); // punctuation variant
+  });
+
+  it('treats a dash/N-A placeholder ticker as ticker-less (no penalty, no review)', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(env, filing(), [tx({ ticker: '--', assetName: 'US Treasury Note' })]);
+    expect(result.needsReview).toBe(false);
+    expect(result.transactions[0].ticker).toBeNull();
+    expect(cap.insertedTx).toHaveLength(1);
+    expect(cap.reviewRows).toHaveLength(0);
   });
 
   it('snaps a plausible non-canonical amount to the nearest bracket without penalty', async () => {
