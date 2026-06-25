@@ -51,6 +51,7 @@ function toImportRef(r: SecurityRef): Record<string, unknown> {
     exchangeShort: r.exchangeShort,
     currency: r.currency,
     marketCap: r.marketCap,
+    sharesOutstanding: r.sharesOutstanding,
     ipoDate: r.ipoDate,
     cik: r.cik,
     sicCode: r.sicCode,
