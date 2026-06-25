@@ -156,6 +156,14 @@ export const ANALYTICS_FROM_JOINS =
 export const ANALYTICS_FROM_JOINS_SECURITIES =
   ANALYTICS_FROM_JOINS + 'LEFT JOIN securities_master sm ON sm.ticker = t.ticker ';
 
+/**
+ * As {@link ANALYTICS_FROM_JOINS} but also joins the enrichment reference
+ * (securities_ref `sr`) so a query can group/filter by real GICS sector and
+ * market-cap bucket. LEFT, so un-enriched tickers are preserved (sr.* NULL).
+ */
+export const ANALYTICS_FROM_JOINS_REF =
+  ANALYTICS_FROM_JOINS + 'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ';
+
 // ---------------------------------------------------------------------------
 // Common filter builder
 // ---------------------------------------------------------------------------
@@ -184,6 +192,9 @@ export interface CommonFilters {
 export function buildCommonFilters(p: CommonFilters): { where: string[]; params: SqlParam[] } {
   const where: string[] = [];
   const params: SqlParam[] = [];
+
+  // Retracted (un-published) rows never appear in any analytics aggregate.
+  where.push('t.deprecated_at IS NULL');
 
   const offset = windowToOffset(p.window ?? '30d');
   if (offset) {
