@@ -1363,6 +1363,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'ALTER TABLE transactions ADD COLUMN description TEXT',
       'ALTER TABLE transactions ADD COLUMN supplemental_text TEXT',
       'CREATE INDEX IF NOT EXISTS idx_tx_asset_type_name ON transactions (asset_type_name)',
+      // 0014_tx_perf_filing_anchors.sql — disclosure-date performance anchors.
+      'ALTER TABLE tx_performance ADD COLUMN price_at_filing REAL',
+      'ALTER TABLE tx_performance ADD COLUMN spx_at_filing REAL',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

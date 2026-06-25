@@ -46,6 +46,7 @@ import {
   buildPartySplitQuery,
   buildPartySplitOverTimeQuery,
   buildSectorBreakdownQuery,
+  buildMemberPerformanceLeaderboardQuery,
   buildSummaryQuery,
   buildTickerLeaderboardQuery,
   buildTickerRecentTradesQuery,
@@ -431,6 +432,47 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         uniqueTickers: num(row.unique_tickers),
       }));
       return meta(f, { count: sectors.length, sectors });
+    });
+    return c.json(data);
+  });
+
+  // --- GET /member-performance --------------------------------------------
+  // Per-member excess return vs the S&P 500 on their BUYS, anchored at the
+  // FILING (disclosure) date — the realizable "could you have followed this?"
+  // number, not the trade-date hindsight figure. Buys only, options excluded,
+  // small-N guarded. Defaults to the whole track record (window=all).
+  r.get('/member-performance', async (c) => {
+    const q = c.req.query();
+    const f = { ...commonFromQuery(q), window: asWindow(q.window, 'all') };
+    const limit = q.limit ? Number(q.limit) : undefined;
+    const minTrades = q.minTrades ? Number(q.minTrades) : undefined;
+    const key = cacheKey('member-performance', { ...f, limit, minTrades });
+    const data = await cached(c.env, key, 300, async () => {
+      const built = buildMemberPerformanceLeaderboardQuery({ ...f, limit, minTrades });
+      const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
+      const members = rows.map((row) => {
+        const n = num(row.trade_count);
+        const wins = num(row.wins);
+        return {
+          filerId: str(row.filer_id),
+          fullName: str(row.full_name),
+          party: str(row.party),
+          photoUrl: str(row.photo_url),
+          tradeCount: n,
+          // Excess return vs SPX since the filing date, equal-weighted across buys.
+          avgExcessReturn: num(row.avg_excess),
+          winRate: n > 0 ? wins / n : 0,
+          estVolumeUsd: usd(row.est_volume),
+        };
+      });
+      return meta(f, {
+        count: members.length,
+        members,
+        anchor: 'filing_date',
+        side: 'buys',
+        note: 'Excess return vs S&P 500 from the disclosure date (realizable by a follower); buys only, options excluded.',
+        estimatedAmounts: true,
+      });
     });
     return c.json(data);
   });

@@ -372,6 +372,62 @@ export function buildLateFilersQuery(p: CommonFilters & { limit?: number }): Bui
 }
 
 // ---------------------------------------------------------------------------
+// 9b. Member performance leaderboard — excess return vs the S&P 500
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-member realized performance of their BUYS, measured as excess return vs
+ * the S&P 500, anchored at the FILING (disclosure) date — the only price a
+ * follower could actually have transacted at (trade-date anchoring would bake in
+ * the move that happened before the trade was public). Each trade's excess is
+ *
+ *   (current_price / price_at_filing − 1) − (spx_now / spx_at_filing − 1)
+ *
+ * Options are excluded (no EOD-equity anchor); only resolved, non-retracted buys
+ * with both a filing anchor and a current price count. `minTrades` (validated
+ * int, default 5) is a small-N guard so a 1–2 trade "leader" can't top the
+ * board. Reports equal-weighted average excess, win-rate, N, and est volume.
+ */
+export function buildMemberPerformanceLeaderboardQuery(
+  p: CommonFilters & { limit?: number; minTrades?: number },
+): BuiltQuery {
+  const { where, params } = buildCommonFilters(p);
+  const limit = clampLimit(p.limit, 20, 100);
+  const minTrades = clampLimit(p.minTrades, 5, 1000);
+  // Excess return of one buy vs SPX, both legs anchored at the filing date.
+  const EXCESS =
+    '((sr.current_price / p.price_at_filing) - 1.0) - ((sx.spx_now / p.spx_at_filing) - 1.0)';
+  const allWhere = [
+    "t.tx_type = 'P'",
+    't.is_option = 0',
+    'p.price_at_filing IS NOT NULL AND p.price_at_filing > 0',
+    'p.spx_at_filing IS NOT NULL AND p.spx_at_filing > 0',
+    'sr.current_price IS NOT NULL',
+    't.filer_id IS NOT NULL',
+    ...where,
+  ];
+  const sql =
+    'SELECT t.filer_id AS filer_id, fl.full_name AS full_name, fl.party AS party, ' +
+    'fl.photo_url AS photo_url, ' +
+    'COUNT(*) AS trade_count, ' +
+    `AVG(${EXCESS}) AS avg_excess, ` +
+    `SUM(CASE WHEN ${EXCESS} > 0 THEN 1 ELSE 0 END) AS wins, ` +
+    `SUM(${MID}) AS est_volume ` +
+    'FROM transactions t ' +
+    'JOIN tx_performance p ON p.tx_id = t.id ' +
+    'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
+    'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
+    'JOIN securities_ref sr ON sr.ticker = t.ticker ' +
+    'CROSS JOIN (SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1) sx ' +
+    whereSql(allWhere) +
+    'GROUP BY t.filer_id ' +
+    `HAVING trade_count >= ${minTrades} ` +
+    'ORDER BY avg_excess DESC ' +
+    `LIMIT ${limit}`;
+  return { sql, params };
+}
+
+// ---------------------------------------------------------------------------
 // 10. Single-ticker deep dive
 // ---------------------------------------------------------------------------
 
