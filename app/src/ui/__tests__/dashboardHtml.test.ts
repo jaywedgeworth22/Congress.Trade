@@ -199,7 +199,7 @@ describe('DASHBOARD_HTML', () => {
   it('keeps the educational + dollar-estimate disclaimers in the Trends view', () => {
     expect(DASHBOARD_HTML).toContain('estimates');
     expect(DASHBOARD_HTML.toLowerCase()).toContain('bracket');
-    expect(DASHBOARD_HTML).toContain('Estimated from STOCK Act amount ranges');
+    expect(DASHBOARD_HTML).toContain('from STOCK Act amount ranges');
     expect(DASHBOARD_HTML).toContain('info-tip');
     // educational / liability framing must remain user-facing
     expect(DASHBOARD_HTML).toContain('not investment advice');
@@ -216,5 +216,65 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }");
     expect(DASHBOARD_HTML).not.toContain('r.filedDate || r.filed || publishedRaw(r)');
     expect(DASHBOARD_HTML).not.toContain('using Congress.Trade import date');
+  });
+
+  it('provides name/chamber/state/class display formatters', () => {
+    for (const fn of ['function fmtName(', 'function chamberLabel(', 'function stateName(', 'function assetClassLabel(', 'function assetTypeLabel(']) {
+      expect(DASHBOARD_HTML).toContain(fn);
+    }
+    // suffix + state maps present
+    expect(DASHBOARD_HTML).toContain("'jr': 'Jr'");
+    expect(DASHBOARD_HTML).toContain("CA: 'California'");
+    expect(DASHBOARD_HTML).toContain("etf: 'ETF'");
+  });
+
+  it('renames Members→Politicians and Tickers→Assets and softens Est.→Approx', () => {
+    expect(DASHBOARD_HTML).toContain("kpi('Politicians'");
+    expect(DASHBOARD_HTML).toContain("kpi('Assets'");
+    expect(DASHBOARD_HTML).toContain("kpiInfo('Approx. Volume'");
+    expect(DASHBOARD_HTML).toContain("kvRow('Distinct Assets'");
+    expect(DASHBOARD_HTML).not.toContain("kpi('Members'");
+    expect(DASHBOARD_HTML).not.toContain("kpi('Tickers'");
+  });
+
+  it('hides trade-row source provenance from the public feed', () => {
+    expect(DASHBOARD_HTML).not.toContain('id="qSource"');
+    expect(DASHBOARD_HTML).not.toContain("kvRow('Source', esc(sourceLabel(row.source)))");
+    // the document link ("View source filing") is intentionally kept
+    expect(DASHBOARD_HTML).toContain('View source filing');
+  });
+
+  it('uses a compact 2-row mobile feed card with an open-trade chevron', () => {
+    for (const s of ['fc-main', 'fc-row1', 'fc-row2', 'fc-amt-val', 'fc-chevron']) {
+      expect(DASHBOARD_HTML).toContain(s);
+    }
+    expect(DASHBOARD_HTML).not.toContain('feed-card-top');
+  });
+
+  it('differentiates the trade drawer from the company drawer', () => {
+    expect(DASHBOARD_HTML).toContain('drawer-trade-head');
+    expect(DASHBOARD_HTML).toContain('drawer-kicker');
+    expect(DASHBOARD_HTML).toContain('drawer-trade-headline');
+    // ticker shown but NOT clickable in its own trade context (no data-asset on the in-line)
+    expect(DASHBOARD_HTML).toContain('drawer-trade-in');
+  });
+
+  it('compacts the company profile into a responsive definition grid', () => {
+    expect(DASHBOARD_HTML).toContain('def-grid');
+    expect(DASHBOARD_HTML).toContain('repeat(auto-fit, minmax(130px, 1fr))');
+    expect(DASHBOARD_HTML).toContain("item('IPO', ref.ipoDate ? esc(dateText(ref.ipoDate)) : '')");
+  });
+
+  it('adds a collapsible disclaimer and tap-to-reveal tooltips', () => {
+    expect(DASHBOARD_HTML).toContain('function toggleDisclaimer(');
+    expect(DASHBOARD_HTML).toContain('class="disclaimer collapsed"');
+    expect(DASHBOARD_HTML).toContain('tip-pop');
+    expect(DASHBOARD_HTML).toContain('(hover: none)');
+  });
+
+  it('gives AAPL a themeable glyph logo and reconstructs House filing links', () => {
+    expect(DASHBOARD_HTML).toContain('CUSTOM_GLYPH');
+    expect(DASHBOARD_HTML).toContain('function reconstructFilingUrl(');
+    expect(DASHBOARD_HTML).toContain('public_disc/ptr-pdfs/');
   });
 });

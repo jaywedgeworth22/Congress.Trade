@@ -203,13 +203,41 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .muted { color: var(--text-dim); }
   .mobile-only { display: none; }
   .feed-cards { display: none; gap: 10px; min-width: 0; max-width: 100%; }
-  .feed-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 13px; cursor: pointer; min-width: 0; max-width: 100%; overflow: hidden; }
+  /* Compact 2-row trade card: row1 = asset + side/amount, row2 = one muted meta line. */
+  .feed-card { position: relative; display: grid; grid-template-columns: 1fr 16px; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 11px 12px; cursor: pointer; min-width: 0; max-width: 100%; overflow: hidden; }
   .feed-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-  .feed-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 10px; min-width: 0; }
-  .feed-card-top .asset-cell { flex: 1 1 auto; min-width: 0; }
-  .feed-card-top .tag { flex: 0 0 auto; }
-  .feed-card-member { display: flex; align-items: center; gap: 9px; min-width: 0; margin-bottom: 10px; }
-  .feed-card-member > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .feed-card:active { background: var(--panel-2); }
+  .fc-main { grid-column: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+  .fc-row1 { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .fc-row1 .asset-cell { flex: 1 1 auto; min-width: 0; }
+  .fc-amt { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .fc-amt-val { font-family: var(--mono); font-size: 13px; font-weight: 700; color: var(--text); }
+  .fc-row2 { font-size: 12px; line-height: 1.4; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fc-sep { opacity: .5; margin: 0 1px; }
+  .fc-member { color: var(--text); }
+  .fc-member.clickable:active { text-decoration: underline; }
+  .fc-chevron { grid-column: 2; justify-self: end; color: var(--text-dim); font-size: 22px; line-height: 1; opacity: .55; pointer-events: none; }
+  /* Asset-cell ticker→name spacing (the user asked for a clear gap). */
+  .tkr-gap { display: inline-block; width: .65em; }
+  /* Glyph-based ticker logo (e.g. AAPL ) — themes via currentColor. */
+  .tkr-logo.glyph { display: inline-flex; align-items: center; justify-content: center; color: var(--text); font-size: 1.05em; }
+  .tkr-logo.glyph.tile { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
+  /* Compact company definition grid (kills the right-side whitespace). */
+  .def-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px 16px; margin: 0; }
+  .def-item { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .def-k { color: var(--text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  .def-v { color: var(--text); font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
+  /* Trade-drawer header — makes a tapped trade read as a TRANSACTION, not a company. */
+  .drawer-trade-head { padding: 2px 0 6px; }
+  .drawer-kicker { display: inline-block; margin-bottom: 8px; font-size: 11px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; }
+  .drawer-trade-headline { margin: 0 0 4px; font-size: 22px; font-weight: 700; color: var(--text); font-family: var(--mono); }
+  .drawer-trade-bracket { font-family: var(--sans); font-size: 12px; font-weight: 500; }
+  .drawer-trade-in { margin: 0; font-size: 14px; color: var(--text-dim); }
+  .drawer-trade-in .tkr { color: var(--accent); font-weight: 700; }
+  .drawer-trade-in .company-name { color: var(--text); }
+  .drawer-trade-in .dot-sep { margin: 0 6px; opacity: .5; }
+  /* Tap-to-reveal tooltip popover (phones/tablets can't hover). */
+  .tip-pop { position: fixed; z-index: 80; max-width: min(78vw, 320px); background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; line-height: 1.4; box-shadow: 0 10px 30px rgba(0,0,0,.32); }
   .feed-card-meta { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 10px; min-width: 0; }
   .feed-card-meta > div { min-width: 0; }
   .feed-card-meta .mkey { display: block; color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 2px; }
@@ -238,7 +266,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   code { font-family: var(--mono); background: var(--bg); padding:1px 6px; border-radius:5px; font-size:12px; color: var(--accent); }
   /* ================= TRENDS / ANALYTICS ================= */
   .trend-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-  @media (max-width: 860px) { .trend-grid2 { grid-template-columns: 1fr; } }
+  @media (max-width: 760px) { .trend-grid2 { grid-template-columns: 1fr; } }
+  /* Roomier side drawer on tablets (mobile bottom-sheet still kicks in at 600px). */
+  @media (min-width: 601px) and (max-width: 980px) { .drawer-panel { width: 560px; } }
+  /* Let the feed toolbar wrap instead of overflowing on tablet widths. */
+  @media (min-width: 721px) and (max-width: 900px) { .toolbar { flex-wrap: wrap; } .toolbar input, .toolbar select { flex: 1 1 160px; } }
   .est, .est-money { color: var(--text-dim); }
   .pdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; background: var(--text-dim); }
   .pdot.D { background:#3b82f6; } .pdot.R { background:#ef4444; } .pdot.O { background:#a78bfa; }
@@ -281,6 +313,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .chip { font-size:11px; color: var(--text-dim); }
   .disclaimer { font-size:12px; color: var(--text-dim); line-height:1.6; border:1px solid var(--border); background: var(--panel); border-radius: var(--radius); padding:12px 15px; margin-bottom:16px; }
   .disclaimer strong { color: var(--text); }
+  .disclaimer-toggle { display:none; }
+  .disclaimer.collapsed { padding:0; }
+  .disclaimer.collapsed .disclaimer-toggle { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; background:transparent; border:none; color:var(--text-dim); font-size:12px; font-weight:600; padding:9px 14px; cursor:pointer; }
+  .disclaimer.collapsed .dt-chevron { transition: transform .15s ease; }
+  .disclaimer:not(.collapsed) .disclaimer-toggle { display:flex; align-items:center; justify-content:space-between; gap:8px; width:100%; background:transparent; border:none; color:var(--text-dim); font-size:12px; font-weight:600; padding:0 0 8px; cursor:pointer; }
+  .disclaimer:not(.collapsed) .dt-chevron { transform: rotate(180deg); }
+  .disclaimer.collapsed .disclaimer-body { display:none; }
   /* modal */
   /* ---- detail drawer (trade / asset / politician) ---- */
   .drawer { position:fixed; inset:0; z-index:60; display:none; }
@@ -393,12 +432,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   @media (max-width: 720px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
     html, body { width:100%; max-width:100%; overflow-x:hidden; }
     body { background: var(--bg); font-size: 13px; }
-    body::after {
-      content:""; position:fixed; left:0; right:0; bottom:0;
-      height:calc(28px + env(safe-area-inset-bottom));
-      background:var(--panel); z-index:44; pointer-events:none;
-    }
-    html[data-theme="light"] body::after { background:#fff; }
     header.top {
       display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
       padding: 10px 12px; align-items: center; backdrop-filter: none;
@@ -409,15 +442,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .theme-toggle { display:none; }
     nav.tabs {
       position: fixed; left: 0; right: 0; bottom: 0; margin: 0;
-      width: 100vw; max-width: 100vw;
+      width: 100%; max-width: 100%;
       display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 4px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+      gap: 4px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
       background: var(--panel);
-      border-top: 1px solid var(--border); backdrop-filter: none; z-index: 45;
-      box-shadow: 0 -8px 24px rgba(0,0,0,.18); transform: translateZ(0);
+      border-top: 1px solid var(--border); backdrop-filter: none; z-index: 50;
+      box-shadow: 0 -8px 24px rgba(0,0,0,.18);
     }
     html[data-theme="light"] nav.tabs { background:#fff; }
-    nav.tabs button { padding: 8px 4px; font-size: 0; min-width: 0; border-radius: 9px; }
+    nav.tabs button { padding: 6px 4px; min-height: 44px; font-size: 0; min-width: 0; border-radius: 9px; }
     nav.tabs button::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
     nav.tabs button::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .acct { justify-content: flex-end; }
@@ -544,10 +577,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <input id="qAll" placeholder="Member, Asset, Ticker, Source…" style="min-width:240px;flex:1" oninput="renderFeed()" />
       <span class="lbl">Min $</span>
       <input id="qMinAmt" type="number" min="0" placeholder="0" style="width:120px" oninput="renderFeed()" />
-      <span class="lbl">Source</span>
-      <select id="qSource" onchange="renderFeed()">
-        <option value="">Any</option><option value="primary">Primary</option><option value="seed_dataset">Historical</option>
-      </select>
       <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
     </div>
     <div class="table-wrap">
@@ -593,8 +622,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </select>
       <button class="btn ghost sm" onclick="loadTrends()">↻ Refresh</button>
     </div>
-    <div class="disclaimer">
+    <div class="disclaimer collapsed" id="trDisclaimer">
+      <button class="disclaimer-toggle" type="button" onclick="toggleDisclaimer()" aria-expanded="false" aria-controls="trDisclaimerBody"><span class="dt-label">Disclaimer</span><span class="dt-chevron" aria-hidden="true">▾</span></button>
+      <div class="disclaimer-body" id="trDisclaimerBody">
       <strong>For education, not investment advice.</strong> Congress.Trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any member acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. “All Data” can double-count a trade present in both the live and historic sets; use <em>Live Only</em> for a de-duplicated dollar view. Party is known for only some members. Always do your own research.
+      </div>
     </div>
 
     <!-- KPI strip -->
@@ -908,6 +940,48 @@ var confClass = function (c) { return c >= 0.9 ? 'hi' : c >= 0.7 ? 'mid' : 'lo';
 var typeName = { P: 'Purchase', S: 'Sale', E: 'Exchange' };
 /* Capitalize a beneficial-owner code for display (self -> Self, joint -> Joint). */
 function ownerLabel(o) { var s = String(o == null ? '' : o); return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
+/* Format a politician name so a generational suffix sits after a single comma
+   with no space on its left, e.g. "Sonny Perdue Jr" -> "Sonny Perdue, Jr". */
+var NAME_SUFFIX = { 'jr': 'Jr', 'jr.': 'Jr', 'sr': 'Sr', 'sr.': 'Sr', 'ii': 'II', 'iii': 'III', 'iv': 'IV' };
+function fmtName(raw) {
+  var s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  while (s.indexOf('  ') >= 0) s = s.split('  ').join(' ');
+  s = s.split(' , ').join(', ');
+  var parts = s.split(' ');
+  var suf = NAME_SUFFIX[parts[parts.length - 1].toLowerCase()];
+  if (!suf) return s;
+  var head = parts.slice(0, -1).join(' ');
+  while (head.charAt(head.length - 1) === ',' || head.charAt(head.length - 1) === ' ') head = head.slice(0, -1);
+  return head ? head + ', ' + suf : suf;
+}
+/* "House"/"Senate" are proper nouns here — always capitalize the chamber. */
+function chamberLabel(c) {
+  var s = String(c == null ? '' : c).trim().toLowerCase();
+  if (s === 'house' || s === 'h') return 'House';
+  if (s === 'senate' || s === 's') return 'Senate';
+  return c ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+}
+/* Spell out a US state/territory from its 2-letter code for the politician drawer. */
+var US_STATES = { AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming', DC: 'District of Columbia', PR: 'Puerto Rico', GU: 'Guam', VI: 'U.S. Virgin Islands', AS: 'American Samoa', MP: 'Northern Mariana Islands' };
+function stateName(abbr) {
+  var s = String(abbr == null ? '' : abbr).trim().toUpperCase();
+  return US_STATES[s] || (abbr || '');
+}
+/* Title-case an instrument/asset class but keep common acronyms upper (ETF, REIT…). */
+var ASSET_CLASS_UP = { etf: 'ETF', reit: 'REIT', adr: 'ADR', etn: 'ETN', spac: 'SPAC' };
+function assetClassLabel(c) {
+  var s = String(c == null ? '' : c).trim();
+  if (!s) return '';
+  return ASSET_CLASS_UP[s.toLowerCase()] || (s.charAt(0).toUpperCase() + s.slice(1));
+}
+/* Friendlier label for STOCK Act asset-type codes (ST = Stocks, etc.). */
+var ASSET_TYPE_LABEL = { ST: 'Stocks', OP: 'Options', GS: 'Govt Securities', CS: 'Corporate Bonds', EF: 'Funds / ETFs', MF: 'Mutual Funds', OT: 'Other', PE: 'Private Equity', RP: 'Real Property', Unknown: 'Unclassified' };
+function assetTypeLabel(t) {
+  var s = String(t == null ? '' : t).trim();
+  if (!s) return 'Unclassified';
+  return ASSET_TYPE_LABEL[s] || ASSET_TYPE_LABEL[s.toUpperCase()] || s;
+}
 /* Normalize a date string to YYYY-MM-DD without timezone drift. Accepts ISO
    ("2026-06-15...") and US ("6/15/2026") forms (Senate filings use the latter). */
 function toISODate(s) {
@@ -1024,10 +1098,16 @@ function logoFallback(img, mono) {
 /* Build the logo <span><img></span>. Framing follows the site-wide display mode;
    the company name rides along as a hover title; a missing logo falls back to a
    monogram via logoFallback(). */
+/* A few well-known tickers get a crisp glyph instead of a fetched image so they
+   look right on both dark and light themes (the Apple  glyph scales with text). */
+var CUSTOM_GLYPH = { AAPL: '' };
 function tickerLogoHtml(ticker, company) {
   var sym = normalizeLogoSymbol(ticker);
   if (!sym || logoDisplay === 'off') return '';
   var title = company ? ' title="' + esc(company) + '"' : '';
+  if (CUSTOM_GLYPH[sym]) {
+    return '<span class="tkr-logo glyph ' + logoDisplay + '"' + title + '>' + CUSTOM_GLYPH[sym] + '</span>';
+  }
   var mono = esc(sym.slice(0, 2));
   return '<span class="tkr-logo ' + logoDisplay + '"' + title + '>' +
     '<img src="/api/logos/ticker?symbol=' + encodeURIComponent(sym) + '" alt="" ' +
@@ -1087,35 +1167,40 @@ function memberCellHtml(r) {
     : 'class="member-cell"';
   var nameClass = (r.member || '').length > 28 ? 'fit-xs' : (r.member || '').length > 22 ? 'fit-sm' : '';
   return '<div ' + attr + '>' + memberAvatarHtml(r.member, r.photoUrl) +
-    '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div>';
+    '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div>';
 }
 function assetCellHtml(r) {
   var inner = '<div title="' + esc((r.ticker ? r.ticker + ' · ' : '') + r.asset) + '">' +
-    (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span> ' : '') +
+    (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span><span class="tkr-gap"></span>' : '') +
     '<span class="muted">' + esc(r.asset) + '</span></div>';
   return r.ticker
     ? '<div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, r.asset) + inner + '</div>'
     : '<div class="asset-cell">' + inner + '</div>';
 }
 function feedCardHtml(r) {
-  var lag = lagDays(r);
   var amount = (r.min == null && r.max == null) ? '—' : amountText(r.min, r.max);
-  var published = publishedText(r);
   var traded = dateText(r.txdate);
-  var source = sourceLabel(r.source);
-  return '<article class="feed-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + r.member) + '">' +
-    '<div class="feed-card-top">' + assetCellHtml(r) + actionBadge(r.type) + '</div>' +
-    '<div class="feed-card-member ' + (r.filerId ? 'clickable' : '') + '"' + (r.filerId ? ' data-member="' + esc(r.filerId) + '"' : '') + '>' +
-      memberAvatarHtml(r.member, r.photoUrl) + '<div>' + esc(r.member) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div>' +
+  var lag = shortLagText(r);
+  var chamber = chamberLabel(r.chamber);
+  var member = fmtName(r.member);
+  // Member name is its own tappable chip; the rest of row 2 (and the chevron)
+  // falls through to the trade drawer via handleFeedOpenEvent's delegation order.
+  var memberHtml = r.filerId
+    ? '<span class="fc-member clickable" data-member="' + esc(r.filerId) + '">' + esc(member) + (r.st ? ', ' + esc(r.st) : '') + '</span>'
+    : esc(member) + (r.st ? ', ' + esc(r.st) : '');
+  var bits = [];
+  if (member) bits.push(memberHtml);
+  if (chamber) bits.push(esc(chamber));
+  bits.push('Traded ' + esc(traded));
+  if (lag && lag !== 'Unavailable') bits.push('Lag ' + esc(lag));
+  return '<article class="feed-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + member) + '">' +
+    '<div class="fc-main">' +
+      '<div class="fc-row1">' + assetCellHtml(r) +
+        '<span class="fc-amt">' + actionBadge(r.type) + '<span class="fc-amt-val">' + esc(amount) + '</span></span>' +
+      '</div>' +
+      '<div class="fc-row2 muted">' + bits.join(' <span class="fc-sep">·</span> ') + '</div>' +
     '</div>' +
-    '<div class="feed-card-meta">' +
-      '<div><span class="mkey">Amount</span><span class="mval">' + esc(amount) + '</span></div>' +
-      '<div><span class="mkey">Source</span><span class="mval">' + esc(source) + '</span></div>' +
-      '<div><span class="mkey">Traded</span><span class="mval">' + esc(traded) + '</span></div>' +
-      '<div><span class="mkey">Published</span><span class="mval">' + esc(published) + '</span></div>' +
-      '<div><span class="mkey">Lag</span><span class="mval">' + esc(shortLagText(r)) + '</span></div>' +
-      '<div><span class="mkey">Chamber</span><span class="mval">' + esc(ownerLabel(r.chamber) || '—') + '</span></div>' +
-    '</div>' +
+    '<span class="fc-chevron" aria-hidden="true">›</span>' +
   '</article>';
 }
 function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }
@@ -1252,7 +1337,6 @@ function renderFeed() {
   // Fold-out advanced search (panel may be collapsed; inputs still honored).
   var qa = (el('qAll').value || '').toLowerCase().trim();
   var minAmt = parseFloat(el('qMinAmt').value);
-  var src = el('qSource').value;
   var body = el('feedBody');
   var cards = el('feedCards');
   var cols = visibleCols();
@@ -1273,7 +1357,6 @@ function renderFeed() {
       if (hay.indexOf(qa) < 0) return false;
     }
     if (!isNaN(minAmt) && !((r.min != null ? r.min : 0) >= minAmt)) return false;
-    if (src && r.source !== src) return false;
     return (!m || (r.member || '').toLowerCase().indexOf(m) >= 0) &&
            (!t || (r.ticker || '').indexOf(t) >= 0) &&
            (!ty || r.type === ty) &&
@@ -1445,7 +1528,7 @@ function toggleSearch() {
   if (open) setTimeout(function () { el('qAll').focus(); }, 0);
 }
 function clearSearch() {
-  el('qAll').value = ''; el('qMinAmt').value = ''; el('qSource').value = '';
+  el('qAll').value = ''; el('qMinAmt').value = '';
   renderFeed();
 }
 
@@ -2144,7 +2227,8 @@ function loadDiagnostics() {
 /* ============================ TRENDS / ANALYTICS ============================ */
 /* All views read /api/analytics/* — read-only aggregates over the corpus. Dollar
 	   values are ESTIMATES from STOCK Act bracket midpoints (labelled with ~). */
-	var EST_VOLUME_TIP = 'Estimated from STOCK Act amount ranges: closed ranges use the midpoint; the open $50M+ range uses its $50,000,001 floor.';
+	var EST_VOLUME_TIP = 'Approximate, from STOCK Act amount ranges: closed ranges use the midpoint; the open $50M+ range uses its $50,000,001 floor. Treat as a rough order of magnitude, not an exact figure.';
+	var BUY_PRESSURE_TIP = 'Share of buys among buy+sell trades in the window (buy count / (buys + sells)). A simple trade-count tilt, not dollar-weighted.';
 function trParams() {
   var p = 'window=' + encodeURIComponent(el('trWindow').value);
   var ch = el('trChamber').value; if (ch) p += '&chamber=' + ch;
@@ -2261,7 +2345,7 @@ function loadTrPerformers() {
     var rows = d.members || [];
     if (!rows.length) { body.innerHTML = stateRow(5, 'Not enough priced, filing-anchored buys to rank yet — this fills in as the price cache backfills.'); return; }
     body.innerHTML = rows.map(function (r, i) {
-      var name = r.fullName || r.filerId || 'Unknown';
+      var name = fmtName(r.fullName || r.filerId || 'Unknown');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
         '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.party) +
@@ -2279,9 +2363,9 @@ function loadTrSummary() {
   aGet('summary?' + trParams()).then(function (d) {
     var sent = d.netSentiment == null ? '—' : Math.round(d.netSentiment * 100) + '<small>% buys</small>';
     box.innerHTML =
-      kpi('Trades', d.totalTrades) + kpi('Members', d.uniqueMembers) + kpi('Tickers', d.uniqueTickers) +
-	      kpiInfo('Est. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP) + kpi('Net Flow', netHtml(d.estimatedNetFlowUsd)) +
-      kpi('Buy Pressure', sent);
+      kpi('Trades', d.totalTrades) + kpi('Politicians', d.uniqueMembers) + kpi('Assets', d.uniqueTickers) +
+	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP) + kpi('Net Flow', netHtml(d.estimatedNetFlowUsd)) +
+      kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP);
   }).catch(function (e) { box.innerHTML = kpi('Summary', '<span style="font-size:13px">' + esc(e.message) + '</span>'); });
 }
 
@@ -2361,8 +2445,8 @@ function loadTrMembers() {
     var rows = d.members || [];
     if (!rows.length) { body.innerHTML = stateRow(5, 'No member activity in this window.'); return; }
     body.innerHTML = rows.map(function (r, i) {
-      var name = r.fullName || r.filerId || 'Unknown';
-      var metaBits = [r.chamber, r.state].filter(Boolean).join(' · ');
+      var name = fmtName(r.fullName || r.filerId || 'Unknown');
+      var metaBits = [chamberLabel(r.chamber), r.state].filter(Boolean).join(' · ');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
         '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.partyBucket) +
@@ -2402,7 +2486,7 @@ function loadTrSectors() {
     var max = 1; rows.forEach(function (r) { max = Math.max(max, r.estVolumeUsd); });
     box.innerHTML = rows.map(function (r) {
       var w = Math.round(100 * r.estVolumeUsd / max);
-      return '<div class="hbar"><div class="hlabel" title="' + esc(r.assetType) + '">' + esc(r.assetType) + '</div>' +
+      return '<div class="hbar"><div class="hlabel" title="' + esc(r.assetType) + '">' + esc(assetTypeLabel(r.assetType)) + '</div>' +
         '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
         '<div class="hval">' + estUsd(r.estVolumeUsd) + '</div></div>';
     }).join('');
@@ -2431,7 +2515,7 @@ function loadTrLag() {
     var lf = d.topLateFilers || [];
     if (!lf.length) { lbox.innerHTML = stateRow(4, 'Not enough dated filings.'); }
     else lbox.innerHTML = lf.slice(0, 10).map(function (m) {
-      var name = m.fullName || m.filerId || 'Unknown';
+      var name = fmtName(m.fullName || m.filerId || 'Unknown');
       var memberAttr = m.filerId ? ' class="member-cell clickable" data-member="' + esc(m.filerId) + '"' : ' class="member-cell"';
       return '<tr class="row"><td><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl) + '<div>' +
         pdot(m.partyBucket) + esc(name) + '</div></div></td>' +
@@ -2537,18 +2621,22 @@ function companySectionHtml(ref) {
   if (!ref || (!ref.sector && ref.marketCap == null && !ref.marketCapBucket && !ref.country && !ref.exchangeShort && !ref.assetClass)) {
     return PROFILE_GATE;
   }
-  var rows = '';
-  if (ref.sector) rows += kvRow('Sector', esc(ref.sector));
-  if (ref.industry) rows += kvRow('Industry', esc(ref.industry));
-  if (ref.assetClass) rows += kvRow('Class', esc(ownerLabel(ref.assetClass)));
-  if (ref.marketCapBucket || ref.marketCap != null) {
-    rows += kvRow('Market cap', (ref.marketCapBucket ? esc(ownerLabel(ref.marketCapBucket)) : '') + (ref.marketCap != null ? ' · ' + estUsd(ref.marketCap) : ''));
+  function item(label, val) {
+    if (!val && val !== 0) return '';
+    return '<div class="def-item"><span class="def-k">' + esc(label) + '</span><span class="def-v">' + val + '</span></div>';
   }
-  if (ref.exchangeShort) rows += kvRow('Exchange', esc(ref.exchangeShort));
-  if (ref.country) rows += kvRow('Country', esc(ref.country));
-  if (ref.currency) rows += kvRow('Currency', esc(ref.currency));
-  if (ref.ipoDate) rows += kvRow('IPO', esc(ref.ipoDate));
-  return '<dl class="drawer-kv">' + rows + '</dl>';
+  var mcap = (ref.marketCapBucket ? esc(ownerLabel(ref.marketCapBucket)) : '') +
+    (ref.marketCap != null ? (ref.marketCapBucket ? ' · ' : '') + estUsd(ref.marketCap) : '');
+  var html =
+    item('Sector', ref.sector ? esc(ref.sector) : '') +
+    item('Industry', ref.industry ? esc(ref.industry) : '') +
+    item('Class', ref.assetClass ? esc(assetClassLabel(ref.assetClass)) : '') +
+    item('Market Cap', mcap) +
+    item('Exchange', ref.exchangeShort ? esc(ref.exchangeShort) : '') +
+    item('Country', ref.country ? esc(ref.country) : '') +
+    item('Currency', ref.currency ? esc(ref.currency) : '') +
+    item('IPO', ref.ipoDate ? esc(dateText(ref.ipoDate)) : '');
+  return '<div class="def-grid">' + html + '</div>';
 }
 function drawerCompanyTitle(ticker, name) {
   var label = name || ticker || 'Company';
@@ -2582,7 +2670,7 @@ function openAsset(ticker) {
     function traderList(arr, label) {
       if (!arr || !arr.length) return '<div class="note">No ' + label + '.</div>';
       return arr.map(function (m) {
-        var name = m.fullName || m.filerId || 'Unknown';
+        var name = fmtName(m.fullName || m.filerId || 'Unknown');
         var memberAttr = m.filerId ? ' data-member="' + esc(m.filerId) + '"' : '';
         var labelCls = m.filerId ? 'hlabel clickable' : 'hlabel';
         return '<div class="hbar" style="margin:5px 0"><div class="' + labelCls + '"' + memberAttr + ' style="width:auto;flex:1">' +
@@ -2591,7 +2679,7 @@ function openAsset(ticker) {
       }).join('');
     }
     var recent = (d.recentTrades || []).map(function (t) {
-      var name = t.fullName || 'Unknown';
+      var name = fmtName(t.fullName || 'Unknown');
       var member = t.filerId
         ? '<span class="member-cell clickable" data-member="' + esc(t.filerId) + '">' + pdot(t.partyBucket) + esc(name) + '</span>'
         : pdot(t.partyBucket) + esc(name);
@@ -2602,11 +2690,11 @@ function openAsset(ticker) {
     }).join('');
     openDrawer(
       drawerCompanyTitle(d.ticker, companyName || d.ticker) +
-	      '<p class="dsub">' + (s.totalTrades || 0) + ' trades · ' + (s.memberCount || 0) + ' members · ' + estUsd(s.estVolumeUsd) + ' est. volume</p>' +
+	      '<p class="dsub">' + (s.totalTrades || 0) + ' trades · ' + (s.memberCount || 0) + ' politicians · ' + estUsd(s.estVolumeUsd) + ' approx. volume</p>' +
       '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
       '<div class="drawer-section"><h3>Congressional Activity (All Time)</h3><div class="grid-cards">' +
-	        kpi('Trades', s.totalTrades || 0) + kpi('Members', s.memberCount || 0) + kpiInfo('Est. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP) +
-        kpi('Net Flow', netHtml(s.estNetFlowUsd)) + kpi('Buy Pressure', sent) + '</div>' +
+	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP) +
+        kpi('Net Flow', netHtml(s.estNetFlowUsd)) + kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP) + '</div>' +
         '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + '</div>' +
       '<div class="drawer-section"><h3>Performance Since Trades</h3>' + PERF_GATE + '</div>' +
       '<div class="trend-grid2"><div class="drawer-section"><h3>Top Buyers</h3>' + traderList(d.topBuyers, 'buyers') + '</div>' +
@@ -2623,9 +2711,9 @@ function openMember(filerId) {
   openDrawer('<div class="note">Loading member…</div>');
   aGet('member/' + encodeURIComponent(filerId) + '?window=all').then(function (d) {
     var p = d.profile || {}, st = d.stats || {};
-    var name = p.fullName || filerId;
+    var name = fmtName(p.fullName || filerId);
     var partyName = partyLabel(p.partyBucket);
-    var meta = [p.chamber, p.state].filter(Boolean).join(' · ');
+    var meta = [chamberLabel(p.chamber), stateName(p.state)].filter(Boolean).join(' · ');
     var subBits = [];
     if (meta) subBits.push(esc(meta));
     if (p.district) subBits.push('District ' + esc(p.district));
@@ -2653,7 +2741,7 @@ function openMember(filerId) {
         '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
       '<div class="drawer-section"><h3>Trade Stats</h3><dl class="drawer-kv">' +
         kvRow('Total Trades', st.totalTrades || 0) + kvRow('Buys / Sells', (st.buyCount || 0) + ' / ' + (st.sellCount || 0)) +
-	        kvRow('Distinct Tickers', st.uniqueTickers || 0) + kvRow('Est. Volume', estUsd(st.estVolumeUsd)) +
+	        kvRow('Distinct Assets', st.uniqueTickers || 0) + kvRow('Approx. Volume', estUsd(st.estVolumeUsd)) +
         kvRow('Avg. Disclosure Lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
       '<div class="drawer-section"><h3>Committees</h3>' + commHtml + '</div>' +
       '<div class="drawer-section"><h3>Performance vs S&amp;P 500</h3>' + PERF_GATE + '</div>' +
@@ -2668,22 +2756,34 @@ function openMember(filerId) {
 function openTrade(row) {
   if (!row) return;
   var memberVal = row.filerId
-    ? '<span class="clickable" data-member="' + esc(row.filerId) + '">' + esc(row.member) + '</span>'
-    : esc(row.member);
+    ? '<span class="clickable" data-member="' + esc(row.filerId) + '">' + esc(fmtName(row.member)) + '</span>'
+    : esc(fmtName(row.member));
+  var sideWord = row.type === 'P' ? 'Bought' : row.type === 'S' ? 'Sold' : 'Exchanged';
+  // A trade drawer leads with the TRANSACTION (kicker + amount), not the company —
+  // the ticker/company is demoted to a non-clickable "in …" line so it can't be
+  // mistaken for the company drawer (the ticker is intentionally NOT clickable here).
+  var inName = (row.ticker || row.asset)
+    ? '<p class="drawer-trade-in">in ' +
+        (row.ticker ? '<span class="tkr">' + esc(row.ticker) + '</span>' : '') +
+        (row.ticker && row.asset ? '<span class="dot-sep">·</span>' : '') +
+        (row.asset ? '<span class="company-name">' + esc(row.asset) + '</span>' : '') + '</p>'
+    : '';
   var head =
-    drawerCompanyTitle(row.ticker, row.asset || 'Trade') +
-    '<p class="dsub">' + actionBadge(row.type) + ' · ' + amountText(row.min, row.max) + ' <span class="muted">(est. bracket)</span></p>';
+    '<div class="drawer-trade-head">' +
+      '<span class="drawer-kicker tag ' + esc(row.type) + '">' + sideWord + '</span>' +
+      '<h2 class="drawer-trade-headline">' + esc(amountText(row.min, row.max)) +
+        ' <span class="drawer-trade-bracket muted">est. bracket</span></h2>' + inName +
+    '</div>';
   var summary =
-    '<div class="drawer-section first"><h3>Trade</h3><dl class="drawer-kv">' +
-      kvRow('Member', memberVal) +
+    '<div class="drawer-section first"><h3>Trade Details</h3><dl class="drawer-kv">' +
+      kvRow('Politician', memberVal) +
       kvRow('Traded', esc(dateText(row.txdate))) +
-      kvRow('Published', esc(publishedDetailText(row))) +
+      kvRow('Published', '<em>' + esc(publishedDetailText(row)) + '</em>') +
       kvRow('Official Filed', esc(filedDetailText(row))) +
       kvRow('Disclosure Lag', esc(lagDetailText(row))) +
       kvRow('Owner', esc(ownerLabel(row.owner) || '—')) +
-      kvRow('Instrument', row.isOption ? 'Option' : 'Equity / other') +
+      kvRow('Instrument', row.isOption ? 'Option' : 'Equity / Other') +
       kvRow('Imported', esc(dateTimeText(row.imported))) +
-      kvRow('Source', esc(sourceLabel(row.source))) +
       '</dl><div id="tradeSource"></div></div>';
   var perfInit = row.isOption ? OPTION_PERF_NOTE : PERF_GATE;
   var perf = '<div class="drawer-section"><h3>Performance Since ' + (row.type === 'S' ? 'Sale' : 'Trade') + '</h3><div id="tradePerf">' + perfInit + '</div></div>';
@@ -2692,7 +2792,7 @@ function openTrade(row) {
   var notes = row.rawText ? '<div class="drawer-section"><h3>Filing Notes</h3>' + filingNotesHtml(row.rawText) + '</div>' : '';
   var links = '<div class="drawer-section">' +
     (row.ticker ? '<a class="drawer-all-link clickable" data-asset="' + esc(row.ticker) + '">View All Trades of ' + esc(row.ticker) + ' →</a>' : '') +
-    (row.filerId ? '<a class="drawer-all-link clickable" data-member="' + esc(row.filerId) + '">View All Trades by ' + esc(row.member) + ' →</a>' : '') +
+    (row.filerId ? '<a class="drawer-all-link clickable" data-member="' + esc(row.filerId) + '">View All Trades by ' + esc(fmtName(row.member)) + ' →</a>' : '') +
     '</div>';
   openDrawer(head + summary + perf + profile + notes + links);
   // Lazy-load the performance line (FMP-gated; "—"/note when unavailable).
@@ -2707,13 +2807,25 @@ function openTrade(row) {
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         var sEl = el('tradeSource'); if (!sEl) return;
-        var url = d && d.filing && d.filing.sourceUrl;
+        var url = (d && d.filing && d.filing.sourceUrl) || reconstructFilingUrl(row.docId);
         sEl.innerHTML = url
           ? '<a class="source-link" href="' + esc(url) + '" target="_blank" rel="noopener">🔗 View source filing</a>'
           : '<div class="tier-gate-note" style="margin-top:9px">Source document not stored for this row (historic import).</div>';
       })
-      .catch(function () {});
+      .catch(function () {
+        var sEl = el('tradeSource'); if (!sEl) return;
+        var url = reconstructFilingUrl(row.docId);
+        if (url) sEl.innerHTML = '<a class="source-link" href="' + esc(url) + '" target="_blank" rel="noopener">🔗 View source filing</a>';
+      });
   }
+}
+/* Rebuild a House PTR PDF link from its docId (H-YYYY-NNNN) when the stored
+   source_url is missing — covers historic/seed House rows that predate URL capture.
+   House PTRs live at disclosures-clerk.house.gov/public_disc/ptr-pdfs/YYYY/NNNN.pdf. */
+function reconstructFilingUrl(docId) {
+  var m = /^H-(\\d{4})-(\\d+)$/.exec(String(docId || ''));
+  if (!m) return '';
+  return 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/' + m[1] + '/' + m[2] + '.pdf';
 }
 
 /* ============================ ACCOUNT (auth + billing) ============================ */
@@ -2884,6 +2996,54 @@ function handleAuthQueryParams() {
     window.history.replaceState({}, '', window.location.pathname + (qs ? ('?' + qs) : ''));
   }
 }
+
+/* Collapse / expand the Trends disclaimer to reclaim screen space. */
+function toggleDisclaimer() {
+  var d = el('trDisclaimer'); if (!d) return;
+  var collapsed = d.classList.toggle('collapsed');
+  var btn = d.querySelector('.disclaimer-toggle');
+  if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  try { localStorage.setItem('tr-disclaimer-collapsed', collapsed ? '1' : '0'); } catch (e) {}
+}
+(function () {
+  // Default collapsed; honor the saved preference.
+  try { if (localStorage.getItem('tr-disclaimer-collapsed') === '0') { var d = el('trDisclaimer'); if (d) { d.classList.remove('collapsed'); var b = d.querySelector('.disclaimer-toggle'); if (b) b.setAttribute('aria-expanded', 'true'); } } } catch (e) {}
+})();
+
+/* Tap-to-reveal tooltips: phones/tablets can't hover, so tapping any element that
+   carries an info tooltip (title or .info-tip / .est-money etc.) pops the same text. */
+(function () {
+  var pop = null;
+  function closeTip() { if (pop) { pop.remove(); pop = null; } }
+  function tipTextFor(t) {
+    var node = t.closest('[data-tip],[title],.info-tip,.est-money');
+    if (!node) return null;
+    return node.getAttribute('data-tip') || node.getAttribute('title') || (node.getAttribute('aria-label') || '');
+  }
+  document.addEventListener('click', function (e) {
+    // Only act as a tap-tooltip on coarse pointers (touch); desktop keeps native hover.
+    if (window.matchMedia && !window.matchMedia('(hover: none)').matches) return;
+    if (!e.target || !e.target.closest) return;
+    if (pop && pop.contains(e.target)) { closeTip(); return; }
+    var node = e.target.closest('[data-tip],.info-tip,.est-money');
+    if (!node) { closeTip(); return; }
+    var text = node.getAttribute('data-tip') || node.getAttribute('title') || node.getAttribute('aria-label') || '';
+    if (!text) return;
+    e.preventDefault(); e.stopPropagation();
+    closeTip();
+    pop = document.createElement('div');
+    pop.className = 'tip-pop';
+    pop.textContent = text;
+    document.body.appendChild(pop);
+    var r = node.getBoundingClientRect();
+    var pw = Math.min(pop.offsetWidth, window.innerWidth * 0.78);
+    var left = Math.max(8, Math.min(r.left, window.innerWidth - pw - 8));
+    var top = r.bottom + 8;
+    if (top + pop.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - pop.offsetHeight - 8);
+    pop.style.left = left + 'px'; pop.style.top = top + 'px';
+  }, true);
+  window.addEventListener('scroll', closeTip, true);
+}());
 
 /* ============================ TABS + BOOT ============================ */
 document.querySelectorAll('nav.tabs button').forEach(function (b) {
