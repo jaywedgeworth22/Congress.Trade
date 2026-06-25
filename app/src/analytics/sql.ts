@@ -184,6 +184,8 @@ export interface CommonFilters {
   txTypes?: TxType[];
   /** Restrict to this explicit set of tickers (e.g. a precomputed candidate set). */
   tickers?: string[];
+  /** Exclude option rows (is_option = 1) — for common-stock-only views. */
+  excludeOptions?: boolean;
 }
 
 /**
@@ -229,6 +231,9 @@ export function buildCommonFilters(p: CommonFilters): { where: string[]; params:
   if (p.tickers && p.tickers.length) {
     where.push(`t.ticker IN (${p.tickers.map(() => '?').join(', ')})`);
     for (const tk of p.tickers) params.push(tk);
+  }
+  if (p.excludeOptions) {
+    where.push('t.is_option = 0');
   }
 
   return { where, params };

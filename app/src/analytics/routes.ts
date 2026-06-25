@@ -275,13 +275,18 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       // candidate pool rather than just the top `limit`.
       const POOL_MAX = 100;
       const pool = Math.min(POOL_MAX, Math.max(60, limit * 3));
+      // Conviction is a COMMON-STOCK directional signal, so every input excludes
+      // option rows: a bought put / sold call is not bullish/bearish stock
+      // conviction (and the app has no option-performance anchor anyway). All the
+      // candidate/aggregate queries below share this stock-only, P/S filter base.
+      const fStock = { ...f, excludeOptions: true };
       // Seed the candidate pool from DIRECTIONAL (P/S) activity only. If we ranked
       // the unfiltered leaderboard by total trade_count, an exchange-heavy window
       // could fill the pool with non-directional 'E' tickers that later score null
       // (sameSideTrades = 0) and drop out — starving real BUY/SELL names and
       // returning fewer than `limit`. Filtering to P/S makes trade_count (and the
       // ranking) directional, and a ticker with no P/S simply isn't a candidate.
-      const lbQ = buildTickerLeaderboardQuery({ ...f, txTypes: ['P', 'S'], sort: 'trades', limit: pool });
+      const lbQ = buildTickerLeaderboardQuery({ ...fStock, txTypes: ['P', 'S'], sort: 'trades', limit: pool });
       const lbRows = await all<Record<string, unknown>>(c.env.DB, lbQ.sql, lbQ.params);
       // Fetch the party + momentum + skill-link aggregates restricted to THIS
       // candidate set, so every ranked candidate's resolved side is present (a
@@ -296,12 +301,12 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const linkRows: Record<string, unknown>[] = [];
       await Promise.all(
         chunk(candidateTickers, D1_IN_CHUNK).flatMap((batch) => {
-          const clQ = buildClusterBuysQuery({ ...f, tickers: batch, minMembers: 2, limit: 200 });
+          const clQ = buildClusterBuysQuery({ ...fStock, tickers: batch, minMembers: 2, limit: 200 });
           // Momentum is PER SIDE (bySide) and directional (P/S) only — rising
-          // purchases must not feed a SELL signal, and 'E' rows never count.
-          const trQ = buildTrendingQuery({ ...f, tickers: batch, txTypes: ['P', 'S'], bySide: true, limit: 200 });
+          // purchases must not feed a SELL signal, and 'E'/option rows never count.
+          const trQ = buildTrendingQuery({ ...fStock, tickers: batch, txTypes: ['P', 'S'], bySide: true, limit: 200 });
           // Who traded each candidate, by side (for the realized-skill rollup).
-          const lkQ = buildConvictionMemberLinksQuery(batch, f);
+          const lkQ = buildConvictionMemberLinksQuery(batch, fStock);
           return [
             all<Record<string, unknown>>(c.env.DB, clQ.sql, clQ.params).then((r) => void clRows.push(...r)),
             all<Record<string, unknown>>(c.env.DB, trQ.sql, trQ.params).then((r) => void trRows.push(...r)),
@@ -365,9 +370,13 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         ticker: string | null,
         direction: 'BUY' | 'SELL' | null,
       ): ConvictionSkill | null => {
-        const side = direction === 'BUY' ? 'P' : direction === 'SELL' ? 'S' : null;
-        if (!ticker || !side) return null;
-        const members = membersByTickerSide.get(`${ticker}|${side}`);
+        // Skill applies ONLY to BUY conviction: the realized track record measures
+        // members' BUYS (filing-anchored excess), which is evidence for a buy
+        // signal but says nothing about sell timing. SELL conviction stays in the
+        // fallback (no-realized-evidence cap) until sell-side skill is modeled —
+        // a strong buy-picker must not lift a bearish SELL score.
+        if (!ticker || direction !== 'BUY') return null;
+        const members = membersByTickerSide.get(`${ticker}|P`);
         if (!members || !members.length) return null;
         let sumScored = 0;
         let sumWins = 0; // Σ wins == Σ (scored·winRate) → scored-weighted mean win-rate

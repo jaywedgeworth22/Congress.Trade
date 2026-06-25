@@ -164,6 +164,13 @@ describe('buildCommonFilters', () => {
     expect(params).toEqual(['AAPL', 'MSFT', 'NVDA']);
   });
 
+  it('excludeOptions adds an is_option = 0 clause (no bind), off by default', () => {
+    const { where, params } = buildCommonFilters({ window: 'all', excludeOptions: true });
+    expect(where).toContain('t.is_option = 0');
+    expect(params).toEqual([]);
+    expect(buildCommonFilters({ window: 'all' }).where).not.toContain('t.is_option = 0');
+  });
+
   it('whereSql renders a clause with a trailing space, or empty', () => {
     expect(whereSql([])).toBe('');
     expect(whereSql(['a = ?', 'b = ?'])).toBe('WHERE a = ? AND b = ? ');
