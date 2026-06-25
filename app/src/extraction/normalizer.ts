@@ -59,12 +59,18 @@ type RowKeyFields = Pick<
   | 'assetName'
   | 'ticker'
   | 'assetType'
+  | 'assetTypeName'
   | 'txType'
   | 'amountMin'
   | 'amountMax'
   | 'isOption'
   | 'capGainsOver200'
   | 'rawText'
+  | 'filingStatus'
+  | 'subholding'
+  | 'location'
+  | 'description'
+  | 'supplementalText'
 >;
 
 /**
@@ -83,12 +89,18 @@ export function transactionRowKey(
     normalizeText(fields.assetName),
     (fields.ticker ?? '').toUpperCase(),
     normalizeText(fields.assetType),
+    normalizeText(fields.assetTypeName ?? null),
     fields.txType ?? '',
     fields.amountMin ?? '',
     fields.amountMax ?? '',
     fields.isOption ? '1' : '0',
     fields.capGainsOver200 ? '1' : '0',
     normalizeText(fields.rawText),
+    normalizeText(fields.filingStatus ?? null),
+    normalizeText(fields.subholding ?? null),
+    normalizeText(fields.location ?? null),
+    normalizeText(fields.description ?? null),
+    normalizeText(fields.supplementalText ?? null),
   ].join('\u001f');
   return `v1:${source}:${rowIndex}:${fnv1a32(payload)}`;
 }
@@ -167,7 +179,10 @@ export async function normalize(
   );
 
   if (needsReview) {
-    await routeToReview(env, filing, flagged, minConfidence, nowIso);
+    await routeToReview(env, filing, flagged, minConfidence, nowIso, {
+      extractor: extractorName,
+      modelVersion,
+    });
     return { transactions, minConfidence, needsReview: true };
   }
 
@@ -227,12 +242,18 @@ function buildTransaction(
     assetName: p.assetName || s.ticker || '(unknown)',
     ticker: s.ticker,
     assetType: p.assetType,
+    assetTypeName: p.assetTypeName ?? null,
     txType: s.txType,
     amountMin: s.amountMin,
     amountMax: s.amountMax,
     isOption: Boolean(p.isOption),
     capGainsOver200: Boolean(p.capGainsOver200),
     rawText: p.rawText ?? '',
+    filingStatus: p.filingStatus ?? null,
+    subholding: p.subholding ?? null,
+    location: p.location ?? null,
+    description: p.description ?? null,
+    supplementalText: p.supplementalText ?? null,
     confidence: s.confidence,
     source: 'primary',
     rowKey: transactionRowKey('primary', rowIndex, {
@@ -402,8 +423,9 @@ function buildResolver(rows: SecRow[]): TickerResolver {
 const INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
   id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
   tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
-  raw_text, row_key, confidence, source, created_at, cursor_seq
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`;
+  raw_text, asset_type_name, filing_status, subholding, location, description,
+  supplemental_text, row_key, confidence, source, created_at, cursor_seq
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`;
 
 /** Insert each validated transaction. cursor_seq is assigned by the DB trigger. */
 async function persistTransactions(env: Env, transactions: Transaction[]): Promise<string[]> {
@@ -424,6 +446,12 @@ async function persistTransactions(env: Env, transactions: Transaction[]): Promi
       fromBool(tx.isOption),
       fromBool(tx.capGainsOver200),
       tx.rawText,
+      tx.assetTypeName ?? null,
+      tx.filingStatus ?? null,
+      tx.subholding ?? null,
+      tx.location ?? null,
+      tx.description ?? null,
+      tx.supplementalText ?? null,
       tx.rowKey ?? null,
       tx.confidence,
       tx.source,
@@ -441,6 +469,7 @@ async function routeToReview(
   flagged: FlaggedTx[],
   minConfidence: number,
   nowIso: string,
+  meta: { extractor: string | null; modelVersion: string | null },
 ): Promise<void> {
   const reasons = new Set<string>();
   for (const f of flagged) for (const flag of f.flags) reasons.add(flag);
@@ -450,8 +479,8 @@ async function routeToReview(
   const reason = Array.from(reasons).join(',') || 'needs_review';
   const payload = JSON.stringify({
     minConfidence,
-    extractor: filing.extractor,
-    modelVersion: filing.modelVersion,
+    extractor: meta.extractor,
+    modelVersion: meta.modelVersion,
     transactions: flagged.map((f) => ({ ...f.tx, flags: f.flags })),
   });
 

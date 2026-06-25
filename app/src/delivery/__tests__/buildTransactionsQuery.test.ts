@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildTransactionsQuery,
   buildTransactionsCountQuery,
+  buildTransactionsTodayFilingsQuery,
   mapFeedTransaction,
   DEFAULT_TX_LIMIT,
   MAX_TX_LIMIT,
@@ -17,7 +18,7 @@ import {
 } from '../rows';
 
 describe('buildTransactionsQuery', () => {
-  it('always filters cursor_seq > since (defaulting since to 0) and orders ASC', () => {
+  it('always filters cursor_seq > since (defaulting since to 0) and orders by cursor ASC', () => {
     const q = buildTransactionsQuery({});
     expect(q.sql).toContain('t.cursor_seq > ?');
     expect(q.sql).toContain('ORDER BY t.cursor_seq ASC');
@@ -40,6 +41,12 @@ describe('buildTransactionsQuery', () => {
     const q = buildTransactionsQuery({ member: 'M000001' });
     expect(q.sql).toContain('t.filer_id = ?');
     expect(q.params).toEqual([0, 'M000001']);
+  });
+
+  it('filters by fuzzy member name server-side', () => {
+    const q = buildTransactionsQuery({ memberName: 'Pelo' });
+    expect(q.sql).toContain("LOWER(COALESCE(fl.full_name, t.filer_id, '')) LIKE ?");
+    expect(q.params).toEqual([0, '%pelo%']);
   });
 
   it('filters by tx type', () => {
@@ -71,6 +78,7 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain('fl.full_name AS filer_full_name');
     expect(q.sql).toContain('fl.state AS filer_state');
     expect(q.sql).toContain('fl.photo_url AS filer_photo_url');
+    expect(q.sql).toContain('f.source_url AS filing_source_url');
   });
 
   it('composes all filters in a stable param order (since, ticker, member, type, chamber)', () => {
@@ -115,7 +123,22 @@ describe('buildTransactionsQuery', () => {
   it('honors a valid explicit limit and embeds it in the SQL', () => {
     const q = buildTransactionsQuery({ limit: 25 });
     expect(q.limit).toBe(25);
+    expect(q.offset).toBe(0);
     expect(q.sql).toContain('LIMIT 25');
+  });
+
+  it('honors a non-negative offset for snapshot page navigation', () => {
+    const q = buildTransactionsQuery({ limit: 25, offset: 50, order: 'desc' });
+    expect(q.limit).toBe(25);
+    expect(q.offset).toBe(50);
+    expect(q.sql).toContain('ORDER BY t.cursor_seq DESC');
+    expect(q.sql).toContain('LIMIT 25 OFFSET 50');
+  });
+
+  it('clamps negative offsets to zero and omits OFFSET 0', () => {
+    const q = buildTransactionsQuery({ offset: -10 });
+    expect(q.offset).toBe(0);
+    expect(q.sql).not.toContain('OFFSET');
   });
 
   it('caps the limit at MAX_TX_LIMIT', () => {
@@ -148,6 +171,12 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain('ORDER BY t.cursor_seq DESC');
     // order adds no bound param; same param order as the asc path.
     expect(q.params).toEqual([7, 'AAPL']);
+  });
+
+  it('can sort snapshot pages by published/imported time', () => {
+    const q = buildTransactionsQuery({ sort: 'published', order: 'desc', limit: 25 });
+    expect(q.sql).toContain('ORDER BY COALESCE(f.first_seen_at, f.filed_date, t.created_at, t.cursor_seq) DESC, t.cursor_seq DESC');
+    expect(q.params).toEqual([0]);
   });
 
   it('does not interpolate untrusted values directly (ticker/member are bound, not inlined)', () => {
@@ -202,6 +231,20 @@ describe('buildTransactionsCountQuery', () => {
   });
 });
 
+describe('buildTransactionsTodayFilingsQuery', () => {
+  it('counts distinct docs imported today with the same feed filters', () => {
+    const q = buildTransactionsTodayFilingsQuery(
+      { ticker: 'aapl', chamber: 'house' },
+      '2026-06-24T12:00:00Z',
+    );
+    expect(q.sql).toContain('COUNT(DISTINCT t.doc_id) AS total');
+    expect(q.sql).toContain('t.ticker = ?');
+    expect(q.sql).toContain('COALESCE(fl.chamber, f.chamber) = ?');
+    expect(q.sql).toContain('substr(COALESCE(f.first_seen_at, t.created_at), 1, 10) = ?');
+    expect(q.params).toEqual(['AAPL', 'house', '2026-06-24']);
+  });
+});
+
 describe('mapFeedTransaction', () => {
   function feedRow(over: Partial<FeedTransactionRow> = {}): FeedTransactionRow {
     return {
@@ -228,6 +271,7 @@ describe('mapFeedTransaction', () => {
       filer_photo_url: 'https://unitedstates.github.io/images/congress/225x275/P000197.jpg',
       filing_filed_date: '2024-01-01',
       filing_first_seen_at: '2024-01-02T12:00:00Z',
+      filing_source_url: 'https://disclosures.example/doc.pdf',
       ...over,
     };
   }
@@ -240,6 +284,7 @@ describe('mapFeedTransaction', () => {
     // filing timestamps for the per-row latency column
     expect(tx.filedDate).toBe('2024-01-01');
     expect(tx.firstSeenAt).toBe('2024-01-02T12:00:00Z');
+    expect(tx.sourceUrl).toBe('https://disclosures.example/doc.pdf');
     // base transaction mapping still applies
     expect(tx.ticker).toBe('ACME');
     expect(tx.cursorSeq).toBe(5);

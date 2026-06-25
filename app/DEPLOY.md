@@ -80,6 +80,21 @@ Google OAuth client, Resend, and Cloudflare Access for the admin subdomain:
 see [`docs/wave4-auth-billing.md`](docs/wave4-auth-billing.md). All of it
 degrades gracefully until configured, so this is optional for a first deploy.
 
+## 3c. Worker usage profile
+Production `wrangler.toml` is tuned for the Workers paid plan:
+
+```toml
+[limits]
+cpu_ms = 300_000
+subrequests = 10_000
+```
+
+The app still keeps its own guardrails. `/api/admin/securities/import` uses
+`IMPORT_MAX_*` vars so sibling apps can send larger paid-plan batches without
+turning a malformed import into runaway CPU/DB work. To run a leaner profile
+later, lower the `IMPORT_MAX_*` vars and lower or remove the `[limits]` block.
+The functional code path stays the same; only batch size/ceiling changes.
+
 > **Migrations don't auto-apply.** Code auto-deploys (Cloudflare Workers
 > Builds on push to `main`), but D1 migrations do **not** run as part of that.
 > After any deploy that adds a migration, apply it or the new code will query
@@ -146,6 +161,10 @@ Admin (`/api/admin`, bearer token or Cloudflare Access; fails closed unless conf
 
 UI: `GET /` (dashboard) and `/admin`. `GET /health` → `{ok:true}`.
 
+Admin custom domain: `admin.congress.trade` is routed to the same Worker. Protect
+it with Cloudflare Access before exposing admin workflows there; see
+`docs/wave4-auth-billing.md`.
+
 ## Pipeline (how a filing flows)
 ```
 cron → watcher (House XML diff + Senate eFD) → INGEST_QUEUE
@@ -166,4 +185,7 @@ cron → watcher (House XML diff + Senate eFD) → INGEST_QUEUE
   (`pollHouseLiveSearch()`) is stubbed for when you want sub-day House latency.
 - **Vision model** id lives in `src/extraction/visionLlm.ts`; review that
   constant before changing extraction cost/quality.
+- **Observability and Smart Placement** are configured in `wrangler.toml`.
+  Dashboard-only changes will drift on the next deploy if the config is not kept
+  in sync.
 - Confirm the `SEED_SOURCES` URLs in `src/backfill/seed.ts` resolve (flagged in code).

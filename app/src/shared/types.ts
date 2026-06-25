@@ -94,12 +94,18 @@ export interface Transaction {
   assetName: string;
   ticker: string | null;
   assetType: string | null;
+  assetTypeName?: string | null;
   txType: TxType;
   amountMin: number | null;
   amountMax: number | null;
   isOption: boolean;
   capGainsOver200: boolean;
   rawText: string;
+  filingStatus?: string | null;
+  subholding?: string | null;
+  location?: string | null;
+  description?: string | null;
+  supplementalText?: string | null;
   confidence: number;
   /** Provenance: live pipeline ('primary') vs backfill ('seed_dataset'). */
   source: TxSource;
@@ -124,6 +130,8 @@ export interface Transaction {
   filedDate?: string | null;
   /** When our watcher first saw the filing (timestamp). Feed only. */
   firstSeenAt?: string | null;
+  /** Original public disclosure document URL. Feed only. */
+  sourceUrl?: string | null;
   // --- Optional cross-referenced asset data (securities_ref; feed only) ------
   // Populated when the ticker has been enriched; null/absent otherwise.
   refSector?: string | null;
@@ -146,6 +154,7 @@ export interface ParsedTx {
   /** Raw ticker as seen in the document; may be null/garbage pre-resolution. */
   ticker: string | null;
   assetType: string | null;
+  assetTypeName?: string | null;
   txType: TxType;
   amountMin: number | null;
   amountMax: number | null;
@@ -153,6 +162,12 @@ export interface ParsedTx {
   capGainsOver200: boolean;
   /** Verbatim source text for this row, for audit/review. */
   rawText: string;
+  /** Structured/detail text that belongs to this filing row, not page chrome. */
+  filingStatus?: string | null;
+  subholding?: string | null;
+  location?: string | null;
+  description?: string | null;
+  supplementalText?: string | null;
   /** Per-row extractor confidence in [0,1]. */
   confidence: number;
 }
@@ -239,7 +254,7 @@ export interface ClientTrade {
   filing: {
     filedDate: string | null;
     firstSeenAt: string | null;
-    sourceUrl?: string;
+    sourceUrl: string | null;
   };
   confidence: number;
   source: TxSource;
@@ -428,4 +443,12 @@ export interface Env {
   // --- Plain vars (.dev.vars / [vars]) ---
   /** "true" to force arbitration on when configured. */
   ARBITRATION_ENABLED?: string;
+  /** Cross-app import guardrails. Tune down for lean/free-compatible runs. */
+  IMPORT_MAX_BYTES?: string;
+  IMPORT_MAX_REFS?: string;
+  IMPORT_MAX_SPX?: string;
+  IMPORT_MAX_PRICES?: string;
+  IMPORT_MAX_CLOSES_PER_TICKER?: string;
+  IMPORT_MAX_INSIDER?: string;
+  IMPORT_MAX_SHORT_VOLUME?: string;
 }

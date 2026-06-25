@@ -28,4 +28,33 @@ describe('buildFmpProvider fetchRef — tier-error surfacing', () => {
     expect(ref?.companyName).toBe('Apple');
     expect(ref?.sector).toBe('Technology');
   });
+
+  it('maps the /stable/ field shape (marketCap; exchange = short, exchangeFullName = full)', async () => {
+    const ref = await buildFmpProvider(
+      'k',
+      fetchWith(200, [
+        {
+          symbol: 'AAPL',
+          companyName: 'Apple Inc.',
+          sector: 'Technology',
+          marketCap: 4322488870800,
+          exchange: 'NASDAQ',
+          exchangeFullName: 'NASDAQ Global Select',
+          country: 'US',
+        },
+      ]),
+    ).fetchRef('AAPL');
+    expect(ref?.marketCap).toBe(4322488870800);
+    expect(ref?.marketCapBucket).toBe('mega');
+    expect(ref?.exchangeShort).toBe('NASDAQ');
+    expect(ref?.exchange).toBe('NASDAQ Global Select');
+  });
+
+  it('treats FMP\'s { "Error Message" } object (non-array) as no data', async () => {
+    const ref = await buildFmpProvider(
+      'k',
+      fetchWith(200, { 'Error Message': 'Legacy Endpoint : no longer supported' }),
+    ).fetchRef('AAPL');
+    expect(ref).toBeNull();
+  });
 });

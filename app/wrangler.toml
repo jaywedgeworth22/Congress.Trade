@@ -2,6 +2,19 @@ name = "congress-feed"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+# ---------------------------------------------------------------------------
+# Worker runtime limits
+# Paid Workers can run materially larger admin/import jobs than the free plan.
+# Keep explicit ceilings so a bad import cannot turn into an unbounded bill.
+# To run this same Worker on a lean/free-compatible profile later, lower or
+# remove this block and set the IMPORT_* vars below to smaller batches.
+# ---------------------------------------------------------------------------
+[limits]
+cpu_ms = 300_000
+subrequests = 10_000
 
 # ---------------------------------------------------------------------------
 # Custom domains. The congress.trade zone must be active on this Cloudflare
@@ -10,8 +23,38 @@ compatibility_flags = ["nodejs_compat"]
 # ---------------------------------------------------------------------------
 routes = [
   { pattern = "congress.trade", custom_domain = true },
-  { pattern = "www.congress.trade", custom_domain = true }
+  { pattern = "www.congress.trade", custom_domain = true },
+  { pattern = "admin.congress.trade", custom_domain = true }
 ]
+
+# ---------------------------------------------------------------------------
+# Observability
+# Keep this in config so dashboard changes are not overwritten on deploy.
+# Invocation logs are useful while the app is ingesting/backfilling and while
+# the error rate is being investigated.
+# ---------------------------------------------------------------------------
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
+
+[observability.traces]
+enabled = true
+persist = true
+head_sampling_rate = 0.05
+
+# ---------------------------------------------------------------------------
+# Smart Placement
+# The Worker makes round trips to D1 plus external filing/market/email APIs.
+# Let Cloudflare place invocations where those round trips are fastest.
+# ---------------------------------------------------------------------------
+[placement]
+mode = "smart"
 
 # ---------------------------------------------------------------------------
 # Cron Triggers
@@ -84,6 +127,23 @@ id = "b5554a8cd8b04347baeb80cd160bf1e0"
 # ---------------------------------------------------------------------------
 [vars]
 APP_BASE_URL = "https://congress.trade"
+# Paid-plan import guardrails. These are deliberately below platform maximums:
+# large enough to avoid tiny cross-app chunks, still bounded against runaway
+# JSON parse/DB-batch cost. Lower these vars for a lean/free-compatible profile.
+IMPORT_MAX_BYTES = "1500000"
+IMPORT_MAX_REFS = "2000"
+IMPORT_MAX_SPX = "5000"
+IMPORT_MAX_PRICES = "100"
+IMPORT_MAX_CLOSES_PER_TICKER = "1500"
+IMPORT_MAX_INSIDER = "5000"
+IMPORT_MAX_SHORT_VOLUME = "5000"
+# FMP paid tier (Starter = 300 calls/min). Raise the daily enrichment/price
+# ceiling well above the free-tier default (230) and pace under the per-minute
+# limit, so the daily job uses the paid headroom without tripping 429s. Each
+# run stays within Cloudflare's per-invocation subrequest budget; the backlog
+# clears across at most a couple runs.
+FMP_DAILY_CALL_CAP = "1000"
+FMP_MAX_PER_MINUTE = "250"
 # Stripe premium price ids (not secret) — created 2026-06-22 on the live account.
 STRIPE_PRICE_MONTHLY = "price_1TlHYBEUQUPhZj0SEzG2Qx68"
 STRIPE_PRICE_ANNUAL = "price_1TlHYCEUQUPhZj0SpNVoPb3Z"

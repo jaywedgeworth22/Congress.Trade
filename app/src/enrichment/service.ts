@@ -15,12 +15,64 @@ import { all, run } from '../shared/db';
 import { mergeRefs, remainingBudget } from './compute';
 import { buildFmpProvider } from './fmp';
 import { buildSecProvider } from './sec';
+import {
+  buildMassiveProvider,
+  buildFinnhubProvider,
+  buildTwelveDataProvider,
+  buildIntrinioProvider,
+} from './providers';
 import { createPacer } from '../shared/pace';
-import type { SecurityRef } from './types';
+import type { EnrichmentProvider, SecurityRef } from './types';
 
 const DEFAULT_DAILY_CAP = 230;
 
-type EnvX = Env & { FMP_API_KEY?: string; FMP_DAILY_CALL_CAP?: string };
+type EnvX = Env & {
+  FMP_API_KEY?: string;
+  FMP_DAILY_CALL_CAP?: string;
+  MASSIVE_API_KEY?: string;
+  INTRINIO_API_KEY?: string;
+  TWELVEDATA_API_KEY?: string;
+  FINNHUB_API_KEY?: string;
+};
+
+interface ChainEntry {
+  name: string;
+  provider: EnrichmentProvider;
+  /** True only for FMP, whose calls are metered against the daily budget. */
+  budgeted: boolean;
+}
+
+/**
+ * Quality-ranked enrichment chain (best first), gated by configured keys.
+ * Ranking is from the provider benchmark: FMP has the cleanest, widest profile
+ * coverage; Massive (Polygon) adds reference + market cap + logos; Intrinio and
+ * Twelve Data add classification; Finnhub adds an industry label + a directly-
+ * displayable logo; SEC EDGAR is the always-on, public-domain (free) baseline.
+ * These are NOT mere fallbacks — each fills fields the higher ones lack.
+ */
+function buildEnrichmentChain(env: EnvX, hasFmp: boolean): ChainEntry[] {
+  const chain: ChainEntry[] = [];
+  if (hasFmp) chain.push({ name: 'fmp', provider: buildFmpProvider(env.FMP_API_KEY as string), budgeted: true });
+  if (env.MASSIVE_API_KEY) chain.push({ name: 'massive', provider: buildMassiveProvider(env.MASSIVE_API_KEY), budgeted: false });
+  if (env.INTRINIO_API_KEY) chain.push({ name: 'intrinio', provider: buildIntrinioProvider(env.INTRINIO_API_KEY), budgeted: false });
+  if (env.TWELVEDATA_API_KEY) chain.push({ name: 'twelvedata', provider: buildTwelveDataProvider(env.TWELVEDATA_API_KEY), budgeted: false });
+  if (env.FINNHUB_API_KEY) chain.push({ name: 'finnhub', provider: buildFinnhubProvider(env.FINNHUB_API_KEY), budgeted: false });
+  chain.push({ name: 'edgar', provider: buildSecProvider(), budgeted: false }); // free public-domain baseline, always last
+  return chain;
+}
+
+/** Display-critical coverage: stop walking the chain early once these are set. */
+function isCovered(partials: Array<Partial<SecurityRef>>): boolean {
+  let name = false;
+  let sector = false;
+  let mcap = false;
+  for (const p of partials) {
+    if (p.companyName) name = true;
+    if (p.sector) sector = true;
+    if (p.marketCap != null) mcap = true;
+  }
+  return name && sector && mcap;
+}
 
 function dayKey(now = new Date()): string {
   return 'fmp:calls:' + now.toISOString().slice(0, 10);
@@ -81,6 +133,8 @@ export interface EnrichResult {
   budgetRemaining: number;
   dryRun: boolean;
   errors: string[];
+  /** Refs THIS run enriched (for the App B outbound push — our own fetches only). */
+  shareRefs: SecurityRef[];
 }
 
 /**
@@ -112,44 +166,49 @@ export async function runEnrichment(
     budgetRemaining: fmpBudget,
     dryRun,
     errors: [],
+    shareRefs: [],
   };
   if (selectLimit <= 0) return result;
 
   const tickers = await selectTickersToEnrich(env, selectLimit);
-  const sec = buildSecProvider();
-  const fmp = hasFmp ? buildFmpProvider(envx.FMP_API_KEY as string) : null;
+  const chain = buildEnrichmentChain(envx, hasFmp);
+  const hasKeyedProvider = chain.some((e) => e.name !== 'edgar');
   const pace = createPacer(opts.maxPerMinute);
   let fmpCalls = 0;
 
   for (const ticker of tickers) {
     result.scanned++;
-    const partials = [];
-    try {
-      const secRef = await sec.fetchRef(ticker);
-      if (secRef) partials.push(secRef);
-    } catch (e) {
-      result.errors.push(ticker + ' edgar: ' + (e as Error).message);
-    }
-    if (fmp && fmpCalls < fmpBudget) {
+    // Quality-ranked chain (best first). Each provider fills only what better
+    // ones missed; we stop early once the display-critical fields are covered.
+    const collected: Array<Partial<SecurityRef>> = [];
+    for (const entry of chain) {
+      if (entry.budgeted && fmpCalls >= fmpBudget) continue; // out of FMP budget
       try {
-        await pace();
-        const fmpRef = await fmp.fetchRef(ticker);
-        fmpCalls++;
-        if (fmpRef) partials.push(fmpRef);
+        if (entry.name !== 'edgar') await pace(); // EDGAR is free + unmetered
+        const ref = await entry.provider.fetchRef(ticker);
+        if (entry.budgeted) fmpCalls++;
+        if (ref) collected.push(ref);
       } catch (e) {
-        fmpCalls++; // a failed call still consumes quota
-        result.errors.push(ticker + ' fmp: ' + (e as Error).message);
+        if (entry.budgeted) fmpCalls++; // a failed call still consumes quota
+        result.errors.push(ticker + ' ' + entry.name + ': ' + (e as Error).message);
       }
+      if (isCovered(collected)) break; // display-critical fields satisfied
     }
 
-    if (partials.length === 0) {
+    if (collected.length === 0) {
       result.failures++;
-      // Only "tombstone" (mark enriched_at so we stop retrying) when FMP was
-      // actually consulted — otherwise leave it for a later run once a key exists.
-      if (!dryRun && hasFmp) await upsertEmpty(env, ticker, 'no provider data');
+      // Tombstone (set enriched_at so we stop retrying) only when a keyed
+      // provider was actually consulted; a key-less SEC-only miss stays eligible.
+      if (!dryRun && hasKeyedProvider) await upsertEmpty(env, ticker, 'no provider data');
       continue;
     }
-    if (!dryRun) await upsertRef(env, mergeRefs(ticker, partials));
+    // mergeRefs is last-wins; the chain is best-first, so reverse so the best
+    // provider's non-null fields win.
+    const merged = mergeRefs(ticker, [...collected].reverse());
+    if (!dryRun) {
+      await upsertRef(env, merged);
+      result.shareRefs.push(merged);
+    }
     result.enriched++;
   }
 

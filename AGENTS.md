@@ -68,6 +68,16 @@ Use `npm run dev` for local Wrangler development. Treat `npm run deploy`,
 `npm run deploy:full`, `scripts/ship.sh`, `scripts/provision.sh`, and remote D1
 commands as production-affecting until proven otherwise.
 
+Preview deploys are the default review path after verified app changes. If
+`app/wrangler.preview.toml` exists, run `cd app && npm run preview:deploy` after
+`npm run typecheck` and `npm test` pass, then report the preview URL. If the
+preview config is missing and the user has asked for preview behavior, run
+`cd app && npm run preview:provision` once, then `npm run preview:deploy`.
+Preview resources must stay isolated from production; do not use production D1,
+KV, R2, queues, custom domains, cron triggers, or `app/wrangler.toml` for
+preview work. Production deploys and merges still require explicit user
+approval.
+
 Backfill and ingestion commands can mutate queues, D1, KV, R2, or provider
 state. Do not run remote backfills, queue drains, production crawlers, or
 production ingestion jobs unless the user explicitly asks.

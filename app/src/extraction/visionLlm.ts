@@ -119,10 +119,16 @@ Extract EVERY disclosed transaction row. For each transaction return:
 - assetName: the security/asset name as written.
 - ticker: the stock ticker symbol in UPPERCASE if shown, else null.
 - assetType: short asset-type code/label if shown (e.g. "ST","OP","Stock","Option"), else null.
+- assetTypeName: expanded asset-type name if the document or code is clear, else null.
 - txType: one of "P" (Purchase), "S" (Sale), "E" (Exchange).
 - amountRange: the disclosed amount bracket exactly as printed, e.g. "$1,001 - $15,000" or "$50,000,001 +".
 - isOption: true if the holding is an option/call/put/warrant.
 - capGainsOver200: true only if a ">$200" capital-gains box/flag is checked.
+- filingStatus: row-specific filing status such as "New", if shown.
+- subholding: row-specific account/subholding text, if shown.
+- location: row-specific location text, if shown.
+- description: row-specific description text, if shown.
+- supplementalText: remaining row-specific notes/details that are not already captured; do not include page titles, headers, footers, or generic instructions.
 - confidence: YOUR confidence for this row in [0,1], lowering it when handwriting or scan quality is poor.
 Return ONLY the structured JSON array. Do not guess values you cannot read; use null instead.`;
 
@@ -137,10 +143,16 @@ const RESPONSE_SCHEMA = {
       assetName: { type: 'STRING' },
       ticker: { type: 'STRING', nullable: true },
       assetType: { type: 'STRING', nullable: true },
+      assetTypeName: { type: 'STRING', nullable: true },
       txType: { type: 'STRING', enum: ['P', 'S', 'E'] },
       amountRange: { type: 'STRING', nullable: true },
       isOption: { type: 'BOOLEAN' },
       capGainsOver200: { type: 'BOOLEAN' },
+      filingStatus: { type: 'STRING', nullable: true },
+      subholding: { type: 'STRING', nullable: true },
+      location: { type: 'STRING', nullable: true },
+      description: { type: 'STRING', nullable: true },
+      supplementalText: { type: 'STRING', nullable: true },
       confidence: { type: 'NUMBER' },
     },
     required: ['assetName', 'txType', 'amountRange', 'isOption', 'capGainsOver200'],
@@ -181,10 +193,16 @@ interface ModelTx {
   assetName?: string;
   ticker?: string | null;
   assetType?: string | null;
+  assetTypeName?: string | null;
   txType?: string;
   amountRange?: string | null;
   isOption?: boolean;
   capGainsOver200?: boolean;
+  filingStatus?: string | null;
+  subholding?: string | null;
+  location?: string | null;
+  description?: string | null;
+  supplementalText?: string | null;
   confidence?: number;
 }
 
@@ -221,14 +239,25 @@ export function toParsedTx(m: ModelTx): ParsedTx {
     assetName: (m.assetName ?? '').trim() || (m.ticker ?? '(unknown)'),
     ticker: m.ticker ? m.ticker.trim().toUpperCase() : null,
     assetType: m.assetType ?? null,
+    assetTypeName: cleanNullable(m.assetTypeName),
     txType: normalizeTxType(m.txType),
     amountMin: min,
     amountMax: max,
     isOption: Boolean(m.isOption),
     capGainsOver200: Boolean(m.capGainsOver200),
     rawText: JSON.stringify(m),
+    filingStatus: cleanNullable(m.filingStatus),
+    subholding: cleanNullable(m.subholding),
+    location: cleanNullable(m.location),
+    description: cleanNullable(m.description),
+    supplementalText: cleanNullable(m.supplementalText),
     confidence,
   };
+}
+
+function cleanNullable(value: string | null | undefined): string | null {
+  const cleaned = (value ?? '').trim();
+  return cleaned || null;
 }
 
 function normalizeOwner(raw: string | null | undefined): Owner | null {
