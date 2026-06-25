@@ -46,6 +46,8 @@ import {
   buildPartySplitQuery,
   buildPartySplitOverTimeQuery,
   buildSectorBreakdownQuery,
+  buildSectorFlowQuery,
+  buildMarketCapBreakdownQuery,
   buildSummaryQuery,
   buildTickerLeaderboardQuery,
   buildTickerRecentTradesQuery,
@@ -431,6 +433,56 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         uniqueTickers: num(row.unique_tickers),
       }));
       return meta(f, { count: sectors.length, sectors });
+    });
+    return c.json(data);
+  });
+
+  // --- GET /sector-flow ---------------------------------------------------
+  // REAL GICS sector net flow (securities_ref.sector), unlike /sector-breakdown
+  // which groups by the free-text asset_type. Resolved tickers only.
+  r.get('/sector-flow', async (c) => {
+    const q = c.req.query();
+    const f = commonFromQuery(q);
+    const limit = q.limit ? Number(q.limit) : undefined;
+    const key = cacheKey('sector-flow', { ...f, limit });
+    const data = await cached(c.env, key, 300, async () => {
+      const built = buildSectorFlowQuery({ ...f, limit });
+      const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
+      const sectors = rows.map((row) => ({
+        sector: str(row.sector) ?? 'Unknown',
+        tradeCount: num(row.trade_count),
+        buyCount: num(row.buy_count),
+        sellCount: num(row.sell_count),
+        estVolumeUsd: usd(row.est_volume),
+        estNetFlowUsd: usd(row.est_net_flow),
+        uniqueMembers: num(row.unique_members),
+        uniqueTickers: num(row.unique_tickers),
+      }));
+      return meta(f, { count: sectors.length, sectors, estimatedAmounts: true });
+    });
+    return c.json(data);
+  });
+
+  // --- GET /market-cap-breakdown ------------------------------------------
+  // Net flow + activity by market-cap bucket (mega…nano) — the size tilt.
+  r.get('/market-cap-breakdown', async (c) => {
+    const q = c.req.query();
+    const f = commonFromQuery(q);
+    const key = cacheKey('market-cap-breakdown', f as never);
+    const data = await cached(c.env, key, 300, async () => {
+      const built = buildMarketCapBreakdownQuery(f);
+      const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
+      const buckets = rows.map((row) => ({
+        bucket: str(row.bucket) ?? 'unknown',
+        tradeCount: num(row.trade_count),
+        buyCount: num(row.buy_count),
+        sellCount: num(row.sell_count),
+        estVolumeUsd: usd(row.est_volume),
+        estNetFlowUsd: usd(row.est_net_flow),
+        uniqueMembers: num(row.unique_members),
+        uniqueTickers: num(row.unique_tickers),
+      }));
+      return meta(f, { count: buckets.length, buckets, estimatedAmounts: true });
     });
     return c.json(data);
   });
