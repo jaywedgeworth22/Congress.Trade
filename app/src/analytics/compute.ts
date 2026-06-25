@@ -364,8 +364,31 @@ export interface ConvictionResult {
 
 const BREADTH_REF = 12; // cluster-buys default ceiling
 
+/**
+ * Resolve the conviction direction from net sentiment, with net flow as the
+ * tiebreaker. BUY when buying dominates the directional trade count, SELL when
+ * selling dominates. A perfectly balanced count (netSentiment === 0.5) is NOT
+ * sell — it breaks the tie on net-flow sign, and only when flow is also exactly
+ * balanced (or absent) does it return null. null directional activity → null.
+ * Exported so the route can pick the matching (ticker, tx_type) party cluster.
+ */
+export function convictionDirection(
+  netSentiment: number | null,
+  estNetFlowUsd: number,
+): 'BUY' | 'SELL' | null {
+  if (netSentiment == null) return null;
+  if (netSentiment > 0.5) return 'BUY';
+  if (netSentiment < 0.5) return 'SELL';
+  // Exactly balanced by count — let the dollar flow break the tie.
+  if (estNetFlowUsd > 0) return 'BUY';
+  if (estNetFlowUsd < 0) return 'SELL';
+  return null;
+}
+
 /** Compute the 0-100 conviction score for one ticker+direction. Pure. */
 export function computeConvictionScore(i: ConvictionInput): ConvictionResult {
+  const direction = convictionDirection(i.netSentiment, i.estNetFlowUsd);
+
   const fBreadth = clamp((100 * Math.log(1 + i.memberCount)) / Math.log(1 + BREADTH_REF), 0, 100);
 
   const both = (i.dMembers > 0 ? 1 : 0) + (i.rMembers > 0 ? 1 : 0);
@@ -387,8 +410,14 @@ export function computeConvictionScore(i: ConvictionInput): ConvictionResult {
   const fMomentum =
     100 * clamp((i.deltaCount ?? 0) / 8, 0, 1) * Math.min(1, (i.recentMembers ?? 0) / 3);
 
-  const clippedFlow = clamp(i.estNetFlowUsd, -5_000_000, 5_000_000);
-  const fNetflow = clamp((clippedFlow + 5_000_000) / 10_000_000, 0, 1) * 100;
+  // Net-flow strength is symmetric in the conviction direction: dollars flowing
+  // WITH the signal (inflow for BUY, outflow for SELL) strengthen it; dollars
+  // against it count as 0. Saturates at $5M of supporting flow. (Earlier this
+  // mapped raw signed flow onto [0,100], which scored every SELL's outflow as
+  // weak and biased the composite toward BUY.)
+  const dirSign = direction === 'SELL' ? -1 : 1;
+  const supportingFlow = dirSign * i.estNetFlowUsd;
+  const fNetflow = clamp(supportingFlow / 5_000_000, 0, 1) * 100;
 
   // Additive base — full vs data-gap fallback (drops skill, renormalizes to 0.90).
   const fallback = fSkill == null;
@@ -425,9 +454,6 @@ export function computeConvictionScore(i: ConvictionInput): ConvictionResult {
 
   // Suppress entirely (null, not 0) when there's no real signal in the window.
   if (i.tradeCount < 3) return { score: null, direction: null, fallback, components };
-
-  const direction: 'BUY' | 'SELL' | null =
-    i.netSentiment == null ? null : i.netSentiment > 0.5 && i.estNetFlowUsd >= 0 ? 'BUY' : 'SELL';
 
   return { score: Math.round(clamp(raw, 0, 100)), direction, fallback, components };
 }

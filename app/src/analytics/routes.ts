@@ -63,6 +63,7 @@ import {
   aggregateMemberPerformance,
   aggregateTickerBacktest,
   computeConvictionScore,
+  convictionDirection,
   bracketMidpoint,
   netSentiment,
   round,
@@ -249,21 +250,34 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const limit = Math.max(1, Math.min(100, Math.floor(Number(q.limit) || 40)));
     const key = cacheKey('conviction', { ...f, limit });
     const data = await cached(c.env, key, 300, async () => {
-      const lbQ = buildTickerLeaderboardQuery({ ...f, sort: 'trades', limit: Math.min(200, limit * 3) });
-      const clQ = buildClusterBuysQuery({ ...f, minMembers: 2, limit: 200 });
-      const trQ = buildTrendingQuery({ ...f, limit: 200 });
+      // Conviction is NOT monotonic in trade count (broad bipartisan low-trade
+      // names can outscore the trade-count leaders), so rank over a generous
+      // candidate pool rather than just the top `limit`. The pool and the side
+      // aggregates are capped at the same ceiling (100) so every ranked
+      // candidate has its party/momentum aggregates available — no candidate is
+      // scored with silently-missing components.
+      const POOL_MAX = 100;
+      const pool = Math.min(POOL_MAX, Math.max(60, limit * 3));
+      const lbQ = buildTickerLeaderboardQuery({ ...f, sort: 'trades', limit: pool });
+      const clQ = buildClusterBuysQuery({ ...f, minMembers: 2, limit: POOL_MAX });
+      const trQ = buildTrendingQuery({ ...f, limit: POOL_MAX });
       const [lbRows, clRows, trRows] = await Promise.all([
         all<Record<string, unknown>>(c.env.DB, lbQ.sql, lbQ.params),
         all<Record<string, unknown>>(c.env.DB, clQ.sql, clQ.params),
         all<Record<string, unknown>>(c.env.DB, trQ.sql, trQ.params),
       ]);
-      // Cluster: keep the highest-member row per ticker (best consensus signal).
-      const clByTicker = new Map<string, Record<string, unknown>>();
+      // Cluster rows are per (ticker, tx_type); keep BOTH the buy ('P') and sell
+      // ('S') side so the route can attach the party split for the side the
+      // conviction actually resolves to — not just whichever side had more
+      // members.
+      const clByTickerSide = new Map<string, { P?: Record<string, unknown>; S?: Record<string, unknown> }>();
       for (const row of clRows) {
         const t = str(row.ticker);
         if (!t) continue;
-        const cur = clByTicker.get(t);
-        if (!cur || num(row.member_count) > num(cur.member_count)) clByTicker.set(t, row);
+        const side = str(row.tx_type) === 'S' ? 'S' : 'P';
+        const cur = clByTickerSide.get(t) ?? {};
+        cur[side] = row;
+        clByTickerSide.set(t, cur);
       }
       const trByTicker = new Map<string, Record<string, unknown>>();
       for (const row of trRows) {
@@ -275,15 +289,25 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           const ticker = str(row.ticker);
           const buyCount = num(row.buy_count);
           const sellCount = num(row.sell_count);
-          const cl = ticker ? clByTicker.get(ticker) : undefined;
+          const estNetFlow = num(row.est_net_flow);
+          const sentiment = netSentiment(buyCount, sellCount);
+          // Direction-aware party cluster: pick the side the signal resolves to.
+          const direction = convictionDirection(sentiment, estNetFlow);
+          const sides = ticker ? clByTickerSide.get(ticker) : undefined;
+          const cl = sides ? (direction === 'SELL' ? sides.S : sides.P) : undefined;
           const tr = ticker ? trByTicker.get(ticker) : undefined;
+          // Breadth and trade count use DIRECTIONAL (P/S) activity only — purely
+          // non-directional rows (exchanges, type-changes) must not manufacture
+          // a BUY/SELL conviction.
+          const directionalMembers = num(row.directional_member_count);
+          const directionalTrades = buyCount + sellCount;
           const res = computeConvictionScore({
-            memberCount: num(row.member_count),
+            memberCount: directionalMembers,
             buyCount,
             sellCount,
-            netSentiment: netSentiment(buyCount, sellCount),
-            estNetFlowUsd: num(row.est_net_flow),
-            tradeCount: num(row.trade_count),
+            netSentiment: sentiment,
+            estNetFlowUsd: estNetFlow,
+            tradeCount: directionalTrades,
             dMembers: cl ? num(cl.d_members) : 0,
             rMembers: cl ? num(cl.r_members) : 0,
             deltaCount: tr ? num(tr.recent_count) - num(tr.prior_count) : null,
@@ -297,9 +321,9 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
             convictionScore: res.score,
             direction: res.direction,
             fallback: res.fallback,
-            memberCount: num(row.member_count),
-            tradeCount: num(row.trade_count),
-            netSentiment: netSentiment(buyCount, sellCount),
+            memberCount: directionalMembers,
+            tradeCount: directionalTrades,
+            netSentiment: sentiment,
             estNetFlowUsd: usd(row.est_net_flow),
             parties: { D: cl ? num(cl.d_members) : 0, R: cl ? num(cl.r_members) : 0 },
             components: res.components,

@@ -9,6 +9,7 @@ import {
   aggregateMemberPerformance,
   aggregateTickerBacktest,
   computeConvictionScore,
+  convictionDirection,
   BACKTEST_MIN_N,
   bracketMidpoint,
   idxOnOrBefore,
@@ -329,5 +330,68 @@ describe('computeConvictionScore', () => {
       estNetFlowUsd: -1_000_000,
     });
     expect(r.direction).toBe('SELL');
+  });
+
+  it('treats a perfectly balanced ticker as neutral (no direction), not SELL', () => {
+    // Equal buys/sells with no net dollar flow → genuinely neutral.
+    const r = computeConvictionScore({
+      ...full,
+      buyCount: 10,
+      sellCount: 10,
+      netSentiment: 0.5,
+      estNetFlowUsd: 0,
+    });
+    expect(r.direction).toBeNull();
+  });
+
+  it('scores net-flow symmetrically: a big-outflow SELL matches a big-inflow BUY', () => {
+    // Same magnitude of supporting flow ($4M) should yield the same net-flow
+    // component for a SELL (outflow) as for a BUY (inflow).
+    const buy = computeConvictionScore({
+      ...full,
+      buyCount: 17,
+      sellCount: 3,
+      netSentiment: 0.85,
+      estNetFlowUsd: 4_000_000,
+    });
+    const sell = computeConvictionScore({
+      ...full,
+      buyCount: 3,
+      sellCount: 17,
+      netSentiment: 0.15,
+      estNetFlowUsd: -4_000_000,
+    });
+    expect(buy.direction).toBe('BUY');
+    expect(sell.direction).toBe('SELL');
+    expect(sell.components.netflow).toBe(buy.components.netflow);
+    expect(sell.components.netflow).toBeGreaterThan(0);
+  });
+
+  it('does not credit net-flow that runs against the conviction direction', () => {
+    // Net buying (BUY) but a net dollar OUTflow → flow opposes the signal → 0.
+    const r = computeConvictionScore({
+      ...full,
+      buyCount: 17,
+      sellCount: 3,
+      netSentiment: 0.85,
+      estNetFlowUsd: -4_000_000,
+    });
+    expect(r.direction).toBe('BUY');
+    expect(r.components.netflow).toBe(0);
+  });
+});
+
+describe('convictionDirection', () => {
+  it('is BUY when buying dominates, SELL when selling dominates', () => {
+    expect(convictionDirection(0.75, 0)).toBe('BUY');
+    expect(convictionDirection(0.25, 0)).toBe('SELL');
+  });
+  it('breaks an exact tie on net-flow sign, else null', () => {
+    expect(convictionDirection(0.5, 1)).toBe('BUY');
+    expect(convictionDirection(0.5, -1)).toBe('SELL');
+    expect(convictionDirection(0.5, 0)).toBeNull();
+  });
+  it('is null with no directional activity', () => {
+    expect(convictionDirection(null, 5_000_000)).toBeNull();
   });
 });

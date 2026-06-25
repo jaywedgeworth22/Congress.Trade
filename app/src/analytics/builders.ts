@@ -97,6 +97,7 @@ export function buildTickerLeaderboardQuery(
     'COUNT(*) AS trade_count, ' +
     `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
     'COUNT(DISTINCT t.filer_id) AS member_count, ' +
+    "COUNT(DISTINCT CASE WHEN t.tx_type IN ('P', 'S') THEN t.filer_id END) AS directional_member_count, " +
     `SUM(${MID}) AS est_volume, ` +
     `SUM(${SIGNED}) AS est_net_flow ` +
     ANALYTICS_FROM_JOINS_SECURITIES +
