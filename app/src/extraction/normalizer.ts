@@ -22,6 +22,7 @@ import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../share
 import { all, run, fromBool, parseJson } from '../shared/db';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets';
 import { uuid } from '../shared/ids';
+import { isPlaceholderTicker, resolveTickerDeterministic } from './tickerNormalize';
 
 /**
  * Per-tx confidence at or above this threshold is trusted for auto-publish. If a
@@ -313,7 +314,9 @@ export function scoreFields(
   // Only PENALIZE when a ticker string was supplied but couldn't be resolved
   // (a likely mis-parse). Many disclosures legitimately have no ticker — bonds,
   // real estate, private funds — and that should NOT lower confidence.
-  const hadTickerInput = !!(fields.ticker && fields.ticker.trim());
+  // A dash / "N/A" / blank is a "no ticker" marker, not an unresolved ticker —
+  // treat it like a legitimately symbol-less asset (bond, fund) and don't penalize.
+  const hadTickerInput = !!(fields.ticker && fields.ticker.trim()) && !isPlaceholderTicker(fields.ticker);
   const resolved = resolve(fields.ticker, fields.assetName);
   let ticker = fields.ticker;
   if (resolved) {
@@ -412,7 +415,11 @@ function buildResolver(rows: SecRow[]): TickerResolver {
     // Also try the raw ticker as an alias (sometimes asset name lands in ticker).
     const tl = t.toLowerCase();
     if (tl && byAlias.has(tl)) return byAlias.get(tl)!;
-    return null;
+    // Deterministic fallback: `$`-series strip, punctuation variants, curated
+    // stale→current aliases (probed against the master), then syntactic
+    // acceptance of a well-formed symbol the master doesn't list yet. This is
+    // what clears the dominant `unresolved_ticker` review-queue reason.
+    return resolveTickerDeterministic(t, (sym) => (byTicker.has(sym) ? byTicker.get(sym)! : null));
   };
 }
 
