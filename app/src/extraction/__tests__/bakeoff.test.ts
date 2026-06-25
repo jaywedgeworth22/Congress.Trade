@@ -23,6 +23,8 @@ function r(
     latencyMs: 100,
     rowCount: rowKeys.length,
     rowKeys,
+    avgConfidence: 0,
+    rows: [],
     ...over,
   };
 }
