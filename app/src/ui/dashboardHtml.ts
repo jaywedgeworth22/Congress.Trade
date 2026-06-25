@@ -301,21 +301,42 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* horizontal proportion bar (sectors / lag / party) */
   .hbar { display:flex; align-items:center; gap:10px; margin:7px 0; }
   .hbar .hlabel { width:130px; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .hbar .htrack { flex:1; height:14px; background: var(--panel-2); border:1px solid var(--border); border-radius:7px; overflow:hidden; }
-  .hbar .hfill { height:100%; background: color-mix(in srgb, var(--accent) 70%, transparent); }
-  .hbar .hfill.buy { background: var(--buy); } .hbar .hfill.warn { background: var(--warn); } .hbar .hfill.sell { background: var(--sell); }
+  /* track + fill are shared by .hbar (inline row) and .flowrow (stacked) */
+  .htrack { flex:1; height:14px; background: var(--panel-2); border:1px solid var(--border); border-radius:7px; overflow:hidden; }
+  .hfill { height:100%; background: color-mix(in srgb, var(--accent) 70%, transparent); }
+  .hfill.buy { background: var(--buy); } .hfill.warn { background: var(--warn); } .hfill.sell { background: var(--sell); }
   .hbar .hval { width:120px; text-align:right; font-family: var(--mono); font-size:12px; color: var(--text-dim); }
   .hbar .hval .est-money { font-family: var(--mono); }
-  /* time chart (CSS columns, no chart lib) */
+  /* time chart (CSS columns, no chart lib)
+     Columns flex to fill the container so the chart spans the full width; when
+     there are too many buckets to fit, each keeps a min width and the chart
+     scrolls instead of crushing the bars. */
   .tchart { display:flex; align-items:flex-end; gap:3px; height:180px; overflow-x:auto; padding-top:6px; }
-  .tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:0 0 auto; }
-  .tbars { display:flex; align-items:flex-end; gap:2px; height:150px; }
-  .tbars i { display:block; width:7px; border-radius:2px 2px 0 0; min-height:0; }
+  .tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:1 1 0; min-width:20px; }
+  .tbars { display:flex; align-items:flex-end; justify-content:center; gap:3px; height:150px; }
+  .tbars i { display:block; width:9px; border-radius:2px 2px 0 0; min-height:0; }
   .tbars i.buy { background: var(--buy); } .tbars i.sell { background: var(--sell); }
   .tlbl { font-size:9px; color: var(--text-dim); font-family: var(--mono); white-space:nowrap; }
   .legend { display:flex; gap:14px; font-size:12px; color: var(--text-dim); margin-bottom:6px; }
   .legend .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:middle; }
   .legend .sw.buy { background: var(--buy); } .legend .sw.sell { background: var(--sell); }
+  /* ---- Trends tables: keep numeric cells on one line, let the name column
+     absorb the slack and ellipsis instead of the numbers wrapping ("3 / mbr").
+     The name/member cell is forced narrow (max-width:0 + width:99%) so its
+     inner ellipsis engages; every other cell sizes to its content. ---- */
+  #view-trends td { white-space: nowrap; }
+  #view-trends td:has(.asset-cell), #view-trends td:has(.member-cell) { white-space: normal; width: 99%; max-width: 0; }
+  /* ---- Flow rows (sector / market-cap / party): label + value on a top line,
+     a full-width bar, then the stats chip flush-left beneath — no hard-coded
+     indent, so it stays aligned at every width. ---- */
+  .flowrow { margin: 11px 0; }
+  .flowrow:first-child { margin-top: 2px; }
+  .flowrow .ftop { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
+  .flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .flowrow .fval { flex: 0 0 auto; font-family: var(--mono); font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+  .flowrow .fchip { margin-top: 5px; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
+  /* "politicians" spelled out where there's room; collapses to "mbr" on phones. */
+  .u-abbr { display: none; }
   /* cluster cards */
   .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:12px; }
   .ccard { background: var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:13px 14px; }
@@ -512,6 +533,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .row-flex > input, .row-flex > select, .row-flex > button { width: 100%; min-height: 40px; }
     .sched-row { grid-template-columns: 1fr 1fr; }
     .trend-grid2 { gap: 12px; }
+    /* Narrow the fixed label/value gutters so the proportion bar keeps room. */
+    .hbar .hlabel { width: 92px; font-size: 12px; }
+    .hbar .hval { width: auto; min-width: 56px; }
+    /* Trends tables are dense; on phones drop the 120px buy/sell bar (the "3B / 3S"
+       text stays) and the long company name so the ticker + numeric columns all
+       fit without horizontal scroll. */
+    #view-trends .split { display: none; }
+    #view-trends .split-wrap { gap: 0; }
+    #view-trends .asset-cell .muted { display: none; }
+    #view-trends td:has(.asset-cell) { width: auto; max-width: none; }
+    #view-trends .u-full { display: none; }
+    #view-trends .u-abbr { display: inline; }
+    /* "What Congress Is Trading" is the densest row; on phones drop the gross
+       Approx-Volume column (it's in the KPI strip + the tap-through drawer) so the
+       signed net-flow column isn't clipped. Other tables keep their volume. */
+    #trTickers td.est { display: none; }
     .cluster-grid { grid-template-columns: 1fr; }
     .drawer-panel { top: auto; bottom: 0; height: 88vh; width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; padding: 0 16px calc(18px + env(safe-area-inset-bottom)); }
     .drawer-kv { grid-template-columns: 1fr; gap: 3px; }
@@ -2512,6 +2549,11 @@ function splitBar(buys, sells) {
     '<small>' + buys + 'B / ' + sells + 'S</small></span>';
 }
 function pdot(b) { return b ? '<span class="pdot ' + esc(b) + '"></span>' : ''; }
+/* "politician(s)" — spelled out for consistency with the Politicians KPI. */
+function polFull(n) { n = Number(n || 0); return n + ' politician' + (n === 1 ? '' : 's'); }
+function tickFull(n) { n = Number(n || 0); return n + ' ticker' + (n === 1 ? '' : 's'); }
+/* Table-cell variant: full word where there's room, "mbr" on phones (CSS toggle). */
+function polCell(n) { n = Number(n || 0); return n + ' <span class="u-full">politician' + (n === 1 ? '' : 's') + '</span><span class="u-abbr">mbr</span>'; }
 	function kpi(k, v) { return '<div class="card"><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>'; }
 	function infoLabel(text, tip) {
 	  return esc(text) + ' <span class="info-tip" tabindex="0" aria-label="' + esc(tip) + '" title="' + esc(tip) + '">ⓘ</span>';
@@ -2544,12 +2586,13 @@ function loadTrends() {
 /* Volume bar + buy/sell/breadth/net chip — shared by the sector & cap views. */
 function flowRowHtml(label, r, maxVol, title) {
   var w = Math.round(100 * Number(r.estVolumeUsd || 0) / (maxVol || 1));
-  var breadth = (r.uniqueMembers || 0) + ' mbr · ' + (r.uniqueTickers || 0) + ' tkr';
-  return '<div class="hbar"><div class="hlabel" title="' + esc(title || label) + '">' + esc(label) + '</div>' +
+  var breadth = polFull(r.uniqueMembers) + ' · ' + tickFull(r.uniqueTickers);
+  return '<div class="flowrow">' +
+    '<div class="ftop"><span class="flabel" title="' + esc(title || label) + '">' + esc(label) + '</span>' +
+      '<span class="fval">' + estUsd(r.estVolumeUsd) + '</span></div>' +
     '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
-    '<div class="hval">' + estUsd(r.estVolumeUsd) + '</div></div>' +
-    '<div class="chip" style="margin:-3px 0 9px 130px">' + (r.buyCount || 0) + 'B / ' + (r.sellCount || 0) +
-      'S · ' + esc(breadth) + ' · net ' + netHtml(r.estNetFlowUsd) + '</div>';
+    '<div class="fchip">' + (r.buyCount || 0) + 'B / ' + (r.sellCount || 0) +
+      'S · ' + esc(breadth) + ' · net ' + netHtml(r.estNetFlowUsd) + '</div></div>';
 }
 
 function loadTrSectorFlow() {
@@ -2626,7 +2669,7 @@ function loadTrTickers() {
         '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' +
           esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(r.name) + '</span>' : '') + '</div></div></td>' +
         '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
-        '<td class="muted">' + r.memberCount + ' mbr</td>' +
+        '<td class="muted">' + polCell(r.memberCount) + '</td>' +
         '<td class="est">' + estUsd(r.estVolumeUsd) + '</td>' +
         '<td>' + netHtml(r.estNetFlowUsd) + '</td></tr>';
     }).join('');
@@ -2644,7 +2687,7 @@ function loadTrTrending() {
         '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' + esc(r.ticker) + '</span></div></div></td>' +
         '<td class="muted">' + r.priorCount + ' → ' + r.recentCount + '</td>' +
         '<td class="net pos">▲ ' + r.deltaCount + '</td>' +
-        '<td class="muted">' + r.recentMembers + ' mbr</td></tr>';
+        '<td class="muted">' + polCell(r.recentMembers) + '</td></tr>';
     }).join('');
   }).catch(function (e) { body.innerHTML = stateRow(4, 'Could not load: ' + e.message); });
 }
@@ -2655,7 +2698,7 @@ function loadTrClusters() {
   aGet('cluster-buys?' + trParams() + '&limit=12&minMembers=2').then(function (d) {
     var cs = d.clusters || [];
     el('trClusterHint').textContent = '· ' + cs.length + ' found';
-    if (!cs.length) { box.innerHTML = '<div class="chip">No multi-member consensus in this window — try a longer window or “All Data”.</div>'; return; }
+    if (!cs.length) { box.innerHTML = '<div class="chip">No multi-politician consensus in this window — try a longer window or “All Data”.</div>'; return; }
     box.innerHTML = cs.map(function (c) {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) { return memberAvatarHtml(m.fullName, m.photoUrl); }).join('');
       var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
@@ -2665,7 +2708,7 @@ function loadTrClusters() {
       return '<div class="ccard clickable" data-ticker="' + esc(c.ticker) + '">' +
         '<div class="chead">' + tickerLogoHtml(c.ticker, c.name) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
-        '<div><strong>' + c.memberCount + '</strong> members · ' + c.tradeCount + ' trades' + bip + '</div>' +
+        '<div><strong>' + c.memberCount + '</strong> ' + (c.memberCount === 1 ? 'politician' : 'politicians') + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
         '<div class="chip">' + esc(parties) + '</div>' +
         '<div class="chip">' + esc(range) + ' · ' + estUsd(c.estVolumeUsd) + '</div>' +
         '<div class="faces">' + faces + '</div></div>';
@@ -2732,10 +2775,11 @@ function loadTrParties() {
     box.innerHTML = keys.map(function (k) {
       var v = o[k] || { buys: 0, sells: 0, estVolumeUsd: 0, estNetFlowUsd: 0, members: 0 };
       var w = Math.round(100 * v.estVolumeUsd / maxVol);
-      return '<div class="hbar"><div class="hlabel">' + pdot(k) + esc(names[k]) + '</div>' +
+      return '<div class="flowrow">' +
+        '<div class="ftop"><span class="flabel">' + pdot(k) + esc(names[k]) + '</span>' +
+          '<span class="fval">' + estUsd(v.estVolumeUsd) + '</span></div>' +
         '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
-        '<div class="hval">' + estUsd(v.estVolumeUsd) + '</div></div>' +
-        '<div class="chip" style="margin:-3px 0 9px 130px">' + v.buys + 'B / ' + v.sells + 'S · ' + v.members + ' mbr · net ' + netHtml(v.estNetFlowUsd) + '</div>';
+        '<div class="fchip">' + v.buys + 'B / ' + v.sells + 'S · ' + polFull(v.members) + ' · net ' + netHtml(v.estNetFlowUsd) + '</div></div>';
     }).join('');
   }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
 }
