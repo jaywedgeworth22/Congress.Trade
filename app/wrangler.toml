@@ -144,6 +144,9 @@ IMPORT_MAX_SHORT_VOLUME = "5000"
 # clears across at most a couple runs.
 FMP_DAILY_CALL_CAP = "1000"
 FMP_MAX_PER_MINUTE = "250"
+# Price-history source: "fmp" (default) or "massive" (Polygon aggregates,
+# unlimited on the paid plan, not metered against the FMP budget). Flip to A/B.
+PRICE_PROVIDER = "fmp"
 # Stripe premium price ids (not secret) — created 2026-06-22 on the live account.
 STRIPE_PRICE_MONTHLY = "price_1TlHYBEUQUPhZj0SEzG2Qx68"
 STRIPE_PRICE_ANNUAL = "price_1TlHYCEUQUPhZj0SpNVoPb3Z"

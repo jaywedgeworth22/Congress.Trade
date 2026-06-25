@@ -15,11 +15,39 @@ import { all, get, run } from '../shared/db';
 import { remainingBudget } from '../enrichment/compute';
 import { getDailyUsed, addDailyUsed } from '../enrichment/service';
 import { createPacer } from '../shared/pace';
-import { buildFmpPriceClient } from './fmp';
+import { buildFmpPriceClient, type PriceClient } from './fmp';
+import { buildMassivePriceClient } from './massive';
 import { nearestClose, type Close } from './compute';
 
 const DEFAULT_DAILY_CAP = 230;
-type EnvX = Env & { FMP_API_KEY?: string; FMP_DAILY_CALL_CAP?: string };
+type EnvX = Env & {
+  FMP_API_KEY?: string;
+  FMP_DAILY_CALL_CAP?: string;
+  MASSIVE_API_KEY?: string;
+  /** Which provider supplies price history: 'fmp' (default) or 'massive'. */
+  PRICE_PROVIDER?: string;
+};
+
+interface PricePlan {
+  client: PriceClient;
+  /** True only for FMP, whose calls are metered against the shared daily budget. */
+  fmpBudgeted: boolean;
+}
+
+/**
+ * Pick the price client from PRICE_PROVIDER (default 'fmp'), gated by configured
+ * keys. 'massive' uses Polygon aggregates (unlimited on the paid plan, so it is
+ * NOT metered against the FMP daily budget). Falls back to whichever key exists.
+ */
+function pricePlan(env: EnvX): PricePlan | null {
+  const provider = (env.PRICE_PROVIDER || 'fmp').trim().toLowerCase();
+  if (provider === 'massive' && env.MASSIVE_API_KEY) {
+    return { client: buildMassivePriceClient(env.MASSIVE_API_KEY), fmpBudgeted: false };
+  }
+  if (env.FMP_API_KEY) return { client: buildFmpPriceClient(env.FMP_API_KEY), fmpBudgeted: true };
+  if (env.MASSIVE_API_KEY) return { client: buildMassivePriceClient(env.MASSIVE_API_KEY), fmpBudgeted: false };
+  return null;
+}
 
 function isoDaysAgo(days: number, from = new Date()): string {
   return new Date(from.getTime() - days * 86400000).toISOString().slice(0, 10);
@@ -96,15 +124,17 @@ export async function runPriceRefresh(
     shareSpx: [],
     sharePrices: [],
   };
-  if (!envx.FMP_API_KEY) return result; // price data is FMP-only
+  const plan = pricePlan(envx);
+  if (!plan) return result; // no usable price provider configured
+  const { client, fmpBudgeted } = plan;
 
   const cap = parseInt(envx.FMP_DAILY_CALL_CAP || '', 10) || DEFAULT_DAILY_CAP;
-  const used = await getDailyUsed(env);
-  let budget = remainingBudget(cap, used, opts.max);
+  // Massive isn't metered against the FMP budget; cap its per-run work instead.
+  const used = fmpBudgeted ? await getDailyUsed(env) : 0;
+  let budget = fmpBudgeted ? remainingBudget(cap, used, opts.max) : opts.max ?? cap;
   result.budgetRemaining = budget;
   if (budget <= 0) return result;
 
-  const client = buildFmpPriceClient(envx.FMP_API_KEY);
   const pace = createPacer(opts.maxPerMinute);
   let calls = 0;
 
@@ -197,8 +227,8 @@ export async function runPriceRefresh(
   }
 
   result.fmpCalls = calls;
-  if (!dryRun && calls > 0) await addDailyUsed(env, calls);
-  result.budgetRemaining = remainingBudget(cap, used + calls);
+  if (fmpBudgeted && !dryRun && calls > 0) await addDailyUsed(env, calls);
+  result.budgetRemaining = fmpBudgeted ? remainingBudget(cap, used + calls) : Math.max(0, budget - calls);
   return result;
 }
 
