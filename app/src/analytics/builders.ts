@@ -97,6 +97,9 @@ export function buildTickerLeaderboardQuery(
     'COUNT(*) AS trade_count, ' +
     `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
     'COUNT(DISTINCT t.filer_id) AS member_count, ' +
+    "COUNT(DISTINCT CASE WHEN t.tx_type IN ('P', 'S') THEN t.filer_id END) AS directional_member_count, " +
+    "COUNT(DISTINCT CASE WHEN t.tx_type = 'P' THEN t.filer_id END) AS buy_member_count, " +
+    "COUNT(DISTINCT CASE WHEN t.tx_type = 'S' THEN t.filer_id END) AS sell_member_count, " +
     `SUM(${MID}) AS est_volume, ` +
     `SUM(${SIGNED}) AS est_net_flow ` +
     ANALYTICS_FROM_JOINS_SECURITIES +
@@ -155,7 +158,10 @@ export function buildClusterBuysQuery(
 ): BuiltQuery {
   const { where, params } = buildCommonFilters({ ...p, tickerNotNull: true, txTypes: ['P', 'S'] });
   const minMembers = clampLimit(p.minMembers, 3, 50);
-  const limit = clampLimit(p.limit, 12, 100);
+  // Max 200 so a caller restricting to a candidate ticker set can fetch both the
+  // buy ('P') and sell ('S') cluster row for up to 100 tickers; public callers
+  // pin their own limit (see /cluster-buys).
+  const limit = clampLimit(p.limit, 12, 200);
   const sql =
     'SELECT t.ticker AS ticker, t.tx_type AS tx_type, sm.name AS name, ' +
     'COUNT(DISTINCT t.filer_id) AS member_count, ' +
@@ -215,13 +221,15 @@ export function momentumOffsets(w: Window): { recent: string; priorStart: string
  * keeps the many SELECT-side date references from scrambling param order.
  */
 export function buildTrendingQuery(
-  p: Omit<CommonFilters, 'window'> & { window?: Window; limit?: number },
+  p: Omit<CommonFilters, 'window'> & { window?: Window; limit?: number; bySide?: boolean },
 ): BuiltQuery {
   const w = p.window ?? '30d';
   const { recent, priorStart } = momentumOffsets(w);
   const recentLit = `date('now', '${recent}')`;
   const priorLit = `date('now', '${priorStart}')`;
-  const limit = clampLimit(p.limit, 20, 100);
+  // Max 200 so a bySide caller restricting to a candidate set can fetch both
+  // sides for up to 100 tickers; public callers pin their own limit (see /trending).
+  const limit = clampLimit(p.limit, 20, 200);
 
   // Build filters WITHOUT the window clause (we manage the date range manually).
   const { where, params } = buildCommonFilters({ ...p, window: 'all', tickerNotNull: true });
@@ -233,8 +241,16 @@ export function buildTrendingQuery(
   const recentVol = `SUM(CASE WHEN t.tx_date >= ${recentLit} THEN ${MID} ELSE 0 END)`;
   const recentNet = `SUM(CASE WHEN t.tx_date >= ${recentLit} THEN ${SIGNED} ELSE 0 END)`;
 
+  // `bySide` groups by (ticker, tx_type) so a caller can read momentum for ONE
+  // direction (purchases vs sales) instead of the combined ticker total — the
+  // conviction score needs the rising/falling activity for the side it resolved
+  // to, not a mix where rising buys could feed a SELL signal.
+  const sideSelect = p.bySide ? 't.tx_type AS tx_type, ' : '';
+  const groupBy = p.bySide ? 'GROUP BY t.ticker, t.tx_type ' : 'GROUP BY t.ticker ';
+
   const sql =
     'SELECT t.ticker AS ticker, sm.name AS name, ' +
+    sideSelect +
     `${recentCount} AS recent_count, ` +
     `${priorCount} AS prior_count, ` +
     `${recentMembers} AS recent_members, ` +
@@ -242,7 +258,7 @@ export function buildTrendingQuery(
     `${recentNet} AS recent_net_flow ` +
     ANALYTICS_FROM_JOINS_SECURITIES +
     whereSql(allWhere) +
-    'GROUP BY t.ticker ' +
+    groupBy +
     // Require >=2 recent trades so a single new trade doesn't read as "rising".
     'HAVING recent_count >= 2 ' +
     'ORDER BY (recent_count - prior_count) DESC, recent_count DESC ' +
@@ -479,6 +495,71 @@ export function buildMemberPerformanceLeaderboardQuery(
     `HAVING trade_count >= ${minTrades} ` +
     'ORDER BY avg_excess DESC ' +
     `LIMIT ${limit}`;
+  return { sql, params };
+}
+
+// ---------------------------------------------------------------------------
+// 9b. Conviction realized-skill inputs
+// ---------------------------------------------------------------------------
+
+/**
+ * Distinct (ticker, side, member) rows for the directional trades on a candidate
+ * ticker set in the window — i.e. "who traded each candidate, on which side".
+ * Keyed by tx_type so the conviction rollup can use ONLY the members on the side
+ * the signal resolves to. Caller must chunk `tickers` under D1's 100-bind cap.
+ */
+export function buildConvictionMemberLinksQuery(tickers: string[], p: CommonFilters): BuiltQuery {
+  const { where, params } = buildCommonFilters({ ...p, tickers, txTypes: ['P', 'S'] });
+  const allWhere = ['t.filer_id IS NOT NULL', ...where];
+  const sql =
+    'SELECT DISTINCT t.ticker AS ticker, t.tx_type AS tx_type, t.filer_id AS filer_id ' +
+    ANALYTICS_FROM_JOINS +
+    whereSql(allWhere);
+  return { sql, params };
+}
+
+/**
+ * Per-member realized "skill" over their FULL track record (all-time): scored buy
+ * count, wins (filing-anchored excess vs the S&P > 0), and average excess. Same
+ * EXCESS basis as the performance leaderboard. The window is intentionally OMITTED
+ * (skill is a career track record), but the trade-level source / minConf filters
+ * ARE honored so the skill matches the requested analytics slice (e.g.
+ * ?source=primary won't let seed-dataset buys leak in). Only members with >= 5
+ * scored buys are returned. Caller must chunk `filerIds` under D1's 100-bind cap.
+ */
+export function buildMemberSkillQuery(filerIds: string[], p: CommonFilters): BuiltQuery {
+  const EXCESS =
+    '((sr.current_price / p.price_at_filing) - 1.0) - ((sx.spx_now / p.spx_at_filing) - 1.0)';
+  const where = [
+    't.deprecated_at IS NULL',
+    "t.tx_type = 'P'",
+    't.is_option = 0',
+    'p.price_at_filing IS NOT NULL AND p.price_at_filing > 0',
+    'p.spx_at_filing IS NOT NULL AND p.spx_at_filing > 0',
+    'sr.current_price IS NOT NULL',
+  ];
+  const params: SqlParam[] = [];
+  if (p.source && p.source !== 'all') {
+    where.push('t.source = ?');
+    params.push(p.source);
+  }
+  if (typeof p.minConf === 'number' && Number.isFinite(p.minConf)) {
+    where.push('t.confidence >= ?');
+    params.push(p.minConf);
+  }
+  where.push(`t.filer_id IN (${filerIds.map(() => '?').join(', ')})`);
+  for (const id of filerIds) params.push(id);
+  const sql =
+    'SELECT t.filer_id AS filer_id, COUNT(*) AS scored, ' +
+    `SUM(CASE WHEN ${EXCESS} > 0 THEN 1 ELSE 0 END) AS wins, ` +
+    `AVG(${EXCESS}) AS avg_excess ` +
+    'FROM transactions t ' +
+    'JOIN tx_performance p ON p.tx_id = t.id ' +
+    'JOIN securities_ref sr ON sr.ticker = t.ticker ' +
+    'CROSS JOIN (SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1) sx ' +
+    whereSql(where) +
+    'GROUP BY t.filer_id ' +
+    'HAVING scored >= 5';
   return { sql, params };
 }
 
