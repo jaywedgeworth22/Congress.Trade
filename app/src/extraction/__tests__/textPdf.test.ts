@@ -73,6 +73,28 @@ describe('parseHousePtrText', () => {
     expect(rows[0].assetName).not.toContain('Clerk');
   });
 
+  it('strips truncated single-line House table headers before inline parsing', () => {
+    const rows = parseHousePtrText(
+      'P T R Clerk of the House of Representatives - Legislative Resource Center - B81 Cannon Building - Washington, DC 20515 ' +
+        'F I Name: Hon. Dwight Evans Status: Member State/District: PA03 T ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > ' +
+        'DC General Dynamics Corporation (GD) [ST] P 06/10/2026 06/23/2026 $1,001 - $15,000 F S: New',
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      owner: 'dependent',
+      assetName: 'General Dynamics Corporation',
+      ticker: 'GD',
+      assetType: 'ST',
+      txType: 'P',
+      txDate: '2026-06-10',
+      amountMin: 1001,
+      amountMax: 15000,
+    });
+    expect(rows[0].assetName).not.toContain('Clerk');
+    expect(rows[0].assetName).not.toContain('Transaction Type');
+  });
+
   it('parses Pelosi-style option rows from House PTR text at text confidence', () => {
     const rows = parseHousePtrText(
       'Periodic Transaction Report ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200? ' +
