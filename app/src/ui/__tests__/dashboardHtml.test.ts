@@ -281,4 +281,36 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function reconstructFilingUrl(');
     expect(DASHBOARD_HTML).toContain('public_disc/ptr-pdfs/');
   });
+
+  it('labels every analytics section with its timeframe', () => {
+    expect(DASHBOARD_HTML).toContain('function windowLabel(');
+    expect(DASHBOARD_HTML).toContain('function stampWindowChips(');
+    expect(DASHBOARD_HTML).toContain('stampWindowChips();'); // called in loadTrends
+    expect(DASHBOARD_HTML).toContain('class="tf-h"');
+    expect(DASHBOARD_HTML).toContain('id="trKpisCap"');
+  });
+
+  it('gives Net Flow a tooltip and de-underlines the info marker', () => {
+    expect(DASHBOARD_HTML).toContain("kpiInfo('Net Flow'");
+    expect(DASHBOARD_HTML).toContain('NET_FLOW_TIP');
+    // info-tip marker: no dotted underline, raised toward the top
+    expect(DASHBOARD_HTML).not.toContain('.info-tip { color: var(--text-dim); cursor: help; border-bottom: 1px dotted var(--text-dim); }');
+    expect(DASHBOARD_HTML).toContain('.est-money::first-letter');
+  });
+
+  it('uses skeleton-shimmer loaders in the Trends view', () => {
+    for (const fn of ['function skCards(', 'function skRows(', 'function skBars(', 'function skChart(']) {
+      expect(DASHBOARD_HTML).toContain(fn);
+    }
+    expect(DASHBOARD_HTML).toContain('@keyframes tr-shimmer');
+    expect(DASHBOARD_HTML).toContain('prefers-reduced-motion');
+  });
+
+  it('adds an independent time-range control to the buys/sells chart, anchored to recent', () => {
+    expect(DASHBOARD_HTML).toContain('id="trTimeWin"');
+    expect(DASHBOARD_HTML).toContain('function setTrTimeWin(');
+    expect(DASHBOARD_HTML).toContain('function anchorChartRight(');
+    expect(DASHBOARD_HTML).toContain('function trTimeParams(');
+    expect(DASHBOARD_HTML).toContain('tc.scrollLeft = tc.scrollWidth');
+  });
 });

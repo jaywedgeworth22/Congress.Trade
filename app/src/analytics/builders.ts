@@ -201,9 +201,10 @@ export function buildClusterMembersQuery(
 
 /** Map a window to (recentOffset, priorStartOffset) day modifiers: the recent
  *  period is the window, the prior period is the equal-length span before it.
- *  'all' has no natural prior period, so it falls back to a 30-day comparison. */
+ *  'all' has no natural prior period, so it falls back to a 90-day comparison
+ *  (30d was too short — on sparse data nearly every ticker showed 0→1). */
 export function momentumOffsets(w: Window): { recent: string; priorStart: string } {
-  const d = windowDays(w) ?? 30;
+  const d = windowDays(w) ?? 90;
   return { recent: `-${d} days`, priorStart: `-${2 * d} days` };
 }
 
@@ -242,7 +243,8 @@ export function buildTrendingQuery(
     ANALYTICS_FROM_JOINS_SECURITIES +
     whereSql(allWhere) +
     'GROUP BY t.ticker ' +
-    'HAVING recent_count > 0 ' +
+    // Require >=2 recent trades so a single new trade doesn't read as "rising".
+    'HAVING recent_count >= 2 ' +
     'ORDER BY (recent_count - prior_count) DESC, recent_count DESC ' +
     `LIMIT ${limit}`;
   return { sql, params };
@@ -576,6 +578,9 @@ export function buildMemberStatsQuery(filerId: string, p: CommonFilters): BuiltQ
     'SELECT COUNT(*) AS total_trades, ' +
     `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
     `COUNT(DISTINCT CASE WHEN ${TICKER_RESOLVED_SQL} THEN t.ticker END) AS unique_tickers, ` +
+    // Distinct *assets* counts the resolved ticker, else the reported asset name,
+    // so members whose holdings are bonds/funds (ticker NULL) don't show 0.
+    `COUNT(DISTINCT COALESCE(CASE WHEN ${TICKER_RESOLVED_SQL} THEN t.ticker END, NULLIF(t.asset_name, ''))) AS unique_assets, ` +
     `SUM(${MID}) AS est_volume, SUM(${SIGNED}) AS est_net_flow, ` +
     `${lag} AS avg_lag_days, ` +
     'MIN(t.tx_date) AS first_trade, MAX(t.tx_date) AS last_trade ' +

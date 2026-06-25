@@ -765,6 +765,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           buyCount,
           sellCount,
           uniqueTickers: num(s.unique_tickers),
+          uniqueAssets: num(s.unique_assets),
           estVolumeUsd: usd(s.est_volume),
           estNetFlowUsd: usd(s.est_net_flow),
           netSentiment: netSentiment(buyCount, sellCount),

@@ -130,7 +130,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .card .k { color: var(--text-dim); font-size: 12px; }
   .card .v { font-size: 22px; font-weight: 700; margin-top: 4px; }
   .card .v small { font-size: 12px; font-weight: 500; color: var(--text-dim); }
-  .info-tip { color: var(--text-dim); cursor: help; border-bottom: 1px dotted var(--text-dim); }
+  .info-tip { color: var(--text-dim); cursor: help; border-bottom: 0; text-decoration: none; font-size: .82em; line-height: 1; vertical-align: .35em; margin-left: 1px; }
+  .info-tip:hover, .info-tip:focus-visible { color: var(--accent); outline: none; }
   table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
   th, td { text-align: left; padding: 11px 13px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
   th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
@@ -238,6 +239,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-trade-in .dot-sep, .drawer-title-line .dot-sep { margin: 0 6px; opacity: .5; font-weight: 400; }
   /* Tap-to-reveal tooltip popover (phones/tablets can't hover). */
   .tip-pop { position: fixed; z-index: 80; max-width: min(78vw, 320px); background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; line-height: 1.4; box-shadow: 0 10px 30px rgba(0,0,0,.32); }
+  /* Timeframe chips on section headers + the KPI-strip caption. */
+  .tf-chip { font-weight: 400; font-size: .8em; color: var(--text-dim); white-space: nowrap; }
+  .tf-cap  { font-size: 12px; color: var(--text-dim); margin: 0 0 6px; }
+  /* Skeleton shimmer loaders (GPU-composited background animation, no layout shift). */
+  @keyframes tr-shimmer { 100% { background-position: -200% 0; } }
+  .sk { display: inline-block; border-radius: 6px; background: linear-gradient(90deg, var(--panel-2) 25%, color-mix(in srgb, var(--text-dim) 18%, var(--panel-2)) 37%, var(--panel-2) 63%); background-size: 200% 100%; animation: tr-shimmer 1.25s ease-in-out infinite; }
+  .sk-line { height: 12px; width: 100%; margin: 7px 0; }
+  @media (prefers-reduced-motion: reduce) { .sk { animation: none; } }
+  /* Segmented time-range control for the buys/sells chart. */
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { background: transparent; border: 0; border-left: 1px solid var(--border); color: var(--text-dim); font: 600 12px var(--sans); padding: 5px 10px; cursor: pointer; }
+  .seg button:first-child { border-left: 0; }
+  .seg button.on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  .seg button:hover:not(.on) { color: var(--text); }
   .feed-card-meta { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 10px; min-width: 0; }
   .feed-card-meta > div { min-width: 0; }
   .feed-card-meta .mkey { display: block; color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 2px; }
@@ -272,6 +287,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Let the feed toolbar wrap instead of overflowing on tablet widths. */
   @media (min-width: 721px) and (max-width: 900px) { .toolbar { flex-wrap: wrap; } .toolbar input, .toolbar select { flex: 1 1 160px; } }
   .est, .est-money { color: var(--text-dim); }
+  .est-money::first-letter { font-size: .82em; vertical-align: .3em; margin-right: .5px; }
   .pdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; background: var(--text-dim); }
   .pdot.D { background:#3b82f6; } .pdot.R { background:#ef4444; } .pdot.O { background:#a78bfa; }
   .rank { color: var(--text-dim); font-family: var(--mono); font-size:12px; width:22px; text-align:right; }
@@ -637,6 +653,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
 
     <!-- KPI strip -->
+    <div class="tf-cap">Snapshot · <span id="trKpisCap">All Time</span></div>
     <div class="grid-cards" id="trKpis">
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
     </div>
@@ -644,7 +661,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- What Congress is trading + Heating up -->
     <div class="trend-grid2">
       <div class="section">
-        <h3>What Congress Is Trading</h3>
+        <h3 class="tf-h">What Congress Is Trading</h3>
         <p class="sub">Most-traded tickers in the window. Click a row for a deep dive. Bar = buy / sell mix.</p>
         <div class="row-flex" style="margin:-6px 0 12px">
           <label class="lbl">Rank By</label>
@@ -658,7 +675,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="table-wrap"><table><tbody id="trTickers"></tbody></table></div>
       </div>
       <div class="section">
-        <h3>Rising Activity</h3>
+        <h3 class="tf-h">Rising Activity</h3>
         <p class="sub">Tickers whose disclosed trade count rose most vs the prior equal period. A descriptive view of filing activity — not a forecast.</p>
         <div class="table-wrap"><table><tbody id="trTrending"></tbody></table></div>
       </div>
@@ -666,15 +683,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Consensus / cluster buys -->
     <div class="section">
-      <h3>Consensus Moves <span class="chip" id="trClusterHint"></span></h3>
+      <h3 class="tf-h">Consensus Moves <span class="chip" id="trClusterHint"></span></h3>
       <p class="sub">Tickers where several different members happened to trade the <strong>same direction</strong> in the window. Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination.</p>
       <div class="cluster-grid" id="trClusters"></div>
     </div>
 
     <!-- Buys vs sells over time -->
     <div class="section">
-      <h3>Buys vs Sells Over Time</h3>
-      <p class="sub">Trade counts bucketed by period. The <em>shape</em> — a surge of buying or selling — is the trend.</p>
+      <div class="row-flex" style="justify-content:space-between;align-items:flex-end;gap:10px">
+        <h3 style="margin:0">Buys vs Sells Over Time</h3>
+        <div class="seg" id="trTimeWin" role="group" aria-label="Chart time range">
+          <button type="button" data-w="365d" onclick="setTrTimeWin('365d')">1Y</button>
+          <button type="button" data-w="1095d" onclick="setTrTimeWin('1095d')">3Y</button>
+          <button type="button" data-w="1825d" onclick="setTrTimeWin('1825d')">5Y</button>
+          <button type="button" data-w="3650d" onclick="setTrTimeWin('3650d')">10Y</button>
+          <button type="button" data-w="all" class="on" onclick="setTrTimeWin('all')">Max</button>
+        </div>
+      </div>
+      <p class="sub">Trade counts bucketed by period (own time range, independent of the page window). The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.</p>
       <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
       <div id="trTime"></div>
     </div>
@@ -682,12 +708,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Real GICS sector flow + market-cap size tilt (securities_ref-backed) -->
     <div class="trend-grid2">
       <div class="section">
-        <h3>Net Flow by Sector</h3>
+        <h3 class="tf-h">Net Flow by Sector</h3>
         <p class="sub">Real <strong>GICS sectors</strong> (from enriched security reference data), ranked by estimated volume. Bar = volume; chip shows buy/sell mix, breadth, and signed net $ flow.</p>
         <div id="trSectorFlow"></div>
       </div>
       <div class="section">
-        <h3>By Market Cap</h3>
+        <h3 class="tf-h">By Market Cap</h3>
         <p class="sub">The size tilt — net flow and activity across market-cap buckets (mega → nano). Cap tracks the daily close, so it stays current as price moves.</p>
         <div id="trCapFlow"></div>
       </div>
@@ -703,15 +729,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Members + Party -->
     <div class="trend-grid2">
       <div class="section">
-        <h3>Most Active Members</h3>
+        <h3 class="tf-h">Most Active Members</h3>
         <p class="sub">Who is trading the most in the window.</p>
         <div class="table-wrap"><table><tbody id="trMembers"></tbody></table></div>
       </div>
       <div class="section">
-        <h3>By Party</h3>
+        <h3 class="tf-h">By Party</h3>
         <p class="sub">Buy / sell mix and estimated net flow per party (where party is known).</p>
         <div id="trParties"></div>
-        <h3 style="margin-top:18px">By Asset Type</h3>
+        <h3 class="tf-h" style="margin-top:18px">By Asset Type</h3>
         <p class="sub">Share of estimated volume by instrument type.</p>
         <div id="trSectors"></div>
       </div>
@@ -1153,6 +1179,30 @@ function stateRow(cols, text) {
 }
 function stateCards(text) {
   return '<div class="feed-card state">' + esc(text) + '</div>';
+}
+/* Skeleton-shimmer loading placeholders (shape-matched, no layout shift). */
+function skCards(n) {
+  var out = ''; for (var i = 0; i < (n || 6); i++)
+    out += '<div class="card"><div class="sk sk-line" style="width:55%"></div><div class="sk sk-line" style="height:20px;width:70%"></div></div>';
+  return out;
+}
+function skRows(cols, n) {
+  var out = ''; for (var i = 0; i < (n || 5); i++)
+    out += '<tr><td colspan="' + cols + '"><div class="sk sk-line"></div></td></tr>';
+  return out;
+}
+function skBars(n) {
+  var out = ''; for (var i = 0; i < (n || 4); i++)
+    out += '<div class="hbar"><div class="hlabel"><div class="sk sk-line" style="width:80px;margin:0"></div></div>' +
+      '<div class="htrack"><div class="sk" style="height:14px;width:' + (40 + (i * 13) % 50) + '%"></div></div></div>';
+  return out;
+}
+function skChart() {
+  var bars = ''; for (var i = 0; i < 24; i++) {
+    var h = 30 + ((i * 37) % 70);
+    bars += '<div class="tcol"><div class="tbars"><i class="sk" style="display:block;width:7px;height:' + h + '%"></i></div></div>';
+  }
+  return '<div class="tchart">' + bars + '</div>';
 }
 
 /* Admin surfaces (Review Queue / Subscriptions / Admin · Cadence) call
@@ -2406,12 +2456,29 @@ function loadDiagnostics() {
 	   values are ESTIMATES from STOCK Act bracket midpoints (labelled with ~). */
 	var EST_VOLUME_TIP = 'Approximate, from STOCK Act amount ranges: closed ranges use the midpoint; the open $50M+ range uses its $50,000,001 floor. Treat as a rough order of magnitude, not an exact figure.';
 	var BUY_PRESSURE_TIP = 'Share of buys among buy+sell trades in the window (buy count / (buys + sells)). A simple trade-count tilt, not dollar-weighted.';
+	var NET_FLOW_TIP = 'Buy dollars minus sell dollars in the selected window, using STOCK Act bracket midpoints ($50M+ uses its floor). A very rough estimate of net direction, not an exact figure.';
+	var NET_FLOW_TIP_ALLTIME = 'Buy dollars minus sell dollars across all disclosed trades for this asset, using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
 function trParams() {
   var p = 'window=' + encodeURIComponent(el('trWindow').value);
   var ch = el('trChamber').value; if (ch) p += '&chamber=' + ch;
   var pa = el('trParty').value; if (pa) p += '&party=' + pa;
   var src = el('trSource').value; if (src && src !== 'all') p += '&source=' + src;
   return p;
+}
+var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'all': 'All Time' };
+function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
+/* Stamp the active timeframe onto every analytics section header (.tf-h) in one
+   central pass, so each panel clearly states which window it reflects. Runs at
+   the top of loadTrends(), which fires on Refresh and on any window change. */
+function stampWindowChips() {
+  var label = windowLabel(el('trWindow').value);
+  var heads = document.querySelectorAll('#view-trends h3.tf-h');
+  for (var i = 0; i < heads.length; i++) {
+    var h = heads[i], chip = h.querySelector('.tf-chip');
+    if (!chip) { chip = document.createElement('span'); chip.className = 'tf-chip'; h.appendChild(chip); }
+    chip.textContent = ' \\u00B7 ' + label;
+  }
+  var cap = el('trKpisCap'); if (cap) cap.textContent = label;
 }
 function aGet(path) {
   return fetch('/api/analytics/' + path).then(function (r) {
@@ -2468,6 +2535,7 @@ function timeChartHtml(series, labelStep) {
 }
 
 function loadTrends() {
+  stampWindowChips();
   loadTrSummary(); loadTrTickers(); loadTrTrending(); loadTrClusters();
   loadTrTime(); loadTrSectorFlow(); loadTrCapFlow(); loadTrPerformers();
   loadTrMembers(); loadTrParties(); loadTrSectors(); loadTrLag();
@@ -2486,7 +2554,7 @@ function flowRowHtml(label, r, maxVol, title) {
 
 function loadTrSectorFlow() {
   var box = el('trSectorFlow');
-  box.innerHTML = '<div class="note">Loading…</div>';
+  box.innerHTML = skBars(5);
   aGet('sector-flow?' + trParams() + '&limit=12').then(function (d) {
     var rows = (d.sectors || []).filter(function (r) { return r.sector && r.sector !== 'Unknown'; });
     if (!rows.length) { box.innerHTML = '<div class="note">No sector-classified trades in this window yet (security reference data fills in as enrichment runs).</div>'; return; }
@@ -2499,7 +2567,7 @@ var CAP_NAMES = { mega: 'Mega Cap', large: 'Large Cap', mid: 'Mid Cap', small: '
 var CAP_ORDER = ['mega', 'large', 'mid', 'small', 'micro', 'nano', 'unknown'];
 function loadTrCapFlow() {
   var box = el('trCapFlow');
-  box.innerHTML = '<div class="note">Loading…</div>';
+  box.innerHTML = skBars(5);
   aGet('market-cap-breakdown?' + trParams()).then(function (d) {
     var rows = (d.buckets || []).filter(function (r) { return (r.buyCount + r.sellCount) > 0; });
     if (!rows.length) { box.innerHTML = '<div class="note">No market-cap-classified trades in this window yet.</div>'; return; }
@@ -2517,7 +2585,7 @@ function pctSigned(n) {
 }
 function loadTrPerformers() {
   var body = el('trPerformers');
-  body.innerHTML = stateRow(5, 'Loading…');
+  body.innerHTML = skRows(5, 6);
   aGet('member-performance?' + trParams() + '&limit=15').then(function (d) {
     var rows = d.members || [];
     if (!rows.length) { body.innerHTML = stateRow(5, 'Not enough priced, filing-anchored buys to rank yet — this fills in as the price cache backfills.'); return; }
@@ -2536,19 +2604,19 @@ function loadTrPerformers() {
 
 function loadTrSummary() {
   var box = el('trKpis');
-  box.innerHTML = kpi('Loading…', '—');
+  box.innerHTML = skCards(6);
   aGet('summary?' + trParams()).then(function (d) {
     var sent = d.netSentiment == null ? '—' : Math.round(d.netSentiment * 100) + '<small>% buys</small>';
     box.innerHTML =
       kpi('Trades', d.totalTrades) + kpi('Politicians', d.uniqueMembers) + kpi('Assets', d.uniqueTickers) +
-	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP) + kpi('Net Flow', netHtml(d.estimatedNetFlowUsd)) +
+	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP) + kpiInfo('Net Flow', netHtml(d.estimatedNetFlowUsd), NET_FLOW_TIP) +
       kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP);
   }).catch(function (e) { box.innerHTML = kpi('Summary', '<span style="font-size:13px">' + esc(e.message) + '</span>'); });
 }
 
 function loadTrTickers() {
   var body = el('trTickers');
-  body.innerHTML = stateRow(6, 'Loading…');
+  body.innerHTML = skRows(6, 6);
   aGet('ticker-leaderboard?' + trParams() + '&sort=' + el('trTickerSort').value + '&limit=15').then(function (d) {
     var rows = d.tickers || [];
     if (!rows.length) { body.innerHTML = stateRow(6, 'No trades in this window.'); return; }
@@ -2567,7 +2635,7 @@ function loadTrTickers() {
 
 function loadTrTrending() {
   var body = el('trTrending');
-  body.innerHTML = stateRow(4, 'Loading…');
+  body.innerHTML = skRows(4, 6);
   aGet('trending?' + trParams() + '&limit=12').then(function (d) {
     var rows = (d.trending || []).filter(function (r) { return r.deltaCount > 0; });
     if (!rows.length) { body.innerHTML = stateRow(4, 'Not enough history to rank momentum.'); return; }
@@ -2605,19 +2673,37 @@ function loadTrClusters() {
   }).catch(function (e) { box.innerHTML = '<div class="chip">Could not load: ' + esc(e.message) + '</div>'; });
 }
 
+/* This chart has its OWN time range (1Y/3Y/5Y/10Y/Max), independent of the page
+   window — a multi-year shape is the point, while the page may be on "Past Month".
+   chamber/party/source stay shared via trParams(); only the window is overridden. */
+var trTimeWindow = 'all';
+function trTimeParams() { return trParams().replace(/window=[^&]*/, 'window=' + encodeURIComponent(trTimeWindow)); }
+function setTrTimeWin(w) {
+  trTimeWindow = w;
+  var btns = el('trTimeWin').querySelectorAll('button');
+  for (var i = 0; i < btns.length; i++) btns[i].className = (btns[i].getAttribute('data-w') === w) ? 'on' : '';
+  loadTrTime();
+}
+/* If the series overflows, pin the scroll to the right so the MOST RECENT dates
+   show first; the oldest sit off-screen left until the user scrolls. */
+function anchorChartRight(box) {
+  var tc = box.querySelector('.tchart');
+  if (tc && tc.scrollWidth > tc.clientWidth) tc.scrollLeft = tc.scrollWidth;
+}
 function loadTrTime() {
   var box = el('trTime');
-  box.innerHTML = '<div class="note">Loading…</div>';
-  aGet('volume-over-time?' + trParams()).then(function (d) {
+  box.innerHTML = skChart();
+  aGet('volume-over-time?' + trTimeParams()).then(function (d) {
     var s = d.series || [];
-    if (!s.length) { box.innerHTML = '<div class="note">No dated trades in this window.</div>'; return; }
+    if (!s.length) { box.innerHTML = '<div class="note">No dated trades in this range.</div>'; return; }
     box.innerHTML = timeChartHtml(s);
+    anchorChartRight(box);
   }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
 }
 
 function loadTrMembers() {
   var body = el('trMembers');
-  body.innerHTML = stateRow(5, 'Loading…');
+  body.innerHTML = skRows(5, 6);
   aGet('member-leaderboard?' + trParams() + '&limit=15').then(function (d) {
     var rows = d.members || [];
     if (!rows.length) { body.innerHTML = stateRow(5, 'No member activity in this window.'); return; }
@@ -2637,7 +2723,7 @@ function loadTrMembers() {
 
 function loadTrParties() {
   var box = el('trParties');
-  box.innerHTML = '<div class="note">Loading…</div>';
+  box.innerHTML = skBars(4);
   aGet('party-split?' + trParams()).then(function (d) {
     var o = d.overall || {}, names = { D: 'Democrat', R: 'Republican', O: 'Other / Ind.' }, keys = ['D', 'R', 'O'];
     var maxVol = 1, any = false;
@@ -2656,7 +2742,7 @@ function loadTrParties() {
 
 function loadTrSectors() {
   var box = el('trSectors');
-  box.innerHTML = '<div class="note">Loading…</div>';
+  box.innerHTML = skBars(4);
   aGet('sector-breakdown?' + trParams() + '&limit=8').then(function (d) {
     var rows = d.sectors || [];
     if (!rows.length) { box.innerHTML = '<div class="note">No data in this window.</div>'; return; }
@@ -2672,7 +2758,7 @@ function loadTrSectors() {
 
 function loadTrLag() {
   var kbox = el('trLagKpis'), dbox = el('trLagDist'), lbox = el('trLateFilers');
-  kbox.innerHTML = ''; dbox.innerHTML = '<div class="note">Loading…</div>'; lbox.innerHTML = stateRow(4, 'Loading…');
+  kbox.innerHTML = ''; dbox.innerHTML = skBars(3); lbox.innerHTML = skRows(4, 4);
   aGet('filing-lag?' + trParams()).then(function (d) {
     var s = d.summary || {};
     kbox.innerHTML =
@@ -2873,7 +2959,7 @@ function openAsset(ticker) {
       '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
       '<div class="drawer-section"><h3>Congressional Activity (All Time)</h3><div class="grid-cards">' +
 	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP) +
-        kpi('Net Flow', netHtml(s.estNetFlowUsd)) + kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP) + '</div>' +
+        kpiInfo('Net Flow', netHtml(s.estNetFlowUsd), NET_FLOW_TIP_ALLTIME) + kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP) + '</div>' +
         '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + '</div>' +
       '<div class="drawer-section"><h3>Performance Since Trades</h3>' + PERF_GATE + '</div>' +
       '<div class="trend-grid2"><div class="drawer-section"><h3>Top Buyers</h3>' + traderList(d.topBuyers, 'buyers') + '</div>' +
@@ -2920,7 +3006,7 @@ function openMember(filerId) {
         '<div><h2 class="drawer-member-name">' + esc(name) + '</h2><p class="dsub" style="margin:0">' + subline + '</p></div></div>' +
       '<div class="drawer-section"><h3>Trade Stats</h3><dl class="drawer-kv">' +
         kvRow('Total Trades', st.totalTrades || 0) + kvRow('Buys / Sells', (st.buyCount || 0) + ' / ' + (st.sellCount || 0)) +
-	        kvRow('Distinct Assets', st.uniqueTickers || 0) + kvRow('Approx. Volume', estUsd(st.estVolumeUsd)) +
+	        kvRow('Distinct Assets', st.uniqueAssets || st.uniqueTickers || 0) + kvRow('Approx. Volume', estUsd(st.estVolumeUsd)) +
         kvRow('Avg. Disclosure Lag', st.avgLagDays == null ? '—' : (Math.round(st.avgLagDays) + ' days')) + '</dl></div>' +
       '<div class="drawer-section"><h3>Committees</h3>' + commHtml + '</div>' +
       '<div class="drawer-section"><h3>Performance vs S&amp;P 500</h3>' + PERF_GATE + '</div>' +

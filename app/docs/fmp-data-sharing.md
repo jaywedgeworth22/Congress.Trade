@@ -265,3 +265,20 @@ Mapping to a typical `CongressTrade`:
   routes): use `npm run migrate:remote`, `npm run deploy:full`, or
   `ADMIN_TOKEN=... bash scripts/ship.sh` depending on the production path chosen
   in `DEPLOY.md`. The plain `npm run migrate` is **local-only**.
+
+## Read-back routes (avoid re-paying for donated data)
+
+These public reads let a sibling app pull back data it (or our enrichment)
+already stored, instead of re-calling a paid provider. All are read-only,
+no-auth, and mirror the `?from=&to=` shape of `/api/market/insider`:
+
+- `GET /api/market/fundamentals/:ticker?from=&to=` → rows of
+  `{ date, peRatio, eps, beta, dividendYield, week52High, week52Low, fcfYield,
+  debtToEquity, epsGrowth, source, updatedAt }` from `fundamentals_eod`.
+- `GET /api/market/analyst/:ticker?from=&to=` → rows of
+  `{ date, rating, targetMean/High/Low/Median, analystCount,
+  strongBuy/buy/hold/sell/strongSell, source, updatedAt }` from `analyst_consensus`.
+
+Consumer side (agentic-trading) should add a top-of-cascade tier in
+`src/lib/data-providers.ts` that reads these before hitting a paid enrichment
+provider — see the cross-app data-sharing plan.

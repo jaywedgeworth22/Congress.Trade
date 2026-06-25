@@ -465,6 +465,73 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
+  // GET /market/fundamentals/:ticker?from=&to= -> cached fundamentals (P/E, EPS,
+  // beta, 52w, FCF yield, debt/equity, EPS growth, dividend yield). Lets a sibling
+  // app read back the fundamentals it (or our enrichment) already stored instead of
+  // re-paying a provider — see docs/fmp-data-sharing.md.
+  r.get('/market/fundamentals/:ticker', async (c) => {
+    const ticker = c.req.param('ticker').toUpperCase();
+    const where = ['ticker = ?'];
+    const params: (string | number)[] = [ticker];
+    const from = c.req.query('from');
+    const to = c.req.query('to');
+    if (from) { where.push('date >= ?'); params.push(from.slice(0, 10)); }
+    if (to) { where.push('date <= ?'); params.push(to.slice(0, 10)); }
+    const rows = await all<{
+      date: string; pe_ratio: number | null; eps: number | null; beta: number | null;
+      dividend_yield: number | null; week52_high: number | null; week52_low: number | null;
+      fcf_yield: number | null; debt_to_equity: number | null; eps_growth: number | null;
+      source: string | null; updated_at: string;
+    }>(
+      c.env.DB,
+      `SELECT date, pe_ratio, eps, beta, dividend_yield, week52_high, week52_low,
+              fcf_yield, debt_to_equity, eps_growth, source, updated_at
+         FROM fundamentals_eod WHERE ${where.join(' AND ')} ORDER BY date ASC`,
+      params,
+    );
+    return c.json({
+      ticker,
+      rows: rows.map((r2) => ({
+        date: r2.date, peRatio: r2.pe_ratio, eps: r2.eps, beta: r2.beta,
+        dividendYield: r2.dividend_yield, week52High: r2.week52_high, week52Low: r2.week52_low,
+        fcfYield: r2.fcf_yield, debtToEquity: r2.debt_to_equity, epsGrowth: r2.eps_growth,
+        source: r2.source, updatedAt: r2.updated_at,
+      })),
+    });
+  });
+
+  // GET /market/analyst/:ticker?from=&to= -> cached analyst consensus + targets.
+  r.get('/market/analyst/:ticker', async (c) => {
+    const ticker = c.req.param('ticker').toUpperCase();
+    const where = ['ticker = ?'];
+    const params: (string | number)[] = [ticker];
+    const from = c.req.query('from');
+    const to = c.req.query('to');
+    if (from) { where.push('date >= ?'); params.push(from.slice(0, 10)); }
+    if (to) { where.push('date <= ?'); params.push(to.slice(0, 10)); }
+    const rows = await all<{
+      date: string; rating: string | null; target_mean: number | null; target_high: number | null;
+      target_low: number | null; target_median: number | null; analyst_count: number | null;
+      strong_buy: number | null; buy: number | null; hold: number | null; sell: number | null;
+      strong_sell: number | null; source: string | null; updated_at: string;
+    }>(
+      c.env.DB,
+      `SELECT date, rating, target_mean, target_high, target_low, target_median, analyst_count,
+              strong_buy, buy, hold, sell, strong_sell, source, updated_at
+         FROM analyst_consensus WHERE ${where.join(' AND ')} ORDER BY date ASC`,
+      params,
+    );
+    return c.json({
+      ticker,
+      rows: rows.map((r2) => ({
+        date: r2.date, rating: r2.rating, targetMean: r2.target_mean, targetHigh: r2.target_high,
+        targetLow: r2.target_low, targetMedian: r2.target_median, analystCount: r2.analyst_count,
+        strongBuy: r2.strong_buy, buy: r2.buy, hold: r2.hold, sell: r2.sell, strongSell: r2.strong_sell,
+        source: r2.source, updatedAt: r2.updated_at,
+      })),
+    });
+  });
+
   // GET /market/short-volume/:ticker?from=&to= -> FINRA short-volume daily.
   r.get('/market/short-volume/:ticker', async (c) => {
     const ticker = c.req.param('ticker').toUpperCase();
