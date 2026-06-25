@@ -257,7 +257,13 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       // candidate pool rather than just the top `limit`.
       const POOL_MAX = 100;
       const pool = Math.min(POOL_MAX, Math.max(60, limit * 3));
-      const lbQ = buildTickerLeaderboardQuery({ ...f, sort: 'trades', limit: pool });
+      // Seed the candidate pool from DIRECTIONAL (P/S) activity only. If we ranked
+      // the unfiltered leaderboard by total trade_count, an exchange-heavy window
+      // could fill the pool with non-directional 'E' tickers that later score null
+      // (sameSideTrades = 0) and drop out — starving real BUY/SELL names and
+      // returning fewer than `limit`. Filtering to P/S makes trade_count (and the
+      // ranking) directional, and a ticker with no P/S simply isn't a candidate.
+      const lbQ = buildTickerLeaderboardQuery({ ...f, txTypes: ['P', 'S'], sort: 'trades', limit: pool });
       const lbRows = await all<Record<string, unknown>>(c.env.DB, lbQ.sql, lbQ.params);
       // Fetch the party + momentum aggregates restricted to THIS candidate set,
       // so every ranked candidate's resolved side is present (a global top-N side
