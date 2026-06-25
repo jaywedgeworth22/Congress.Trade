@@ -36,6 +36,7 @@ import {
   asTickerSort,
   buildClusterBuysQuery,
   buildClusterMembersQuery,
+  buildConflictCandidatesQuery,
   buildFilingLagHistogramQuery,
   buildLateFilersQuery,
   buildMemberLeaderboardQuery,
@@ -72,6 +73,7 @@ import {
   type LagRow,
   type PriceBar,
 } from './compute';
+import { committeeConflict } from './conflicts';
 import { computePerformance } from '../prices/compute';
 import { latestSpxClose } from '../prices/service';
 
@@ -982,6 +984,44 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         currentPrice: row.current_price == null ? null : num(row.current_price),
       }));
       return meta(f, { filerId, performance: aggregateMemberPerformance(perfRows, currentSpx) });
+    });
+    return c.json(data);
+  });
+
+  // --- GET /conflicts ----------------------------------------------------
+  // Committee conflict-of-interest signal: trades where the member sits on a
+  // committee that oversees the traded stock's GICS sector (curated map in
+  // analytics/conflicts.ts). Per-trade flags, newest first. Honors the shared
+  // window/chamber/party/source/minConf filters.
+  r.get('/conflicts', async (c) => {
+    const q = c.req.query();
+    const f = commonFromQuery(q);
+    const limit = Math.max(1, Math.min(500, Math.floor(Number(q.limit) || 100)));
+    const key = cacheKey('conflicts', { ...f, limit });
+    const data = await cached(c.env, key, 300, async () => {
+      const built = buildConflictCandidatesQuery({ ...f, limit: 2000 });
+      const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
+      const conflicts: Array<Record<string, unknown>> = [];
+      for (const row of rows) {
+        const committees = parseJson<string[]>(row.committees, []);
+        const m = committeeConflict(Array.isArray(committees) ? committees : [], str(row.sector));
+        if (!m.conflict) continue;
+        conflicts.push({
+          id: str(row.id),
+          ticker: str(row.ticker),
+          sector: m.sector,
+          txType: str(row.tx_type),
+          txDate: str(row.tx_date),
+          filerId: str(row.filer_id),
+          memberName: str(row.full_name),
+          chamber: str(row.chamber),
+          partyBucket: asPartyBucket(row.party) ?? null,
+          viaCommittees: m.viaCommittees,
+          estAmountUsd: usd(bracketMidpoint(num(row.amount_min) || null, num(row.amount_max) || null)),
+        });
+        if (conflicts.length >= limit) break;
+      }
+      return meta(f, { count: conflicts.length, conflicts });
     });
     return c.json(data);
   });
