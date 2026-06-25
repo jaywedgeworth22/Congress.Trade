@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { matchesFilters, matchesFiltersWithChamber } from '../subscriptions';
+import { matchesFilters, matchesFiltersWithChamber, matchesFiltersWithContext } from '../subscriptions';
 import type { SubscriptionFilters, Transaction } from '../../shared/types';
 
 /** Build a Transaction fixture with sensible defaults, overridable per-test. */
@@ -89,6 +89,26 @@ describe('matchesFilters', () => {
     expect(matchesFilters(tx({ amountMin: null }), { minAmount: 0 })).toBe(true);
   });
 
+  // --- maxAmount ----------------------------------------------------------
+  it('rejects when amountMin > maxAmount, matches at the boundary', () => {
+    expect(matchesFilters(tx({ amountMin: 100_000 }), { maxAmount: 50_000 })).toBe(false);
+    expect(matchesFilters(tx({ amountMin: 50_000 }), { maxAmount: 50_000 })).toBe(true);
+  });
+
+  it('supports a min/max amount range together', () => {
+    const range: SubscriptionFilters = { minAmount: 15_001, maxAmount: 50_000 };
+    expect(matchesFilters(tx({ amountMin: 1_000 }), range)).toBe(false); // below
+    expect(matchesFilters(tx({ amountMin: 50_001 }), range)).toBe(false); // above
+    expect(matchesFilters(tx({ amountMin: 25_000 }), range)).toBe(true); // inside
+  });
+
+  // --- sides[] ------------------------------------------------------------
+  it('filters by transaction side (buys only)', () => {
+    expect(matchesFilters(tx({ txType: 'P' }), { sides: ['P'] })).toBe(true);
+    expect(matchesFilters(tx({ txType: 'S' }), { sides: ['P'] })).toBe(false);
+    expect(matchesFilters(tx({ txType: 'S' }), { sides: ['P', 'S'] })).toBe(true);
+  });
+
   // --- combined (AND semantics) ------------------------------------------
   it('AND-s all clauses; all must pass', () => {
     const filters: SubscriptionFilters = {
@@ -99,6 +119,42 @@ describe('matchesFilters', () => {
     expect(matchesFilters(tx(), filters)).toBe(true);
     // one clause fails -> whole predicate fails
     expect(matchesFilters(tx({ ticker: 'TSLA' }), filters)).toBe(false);
+  });
+});
+
+describe('matchesFiltersWithContext (sector + market cap)', () => {
+  const ctx = (over: Record<string, unknown> = {}) => ({
+    chamber: 'house',
+    sector: 'Technology',
+    marketCapBucket: 'mega',
+    ...over,
+  });
+
+  it('matches when sector is in sectors[]', () => {
+    expect(matchesFiltersWithContext(tx(), { sectors: ['Technology', 'Energy'] }, ctx())).toBe(true);
+  });
+
+  it('rejects when sector not in sectors[], or is unresolved', () => {
+    expect(matchesFiltersWithContext(tx(), { sectors: ['Energy'] }, ctx())).toBe(false);
+    expect(matchesFiltersWithContext(tx(), { sectors: ['Technology'] }, ctx({ sector: null }))).toBe(false);
+  });
+
+  it('matches/rejects by market-cap bucket', () => {
+    expect(matchesFiltersWithContext(tx(), { marketCapBuckets: ['mega', 'large'] }, ctx())).toBe(true);
+    expect(matchesFiltersWithContext(tx(), { marketCapBuckets: ['small'] }, ctx())).toBe(false);
+    expect(matchesFiltersWithContext(tx(), { marketCapBuckets: ['mega'] }, ctx({ marketCapBucket: null }))).toBe(false);
+  });
+
+  it('AND-s context clauses with base + chamber filters', () => {
+    const filters: SubscriptionFilters = {
+      chambers: ['house'],
+      sectors: ['Technology'],
+      marketCapBuckets: ['mega'],
+      sides: ['P'],
+    };
+    expect(matchesFiltersWithContext(tx(), filters, ctx())).toBe(true);
+    expect(matchesFiltersWithContext(tx({ txType: 'S' }), filters, ctx())).toBe(false);
+    expect(matchesFiltersWithContext(tx(), filters, ctx({ marketCapBucket: 'small' }))).toBe(false);
   });
 });
 
