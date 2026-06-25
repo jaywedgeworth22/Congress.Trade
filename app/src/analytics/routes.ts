@@ -37,6 +37,8 @@ import {
   buildClusterBuysQuery,
   buildClusterMembersQuery,
   buildConflictCandidatesQuery,
+  buildConvictionMemberLinksQuery,
+  buildMemberSkillQuery,
   buildFilingLagHistogramQuery,
   buildLateFilersQuery,
   buildMemberLeaderboardQuery,
@@ -65,6 +67,7 @@ import {
   aggregateTickerBacktest,
   computeConvictionScore,
   convictionDirection,
+  type ConvictionSkill,
   bracketMidpoint,
   netSentiment,
   round,
@@ -309,6 +312,56 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         const side = str(row.tx_type) === 'S' ? 'S' : 'P';
         trByTickerSide.set(`${t}|${side}`, row);
       }
+
+      // Realized member-skill rollup per candidate ticker: the members who traded
+      // it (this window) → each member's FULL-track-record realized win-rate /
+      // excess (>= 5 scored buys) → a scoredCount-weighted ConvictionSkill. Tickers
+      // whose members lack enough realized history get no skill row and fall back
+      // (skill = null) — so the factor lights up automatically as price coverage
+      // densifies, without a contract change.
+      const skillByTicker = new Map<string, ConvictionSkill>();
+      if (candidateTickers.length) {
+        const linkQ = buildConvictionMemberLinksQuery(candidateTickers, f);
+        const linkRows = await all<Record<string, unknown>>(c.env.DB, linkQ.sql, linkQ.params);
+        const tickerMembers = new Map<string, string[]>();
+        const allFilers = new Set<string>();
+        for (const row of linkRows) {
+          const t = str(row.ticker);
+          const fid = str(row.filer_id);
+          if (!t || !fid) continue;
+          (tickerMembers.get(t) ?? tickerMembers.set(t, []).get(t)!).push(fid);
+          allFilers.add(fid);
+        }
+        if (allFilers.size) {
+          const skillQ = buildMemberSkillQuery([...allFilers]);
+          const skillRows = await all<Record<string, unknown>>(c.env.DB, skillQ.sql, skillQ.params);
+          const memberSkill = new Map<string, { scored: number; wins: number; avgExcess: number }>();
+          for (const row of skillRows) {
+            const fid = str(row.filer_id);
+            if (fid) memberSkill.set(fid, { scored: num(row.scored), wins: num(row.wins), avgExcess: num(row.avg_excess) });
+          }
+          for (const [t, members] of tickerMembers) {
+            let sumScored = 0;
+            let sumWins = 0; // Σ wins == Σ (scored·winRate) → weighted mean win-rate
+            let sumWeightedExcess = 0;
+            for (const fid of members) {
+              const s = memberSkill.get(fid);
+              if (!s || s.scored <= 0) continue;
+              sumScored += s.scored;
+              sumWins += s.wins;
+              sumWeightedExcess += s.scored * s.avgExcess;
+            }
+            if (sumScored > 0) {
+              skillByTicker.set(t, {
+                wMeanWinRate: sumWins / sumScored,
+                totalScoredCount: sumScored,
+                medianExcessPositive: sumWeightedExcess > 0,
+              });
+            }
+          }
+        }
+      }
+
       const tickers = lbRows
         .map((row) => {
           const ticker = str(row.ticker);
@@ -348,7 +401,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
             deltaCount: tr ? num(tr.recent_count) - num(tr.prior_count) : null,
             recentMembers: tr ? num(tr.recent_members) : null,
             lateShare: null,
-            skill: null,
+            skill: ticker ? skillByTicker.get(ticker) ?? null : null,
           });
           return {
             ticker,

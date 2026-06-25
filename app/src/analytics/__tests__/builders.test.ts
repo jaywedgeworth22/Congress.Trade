@@ -12,6 +12,8 @@ import {
   asTickerSort,
   buildClusterBuysQuery,
   buildClusterMembersQuery,
+  buildConvictionMemberLinksQuery,
+  buildMemberSkillQuery,
   buildFilingLagHistogramQuery,
   buildLateFilersQuery,
   buildMemberLeaderboardQuery,
@@ -196,6 +198,30 @@ describe('buildMarketCapBreakdownQuery', () => {
     expect(q.sql).toContain('LEFT JOIN securities_ref sr ON sr.ticker = t.ticker');
     expect(q.sql).toContain('AS est_net_flow');
     expect(q.sql).toContain('GROUP BY bucket');
+  });
+});
+
+describe('conviction realized-skill inputs', () => {
+  it('buildConvictionMemberLinksQuery: distinct (ticker, member) for the candidate set, P/S only', () => {
+    const q = buildConvictionMemberLinksQuery(['AAPL', 'MSFT'], { window: '90d' });
+    expect(q.sql).toContain('SELECT DISTINCT t.ticker AS ticker, t.filer_id AS filer_id');
+    expect(q.sql).toContain('t.ticker IN (?, ?)');
+    expect(q.sql).toContain('t.tx_type IN (?, ?)');
+    expect(q.sql).toContain('t.filer_id IS NOT NULL');
+    // bind order: window offset, then tx_types, then the ticker IN-list.
+    expect(q.params).toEqual(['-90 days', 'P', 'S', 'AAPL', 'MSFT']);
+  });
+
+  it('buildMemberSkillQuery: per-member scored/wins/avg-excess for the given filers (>=5)', () => {
+    const q = buildMemberSkillQuery(['A1', 'B2', 'C3']);
+    expect(q.sql).toContain('JOIN tx_performance p ON p.tx_id = t.id');
+    expect(q.sql).toContain('COUNT(*) AS scored');
+    expect(q.sql).toContain('AS wins');
+    expect(q.sql).toContain('AS avg_excess');
+    expect(q.sql).toContain("t.tx_type = 'P'");
+    expect(q.sql).toContain('t.filer_id IN (?, ?, ?)');
+    expect(q.sql).toContain('HAVING scored >= 5');
+    expect(q.params).toEqual(['A1', 'B2', 'C3']);
   });
 });
 

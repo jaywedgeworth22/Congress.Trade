@@ -499,6 +499,55 @@ export function buildMemberPerformanceLeaderboardQuery(
 }
 
 // ---------------------------------------------------------------------------
+// 9b. Conviction realized-skill inputs
+// ---------------------------------------------------------------------------
+
+/**
+ * Distinct (ticker, member) pairs for the directional trades on a candidate
+ * ticker set in the window — i.e. "who traded each candidate". Feeds the
+ * per-ticker member-skill rollup for the conviction score.
+ */
+export function buildConvictionMemberLinksQuery(tickers: string[], p: CommonFilters): BuiltQuery {
+  const { where, params } = buildCommonFilters({ ...p, tickers, txTypes: ['P', 'S'] });
+  const allWhere = ['t.filer_id IS NOT NULL', ...where];
+  const sql =
+    'SELECT DISTINCT t.ticker AS ticker, t.filer_id AS filer_id ' +
+    ANALYTICS_FROM_JOINS +
+    whereSql(allWhere);
+  return { sql, params };
+}
+
+/**
+ * Per-member realized "skill" over their FULL track record (all-time, not the
+ * conviction window): scored buy count, wins (filing-anchored excess vs the S&P
+ * > 0), and average excess. Same EXCESS basis as the performance leaderboard.
+ * Restricted to the given members; only those with >= 5 scored buys are returned
+ * (the conviction rollup needs a meaningful sample). `filerIds` is bounded by the
+ * number of members of Congress, so a single IN-list is safe.
+ */
+export function buildMemberSkillQuery(filerIds: string[]): BuiltQuery {
+  const placeholders = filerIds.map(() => '?').join(', ');
+  const EXCESS =
+    '((sr.current_price / p.price_at_filing) - 1.0) - ((sx.spx_now / p.spx_at_filing) - 1.0)';
+  const sql =
+    'SELECT t.filer_id AS filer_id, COUNT(*) AS scored, ' +
+    `SUM(CASE WHEN ${EXCESS} > 0 THEN 1 ELSE 0 END) AS wins, ` +
+    `AVG(${EXCESS}) AS avg_excess ` +
+    'FROM transactions t ' +
+    'JOIN tx_performance p ON p.tx_id = t.id ' +
+    'JOIN securities_ref sr ON sr.ticker = t.ticker ' +
+    'CROSS JOIN (SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1) sx ' +
+    "WHERE t.deprecated_at IS NULL AND t.tx_type = 'P' AND t.is_option = 0 " +
+    'AND p.price_at_filing IS NOT NULL AND p.price_at_filing > 0 ' +
+    'AND p.spx_at_filing IS NOT NULL AND p.spx_at_filing > 0 ' +
+    'AND sr.current_price IS NOT NULL ' +
+    `AND t.filer_id IN (${placeholders}) ` +
+    'GROUP BY t.filer_id ' +
+    'HAVING scored >= 5';
+  return { sql, params: filerIds };
+}
+
+// ---------------------------------------------------------------------------
 // 10. Single-ticker deep dive
 // ---------------------------------------------------------------------------
 
