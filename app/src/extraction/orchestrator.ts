@@ -17,6 +17,7 @@ import type { Env, Filing, DocKind, Chamber, ParsedTx } from '../shared/types';
 import { get, run } from '../shared/db';
 import { buildExtractorPipeline } from '../extractors/types';
 import { normalize } from './normalizer';
+import { enqueueAgreementCheck } from './agreement';
 
 interface FilingRow {
   doc_id: string;
@@ -82,10 +83,21 @@ export async function extractAndNormalize(env: Env, docId: string): Promise<void
   const extracted = await extractParsed(env, docId);
   if (!extracted) return; // missing row / raw object: already recorded as error.
 
-  await normalize(env, extracted.filing, extracted.transactions, {
+  const result = await normalize(env, extracted.filing, extracted.transactions, {
     extractor: extracted.extractor,
     modelVersion: extracted.modelVersion ?? null,
   });
+
+  // Fast path: a doc that just landed in review gets a cross-vendor agreement
+  // check enqueued immediately (self-gates on the flag; the per-minute cron is
+  // the backstop). Best-effort — a failure here must not fail the extraction.
+  if (result.needsReview) {
+    try {
+      await enqueueAgreementCheck(env, extracted.filing.docId, extracted.filing.rawObjectKey);
+    } catch (err) {
+      console.warn('inline agreement enqueue failed:', docId, (err as Error).message);
+    }
+  }
 }
 
 /** Result of re-running extraction (no normalize/persist). */
