@@ -112,14 +112,43 @@ export function buildExportRouter(): Hono<{ Bindings: ExportEnv }> {
     // Return the cron-written manifest if present; otherwise generate today's
     // snapshot inline (back-fill path). A missing past-date snapshot is a 404 —
     // we don't retroactively reconstruct historical days.
-    let manifest = await readManifest(c.env, date);
-    if (!manifest) {
-      if (date !== today) {
-        return c.json({ error: 'snapshot not available for date', date }, 404);
-      }
-      manifest = await runBulkSnapshot(c.env, date);
+    const manifest = await readManifest(c.env, date);
+    if (manifest) return c.json(shapeManifest(manifest, tables));
+    if (date !== today) {
+      return c.json({ error: 'snapshot not available for date', date }, 404);
     }
-    return c.json(shapeManifest(manifest, tables));
+
+    // Inline generation is serialized by a per-date KV lock: a timed-out App B
+    // retry, or the cron racing the first pull, must NOT each page all five D1
+    // tables and write a full R2 run. Acquire the lock; if another run holds it,
+    // return 202 so the client retries shortly rather than kicking a duplicate
+    // export. (KV get→put has a tiny race window, acceptable for this fallback —
+    // the normal path is the cron-written manifest.)
+    const lockKey = `export:bulk:lock:${date}`;
+    let held = false;
+    try {
+      held = !(await c.env.CONFIG_KV.get(lockKey));
+    } catch {
+      held = true; // KV unavailable → don't block the fallback path
+    }
+    if (!held) {
+      return c.json({ status: 'generating', date, retryAfterSec: 30 }, 202);
+    }
+    try {
+      await c.env.CONFIG_KV.put(lockKey, '1', { expirationTtl: 300 });
+    } catch {
+      /* best-effort lock; proceed even if KV write fails */
+    }
+    try {
+      const fresh = await runBulkSnapshot(c.env, date);
+      return c.json(shapeManifest(fresh, tables));
+    } finally {
+      try {
+        await c.env.CONFIG_KV.delete(lockKey);
+      } catch {
+        /* lock self-expires via TTL if delete fails */
+      }
+    }
   });
 
   // --- GET /bulk-snapshot/file -------------------------------------------

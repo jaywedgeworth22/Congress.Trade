@@ -62,6 +62,16 @@ function fakeR2(seed: Record<string, string> = {}) {
   };
 }
 
+function fakeKV(seed: Record<string, string> = {}) {
+  const m = new Map<string, string>(Object.entries(seed));
+  return {
+    store: m,
+    async get(k: string) { return m.get(k) ?? null; },
+    async put(k: string, v: string) { m.set(k, v); },
+    async delete(k: string) { m.delete(k); },
+  };
+}
+
 function req(path: string, env: Record<string, unknown>, token?: string) {
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -142,18 +152,29 @@ describe('GET /api/export/bulk-snapshot — manifest', () => {
     expect((await req('/bulk-snapshot?date=2020-01-01', baseEnv(), TOKEN)).status).toBe(404);
   });
 
-  it('generates today inline when no manifest exists yet', async () => {
+  it('generates today inline when no manifest exists yet (and releases the lock)', async () => {
     const db = fakeDb({
       price_eod: [{ ticker: 'AAPL', date: TODAY, close: 200, volume: 10 }],
       spx_eod: [], securities_ref: [], fundamentals_eod: [], analyst_consensus: [],
     });
     const r2 = fakeR2();
-    const res = await req('/bulk-snapshot', { INGEST_TOKEN: TOKEN, DB: db, RAW_FILES: r2 }, TOKEN);
+    const kv = fakeKV();
+    const res = await req('/bulk-snapshot', { INGEST_TOKEN: TOKEN, DB: db, RAW_FILES: r2, CONFIG_KV: kv }, TOKEN);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { snapshotDate: string; tables: Record<string, { rowCount: number }> };
     expect(body.snapshotDate).toBe(TODAY);
     expect(body.tables.price_eod.rowCount).toBe(1);
     expect(r2.store.has(manifestObjectKey(TODAY))).toBe(true);
+    expect(kv.store.has(`export:bulk:lock:${TODAY}`)).toBe(false); // lock released
+  });
+
+  it('returns 202 while another inline generation holds the per-date lock', async () => {
+    const kv = fakeKV({ [`export:bulk:lock:${TODAY}`]: '1' });
+    const env = { INGEST_TOKEN: TOKEN, DB: fakeDb(), RAW_FILES: fakeR2(), CONFIG_KV: kv };
+    const res = await req('/bulk-snapshot', env, TOKEN);
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { status: string };
+    expect(body.status).toBe('generating');
   });
 });
 

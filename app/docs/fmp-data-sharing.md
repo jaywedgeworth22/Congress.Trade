@@ -340,7 +340,13 @@ Notes for App B:
   manifest's `runId` (or `generatedAt`, or each table's `objectKey`) and re-pull a table
   when that changes; `snapshotDate` alone is not enough to detect a refreshed run.
 - **A missing past date is `404`**; today's snapshot is generated inline on first
-  request if the cron hasn't written it yet.
+  request if the cron hasn't written it yet (serialized by a per-date lock, so a
+  retry won't kick a duplicate export — you may briefly get `202 {status:"generating"}`,
+  just retry after ~30s).
+- **Consistency is EOD-granular, not transactional.** Each table is a forward
+  key-ordered scan, so a row reflects its state when its key was read, not one
+  global instant. For daily end-of-day data this is immaterial and each new daily
+  snapshot supersedes the last — treat a snapshot as "as of `snapshotDate`".
 - **What's NOT here:** the congressional-trade corpus (use the paged
   `/api/transactions` feed), `tx_performance` (derive it from `price_eod`+`spx_eod`),
   and `insider_eod`/`short_volume_eod` (those flow App B → App A, so they're not

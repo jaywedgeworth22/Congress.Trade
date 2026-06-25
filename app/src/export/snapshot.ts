@@ -147,12 +147,22 @@ function keysetAfter(keyCols: readonly string[], cursor: SqlParam[] | null): { c
 /**
  * Page one table out of D1 and stream it to R2 as NDJSON. Uses KEYSET pagination
  * (cursor on the table's unique key) rather than OFFSET, so a concurrent insert
- * between pages can't shift the window and duplicate/skip a row — the dump stays
- * a consistent forward scan for bootstrap consumers. Cuts the UTF-8 byte stream
- * into fixed PART_SIZE multipart parts (R2 requires equal-sized non-final parts);
- * the remainder is the final part; tables under one part use a single PUT. On any
- * failure mid-upload the multipart upload is aborted so no orphaned parts linger.
- * Returns the row count written.
+ * between pages can't shift the window and duplicate/skip a row — the dump is a
+ * forward key-ordered scan. Cuts the UTF-8 byte stream into fixed PART_SIZE
+ * multipart parts (R2 requires equal-sized non-final parts); the remainder is the
+ * final part; tables under one part use a single PUT. On any failure mid-upload
+ * the multipart upload is aborted so no orphaned parts linger. Returns the row
+ * count written.
+ *
+ * Consistency model: each row reflects its state at the instant its KEY was read,
+ * not a single global point in time — the Workers D1 binding has no read-snapshot
+ * spanning the many paged `all()` calls. Keyset already removes the severe
+ * OFFSET-shift duplicate/skip bug; a row whose key sorts after the cursor and is
+ * inserted before that page is reached can still appear, and a late backfill below
+ * the cursor can be missed. For DAILY EOD bootstrap data that smear is immaterial
+ * and self-heals on the next day's snapshot. Stronger point-in-time isolation
+ * would need the D1 Sessions (bookmark) API or a staged table copy — deferred
+ * until a consumer needs it.
  */
 async function writeTableNdjson(
   env: Env,
