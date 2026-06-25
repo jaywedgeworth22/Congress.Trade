@@ -71,15 +71,29 @@ arrays. Send whichever you have:
       "owners": ["Jane Director", "John Officer"] }
   ],
   // FINRA short-volume daily, keyed by ticker+date
-  "shortVolume": [ { "ticker": "AAPL", "date": "2026-06-15", "ratio": 48.3, "elevated": false } ]
+  "shortVolume": [ { "ticker": "AAPL", "date": "2026-06-15", "ratio": 48.3, "elevated": false } ],
+  // Fundamentals daily snapshot, keyed by ticker+date (week52High/Low also
+  // accept the `52wHigh`/`52wLow` aliases)
+  "fundamentals": [
+    { "ticker": "AAPL", "date": "2026-06-15", "peRatio": 30.1, "eps": 6.2, "beta": 1.2,
+      "dividendYield": 0.005, "week52High": 250, "week52Low": 160, "fcfYield": 0.03,
+      "debtToEquity": 1.5, "epsGrowth": 0.08 }
+  ],
+  // Analyst consensus snapshot, keyed by ticker+date
+  "analyst": [
+    { "ticker": "AAPL", "date": "2026-06-15", "rating": "Buy", "targetMean": 240,
+      "targetHigh": 300, "targetLow": 180, "targetMedian": 235, "analystCount": 40,
+      "strongBuy": 20, "buy": 10, "hold": 8, "sell": 2, "strongSell": 0 }
+  ]
 }
 ```
 
 App A upserts `securities_ref` / `spx_eod` / `price_eod` / `insider_eod` /
-`short_volume_eod` and recomputes per-trade performance anchors for any imported
-ticker. Response: `{ ok, refs, spxRows, pricedTickers, priceRows, perfTickers,
-insiderRows, shortVolumeRows, errors }`. All upserts are non-destructive (an
-incoming null never overwrites an existing value).
+`short_volume_eod` / `fundamentals_eod` / `analyst_consensus` and recomputes
+per-trade performance anchors for any imported ticker. Response:
+`{ ok, refs, spxRows, pricedTickers, priceRows, perfTickers, insiderRows,
+shortVolumeRows, fundamentalsRows, analystRows, errors }`. All upserts are
+non-destructive (an incoming null never overwrites an existing value).
 
 **Partial refs are fine.** If the sending app only has some columns (e.g.
 `companyName` / `sector` / `industry` / `marketCap` but no `cik` / `exchange` /
