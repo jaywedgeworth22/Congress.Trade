@@ -307,3 +307,127 @@ export function aggregateTickerBacktest(
   });
   return { tradeCount: cohortDates.length, horizons: out };
 }
+
+// ---------------------------------------------------------------------------
+// Per-ticker composite conviction score (0-100) — expert-panel synthesis
+// ---------------------------------------------------------------------------
+//
+// Distinct-member-consensus base, gated by realized member skill + disclosure
+// integrity, with multiplicative anti-gaming guards and hard thin-sample caps.
+// Built ONLY from fields App A already returns. Returns are direction-aware
+// (buy vs sell conviction). All sub-factors clamp to [0,100]. See PR for the
+// full rationale + worked examples.
+
+const clamp = (n: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, n));
+
+/** Member-skill rollup for the ticker's contributing members (or null = data gap). */
+export interface ConvictionSkill {
+  /** scoredCount-weighted mean winRate over members with scoredCount>=5. */
+  wMeanWinRate: number;
+  /** total scored trades across contributing members (coverage). */
+  totalScoredCount: number;
+  /** aggregate medianExcess > 0 (else skill is capped at 50). */
+  medianExcessPositive: boolean;
+}
+
+export interface ConvictionInput {
+  memberCount: number;
+  buyCount: number;
+  sellCount: number;
+  netSentiment: number | null; // buys/(buys+sells); null = no directional activity
+  estNetFlowUsd: number;
+  tradeCount: number;
+  dMembers: number; // distinct D members (cluster); 0 if none
+  rMembers: number; // distinct R members
+  deltaCount: number | null; // momentum: recent-minus-prior count (trending)
+  recentMembers: number | null;
+  lateShare: number | null; // share of the ticker's trades filed >45d after tx_date; null = unknown
+  skill?: ConvictionSkill | null; // null/undefined => data-gap fallback (drop skill factor)
+}
+
+export interface ConvictionResult {
+  score: number | null; // 0..100; null when suppressed (tradeCount < 3)
+  direction: 'BUY' | 'SELL' | null;
+  fallback: boolean; // true when the no-skill-data fallback weighting was used
+  components: {
+    breadth: number;
+    party: number;
+    skill: number | null;
+    skew: number;
+    momentum: number;
+    netflow: number;
+    base: number;
+    integrityMult: number;
+    dominanceMult: number;
+  };
+}
+
+const BREADTH_REF = 12; // cluster-buys default ceiling
+
+/** Compute the 0-100 conviction score for one ticker+direction. Pure. */
+export function computeConvictionScore(i: ConvictionInput): ConvictionResult {
+  const fBreadth = clamp((100 * Math.log(1 + i.memberCount)) / Math.log(1 + BREADTH_REF), 0, 100);
+
+  const both = (i.dMembers > 0 ? 1 : 0) + (i.rMembers > 0 ? 1 : 0);
+  const fParty = both === 2 ? 100 : both === 1 ? 45 : 0;
+
+  // Member skill rollup (or fallback when sparse).
+  const skillEnough = !!i.skill && i.skill.totalScoredCount >= 3;
+  let fSkill: number | null = null;
+  if (skillEnough && i.skill) {
+    let s = clamp((i.skill.wMeanWinRate - 0.5) / 0.3, 0, 1) * 100;
+    if (!i.skill.medianExcessPositive) s = Math.min(s, 50);
+    fSkill = s * Math.min(1, i.skill.totalScoredCount / 10);
+  }
+
+  const directional = i.buyCount + i.sellCount;
+  const fSkew =
+    i.netSentiment == null ? 0 : Math.abs(i.netSentiment - 0.5) * 2 * Math.min(1, directional / 8) * 100;
+
+  const fMomentum =
+    100 * clamp((i.deltaCount ?? 0) / 8, 0, 1) * Math.min(1, (i.recentMembers ?? 0) / 3);
+
+  const clippedFlow = clamp(i.estNetFlowUsd, -5_000_000, 5_000_000);
+  const fNetflow = clamp((clippedFlow + 5_000_000) / 10_000_000, 0, 1) * 100;
+
+  // Additive base — full vs data-gap fallback (drops skill, renormalizes to 0.90).
+  const fallback = fSkill == null;
+  const base = fallback
+    ? 0.3 * fBreadth + 0.225 * fParty + 0.15 * fSkew + 0.15 * fMomentum + 0.075 * fNetflow
+    : 0.24 * fBreadth + 0.18 * fParty + 0.18 * (fSkill as number) + 0.12 * fSkew + 0.12 * fMomentum + 0.06 * fNetflow;
+
+  // Multiplicative anti-gaming gates.
+  const integrityMult = i.lateShare == null ? 0.9 : clamp(1 - 0.4 * i.lateShare, 0.6, 1);
+  const conc = i.memberCount > 0 ? i.tradeCount / i.memberCount : i.tradeCount;
+  const baseConc = conc > 8 ? 0.65 : conc > 4 ? 0.8 : 1.0;
+  const partyBonus = i.dMembers >= 1 && i.rMembers >= 1 ? 1.08 : 1.0;
+  const dominanceMult = clamp(baseConc * partyBonus, 0.5, 1.0);
+
+  let raw = base * integrityMult * dominanceMult;
+
+  // Hard caps.
+  if (i.memberCount < 2) raw = Math.min(raw, 25);
+  const totalScored = i.skill?.totalScoredCount ?? 0;
+  if (totalScored < 3) raw = Math.min(raw, 60);
+  if (i.netSentiment == null) raw = Math.min(raw, 20);
+
+  const components = {
+    breadth: round(fBreadth, 1),
+    party: fParty,
+    skill: fSkill == null ? null : round(fSkill, 1),
+    skew: round(fSkew, 1),
+    momentum: round(fMomentum, 1),
+    netflow: round(fNetflow, 1),
+    base: round(base, 1),
+    integrityMult: round(integrityMult, 3),
+    dominanceMult: round(dominanceMult, 3),
+  };
+
+  // Suppress entirely (null, not 0) when there's no real signal in the window.
+  if (i.tradeCount < 3) return { score: null, direction: null, fallback, components };
+
+  const direction: 'BUY' | 'SELL' | null =
+    i.netSentiment == null ? null : i.netSentiment > 0.5 && i.estNetFlowUsd >= 0 ? 'BUY' : 'SELL';
+
+  return { score: Math.round(clamp(raw, 0, 100)), direction, fallback, components };
+}

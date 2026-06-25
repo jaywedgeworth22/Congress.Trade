@@ -8,6 +8,7 @@ import { describe, it, expect } from 'vitest';
 import {
   aggregateMemberPerformance,
   aggregateTickerBacktest,
+  computeConvictionScore,
   BACKTEST_MIN_N,
   bracketMidpoint,
   idxOnOrBefore,
@@ -235,5 +236,98 @@ describe('aggregateTickerBacktest', () => {
     expect(h1.medianReturn).toBeCloseTo(0.01, 5); // asset +1%
     expect(h1.medianExcess).toBeCloseTo(0, 5); // SPX also +1% → excess ~0
     expect(h1.winRate).toBeCloseTo(0, 5); // 0 is not > 0
+  });
+});
+
+describe('computeConvictionScore', () => {
+  // Baseline = the panel's full-data worked example (expected ~69, BUY).
+  const full = {
+    memberCount: 8,
+    buyCount: 17,
+    sellCount: 3,
+    netSentiment: 0.85,
+    estNetFlowUsd: 1_000_000,
+    tradeCount: 28,
+    dMembers: 4,
+    rMembers: 3,
+    deltaCount: 6,
+    recentMembers: 4,
+    lateShare: 0.1,
+    skill: { wMeanWinRate: 0.7, totalScoredCount: 30, medianExcessPositive: true },
+  };
+
+  it('scores the full-data example in the panel-predicted range (BUY, ~69)', () => {
+    const r = computeConvictionScore(full);
+    expect(r.direction).toBe('BUY');
+    expect(r.fallback).toBe(false);
+    expect(r.score).toBeGreaterThanOrEqual(62);
+    expect(r.score).toBeLessThanOrEqual(76);
+    expect(r.components.skill).not.toBeNull();
+  });
+
+  it('uses the data-gap fallback (no skill) and caps at 60 when no realized evidence', () => {
+    const r = computeConvictionScore({ ...full, skill: null });
+    expect(r.fallback).toBe(true);
+    expect(r.components.skill).toBeNull();
+    expect(r.score).toBeLessThanOrEqual(60); // totalScoredCount<3 hard cap
+  });
+
+  it('caps a single-member name at 25 (an idea, not conviction)', () => {
+    const r = computeConvictionScore({
+      ...full,
+      memberCount: 1,
+      dMembers: 1,
+      rMembers: 0,
+      skill: null,
+    });
+    expect(r.score).toBeLessThanOrEqual(25);
+  });
+
+  it('suppresses entirely (null score) when tradeCount < 3', () => {
+    const r = computeConvictionScore({ ...full, tradeCount: 2 });
+    expect(r.score).toBeNull();
+  });
+
+  it('caps at 20 and gives no direction when there is no directional activity', () => {
+    const r = computeConvictionScore({
+      ...full,
+      netSentiment: null,
+      buyCount: 0,
+      sellCount: 0,
+    });
+    expect(r.direction).toBeNull();
+    expect(r.score).toBeLessThanOrEqual(20);
+  });
+
+  it('rewards bipartisan consensus over single-party (party factor)', () => {
+    // Moderate inputs so the score sits below the no-skill 60 cap and the party
+    // difference is observable rather than clamped away.
+    const moderate = {
+      memberCount: 4,
+      buyCount: 7,
+      sellCount: 1,
+      netSentiment: 0.875,
+      estNetFlowUsd: 200_000,
+      tradeCount: 8,
+      deltaCount: 2,
+      recentMembers: 2,
+      lateShare: 0.1,
+      skill: null,
+    };
+    const bipartisan = computeConvictionScore({ ...moderate, dMembers: 2, rMembers: 2 });
+    const onePartyOnly = computeConvictionScore({ ...moderate, dMembers: 4, rMembers: 0 });
+    expect(bipartisan.score!).toBeLessThan(60); // below the cap, so the diff shows
+    expect(bipartisan.score!).toBeGreaterThan(onePartyOnly.score!);
+  });
+
+  it('labels SELL conviction when sentiment is net-sell', () => {
+    const r = computeConvictionScore({
+      ...full,
+      buyCount: 3,
+      sellCount: 17,
+      netSentiment: 0.15,
+      estNetFlowUsd: -1_000_000,
+    });
+    expect(r.direction).toBe('SELL');
   });
 });

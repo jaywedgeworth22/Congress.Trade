@@ -62,6 +62,7 @@ import {
 import {
   aggregateMemberPerformance,
   aggregateTickerBacktest,
+  computeConvictionScore,
   bracketMidpoint,
   netSentiment,
   round,
@@ -230,6 +231,84 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         };
       });
       return meta(f, { sort, count: tickers.length, tickers });
+    });
+    return c.json(data);
+  });
+
+  // --- GET /conviction ---------------------------------------------------
+  // Per-ticker composite 0-100 "congressional conviction" score (expert-panel
+  // synthesis, see computeConvictionScore): distinct-member consensus base,
+  // cross-party + skew + momentum + small net-flow, anti-gaming gates, hard
+  // caps, direction-aware. Defaults to a recent window so the ranking reflects
+  // what Congress is actually converging on now. Currently runs the documented
+  // data-gap fallback (member-skill rollup activates as price coverage densifies;
+  // the integrity gate uses the neutral 0.9 until per-ticker filing-lag is wired).
+  r.get('/conviction', async (c) => {
+    const q = c.req.query();
+    const f = commonFromQuery(q);
+    const limit = Math.max(1, Math.min(100, Math.floor(Number(q.limit) || 40)));
+    const key = cacheKey('conviction', { ...f, limit });
+    const data = await cached(c.env, key, 300, async () => {
+      const lbQ = buildTickerLeaderboardQuery({ ...f, sort: 'trades', limit: Math.min(200, limit * 3) });
+      const clQ = buildClusterBuysQuery({ ...f, minMembers: 2, limit: 200 });
+      const trQ = buildTrendingQuery({ ...f, limit: 200 });
+      const [lbRows, clRows, trRows] = await Promise.all([
+        all<Record<string, unknown>>(c.env.DB, lbQ.sql, lbQ.params),
+        all<Record<string, unknown>>(c.env.DB, clQ.sql, clQ.params),
+        all<Record<string, unknown>>(c.env.DB, trQ.sql, trQ.params),
+      ]);
+      // Cluster: keep the highest-member row per ticker (best consensus signal).
+      const clByTicker = new Map<string, Record<string, unknown>>();
+      for (const row of clRows) {
+        const t = str(row.ticker);
+        if (!t) continue;
+        const cur = clByTicker.get(t);
+        if (!cur || num(row.member_count) > num(cur.member_count)) clByTicker.set(t, row);
+      }
+      const trByTicker = new Map<string, Record<string, unknown>>();
+      for (const row of trRows) {
+        const t = str(row.ticker);
+        if (t) trByTicker.set(t, row);
+      }
+      const tickers = lbRows
+        .map((row) => {
+          const ticker = str(row.ticker);
+          const buyCount = num(row.buy_count);
+          const sellCount = num(row.sell_count);
+          const cl = ticker ? clByTicker.get(ticker) : undefined;
+          const tr = ticker ? trByTicker.get(ticker) : undefined;
+          const res = computeConvictionScore({
+            memberCount: num(row.member_count),
+            buyCount,
+            sellCount,
+            netSentiment: netSentiment(buyCount, sellCount),
+            estNetFlowUsd: num(row.est_net_flow),
+            tradeCount: num(row.trade_count),
+            dMembers: cl ? num(cl.d_members) : 0,
+            rMembers: cl ? num(cl.r_members) : 0,
+            deltaCount: tr ? num(tr.recent_count) - num(tr.prior_count) : null,
+            recentMembers: tr ? num(tr.recent_members) : null,
+            lateShare: null,
+            skill: null,
+          });
+          return {
+            ticker,
+            name: str(row.name),
+            convictionScore: res.score,
+            direction: res.direction,
+            fallback: res.fallback,
+            memberCount: num(row.member_count),
+            tradeCount: num(row.trade_count),
+            netSentiment: netSentiment(buyCount, sellCount),
+            estNetFlowUsd: usd(row.est_net_flow),
+            parties: { D: cl ? num(cl.d_members) : 0, R: cl ? num(cl.r_members) : 0 },
+            components: res.components,
+          };
+        })
+        .filter((x) => x.convictionScore != null)
+        .sort((a, b) => (b.convictionScore as number) - (a.convictionScore as number))
+        .slice(0, limit);
+      return meta(f, { scoringVersion: 'v1', count: tickers.length, tickers });
     });
     return c.json(data);
   });
