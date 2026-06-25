@@ -112,6 +112,8 @@ export async function dispatchWebhook(
     console.warn('dispatchWebhook: transaction not found', msg.txId);
     return;
   }
+  // Don't push a retracted (un-published) row, e.g. on a retry after unpublish.
+  if ((txRow as { deprecated_at?: string | null }).deprecated_at) return;
   const tx = mapTransaction(txRow);
 
   // Resolve chamber via the owning filing (Transaction carries no chamber col).
