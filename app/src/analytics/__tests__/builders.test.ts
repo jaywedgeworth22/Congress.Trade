@@ -21,6 +21,8 @@ import {
   buildPartySplitQuery,
   buildPartySplitOverTimeQuery,
   buildSectorBreakdownQuery,
+  buildSectorFlowQuery,
+  buildMarketCapBreakdownQuery,
   buildSummaryQuery,
   buildTickerLeaderboardQuery,
   buildTickerRecentTradesQuery,
@@ -155,6 +157,27 @@ describe('buildSectorBreakdownQuery', () => {
     const q = buildSectorBreakdownQuery({ window: 'all' });
     expect(q.sql).toContain("COALESCE(NULLIF(t.asset_type, ''), 'Unknown') AS asset_type");
     expect(q.sql).toContain('GROUP BY asset_type');
+  });
+});
+
+describe('buildSectorFlowQuery (real GICS sector)', () => {
+  it('groups by securities_ref.sector with signed net flow, resolved tickers only', () => {
+    const q = buildSectorFlowQuery({ window: '90d' });
+    expect(q.sql).toContain("COALESCE(NULLIF(sr.sector, ''), 'Unknown') AS sector");
+    expect(q.sql).toContain('LEFT JOIN securities_ref sr ON sr.ticker = t.ticker');
+    expect(q.sql).toContain('AS est_net_flow');
+    expect(q.sql).toContain('GROUP BY sector');
+    expect(q.sql).toContain("t.ticker IS NOT NULL AND t.ticker <> ''");
+  });
+});
+
+describe('buildMarketCapBreakdownQuery', () => {
+  it('groups by market_cap_bucket with net flow + breadth', () => {
+    const q = buildMarketCapBreakdownQuery({ window: 'all' });
+    expect(q.sql).toContain("COALESCE(NULLIF(sr.market_cap_bucket, ''), 'unknown') AS bucket");
+    expect(q.sql).toContain('LEFT JOIN securities_ref sr ON sr.ticker = t.ticker');
+    expect(q.sql).toContain('AS est_net_flow');
+    expect(q.sql).toContain('GROUP BY bucket');
   });
 });
 
