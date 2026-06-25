@@ -15,6 +15,7 @@ import {
   buildFilingLagHistogramQuery,
   buildLateFilersQuery,
   buildMemberLeaderboardQuery,
+  buildMemberPerformanceQuery,
   buildMemberStatsQuery,
   buildMemberTopTickersQuery,
   buildMemberRecentTradesQuery,
@@ -178,6 +179,15 @@ describe('member deep-dive builders', () => {
     const q = buildMemberStatsQuery('P000197', { window: 'all' });
     expect(q.sql).toContain('t.filer_id = ?');
     expect(q.sql).toContain('AS avg_lag_days');
+    expect(q.params).toEqual(['P000197']);
+  });
+  it('performance query joins tx_performance + securities_ref and filters by filer', () => {
+    const q = buildMemberPerformanceQuery('P000197', { window: 'all' });
+    expect(q.sql).toContain('LEFT JOIN tx_performance txp ON txp.tx_id = t.id');
+    expect(q.sql).toContain('LEFT JOIN securities_ref sr ON sr.ticker = t.ticker');
+    expect(q.sql).toContain('txp.price_at_trade AS price_at_trade');
+    expect(q.sql).toContain('sr.current_price AS current_price');
+    expect(q.sql).toContain('t.filer_id = ?');
     expect(q.params).toEqual(['P000197']);
   });
   it('top tickers exclude null tickers and group by ticker', () => {

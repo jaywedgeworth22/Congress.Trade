@@ -475,6 +475,25 @@ export function buildMemberStatsQuery(filerId: string, p: CommonFilters): BuiltQ
   return { sql, params };
 }
 
+/**
+ * Per-trade performance anchors for one member's trades, backing the realized
+ * "skill" aggregate (see aggregateMemberPerformance). Joins the cached
+ * tx_performance anchor (price + S&P at the trade date) and the security's
+ * current price. Returns every windowed trade; the aggregator excludes options
+ * and unpriced rows so callers can report tradeCount vs scoredCount.
+ */
+export function buildMemberPerformanceQuery(filerId: string, p: CommonFilters): BuiltQuery {
+  const { where, params } = memberFilters(filerId, p);
+  const sql =
+    'SELECT t.is_option AS is_option, txp.price_at_trade AS price_at_trade, ' +
+    'txp.spx_at_trade AS spx_at_trade, sr.current_price AS current_price ' +
+    ANALYTICS_FROM_JOINS +
+    'LEFT JOIN tx_performance txp ON txp.tx_id = t.id ' +
+    'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ' +
+    whereSql(where);
+  return { sql, params };
+}
+
 /** Most-traded tickers for one member. */
 export function buildMemberTopTickersQuery(
   filerId: string,
