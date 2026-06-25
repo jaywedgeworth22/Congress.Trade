@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeConsensusAgreement,
+  extractXaiResponseText,
   parseMistralOcrResponse,
   summarizeModels,
   type BakeoffCandidate,
@@ -136,5 +137,24 @@ describe('parseMistralOcrResponse', () => {
 
   it('throws when there is neither an annotation nor a JSON block', () => {
     expect(() => parseMistralOcrResponse({ pages: [{ markdown: 'plain text only' }] })).toThrow(/no document_annotation/);
+  });
+});
+
+describe('extractXaiResponseText', () => {
+  it('prefers the convenience output_text field', () => {
+    expect(extractXaiResponseText({ output_text: '{"transactions":[]}' })).toBe('{"transactions":[]}');
+  });
+
+  it('concatenates output[].content[].text parts (Responses message shape)', () => {
+    const payload = {
+      output: [
+        { content: [{ type: 'output_text', text: '{"transactions":' }, { type: 'output_text', text: '[{"ticker":"AAPL"}]}' }] },
+      ],
+    };
+    expect(extractXaiResponseText(payload)).toBe('{"transactions":[{"ticker":"AAPL"}]}');
+  });
+
+  it('throws when there is no text in the output', () => {
+    expect(() => extractXaiResponseText({ output: [{ content: [] }] })).toThrow(/no text/);
   });
 });

@@ -2,7 +2,7 @@
  * src/extraction/bakeoff.ts
  *
  * Provider-neutral extraction bake-off. Runs the SAME House PTR PDFs through
- * several vision models (Gemini, OpenAI, Anthropic) using one shared prompt, so
+ * several vision models (Gemini, OpenAI, Anthropic, Mistral, xAI) using one shared prompt, so
  * we can compare extraction quality before committing the whole House corpus to
  * one model. Each provider is a thin raw-`fetch` adapter (matching the existing
  * visionLlm.ts style — no SDK in the Worker); the shared JSON parser turns every
@@ -25,7 +25,7 @@ import {
   VisionLlmExtractor,
 } from './visionLlm';
 
-export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral';
+export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral' | 'xai';
 
 export interface BakeoffCandidate {
   provider: Provider;
@@ -33,14 +33,16 @@ export interface BakeoffCandidate {
 }
 
 /**
- * Provider-neutral default lineup (overridable per request). Four companies:
- * Google, OpenAI, Anthropic, Mistral. `gpt-4o-mini` is intentionally absent —
- * a live bake-off showed it rejects PDF document input outright (instant 4xx).
+ * Provider-neutral default lineup (overridable per request). Five companies:
+ * Google, OpenAI, Anthropic, Mistral, xAI. `gpt-4o-mini` is intentionally
+ * absent — a live bake-off showed it rejects PDF document input outright
+ * (instant 4xx).
  *
- * xAI Grok is NOT included: its vision API takes images only (jpg/png), so a
- * PTR PDF would have to be rasterized to PNG per page first — which a Worker
- * can't do natively. Mistral's `/v1/ocr` accepts a base64 PDF directly, so it
- * is the feasible fourth competitor.
+ * Each provider takes a PDF via its own native path: Gemini/OpenAI/Anthropic as
+ * an inline base64 part, Mistral via `/v1/ocr`, and xAI via the Files API
+ * (upload → `file_id` → attach to a `grok-4.3` `/v1/responses` call; the model's
+ * server-side OCR+vision reads the scan). grok-4.3 is agentic, so it is the
+ * slowest/most expensive candidate — keep bake-off `docIds` small when it's in.
  */
 export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'gemini', model: 'gemini-3.5-flash' },
@@ -48,6 +50,7 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   { provider: 'anthropic', model: 'claude-haiku-4-5' },
   { provider: 'mistral', model: 'mistral-ocr-latest' },
+  { provider: 'xai', model: 'grok-4.3' },
 ];
 
 /** One model's run over one document. */
@@ -90,6 +93,7 @@ function keyFor(env: Env, provider: Provider): string | null {
   if (provider === 'openai') return env.OPENAI_API_KEY ?? null;
   if (provider === 'anthropic') return env.ANTHROPIC_API_KEY ?? null;
   if (provider === 'mistral') return env.MISTRAL_API_KEY ?? null;
+  if (provider === 'xai') return env.XAI_API_KEY ?? null;
   return null;
 }
 
@@ -245,6 +249,69 @@ async function runMistral(model: string, key: string, bytes: ArrayBuffer): Promi
   return parseMistralOcrResponse(await res.json());
 }
 
+/**
+ * Pull the assistant text out of an xAI `/v1/responses` payload. Prefers the
+ * convenience `output_text`, else concatenates the `output[].content[].text`
+ * parts (the Responses-API message shape). Separated for unit testing.
+ */
+export function extractXaiResponseText(payload: unknown): string {
+  const p = (payload ?? {}) as {
+    output_text?: unknown;
+    output?: Array<{ content?: Array<{ text?: string }> }>;
+  };
+  if (typeof p.output_text === 'string' && p.output_text.trim()) return p.output_text.trim();
+  const parts: string[] = [];
+  for (const item of p.output ?? []) {
+    for (const c of item.content ?? []) {
+      if (typeof c.text === 'string') parts.push(c.text);
+    }
+  }
+  const text = parts.join('').trim();
+  if (!text) throw new Error('xai: no text in /v1/responses output');
+  return text;
+}
+
+/**
+ * xAI Grok via the Files API. Unlike the inline-base64 providers, Grok needs the
+ * PDF uploaded first (`POST /v1/files`), then the returned `file_id` attached to
+ * an agentic `/v1/responses` call (grok-4.3), whose server-side OCR+vision reads
+ * the scan. Two round-trips, so it's the slowest candidate.
+ */
+async function runXai(model: string, key: string, bytes: ArrayBuffer): Promise<ParsedTx[]> {
+  // 1) upload the PDF (multipart/form-data; let fetch set the boundary).
+  const form = new FormData();
+  form.append('purpose', 'assistants');
+  form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'ptr.pdf');
+  const up = await fetch('https://api.x.ai/v1/files', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${key}` },
+    body: form,
+  });
+  if (!up.ok) throw new Error(`xai upload ${up.status} ${await safeText(up)}`);
+  const uploaded = (await up.json()) as { id?: string };
+  if (!uploaded.id) throw new Error('xai: upload returned no file id');
+
+  // 2) ask Grok to extract, attaching the uploaded file.
+  const res = await fetch('https://api.x.ai/v1/responses', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      input: [
+        {
+          role: 'user',
+          content: [
+            { type: 'input_text', text: `${SYSTEM_PROMPT}\nReturn ONLY a JSON object {"transactions": [...]} .` },
+            { type: 'input_file', file_id: uploaded.id },
+          ],
+        },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`xai ${res.status} ${await safeText(res)}`);
+  return parseModelJson(extractXaiResponseText(await res.json())).map(toParsedTx);
+}
+
 /** Run one candidate over one document's bytes, timing it and trapping errors. */
 export async function runCandidateOnDoc(
   env: Env,
@@ -272,6 +339,8 @@ export async function runCandidateOnDoc(
       rows = await runOpenAi(model, key, bytes);
     } else if (provider === 'mistral') {
       rows = await runMistral(model, key, bytes);
+    } else if (provider === 'xai') {
+      rows = await runXai(model, key, bytes);
     } else {
       rows = await runAnthropic(model, key, bytes);
     }
