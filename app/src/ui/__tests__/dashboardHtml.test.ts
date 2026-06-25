@@ -273,7 +273,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function toggleDisclaimer(');
     expect(DASHBOARD_HTML).toContain('id="trDisclaimer"');
     expect(DASHBOARD_HTML).toContain('_disclaimerAutoTimer');
-    expect(DASHBOARD_HTML).toContain('class="dt-tagline"');
+    expect(DASHBOARD_HTML).toContain('For Educational Uses (NOT Investment Advice)');
     expect(DASHBOARD_HTML).toContain('tip-pop');
     expect(DASHBOARD_HTML).toContain('(hover: none)');
   });
