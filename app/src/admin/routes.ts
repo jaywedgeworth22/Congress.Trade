@@ -45,7 +45,7 @@ import {
   HARD_FAILURE_FLAGS,
 } from '../extraction/normalizer';
 import { mapFiling, type FilingRow } from '../delivery/rows';
-import { arbitrationRowKey } from '../extractors/types';
+import { processAgreementDoc, type AgreementModels } from '../extraction/agreement';
 import type { Chamber } from '../shared/types';
 import { verifyAccessJwt, certsUrl, parseEmailAllowlist } from './access';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
@@ -1752,69 +1752,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       );
     }
 
-    const sameRowSet = (a: CandidateDocResult, b: CandidateDocResult): boolean => {
-      if (!a.ok || !b.ok || a.rows.length === 0) return false;
-      const ka = new Set(a.rows.map(arbitrationRowKey));
-      const kb = new Set(b.rows.map(arbitrationRowKey));
-      if (ka.size !== kb.size) return false;
-      for (const k of ka) if (!kb.has(k)) return false;
-      return true;
-    };
-
+    const agModels: AgreementModels = { a: mA, b: mB, c: mC };
     const results: Array<Record<string, unknown>> = [];
     let published = 0, wouldPublish = 0, disagree = 0, hardfail = 0, skipped = 0;
 
     for (const { doc_id, raw_object_key } of docRows) {
-      if (!raw_object_key) { results.push({ docId: doc_id, outcome: 'skipped', reason: 'no raw_object_key' }); skipped++; continue; }
-      const obj = await c.env.RAW_FILES.get(raw_object_key);
-      if (!obj) { results.push({ docId: doc_id, outcome: 'skipped', reason: 'R2 object missing' }); skipped++; continue; }
-      const bytes = await obj.arrayBuffer();
-
-      const rA = await runCandidateOnDoc(c.env, mA, doc_id, bytes);
-      const rB = await runCandidateOnDoc(c.env, mB, doc_id, bytes);
-      const rC = mC ? await runCandidateOnDoc(c.env, mC, doc_id, bytes) : null;
-
-      const agree = sameRowSet(rA, rB) && (!rC || (sameRowSet(rA, rC) && sameRowSet(rB, rC)));
-      if (!agree) {
-        results.push({ docId: doc_id, outcome: 'disagree', rows: { [`${mA.provider}`]: rA.ok ? rA.rowCount : 'ERR', [`${mB.provider}`]: rB.ok ? rB.rowCount : 'ERR', ...(mC ? { [`${mC.provider}`]: rC && rC.ok ? rC.rowCount : 'ERR' } : {}) } });
-        disagree++;
-        continue;
-      }
-
-      // Agreed — normalize (resolve tickers + validate brackets) and check for
-      // hard structural failures before trusting the read for publish.
-      const frow = await get<FilingRow>(
-        c.env.DB,
-        `SELECT doc_id, chamber, filer_id, filing_type, filed_date, source_url, raw_object_key,
-                ingest_status, doc_kind, extractor, model_version, confidence, first_seen_at,
-                source_updated_at, error FROM filings WHERE doc_id = ?`,
-        [doc_id],
-      );
-      if (!frow) { results.push({ docId: doc_id, outcome: 'skipped', reason: 'filing row missing' }); skipped++; continue; }
-      const flagged = await recomputeTransactions(c.env, mapFiling(frow), rA.rows);
-      const hardFlags = flagged.flatMap((f) => f.flags).filter((fl) => HARD_FAILURE_FLAGS.includes(fl));
-      if (hardFlags.length) {
-        results.push({ docId: doc_id, outcome: 'agree_but_hardfail', rowCount: rA.rowCount, flags: Array.from(new Set(hardFlags)) });
-        hardfail++;
-        continue;
-      }
-
-      if (dryRun) {
-        results.push({ docId: doc_id, outcome: 'would_publish', rowCount: flagged.length, tickers: flagged.map((f) => f.tx.ticker).filter(Boolean).slice(0, 8) });
-        wouldPublish++;
-        continue;
-      }
-
-      // Publish: agreement overrides the soft confidence cap.
-      const txs = flagged.map((f) => ({ ...f.tx, source: 'primary' as const, confidence: Math.max(f.tx.confidence, 0.95) }));
-      const insertedIds = await persistTransactions(c.env, txs);
-      await run(c.env.DB, "UPDATE filings SET ingest_status = 'persisted', error = NULL WHERE doc_id = ?", [doc_id]);
-      await run(c.env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [doc_id]);
-      for (const txId of insertedIds) {
-        try { await c.env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId }); } catch { /* best-effort fan-out */ }
-      }
-      results.push({ docId: doc_id, outcome: 'published', inserted: insertedIds.length });
-      published++;
+      const res = await processAgreementDoc(c.env, agModels, doc_id, raw_object_key, dryRun);
+      results.push(res as unknown as Record<string, unknown>);
+      if (res.outcome === 'published') published++;
+      else if (res.outcome === 'would_publish') wouldPublish++;
+      else if (res.outcome === 'disagree') disagree++;
+      else if (res.outcome === 'agree_but_hardfail') hardfail++;
+      else skipped++;
     }
 
     return c.json({
@@ -1991,6 +1940,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       "UPDATE transactions SET ticker = 'META' WHERE ticker = 'FB' AND deprecated_at IS NULL",
       "UPDATE securities_ref SET company_name = 'Meta Platforms, Inc.' WHERE ticker = 'META' AND (company_name IS NULL OR company_name = '' OR company_name LIKE '%ProShares%')",
       "UPDATE securities_master SET name = 'Meta Platforms, Inc.' WHERE ticker = 'META'",
+      // 0018_agreement_attempted.sql — one autonomous agreement attempt per review doc.
+      'ALTER TABLE review_queue ADD COLUMN agreement_attempted_at TEXT',
+      'CREATE INDEX IF NOT EXISTS idx_review_queue_agreement ON review_queue (agreement_attempted_at)',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

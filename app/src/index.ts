@@ -32,6 +32,7 @@ import { buildBillingRouter } from './billing/routes';
 import { buildClientRouter } from './client/routes';
 import { buildUiRouter } from './ui/routes';
 import { maybeRunDailyJobs } from './jobs';
+import { maybeRunAgreementAutopublish } from './extraction/agreement';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -136,6 +137,13 @@ export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     await runWatcher(env, new Date());
     ctx.waitUntil(maybeRunDailyJobs(env));
+    // Autonomous cross-vendor agreement → auto-publish for a few newly-reviewed
+    // docs each minute (self-gates on AGREEMENT_AUTOPUBLISH_ENABLED; cron-safe).
+    ctx.waitUntil(
+      maybeRunAgreementAutopublish(env).catch((err) =>
+        console.warn('agreement autopublish failed:', (err as Error).message),
+      ),
+    );
   },
 
   /**

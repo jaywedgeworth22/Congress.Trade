@@ -632,11 +632,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="1d">Past Day</option>
         <option value="7d">Past Week</option>
         <option value="30d">Past Month</option>
-        <option value="90d">Past 3 Months</option>
+        <option value="90d" selected>Past 3 Months</option>
         <option value="180d">Past 6 Months</option>
         <option value="365d">Past Year</option>
         <option value="1825d">Past 5 Years</option>
-        <option value="all" selected>All Time</option>
+        <option value="all">All Time</option>
       </select>
       <select id="trChamber"><option value="">Both Chambers</option><option value="house">House</option><option value="senate">Senate</option></select>
       <select id="trParty"><option value="">All Parties</option><option value="D">Democrat</option><option value="R">Republican</option><option value="O">Other / Ind.</option></select>
@@ -655,7 +655,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
 
     <!-- KPI strip -->
-    <div class="tf-cap">Snapshot · <span id="trKpisCap">All Time</span></div>
+    <div class="tf-cap">Snapshot · <span id="trKpisCap">Past 3 Months</span></div>
     <div class="grid-cards" id="trKpis">
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
     </div>
@@ -686,7 +686,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Consensus / cluster buys -->
     <div class="section">
       <h3 class="tf-h">Consensus Moves <span class="chip" id="trClusterHint"></span></h3>
-      <p class="sub">Tickers where several different members happened to trade the <strong>same direction</strong> in the window. Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination.</p>
+      <p class="sub">Tickers where several different members happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above). Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination. For an all-time view, switch the window selector to “All Time”.</p>
       <div class="cluster-grid" id="trClusters"></div>
     </div>
 
@@ -2928,7 +2928,14 @@ function miniSourceLinkHtml(url) {
 function openAsset(ticker) {
   if (!ticker) return;
   openDrawer('<div class="note">Loading ' + esc(ticker) + '…</div>');
-  aGet('ticker/' + encodeURIComponent(ticker) + '?window=all').then(function (d) {
+  // Follow the Trends window if it's on the page; fall back to all-time when the
+  // drawer is opened from a context without the window selector (feed, search).
+  var tickerWindow = el('trWindow') ? el('trWindow').value : 'all';
+  var tickerWindowLabel = tickerWindow === 'all' ? 'All Time' : windowLabel(tickerWindow);
+  var netFlowTip = tickerWindow === 'all'
+    ? NET_FLOW_TIP_ALLTIME
+    : 'Buy dollars minus sell dollars across this asset\\u2019s disclosed trades in the selected window (' + tickerWindowLabel + '), using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
+  aGet('ticker/' + encodeURIComponent(ticker) + '?window=' + encodeURIComponent(tickerWindow)).then(function (d) {
     var s = d.summary || {};
     var companyName = (d.ref && d.ref.companyName) || d.name || '';
     var sent = s.netSentiment == null ? '—' : Math.round(s.netSentiment * 100) + '% buys';
@@ -2959,9 +2966,9 @@ function openAsset(ticker) {
       drawerCompanyTitle(d.ticker, companyName || d.ticker) +
 	      '<p class="dsub">' + (s.totalTrades || 0) + ' trades · ' + (s.memberCount || 0) + ' politicians · ' + estUsd(s.estVolumeUsd) + ' approx. volume</p>' +
       '<div class="drawer-section first"><h3>Company</h3>' + companySectionHtml(d.ref) + '</div>' +
-      '<div class="drawer-section"><h3>Congressional Activity (All Time)</h3><div class="grid-cards">' +
+      '<div class="drawer-section"><h3>Congressional Activity (' + esc(tickerWindowLabel) + ')</h3><div class="grid-cards">' +
 	        kpi('Trades', s.totalTrades || 0) + kpi('Politicians', s.memberCount || 0) + kpiInfo('Approx. Volume', estUsd(s.estVolumeUsd), EST_VOLUME_TIP) +
-        kpiInfo('Net Flow', netHtml(s.estNetFlowUsd), NET_FLOW_TIP_ALLTIME) + kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP) + '</div>' +
+        kpiInfo('Net Flow', netHtml(s.estNetFlowUsd), netFlowTip) + kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP) + '</div>' +
         '<div class="legend" style="margin-top:8px"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>' + chart + '</div>' +
       '<div class="drawer-section"><h3>Performance Since Trades</h3>' + PERF_GATE + '</div>' +
       '<div class="trend-grid2"><div class="drawer-section"><h3>Top Buyers</h3>' + traderList(d.topBuyers, 'buyers') + '</div>' +
