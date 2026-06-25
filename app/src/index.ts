@@ -32,7 +32,7 @@ import { buildBillingRouter } from './billing/routes';
 import { buildClientRouter } from './client/routes';
 import { buildUiRouter } from './ui/routes';
 import { maybeRunDailyJobs } from './jobs';
-import { maybeRunAgreementAutopublish } from './extraction/agreement';
+import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -109,6 +109,12 @@ async function handleIngestMessage(env: Env, msg: QueueMessage): Promise<void> {
     case 'tx.persisted':
       // Enqueue delivery fan-out for the newly persisted transaction.
       await env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId: msg.txId });
+      return;
+    case 'agreement.check':
+      // Slow cross-vendor agreement read + auto-publish for one review doc. Runs
+      // here (generous per-message duration) rather than in the cron, whose
+      // scheduled-handler waitUntil cancels long model work.
+      await handleAgreementCheck(env, msg.docId, msg.rawObjectKey);
       return;
     default:
       console.warn('INGEST_QUEUE: unexpected message type', (msg as { type?: string }).type);

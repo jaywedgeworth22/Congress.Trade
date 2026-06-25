@@ -397,6 +397,7 @@ export type QueueMessage =
   | { type: 'filing.fetched'; docId: string }
   | { type: 'filing.extracted'; docId: string }
   | { type: 'tx.persisted'; txId: string; docId: string }
+  | { type: 'agreement.check'; docId: string; rawObjectKey: string | null }
   | { type: 'delivery.dispatch'; txId: string };
 
 // ---------------------------------------------------------------------------

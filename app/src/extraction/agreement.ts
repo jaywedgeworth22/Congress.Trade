@@ -128,20 +128,65 @@ interface AgreementEnv {
   AGREEMENT_AUTOPUBLISH_LIMIT?: string;
 }
 
-/**
- * Autonomous pass: pick up to `limit` review docs that have NOT yet had an
- * agreement attempt, run the two configured cross-vendor models, and publish
- * the ones that agree. Each doc is attempted exactly once (agreement_attempted_at
- * is stamped regardless of outcome) so disagreements aren't re-read every minute.
- * Self-gates on AGREEMENT_AUTOPUBLISH_ENABLED; never throws (cron-safe).
- */
-export async function maybeRunAgreementAutopublish(env: Env): Promise<{ attempted: number; published: number } | null> {
-  const e = env as unknown as AgreementEnv;
-  if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return null;
-  const models: AgreementModels = {
+/** Resolve the configured A/B agreement models (with sensible defaults). */
+function resolveModels(e: AgreementEnv): AgreementModels {
+  return {
     a: parseCandidate(e.AGREEMENT_AUTOPUBLISH_MODEL_A, { provider: 'mistral', model: 'mistral-ocr-latest' }),
     b: parseCandidate(e.AGREEMENT_AUTOPUBLISH_MODEL_B, { provider: 'gemini', model: 'gemini-3.5-flash' }),
   };
+}
+
+/**
+ * Hand ONE review doc to the agreement pipeline asynchronously: enqueue an
+ * `agreement.check` message and stamp the attempt. The slow model work runs in
+ * the queue consumer (handleAgreementCheck), where per-message duration is
+ * generous — unlike the cron's scheduled-handler waitUntil, which cancels long
+ * work. Self-gates on the flag. The attempt is stamped only AFTER a successful
+ * enqueue so a send failure lets the cron backstop retry next minute. Returns
+ * true when a check was enqueued.
+ */
+export async function enqueueAgreementCheck(env: Env, docId: string, rawObjectKey: string | null): Promise<boolean> {
+  const e = env as unknown as AgreementEnv;
+  if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return false;
+  try {
+    await env.INGEST_QUEUE.send({ type: 'agreement.check', docId, rawObjectKey });
+  } catch (err) {
+    console.warn('enqueueAgreementCheck send failed:', docId, (err as Error).message);
+    return false;
+  }
+  // Stamp attempted so neither the cron backstop nor the inline path re-enqueues
+  // it. Best-effort: the migration may not be applied yet in some environments.
+  try {
+    await run(env.DB, 'UPDATE review_queue SET agreement_attempted_at = ? WHERE doc_id = ?', [new Date().toISOString(), docId]);
+  } catch { /* best-effort */ }
+  return true;
+}
+
+/**
+ * Queue-consumer handler for an `agreement.check` message: resolve the
+ * configured models and run the (slow) agreement read + publish for one doc.
+ * Self-gates on the flag so a disabled deploy drains queued checks as no-ops.
+ */
+export async function handleAgreementCheck(env: Env, docId: string, rawObjectKey: string | null): Promise<void> {
+  const e = env as unknown as AgreementEnv;
+  if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return;
+  const res = await processAgreementDoc(env, resolveModels(e), docId, rawObjectKey, false);
+  console.log(`agreement.check ${docId}: ${res.outcome}${res.inserted ? ` (+${res.inserted} tx)` : ''}`);
+}
+
+/**
+ * Autonomous per-minute backstop: pick up to `limit` review docs that have NOT
+ * yet had an agreement attempt and ENQUEUE an agreement.check for each (fast —
+ * no model work, so it never gets canceled like inline cron work does). Each doc
+ * is attempted exactly once (agreement_attempted_at is stamped on enqueue) so a
+ * doc is never re-read every minute. The newly-reviewed fast path lives in the
+ * orchestrator (enqueueAgreementCheck right when a doc hits review); this cron
+ * is the safety net that catches anything that path missed. Self-gates on
+ * AGREEMENT_AUTOPUBLISH_ENABLED; never throws (cron-safe).
+ */
+export async function maybeRunAgreementAutopublish(env: Env): Promise<{ attempted: number; enqueued: number } | null> {
+  const e = env as unknown as AgreementEnv;
+  if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return null;
   const limit = Math.min(Math.max(parseInt(e.AGREEMENT_AUTOPUBLISH_LIMIT || '3', 10) || 3, 1), 10);
 
   let docs: Array<{ doc_id: string; raw_object_key: string | null }>;
@@ -158,19 +203,10 @@ export async function maybeRunAgreementAutopublish(env: Env): Promise<{ attempte
     return null; // migration not applied yet
   }
 
-  let published = 0;
+  let enqueued = 0;
   for (const d of docs) {
-    try {
-      const res = await processAgreementDoc(env, models, d.doc_id, d.raw_object_key, false);
-      if (res.outcome === 'published') published++;
-    } catch (err) {
-      console.warn('agreement autopublish doc failed:', d.doc_id, (err as Error).message);
-    }
-    // Stamp attempted regardless of outcome so we never re-read it every minute.
-    try {
-      await run(env.DB, 'UPDATE review_queue SET agreement_attempted_at = ? WHERE doc_id = ?', [new Date().toISOString(), d.doc_id]);
-    } catch { /* best-effort */ }
+    if (await enqueueAgreementCheck(env, d.doc_id, d.raw_object_key)) enqueued++;
   }
-  if (docs.length) console.log(`agreement autopublish: attempted ${docs.length}, published ${published}`);
-  return { attempted: docs.length, published };
+  if (docs.length) console.log(`agreement autopublish: enqueued ${enqueued}/${docs.length} checks`);
+  return { attempted: docs.length, enqueued };
 }
