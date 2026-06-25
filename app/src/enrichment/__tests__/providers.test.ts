@@ -18,6 +18,7 @@ describe('parseMassiveTicker (Polygon)', () => {
         ticker: 'AAPL', name: 'Apple Inc.', market_cap: 4.377e12, type: 'CS',
         sic_code: '3571', sic_description: 'ELECTRONIC COMPUTERS', primary_exchange: 'XNAS',
         currency_name: 'usd', locale: 'us', cik: '0000320193',
+        weighted_shares_outstanding: 15_000_000_000, share_class_shares_outstanding: 14_900_000_000,
         branding: { icon_url: 'https://api.massive.com/v1/.../icon.png' },
       },
     });
@@ -25,6 +26,7 @@ describe('parseMassiveTicker (Polygon)', () => {
     expect(ref?.sector).toBe('Manufacturing'); // SIC 3571 → Manufacturing division
     expect(ref?.marketCap).toBe(4.377e12);
     expect(ref?.marketCapBucket).toBe('mega');
+    expect(ref?.sharesOutstanding).toBe(15_000_000_000); // prefers the weighted figure
     expect(ref?.isEtf).toBe(false);
     expect(ref?.source).toBe('massive');
   });
@@ -43,11 +45,13 @@ describe('parseFinnhubProfile', () => {
   it('converts market cap from millions and keeps the CDN logo', () => {
     const ref = parseFinnhubProfile({
       name: 'Apple Inc', finnhubIndustry: 'Technology', marketCapitalization: 4322488,
+      shareOutstanding: 14900, // millions
       exchange: 'NASDAQ NMS - GLOBAL MARKET', currency: 'USD', ipo: '1980-12-12',
       logo: 'https://static.finnhub.io/logo/87cb30d8.png',
     });
     expect(ref?.marketCap).toBe(4322488000000);
     expect(ref?.sector).toBe('Technology');
+    expect(ref?.sharesOutstanding).toBe(14_900_000_000); // 14900M → shares
   });
   it('returns null without a name', () => expect(parseFinnhubProfile({})).toBeNull());
 });

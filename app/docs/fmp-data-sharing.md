@@ -49,6 +49,7 @@ arrays. Send whichever you have:
       "exchange": "NASDAQ Global Select", "exchangeShort": "NASDAQ",
       "currency": "USD",
       "marketCap": 3200000000000,
+      "sharesOutstanding": 15000000000,   // lets the importer keep cap current off the daily close
       "ipoDate": "1980-12-12",
       "cik": "0000320193", "sicCode": "3571", "sicDescription": "Electronic Computers"
     }

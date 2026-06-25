@@ -203,13 +203,31 @@ export async function runPriceRefresh(
         ),
       );
     }
-    // Current price = latest cached close.
+    // Current price = latest cached close. When we know the share count, also
+    // recompute market_cap (= shares_outstanding * price) + its bucket so the cap
+    // tracks the latest close instead of going stale at the enrichment snapshot.
+    // The bucket thresholds mirror marketCapBucket() in enrichment/compute.ts.
     const latest = hist[0];
     await run(
       env.DB,
       `INSERT INTO securities_ref (ticker, current_price, current_price_date)
          VALUES (?, ?, ?)
-       ON CONFLICT(ticker) DO UPDATE SET current_price=excluded.current_price, current_price_date=excluded.current_price_date`,
+       ON CONFLICT(ticker) DO UPDATE SET
+         current_price=excluded.current_price,
+         current_price_date=excluded.current_price_date,
+         market_cap = CASE
+           WHEN securities_ref.shares_outstanding IS NOT NULL AND securities_ref.shares_outstanding > 0
+             THEN securities_ref.shares_outstanding * excluded.current_price
+           ELSE securities_ref.market_cap END,
+         market_cap_bucket = CASE
+           WHEN securities_ref.shares_outstanding IS NULL OR securities_ref.shares_outstanding <= 0
+             THEN securities_ref.market_cap_bucket
+           WHEN securities_ref.shares_outstanding * excluded.current_price >= 200000000000 THEN 'mega'
+           WHEN securities_ref.shares_outstanding * excluded.current_price >=  10000000000 THEN 'large'
+           WHEN securities_ref.shares_outstanding * excluded.current_price >=   2000000000 THEN 'mid'
+           WHEN securities_ref.shares_outstanding * excluded.current_price >=    300000000 THEN 'small'
+           WHEN securities_ref.shares_outstanding * excluded.current_price >=     50000000 THEN 'micro'
+           ELSE 'nano' END`,
       [ticker, latest.close, latest.date],
     );
     result.sharePrices.push({ ticker, closes: hist, currentPrice: latest.close, currentPriceDate: latest.date });
