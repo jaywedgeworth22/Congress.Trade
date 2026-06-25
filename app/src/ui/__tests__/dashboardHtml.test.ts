@@ -94,6 +94,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('(orientation: landscape) and (max-width: 950px)');
     expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom)');
     expect(DASHBOARD_HTML).toContain('grid-template-columns: minmax(0, 1fr)');
+    expect(DASHBOARD_HTML).toContain('nav.tabs::after');
+    expect(DASHBOARD_HTML).toContain('height:calc(120px + env(safe-area-inset-bottom))');
   });
 
   it('renders a dedicated one-time subscription secret panel', () => {
