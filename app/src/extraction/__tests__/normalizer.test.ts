@@ -207,4 +207,21 @@ describe('normalize', () => {
     expect(String(cap.reviewRows[0][1])).toContain('no_transactions_extracted');
     expect(String(cap.reviewRows[0][1])).toContain('low_confidence');
   });
+
+  it('routes header-contaminated asset names to review', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'GD', name: 'General Dynamics Corporation', aliases: '[]' }]);
+    const result = await normalize(env, filing(), [
+      tx({
+        ticker: 'GD',
+        assetName:
+          'P T R Clerk of the House of Representatives Legislative Resource Center Name: Hon. Dwight Evans Status: Member State/District: PA03 T ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains >',
+      }),
+    ]);
+
+    expect(result.needsReview).toBe(true);
+    expect(result.minConfidence).toBeLessThan(CONFIDENCE_THRESHOLD);
+    expect(cap.insertedTx).toHaveLength(0);
+    expect(cap.reviewRows).toHaveLength(1);
+    expect(String(cap.reviewRows[0][1])).toContain('bad_asset_name');
+  });
 });
