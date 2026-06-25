@@ -41,6 +41,7 @@ import {
   buildMemberLeaderboardQuery,
   buildMemberPerformanceQuery,
   buildMemberStatsQuery,
+  buildTickerBacktestCohortQuery,
   buildMemberTopTickersQuery,
   buildMemberRecentTradesQuery,
   buildPartySplitQuery,
@@ -60,12 +61,14 @@ import {
 } from './builders';
 import {
   aggregateMemberPerformance,
+  aggregateTickerBacktest,
   bracketMidpoint,
   netSentiment,
   round,
   summarizeLag,
   topPerGroup,
   type LagRow,
+  type PriceBar,
 } from './compute';
 import { computePerformance } from '../prices/compute';
 import { latestSpxClose } from '../prices/service';
@@ -557,6 +560,50 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         tradeCount: num(row.trade_count),
       }));
       return meta(f, { summary: summarizeLag(lag), topLateFilers });
+    });
+    return c.json(data);
+  });
+
+  // --- GET /ticker/:ticker/backtest --------------------------------------
+  // "How did this name perform after Congress BOUGHT it, vs the S&P, by horizon
+  // (21/63/126/252 trading days)?" Forward return from each buy's tx_date, vs
+  // SPX over the same span. Optional ?filerId= scopes to one member. Returns are
+  // fractions; horizons with n < BACKTEST_MIN_N report null (not noise). Coverage
+  // is honest: tradeCount (cohort) vs n (events with forward history) per horizon.
+  // MUST be registered before /ticker/:ticker (Hono matches in declaration order).
+  r.get('/ticker/:ticker/backtest', async (c) => {
+    const q = c.req.query();
+    const f = { ...commonFromQuery(q), window: asWindow(q.window, 'all') };
+    const tickerParam = (c.req.param('ticker') || '').toUpperCase();
+    if (!/^[A-Z0-9._-]{1,20}$/.test(tickerParam)) {
+      return c.json({ error: 'invalid ticker' }, 400);
+    }
+    const filerId = q.filerId && /^[A-Za-z0-9_-]{1,64}$/.test(q.filerId) ? q.filerId : undefined;
+    const DEFAULT_HORIZONS = [21, 63, 126, 252];
+    const horizons = (q.horizons ? q.horizons.split(',') : [])
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isInteger(n) && n >= 1 && n <= 504);
+    const useHorizons = Array.from(new Set(horizons.length ? horizons : DEFAULT_HORIZONS))
+      .sort((a, b) => a - b)
+      .slice(0, 8);
+    const key = cacheKey(`backtest:${tickerParam}`, { ...f, filerId, h: useHorizons.join('-') });
+    const data = await cached(c.env, key, 300, async () => {
+      const cohortQ = buildTickerBacktestCohortQuery(tickerParam, f, filerId);
+      const [cohortRows, priceAsc, spxAsc] = await Promise.all([
+        all<{ tx_date: string }>(c.env.DB, cohortQ.sql, cohortQ.params),
+        all<PriceBar>(c.env.DB, 'SELECT date, close FROM price_eod WHERE ticker = ? ORDER BY date ASC', [tickerParam]),
+        all<PriceBar>(c.env.DB, 'SELECT date, close FROM spx_eod ORDER BY date ASC'),
+      ]);
+      const cohortDates = cohortRows.map((row) => str(row.tx_date)).filter((d): d is string => !!d);
+      const bt = aggregateTickerBacktest(cohortDates, priceAsc, spxAsc, useHorizons);
+      return meta(f, {
+        ticker: tickerParam,
+        filerId: filerId ?? null,
+        txType: 'P',
+        totalBuyEvents: bt.tradeCount,
+        pricedDays: priceAsc.length,
+        horizons: bt.horizons,
+      });
     });
     return c.json(data);
   });
