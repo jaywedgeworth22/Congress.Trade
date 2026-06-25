@@ -40,6 +40,7 @@ import {
   recomputeTransactions,
   persistTransactions,
   transactionRowKey,
+  loadResolver,
   CONFIDENCE_THRESHOLD,
   HARD_FAILURE_FLAGS,
 } from '../extraction/normalizer';
@@ -358,6 +359,70 @@ async function buildLegislatorMap(): Promise<Map<string, LegislatorMatch>> {
 
 function photoUrlFor(bioguide: string): string {
   return `https://unitedstates.github.io/images/congress/225x275/${bioguide}.jpg`;
+}
+
+/**
+ * Backfill ticker resolution over stored rows whose ticker is NULL/empty, so
+ * name-but-no-ticker holdings become visible to the leaderboards. No PDF
+ * re-extraction — just the deterministic resolver over the asset name. Bounded
+ * per call; safe to re-run. Shared by POST /resolve-tickers and the daily cron.
+ */
+export async function runTickerBackfill(
+  env: Env,
+  limit = 5000,
+): Promise<{ scanned: number; resolved: number }> {
+  const resolver = await loadResolver(env);
+  const rows = await all<{ id: string; ticker: string | null; asset_name: string | null }>(
+    env.DB,
+    "SELECT id, ticker, asset_name FROM transactions " +
+      "WHERE (ticker IS NULL OR ticker = '') AND asset_name IS NOT NULL AND asset_name <> '' " +
+      'AND deprecated_at IS NULL LIMIT ?',
+    [Math.min(limit, 20000)],
+  );
+  const updates: D1PreparedStatement[] = [];
+  for (const row of rows) {
+    const resolved = resolver(row.ticker, row.asset_name);
+    if (resolved) {
+      updates.push(env.DB.prepare('UPDATE transactions SET ticker = ? WHERE id = ?').bind(resolved, row.id));
+    }
+  }
+  for (let i = 0; i < updates.length; i += 50) {
+    await env.DB.batch(updates.slice(i, i + 50));
+  }
+  return { scanned: rows.length, resolved: updates.length };
+}
+
+/**
+ * Resolve each filer's name -> bioguide (congress-legislators) and fill in the
+ * public headshot URL plus party/state/district (COALESCE-preserve so an existing
+ * value is never overwritten). Pure data fill, safe to re-run; unmatched filers
+ * stay null (the UI falls back to initials). Shared by POST /enrich-photos and the
+ * daily cron so photos/party fill in automatically, not just on a manual call.
+ */
+export async function runPhotoEnrichment(
+  env: Env,
+): Promise<{ filers: number; matched: number; unmatched: number }> {
+  const map = await buildLegislatorMap();
+  const filers = await all<{ bioguide_id: string; full_name: string | null }>(
+    env.DB,
+    'SELECT bioguide_id, full_name FROM filers',
+  );
+  const updates: D1PreparedStatement[] = [];
+  let matched = 0;
+  for (const f of filers) {
+    const match = map.get(normName(f.full_name));
+    if (!match) continue;
+    matched++;
+    updates.push(
+      env.DB
+        .prepare("UPDATE filers SET photo_url = ?, party = COALESCE(NULLIF(party, ''), ?), state = COALESCE(NULLIF(state, ''), ?), district = COALESCE(NULLIF(district, ''), ?) WHERE bioguide_id = ?")
+        .bind(photoUrlFor(match.bioguide), match.party, match.state, match.district, f.bioguide_id),
+    );
+  }
+  for (let i = 0; i < updates.length; i += 50) {
+    await env.DB.batch(updates.slice(i, i + 50));
+  }
+  return { filers: filers.length, matched, unmatched: filers.length - matched };
 }
 
 export function buildAdminRouter(): Hono<{ Bindings: Env }> {
@@ -2389,27 +2454,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // falls back to initials).
   r.post('/enrich-photos', async (c) => {
     try {
-      const map = await buildLegislatorMap();
-      const filers = await all<{ bioguide_id: string; full_name: string | null }>(
-        c.env.DB,
-        'SELECT bioguide_id, full_name FROM filers',
-      );
-      const updates: D1PreparedStatement[] = [];
-      let matched = 0;
-      for (const f of filers) {
-        const match = map.get(normName(f.full_name));
-        if (!match) continue;
-        matched++;
-        updates.push(
-          c.env.DB
-            .prepare('UPDATE filers SET photo_url = ?, party = COALESCE(NULLIF(party, \'\'), ?), state = COALESCE(NULLIF(state, \'\'), ?), district = COALESCE(NULLIF(district, \'\'), ?) WHERE bioguide_id = ?')
-            .bind(photoUrlFor(match.bioguide), match.party, match.state, match.district, f.bioguide_id),
-        );
-      }
-      for (let i = 0; i < updates.length; i += 50) {
-        await c.env.DB.batch(updates.slice(i, i + 50));
-      }
-      return c.json({ filers: filers.length, matched, unmatched: filers.length - matched });
+      return c.json(await runPhotoEnrichment(c.env));
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /resolve-tickers ----------------------------------------------
+  // Backfill: re-run ticker resolution over already-stored rows whose ticker is
+  // NULL/empty (e.g. seed rows, or rows that predate a securities_master entry),
+  // so name-but-no-ticker holdings become visible to the leaderboards. No PDF
+  // re-extraction — just the deterministic resolver over the asset name. Safe to
+  // re-run; bounded per call by ?limit (default 5000).
+  r.post('/resolve-tickers', async (c) => {
+    try {
+      const limit = Number(c.req.query('limit')) || 5000;
+      return c.json(await runTickerBackfill(c.env, limit));
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }
