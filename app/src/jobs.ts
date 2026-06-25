@@ -17,6 +17,7 @@ import { runPriceRefresh } from './prices/service';
 import { hasFmpTierFailure } from './shared/fmpStatus';
 import { notifyAdmin } from './alerts/notify';
 import { shareWithPeer, type PeerShareInput } from './share/outbound';
+import { runFreshnessCheck } from './share/freshness';
 
 const DAILY_KEY = 'jobs:daily:lastdate';
 
@@ -91,5 +92,14 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
         '\n\nCheck your FMP plan + the FMP_API_KEY secret. The job retries automatically each day;\n' +
         "you'll get at most one of these alerts every 12 hours.",
     });
+  }
+
+  // Cross-app freshness watchdog: alert if a donated market-data stream (S&P /
+  // prices / fundamentals) has gone stale — i.e. the partner's push or our own
+  // refresh quietly stopped. Throttled + best-effort; never blocks the cron.
+  try {
+    await runFreshnessCheck(env, now);
+  } catch (err) {
+    console.warn('freshness check failed:', (err as Error).message);
   }
 }
