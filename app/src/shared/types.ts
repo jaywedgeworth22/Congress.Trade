@@ -134,6 +134,7 @@ export interface Transaction {
   sourceUrl?: string | null;
   // --- Optional cross-referenced asset data (securities_ref; feed only) ------
   // Populated when the ticker has been enriched; null/absent otherwise.
+  refCompanyName?: string | null;
   refSector?: string | null;
   refMarketCap?: number | null;
   refMarketCapBucket?: string | null;
@@ -247,6 +248,10 @@ export interface ClientTrade {
   asset: {
     name: string;
     ticker: string | null;
+    /** Canonical company name from securities_ref (null until the ticker is enriched). */
+    companyName: string | null;
+    /** Same-origin cached logo proxy URL for the ticker, or null when no ticker is resolved. */
+    logoUrl: string | null;
     type: string | null;
     sector: string | null;
     marketCapBucket: string | null;
