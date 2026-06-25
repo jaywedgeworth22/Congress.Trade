@@ -235,7 +235,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer-trade-in { margin: 0; font-size: 14px; color: var(--text-dim); }
   .drawer-trade-in .tkr { color: var(--accent); font-weight: 700; }
   .drawer-trade-in .company-name { color: var(--text); }
-  .drawer-trade-in .dot-sep { margin: 0 6px; opacity: .5; }
+  .drawer-trade-in .dot-sep, .drawer-title-line .dot-sep { margin: 0 6px; opacity: .5; font-weight: 400; }
   /* Tap-to-reveal tooltip popover (phones/tablets can't hover). */
   .tip-pop { position: fixed; z-index: 80; max-width: min(78vw, 320px); background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; line-height: 1.4; box-shadow: 0 10px 30px rgba(0,0,0,.32); }
   .feed-card-meta { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 10px; min-width: 0; }
@@ -2816,12 +2816,14 @@ function companySectionHtml(ref) {
   return '<div class="def-grid">' + html + '</div>';
 }
 function drawerCompanyTitle(ticker, name) {
+  // This is the drawer FOR this ticker — the title is not clickable (it would
+  // just reopen the same drawer). Ticker and name are separated by a dot.
   var label = name || ticker || 'Company';
-  var attr = ticker ? ' data-asset="' + esc(ticker) + '"' : '';
-  var cls = ticker ? 'drawer-title-line clickable' : 'drawer-title-line';
-  return '<h2 class="' + cls + '"' + attr + '>' +
+  var sameAsTicker = label === ticker;
+  return '<h2 class="drawer-title-line">' +
     (ticker ? '<span class="tkr">' + esc(ticker) + '</span>' : '') +
-    '<span class="company-name">' + esc(label) + '</span></h2>';
+    (ticker && !sameAsTicker ? '<span class="dot-sep">·</span>' : '') +
+    (sameAsTicker ? '' : '<span class="company-name">' + esc(label) + '</span>') + '</h2>';
 }
 function miniTradeDateHtml(t) {
   var traded = dateText(t.txDate);

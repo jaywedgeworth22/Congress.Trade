@@ -151,7 +151,9 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function filingNotesHtml(');
     expect(DASHBOARD_HTML).toContain('Historical source note:');
     expect(DASHBOARD_HTML).toContain("e.target.closest('[data-member]')");
-    expect(DASHBOARD_HTML).toContain('drawer-title-line clickable');
+    // The company-drawer title is NOT clickable (it would just reopen the same drawer);
+    // clickable entities are the member/asset links inside the drawer body instead.
+    expect(DASHBOARD_HTML).not.toContain('drawer-title-line clickable');
     expect(DASHBOARD_HTML).toContain('drawer-member-title');
     expect(DASHBOARD_HTML).toContain('color:var(--text)');
     expect(DASHBOARD_HTML).not.toContain('<pre class="raw-notes">');
