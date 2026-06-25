@@ -414,6 +414,8 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   /** OpenAI API key — GPT vision candidates in the extractor bake-off. */
   OPENAI_API_KEY?: string;
+  /** Mistral API key — `mistral-ocr-latest` candidate in the extractor bake-off. */
+  MISTRAL_API_KEY?: string;
   /** Financial Modeling Prep key — enables asset enrichment + price/performance. */
   FMP_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */

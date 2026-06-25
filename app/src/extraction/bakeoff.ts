@@ -25,20 +25,29 @@ import {
   VisionLlmExtractor,
 } from './visionLlm';
 
-export type Provider = 'gemini' | 'openai' | 'anthropic';
+export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral';
 
 export interface BakeoffCandidate {
   provider: Provider;
   model: string;
 }
 
-/** Provider-neutral default lineup (overridable per request). */
+/**
+ * Provider-neutral default lineup (overridable per request). Four companies:
+ * Google, OpenAI, Anthropic, Mistral. `gpt-4o-mini` is intentionally absent —
+ * a live bake-off showed it rejects PDF document input outright (instant 4xx).
+ *
+ * xAI Grok is NOT included: its vision API takes images only (jpg/png), so a
+ * PTR PDF would have to be rasterized to PNG per page first — which a Worker
+ * can't do natively. Mistral's `/v1/ocr` accepts a base64 PDF directly, so it
+ * is the feasible fourth competitor.
+ */
 export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'gemini', model: 'gemini-3.5-flash' },
   { provider: 'openai', model: 'gpt-4o' },
-  { provider: 'openai', model: 'gpt-4o-mini' },
   { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   { provider: 'anthropic', model: 'claude-haiku-4-5' },
+  { provider: 'mistral', model: 'mistral-ocr-latest' },
 ];
 
 /** One model's run over one document. */
@@ -80,6 +89,7 @@ function keyFor(env: Env, provider: Provider): string | null {
   if (provider === 'gemini') return env.GEMINI_API_KEY ?? null;
   if (provider === 'openai') return env.OPENAI_API_KEY ?? null;
   if (provider === 'anthropic') return env.ANTHROPIC_API_KEY ?? null;
+  if (provider === 'mistral') return env.MISTRAL_API_KEY ?? null;
   return null;
 }
 
@@ -158,6 +168,83 @@ async function runAnthropic(model: string, key: string, bytes: ArrayBuffer): Pro
   return parseModelJson(text).map(toParsedTx);
 }
 
+/**
+ * JSON-schema for Mistral's `document_annotation` — a doc-wide structured
+ * extraction whose field names match {@link toParsedTx}'s `ModelTx` input, so
+ * the shared parser maps it like every other provider.
+ */
+const MISTRAL_ANNOTATION_SCHEMA = {
+  name: 'congress_ptr_transactions',
+  strict: true,
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      transactions: {
+        type: 'array',
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            txDate: { type: ['string', 'null'] },
+            owner: { type: ['string', 'null'] },
+            assetName: { type: 'string' },
+            ticker: { type: ['string', 'null'] },
+            assetType: { type: ['string', 'null'] },
+            txType: { type: 'string' },
+            amountRange: { type: ['string', 'null'] },
+            isOption: { type: 'boolean' },
+          },
+          required: ['assetName', 'ticker', 'assetType', 'txType', 'amountRange', 'txDate', 'owner', 'isOption'],
+        },
+      },
+    },
+    required: ['transactions'],
+  },
+} as const;
+
+/**
+ * Map a Mistral `/v1/ocr` response to ParsedTx[]. Prefers the structured
+ * `document_annotation` (a JSON string or object); falls back to a fenced JSON
+ * block embedded in the OCR markdown. Separated from the network call so the
+ * mapping is unit-testable without a live key. Exported for tests.
+ */
+export function parseMistralOcrResponse(payload: unknown): ParsedTx[] {
+  const p = (payload ?? {}) as { document_annotation?: unknown; pages?: Array<{ markdown?: string }> };
+  if (p.document_annotation != null) {
+    const text =
+      typeof p.document_annotation === 'string'
+        ? p.document_annotation
+        : JSON.stringify(p.document_annotation);
+    return parseModelJson(text).map(toParsedTx);
+  }
+  const markdown = (p.pages ?? []).map((pg) => pg.markdown ?? '').join('\n');
+  const fenced = markdown.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) return parseModelJson(fenced[1]).map(toParsedTx);
+  throw new Error('mistral: no document_annotation or JSON block in OCR output');
+}
+
+/**
+ * Mistral OCR call. Unlike the chat-style providers, `/v1/ocr` natively accepts
+ * a base64 PDF as a `document_url` and returns a doc-wide structured annotation
+ * when `document_annotation_format` is supplied.
+ */
+async function runMistral(model: string, key: string, bytes: ArrayBuffer): Promise<ParsedTx[]> {
+  const dataUrl = `data:application/pdf;base64,${arrayBufferToBase64(bytes)}`;
+  const res = await fetch('https://api.mistral.ai/v1/ocr', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      document: { type: 'document_url', document_url: dataUrl },
+      document_annotation_format: { type: 'json_schema', json_schema: MISTRAL_ANNOTATION_SCHEMA },
+      include_image_base64: false,
+    }),
+  });
+  if (!res.ok) throw new Error(`mistral ${res.status} ${await safeText(res)}`);
+  return parseMistralOcrResponse(await res.json());
+}
+
 /** Run one candidate over one document's bytes, timing it and trapping errors. */
 export async function runCandidateOnDoc(
   env: Env,
@@ -183,6 +270,8 @@ export async function runCandidateOnDoc(
       rows = result.transactions;
     } else if (provider === 'openai') {
       rows = await runOpenAi(model, key, bytes);
+    } else if (provider === 'mistral') {
+      rows = await runMistral(model, key, bytes);
     } else {
       rows = await runAnthropic(model, key, bytes);
     }
