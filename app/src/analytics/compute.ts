@@ -9,6 +9,8 @@
  * are pure + deterministic so they unit-test without a database.
  */
 
+import { computePerformance } from '../prices/compute';
+
 /**
  * Estimated dollar value of one STOCK Act bracket. Mirror of
  * BRACKET_MIDPOINT_SQL: midpoint of [min,max]; open top tier (max == null) →
@@ -134,4 +136,76 @@ export function topPerGroup<T>(items: T[], keyOf: (x: T) => string, n: number): 
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Member realized-performance aggregate ("skill" signal)
+// ---------------------------------------------------------------------------
+
+/** Median of a numeric list, or null when empty. */
+function median(nums: number[]): number | null {
+  if (nums.length === 0) return null;
+  const s = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid];
+}
+
+/** One trade's cached performance anchors (from tx_performance + securities_ref). */
+export interface MemberPerfRow {
+  isOption: boolean;
+  priceAtTrade: number | null;
+  currentPrice: number | null;
+  spxAtTrade: number | null;
+}
+
+/**
+ * Realized-performance aggregate for one member's trades. All return figures are
+ * FRACTIONS (0.18 = +18%), matching computePerformance / the /performance
+ * endpoint. `winRate` is the share (0..1) of scored trades that beat the S&P.
+ *
+ * This is the security's move SINCE the disclosed trade (the same basis as
+ * /performance), not cost-basis P&L — for buys it reads as "did the pick go up,
+ * and did it beat the market." Options and unpriced tickers are excluded from
+ * the scored set so they don't dilute the stats.
+ */
+export interface MemberPerfSummary {
+  tradeCount: number; // total trades in the window
+  scoredCount: number; // trades with usable price anchors
+  winRate: number | null; // share with positive excess return (0..1)
+  medianReturn: number | null;
+  medianExcess: number | null;
+  avgReturn: number | null;
+  avgExcess: number | null;
+}
+
+const mean = (nums: number[]): number | null =>
+  nums.length ? round(nums.reduce((a, b) => a + b, 0) / nums.length, 4) : null;
+
+export function aggregateMemberPerformance(
+  rows: MemberPerfRow[],
+  currentSpx: number | null,
+): MemberPerfSummary {
+  const returns: number[] = [];
+  const excesses: number[] = [];
+  for (const r of rows) {
+    if (r.isOption || r.priceAtTrade == null || r.currentPrice == null) continue;
+    const perf = computePerformance(r.priceAtTrade, r.currentPrice, r.spxAtTrade, currentSpx);
+    if (perf.assetReturn == null) continue;
+    returns.push(perf.assetReturn);
+    if (perf.excessReturn != null) excesses.push(perf.excessReturn);
+  }
+  const wins = excesses.filter((x) => x > 0).length;
+  const med = (nums: number[]): number | null => {
+    const m = median(nums);
+    return m == null ? null : round(m, 4);
+  };
+  return {
+    tradeCount: rows.length,
+    scoredCount: returns.length,
+    winRate: excesses.length ? round(wins / excesses.length, 4) : null,
+    medianReturn: med(returns),
+    medianExcess: med(excesses),
+    avgReturn: mean(returns),
+    avgExcess: mean(excesses),
+  };
 }
