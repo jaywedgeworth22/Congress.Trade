@@ -416,6 +416,8 @@ export interface Env {
   OPENAI_API_KEY?: string;
   /** Mistral API key — `mistral-ocr-latest` candidate in the extractor bake-off. */
   MISTRAL_API_KEY?: string;
+  /** xAI API key — Grok (Files API → grok-4.3) candidate in the extractor bake-off. */
+  XAI_API_KEY?: string;
   /** Financial Modeling Prep key — enables asset enrichment + price/performance. */
   FMP_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */
