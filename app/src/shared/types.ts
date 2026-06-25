@@ -424,6 +424,14 @@ export interface Env {
   MISTRAL_API_KEY?: string;
   /** xAI API key — Grok (Files API → grok-4.3) candidate in the extractor bake-off. */
   XAI_API_KEY?: string;
+  /** 'true' enables the per-minute autonomous cross-vendor agreement → auto-publish pass. */
+  AGREEMENT_AUTOPUBLISH_ENABLED?: string;
+  /** Agreement model A as "provider:model" (default mistral:mistral-ocr-latest). */
+  AGREEMENT_AUTOPUBLISH_MODEL_A?: string;
+  /** Agreement model B as "provider:model" (default gemini:gemini-3.5-flash). */
+  AGREEMENT_AUTOPUBLISH_MODEL_B?: string;
+  /** Max review docs the autonomous pass attempts per cron tick (default 3). */
+  AGREEMENT_AUTOPUBLISH_LIMIT?: string;
   /** Financial Modeling Prep key — enables asset enrichment + price/performance. */
   FMP_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */
