@@ -53,6 +53,7 @@ import {
   type CandidateDocResult,
   type Provider,
 } from '../extraction/bakeoff';
+import { isBatchProvider, submitBatch, pollBatch, type BatchDoc } from '../extraction/batchExtract';
 import { runEnrichment, getDailyUsed, importSecurityRef } from '../enrichment/service';
 import { mergeRefs } from '../enrichment/compute';
 import type { SecurityRef } from '../enrichment/types';
@@ -1451,6 +1452,175 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
+  // --- POST /batch-submit -------------------------------------------------
+  // Kick off an async, ~50%-cheaper batch extraction for a set of docs (backlog
+  // reprocessing — NOT the live feed). Body: { provider, model, docIds?, n? }.
+  // Returns immediately with a jobId to poll via /batch-status/:jobId.
+  r.post('/batch-submit', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    if (!isBatchProvider(body.provider)) {
+      return c.json({ error: 'provider must be anthropic | openai | mistral | xai' }, 400);
+    }
+    const provider = body.provider;
+    const model =
+      typeof body.model === 'string' && body.model
+        ? body.model
+        : provider === 'anthropic' ? 'claude-haiku-4-5'
+        : provider === 'openai' ? 'gpt-4o'
+        : provider === 'xai' ? 'grok-4.3'
+        : 'mistral-ocr-latest';
+
+    let n = typeof body.n === 'number' && body.n > 0 ? Math.floor(body.n) : 50;
+    if (n > 200) n = 200;
+
+    let docRows: Array<{ doc_id: string; raw_object_key: string | null }>;
+    if (Array.isArray(body.docIds) && body.docIds.length > 0) {
+      const ids = body.docIds.filter((x): x is string => typeof x === 'string').slice(0, n);
+      docRows = [];
+      for (const id of ids) {
+        const row = await get<{ doc_id: string; raw_object_key: string | null }>(
+          c.env.DB,
+          'SELECT doc_id, raw_object_key FROM filings WHERE doc_id = ?',
+          [id],
+        );
+        if (row) docRows.push(row);
+      }
+    } else {
+      // Default target: the unresolved review backlog (what batch is cheapest for).
+      docRows = await all<{ doc_id: string; raw_object_key: string | null }>(
+        c.env.DB,
+        `SELECT f.doc_id, f.raw_object_key
+           FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
+          WHERE rq.resolved = 0 AND f.raw_object_key IS NOT NULL
+          ORDER BY rq.created_at DESC LIMIT ?`,
+        [n],
+      );
+    }
+
+    const docs: BatchDoc[] = [];
+    const skipped: string[] = [];
+    for (const { doc_id, raw_object_key } of docRows) {
+      if (!raw_object_key) { skipped.push(`${doc_id}: no raw_object_key`); continue; }
+      const obj = await c.env.RAW_FILES.get(raw_object_key);
+      if (!obj) { skipped.push(`${doc_id}: R2 object missing`); continue; }
+      docs.push({ docId: doc_id, bytes: await obj.arrayBuffer() });
+    }
+    if (docs.length === 0) return c.json({ error: 'no documents with a stored PDF to batch', skipped }, 404);
+
+    let providerBatchId: string;
+    try {
+      providerBatchId = await submitBatch(c.env, provider, model, docs);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+
+    const jobId = uuid();
+    await run(
+      c.env.DB,
+      `INSERT INTO batch_jobs (id, provider, model, provider_batch_id, doc_ids, status, submitted_at)
+       VALUES (?, ?, ?, ?, ?, 'submitted', ?)`,
+      [jobId, provider, model, providerBatchId, JSON.stringify(docs.map((d) => d.docId)), new Date().toISOString()],
+    );
+    return c.json({ jobId, provider, model, providerBatchId, docCount: docs.length, skipped, poll: `/api/admin/batch-status/${jobId}` });
+  });
+
+  // --- GET /batch-jobs ----------------------------------------------------
+  r.get('/batch-jobs', async (c) => {
+    let jobs: Array<Record<string, unknown>> = [];
+    try {
+      const rowsB = await all<Record<string, unknown>>(
+        c.env.DB,
+        `SELECT id, provider, model, provider_batch_id, doc_ids, status, submitted_at, completed_at, turnaround_ms, result_summary, error
+           FROM batch_jobs ORDER BY submitted_at DESC LIMIT 50`,
+      );
+      jobs = rowsB.map((j) => ({
+        ...j,
+        doc_ids: typeof j.doc_ids === 'string' ? safeJson(j.doc_ids) : j.doc_ids,
+        result_summary: typeof j.result_summary === 'string' ? safeJson(j.result_summary) : j.result_summary,
+      }));
+    } catch {
+      /* table not migrated */
+    }
+    return c.json({ jobs, count: jobs.length });
+  });
+
+  // --- POST /batch-status/:jobId ------------------------------------------
+  // Poll the provider; when finished, persist each doc's reading into
+  // extraction_runs (kind='batch') and record the real turnaround on batch_jobs.
+  r.post('/batch-status/:jobId', async (c) => {
+    const jobId = c.req.param('jobId');
+    const job = await get<{
+      id: string; provider: string; model: string; provider_batch_id: string | null;
+      doc_ids: string; status: string; submitted_at: string;
+    }>(
+      c.env.DB,
+      'SELECT id, provider, model, provider_batch_id, doc_ids, status, submitted_at FROM batch_jobs WHERE id = ?',
+      [jobId],
+    );
+    if (!job) return c.json({ error: 'batch job not found' }, 404);
+    if (!isBatchProvider(job.provider) || !job.provider_batch_id) {
+      return c.json({ error: 'job missing provider batch id' }, 409);
+    }
+    if (job.status === 'completed' || job.status === 'failed') {
+      return c.json({ jobId, status: job.status, alreadyFinished: true });
+    }
+
+    let poll;
+    try {
+      poll = await pollBatch(c.env, job.provider, job.provider_batch_id);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+
+    if (!poll.done) {
+      await run(c.env.DB, 'UPDATE batch_jobs SET status = ? WHERE id = ?', ['running', jobId]);
+      return c.json({ jobId, status: 'running', providerStatus: poll.status });
+    }
+
+    const completedAt = new Date().toISOString();
+    const turnaroundMs = Date.parse(completedAt) - Date.parse(job.submitted_at);
+    let okCount = 0;
+    let rowTotal = 0;
+    const errors: string[] = [];
+
+    if (!poll.failed) {
+      for (const res of poll.results) {
+        if (res.ok) { okCount++; rowTotal += res.rows.length; } else errors.push(`${res.docId}: ${res.error ?? 'failed'}`);
+        const avg = res.rows.length ? res.rows.reduce((s, x) => s + (x.confidence ?? 0), 0) / res.rows.length : 0;
+        try {
+          await run(
+            c.env.DB,
+            `INSERT INTO extraction_runs
+               (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, created_at)
+             VALUES (?, ?, ?, ?, ?, 'batch', ?, ?, ?, ?, ?, ?, ?)`,
+            [uuid(), jobId, res.docId, job.provider, job.model, res.ok ? 1 : 0, res.error ?? null,
+             res.rows.length, turnaroundMs, Math.round(avg * 1000) / 1000, JSON.stringify(res.rows), completedAt],
+          );
+        } catch { /* extraction_runs missing */ }
+      }
+    }
+
+    const summary = { docs: poll.results.length, ok: okCount, rows: rowTotal, errors: errors.slice(0, 20) };
+    await run(
+      c.env.DB,
+      'UPDATE batch_jobs SET status = ?, completed_at = ?, turnaround_ms = ?, result_summary = ?, error = ? WHERE id = ?',
+      [poll.failed ? 'failed' : 'completed', completedAt, turnaroundMs, JSON.stringify(summary), poll.failed ? poll.status : null, jobId],
+    );
+    return c.json({
+      jobId,
+      status: poll.failed ? 'failed' : 'completed',
+      turnaroundMs,
+      turnaroundMin: Math.round((turnaroundMs / 60000) * 10) / 10,
+      summary,
+    });
+  });
+
   // --- POST /migrate ------------------------------------------------------
   // Apply schema changes via the Worker's D1 binding (sidesteps the wrangler
   // CLI's --remote D1 auth issues). Idempotent: "duplicate column" is treated
@@ -1600,6 +1770,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'CREATE INDEX IF NOT EXISTS idx_extraction_runs_doc ON extraction_runs (doc_id)',
       'CREATE INDEX IF NOT EXISTS idx_extraction_runs_batch ON extraction_runs (batch_id)',
       'CREATE INDEX IF NOT EXISTS idx_extraction_runs_created ON extraction_runs (created_at)',
+      // 0016_batch_jobs.sql — async batch reprocessing jobs (cheaper backlog path).
+      `CREATE TABLE IF NOT EXISTS batch_jobs (
+         id TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT NOT NULL,
+         provider_batch_id TEXT, doc_ids TEXT NOT NULL, status TEXT NOT NULL,
+         submitted_at TEXT NOT NULL, completed_at TEXT, turnaround_ms INTEGER,
+         result_summary TEXT, error TEXT)`,
+      'CREATE INDEX IF NOT EXISTS idx_batch_jobs_status ON batch_jobs (status)',
+      'CREATE INDEX IF NOT EXISTS idx_batch_jobs_submitted ON batch_jobs (submitted_at)',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

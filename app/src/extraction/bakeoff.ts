@@ -181,7 +181,7 @@ async function runAnthropic(model: string, key: string, bytes: ArrayBuffer): Pro
  * extraction whose field names match {@link toParsedTx}'s `ModelTx` input, so
  * the shared parser maps it like every other provider.
  */
-const MISTRAL_ANNOTATION_SCHEMA = {
+export const MISTRAL_ANNOTATION_SCHEMA = {
   name: 'congress_ptr_transactions',
   strict: true,
   schema: {
