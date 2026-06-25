@@ -18,6 +18,7 @@ import type { SqlParam } from '../shared/db';
 import {
   ANALYTICS_FROM_JOINS,
   ANALYTICS_FROM_JOINS_SECURITIES,
+  ANALYTICS_FROM_JOINS_REF,
   BRACKET_MIDPOINT_SQL,
   CHAMBER_EXPR,
   PARTY_BUCKET_SQL,
@@ -318,6 +319,58 @@ export function buildSectorBreakdownQuery(p: CommonFilters & { limit?: number })
     whereSql(where) +
     'GROUP BY asset_type ORDER BY trade_count DESC ' +
     `LIMIT ${limit}`;
+  return { sql, params };
+}
+
+// ---------------------------------------------------------------------------
+// 8b. Real GICS sector flow + market-cap tilt (from securities_ref enrichment)
+// ---------------------------------------------------------------------------
+
+/**
+ * Net buy/sell flow by REAL GICS sector (securities_ref.sector) — distinct from
+ * buildSectorBreakdownQuery, which groups by the free-text `asset_type` (an
+ * instrument class, not a sector). Resolved tickers only; un-enriched/unknown
+ * sectors collapse to 'Unknown'. Reports signed net flow so a sector's
+ * accumulation vs distribution is visible, plus member/ticker breadth.
+ */
+export function buildSectorFlowQuery(p: CommonFilters & { limit?: number }): BuiltQuery {
+  const { where, params } = buildCommonFilters(p);
+  const limit = clampLimit(p.limit, 20, 100);
+  const allWhere = [TICKER_RESOLVED_SQL, ...where];
+  const sql =
+    "SELECT COALESCE(NULLIF(sr.sector, ''), 'Unknown') AS sector, " +
+    'COUNT(*) AS trade_count, ' +
+    `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
+    `SUM(${MID}) AS est_volume, ` +
+    `SUM(${SIGNED}) AS est_net_flow, ` +
+    'COUNT(DISTINCT t.filer_id) AS unique_members, ' +
+    'COUNT(DISTINCT t.ticker) AS unique_tickers ' +
+    ANALYTICS_FROM_JOINS_REF +
+    whereSql(allWhere) +
+    'GROUP BY sector ORDER BY trade_count DESC ' +
+    `LIMIT ${limit}`;
+  return { sql, params };
+}
+
+/**
+ * Net flow + activity by market-cap bucket (securities_ref.market_cap_bucket:
+ * mega…nano). Surfaces a size tilt (e.g. concentration in small/micro caps).
+ * Resolved tickers only; un-enriched rows collapse to 'unknown'.
+ */
+export function buildMarketCapBreakdownQuery(p: CommonFilters): BuiltQuery {
+  const { where, params } = buildCommonFilters(p);
+  const allWhere = [TICKER_RESOLVED_SQL, ...where];
+  const sql =
+    "SELECT COALESCE(NULLIF(sr.market_cap_bucket, ''), 'unknown') AS bucket, " +
+    'COUNT(*) AS trade_count, ' +
+    `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
+    `SUM(${MID}) AS est_volume, ` +
+    `SUM(${SIGNED}) AS est_net_flow, ` +
+    'COUNT(DISTINCT t.filer_id) AS unique_members, ' +
+    'COUNT(DISTINCT t.ticker) AS unique_tickers ' +
+    ANALYTICS_FROM_JOINS_REF +
+    whereSql(allWhere) +
+    'GROUP BY bucket';
   return { sql, params };
 }
 
