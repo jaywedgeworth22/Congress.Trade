@@ -420,8 +420,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /review-queue --------------------------------------------------
+  // ?resolved=1 lists already-reviewed items (history) instead of the pending
+  // queue (default 0). ingest_status distinguishes confirmed (persisted) from
+  // rejected (error) for resolved items.
   r.get('/review-queue', async (c) => {
-    const rows = await all<ReviewRow>(
+    const resolved = c.req.query('resolved') === '1' ? 1 : 0;
+    const rows = await all<ReviewRow & { ingest_status?: string | null }>(
       c.env.DB,
       `SELECT
           rq.doc_id,
@@ -431,11 +435,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           rq.resolved,
           f.source_url,
           f.raw_object_key,
-          f.doc_kind
+          f.doc_kind,
+          f.ingest_status
         FROM review_queue rq
         LEFT JOIN filings f ON f.doc_id = rq.doc_id
-        WHERE rq.resolved = 0
-        ORDER BY rq.created_at ASC`,
+        WHERE rq.resolved = ?
+        ORDER BY rq.created_at ${resolved ? 'DESC' : 'ASC'}`,
+      [resolved],
     );
     const items = rows.map((row) => ({
       docId: row.doc_id,
@@ -443,11 +449,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       payload: row.payload ? safeJson(row.payload) : null,
       createdAt: row.created_at ?? '',
       resolved: row.resolved === 1,
+      ingestStatus: row.ingest_status ?? '',
       sourceUrl: row.source_url ?? '',
       rawObjectKey: row.raw_object_key ?? '',
       docKind: row.doc_kind ?? '',
     }));
-    return c.json({ items, count: items.length });
+    return c.json({ items, count: items.length, resolved: resolved === 1 });
   });
 
   // --- POST /review/:docId ------------------------------------------------
@@ -570,6 +577,56 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       inserted: insertedIds.length,
       transactionIds: insertedIds,
     });
+  });
+
+  // --- POST /review/:docId/unpublish --------------------------------------
+  // Retract a previously-published filing: soft-delete its primary transactions
+  // (deprecated_at), revert the filing to 'needs_review', and re-open the review
+  // item so it returns to the pending queue. Soft-delete (not hard delete) keeps
+  // history and lets every feed/analytics/stream read exclude the rows via
+  // `deprecated_at IS NULL`. Already-delivered webhook/SSE events cannot be
+  // recalled — this stops the rows being served going forward.
+  // Body (optional): { reason?: string }
+  r.post('/review/:docId/unpublish', async (c) => {
+    const docId = c.req.param('docId');
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const reason = typeof body.reason === 'string' && body.reason.length ? body.reason : 'unpublished by admin';
+
+    const filing = await get<{ ingest_status: string | null }>(
+      c.env.DB,
+      'SELECT ingest_status FROM filings WHERE doc_id = ?',
+      [docId],
+    );
+    if (!filing) return c.json({ error: 'filing not found' }, 404);
+
+    const nowIso = new Date().toISOString();
+    // Soft-delete the live primary rows for this doc.
+    const res = await run(
+      c.env.DB,
+      `UPDATE transactions
+          SET deprecated_at = ?, deprecated_reason = ?
+        WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL`,
+      [nowIso, reason, docId],
+    );
+    const deprecated = res.meta?.changes ?? 0;
+
+    // Revert the filing and re-open the review item (back into the pending queue).
+    await run(c.env.DB, 'UPDATE filings SET ingest_status = ? WHERE doc_id = ?', ['needs_review', docId]);
+    await run(
+      c.env.DB,
+      `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved)
+         VALUES (?, ?, ?, ?, 0)
+       ON CONFLICT(doc_id) DO UPDATE SET resolved = 0, reason = excluded.reason, created_at = excluded.created_at`,
+      [docId, 'unpublished: ' + reason, null, nowIso],
+    );
+
+    return c.json({ docId, unpublished: true, deprecatedTransactions: deprecated, reason });
   });
 
   // --- GET /sources/health ------------------------------------------------
@@ -1363,6 +1420,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'ALTER TABLE transactions ADD COLUMN description TEXT',
       'ALTER TABLE transactions ADD COLUMN supplemental_text TEXT',
       'CREATE INDEX IF NOT EXISTS idx_tx_asset_type_name ON transactions (asset_type_name)',
+      // 0013_tx_deprecation.sql — soft-delete so admins can un-publish filings.
+      'ALTER TABLE transactions ADD COLUMN deprecated_at TEXT',
+      'ALTER TABLE transactions ADD COLUMN deprecated_reason TEXT',
+      'CREATE INDEX IF NOT EXISTS idx_tx_deprecated_at ON transactions (deprecated_at)',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

@@ -108,15 +108,17 @@ describe('SQL fragments', () => {
 });
 
 describe('buildCommonFilters', () => {
-  it('defaults to a 30-day window clause with the offset as the first param', () => {
+  it('always excludes retracted rows, then the 30-day window with the offset as the first param', () => {
     const { where, params } = buildCommonFilters({});
-    expect(where[0]).toBe("t.tx_date >= date('now', ?)");
+    expect(where[0]).toBe('t.deprecated_at IS NULL');
+    expect(where[1]).toBe("t.tx_date >= date('now', ?)");
     expect(params[0]).toBe('-30 days');
   });
 
-  it('window="all" drops the date clause entirely', () => {
+  it('window="all" drops the date clause entirely (but keeps the retracted guard)', () => {
     const { where, params } = buildCommonFilters({ window: 'all' });
     expect(where.join(' ')).not.toContain('tx_date >=');
+    expect(where).toContain('t.deprecated_at IS NULL');
     expect(params).toEqual([]);
   });
 
@@ -129,6 +131,7 @@ describe('buildCommonFilters', () => {
       minConf: 0.7,
     });
     expect(where).toEqual([
+      't.deprecated_at IS NULL',
       "t.tx_date >= date('now', ?)",
       'COALESCE(fl.chamber, f.chamber) = ?',
       `${PARTY_BUCKET_SQL} = ?`,
