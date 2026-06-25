@@ -179,8 +179,16 @@ export interface SubscriptionFilters {
   tickers?: string[];
   /** Chambers to include (empty/undefined => all). */
   chambers?: Chamber[];
-  /** Minimum transaction amount_min to deliver. */
+  /** Minimum transaction amount_min (bracket floor) to deliver. */
   minAmount?: number;
+  /** Maximum transaction amount_min (bracket floor); pairs with minAmount for a range. */
+  maxAmount?: number;
+  /** Transaction sides to include, e.g. ['P'] for buys only (empty/undefined => all). */
+  sides?: TxType[];
+  /** GICS sectors to include (securities_ref.sector); empty/undefined => all. */
+  sectors?: string[];
+  /** Market-cap buckets to include (mega…nano, securities_ref.market_cap_bucket). */
+  marketCapBuckets?: string[];
 }
 
 export interface Subscription {
