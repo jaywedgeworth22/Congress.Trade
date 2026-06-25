@@ -30,8 +30,9 @@ describe('validators', () => {
     expect(asWindow('180d')).toBe('180d'); // preset (past 6 months)
     expect(asWindow('1825d')).toBe('1825d'); // preset (past 5 years)
     expect(asWindow('45d')).toBe('45d'); // custom age via API
-    expect(asWindow('nonsense')).toBe('30d');
-    expect(asWindow('0d')).toBe('30d'); // must be >= 1 day
+    expect(asWindow('nonsense')).toBe('90d'); // default fallback (recent, not all-time)
+    expect(asWindow('0d')).toBe('90d'); // must be >= 1 day → default fallback
+    expect(asWindow('nonsense', '30d')).toBe('30d'); // explicit fallback still honored
     expect(asWindow(undefined, '90d')).toBe('90d');
     expect(isWindow('365d')).toBe(true);
     expect(isWindow('5y')).toBe(false); // only <N>d or 'all'
