@@ -38,9 +38,13 @@ import { extractParsed } from '../extraction/orchestrator';
 import {
   normalize,
   recomputeTransactions,
+  persistTransactions,
   transactionRowKey,
   CONFIDENCE_THRESHOLD,
+  HARD_FAILURE_FLAGS,
 } from '../extraction/normalizer';
+import { mapFiling, type FilingRow } from '../delivery/rows';
+import { arbitrationRowKey } from '../extractors/types';
 import type { Chamber } from '../shared/types';
 import { verifyAccessJwt, certsUrl, parseEmailAllowlist } from './access';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
@@ -1618,6 +1622,143 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       turnaroundMs,
       turnaroundMin: Math.round((turnaroundMs / 60000) * 10) / 10,
       summary,
+    });
+  });
+
+  // --- POST /agreement-reprocess ------------------------------------------
+  // Agreement-based auto-publish for the backlog. For each doc, run TWO
+  // independent (cross-vendor) models; when they FULLY agree on the row set
+  // (every row's ticker|date|type matches), the read is trusted and published
+  // (ticker-resolved + bracket-validated via the normalizer) instead of held in
+  // review — agreement substitutes for the conservative 0.60 vision-confidence
+  // cap. Disagreements (or hard structural failures) stay in review.
+  //
+  // Body: { docIds?, n?, models:[{provider,model},{provider,model}],
+  //         requireThird?:{provider,model}, dryRun?:boolean (default TRUE) }
+  // dryRun reports what WOULD publish without writing — always preview first.
+  r.post('/agreement-reprocess', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+
+    const parseModel = (m: unknown): BakeoffCandidate | null => {
+      const o = m as { provider?: unknown; model?: unknown };
+      const valid: Provider[] = ['gemini', 'openai', 'anthropic', 'mistral', 'xai'];
+      return valid.includes(o.provider as Provider) && typeof o.model === 'string'
+        ? { provider: o.provider as Provider, model: o.model }
+        : null;
+    };
+    const models = Array.isArray(body.models) ? body.models.map(parseModel) : [];
+    if (models.length !== 2 || models.some((m) => !m)) {
+      return c.json({ error: 'models must be exactly two {provider,model} from gemini|openai|anthropic|mistral|xai' }, 400);
+    }
+    const [mA, mB] = models as BakeoffCandidate[];
+    const mC = body.requireThird ? parseModel(body.requireThird) : null;
+    if (body.requireThird && !mC) return c.json({ error: 'requireThird must be {provider,model}' }, 400);
+    const dryRun = body.dryRun !== false; // default true — preview unless explicitly false
+
+    let n = typeof body.n === 'number' && body.n > 0 ? Math.floor(body.n) : 25;
+    if (n > 100) n = 100;
+
+    let docRows: Array<{ doc_id: string; raw_object_key: string | null }>;
+    if (Array.isArray(body.docIds) && body.docIds.length > 0) {
+      const ids = body.docIds.filter((x): x is string => typeof x === 'string').slice(0, n);
+      docRows = [];
+      for (const id of ids) {
+        const row = await get<{ doc_id: string; raw_object_key: string | null }>(
+          c.env.DB,
+          'SELECT doc_id, raw_object_key FROM filings WHERE doc_id = ?',
+          [id],
+        );
+        if (row) docRows.push(row);
+      }
+    } else {
+      docRows = await all<{ doc_id: string; raw_object_key: string | null }>(
+        c.env.DB,
+        `SELECT f.doc_id, f.raw_object_key
+           FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
+          WHERE rq.resolved = 0 AND f.raw_object_key IS NOT NULL
+          ORDER BY rq.created_at DESC LIMIT ?`,
+        [n],
+      );
+    }
+
+    const sameRowSet = (a: CandidateDocResult, b: CandidateDocResult): boolean => {
+      if (!a.ok || !b.ok || a.rows.length === 0) return false;
+      const ka = new Set(a.rows.map(arbitrationRowKey));
+      const kb = new Set(b.rows.map(arbitrationRowKey));
+      if (ka.size !== kb.size) return false;
+      for (const k of ka) if (!kb.has(k)) return false;
+      return true;
+    };
+
+    const results: Array<Record<string, unknown>> = [];
+    let published = 0, wouldPublish = 0, disagree = 0, hardfail = 0, skipped = 0;
+
+    for (const { doc_id, raw_object_key } of docRows) {
+      if (!raw_object_key) { results.push({ docId: doc_id, outcome: 'skipped', reason: 'no raw_object_key' }); skipped++; continue; }
+      const obj = await c.env.RAW_FILES.get(raw_object_key);
+      if (!obj) { results.push({ docId: doc_id, outcome: 'skipped', reason: 'R2 object missing' }); skipped++; continue; }
+      const bytes = await obj.arrayBuffer();
+
+      const rA = await runCandidateOnDoc(c.env, mA, doc_id, bytes);
+      const rB = await runCandidateOnDoc(c.env, mB, doc_id, bytes);
+      const rC = mC ? await runCandidateOnDoc(c.env, mC, doc_id, bytes) : null;
+
+      const agree = sameRowSet(rA, rB) && (!rC || (sameRowSet(rA, rC) && sameRowSet(rB, rC)));
+      if (!agree) {
+        results.push({ docId: doc_id, outcome: 'disagree', rows: { [`${mA.provider}`]: rA.ok ? rA.rowCount : 'ERR', [`${mB.provider}`]: rB.ok ? rB.rowCount : 'ERR', ...(mC ? { [`${mC.provider}`]: rC && rC.ok ? rC.rowCount : 'ERR' } : {}) } });
+        disagree++;
+        continue;
+      }
+
+      // Agreed — normalize (resolve tickers + validate brackets) and check for
+      // hard structural failures before trusting the read for publish.
+      const frow = await get<FilingRow>(
+        c.env.DB,
+        `SELECT doc_id, chamber, filer_id, filing_type, filed_date, source_url, raw_object_key,
+                ingest_status, doc_kind, extractor, model_version, confidence, first_seen_at,
+                source_updated_at, error FROM filings WHERE doc_id = ?`,
+        [doc_id],
+      );
+      if (!frow) { results.push({ docId: doc_id, outcome: 'skipped', reason: 'filing row missing' }); skipped++; continue; }
+      const flagged = await recomputeTransactions(c.env, mapFiling(frow), rA.rows);
+      const hardFlags = flagged.flatMap((f) => f.flags).filter((fl) => HARD_FAILURE_FLAGS.includes(fl));
+      if (hardFlags.length) {
+        results.push({ docId: doc_id, outcome: 'agree_but_hardfail', rowCount: rA.rowCount, flags: Array.from(new Set(hardFlags)) });
+        hardfail++;
+        continue;
+      }
+
+      if (dryRun) {
+        results.push({ docId: doc_id, outcome: 'would_publish', rowCount: flagged.length, tickers: flagged.map((f) => f.tx.ticker).filter(Boolean).slice(0, 8) });
+        wouldPublish++;
+        continue;
+      }
+
+      // Publish: agreement overrides the soft confidence cap.
+      const txs = flagged.map((f) => ({ ...f.tx, source: 'primary' as const, confidence: Math.max(f.tx.confidence, 0.95) }));
+      const insertedIds = await persistTransactions(c.env, txs);
+      await run(c.env.DB, "UPDATE filings SET ingest_status = 'persisted', error = NULL WHERE doc_id = ?", [doc_id]);
+      await run(c.env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [doc_id]);
+      for (const txId of insertedIds) {
+        try { await c.env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId }); } catch { /* best-effort fan-out */ }
+      }
+      results.push({ docId: doc_id, outcome: 'published', inserted: insertedIds.length });
+      published++;
+    }
+
+    return c.json({
+      ok: true,
+      dryRun,
+      models: { a: `${mA.provider}:${mA.model}`, b: `${mB.provider}:${mB.model}`, ...(mC ? { c: `${mC.provider}:${mC.model}` } : {}) },
+      docsProcessed: docRows.length,
+      summary: { published, wouldPublish, disagree, hardfail, skipped },
+      results,
     });
   });
 
