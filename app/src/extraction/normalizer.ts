@@ -22,6 +22,7 @@ import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../share
 import { all, run, fromBool, parseJson } from '../shared/db';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets';
 import { uuid } from '../shared/ids';
+import { isPlaceholderTicker, resolveTickerDeterministic } from './tickerNormalize';
 
 /**
  * Per-tx confidence at or above this threshold is trusted for auto-publish. If a
@@ -36,6 +37,7 @@ const PENALTY_UNRESOLVED_TICKER = 0.85; // asset/ticker could not be resolved
 const PENALTY_INVALID_BRACKET = 0.6; //   amount range is not a canonical bracket
 const PENALTY_FUTURE_TX_DATE = 0.7; //    tx_date after the filing's filed_date
 const PENALTY_BAD_TX_TYPE = 0.5; //       tx_type not in {P,S,E}
+const PENALTY_BAD_ASSET_NAME = 0.4; //    parsed asset contains PTR header chrome
 
 /** Outcome of normalizing one filing's extracted rows. */
 export interface NormalizeResult {
@@ -163,7 +165,8 @@ export async function normalize(
     (f) =>
       f.flags.includes('no_amount') ||
       f.flags.includes('invalid_amount') ||
-      f.flags.includes('bad_tx_type'),
+      f.flags.includes('bad_tx_type') ||
+      f.flags.includes('bad_asset_name'),
   );
 
   const needsReview =
@@ -309,11 +312,18 @@ export function scoreFields(
   const flags: string[] = [];
   let confidence = clamp01(base);
 
+  if (looksLikeHeaderContaminatedAsset(fields.assetName)) {
+    flags.push('bad_asset_name');
+    confidence *= PENALTY_BAD_ASSET_NAME;
+  }
+
   // --- ticker resolution: exact symbol, then alias/name lookup --------------
   // Only PENALIZE when a ticker string was supplied but couldn't be resolved
   // (a likely mis-parse). Many disclosures legitimately have no ticker — bonds,
   // real estate, private funds — and that should NOT lower confidence.
-  const hadTickerInput = !!(fields.ticker && fields.ticker.trim());
+  // A dash / "N/A" / blank is a "no ticker" marker, not an unresolved ticker —
+  // treat it like a legitimately symbol-less asset (bond, fund) and don't penalize.
+  const hadTickerInput = !!(fields.ticker && fields.ticker.trim()) && !isPlaceholderTicker(fields.ticker);
   const resolved = resolve(fields.ticker, fields.assetName);
   let ticker = fields.ticker;
   if (resolved) {
@@ -368,6 +378,13 @@ export function scoreFields(
   return { confidence: clamp01(confidence), flags, ticker, amountMin, amountMax, txType };
 }
 
+function looksLikeHeaderContaminatedAsset(assetName: string | null): boolean {
+  if (!assetName) return false;
+  return /(?:\bClerk of the House of Representatives\b|\bLegislative Resource Center\b|\bID Owner Asset Transaction Type\b|\bTransaction Type Date Notification Date Amount\b|\bPeriodic Transaction Report\b|Name:\s*Hon\.|Status:\s*Member|State\/District:)/i.test(
+    assetName,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Ticker resolution against securities_master
 // ---------------------------------------------------------------------------
@@ -412,7 +429,11 @@ function buildResolver(rows: SecRow[]): TickerResolver {
     // Also try the raw ticker as an alias (sometimes asset name lands in ticker).
     const tl = t.toLowerCase();
     if (tl && byAlias.has(tl)) return byAlias.get(tl)!;
-    return null;
+    // Deterministic fallback: `$`-series strip, punctuation variants, curated
+    // stale→current aliases (probed against the master), then syntactic
+    // acceptance of a well-formed symbol the master doesn't list yet. This is
+    // what clears the dominant `unresolved_ticker` review-queue reason.
+    return resolveTickerDeterministic(t, (sym) => (byTicker.has(sym) ? byTicker.get(sym)! : null));
   };
 }
 

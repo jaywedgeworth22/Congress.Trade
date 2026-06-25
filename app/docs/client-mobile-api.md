@@ -59,6 +59,16 @@ shared type set but still return `501`.
 - `feed` currently accepts query params like `since`, `ticker`, `member`,
   `chamber`, `type`, `from`, `to`, `order`, and `limit`, and returns the
   cursor/count/total metadata used by polling clients.
+- Each feed item's `asset` object carries `name` (the disclosed asset text),
+  `ticker`, `type`, `sector`, and `marketCapBucket`, plus two enrichment fields
+  shared with the web client so every surface renders identically:
+  - `companyName` — the canonical company name from `securities_ref`
+    (`null` until the ticker is enriched).
+  - `logoUrl` — a same-origin path to the cached logo proxy, e.g.
+    `/api/logos/ticker?symbol=AAPL` (`null` when no ticker resolves). Clients
+    render `<img>` against this URL directly; the proxy handles the logo
+    provider key and edge caching server-side and 404s on a true miss so the
+    client can fall back to a monogram.
 - Next: trade detail, ticker detail, member detail, analytics summary, alert
   create/update/pause commands, device registration for APNs and web push,
   rotate secret, test delivery, delivery history, and foreground command

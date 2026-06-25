@@ -247,6 +247,100 @@ describe('client API routes', () => {
     });
   });
 
+  it('surfaces company name + same-origin logo URL on enriched feed rows', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push({
+      id: 'tx_2',
+      doc_id: 'H-2026-20034836',
+      filer_id: 'P000197',
+      tx_date: '2026-05-06',
+      owner: 'self',
+      asset_name: 'Apple Inc. - Common Stock',
+      ticker: 'AAPL',
+      asset_type: 'ST',
+      tx_type: 'P',
+      amount_min: 1001,
+      amount_max: 15000,
+      is_option: 0,
+      cap_gains_over_200: 0,
+      raw_text: 'Apple',
+      confidence: 0.95,
+      source: 'primary',
+      row_key: 'v1:primary:0:aapl',
+      created_at: '2026-06-22T13:01:49.646Z',
+      cursor_seq: 7473,
+      filer_full_name: 'Scott Peters',
+      filer_state: 'CA',
+      filer_photo_url: null,
+      filing_filed_date: '2026-06-19',
+      filing_first_seen_at: '2026-06-22T13:01:15.667Z',
+      filing_source_url: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034836.pdf',
+      ref_company_name: 'Apple Inc.',
+      ref_sector: 'Technology',
+      ref_market_cap_bucket: 'mega',
+      __chamber: 'house',
+      __member_name: 'Scott Peters',
+      __party: null,
+    } as FeedTransactionRow & { __chamber: string; __member_name: string; __party: null });
+
+    const app = buildClientRouter();
+    const res = await app.request('http://localhost/feed?limit=1', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: Array<{
+        asset: { ticker: string | null; companyName: string | null; logoUrl: string | null; sector: string | null };
+      }>;
+    };
+    expect(body.items[0].asset).toMatchObject({
+      ticker: 'AAPL',
+      companyName: 'Apple Inc.',
+      logoUrl: '/api/logos/ticker?symbol=AAPL',
+      sector: 'Technology',
+    });
+  });
+
+  it('emits null company name + logo URL when a row has no resolved ticker', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push({
+      id: 'tx_3',
+      doc_id: 'H-2026-20034784',
+      filer_id: 'P000197',
+      tx_date: '2026-05-05',
+      owner: 'spouse',
+      asset_name: 'Austin TX ARPT SYS TRAN',
+      ticker: null,
+      asset_type: 'GS',
+      tx_type: 'P',
+      amount_min: 50001,
+      amount_max: 100000,
+      is_option: 0,
+      cap_gains_over_200: 0,
+      raw_text: 'muni bond',
+      confidence: 0.9,
+      source: 'primary',
+      row_key: 'v1:primary:0:muni',
+      created_at: '2026-06-22T13:01:49.646Z',
+      cursor_seq: 7474,
+      filer_full_name: 'Scott Peters',
+      filer_state: 'CA',
+      filer_photo_url: null,
+      filing_filed_date: '2026-06-19',
+      filing_first_seen_at: '2026-06-22T13:01:15.667Z',
+      filing_source_url: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034784.pdf',
+      __chamber: 'house',
+      __member_name: 'Scott Peters',
+      __party: null,
+    } as FeedTransactionRow & { __chamber: string; __member_name: string; __party: null });
+
+    const app = buildClientRouter();
+    const res = await app.request('http://localhost/feed?limit=1', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: Array<{ asset: { ticker: string | null; companyName: string | null; logoUrl: string | null } }>;
+    };
+    expect(body.items[0].asset).toMatchObject({ ticker: null, companyName: null, logoUrl: null });
+  });
+
   it('updates preferences through an authenticated command', async () => {
     const { env, preferences } = makeEnv();
     const app = buildClientRouter();

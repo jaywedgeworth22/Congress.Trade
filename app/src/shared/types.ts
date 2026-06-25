@@ -47,8 +47,9 @@ export type DeliveryKind = DeliveryChannel;
 /** Delivery attempt status. */
 export type DeliveryStatus = 'pending' | 'delivered' | 'failed';
 
-/** Provenance of a persisted transaction. */
-export type TxSource = 'primary' | 'seed_dataset';
+/** Provenance of a persisted transaction. 'manual' = hand-entered by an admin in
+ *  review when the automated read was wrong / too low-confidence to trust. */
+export type TxSource = 'primary' | 'seed_dataset' | 'manual';
 
 // ---------------------------------------------------------------------------
 // Domain entities (mirror D1 tables; JSON columns are typed as parsed shapes)
@@ -134,6 +135,7 @@ export interface Transaction {
   sourceUrl?: string | null;
   // --- Optional cross-referenced asset data (securities_ref; feed only) ------
   // Populated when the ticker has been enriched; null/absent otherwise.
+  refCompanyName?: string | null;
   refSector?: string | null;
   refMarketCap?: number | null;
   refMarketCapBucket?: string | null;
@@ -247,6 +249,10 @@ export interface ClientTrade {
   asset: {
     name: string;
     ticker: string | null;
+    /** Canonical company name from securities_ref (null until the ticker is enriched). */
+    companyName: string | null;
+    /** Same-origin cached logo proxy URL for the ticker, or null when no ticker is resolved. */
+    logoUrl: string | null;
     type: string | null;
     sector: string | null;
     marketCapBucket: string | null;
@@ -414,6 +420,10 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   /** OpenAI API key — GPT vision candidates in the extractor bake-off. */
   OPENAI_API_KEY?: string;
+  /** Mistral API key — `mistral-ocr-latest` candidate in the extractor bake-off. */
+  MISTRAL_API_KEY?: string;
+  /** xAI API key — Grok (Files API → grok-4.3) candidate in the extractor bake-off. */
+  XAI_API_KEY?: string;
   /** Financial Modeling Prep key — enables asset enrichment + price/performance. */
   FMP_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */

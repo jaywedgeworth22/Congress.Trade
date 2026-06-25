@@ -27,7 +27,7 @@
  */
 
 import { Hono } from 'hono';
-import type { Env, PollConfig, PollWindow, TxType } from '../shared/types';
+import type { Env, PollConfig, PollWindow, TxType, TxSource } from '../shared/types';
 import { all, get, run, type SqlParam } from '../shared/db';
 import { getConfig, setConfig } from '../shared/config';
 import { uuid } from '../shared/ids';
@@ -425,7 +425,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // rejected (error) for resolved items.
   r.get('/review-queue', async (c) => {
     const resolved = c.req.query('resolved') === '1' ? 1 : 0;
-    const rows = await all<ReviewRow & { ingest_status?: string | null }>(
+    const rows = await all<
+      ReviewRow & { ingest_status?: string | null; manual_rows?: number | null; live_rows?: number | null }
+    >(
       c.env.DB,
       `SELECT
           rq.doc_id,
@@ -436,31 +438,147 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           f.source_url,
           f.raw_object_key,
           f.doc_kind,
-          f.ingest_status
+          f.ingest_status,
+          (SELECT COUNT(*) FROM transactions t
+             WHERE t.doc_id = rq.doc_id AND t.source = 'manual' AND t.deprecated_at IS NULL) AS manual_rows,
+          (SELECT COUNT(*) FROM transactions t
+             WHERE t.doc_id = rq.doc_id AND t.deprecated_at IS NULL) AS live_rows
         FROM review_queue rq
         LEFT JOIN filings f ON f.doc_id = rq.doc_id
         WHERE rq.resolved = ?
         ORDER BY rq.created_at ${resolved ? 'DESC' : 'ASC'}`,
       [resolved],
     );
-    const items = rows.map((row) => ({
-      docId: row.doc_id,
-      reason: row.reason ?? '',
-      payload: row.payload ? safeJson(row.payload) : null,
-      createdAt: row.created_at ?? '',
-      resolved: row.resolved === 1,
-      ingestStatus: row.ingest_status ?? '',
-      sourceUrl: row.source_url ?? '',
-      rawObjectKey: row.raw_object_key ?? '',
-      docKind: row.doc_kind ?? '',
-    }));
+
+    // Attach per-model extraction results (latest run per provider:model per doc).
+    // Wrapped so a missing extraction_runs table (pre-migration) degrades to [].
+    const modelsByDoc = new Map<string, Array<Record<string, unknown>>>();
+    if (rows.length) {
+      try {
+        const ids = rows.map((r) => r.doc_id);
+        const placeholders = ids.map(() => '?').join(',');
+        const runs = await all<{
+          doc_id: string;
+          provider: string;
+          model: string;
+          kind: string;
+          ok: number;
+          error: string | null;
+          row_count: number;
+          latency_ms: number | null;
+          avg_confidence: number | null;
+          created_at: string;
+        }>(
+          c.env.DB,
+          `SELECT doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, created_at
+             FROM extraction_runs WHERE doc_id IN (${placeholders})
+            ORDER BY created_at DESC`,
+          ids,
+        );
+        for (const er of runs) {
+          const list = modelsByDoc.get(er.doc_id) ?? [];
+          // Keep only the most recent run per provider:model (rows are DESC by time).
+          if (list.some((m) => m.provider === er.provider && m.model === er.model)) continue;
+          list.push({
+            provider: er.provider,
+            model: er.model,
+            kind: er.kind,
+            ok: er.ok === 1,
+            error: er.error,
+            rowCount: er.row_count,
+            latencyMs: er.latency_ms,
+            avgConfidence: er.avg_confidence,
+            createdAt: er.created_at,
+          });
+          modelsByDoc.set(er.doc_id, list);
+        }
+      } catch {
+        /* extraction_runs not migrated yet — no per-model data */
+      }
+    }
+
+    const items = rows.map((row) => {
+      const manual = (row.manual_rows ?? 0) > 0;
+      const status = !row.resolved || row.resolved === 0
+        ? 'pending'
+        : row.ingest_status === 'error'
+          ? 'rejected'
+          : manual
+            ? 'modified'
+            : (row.live_rows ?? 0) > 0
+              ? 'published'
+              : 'resolved';
+      return {
+        docId: row.doc_id,
+        reason: row.reason ?? '',
+        payload: row.payload ? safeJson(row.payload) : null,
+        createdAt: row.created_at ?? '',
+        resolved: row.resolved === 1,
+        status,
+        ingestStatus: row.ingest_status ?? '',
+        sourceUrl: row.source_url ?? '',
+        rawObjectKey: row.raw_object_key ?? '',
+        docKind: row.doc_kind ?? '',
+        models: modelsByDoc.get(row.doc_id) ?? [],
+      };
+    });
     return c.json({ items, count: items.length, resolved: resolved === 1 });
   });
 
+  // --- GET /review/:docId/extractions -------------------------------------
+  // Full stored readings (result_json) for one document, newest first — powers
+  // the dashboard's "view each model's reading" panel. Separate from the list
+  // endpoint so the heavy result_json is only fetched on demand.
+  r.get('/review/:docId/extractions', async (c) => {
+    const docId = c.req.param('docId');
+    let runs: Array<Record<string, unknown>> = [];
+    try {
+      const rowsE = await all<{
+        id: string;
+        batch_id: string | null;
+        provider: string;
+        model: string;
+        kind: string;
+        ok: number;
+        error: string | null;
+        row_count: number;
+        latency_ms: number | null;
+        avg_confidence: number | null;
+        result_json: string | null;
+        created_at: string;
+      }>(
+        c.env.DB,
+        `SELECT id, batch_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, created_at
+           FROM extraction_runs WHERE doc_id = ? ORDER BY created_at DESC`,
+        [docId],
+      );
+      runs = rowsE.map((er) => ({
+        id: er.id,
+        batchId: er.batch_id,
+        provider: er.provider,
+        model: er.model,
+        kind: er.kind,
+        ok: er.ok === 1,
+        error: er.error,
+        rowCount: er.row_count,
+        latencyMs: er.latency_ms,
+        avgConfidence: er.avg_confidence,
+        rows: er.result_json ? safeJson(er.result_json) : [],
+        createdAt: er.created_at,
+      }));
+    } catch {
+      /* extraction_runs not migrated yet */
+    }
+    return c.json({ docId, runs, count: runs.length });
+  });
+
   // --- POST /review/:docId ------------------------------------------------
-  // Body: { decision: 'confirm'|'reject', edits?: EditedTx[] }
+  // Body: { decision: 'confirm'|'reject'|'manual', edits?: EditedTx[] }
   //   confirm -> insert corrected transactions (source='primary'), mark review
   //              resolved, set filing persisted, enqueue delivery.dispatch each.
+  //   manual  -> same as confirm but recorded as source='manual' — the admin
+  //              hand-entered the rows because the automated read was wrong / too
+  //              low-confidence to trust. Flagged so admins can tell them apart.
   //   reject  -> mark review resolved + filing status 'error'.
   r.post('/review/:docId', async (c) => {
     const docId = c.req.param('docId');
@@ -472,8 +590,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
 
     const decision = body.decision;
-    if (decision !== 'confirm' && decision !== 'reject') {
-      return c.json({ error: "decision must be 'confirm' or 'reject'" }, 400);
+    if (decision !== 'confirm' && decision !== 'reject' && decision !== 'manual') {
+      return c.json({ error: "decision must be 'confirm', 'reject', or 'manual'" }, 400);
     }
 
     const review = await get<ReviewRow>(
@@ -495,7 +613,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ docId, decision: 'reject', resolved: true });
     }
 
-    // confirm: insert the corrected transactions.
+    // confirm/manual: insert the (corrected or hand-entered) transactions.
+    // 'manual' tags provenance so admins can tell hand-entered rows from machine reads.
+    const source: TxSource = decision === 'manual' ? 'manual' : 'primary';
     const edits = Array.isArray(body.edits) ? (body.edits as EditedTx[]) : [];
     const filing = await get<{ filer_id: string | null }>(
       c.env.DB,
@@ -508,7 +628,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const nowIso = new Date().toISOString();
     for (const [rowIndex, e] of edits.entries()) {
       const id = uuid();
-      const rowKey = transactionRowKey('primary', rowIndex, {
+      const rowKey = transactionRowKey(source, rowIndex, {
         txDate: e.txDate ?? null,
         owner: e.owner === 'self' || e.owner === 'spouse' || e.owner === 'joint' || e.owner === 'dependent'
           ? e.owner
@@ -530,7 +650,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
            id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
            tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
            raw_text, row_key, confidence, source, created_at, cursor_seq
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'primary', ?, NULL)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
         [
           id,
           docId,
@@ -548,6 +668,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           e.rawText ?? '',
           rowKey,
           e.confidence ?? 1,
+          source,
           nowIso,
         ],
       );
@@ -572,7 +693,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
     return c.json({
       docId,
-      decision: 'confirm',
+      decision,
+      source,
       resolved: true,
       inserted: insertedIds.length,
       transactionIds: insertedIds,
@@ -611,7 +733,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       c.env.DB,
       `UPDATE transactions
           SET deprecated_at = ?, deprecated_reason = ?
-        WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL`,
+        WHERE doc_id = ? AND source IN ('primary', 'manual') AND deprecated_at IS NULL`,
       [nowIso, reason, docId],
     );
     const deprecated = res.meta?.changes ?? 0;
@@ -1197,7 +1319,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /bakeoff ------------------------------------------------------
-  // Run N House PTR PDFs through several vision models (Gemini/OpenAI/Anthropic)
+  // Run N House PTR PDFs through several vision models (Gemini/OpenAI/Anthropic/Mistral/xAI)
   // and report row recall, failures, latency, and cross-model agreement so we
   // can pick the best extractor before reprocessing the whole corpus. Read-only:
   // it never writes transactions. Body: { n?, models?: [{provider,model}], docIds? }.
@@ -1213,12 +1335,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     // Candidate lineup (default provider-neutral set, overridable).
     let candidates: BakeoffCandidate[] = DEFAULT_CANDIDATES;
     if (Array.isArray(body.models)) {
-      const valid: Provider[] = ['gemini', 'openai', 'anthropic'];
+      const valid: Provider[] = ['gemini', 'openai', 'anthropic', 'mistral', 'xai'];
       const parsed: BakeoffCandidate[] = [];
       for (const m of body.models) {
         const o = m as { provider?: unknown; model?: unknown };
         if (!valid.includes(o.provider as Provider) || typeof o.model !== 'string') {
-          return c.json({ error: 'each model must be {provider:gemini|openai|anthropic, model:string}' }, 400);
+          return c.json({ error: 'each model must be {provider:gemini|openai|anthropic|mistral|xai, model:string}' }, 400);
         }
         parsed.push({ provider: o.provider as Provider, model: o.model });
       }
@@ -1257,8 +1379,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'no House filings with a stored PDF were found to test' }, 404);
     }
 
+    // Persist each model's reading by default (set persist:false to skip) so the
+    // results land in extraction_runs for the review dashboard + later learning.
+    const persist = body.persist !== false;
+    const batchId = uuid();
+    const nowIso = new Date().toISOString();
+
     const results: CandidateDocResult[] = [];
     const skipped: string[] = [];
+    let persistErrors = 0;
     for (const { doc_id, raw_object_key } of docs) {
       if (!raw_object_key) {
         skipped.push(`${doc_id}: no raw_object_key`);
@@ -1272,7 +1401,35 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       const bytes = await obj.arrayBuffer();
       // Sequential per doc keeps memory + provider rate-limits sane.
       for (const candidate of candidates) {
-        results.push(await runCandidateOnDoc(c.env, candidate, doc_id, bytes));
+        const res = await runCandidateOnDoc(c.env, candidate, doc_id, bytes);
+        results.push(res);
+        if (persist) {
+          try {
+            await run(
+              c.env.DB,
+              `INSERT INTO extraction_runs
+                 (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, created_at)
+               VALUES (?, ?, ?, ?, ?, 'bakeoff', ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                uuid(),
+                batchId,
+                res.docId,
+                res.provider,
+                res.model,
+                res.ok ? 1 : 0,
+                res.error ?? null,
+                res.rowCount,
+                res.latencyMs,
+                res.avgConfidence,
+                JSON.stringify(res.rows ?? []),
+                nowIso,
+              ],
+            );
+          } catch {
+            // Table may not exist yet (pre-migration) — keep the bake-off read-only-safe.
+            persistErrors++;
+          }
+        }
       }
     }
 
@@ -1287,6 +1444,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       ok: true,
       docsTested: docs.length - skipped.length,
       skipped,
+      persisted: persist && persistErrors === 0,
+      batchId: persist ? batchId : null,
       models: summarizeModels(candidates, results),
       perDoc,
     });
@@ -1432,6 +1591,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       // 0014_tx_perf_filing_anchors.sql — disclosure-date performance anchors.
       'ALTER TABLE tx_performance ADD COLUMN price_at_filing REAL',
       'ALTER TABLE tx_performance ADD COLUMN spx_at_filing REAL',
+      // 0015_extraction_runs.sql — per-doc per-model extraction results (bake-off + review dashboard).
+      `CREATE TABLE IF NOT EXISTS extraction_runs (
+         id TEXT PRIMARY KEY, batch_id TEXT, doc_id TEXT NOT NULL,
+         provider TEXT NOT NULL, model TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'bakeoff',
+         ok INTEGER NOT NULL DEFAULT 0, error TEXT, row_count INTEGER NOT NULL DEFAULT 0,
+         latency_ms INTEGER, avg_confidence REAL, result_json TEXT, created_at TEXT NOT NULL)`,
+      'CREATE INDEX IF NOT EXISTS idx_extraction_runs_doc ON extraction_runs (doc_id)',
+      'CREATE INDEX IF NOT EXISTS idx_extraction_runs_batch ON extraction_runs (batch_id)',
+      'CREATE INDEX IF NOT EXISTS idx_extraction_runs_created ON extraction_runs (created_at)',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
