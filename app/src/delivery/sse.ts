@@ -190,7 +190,7 @@ async function drain(
          LEFT JOIN filings f ON f.doc_id = t.doc_id
          LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
          LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id
-        WHERE t.cursor_seq > ?
+        WHERE t.cursor_seq > ? AND t.deprecated_at IS NULL
         ORDER BY t.cursor_seq ASC
         LIMIT ?`,
       [hwm, PAGE_SIZE],

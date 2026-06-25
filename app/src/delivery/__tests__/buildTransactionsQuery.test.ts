@@ -216,9 +216,10 @@ describe('buildTransactionsCountQuery', () => {
     expect(q.params).toEqual(['senate']);
   });
 
-  it('emits no WHERE clause when there are no filters', () => {
+  it('excludes retracted rows even when no other filters are given', () => {
     const q = buildTransactionsCountQuery({});
-    expect(q.sql).not.toContain('WHERE');
+    // The only WHERE clause is the always-on retracted (un-published) guard.
+    expect(q.sql).toContain('WHERE t.deprecated_at IS NULL');
     expect(q.params).toEqual([]);
   });
 
