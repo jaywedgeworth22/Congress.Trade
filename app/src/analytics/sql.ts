@@ -46,7 +46,7 @@ export function isWindow(v: unknown): v is Window {
   return n >= 1 && n <= MAX_WINDOW_DAYS;
 }
 /** Coerce arbitrary input to a valid Window, falling back to `fallback`. */
-export function asWindow(v: unknown, fallback: Window = '30d'): Window {
+export function asWindow(v: unknown, fallback: Window = '90d'): Window {
   return isWindow(v) ? (v as Window) : fallback;
 }
 /** Number of days a window spans, or null for 'all'. Defaults to 30 on garbage. */
