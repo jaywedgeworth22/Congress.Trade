@@ -438,7 +438,10 @@ export function computeConvictionScore(i: ConvictionInput): ConvictionResult {
   if (i.memberCount < 2) raw = Math.min(raw, 25);
   const totalScored = i.skill?.totalScoredCount ?? 0;
   if (totalScored < 3) raw = Math.min(raw, 60);
-  if (i.netSentiment == null) raw = Math.min(raw, 20);
+  // No resolved BUY/SELL direction (no directional activity, or a perfectly
+  // balanced ticker with no net flow) → cap hard: breadth/party/momentum must
+  // not surface a directionless name as high conviction.
+  if (direction == null) raw = Math.min(raw, 20);
 
   const components = {
     breadth: round(fBreadth, 1),

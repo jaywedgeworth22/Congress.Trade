@@ -254,24 +254,33 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const data = await cached(c.env, key, 300, async () => {
       // Conviction is NOT monotonic in trade count (broad bipartisan low-trade
       // names can outscore the trade-count leaders), so rank over a generous
-      // candidate pool rather than just the top `limit`. The pool and the side
-      // aggregates are capped at the same ceiling (100) so every ranked
-      // candidate has its party/momentum aggregates available — no candidate is
-      // scored with silently-missing components.
+      // candidate pool rather than just the top `limit`.
       const POOL_MAX = 100;
       const pool = Math.min(POOL_MAX, Math.max(60, limit * 3));
       const lbQ = buildTickerLeaderboardQuery({ ...f, sort: 'trades', limit: pool });
-      const clQ = buildClusterBuysQuery({ ...f, minMembers: 2, limit: POOL_MAX });
-      // Momentum is computed PER SIDE (bySide → grouped by ticker, tx_type) and
-      // restricted to directional (P/S) rows: rising purchases must not feed a
-      // SELL conviction's momentum, and non-directional exchange/type-change rows
-      // never count.
-      const trQ = buildTrendingQuery({ ...f, txTypes: ['P', 'S'], bySide: true, limit: POOL_MAX });
-      const [lbRows, clRows, trRows] = await Promise.all([
-        all<Record<string, unknown>>(c.env.DB, lbQ.sql, lbQ.params),
-        all<Record<string, unknown>>(c.env.DB, clQ.sql, clQ.params),
-        all<Record<string, unknown>>(c.env.DB, trQ.sql, trQ.params),
-      ]);
+      const lbRows = await all<Record<string, unknown>>(c.env.DB, lbQ.sql, lbQ.params);
+      // Fetch the party + momentum aggregates restricted to THIS candidate set,
+      // so every ranked candidate's resolved side is present (a global top-N side
+      // query could omit a candidate's row and silently null its components).
+      // bySide ⇒ up to 2 rows (P/S) per ticker; the builders allow up to 200.
+      const candidateTickers = Array.from(
+        new Set(lbRows.map((row) => str(row.ticker)).filter((t): t is string => !!t)),
+      );
+      const sideLimit = Math.min(200, Math.max(2, candidateTickers.length * 2));
+      let clRows: Record<string, unknown>[] = [];
+      let trRows: Record<string, unknown>[] = [];
+      if (candidateTickers.length) {
+        const clQ = buildClusterBuysQuery({ ...f, tickers: candidateTickers, minMembers: 2, limit: sideLimit });
+        // Momentum is computed PER SIDE (bySide → grouped by ticker, tx_type) and
+        // restricted to directional (P/S) rows: rising purchases must not feed a
+        // SELL conviction's momentum, and non-directional exchange/type-change
+        // rows never count.
+        const trQ = buildTrendingQuery({ ...f, tickers: candidateTickers, txTypes: ['P', 'S'], bySide: true, limit: sideLimit });
+        [clRows, trRows] = await Promise.all([
+          all<Record<string, unknown>>(c.env.DB, clQ.sql, clQ.params),
+          all<Record<string, unknown>>(c.env.DB, trQ.sql, trQ.params),
+        ]);
+      }
       // Cluster rows are per (ticker, tx_type); keep BOTH the buy ('P') and sell
       // ('S') side so the route can attach the party split for the side the
       // conviction actually resolves to — not just whichever side had more
@@ -401,7 +410,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const q = c.req.query();
     const f = commonFromQuery(q);
     const minMembers = q.minMembers ? Number(q.minMembers) : undefined;
-    const limit = q.limit ? Number(q.limit) : undefined;
+    const limit = q.limit ? Math.min(100, Number(q.limit)) : undefined; // public cap (builder allows 200 for internal callers)
     const key = cacheKey('cluster-buys', { ...f, minMembers, limit });
     const data = await cached(c.env, key, 300, async () => {
       const built = buildClusterBuysQuery({ ...f, minMembers, limit });
@@ -445,7 +454,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   r.get('/trending', async (c) => {
     const q = c.req.query();
     const f = commonFromQuery(q);
-    const limit = q.limit ? Number(q.limit) : undefined;
+    const limit = q.limit ? Math.min(100, Number(q.limit)) : undefined; // public cap (builder allows 200 for internal callers)
     const key = cacheKey('trending', { ...f, limit });
     const data = await cached(c.env, key, 300, async () => {
       const built = buildTrendingQuery({ ...f, limit });

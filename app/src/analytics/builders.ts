@@ -158,7 +158,10 @@ export function buildClusterBuysQuery(
 ): BuiltQuery {
   const { where, params } = buildCommonFilters({ ...p, tickerNotNull: true, txTypes: ['P', 'S'] });
   const minMembers = clampLimit(p.minMembers, 3, 50);
-  const limit = clampLimit(p.limit, 12, 100);
+  // Max 200 so a caller restricting to a candidate ticker set can fetch both the
+  // buy ('P') and sell ('S') cluster row for up to 100 tickers; public callers
+  // pin their own limit (see /cluster-buys).
+  const limit = clampLimit(p.limit, 12, 200);
   const sql =
     'SELECT t.ticker AS ticker, t.tx_type AS tx_type, sm.name AS name, ' +
     'COUNT(DISTINCT t.filer_id) AS member_count, ' +
@@ -224,7 +227,9 @@ export function buildTrendingQuery(
   const { recent, priorStart } = momentumOffsets(w);
   const recentLit = `date('now', '${recent}')`;
   const priorLit = `date('now', '${priorStart}')`;
-  const limit = clampLimit(p.limit, 20, 100);
+  // Max 200 so a bySide caller restricting to a candidate set can fetch both
+  // sides for up to 100 tickers; public callers pin their own limit (see /trending).
+  const limit = clampLimit(p.limit, 20, 200);
 
   // Build filters WITHOUT the window clause (we manage the date range manually).
   const { where, params } = buildCommonFilters({ ...p, window: 'all', tickerNotNull: true });

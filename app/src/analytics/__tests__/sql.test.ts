@@ -158,6 +158,12 @@ describe('buildCommonFilters', () => {
     expect(params).toEqual(['P', 'S']);
   });
 
+  it('tickers expands to an IN-list with one bind per ticker', () => {
+    const { where, params } = buildCommonFilters({ window: 'all', tickers: ['AAPL', 'MSFT', 'NVDA'] });
+    expect(where.some((w) => w === 't.ticker IN (?, ?, ?)')).toBe(true);
+    expect(params).toEqual(['AAPL', 'MSFT', 'NVDA']);
+  });
+
   it('whereSql renders a clause with a trailing space, or empty', () => {
     expect(whereSql([])).toBe('');
     expect(whereSql(['a = ?', 'b = ?'])).toBe('WHERE a = ? AND b = ? ');

@@ -332,8 +332,9 @@ describe('computeConvictionScore', () => {
     expect(r.direction).toBe('SELL');
   });
 
-  it('treats a perfectly balanced ticker as neutral (no direction), not SELL', () => {
-    // Equal buys/sells with no net dollar flow → genuinely neutral.
+  it('treats a perfectly balanced ticker as neutral (no direction) and caps it at 20', () => {
+    // Equal buys/sells with no net dollar flow → genuinely neutral: no direction,
+    // and capped like the no-directional case so it can't rank as high conviction.
     const r = computeConvictionScore({
       ...full,
       buyCount: 10,
@@ -342,6 +343,7 @@ describe('computeConvictionScore', () => {
       estNetFlowUsd: 0,
     });
     expect(r.direction).toBeNull();
+    expect(r.score).toBeLessThanOrEqual(20);
   });
 
   it('scores net-flow symmetrically: a big-outflow SELL matches a big-inflow BUY', () => {
