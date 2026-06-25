@@ -527,6 +527,34 @@ export function buildTickerBacktestCohortQuery(
   return { sql, params };
 }
 
+/**
+ * Candidate trades for the committee conflict-of-interest signal: trades by a
+ * member WITH committees, in a resolved sector. The route applies the curated
+ * committee→sector map (see committeeConflict) to keep only true conflicts, so
+ * this just pre-filters to rows that could possibly conflict.
+ */
+export function buildConflictCandidatesQuery(p: CommonFilters & { limit?: number }): BuiltQuery {
+  const { where, params } = buildCommonFilters(p);
+  const allWhere = [
+    ...where,
+    't.ticker IS NOT NULL',
+    'sr.sector IS NOT NULL',
+    'fl.committees IS NOT NULL',
+    "fl.committees <> ''",
+    "fl.committees <> '[]'",
+  ];
+  const limit = clampLimit(p.limit, 200, 2000);
+  const sql =
+    'SELECT t.id AS id, t.ticker AS ticker, t.tx_type AS tx_type, t.tx_date AS tx_date, ' +
+    `t.filer_id AS filer_id, fl.full_name AS full_name, ${CHAMBER_EXPR} AS chamber, fl.party AS party, ` +
+    'fl.committees AS committees, sr.sector AS sector, t.amount_min AS amount_min, t.amount_max AS amount_max ' +
+    ANALYTICS_FROM_JOINS +
+    'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ' +
+    whereSql(allWhere) +
+    `ORDER BY t.tx_date DESC LIMIT ${limit}`;
+  return { sql, params };
+}
+
 export function buildTickerTimeSeriesQuery(
   ticker: string,
   p: CommonFilters & { granularity: Granularity },
