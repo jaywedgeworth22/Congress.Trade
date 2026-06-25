@@ -271,7 +271,10 @@ describe('DASHBOARD_HTML', () => {
 
   it('adds a collapsible disclaimer and tap-to-reveal tooltips', () => {
     expect(DASHBOARD_HTML).toContain('function toggleDisclaimer(');
-    expect(DASHBOARD_HTML).toContain('class="disclaimer collapsed"');
+    expect(DASHBOARD_HTML).toContain('id="trDisclaimer"');
+    expect(DASHBOARD_HTML).toContain('_disclaimerAutoTimer');
+    expect(DASHBOARD_HTML).toContain('For Educational Use, Not Investment Advice');
+    expect(DASHBOARD_HTML).toContain('class="dt-more"');
     expect(DASHBOARD_HTML).toContain('tip-pop');
     expect(DASHBOARD_HTML).toContain('(hover: none)');
   });
