@@ -301,21 +301,42 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* horizontal proportion bar (sectors / lag / party) */
   .hbar { display:flex; align-items:center; gap:10px; margin:7px 0; }
   .hbar .hlabel { width:130px; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .hbar .htrack { flex:1; height:14px; background: var(--panel-2); border:1px solid var(--border); border-radius:7px; overflow:hidden; }
-  .hbar .hfill { height:100%; background: color-mix(in srgb, var(--accent) 70%, transparent); }
-  .hbar .hfill.buy { background: var(--buy); } .hbar .hfill.warn { background: var(--warn); } .hbar .hfill.sell { background: var(--sell); }
+  /* track + fill are shared by .hbar (inline row) and .flowrow (stacked) */
+  .htrack { flex:1; height:14px; background: var(--panel-2); border:1px solid var(--border); border-radius:7px; overflow:hidden; }
+  .hfill { height:100%; background: color-mix(in srgb, var(--accent) 70%, transparent); }
+  .hfill.buy { background: var(--buy); } .hfill.warn { background: var(--warn); } .hfill.sell { background: var(--sell); }
   .hbar .hval { width:120px; text-align:right; font-family: var(--mono); font-size:12px; color: var(--text-dim); }
   .hbar .hval .est-money { font-family: var(--mono); }
-  /* time chart (CSS columns, no chart lib) */
+  /* time chart (CSS columns, no chart lib)
+     Columns flex to fill the container so the chart spans the full width; when
+     there are too many buckets to fit, each keeps a min width and the chart
+     scrolls instead of crushing the bars. */
   .tchart { display:flex; align-items:flex-end; gap:3px; height:180px; overflow-x:auto; padding-top:6px; }
-  .tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:0 0 auto; }
-  .tbars { display:flex; align-items:flex-end; gap:2px; height:150px; }
-  .tbars i { display:block; width:7px; border-radius:2px 2px 0 0; min-height:0; }
+  .tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:1 1 0; min-width:20px; }
+  .tbars { display:flex; align-items:flex-end; justify-content:center; gap:3px; height:150px; }
+  .tbars i { display:block; width:9px; border-radius:2px 2px 0 0; min-height:0; }
   .tbars i.buy { background: var(--buy); } .tbars i.sell { background: var(--sell); }
   .tlbl { font-size:9px; color: var(--text-dim); font-family: var(--mono); white-space:nowrap; }
   .legend { display:flex; gap:14px; font-size:12px; color: var(--text-dim); margin-bottom:6px; }
   .legend .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:middle; }
   .legend .sw.buy { background: var(--buy); } .legend .sw.sell { background: var(--sell); }
+  /* ---- Trends tables: keep numeric cells on one line, let the name column
+     absorb the slack and ellipsis instead of the numbers wrapping ("3 / mbr").
+     The name/member cell is forced narrow (max-width:0 + width:99%) so its
+     inner ellipsis engages; every other cell sizes to its content. ---- */
+  #view-trends td { white-space: nowrap; }
+  #view-trends td:has(.asset-cell), #view-trends td:has(.member-cell) { white-space: normal; width: 99%; max-width: 0; }
+  /* ---- Flow rows (sector / market-cap / party): label + value on a top line,
+     a full-width bar, then the stats chip flush-left beneath — no hard-coded
+     indent, so it stays aligned at every width. ---- */
+  .flowrow { margin: 11px 0; }
+  .flowrow:first-child { margin-top: 2px; }
+  .flowrow .ftop { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 5px; }
+  .flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .flowrow .fval { flex: 0 0 auto; font-family: var(--mono); font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+  .flowrow .fchip { margin-top: 5px; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
+  /* "politicians" spelled out where there's room; collapses to "mbr" on phones. */
+  .u-abbr { display: none; }
   /* cluster cards */
   .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:12px; }
   .ccard { background: var(--panel-2); border:1px solid var(--border); border-radius:10px; padding:13px 14px; }
@@ -512,6 +533,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .row-flex > input, .row-flex > select, .row-flex > button { width: 100%; min-height: 40px; }
     .sched-row { grid-template-columns: 1fr 1fr; }
     .trend-grid2 { gap: 12px; }
+    /* Narrow the fixed label/value gutters so the proportion bar keeps room. */
+    .hbar .hlabel { width: 92px; font-size: 12px; }
+    .hbar .hval { width: auto; min-width: 56px; }
+    /* Trends tables are dense; on phones drop the 120px buy/sell bar (the "3B / 3S"
+       text stays) and the long company name so the ticker + numeric columns all
+       fit without horizontal scroll. */
+    #view-trends .split { display: none; }
+    #view-trends .split-wrap { gap: 0; }
+    #view-trends .asset-cell .muted { display: none; }
+    #view-trends td:has(.asset-cell) { width: auto; max-width: none; }
+    #view-trends .u-full { display: none; }
+    #view-trends .u-abbr { display: inline; }
+    /* "What Congress Is Trading" is the densest row; on phones drop the gross
+       Approx-Volume column (it's in the KPI strip + the tap-through drawer) so the
+       signed net-flow column isn't clipped. Other tables keep their volume. */
+    #trTickers td.est { display: none; }
     .cluster-grid { grid-template-columns: 1fr; }
     .drawer-panel { top: auto; bottom: 0; height: 88vh; width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; padding: 0 16px calc(18px + env(safe-area-inset-bottom)); }
     .drawer-kv { grid-template-columns: 1fr; gap: 3px; }
@@ -542,6 +579,429 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .drawer-panel { height:92vh; }
     nav.tabs { padding-top:6px; padding-bottom:calc(6px + env(safe-area-inset-bottom)); }
   }
+
+/* =====================================================================
+   TRENDS — POLISH OVERRIDE BLOCK  (append-only polish layer)
+   Synthesis of four design lenses into one voice. Tokens only
+   (var(--…) / color-mix). Sits BEFORE the existing mobile media
+   queries (720px / 460px / 420px), so those still win on phones; every
+   rule that could re-widen or re-pad a row is guarded with
+   @media (min-width: 721px) or neutralized in the mobile block at the end.
+   ===================================================================== */
+
+/* ---- 0. Local material + motion contract -----------------------------
+   One token-derived surface recipe + one easing/duration vocabulary,
+   inherited by descendants. These custom props never paint on their own. */
+#view-trends {
+  --tr-ease: cubic-bezier(.2, .6, .25, 1);
+  --tr-fast: 130ms;
+  --tr-med: 170ms;
+  --surf-hi:   color-mix(in srgb, var(--text) 5%, transparent);
+  --surf-edge: color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+/* ---- 1. Shared numeric rhythm ----------------------------------------
+   Every figure rides the same tabular baseline so columns line up
+   digit-for-digit and never jitter as values change. */
+#view-trends .card .v,
+#view-trends .rank,
+#view-trends .net,
+#view-trends .est,
+#view-trends .est-money,
+#view-trends .muted,
+#view-trends td,
+#view-trends .split-wrap small,
+#view-trends .fval,
+#view-trends .fchip,
+#view-trends .hval,
+#view-trends .tlbl,
+#view-trends .ccard .big,
+#view-trends .conf {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+}
+
+/* ---- 2. Section headers + sub text -----------------------------------
+   Crisper header, calmer sub capped to a readable measure on wide cards,
+   and a 3px accent tick that marks every section start. */
+#view-trends .section h3,
+#view-trends h3.tf-h {
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  margin-top: 0;
+}
+#view-trends h3.tf-h .chip,
+#view-trends h3.tf-h .tf-chip,
+#view-trends h3.tf-h .info-tip,
+#view-trends .section h3 .info-tip { letter-spacing: 0; font-weight: 400; }
+#view-trends .section p.sub {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+@media (min-width: 721px) {
+  #view-trends .section p.sub { max-width: 64ch; }
+}
+/* Accent tick on every section-starting heading (direct child, plus the
+   one chart header nested in a .row-flex). */
+#view-trends .section > h3,
+#view-trends .section > .row-flex > h3 {
+  position: relative;
+  padding-left: 12px;
+}
+#view-trends .section > h3::before,
+#view-trends .section > .row-flex > h3::before {
+  content: "";
+  position: absolute;
+  left: 0; top: .12em;
+  width: 3px; height: .82em;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 65%, transparent);
+}
+/* Nested "Lag Distribution" / "Slowest Filers" sub-headers are NOT section
+   starters: no tick, dim small-caps cadence so they read as captions. */
+#view-trends .trend-grid2 > div > h3 {
+  padding-left: 0;
+  color: var(--text-dim);
+  letter-spacing: .03em;
+}
+#view-trends .trend-grid2 > div > h3::before { display: none; }
+/* KPI-strip caption sits in the same rhythm. */
+#view-trends .tf-cap {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+/* ---- 3. Surfaces: one calm material for sections, cards, clusters ------
+   Token top-light gradient + 1px inner highlight via ::before (inset:0,
+   pointer-events:none, radius inherited so it never blocks clicks or
+   bleeds past corners). No resting elevation — depth arrives on hover. */
+#view-trends .section,
+#view-trends .grid-cards .card {
+  position: relative;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--text) 2%, transparent),
+      transparent 44%),
+    var(--panel);
+  border-color: var(--surf-edge);
+}
+#view-trends .section::before,
+#view-trends .grid-cards .card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 1px 0 0 var(--surf-hi);
+}
+#view-trends .section {
+  transition: border-color var(--tr-med) var(--tr-ease),
+              box-shadow var(--tr-med) var(--tr-ease);
+}
+#view-trends .ccard {
+  position: relative;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--text) 2.5%, transparent),
+      transparent 46%),
+    var(--panel-2);
+  border-color: var(--surf-edge);
+  transition: border-color var(--tr-med) var(--tr-ease),
+              background var(--tr-med) var(--tr-ease),
+              box-shadow var(--tr-med) var(--tr-ease),
+              transform var(--tr-med) var(--tr-ease);
+}
+
+/* ---- 4. KPI cards: quieter label, confident value --------------------- */
+#view-trends .grid-cards .card {
+  transition: border-color var(--tr-fast) var(--tr-ease),
+              background var(--tr-fast) var(--tr-ease);
+}
+#view-trends .grid-cards .card .k {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .045em;
+  text-transform: uppercase;
+  line-height: 1.3;
+}
+#view-trends .grid-cards .card .v {
+  letter-spacing: -.018em;
+  line-height: 1.08;
+}
+#view-trends .grid-cards .card .v small {
+  letter-spacing: 0;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+/* ---- 5. Tables: header casing, calmer dividers, aligned numerics ------- */
+#view-trends th {
+  font-size: 10.5px;
+  letter-spacing: .07em;
+  font-weight: 650;
+}
+#view-trends tbody tr:not(:last-child) td {
+  border-bottom-color: color-mix(in srgb, var(--border) 64%, transparent);
+}
+#view-trends .rank { font-size: 11.5px; }
+#view-trends .net {
+  font-family: var(--mono);
+  font-weight: 600;
+}
+#view-trends .net.pos { color: color-mix(in srgb, var(--buy) 92%, var(--text)); }
+#view-trends .net.neg { color: color-mix(in srgb, var(--sell) 92%, var(--text)); }
+#view-trends .split-wrap small {
+  color: color-mix(in srgb, var(--text-dim) 88%, var(--text));
+}
+
+/* ---- 6. Proportion bars (sector / cap / party / asset-type) -----------
+   Recessed token track + token-sheen fill so a partial bar sits IN the
+   channel; width animates on load with the shared easing. */
+#view-trends .htrack {
+  background: color-mix(in srgb, var(--bg) 50%, var(--panel-2));
+  border-color: color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 8px;
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--bg) 55%, transparent);
+}
+#view-trends .hfill {
+  border-radius: 6px;
+  background-image: linear-gradient(180deg,
+    color-mix(in srgb, var(--accent) 86%, var(--text)),
+    color-mix(in srgb, var(--accent) 78%, transparent));
+  background-color: color-mix(in srgb, var(--accent) 78%, transparent);
+}
+#view-trends .hfill.buy {
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--buy) 92%, var(--text)), var(--buy));
+  background-color: var(--buy);
+}
+#view-trends .hfill.sell {
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--sell) 92%, var(--text)), var(--sell));
+  background-color: var(--sell);
+}
+#view-trends .hfill.warn {
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--warn) 92%, var(--text)), var(--warn));
+  background-color: var(--warn);
+}
+
+/* ---- 7. Split buy/sell mini-bar: matching inset + crisp seam ----------- */
+#view-trends .split {
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--bg) 45%, transparent);
+}
+#view-trends .split .seg.buy {
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--buy) 90%, var(--text)), var(--buy));
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--bg) 50%, transparent);
+}
+#view-trends .split .seg.sell {
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--sell) 90%, var(--text)), var(--sell));
+}
+
+/* ---- 8. Flow rows: tidy stack, quiet chip caption --------------------- */
+#view-trends .flowrow .flabel { letter-spacing: -.005em; }
+#view-trends .flowrow .fchip {
+  margin-top: 6px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--text-dim) 88%, var(--text));
+}
+
+/* ---- 9. Time chart "Buys vs Sells Over Time" -------------------------- */
+#view-trends .tchart {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+#view-trends .tbars i { border-radius: 3px 3px 1px 1px; }
+#view-trends .tbars i.buy {
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--buy) 92%, var(--text)), color-mix(in srgb, var(--buy) 96%, transparent));
+}
+#view-trends .tbars i.sell {
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--sell) 92%, var(--text)), color-mix(in srgb, var(--sell) 96%, transparent));
+}
+#view-trends .legend {
+  align-items: center;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 600;
+}
+#view-trends .legend .sw {
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+/* ---- 10. Segmented control (scoped to #trTimeWin so .split .seg is safe) */
+#trTimeWin.seg { background: color-mix(in srgb, var(--panel-2) 60%, transparent); }
+#trTimeWin.seg button {
+  letter-spacing: .02em;
+  transition: color var(--tr-fast) var(--tr-ease), background-color var(--tr-fast) var(--tr-ease);
+}
+#trTimeWin.seg button.on {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+#trTimeWin.seg button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* ---- 11. Cluster cards: marquee component, tidy headline -------------- */
+#view-trends .ccard .big { letter-spacing: -.01em; }
+#view-trends .ccard .dirpill { letter-spacing: .05em; }
+/* Real tag chips inside cluster cards / heading hints become faint pills;
+   the cluster-grid loading/empty .chip (a block div) is handled in §12. */
+#view-trends .ccard .chip,
+#view-trends h3 .chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+  color: color-mix(in srgb, var(--text-dim) 90%, var(--text));
+  line-height: 1.5;
+}
+
+/* ---- 12. Empty / error / loading states: calm token frames ------------ */
+#view-trends .note {
+  line-height: 1.55;
+  border: 1px dashed color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--panel-2) 55%, transparent);
+  border-radius: 8px;
+  padding: 11px 13px;
+}
+#view-trends .cluster-grid > .chip {
+  display: block;
+  grid-column: 1 / -1;
+  padding: 12px 13px;
+  border: 1px dashed color-mix(in srgb, var(--border) 80%, transparent);
+  background: color-mix(in srgb, var(--panel-2) 55%, transparent);
+  border-radius: 8px;
+  line-height: 1.5;
+}
+
+/* ---- 13. Desktop/tablet micro-interactions (hover, no touch) ---------- */
+@media (min-width: 721px) and (hover: hover) {
+  /* Sections lift with a calm accent-tinted edge + short-throw shadow. */
+  #view-trends .section:hover {
+    border-color: color-mix(in srgb, var(--border) 55%, var(--accent));
+    box-shadow: 0 10px 30px -20px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  /* KPI cards get a whisper of accent on hover. */
+  #view-trends .grid-cards .card:hover {
+    border-color: color-mix(in srgb, var(--border) 55%, var(--accent));
+    background: color-mix(in srgb, var(--accent) 4%, var(--panel));
+  }
+  /* Clickable rows: accent wash + 2px accent rail on the first cell. */
+  #view-trends tr.clickable td { transition: background var(--tr-fast) var(--tr-ease); }
+  #view-trends tr.clickable:hover td {
+    background: color-mix(in srgb, var(--accent) 7%, var(--panel-2));
+  }
+  #view-trends tr.clickable td:first-child {
+    box-shadow: inset 2px 0 0 -1px transparent;
+    transition: box-shadow var(--tr-fast) var(--tr-ease);
+  }
+  #view-trends tr.clickable:hover td:first-child {
+    box-shadow: inset 2px 0 0 0 color-mix(in srgb, var(--accent) 65%, transparent);
+  }
+  /* Ticker reads as the live link as its row lights up (rows are the click
+     target; .asset-cell here has no .clickable, so key off tr.clickable). */
+  #view-trends tr.clickable .tkr { transition: color var(--tr-fast) var(--tr-ease); }
+  #view-trends tr.clickable:hover .tkr { color: var(--accent); }
+  #view-trends tr.clickable:hover .tkr-logo.tile { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+  /* Member identity cell (genuinely .clickable) takes accent on hover. */
+  #view-trends .member-cell.clickable { transition: color var(--tr-fast) var(--tr-ease); }
+  #view-trends .member-cell.clickable:hover { color: var(--accent); text-decoration: none; }
+  /* Flow / hbar fills gently saturate when their row is hovered. */
+  #view-trends .flowrow:hover .hfill,
+  #view-trends .hbar:hover .hfill { filter: saturate(1.1) brightness(1.04); }
+  /* Time chart: hovered column focuses, its siblings recede. */
+  #view-trends .tcol { transition: opacity var(--tr-fast) var(--tr-ease); }
+  #view-trends .tchart:hover .tcol:not(:hover) { opacity: .6; }
+  #view-trends .tcol:hover .tbars i { filter: brightness(1.08) saturate(1.08); }
+  /* Cluster cards lift 1px with an accent-tinted border + short shadow. */
+  #view-trends .ccard.clickable:hover {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+    background: color-mix(in srgb, var(--accent) 5%, var(--panel-2));
+    transform: translateY(-1px);
+    box-shadow: 0 12px 30px -20px color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+  #view-trends .ccard.clickable:active { transform: translateY(0); }
+  /* Toolbar selects + ghost buttons share the accent affordance. */
+  #view-trends .toolbar select:hover,
+  #view-trends .toolbar .btn.ghost:hover {
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  }
+}
+
+/* ---- 14. Animated fills + bars (motion, reduced-motion respected) ------ */
+@media (prefers-reduced-motion: no-preference) {
+  #view-trends .hfill,
+  #view-trends .split .seg {
+    transition: width .5s var(--tr-ease), filter var(--tr-fast) var(--tr-ease);
+  }
+  #view-trends .tbars i { transition: filter var(--tr-fast) var(--tr-ease); }
+}
+
+/* ---- 15. Keyboard focus parity (token rings, no layout shift) ---------- */
+#view-trends tr.clickable:focus-visible { outline: none; }
+#view-trends tr.clickable:focus-visible td {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-2));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+#view-trends .ccard.clickable:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+#view-trends .toolbar select:focus-visible,
+#view-trends .btn:focus-visible,
+#view-trends .info-tip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+/* ---- 16. Desktop/tablet spacing + numeric edge alignment -------------- */
+@media (min-width: 721px) {
+  #view-trends .section { padding: 19px 20px; }
+  #view-trends .trend-grid2 { gap: 18px; }
+  /* Hang the standalone Est-Volume figures on a shared right edge. Identity
+     and split-mix cells keep their left flow. (#trTickers td.est is hidden
+     on phones by the base 720px query — this guard never undoes that.) */
+  #view-trends #trTickers td.est,
+  #view-trends #trMembers td.est { text-align: right; }
+}
+
+/* ---- 17. Reduced-motion: honor opt-out everywhere --------------------- */
+@media (prefers-reduced-motion: reduce) {
+  #view-trends .section,
+  #view-trends .grid-cards .card,
+  #view-trends .ccard,
+  #view-trends tr.clickable td,
+  #view-trends tr.clickable td:first-child,
+  #view-trends tr.clickable .tkr,
+  #view-trends .member-cell.clickable,
+  #view-trends .hfill,
+  #view-trends .split .seg,
+  #view-trends .tcol,
+  #view-trends .tbars i,
+  #view-trends #trTimeWin.seg button {
+    transition: none;
+  }
+  #view-trends .ccard.clickable:hover { transform: none; }
+}
+
+/* ---- 18. Mobile guard (<=720px): keep enhancements from re-widening ----
+   The base 720px query (which hides .split, #trTickers td.est, .asset-cell
+   .muted and abbreviates to "mbr") runs AFTER this block. Re-assert only the
+   safe, width-neutral pieces; drop chrome that only makes sense with hover. */
+@media (max-width: 720px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
+  #view-trends .section::before,
+  #view-trends .grid-cards .card::before { box-shadow: none; }
+  #view-trends .ccard .chip,
+  #view-trends h3 .chip { padding: 1px 6px; }
+  #view-trends .section > h3,
+  #view-trends .section > .row-flex > h3 { padding-left: 11px; }
+}
 </style>
 </head>
 <body>
@@ -2512,6 +2972,11 @@ function splitBar(buys, sells) {
     '<small>' + buys + 'B / ' + sells + 'S</small></span>';
 }
 function pdot(b) { return b ? '<span class="pdot ' + esc(b) + '"></span>' : ''; }
+/* "politician(s)" — spelled out for consistency with the Politicians KPI. */
+function polFull(n) { n = Number(n || 0); return n + ' politician' + (n === 1 ? '' : 's'); }
+function tickFull(n) { n = Number(n || 0); return n + ' ticker' + (n === 1 ? '' : 's'); }
+/* Table-cell variant: full word where there's room, "mbr" on phones (CSS toggle). */
+function polCell(n) { n = Number(n || 0); return n + ' <span class="u-full">politician' + (n === 1 ? '' : 's') + '</span><span class="u-abbr">mbr</span>'; }
 	function kpi(k, v) { return '<div class="card"><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>'; }
 	function infoLabel(text, tip) {
 	  return esc(text) + ' <span class="info-tip" tabindex="0" aria-label="' + esc(tip) + '" title="' + esc(tip) + '">ⓘ</span>';
@@ -2544,12 +3009,13 @@ function loadTrends() {
 /* Volume bar + buy/sell/breadth/net chip — shared by the sector & cap views. */
 function flowRowHtml(label, r, maxVol, title) {
   var w = Math.round(100 * Number(r.estVolumeUsd || 0) / (maxVol || 1));
-  var breadth = (r.uniqueMembers || 0) + ' mbr · ' + (r.uniqueTickers || 0) + ' tkr';
-  return '<div class="hbar"><div class="hlabel" title="' + esc(title || label) + '">' + esc(label) + '</div>' +
+  var breadth = polFull(r.uniqueMembers) + ' · ' + tickFull(r.uniqueTickers);
+  return '<div class="flowrow">' +
+    '<div class="ftop"><span class="flabel" title="' + esc(title || label) + '">' + esc(label) + '</span>' +
+      '<span class="fval">' + estUsd(r.estVolumeUsd) + '</span></div>' +
     '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
-    '<div class="hval">' + estUsd(r.estVolumeUsd) + '</div></div>' +
-    '<div class="chip" style="margin:-3px 0 9px 130px">' + (r.buyCount || 0) + 'B / ' + (r.sellCount || 0) +
-      'S · ' + esc(breadth) + ' · net ' + netHtml(r.estNetFlowUsd) + '</div>';
+    '<div class="fchip">' + (r.buyCount || 0) + 'B / ' + (r.sellCount || 0) +
+      'S · ' + esc(breadth) + ' · net ' + netHtml(r.estNetFlowUsd) + '</div></div>';
 }
 
 function loadTrSectorFlow() {
@@ -2626,7 +3092,7 @@ function loadTrTickers() {
         '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' +
           esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(r.name) + '</span>' : '') + '</div></div></td>' +
         '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
-        '<td class="muted">' + r.memberCount + ' mbr</td>' +
+        '<td class="muted">' + polCell(r.memberCount) + '</td>' +
         '<td class="est">' + estUsd(r.estVolumeUsd) + '</td>' +
         '<td>' + netHtml(r.estNetFlowUsd) + '</td></tr>';
     }).join('');
@@ -2644,7 +3110,7 @@ function loadTrTrending() {
         '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' + esc(r.ticker) + '</span></div></div></td>' +
         '<td class="muted">' + r.priorCount + ' → ' + r.recentCount + '</td>' +
         '<td class="net pos">▲ ' + r.deltaCount + '</td>' +
-        '<td class="muted">' + r.recentMembers + ' mbr</td></tr>';
+        '<td class="muted">' + polCell(r.recentMembers) + '</td></tr>';
     }).join('');
   }).catch(function (e) { body.innerHTML = stateRow(4, 'Could not load: ' + e.message); });
 }
@@ -2655,7 +3121,7 @@ function loadTrClusters() {
   aGet('cluster-buys?' + trParams() + '&limit=12&minMembers=2').then(function (d) {
     var cs = d.clusters || [];
     el('trClusterHint').textContent = '· ' + cs.length + ' found';
-    if (!cs.length) { box.innerHTML = '<div class="chip">No multi-member consensus in this window — try a longer window or “All Data”.</div>'; return; }
+    if (!cs.length) { box.innerHTML = '<div class="chip">No multi-politician consensus in this window — try a longer window or “All Data”.</div>'; return; }
     box.innerHTML = cs.map(function (c) {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) { return memberAvatarHtml(m.fullName, m.photoUrl); }).join('');
       var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
@@ -2665,7 +3131,7 @@ function loadTrClusters() {
       return '<div class="ccard clickable" data-ticker="' + esc(c.ticker) + '">' +
         '<div class="chead">' + tickerLogoHtml(c.ticker, c.name) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
-        '<div><strong>' + c.memberCount + '</strong> members · ' + c.tradeCount + ' trades' + bip + '</div>' +
+        '<div><strong>' + c.memberCount + '</strong> ' + (c.memberCount === 1 ? 'politician' : 'politicians') + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
         '<div class="chip">' + esc(parties) + '</div>' +
         '<div class="chip">' + esc(range) + ' · ' + estUsd(c.estVolumeUsd) + '</div>' +
         '<div class="faces">' + faces + '</div></div>';
@@ -2732,10 +3198,11 @@ function loadTrParties() {
     box.innerHTML = keys.map(function (k) {
       var v = o[k] || { buys: 0, sells: 0, estVolumeUsd: 0, estNetFlowUsd: 0, members: 0 };
       var w = Math.round(100 * v.estVolumeUsd / maxVol);
-      return '<div class="hbar"><div class="hlabel">' + pdot(k) + esc(names[k]) + '</div>' +
+      return '<div class="flowrow">' +
+        '<div class="ftop"><span class="flabel">' + pdot(k) + esc(names[k]) + '</span>' +
+          '<span class="fval">' + estUsd(v.estVolumeUsd) + '</span></div>' +
         '<div class="htrack"><div class="hfill" style="width:' + w + '%"></div></div>' +
-        '<div class="hval">' + estUsd(v.estVolumeUsd) + '</div></div>' +
-        '<div class="chip" style="margin:-3px 0 9px 130px">' + v.buys + 'B / ' + v.sells + 'S · ' + v.members + ' mbr · net ' + netHtml(v.estNetFlowUsd) + '</div>';
+        '<div class="fchip">' + v.buys + 'B / ' + v.sells + 'S · ' + polFull(v.members) + ' · net ' + netHtml(v.estNetFlowUsd) + '</div></div>';
     }).join('');
   }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
 }
