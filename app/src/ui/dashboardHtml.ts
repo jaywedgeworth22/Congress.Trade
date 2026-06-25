@@ -678,7 +678,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <thead><tr><th>Filed</th><th>Doc</th><th>Reason</th><th>Payload</th><th></th></tr></thead>
         <tbody id="reviewBody"></tbody>
       </table>
-      <p class="note">Confirming a row promotes it to the live feed and dispatches it to subscribers. <code>POST /api/admin/review/:docId {decision}</code></p>
+      <p class="note">Confirm promotes the read to the live feed; Manual lets you hand-key the rows (recorded as <code>source=manual</code>) when the automated read is wrong or too low-confidence; Reject discards it. <code>POST /api/admin/review/:docId {decision}</code></p>
     </div>
   </section>
 
@@ -1781,6 +1781,7 @@ function renderReview() {
       '<td class="muted" style="max-width:360px">' + esc(payload) + docAction + '</td>' +
       '<td>' +
         '<button class="btn sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'confirm\\')">Confirm</button> ' +
+        '<button class="btn ghost sm" onclick="manualEntry(\\'' + esc(r.docId) + '\\')">Manual</button> ' +
         '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'reject\\')">Reject</button>' +
       '</td>' +
     '</tr>';
@@ -1799,6 +1800,71 @@ function resolveReview(docId, decision) {
     .catch(function (e) {
       if (rowEl) rowEl.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
       alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review action failed: ' + e.message));
+    });
+}
+/* Manual entry: hand-key the rows when the automated read is wrong / too low to
+   trust. Submitted with decision:'manual' so they are recorded as source=manual. */
+function meRowHtml() {
+  return '<div class="me-row" style="margin:4px 0;display:flex;flex-wrap:wrap;gap:4px;align-items:center">' +
+    '<input class="me-ticker" placeholder="Ticker" maxlength="12" style="width:80px" /> ' +
+    '<select class="me-type"><option value="P">Purchase</option><option value="S">Sale</option><option value="E">Exchange</option></select> ' +
+    '<input class="me-min" type="number" placeholder="Amt min" style="width:90px" /> ' +
+    '<input class="me-max" type="number" placeholder="Amt max" style="width:90px" /> ' +
+    '<input class="me-date" type="date" /> ' +
+    '<select class="me-owner"><option value="self">self</option><option value="spouse">spouse</option><option value="joint">joint</option><option value="dependent">dependent</option></select> ' +
+    '<input class="me-asset" placeholder="Asset name (optional)" style="width:160px" />' +
+    '</div>';
+}
+function meAddRow(docId) { var c = el('me-rows-' + docId); if (c) c.insertAdjacentHTML('beforeend', meRowHtml()); }
+function meCancel(docId) { var tr = el('me-' + docId); if (tr) tr.parentNode.removeChild(tr); }
+function manualEntry(docId) {
+  if (el('me-' + docId)) return; // already open
+  var row = el('rv-' + docId);
+  if (!row) return;
+  var tr = document.createElement('tr');
+  tr.id = 'me-' + docId;
+  tr.innerHTML = '<td colspan="5" class="manual-entry" style="background:#f8fafc;padding:8px 12px">' +
+    '<div class="me-rows" id="me-rows-' + esc(docId) + '"></div>' +
+    '<button class="btn ghost sm" onclick="meAddRow(\\'' + esc(docId) + '\\')">+ Add row</button> ' +
+    '<button class="btn sm" onclick="meSubmit(\\'' + esc(docId) + '\\')">Submit manual entry</button> ' +
+    '<button class="btn ghost sm" onclick="meCancel(\\'' + esc(docId) + '\\')">Cancel</button>' +
+    '<p class="note">Recorded as <code>source=manual</code> (hand-entered by an admin) and promoted to the live feed.</p>' +
+    '</td>';
+  row.parentNode.insertBefore(tr, row.nextSibling);
+  meAddRow(docId);
+}
+function meSubmit(docId) {
+  var c = el('me-rows-' + docId);
+  if (!c) return;
+  var edits = [];
+  c.querySelectorAll('.me-row').forEach(function (g) {
+    var t = (g.querySelector('.me-ticker').value || '').trim().toUpperCase();
+    var asset = (g.querySelector('.me-asset').value || '').trim();
+    if (!t && !asset) return; // skip blank rows
+    var min = g.querySelector('.me-min').value, max = g.querySelector('.me-max').value;
+    edits.push({
+      ticker: t || null,
+      assetName: asset || t || '(manual entry)',
+      txType: g.querySelector('.me-type').value,
+      amountMin: min === '' ? null : Number(min),
+      amountMax: max === '' ? null : Number(max),
+      txDate: g.querySelector('.me-date').value || null,
+      owner: g.querySelector('.me-owner').value,
+      rawText: 'manual entry', confidence: 1
+    });
+  });
+  if (edits.length === 0) { alert('Add at least one row (a ticker or asset name).'); return; }
+  var tr = el('me-' + docId);
+  if (tr) tr.querySelectorAll('button,input,select').forEach(function (b) { b.disabled = true; });
+  fetch('/api/admin/review/' + encodeURIComponent(docId), {
+    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ decision: 'manual', edits: edits })
+  })
+    .then(okOrThrow)
+    .then(function () { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); if (tr && tr.parentNode) tr.parentNode.removeChild(tr); renderReview(); loadFeed(); })
+    .catch(function (e) {
+      if (tr) tr.querySelectorAll('button,input,select').forEach(function (b) { b.disabled = false; });
+      alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Manual entry failed: ' + e.message));
     });
 }
 
