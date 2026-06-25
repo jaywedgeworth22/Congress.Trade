@@ -31,7 +31,6 @@ import { constantTimeEqual } from '../auth/tokens';
 import {
   runBulkSnapshot,
   readManifest,
-  snapshotObjectKey,
   SNAPSHOT_TABLES,
   type SnapshotManifest,
   type SnapshotTableName,
@@ -130,7 +129,13 @@ export function buildExportRouter(): Hono<{ Bindings: ExportEnv }> {
     if (!DATE_RE.test(date)) return c.json({ error: 'date must be YYYY-MM-DD', date }, 400);
     if (!VALID_TABLES.has(table)) return c.json({ error: 'unknown table', table }, 400);
 
-    const obj = await c.env.RAW_FILES.get(snapshotObjectKey(date, table));
+    // Resolve the actual (run-scoped) object key through the published manifest
+    // so downloads always point at the committed run's files, never a key a
+    // racing rerun may have rewritten.
+    const manifest = await readManifest(c.env, date);
+    const info = manifest?.tables[table];
+    if (!info) return c.json({ error: 'snapshot file not available', date, table }, 404);
+    const obj = await c.env.RAW_FILES.get(info.objectKey);
     if (!obj) return c.json({ error: 'snapshot file not available', date, table }, 404);
     return new Response(obj.body, {
       headers: {
