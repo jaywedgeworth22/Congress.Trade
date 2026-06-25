@@ -127,7 +127,7 @@ describe('buildTrendingQuery', () => {
     expect(momentumOffsets('90d')).toEqual({ recent: '-90 days', priorStart: '-180 days' });
     expect(momentumOffsets('180d')).toEqual({ recent: '-180 days', priorStart: '-360 days' });
     expect(momentumOffsets('45d')).toEqual({ recent: '-45 days', priorStart: '-90 days' });
-    expect(momentumOffsets('all')).toEqual({ recent: '-30 days', priorStart: '-60 days' });
+    expect(momentumOffsets('all')).toEqual({ recent: '-90 days', priorStart: '-180 days' });
   });
 });
 
@@ -227,6 +227,10 @@ describe('member deep-dive builders', () => {
     const q = buildMemberStatsQuery('P000197', { window: 'all' });
     expect(q.sql).toContain('t.filer_id = ?');
     expect(q.sql).toContain('AS avg_lag_days');
+    // Distinct *assets* falls back to the asset name when ticker is unresolved,
+    // so members holding only bonds/funds (ticker NULL) don't show 0.
+    expect(q.sql).toContain('AS unique_assets');
+    expect(q.sql).toContain('NULLIF(t.asset_name');
     expect(q.params).toEqual(['P000197']);
   });
   it('performance query joins tx_performance + securities_ref and filters by filer', () => {
