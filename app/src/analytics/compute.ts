@@ -209,3 +209,101 @@ export function aggregateMemberPerformance(
     avgExcess: mean(excesses),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Per-ticker congressional backtest ("how did names do after Congress bought")
+// ---------------------------------------------------------------------------
+
+/** One daily close bar; series are ASCENDING by date. */
+export interface PriceBar {
+  date: string;
+  close: number;
+}
+
+export interface BacktestHorizon {
+  days: number; // trading-day horizon (21/63/126/252)
+  tradeCount: number; // buy events in the cohort (window)
+  n: number; // events with complete forward price history at this horizon
+  medianReturn: number | null;
+  avgReturn: number | null;
+  winRate: number | null; // share of scored events beating the S&P (excess > 0)
+  medianExcess: number | null;
+  avgExcess: number | null;
+}
+
+/** Minimum scored events before a horizon's stats are reported (else nulls). */
+export const BACKTEST_MIN_N = 5;
+
+/** Index of the last bar with date <= `date` (ascending series), or -1. Binary search. */
+export function idxOnOrBefore(series: PriceBar[], date: string): number {
+  let lo = 0;
+  let hi = series.length - 1;
+  let ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (series[mid].date <= date) {
+      ans = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return ans;
+}
+
+/**
+ * Backtest a ticker's congressional BUY cohort: for each horizon N (trading
+ * days), the forward return of the name from the trade date vs the S&P over the
+ * same calendar span. Pure + deterministic.
+ *
+ * Entry = the close on/before each buy's tx_date (matches price_at_trade
+ * semantics); forward = the close N trading days later (entryIdx + N in the
+ * ascending series). Excess subtracts the S&P return over the same entry→forward
+ * dates. Returns are FRACTIONS (0.18 = +18%). Events lacking forward history
+ * (recent buys, delisted names) are counted in tradeCount but excluded from n —
+ * surface both so callers can judge coverage. Horizons with n < BACKTEST_MIN_N
+ * report null stats rather than noise.
+ */
+export function aggregateTickerBacktest(
+  cohortDates: string[],
+  priceAsc: PriceBar[],
+  spxAsc: PriceBar[],
+  horizons: number[],
+): { tradeCount: number; horizons: BacktestHorizon[] } {
+  const med = (nums: number[]): number | null => {
+    const m = median(nums);
+    return m == null ? null : round(m, 4);
+  };
+  const out: BacktestHorizon[] = horizons.map((N) => {
+    const returns: number[] = [];
+    const excesses: number[] = [];
+    for (const d of cohortDates) {
+      const ei = idxOnOrBefore(priceAsc, d);
+      if (ei < 0) continue;
+      const fi = ei + N;
+      if (fi >= priceAsc.length) continue; // insufficient forward history
+      const entry = priceAsc[ei].close;
+      const fwd = priceAsc[fi].close;
+      if (!(entry > 0)) continue;
+      const assetReturn = fwd / entry - 1;
+      returns.push(assetReturn);
+      const se = idxOnOrBefore(spxAsc, priceAsc[ei].date);
+      const sf = idxOnOrBefore(spxAsc, priceAsc[fi].date);
+      if (se >= 0 && sf >= 0 && spxAsc[se].close > 0) {
+        excesses.push(assetReturn - (spxAsc[sf].close / spxAsc[se].close - 1));
+      }
+    }
+    const enough = returns.length >= BACKTEST_MIN_N;
+    return {
+      days: N,
+      tradeCount: cohortDates.length,
+      n: returns.length,
+      medianReturn: enough ? med(returns) : null,
+      avgReturn: enough ? mean(returns) : null,
+      winRate: enough && excesses.length ? round(excesses.filter((x) => x > 0).length / excesses.length, 4) : null,
+      medianExcess: enough && excesses.length ? med(excesses) : null,
+      avgExcess: enough && excesses.length ? mean(excesses) : null,
+    };
+  });
+  return { tradeCount: cohortDates.length, horizons: out };
+}
