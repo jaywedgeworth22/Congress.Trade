@@ -49,10 +49,13 @@ export interface NormalizeResult {
   needsReview: boolean;
 }
 
-interface FlaggedTx {
+export interface FlaggedTx {
   tx: Transaction;
   flags: string[];
 }
+
+/** Flags that force a filing to human review regardless of soft confidence. */
+export const HARD_FAILURE_FLAGS = ['no_amount', 'invalid_amount', 'bad_tx_type', 'bad_asset_name'];
 
 type RowKeyFields = Pick<
   ParsedTx,
@@ -453,7 +456,7 @@ const INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`;
 
 /** Insert each validated transaction. cursor_seq is assigned by the DB trigger. */
-async function persistTransactions(env: Env, transactions: Transaction[]): Promise<string[]> {
+export async function persistTransactions(env: Env, transactions: Transaction[]): Promise<string[]> {
   const insertedIds: string[] = [];
   for (const tx of transactions) {
     const res = await run(env.DB, INSERT_TX_SQL, [
