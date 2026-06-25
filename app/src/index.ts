@@ -30,6 +30,7 @@ import { buildAnalyticsRouter } from './analytics/routes';
 import { buildAuthRouter } from './auth/routes';
 import { buildBillingRouter } from './billing/routes';
 import { buildClientRouter } from './client/routes';
+import { buildExportRouter } from './export/routes';
 import { buildUiRouter } from './ui/routes';
 import { maybeRunDailyJobs } from './jobs';
 import { maybeRunAgreementAutopublish } from './extraction/agreement';
@@ -65,6 +66,12 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
     root.route('/api/client/v1', buildClientRouter());
   } catch (err) {
     console.warn('client/routes router not mounted:', (err as Error).message);
+  }
+  try {
+    // Bulk market-data snapshot export (NDJSON in R2) for App B bootstrapping.
+    root.route('/api/export', buildExportRouter());
+  } catch (err) {
+    console.warn('export/routes router not mounted:', (err as Error).message);
   }
   // End-user auth (Google OAuth + magic-link) at /auth/*. Mounted before the UI
   // catch-all so its routes are not shadowed by the dashboard.
