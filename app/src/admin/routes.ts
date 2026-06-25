@@ -1363,6 +1363,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'ALTER TABLE transactions ADD COLUMN description TEXT',
       'ALTER TABLE transactions ADD COLUMN supplemental_text TEXT',
       'CREATE INDEX IF NOT EXISTS idx_tx_asset_type_name ON transactions (asset_type_name)',
+      // 0012_shares_outstanding.sql — keep market cap current off the daily close.
+      'ALTER TABLE securities_ref ADD COLUMN shares_outstanding REAL',
+      `UPDATE securities_ref SET shares_outstanding = market_cap / current_price
+         WHERE shares_outstanding IS NULL AND market_cap IS NOT NULL
+           AND current_price IS NOT NULL AND current_price > 0`,
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -1565,7 +1570,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const REF_KEYS = [
       'companyName', 'sector', 'industry', 'assetClass', 'isEtf', 'isAdr', 'country',
       'stateHq', 'stateOfIncorp', 'exchange', 'exchangeShort', 'currency', 'marketCap',
-      'ipoDate', 'cik', 'sicCode', 'sicDescription',
+      'sharesOutstanding', 'ipoDate', 'cik', 'sicCode', 'sicDescription',
     ] as const;
 
     // 1) Company reference rows.
