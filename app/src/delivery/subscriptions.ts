@@ -4,7 +4,7 @@
  *
  * Subscription CRUD + matching logic. Creates/updates/cancels subscriptions and
  * decides whether a given transaction matches a subscription's filters
- * (members/tickers/chambers/min_amount).
+ * (members/tickers/chambers/amount range/sides/sectors/market-cap buckets).
  */
 
 import type { Env, Subscription, SubscriptionFilters, Transaction } from '../shared/types';
@@ -172,21 +172,60 @@ export function matchesFilters(tx: Transaction, filters: SubscriptionFilters): b
     if (amt < filters.minAmount) return false;
   }
 
+  if (filters.maxAmount !== undefined && filters.maxAmount !== null) {
+    const amt = tx.amountMin ?? 0;
+    if (amt > filters.maxAmount) return false;
+  }
+
+  if (filters.sides && filters.sides.length > 0) {
+    if (!filters.sides.includes(tx.txType)) return false;
+  }
+
+  return true;
+}
+
+/** Resolved per-transaction context the predicate can't read off the row itself. */
+export interface DeliveryContext {
+  /** Owning filing's chamber ('house' | 'senate'). */
+  chamber?: string | null;
+  /** securities_ref.sector for the tx ticker. */
+  sector?: string | null;
+  /** securities_ref.market_cap_bucket for the tx ticker. */
+  marketCapBucket?: string | null;
+}
+
+/**
+ * Filter variant that enforces the clauses needing resolved context the caller
+ * supplies (chamber from the owning filing; sector + market-cap bucket from
+ * securities_ref). A filtered field with no resolved value never matches, so a
+ * subscription that asks for e.g. mega-caps won't receive un-enriched tickers.
+ */
+export function matchesFiltersWithContext(
+  tx: Transaction,
+  filters: SubscriptionFilters,
+  ctx: DeliveryContext,
+): boolean {
+  if (!matchesFilters(tx, filters)) return false;
+  if (filters.chambers && filters.chambers.length > 0) {
+    if (!ctx.chamber || !filters.chambers.includes(ctx.chamber as never)) return false;
+  }
+  if (filters.sectors && filters.sectors.length > 0) {
+    if (!ctx.sector || !filters.sectors.includes(ctx.sector)) return false;
+  }
+  if (filters.marketCapBuckets && filters.marketCapBuckets.length > 0) {
+    if (!ctx.marketCapBucket || !filters.marketCapBuckets.includes(ctx.marketCapBucket)) return false;
+  }
   return true;
 }
 
 /**
- * Filter variant that also enforces chambers[] when the transaction's chamber is
- * known (resolved by the caller, since Transaction has no chamber field).
+ * Back-compat wrapper: enforce chambers[] only (sector/cap unresolved). Prefer
+ * {@link matchesFiltersWithContext} where securities_ref is available.
  */
 export function matchesFiltersWithChamber(
   tx: Transaction,
   filters: SubscriptionFilters,
   chamber: string | null,
 ): boolean {
-  if (!matchesFilters(tx, filters)) return false;
-  if (filters.chambers && filters.chambers.length > 0) {
-    if (!chamber || !filters.chambers.includes(chamber as never)) return false;
-  }
-  return true;
+  return matchesFiltersWithContext(tx, filters, { chamber });
 }
