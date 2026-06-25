@@ -27,7 +27,7 @@
  */
 
 import { Hono } from 'hono';
-import type { Env, PollConfig, PollWindow, TxType } from '../shared/types';
+import type { Env, PollConfig, PollWindow, TxType, TxSource } from '../shared/types';
 import { all, get, run, type SqlParam } from '../shared/db';
 import { getConfig, setConfig } from '../shared/config';
 import { uuid } from '../shared/ids';
@@ -458,9 +458,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /review/:docId ------------------------------------------------
-  // Body: { decision: 'confirm'|'reject', edits?: EditedTx[] }
+  // Body: { decision: 'confirm'|'reject'|'manual', edits?: EditedTx[] }
   //   confirm -> insert corrected transactions (source='primary'), mark review
   //              resolved, set filing persisted, enqueue delivery.dispatch each.
+  //   manual  -> same as confirm but recorded as source='manual' — the admin
+  //              hand-entered the rows because the automated read was wrong / too
+  //              low-confidence to trust. Flagged so admins can tell them apart.
   //   reject  -> mark review resolved + filing status 'error'.
   r.post('/review/:docId', async (c) => {
     const docId = c.req.param('docId');
@@ -472,8 +475,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
 
     const decision = body.decision;
-    if (decision !== 'confirm' && decision !== 'reject') {
-      return c.json({ error: "decision must be 'confirm' or 'reject'" }, 400);
+    if (decision !== 'confirm' && decision !== 'reject' && decision !== 'manual') {
+      return c.json({ error: "decision must be 'confirm', 'reject', or 'manual'" }, 400);
     }
 
     const review = await get<ReviewRow>(
@@ -495,7 +498,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ docId, decision: 'reject', resolved: true });
     }
 
-    // confirm: insert the corrected transactions.
+    // confirm/manual: insert the (corrected or hand-entered) transactions.
+    // 'manual' tags provenance so admins can tell hand-entered rows from machine reads.
+    const source: TxSource = decision === 'manual' ? 'manual' : 'primary';
     const edits = Array.isArray(body.edits) ? (body.edits as EditedTx[]) : [];
     const filing = await get<{ filer_id: string | null }>(
       c.env.DB,
@@ -508,7 +513,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const nowIso = new Date().toISOString();
     for (const [rowIndex, e] of edits.entries()) {
       const id = uuid();
-      const rowKey = transactionRowKey('primary', rowIndex, {
+      const rowKey = transactionRowKey(source, rowIndex, {
         txDate: e.txDate ?? null,
         owner: e.owner === 'self' || e.owner === 'spouse' || e.owner === 'joint' || e.owner === 'dependent'
           ? e.owner
@@ -530,7 +535,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
            id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
            tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
            raw_text, row_key, confidence, source, created_at, cursor_seq
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'primary', ?, NULL)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
         [
           id,
           docId,
@@ -548,6 +553,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           e.rawText ?? '',
           rowKey,
           e.confidence ?? 1,
+          source,
           nowIso,
         ],
       );
@@ -572,7 +578,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
     return c.json({
       docId,
-      decision: 'confirm',
+      decision,
+      source,
       resolved: true,
       inserted: insertedIds.length,
       transactionIds: insertedIds,
@@ -611,7 +618,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       c.env.DB,
       `UPDATE transactions
           SET deprecated_at = ?, deprecated_reason = ?
-        WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL`,
+        WHERE doc_id = ? AND source IN ('primary', 'manual') AND deprecated_at IS NULL`,
       [nowIso, reason, docId],
     );
     const deprecated = res.meta?.changes ?? 0;
@@ -1197,7 +1204,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /bakeoff ------------------------------------------------------
-  // Run N House PTR PDFs through several vision models (Gemini/OpenAI/Anthropic)
+  // Run N House PTR PDFs through several vision models (Gemini/OpenAI/Anthropic/Mistral/xAI)
   // and report row recall, failures, latency, and cross-model agreement so we
   // can pick the best extractor before reprocessing the whole corpus. Read-only:
   // it never writes transactions. Body: { n?, models?: [{provider,model}], docIds? }.
@@ -1213,12 +1220,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     // Candidate lineup (default provider-neutral set, overridable).
     let candidates: BakeoffCandidate[] = DEFAULT_CANDIDATES;
     if (Array.isArray(body.models)) {
-      const valid: Provider[] = ['gemini', 'openai', 'anthropic'];
+      const valid: Provider[] = ['gemini', 'openai', 'anthropic', 'mistral', 'xai'];
       const parsed: BakeoffCandidate[] = [];
       for (const m of body.models) {
         const o = m as { provider?: unknown; model?: unknown };
         if (!valid.includes(o.provider as Provider) || typeof o.model !== 'string') {
-          return c.json({ error: 'each model must be {provider:gemini|openai|anthropic, model:string}' }, 400);
+          return c.json({ error: 'each model must be {provider:gemini|openai|anthropic|mistral|xai, model:string}' }, 400);
         }
         parsed.push({ provider: o.provider as Provider, model: o.model });
       }
