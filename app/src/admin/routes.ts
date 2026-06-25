@@ -1465,7 +1465,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'invalid JSON body' }, 400);
     }
     if (!isBatchProvider(body.provider)) {
-      return c.json({ error: 'provider must be anthropic | openai | mistral' }, 400);
+      return c.json({ error: 'provider must be anthropic | openai | mistral | xai' }, 400);
     }
     const provider = body.provider;
     const model =
@@ -1473,6 +1473,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         ? body.model
         : provider === 'anthropic' ? 'claude-haiku-4-5'
         : provider === 'openai' ? 'gpt-4o'
+        : provider === 'xai' ? 'grok-4.3'
         : 'mistral-ocr-latest';
 
     let n = typeof body.n === 'number' && body.n > 0 ? Math.floor(body.n) : 50;

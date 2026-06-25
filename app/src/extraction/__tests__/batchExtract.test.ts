@@ -3,6 +3,7 @@ import {
   decodeAnthropicLine,
   decodeOpenAiLine,
   decodeMistralLine,
+  decodeXaiResult,
   parseJsonl,
   isBatchProvider,
 } from '../batchExtract';
@@ -15,9 +16,29 @@ describe('parseJsonl', () => {
 });
 
 describe('isBatchProvider', () => {
-  it('accepts the three supported providers only', () => {
-    for (const p of ['anthropic', 'openai', 'mistral']) expect(isBatchProvider(p)).toBe(true);
-    for (const p of ['xai', 'gemini', '', null, 42]) expect(isBatchProvider(p)).toBe(false);
+  it('accepts the four supported providers only', () => {
+    for (const p of ['anthropic', 'openai', 'mistral', 'xai']) expect(isBatchProvider(p)).toBe(true);
+    for (const p of ['gemini', 'cohere', '', null, 42]) expect(isBatchProvider(p)).toBe(false);
+  });
+});
+
+describe('decodeXaiResult', () => {
+  it('decodes a chat_get_completion result into rows', () => {
+    const item = {
+      batch_request_id: 'H-7',
+      batch_result: { response: { chat_get_completion: { choices: [{ message: { content: '{"transactions":[{"ticker":"NVDA","assetName":"Nvidia","txType":"P","amountRange":"$1,001 - $15,000"}]}' } }] } } },
+    };
+    const r = decodeXaiResult(item);
+    expect(r).toMatchObject({ docId: 'H-7', ok: true });
+    expect(r.rows[0].ticker).toBe('NVDA');
+  });
+
+  it('decodes a responses-shaped result via output_text', () => {
+    const item = {
+      batch_request_id: 'H-8',
+      batch_result: { response: { responses: { output_text: '[{"ticker":"AMD","assetName":"AMD","txType":"S","amountRange":"$1,001 - $15,000"}]' } } },
+    };
+    expect(decodeXaiResult(item).rows[0].ticker).toBe('AMD');
   });
 });
 
