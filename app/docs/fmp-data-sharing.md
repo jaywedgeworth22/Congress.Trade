@@ -282,3 +282,72 @@ no-auth, and mirror the `?from=&to=` shape of `/api/market/insider`:
 Consumer side (agentic-trading) should add a top-of-cascade tier in
 `src/lib/data-providers.ts` that reads these before hitting a paid enrichment
 provider — see the cross-app data-sharing plan.
+
+## Bulk snapshot export (full-history bootstrap / catch-up)
+
+The per-ticker reads above are for incremental, one-symbol cache-aside. To
+**bootstrap from scratch** or **catch up after a downtime gap**, App B can pull
+a daily, date-partitioned NDJSON snapshot of the whole market-data set instead of
+walking thousands of per-ticker calls. App A writes the snapshot to R2 once a day
+(in the daily cron, after enrichment + price refresh) and serves it token-gated.
+
+```
+GET https://congress.trade/api/export/bulk-snapshot
+Headers: Authorization: Bearer <INGEST_TOKEN>          # same scoped token as /securities/import
+Query:   ?date=YYYY-MM-DD   (optional, default today UTC)
+         ?tables=price_eod,spx_eod,securities_ref,fundamentals_eod,analyst_consensus  (optional, default all)
+         ?format=ndjson     (only ndjson; csv/parquet are not offered)
+```
+
+Returns a **manifest** (no row data) — object keys, row counts, the column
+schema, and a per-table `downloadPath`:
+
+```jsonc
+{
+  "generatedAt": "2026-06-25T04:01:00.000Z",
+  "snapshotDate": "2026-06-25",
+  "snapshotDate": "2026-06-25",
+  "runId": "9f3c…",                                  // unique per run; pinned into downloadPath
+  "format": "ndjson",
+  "tables": {
+    "price_eod":  { "objectKey": "bulk/2026-06-25/runs/9f3c…/price_eod.ndjson", "rowCount": 412000,
+                    "downloadPath": "/api/export/bulk-snapshot/file?date=2026-06-25&runId=9f3c…&table=price_eod" },
+    "spx_eod":    { "objectKey": "bulk/2026-06-25/runs/9f3c…/spx_eod.ndjson",   "rowCount": 9500,  "downloadPath": "…" },
+    "securities_ref":   { /* … */ }, "fundamentals_eod": { /* … */ }, "analyst_consensus": { /* … */ }
+  },
+  "schema": { "price_eod": ["ticker","date","close","volume"], /* … all five … */ }
+}
+```
+
+Then download each table's NDJSON (one JSON object per line) and stream-parse it.
+Use the `downloadPath` from the manifest verbatim — it pins the `runId`:
+
+```
+GET /api/export/bulk-snapshot/file?date=2026-06-25&runId=9f3c…&table=price_eod
+Headers: Authorization: Bearer <INGEST_TOKEN>
+→ application/x-ndjson  (stream line-by-line; each line is one row object)
+```
+
+Notes for App B:
+- **No presigned URLs.** The R2 binding in the Workers runtime can't sign URLs, so
+  downloads go through the token-gated `downloadPath` (same `INGEST_TOKEN`).
+- **Pin the run, then download.** Each run writes to a unique `runId` prefix and the
+  manifest's `downloadPath` carries that `runId`, so the row counts you read and the
+  bytes you download are always from the **same** run — even if a later same-day run
+  republishes the manifest while you're mid-download.
+- **Watermark by run identity, not row count.** A rerun can change prices/fundamentals
+  without changing the row count, so don't skip a table on `rowCount` alone. Persist the
+  manifest's `runId` (or `generatedAt`, or each table's `objectKey`) and re-pull a table
+  when that changes; `snapshotDate` alone is not enough to detect a refreshed run.
+- **A missing past date is `404`**; today's snapshot is generated inline on first
+  request if the cron hasn't written it yet (serialized by a per-date lock, so a
+  retry won't kick a duplicate export — you may briefly get `202 {status:"generating"}`,
+  just retry after ~30s).
+- **Consistency is EOD-granular, not transactional.** Each table is a forward
+  key-ordered scan, so a row reflects its state when its key was read, not one
+  global instant. For daily end-of-day data this is immaterial and each new daily
+  snapshot supersedes the last — treat a snapshot as "as of `snapshotDate`".
+- **What's NOT here:** the congressional-trade corpus (use the paged
+  `/api/transactions` feed), `tx_performance` (derive it from `price_eod`+`spx_eod`),
+  and `insider_eod`/`short_volume_eod` (those flow App B → App A, so they're not
+  echoed back).
