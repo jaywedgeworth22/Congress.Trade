@@ -18,6 +18,7 @@ import { hasFmpTierFailure } from './shared/fmpStatus';
 import { notifyAdmin } from './alerts/notify';
 import { shareWithPeer, type PeerShareInput } from './share/outbound';
 import { runFreshnessCheck } from './share/freshness';
+import { runPhotoEnrichment, runTickerBackfill } from './admin/routes';
 
 const DAILY_KEY = 'jobs:daily:lastdate';
 
@@ -101,5 +102,22 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     await runFreshnessCheck(env, now);
   } catch (err) {
     console.warn('freshness check failed:', (err as Error).message);
+  }
+
+  // Fill politician headshots + party/state/district from congress-legislators.
+  // Best-effort, COALESCE-preserving, so new filers get a photo/party without a
+  // manual POST /enrich-photos. Never blocks the cron.
+  try {
+    await runPhotoEnrichment(env);
+  } catch (err) {
+    console.warn('photo enrichment failed:', (err as Error).message);
+  }
+
+  // Backfill ticker resolution for name-but-no-ticker rows (seed/historic), so
+  // they become visible to the leaderboards. Bounded + best-effort.
+  try {
+    await runTickerBackfill(env, 5000);
+  } catch (err) {
+    console.warn('ticker backfill failed:', (err as Error).message);
   }
 }
