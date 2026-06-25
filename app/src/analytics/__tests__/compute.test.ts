@@ -7,7 +7,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   aggregateMemberPerformance,
+  aggregateTickerBacktest,
+  BACKTEST_MIN_N,
   bracketMidpoint,
+  idxOnOrBefore,
   lagBucket,
   netSentiment,
   percentileFromHistogram,
@@ -16,6 +19,7 @@ import {
   topPerGroup,
   type LagRow,
   type MemberPerfRow,
+  type PriceBar,
 } from '../compute';
 
 describe('bracketMidpoint', () => {
@@ -177,5 +181,59 @@ describe('aggregateMemberPerformance', () => {
     expect(out.medianReturn).toBeCloseTo(0.2, 5);
     expect(out.winRate).toBeNull();
     expect(out.medianExcess).toBeNull();
+  });
+});
+
+describe('aggregateTickerBacktest', () => {
+  // 12 ascending daily bars, close = 100,101,...,111 over 2026-02-01..2026-02-12.
+  const price: PriceBar[] = Array.from({ length: 12 }, (_, i) => ({
+    date: `2026-02-${String(i + 1).padStart(2, '0')}`,
+    close: 100 + i,
+  }));
+  const spxFlat: PriceBar[] = price.map((b) => ({ date: b.date, close: 5000 }));
+
+  it('idxOnOrBefore finds the last bar on/before a date (binary search)', () => {
+    expect(idxOnOrBefore(price, '2026-02-01')).toBe(0);
+    expect(idxOnOrBefore(price, '2026-02-05')).toBe(4);
+    expect(idxOnOrBefore(price, '2026-01-01')).toBe(-1); // before all history
+    expect(idxOnOrBefore(price, '2026-12-31')).toBe(11); // after all history
+  });
+
+  it('computes forward return + excess per horizon (flat SPX → excess == return)', () => {
+    const cohort = Array(6).fill('2026-02-01'); // entry idx 0, close 100
+    const r = aggregateTickerBacktest(cohort, price, spxFlat, [1, 3]);
+    expect(r.tradeCount).toBe(6);
+    const h1 = r.horizons.find((h) => h.days === 1)!;
+    expect(h1.n).toBe(6);
+    expect(h1.medianReturn).toBeCloseTo(0.01, 5); // 101/100 - 1
+    expect(h1.winRate).toBeCloseTo(1, 5); // excess 0.01 > 0
+    expect(h1.medianExcess).toBeCloseTo(0.01, 5);
+    const h3 = r.horizons.find((h) => h.days === 3)!;
+    expect(h3.medianReturn).toBeCloseTo(0.03, 5); // 103/100 - 1
+  });
+
+  it('excludes events lacking forward history but counts them in tradeCount', () => {
+    const cohort = Array(5).fill('2026-02-12'); // last bar (idx 11) → no forward bar
+    const r = aggregateTickerBacktest(cohort, price, spxFlat, [1]);
+    expect(r.horizons[0].tradeCount).toBe(5);
+    expect(r.horizons[0].n).toBe(0);
+    expect(r.horizons[0].medianReturn).toBeNull();
+  });
+
+  it(`reports null stats when fewer than BACKTEST_MIN_N (${BACKTEST_MIN_N}) scored events`, () => {
+    const cohort = ['2026-02-01', '2026-02-02', '2026-02-03']; // 3 < 5
+    const r = aggregateTickerBacktest(cohort, price, spxFlat, [1]);
+    expect(r.horizons[0].n).toBe(3);
+    expect(r.horizons[0].medianReturn).toBeNull();
+    expect(r.horizons[0].winRate).toBeNull();
+  });
+
+  it('subtracts the S&P return for excess (parallel SPX rise → ~0 excess, no win)', () => {
+    const spxRising: PriceBar[] = price.map((b, i) => ({ date: b.date, close: 1000 + 10 * i })); // +1%/day
+    const cohort = Array(6).fill('2026-02-01');
+    const h1 = aggregateTickerBacktest(cohort, price, spxRising, [1]).horizons[0];
+    expect(h1.medianReturn).toBeCloseTo(0.01, 5); // asset +1%
+    expect(h1.medianExcess).toBeCloseTo(0, 5); // SPX also +1% → excess ~0
+    expect(h1.winRate).toBeCloseTo(0, 5); // 0 is not > 0
   });
 });

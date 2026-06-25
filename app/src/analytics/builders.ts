@@ -504,6 +504,29 @@ export function buildTickerSummaryQuery(ticker: string, p: CommonFilters): Built
   return { sql, params };
 }
 
+/**
+ * Purchase-cohort trade dates for a ticker backtest: BUYS only, options and
+ * null/empty trade dates excluded, honoring the shared window/chamber/party/
+ * source/minConf filters (+ optional single member). The route computes forward
+ * returns in-memory from the price series (see aggregateTickerBacktest), so this
+ * only needs the dates.
+ */
+export function buildTickerBacktestCohortQuery(
+  ticker: string,
+  p: CommonFilters,
+  filerId?: string,
+): BuiltQuery {
+  const { where, params } = tickerFilters(ticker, { ...p, txTypes: ['P'] });
+  const allWhere = [...where, 't.is_option = 0', "t.tx_date IS NOT NULL", "t.tx_date <> ''"];
+  if (filerId) {
+    allWhere.push('t.filer_id = ?');
+    params.push(filerId);
+  }
+  const sql =
+    'SELECT t.tx_date AS tx_date ' + ANALYTICS_FROM_JOINS + whereSql(allWhere) + 'ORDER BY t.tx_date ASC';
+  return { sql, params };
+}
+
 export function buildTickerTimeSeriesQuery(
   ticker: string,
   p: CommonFilters & { granularity: Granularity },
