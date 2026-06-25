@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   computeConsensusAgreement,
+  parseMistralOcrResponse,
   summarizeModels,
   type BakeoffCandidate,
   type CandidateDocResult,
@@ -103,5 +104,37 @@ describe('summarizeModels', () => {
       expect(s.avgRowsPerOkDoc).toBe(0);
       expect(s.consensusAgreement).toBe(0);
     }
+  });
+});
+
+describe('parseMistralOcrResponse', () => {
+  it('maps a structured document_annotation (JSON string) to ParsedTx[]', () => {
+    const annotation = JSON.stringify({
+      transactions: [
+        { txDate: '2026-05-05', owner: 'self', assetName: 'Apple Inc.', ticker: 'AAPL', assetType: 'ST', txType: 'P', amountRange: '$1,001 - $15,000', isOption: false },
+        { txDate: '2026-05-06', owner: 'spouse', assetName: 'Intel Corp', ticker: 'INTC', assetType: 'ST', txType: 'S', amountRange: '$15,001 - $50,000', isOption: false },
+      ],
+    });
+    const rows = parseMistralOcrResponse({ document_annotation: annotation, pages: [] });
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ ticker: 'AAPL', txType: 'P', amountMin: 1001, amountMax: 15000 });
+    expect(rows[1]).toMatchObject({ ticker: 'INTC', txType: 'S' });
+  });
+
+  it('accepts a document_annotation already parsed into an object', () => {
+    const rows = parseMistralOcrResponse({
+      document_annotation: { transactions: [{ assetName: 'Microsoft', ticker: 'MSFT', txType: 'P', amountRange: '$1,001 - $15,000' }] },
+    });
+    expect(rows[0].ticker).toBe('MSFT');
+  });
+
+  it('falls back to a fenced JSON block in the OCR markdown', () => {
+    const md = 'Some OCR text\n```json\n{"transactions":[{"assetName":"Tesla","ticker":"TSLA","txType":"P","amountRange":"$1,001 - $15,000"}]}\n```\n';
+    const rows = parseMistralOcrResponse({ pages: [{ markdown: md }] });
+    expect(rows[0].ticker).toBe('TSLA');
+  });
+
+  it('throws when there is neither an annotation nor a JSON block', () => {
+    expect(() => parseMistralOcrResponse({ pages: [{ markdown: 'plain text only' }] })).toThrow(/no document_annotation/);
   });
 });
