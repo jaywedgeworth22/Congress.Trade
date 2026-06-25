@@ -64,6 +64,10 @@ export interface CandidateDocResult {
   rowCount: number;
   /** Stable row keys (ticker/name|date|type) for agreement scoring. */
   rowKeys: string[];
+  /** Mean per-row extractor confidence in [0,1] (0 when no rows / failed). */
+  avgConfidence: number;
+  /** The model's extracted rows, retained so the bake-off can persist each reading. */
+  rows: ParsedTx[];
 }
 
 /** Per-model rollup across all documents. */
@@ -323,7 +327,7 @@ export async function runCandidateOnDoc(
   const base = { provider, model, docId };
   const key = keyFor(env, provider);
   if (!key) {
-    return { ...base, ok: false, error: `${provider} API key not configured`, latencyMs: 0, rowCount: 0, rowKeys: [] };
+    return { ...base, ok: false, error: `${provider} API key not configured`, latencyMs: 0, rowCount: 0, rowKeys: [], avgConfidence: 0, rows: [] };
   }
 
   const started = Date.now();
@@ -350,6 +354,8 @@ export async function runCandidateOnDoc(
       latencyMs: Date.now() - started,
       rowCount: rows.length,
       rowKeys: rows.map(arbitrationRowKey),
+      avgConfidence: meanConfidence(rows),
+      rows,
     };
   } catch (err) {
     return {
@@ -359,8 +365,17 @@ export async function runCandidateOnDoc(
       latencyMs: Date.now() - started,
       rowCount: 0,
       rowKeys: [],
+      avgConfidence: 0,
+      rows: [],
     };
   }
+}
+
+/** Mean per-row extractor confidence over a model's extracted rows, 0 when empty. */
+export function meanConfidence(rows: ParsedTx[]): number {
+  if (!rows.length) return 0;
+  const sum = rows.reduce((s, r) => s + (typeof r.confidence === 'number' ? r.confidence : 0), 0);
+  return Math.round((sum / rows.length) * 1000) / 1000;
 }
 
 // ---------------------------------------------------------------------------
