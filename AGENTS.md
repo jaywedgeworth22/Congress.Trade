@@ -90,16 +90,30 @@ production ingestion jobs unless the user explicitly asks.
 - The admin API fails closed unless `ADMIN_TOKEN` or Cloudflare Access is
   configured. `ADMIN_OPEN_IN_DEV=true` is only for local development.
 
-## Migrations
+## Migrations & deploy (READ THIS — the remote path is a trap)
 
-D1 migrations do not automatically run just because code deploys. If you add or
-change a migration:
+**Production schema is applied via `POST /api/admin/migrate` (the idempotent
+statement list in `app/src/admin/routes.ts`), NOT via `wrangler d1 ... --remote`.**
+The wrangler remote-migration path is deliberately avoided on this account (OAuth
+issues), so the remote `d1_migrations` tracking log **intentionally lags** (it sits
+at an early migration while the real schema is far ahead). Running
+`wrangler d1 migrations apply DB --remote` therefore tries to re-add columns that
+already exist and dies with `duplicate column name: …` — this is expected, not a
+bug, and it is NOT a sign that prod schema is behind. Do not "reconcile" the remote
+log or force it; that fights the design.
 
-- Add the SQL file under `app/migrations/`.
-- Keep `POST /api/admin/migrate` in `app/src/admin/routes.ts` in sync when the
-  migration is safe to run idempotently through the Worker binding.
-- Document whether production should use `npm run migrate:remote`,
-  `npm run deploy:full`, or `scripts/ship.sh`.
+**Canonical production deploy:** `bash app/scripts/ship.sh` — it runs `npm run deploy`
+(just `wrangler deploy`, no migrations) then `POST /api/admin/migrate` (idempotent;
+"duplicate column" is treated as already-applied) through the Worker's D1 binding.
+`npm run deploy:full` now aliases `ship.sh`; `npm run migrate:remote` is intentionally
+disabled (it errors with guidance). `npm run migrate` (`--local`) is for local dev only.
+
+If you add or change a migration:
+
+- Add the SQL file under `app/migrations/` (used by `npm run migrate` for LOCAL dev).
+- **Mirror the same change as an idempotent statement in `POST /api/admin/migrate`**
+  (`app/src/admin/routes.ts`) — that list is the source of truth for PROD schema.
+- Deploy with `bash app/scripts/ship.sh`. Never `wrangler ... --remote` migrations.
 
 ## Implemented Safety Decisions
 
