@@ -11,8 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "migrate": "wrangler d1 migrations apply DB --local",
-    "migrate:remote": "wrangler d1 migrations apply DB --remote",
-    "deploy:full": "wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "migrate:remote": "echo 'NOT used on this account: wrangler --remote D1 migrations are deliberately avoided (OAuth issues; the remote d1_migrations log intentionally lags). Prod schema is applied idempotently via POST /api/admin/migrate — run: bash scripts/ship.sh. See AGENTS.md.' && exit 1",
+    "deploy:full": "bash scripts/ship.sh",
     "preview:provision": "bash scripts/provision-preview.sh",
     "preview:deploy": "bash scripts/deploy-preview.sh"
   },
