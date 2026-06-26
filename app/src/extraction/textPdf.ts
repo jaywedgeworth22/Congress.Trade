@@ -140,6 +140,10 @@ const AMOUNT_RE = /\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?/i;
 const TXTYPE_RE = /\b(P|S|E)\b|\b(purchase|sale|exchange)\b/i;
 // A ticker in parentheses, e.g. "(AAPL)".
 const TICKER_RE = /\(([A-Z][A-Z0-9.\-]{0,9})\)/;
+const HOUSE_TABLE_HEADER_RE =
+  /\bID Owner Asset Transaction Type Date Notification Date Amount Cap\.?\s*Gains\s*>\s*(?:\$?\s*200\??)?/i;
+const HOUSE_TABLE_HEADER_GLOBAL_RE =
+  /\b(?:Filing ID\s*#?\d+\s+)?ID Owner Asset Transaction Type Date Notification Date Amount Cap\.?\s*Gains\s*>\s*(?:\$?\s*200\??)?/gi;
 const INLINE_RECORD_RE =
   /\b(?<owner>SP|DC|JT|SELF)\s+(?<asset>[^$]{1,220}?)\s+(?:(?:\((?<parenTicker>[A-Z][A-Z0-9.\/-]{0,9})\))|(?:NYSE[A-Z]*:\s*(?<exchangeTicker>[A-Z][A-Z0-9.\/-]{0,9})))?\s*\[(?<assetType>[A-Z]{2,3})\]\s+(?<txType>P|S|E|purchase|sale|exchange)(?:\s*\([^)]*\))?\s+(?<txDate>\d{1,2}\/\d{1,2}\/\d{2,4})\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+(?<amount>\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?)/gi;
 
@@ -149,7 +153,7 @@ const INLINE_RECORD_RE =
  */
 export function parseHousePtrText(text: string): ParsedTx[] {
   const cleaned = cleanPdfText(text);
-  if (/\bID Owner Asset Transaction Type Date Notification Date Amount Cap\. Gains > \$200\?/i.test(cleaned)) {
+  if (HOUSE_TABLE_HEADER_RE.test(cleaned)) {
     const inlineRows = parseInlineRecords(cleaned);
     if (inlineRows.length > 0) return inlineRows;
   }
@@ -179,11 +183,8 @@ function cleanPdfText(text: string): string {
 
 function stripHouseTableHeaders(text: string): string {
   return text
-    .replace(/^.*?\bID Owner Asset Transaction Type Date Notification Date Amount Cap\. Gains > \$200\?\s*/i, '')
-    .replace(
-      /\bFiling ID\s*#?\d+\s+ID Owner Asset Transaction Type Date Notification Date Amount Cap\. Gains > \$200\?\s*/gi,
-      ' ',
-    );
+    .replace(new RegExp(`^.*?${HOUSE_TABLE_HEADER_RE.source}\\s*`, 'i'), '')
+    .replace(HOUSE_TABLE_HEADER_GLOBAL_RE, ' ');
 }
 
 function parseInlineRecords(text: string): ParsedTx[] {
@@ -253,7 +254,7 @@ function stripInlineDetailSpans(text: string): string {
 function cleanInlineAssetName(value: string): string {
   return value
     .replace(/^.*(?:\/share|shares)\s+/i, '')
-    .replace(/\b(F|T)\s*ID Owner Asset Transaction Type Date Notification Date Amount Cap\. Gains > \$200\?/gi, ' ')
+    .replace(HOUSE_TABLE_HEADER_GLOBAL_RE, ' ')
     .replace(/\b(S|P|E|F)\s+S:\s+New\b.*$/i, '')
     .replace(/\b(S|P|E|F)\s+O:\s+.*$/i, '')
     .replace(/\bD:\s+.*$/i, '')

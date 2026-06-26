@@ -12,15 +12,21 @@ import {
   asTickerSort,
   buildClusterBuysQuery,
   buildClusterMembersQuery,
+  buildConvictionMemberLinksQuery,
+  buildMemberSkillQuery,
   buildFilingLagHistogramQuery,
   buildLateFilersQuery,
   buildMemberLeaderboardQuery,
+  buildMemberPerformanceQuery,
   buildMemberStatsQuery,
   buildMemberTopTickersQuery,
   buildMemberRecentTradesQuery,
   buildPartySplitQuery,
   buildPartySplitOverTimeQuery,
   buildSectorBreakdownQuery,
+  buildSectorFlowQuery,
+  buildMarketCapBreakdownQuery,
+  buildMemberPerformanceLeaderboardQuery,
   buildSummaryQuery,
   buildTickerLeaderboardQuery,
   buildTickerRecentTradesQuery,
@@ -60,6 +66,13 @@ describe('buildTickerLeaderboardQuery', () => {
     const q = buildTickerLeaderboardQuery({ window: 'all', sort: 'volume', limit: 9999 });
     expect(q.sql).toContain('ORDER BY est_volume DESC');
     expect(q.sql).toContain('LIMIT 200');
+  });
+
+  it('exposes directional + per-side distinct-member counts (for conviction breadth)', () => {
+    const q = buildTickerLeaderboardQuery({ window: 'all' });
+    expect(q.sql).toContain("CASE WHEN t.tx_type IN ('P', 'S') THEN t.filer_id END) AS directional_member_count");
+    expect(q.sql).toContain("CASE WHEN t.tx_type = 'P' THEN t.filer_id END) AS buy_member_count");
+    expect(q.sql).toContain("CASE WHEN t.tx_type = 'S' THEN t.filer_id END) AS sell_member_count");
   });
 });
 
@@ -118,12 +131,21 @@ describe('buildTrendingQuery', () => {
     expect(q.params).toEqual([]);
   });
 
+  it('bySide groups momentum by ticker + tx_type for per-direction reads', () => {
+    const def = buildTrendingQuery({ window: '30d' });
+    expect(def.sql).toContain('GROUP BY t.ticker ');
+    expect(def.sql).not.toContain('t.tx_type AS tx_type');
+    const sided = buildTrendingQuery({ window: '30d', bySide: true });
+    expect(sided.sql).toContain('t.tx_type AS tx_type');
+    expect(sided.sql).toContain('GROUP BY t.ticker, t.tx_type');
+  });
+
   it('momentumOffsets returns a prior period of equal length', () => {
     expect(momentumOffsets('7d')).toEqual({ recent: '-7 days', priorStart: '-14 days' });
     expect(momentumOffsets('90d')).toEqual({ recent: '-90 days', priorStart: '-180 days' });
     expect(momentumOffsets('180d')).toEqual({ recent: '-180 days', priorStart: '-360 days' });
     expect(momentumOffsets('45d')).toEqual({ recent: '-45 days', priorStart: '-90 days' });
-    expect(momentumOffsets('all')).toEqual({ recent: '-30 days', priorStart: '-60 days' });
+    expect(momentumOffsets('all')).toEqual({ recent: '-90 days', priorStart: '-180 days' });
   });
 });
 
@@ -158,6 +180,84 @@ describe('buildSectorBreakdownQuery', () => {
   });
 });
 
+describe('buildSectorFlowQuery (real GICS sector)', () => {
+  it('groups by securities_ref.sector with signed net flow, resolved tickers only', () => {
+    const q = buildSectorFlowQuery({ window: '90d' });
+    expect(q.sql).toContain("COALESCE(NULLIF(sr.sector, ''), 'Unknown') AS sector");
+    expect(q.sql).toContain('LEFT JOIN securities_ref sr ON sr.ticker = t.ticker');
+    expect(q.sql).toContain('AS est_net_flow');
+    expect(q.sql).toContain('GROUP BY sector');
+    expect(q.sql).toContain("t.ticker IS NOT NULL AND t.ticker <> ''");
+  });
+});
+
+describe('buildMarketCapBreakdownQuery', () => {
+  it('groups by market_cap_bucket with net flow + breadth', () => {
+    const q = buildMarketCapBreakdownQuery({ window: 'all' });
+    expect(q.sql).toContain("COALESCE(NULLIF(sr.market_cap_bucket, ''), 'unknown') AS bucket");
+    expect(q.sql).toContain('LEFT JOIN securities_ref sr ON sr.ticker = t.ticker');
+    expect(q.sql).toContain('AS est_net_flow');
+    expect(q.sql).toContain('GROUP BY bucket');
+  });
+});
+
+describe('conviction realized-skill inputs', () => {
+  it('buildConvictionMemberLinksQuery: distinct (ticker, side, member) for the candidate set', () => {
+    const q = buildConvictionMemberLinksQuery(['AAPL', 'MSFT'], { window: '90d' });
+    expect(q.sql).toContain('SELECT DISTINCT t.ticker AS ticker, t.tx_type AS tx_type, t.filer_id AS filer_id');
+    expect(q.sql).toContain('t.ticker IN (?, ?)');
+    expect(q.sql).toContain('t.tx_type IN (?, ?)');
+    expect(q.sql).toContain('t.filer_id IS NOT NULL');
+    // bind order: window offset, then tx_types, then the ticker IN-list.
+    expect(q.params).toEqual(['-90 days', 'P', 'S', 'AAPL', 'MSFT']);
+  });
+
+  it('buildMemberSkillQuery: per-member scored/wins/avg-excess for the given filers (>=5)', () => {
+    const q = buildMemberSkillQuery(['A1', 'B2', 'C3'], { window: 'all' });
+    expect(q.sql).toContain('JOIN tx_performance p ON p.tx_id = t.id');
+    expect(q.sql).toContain('COUNT(*) AS scored');
+    expect(q.sql).toContain('AS wins');
+    expect(q.sql).toContain('AS avg_excess');
+    expect(q.sql).toContain("t.tx_type = 'P'");
+    expect(q.sql).toContain('t.filer_id IN (?, ?, ?)');
+    expect(q.sql).toContain('HAVING scored >= 5');
+    // window is intentionally omitted (career track record); no date bind.
+    expect(q.sql).not.toContain("tx_date >=");
+    expect(q.params).toEqual(['A1', 'B2', 'C3']);
+  });
+
+  it('buildMemberSkillQuery: honors source + minConf (trade-level), binds before the filer IN-list', () => {
+    const q = buildMemberSkillQuery(['A1'], { window: 'all', source: 'primary', minConf: 0.7 });
+    expect(q.sql).toContain('t.source = ?');
+    expect(q.sql).toContain('t.confidence >= ?');
+    expect(q.params).toEqual(['primary', 0.7, 'A1']);
+  });
+});
+
+describe('buildMemberPerformanceLeaderboardQuery', () => {
+  it('anchors excess return at the filing date, buys only, options excluded, small-N guarded', () => {
+    const q = buildMemberPerformanceLeaderboardQuery({ window: 'all', minTrades: 5, limit: 10 });
+    expect(q.sql).toContain('JOIN tx_performance p ON p.tx_id = t.id');
+    // Excess uses the FILING anchors, not the trade-date ones.
+    expect(q.sql).toContain('p.price_at_filing');
+    expect(q.sql).toContain('p.spx_at_filing');
+    expect(q.sql).not.toContain('price_at_trade');
+    // Latest SPX brought in via a one-row cross join.
+    expect(q.sql).toContain('SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1');
+    expect(q.sql).toContain("t.tx_type = 'P'");
+    expect(q.sql).toContain('t.is_option = 0');
+    expect(q.sql).toContain('GROUP BY t.filer_id');
+    expect(q.sql).toContain('HAVING trade_count >= 5');
+    expect(q.sql).toContain('ORDER BY avg_excess DESC');
+  });
+
+  it('defaults and clamps the small-N guard + limit', () => {
+    const q = buildMemberPerformanceLeaderboardQuery({ window: 'all' });
+    expect(q.sql).toContain('HAVING trade_count >= 5'); // default minTrades
+    expect(q.sql).toContain('LIMIT 20'); // default limit
+  });
+});
+
 describe('filing-lag builders', () => {
   it('histogram excludes negative lags and groups by whole-day lag', () => {
     const q = buildFilingLagHistogramQuery({ window: '90d' });
@@ -178,6 +278,19 @@ describe('member deep-dive builders', () => {
     const q = buildMemberStatsQuery('P000197', { window: 'all' });
     expect(q.sql).toContain('t.filer_id = ?');
     expect(q.sql).toContain('AS avg_lag_days');
+    // Distinct *assets* falls back to the asset name when ticker is unresolved,
+    // so members holding only bonds/funds (ticker NULL) don't show 0.
+    expect(q.sql).toContain('AS unique_assets');
+    expect(q.sql).toContain('NULLIF(t.asset_name');
+    expect(q.params).toEqual(['P000197']);
+  });
+  it('performance query joins tx_performance + securities_ref and filters by filer', () => {
+    const q = buildMemberPerformanceQuery('P000197', { window: 'all' });
+    expect(q.sql).toContain('LEFT JOIN tx_performance txp ON txp.tx_id = t.id');
+    expect(q.sql).toContain('LEFT JOIN securities_ref sr ON sr.ticker = t.ticker');
+    expect(q.sql).toContain('txp.price_at_trade AS price_at_trade');
+    expect(q.sql).toContain('sr.current_price AS current_price');
+    expect(q.sql).toContain('t.filer_id = ?');
     expect(q.params).toEqual(['P000197']);
   });
   it('top tickers exclude null tickers and group by ticker', () => {

@@ -46,7 +46,7 @@ export function isWindow(v: unknown): v is Window {
   return n >= 1 && n <= MAX_WINDOW_DAYS;
 }
 /** Coerce arbitrary input to a valid Window, falling back to `fallback`. */
-export function asWindow(v: unknown, fallback: Window = '30d'): Window {
+export function asWindow(v: unknown, fallback: Window = '90d'): Window {
   return isWindow(v) ? (v as Window) : fallback;
 }
 /** Number of days a window spans, or null for 'all'. Defaults to 30 on garbage. */
@@ -56,7 +56,7 @@ export function windowDays(w: Window): number | null {
   return m ? Number(m[1]) : 30;
 }
 
-export const SOURCE_FILTERS = ['primary', 'seed_dataset', 'all'] as const;
+export const SOURCE_FILTERS = ['primary', 'seed_dataset', 'manual', 'all'] as const;
 export type SourceFilter = (typeof SOURCE_FILTERS)[number];
 export function asSourceFilter(v: unknown, fallback: SourceFilter = 'all'): SourceFilter {
   return typeof v === 'string' && (SOURCE_FILTERS as readonly string[]).includes(v)
@@ -156,6 +156,14 @@ export const ANALYTICS_FROM_JOINS =
 export const ANALYTICS_FROM_JOINS_SECURITIES =
   ANALYTICS_FROM_JOINS + 'LEFT JOIN securities_master sm ON sm.ticker = t.ticker ';
 
+/**
+ * As {@link ANALYTICS_FROM_JOINS} but also joins the enrichment reference
+ * (securities_ref `sr`) so a query can group/filter by real GICS sector and
+ * market-cap bucket. LEFT, so un-enriched tickers are preserved (sr.* NULL).
+ */
+export const ANALYTICS_FROM_JOINS_REF =
+  ANALYTICS_FROM_JOINS + 'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ';
+
 // ---------------------------------------------------------------------------
 // Common filter builder
 // ---------------------------------------------------------------------------
@@ -174,6 +182,10 @@ export interface CommonFilters {
   tickerNotNull?: boolean;
   /** Restrict to these transaction types (e.g. ['P','S']). */
   txTypes?: TxType[];
+  /** Restrict to this explicit set of tickers (e.g. a precomputed candidate set). */
+  tickers?: string[];
+  /** Exclude option rows (is_option = 1) — for common-stock-only views. */
+  excludeOptions?: boolean;
 }
 
 /**
@@ -184,6 +196,9 @@ export interface CommonFilters {
 export function buildCommonFilters(p: CommonFilters): { where: string[]; params: SqlParam[] } {
   const where: string[] = [];
   const params: SqlParam[] = [];
+
+  // Retracted (un-published) rows never appear in any analytics aggregate.
+  where.push('t.deprecated_at IS NULL');
 
   const offset = windowToOffset(p.window ?? '30d');
   if (offset) {
@@ -212,6 +227,13 @@ export function buildCommonFilters(p: CommonFilters): { where: string[]; params:
   if (p.txTypes && p.txTypes.length) {
     where.push(`t.tx_type IN (${p.txTypes.map(() => '?').join(', ')})`);
     for (const ty of p.txTypes) params.push(ty);
+  }
+  if (p.tickers && p.tickers.length) {
+    where.push(`t.ticker IN (${p.tickers.map(() => '?').join(', ')})`);
+    for (const tk of p.tickers) params.push(tk);
+  }
+  if (p.excludeOptions) {
+    where.push('t.is_option = 0');
   }
 
   return { where, params };

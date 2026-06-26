@@ -17,6 +17,9 @@ import { runPriceRefresh } from './prices/service';
 import { hasFmpTierFailure } from './shared/fmpStatus';
 import { notifyAdmin } from './alerts/notify';
 import { shareWithPeer, type PeerShareInput } from './share/outbound';
+import { runFreshnessCheck } from './share/freshness';
+import { runPhotoEnrichment, runTickerBackfill } from './admin/routes';
+import { runBulkSnapshot } from './export/snapshot';
 
 const DAILY_KEY = 'jobs:daily:lastdate';
 
@@ -34,9 +37,15 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   const errors: string[] = [];
   let hadFmpKey = false;
   const share: PeerShareInput = {};
+  // Paid FMP tiers are rate-limited per MINUTE (Starter ~300/min), not per day —
+  // so pace calls to use that headroom without tripping 429s. Configurable via
+  // FMP_MAX_PER_MINUTE; unset = no pacing (prior behavior). The per-day ceiling
+  // is FMP_DAILY_CALL_CAP (raise it on a paid plan so enrichment isn't throttled).
+  const maxPerMinute =
+    parseInt((env as { FMP_MAX_PER_MINUTE?: string }).FMP_MAX_PER_MINUTE || '', 10) || undefined;
 
   try {
-    const r = await runEnrichment(env, {});
+    const r = await runEnrichment(env, { maxPerMinute });
     hadFmpKey = hadFmpKey || r.hasFmpKey;
     errors.push(...r.errors);
     share.refs = r.shareRefs;
@@ -45,7 +54,7 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     errors.push('enrichment: ' + (err as Error).message);
   }
   try {
-    const r = await runPriceRefresh(env, {});
+    const r = await runPriceRefresh(env, { maxPerMinute });
     hadFmpKey = hadFmpKey || r.hasFmpKey;
     errors.push(...r.errors);
     share.prices = r.sharePrices;
@@ -85,5 +94,43 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
         '\n\nCheck your FMP plan + the FMP_API_KEY secret. The job retries automatically each day;\n' +
         "you'll get at most one of these alerts every 12 hours.",
     });
+  }
+
+  // Cross-app freshness watchdog: alert if a donated market-data stream (S&P /
+  // prices / fundamentals) has gone stale — i.e. the partner's push or our own
+  // refresh quietly stopped. Throttled + best-effort; never blocks the cron.
+  try {
+    await runFreshnessCheck(env, now);
+  } catch (err) {
+    console.warn('freshness check failed:', (err as Error).message);
+  }
+
+  // Write the daily bulk market-data snapshot to R2 (prices, S&P, securities
+  // reference, fundamentals, analyst consensus) for App B to pull. Runs AFTER
+  // the enrichment + price refresh above so it captures the freshest data
+  // written today. Best-effort + bounded; never blocks the cron.
+  try {
+    const manifest = await runBulkSnapshot(env, day, now);
+    const rows = Object.values(manifest.tables).reduce((s, t) => s + t.rowCount, 0);
+    console.log('bulk snapshot written:', day, rows, 'rows');
+  } catch (err) {
+    console.warn('bulk snapshot failed:', (err as Error).message);
+  }
+
+  // Fill politician headshots + party/state/district from congress-legislators.
+  // Best-effort, COALESCE-preserving, so new filers get a photo/party without a
+  // manual POST /enrich-photos. Never blocks the cron.
+  try {
+    await runPhotoEnrichment(env);
+  } catch (err) {
+    console.warn('photo enrichment failed:', (err as Error).message);
+  }
+
+  // Backfill ticker resolution for name-but-no-ticker rows (seed/historic), so
+  // they become visible to the leaderboards. Bounded + best-effort.
+  try {
+    await runTickerBackfill(env, 5000);
+  } catch (err) {
+    console.warn('ticker backfill failed:', (err as Error).message);
   }
 }

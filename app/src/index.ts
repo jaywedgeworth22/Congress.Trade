@@ -30,8 +30,10 @@ import { buildAnalyticsRouter } from './analytics/routes';
 import { buildAuthRouter } from './auth/routes';
 import { buildBillingRouter } from './billing/routes';
 import { buildClientRouter } from './client/routes';
+import { buildExportRouter } from './export/routes';
 import { buildUiRouter } from './ui/routes';
 import { maybeRunDailyJobs } from './jobs';
+import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -64,6 +66,12 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
     root.route('/api/client/v1', buildClientRouter());
   } catch (err) {
     console.warn('client/routes router not mounted:', (err as Error).message);
+  }
+  try {
+    // Bulk market-data snapshot export (NDJSON in R2) for App B bootstrapping.
+    root.route('/api/export', buildExportRouter());
+  } catch (err) {
+    console.warn('export/routes router not mounted:', (err as Error).message);
   }
   // End-user auth (Google OAuth + magic-link) at /auth/*. Mounted before the UI
   // catch-all so its routes are not shadowed by the dashboard.
@@ -109,6 +117,12 @@ async function handleIngestMessage(env: Env, msg: QueueMessage): Promise<void> {
       // Enqueue delivery fan-out for the newly persisted transaction.
       await env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId: msg.txId });
       return;
+    case 'agreement.check':
+      // Slow cross-vendor agreement read + auto-publish for one review doc. Runs
+      // here (generous per-message duration) rather than in the cron, whose
+      // scheduled-handler waitUntil cancels long model work.
+      await handleAgreementCheck(env, msg.docId, msg.rawObjectKey);
+      return;
     default:
       console.warn('INGEST_QUEUE: unexpected message type', (msg as { type?: string }).type);
   }
@@ -136,6 +150,13 @@ export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     await runWatcher(env, new Date());
     ctx.waitUntil(maybeRunDailyJobs(env));
+    // Autonomous cross-vendor agreement → auto-publish for a few newly-reviewed
+    // docs each minute (self-gates on AGREEMENT_AUTOPUBLISH_ENABLED; cron-safe).
+    ctx.waitUntil(
+      maybeRunAgreementAutopublish(env).catch((err) =>
+        console.warn('agreement autopublish failed:', (err as Error).message),
+      ),
+    );
   },
 
   /**

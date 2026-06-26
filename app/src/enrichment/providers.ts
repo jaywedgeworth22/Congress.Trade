@@ -42,6 +42,8 @@ export function parseMassiveTicker(json: unknown): Partial<SecurityRef> | null {
   const isAdr = type.indexOf('ADR') >= 0;
   const mc = num(r.market_cap);
   const sic = str(r.sic_code);
+  // Polygon exposes shares directly; prefer the weighted figure.
+  const shares = num(r.weighted_shares_outstanding) ?? num(r.share_class_shares_outstanding);
   return {
     companyName: str(r.name),
     sector: sicToSector(sic),
@@ -54,6 +56,7 @@ export function parseMassiveTicker(json: unknown): Partial<SecurityRef> | null {
     currency: str(r.currency_name) ? String(r.currency_name).toUpperCase() : null,
     marketCap: mc,
     marketCapBucket: marketCapBucket(mc),
+    sharesOutstanding: shares,
     cik: str(r.cik),
     sicCode: sic,
     sicDescription: str(r.sic_description),
@@ -79,6 +82,9 @@ export function parseFinnhubProfile(json: unknown): Partial<SecurityRef> | null 
   if (!j || !str(j.name)) return null;
   const mcM = num(j.marketCapitalization);
   const mc = mcM != null ? Math.round(mcM * 1e6) : null;
+  // Finnhub reports shareOutstanding in millions.
+  const soM = num(j.shareOutstanding);
+  const shares = soM != null ? Math.round(soM * 1e6) : null;
   return {
     companyName: str(j.name),
     industry: str(j.finnhubIndustry),
@@ -88,6 +94,7 @@ export function parseFinnhubProfile(json: unknown): Partial<SecurityRef> | null 
     currency: str(j.currency),
     marketCap: mc,
     marketCapBucket: marketCapBucket(mc),
+    sharesOutstanding: shares,
     ipoDate: str(j.ipo),
     source: 'finnhub',
   };

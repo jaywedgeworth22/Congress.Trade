@@ -49,6 +49,7 @@ arrays. Send whichever you have:
       "exchange": "NASDAQ Global Select", "exchangeShort": "NASDAQ",
       "currency": "USD",
       "marketCap": 3200000000000,
+      "sharesOutstanding": 15000000000,   // lets the importer keep cap current off the daily close
       "ipoDate": "1980-12-12",
       "cik": "0000320193", "sicCode": "3571", "sicDescription": "Electronic Computers"
     }
@@ -71,15 +72,29 @@ arrays. Send whichever you have:
       "owners": ["Jane Director", "John Officer"] }
   ],
   // FINRA short-volume daily, keyed by ticker+date
-  "shortVolume": [ { "ticker": "AAPL", "date": "2026-06-15", "ratio": 48.3, "elevated": false } ]
+  "shortVolume": [ { "ticker": "AAPL", "date": "2026-06-15", "ratio": 48.3, "elevated": false } ],
+  // Fundamentals daily snapshot, keyed by ticker+date (week52High/Low also
+  // accept the `52wHigh`/`52wLow` aliases)
+  "fundamentals": [
+    { "ticker": "AAPL", "date": "2026-06-15", "peRatio": 30.1, "eps": 6.2, "beta": 1.2,
+      "dividendYield": 0.005, "week52High": 250, "week52Low": 160, "fcfYield": 0.03,
+      "debtToEquity": 1.5, "epsGrowth": 0.08 }
+  ],
+  // Analyst consensus snapshot, keyed by ticker+date
+  "analyst": [
+    { "ticker": "AAPL", "date": "2026-06-15", "rating": "Buy", "targetMean": 240,
+      "targetHigh": 300, "targetLow": 180, "targetMedian": 235, "analystCount": 40,
+      "strongBuy": 20, "buy": 10, "hold": 8, "sell": 2, "strongSell": 0 }
+  ]
 }
 ```
 
 App A upserts `securities_ref` / `spx_eod` / `price_eod` / `insider_eod` /
-`short_volume_eod` and recomputes per-trade performance anchors for any imported
-ticker. Response: `{ ok, refs, spxRows, pricedTickers, priceRows, perfTickers,
-insiderRows, shortVolumeRows, errors }`. All upserts are non-destructive (an
-incoming null never overwrites an existing value).
+`short_volume_eod` / `fundamentals_eod` / `analyst_consensus` and recomputes
+per-trade performance anchors for any imported ticker. Response:
+`{ ok, refs, spxRows, pricedTickers, priceRows, perfTickers, insiderRows,
+shortVolumeRows, fundamentalsRows, analystRows, errors }`. All upserts are
+non-destructive (an incoming null never overwrites an existing value).
 
 **Partial refs are fine.** If the sending app only has some columns (e.g.
 `companyName` / `sector` / `industry` / `marketCap` but no `cik` / `exchange` /
@@ -250,3 +265,89 @@ Mapping to a typical `CongressTrade`:
   routes): use `npm run migrate:remote`, `npm run deploy:full`, or
   `ADMIN_TOKEN=... bash scripts/ship.sh` depending on the production path chosen
   in `DEPLOY.md`. The plain `npm run migrate` is **local-only**.
+
+## Read-back routes (avoid re-paying for donated data)
+
+These public reads let a sibling app pull back data it (or our enrichment)
+already stored, instead of re-calling a paid provider. All are read-only,
+no-auth, and mirror the `?from=&to=` shape of `/api/market/insider`:
+
+- `GET /api/market/fundamentals/:ticker?from=&to=` → rows of
+  `{ date, peRatio, eps, beta, dividendYield, week52High, week52Low, fcfYield,
+  debtToEquity, epsGrowth, source, updatedAt }` from `fundamentals_eod`.
+- `GET /api/market/analyst/:ticker?from=&to=` → rows of
+  `{ date, rating, targetMean/High/Low/Median, analystCount,
+  strongBuy/buy/hold/sell/strongSell, source, updatedAt }` from `analyst_consensus`.
+
+Consumer side (agentic-trading) should add a top-of-cascade tier in
+`src/lib/data-providers.ts` that reads these before hitting a paid enrichment
+provider — see the cross-app data-sharing plan.
+
+## Bulk snapshot export (full-history bootstrap / catch-up)
+
+The per-ticker reads above are for incremental, one-symbol cache-aside. To
+**bootstrap from scratch** or **catch up after a downtime gap**, App B can pull
+a daily, date-partitioned NDJSON snapshot of the whole market-data set instead of
+walking thousands of per-ticker calls. App A writes the snapshot to R2 once a day
+(in the daily cron, after enrichment + price refresh) and serves it token-gated.
+
+```
+GET https://congress.trade/api/export/bulk-snapshot
+Headers: Authorization: Bearer <INGEST_TOKEN>          # same scoped token as /securities/import
+Query:   ?date=YYYY-MM-DD   (optional, default today UTC)
+         ?tables=price_eod,spx_eod,securities_ref,fundamentals_eod,analyst_consensus  (optional, default all)
+         ?format=ndjson     (only ndjson; csv/parquet are not offered)
+```
+
+Returns a **manifest** (no row data) — object keys, row counts, the column
+schema, and a per-table `downloadPath`:
+
+```jsonc
+{
+  "generatedAt": "2026-06-25T04:01:00.000Z",
+  "snapshotDate": "2026-06-25",
+  "snapshotDate": "2026-06-25",
+  "runId": "9f3c…",                                  // unique per run; pinned into downloadPath
+  "format": "ndjson",
+  "tables": {
+    "price_eod":  { "objectKey": "bulk/2026-06-25/runs/9f3c…/price_eod.ndjson", "rowCount": 412000,
+                    "downloadPath": "/api/export/bulk-snapshot/file?date=2026-06-25&runId=9f3c…&table=price_eod" },
+    "spx_eod":    { "objectKey": "bulk/2026-06-25/runs/9f3c…/spx_eod.ndjson",   "rowCount": 9500,  "downloadPath": "…" },
+    "securities_ref":   { /* … */ }, "fundamentals_eod": { /* … */ }, "analyst_consensus": { /* … */ }
+  },
+  "schema": { "price_eod": ["ticker","date","close","volume"], /* … all five … */ }
+}
+```
+
+Then download each table's NDJSON (one JSON object per line) and stream-parse it.
+Use the `downloadPath` from the manifest verbatim — it pins the `runId`:
+
+```
+GET /api/export/bulk-snapshot/file?date=2026-06-25&runId=9f3c…&table=price_eod
+Headers: Authorization: Bearer <INGEST_TOKEN>
+→ application/x-ndjson  (stream line-by-line; each line is one row object)
+```
+
+Notes for App B:
+- **No presigned URLs.** The R2 binding in the Workers runtime can't sign URLs, so
+  downloads go through the token-gated `downloadPath` (same `INGEST_TOKEN`).
+- **Pin the run, then download.** Each run writes to a unique `runId` prefix and the
+  manifest's `downloadPath` carries that `runId`, so the row counts you read and the
+  bytes you download are always from the **same** run — even if a later same-day run
+  republishes the manifest while you're mid-download.
+- **Watermark by run identity, not row count.** A rerun can change prices/fundamentals
+  without changing the row count, so don't skip a table on `rowCount` alone. Persist the
+  manifest's `runId` (or `generatedAt`, or each table's `objectKey`) and re-pull a table
+  when that changes; `snapshotDate` alone is not enough to detect a refreshed run.
+- **A missing past date is `404`**; today's snapshot is generated inline on first
+  request if the cron hasn't written it yet (serialized by a per-date lock, so a
+  retry won't kick a duplicate export — you may briefly get `202 {status:"generating"}`,
+  just retry after ~30s).
+- **Consistency is EOD-granular, not transactional.** Each table is a forward
+  key-ordered scan, so a row reflects its state when its key was read, not one
+  global instant. For daily end-of-day data this is immaterial and each new daily
+  snapshot supersedes the last — treat a snapshot as "as of `snapshotDate`".
+- **What's NOT here:** the congressional-trade corpus (use the paged
+  `/api/transactions` feed), `tx_performance` (derive it from `price_eod`+`spx_eod`),
+  and `insider_eod`/`short_volume_eod` (those flow App B → App A, so they're not
+  echoed back).

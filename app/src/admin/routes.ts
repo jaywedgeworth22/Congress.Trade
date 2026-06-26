@@ -27,7 +27,7 @@
  */
 
 import { Hono } from 'hono';
-import type { Env, PollConfig, PollWindow, TxType } from '../shared/types';
+import type { Env, PollConfig, PollWindow, TxType, TxSource } from '../shared/types';
 import { all, get, run, type SqlParam } from '../shared/db';
 import { getConfig, setConfig } from '../shared/config';
 import { uuid } from '../shared/ids';
@@ -38,9 +38,14 @@ import { extractParsed } from '../extraction/orchestrator';
 import {
   normalize,
   recomputeTransactions,
+  persistTransactions,
   transactionRowKey,
+  loadResolver,
   CONFIDENCE_THRESHOLD,
+  HARD_FAILURE_FLAGS,
 } from '../extraction/normalizer';
+import { mapFiling, type FilingRow } from '../delivery/rows';
+import { processAgreementDoc, type AgreementModels } from '../extraction/agreement';
 import type { Chamber } from '../shared/types';
 import { verifyAccessJwt, certsUrl, parseEmailAllowlist } from './access';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
@@ -53,6 +58,7 @@ import {
   type CandidateDocResult,
   type Provider,
 } from '../extraction/bakeoff';
+import { isBatchProvider, submitBatch, pollBatch, type BatchDoc } from '../extraction/batchExtract';
 import { runEnrichment, getDailyUsed, importSecurityRef } from '../enrichment/service';
 import { mergeRefs } from '../enrichment/compute';
 import type { SecurityRef } from '../enrichment/types';
@@ -355,6 +361,70 @@ function photoUrlFor(bioguide: string): string {
   return `https://unitedstates.github.io/images/congress/225x275/${bioguide}.jpg`;
 }
 
+/**
+ * Backfill ticker resolution over stored rows whose ticker is NULL/empty, so
+ * name-but-no-ticker holdings become visible to the leaderboards. No PDF
+ * re-extraction — just the deterministic resolver over the asset name. Bounded
+ * per call; safe to re-run. Shared by POST /resolve-tickers and the daily cron.
+ */
+export async function runTickerBackfill(
+  env: Env,
+  limit = 5000,
+): Promise<{ scanned: number; resolved: number }> {
+  const resolver = await loadResolver(env);
+  const rows = await all<{ id: string; ticker: string | null; asset_name: string | null }>(
+    env.DB,
+    "SELECT id, ticker, asset_name FROM transactions " +
+      "WHERE (ticker IS NULL OR ticker = '') AND asset_name IS NOT NULL AND asset_name <> '' " +
+      'AND deprecated_at IS NULL LIMIT ?',
+    [Math.min(limit, 20000)],
+  );
+  const updates: D1PreparedStatement[] = [];
+  for (const row of rows) {
+    const resolved = resolver(row.ticker, row.asset_name);
+    if (resolved) {
+      updates.push(env.DB.prepare('UPDATE transactions SET ticker = ? WHERE id = ?').bind(resolved, row.id));
+    }
+  }
+  for (let i = 0; i < updates.length; i += 50) {
+    await env.DB.batch(updates.slice(i, i + 50));
+  }
+  return { scanned: rows.length, resolved: updates.length };
+}
+
+/**
+ * Resolve each filer's name -> bioguide (congress-legislators) and fill in the
+ * public headshot URL plus party/state/district (COALESCE-preserve so an existing
+ * value is never overwritten). Pure data fill, safe to re-run; unmatched filers
+ * stay null (the UI falls back to initials). Shared by POST /enrich-photos and the
+ * daily cron so photos/party fill in automatically, not just on a manual call.
+ */
+export async function runPhotoEnrichment(
+  env: Env,
+): Promise<{ filers: number; matched: number; unmatched: number }> {
+  const map = await buildLegislatorMap();
+  const filers = await all<{ bioguide_id: string; full_name: string | null }>(
+    env.DB,
+    'SELECT bioguide_id, full_name FROM filers',
+  );
+  const updates: D1PreparedStatement[] = [];
+  let matched = 0;
+  for (const f of filers) {
+    const match = map.get(normName(f.full_name));
+    if (!match) continue;
+    matched++;
+    updates.push(
+      env.DB
+        .prepare("UPDATE filers SET photo_url = ?, party = COALESCE(NULLIF(party, ''), ?), state = COALESCE(NULLIF(state, ''), ?), district = COALESCE(NULLIF(district, ''), ?) WHERE bioguide_id = ?")
+        .bind(photoUrlFor(match.bioguide), match.party, match.state, match.district, f.bioguide_id),
+    );
+  }
+  for (let i = 0; i < updates.length; i += 50) {
+    await env.DB.batch(updates.slice(i, i + 50));
+  }
+  return { filers: filers.length, matched, unmatched: filers.length - matched };
+}
+
 export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
@@ -420,8 +490,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /review-queue --------------------------------------------------
+  // ?resolved=1 lists already-reviewed items (history) instead of the pending
+  // queue (default 0). ingest_status distinguishes confirmed (persisted) from
+  // rejected (error) for resolved items.
   r.get('/review-queue', async (c) => {
-    const rows = await all<ReviewRow>(
+    const resolved = c.req.query('resolved') === '1' ? 1 : 0;
+    const rows = await all<
+      ReviewRow & { ingest_status?: string | null; manual_rows?: number | null; live_rows?: number | null }
+    >(
       c.env.DB,
       `SELECT
           rq.doc_id,
@@ -431,29 +507,148 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           rq.resolved,
           f.source_url,
           f.raw_object_key,
-          f.doc_kind
+          f.doc_kind,
+          f.ingest_status,
+          (SELECT COUNT(*) FROM transactions t
+             WHERE t.doc_id = rq.doc_id AND t.source = 'manual' AND t.deprecated_at IS NULL) AS manual_rows,
+          (SELECT COUNT(*) FROM transactions t
+             WHERE t.doc_id = rq.doc_id AND t.deprecated_at IS NULL) AS live_rows
         FROM review_queue rq
         LEFT JOIN filings f ON f.doc_id = rq.doc_id
-        WHERE rq.resolved = 0
-        ORDER BY rq.created_at ASC`,
+        WHERE rq.resolved = ?
+        ORDER BY rq.created_at ${resolved ? 'DESC' : 'ASC'}`,
+      [resolved],
     );
-    const items = rows.map((row) => ({
-      docId: row.doc_id,
-      reason: row.reason ?? '',
-      payload: row.payload ? safeJson(row.payload) : null,
-      createdAt: row.created_at ?? '',
-      resolved: row.resolved === 1,
-      sourceUrl: row.source_url ?? '',
-      rawObjectKey: row.raw_object_key ?? '',
-      docKind: row.doc_kind ?? '',
-    }));
-    return c.json({ items, count: items.length });
+
+    // Attach per-model extraction results (latest run per provider:model per doc).
+    // Wrapped so a missing extraction_runs table (pre-migration) degrades to [].
+    const modelsByDoc = new Map<string, Array<Record<string, unknown>>>();
+    if (rows.length) {
+      try {
+        const ids = rows.map((r) => r.doc_id);
+        const placeholders = ids.map(() => '?').join(',');
+        const runs = await all<{
+          doc_id: string;
+          provider: string;
+          model: string;
+          kind: string;
+          ok: number;
+          error: string | null;
+          row_count: number;
+          latency_ms: number | null;
+          avg_confidence: number | null;
+          created_at: string;
+        }>(
+          c.env.DB,
+          `SELECT doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, created_at
+             FROM extraction_runs WHERE doc_id IN (${placeholders})
+            ORDER BY created_at DESC`,
+          ids,
+        );
+        for (const er of runs) {
+          const list = modelsByDoc.get(er.doc_id) ?? [];
+          // Keep only the most recent run per provider:model (rows are DESC by time).
+          if (list.some((m) => m.provider === er.provider && m.model === er.model)) continue;
+          list.push({
+            provider: er.provider,
+            model: er.model,
+            kind: er.kind,
+            ok: er.ok === 1,
+            error: er.error,
+            rowCount: er.row_count,
+            latencyMs: er.latency_ms,
+            avgConfidence: er.avg_confidence,
+            createdAt: er.created_at,
+          });
+          modelsByDoc.set(er.doc_id, list);
+        }
+      } catch {
+        /* extraction_runs not migrated yet — no per-model data */
+      }
+    }
+
+    const items = rows.map((row) => {
+      const manual = (row.manual_rows ?? 0) > 0;
+      const status = !row.resolved || row.resolved === 0
+        ? 'pending'
+        : row.ingest_status === 'error'
+          ? 'rejected'
+          : manual
+            ? 'modified'
+            : (row.live_rows ?? 0) > 0
+              ? 'published'
+              : 'resolved';
+      return {
+        docId: row.doc_id,
+        reason: row.reason ?? '',
+        payload: row.payload ? safeJson(row.payload) : null,
+        createdAt: row.created_at ?? '',
+        resolved: row.resolved === 1,
+        status,
+        ingestStatus: row.ingest_status ?? '',
+        sourceUrl: row.source_url ?? '',
+        rawObjectKey: row.raw_object_key ?? '',
+        docKind: row.doc_kind ?? '',
+        models: modelsByDoc.get(row.doc_id) ?? [],
+      };
+    });
+    return c.json({ items, count: items.length, resolved: resolved === 1 });
+  });
+
+  // --- GET /review/:docId/extractions -------------------------------------
+  // Full stored readings (result_json) for one document, newest first — powers
+  // the dashboard's "view each model's reading" panel. Separate from the list
+  // endpoint so the heavy result_json is only fetched on demand.
+  r.get('/review/:docId/extractions', async (c) => {
+    const docId = c.req.param('docId');
+    let runs: Array<Record<string, unknown>> = [];
+    try {
+      const rowsE = await all<{
+        id: string;
+        batch_id: string | null;
+        provider: string;
+        model: string;
+        kind: string;
+        ok: number;
+        error: string | null;
+        row_count: number;
+        latency_ms: number | null;
+        avg_confidence: number | null;
+        result_json: string | null;
+        created_at: string;
+      }>(
+        c.env.DB,
+        `SELECT id, batch_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, created_at
+           FROM extraction_runs WHERE doc_id = ? ORDER BY created_at DESC`,
+        [docId],
+      );
+      runs = rowsE.map((er) => ({
+        id: er.id,
+        batchId: er.batch_id,
+        provider: er.provider,
+        model: er.model,
+        kind: er.kind,
+        ok: er.ok === 1,
+        error: er.error,
+        rowCount: er.row_count,
+        latencyMs: er.latency_ms,
+        avgConfidence: er.avg_confidence,
+        rows: er.result_json ? safeJson(er.result_json) : [],
+        createdAt: er.created_at,
+      }));
+    } catch {
+      /* extraction_runs not migrated yet */
+    }
+    return c.json({ docId, runs, count: runs.length });
   });
 
   // --- POST /review/:docId ------------------------------------------------
-  // Body: { decision: 'confirm'|'reject', edits?: EditedTx[] }
+  // Body: { decision: 'confirm'|'reject'|'manual', edits?: EditedTx[] }
   //   confirm -> insert corrected transactions (source='primary'), mark review
   //              resolved, set filing persisted, enqueue delivery.dispatch each.
+  //   manual  -> same as confirm but recorded as source='manual' — the admin
+  //              hand-entered the rows because the automated read was wrong / too
+  //              low-confidence to trust. Flagged so admins can tell them apart.
   //   reject  -> mark review resolved + filing status 'error'.
   r.post('/review/:docId', async (c) => {
     const docId = c.req.param('docId');
@@ -465,8 +660,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
 
     const decision = body.decision;
-    if (decision !== 'confirm' && decision !== 'reject') {
-      return c.json({ error: "decision must be 'confirm' or 'reject'" }, 400);
+    if (decision !== 'confirm' && decision !== 'reject' && decision !== 'manual') {
+      return c.json({ error: "decision must be 'confirm', 'reject', or 'manual'" }, 400);
     }
 
     const review = await get<ReviewRow>(
@@ -488,7 +683,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ docId, decision: 'reject', resolved: true });
     }
 
-    // confirm: insert the corrected transactions.
+    // confirm/manual: insert the (corrected or hand-entered) transactions.
+    // 'manual' tags provenance so admins can tell hand-entered rows from machine reads.
+    const source: TxSource = decision === 'manual' ? 'manual' : 'primary';
     const edits = Array.isArray(body.edits) ? (body.edits as EditedTx[]) : [];
     const filing = await get<{ filer_id: string | null }>(
       c.env.DB,
@@ -501,7 +698,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const nowIso = new Date().toISOString();
     for (const [rowIndex, e] of edits.entries()) {
       const id = uuid();
-      const rowKey = transactionRowKey('primary', rowIndex, {
+      const rowKey = transactionRowKey(source, rowIndex, {
         txDate: e.txDate ?? null,
         owner: e.owner === 'self' || e.owner === 'spouse' || e.owner === 'joint' || e.owner === 'dependent'
           ? e.owner
@@ -523,7 +720,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
            id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
            tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
            raw_text, row_key, confidence, source, created_at, cursor_seq
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'primary', ?, NULL)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
         [
           id,
           docId,
@@ -541,6 +738,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           e.rawText ?? '',
           rowKey,
           e.confidence ?? 1,
+          source,
           nowIso,
         ],
       );
@@ -565,11 +763,62 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
     return c.json({
       docId,
-      decision: 'confirm',
+      decision,
+      source,
       resolved: true,
       inserted: insertedIds.length,
       transactionIds: insertedIds,
     });
+  });
+
+  // --- POST /review/:docId/unpublish --------------------------------------
+  // Retract a previously-published filing: soft-delete its primary transactions
+  // (deprecated_at), revert the filing to 'needs_review', and re-open the review
+  // item so it returns to the pending queue. Soft-delete (not hard delete) keeps
+  // history and lets every feed/analytics/stream read exclude the rows via
+  // `deprecated_at IS NULL`. Already-delivered webhook/SSE events cannot be
+  // recalled — this stops the rows being served going forward.
+  // Body (optional): { reason?: string }
+  r.post('/review/:docId/unpublish', async (c) => {
+    const docId = c.req.param('docId');
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const reason = typeof body.reason === 'string' && body.reason.length ? body.reason : 'unpublished by admin';
+
+    const filing = await get<{ ingest_status: string | null }>(
+      c.env.DB,
+      'SELECT ingest_status FROM filings WHERE doc_id = ?',
+      [docId],
+    );
+    if (!filing) return c.json({ error: 'filing not found' }, 404);
+
+    const nowIso = new Date().toISOString();
+    // Soft-delete the live primary rows for this doc.
+    const res = await run(
+      c.env.DB,
+      `UPDATE transactions
+          SET deprecated_at = ?, deprecated_reason = ?
+        WHERE doc_id = ? AND source IN ('primary', 'manual') AND deprecated_at IS NULL`,
+      [nowIso, reason, docId],
+    );
+    const deprecated = res.meta?.changes ?? 0;
+
+    // Revert the filing and re-open the review item (back into the pending queue).
+    await run(c.env.DB, 'UPDATE filings SET ingest_status = ? WHERE doc_id = ?', ['needs_review', docId]);
+    await run(
+      c.env.DB,
+      `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved)
+         VALUES (?, ?, ?, ?, 0)
+       ON CONFLICT(doc_id) DO UPDATE SET resolved = 0, reason = excluded.reason, created_at = excluded.created_at`,
+      [docId, 'unpublished: ' + reason, null, nowIso],
+    );
+
+    return c.json({ docId, unpublished: true, deprecatedTransactions: deprecated, reason });
   });
 
   // --- GET /sources/health ------------------------------------------------
@@ -1140,7 +1389,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /bakeoff ------------------------------------------------------
-  // Run N House PTR PDFs through several vision models (Gemini/OpenAI/Anthropic)
+  // Run N House PTR PDFs through several vision models (Gemini/OpenAI/Anthropic/Mistral/xAI)
   // and report row recall, failures, latency, and cross-model agreement so we
   // can pick the best extractor before reprocessing the whole corpus. Read-only:
   // it never writes transactions. Body: { n?, models?: [{provider,model}], docIds? }.
@@ -1156,12 +1405,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     // Candidate lineup (default provider-neutral set, overridable).
     let candidates: BakeoffCandidate[] = DEFAULT_CANDIDATES;
     if (Array.isArray(body.models)) {
-      const valid: Provider[] = ['gemini', 'openai', 'anthropic'];
+      const valid: Provider[] = ['gemini', 'openai', 'anthropic', 'mistral', 'xai'];
       const parsed: BakeoffCandidate[] = [];
       for (const m of body.models) {
         const o = m as { provider?: unknown; model?: unknown };
         if (!valid.includes(o.provider as Provider) || typeof o.model !== 'string') {
-          return c.json({ error: 'each model must be {provider:gemini|openai|anthropic, model:string}' }, 400);
+          return c.json({ error: 'each model must be {provider:gemini|openai|anthropic|mistral|xai, model:string}' }, 400);
         }
         parsed.push({ provider: o.provider as Provider, model: o.model });
       }
@@ -1200,8 +1449,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'no House filings with a stored PDF were found to test' }, 404);
     }
 
+    // Persist each model's reading by default (set persist:false to skip) so the
+    // results land in extraction_runs for the review dashboard + later learning.
+    const persist = body.persist !== false;
+    const batchId = uuid();
+    const nowIso = new Date().toISOString();
+
     const results: CandidateDocResult[] = [];
     const skipped: string[] = [];
+    let persistErrors = 0;
     for (const { doc_id, raw_object_key } of docs) {
       if (!raw_object_key) {
         skipped.push(`${doc_id}: no raw_object_key`);
@@ -1215,7 +1471,35 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       const bytes = await obj.arrayBuffer();
       // Sequential per doc keeps memory + provider rate-limits sane.
       for (const candidate of candidates) {
-        results.push(await runCandidateOnDoc(c.env, candidate, doc_id, bytes));
+        const res = await runCandidateOnDoc(c.env, candidate, doc_id, bytes);
+        results.push(res);
+        if (persist) {
+          try {
+            await run(
+              c.env.DB,
+              `INSERT INTO extraction_runs
+                 (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, created_at)
+               VALUES (?, ?, ?, ?, ?, 'bakeoff', ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                uuid(),
+                batchId,
+                res.docId,
+                res.provider,
+                res.model,
+                res.ok ? 1 : 0,
+                res.error ?? null,
+                res.rowCount,
+                res.latencyMs,
+                res.avgConfidence,
+                JSON.stringify(res.rows ?? []),
+                nowIso,
+              ],
+            );
+          } catch {
+            // Table may not exist yet (pre-migration) — keep the bake-off read-only-safe.
+            persistErrors++;
+          }
+        }
       }
     }
 
@@ -1230,8 +1514,265 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       ok: true,
       docsTested: docs.length - skipped.length,
       skipped,
+      persisted: persist && persistErrors === 0,
+      batchId: persist ? batchId : null,
       models: summarizeModels(candidates, results),
       perDoc,
+    });
+  });
+
+  // --- POST /batch-submit -------------------------------------------------
+  // Kick off an async, ~50%-cheaper batch extraction for a set of docs (backlog
+  // reprocessing — NOT the live feed). Body: { provider, model, docIds?, n? }.
+  // Returns immediately with a jobId to poll via /batch-status/:jobId.
+  r.post('/batch-submit', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    if (!isBatchProvider(body.provider)) {
+      return c.json({ error: 'provider must be anthropic | openai | mistral | xai' }, 400);
+    }
+    const provider = body.provider;
+    const model =
+      typeof body.model === 'string' && body.model
+        ? body.model
+        : provider === 'anthropic' ? 'claude-haiku-4-5'
+        : provider === 'openai' ? 'gpt-4o'
+        : provider === 'xai' ? 'grok-4.3'
+        : 'mistral-ocr-latest';
+
+    let n = typeof body.n === 'number' && body.n > 0 ? Math.floor(body.n) : 50;
+    if (n > 200) n = 200;
+
+    let docRows: Array<{ doc_id: string; raw_object_key: string | null }>;
+    if (Array.isArray(body.docIds) && body.docIds.length > 0) {
+      const ids = body.docIds.filter((x): x is string => typeof x === 'string').slice(0, n);
+      docRows = [];
+      for (const id of ids) {
+        const row = await get<{ doc_id: string; raw_object_key: string | null }>(
+          c.env.DB,
+          'SELECT doc_id, raw_object_key FROM filings WHERE doc_id = ?',
+          [id],
+        );
+        if (row) docRows.push(row);
+      }
+    } else {
+      // Default target: the unresolved review backlog (what batch is cheapest for).
+      docRows = await all<{ doc_id: string; raw_object_key: string | null }>(
+        c.env.DB,
+        `SELECT f.doc_id, f.raw_object_key
+           FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
+          WHERE rq.resolved = 0 AND f.raw_object_key IS NOT NULL
+          ORDER BY rq.created_at DESC LIMIT ?`,
+        [n],
+      );
+    }
+
+    const docs: BatchDoc[] = [];
+    const skipped: string[] = [];
+    for (const { doc_id, raw_object_key } of docRows) {
+      if (!raw_object_key) { skipped.push(`${doc_id}: no raw_object_key`); continue; }
+      const obj = await c.env.RAW_FILES.get(raw_object_key);
+      if (!obj) { skipped.push(`${doc_id}: R2 object missing`); continue; }
+      docs.push({ docId: doc_id, bytes: await obj.arrayBuffer() });
+    }
+    if (docs.length === 0) return c.json({ error: 'no documents with a stored PDF to batch', skipped }, 404);
+
+    let providerBatchId: string;
+    try {
+      providerBatchId = await submitBatch(c.env, provider, model, docs);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+
+    const jobId = uuid();
+    await run(
+      c.env.DB,
+      `INSERT INTO batch_jobs (id, provider, model, provider_batch_id, doc_ids, status, submitted_at)
+       VALUES (?, ?, ?, ?, ?, 'submitted', ?)`,
+      [jobId, provider, model, providerBatchId, JSON.stringify(docs.map((d) => d.docId)), new Date().toISOString()],
+    );
+    return c.json({ jobId, provider, model, providerBatchId, docCount: docs.length, skipped, poll: `/api/admin/batch-status/${jobId}` });
+  });
+
+  // --- GET /batch-jobs ----------------------------------------------------
+  r.get('/batch-jobs', async (c) => {
+    let jobs: Array<Record<string, unknown>> = [];
+    try {
+      const rowsB = await all<Record<string, unknown>>(
+        c.env.DB,
+        `SELECT id, provider, model, provider_batch_id, doc_ids, status, submitted_at, completed_at, turnaround_ms, result_summary, error
+           FROM batch_jobs ORDER BY submitted_at DESC LIMIT 50`,
+      );
+      jobs = rowsB.map((j) => ({
+        ...j,
+        doc_ids: typeof j.doc_ids === 'string' ? safeJson(j.doc_ids) : j.doc_ids,
+        result_summary: typeof j.result_summary === 'string' ? safeJson(j.result_summary) : j.result_summary,
+      }));
+    } catch {
+      /* table not migrated */
+    }
+    return c.json({ jobs, count: jobs.length });
+  });
+
+  // --- POST /batch-status/:jobId ------------------------------------------
+  // Poll the provider; when finished, persist each doc's reading into
+  // extraction_runs (kind='batch') and record the real turnaround on batch_jobs.
+  r.post('/batch-status/:jobId', async (c) => {
+    const jobId = c.req.param('jobId');
+    const job = await get<{
+      id: string; provider: string; model: string; provider_batch_id: string | null;
+      doc_ids: string; status: string; submitted_at: string;
+    }>(
+      c.env.DB,
+      'SELECT id, provider, model, provider_batch_id, doc_ids, status, submitted_at FROM batch_jobs WHERE id = ?',
+      [jobId],
+    );
+    if (!job) return c.json({ error: 'batch job not found' }, 404);
+    if (!isBatchProvider(job.provider) || !job.provider_batch_id) {
+      return c.json({ error: 'job missing provider batch id' }, 409);
+    }
+    if (job.status === 'completed' || job.status === 'failed') {
+      return c.json({ jobId, status: job.status, alreadyFinished: true });
+    }
+
+    let poll;
+    try {
+      poll = await pollBatch(c.env, job.provider, job.provider_batch_id);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 502);
+    }
+
+    if (!poll.done) {
+      await run(c.env.DB, 'UPDATE batch_jobs SET status = ? WHERE id = ?', ['running', jobId]);
+      return c.json({ jobId, status: 'running', providerStatus: poll.status });
+    }
+
+    const completedAt = new Date().toISOString();
+    const turnaroundMs = Date.parse(completedAt) - Date.parse(job.submitted_at);
+    let okCount = 0;
+    let rowTotal = 0;
+    const errors: string[] = [];
+
+    if (!poll.failed) {
+      for (const res of poll.results) {
+        if (res.ok) { okCount++; rowTotal += res.rows.length; } else errors.push(`${res.docId}: ${res.error ?? 'failed'}`);
+        const avg = res.rows.length ? res.rows.reduce((s, x) => s + (x.confidence ?? 0), 0) / res.rows.length : 0;
+        try {
+          await run(
+            c.env.DB,
+            `INSERT INTO extraction_runs
+               (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, created_at)
+             VALUES (?, ?, ?, ?, ?, 'batch', ?, ?, ?, ?, ?, ?, ?)`,
+            [uuid(), jobId, res.docId, job.provider, job.model, res.ok ? 1 : 0, res.error ?? null,
+             res.rows.length, turnaroundMs, Math.round(avg * 1000) / 1000, JSON.stringify(res.rows), completedAt],
+          );
+        } catch { /* extraction_runs missing */ }
+      }
+    }
+
+    const summary = { docs: poll.results.length, ok: okCount, rows: rowTotal, errors: errors.slice(0, 20) };
+    await run(
+      c.env.DB,
+      'UPDATE batch_jobs SET status = ?, completed_at = ?, turnaround_ms = ?, result_summary = ?, error = ? WHERE id = ?',
+      [poll.failed ? 'failed' : 'completed', completedAt, turnaroundMs, JSON.stringify(summary), poll.failed ? poll.status : null, jobId],
+    );
+    return c.json({
+      jobId,
+      status: poll.failed ? 'failed' : 'completed',
+      turnaroundMs,
+      turnaroundMin: Math.round((turnaroundMs / 60000) * 10) / 10,
+      summary,
+    });
+  });
+
+  // --- POST /agreement-reprocess ------------------------------------------
+  // Agreement-based auto-publish for the backlog. For each doc, run TWO
+  // independent (cross-vendor) models; when they FULLY agree on the row set
+  // (every row's ticker|date|type matches), the read is trusted and published
+  // (ticker-resolved + bracket-validated via the normalizer) instead of held in
+  // review — agreement substitutes for the conservative 0.60 vision-confidence
+  // cap. Disagreements (or hard structural failures) stay in review.
+  //
+  // Body: { docIds?, n?, models:[{provider,model},{provider,model}],
+  //         requireThird?:{provider,model}, dryRun?:boolean (default TRUE) }
+  // dryRun reports what WOULD publish without writing — always preview first.
+  r.post('/agreement-reprocess', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+
+    const parseModel = (m: unknown): BakeoffCandidate | null => {
+      const o = m as { provider?: unknown; model?: unknown };
+      const valid: Provider[] = ['gemini', 'openai', 'anthropic', 'mistral', 'xai'];
+      return valid.includes(o.provider as Provider) && typeof o.model === 'string'
+        ? { provider: o.provider as Provider, model: o.model }
+        : null;
+    };
+    const models = Array.isArray(body.models) ? body.models.map(parseModel) : [];
+    if (models.length !== 2 || models.some((m) => !m)) {
+      return c.json({ error: 'models must be exactly two {provider,model} from gemini|openai|anthropic|mistral|xai' }, 400);
+    }
+    const [mA, mB] = models as BakeoffCandidate[];
+    const mC = body.requireThird ? parseModel(body.requireThird) : null;
+    if (body.requireThird && !mC) return c.json({ error: 'requireThird must be {provider,model}' }, 400);
+    const dryRun = body.dryRun !== false; // default true — preview unless explicitly false
+
+    let n = typeof body.n === 'number' && body.n > 0 ? Math.floor(body.n) : 25;
+    if (n > 100) n = 100;
+
+    let docRows: Array<{ doc_id: string; raw_object_key: string | null }>;
+    if (Array.isArray(body.docIds) && body.docIds.length > 0) {
+      const ids = body.docIds.filter((x): x is string => typeof x === 'string').slice(0, n);
+      docRows = [];
+      for (const id of ids) {
+        const row = await get<{ doc_id: string; raw_object_key: string | null }>(
+          c.env.DB,
+          'SELECT doc_id, raw_object_key FROM filings WHERE doc_id = ?',
+          [id],
+        );
+        if (row) docRows.push(row);
+      }
+    } else {
+      docRows = await all<{ doc_id: string; raw_object_key: string | null }>(
+        c.env.DB,
+        `SELECT f.doc_id, f.raw_object_key
+           FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
+          WHERE rq.resolved = 0 AND f.raw_object_key IS NOT NULL
+          ORDER BY rq.created_at DESC LIMIT ?`,
+        [n],
+      );
+    }
+
+    const agModels: AgreementModels = { a: mA, b: mB, c: mC };
+    const results: Array<Record<string, unknown>> = [];
+    let published = 0, wouldPublish = 0, disagree = 0, hardfail = 0, skipped = 0;
+
+    for (const { doc_id, raw_object_key } of docRows) {
+      const res = await processAgreementDoc(c.env, agModels, doc_id, raw_object_key, dryRun);
+      results.push(res as unknown as Record<string, unknown>);
+      if (res.outcome === 'published') published++;
+      else if (res.outcome === 'would_publish') wouldPublish++;
+      else if (res.outcome === 'disagree') disagree++;
+      else if (res.outcome === 'agree_but_hardfail') hardfail++;
+      else skipped++;
+    }
+
+    return c.json({
+      ok: true,
+      dryRun,
+      models: { a: `${mA.provider}:${mA.model}`, b: `${mB.provider}:${mB.model}`, ...(mC ? { c: `${mC.provider}:${mC.model}` } : {}) },
+      docsProcessed: docRows.length,
+      summary: { published, wouldPublish, disagree, hardfail, skipped },
+      results,
     });
   });
 
@@ -1342,6 +1883,19 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       `CREATE INDEX IF NOT EXISTS idx_client_commands_user_created
          ON client_commands (user_id, created_at DESC)`,
       'CREATE INDEX IF NOT EXISTS idx_client_commands_status ON client_commands (status)',
+      // 0010_fundamentals.sql — sibling-app fundamentals + analyst consensus cache.
+      `CREATE TABLE IF NOT EXISTS fundamentals_eod (
+         ticker TEXT NOT NULL, date TEXT NOT NULL, pe_ratio REAL, eps REAL, beta REAL,
+         dividend_yield REAL, week52_high REAL, week52_low REAL, fcf_yield REAL,
+         debt_to_equity REAL, eps_growth REAL, source TEXT, updated_at TEXT NOT NULL,
+         PRIMARY KEY (ticker, date)
+       )`,
+      `CREATE TABLE IF NOT EXISTS analyst_consensus (
+         ticker TEXT NOT NULL, date TEXT NOT NULL, rating TEXT, target_mean REAL,
+         target_high REAL, target_low REAL, target_median REAL, analyst_count INTEGER,
+         strong_buy INTEGER, buy INTEGER, hold INTEGER, sell INTEGER, strong_sell INTEGER,
+         source TEXT, updated_at TEXT NOT NULL, PRIMARY KEY (ticker, date)
+       )`,
       // 0011_transaction_row_details.sql — row-specific House PTR details.
       'ALTER TABLE transactions ADD COLUMN asset_type_name TEXT',
       'ALTER TABLE transactions ADD COLUMN filing_status TEXT',
@@ -1350,6 +1904,45 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'ALTER TABLE transactions ADD COLUMN description TEXT',
       'ALTER TABLE transactions ADD COLUMN supplemental_text TEXT',
       'CREATE INDEX IF NOT EXISTS idx_tx_asset_type_name ON transactions (asset_type_name)',
+      // 0012_shares_outstanding.sql — keep market cap current off the daily close.
+      'ALTER TABLE securities_ref ADD COLUMN shares_outstanding REAL',
+      `UPDATE securities_ref SET shares_outstanding = market_cap / current_price
+         WHERE shares_outstanding IS NULL AND market_cap IS NOT NULL
+           AND current_price IS NOT NULL AND current_price > 0`,
+      // 0013_tx_deprecation.sql — soft-delete so admins can un-publish filings.
+      'ALTER TABLE transactions ADD COLUMN deprecated_at TEXT',
+      'ALTER TABLE transactions ADD COLUMN deprecated_reason TEXT',
+      'CREATE INDEX IF NOT EXISTS idx_tx_deprecated_at ON transactions (deprecated_at)',
+      // 0014_tx_perf_filing_anchors.sql — disclosure-date performance anchors.
+      'ALTER TABLE tx_performance ADD COLUMN price_at_filing REAL',
+      'ALTER TABLE tx_performance ADD COLUMN spx_at_filing REAL',
+      // 0015_extraction_runs.sql — per-doc per-model extraction results (bake-off + review dashboard).
+      `CREATE TABLE IF NOT EXISTS extraction_runs (
+         id TEXT PRIMARY KEY, batch_id TEXT, doc_id TEXT NOT NULL,
+         provider TEXT NOT NULL, model TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'bakeoff',
+         ok INTEGER NOT NULL DEFAULT 0, error TEXT, row_count INTEGER NOT NULL DEFAULT 0,
+         latency_ms INTEGER, avg_confidence REAL, result_json TEXT, created_at TEXT NOT NULL)`,
+      'CREATE INDEX IF NOT EXISTS idx_extraction_runs_doc ON extraction_runs (doc_id)',
+      'CREATE INDEX IF NOT EXISTS idx_extraction_runs_batch ON extraction_runs (batch_id)',
+      'CREATE INDEX IF NOT EXISTS idx_extraction_runs_created ON extraction_runs (created_at)',
+      // 0016_batch_jobs.sql — async batch reprocessing jobs (cheaper backlog path).
+      `CREATE TABLE IF NOT EXISTS batch_jobs (
+         id TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT NOT NULL,
+         provider_batch_id TEXT, doc_ids TEXT NOT NULL, status TEXT NOT NULL,
+         submitted_at TEXT NOT NULL, completed_at TEXT, turnaround_ms INTEGER,
+         result_summary TEXT, error TEXT)`,
+      'CREATE INDEX IF NOT EXISTS idx_batch_jobs_status ON batch_jobs (status)',
+      'CREATE INDEX IF NOT EXISTS idx_batch_jobs_submitted ON batch_jobs (submitted_at)',
+      // 0017_fb_meta_remap.sql — Facebook's old "FB" ticker was reassigned by the
+      // SEC to a ProShares ETF after Meta moved to "META", so congressional FB
+      // trades were showing the ProShares name. Remap stored FB rows to META and
+      // fix the cached names. Idempotent (UPDATEs).
+      "UPDATE transactions SET ticker = 'META' WHERE ticker = 'FB' AND deprecated_at IS NULL",
+      "UPDATE securities_ref SET company_name = 'Meta Platforms, Inc.' WHERE ticker = 'META' AND (company_name IS NULL OR company_name = '' OR company_name LIKE '%ProShares%')",
+      "UPDATE securities_master SET name = 'Meta Platforms, Inc.' WHERE ticker = 'META'",
+      // 0018_agreement_attempted.sql — one autonomous agreement attempt per review doc.
+      'ALTER TABLE review_queue ADD COLUMN agreement_attempted_at TEXT',
+      'CREATE INDEX IF NOT EXISTS idx_review_queue_agreement ON review_queue (agreement_attempted_at)',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -1491,9 +2084,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   //     spx?: [{ date, close }],
   //     prices?: [{ ticker, closes?: [{date,close,volume?}], currentPrice?, currentPriceDate? }],
   //     insider?: [{ ticker, date, sentiment?, buyFilings?, sellFilings?, buyShares?, sellShares?, owners? }],
-  //     shortVolume?: [{ ticker, date, ratio, elevated? }] }
-  // Upserts securities_ref / spx_eod / price_eod / insider_eod / short_volume_eod
-  // and recomputes per-trade
+  //     shortVolume?: [{ ticker, date, ratio, elevated? }],
+  //     fundamentals?: [{ ticker, date, peRatio?, eps?, beta?, dividendYield?,
+  //                       week52High?, week52Low?, fcfYield?, debtToEquity?, epsGrowth? }],
+  //     analyst?: [{ ticker, date, rating?, targetMean?, targetHigh?, targetLow?,
+  //                  targetMedian?, analystCount?, strongBuy?, buy?, hold?, sell?, strongSell? }] }
+  // Upserts securities_ref / spx_eod / price_eod / insider_eod / short_volume_eod /
+  // fundamentals_eod / analyst_consensus and recomputes per-trade
   // performance anchors for imported tickers. Idempotent. Authorized by the
   // full ADMIN_TOKEN/Access OR the scoped INGEST_TOKEN (this endpoint only).
   r.post('/securities/import', async (c) => {
@@ -1523,7 +2120,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
     const summary = {
       refs: 0, spxRows: 0, pricedTickers: 0, priceRows: 0, perfTickers: 0,
-      insiderRows: 0, shortVolumeRows: 0, errors: [] as string[],
+      insiderRows: 0, shortVolumeRows: 0, fundamentalsRows: 0, analystRows: 0,
+      errors: [] as string[],
     };
     const nowIso = new Date().toISOString();
     const oversized =
@@ -1547,7 +2145,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const REF_KEYS = [
       'companyName', 'sector', 'industry', 'assetClass', 'isEtf', 'isAdr', 'country',
       'stateHq', 'stateOfIncorp', 'exchange', 'exchangeShort', 'currency', 'marketCap',
-      'ipoDate', 'cik', 'sicCode', 'sicDescription',
+      'sharesOutstanding', 'ipoDate', 'cik', 'sicCode', 'sicDescription',
     ] as const;
 
     // 1) Company reference rows.
@@ -1703,6 +2301,102 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       summary.shortVolumeRows += rows.length;
     }
 
+    // 6) Fundamentals daily snapshot pushed by a sibling app (saves our FMP
+    //    quota). [{ ticker, date, peRatio?, eps?, beta?, dividendYield?,
+    //    week52High?, week52Low?, fcfYield?, debtToEquity?, epsGrowth? }].
+    //    week52High/Low also accept the `52wHigh`/`52wLow` aliases.
+    if (Array.isArray(body.fundamentals)) {
+      const rows = (body.fundamentals as Array<Record<string, unknown>>)
+        .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
+        .slice(0, 20000);
+      for (let i = 0; i < rows.length; i += 100) {
+        await c.env.DB.batch(
+          rows.slice(i, i + 100).map((o) =>
+            c.env.DB.prepare(
+              `INSERT INTO fundamentals_eod (ticker, date, pe_ratio, eps, beta, dividend_yield,
+                 week52_high, week52_low, fcf_yield, debt_to_equity, eps_growth, source, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'imported', ?)
+               ON CONFLICT(ticker, date) DO UPDATE SET
+                 pe_ratio=COALESCE(excluded.pe_ratio, fundamentals_eod.pe_ratio),
+                 eps=COALESCE(excluded.eps, fundamentals_eod.eps),
+                 beta=COALESCE(excluded.beta, fundamentals_eod.beta),
+                 dividend_yield=COALESCE(excluded.dividend_yield, fundamentals_eod.dividend_yield),
+                 week52_high=COALESCE(excluded.week52_high, fundamentals_eod.week52_high),
+                 week52_low=COALESCE(excluded.week52_low, fundamentals_eod.week52_low),
+                 fcf_yield=COALESCE(excluded.fcf_yield, fundamentals_eod.fcf_yield),
+                 debt_to_equity=COALESCE(excluded.debt_to_equity, fundamentals_eod.debt_to_equity),
+                 eps_growth=COALESCE(excluded.eps_growth, fundamentals_eod.eps_growth),
+                 source=excluded.source, updated_at=excluded.updated_at`,
+            ).bind(
+              (o.ticker as string).toUpperCase(),
+              (o.date as string).slice(0, 10),
+              numOrNull(o.peRatio),
+              numOrNull(o.eps),
+              numOrNull(o.beta),
+              numOrNull(o.dividendYield),
+              numOrNull(o.week52High ?? o['52wHigh']),
+              numOrNull(o.week52Low ?? o['52wLow']),
+              numOrNull(o.fcfYield),
+              numOrNull(o.debtToEquity),
+              numOrNull(o.epsGrowth),
+              nowIso,
+            ),
+          ),
+        );
+      }
+      summary.fundamentalsRows += rows.length;
+    }
+
+    // 7) Analyst consensus snapshot. [{ ticker, date, rating?, targetMean?,
+    //    targetHigh?, targetLow?, targetMedian?, analystCount?, strongBuy?,
+    //    buy?, hold?, sell?, strongSell? }].
+    if (Array.isArray(body.analyst)) {
+      const rows = (body.analyst as Array<Record<string, unknown>>)
+        .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
+        .slice(0, 20000);
+      for (let i = 0; i < rows.length; i += 100) {
+        await c.env.DB.batch(
+          rows.slice(i, i + 100).map((o) =>
+            c.env.DB.prepare(
+              `INSERT INTO analyst_consensus (ticker, date, rating, target_mean, target_high,
+                 target_low, target_median, analyst_count, strong_buy, buy, hold, sell, strong_sell,
+                 source, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'imported', ?)
+               ON CONFLICT(ticker, date) DO UPDATE SET
+                 rating=COALESCE(excluded.rating, analyst_consensus.rating),
+                 target_mean=COALESCE(excluded.target_mean, analyst_consensus.target_mean),
+                 target_high=COALESCE(excluded.target_high, analyst_consensus.target_high),
+                 target_low=COALESCE(excluded.target_low, analyst_consensus.target_low),
+                 target_median=COALESCE(excluded.target_median, analyst_consensus.target_median),
+                 analyst_count=COALESCE(excluded.analyst_count, analyst_consensus.analyst_count),
+                 strong_buy=COALESCE(excluded.strong_buy, analyst_consensus.strong_buy),
+                 buy=COALESCE(excluded.buy, analyst_consensus.buy),
+                 hold=COALESCE(excluded.hold, analyst_consensus.hold),
+                 sell=COALESCE(excluded.sell, analyst_consensus.sell),
+                 strong_sell=COALESCE(excluded.strong_sell, analyst_consensus.strong_sell),
+                 source=excluded.source, updated_at=excluded.updated_at`,
+            ).bind(
+              (o.ticker as string).toUpperCase(),
+              (o.date as string).slice(0, 10),
+              typeof o.rating === 'string' ? o.rating : null,
+              numOrNull(o.targetMean),
+              numOrNull(o.targetHigh),
+              numOrNull(o.targetLow),
+              numOrNull(o.targetMedian),
+              intOrNull(o.analystCount),
+              intOrNull(o.strongBuy),
+              intOrNull(o.buy),
+              intOrNull(o.hold),
+              intOrNull(o.sell),
+              intOrNull(o.strongSell),
+              nowIso,
+            ),
+          ),
+        );
+      }
+      summary.analystRows += rows.length;
+    }
+
     return c.json({ ok: summary.errors.length === 0, ...summary });
   });
 
@@ -1712,27 +2406,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // falls back to initials).
   r.post('/enrich-photos', async (c) => {
     try {
-      const map = await buildLegislatorMap();
-      const filers = await all<{ bioguide_id: string; full_name: string | null }>(
-        c.env.DB,
-        'SELECT bioguide_id, full_name FROM filers',
-      );
-      const updates: D1PreparedStatement[] = [];
-      let matched = 0;
-      for (const f of filers) {
-        const match = map.get(normName(f.full_name));
-        if (!match) continue;
-        matched++;
-        updates.push(
-          c.env.DB
-            .prepare('UPDATE filers SET photo_url = ?, party = COALESCE(NULLIF(party, \'\'), ?), state = COALESCE(NULLIF(state, \'\'), ?), district = COALESCE(NULLIF(district, \'\'), ?) WHERE bioguide_id = ?')
-            .bind(photoUrlFor(match.bioguide), match.party, match.state, match.district, f.bioguide_id),
-        );
-      }
-      for (let i = 0; i < updates.length; i += 50) {
-        await c.env.DB.batch(updates.slice(i, i + 50));
-      }
-      return c.json({ filers: filers.length, matched, unmatched: filers.length - matched });
+      return c.json(await runPhotoEnrichment(c.env));
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /resolve-tickers ----------------------------------------------
+  // Backfill: re-run ticker resolution over already-stored rows whose ticker is
+  // NULL/empty (e.g. seed rows, or rows that predate a securities_master entry),
+  // so name-but-no-ticker holdings become visible to the leaderboards. No PDF
+  // re-extraction — just the deterministic resolver over the asset name. Safe to
+  // re-run; bounded per call by ?limit (default 5000).
+  r.post('/resolve-tickers', async (c) => {
+    try {
+      const limit = Number(c.req.query('limit')) || 5000;
+      return c.json(await runTickerBackfill(c.env, limit));
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }

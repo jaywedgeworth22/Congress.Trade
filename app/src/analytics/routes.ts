@@ -36,15 +36,23 @@ import {
   asTickerSort,
   buildClusterBuysQuery,
   buildClusterMembersQuery,
+  buildConflictCandidatesQuery,
+  buildConvictionMemberLinksQuery,
+  buildMemberSkillQuery,
   buildFilingLagHistogramQuery,
   buildLateFilersQuery,
   buildMemberLeaderboardQuery,
+  buildMemberPerformanceQuery,
   buildMemberStatsQuery,
+  buildTickerBacktestCohortQuery,
   buildMemberTopTickersQuery,
   buildMemberRecentTradesQuery,
   buildPartySplitQuery,
   buildPartySplitOverTimeQuery,
   buildSectorBreakdownQuery,
+  buildSectorFlowQuery,
+  buildMarketCapBreakdownQuery,
+  buildMemberPerformanceLeaderboardQuery,
   buildSummaryQuery,
   buildTickerLeaderboardQuery,
   buildTickerRecentTradesQuery,
@@ -55,13 +63,20 @@ import {
   buildVolumeOverTimeQuery,
 } from './builders';
 import {
+  aggregateMemberPerformance,
+  aggregateTickerBacktest,
+  computeConvictionScore,
+  convictionDirection,
+  type ConvictionSkill,
   bracketMidpoint,
   netSentiment,
   round,
   summarizeLag,
   topPerGroup,
   type LagRow,
+  type PriceBar,
 } from './compute';
+import { committeeConflict } from './conflicts';
 import { computePerformance } from '../prices/compute';
 import { latestSpxClose } from '../prices/service';
 
@@ -80,6 +95,21 @@ function usd(v: unknown): number {
 function str(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
 }
+/** Split a list into fixed-size batches (to stay under D1's 100-bound-param cap). */
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+/** Median of a numeric list (0 when empty — callers test the sign). */
+function medianOf(nums: number[]): number {
+  if (nums.length === 0) return 0;
+  const s = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid];
+}
+/** Max IN-list size per D1 prepared statement, leaving headroom for other binds. */
+const D1_IN_CHUNK = 80;
 
 async function closeOnOrBefore(
   env: Env,
@@ -226,6 +256,213 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     return c.json(data);
   });
 
+  // --- GET /conviction ---------------------------------------------------
+  // Per-ticker composite 0-100 "congressional conviction" score (expert-panel
+  // synthesis, see computeConvictionScore): distinct-member consensus base,
+  // cross-party + skew + momentum + small net-flow, anti-gaming gates, hard
+  // caps, direction-aware. Defaults to a recent window so the ranking reflects
+  // what Congress is actually converging on now. Currently runs the documented
+  // data-gap fallback (member-skill rollup activates as price coverage densifies;
+  // the integrity gate uses the neutral 0.9 until per-ticker filing-lag is wired).
+  r.get('/conviction', async (c) => {
+    const q = c.req.query();
+    const f = commonFromQuery(q);
+    const limit = Math.max(1, Math.min(100, Math.floor(Number(q.limit) || 40)));
+    const key = cacheKey('conviction', { ...f, limit });
+    const data = await cached(c.env, key, 300, async () => {
+      // Conviction is NOT monotonic in trade count (broad bipartisan low-trade
+      // names can outscore the trade-count leaders), so rank over a generous
+      // candidate pool rather than just the top `limit`.
+      const POOL_MAX = 100;
+      const pool = Math.min(POOL_MAX, Math.max(60, limit * 3));
+      // Conviction is a COMMON-STOCK directional signal, so every input excludes
+      // option rows: a bought put / sold call is not bullish/bearish stock
+      // conviction (and the app has no option-performance anchor anyway). All the
+      // candidate/aggregate queries below share this stock-only, P/S filter base.
+      const fStock = { ...f, excludeOptions: true };
+      // Seed the candidate pool from DIRECTIONAL (P/S) activity only. If we ranked
+      // the unfiltered leaderboard by total trade_count, an exchange-heavy window
+      // could fill the pool with non-directional 'E' tickers that later score null
+      // (sameSideTrades = 0) and drop out — starving real BUY/SELL names and
+      // returning fewer than `limit`. Filtering to P/S makes trade_count (and the
+      // ranking) directional, and a ticker with no P/S simply isn't a candidate.
+      const lbQ = buildTickerLeaderboardQuery({ ...fStock, txTypes: ['P', 'S'], sort: 'trades', limit: pool });
+      const lbRows = await all<Record<string, unknown>>(c.env.DB, lbQ.sql, lbQ.params);
+      // Fetch the party + momentum + skill-link aggregates restricted to THIS
+      // candidate set, so every ranked candidate's resolved side is present (a
+      // global top-N side query could omit a candidate and silently null its
+      // components). D1 caps a statement at 100 bound params, so the ticker (and
+      // later filer) IN-lists are CHUNKED and the rows concatenated.
+      const candidateTickers = Array.from(
+        new Set(lbRows.map((row) => str(row.ticker)).filter((t): t is string => !!t)),
+      );
+      const clRows: Record<string, unknown>[] = [];
+      const trRows: Record<string, unknown>[] = [];
+      const linkRows: Record<string, unknown>[] = [];
+      await Promise.all(
+        chunk(candidateTickers, D1_IN_CHUNK).flatMap((batch) => {
+          const clQ = buildClusterBuysQuery({ ...fStock, tickers: batch, minMembers: 2, limit: 200 });
+          // Momentum is PER SIDE (bySide) and directional (P/S) only — rising
+          // purchases must not feed a SELL signal, and 'E'/option rows never count.
+          const trQ = buildTrendingQuery({ ...fStock, tickers: batch, txTypes: ['P', 'S'], bySide: true, limit: 200 });
+          // Who traded each candidate, by side (for the realized-skill rollup).
+          const lkQ = buildConvictionMemberLinksQuery(batch, fStock);
+          return [
+            all<Record<string, unknown>>(c.env.DB, clQ.sql, clQ.params).then((r) => void clRows.push(...r)),
+            all<Record<string, unknown>>(c.env.DB, trQ.sql, trQ.params).then((r) => void trRows.push(...r)),
+            all<Record<string, unknown>>(c.env.DB, lkQ.sql, lkQ.params).then((r) => void linkRows.push(...r)),
+          ];
+        }),
+      );
+      // Cluster rows are per (ticker, tx_type); keep BOTH the buy ('P') and sell
+      // ('S') side so the route can attach the party split for the side the
+      // conviction actually resolves to — not just whichever side had more members.
+      const clByTickerSide = new Map<string, { P?: Record<string, unknown>; S?: Record<string, unknown> }>();
+      for (const row of clRows) {
+        const t = str(row.ticker);
+        if (!t) continue;
+        const side = str(row.tx_type) === 'S' ? 'S' : 'P';
+        const cur = clByTickerSide.get(t) ?? {};
+        cur[side] = row;
+        clByTickerSide.set(t, cur);
+      }
+      // Trending keyed by ticker+side so momentum is read for the resolved direction.
+      const trByTickerSide = new Map<string, Record<string, unknown>>();
+      for (const row of trRows) {
+        const t = str(row.ticker);
+        if (!t) continue;
+        const side = str(row.tx_type) === 'S' ? 'S' : 'P';
+        trByTickerSide.set(`${t}|${side}`, row);
+      }
+      // Skill links keyed by ticker+side: the members who traded each candidate on
+      // each side, so the rollup uses ONLY the side the signal resolves to.
+      const membersByTickerSide = new Map<string, string[]>();
+      const allFilers = new Set<string>();
+      for (const row of linkRows) {
+        const t = str(row.ticker);
+        const fid = str(row.filer_id);
+        if (!t || !fid) continue;
+        const side = str(row.tx_type) === 'S' ? 'S' : 'P';
+        const k = `${t}|${side}`;
+        (membersByTickerSide.get(k) ?? membersByTickerSide.set(k, []).get(k)!).push(fid);
+        allFilers.add(fid);
+      }
+      // Per-member realized skill over their full track record (chunked under the
+      // bind cap; honors source/minConf, omits the window intentionally).
+      const memberSkill = new Map<string, { scored: number; wins: number; avgExcess: number }>();
+      await Promise.all(
+        chunk([...allFilers], D1_IN_CHUNK).map((batch) => {
+          const sq = buildMemberSkillQuery(batch, f);
+          return all<Record<string, unknown>>(c.env.DB, sq.sql, sq.params).then((rows) => {
+            for (const row of rows) {
+              const fid = str(row.filer_id);
+              if (fid) memberSkill.set(fid, { scored: num(row.scored), wins: num(row.wins), avgExcess: num(row.avg_excess) });
+            }
+          });
+        }),
+      );
+      // Roll up a ticker's RESOLVED-SIDE members into a ConvictionSkill: weighted
+      // win-rate, total scored coverage, and a true MEDIAN of member excess (a
+      // skewed history with one big loser shouldn't flip the gate). null when no
+      // resolved direction or no contributing member has enough realized history
+      // → the scorer falls back, so nothing regresses where data is sparse.
+      const skillFor = (
+        ticker: string | null,
+        direction: 'BUY' | 'SELL' | null,
+      ): ConvictionSkill | null => {
+        // Skill applies ONLY to BUY conviction: the realized track record measures
+        // members' BUYS (filing-anchored excess), which is evidence for a buy
+        // signal but says nothing about sell timing. SELL conviction stays in the
+        // fallback (no-realized-evidence cap) until sell-side skill is modeled —
+        // a strong buy-picker must not lift a bearish SELL score.
+        if (!ticker || direction !== 'BUY') return null;
+        const members = membersByTickerSide.get(`${ticker}|P`);
+        if (!members || !members.length) return null;
+        let sumScored = 0;
+        let sumWins = 0; // Σ wins == Σ (scored·winRate) → scored-weighted mean win-rate
+        const excesses: number[] = [];
+        for (const fid of members) {
+          const s = memberSkill.get(fid);
+          if (!s || s.scored <= 0) continue;
+          sumScored += s.scored;
+          sumWins += s.wins;
+          excesses.push(s.avgExcess);
+        }
+        if (sumScored <= 0) return null;
+        return {
+          wMeanWinRate: sumWins / sumScored,
+          totalScoredCount: sumScored,
+          medianExcessPositive: medianOf(excesses) > 0,
+        };
+      };
+
+      const tickers = lbRows
+        .map((row) => {
+          const ticker = str(row.ticker);
+          const buyCount = num(row.buy_count);
+          const sellCount = num(row.sell_count);
+          const estNetFlow = num(row.est_net_flow);
+          const sentiment = netSentiment(buyCount, sellCount);
+          // Direction-aware party cluster: pick the side the signal resolves to.
+          const direction = convictionDirection(sentiment, estNetFlow);
+          const sides = ticker ? clByTickerSide.get(ticker) : undefined;
+          const cl = sides ? (direction === 'SELL' ? sides.S : sides.P) : undefined;
+          // Momentum for the resolved side (default to the BUY side when there's
+          // no direction — it's capped at 20 anyway).
+          const momentumSide = direction === 'SELL' ? 'S' : 'P';
+          const tr = ticker ? trByTickerSide.get(`${ticker}|${momentumSide}`) : undefined;
+          // Breadth and trade count reflect ONLY the resolved side: a concentrated
+          // SELL must not borrow breadth from opposing BUY members (and vice
+          // versa), so it can't dodge the single-member cap. Purely non-directional
+          // rows (exchanges, type-changes) never count. For a no-direction ticker
+          // (capped at 20 anyway) fall back to the directional union.
+          const buyMembers = num(row.buy_member_count);
+          const sellMembers = num(row.sell_member_count);
+          const directionalMembers = num(row.directional_member_count);
+          const sameSideMembers =
+            direction === 'BUY' ? buyMembers : direction === 'SELL' ? sellMembers : directionalMembers;
+          const sameSideTrades =
+            direction === 'BUY' ? buyCount : direction === 'SELL' ? sellCount : buyCount + sellCount;
+          const res = computeConvictionScore({
+            memberCount: sameSideMembers,
+            buyCount,
+            sellCount,
+            netSentiment: sentiment,
+            estNetFlowUsd: estNetFlow,
+            tradeCount: sameSideTrades,
+            dMembers: cl ? num(cl.d_members) : 0,
+            rMembers: cl ? num(cl.r_members) : 0,
+            deltaCount: tr ? num(tr.recent_count) - num(tr.prior_count) : null,
+            recentMembers: tr ? num(tr.recent_members) : null,
+            lateShare: null,
+            skill: skillFor(ticker, direction),
+          });
+          return {
+            ticker,
+            name: str(row.name),
+            convictionScore: res.score,
+            direction: res.direction,
+            fallback: res.fallback,
+            // memberCount / tradeCount reflect the SCORED side (what the score is
+            // built from); directionalMembers/Trades give the both-side totals.
+            memberCount: sameSideMembers,
+            tradeCount: sameSideTrades,
+            directionalMembers,
+            directionalTrades: buyCount + sellCount,
+            netSentiment: sentiment,
+            estNetFlowUsd: usd(row.est_net_flow),
+            parties: { D: cl ? num(cl.d_members) : 0, R: cl ? num(cl.r_members) : 0 },
+            components: res.components,
+          };
+        })
+        .filter((x) => x.convictionScore != null)
+        .sort((a, b) => (b.convictionScore as number) - (a.convictionScore as number))
+        .slice(0, limit);
+      return meta(f, { scoringVersion: 'v1', count: tickers.length, tickers });
+    });
+    return c.json(data);
+  });
+
   // --- GET /member-leaderboard -------------------------------------------
   r.get('/member-leaderboard', async (c) => {
     const q = c.req.query();
@@ -266,7 +503,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const q = c.req.query();
     const f = commonFromQuery(q);
     const minMembers = q.minMembers ? Number(q.minMembers) : undefined;
-    const limit = q.limit ? Number(q.limit) : undefined;
+    const limit = q.limit ? Math.min(100, Number(q.limit)) : undefined; // public cap (builder allows 200 for internal callers)
     const key = cacheKey('cluster-buys', { ...f, minMembers, limit });
     const data = await cached(c.env, key, 300, async () => {
       const built = buildClusterBuysQuery({ ...f, minMembers, limit });
@@ -310,7 +547,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   r.get('/trending', async (c) => {
     const q = c.req.query();
     const f = commonFromQuery(q);
-    const limit = q.limit ? Number(q.limit) : undefined;
+    const limit = q.limit ? Math.min(100, Number(q.limit)) : undefined; // public cap (builder allows 200 for internal callers)
     const key = cacheKey('trending', { ...f, limit });
     const data = await cached(c.env, key, 300, async () => {
       const built = buildTrendingQuery({ ...f, limit });
@@ -433,6 +670,97 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     return c.json(data);
   });
 
+  // --- GET /sector-flow ---------------------------------------------------
+  // REAL GICS sector net flow (securities_ref.sector), unlike /sector-breakdown
+  // which groups by the free-text asset_type. Resolved tickers only.
+  r.get('/sector-flow', async (c) => {
+    const q = c.req.query();
+    const f = commonFromQuery(q);
+    const limit = q.limit ? Number(q.limit) : undefined;
+    const key = cacheKey('sector-flow', { ...f, limit });
+    const data = await cached(c.env, key, 300, async () => {
+      const built = buildSectorFlowQuery({ ...f, limit });
+      const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
+      const sectors = rows.map((row) => ({
+        sector: str(row.sector) ?? 'Unknown',
+        tradeCount: num(row.trade_count),
+        buyCount: num(row.buy_count),
+        sellCount: num(row.sell_count),
+        estVolumeUsd: usd(row.est_volume),
+        estNetFlowUsd: usd(row.est_net_flow),
+        uniqueMembers: num(row.unique_members),
+        uniqueTickers: num(row.unique_tickers),
+      }));
+      return meta(f, { count: sectors.length, sectors, estimatedAmounts: true });
+    });
+    return c.json(data);
+  });
+
+  // --- GET /market-cap-breakdown ------------------------------------------
+  // Net flow + activity by market-cap bucket (mega…nano) — the size tilt.
+  r.get('/market-cap-breakdown', async (c) => {
+    const q = c.req.query();
+    const f = commonFromQuery(q);
+    const key = cacheKey('market-cap-breakdown', f as never);
+    const data = await cached(c.env, key, 300, async () => {
+      const built = buildMarketCapBreakdownQuery(f);
+      const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
+      const buckets = rows.map((row) => ({
+        bucket: str(row.bucket) ?? 'unknown',
+        tradeCount: num(row.trade_count),
+        buyCount: num(row.buy_count),
+        sellCount: num(row.sell_count),
+        estVolumeUsd: usd(row.est_volume),
+        estNetFlowUsd: usd(row.est_net_flow),
+        uniqueMembers: num(row.unique_members),
+        uniqueTickers: num(row.unique_tickers),
+      }));
+      return meta(f, { count: buckets.length, buckets, estimatedAmounts: true });
+    });
+    return c.json(data);
+  });
+
+  // --- GET /member-performance --------------------------------------------
+  // Per-member excess return vs the S&P 500 on their BUYS, anchored at the
+  // FILING (disclosure) date — the realizable "could you have followed this?"
+  // number, not the trade-date hindsight figure. Buys only, options excluded,
+  // small-N guarded. Defaults to the whole track record (window=all).
+  r.get('/member-performance', async (c) => {
+    const q = c.req.query();
+    const f = { ...commonFromQuery(q), window: asWindow(q.window, 'all') };
+    const limit = q.limit ? Number(q.limit) : undefined;
+    const minTrades = q.minTrades ? Number(q.minTrades) : undefined;
+    const key = cacheKey('member-performance', { ...f, limit, minTrades });
+    const data = await cached(c.env, key, 300, async () => {
+      const built = buildMemberPerformanceLeaderboardQuery({ ...f, limit, minTrades });
+      const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
+      const members = rows.map((row) => {
+        const n = num(row.trade_count);
+        const wins = num(row.wins);
+        return {
+          filerId: str(row.filer_id),
+          fullName: str(row.full_name),
+          party: str(row.party),
+          photoUrl: str(row.photo_url),
+          tradeCount: n,
+          // Excess return vs SPX since the filing date, equal-weighted across buys.
+          avgExcessReturn: num(row.avg_excess),
+          winRate: n > 0 ? wins / n : 0,
+          estVolumeUsd: usd(row.est_volume),
+        };
+      });
+      return meta(f, {
+        count: members.length,
+        members,
+        anchor: 'filing_date',
+        side: 'buys',
+        note: 'Excess return vs S&P 500 from the disclosure date (realizable by a follower); buys only, options excluded.',
+        estimatedAmounts: true,
+      });
+    });
+    return c.json(data);
+  });
+
   // --- GET /filing-lag ----------------------------------------------------
   r.get('/filing-lag', async (c) => {
     const q = c.req.query();
@@ -461,6 +789,50 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         tradeCount: num(row.trade_count),
       }));
       return meta(f, { summary: summarizeLag(lag), topLateFilers });
+    });
+    return c.json(data);
+  });
+
+  // --- GET /ticker/:ticker/backtest --------------------------------------
+  // "How did this name perform after Congress BOUGHT it, vs the S&P, by horizon
+  // (21/63/126/252 trading days)?" Forward return from each buy's tx_date, vs
+  // SPX over the same span. Optional ?filerId= scopes to one member. Returns are
+  // fractions; horizons with n < BACKTEST_MIN_N report null (not noise). Coverage
+  // is honest: tradeCount (cohort) vs n (events with forward history) per horizon.
+  // MUST be registered before /ticker/:ticker (Hono matches in declaration order).
+  r.get('/ticker/:ticker/backtest', async (c) => {
+    const q = c.req.query();
+    const f = { ...commonFromQuery(q), window: asWindow(q.window, 'all') };
+    const tickerParam = (c.req.param('ticker') || '').toUpperCase();
+    if (!/^[A-Z0-9._-]{1,20}$/.test(tickerParam)) {
+      return c.json({ error: 'invalid ticker' }, 400);
+    }
+    const filerId = q.filerId && /^[A-Za-z0-9_-]{1,64}$/.test(q.filerId) ? q.filerId : undefined;
+    const DEFAULT_HORIZONS = [21, 63, 126, 252];
+    const horizons = (q.horizons ? q.horizons.split(',') : [])
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isInteger(n) && n >= 1 && n <= 504);
+    const useHorizons = Array.from(new Set(horizons.length ? horizons : DEFAULT_HORIZONS))
+      .sort((a, b) => a - b)
+      .slice(0, 8);
+    const key = cacheKey(`backtest:${tickerParam}`, { ...f, filerId, h: useHorizons.join('-') });
+    const data = await cached(c.env, key, 300, async () => {
+      const cohortQ = buildTickerBacktestCohortQuery(tickerParam, f, filerId);
+      const [cohortRows, priceAsc, spxAsc] = await Promise.all([
+        all<{ tx_date: string }>(c.env.DB, cohortQ.sql, cohortQ.params),
+        all<PriceBar>(c.env.DB, 'SELECT date, close FROM price_eod WHERE ticker = ? ORDER BY date ASC', [tickerParam]),
+        all<PriceBar>(c.env.DB, 'SELECT date, close FROM spx_eod ORDER BY date ASC'),
+      ]);
+      const cohortDates = cohortRows.map((row) => str(row.tx_date)).filter((d): d is string => !!d);
+      const bt = aggregateTickerBacktest(cohortDates, priceAsc, spxAsc, useHorizons);
+      return meta(f, {
+        ticker: tickerParam,
+        filerId: filerId ?? null,
+        txType: 'P',
+        totalBuyEvents: bt.tradeCount,
+        pricedDays: priceAsc.length,
+        horizons: bt.horizons,
+      });
     });
     return c.json(data);
   });
@@ -669,6 +1041,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           buyCount,
           sellCount,
           uniqueTickers: num(s.unique_tickers),
+          uniqueAssets: num(s.unique_assets),
           estVolumeUsd: usd(s.est_volume),
           estNetFlowUsd: usd(s.est_net_flow),
           netSentiment: netSentiment(buyCount, sellCount),
@@ -706,6 +1079,73 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           ),
         })),
       });
+    });
+    return c.json(data);
+  });
+
+  // --- GET /member/:filerId/performance (realized "skill" aggregate) ------
+  // Aggregates the member's trades' realized return + alpha vs S&P from the
+  // cached price anchors (tx_performance + securities_ref.current_price). All
+  // returns are fractions (0.18 = +18%); winRate is the share (0..1) beating
+  // the market. Lights up as filer_id resolves and prices populate; until then
+  // scoredCount stays low. Defaults to full history (window=all).
+  r.get('/member/:filerId/performance', async (c) => {
+    const q = c.req.query();
+    const f = { ...commonFromQuery(q), window: asWindow(q.window, 'all') };
+    const filerId = c.req.param('filerId') || '';
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(filerId)) {
+      return c.json({ error: 'invalid member id' }, 400);
+    }
+    const key = cacheKey(`member-perf:${filerId}`, f as never);
+    const data = await cached(c.env, key, 300, async () => {
+      const built = buildMemberPerformanceQuery(filerId, f);
+      const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
+      const currentSpx = await latestSpxClose(c.env);
+      const perfRows = rows.map((row) => ({
+        isOption: num(row.is_option) === 1,
+        priceAtTrade: row.price_at_trade == null ? null : num(row.price_at_trade),
+        spxAtTrade: row.spx_at_trade == null ? null : num(row.spx_at_trade),
+        currentPrice: row.current_price == null ? null : num(row.current_price),
+      }));
+      return meta(f, { filerId, performance: aggregateMemberPerformance(perfRows, currentSpx) });
+    });
+    return c.json(data);
+  });
+
+  // --- GET /conflicts ----------------------------------------------------
+  // Committee conflict-of-interest signal: trades where the member sits on a
+  // committee that oversees the traded stock's GICS sector (curated map in
+  // analytics/conflicts.ts). Per-trade flags, newest first. Honors the shared
+  // window/chamber/party/source/minConf filters.
+  r.get('/conflicts', async (c) => {
+    const q = c.req.query();
+    const f = commonFromQuery(q);
+    const limit = Math.max(1, Math.min(500, Math.floor(Number(q.limit) || 100)));
+    const key = cacheKey('conflicts', { ...f, limit });
+    const data = await cached(c.env, key, 300, async () => {
+      const built = buildConflictCandidatesQuery({ ...f, limit: 2000 });
+      const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
+      const conflicts: Array<Record<string, unknown>> = [];
+      for (const row of rows) {
+        const committees = parseJson<string[]>(row.committees, []);
+        const m = committeeConflict(Array.isArray(committees) ? committees : [], str(row.sector));
+        if (!m.conflict) continue;
+        conflicts.push({
+          id: str(row.id),
+          ticker: str(row.ticker),
+          sector: m.sector,
+          txType: str(row.tx_type),
+          txDate: str(row.tx_date),
+          filerId: str(row.filer_id),
+          memberName: str(row.full_name),
+          chamber: str(row.chamber),
+          partyBucket: asPartyBucket(row.party) ?? null,
+          viaCommittees: m.viaCommittees,
+          estAmountUsd: usd(bracketMidpoint(num(row.amount_min) || null, num(row.amount_max) || null)),
+        });
+        if (conflicts.length >= limit) break;
+      }
+      return meta(f, { count: conflicts.length, conflicts });
     });
     return c.json(data);
   });

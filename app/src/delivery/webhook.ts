@@ -33,7 +33,7 @@ import type { Env, Subscription, Transaction } from '../shared/types';
 import { all, get, run } from '../shared/db';
 import { prefixedId } from '../shared/ids';
 import { mapSubscription, mapTransaction, type SubscriptionRow, type TransactionRow } from './rows';
-import { matchesFiltersWithChamber } from './subscriptions';
+import { matchesFiltersWithContext } from './subscriptions';
 
 /** Max delivery attempts before we give up (initial try + retries). */
 const MAX_ATTEMPTS = 5;
@@ -112,6 +112,8 @@ export async function dispatchWebhook(
     console.warn('dispatchWebhook: transaction not found', msg.txId);
     return;
   }
+  // Don't push a retracted (un-published) row, e.g. on a retry after unpublish.
+  if ((txRow as { deprecated_at?: string | null }).deprecated_at) return;
   const tx = mapTransaction(txRow);
 
   // Resolve chamber via the owning filing (Transaction carries no chamber col).
@@ -121,6 +123,20 @@ export async function dispatchWebhook(
     [tx.docId],
   );
   const chamber = chamberRow?.chamber ?? null;
+
+  // Resolve sector + market-cap bucket for sector/cap subscription filters.
+  const refRow = tx.ticker
+    ? await get<{ sector: string | null; market_cap_bucket: string | null }>(
+        env.DB,
+        'SELECT sector, market_cap_bucket FROM securities_ref WHERE ticker = ?',
+        [tx.ticker],
+      )
+    : null;
+  const ctx = {
+    chamber,
+    sector: refRow?.sector ?? null,
+    marketCapBucket: refRow?.market_cap_bucket ?? null,
+  };
 
   // Target set: a single subscription on the retry path, else all active webhooks.
   let subs: Subscription[];
@@ -143,7 +159,7 @@ export async function dispatchWebhook(
 
   for (const sub of subs) {
     if (!sub.targetUrl) continue;
-    if (!matchesFiltersWithChamber(tx, sub.filters, chamber)) continue;
+    if (!matchesFiltersWithContext(tx, sub.filters, ctx)) continue;
     await deliverToSubscription(env, sub, tx, attempt);
   }
 }

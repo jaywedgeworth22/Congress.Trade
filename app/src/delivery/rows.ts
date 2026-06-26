@@ -68,6 +68,7 @@ export interface FeedTransactionRow extends TransactionRow {
   filing_source_url?: string | null;
   // Cross-referenced asset reference data (securities_ref); null until enriched,
   // optional so callers/tests that build a feed row needn't supply them.
+  ref_company_name?: string | null;
   ref_sector?: string | null;
   ref_market_cap?: number | null;
   ref_market_cap_bucket?: string | null;
@@ -155,6 +156,7 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     filedDate: row.filing_filed_date,
     firstSeenAt: row.filing_first_seen_at,
     sourceUrl: row.filing_source_url ?? undefined,
+    refCompanyName: row.ref_company_name,
     refSector: row.ref_sector,
     refMarketCap: row.ref_market_cap,
     refMarketCapBucket: row.ref_market_cap_bucket,
@@ -284,6 +286,7 @@ const TX_FROM_JOINS =
 
 /** Cross-referenced asset fields (securities_ref) carried on each feed row. */
 const REF_SELECT =
+  'sr.company_name AS ref_company_name, ' +
   'sr.sector AS ref_sector, sr.market_cap AS ref_market_cap, ' +
   'sr.market_cap_bucket AS ref_market_cap_bucket, sr.country AS ref_country, ' +
   'sr.exchange_short AS ref_exchange_short, sr.asset_class AS ref_asset_class, ';
@@ -303,6 +306,9 @@ function buildTxFilters(
 ): { where: string[]; params: Array<string | number> } {
   const where: string[] = [];
   const params: Array<string | number> = [];
+
+  // Retracted (un-published) rows are never served on the feed.
+  where.push('t.deprecated_at IS NULL');
 
   if (includeCursor) {
     const since = Number.isFinite(p.since) ? Number(p.since) : 0;

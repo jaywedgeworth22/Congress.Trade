@@ -6,7 +6,8 @@ import type { SecurityRef } from '../../enrichment/types';
 const ref = (ticker: string): SecurityRef => ({
   ticker, companyName: ticker + ' Inc', sector: 'Technology', industry: null, assetClass: 'equity',
   isEtf: false, isAdr: false, country: 'US', stateHq: null, stateOfIncorp: null, exchange: null,
-  exchangeShort: 'NASDAQ', currency: 'USD', marketCap: 1e12, marketCapBucket: 'mega', ipoDate: null,
+  exchangeShort: 'NASDAQ', currency: 'USD', marketCap: 1e12, marketCapBucket: 'mega',
+  sharesOutstanding: 4e9, ipoDate: null,
   cik: null, sicCode: null, sicDescription: null, source: 'fmp',
 });
 const env = (over: Record<string, unknown> = {}): Env => over as unknown as Env;
@@ -33,7 +34,7 @@ describe('shareWithPeer', () => {
       expect(url).toBe('https://b/import');
       expect((init.headers as Record<string, string>).authorization).toBe('Bearer tok');
       const body = JSON.parse(init.body as string);
-      expect(body.refs[0]).toMatchObject({ ticker: 'AAPL', sector: 'Technology', marketCap: 1e12 });
+      expect(body.refs[0]).toMatchObject({ ticker: 'AAPL', sector: 'Technology', marketCap: 1e12, sharesOutstanding: 4e9 });
       expect(body.refs[0].marketCapBucket).toBeUndefined(); // import recomputes the bucket itself
       expect(body.prices[0].closes[0]).toEqual({ date: '2026-06-23', close: 294.3 });
       expect(body.spx[0]).toEqual({ date: '2026-06-23', close: 733.58 });

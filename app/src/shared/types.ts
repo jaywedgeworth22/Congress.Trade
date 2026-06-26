@@ -47,8 +47,9 @@ export type DeliveryKind = DeliveryChannel;
 /** Delivery attempt status. */
 export type DeliveryStatus = 'pending' | 'delivered' | 'failed';
 
-/** Provenance of a persisted transaction. */
-export type TxSource = 'primary' | 'seed_dataset';
+/** Provenance of a persisted transaction. 'manual' = hand-entered by an admin in
+ *  review when the automated read was wrong / too low-confidence to trust. */
+export type TxSource = 'primary' | 'seed_dataset' | 'manual';
 
 // ---------------------------------------------------------------------------
 // Domain entities (mirror D1 tables; JSON columns are typed as parsed shapes)
@@ -134,6 +135,7 @@ export interface Transaction {
   sourceUrl?: string | null;
   // --- Optional cross-referenced asset data (securities_ref; feed only) ------
   // Populated when the ticker has been enriched; null/absent otherwise.
+  refCompanyName?: string | null;
   refSector?: string | null;
   refMarketCap?: number | null;
   refMarketCapBucket?: string | null;
@@ -179,8 +181,16 @@ export interface SubscriptionFilters {
   tickers?: string[];
   /** Chambers to include (empty/undefined => all). */
   chambers?: Chamber[];
-  /** Minimum transaction amount_min to deliver. */
+  /** Minimum transaction amount_min (bracket floor) to deliver. */
   minAmount?: number;
+  /** Maximum transaction amount_min (bracket floor); pairs with minAmount for a range. */
+  maxAmount?: number;
+  /** Transaction sides to include, e.g. ['P'] for buys only (empty/undefined => all). */
+  sides?: TxType[];
+  /** GICS sectors to include (securities_ref.sector); empty/undefined => all. */
+  sectors?: string[];
+  /** Market-cap buckets to include (mega…nano, securities_ref.market_cap_bucket). */
+  marketCapBuckets?: string[];
 }
 
 export interface Subscription {
@@ -239,6 +249,10 @@ export interface ClientTrade {
   asset: {
     name: string;
     ticker: string | null;
+    /** Canonical company name from securities_ref (null until the ticker is enriched). */
+    companyName: string | null;
+    /** Same-origin cached logo proxy URL for the ticker, or null when no ticker is resolved. */
+    logoUrl: string | null;
     type: string | null;
     sector: string | null;
     marketCapBucket: string | null;
@@ -383,6 +397,7 @@ export type QueueMessage =
   | { type: 'filing.fetched'; docId: string }
   | { type: 'filing.extracted'; docId: string }
   | { type: 'tx.persisted'; txId: string; docId: string }
+  | { type: 'agreement.check'; docId: string; rawObjectKey: string | null }
   | { type: 'delivery.dispatch'; txId: string };
 
 // ---------------------------------------------------------------------------
@@ -406,6 +421,18 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   /** OpenAI API key — GPT vision candidates in the extractor bake-off. */
   OPENAI_API_KEY?: string;
+  /** Mistral API key — `mistral-ocr-latest` candidate in the extractor bake-off. */
+  MISTRAL_API_KEY?: string;
+  /** xAI API key — Grok (Files API → grok-4.3) candidate in the extractor bake-off. */
+  XAI_API_KEY?: string;
+  /** 'true' enables the per-minute autonomous cross-vendor agreement → auto-publish pass. */
+  AGREEMENT_AUTOPUBLISH_ENABLED?: string;
+  /** Agreement model A as "provider:model" (default mistral:mistral-ocr-latest). */
+  AGREEMENT_AUTOPUBLISH_MODEL_A?: string;
+  /** Agreement model B as "provider:model" (default gemini:gemini-3.5-flash). */
+  AGREEMENT_AUTOPUBLISH_MODEL_B?: string;
+  /** Max review docs the autonomous pass attempts per cron tick (default 3). */
+  AGREEMENT_AUTOPUBLISH_LIMIT?: string;
   /** Financial Modeling Prep key — enables asset enrichment + price/performance. */
   FMP_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */

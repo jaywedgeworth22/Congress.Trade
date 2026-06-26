@@ -127,6 +127,14 @@ id = "b5554a8cd8b04347baeb80cd160bf1e0"
 # ---------------------------------------------------------------------------
 [vars]
 APP_BASE_URL = "https://congress.trade"
+# Autonomous cross-vendor agreement -> auto-publish (per-minute cron). When two
+# independent models fully agree on a held-for-review filing's rows, it's
+# published instead of waiting for a human. Bounded: LIMIT docs/tick, each doc
+# attempted once. Set ENABLED to "" to turn off.
+AGREEMENT_AUTOPUBLISH_ENABLED = "true"
+AGREEMENT_AUTOPUBLISH_MODEL_A = "mistral:mistral-ocr-latest"
+AGREEMENT_AUTOPUBLISH_MODEL_B = "gemini:gemini-3.5-flash"
+AGREEMENT_AUTOPUBLISH_LIMIT = "3"
 # Paid-plan import guardrails. These are deliberately below platform maximums:
 # large enough to avoid tiny cross-app chunks, still bounded against runaway
 # JSON parse/DB-batch cost. Lower these vars for a lean/free-compatible profile.
@@ -137,6 +145,16 @@ IMPORT_MAX_PRICES = "100"
 IMPORT_MAX_CLOSES_PER_TICKER = "1500"
 IMPORT_MAX_INSIDER = "5000"
 IMPORT_MAX_SHORT_VOLUME = "5000"
+# FMP paid tier (Starter = 300 calls/min). Raise the daily enrichment/price
+# ceiling well above the free-tier default (230) and pace under the per-minute
+# limit, so the daily job uses the paid headroom without tripping 429s. Each
+# run stays within Cloudflare's per-invocation subrequest budget; the backlog
+# clears across at most a couple runs.
+FMP_DAILY_CALL_CAP = "1000"
+FMP_MAX_PER_MINUTE = "250"
+# Price-history source: "fmp" (default) or "massive" (Polygon aggregates,
+# unlimited on the paid plan, not metered against the FMP budget). Flip to A/B.
+PRICE_PROVIDER = "fmp"
 # Stripe premium price ids (not secret) — created 2026-06-22 on the live account.
 STRIPE_PRICE_MONTHLY = "price_1TlHYBEUQUPhZj0SEzG2Qx68"
 STRIPE_PRICE_ANNUAL = "price_1TlHYCEUQUPhZj0SpNVoPb3Z"

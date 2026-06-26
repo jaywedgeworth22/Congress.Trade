@@ -15,11 +15,39 @@ import { all, get, run } from '../shared/db';
 import { remainingBudget } from '../enrichment/compute';
 import { getDailyUsed, addDailyUsed } from '../enrichment/service';
 import { createPacer } from '../shared/pace';
-import { buildFmpPriceClient } from './fmp';
+import { buildFmpPriceClient, type PriceClient } from './fmp';
+import { buildMassivePriceClient } from './massive';
 import { nearestClose, type Close } from './compute';
 
 const DEFAULT_DAILY_CAP = 230;
-type EnvX = Env & { FMP_API_KEY?: string; FMP_DAILY_CALL_CAP?: string };
+type EnvX = Env & {
+  FMP_API_KEY?: string;
+  FMP_DAILY_CALL_CAP?: string;
+  MASSIVE_API_KEY?: string;
+  /** Which provider supplies price history: 'fmp' (default) or 'massive'. */
+  PRICE_PROVIDER?: string;
+};
+
+interface PricePlan {
+  client: PriceClient;
+  /** True only for FMP, whose calls are metered against the shared daily budget. */
+  fmpBudgeted: boolean;
+}
+
+/**
+ * Pick the price client from PRICE_PROVIDER (default 'fmp'), gated by configured
+ * keys. 'massive' uses Polygon aggregates (unlimited on the paid plan, so it is
+ * NOT metered against the FMP daily budget). Falls back to whichever key exists.
+ */
+function pricePlan(env: EnvX): PricePlan | null {
+  const provider = (env.PRICE_PROVIDER || 'fmp').trim().toLowerCase();
+  if (provider === 'massive' && env.MASSIVE_API_KEY) {
+    return { client: buildMassivePriceClient(env.MASSIVE_API_KEY), fmpBudgeted: false };
+  }
+  if (env.FMP_API_KEY) return { client: buildFmpPriceClient(env.FMP_API_KEY), fmpBudgeted: true };
+  if (env.MASSIVE_API_KEY) return { client: buildMassivePriceClient(env.MASSIVE_API_KEY), fmpBudgeted: false };
+  return null;
+}
 
 function isoDaysAgo(days: number, from = new Date()): string {
   return new Date(from.getTime() - days * 86400000).toISOString().slice(0, 10);
@@ -96,15 +124,17 @@ export async function runPriceRefresh(
     shareSpx: [],
     sharePrices: [],
   };
-  if (!envx.FMP_API_KEY) return result; // price data is FMP-only
+  const plan = pricePlan(envx);
+  if (!plan) return result; // no usable price provider configured
+  const { client, fmpBudgeted } = plan;
 
   const cap = parseInt(envx.FMP_DAILY_CALL_CAP || '', 10) || DEFAULT_DAILY_CAP;
-  const used = await getDailyUsed(env);
-  let budget = remainingBudget(cap, used, opts.max);
+  // Massive isn't metered against the FMP budget; cap its per-run work instead.
+  const used = fmpBudgeted ? await getDailyUsed(env) : 0;
+  let budget = fmpBudgeted ? remainingBudget(cap, used, opts.max) : opts.max ?? cap;
   result.budgetRemaining = budget;
   if (budget <= 0) return result;
 
-  const client = buildFmpPriceClient(envx.FMP_API_KEY);
   const pace = createPacer(opts.maxPerMinute);
   let calls = 0;
 
@@ -141,9 +171,13 @@ export async function runPriceRefresh(
   const tickers = await selectTickersNeedingPrices(env, budget);
   for (const ticker of tickers) {
     if (budget <= 0) break;
-    const trades = await all<{ id: string; tx_date: string }>(
+    const trades = await all<{ id: string; tx_date: string; filed_date: string | null }>(
       env.DB,
-      "SELECT id, tx_date FROM transactions WHERE ticker = ? AND tx_date IS NOT NULL AND tx_date <> ''",
+      `SELECT t.id AS id, t.tx_date AS tx_date,
+              COALESCE(f.filed_date, f.first_seen_at) AS filed_date
+         FROM transactions t
+         LEFT JOIN filings f ON f.doc_id = t.doc_id
+        WHERE t.ticker = ? AND t.tx_date IS NOT NULL AND t.tx_date <> ''`,
       [ticker],
     );
     if (trades.length === 0) continue;
@@ -173,32 +207,65 @@ export async function runPriceRefresh(
         ),
       );
     }
-    // Current price = latest cached close.
+    // Current price = latest cached close. When we know the share count, also
+    // recompute market_cap (= shares_outstanding * price) + its bucket so the cap
+    // tracks the latest close instead of going stale at the enrichment snapshot.
+    // The bucket thresholds mirror marketCapBucket() in enrichment/compute.ts.
     const latest = hist[0];
     await run(
       env.DB,
       `INSERT INTO securities_ref (ticker, current_price, current_price_date)
          VALUES (?, ?, ?)
-       ON CONFLICT(ticker) DO UPDATE SET current_price=excluded.current_price, current_price_date=excluded.current_price_date`,
+       ON CONFLICT(ticker) DO UPDATE SET
+         current_price=excluded.current_price,
+         current_price_date=excluded.current_price_date,
+         market_cap = CASE
+           WHEN securities_ref.shares_outstanding IS NOT NULL AND securities_ref.shares_outstanding > 0
+             THEN securities_ref.shares_outstanding * excluded.current_price
+           ELSE securities_ref.market_cap END,
+         market_cap_bucket = CASE
+           WHEN securities_ref.shares_outstanding IS NULL OR securities_ref.shares_outstanding <= 0
+             THEN securities_ref.market_cap_bucket
+           WHEN securities_ref.shares_outstanding * excluded.current_price >= 200000000000 THEN 'mega'
+           WHEN securities_ref.shares_outstanding * excluded.current_price >=  10000000000 THEN 'large'
+           WHEN securities_ref.shares_outstanding * excluded.current_price >=   2000000000 THEN 'mid'
+           WHEN securities_ref.shares_outstanding * excluded.current_price >=    300000000 THEN 'small'
+           WHEN securities_ref.shares_outstanding * excluded.current_price >=     50000000 THEN 'micro'
+           ELSE 'nano' END`,
       [ticker, latest.close, latest.date],
     );
     result.sharePrices.push({ ticker, closes: hist, currentPrice: latest.close, currentPriceDate: latest.date });
     // Per-trade anchors.
     const nowIso = new Date().toISOString();
-    const stmts = trades.map((t) =>
-      env.DB.prepare(
-        `INSERT INTO tx_performance (tx_id, price_at_trade, spx_at_trade, computed_at)
-           VALUES (?, ?, ?, ?)
-         ON CONFLICT(tx_id) DO UPDATE SET price_at_trade=excluded.price_at_trade, spx_at_trade=excluded.spx_at_trade, computed_at=excluded.computed_at`,
-      ).bind(t.id, nearestClose(hist, t.tx_date), spx.length ? nearestClose(spx, t.tx_date) : null, nowIso),
-    );
+    const stmts = trades.map((t) => {
+      // Filing-date anchors: the close on/before the disclosure date (the only
+      // price a copy-trader could have acted on). Fall back to the trade date
+      // when no filing date is known, so the anchor is never null for a priced
+      // trade that has a trade date.
+      const filedDate = t.filed_date || t.tx_date;
+      return env.DB.prepare(
+        `INSERT INTO tx_performance (tx_id, price_at_trade, spx_at_trade, price_at_filing, spx_at_filing, computed_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(tx_id) DO UPDATE SET
+           price_at_trade=excluded.price_at_trade, spx_at_trade=excluded.spx_at_trade,
+           price_at_filing=excluded.price_at_filing, spx_at_filing=excluded.spx_at_filing,
+           computed_at=excluded.computed_at`,
+      ).bind(
+        t.id,
+        nearestClose(hist, t.tx_date),
+        spx.length ? nearestClose(spx, t.tx_date) : null,
+        nearestClose(hist, filedDate),
+        spx.length ? nearestClose(spx, filedDate) : null,
+        nowIso,
+      );
+    });
     for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
     result.tradesComputed += trades.length;
   }
 
   result.fmpCalls = calls;
-  if (!dryRun && calls > 0) await addDailyUsed(env, calls);
-  result.budgetRemaining = remainingBudget(cap, used + calls);
+  if (fmpBudgeted && !dryRun && calls > 0) await addDailyUsed(env, calls);
+  result.budgetRemaining = fmpBudgeted ? remainingBudget(cap, used + calls) : Math.max(0, budget - calls);
   return result;
 }
 

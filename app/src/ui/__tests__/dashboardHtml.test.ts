@@ -43,6 +43,34 @@ describe('DASHBOARD_HTML', () => {
     }
   });
 
+  it('makes Trends the first, default-active view and renames Live Feed to Trades', () => {
+    // Trends nav button comes before the feed (Trades) button and is the active one.
+    const trendsIdx = DASHBOARD_HTML.indexOf('data-view="trends"');
+    const feedIdx = DASHBOARD_HTML.indexOf('data-view="feed"');
+    expect(trendsIdx).toBeGreaterThan(0);
+    expect(trendsIdx).toBeLessThan(feedIdx);
+    expect(DASHBOARD_HTML).toContain('data-view="trends" data-mobile="Trends" data-icon="⌁" class="active"');
+    // The Trends section is the default-active view; the feed section is not.
+    expect(DASHBOARD_HTML).toContain('<section class="view active" id="view-trends">');
+    expect(DASHBOARD_HTML).toContain('<section class="view" id="view-feed">');
+    // The former "Live Feed" tab is now labelled "Trades".
+    expect(DASHBOARD_HTML).toContain('data-view="feed" data-mobile="Trades" data-icon="▦">Trades</button>');
+    // Trends is warmed on boot since it is the landing view.
+    expect(DASHBOARD_HTML).toContain('loadTrends();      // Trends is the default landing view');
+  });
+
+  it('surfaces the GICS sector flow, market-cap, and performer analytics in Trends', () => {
+    for (const id of ['trSectorFlow', 'trCapFlow', 'trPerformers']) {
+      expect(DASHBOARD_HTML).toContain('id="' + id + '"');
+    }
+    for (const fn of ['function loadTrSectorFlow(', 'function loadTrCapFlow(', 'function loadTrPerformers(']) {
+      expect(DASHBOARD_HTML).toContain(fn);
+    }
+    expect(DASHBOARD_HTML).toContain("aGet('sector-flow?'");
+    expect(DASHBOARD_HTML).toContain("aGet('market-cap-breakdown?'");
+    expect(DASHBOARD_HTML).toContain("aGet('member-performance?'");
+  });
+
   it('wires the configurable column registry + chooser', () => {
     expect(DASHBOARD_HTML).toContain('var FEED_COLS');
     expect(DASHBOARD_HTML).toContain('function renderFeedHeader(');
@@ -58,7 +86,7 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('contains mobile-first feed and navigation hooks', () => {
-    expect(DASHBOARD_HTML).toContain('data-mobile="Feed"');
+    expect(DASHBOARD_HTML).toContain('data-mobile="Trades"');
     expect(DASHBOARD_HTML).toContain('id="feedCards"');
     expect(DASHBOARD_HTML).toContain('function feedCardHtml(');
     expect(DASHBOARD_HTML).toContain('function handleFeedOpenEvent(');
@@ -66,6 +94,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('(orientation: landscape) and (max-width: 950px)');
     expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom)');
     expect(DASHBOARD_HTML).toContain('grid-template-columns: minmax(0, 1fr)');
+    expect(DASHBOARD_HTML).toContain('nav.tabs::after');
+    expect(DASHBOARD_HTML).toContain('height:calc(120px + env(safe-area-inset-bottom))');
   });
 
   it('renders a dedicated one-time subscription secret panel', () => {
@@ -121,7 +151,9 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function filingNotesHtml(');
     expect(DASHBOARD_HTML).toContain('Historical source note:');
     expect(DASHBOARD_HTML).toContain("e.target.closest('[data-member]')");
-    expect(DASHBOARD_HTML).toContain('drawer-title-line clickable');
+    // The company-drawer title is NOT clickable (it would just reopen the same drawer);
+    // clickable entities are the member/asset links inside the drawer body instead.
+    expect(DASHBOARD_HTML).not.toContain('drawer-title-line clickable');
     expect(DASHBOARD_HTML).toContain('drawer-member-title');
     expect(DASHBOARD_HTML).toContain('color:var(--text)');
     expect(DASHBOARD_HTML).not.toContain('<pre class="raw-notes">');
@@ -171,7 +203,7 @@ describe('DASHBOARD_HTML', () => {
   it('keeps the educational + dollar-estimate disclaimers in the Trends view', () => {
     expect(DASHBOARD_HTML).toContain('estimates');
     expect(DASHBOARD_HTML.toLowerCase()).toContain('bracket');
-    expect(DASHBOARD_HTML).toContain('Estimated from STOCK Act amount ranges');
+    expect(DASHBOARD_HTML).toContain('from STOCK Act amount ranges');
     expect(DASHBOARD_HTML).toContain('info-tip');
     // educational / liability framing must remain user-facing
     expect(DASHBOARD_HTML).toContain('not investment advice');
@@ -188,5 +220,100 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }");
     expect(DASHBOARD_HTML).not.toContain('r.filedDate || r.filed || publishedRaw(r)');
     expect(DASHBOARD_HTML).not.toContain('using Congress.Trade import date');
+  });
+
+  it('provides name/chamber/state/class display formatters', () => {
+    for (const fn of ['function fmtName(', 'function chamberLabel(', 'function stateName(', 'function assetClassLabel(', 'function assetTypeLabel(']) {
+      expect(DASHBOARD_HTML).toContain(fn);
+    }
+    // suffix + state maps present
+    expect(DASHBOARD_HTML).toContain("'jr': 'Jr'");
+    expect(DASHBOARD_HTML).toContain("CA: 'California'");
+    expect(DASHBOARD_HTML).toContain("etf: 'ETF'");
+  });
+
+  it('renames Members→Politicians and Tickers→Assets and softens Est.→Approx', () => {
+    expect(DASHBOARD_HTML).toContain("kpi('Politicians'");
+    expect(DASHBOARD_HTML).toContain("kpi('Assets'");
+    expect(DASHBOARD_HTML).toContain("kpiInfo('Approx. Volume'");
+    expect(DASHBOARD_HTML).toContain("kvRow('Distinct Assets'");
+    expect(DASHBOARD_HTML).not.toContain("kpi('Members'");
+    expect(DASHBOARD_HTML).not.toContain("kpi('Tickers'");
+  });
+
+  it('hides trade-row source provenance from the public feed', () => {
+    expect(DASHBOARD_HTML).not.toContain('id="qSource"');
+    expect(DASHBOARD_HTML).not.toContain("kvRow('Source', esc(sourceLabel(row.source)))");
+    // the document link ("View source filing") is intentionally kept
+    expect(DASHBOARD_HTML).toContain('View source filing');
+  });
+
+  it('uses a compact 2-row mobile feed card with an open-trade chevron', () => {
+    for (const s of ['fc-main', 'fc-row1', 'fc-row2', 'fc-amt-val', 'fc-chevron']) {
+      expect(DASHBOARD_HTML).toContain(s);
+    }
+    expect(DASHBOARD_HTML).not.toContain('feed-card-top');
+  });
+
+  it('differentiates the trade drawer from the company drawer', () => {
+    expect(DASHBOARD_HTML).toContain('drawer-trade-head');
+    expect(DASHBOARD_HTML).toContain('drawer-kicker');
+    expect(DASHBOARD_HTML).toContain('drawer-trade-headline');
+    // ticker shown but NOT clickable in its own trade context (no data-asset on the in-line)
+    expect(DASHBOARD_HTML).toContain('drawer-trade-in');
+  });
+
+  it('compacts the company profile into a responsive definition grid', () => {
+    expect(DASHBOARD_HTML).toContain('def-grid');
+    expect(DASHBOARD_HTML).toContain('repeat(auto-fit, minmax(130px, 1fr))');
+    expect(DASHBOARD_HTML).toContain("item('IPO', ref.ipoDate ? esc(dateText(ref.ipoDate)) : '')");
+  });
+
+  it('adds a collapsible disclaimer and tap-to-reveal tooltips', () => {
+    expect(DASHBOARD_HTML).toContain('function toggleDisclaimer(');
+    expect(DASHBOARD_HTML).toContain('id="trDisclaimer"');
+    expect(DASHBOARD_HTML).toContain('_disclaimerAutoTimer');
+    expect(DASHBOARD_HTML).toContain('For Educational Use, Not Investment Advice');
+    expect(DASHBOARD_HTML).toContain('class="dt-more"');
+    expect(DASHBOARD_HTML).toContain('tip-pop');
+    expect(DASHBOARD_HTML).toContain('(hover: none)');
+  });
+
+  it('gives AAPL a themeable glyph logo and reconstructs House filing links', () => {
+    expect(DASHBOARD_HTML).toContain('CUSTOM_GLYPH');
+    expect(DASHBOARD_HTML).toContain('function reconstructFilingUrl(');
+    expect(DASHBOARD_HTML).toContain('public_disc/ptr-pdfs/');
+  });
+
+  it('labels every analytics section with its timeframe', () => {
+    expect(DASHBOARD_HTML).toContain('function windowLabel(');
+    expect(DASHBOARD_HTML).toContain('function stampWindowChips(');
+    expect(DASHBOARD_HTML).toContain('stampWindowChips();'); // called in loadTrends
+    expect(DASHBOARD_HTML).toContain('class="tf-h"');
+    expect(DASHBOARD_HTML).toContain('id="trKpisCap"');
+  });
+
+  it('gives Net Flow a tooltip and de-underlines the info marker', () => {
+    expect(DASHBOARD_HTML).toContain("kpiInfo('Net Flow'");
+    expect(DASHBOARD_HTML).toContain('NET_FLOW_TIP');
+    // info-tip marker: no dotted underline, raised toward the top
+    expect(DASHBOARD_HTML).not.toContain('.info-tip { color: var(--text-dim); cursor: help; border-bottom: 1px dotted var(--text-dim); }');
+    expect(DASHBOARD_HTML).toContain('.est-money::first-letter');
+  });
+
+  it('uses skeleton-shimmer loaders in the Trends view', () => {
+    for (const fn of ['function skCards(', 'function skRows(', 'function skBars(', 'function skChart(']) {
+      expect(DASHBOARD_HTML).toContain(fn);
+    }
+    expect(DASHBOARD_HTML).toContain('@keyframes tr-shimmer');
+    expect(DASHBOARD_HTML).toContain('prefers-reduced-motion');
+  });
+
+  it('adds an independent time-range control to the buys/sells chart, anchored to recent', () => {
+    expect(DASHBOARD_HTML).toContain('id="trTimeWin"');
+    expect(DASHBOARD_HTML).toContain('function setTrTimeWin(');
+    expect(DASHBOARD_HTML).toContain('function anchorChartRight(');
+    expect(DASHBOARD_HTML).toContain('function trTimeParams(');
+    expect(DASHBOARD_HTML).toContain('tc.scrollLeft = tc.scrollWidth');
   });
 });

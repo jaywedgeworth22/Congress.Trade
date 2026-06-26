@@ -18,6 +18,7 @@ import type { SqlParam } from '../shared/db';
 import {
   ANALYTICS_FROM_JOINS,
   ANALYTICS_FROM_JOINS_SECURITIES,
+  ANALYTICS_FROM_JOINS_REF,
   BRACKET_MIDPOINT_SQL,
   CHAMBER_EXPR,
   PARTY_BUCKET_SQL,
@@ -96,6 +97,9 @@ export function buildTickerLeaderboardQuery(
     'COUNT(*) AS trade_count, ' +
     `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
     'COUNT(DISTINCT t.filer_id) AS member_count, ' +
+    "COUNT(DISTINCT CASE WHEN t.tx_type IN ('P', 'S') THEN t.filer_id END) AS directional_member_count, " +
+    "COUNT(DISTINCT CASE WHEN t.tx_type = 'P' THEN t.filer_id END) AS buy_member_count, " +
+    "COUNT(DISTINCT CASE WHEN t.tx_type = 'S' THEN t.filer_id END) AS sell_member_count, " +
     `SUM(${MID}) AS est_volume, ` +
     `SUM(${SIGNED}) AS est_net_flow ` +
     ANALYTICS_FROM_JOINS_SECURITIES +
@@ -154,7 +158,10 @@ export function buildClusterBuysQuery(
 ): BuiltQuery {
   const { where, params } = buildCommonFilters({ ...p, tickerNotNull: true, txTypes: ['P', 'S'] });
   const minMembers = clampLimit(p.minMembers, 3, 50);
-  const limit = clampLimit(p.limit, 12, 100);
+  // Max 200 so a caller restricting to a candidate ticker set can fetch both the
+  // buy ('P') and sell ('S') cluster row for up to 100 tickers; public callers
+  // pin their own limit (see /cluster-buys).
+  const limit = clampLimit(p.limit, 12, 200);
   const sql =
     'SELECT t.ticker AS ticker, t.tx_type AS tx_type, sm.name AS name, ' +
     'COUNT(DISTINCT t.filer_id) AS member_count, ' +
@@ -200,9 +207,10 @@ export function buildClusterMembersQuery(
 
 /** Map a window to (recentOffset, priorStartOffset) day modifiers: the recent
  *  period is the window, the prior period is the equal-length span before it.
- *  'all' has no natural prior period, so it falls back to a 30-day comparison. */
+ *  'all' has no natural prior period, so it falls back to a 90-day comparison
+ *  (30d was too short — on sparse data nearly every ticker showed 0→1). */
 export function momentumOffsets(w: Window): { recent: string; priorStart: string } {
-  const d = windowDays(w) ?? 30;
+  const d = windowDays(w) ?? 90;
   return { recent: `-${d} days`, priorStart: `-${2 * d} days` };
 }
 
@@ -213,13 +221,15 @@ export function momentumOffsets(w: Window): { recent: string; priorStart: string
  * keeps the many SELECT-side date references from scrambling param order.
  */
 export function buildTrendingQuery(
-  p: Omit<CommonFilters, 'window'> & { window?: Window; limit?: number },
+  p: Omit<CommonFilters, 'window'> & { window?: Window; limit?: number; bySide?: boolean },
 ): BuiltQuery {
   const w = p.window ?? '30d';
   const { recent, priorStart } = momentumOffsets(w);
   const recentLit = `date('now', '${recent}')`;
   const priorLit = `date('now', '${priorStart}')`;
-  const limit = clampLimit(p.limit, 20, 100);
+  // Max 200 so a bySide caller restricting to a candidate set can fetch both
+  // sides for up to 100 tickers; public callers pin their own limit (see /trending).
+  const limit = clampLimit(p.limit, 20, 200);
 
   // Build filters WITHOUT the window clause (we manage the date range manually).
   const { where, params } = buildCommonFilters({ ...p, window: 'all', tickerNotNull: true });
@@ -231,8 +241,16 @@ export function buildTrendingQuery(
   const recentVol = `SUM(CASE WHEN t.tx_date >= ${recentLit} THEN ${MID} ELSE 0 END)`;
   const recentNet = `SUM(CASE WHEN t.tx_date >= ${recentLit} THEN ${SIGNED} ELSE 0 END)`;
 
+  // `bySide` groups by (ticker, tx_type) so a caller can read momentum for ONE
+  // direction (purchases vs sales) instead of the combined ticker total — the
+  // conviction score needs the rising/falling activity for the side it resolved
+  // to, not a mix where rising buys could feed a SELL signal.
+  const sideSelect = p.bySide ? 't.tx_type AS tx_type, ' : '';
+  const groupBy = p.bySide ? 'GROUP BY t.ticker, t.tx_type ' : 'GROUP BY t.ticker ';
+
   const sql =
     'SELECT t.ticker AS ticker, sm.name AS name, ' +
+    sideSelect +
     `${recentCount} AS recent_count, ` +
     `${priorCount} AS prior_count, ` +
     `${recentMembers} AS recent_members, ` +
@@ -240,8 +258,9 @@ export function buildTrendingQuery(
     `${recentNet} AS recent_net_flow ` +
     ANALYTICS_FROM_JOINS_SECURITIES +
     whereSql(allWhere) +
-    'GROUP BY t.ticker ' +
-    'HAVING recent_count > 0 ' +
+    groupBy +
+    // Require >=2 recent trades so a single new trade doesn't read as "rising".
+    'HAVING recent_count >= 2 ' +
     'ORDER BY (recent_count - prior_count) DESC, recent_count DESC ' +
     `LIMIT ${limit}`;
   return { sql, params };
@@ -322,6 +341,58 @@ export function buildSectorBreakdownQuery(p: CommonFilters & { limit?: number })
 }
 
 // ---------------------------------------------------------------------------
+// 8b. Real GICS sector flow + market-cap tilt (from securities_ref enrichment)
+// ---------------------------------------------------------------------------
+
+/**
+ * Net buy/sell flow by REAL GICS sector (securities_ref.sector) — distinct from
+ * buildSectorBreakdownQuery, which groups by the free-text `asset_type` (an
+ * instrument class, not a sector). Resolved tickers only; un-enriched/unknown
+ * sectors collapse to 'Unknown'. Reports signed net flow so a sector's
+ * accumulation vs distribution is visible, plus member/ticker breadth.
+ */
+export function buildSectorFlowQuery(p: CommonFilters & { limit?: number }): BuiltQuery {
+  const { where, params } = buildCommonFilters(p);
+  const limit = clampLimit(p.limit, 20, 100);
+  const allWhere = [TICKER_RESOLVED_SQL, ...where];
+  const sql =
+    "SELECT COALESCE(NULLIF(sr.sector, ''), 'Unknown') AS sector, " +
+    'COUNT(*) AS trade_count, ' +
+    `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
+    `SUM(${MID}) AS est_volume, ` +
+    `SUM(${SIGNED}) AS est_net_flow, ` +
+    'COUNT(DISTINCT t.filer_id) AS unique_members, ' +
+    'COUNT(DISTINCT t.ticker) AS unique_tickers ' +
+    ANALYTICS_FROM_JOINS_REF +
+    whereSql(allWhere) +
+    'GROUP BY sector ORDER BY trade_count DESC ' +
+    `LIMIT ${limit}`;
+  return { sql, params };
+}
+
+/**
+ * Net flow + activity by market-cap bucket (securities_ref.market_cap_bucket:
+ * mega…nano). Surfaces a size tilt (e.g. concentration in small/micro caps).
+ * Resolved tickers only; un-enriched rows collapse to 'unknown'.
+ */
+export function buildMarketCapBreakdownQuery(p: CommonFilters): BuiltQuery {
+  const { where, params } = buildCommonFilters(p);
+  const allWhere = [TICKER_RESOLVED_SQL, ...where];
+  const sql =
+    "SELECT COALESCE(NULLIF(sr.market_cap_bucket, ''), 'unknown') AS bucket, " +
+    'COUNT(*) AS trade_count, ' +
+    `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
+    `SUM(${MID}) AS est_volume, ` +
+    `SUM(${SIGNED}) AS est_net_flow, ` +
+    'COUNT(DISTINCT t.filer_id) AS unique_members, ' +
+    'COUNT(DISTINCT t.ticker) AS unique_tickers ' +
+    ANALYTICS_FROM_JOINS_REF +
+    whereSql(allWhere) +
+    'GROUP BY bucket';
+  return { sql, params };
+}
+
+// ---------------------------------------------------------------------------
 // 9. Filing lag — disclosure timeliness
 // ---------------------------------------------------------------------------
 
@@ -372,6 +443,127 @@ export function buildLateFilersQuery(p: CommonFilters & { limit?: number }): Bui
 }
 
 // ---------------------------------------------------------------------------
+// 9b. Member performance leaderboard — excess return vs the S&P 500
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-member realized performance of their BUYS, measured as excess return vs
+ * the S&P 500, anchored at the FILING (disclosure) date — the only price a
+ * follower could actually have transacted at (trade-date anchoring would bake in
+ * the move that happened before the trade was public). Each trade's excess is
+ *
+ *   (current_price / price_at_filing − 1) − (spx_now / spx_at_filing − 1)
+ *
+ * Options are excluded (no EOD-equity anchor); only resolved, non-retracted buys
+ * with both a filing anchor and a current price count. `minTrades` (validated
+ * int, default 5) is a small-N guard so a 1–2 trade "leader" can't top the
+ * board. Reports equal-weighted average excess, win-rate, N, and est volume.
+ */
+export function buildMemberPerformanceLeaderboardQuery(
+  p: CommonFilters & { limit?: number; minTrades?: number },
+): BuiltQuery {
+  const { where, params } = buildCommonFilters(p);
+  const limit = clampLimit(p.limit, 20, 100);
+  const minTrades = clampLimit(p.minTrades, 5, 1000);
+  // Excess return of one buy vs SPX, both legs anchored at the filing date.
+  const EXCESS =
+    '((sr.current_price / p.price_at_filing) - 1.0) - ((sx.spx_now / p.spx_at_filing) - 1.0)';
+  const allWhere = [
+    "t.tx_type = 'P'",
+    't.is_option = 0',
+    'p.price_at_filing IS NOT NULL AND p.price_at_filing > 0',
+    'p.spx_at_filing IS NOT NULL AND p.spx_at_filing > 0',
+    'sr.current_price IS NOT NULL',
+    't.filer_id IS NOT NULL',
+    ...where,
+  ];
+  const sql =
+    'SELECT t.filer_id AS filer_id, fl.full_name AS full_name, fl.party AS party, ' +
+    'fl.photo_url AS photo_url, ' +
+    'COUNT(*) AS trade_count, ' +
+    `AVG(${EXCESS}) AS avg_excess, ` +
+    `SUM(CASE WHEN ${EXCESS} > 0 THEN 1 ELSE 0 END) AS wins, ` +
+    `SUM(${MID}) AS est_volume ` +
+    'FROM transactions t ' +
+    'JOIN tx_performance p ON p.tx_id = t.id ' +
+    'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
+    'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
+    'JOIN securities_ref sr ON sr.ticker = t.ticker ' +
+    'CROSS JOIN (SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1) sx ' +
+    whereSql(allWhere) +
+    'GROUP BY t.filer_id ' +
+    `HAVING trade_count >= ${minTrades} ` +
+    'ORDER BY avg_excess DESC ' +
+    `LIMIT ${limit}`;
+  return { sql, params };
+}
+
+// ---------------------------------------------------------------------------
+// 9b. Conviction realized-skill inputs
+// ---------------------------------------------------------------------------
+
+/**
+ * Distinct (ticker, side, member) rows for the directional trades on a candidate
+ * ticker set in the window — i.e. "who traded each candidate, on which side".
+ * Keyed by tx_type so the conviction rollup can use ONLY the members on the side
+ * the signal resolves to. Caller must chunk `tickers` under D1's 100-bind cap.
+ */
+export function buildConvictionMemberLinksQuery(tickers: string[], p: CommonFilters): BuiltQuery {
+  const { where, params } = buildCommonFilters({ ...p, tickers, txTypes: ['P', 'S'] });
+  const allWhere = ['t.filer_id IS NOT NULL', ...where];
+  const sql =
+    'SELECT DISTINCT t.ticker AS ticker, t.tx_type AS tx_type, t.filer_id AS filer_id ' +
+    ANALYTICS_FROM_JOINS +
+    whereSql(allWhere);
+  return { sql, params };
+}
+
+/**
+ * Per-member realized "skill" over their FULL track record (all-time): scored buy
+ * count, wins (filing-anchored excess vs the S&P > 0), and average excess. Same
+ * EXCESS basis as the performance leaderboard. The window is intentionally OMITTED
+ * (skill is a career track record), but the trade-level source / minConf filters
+ * ARE honored so the skill matches the requested analytics slice (e.g.
+ * ?source=primary won't let seed-dataset buys leak in). Only members with >= 5
+ * scored buys are returned. Caller must chunk `filerIds` under D1's 100-bind cap.
+ */
+export function buildMemberSkillQuery(filerIds: string[], p: CommonFilters): BuiltQuery {
+  const EXCESS =
+    '((sr.current_price / p.price_at_filing) - 1.0) - ((sx.spx_now / p.spx_at_filing) - 1.0)';
+  const where = [
+    't.deprecated_at IS NULL',
+    "t.tx_type = 'P'",
+    't.is_option = 0',
+    'p.price_at_filing IS NOT NULL AND p.price_at_filing > 0',
+    'p.spx_at_filing IS NOT NULL AND p.spx_at_filing > 0',
+    'sr.current_price IS NOT NULL',
+  ];
+  const params: SqlParam[] = [];
+  if (p.source && p.source !== 'all') {
+    where.push('t.source = ?');
+    params.push(p.source);
+  }
+  if (typeof p.minConf === 'number' && Number.isFinite(p.minConf)) {
+    where.push('t.confidence >= ?');
+    params.push(p.minConf);
+  }
+  where.push(`t.filer_id IN (${filerIds.map(() => '?').join(', ')})`);
+  for (const id of filerIds) params.push(id);
+  const sql =
+    'SELECT t.filer_id AS filer_id, COUNT(*) AS scored, ' +
+    `SUM(CASE WHEN ${EXCESS} > 0 THEN 1 ELSE 0 END) AS wins, ` +
+    `AVG(${EXCESS}) AS avg_excess ` +
+    'FROM transactions t ' +
+    'JOIN tx_performance p ON p.tx_id = t.id ' +
+    'JOIN securities_ref sr ON sr.ticker = t.ticker ' +
+    'CROSS JOIN (SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1) sx ' +
+    whereSql(where) +
+    'GROUP BY t.filer_id ' +
+    'HAVING scored >= 5';
+  return { sql, params };
+}
+
+// ---------------------------------------------------------------------------
 // 10. Single-ticker deep dive
 // ---------------------------------------------------------------------------
 
@@ -390,6 +582,57 @@ export function buildTickerSummaryQuery(ticker: string, p: CommonFilters): Built
     'MIN(t.tx_date) AS first_trade, MAX(t.tx_date) AS last_trade ' +
     ANALYTICS_FROM_JOINS +
     whereSql(where);
+  return { sql, params };
+}
+
+/**
+ * Purchase-cohort trade dates for a ticker backtest: BUYS only, options and
+ * null/empty trade dates excluded, honoring the shared window/chamber/party/
+ * source/minConf filters (+ optional single member). The route computes forward
+ * returns in-memory from the price series (see aggregateTickerBacktest), so this
+ * only needs the dates.
+ */
+export function buildTickerBacktestCohortQuery(
+  ticker: string,
+  p: CommonFilters,
+  filerId?: string,
+): BuiltQuery {
+  const { where, params } = tickerFilters(ticker, { ...p, txTypes: ['P'] });
+  const allWhere = [...where, 't.is_option = 0', "t.tx_date IS NOT NULL", "t.tx_date <> ''"];
+  if (filerId) {
+    allWhere.push('t.filer_id = ?');
+    params.push(filerId);
+  }
+  const sql =
+    'SELECT t.tx_date AS tx_date ' + ANALYTICS_FROM_JOINS + whereSql(allWhere) + 'ORDER BY t.tx_date ASC';
+  return { sql, params };
+}
+
+/**
+ * Candidate trades for the committee conflict-of-interest signal: trades by a
+ * member WITH committees, in a resolved sector. The route applies the curated
+ * committee→sector map (see committeeConflict) to keep only true conflicts, so
+ * this just pre-filters to rows that could possibly conflict.
+ */
+export function buildConflictCandidatesQuery(p: CommonFilters & { limit?: number }): BuiltQuery {
+  const { where, params } = buildCommonFilters(p);
+  const allWhere = [
+    ...where,
+    't.ticker IS NOT NULL',
+    'sr.sector IS NOT NULL',
+    'fl.committees IS NOT NULL',
+    "fl.committees <> ''",
+    "fl.committees <> '[]'",
+  ];
+  const limit = clampLimit(p.limit, 200, 2000);
+  const sql =
+    'SELECT t.id AS id, t.ticker AS ticker, t.tx_type AS tx_type, t.tx_date AS tx_date, ' +
+    `t.filer_id AS filer_id, fl.full_name AS full_name, ${CHAMBER_EXPR} AS chamber, fl.party AS party, ` +
+    'fl.committees AS committees, sr.sector AS sector, t.amount_min AS amount_min, t.amount_max AS amount_max ' +
+    ANALYTICS_FROM_JOINS +
+    'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ' +
+    whereSql(allWhere) +
+    `ORDER BY t.tx_date DESC LIMIT ${limit}`;
   return { sql, params };
 }
 
@@ -467,10 +710,32 @@ export function buildMemberStatsQuery(filerId: string, p: CommonFilters): BuiltQ
     'SELECT COUNT(*) AS total_trades, ' +
     `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
     `COUNT(DISTINCT CASE WHEN ${TICKER_RESOLVED_SQL} THEN t.ticker END) AS unique_tickers, ` +
+    // Distinct *assets* counts the resolved ticker, else the reported asset name,
+    // so members whose holdings are bonds/funds (ticker NULL) don't show 0.
+    `COUNT(DISTINCT COALESCE(CASE WHEN ${TICKER_RESOLVED_SQL} THEN t.ticker END, NULLIF(t.asset_name, ''))) AS unique_assets, ` +
     `SUM(${MID}) AS est_volume, SUM(${SIGNED}) AS est_net_flow, ` +
     `${lag} AS avg_lag_days, ` +
     'MIN(t.tx_date) AS first_trade, MAX(t.tx_date) AS last_trade ' +
     ANALYTICS_FROM_JOINS +
+    whereSql(where);
+  return { sql, params };
+}
+
+/**
+ * Per-trade performance anchors for one member's trades, backing the realized
+ * "skill" aggregate (see aggregateMemberPerformance). Joins the cached
+ * tx_performance anchor (price + S&P at the trade date) and the security's
+ * current price. Returns every windowed trade; the aggregator excludes options
+ * and unpriced rows so callers can report tradeCount vs scoredCount.
+ */
+export function buildMemberPerformanceQuery(filerId: string, p: CommonFilters): BuiltQuery {
+  const { where, params } = memberFilters(filerId, p);
+  const sql =
+    'SELECT t.is_option AS is_option, txp.price_at_trade AS price_at_trade, ' +
+    'txp.spx_at_trade AS spx_at_trade, sr.current_price AS current_price ' +
+    ANALYTICS_FROM_JOINS +
+    'LEFT JOIN tx_performance txp ON txp.tx_id = t.id ' +
+    'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ' +
     whereSql(where);
   return { sql, params };
 }

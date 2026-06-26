@@ -30,8 +30,9 @@ describe('validators', () => {
     expect(asWindow('180d')).toBe('180d'); // preset (past 6 months)
     expect(asWindow('1825d')).toBe('1825d'); // preset (past 5 years)
     expect(asWindow('45d')).toBe('45d'); // custom age via API
-    expect(asWindow('nonsense')).toBe('30d');
-    expect(asWindow('0d')).toBe('30d'); // must be >= 1 day
+    expect(asWindow('nonsense')).toBe('90d'); // default fallback (recent, not all-time)
+    expect(asWindow('0d')).toBe('90d'); // must be >= 1 day → default fallback
+    expect(asWindow('nonsense', '30d')).toBe('30d'); // explicit fallback still honored
     expect(asWindow(undefined, '90d')).toBe('90d');
     expect(isWindow('365d')).toBe(true);
     expect(isWindow('5y')).toBe(false); // only <N>d or 'all'
@@ -108,15 +109,17 @@ describe('SQL fragments', () => {
 });
 
 describe('buildCommonFilters', () => {
-  it('defaults to a 30-day window clause with the offset as the first param', () => {
+  it('always excludes retracted rows, then the 30-day window with the offset as the first param', () => {
     const { where, params } = buildCommonFilters({});
-    expect(where[0]).toBe("t.tx_date >= date('now', ?)");
+    expect(where[0]).toBe('t.deprecated_at IS NULL');
+    expect(where[1]).toBe("t.tx_date >= date('now', ?)");
     expect(params[0]).toBe('-30 days');
   });
 
-  it('window="all" drops the date clause entirely', () => {
+  it('window="all" drops the date clause entirely (but keeps the retracted guard)', () => {
     const { where, params } = buildCommonFilters({ window: 'all' });
     expect(where.join(' ')).not.toContain('tx_date >=');
+    expect(where).toContain('t.deprecated_at IS NULL');
     expect(params).toEqual([]);
   });
 
@@ -129,6 +132,7 @@ describe('buildCommonFilters', () => {
       minConf: 0.7,
     });
     expect(where).toEqual([
+      't.deprecated_at IS NULL',
       "t.tx_date >= date('now', ?)",
       'COALESCE(fl.chamber, f.chamber) = ?',
       `${PARTY_BUCKET_SQL} = ?`,
@@ -152,6 +156,19 @@ describe('buildCommonFilters', () => {
     expect(where).toContain("(t.ticker IS NOT NULL AND t.ticker <> '')");
     expect(where.some((w) => w.includes('t.tx_type IN (?, ?)'))).toBe(true);
     expect(params).toEqual(['P', 'S']);
+  });
+
+  it('tickers expands to an IN-list with one bind per ticker', () => {
+    const { where, params } = buildCommonFilters({ window: 'all', tickers: ['AAPL', 'MSFT', 'NVDA'] });
+    expect(where.some((w) => w === 't.ticker IN (?, ?, ?)')).toBe(true);
+    expect(params).toEqual(['AAPL', 'MSFT', 'NVDA']);
+  });
+
+  it('excludeOptions adds an is_option = 0 clause (no bind), off by default', () => {
+    const { where, params } = buildCommonFilters({ window: 'all', excludeOptions: true });
+    expect(where).toContain('t.is_option = 0');
+    expect(params).toEqual([]);
+    expect(buildCommonFilters({ window: 'all' }).where).not.toContain('t.is_option = 0');
   });
 
   it('whereSql renders a clause with a trailing space, or empty', () => {
