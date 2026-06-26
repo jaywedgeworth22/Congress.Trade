@@ -126,7 +126,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   input::placeholder { color: var(--text-dim); }
   .grid-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; margin-bottom: 20px; }
-  #trKpis { grid-template-columns: repeat(6,minmax(0,1fr)); }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
   .card .k { color: var(--text-dim); font-size: 12px; }
   .card .v { font-size: 22px; font-weight: 700; margin-top: 4px; }
@@ -287,6 +286,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   @media (min-width: 601px) and (max-width: 980px) { .drawer-panel { width: 560px; } }
   /* Let the feed toolbar wrap instead of overflowing on tablet widths. */
   @media (min-width: 721px) and (max-width: 900px) { .toolbar { flex-wrap: wrap; } .toolbar input, .toolbar select { flex: 1 1 160px; } }
+  @media (min-width: 1080px) { #trKpis { grid-template-columns: repeat(6,minmax(0,1fr)); } }
   .est, .est-money { color: var(--text-dim); }
   .est-money::first-letter { font-size: .82em; vertical-align: .3em; margin-right: .5px; }
   .pdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; background: var(--text-dim); }
