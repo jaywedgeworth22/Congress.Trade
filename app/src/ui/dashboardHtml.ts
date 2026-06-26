@@ -126,6 +126,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   input::placeholder { color: var(--text-dim); }
   .grid-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; margin-bottom: 20px; }
+  #trKpis { grid-template-columns: repeat(6,minmax(0,1fr)); }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
   .card .k { color: var(--text-dim); font-size: 12px; }
   .card .v { font-size: 22px; font-weight: 700; margin-top: 4px; }
@@ -491,6 +492,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-feed > .grid-cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; overflow:visible; margin:0 0 10px; padding:0; }
     #view-feed > .grid-cards .card { min-width:0; padding:10px 11px; border-radius:8px; }
     .grid-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; overflow:visible; margin:0 0 14px; padding:0; }
+    #trKpis { grid-template-columns:repeat(3,minmax(0,1fr)); }
     .grid-cards .card { min-width:0; padding:11px 12px; border-radius:10px; }
     .card .k { font-size:11px; line-height:1.25; }
     .card .v { font-size:18px; }
@@ -2659,7 +2661,7 @@ function loadTrClusters() {
     box.innerHTML = cs.map(function (c) {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) { return memberAvatarHtml(m.fullName, m.photoUrl); }).join('');
       var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
-      var parties = 'D ' + c.parties.D + ' · R ' + c.parties.R + (c.parties.O ? ' · O ' + c.parties.O : '');
+      var parties = c.parties.D + ' Democrats, ' + c.parties.R + ' Republicans' + (c.parties.O ? ', ' + c.parties.O + ' Other' : '');
       var bip = (c.parties.D > 0 && c.parties.R > 0) ? ' <span class="chip" title="Both parties traded">· bipartisan</span>' : '';
       var range = dateText(c.firstSeen) + (c.lastSeen && c.lastSeen !== c.firstSeen ? ' → ' + dateText(c.lastSeen) : '');
       return '<div class="ccard clickable" data-ticker="' + esc(c.ticker) + '">' +
