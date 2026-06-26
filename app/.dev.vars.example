@@ -6,6 +6,11 @@ GEMINI_API_KEY=""
 # Optional extractor bake-off candidates used by /api/admin/extractor-bakeoff.
 ANTHROPIC_API_KEY=""
 OPENAI_API_KEY=""
+# LlamaIndex Cloud (LlamaParse) — OCR + handwriting-aware structured extraction.
+# Get a key at https://cloud.llamaindex.ai. Free tier: 10,000 credits/month.
+# Use as agreement model: AGREEMENT_AUTOPUBLISH_MODEL_B="llamaparse:cost-effective"
+# Tiers (credits/page): fast=1, cost-effective=3, agentic=10, agentic-plus=45
+LLAMAINDEX_API_KEY=""
 
 # Financial Modeling Prep — enables asset enrichment (sector, market cap, country,
 # exchange) and, later, price + performance-vs-S&P. Without it, the SEC-EDGAR

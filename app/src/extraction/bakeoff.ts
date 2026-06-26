@@ -25,7 +25,7 @@ import {
   VisionLlmExtractor,
 } from './visionLlm';
 
-export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral' | 'xai';
+export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral' | 'xai' | 'llamaparse';
 
 export interface BakeoffCandidate {
   provider: Provider;
@@ -98,6 +98,7 @@ function keyFor(env: Env, provider: Provider): string | null {
   if (provider === 'anthropic') return env.ANTHROPIC_API_KEY ?? null;
   if (provider === 'mistral') return env.MISTRAL_API_KEY ?? null;
   if (provider === 'xai') return env.XAI_API_KEY ?? null;
+  if (provider === 'llamaparse') return env.LLAMAINDEX_API_KEY ?? null;
   return null;
 }
 
@@ -316,6 +317,96 @@ async function runXai(model: string, key: string, bytes: ArrayBuffer): Promise<P
   return parseModelJson(extractXaiResponseText(await res.json())).map(toParsedTx);
 }
 
+// ---------------------------------------------------------------------------
+// LlamaParse provider — OCR + LLM-guided structured extraction via
+// https://api.cloud.llamaindex.ai/api/v1/parsing. The `parsing_instruction`
+// directs LlamaParse's internal model to emit a JSON array in a fenced block;
+// `parseLlamaParseMarkdown` then extracts it using the same regex path as the
+// Mistral markdown fallback. Two round-trips: upload → poll → fetch markdown.
+// ---------------------------------------------------------------------------
+
+const LLAMAPARSE_BASE = 'https://api.cloud.llamaindex.ai/api/v1/parsing';
+
+/**
+ * Instruction appended to SYSTEM_PROMPT when submitting to LlamaParse. Asks
+ * the parser's internal LLM to embed the transaction array in a fenced JSON
+ * block so `parseLlamaParseMarkdown` can extract it without a second LLM call.
+ */
+const LLAMAPARSE_JSON_SUFFIX =
+  '\n\nReturn ONLY a fenced JSON block with no other text:\n```json\n[…]\n```';
+
+/**
+ * Extract ParsedTx[] from LlamaParse markdown output. Looks for a fenced
+ * ```json … ``` block first, then falls back to a bare JSON array anywhere in
+ * the text. Exported for unit testing without a live key.
+ */
+export function parseLlamaParseMarkdown(markdown: string): ParsedTx[] {
+  // Prefer an explicit fenced block.
+  const fenced = markdown.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) return parseModelJson(fenced[1]).map(toParsedTx);
+  // Fall back to the first bare JSON array in the text.
+  const bare = markdown.match(/(\[[\s\S]*?\])/);
+  if (bare) return parseModelJson(bare[1]).map(toParsedTx);
+  throw new Error('llamaparse: no JSON array found in markdown output');
+}
+
+/**
+ * LlamaParse extraction call. The `model` string controls the parse tier:
+ *   "fast"           — 1 credit/page  (basic OCR, good for clean text PDFs)
+ *   "cost-effective" — 3 credits/page (premium_mode, better table handling)
+ *   "agentic"        — 10 credits/page (internal LLM pass; best for handwriting)
+ *   "agentic-plus"   — 45 credits/page (highest accuracy, most expensive)
+ *
+ * The parsing_instruction guides the internal model to emit the JSON output
+ * format we need. Poll interval is 2 s; hard timeout is 90 s (well inside the
+ * Worker's cpu_ms=300_000 ceiling since poll time is I/O, not CPU).
+ */
+async function runLlamaParse(model: string, key: string, bytes: ArrayBuffer): Promise<ParsedTx[]> {
+  const form = new FormData();
+  form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'ptr.pdf');
+  form.append('parsing_instruction', SYSTEM_PROMPT + LLAMAPARSE_JSON_SUFFIX);
+  // Tier selection via LlamaParse form parameters.
+  if (model === 'cost-effective') {
+    form.append('premium_mode', 'true');
+  } else if (model === 'agentic' || model === 'agentic-plus') {
+    form.append('agentic_parsing', 'true');
+    if (model === 'agentic-plus') form.append('fast_mode', 'false');
+  }
+
+  // 1) Upload
+  const up = await fetch(`${LLAMAPARSE_BASE}/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}` },
+    body: form,
+  });
+  if (!up.ok) throw new Error(`llamaparse upload ${up.status} ${await safeText(up)}`);
+  const uploaded = (await up.json()) as { id?: string };
+  if (!uploaded.id) throw new Error('llamaparse: upload returned no job id');
+
+  // 2) Poll for completion (up to 90 s; each sleep is pure I/O wait).
+  let succeeded = false;
+  for (let i = 0; i < 45; i++) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+    const st = await fetch(`${LLAMAPARSE_BASE}/job/${uploaded.id}`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    if (!st.ok) continue; // transient; keep polling
+    const { status } = (await st.json()) as { status?: string };
+    if (status === 'SUCCESS') { succeeded = true; break; }
+    if (status === 'ERROR' || status === 'CANCELLED') throw new Error(`llamaparse: job ${status ?? 'unknown'}`);
+  }
+  if (!succeeded) throw new Error('llamaparse: job timed out after 90s');
+
+  // 3) Fetch markdown result
+  const res = await fetch(`${LLAMAPARSE_BASE}/job/${uploaded.id}/result/markdown`, {
+    headers: { Authorization: `Bearer ${key}` },
+  });
+  if (!res.ok) throw new Error(`llamaparse result ${res.status} ${await safeText(res)}`);
+  const { markdown } = (await res.json()) as { markdown?: string };
+  if (!markdown) throw new Error('llamaparse: empty markdown result');
+  return parseLlamaParseMarkdown(markdown);
+}
+
 /** Run one candidate over one document's bytes, timing it and trapping errors. */
 export async function runCandidateOnDoc(
   env: Env,
@@ -345,6 +436,8 @@ export async function runCandidateOnDoc(
       rows = await runMistral(model, key, bytes);
     } else if (provider === 'xai') {
       rows = await runXai(model, key, bytes);
+    } else if (provider === 'llamaparse') {
+      rows = await runLlamaParse(model, key, bytes);
     } else {
       rows = await runAnthropic(model, key, bytes);
     }
