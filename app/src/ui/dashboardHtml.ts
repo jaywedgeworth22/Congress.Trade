@@ -1103,6 +1103,13 @@ function fmtDuration(sec) {
   return d + 'd ' + h + 'h';
 }
 
+/* Human latency from milliseconds: 850ms, 4s, 2m 30s, 1h 5m. */
+function fmtMs(ms) {
+  if (ms == null) return '—';
+  if (ms < 1000) return ms + 'ms';
+  return fmtDuration(Math.round(ms / 1000));
+}
+
 /* ---- light / dark theme (per-visitor preference) ---- */
 function applyTheme(t) {
   if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
@@ -1959,7 +1966,7 @@ function modelsSummaryHtml(models) {
     var conf = (typeof m.avgConfidence === 'number') ? Math.round(m.avgConfidence * 100) + '%' : '—';
     var label = m.provider + ':' + m.model;
     var color = m.ok ? '#1a7f37' : '#c0362c';
-    var title = label + ' · ' + (m.ok ? (m.rowCount + ' rows, conf ' + conf + (m.latencyMs ? ', ' + m.latencyMs + 'ms' : '')) : ('ERROR: ' + (m.error || 'failed')));
+    var title = label + ' · ' + (m.ok ? (m.rowCount + ' rows, conf ' + conf + (m.latencyMs ? ', ' + fmtMs(m.latencyMs) : '')) : ('ERROR: ' + (m.error || 'failed')));
     return '<span title="' + esc(title) + '" style="display:inline-block;margin:1px 3px 1px 0;padding:0 5px;border-radius:8px;font-size:11px;border:1px solid ' + color + ';color:' + color + '">' +
       esc(m.provider) + ' ' + (m.ok ? esc(conf) : 'ERR') + '</span>';
   }).join('');
@@ -2018,7 +2025,7 @@ function modelsTableHtml(models) {
       '<td>' + (m.ok ? 'ok' : '<span style="color:#c0362c">ERR</span>') + '</td>' +
       '<td style="text-align:right">' + (m.ok ? m.rowCount : '—') + '</td>' +
       '<td style="text-align:right">' + (m.ok ? esc(conf) : '—') + '</td>' +
-      '<td style="text-align:right">' + (m.latencyMs != null ? m.latencyMs + 'ms' : '—') + '</td>' +
+      '<td style="text-align:right">' + fmtMs(m.latencyMs) + '</td>' +
       (m.error ? '<td class="muted">' + esc(String(m.error).slice(0, 80)) + '</td>' : '<td></td>') + '</tr>';
   }).join('');
   return '<table style="font-size:12px;width:100%"><thead><tr><th>Model</th><th>Kind</th><th>OK</th><th style="text-align:right">Rows</th><th style="text-align:right">Conf</th><th style="text-align:right">Latency</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table>';
@@ -2035,7 +2042,7 @@ function viewReadings(docId) {
       if (target) target.innerHTML = runs.map(function (run) {
         var conf = (typeof run.avgConfidence === 'number') ? Math.round(run.avgConfidence * 100) + '%' : '—';
         var header = '<div style="margin:8px 0 2px"><strong>' + esc(run.provider + ':' + run.model) + '</strong> ' +
-          '<span class="muted">· ' + (run.ok ? (run.rowCount + ' rows · conf ' + conf + (run.latencyMs ? ' · ' + run.latencyMs + 'ms' : '')) : ('ERROR: ' + esc(String(run.error || 'failed')))) + '</span></div>';
+          '<span class="muted">· ' + (run.ok ? (run.rowCount + ' rows · conf ' + conf + (run.latencyMs ? ' · ' + fmtMs(run.latencyMs) : '')) : ('ERROR: ' + esc(String(run.error || 'failed')))) + '</span></div>';
         var rowsHtml = (run.rows && run.rows.length)
           ? '<table style="font-size:12px;width:100%"><thead><tr><th>Ticker</th><th>Asset</th><th>Type</th><th>Date</th><th style="text-align:right">Amt min</th><th style="text-align:right">Amt max</th></tr></thead><tbody>' +
             run.rows.map(function (t) {
