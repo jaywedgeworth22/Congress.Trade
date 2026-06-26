@@ -1,0 +1,6 @@
+{
+  "name": "congress-feed",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "postCreateCommand": "bash scripts/cloud-setup.sh",
+  "forwardPorts": [8787]
+}
