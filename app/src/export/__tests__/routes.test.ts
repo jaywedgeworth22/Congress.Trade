@@ -131,6 +131,28 @@ describe('GET /api/export/congress-pit-scores', () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'unknown placebo' });
   });
+
+  it('400 on invalid source and minConf filters', async () => {
+    expect((await req('/congress-pit-scores?source=bogus', baseEnv(), TOKEN)).status).toBe(400);
+    expect((await req('/congress-pit-scores?minConf=2', baseEnv(), TOKEN)).status).toBe(400);
+  });
+
+  it('returns an empty JSON export with pagination metadata', async () => {
+    const res = await req('/congress-pit-scores?from=2026-01-01&to=2026-01-31', baseEnv(), TOKEN);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rowCount: number; pagination: { nextCursor: string | null } };
+    expect(body.rowCount).toBe(0);
+    expect(body.pagination.nextCursor).toBeNull();
+  });
+
+  it('returns NDJSON with score headers', async () => {
+    const res = await req('/congress-pit-scores?format=ndjson', baseEnv(), TOKEN);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/x-ndjson');
+    expect(res.headers.get('x-score-version')).toBe('congress-pit-v2');
+    expect(res.headers.get('x-row-count')).toBe('0');
+    expect(await res.text()).toBe('');
+  });
 });
 
 describe('GET /api/export/bulk-snapshot — validation', () => {

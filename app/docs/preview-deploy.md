@@ -75,4 +75,6 @@ npm run typecheck
 npm test
 ```
 
-Apply remote migrations only when the production deploy intentionally needs them.
+Apply production schema changes through `npm run deploy:full` / `scripts/ship.sh`
+or `POST /api/admin/migrate`; do not use remote Wrangler D1 migrations on this
+account.

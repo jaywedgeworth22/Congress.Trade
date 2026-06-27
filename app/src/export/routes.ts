@@ -107,13 +107,15 @@ export function buildExportRouter(): Hono<{ Bindings: ExportEnv }> {
     if ('error' in parsed) return c.json({ error: parsed.error }, parsed.status as 400);
     const exportData = await buildPitScoreExport(c.env, parsed);
     if (parsed.format === 'ndjson') {
+      const headers: Record<string, string> = {
+        'content-type': 'application/x-ndjson; charset=utf-8',
+        'cache-control': 'private, max-age=60',
+        'x-score-version': exportData.scoreVersion,
+        'x-row-count': String(exportData.rowCount),
+      };
+      if (exportData.pagination.nextCursor) headers['x-next-cursor'] = exportData.pagination.nextCursor;
       return new Response(pitScoreRowsToNdjson(exportData.rows), {
-        headers: {
-          'content-type': 'application/x-ndjson; charset=utf-8',
-          'cache-control': 'private, max-age=60',
-          'x-score-version': exportData.scoreVersion,
-          'x-row-count': String(exportData.rowCount),
-        },
+        headers,
       });
     }
     return c.json(exportData);

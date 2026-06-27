@@ -9,6 +9,16 @@ Authorization: Bearer <INGEST_TOKEN>
 
 Use `format=ndjson` for one JSON object per line.
 
+For multi-page backfills, pass the returned `pagination.nextCursor`:
+
+```http
+GET /api/export/congress-pit-scores?from=2026-01-01&to=2026-06-30&limit=500&cursor=2026-01-02T00:00:00.000Z~AAPL
+Authorization: Bearer <INGEST_TOKEN>
+```
+
+JSON responses include `pagination.nextCursor`; NDJSON responses expose the same
+value in the `x-next-cursor` header. The cursor is ordered by `(asOf, ticker)`.
+
 ## Contract
 
 Rows are keyed by ticker and market-available disclosure timestamp:
@@ -45,9 +55,13 @@ Weights:
   "flow": 0.20,
   "freshness": 0.15,
   "member_skill": 0.20,
-  "committee_sector_overlap": 0.10
+  "committee_sector_overlap": 0
 }
 ```
+
+`committee_sector_overlap` is exported as context only until Congress.Trade has
+point-in-time committee/security-reference vintages and the feature validates on
+its own. It is not currently allowed to lift the score.
 
 Each component carries:
 
@@ -105,7 +119,8 @@ availability date. `tradeAlpha` is the same calculation measured from the
 reported trade date, but only after that disclosure was market-available and
 only when the evaluation horizon had matured before `asOf`. The score component
 uses filing-date alpha first because that is the tradable, market-available
-basis.
+basis. When a disclosure only has date-level availability, filing-date skill uses
+the next calendar day as the conservative actionable entry date.
 
 For sales, alpha is direction-adjusted: underperformance after a disclosed sale
 counts as positive sale skill. Dispersion is reported as sample standard
@@ -116,6 +131,9 @@ metadata.
 
 If no matured labels exist, `skillScore` is null and the component falls back to
 `activity_prominence`. This is marked as `basis:"inferred"`, not computed skill.
+The training window is capped at the newest 1,000 eligible prior disclosed
+transactions per observation; the cap and selection rule are repeated in
+`memberSkill.trainingWindowDetails`.
 
 ## Cluster Consensus
 
@@ -157,8 +175,18 @@ Current horizons:
 Basis:
 
 - `adjusted_close_from_price_eod`
+- horizon basis: `trading_days`
 - benchmark: `spx_eod`
-- entry price: close on or before `disclosureAvailableAt`
+- entry price: first close on or after the conservative actionable date
+
+Each row exports `availabilitySource`, `availabilityPrecision`, and
+`conservativeLabelEntryDate` under `rawInputs`, and each disclosure repeats
+`availabilitySource` / `availabilityPrecision`. If the export only has a
+date-level filed date, labels use the next calendar day before selecting the
+first available close.
+
+`labels` also includes `priceDataThrough` and `benchmarkDataThrough` so App B can
+audit label reproducibility.
 
 If the forward close is unavailable, the horizon returns null fields with
 `missingLabelReason`.
@@ -194,5 +222,7 @@ These fields are intentionally present but null until source data exists:
 - corporate-action vintage
 - App B pre-Congress scan score and factor set
 - no-signal universe rows
+- point-in-time committee/security reference vintages; current committee/sector
+  metadata is marked context-only
 
 App B should treat these as missing source data, not zero.

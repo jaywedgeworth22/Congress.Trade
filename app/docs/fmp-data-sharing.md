@@ -272,6 +272,9 @@ It returns one row per `(ticker, disclosureAvailableAt)` observation using the
 market-available disclosure timestamp, not the private trade date. Member skill
 is point-in-time and split by filing-date vs trade-date basis, buy vs sell side,
 and 1/3/6/12m horizons; cluster fields include both 21d/1m and 63d/3m windows.
+Large historical ranges page with `pagination.nextCursor` in JSON responses or
+the `x-next-cursor` header for NDJSON. Rows also expose availability source and
+precision; date-only availability uses a conservative next-day label entry rule.
 It also supports null/placebo exports via `?placebo=...` for validation robustness:
 within-date score permutation, member shuffle, disclosure-date jitter, buy/sell
 flip, component ablations, future-shift leakage detection, and the currently
@@ -284,9 +287,10 @@ Full contract: [`app/docs/pit-score-export.md`](pit-score-export.md).
 - `GET /api/health` → `{ ok, db, time }` — liveness + D1 connectivity (`db:false`
   means the database is unreachable or unmigrated).
 - **Apply migrations to production** (the common cause of 500s on DB-backed
-  routes): use `npm run migrate:remote`, `npm run deploy:full`, or
-  `ADMIN_TOKEN=... bash scripts/ship.sh` depending on the production path chosen
-  in `DEPLOY.md`. The plain `npm run migrate` is **local-only**.
+  routes): use `npm run deploy:full` / `ADMIN_TOKEN=... bash scripts/ship.sh`,
+  which deploys then calls the idempotent `POST /api/admin/migrate` path. The
+  plain `npm run migrate` is **local-only**, and `npm run migrate:remote` is
+  intentionally disabled for this account.
 
 ## Read-back routes (avoid re-paying for donated data)
 

@@ -37,7 +37,7 @@ export const PIT_SCORE_WEIGHTS = {
   flow: 0.2,
   freshness: 0.15,
   member_skill: 0.2,
-  committee_sector_overlap: 0.1,
+  committee_sector_overlap: 0,
 } as const;
 
 export const PIT_PLACEBOS = [
@@ -64,11 +64,17 @@ export interface PitScoreQuery {
   from?: string;
   to?: string;
   ticker?: string;
+  cursor?: PitScoreCursor;
   limit: number;
   format: 'json' | 'ndjson';
   placebo: PitPlacebo;
   source?: 'primary' | 'seed_dataset' | 'manual' | 'all';
   minConf?: number;
+}
+
+interface PitScoreCursor {
+  asOf: string;
+  ticker: string;
 }
 
 interface TxRow {
@@ -183,6 +189,10 @@ export interface PitScoreExportResult {
   parameterManifest: Record<string, unknown>;
   placebosAvailable: readonly PitPlacebo[];
   rowCount: number;
+  pagination: {
+    limit: number;
+    nextCursor: string | null;
+  };
   rows: PitScoreRow[];
   notes: string[];
 }
@@ -193,6 +203,13 @@ const SOURCE_FILTERS = new Set(['primary', 'seed_dataset', 'manual', 'all']);
 
 const ASOF_SQL =
   "COALESCE(f.first_seen_at, CASE WHEN f.filed_date IS NOT NULL THEN f.filed_date || 'T00:00:00.000Z' END, t.created_at)";
+
+interface AvailabilityInfo {
+  timestamp: string | null;
+  source: 'first_seen_at' | 'filed_date' | 'created_at' | 'missing';
+  precision: 'timestamp' | 'date' | 'missing';
+  conservativeLabelEntryDate: string | null;
+}
 
 function num(v: unknown): number {
   const n = typeof v === 'number' ? v : Number(v);
@@ -223,6 +240,34 @@ function addDays(date: string, days: number): string {
   return new Date(t).toISOString().slice(0, 10);
 }
 
+function maxDate(a: string | undefined, b: string | undefined): string | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return a > b ? a : b;
+}
+
+function transactionQueryLimit(q: PitScoreQuery): number {
+  return Math.min(50_000, Math.max(10_000, q.limit * 100));
+}
+
+function availabilityFor(row: Pick<TxRow, 'first_seen_at' | 'filed_date' | 'created_at'>): AvailabilityInfo {
+  const source: AvailabilityInfo['source'] =
+    dateOnly(row.first_seen_at) ? 'first_seen_at' :
+    dateOnly(row.filed_date) ? 'filed_date' :
+    dateOnly(row.created_at) ? 'created_at' :
+    'missing';
+  const raw = source === 'first_seen_at' ? row.first_seen_at : source === 'filed_date' ? row.filed_date : source === 'created_at' ? row.created_at : null;
+  const timestamp = isoTimestamp(raw);
+  const precision: AvailabilityInfo['precision'] = !timestamp ? 'missing' : raw && raw.includes('T') ? 'timestamp' : 'date';
+  const d = dateOnly(timestamp);
+  return {
+    timestamp,
+    source,
+    precision,
+    conservativeLabelEntryDate: d ? addDays(d, precision === 'date' ? 1 : 0) : null,
+  };
+}
+
 function daysBetween(a: string | null, b: string | null): number | null {
   if (!a || !b) return null;
   const ta = Date.parse(`${a}T00:00:00.000Z`);
@@ -235,6 +280,20 @@ function normalizeTicker(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
   const t = raw.trim().toUpperCase();
   return TICKER_RE.test(t) ? t : undefined;
+}
+
+function parseCursor(raw: string | undefined): PitScoreCursor | { error: string; status: number } | undefined {
+  if (!raw) return undefined;
+  const parts = raw.split('~');
+  if (parts.length !== 2) return { error: 'invalid cursor', status: 400 };
+  const asOf = parts[0];
+  const ticker = normalizeTicker(parts[1]);
+  if (!dateOnly(asOf) || !ticker) return { error: 'invalid cursor', status: 400 };
+  return { asOf, ticker };
+}
+
+function encodeCursor(asOf: string, ticker: string): string {
+  return `${asOf}~${ticker}`;
 }
 
 export function parsePitScoreQuery(q: Record<string, string | undefined>): PitScoreQuery | { error: string; status: number } {
@@ -252,12 +311,16 @@ export function parsePitScoreQuery(q: Record<string, string | undefined>): PitSc
   if (!(PIT_PLACEBOS as readonly string[]).includes(placebo)) {
     return { error: 'unknown placebo', status: 400 };
   }
-  const source = q.source && SOURCE_FILTERS.has(q.source) ? (q.source as PitScoreQuery['source']) : 'all';
+  if (q.source && !SOURCE_FILTERS.has(q.source)) return { error: 'unknown source', status: 400 };
+  const source = q.source ? (q.source as PitScoreQuery['source']) : 'all';
   const minConf =
     q.minConf !== undefined && q.minConf !== '' && Number.isFinite(Number(q.minConf))
       ? Number(q.minConf)
       : undefined;
-  return { from, to, ticker, limit, format, placebo, source, minConf };
+  if (minConf !== undefined && (minConf < 0 || minConf > 1)) return { error: 'minConf must be between 0 and 1', status: 400 };
+  const cursor = parseCursor(q.cursor);
+  if (cursor && 'error' in cursor) return cursor;
+  return { from, to, ticker, cursor, limit, format, placebo, source, minConf };
 }
 
 function parameterManifest(): Record<string, unknown> {
@@ -275,6 +338,8 @@ function parameterManifest(): Record<string, unknown> {
       directions: ['buy', 'sell'],
       noLeakageRule:
         'At asOf, skill uses only prior disclosures whose horizon close exists at or before asOf; trade-date basis is computed only after the disclosure is market-available.',
+      maxTrainingRowsPerObservation: 1000,
+      trainingSelection: 'newest prior disclosed transactions first; older rows beyond the cap are truncated',
       shrinkagePrior: { alpha: 2.5, beta: 2.5, meaning: 'Beta prior on directional win rate; alpha mean is shrunk toward 0 by sample weighting.' },
       dispersionWinsorization:
         'Sample standard deviation is reported on raw direction-adjusted excess returns; returns are winsorized at 5th/95th percentile per basis/direction/horizon when n >= 20.',
@@ -286,12 +351,17 @@ function parameterManifest(): Record<string, unknown> {
         amountWeight: '0.5 + 0.5 * min(1, log10(1 + STOCK Act bracket midpoint) / 6)',
         diminishingReturn: 'log1p(dominant distinct members) / log1p(12)',
       },
+      currentStateMetadata:
+        'party/chamber breadth uses current filer metadata until PIT filer history exists; it is context only.',
     },
     labels: {
       horizonsDays: LABEL_HORIZONS_DAYS,
-      entryBasis: 'adjusted_close_on_or_before_disclosure_available_at',
+      horizonBasis: 'trading_days',
+      entryBasis: 'first_adjusted_close_on_or_after_conservative_actionable_date',
       benchmark: 'S&P 500 from spx_eod',
     },
+    committeeSectorOverlap:
+      'Current committee/security reference metadata is exported as context only. Weight is 0 until PIT committee/security reference vintages exist.',
   };
 }
 
@@ -351,8 +421,10 @@ async function loadTransactions(env: Env, q: PitScoreQuery): Promise<TxRow[]> {
     "t.tx_type IN ('P', 'S')",
   ];
   const params: SqlParam[] = [];
-  if (q.from) {
-    const contextFrom = addDays(q.from, -63);
+  const cursorDate = dateOnly(q.cursor?.asOf);
+  const contextAnchor = cursorDate ? maxDate(q.from, cursorDate) : q.from;
+  if (contextAnchor) {
+    const contextFrom = addDays(contextAnchor, -63);
     where.push(`substr(${ASOF_SQL}, 1, 10) >= ?`);
     params.push(contextFrom);
   }
@@ -372,7 +444,7 @@ async function loadTransactions(env: Env, q: PitScoreQuery): Promise<TxRow[]> {
     where.push('t.confidence >= ?');
     params.push(q.minConf);
   }
-  const txLimit = Math.min(10_000, Math.max(500, q.limit * 40));
+  const txLimit = transactionQueryLimit(q);
   const sql =
     `SELECT t.id, t.doc_id, t.filer_id, t.tx_date, t.owner, t.asset_name, t.ticker, ` +
     `t.asset_type, t.asset_type_name, t.tx_type, t.amount_min, t.amount_max, t.is_option, ` +
@@ -434,6 +506,7 @@ export interface PitSkillTrainingRow {
   filerId: string;
   ticker: string;
   disclosureAvailableAt: string;
+  filingEntryDate?: string | null;
   txDate?: string | null;
   side?: TxType;
 }
@@ -563,7 +636,7 @@ function evaluateSkillObservation(
   spx: PriceBar[],
   asOfDate: string,
 ): SkillObservation | null {
-  const entryDate = basis === 'filing' ? dateOnly(row.disclosureAvailableAt) : dateOnly(row.txDate);
+  const entryDate = basis === 'filing' ? dateOnly(row.filingEntryDate) ?? dateOnly(row.disclosureAvailableAt) : dateOnly(row.txDate);
   if (!entryDate) return null;
   const targetDate = addDays(entryDate, horizon.days);
   if (targetDate > asOfDate) return null;
@@ -682,8 +755,10 @@ export function computePitMemberSkillFromRows(
       trainingWindow: 'all_prior_matured_disclosures',
       trainingWindowDetails: {
         disclosureCutoff: `${asOfDate}T00:00:00.000Z`,
-        includes: 'prior disclosed transactions only',
+        includes: 'prior disclosed transactions only; filing-date basis uses conservative actionable date when availability is date-only',
         excludes: 'outcomes whose horizon close is after asOf',
+        maxTrainingRowsPerObservation: 1000,
+        selection: 'newest prior disclosed transactions first; older rows beyond the cap are truncated',
       },
       horizonDays: MEMBER_SKILL_HORIZON_DAYS,
       horizonWeights: horizonWeightsRecord(),
@@ -715,8 +790,10 @@ export function computePitMemberSkillFromRows(
     trainingWindow: 'all_prior_matured_disclosures',
     trainingWindowDetails: {
       disclosureCutoff: `${asOfDate}T00:00:00.000Z`,
-      includes: 'prior disclosed transactions only',
+      includes: 'prior disclosed transactions only; filing-date basis uses conservative actionable date when availability is date-only',
       excludes: 'outcomes whose horizon close is after asOf',
+      maxTrainingRowsPerObservation: 1000,
+      selection: 'newest prior disclosed transactions first; older rows beyond the cap are truncated',
     },
     horizonDays: MEMBER_SKILL_HORIZON_DAYS,
     horizonWeights: horizonWeightsRecord(),
@@ -770,12 +847,12 @@ async function memberSkillFor(
     where.push('t.confidence >= ?');
     params.push(q.minConf);
   }
-  const rows = await all<{ id: string; filer_id: string; ticker: string; tx_date: string | null; tx_type: TxType; disclosure_available_at: string }>(
+  const rows = await all<{ id: string; filer_id: string; ticker: string; tx_date: string | null; tx_type: TxType; first_seen_at: string | null; filed_date: string | null; created_at: string | null; disclosure_available_at: string }>(
     env.DB,
-    `SELECT t.id, t.filer_id, t.ticker, t.tx_date, t.tx_type, ` +
+    `SELECT t.id, t.filer_id, t.ticker, t.tx_date, t.tx_type, f.first_seen_at, f.filed_date, t.created_at, ` +
       `COALESCE(f.first_seen_at, CASE WHEN f.filed_date IS NOT NULL THEN f.filed_date || 'T00:00:00.000Z' END, t.created_at) AS disclosure_available_at ` +
       `FROM transactions t LEFT JOIN filings f ON f.doc_id = t.doc_id ` +
-      `WHERE ${where.join(' AND ')} ORDER BY disclosure_available_at ASC LIMIT 1000`,
+      `WHERE ${where.join(' AND ')} ORDER BY disclosure_available_at DESC, t.id DESC LIMIT 1000`,
     params,
   );
   const tickers = Array.from(new Set(rows.map((r) => r.ticker).filter(Boolean)));
@@ -789,6 +866,7 @@ async function memberSkillFor(
       ticker: r.ticker,
       txDate: r.tx_date,
       side: r.tx_type,
+      filingEntryDate: availabilityFor(r).conservativeLabelEntryDate,
       disclosureAvailableAt: r.disclosure_available_at,
     })),
     map,
@@ -798,9 +876,17 @@ async function memberSkillFor(
   );
 }
 
-function buildLabels(ticker: string, asOfDate: string, price: PriceBar[], spx: PriceBar[], computedAt: string): Record<string, unknown> {
-  const entryIdx = idxOnOrBefore(price, asOfDate);
-  const spxEntryIdx = idxOnOrBefore(spx, asOfDate);
+function buildLabels(
+  ticker: string,
+  scoreAsOfDate: string,
+  labelEntryDate: string | null,
+  availability: AvailabilityInfo,
+  price: PriceBar[],
+  spx: PriceBar[],
+  computedAt: string,
+): Record<string, unknown> {
+  const entryIdx = labelEntryDate ? idxOnOrAfter(price, labelEntryDate) : -1;
+  const spxEntryIdx = labelEntryDate ? idxOnOrAfter(spx, labelEntryDate) : -1;
   const entry = entryIdx >= 0 ? price[entryIdx] : null;
   const spxEntry = spxEntryIdx >= 0 ? spx[spxEntryIdx] : null;
   const horizons = LABEL_HORIZONS_DAYS.map((days) => {
@@ -834,6 +920,17 @@ function buildLabels(ticker: string, asOfDate: string, price: PriceBar[], spx: P
   });
   return {
     basis: 'adjusted_close_from_price_eod',
+    horizonBasis: 'trading_days',
+    scoreAsOfDate,
+    conservativeLabelEntryDate: labelEntryDate,
+    entryRule:
+      availability.precision === 'date'
+        ? 'first_close_on_or_after_next_calendar_day_because_availability_is_date_only'
+        : 'first_close_on_or_after_market_available_date',
+    availabilitySource: availability.source,
+    availabilityPrecision: availability.precision,
+    priceDataThrough: price.length ? price[price.length - 1].date : null,
+    benchmarkDataThrough: spx.length ? spx[spx.length - 1].date : null,
     totalReturnBasis: false,
     labelComputedAt: computedAt,
     corporateActionVintage: null,
@@ -850,12 +947,19 @@ function disclosureAvailableAt(row: Pick<TxRow, 'first_seen_at' | 'filed_date' |
   return isoTimestamp(row.first_seen_at) ?? isoTimestamp(row.filed_date) ?? isoTimestamp(row.created_at);
 }
 
-function inOutputRange(q: PitScoreQuery, asOf: string): boolean {
+function afterCursor(cursor: PitScoreCursor | undefined, asOf: string, ticker: string): boolean {
+  if (!cursor) return true;
+  if (asOf > cursor.asOf) return true;
+  if (asOf < cursor.asOf) return false;
+  return ticker > cursor.ticker;
+}
+
+function inOutputRange(q: PitScoreQuery, asOf: string, ticker: string): boolean {
   const d = dateOnly(asOf);
   if (!d) return false;
   if (q.from && d < q.from) return false;
   if (q.to && d > q.to) return false;
-  return true;
+  return afterCursor(q.cursor, asOf, ticker);
 }
 
 function countBy(values: Array<string | null | undefined>): Record<string, number> {
@@ -923,10 +1027,12 @@ function buildClusterWindow(ticker: string, asOf: string, allRows: TxRow[], days
       sell: round(sellWeighted, 4),
     },
     partyBreadth: {
+      basis: 'current_state_metadata_context_only',
       distinct: Object.keys(countBy(rows.map((r) => r.party))).length,
       counts: countBy(rows.map((r) => r.party)),
     },
     chamberBreadth: {
+      basis: 'current_state_metadata_context_only',
       distinct: Object.keys(countBy(rows.map((r) => r.filer_chamber ?? r.filing_chamber))).length,
       counts: countBy(rows.map((r) => r.filer_chamber ?? r.filing_chamber)),
     },
@@ -995,6 +1101,7 @@ async function buildRow(
     .map((t) => daysBetween(dateOnly(t.tx_date), dateOnly(isoTimestamp(t.first_seen_at) ?? t.filed_date ?? t.created_at)))
     .filter((n): n is number => n != null && Number.isFinite(n))
     .reduce((a, b, _, arr) => a + b / arr.length, 0);
+  const availability = availabilityFor(txs[0]);
   const freshness = Math.max(0, Math.min(100, 100 - (Number.isFinite(avgLagDays) ? avgLagDays : 45) * (100 / 90)));
   const consensus = Math.min(100, (Math.log(1 + sameSideMembers) / Math.log(1 + 12)) * 100);
   const supportingFlow = Math.max(0, directionSign * netFlowUsd);
@@ -1018,7 +1125,14 @@ async function buildRow(
       memberSkill.fallback,
       memberSkill.sourceRecordIds.length ? memberSkill.sourceRecordIds : ids,
     ),
-    component('committee_sector_overlap', committeeScore, PIT_SCORE_WEIGHTS.committee_sector_overlap, sector ? 'computed' : 'missing', sector ? null : 'missing_sector_or_committees', ids),
+    component(
+      'committee_sector_overlap',
+      committeeScore,
+      PIT_SCORE_WEIGHTS.committee_sector_overlap,
+      sector ? 'sourced' : 'missing',
+      sector ? 'current_state_context_only_not_pit_scored' : 'missing_sector_or_committees',
+      ids,
+    ),
   ];
   const scored = scoreComponents(components);
   const score = scored.score;
@@ -1026,6 +1140,8 @@ async function buildRow(
   const price = await (priceCache.get(ticker) ?? priceCache.set(ticker, priceSeries(env, ticker)).get(ticker)!);
   const ref = txs.find((t) => t.company_name || t.cik || t.asset_class || t.sector) ?? txs[0];
   const includedDisclosures = txs.map((t) => ({
+    availabilitySource: availabilityFor(t).source,
+    availabilityPrecision: availabilityFor(t).precision,
     disclosureId: t.id,
     docId: t.doc_id,
     sourceUrl: t.source_url,
@@ -1079,12 +1195,16 @@ async function buildRow(
       netFlowUsd: Math.round(netFlowUsd),
       netSentiment: netSentiment(buyCount, sellCount),
       avgDisclosureLagDays: Number.isFinite(avgLagDays) ? round(avgLagDays, 2) : null,
+      availabilitySource: availability.source,
+      availabilityPrecision: availability.precision,
+      conservativeLabelEntryDate: availability.conservativeLabelEntryDate,
       sourceRecordIds: ids,
     },
     provenance: {
       scoreInputsCutoffAt: asOf,
-      scoreInputBasis: 'disclosures_available_at_or_before_asOf',
+      scoreInputBasis: 'disclosures_available_at_or_before_asOf; current-state ref metadata is marked context-only',
       amountBasis: 'STOCK Act bracket midpoint; open top tier uses floor',
+      currentStateMetadata: ['filers.party', 'filers.chamber', 'filers.committees', 'securities_ref.sector', 'securities_ref.cik'],
       sources: ['transactions', 'filings', 'filers', 'securities_ref', 'price_eod', 'spx_eod'],
     },
     includedDisclosures,
@@ -1103,9 +1223,11 @@ async function buildRow(
       mappingVersion: COMMITTEE_SECTOR_MAPPING_VERSION,
       confidence: sector && committees.length ? 0.75 : 0,
       legalConclusion: false,
+      scoringWeight: PIT_SCORE_WEIGHTS.committee_sector_overlap,
+      basis: 'current_state_metadata_context_only',
       note: 'Sector overlap is an analytical feature only; it is not a misconduct or conflict finding.',
     },
-    labels: buildLabels(ticker, asOfDate, price, spx, computedAt),
+    labels: buildLabels(ticker, asOfDate, availability.conservativeLabelEntryDate, availability, price, spx, computedAt),
     baselines: {
       noSignalUniverseRow: false,
       noSignalUniverseReason: 'No App B decision-universe input was supplied to this export.',
@@ -1234,20 +1356,34 @@ function applyPlacebo(rows: PitScoreRow[], type: PitPlacebo): PitScoreRow[] {
 export async function buildPitScoreExport(env: Env, q: PitScoreQuery, now = new Date()): Promise<PitScoreExportResult> {
   const generatedAt = now.toISOString();
   const txRows = await loadTransactions(env, q);
+  const sourceRowsMayBeTruncated = txRows.length >= transactionQueryLimit(q);
   const normalizedRows = txRows.map((row) => ({ ...row, ticker: row.ticker.toUpperCase() }));
   const groups = new Map<string, TxRow[]>();
   for (const row of normalizedRows) {
     const ticker = row.ticker;
     const asOf = disclosureAvailableAt(row);
     if (!asOf) continue;
-    if (!inOutputRange(q, asOf)) continue;
+    if (!inOutputRange(q, asOf, ticker)) continue;
     const key = `${ticker}|${asOf}`;
     (groups.get(key) ?? groups.set(key, []).get(key)!).push({ ...row, ticker });
   }
   const priceCache = new Map<string, Promise<PriceBar[]>>();
   const spx = await spxSeries(env);
   const baseRows: PitScoreRow[] = [];
-  for (const [key, rows] of groups) {
+  const sortedGroups = Array.from(groups.entries()).sort(([a], [b]) => {
+    const [ta, aa] = a.split('|');
+    const [tb, ab] = b.split('|');
+    return aa === ab ? ta.localeCompare(tb) : aa.localeCompare(ab);
+  });
+  const pageGroups = sortedGroups.slice(0, q.limit);
+  const nextCursor = (sortedGroups.length > q.limit || sourceRowsMayBeTruncated) && pageGroups.length
+    ? (() => {
+        const [lastKey] = pageGroups[pageGroups.length - 1];
+        const [ticker, asOf] = lastKey.split('|');
+        return encodeCursor(asOf, ticker);
+      })()
+    : null;
+  for (const [key, rows] of pageGroups) {
     if (baseRows.length >= q.limit) break;
     const [ticker, asOf] = key.split('|');
     baseRows.push(await buildRow(env, ticker, asOf, rows, normalizedRows, generatedAt, q, priceCache, spx));
@@ -1258,6 +1394,9 @@ export async function buildPitScoreExport(env: Env, q: PitScoreQuery, now = new 
     'Forward labels are outcomes and are not used in score inputs.',
     'CUSIP, ticker-change history, corporate-action vintage, and App B pre-Congress scan factors are null until source tables exist.',
   ];
+  if (sourceRowsMayBeTruncated) {
+    notes.push('The source transaction scan hit its safety cap; continue with pagination.nextCursor or use a narrower date range.');
+  }
   if (q.placebo === 'split_dividend_event_stress_subset') {
     notes.push('split_dividend_event_stress_subset returned no rows because no corporate-action event table exists yet.');
   }
@@ -1269,6 +1408,10 @@ export async function buildPitScoreExport(env: Env, q: PitScoreQuery, now = new 
     parameterManifest: parameterManifest(),
     placebosAvailable: PIT_PLACEBOS,
     rowCount: rows.length,
+    pagination: {
+      limit: q.limit,
+      nextCursor,
+    },
     rows,
     notes,
   };

@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MEMBER_SKILL_HORIZON_DAYS,
   MEMBER_SKILL_HORIZONS,
+  buildPitScoreExport,
   computePitMemberSkillFromRows,
   parsePitScoreQuery,
   pitScoreRowsToNdjson,
@@ -110,12 +111,49 @@ describe('parsePitScoreQuery', () => {
   it('validates date ranges and placebos', () => {
     expect(parsePitScoreQuery({ from: '2026-01-02', to: '2026-01-01' })).toMatchObject({ status: 400 });
     expect(parsePitScoreQuery({ placebo: 'bogus' })).toMatchObject({ status: 400 });
+    expect(parsePitScoreQuery({ source: 'bogus' })).toMatchObject({ status: 400 });
+    expect(parsePitScoreQuery({ minConf: '2' })).toMatchObject({ status: 400 });
     expect(parsePitScoreQuery({ ticker: 'aapl', limit: '999', format: 'ndjson', placebo: 'no_flow' })).toMatchObject({
       ticker: 'AAPL',
       limit: 500,
       format: 'ndjson',
       placebo: 'no_flow',
     });
+  });
+
+  it('parses cursors over asOf and ticker', () => {
+    expect(parsePitScoreQuery({ cursor: '2026-01-02T00:00:00.000Z~AAPL' })).toMatchObject({
+      cursor: { asOf: '2026-01-02T00:00:00.000Z', ticker: 'AAPL' },
+    });
+    expect(parsePitScoreQuery({ cursor: 'bad' })).toMatchObject({ status: 400 });
+  });
+});
+
+describe('buildPitScoreExport pagination', () => {
+  it('returns a nextCursor and continues after it', async () => {
+    const env = {
+      DB: fakeDb({
+        transactions: [
+          tx('tx1', 'AAPL', '2026-01-01T00:00:00.000Z'),
+          tx('tx2', 'MSFT', '2026-01-02T00:00:00.000Z'),
+        ],
+        price_eod: [],
+        spx_eod: [],
+      }),
+    };
+    const first = await buildPitScoreExport(env as never, { limit: 1, format: 'json', placebo: 'none', source: 'all' }, new Date('2026-03-01T00:00:00.000Z'));
+    expect(first.rows.map((r) => r.ticker)).toEqual(['AAPL']);
+    expect(first.pagination.nextCursor).toBe('2026-01-01T00:00:00.000Z~AAPL');
+
+    const second = await buildPitScoreExport(env as never, {
+      limit: 1,
+      format: 'json',
+      placebo: 'none',
+      source: 'all',
+      cursor: { asOf: '2026-01-01T00:00:00.000Z', ticker: 'AAPL' },
+    }, new Date('2026-03-01T00:00:00.000Z'));
+    expect(second.rows.map((r) => r.ticker)).toEqual(['MSFT']);
+    expect(second.pagination.nextCursor).toBeNull();
   });
 });
 
@@ -125,3 +163,55 @@ describe('pitScoreRowsToNdjson', () => {
     expect(pitScoreRowsToNdjson([{ a: 1 }, { b: 2 }] as never)).toBe('{"a":1}\n{"b":2}\n');
   });
 });
+
+function tx(id: string, ticker: string, firstSeenAt: string) {
+  return {
+    id,
+    doc_id: `doc-${id}`,
+    filer_id: `F-${id}`,
+    tx_date: firstSeenAt.slice(0, 10),
+    owner: 'Self',
+    asset_name: ticker,
+    ticker,
+    asset_type: 'STOCK',
+    asset_type_name: 'Stock',
+    tx_type: 'P',
+    amount_min: 1001,
+    amount_max: 15000,
+    is_option: 0,
+    raw_text: null,
+    confidence: 0.9,
+    source: 'primary',
+    created_at: firstSeenAt,
+    filed_date: firstSeenAt.slice(0, 10),
+    first_seen_at: firstSeenAt,
+    source_url: 'https://example.test/filing',
+    filing_chamber: 'house',
+    full_name: 'Test Member',
+    filer_chamber: 'house',
+    party: 'I',
+    state: 'NA',
+    committees: '[]',
+    company_name: ticker,
+    sector: null,
+    industry: null,
+    asset_class: 'equity',
+    cik: null,
+    exchange_short: 'NASDAQ',
+  };
+}
+
+function fakeDb(data: Record<string, Array<Record<string, unknown>>>) {
+  return {
+    prepare(sql: string) {
+      const stmt = {
+        bind: () => stmt,
+        async all<T>() {
+          const table = /FROM\s+(\w+)/i.exec(sql)?.[1] ?? '';
+          return { results: (data[table] ?? []) as T[] };
+        },
+      };
+      return stmt;
+    },
+  };
+}
