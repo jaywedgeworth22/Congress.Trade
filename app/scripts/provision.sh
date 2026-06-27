@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# provision.sh — one-shot Cloudflare resource provisioning for congress-feed.
+# provision.sh — one-shot Cloudflare backing-resource provisioning for Congress.Trade.
 #
 # Prereqs: `npx wrangler login` (or CLOUDFLARE_API_TOKEN set) and run from app/.
 # Creates D1 + KV + R2 + queues, patches wrangler.toml with the real IDs, and
 # applies migrations. Safe to re-run: existing resources are skipped.
+# The Worker service name is `congress-trade`; legacy backing resource names in
+# this script are intentional unless a resource migration is planned.
 #
 #   cd app && bash scripts/provision.sh
 set -uo pipefail

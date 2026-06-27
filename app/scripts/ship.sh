@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ship.sh — one-command deploy for congress-feed.
+# ship.sh — one-command production deploy for Congress.Trade.
 #
 # Deploys the Worker (uses your saved `wrangler login` — no API key needed),
 # then applies schema + optional data steps through the Worker's own database

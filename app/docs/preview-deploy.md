@@ -5,11 +5,11 @@ deploying `congress.trade`.
 
 The preview deployment is intentionally isolated:
 
-- Worker: `congress-feed-preview`
+- Worker: `congress-trade-preview`
 - Config: `app/wrangler.preview.toml` (generated locally, ignored by git)
-- Database: `congress-feed-preview-db`
-- R2 bucket: `congress-feed-preview-raw`
-- Queues: `congress-feed-preview-*`
+- Database: `congress-feed-preview-db` (legacy backing-resource name)
+- R2 bucket: `congress-feed-preview-raw` (legacy backing-resource name)
+- Queues: `congress-feed-preview-*` (legacy backing-resource names)
 - KV namespace: separate preview namespace
 - No custom-domain route and no cron trigger by default
 
@@ -38,9 +38,15 @@ The deploy script runs `npm run typecheck`, `npm test`, then:
 npx wrangler deploy --config wrangler.preview.toml
 ```
 
-Wrangler prints the `workers.dev` URL after a successful deploy. Use that URL to
-review branch work. Do not use `npm run deploy`, `npm run deploy:full`, or
-`scripts/ship.sh` for preview; those target production.
+Wrangler prints the `workers.dev` URL after a successful deploy, normally:
+
+```text
+https://congress-trade-preview.<your-workers-subdomain>.workers.dev
+```
+
+Use that URL to review branch work. Do not use `npm run deploy`,
+`npm run deploy:full`, or `scripts/ship.sh` for preview; those target
+production.
 
 ## Optional custom domain
 

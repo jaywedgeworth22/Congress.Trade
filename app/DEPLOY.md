@@ -1,15 +1,20 @@
-# Deploy runbook — congress-feed
+# Deploy runbook — Congress.Trade
 
 Cloudflare Workers service that ingests US congressional STOCK Act disclosures
 (House + Senate), extracts/normalizes trades, and pushes them to clients via
 webhook + SSE, with a dashboard and admin panel. This runbook takes a fresh
 checkout to a running deployment.
 
-`wrangler.toml` in this repository currently contains the live `congress.trade`
-custom domains and real Cloudflare resource IDs. Treat `npm run deploy`,
-`npm run deploy:full`, `scripts/ship.sh`, and remote D1 commands as production
-operations unless you have intentionally changed the config or selected another
-environment.
+`wrangler.toml` in this repository currently targets the production Worker
+service `congress-trade`, the live `congress.trade` custom domains, and real
+Cloudflare resource IDs. Treat `npm run deploy`, `npm run deploy:full`,
+`scripts/ship.sh`, and remote D1 commands as production operations unless you
+have intentionally changed the config or selected another environment.
+
+Note for agents: only the Worker service names were renamed to `congress-trade`
+and `congress-trade-preview`. Existing D1/R2/queue resources may still use
+legacy `congress-feed-*` names in config and provisioning docs until a deliberate
+resource migration happens.
 
 ## 0. Prerequisites
 - Node 18+ and npm.
