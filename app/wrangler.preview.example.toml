@@ -1,4 +1,4 @@
-name = "congress-feed-preview"
+name = "congress-trade-preview"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -6,6 +6,8 @@ workers_dev = true
 
 # Preview deliberately has no custom-domain routes and no cron trigger. It is
 # for branch review only; production remains configured in wrangler.toml.
+# Worker service name is `congress-trade-preview`. Backing preview resources may
+# still use original `congress-feed-preview-*` names unless intentionally migrated.
 
 [[d1_databases]]
 binding = "DB"
@@ -44,6 +46,6 @@ binding = "CONFIG_KV"
 id = "PREVIEW_KV_NAMESPACE_ID"
 
 [vars]
-APP_BASE_URL = "https://congress-feed-preview.<your-workers-subdomain>.workers.dev"
+APP_BASE_URL = "https://congress-trade-preview.<your-workers-subdomain>.workers.dev"
 STRIPE_MANAGED_PAYMENTS = "false"
 PREVIEW_DEPLOYMENT = "true"

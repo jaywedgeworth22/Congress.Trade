@@ -1,15 +1,20 @@
-# Deploy runbook — congress-feed
+# Deploy runbook — Congress.Trade
 
 Cloudflare Workers service that ingests US congressional STOCK Act disclosures
 (House + Senate), extracts/normalizes trades, and pushes them to clients via
 webhook + SSE, with a dashboard and admin panel. This runbook takes a fresh
 checkout to a running deployment.
 
-`wrangler.toml` in this repository currently contains the live `congress.trade`
-custom domains and real Cloudflare resource IDs. Treat `npm run deploy`,
-`npm run deploy:full`, `scripts/ship.sh`, and remote D1 commands as production
-operations unless you have intentionally changed the config or selected another
-environment.
+`wrangler.toml` in this repository currently targets the production Worker
+service `congress-trade`, the live `congress.trade` custom domains, and real
+Cloudflare resource IDs. Treat `npm run deploy`, `npm run deploy:full`,
+`scripts/ship.sh`, and remote D1 commands as production operations unless you
+have intentionally changed the config or selected another environment.
+
+Note for agents: only the Worker service names were renamed to `congress-trade`
+and `congress-trade-preview`. Existing D1/R2/queue resources may still use
+legacy `congress-feed-*` names in config and provisioning docs until a deliberate
+resource migration happens.
 
 ## 0. Prerequisites
 - Node 18+ and npm.
@@ -45,14 +50,15 @@ npx wrangler queues create congress-feed-delivery-dlq
 ```
 
 If you use `scripts/provision.sh`, read the script header first. It creates
-resources, patches placeholder IDs when present, and applies remote migrations.
+resources and patches placeholder IDs when present, but production schema still
+goes through `scripts/ship.sh` / `POST /api/admin/migrate`.
 
 ## 2. Apply the database schema
 ```bash
 # local (for `wrangler dev`)
 npx wrangler d1 migrations apply DB --local
 # production
-npx wrangler d1 migrations apply DB --remote
+ADMIN_TOKEN=... bash scripts/ship.sh
 ```
 This creates all tables and seeds `poll_config` row 1 with the default adaptive
 schedule (Mon–Fri 08–19 ET = 300s, evenings = 1200s, weekends = 3600s).
@@ -97,18 +103,18 @@ The functional code path stays the same; only batch size/ceiling changes.
 
 > **Migrations don't auto-apply.** Code auto-deploys (Cloudflare Workers
 > Builds on push to `main`), but D1 migrations do **not** run as part of that.
-> After any deploy that adds a migration, apply it or the new code will query
-> tables/columns that don't exist (→ HTTP 500). Two ways:
-> - `cd app && npx wrangler d1 migrations apply DB --remote`, **or**
-> - `curl -X POST https://<host>/api/admin/migrate -H "authorization: Bearer $ADMIN_TOKEN"`
->   — an idempotent endpoint that runs every `CREATE TABLE IF NOT EXISTS` / `ALTER`
->   (skips "duplicate column"/"already exists"), so it's safe to re-run and needs
->   no local checkout. Keep its statement list in `src/admin/routes.ts` in sync
->   when you add a migration file.
+> This account deliberately avoids `wrangler d1 migrations apply DB --remote`
+> because its remote migration log can lag the real schema and replay old
+> `ALTER TABLE` statements. Production schema is applied through the Worker
+> binding instead:
 >
-> `scripts/ship.sh` deploys and then calls the admin migration endpoint. Use it
-> when you deliberately want that production path. `npm run deploy:full` uses
-> remote Wrangler D1 migration first, then deploys.
+> - `ADMIN_TOKEN=... bash scripts/ship.sh`, or
+> - `curl -X POST https://<host>/api/admin/migrate -H "authorization: Bearer $ADMIN_TOKEN"`
+>
+> The admin migration endpoint is idempotent and skips "duplicate column" /
+> "already exists" cases. Keep its statement list in `src/admin/routes.ts` in
+> sync when you add a migration file. `npm run deploy:full` aliases `ship.sh`;
+> `npm run migrate:remote` is intentionally disabled.
 
 ## 4. (Optional) Seed ticker resolution
 The normalizer resolves tickers against the `securities_master` table; unresolved

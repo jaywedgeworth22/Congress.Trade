@@ -1,4 +1,4 @@
-# congress-feed
+# Congress.Trade
 
 Cloudflare Workers service that ingests US congressional **STOCK Act** stock-trade
 disclosures (House + Senate), extracts structured trade events, and pushes them to
@@ -13,6 +13,11 @@ clients via webhook / SSE / REST.
 > Next.js/PWA and SwiftUI app as peer clients over one backend client API and
 > command/status model, not as places to run scraping, provider credentials, or
 > MCP orchestration.
+>
+> Cloudflare Worker service names: production is `congress-trade`; preview is
+> `congress-trade-preview`. Some backing D1/R2/queue resources still use legacy
+> `congress-feed-*` names and should not be renamed without a coordinated
+> resource migration.
 
 ---
 
@@ -199,11 +204,12 @@ npm run deploy      # production Worker deploy using wrangler.toml
 
 Deployment is automated via **Cloudflare Workers Builds** (connected to this
 repo): pushes to `main` run `npm run build` then `npx wrangler deploy` with the
-**Root directory** set to `app`. The real D1 `database_id` and `CONFIG_KV` id are
-committed in `wrangler.toml`; the queues (`congress-feed-ingest`,
-`congress-feed-delivery`, + `*-dlq`) and the R2 bucket (`congress-feed-raw`) must
-already exist on the account. Runtime secrets are set out-of-band via
-`wrangler secret put` and are NOT committed.
+**Root directory** set to `app`. The production Worker service is
+`congress-trade`. The real D1 `database_id` and `CONFIG_KV` id are committed in
+`wrangler.toml`; the queues (`congress-feed-ingest`,
+`congress-feed-delivery`, + `*-dlq`) and the R2 bucket (`congress-feed-raw`) are
+legacy backing-resource names and must already exist on the account. Runtime
+secrets are set out-of-band via `wrangler secret put` and are NOT committed.
 
 Plain deploys do not apply D1 migrations. Use the deployment runbook before any
 schema change reaches production.

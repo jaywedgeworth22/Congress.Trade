@@ -7,6 +7,10 @@ This repo is worked by multiple agents. Read this before editing.
 - The runnable app is in `app/`, not the repository root.
 - `app/wrangler.toml` targets the real `congress.trade` Worker, custom domains,
   D1 database, KV namespace, R2 bucket, and queues.
+- Current Cloudflare Worker service names are `congress-trade` for production
+  and `congress-trade-preview` for preview. Some backing resources still use
+  legacy `congress-feed-*` names; do not rename D1/R2/queues unless explicitly
+  coordinating a resource migration.
 - Root files are supporting context:
   - `congress-trade-feed-design.md` is historical design/product context.
   - `congress_trade_watch.py` is a standalone local House PTR watcher prototype.

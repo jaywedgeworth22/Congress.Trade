@@ -32,7 +32,8 @@ npm run dev
 ```
 
 The default `npm run deploy` uses `app/wrangler.toml`, which currently points at
-the real `congress.trade` custom domains and production Cloudflare resources.
+the `congress-trade` Worker, the real `congress.trade` custom domains, and
+production Cloudflare resources. The preview Worker is `congress-trade-preview`.
 Do not deploy or run production scripts unless that is explicitly intended.
 
 ## Coordination
