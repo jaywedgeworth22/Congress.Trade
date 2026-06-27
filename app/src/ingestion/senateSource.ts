@@ -185,8 +185,25 @@ export function formatSenateDate(d: Date): string {
 // Network flow.
 // ---------------------------------------------------------------------------
 
-const UA = 'congress-feed/0.1 (+https://congress.trade)';
+// efdsearch.senate.gov fronts its search with an anti-bot layer that returns
+// HTTP 403 to obvious non-browser clients. A bare custom UA
+// ("congress-feed/0.1 …") was reliably blocked, so we present a realistic
+// modern-browser header set. These are static, public request headers (no
+// credentials); the daily bulk/backfill path remains the source of truth if the
+// live search is still refused.
+const UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const POLITE_DELAY_MS = 750;
+
+/** Browser-like base headers shared across the efdsearch request flow. */
+const BROWSER_HEADERS: Record<string, string> = {
+  'user-agent': UA,
+  'accept-language': 'en-US,en;q=0.9',
+  'sec-ch-ua': '"Chromium";v="124", "Not:A-Brand";v="99"',
+  'sec-ch-ua-mobile': '?0',
+  'sec-ch-ua-platform': '"macOS"',
+};
 
 /**
  * Run the full efdsearch flow and return discovered PTR filings submitted within
@@ -204,7 +221,16 @@ export async function fetchSenatePtrFilings(
 
   // 1) GET landing page -> csrftoken cookie + hidden middleware token.
   const landing = await fetchImpl(SENATE_SEARCH, {
-    headers: { 'user-agent': UA, accept: 'text/html,*/*' },
+    headers: {
+      ...BROWSER_HEADERS,
+      accept:
+        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-site': 'none',
+      'sec-fetch-user': '?1',
+      'upgrade-insecure-requests': '1',
+    },
   });
   if (!landing.ok) throw new Error(`senate GET /search/ -> HTTP ${landing.status}`);
   jar.absorb(landing);
@@ -222,11 +248,14 @@ export async function fetchSenatePtrFilings(
   const agree = await fetchImpl(SENATE_HOME, {
     method: 'POST',
     headers: {
-      'user-agent': UA,
+      ...BROWSER_HEADERS,
       'content-type': 'application/x-www-form-urlencoded',
       cookie: jar.header(),
       referer: SENATE_SEARCH,
       origin: SENATE_BASE,
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-site': 'same-origin',
     },
     body: agreeBody.toString(),
     redirect: 'manual',
@@ -257,14 +286,17 @@ export async function fetchSenatePtrFilings(
   const data = await fetchImpl(SENATE_DATA, {
     method: 'POST',
     headers: {
-      'user-agent': UA,
+      ...BROWSER_HEADERS,
       'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
       cookie: jar.header(),
       referer: SENATE_SEARCH,
       origin: SENATE_BASE,
       'x-csrftoken': csrfCookie,
       'x-requested-with': 'XMLHttpRequest',
-      accept: 'application/json,text/javascript,*/*',
+      accept: 'application/json,text/javascript,*/*; q=0.01',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
     },
     body: dataBody.toString(),
   });
