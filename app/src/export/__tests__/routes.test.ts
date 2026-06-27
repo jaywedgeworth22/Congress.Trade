@@ -115,6 +115,24 @@ describe('GET /api/export/bulk-snapshot — auth', () => {
   });
 });
 
+describe('GET /api/export/congress-pit-scores', () => {
+  it('401 without a token', async () => {
+    expect((await req('/congress-pit-scores', baseEnv())).status).toBe(401);
+  });
+
+  it('400 on an invalid date range before touching D1', async () => {
+    const res = await req('/congress-pit-scores?from=2026-02-01&to=2026-01-01', baseEnv(), TOKEN);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'from must be <= to' });
+  });
+
+  it('400 on an unknown placebo', async () => {
+    const res = await req('/congress-pit-scores?placebo=shuffle-everything', baseEnv(), TOKEN);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'unknown placebo' });
+  });
+});
+
 describe('GET /api/export/bulk-snapshot — validation', () => {
   it('400 on an unsupported format', async () => {
     expect((await req('/bulk-snapshot?format=csv', baseEnv(), TOKEN)).status).toBe(400);

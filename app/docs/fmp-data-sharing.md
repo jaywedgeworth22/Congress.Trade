@@ -257,6 +257,26 @@ Mapping to a typical `CongressTrade`:
 | `disclosedAt` | `filedDate` (date-only `YYYY-MM-DD`) |
 | `source` | `source` (`primary`｜`seed_dataset`) |
 
+## Point-in-time score export for historical validation
+
+For App B backtests, do **not** reconstruct congressional scores from the public
+UI analytics endpoints: those are presentation views and may use current-state
+aggregates. Use the token-gated PIT export instead:
+
+```
+GET https://congress.trade/api/export/congress-pit-scores?from=YYYY-MM-DD&to=YYYY-MM-DD&format=ndjson
+Headers: Authorization: Bearer <INGEST_TOKEN>
+```
+
+It returns one row per `(ticker, disclosureAvailableAt)` observation using the
+market-available disclosure timestamp, not the private trade date. It also
+supports null/placebo exports via `?placebo=...` for validation robustness:
+within-date score permutation, member shuffle, disclosure-date jitter, buy/sell
+flip, component ablations, future-shift leakage detection, and the currently
+empty split/dividend stress subset.
+
+Full contract: [`app/docs/pit-score-export.md`](pit-score-export.md).
+
 ## Ops / health
 
 - `GET /api/health` → `{ ok, db, time }` — liveness + D1 connectivity (`db:false`

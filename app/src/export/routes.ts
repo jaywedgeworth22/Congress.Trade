@@ -36,6 +36,11 @@ import {
   type SnapshotManifest,
   type SnapshotTableName,
 } from './snapshot';
+import {
+  buildPitScoreExport,
+  parsePitScoreQuery,
+  pitScoreRowsToNdjson,
+} from './pitScores';
 
 /** Env augmented with the scoped cross-app ingest token (mirrors admin/routes). */
 type ExportEnv = Env & { INGEST_TOKEN?: string };
@@ -90,6 +95,29 @@ function shapeManifest(manifest: SnapshotManifest, tables: SnapshotTableName[]):
 
 export function buildExportRouter(): Hono<{ Bindings: ExportEnv }> {
   const r = new Hono<{ Bindings: ExportEnv }>();
+
+  // --- GET /congress-pit-scores ------------------------------------------
+  // Token-gated point-in-time score export for App B historical validation.
+  // Emits one row per (ticker, disclosure availability timestamp) observation.
+  r.get('/congress-pit-scores', async (c) => {
+    if (!(await isAuthorized(c.env, c.req.header('authorization')))) {
+      return c.json({ error: 'unauthorized' }, 401);
+    }
+    const parsed = parsePitScoreQuery(c.req.query());
+    if ('error' in parsed) return c.json({ error: parsed.error }, parsed.status as 400);
+    const exportData = await buildPitScoreExport(c.env, parsed);
+    if (parsed.format === 'ndjson') {
+      return new Response(pitScoreRowsToNdjson(exportData.rows), {
+        headers: {
+          'content-type': 'application/x-ndjson; charset=utf-8',
+          'cache-control': 'private, max-age=60',
+          'x-score-version': exportData.scoreVersion,
+          'x-row-count': String(exportData.rowCount),
+        },
+      });
+    }
+    return c.json(exportData);
+  });
 
   // --- GET /bulk-snapshot -------------------------------------------------
   r.get('/bulk-snapshot', async (c) => {
