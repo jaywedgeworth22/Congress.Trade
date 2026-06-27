@@ -15,12 +15,22 @@ import { committeeConflict } from '../analytics/conflicts';
 import { TICKER_ALIASES } from '../extraction/tickerNormalize';
 import { pctChange } from '../prices/compute';
 
-export const PIT_SCORE_VERSION = 'congress-pit-v1';
+export const PIT_SCORE_VERSION = 'congress-pit-v2';
 export const TICKER_MAP_VERSION = 'ticker-normalize-v1';
 export const COMMITTEE_SECTOR_MAPPING_VERSION = 'committee-sector-v1';
 export const MEMBER_SKILL_VERSION = 'member-skill-pit-v1';
 export const MEMBER_SKILL_HORIZON_DAYS = 63;
+export const MEMBER_SKILL_HORIZONS = [
+  { key: '1m', days: 21, weight: 0.2 },
+  { key: '3m', days: 63, weight: 0.35 },
+  { key: '6m', days: 126, weight: 0.25 },
+  { key: '12m', days: 252, weight: 0.2 },
+] as const;
 export const LABEL_HORIZONS_DAYS = [1, 5, 21, 63, 126, 252] as const;
+export const CLUSTER_WINDOWS = [
+  { key: '21d_1m', label: '21d/1m', days: 21 },
+  { key: '63d_3m', label: '63d/3m', days: 63 },
+] as const;
 
 export const PIT_SCORE_WEIGHTS = {
   consensus: 0.35,
@@ -47,6 +57,8 @@ export const PIT_PLACEBOS = [
 export type PitPlacebo = (typeof PIT_PLACEBOS)[number];
 type Basis = 'sourced' | 'computed' | 'inferred' | 'missing';
 type Direction = 'BUY' | 'SELL' | 'MIXED' | null;
+type SkillBasis = 'filing' | 'trade';
+type SkillSide = 'buy' | 'sell';
 
 export interface PitScoreQuery {
   from?: string;
@@ -110,15 +122,24 @@ interface Component {
 
 interface MemberSkillSummary {
   skillScore: number | null;
+  filingAlpha: number | null;
+  tradeAlpha: number | null;
+  decayRatio: number | null;
   skillAsOf: string;
   skillScoredThrough: string | null;
   trainingWindow: string;
+  trainingWindowDetails: Record<string, unknown>;
   horizonDays: number;
+  horizonWeights: Record<string, number>;
   scoredCount: number;
   wins: number;
   winRate: number | null;
   avgExcessReturn: number | null;
   shrinkagePrior: { alpha: number; beta: number };
+  dispersionWinsorization: Record<string, unknown>;
+  byBasis: Record<SkillBasis, Record<string, unknown>>;
+  byDirection: Record<SkillSide, Record<string, unknown>>;
+  horizons: Record<string, Record<string, unknown>>;
   fallback: 'activity_prominence' | null;
   fallbackScore: number | null;
   sourceRecordIds: string[];
@@ -247,10 +268,24 @@ function parameterManifest(): Record<string, unknown> {
     memberSkillVersion: MEMBER_SKILL_VERSION,
     weights: PIT_SCORE_WEIGHTS,
     memberSkill: {
-      horizonDays: MEMBER_SKILL_HORIZON_DAYS,
+      primaryHorizonDays: MEMBER_SKILL_HORIZON_DAYS,
+      horizons: MEMBER_SKILL_HORIZONS,
+      horizonWeights: horizonWeightsRecord(),
+      bases: ['filing_date_basis', 'trade_date_basis'],
+      directions: ['buy', 'sell'],
       noLeakageRule:
-        'At asOf, skill uses only prior disclosures whose label horizon close exists at or before asOf.',
-      shrinkagePrior: { alpha: 2.5, beta: 2.5 },
+        'At asOf, skill uses only prior disclosures whose horizon close exists at or before asOf; trade-date basis is computed only after the disclosure is market-available.',
+      shrinkagePrior: { alpha: 2.5, beta: 2.5, meaning: 'Beta prior on directional win rate; alpha mean is shrunk toward 0 by sample weighting.' },
+      dispersionWinsorization:
+        'Sample standard deviation is reported on raw direction-adjusted excess returns; returns are winsorized at 5th/95th percentile per basis/direction/horizon when n >= 20.',
+    },
+    clusterConsensus: {
+      windows: CLUSTER_WINDOWS,
+      perMemberCapsAndDiminishingReturns: {
+        maxContributionPerMemberPerDirectionPerWindow: 1,
+        amountWeight: '0.5 + 0.5 * min(1, log10(1 + STOCK Act bracket midpoint) / 6)',
+        diminishingReturn: 'log1p(dominant distinct members) / log1p(12)',
+      },
     },
     labels: {
       horizonsDays: LABEL_HORIZONS_DAYS,
@@ -317,8 +352,9 @@ async function loadTransactions(env: Env, q: PitScoreQuery): Promise<TxRow[]> {
   ];
   const params: SqlParam[] = [];
   if (q.from) {
+    const contextFrom = addDays(q.from, -63);
     where.push(`substr(${ASOF_SQL}, 1, 10) >= ?`);
-    params.push(q.from);
+    params.push(contextFrom);
   }
   if (q.to) {
     where.push(`substr(${ASOF_SQL}, 1, 10) <= ?`);
@@ -398,6 +434,161 @@ export interface PitSkillTrainingRow {
   filerId: string;
   ticker: string;
   disclosureAvailableAt: string;
+  txDate?: string | null;
+  side?: TxType;
+}
+
+interface SkillObservation {
+  id: string;
+  basis: SkillBasis;
+  side: SkillSide;
+  horizonKey: string;
+  horizonDays: number;
+  horizonWeight: number;
+  alpha: number;
+  exitDate: string;
+}
+
+interface SkillSegmentStats {
+  alpha: number | null;
+  rawAlpha: number | null;
+  scoredCount: number;
+  wins: number;
+  winRate: number | null;
+  dispersionStddev: number | null;
+  winsorLower: number | null;
+  winsorUpper: number | null;
+  skillScoredThrough: string | null;
+  sourceRecordIds: string[];
+}
+
+const SKILL_BASES: SkillBasis[] = ['filing', 'trade'];
+const SKILL_SIDES: SkillSide[] = ['buy', 'sell'];
+
+function horizonWeightsRecord(): Record<string, number> {
+  return Object.fromEntries(MEMBER_SKILL_HORIZONS.map((h) => [h.key, h.weight]));
+}
+
+function sideFromTxType(txType: TxType | undefined): SkillSide | null {
+  if (txType === 'P') return 'buy';
+  if (txType === 'S') return 'sell';
+  return null;
+}
+
+function quantile(sorted: number[], p: number): number | null {
+  if (!sorted.length) return null;
+  if (sorted.length === 1) return sorted[0];
+  const idx = (sorted.length - 1) * p;
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  const frac = idx - lo;
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * frac;
+}
+
+function mean(values: number[]): number | null {
+  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : null;
+}
+
+function stddev(values: number[]): number | null {
+  if (values.length < 2) return null;
+  const m = mean(values);
+  if (m == null) return null;
+  const variance = values.reduce((s, v) => s + Math.pow(v - m, 2), 0) / (values.length - 1);
+  return Math.sqrt(variance);
+}
+
+function winsorized(values: number[]): { values: number[]; lower: number | null; upper: number | null } {
+  if (values.length < 20) return { values, lower: null, upper: null };
+  const sorted = [...values].sort((a, b) => a - b);
+  const lower = quantile(sorted, 0.05);
+  const upper = quantile(sorted, 0.95);
+  if (lower == null || upper == null) return { values, lower: null, upper: null };
+  return { values: values.map((v) => Math.max(lower, Math.min(upper, v))), lower, upper };
+}
+
+function summarizeSkillObservations(observations: SkillObservation[]): SkillSegmentStats {
+  const values = observations.map((o) => o.alpha).filter((v) => Number.isFinite(v));
+  const rawAlpha = mean(values);
+  const clipped = winsorized(values);
+  const alpha = mean(clipped.values);
+  const wins = clipped.values.filter((v) => v > 0).length;
+  const sourceRecordIds = Array.from(new Set(observations.map((o) => o.id))).sort();
+  const scoredThrough = observations.reduce<string | null>(
+    (max, o) => (!max || o.exitDate > max ? o.exitDate : max),
+    null,
+  );
+  return {
+    alpha: alpha == null ? null : round(alpha, 6),
+    rawAlpha: rawAlpha == null ? null : round(rawAlpha, 6),
+    scoredCount: sourceRecordIds.length,
+    wins,
+    winRate: clipped.values.length ? round(wins / clipped.values.length, 4) : null,
+    dispersionStddev: values.length >= 2 ? round(stddev(values) as number, 6) : null,
+    winsorLower: clipped.lower == null ? null : round(clipped.lower, 6),
+    winsorUpper: clipped.upper == null ? null : round(clipped.upper, 6),
+    skillScoredThrough: scoredThrough,
+    sourceRecordIds,
+  };
+}
+
+function aggregateAlpha(observations: SkillObservation[], basis?: SkillBasis, side?: SkillSide): number | null {
+  const filtered = observations.filter((o) => (!basis || o.basis === basis) && (!side || o.side === side));
+  let total = 0;
+  let weight = 0;
+  for (const o of filtered) {
+    total += o.alpha * o.horizonWeight;
+    weight += o.horizonWeight;
+  }
+  return weight > 0 ? round(total / weight, 6) : null;
+}
+
+function skillScoreFromAlpha(alpha: number | null, observations: SkillObservation[]): number | null {
+  if (alpha == null) return null;
+  const values = observations.map((o) => o.alpha);
+  const wins = values.filter((v) => v > 0).length;
+  const prior = { alpha: 2.5, beta: 2.5 };
+  const shrunkWinRate = values.length
+    ? (wins + prior.alpha) / (values.length + prior.alpha + prior.beta)
+    : 0.5;
+  const alphaScore = Math.max(0, Math.min(100, 50 + (alpha / 0.2) * 50));
+  return Math.round(0.6 * alphaScore + 0.4 * shrunkWinRate * 100);
+}
+
+function evaluateSkillObservation(
+  row: PitSkillTrainingRow,
+  basis: SkillBasis,
+  side: SkillSide,
+  horizon: (typeof MEMBER_SKILL_HORIZONS)[number],
+  pricesByTicker: Map<string, PriceBar[]>,
+  spx: PriceBar[],
+  asOfDate: string,
+): SkillObservation | null {
+  const entryDate = basis === 'filing' ? dateOnly(row.disclosureAvailableAt) : dateOnly(row.txDate);
+  if (!entryDate) return null;
+  const targetDate = addDays(entryDate, horizon.days);
+  if (targetDate > asOfDate) return null;
+  const px = pricesByTicker.get(row.ticker) ?? [];
+  const entryIdx = idxOnOrBefore(px, entryDate);
+  const exitIdx = idxOnOrAfter(px, targetDate);
+  const spxEntryIdx = idxOnOrBefore(spx, entryDate);
+  const spxExitIdx = idxOnOrAfter(spx, targetDate);
+  if (entryIdx < 0 || exitIdx < 0 || spxEntryIdx < 0 || spxExitIdx < 0) return null;
+  const exitDate = px[exitIdx].date;
+  if (exitDate > asOfDate || spx[spxExitIdx].date > asOfDate) return null;
+  const assetReturn = pctChange(px[entryIdx].close, px[exitIdx].close);
+  const spxReturn = pctChange(spx[spxEntryIdx].close, spx[spxExitIdx].close);
+  if (assetReturn == null || spxReturn == null) return null;
+  const rawExcess = assetReturn - spxReturn;
+  return {
+    id: row.id,
+    basis,
+    side,
+    horizonKey: horizon.key,
+    horizonDays: horizon.days,
+    horizonWeight: horizon.weight,
+    alpha: side === 'sell' ? -rawExcess : rawExcess,
+    exitDate,
+  };
 }
 
 export function computePitMemberSkillFromRows(
@@ -407,66 +598,144 @@ export function computePitMemberSkillFromRows(
   asOfDate: string,
   activityFallbackScore: number,
 ): MemberSkillSummary {
-  const excesses: number[] = [];
-  const sourceRecordIds: string[] = [];
-  let scoredThrough: string | null = null;
+  const observations: SkillObservation[] = [];
   for (const row of rows) {
-    const entryDate = dateOnly(row.disclosureAvailableAt);
-    if (!entryDate) continue;
-    const targetDate = addDays(entryDate, MEMBER_SKILL_HORIZON_DAYS);
-    if (targetDate > asOfDate) continue;
-    const px = pricesByTicker.get(row.ticker) ?? [];
-    const entryIdx = idxOnOrBefore(px, entryDate);
-    const exitIdx = idxOnOrAfter(px, targetDate);
-    const spxEntryIdx = idxOnOrBefore(spx, entryDate);
-    const spxExitIdx = idxOnOrAfter(spx, targetDate);
-    if (entryIdx < 0 || exitIdx < 0 || spxEntryIdx < 0 || spxExitIdx < 0) continue;
-    const exitDate = px[exitIdx].date;
-    if (exitDate > asOfDate || spx[spxExitIdx].date > asOfDate) continue;
-    const assetReturn = pctChange(px[entryIdx].close, px[exitIdx].close);
-    const spxReturn = pctChange(spx[spxEntryIdx].close, spx[spxExitIdx].close);
-    if (assetReturn == null || spxReturn == null) continue;
-    excesses.push(assetReturn - spxReturn);
-    sourceRecordIds.push(row.id);
-    if (!scoredThrough || exitDate > scoredThrough) scoredThrough = exitDate;
+    const side = sideFromTxType(row.side);
+    if (!side) continue;
+    for (const basis of SKILL_BASES) {
+      for (const horizon of MEMBER_SKILL_HORIZONS) {
+        const observation = evaluateSkillObservation(row, basis, side, horizon, pricesByTicker, spx, asOfDate);
+        if (observation) observations.push(observation);
+      }
+    }
   }
-  const wins = excesses.filter((x) => x > 0).length;
-  const avgExcess = excesses.length ? excesses.reduce((a, b) => a + b, 0) / excesses.length : null;
   const prior = { alpha: 2.5, beta: 2.5 };
-  if (excesses.length === 0) {
+  const uniqueSourceRecordIds = Array.from(new Set(observations.map((o) => o.id))).sort();
+  const filingObservations = observations.filter((o) => o.basis === 'filing');
+  const filingAlpha = aggregateAlpha(observations, 'filing');
+  const tradeAlpha = aggregateAlpha(observations, 'trade');
+  const decayRatio = filingAlpha != null && tradeAlpha != null && Math.abs(tradeAlpha) > 0.000001
+    ? round(filingAlpha / tradeAlpha, 4)
+    : null;
+  const filingStats = summarizeSkillObservations(filingObservations);
+  const allStats = summarizeSkillObservations(observations);
+  const skillScore = skillScoreFromAlpha(filingAlpha, filingObservations);
+
+  const byBasis = Object.fromEntries(
+    SKILL_BASES.map((basis) => {
+      const basisObs = observations.filter((o) => o.basis === basis);
+      return [
+        basis,
+        {
+          ...summarizeSkillObservations(basisObs),
+          alpha: aggregateAlpha(observations, basis),
+          directions: Object.fromEntries(
+            SKILL_SIDES.map((side) => [side, summarizeSkillObservations(basisObs.filter((o) => o.side === side))]),
+          ),
+        },
+      ];
+    }),
+  ) as unknown as Record<SkillBasis, Record<string, unknown>>;
+
+  const byDirection = Object.fromEntries(
+    SKILL_SIDES.map((side) => {
+      const sideObs = observations.filter((o) => o.side === side);
+      return [
+        side,
+        {
+          ...summarizeSkillObservations(sideObs),
+          filingAlpha: aggregateAlpha(observations, 'filing', side),
+          tradeAlpha: aggregateAlpha(observations, 'trade', side),
+          bases: Object.fromEntries(
+            SKILL_BASES.map((basis) => [basis, summarizeSkillObservations(sideObs.filter((o) => o.basis === basis))]),
+          ),
+        },
+      ];
+    }),
+  ) as unknown as Record<SkillSide, Record<string, unknown>>;
+
+  const horizons = Object.fromEntries(
+    MEMBER_SKILL_HORIZONS.map((h) => {
+      const hObs = observations.filter((o) => o.horizonKey === h.key);
+      return [
+        h.key,
+        {
+          days: h.days,
+          weight: h.weight,
+          filingAlpha: aggregateAlpha(hObs, 'filing'),
+          tradeAlpha: aggregateAlpha(hObs, 'trade'),
+          byBasis: Object.fromEntries(SKILL_BASES.map((basis) => [basis, summarizeSkillObservations(hObs.filter((o) => o.basis === basis))])),
+          byDirection: Object.fromEntries(SKILL_SIDES.map((side) => [side, summarizeSkillObservations(hObs.filter((o) => o.side === side))])),
+        },
+      ];
+    }),
+  ) as Record<string, Record<string, unknown>>;
+
+  if (observations.length === 0) {
     return {
       skillScore: null,
+      filingAlpha: null,
+      tradeAlpha: null,
+      decayRatio: null,
       skillAsOf: `${asOfDate}T00:00:00.000Z`,
       skillScoredThrough: null,
       trainingWindow: 'all_prior_matured_disclosures',
+      trainingWindowDetails: {
+        disclosureCutoff: `${asOfDate}T00:00:00.000Z`,
+        includes: 'prior disclosed transactions only',
+        excludes: 'outcomes whose horizon close is after asOf',
+      },
       horizonDays: MEMBER_SKILL_HORIZON_DAYS,
+      horizonWeights: horizonWeightsRecord(),
       scoredCount: 0,
       wins: 0,
       winRate: null,
       avgExcessReturn: null,
       shrinkagePrior: prior,
+      dispersionWinsorization: {
+        dispersion: 'sample_standard_deviation_of_direction_adjusted_excess_returns',
+        winsorization: 'two_sided_5_95_percentile_per_basis_direction_horizon_when_n_at_least_20',
+        minSamplesForWinsorization: 20,
+      },
+      byBasis,
+      byDirection,
+      horizons,
       fallback: 'activity_prominence',
       fallbackScore: Math.round(activityFallbackScore),
       sourceRecordIds: [],
     };
   }
-  const shrunkWinRate = (wins + prior.alpha) / (excesses.length + prior.alpha + prior.beta);
-  const excessScore = avgExcess == null ? 50 : Math.max(0, Math.min(100, 50 + (avgExcess / 0.2) * 50));
-  const skillScore = Math.round(0.7 * shrunkWinRate * 100 + 0.3 * excessScore);
   return {
     skillScore,
+    filingAlpha,
+    tradeAlpha,
+    decayRatio,
     skillAsOf: `${asOfDate}T00:00:00.000Z`,
-    skillScoredThrough: scoredThrough,
+    skillScoredThrough: allStats.skillScoredThrough,
     trainingWindow: 'all_prior_matured_disclosures',
+    trainingWindowDetails: {
+      disclosureCutoff: `${asOfDate}T00:00:00.000Z`,
+      includes: 'prior disclosed transactions only',
+      excludes: 'outcomes whose horizon close is after asOf',
+    },
     horizonDays: MEMBER_SKILL_HORIZON_DAYS,
-    scoredCount: excesses.length,
-    wins,
-    winRate: round(wins / excesses.length, 4),
-    avgExcessReturn: avgExcess == null ? null : round(avgExcess, 4),
+    horizonWeights: horizonWeightsRecord(),
+    scoredCount: uniqueSourceRecordIds.length,
+    wins: filingStats.wins,
+    winRate: filingStats.winRate,
+    avgExcessReturn: filingAlpha,
     shrinkagePrior: prior,
+    dispersionWinsorization: {
+      dispersion: 'sample_standard_deviation_of_direction_adjusted_excess_returns',
+      winsorization: 'two_sided_5_95_percentile_per_basis_direction_horizon_when_n_at_least_20',
+      minSamplesForWinsorization: 20,
+    },
+    byBasis,
+    byDirection,
+    horizons,
     fallback: null,
     fallbackScore: null,
-    sourceRecordIds,
+    sourceRecordIds: uniqueSourceRecordIds,
   };
 }
 
@@ -486,7 +755,7 @@ async function memberSkillFor(
   }
   const where = [
     't.deprecated_at IS NULL',
-    "t.tx_type = 'P'",
+    "t.tx_type IN ('P', 'S')",
     't.is_option = 0',
     "t.ticker IS NOT NULL AND t.ticker <> ''",
     `COALESCE(f.first_seen_at, CASE WHEN f.filed_date IS NOT NULL THEN f.filed_date || 'T00:00:00.000Z' END, t.created_at) < ?`,
@@ -501,9 +770,9 @@ async function memberSkillFor(
     where.push('t.confidence >= ?');
     params.push(q.minConf);
   }
-  const rows = await all<{ id: string; filer_id: string; ticker: string; disclosure_available_at: string }>(
+  const rows = await all<{ id: string; filer_id: string; ticker: string; tx_date: string | null; tx_type: TxType; disclosure_available_at: string }>(
     env.DB,
-    `SELECT t.id, t.filer_id, t.ticker, ` +
+    `SELECT t.id, t.filer_id, t.ticker, t.tx_date, t.tx_type, ` +
       `COALESCE(f.first_seen_at, CASE WHEN f.filed_date IS NOT NULL THEN f.filed_date || 'T00:00:00.000Z' END, t.created_at) AS disclosure_available_at ` +
       `FROM transactions t LEFT JOIN filings f ON f.doc_id = t.doc_id ` +
       `WHERE ${where.join(' AND ')} ORDER BY disclosure_available_at ASC LIMIT 1000`,
@@ -518,6 +787,8 @@ async function memberSkillFor(
       id: r.id,
       filerId: r.filer_id,
       ticker: r.ticker,
+      txDate: r.tx_date,
+      side: r.tx_type,
       disclosureAvailableAt: r.disclosure_available_at,
     })),
     map,
@@ -575,11 +846,134 @@ function component(name: Component['name'], value: number | null, weight: number
   return { name, value: value == null ? null : Math.round(value), weight, basis, fallback, sourceRecordIds: ids };
 }
 
+function disclosureAvailableAt(row: Pick<TxRow, 'first_seen_at' | 'filed_date' | 'created_at'>): string | null {
+  return isoTimestamp(row.first_seen_at) ?? isoTimestamp(row.filed_date) ?? isoTimestamp(row.created_at);
+}
+
+function inOutputRange(q: PitScoreQuery, asOf: string): boolean {
+  const d = dateOnly(asOf);
+  if (!d) return false;
+  if (q.from && d < q.from) return false;
+  if (q.to && d > q.to) return false;
+  return true;
+}
+
+function countBy(values: Array<string | null | undefined>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const v of values) {
+    if (!v) continue;
+    out[v] = (out[v] ?? 0) + 1;
+  }
+  return out;
+}
+
+function weightedClusterContribution(row: TxRow): number {
+  const conf = Math.max(0.1, Math.min(1, finiteOrNull(row.confidence) ?? 0.75));
+  const amountWeight = Math.min(1, Math.log10(1 + midpoint(row)) / 6);
+  return conf * (0.5 + 0.5 * amountWeight);
+}
+
+function buildClusterWindow(ticker: string, asOf: string, allRows: TxRow[], days: number): Record<string, unknown> {
+  const endDate = dateOnly(asOf) ?? '9999-12-31';
+  const startDate = addDays(endDate, -(days - 1));
+  const rows = allRows.filter((row) => {
+    if (row.ticker.toUpperCase() !== ticker) return false;
+    const available = disclosureAvailableAt(row);
+    const d = dateOnly(available);
+    return !!available && !!d && available <= asOf && d >= startDate && d <= endDate;
+  });
+  const buyMemberIds = new Set(rows.filter((r) => r.tx_type === 'P' && r.filer_id).map((r) => r.filer_id as string));
+  const sellMemberIds = new Set(rows.filter((r) => r.tx_type === 'S' && r.filer_id).map((r) => r.filer_id as string));
+  const allMemberIds = new Set(rows.filter((r) => r.filer_id).map((r) => r.filer_id as string));
+  const memberSideWeights = new Map<string, number>();
+  for (const row of rows) {
+    const side = row.tx_type === 'P' ? 'buy' : row.tx_type === 'S' ? 'sell' : null;
+    const member = row.filer_id ?? row.id;
+    if (!side) continue;
+    const key = `${side}:${member}`;
+    memberSideWeights.set(key, Math.min(1, (memberSideWeights.get(key) ?? 0) + weightedClusterContribution(row)));
+  }
+  let buyWeighted = 0;
+  let sellWeighted = 0;
+  for (const [key, value] of memberSideWeights) {
+    if (key.startsWith('buy:')) buyWeighted += value;
+    if (key.startsWith('sell:')) sellWeighted += value;
+  }
+  const dominantDistinct = Math.max(buyMemberIds.size, sellMemberIds.size);
+  const totalWeighted = buyWeighted + sellWeighted;
+  const agreementRatio = allMemberIds.size ? dominantDistinct / allMemberIds.size : null;
+  const breadth = Math.log(1 + dominantDistinct) / Math.log(1 + 12);
+  const qualityWeightedClusterScore = totalWeighted > 0
+    ? Math.round(100 * (Math.max(buyWeighted, sellWeighted) / totalWeighted) * breadth)
+    : null;
+  return {
+    days,
+    startDate,
+    endDate,
+    tradeCount: rows.length,
+    directionalDistinctMemberCounts: {
+      buy: buyMemberIds.size,
+      sell: sellMemberIds.size,
+      net: buyMemberIds.size - sellMemberIds.size,
+    },
+    qualityWeightedClusterScore,
+    agreementRatio: agreementRatio == null ? null : round(agreementRatio, 4),
+    weightedDirectionTotals: {
+      buy: round(buyWeighted, 4),
+      sell: round(sellWeighted, 4),
+    },
+    partyBreadth: {
+      distinct: Object.keys(countBy(rows.map((r) => r.party))).length,
+      counts: countBy(rows.map((r) => r.party)),
+    },
+    chamberBreadth: {
+      distinct: Object.keys(countBy(rows.map((r) => r.filer_chamber ?? r.filing_chamber))).length,
+      counts: countBy(rows.map((r) => r.filer_chamber ?? r.filing_chamber)),
+    },
+  };
+}
+
+function buildClusterConsensus(ticker: string, asOf: string, currentRows: TxRow[], allRows: TxRow[], memberSkill: MemberSkillSummary): Record<string, unknown> {
+  const buyCount = currentRows.filter((t) => t.tx_type === 'P').length;
+  const sellCount = currentRows.filter((t) => t.tx_type === 'S').length;
+  const buyMembers = new Set(currentRows.filter((t) => t.tx_type === 'P' && t.filer_id).map((t) => t.filer_id as string));
+  const sellMembers = new Set(currentRows.filter((t) => t.tx_type === 'S' && t.filer_id).map((t) => t.filer_id as string));
+  const allMembers = new Set(currentRows.filter((t) => t.filer_id).map((t) => t.filer_id as string));
+  const direction = directionFrom(buyCount, sellCount, currentRows.reduce((s, t) => s + (t.tx_type === 'P' ? midpoint(t) : t.tx_type === 'S' ? -midpoint(t) : 0), 0));
+  const sameSideMembers = direction === 'SELL' ? sellMembers.size : direction === 'BUY' ? buyMembers.size : allMembers.size;
+  const netFlowUsd = currentRows.reduce((s, t) => s + (t.tx_type === 'P' ? midpoint(t) : t.tx_type === 'S' ? -midpoint(t) : 0), 0);
+  const windows = Object.fromEntries(
+    CLUSTER_WINDOWS.map((w) => [w.key, { label: w.label, ...buildClusterWindow(ticker, asOf, allRows, w.days) }]),
+  );
+  return {
+    directionalTradeCount: buyCount + sellCount,
+    directionalMemberCount: allMembers.size,
+    clusterMemberCount: sameSideMembers,
+    buyCount,
+    sellCount,
+    netFlowUsd: Math.round(netFlowUsd),
+    netSentiment: netSentiment(buyCount, sellCount),
+    confidence: Math.min(1, round((currentRows.reduce((s, t) => s + num(t.confidence), 0) / Math.max(1, currentRows.length)) * Math.min(1, allMembers.size / 3), 4)),
+    windows,
+    perMemberCapsAndDiminishingReturns: {
+      maxContributionPerMemberPerDirectionPerWindow: 1,
+      amountWeight: '0.5 + 0.5 * min(1, log10(1 + STOCK Act bracket midpoint) / 6)',
+      diminishingReturn: 'quality score multiplies dominant side weight share by log1p(dominant distinct members) / log1p(12)',
+    },
+    coverageQuality: {
+      transactionConfidenceMean: round(currentRows.reduce((s, t) => s + num(t.confidence), 0) / Math.max(1, currentRows.length), 4),
+      memberSkillScoredCount: memberSkill.scoredCount,
+      windowContextDaysLoaded: Math.max(...CLUSTER_WINDOWS.map((w) => w.days)),
+    },
+  };
+}
+
 async function buildRow(
   env: Env,
   ticker: string,
   asOf: string,
   txs: TxRow[],
+  allTxRows: TxRow[],
   computedAt: string,
   q: PitScoreQuery,
   priceCache: Map<string, Promise<PriceBar[]>>,
@@ -649,6 +1043,7 @@ async function buildRow(
     cancelFlag: false,
   }));
   const aliasesFrom = Object.entries(TICKER_ALIASES).filter(([, to]) => to === ticker).map(([from]) => from);
+  const clusterConsensus = buildClusterConsensus(ticker, asOf, txs, allTxRows, memberSkill);
   return {
     observationId: stableObservationId(PIT_SCORE_VERSION, ticker, asOf, ids, 'none'),
     ticker,
@@ -695,17 +1090,9 @@ async function buildRow(
     includedDisclosures,
     memberSkill,
     clusterConsensus: {
-      directionalTradeCount: buyCount + sellCount,
-      directionalMemberCount: allMembers.size,
-      clusterMemberCount: sameSideMembers,
-      buyCount,
-      sellCount,
-      netFlowUsd: Math.round(netFlowUsd),
-      netSentiment: netSentiment(buyCount, sellCount),
-      confidence: Math.min(1, round((txs.reduce((s, t) => s + num(t.confidence), 0) / Math.max(1, txs.length)) * Math.min(1, allMembers.size / 3), 4)),
+      ...clusterConsensus,
       coverageQuality: {
-        transactionConfidenceMean: round(txs.reduce((s, t) => s + num(t.confidence), 0) / Math.max(1, txs.length), 4),
-        memberSkillScoredCount: memberSkill.scoredCount,
+        ...(clusterConsensus.coverageQuality as Record<string, unknown>),
         hasSector: !!sector,
       },
     },
@@ -847,11 +1234,13 @@ function applyPlacebo(rows: PitScoreRow[], type: PitPlacebo): PitScoreRow[] {
 export async function buildPitScoreExport(env: Env, q: PitScoreQuery, now = new Date()): Promise<PitScoreExportResult> {
   const generatedAt = now.toISOString();
   const txRows = await loadTransactions(env, q);
+  const normalizedRows = txRows.map((row) => ({ ...row, ticker: row.ticker.toUpperCase() }));
   const groups = new Map<string, TxRow[]>();
-  for (const row of txRows) {
-    const ticker = row.ticker.toUpperCase();
-    const asOf = isoTimestamp(row.first_seen_at) ?? isoTimestamp(row.filed_date) ?? isoTimestamp(row.created_at);
+  for (const row of normalizedRows) {
+    const ticker = row.ticker;
+    const asOf = disclosureAvailableAt(row);
     if (!asOf) continue;
+    if (!inOutputRange(q, asOf)) continue;
     const key = `${ticker}|${asOf}`;
     (groups.get(key) ?? groups.set(key, []).get(key)!).push({ ...row, ticker });
   }
@@ -861,7 +1250,7 @@ export async function buildPitScoreExport(env: Env, q: PitScoreQuery, now = new 
   for (const [key, rows] of groups) {
     if (baseRows.length >= q.limit) break;
     const [ticker, asOf] = key.split('|');
-    baseRows.push(await buildRow(env, ticker, asOf, rows, generatedAt, q, priceCache, spx));
+    baseRows.push(await buildRow(env, ticker, asOf, rows, normalizedRows, generatedAt, q, priceCache, spx));
   }
   const rows = applyPlacebo(baseRows, q.placebo);
   const notes = [

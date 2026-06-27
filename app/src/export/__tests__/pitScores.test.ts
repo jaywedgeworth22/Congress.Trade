@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MEMBER_SKILL_HORIZON_DAYS,
+  MEMBER_SKILL_HORIZONS,
   computePitMemberSkillFromRows,
   parsePitScoreQuery,
   pitScoreRowsToNdjson,
@@ -32,8 +33,8 @@ describe('computePitMemberSkillFromRows', () => {
     ]);
     const skill = computePitMemberSkillFromRows(
       [
-        { id: 'old', filerId: 'F1', ticker: 'AAPL', disclosureAvailableAt: '2026-01-01T00:00:00.000Z' },
-        { id: 'immature', filerId: 'F1', ticker: 'AAPL', disclosureAvailableAt: '2026-02-10T00:00:00.000Z' },
+        { id: 'old', filerId: 'F1', ticker: 'AAPL', txDate: '2026-01-01', side: 'P', disclosureAvailableAt: '2026-01-01T00:00:00.000Z' },
+        { id: 'immature', filerId: 'F1', ticker: 'AAPL', txDate: '2026-02-20', side: 'P', disclosureAvailableAt: '2026-02-20T00:00:00.000Z' },
       ],
       new Map([['AAPL', px]]),
       spx,
@@ -42,10 +43,40 @@ describe('computePitMemberSkillFromRows', () => {
     );
 
     expect(MEMBER_SKILL_HORIZON_DAYS).toBe(63);
+    expect(MEMBER_SKILL_HORIZONS.map((h) => h.key)).toEqual(['1m', '3m', '6m', '12m']);
     expect(skill.scoredCount).toBe(1);
     expect(skill.sourceRecordIds).toEqual(['old']);
     expect(skill.skillScoredThrough).toBe('2026-03-06');
+    expect(skill.filingAlpha).toBeGreaterThan(0);
+    expect(skill.tradeAlpha).toBeGreaterThan(0);
+    expect(skill.horizons['3m'].filingAlpha as number).toBeGreaterThan(0);
+    expect(skill.byDirection.buy.filingAlpha as number).toBeGreaterThan(0);
     expect(skill.fallback).toBeNull();
+  });
+
+  it('treats sale skill as positive when the asset underperforms after disclosure', () => {
+    const px = prices([
+      ['2026-01-01', 100],
+      ['2026-01-25', 90],
+      ['2026-03-06', 80],
+    ]);
+    const spx = prices([
+      ['2026-01-01', 1000],
+      ['2026-01-25', 1000],
+      ['2026-03-06', 1000],
+    ]);
+    const skill = computePitMemberSkillFromRows(
+      [{ id: 'sale', filerId: 'F1', ticker: 'AAPL', txDate: '2026-01-01', side: 'S', disclosureAvailableAt: '2026-01-01T00:00:00.000Z' }],
+      new Map([['AAPL', px]]),
+      spx,
+      '2026-03-10',
+      42,
+    );
+
+    expect(skill.byDirection.sell.filingAlpha as number).toBeGreaterThan(0);
+    const oneMonth = skill.horizons['1m'] as { byDirection: { sell: { alpha: number } } };
+    expect(oneMonth.byDirection.sell.alpha).toBeGreaterThan(0);
+    expect(skill.sourceRecordIds).toEqual(['sale']);
   });
 
   it('falls back to activity prominence when no matured labels exist', () => {
@@ -58,7 +89,7 @@ describe('computePitMemberSkillFromRows', () => {
       ['2026-03-06', 1020],
     ]);
     const skill = computePitMemberSkillFromRows(
-      [{ id: 'immature', filerId: 'F1', ticker: 'AAPL', disclosureAvailableAt: '2026-02-10T00:00:00.000Z' }],
+      [{ id: 'immature', filerId: 'F1', ticker: 'AAPL', txDate: '2026-03-01', side: 'P', disclosureAvailableAt: '2026-03-01T00:00:00.000Z' }],
       new Map([['AAPL', px]]),
       spx,
       '2026-03-10',
@@ -67,6 +98,8 @@ describe('computePitMemberSkillFromRows', () => {
 
     expect(skill.scoredCount).toBe(0);
     expect(skill.skillScore).toBeNull();
+    expect(skill.filingAlpha).toBeNull();
+    expect(skill.tradeAlpha).toBeNull();
     expect(skill.fallback).toBe('activity_prominence');
     expect(skill.fallbackScore).toBe(37);
     expect(skill.sourceRecordIds).toEqual([]);

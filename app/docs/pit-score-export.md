@@ -35,7 +35,7 @@ a raw disclosure field and is never the score timestamp.
 
 ## Score Inputs
 
-The score version is `congress-pit-v1`.
+The score version is `congress-pit-v2`.
 
 Weights:
 
@@ -64,12 +64,82 @@ Member skill is point-in-time. At each observation `asOf`, it uses only prior
 disclosures for the involved filers where the evaluation horizon had already
 matured before that `asOf`.
 
-Current member-skill horizon:
+Member skill is split along three axes:
 
-- `63` calendar days after the prior disclosure availability date.
+- basis: filing-date basis and trade-date basis
+- direction: buy and sell
+- horizon: `1m`, `3m`, `6m`, `12m`
+
+Current member-skill horizons and weights:
+
+```json
+{
+  "1m": { "days": 21, "weight": 0.20 },
+  "3m": { "days": 63, "weight": 0.35 },
+  "6m": { "days": 126, "weight": 0.25 },
+  "12m": { "days": 252, "weight": 0.20 }
+}
+```
+
+Top-level `memberSkill` includes:
+
+- `skillScore`
+- `filingAlpha`
+- `tradeAlpha`
+- `decayRatio`
+- `skillAsOf`
+- `skillScoredThrough`
+- `trainingWindow`
+- `trainingWindowDetails`
+- `horizonWeights`
+- `scoredCount`
+- `shrinkagePrior`
+- `dispersionWinsorization`
+- `byBasis`
+- `byDirection`
+- `horizons`
+- `sourceRecordIds`
+
+`filingAlpha` is the direction-adjusted excess return measured from the market
+availability date. `tradeAlpha` is the same calculation measured from the
+reported trade date, but only after that disclosure was market-available and
+only when the evaluation horizon had matured before `asOf`. The score component
+uses filing-date alpha first because that is the tradable, market-available
+basis.
+
+For sales, alpha is direction-adjusted: underperformance after a disclosed sale
+counts as positive sale skill. Dispersion is reported as sample standard
+deviation of direction-adjusted excess returns. Winsorization is per
+basis/direction/horizon at the 5th/95th percentile when there are at least 20
+observations; smaller samples are left un-winsorized and still carry the method
+metadata.
 
 If no matured labels exist, `skillScore` is null and the component falls back to
 `activity_prominence`. This is marked as `basis:"inferred"`, not computed skill.
+
+## Cluster Consensus
+
+`clusterConsensus` keeps the original current-observation counts and now also
+exports rolling market-available disclosure windows:
+
+- `21d_1m`
+- `63d_3m`
+
+Each window includes:
+
+- `directionalDistinctMemberCounts`: buy, sell, net
+- `qualityWeightedClusterScore`
+- `agreementRatio`
+- `partyBreadth`
+- `chamberBreadth`
+- `weightedDirectionTotals`
+- `tradeCount`, `startDate`, `endDate`
+
+Per-member cap and diminishing-return assumptions are included under
+`clusterConsensus.perMemberCapsAndDiminishingReturns`. Each member can contribute
+at most `1.0` per direction per window. Contribution is quality-weighted by
+transaction confidence and bracket midpoint, then the cluster score applies a
+log diminishing return to dominant-side distinct member count.
 
 ## Labels
 

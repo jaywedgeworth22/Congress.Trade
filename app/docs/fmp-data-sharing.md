@@ -269,8 +269,10 @@ Headers: Authorization: Bearer <INGEST_TOKEN>
 ```
 
 It returns one row per `(ticker, disclosureAvailableAt)` observation using the
-market-available disclosure timestamp, not the private trade date. It also
-supports null/placebo exports via `?placebo=...` for validation robustness:
+market-available disclosure timestamp, not the private trade date. Member skill
+is point-in-time and split by filing-date vs trade-date basis, buy vs sell side,
+and 1/3/6/12m horizons; cluster fields include both 21d/1m and 63d/3m windows.
+It also supports null/placebo exports via `?placebo=...` for validation robustness:
 within-date score permutation, member shuffle, disclosure-date jitter, buy/sell
 flip, component ablations, future-shift leakage detection, and the currently
 empty split/dividend stress subset.
