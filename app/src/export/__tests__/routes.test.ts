@@ -115,6 +115,46 @@ describe('GET /api/export/bulk-snapshot — auth', () => {
   });
 });
 
+describe('GET /api/export/congress-pit-scores', () => {
+  it('401 without a token', async () => {
+    expect((await req('/congress-pit-scores', baseEnv())).status).toBe(401);
+  });
+
+  it('400 on an invalid date range before touching D1', async () => {
+    const res = await req('/congress-pit-scores?from=2026-02-01&to=2026-01-01', baseEnv(), TOKEN);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'from must be <= to' });
+  });
+
+  it('400 on an unknown placebo', async () => {
+    const res = await req('/congress-pit-scores?placebo=shuffle-everything', baseEnv(), TOKEN);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'unknown placebo' });
+  });
+
+  it('400 on invalid source and minConf filters', async () => {
+    expect((await req('/congress-pit-scores?source=bogus', baseEnv(), TOKEN)).status).toBe(400);
+    expect((await req('/congress-pit-scores?minConf=2', baseEnv(), TOKEN)).status).toBe(400);
+  });
+
+  it('returns an empty JSON export with pagination metadata', async () => {
+    const res = await req('/congress-pit-scores?from=2026-01-01&to=2026-01-31', baseEnv(), TOKEN);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rowCount: number; pagination: { nextCursor: string | null } };
+    expect(body.rowCount).toBe(0);
+    expect(body.pagination.nextCursor).toBeNull();
+  });
+
+  it('returns NDJSON with score headers', async () => {
+    const res = await req('/congress-pit-scores?format=ndjson', baseEnv(), TOKEN);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/x-ndjson');
+    expect(res.headers.get('x-score-version')).toBe('congress-pit-v2');
+    expect(res.headers.get('x-row-count')).toBe('0');
+    expect(await res.text()).toBe('');
+  });
+});
+
 describe('GET /api/export/bulk-snapshot — validation', () => {
   it('400 on an unsupported format', async () => {
     expect((await req('/bulk-snapshot?format=csv', baseEnv(), TOKEN)).status).toBe(400);

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# provision.sh — one-shot Cloudflare resource provisioning for congress-feed.
+# provision.sh — one-shot Cloudflare backing-resource provisioning for Congress.Trade.
 #
 # Prereqs: `npx wrangler login` (or CLOUDFLARE_API_TOKEN set) and run from app/.
-# Creates D1 + KV + R2 + queues, patches wrangler.toml with the real IDs, and
-# applies migrations. Safe to re-run: existing resources are skipped.
+# Creates D1 + KV + R2 + queues and patches wrangler.toml with the real IDs.
+# Safe to re-run: existing resources are skipped. Production schema is applied
+# after deploy through scripts/ship.sh, not Wrangler remote D1 migrations.
+# The Worker service name is `congress-trade`; legacy backing resource names in
+# this script are intentional unless a resource migration is planned.
 #
 #   cd app && bash scripts/provision.sh
 set -uo pipefail
@@ -45,8 +48,9 @@ for q in congress-feed-ingest congress-feed-delivery congress-feed-ingest-dlq co
   $WRANGLER queues create "$q" 2>&1 | sed 's/^/   /' || true
 done
 
-say "Apply D1 migrations (remote)"
-$WRANGLER d1 migrations apply DB --remote 2>&1 | sed 's/^/   /'
+say "Skip remote D1 migrations"
+echo "   This account applies production schema through scripts/ship.sh / POST /api/admin/migrate."
+echo "   After provisioning secrets, run: ADMIN_TOKEN=... bash scripts/ship.sh"
 
 say "Done. Remaining manual steps:"
 cat <<'EOF'
@@ -57,8 +61,8 @@ cat <<'EOF'
    2. (optional) Seed ticker resolution:
         node scripts/seed_securities.mjs && \
           npx wrangler d1 execute DB --remote --file=scripts/securities_master.sql
-   3. Deploy:
-        npm run deploy
+   3. Deploy + apply schema:
+        ADMIN_TOKEN=... bash scripts/ship.sh
    4. Backfill history (dry run first):
         curl -X POST https://<host>/api/admin/backfill -H 'authorization: Bearer <ADMIN_TOKEN>' \
              -H 'content-type: application/json' -d '{"dryRun":true}'

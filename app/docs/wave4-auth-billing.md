@@ -125,14 +125,13 @@ panels work on the subdomain with no token to paste.
 ## 5. Apply migrations, deploy, smoke-test
 
 ```bash
-# migrations 0003 (users) + 0004 (billing)
-npx wrangler d1 migrations apply DB --remote
-# …or, if the CLI's remote D1 auth is fussy, hit the idempotent endpoint:
-#   curl -X POST https://<APP_BASE_URL>/api/admin/migrate -H "authorization: Bearer $ADMIN_TOKEN"
-
 npm run typecheck && npm run test
-npm run deploy
+ADMIN_TOKEN=... bash scripts/ship.sh
 ```
+
+`ship.sh` deploys the Worker and applies the idempotent `POST /api/admin/migrate`
+path through the Worker binding. Do not use remote Wrangler D1 migrations on this
+account.
 
 Smoke test:
 - `GET /auth/me` → `{ "user": null, "entitlement": { "premium": false, … } }`
