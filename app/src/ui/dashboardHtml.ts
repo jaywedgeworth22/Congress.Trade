@@ -1948,7 +1948,7 @@ function updateFeedCountMsg(shown) {
 }
 
 /* ---- resizable feed columns (drag the right edge of a header) ---- */
-var COL_WIDTH_KEY = 'feed-col-widths-v4';
+var COL_WIDTH_KEY = 'feed-col-widths-v5';
 var colResizeInit = false;
 function loadColWidths() { try { return JSON.parse(localStorage.getItem(COL_WIDTH_KEY) || '{}') || {}; } catch (e) { return {}; } }
 function saveColWidths(w) { try { localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w)); } catch (e) {} }
@@ -1994,7 +1994,7 @@ function initColumnResize() {
   // compact default (Asset fits the longest name otherwise) — short entries then
   // show in full, long ones clip to an ellipsis, and any column stays draggable.
   var DEFAULT_CAP = {
-    asset: 180,
+    asset: estimatedColWidth('asset', 96, 86, 112),
     member: estimatedColWidth('member', 220, 160, 286)
   };
   for (var i = 0; i < ths.length; i++) {

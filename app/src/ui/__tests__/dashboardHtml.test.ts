@@ -162,8 +162,8 @@ describe('DASHBOARD_HTML', () => {
   it('uses published timing, tighter asset defaults, and source links in drawers', () => {
     expect(DASHBOARD_HTML).toContain("var sortKey = 'published'");
     expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v2'");
-    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v4'");
-    expect(DASHBOARD_HTML).toContain('asset: 180');
+    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v5'");
+    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 96, 86, 112)");
     expect(DASHBOARD_HTML).toContain("p.set('sort', 'published')");
     expect(DASHBOARD_HTML).toContain("p.set('memberName', m)");
     expect(DASHBOARD_HTML).toContain('function handleFeedTextFilter(');
