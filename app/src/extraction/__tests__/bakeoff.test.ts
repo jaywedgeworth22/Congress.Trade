@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   computeConsensusAgreement,
   extractXaiResponseText,
+  parseLlamaParseMarkdown,
   parseMistralOcrResponse,
   summarizeModels,
   type BakeoffCandidate,
@@ -139,6 +140,38 @@ describe('parseMistralOcrResponse', () => {
 
   it('throws when there is neither an annotation nor a JSON block', () => {
     expect(() => parseMistralOcrResponse({ pages: [{ markdown: 'plain text only' }] })).toThrow(/no document_annotation/);
+  });
+});
+
+describe('parseLlamaParseMarkdown', () => {
+  const txJson = '[{"assetName":"Apple Inc.","ticker":"AAPL","txType":"P","amountRange":"$1,001 - $15,000","txDate":"2026-05-05","owner":"self","assetType":"ST","isOption":false}]';
+
+  it('extracts a fenced ```json block', () => {
+    const md = `Some OCR preamble.\n\`\`\`json\n${txJson}\n\`\`\`\n`;
+    const rows = parseLlamaParseMarkdown(md);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ ticker: 'AAPL', txType: 'P', amountMin: 1001, amountMax: 15000 });
+  });
+
+  it('extracts a fenced ``` block without the json tag', () => {
+    const md = `\`\`\`\n${txJson}\n\`\`\``;
+    expect(parseLlamaParseMarkdown(md)[0].ticker).toBe('AAPL');
+  });
+
+  it('falls back to a bare JSON array when no fenced block is present', () => {
+    const md = `Here are the transactions:\n${txJson}\nEnd of output.`;
+    expect(parseLlamaParseMarkdown(md)[0].ticker).toBe('AAPL');
+  });
+
+  it('parses multiple transactions', () => {
+    const multi = '[{"assetName":"AAPL","ticker":"AAPL","txType":"P","amountRange":"$1,001 - $15,000"},{"assetName":"MSFT","ticker":"MSFT","txType":"S","amountRange":"$15,001 - $50,000"}]';
+    const rows = parseLlamaParseMarkdown(`\`\`\`json\n${multi}\n\`\`\``);
+    expect(rows).toHaveLength(2);
+    expect(rows[1].ticker).toBe('MSFT');
+  });
+
+  it('throws when no JSON array is found in the markdown', () => {
+    expect(() => parseLlamaParseMarkdown('Plain text with no JSON at all.')).toThrow(/no JSON array/);
   });
 });
 

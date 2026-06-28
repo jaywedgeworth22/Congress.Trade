@@ -425,6 +425,8 @@ export interface Env {
   MISTRAL_API_KEY?: string;
   /** xAI API key — Grok (Files API → grok-4.3) candidate in the extractor bake-off. */
   XAI_API_KEY?: string;
+  /** LlamaIndex Cloud API key — LlamaParse OCR + structured extraction candidate. */
+  LLAMAINDEX_API_KEY?: string;
   /** 'true' enables the per-minute autonomous cross-vendor agreement → auto-publish pass. */
   AGREEMENT_AUTOPUBLISH_ENABLED?: string;
   /** Agreement model A as "provider:model" (default mistral:mistral-ocr-latest). */

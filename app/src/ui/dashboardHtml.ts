@@ -286,6 +286,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   @media (min-width: 601px) and (max-width: 980px) { .drawer-panel { width: 560px; } }
   /* Let the feed toolbar wrap instead of overflowing on tablet widths. */
   @media (min-width: 721px) and (max-width: 900px) { .toolbar { flex-wrap: wrap; } .toolbar input, .toolbar select { flex: 1 1 160px; } }
+  @media (min-width: 1080px) { #trKpis { grid-template-columns: repeat(6,minmax(0,1fr)); } }
   .est, .est-money { color: var(--text-dim); }
   .est-money::first-letter { font-size: .82em; vertical-align: .3em; margin-right: .5px; }
   .pdot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; vertical-align:middle; background: var(--text-dim); }
@@ -512,6 +513,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-feed > .grid-cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; overflow:visible; margin:0 0 10px; padding:0; }
     #view-feed > .grid-cards .card { min-width:0; padding:10px 11px; border-radius:8px; }
     .grid-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; overflow:visible; margin:0 0 14px; padding:0; }
+    #trKpis { grid-template-columns:repeat(3,minmax(0,1fr)); }
     .grid-cards .card { min-width:0; padding:11px 12px; border-radius:10px; }
     .card .k { font-size:11px; line-height:1.25; }
     .card .v { font-size:18px; }
@@ -1561,6 +1563,13 @@ function fmtDuration(sec) {
   return d + 'd ' + h + 'h';
 }
 
+/* Human latency from milliseconds: 850ms, 4s, 2m 30s, 1h 5m. */
+function fmtMs(ms) {
+  if (ms == null) return '—';
+  if (ms < 1000) return ms + 'ms';
+  return fmtDuration(Math.round(ms / 1000));
+}
+
 /* ---- light / dark theme (per-visitor preference) ---- */
 function applyTheme(t) {
   if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
@@ -2417,7 +2426,7 @@ function modelsSummaryHtml(models) {
     var conf = (typeof m.avgConfidence === 'number') ? Math.round(m.avgConfidence * 100) + '%' : '—';
     var label = m.provider + ':' + m.model;
     var color = m.ok ? '#1a7f37' : '#c0362c';
-    var title = label + ' · ' + (m.ok ? (m.rowCount + ' rows, conf ' + conf + (m.latencyMs ? ', ' + m.latencyMs + 'ms' : '')) : ('ERROR: ' + (m.error || 'failed')));
+    var title = label + ' · ' + (m.ok ? (m.rowCount + ' rows, conf ' + conf + (m.latencyMs ? ', ' + fmtMs(m.latencyMs) : '')) : ('ERROR: ' + (m.error || 'failed')));
     return '<span title="' + esc(title) + '" style="display:inline-block;margin:1px 3px 1px 0;padding:0 5px;border-radius:8px;font-size:11px;border:1px solid ' + color + ';color:' + color + '">' +
       esc(m.provider) + ' ' + (m.ok ? esc(conf) : 'ERR') + '</span>';
   }).join('');
@@ -2476,7 +2485,7 @@ function modelsTableHtml(models) {
       '<td>' + (m.ok ? 'ok' : '<span style="color:#c0362c">ERR</span>') + '</td>' +
       '<td style="text-align:right">' + (m.ok ? m.rowCount : '—') + '</td>' +
       '<td style="text-align:right">' + (m.ok ? esc(conf) : '—') + '</td>' +
-      '<td style="text-align:right">' + (m.latencyMs != null ? m.latencyMs + 'ms' : '—') + '</td>' +
+      '<td style="text-align:right">' + fmtMs(m.latencyMs) + '</td>' +
       (m.error ? '<td class="muted">' + esc(String(m.error).slice(0, 80)) + '</td>' : '<td></td>') + '</tr>';
   }).join('');
   return '<table style="font-size:12px;width:100%"><thead><tr><th>Model</th><th>Kind</th><th>OK</th><th style="text-align:right">Rows</th><th style="text-align:right">Conf</th><th style="text-align:right">Latency</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table>';
@@ -2493,7 +2502,7 @@ function viewReadings(docId) {
       if (target) target.innerHTML = runs.map(function (run) {
         var conf = (typeof run.avgConfidence === 'number') ? Math.round(run.avgConfidence * 100) + '%' : '—';
         var header = '<div style="margin:8px 0 2px"><strong>' + esc(run.provider + ':' + run.model) + '</strong> ' +
-          '<span class="muted">· ' + (run.ok ? (run.rowCount + ' rows · conf ' + conf + (run.latencyMs ? ' · ' + run.latencyMs + 'ms' : '')) : ('ERROR: ' + esc(String(run.error || 'failed')))) + '</span></div>';
+          '<span class="muted">· ' + (run.ok ? (run.rowCount + ' rows · conf ' + conf + (run.latencyMs ? ' · ' + fmtMs(run.latencyMs) : '')) : ('ERROR: ' + esc(String(run.error || 'failed')))) + '</span></div>';
         var rowsHtml = (run.rows && run.rows.length)
           ? '<table style="font-size:12px;width:100%"><thead><tr><th>Ticker</th><th>Asset</th><th>Type</th><th>Date</th><th style="text-align:right">Amt min</th><th style="text-align:right">Amt max</th></tr></thead><tbody>' +
             run.rows.map(function (t) {
@@ -3125,7 +3134,7 @@ function loadTrClusters() {
     box.innerHTML = cs.map(function (c) {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) { return memberAvatarHtml(m.fullName, m.photoUrl); }).join('');
       var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
-      var parties = 'D ' + c.parties.D + ' · R ' + c.parties.R + (c.parties.O ? ' · O ' + c.parties.O : '');
+      var parties = c.parties.D + ' Democrats, ' + c.parties.R + ' Republicans' + (c.parties.O ? ', ' + c.parties.O + ' Other' : '');
       var bip = (c.parties.D > 0 && c.parties.R > 0) ? ' <span class="chip" title="Both parties traded">· bipartisan</span>' : '';
       var range = dateText(c.firstSeen) + (c.lastSeen && c.lastSeen !== c.firstSeen ? ' → ' + dateText(c.lastSeen) : '');
       return '<div class="ccard clickable" data-ticker="' + esc(c.ticker) + '">' +
