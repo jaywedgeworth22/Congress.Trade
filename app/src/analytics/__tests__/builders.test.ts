@@ -235,7 +235,7 @@ describe('conviction realized-skill inputs', () => {
 });
 
 describe('buildMemberPerformanceLeaderboardQuery', () => {
-  it('anchors excess return at the filing date, buys only, options excluded, small-N guarded', () => {
+  it('anchors annualized excess return at the filing date, buys only, options excluded, small-N guarded', () => {
     const q = buildMemberPerformanceLeaderboardQuery({ window: 'all', minTrades: 5, limit: 10 });
     expect(q.sql).toContain('JOIN tx_performance p ON p.tx_id = t.id');
     // Excess uses the FILING anchors, not the trade-date ones.
@@ -246,9 +246,12 @@ describe('buildMemberPerformanceLeaderboardQuery', () => {
     expect(q.sql).toContain('SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1');
     expect(q.sql).toContain("t.tx_type = 'P'");
     expect(q.sql).toContain('t.is_option = 0');
+    expect(q.sql).toContain("julianday('now') - julianday(COALESCE(f.filed_date, f.first_seen_at, t.tx_date))");
+    expect(q.sql).toContain('AS avg_annualized_excess');
+    expect(q.sql).toContain('AS avg_excess');
     expect(q.sql).toContain('GROUP BY t.filer_id');
     expect(q.sql).toContain('HAVING trade_count >= 5');
-    expect(q.sql).toContain('ORDER BY avg_excess DESC');
+    expect(q.sql).toContain('ORDER BY avg_annualized_excess DESC');
   });
 
   it('defaults and clamps the small-N guard + limit', () => {

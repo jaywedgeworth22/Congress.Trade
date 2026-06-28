@@ -160,6 +160,18 @@ export function mapTxType(raw: string | undefined): TxType {
   return 'P';
 }
 
+function isUnknownSeedTxType(raw: string | undefined): boolean {
+  const t = (raw ?? '').toLowerCase().trim();
+  return !t || t === '--' || t === 'n/a' || t === 'na' || t === 'unknown';
+}
+
+function isScannedPdfPlaceholder(raw: string | undefined): boolean {
+  const t = (raw ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  return t.includes('this filing was disclosed via scanned pdf') ||
+    t.includes('use link in ptr_link column to view the pdf') ||
+    t.includes('pdf disclosed filing');
+}
+
 /** Normalize a raw owner string to the Owner union, or null when absent/unknown. */
 export function mapOwner(raw: string | undefined): Owner | null {
   const o = (raw ?? '').toLowerCase().trim();
@@ -280,6 +292,9 @@ export function mapRecordToTransaction(
   resolve: TickerResolver,
 ): Transaction | null {
   const assetName = sanitizeAssetName(rec.asset_description);
+  if (isScannedPdfPlaceholder(rec.asset_description)) return null;
+  if ((rec.asset_type ?? '').trim().toLowerCase() === 'pdf disclosed filing') return null;
+  if (isUnknownSeedTxType(rec.type)) return null;
   const rawTicker = normalizeTicker(rec.ticker);
   if (!assetName && !rawTicker) return null;
 
