@@ -160,3 +160,29 @@ npm test
 
 For deployment/config changes, also inspect `app/wrangler.toml`, relevant docs,
 and whether migrations need to be applied separately.
+
+## Cursor Cloud specific instructions
+
+The VM startup update script runs `bash scripts/cloud-setup.sh` (idempotent:
+`npm ci` in `app/` + applies local D1 migrations). After it runs, the dev
+environment is ready; do not re-install deps to start services.
+
+Durable, non-obvious notes for running/testing locally (all from `app/`):
+
+- Local dev is keyless. `wrangler dev` (`npm run dev`, serves on
+  `http://localhost:8787`) emulates D1/R2/KV/Queues/cron in-process — no
+  Cloudflare login or API keys are needed to boot, typecheck, or test. Run it
+  under tmux for long-lived sessions.
+- `wrangler dev` reads vars from `app/.dev.vars` (gitignored) and `[vars]` in
+  `wrangler.toml`, NOT from the OS environment. The update script merges
+  known env vars into `.dev.vars`; if you add a var later, re-run
+  `bash scripts/cloud-setup.sh` to merge it.
+- Admin/ingest routes (`/api/admin/*`) fail closed. For local testing only, set
+  `ADMIN_OPEN_IN_DEV="true"` in `app/.dev.vars` to open them.
+- The cron `scheduled()` handler does NOT auto-fire in `wrangler dev`. Trigger
+  it manually: `curl "http://localhost:8787/cdn-cgi/handler/scheduled"`.
+- Queue consumers run inside the same `wrangler dev` process. Ingest is async:
+  e.g. `POST /api/admin/backfill {"chambers":["senate"],"limit":N}` enqueues
+  work; poll `GET /api/transactions` a few seconds later to see normalized rows.
+  The Senate backfill default source (GitHub mirror) needs outbound network.
+- Quick smoke test: `GET /api/health` returns `{"ok":true,"db":true,...}`.

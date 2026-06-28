@@ -12,6 +12,7 @@
 
 import type { Env } from '../shared/types';
 import { all, run } from '../shared/db';
+import type { SqlParam } from '../shared/db';
 import { mergeRefs, remainingBudget } from './compute';
 import { buildFmpProvider } from './fmp';
 import { buildSecProvider } from './sec';
@@ -232,10 +233,13 @@ export async function upsertSecurityRef(env: Env, ref: SecurityRef): Promise<voi
  * FMP/SEC enrichment to complete (CIK, exchange, country, …). is_etf/is_adr and
  * source are preserved on conflict (set only when first inserting the row).
  */
-export async function importSecurityRef(env: Env, ref: SecurityRef): Promise<void> {
-  await run(
-    env.DB,
-    `INSERT INTO securities_ref (
+/**
+ * Non-destructive upsert SQL for an imported (shared) SecurityRef. Extracted as
+ * a constant so both the single-row path (importSecurityRef) and the batched
+ * import path (prepareImportSecurityRef + DB.batch in the import route) reuse
+ * exactly the same statement.
+ */
+const IMPORT_SECURITY_REF_SQL = `INSERT INTO securities_ref (
        ticker, company_name, sector, industry, asset_class, is_etf, is_adr,
        country, state_hq, state_of_incorp, exchange, exchange_short, currency,
        market_cap, market_cap_bucket, shares_outstanding, ipo_date, cik, sic_code, sic_description, source
@@ -257,14 +261,30 @@ export async function importSecurityRef(env: Env, ref: SecurityRef): Promise<voi
        ipo_date=COALESCE(excluded.ipo_date, securities_ref.ipo_date),
        cik=COALESCE(excluded.cik, securities_ref.cik),
        sic_code=COALESCE(excluded.sic_code, securities_ref.sic_code),
-       sic_description=COALESCE(excluded.sic_description, securities_ref.sic_description)`,
-    [
-      ref.ticker, ref.companyName, ref.sector, ref.industry, ref.assetClass,
-      ref.isEtf ? 1 : 0, ref.isAdr ? 1 : 0, ref.country, ref.stateHq, ref.stateOfIncorp,
-      ref.exchange, ref.exchangeShort, ref.currency, ref.marketCap, ref.marketCapBucket,
-      ref.sharesOutstanding ?? null, ref.ipoDate, ref.cik, ref.sicCode, ref.sicDescription, ref.source,
-    ],
-  );
+       sic_description=COALESCE(excluded.sic_description, securities_ref.sic_description)`;
+
+function importSecurityRefBindings(ref: SecurityRef): SqlParam[] {
+  return [
+    ref.ticker, ref.companyName, ref.sector, ref.industry, ref.assetClass,
+    ref.isEtf ? 1 : 0, ref.isAdr ? 1 : 0, ref.country, ref.stateHq, ref.stateOfIncorp,
+    ref.exchange, ref.exchangeShort, ref.currency, ref.marketCap, ref.marketCapBucket,
+    ref.sharesOutstanding ?? null, ref.ipoDate, ref.cik, ref.sicCode, ref.sicDescription, ref.source,
+  ];
+}
+
+/**
+ * Bound, ready-to-execute statement for one imported SecurityRef. Returning the
+ * prepared statement (instead of awaiting it) lets the import route collect many
+ * refs and flush them through a single `DB.batch(...)` per chunk — a sequential
+ * `await` per row was the dominant cause of "Worker exceeded CPU time limit" and
+ * "D1 overloaded" errors on /api/admin/securities/import.
+ */
+export function prepareImportSecurityRef(env: Env, ref: SecurityRef): D1PreparedStatement {
+  return env.DB.prepare(IMPORT_SECURITY_REF_SQL).bind(...importSecurityRefBindings(ref));
+}
+
+export async function importSecurityRef(env: Env, ref: SecurityRef): Promise<void> {
+  await run(env.DB, IMPORT_SECURITY_REF_SQL, importSecurityRefBindings(ref));
 }
 
 async function upsertRef(env: Env, ref: SecurityRef): Promise<void> {

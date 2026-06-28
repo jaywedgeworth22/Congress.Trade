@@ -117,7 +117,7 @@ function parseCandidate(s: string | undefined, fallback: BakeoffCandidate): Bake
   if (!s) return fallback;
   const [provider, ...rest] = s.split(':');
   const model = rest.join(':');
-  const valid = ['gemini', 'openai', 'anthropic', 'mistral', 'xai'];
+  const valid = ['gemini', 'openai', 'anthropic', 'mistral', 'xai', 'llamaparse'];
   return valid.includes(provider) && model ? ({ provider, model } as BakeoffCandidate) : fallback;
 }
 
