@@ -172,6 +172,7 @@ interface PitScoreRow {
   components: Component[];
   rawInputs: Record<string, unknown>;
   provenance: Record<string, unknown>;
+  pitValidity: Record<string, unknown>;
   includedDisclosures: Array<Record<string, unknown>>;
   memberSkill: MemberSkillSummary;
   clusterConsensus: Record<string, unknown>;
@@ -193,6 +194,7 @@ export interface PitScoreExportResult {
     limit: number;
     nextCursor: string | null;
   };
+  validationReadiness: Record<string, unknown>;
   rows: PitScoreRow[];
   notes: string[];
 }
@@ -971,6 +973,62 @@ function countBy(values: Array<string | null | undefined>): Record<string, numbe
   return out;
 }
 
+function buildPitValidity(txs: TxRow[]): Record<string, unknown> {
+  const availabilityInfos = txs.map((tx) => availabilityFor(tx));
+  const availabilitySources = countBy(availabilityInfos.map((a) => a.source));
+  const availabilityPrecisions = countBy(availabilityInfos.map((a) => a.precision));
+  const disclosureSources = countBy(txs.map((tx) => tx.source));
+  const allObservedTimestamp = availabilityInfos.every((a) => a.source === 'first_seen_at' && a.precision === 'timestamp');
+  const allPrimary = txs.every((tx) => tx.source === 'primary');
+  const reasonCodes: string[] = [];
+  if (!allObservedTimestamp) reasonCodes.push('missing_true_market_observed_disclosure_timestamp');
+  if (!allPrimary) reasonCodes.push('non_primary_or_historical_seed_source');
+  reasonCodes.push('missing_pit_security_reference_vintage');
+  reasonCodes.push('missing_pit_filer_committee_party_vintage');
+  reasonCodes.push('missing_corporate_action_vintage');
+  reasonCodes.push('missing_no_signal_decision_universe');
+  const scoreInputsPitSafe = allObservedTimestamp && allPrimary;
+  const metadataPitComplete = false;
+  return {
+    historicalValidationReady: scoreInputsPitSafe && metadataPitComplete,
+    scoreInputsPitSafe,
+    metadataPitComplete,
+    recommendedUse: scoreInputsPitSafe ? 'score_input_validation_only_pending_metadata_vintages' : 'research_contract_or_live_forward_collection_only',
+    reasonCodes,
+    availabilitySources,
+    availabilityPrecisions,
+    disclosureSources,
+    note:
+      'A row is true score-input PIT only when the disclosure was observed by Congress.Trade with a timestamped first_seen_at and came from primary live ingestion. Context metadata remains current-state until vintage tables exist.',
+  };
+}
+
+function summarizeValidationReadiness(rows: PitScoreRow[]): Record<string, unknown> {
+  let scoreInputsPitSafeRows = 0;
+  let historicalValidationReadyRows = 0;
+  const reasonCounts: Record<string, number> = {};
+  for (const row of rows) {
+    const validity = row.pitValidity as { scoreInputsPitSafe?: boolean; historicalValidationReady?: boolean; reasonCodes?: string[] };
+    if (validity.scoreInputsPitSafe) scoreInputsPitSafeRows += 1;
+    if (validity.historicalValidationReady) historicalValidationReadyRows += 1;
+    for (const reason of validity.reasonCodes ?? []) reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
+  }
+  return {
+    historicalValidationReady: rows.length > 0 && historicalValidationReadyRows === rows.length,
+    scoreInputsPitSafeRows,
+    historicalValidationReadyRows,
+    researchOnlyRows: rows.length - historicalValidationReadyRows,
+    rowCount: rows.length,
+    reasonCounts,
+    blocker:
+      rows.length === 0
+        ? null
+        : historicalValidationReadyRows === rows.length
+          ? null
+          : 'True historical validation requires timestamped primary first_seen_at disclosures plus PIT metadata vintages / no-signal universe coverage.',
+  };
+}
+
 function weightedClusterContribution(row: TxRow): number {
   const conf = Math.max(0.1, Math.min(1, finiteOrNull(row.confidence) ?? 0.75));
   const amountWeight = Math.min(1, Math.log10(1 + midpoint(row)) / 6);
@@ -1160,6 +1218,7 @@ async function buildRow(
   }));
   const aliasesFrom = Object.entries(TICKER_ALIASES).filter(([, to]) => to === ticker).map(([from]) => from);
   const clusterConsensus = buildClusterConsensus(ticker, asOf, txs, allTxRows, memberSkill);
+  const pitValidity = buildPitValidity(txs);
   return {
     observationId: stableObservationId(PIT_SCORE_VERSION, ticker, asOf, ids, 'none'),
     ticker,
@@ -1207,6 +1266,7 @@ async function buildRow(
       currentStateMetadata: ['filers.party', 'filers.chamber', 'filers.committees', 'securities_ref.sector', 'securities_ref.cik'],
       sources: ['transactions', 'filings', 'filers', 'securities_ref', 'price_eod', 'spx_eod'],
     },
+    pitValidity,
     includedDisclosures,
     memberSkill,
     clusterConsensus: {
@@ -1392,6 +1452,7 @@ export async function buildPitScoreExport(env: Env, q: PitScoreQuery, now = new 
   const notes = [
     'Scores are point-in-time at disclosure availability; trade dates are included only as raw disclosure fields.',
     'Forward labels are outcomes and are not used in score inputs.',
+    'Rows with pitValidity.historicalValidationReady=false are not a true historical validation set; use them for contract testing or live-forward collection only.',
     'CUSIP, ticker-change history, corporate-action vintage, and App B pre-Congress scan factors are null until source tables exist.',
   ];
   if (sourceRowsMayBeTruncated) {
@@ -1412,6 +1473,7 @@ export async function buildPitScoreExport(env: Env, q: PitScoreQuery, now = new 
       limit: q.limit,
       nextCursor,
     },
+    validationReadiness: summarizeValidationReadiness(rows),
     rows,
     notes,
   };
