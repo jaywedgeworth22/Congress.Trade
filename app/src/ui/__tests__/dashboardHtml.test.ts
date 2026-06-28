@@ -162,8 +162,8 @@ describe('DASHBOARD_HTML', () => {
   it('uses published timing, tighter asset defaults, and source links in drawers', () => {
     expect(DASHBOARD_HTML).toContain("var sortKey = 'published'");
     expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v2'");
-    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v4'");
-    expect(DASHBOARD_HTML).toContain('asset: 180');
+    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v5'");
+    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 96, 86, 112)");
     expect(DASHBOARD_HTML).toContain("p.set('sort', 'published')");
     expect(DASHBOARD_HTML).toContain("p.set('memberName', m)");
     expect(DASHBOARD_HTML).toContain('function handleFeedTextFilter(');
@@ -182,6 +182,21 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('Vision-read filing held for review');
     expect(DASHBOARD_HTML).toContain('Automated read below publish threshold');
     expect(DASHBOARD_HTML).toContain('rel="noopener noreferrer"');
+  });
+
+  it('pre-fills editable review rows from queued payloads or selected model readings', () => {
+    expect(DASHBOARD_HTML).toContain('var REVIEW_RUNS');
+    expect(DASHBOARD_HTML).toContain('function openQueuedReviewEditor(');
+    expect(DASHBOARD_HTML).toContain('function useModelRows(');
+    expect(DASHBOARD_HTML).toContain('function openReviewEditor(');
+    expect(DASHBOARD_HTML).toContain('Review / Confirm');
+    expect(DASHBOARD_HTML).toContain('Use This Model');
+    expect(DASHBOARD_HTML).toContain('Prefilled Rows');
+    expect(DASHBOARD_HTML).toContain('class="me-asset-type"');
+    expect(DASHBOARD_HTML).toContain('class="me-option"');
+    expect(DASHBOARD_HTML).toContain('class="me-cap"');
+    expect(DASHBOARD_HTML).toContain('JSON.stringify({ decision: decision, edits: edits })');
+    expect(DASHBOARD_HTML).not.toContain('JSON.stringify({ decision: decision, edits: [] })');
   });
 
   it('keeps House history backfill bounded from the admin UI', () => {
@@ -214,6 +229,17 @@ describe('DASHBOARD_HTML', () => {
   it('formats trade amount brackets compactly', () => {
     expect(DASHBOARD_HTML).toContain('function fmtBracketAmount(');
     expect(DASHBOARD_HTML).toContain("fmtBracketAmount(min) + ' - '");
+  });
+
+  it('renders amount bracket categories above the compact amount text', () => {
+    expect(DASHBOARD_HTML).toContain('function amountTier(');
+    expect(DASHBOARD_HTML).toContain('function amountBarsHtml(');
+    expect(DASHBOARD_HTML).toContain('function amountCellHtml(');
+    expect(DASHBOARD_HTML).toContain("label: 'Tier I'");
+    expect(DASHBOARD_HTML).toContain("label: 'Tier V'");
+    expect(DASHBOARD_HTML).toContain('class="amount-bars tier-');
+    expect(DASHBOARD_HTML).toContain('class="amount-range fc-amt-val"');
+    expect(DASHBOARD_HTML).toContain('cell: amountCellHtml');
   });
 
   it('does not use imported/published time as disclosure lag', () => {

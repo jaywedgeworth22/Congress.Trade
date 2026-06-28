@@ -686,7 +686,29 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     // confirm/manual: insert the (corrected or hand-entered) transactions.
     // 'manual' tags provenance so admins can tell hand-entered rows from machine reads.
     const source: TxSource = decision === 'manual' ? 'manual' : 'primary';
-    const edits = Array.isArray(body.edits) ? (body.edits as EditedTx[]) : [];
+    if (!Array.isArray(body.edits)) {
+      return c.json(
+        {
+          error:
+            decision === 'confirm'
+              ? 'confirm requires explicit transaction edits; choose a model, edit the queued rows, or reject the item'
+              : 'manual review requires explicit transaction edits',
+        },
+        400,
+      );
+    }
+    const edits = body.edits as EditedTx[];
+    if (edits.length === 0) {
+      return c.json(
+        {
+          error:
+            decision === 'confirm'
+              ? 'confirm requires at least one explicit transaction edit; use Manual to add rows or Reject to discard'
+              : 'manual review requires at least one transaction edit',
+        },
+        400,
+      );
+    }
     const filing = await get<{ filer_id: string | null }>(
       c.env.DB,
       'SELECT filer_id FROM filings WHERE doc_id = ?',
