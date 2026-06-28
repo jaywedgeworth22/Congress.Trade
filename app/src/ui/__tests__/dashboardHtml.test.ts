@@ -228,6 +228,16 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function loadDiagnostics(');
   });
 
+  it('surfaces market-data coverage and bounded backfill controls in Admin', () => {
+    expect(DASHBOARD_HTML).toContain('Market Data Coverage');
+    expect(DASHBOARD_HTML).toContain('id="marketCoverage"');
+    expect(DASHBOARD_HTML).toContain('function loadMarketCoverage(');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/enrich-securities/status'");
+    expect(DASHBOARD_HTML).toContain('function runMarketBackfill(');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/backfill-market'");
+    expect(DASHBOARD_HTML).toContain('Missing Asset Samples');
+  });
+
   it('keeps the educational + dollar-estimate disclaimers in the Trends view', () => {
     expect(DASHBOARD_HTML).toContain('estimates');
     expect(DASHBOARD_HTML.toLowerCase()).toContain('bracket');
