@@ -179,10 +179,33 @@ async function logPoll(
   );
 }
 
+/**
+ * A source failure is "transient" when it reflects a recoverable upstream or
+ * platform condition rather than a bug: anti-bot blocks (403), rate limits
+ * (429), and transient D1/Workers platform limits. These recur on a normal
+ * cadence (e.g. the Senate efdsearch 403), so logging them at `error` floods
+ * observability and buries genuine errors. We log them at `warn` instead; the
+ * daily bulk/backfill path keeps history complete regardless.
+ */
+export function isTransientSourceError(message: string): boolean {
+  return (
+    /HTTP 403\b/.test(message) ||
+    /HTTP 429\b/.test(message) ||
+    /Network connection lost/i.test(message) ||
+    /D1 DB is overloaded/i.test(message) ||
+    /Too many API requests by single Worker invocation/i.test(message) ||
+    /object to be reset/i.test(message)
+  );
+}
+
 /** Record a source-level failure against the source's ingest_log row. */
 async function recordSourceError(env: Env, source: string, nowIso: string, err: unknown): Promise<void> {
   const message = err instanceof Error ? err.message : String(err);
-  console.error(`watcher: ${source} source failed:`, message);
+  if (isTransientSourceError(message)) {
+    console.warn(`watcher: ${source} source degraded (transient, bulk path still authoritative):`, message);
+  } else {
+    console.error(`watcher: ${source} source failed:`, message);
+  }
   try {
     // new_count=0 with an error message in first_seen_at slot would corrupt the
     // cadence column; instead we just emit a log row with 0 yield so the poll

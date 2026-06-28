@@ -59,7 +59,7 @@ import {
   type Provider,
 } from '../extraction/bakeoff';
 import { isBatchProvider, submitBatch, pollBatch, type BatchDoc } from '../extraction/batchExtract';
-import { runEnrichment, getDailyUsed, importSecurityRef } from '../enrichment/service';
+import { runEnrichment, getDailyUsed, prepareImportSecurityRef } from '../enrichment/service';
 import { mergeRefs } from '../enrichment/compute';
 import type { SecurityRef } from '../enrichment/types';
 import { runPriceRefresh } from '../prices/service';
@@ -2148,19 +2148,38 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'sharesOutstanding', 'ipoDate', 'cik', 'sicCode', 'sicDescription',
     ] as const;
 
-    // 1) Company reference rows.
+    // 1) Company reference rows. Build all upsert statements first, then flush
+    // them through DB.batch in chunks of 100 (the same pattern every other slot
+    // below uses). The previous per-row `await` serialized one D1 round trip per
+    // ref — with batches near the 2000-ref cap that repeatedly tripped the
+    // Worker CPU limit and overloaded D1. On a chunk failure we fall back to
+    // per-row writes for that chunk so a single bad ref still gets attributed.
     if (Array.isArray(body.refs)) {
+      const refStmts: { ticker: string; stmt: D1PreparedStatement }[] = [];
       for (const raw of body.refs as unknown[]) {
         const o = raw as Record<string, unknown>;
         const ticker = typeof o.ticker === 'string' ? o.ticker.toUpperCase() : null;
         if (!ticker) continue;
         const partial: Partial<SecurityRef> = { source: 'imported' };
         for (const k of REF_KEYS) if (o[k] !== undefined) (partial as Record<string, unknown>)[k] = o[k];
+        refStmts.push({ ticker, stmt: prepareImportSecurityRef(c.env, mergeRefs(ticker, [partial])) });
+      }
+      for (let i = 0; i < refStmts.length; i += 100) {
+        const chunk = refStmts.slice(i, i + 100);
         try {
-          await importSecurityRef(c.env, mergeRefs(ticker, [partial]));
-          summary.refs++;
-        } catch (e) {
-          summary.errors.push(ticker + ' ref: ' + (e as Error).message);
+          await c.env.DB.batch(chunk.map((r) => r.stmt));
+          summary.refs += chunk.length;
+        } catch {
+          // Batch failed as a unit — retry the chunk row-by-row to surface the
+          // specific ticker(s) at fault without dropping the whole chunk.
+          for (const r of chunk) {
+            try {
+              await r.stmt.run();
+              summary.refs++;
+            } catch (e) {
+              summary.errors.push(r.ticker + ' ref: ' + (e as Error).message);
+            }
+          }
         }
       }
     }
