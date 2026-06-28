@@ -184,6 +184,21 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('rel="noopener noreferrer"');
   });
 
+  it('pre-fills editable review rows from queued payloads or selected model readings', () => {
+    expect(DASHBOARD_HTML).toContain('var REVIEW_RUNS');
+    expect(DASHBOARD_HTML).toContain('function openQueuedReviewEditor(');
+    expect(DASHBOARD_HTML).toContain('function useModelRows(');
+    expect(DASHBOARD_HTML).toContain('function openReviewEditor(');
+    expect(DASHBOARD_HTML).toContain('Review / Confirm');
+    expect(DASHBOARD_HTML).toContain('Use This Model');
+    expect(DASHBOARD_HTML).toContain('Prefilled Rows');
+    expect(DASHBOARD_HTML).toContain('class="me-asset-type"');
+    expect(DASHBOARD_HTML).toContain('class="me-option"');
+    expect(DASHBOARD_HTML).toContain('class="me-cap"');
+    expect(DASHBOARD_HTML).toContain('JSON.stringify({ decision: decision, edits: edits })');
+    expect(DASHBOARD_HTML).not.toContain('JSON.stringify({ decision: decision, edits: [] })');
+  });
+
   it('keeps House history backfill bounded from the admin UI', () => {
     expect(DASHBOARD_HTML).toContain('id="hiMax"');
     expect(DASHBOARD_HTML).toContain('value="500"');

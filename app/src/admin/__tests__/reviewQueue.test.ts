@@ -141,6 +141,76 @@ describe('review queue admin API', () => {
     expect(res.status).toBe(404);
   });
 
+  it("decision='confirm' rejects omitted edits instead of silently publishing nothing", async () => {
+    const db = {
+      prepare() {
+        return {
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return { results: [] as T[] };
+          },
+          async first<T>() {
+            return { doc_id: 'H-1', resolved: 0 } as T;
+          },
+          async run() {
+            return { success: true, meta: { changes: 1 } };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const res = await app.request(
+      '/review/H-1',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ decision: 'confirm' }),
+      },
+      { ADMIN_TOKEN: 'admin-secret', DB: db } as never,
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('explicit transaction edits');
+  });
+
+  it("decision='confirm' rejects empty edits instead of resolving the review item", async () => {
+    const db = {
+      prepare() {
+        return {
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return { results: [] as T[] };
+          },
+          async first<T>() {
+            return { doc_id: 'H-1', resolved: 0 } as T;
+          },
+          async run() {
+            return { success: true, meta: { changes: 1 } };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const res = await app.request(
+      '/review/H-1',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ decision: 'confirm', edits: [] }),
+      },
+      { ADMIN_TOKEN: 'admin-secret', DB: db } as never,
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('at least one explicit transaction edit');
+  });
+
   it("decision='manual' records hand-entered rows as source='manual'", async () => {
     // Capture the INSERT bind params so we can assert the source column = 'manual'.
     const binds: unknown[][] = [];

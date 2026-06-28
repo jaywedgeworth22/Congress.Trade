@@ -397,6 +397,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .source-link { display:inline-block; margin-top:9px; font-size:13px; }
   .review-doc-link { display:block; margin-top:5px; font-size:12px; font-family:var(--sans); font-weight:600; white-space:nowrap; }
   .review-doc-link.inline { display:inline-block; margin:0 0 0 10px; }
+  .review-edit-panel { background: color-mix(in srgb, var(--panel-2) 70%, transparent); padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+  .review-edit-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
+  .review-edit-head strong { display:block; margin-bottom:2px; }
+  .me-row { margin: 6px 0; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .me-row input, .me-row select { min-height:34px; }
+  .me-row .me-ticker { width:82px; }
+  .me-row .me-min, .me-row .me-max { width:96px; }
+  .me-row .me-asset { width:190px; flex:1 1 180px; }
+  .me-row .me-asset-type { width:112px; }
+  .me-check { display:inline-flex; align-items:center; gap:4px; color:var(--text-dim); font-size:12px; white-space:nowrap; }
+  .me-check input { min-height:0; }
   .filing-note { background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12px; line-height:1.5; color:var(--text-dim); margin:0; }
   .filing-note-kv { background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12px; }
   .filing-note-kv dd { text-align:left; }
@@ -1402,6 +1413,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 /* ============================ STATE ============================ */
 var TRADES = [];          // live transactions (newest first)
 var REVIEW = [];          // review-queue items
+var REVIEW_RUNS = {};     // docId -> full extraction runs loaded on demand
 var SCHEDULE = [];        // PollWindow[]
 var aggressive = false;
 var cursor = 0;           // max cursor_seq seen
@@ -2395,6 +2407,67 @@ function payloadText(payload) {
   }
   return bits.join(' · ');
 }
+function reviewPayloadTransactions(payload) {
+  var p = parseReviewPayload(payload);
+  var txs = p && Array.isArray(p.transactions) ? p.transactions : [];
+  return txs.map(function (t) { return normalizeReviewEdit(t, 'queued review payload'); });
+}
+function normalizeReviewEdit(t, sourceLabel) {
+  t = t || {};
+  var ticker = cleanAsset(t.ticker || '').toUpperCase();
+  var asset = cleanAsset(t.assetName || t.asset || '');
+  var type = String(t.txType || t.type || 'P').toUpperCase();
+  if (type !== 'P' && type !== 'S' && type !== 'E') type = 'P';
+  var owner = String(t.owner || 'self').toLowerCase();
+  if (['self', 'spouse', 'joint', 'dependent'].indexOf(owner) < 0) owner = 'self';
+  function n(v) {
+    if (v == null || v === '') return null;
+    var x = Number(v);
+    return Number.isFinite(x) ? x : null;
+  }
+  return {
+    ticker: ticker || null,
+    assetName: asset || ticker || '',
+    txType: type,
+    amountMin: n(t.amountMin),
+    amountMax: n(t.amountMax),
+    txDate: String(t.txDate || '').slice(0, 10) || null,
+    owner: owner,
+    assetType: cleanAsset(t.assetType || ''),
+    isOption: Boolean(t.isOption),
+    capGainsOver200: Boolean(t.capGainsOver200),
+    confidence: t.confidence == null ? null : n(t.confidence),
+    rawText: String(t.rawText || sourceLabel || 'review editor')
+  };
+}
+function txPublishLabel(t) {
+  t = normalizeReviewEdit(t, 'review row');
+  var asset = cleanAsset(t.assetName || '');
+  var ticker = cleanAsset(t.ticker || '');
+  var primary = ticker && asset && asset !== ticker ? ticker + ' · ' + asset : (ticker || asset || 'Unnamed asset');
+  var meta = [];
+  if (t.txType) meta.push(typeName[t.txType] || t.txType);
+  if (t.txDate) meta.push(t.txDate);
+  if (t.amountMin != null || t.amountMax != null) meta.push(amountText(t.amountMin, t.amountMax));
+  if (t.owner) meta.push('owner ' + t.owner);
+  if (t.assetType) meta.push(assetTypeLabel(t.assetType));
+  if (t.isOption) meta.push('option');
+  if (t.capGainsOver200) meta.push('cap gains > $200');
+  return primary + (meta.length ? ' - ' + meta.join(' · ') : '');
+}
+function publishRowsHtml(rows, opts) {
+  rows = (rows || []).map(function (t) { return normalizeReviewEdit(t, 'review row'); }).filter(function (t) { return t.ticker || t.assetName; });
+  var max = opts && opts.max ? opts.max : 3;
+  var title = (opts && opts.title) || 'Rows Ready To Review';
+  if (!rows.length) {
+    return '<div class="filing-note" style="margin-top:6px"><strong>' + esc(title) + '</strong><br />No rows. Use Manual or Reject.</div>';
+  }
+  var html = rows.slice(0, max).map(function (t, i) {
+    return '<div>Row ' + (i + 1) + ': ' + esc(txPublishLabel(t)) + '</div>';
+  }).join('');
+  if (rows.length > max) html += '<div>+' + (rows.length - max) + ' more row' + (rows.length - max === 1 ? '' : 's') + '</div>';
+  return '<div class="filing-note" style="margin-top:6px"><strong>' + esc(title) + '</strong><br />' + html + '</div>';
+}
 function safeDocUrl(url) {
   if (!url) return '';
   try {
@@ -2441,6 +2514,7 @@ function renderReview() {
   }
   body.innerHTML = REVIEW.map(function (r) {
     var payload = payloadText(r.payload);
+    var queuedRows = reviewPayloadTransactions(r.payload);
     var url = safeDocUrl(r.sourceUrl);
     var docAction = url ? '<a class="review-doc-link inline" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Document</a>' : '';
     var nModels = (r.models && r.models.length) || 0;
@@ -2448,7 +2522,7 @@ function renderReview() {
     var actions = REVIEW_RESOLVED
       ? (r.status === 'published' || r.status === 'modified'
           ? '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'unpublish\\')">Unpublish</button> ' : '') + modelsBtn
-      : '<button class="btn sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'confirm\\')">Confirm</button> ' +
+      : '<button class="btn sm" onclick="openQueuedReviewEditor(\\'' + esc(r.docId) + '\\')">Review / Confirm</button> ' +
         '<button class="btn ghost sm" onclick="manualEntry(\\'' + esc(r.docId) + '\\')">Manual</button> ' +
         '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'reject\\')">Reject</button> ' + modelsBtn;
     return '<tr class="row" id="rv-' + esc(r.docId) + '">' +
@@ -2456,7 +2530,7 @@ function renderReview() {
       '<td>' + reviewDocHtml(r) + '</td>' +
       '<td>' + statusBadge(r.status) + '</td>' +
       '<td class="muted">' + esc(reasonText(r.reason, r.payload)) + '<div style="margin-top:3px">' + modelsSummaryHtml(r.models) + '</div></td>' +
-      '<td class="muted" style="max-width:320px">' + esc(payload) + docAction + '</td>' +
+      '<td class="muted" style="max-width:360px">' + esc(payload) + publishRowsHtml(queuedRows, { max: 2, title: 'Queued Rows' }) + docAction + '</td>' +
       '<td>' + actions + '</td>' +
     '</tr>';
   }).join('');
@@ -2472,7 +2546,8 @@ function toggleModels(docId) {
   var models = (item && item.models) || [];
   var head = '<tr id="mdl-' + esc(docId) + '"><td colspan="6" style="background:rgba(127,127,127,.06)">' +
     '<div style="padding:6px 4px"><strong>Per-model readings</strong> ' +
-    '<button class="btn ghost sm" onclick="viewReadings(\\'' + esc(docId) + '\\')">Load full readings</button>' +
+    '<button class="btn ghost sm" onclick="viewReadings(\\'' + esc(docId) + '\\')">Load Full Readings</button>' +
+    '<div class="note">Load readings, then choose a model to pre-fill editable rows before confirming.</div>' +
     '<div id="mdlBody-' + esc(docId) + '" style="margin-top:6px">' + modelsTableHtml(models) + '</div></div>' +
     '</td></tr>';
   rowEl.insertAdjacentHTML('afterend', head);
@@ -2498,11 +2573,14 @@ function viewReadings(docId) {
     .then(okOrThrow)
     .then(function (data) {
       var runs = data.runs || [];
+      REVIEW_RUNS[docId] = runs;
       if (!runs.length) { if (target) target.innerHTML = '<span class="muted">No stored readings.</span>'; return; }
-      if (target) target.innerHTML = runs.map(function (run) {
+      if (target) target.innerHTML = runs.map(function (run, idx) {
         var conf = (typeof run.avgConfidence === 'number') ? Math.round(run.avgConfidence * 100) + '%' : '—';
+        var canUse = run.ok && run.rows && run.rows.length;
         var header = '<div style="margin:8px 0 2px"><strong>' + esc(run.provider + ':' + run.model) + '</strong> ' +
-          '<span class="muted">· ' + (run.ok ? (run.rowCount + ' rows · conf ' + conf + (run.latencyMs ? ' · ' + fmtMs(run.latencyMs) : '')) : ('ERROR: ' + esc(String(run.error || 'failed')))) + '</span></div>';
+          '<span class="muted">· ' + (run.ok ? (run.rowCount + ' rows · conf ' + conf + (run.latencyMs ? ' · ' + fmtMs(run.latencyMs) : '')) : ('ERROR: ' + esc(String(run.error || 'failed')))) + '</span> ' +
+          (canUse ? '<button class="btn ghost sm" onclick="useModelRows(\\'' + esc(docId) + '\\',' + idx + ')">Use This Model</button>' : '') + '</div>';
         var rowsHtml = (run.rows && run.rows.length)
           ? '<table style="font-size:12px;width:100%"><thead><tr><th>Ticker</th><th>Asset</th><th>Type</th><th>Date</th><th style="text-align:right">Amt min</th><th style="text-align:right">Amt max</th></tr></thead><tbody>' +
             run.rows.map(function (t) {
@@ -2517,13 +2595,14 @@ function viewReadings(docId) {
 }
 function resolveReview(docId, decision) {
   // API HOOK: POST /api/admin/review/:docId {decision}  (unpublish uses /review/:docId/unpublish)
+  if (decision === 'confirm') { openQueuedReviewEditor(docId); return; }
   var rowEl = el('rv-' + docId);
   if (rowEl) rowEl.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
   var isUnpublish = decision === 'unpublish';
   var url = '/api/admin/review/' + encodeURIComponent(docId) + (isUnpublish ? '/unpublish' : '');
   fetch(url, {
     method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
-    body: isUnpublish ? JSON.stringify({ reason: 'admin unpublish from dashboard' }) : JSON.stringify({ decision: decision, edits: [] })
+    body: isUnpublish ? JSON.stringify({ reason: 'admin unpublish from dashboard' }) : JSON.stringify({ decision: decision })
   })
     .then(okOrThrow)
     .then(function () {
@@ -2536,69 +2615,107 @@ function resolveReview(docId, decision) {
       alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review action failed: ' + e.message));
     });
 }
-/* Manual entry: hand-key the rows when the automated read is wrong / too low to
-   trust. Submitted with decision:'manual' so they are recorded as source=manual. */
-function meRowHtml() {
-  return '<div class="me-row" style="margin:4px 0;display:flex;flex-wrap:wrap;gap:4px;align-items:center">' +
-    '<input class="me-ticker" placeholder="Ticker" maxlength="12" style="width:80px" /> ' +
-    '<select class="me-type"><option value="P">Purchase</option><option value="S">Sale</option><option value="E">Exchange</option></select> ' +
-    '<input class="me-min" type="number" placeholder="Amt min" style="width:90px" /> ' +
-    '<input class="me-max" type="number" placeholder="Amt max" style="width:90px" /> ' +
-    '<input class="me-date" type="date" /> ' +
-    '<select class="me-owner"><option value="self">self</option><option value="spouse">spouse</option><option value="joint">joint</option><option value="dependent">dependent</option></select> ' +
-    '<input class="me-asset" placeholder="Asset name (optional)" style="width:160px" />' +
+function selectedOption(v, current) { return String(v) === String(current) ? ' selected' : ''; }
+function checkedAttr(v) { return v ? ' checked' : ''; }
+function valueAttr(v) { return esc(v == null ? '' : v); }
+/* Shared review editor. It can start blank for manual entry, from the queued
+   review payload, or from any selected model run. Submit stays explicit. */
+function meRowHtml(tx) {
+  tx = normalizeReviewEdit(tx || {}, 'review editor');
+  return '<div class="me-row">' +
+    '<input class="me-ticker" placeholder="Ticker" maxlength="12" value="' + valueAttr(tx.ticker || '') + '" /> ' +
+    '<select class="me-type"><option value="P"' + selectedOption('P', tx.txType) + '>Purchase</option><option value="S"' + selectedOption('S', tx.txType) + '>Sale</option><option value="E"' + selectedOption('E', tx.txType) + '>Exchange</option></select> ' +
+    '<input class="me-min" type="number" placeholder="Amt min" value="' + valueAttr(tx.amountMin) + '" /> ' +
+    '<input class="me-max" type="number" placeholder="Amt max" value="' + valueAttr(tx.amountMax) + '" /> ' +
+    '<input class="me-date" type="date" value="' + valueAttr(tx.txDate || '') + '" /> ' +
+    '<select class="me-owner"><option value="self"' + selectedOption('self', tx.owner) + '>self</option><option value="spouse"' + selectedOption('spouse', tx.owner) + '>spouse</option><option value="joint"' + selectedOption('joint', tx.owner) + '>joint</option><option value="dependent"' + selectedOption('dependent', tx.owner) + '>dependent</option></select> ' +
+    '<input class="me-asset-type" placeholder="Asset type" value="' + valueAttr(tx.assetType || '') + '" /> ' +
+    '<input class="me-asset" placeholder="Asset name" value="' + valueAttr(tx.assetName || '') + '" />' +
+    '<label class="me-check"><input class="me-option" type="checkbox"' + checkedAttr(tx.isOption) + ' /> Option</label>' +
+    '<label class="me-check"><input class="me-cap" type="checkbox"' + checkedAttr(tx.capGainsOver200) + ' /> Cap gains &gt;$200</label>' +
+    '<input class="me-raw" type="hidden" value="' + valueAttr(tx.rawText || '') + '" />' +
+    '<input class="me-conf" type="hidden" value="' + valueAttr(tx.confidence == null ? '' : tx.confidence) + '" />' +
     '</div>';
 }
-function meAddRow(docId) { var c = el('me-rows-' + docId); if (c) c.insertAdjacentHTML('beforeend', meRowHtml()); }
+function meAddRow(docId, tx) { var c = el('me-rows-' + docId); if (c) c.insertAdjacentHTML('beforeend', meRowHtml(tx)); }
 function meCancel(docId) { var tr = el('me-' + docId); if (tr) tr.parentNode.removeChild(tr); }
-function manualEntry(docId) {
-  if (el('me-' + docId)) return; // already open
+function openQueuedReviewEditor(docId) {
+  var item = null;
+  for (var i = 0; i < REVIEW.length; i++) { if (REVIEW[i].docId === docId) { item = REVIEW[i]; break; } }
+  var rows = reviewPayloadTransactions(item && item.payload);
+  openReviewEditor(docId, rows, 'confirm', 'queued review payload');
+}
+function useModelRows(docId, idx) {
+  var run = REVIEW_RUNS[docId] && REVIEW_RUNS[docId][idx];
+  if (!run || !run.rows || !run.rows.length) { alert('That model run has no rows to use.'); return; }
+  openReviewEditor(docId, run.rows, 'confirm', run.provider + ':' + run.model);
+}
+function manualEntry(docId) { openReviewEditor(docId, [], 'manual', 'manual entry'); }
+function openReviewEditor(docId, rows, decision, label) {
+  var old = el('me-' + docId);
+  if (old && old.parentNode) old.parentNode.removeChild(old);
   var row = el('rv-' + docId);
   if (!row) return;
   var tr = document.createElement('tr');
   tr.id = 'me-' + docId;
-  tr.innerHTML = '<td colspan="5" class="manual-entry" style="background:#f8fafc;padding:8px 12px">' +
+  tr.setAttribute('data-decision', decision);
+  var safeLabel = label || (decision === 'manual' ? 'manual entry' : 'selected rows');
+  var title = decision === 'manual' ? 'Manual Entry' : 'Edit Rows To Confirm';
+  var submit = decision === 'manual' ? 'Submit Manual Entry' : 'Confirm Edited Rows';
+  var note = decision === 'manual'
+    ? 'Recorded as <code>source=manual</code> because these rows were hand-entered by an admin.'
+    : 'These rows will be promoted as <code>source=primary</code>. Edit anything that is wrong before confirming.';
+  tr.innerHTML = '<td colspan="6" class="manual-entry">' +
+    '<div class="review-edit-panel">' +
+    '<div class="review-edit-head"><div><strong>' + esc(title) + '</strong><div class="muted">Prefilled from ' + esc(safeLabel) + '.</div></div>' +
+    '<button class="btn ghost sm" onclick="meCancel(\\'' + esc(docId) + '\\')">Cancel</button></div>' +
+    publishRowsHtml(rows, { max: 5, title: 'Prefilled Rows' }) +
     '<div class="me-rows" id="me-rows-' + esc(docId) + '"></div>' +
     '<button class="btn ghost sm" onclick="meAddRow(\\'' + esc(docId) + '\\')">+ Add row</button> ' +
-    '<button class="btn sm" onclick="meSubmit(\\'' + esc(docId) + '\\')">Submit manual entry</button> ' +
-    '<button class="btn ghost sm" onclick="meCancel(\\'' + esc(docId) + '\\')">Cancel</button>' +
-    '<p class="note">Recorded as <code>source=manual</code> (hand-entered by an admin) and promoted to the live feed.</p>' +
-    '</td>';
+    '<button class="btn sm" onclick="meSubmit(\\'' + esc(docId) + '\\')">' + esc(submit) + '</button> ' +
+    '<p class="note">' + note + '</p></div></td>';
   row.parentNode.insertBefore(tr, row.nextSibling);
-  meAddRow(docId);
+  var seed = rows && rows.length ? rows : [{}];
+  seed.forEach(function (tx) { meAddRow(docId, tx); });
 }
 function meSubmit(docId) {
   var c = el('me-rows-' + docId);
   if (!c) return;
+  var tr = el('me-' + docId);
+  var decision = (tr && tr.getAttribute('data-decision')) || 'manual';
   var edits = [];
   c.querySelectorAll('.me-row').forEach(function (g) {
     var t = (g.querySelector('.me-ticker').value || '').trim().toUpperCase();
     var asset = (g.querySelector('.me-asset').value || '').trim();
     if (!t && !asset) return; // skip blank rows
     var min = g.querySelector('.me-min').value, max = g.querySelector('.me-max').value;
+    var conf = g.querySelector('.me-conf').value;
     edits.push({
       ticker: t || null,
-      assetName: asset || t || '(manual entry)',
+      assetName: asset || t || '(review entry)',
       txType: g.querySelector('.me-type').value,
       amountMin: min === '' ? null : Number(min),
       amountMax: max === '' ? null : Number(max),
       txDate: g.querySelector('.me-date').value || null,
       owner: g.querySelector('.me-owner').value,
-      rawText: 'manual entry', confidence: 1
+      assetType: (g.querySelector('.me-asset-type').value || '').trim() || null,
+      isOption: g.querySelector('.me-option').checked,
+      capGainsOver200: g.querySelector('.me-cap').checked,
+      rawText: (g.querySelector('.me-raw').value || '').trim() || (decision === 'manual' ? 'manual entry' : 'review editor'),
+      confidence: conf === '' ? (decision === 'manual' ? 1 : null) : Number(conf)
     });
   });
   if (edits.length === 0) { alert('Add at least one row (a ticker or asset name).'); return; }
-  var tr = el('me-' + docId);
   if (tr) tr.querySelectorAll('button,input,select').forEach(function (b) { b.disabled = true; });
   fetch('/api/admin/review/' + encodeURIComponent(docId), {
     method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify({ decision: 'manual', edits: edits })
+    body: JSON.stringify({ decision: decision, edits: edits })
   })
     .then(okOrThrow)
     .then(function () { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); if (tr && tr.parentNode) tr.parentNode.removeChild(tr); renderReview(); loadFeed(); })
     .catch(function (e) {
       if (tr) tr.querySelectorAll('button,input,select').forEach(function (b) { b.disabled = false; });
-      alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Manual entry failed: ' + e.message));
+      alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review submit failed: ' + e.message));
     });
 }
 
