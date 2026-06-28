@@ -275,6 +275,12 @@ and 1/3/6/12m horizons; cluster fields include both 21d/1m and 63d/3m windows.
 Large historical ranges page with `pagination.nextCursor` in JSON responses or
 the `x-next-cursor` header for NDJSON. Rows also expose availability source and
 precision; date-only availability uses a conservative next-day label entry rule.
+For real historical validation, App B must filter on
+`pitValidity.historicalValidationReady` / `validationReadiness`; rows based on
+seed imports, date-only availability, or reconstructed disclosure times are
+contract/research rows, not validation truth. A row with
+`scoreInputsPitSafe=true` can validate scoring mechanics, but it still must not
+be used for historical performance claims until `historicalValidationReady=true`.
 It also supports null/placebo exports via `?placebo=...` for validation robustness:
 within-date score permutation, member shuffle, disclosure-date jitter, buy/sell
 flip, component ablations, future-shift leakage detection, and the currently

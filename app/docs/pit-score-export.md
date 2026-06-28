@@ -18,6 +18,8 @@ Authorization: Bearer <INGEST_TOKEN>
 
 JSON responses include `pagination.nextCursor`; NDJSON responses expose the same
 value in the `x-next-cursor` header. The cursor is ordered by `(asOf, ticker)`.
+JSON responses also include `validationReadiness`, an export-level summary of
+whether returned rows are safe for historical validation.
 
 ## Contract
 
@@ -30,7 +32,7 @@ Rows are keyed by ticker and market-available disclosure timestamp:
 - `scoreVersion`, `parameterManifest`
 - `direction`, `congressScore`, `signedScore`
 - `components[]`
-- `rawInputs`, `provenance`
+- `rawInputs`, `provenance`, `pitValidity`
 - `includedDisclosures[]`
 - `memberSkill`
 - `clusterConsensus`
@@ -42,6 +44,44 @@ Rows are keyed by ticker and market-available disclosure timestamp:
 `asOf` / `disclosureAvailableAt` use the filing's `first_seen_at` when present,
 falling back to filed date or transaction creation time. The trade date is only
 a raw disclosure field and is never the score timestamp.
+
+## Historical Validation Readiness
+
+This endpoint is a PIT-shaped score export, but not every row is a true
+historical validation row. App B should gate historical backtests on
+`pitValidity.historicalValidationReady` or the response-level
+`validationReadiness`.
+
+Row-level `pitValidity` includes:
+
+- `historicalValidationReady`
+- `scoreInputsPitSafe`
+- `metadataPitComplete`
+- `recommendedUse`
+- `reasonCodes`
+- `availabilitySources`
+- `availabilityPrecisions`
+- `disclosureSources`
+
+Current rule:
+
+- `scoreInputsPitSafe` is true only when all disclosures in the observation are
+  primary rows with timestamp-level `first_seen_at` captured by Congress.Trade.
+- `historicalValidationReady` is currently expected to be false for every row
+  until Congress.Trade stores the metadata vintages below. Primary timestamped
+  rows may still have `scoreInputsPitSafe=true`.
+- Seed/imported rows, date-only availability, or rows whose availability is
+  reconstructed from filed date or transaction creation time are neither
+  score-input PIT-safe nor historical-validation ready.
+- `metadataPitComplete` is false until Congress.Trade stores point-in-time
+  security-reference, ticker-map, filer/committee/party, corporate-action, and
+  no-signal universe vintages.
+
+Practical implication: rows with `historicalValidationReady=false` are suitable
+for contract tests, exploratory analysis, or live-forward collection dry runs.
+They should not be treated as a real historical validation set. App B may use
+`scoreInputsPitSafe=true` rows to test scoring mechanics, but must not report
+historical performance from them as validation truth.
 
 ## Score Inputs
 

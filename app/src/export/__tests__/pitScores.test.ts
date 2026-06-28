@@ -144,6 +144,19 @@ describe('buildPitScoreExport pagination', () => {
     const first = await buildPitScoreExport(env as never, { limit: 1, format: 'json', placebo: 'none', source: 'all' }, new Date('2026-03-01T00:00:00.000Z'));
     expect(first.rows.map((r) => r.ticker)).toEqual(['AAPL']);
     expect(first.pagination.nextCursor).toBe('2026-01-01T00:00:00.000Z~AAPL');
+    expect(first.validationReadiness).toMatchObject({
+      historicalValidationReady: false,
+      scoreInputsPitSafeRows: 1,
+      historicalValidationReadyRows: 0,
+      researchOnlyRows: 1,
+    });
+    expect(first.rows[0].pitValidity).toMatchObject({
+      historicalValidationReady: false,
+      scoreInputsPitSafe: true,
+      metadataPitComplete: false,
+      recommendedUse: 'score_input_validation_only_pending_metadata_vintages',
+    });
+    expect((first.rows[0].pitValidity.reasonCodes as string[])).toContain('missing_no_signal_decision_universe');
 
     const second = await buildPitScoreExport(env as never, {
       limit: 1,
@@ -155,6 +168,33 @@ describe('buildPitScoreExport pagination', () => {
     expect(second.rows.map((r) => r.ticker)).toEqual(['MSFT']);
     expect(second.pagination.nextCursor).toBeNull();
   });
+
+  it('flags seed/date-only rows as not true historical validation rows', async () => {
+    const env = {
+      DB: fakeDb({
+        transactions: [
+          tx('seed1', 'AAPL', null, { source: 'seed_dataset', filed_date: '2020-01-02', created_at: '2026-06-21T00:00:00.000Z' }),
+        ],
+        price_eod: [],
+        spx_eod: [],
+      }),
+    };
+
+    const out = await buildPitScoreExport(env as never, { limit: 10, format: 'json', placebo: 'none', source: 'all' }, new Date('2026-06-27T00:00:00.000Z'));
+    expect(out.validationReadiness).toMatchObject({
+      historicalValidationReady: false,
+      scoreInputsPitSafeRows: 0,
+      historicalValidationReadyRows: 0,
+      researchOnlyRows: 1,
+    });
+    expect(out.rows[0].pitValidity).toMatchObject({
+      historicalValidationReady: false,
+      scoreInputsPitSafe: false,
+      recommendedUse: 'research_contract_or_live_forward_collection_only',
+    });
+    expect((out.rows[0].pitValidity.reasonCodes as string[])).toContain('missing_true_market_observed_disclosure_timestamp');
+    expect((out.rows[0].pitValidity.reasonCodes as string[])).toContain('non_primary_or_historical_seed_source');
+  });
 });
 
 describe('pitScoreRowsToNdjson', () => {
@@ -164,12 +204,13 @@ describe('pitScoreRowsToNdjson', () => {
   });
 });
 
-function tx(id: string, ticker: string, firstSeenAt: string) {
+function tx(id: string, ticker: string, firstSeenAt: string | null, overrides: Record<string, unknown> = {}) {
+  const fallbackDate = firstSeenAt?.slice(0, 10) ?? '2026-01-01';
   return {
     id,
     doc_id: `doc-${id}`,
     filer_id: `F-${id}`,
-    tx_date: firstSeenAt.slice(0, 10),
+    tx_date: fallbackDate,
     owner: 'Self',
     asset_name: ticker,
     ticker,
@@ -183,7 +224,7 @@ function tx(id: string, ticker: string, firstSeenAt: string) {
     confidence: 0.9,
     source: 'primary',
     created_at: firstSeenAt,
-    filed_date: firstSeenAt.slice(0, 10),
+    filed_date: fallbackDate,
     first_seen_at: firstSeenAt,
     source_url: 'https://example.test/filing',
     filing_chamber: 'house',
@@ -198,6 +239,7 @@ function tx(id: string, ticker: string, firstSeenAt: string) {
     asset_class: 'equity',
     cik: null,
     exchange_short: 'NASDAQ',
+    ...overrides,
   };
 }
 
