@@ -258,6 +258,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .feed-card-meta .mkey { display: block; color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .4px; margin-bottom: 2px; }
   .feed-card-meta .mval { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
   .latency { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+  .amount-cell { display:flex; flex-direction:column; gap:2px; align-items:flex-start; min-width:0; line-height:1.15; }
+  .amount-tier-line { display:inline-flex; align-items:center; gap:6px; color:var(--text); font-size:12px; font-weight:700; white-space:nowrap; }
+  .amount-range { color:var(--text-dim); font-family:var(--mono); font-size:11px; font-weight:500; white-space:nowrap; }
+  .amount-bars { display:inline-flex; align-items:flex-end; gap:2px; height:12px; width:22px; }
+  .amount-bars i { display:block; width:3px; border-radius:2px 2px 0 0; background:color-mix(in srgb, var(--text-dim) 24%, transparent); }
+  .amount-bars i:nth-child(1) { height:4px; }
+  .amount-bars i:nth-child(2) { height:6px; }
+  .amount-bars i:nth-child(3) { height:8px; }
+  .amount-bars i:nth-child(4) { height:10px; }
+  .amount-bars i:nth-child(5) { height:12px; }
+  .amount-bars.tier-1 i:nth-child(-n+1),
+  .amount-bars.tier-2 i:nth-child(-n+2),
+  .amount-bars.tier-3 i:nth-child(-n+3),
+  .amount-bars.tier-4 i:nth-child(-n+4),
+  .amount-bars.tier-5 i:nth-child(-n+5) { background:var(--accent); }
+  .fc-amt .amount-cell { align-items:flex-end; text-align:right; }
   .btn { background: var(--accent); color: #fff; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
   .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
   .btn.sm { padding: 5px 10px; font-size: 12px; }
@@ -1723,8 +1739,32 @@ function assetCellHtml(r) {
     ? '<div class="asset-cell clickable" data-asset="' + esc(r.ticker) + '">' + tickerLogoHtml(r.ticker, nm) + inner + '</div>'
     : '<div class="asset-cell">' + inner + '</div>';
 }
+function amountTier(min, max) {
+  if (min == null && max == null) return null;
+  var basis = max == null ? Number(min) : Number(max);
+  if (!Number.isFinite(basis)) return null;
+  if (basis <= 15000) return { tier: 1, label: 'Tier I', title: 'Tier I: up to $15k disclosed bracket' };
+  if (basis <= 50000) return { tier: 2, label: 'Tier II', title: 'Tier II: $15k-$50k disclosed bracket' };
+  if (basis <= 250000) return { tier: 3, label: 'Tier III', title: 'Tier III: $50k-$250k disclosed bracket' };
+  if (basis <= 1000000) return { tier: 4, label: 'Tier IV', title: 'Tier IV: $250k-$1M disclosed bracket' };
+  return { tier: 5, label: 'Tier V', title: 'Tier V: over $1M disclosed bracket' };
+}
+function amountBarsHtml(tier) {
+  var bars = '';
+  for (var i = 0; i < 5; i++) bars += '<i></i>';
+  return '<span class="amount-bars tier-' + tier + '" aria-hidden="true">' + bars + '</span>';
+}
+function amountCellHtml(r) {
+  if (!r || (r.min == null && r.max == null)) return '<span class="muted">—</span>';
+  var tier = amountTier(r.min, r.max);
+  var text = amountText(r.min, r.max);
+  if (!tier) return '<span class="amount-range fc-amt-val">' + esc(text) + '</span>';
+  return '<div class="amount-cell" title="' + esc(tier.title + ' · ' + text) + '">' +
+    '<div class="amount-tier-line">' + amountBarsHtml(tier.tier) + '<span>' + esc(tier.label) + '</span></div>' +
+    '<div class="amount-range fc-amt-val">' + esc(text) + '</div>' +
+  '</div>';
+}
 function feedCardHtml(r) {
-  var amount = (r.min == null && r.max == null) ? '—' : amountText(r.min, r.max);
   var traded = dateText(r.txdate);
   var lag = shortLagText(r);
   var chamber = chamberLabel(r.chamber);
@@ -1742,7 +1782,7 @@ function feedCardHtml(r) {
   return '<article class="feed-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + member) + '">' +
     '<div class="fc-main">' +
       '<div class="fc-row1">' + assetCellHtml(r) +
-        '<span class="fc-amt">' + actionBadge(r.type) + '<span class="fc-amt-val">' + esc(amount) + '</span></span>' +
+        '<div class="fc-amt">' + actionBadge(r.type) + amountCellHtml(r) + '</div>' +
       '</div>' +
       '<div class="fc-row2 muted">' + bits.join(' <span class="fc-sep">·</span> ') + '</div>' +
     '</div>' +
@@ -1788,7 +1828,7 @@ var FEED_COLS = [
   { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
   { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
   { id: 'lag', label: 'Lag', sort: 'lag', def: true, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
-  { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: function (r) { return (r.min == null && r.max == null) ? '<span class="muted">—</span>' : esc(amountText(r.min, r.max)); } },
+  { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
   { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the ticker is enriched.', cell: function (r) { return r.refSector ? esc(r.refSector) : '<span class="muted">—</span>'; } },
   { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: false, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return r.refMarketCapBucket ? esc(ownerLabel(r.refMarketCapBucket)) : '<span class="muted">—</span>'; } },
   { id: 'country', label: 'Country', sort: 'refCountry', def: false, cls: 'muted', tier: 'premium', tip: 'Country of issue from enriched reference data.', cell: function (r) { return r.refCountry ? esc(r.refCountry) : '<span class="muted">—</span>'; } },

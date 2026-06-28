@@ -231,6 +231,17 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("fmtBracketAmount(min) + ' - '");
   });
 
+  it('renders amount bracket categories above the compact amount text', () => {
+    expect(DASHBOARD_HTML).toContain('function amountTier(');
+    expect(DASHBOARD_HTML).toContain('function amountBarsHtml(');
+    expect(DASHBOARD_HTML).toContain('function amountCellHtml(');
+    expect(DASHBOARD_HTML).toContain("label: 'Tier I'");
+    expect(DASHBOARD_HTML).toContain("label: 'Tier V'");
+    expect(DASHBOARD_HTML).toContain('class="amount-bars tier-');
+    expect(DASHBOARD_HTML).toContain('class="amount-range fc-amt-val"');
+    expect(DASHBOARD_HTML).toContain('cell: amountCellHtml');
+  });
+
   it('does not use imported/published time as disclosure lag', () => {
     expect(DASHBOARD_HTML).toContain("function lagBasisDate(r) { return (r && (r.filedDate || r.filed)) || ''; }");
     expect(DASHBOARD_HTML).not.toContain('r.filedDate || r.filed || publishedRaw(r)');
