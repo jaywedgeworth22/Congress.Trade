@@ -64,16 +64,29 @@ This creates all tables and seeds `poll_config` row 1 with the default adaptive
 schedule (Mon–Fri 08–19 ET = 300s, evenings = 1200s, weekends = 3600s).
 
 ## 3. Secrets and vars
+Infisical is the intended source of truth. Cloudflare should store only the
+Infisical machine-identity bootstrap credentials:
+
 ```bash
-npx wrangler secret put GEMINI_API_KEY        # vision OCR for scanned/handwritten House PTRs
-npx wrangler secret put WEBHOOK_SIGNING_KEY   # default HMAC key for outbound webhooks
-# optional — second OCR provider for dual-extractor arbitration:
-npx wrangler secret put ARBITRATION_API_KEY
+npx wrangler secret put INFISICAL_APP_PROJECT_ID
+npx wrangler secret put INFISICAL_APP_CLIENT_ID
+npx wrangler secret put INFISICAL_APP_CLIENT_SECRET
+npx wrangler secret put INFISICAL_SHARED_PROJECT_ID
+npx wrangler secret put INFISICAL_SHARED_CLIENT_ID
+npx wrangler secret put INFISICAL_SHARED_CLIENT_SECRET
 ```
-Arbitration is **off** until both the key above is set **and** the var
-`ARBITRATION_ENABLED = "true"` is present (set it in `wrangler.toml` `[vars]` or
-`.dev.vars`). Flipping it on makes the vision extractor run primary + secondary
-and reconcile. For local dev, copy `.dev.vars.example` → `.dev.vars`.
+
+The Worker reads provider/app secrets from Infisical at runtime and caches them
+briefly in isolate memory. Existing Cloudflare provider secrets may remain during
+the migration as compatibility fallback while `INFISICAL_ALLOW_ENV_FALLBACK` is
+not set to `"false"`. After production diagnostics show Infisical is reachable
+and required keys are resolved, delete and rotate the old Cloudflare provider
+secret copies.
+
+Arbitration is **off** until `ARBITRATION_ENABLED = "true"` is present (set it in
+`wrangler.toml` `[vars]`, Infisical, or `.dev.vars`). Flipping it on makes the
+vision extractor run primary + secondary and reconcile. For local dev, copy
+`.dev.vars.example` → `.dev.vars`.
 
 Admin auth fails closed by default. Set `ADMIN_TOKEN` or configure Cloudflare
 Access (`ADMIN_EMAILS`, `ACCESS_AUD`, `ACCESS_TEAM_DOMAIN`). Only local

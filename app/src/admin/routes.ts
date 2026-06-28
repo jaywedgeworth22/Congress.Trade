@@ -63,6 +63,7 @@ import { runEnrichment, getDailyUsed, prepareImportSecurityRef } from '../enrich
 import { mergeRefs } from '../enrichment/compute';
 import type { SecurityRef } from '../enrichment/types';
 import { runPriceRefresh } from '../prices/service';
+import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets } from '../secrets/infisical';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -90,7 +91,7 @@ async function isAuthorizedIngest(
   path: string,
   authorization?: string,
 ): Promise<boolean> {
-  const token = env.INGEST_TOKEN;
+  const token = (await resolveSecret(env, 'INGEST_TOKEN')).value;
   return (
     !!token &&
     path.endsWith('/securities/import') &&
@@ -113,7 +114,7 @@ async function isAuthorized(
   env: EnvWithAdmin,
   headers: { authorization?: string; accessJwt?: string },
 ): Promise<boolean> {
-  const token = env.ADMIN_TOKEN;
+  const token = (await resolveSecret(env, 'ADMIN_TOKEN')).value;
   const allow = parseEmailAllowlist(env.ADMIN_EMAILS);
   const aud = env.ACCESS_AUD;
   const teamDomain = env.ACCESS_TEAM_DOMAIN;
@@ -888,17 +889,34 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const now = new Date();
     const last24 = hoursAgoIso(24, now);
     const today = dayStartIso(now);
-    const env = c.env as Env & {
-      GEMINI_API_KEY?: string;
-      FMP_API_KEY?: string;
-      WEBHOOK_SIGNING_KEY?: string;
-      GOOGLE_OAUTH_CLIENT_ID?: string;
-      RESEND_API_KEY?: string;
-      EMAIL_FROM?: string;
-      STRIPE_SECRET_KEY?: string;
-    };
+    const runtimeSecrets = await resolveSecrets(c.env, [
+      'GEMINI_API_KEY',
+      'FMP_API_KEY',
+      'MASSIVE_API_KEY',
+      'WEBHOOK_SIGNING_KEY',
+      'GOOGLE_OAUTH_CLIENT_ID',
+      'RESEND_API_KEY',
+      'EMAIL_FROM',
+      'STRIPE_SECRET_KEY',
+    ]);
+    const secretStatus = getSecretResolverStatus(c.env);
 
     const connections: DiagnosticConnection[] = [];
+    const infisicalFailures = secretStatus.sources.filter((s) => s.configured && !s.ok).length;
+    connections.push({
+      id: 'secrets:infisical',
+      label: 'Infisical Runtime Secrets',
+      status: !secretStatus.enabled ? 'warn' : infisicalFailures || secretStatus.errors.length ? 'error' : 'ok',
+      configured: secretStatus.enabled,
+      lastUsedAt: secretStatus.lastRefreshAt,
+      callsTotal: secretStatus.sources.reduce((sum, s) => sum + s.count, 0),
+      callsLast24h: 0,
+      callsToday: 0,
+      errorsLast24h: secretStatus.errors.length,
+      note: secretStatus.enabled
+        ? `Cache ${secretStatus.cacheReady ? 'ready' : 'empty'}; expires in ${secretStatus.cacheExpiresInSeconds ?? 0}s; env fallback ${secretStatus.envFallbackAllowed ? 'allowed' : 'disabled'}`
+        : 'Infisical machine identity bootstrap secrets are not available to this Worker runtime',
+    });
 
     const sourceRows = await optionalAll<{
       source: string;
@@ -955,14 +973,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     connections.push({
       id: 'provider:gemini',
       label: 'Gemini OCR',
-      status: connectionStatus(!!env.GEMINI_API_KEY, gemini?.errors_last_24h ?? 0, gemini?.last_used_at ?? null),
-      configured: !!env.GEMINI_API_KEY,
+      status: connectionStatus(!!runtimeSecrets.GEMINI_API_KEY, gemini?.errors_last_24h ?? 0, gemini?.last_used_at ?? null),
+      configured: !!runtimeSecrets.GEMINI_API_KEY,
       lastUsedAt: gemini?.last_used_at ?? null,
       callsTotal: gemini?.calls_total ?? 0,
       callsLast24h: gemini?.calls_last_24h ?? 0,
       callsToday: gemini?.calls_today ?? 0,
       errorsLast24h: gemini?.errors_last_24h ?? 0,
-      note: env.GEMINI_API_KEY ? 'Scanned House PDFs only' : 'GEMINI_API_KEY is not configured',
+      note: runtimeSecrets.GEMINI_API_KEY ? 'Scanned House PDFs only' : 'GEMINI_API_KEY is not available to this Worker runtime',
     });
 
     const fmp = await optionalAll<{
@@ -985,14 +1003,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     connections.push({
       id: 'provider:fmp',
       label: 'FMP Market Data',
-      status: connectionStatus(!!env.FMP_API_KEY, fmpRow?.errors_last_24h ?? 0, fmpRow?.last_used_at ?? null),
-      configured: !!env.FMP_API_KEY,
+      status: connectionStatus(!!runtimeSecrets.FMP_API_KEY, fmpRow?.errors_last_24h ?? 0, fmpRow?.last_used_at ?? null),
+      configured: !!runtimeSecrets.FMP_API_KEY,
       lastUsedAt: fmpRow?.last_used_at ?? null,
       callsTotal: fmpRow?.calls_total ?? 0,
       callsLast24h: fmpRow?.calls_last_24h ?? 0,
       callsToday: fmpRow?.calls_today ?? 0,
       errorsLast24h: fmpRow?.errors_last_24h ?? 0,
-      note: env.FMP_API_KEY ? 'Enrichment rows refreshed' : 'FMP_API_KEY is not configured',
+      note: runtimeSecrets.FMP_API_KEY ? 'Enrichment rows refreshed' : 'FMP_API_KEY is not available to this Worker runtime',
     });
 
     const webhooks = await optionalAll<{
@@ -1015,54 +1033,93 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     connections.push({
       id: 'delivery:webhook',
       label: 'Webhook Delivery',
-      status: connectionStatus(!!env.WEBHOOK_SIGNING_KEY, wh?.errors_last_24h ?? 0, wh?.last_used_at ?? null),
-      configured: !!env.WEBHOOK_SIGNING_KEY,
+      status: connectionStatus(!!runtimeSecrets.WEBHOOK_SIGNING_KEY, wh?.errors_last_24h ?? 0, wh?.last_used_at ?? null),
+      configured: !!runtimeSecrets.WEBHOOK_SIGNING_KEY,
       lastUsedAt: wh?.last_used_at ?? null,
       callsTotal: wh?.calls_total ?? 0,
       callsLast24h: wh?.calls_last_24h ?? 0,
       callsToday: wh?.calls_today ?? 0,
       errorsLast24h: wh?.errors_last_24h ?? 0,
-      note: env.WEBHOOK_SIGNING_KEY ? 'Delivery attempts recorded' : 'WEBHOOK_SIGNING_KEY fallback is not configured',
+      note: runtimeSecrets.WEBHOOK_SIGNING_KEY ? 'Delivery attempts recorded' : 'WEBHOOK_SIGNING_KEY is not available to this Worker runtime',
     });
 
     connections.push({
       id: 'auth:google',
       label: 'Google Sign-In',
-      status: env.GOOGLE_OAUTH_CLIENT_ID ? 'ok' : 'warn',
-      configured: !!env.GOOGLE_OAUTH_CLIENT_ID,
+      status: runtimeSecrets.GOOGLE_OAUTH_CLIENT_ID ? 'ok' : 'warn',
+      configured: !!runtimeSecrets.GOOGLE_OAUTH_CLIENT_ID,
       lastUsedAt: null,
       callsTotal: 0,
       callsLast24h: 0,
       callsToday: 0,
       errorsLast24h: 0,
-      note: env.GOOGLE_OAUTH_CLIENT_ID ? 'Client id configured' : 'GOOGLE_OAUTH_CLIENT_ID is not configured',
+      note: runtimeSecrets.GOOGLE_OAUTH_CLIENT_ID ? 'Client id available' : 'GOOGLE_OAUTH_CLIENT_ID is not available to this Worker runtime',
     });
     connections.push({
       id: 'email:resend',
       label: 'Email',
-      status: env.RESEND_API_KEY && env.EMAIL_FROM ? 'ok' : 'warn',
-      configured: !!(env.RESEND_API_KEY && env.EMAIL_FROM),
+      status: runtimeSecrets.RESEND_API_KEY && runtimeSecrets.EMAIL_FROM ? 'ok' : 'warn',
+      configured: !!(runtimeSecrets.RESEND_API_KEY && runtimeSecrets.EMAIL_FROM),
       lastUsedAt: null,
       callsTotal: 0,
       callsLast24h: 0,
       callsToday: 0,
       errorsLast24h: 0,
-      note: env.RESEND_API_KEY && env.EMAIL_FROM ? 'Resend sender configured' : 'RESEND_API_KEY/EMAIL_FROM incomplete',
+      note: runtimeSecrets.RESEND_API_KEY && runtimeSecrets.EMAIL_FROM ? 'Resend sender available' : 'RESEND_API_KEY/EMAIL_FROM unavailable or incomplete',
     });
     connections.push({
       id: 'billing:stripe',
       label: 'Stripe Billing',
-      status: env.STRIPE_SECRET_KEY ? 'ok' : 'warn',
-      configured: !!env.STRIPE_SECRET_KEY,
+      status: runtimeSecrets.STRIPE_SECRET_KEY ? 'ok' : 'warn',
+      configured: !!runtimeSecrets.STRIPE_SECRET_KEY,
       lastUsedAt: null,
       callsTotal: 0,
       callsLast24h: 0,
       callsToday: 0,
       errorsLast24h: 0,
-      note: env.STRIPE_SECRET_KEY ? 'Secret key configured' : 'STRIPE_SECRET_KEY is not configured',
+      note: runtimeSecrets.STRIPE_SECRET_KEY ? 'Secret key available' : 'STRIPE_SECRET_KEY is not available to this Worker runtime',
     });
 
     const errors: DiagnosticError[] = [];
+    for (const source of secretStatus.sources) {
+      if (source.configured && !source.ok) {
+        errors.push({
+          at: secretStatus.lastRefreshAt ?? now.toISOString(),
+          area: 'Infisical',
+          severity: 'error',
+          subject: source.name,
+          message: source.error ?? 'Secret source failed to refresh',
+        });
+      }
+    }
+    if (!runtimeSecrets.FMP_API_KEY) {
+      errors.push({
+        at: now.toISOString(),
+        area: 'Fallback / Degraded Mode',
+        severity: 'warning',
+        subject: 'Security enrichment',
+        message:
+          'FMP_API_KEY is not available to this Worker runtime; enrichment uses runtime-available secondary providers and the EDGAR baseline for missing fields.',
+      });
+    }
+    if (!runtimeSecrets.FMP_API_KEY && runtimeSecrets.MASSIVE_API_KEY) {
+      errors.push({
+        at: now.toISOString(),
+        area: 'Fallback / Degraded Mode',
+        severity: 'warning',
+        subject: 'Price refresh',
+        message:
+          'FMP_API_KEY is not available to this Worker runtime; price refresh will use MASSIVE_API_KEY as the provider fallback.',
+      });
+    } else if (!runtimeSecrets.FMP_API_KEY && !runtimeSecrets.MASSIVE_API_KEY) {
+      errors.push({
+        at: now.toISOString(),
+        area: 'Fallback / Degraded Mode',
+        severity: 'warning',
+        subject: 'Price refresh',
+        message: 'No FMP_API_KEY or MASSIVE_API_KEY is available to this Worker runtime; price refresh is disabled.',
+      });
+    }
     const filingErrors = await optionalAll<{
       first_seen_at: string | null;
       doc_id: string;
@@ -1166,9 +1223,17 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     return c.json({
       generatedAt: now.toISOString(),
       connections,
+      secrets: secretStatus,
       errors: errors.slice(0, 75),
       errorCount: errors.length,
     });
+  });
+
+  // --- POST /diagnostics/secrets/refresh ----------------------------------
+  // Force-refresh the in-isolate Infisical secret cache. This does not write
+  // secrets into KV/D1/Cloudflare vars; it only updates this Worker isolate.
+  r.post('/diagnostics/secrets/refresh', async (c) => {
+    return c.json({ secrets: await refreshSecrets(c.env) });
   });
 
   // --- GET /ui-settings ---------------------------------------------------

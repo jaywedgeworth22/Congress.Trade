@@ -5,6 +5,7 @@
  */
 
 import type { Env } from '../shared/types';
+import { resolveSecrets } from '../secrets/infisical';
 
 export interface EmailMessage {
   to: string;
@@ -18,19 +19,25 @@ export function emailConfigured(env: Env): boolean {
   return !!(env.RESEND_API_KEY && env.EMAIL_FROM);
 }
 
+export async function emailConfiguredAsync(env: Env): Promise<boolean> {
+  const s = await resolveSecrets(env, ['RESEND_API_KEY', 'EMAIL_FROM']);
+  return Boolean(s.RESEND_API_KEY && s.EMAIL_FROM);
+}
+
 /** Send a transactional email. Throws if not configured or on API error. */
 export async function sendEmail(env: Env, msg: EmailMessage): Promise<void> {
-  if (!emailConfigured(env)) {
+  const s = await resolveSecrets(env, ['RESEND_API_KEY', 'EMAIL_FROM']);
+  if (!s.RESEND_API_KEY || !s.EMAIL_FROM) {
     throw new Error('email not configured (set RESEND_API_KEY + EMAIL_FROM)');
   }
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${env.RESEND_API_KEY}`,
+      authorization: `Bearer ${s.RESEND_API_KEY}`,
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      from: env.EMAIL_FROM,
+      from: s.EMAIL_FROM,
       to: msg.to,
       subject: msg.subject,
       html: msg.html,

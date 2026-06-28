@@ -43,6 +43,7 @@ import {
 } from './subscriptions';
 import { openSseStream } from './sse';
 import { handleTickerLogoRequest } from '../ui/tickerLogos';
+import { resolveSecret } from '../secrets/infisical';
 import { constantTimeEqual } from '../auth/tokens';
 
 function parseIntOrUndef(v: string | undefined): number | undefined {
@@ -353,8 +354,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // --- GET /logos/ticker --------------------------------------------------
   // Cached company-logo proxy (see ui/tickerLogos.ts). Reachable at
   // /api/logos/ticker?symbol=AAPL, matching the dashboard's <img> src.
-  r.get('/logos/ticker', (c) =>
-    handleTickerLogoRequest(new URL(c.req.url), (c.env as { LOGODEV_PUBLISHABLE_KEY?: string }).LOGODEV_PUBLISHABLE_KEY),
+  r.get('/logos/ticker', async (c) =>
+    handleTickerLogoRequest(new URL(c.req.url), (await resolveSecret(c.env, 'LOGODEV_PUBLISHABLE_KEY')).value),
   );
 
   // --- GET /filings/:docId ------------------------------------------------

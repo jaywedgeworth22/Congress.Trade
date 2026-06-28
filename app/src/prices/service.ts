@@ -18,6 +18,7 @@ import { createPacer } from '../shared/pace';
 import { buildFmpPriceClient, type PriceClient } from './fmp';
 import { buildMassivePriceClient } from './massive';
 import { nearestClose, type Close } from './compute';
+import { resolveSecrets } from '../secrets/infisical';
 
 const DEFAULT_DAILY_CAP = 230;
 type EnvX = Env & {
@@ -110,7 +111,8 @@ export async function runPriceRefresh(
   env: Env,
   opts: { max?: number; dryRun?: boolean; maxPerMinute?: number } = {},
 ): Promise<PriceRefreshResult> {
-  const envx = env as EnvX;
+  const runtimeSecrets = await resolveSecrets(env, ['FMP_API_KEY', 'FMP_DAILY_CALL_CAP', 'MASSIVE_API_KEY']);
+  const envx = { ...(env as EnvX), ...runtimeSecrets };
   const dryRun = opts.dryRun === true;
   const result: PriceRefreshResult = {
     hasFmpKey: !!envx.FMP_API_KEY,

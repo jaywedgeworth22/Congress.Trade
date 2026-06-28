@@ -19,6 +19,7 @@
 import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types';
 import type { Env, Filing, Owner, ParsedTx, TxType } from '../shared/types';
 import { parseAmountRange } from './amounts';
+import { resolveSecret } from '../secrets/infisical';
 
 /**
  * Gemini model id. Centralized + documented so it is trivial to bump.
@@ -40,6 +41,8 @@ const DEFAULT_CONFIDENCE = 0.6;
 export interface VisionLlmOptions {
   /** API key to use instead of env.GEMINI_API_KEY (e.g. ARBITRATION_API_KEY). */
   apiKey?: string;
+  /** Runtime secret name to resolve when apiKey is not supplied. */
+  apiKeyName?: keyof Env & string;
   /** Model id to use instead of the default (a different model = real cross-check). */
   model?: string;
   /** Override extractor name (so arbitration can tell the two apart). */
@@ -50,6 +53,7 @@ export class VisionLlmExtractor implements Extractor {
   readonly name: string;
   private readonly model: string;
   private readonly apiKeyOverride?: string;
+  private readonly apiKeyName: keyof Env & string;
 
   constructor(
     private readonly env: Env,
@@ -58,6 +62,7 @@ export class VisionLlmExtractor implements Extractor {
     this.name = options.name ?? 'visionLlm';
     this.model = options.model ?? MODEL;
     this.apiKeyOverride = options.apiKey;
+    this.apiKeyName = options.apiKeyName ?? 'GEMINI_API_KEY';
   }
 
   canHandle(f: Filing): boolean {
@@ -65,7 +70,7 @@ export class VisionLlmExtractor implements Extractor {
   }
 
   async extract(input: ExtractorInput): Promise<ExtractorResult> {
-    const key = this.apiKeyOverride ?? this.env.GEMINI_API_KEY;
+    const key = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
     if (!key) throw new Error(`${this.name}: API key is not configured`);
     if (!input.bytes) throw new Error(`${this.name}: no bytes provided on ExtractorInput`);
 

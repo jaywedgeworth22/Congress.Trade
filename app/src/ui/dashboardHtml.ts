@@ -1387,6 +1387,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="section">
       <h3>Connection Status</h3>
       <p class="sub">Provider and integration status from production data. Secret values are never shown.</p>
+      <div class="row-flex" style="margin-bottom:10px">
+        <button class="btn ghost sm" onclick="refreshInfisicalSecrets()">Refresh Runtime Secrets</button>
+        <span id="secretRefreshMsg" class="note"></span>
+      </div>
       <div id="diagConnections" class="diag-grid" aria-live="polite"></div>
       <h3 style="margin-top:14px">Recent App Errors</h3>
       <table>
@@ -3110,6 +3114,25 @@ function loadDiagnostics() {
     .catch(function (e) {
       if (cards) cards.innerHTML = '<div class="state">' + esc(isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load diagnostics: ' + e.message)) + '</div>';
       if (errors) errors.innerHTML = stateRow(4, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load diagnostics: ' + e.message));
+    });
+}
+
+function refreshInfisicalSecrets() {
+  var msg = el('secretRefreshMsg');
+  if (msg) msg.textContent = 'Refreshing…';
+  return fetch('/api/admin/diagnostics/secrets/refresh', {
+    method: 'POST',
+    headers: adminHeaders({ 'content-type': 'application/json' }),
+    body: '{}'
+  })
+    .then(okOrThrow)
+    .then(function () {
+      if (msg) msg.textContent = 'Refreshed.';
+      setTimeout(function () { if (msg) msg.textContent = ''; }, 2500);
+      return loadDiagnostics();
+    })
+    .catch(function (e) {
+      if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Refresh failed: ' + e.message);
     });
 }
 

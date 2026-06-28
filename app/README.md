@@ -174,11 +174,15 @@ duplicate delivery fan-out.
 | `CONFIG_KV` | KV | Hot config cache (poll schedule, last-poll timestamps) |
 
 Local development variables are documented in `.dev.vars.example`; copy it to
-`.dev.vars` and keep the real file untracked. Production secrets are set with
-`wrangler secret put`. Important groups:
+`.dev.vars` and keep the real file untracked. Production provider/app secrets
+should live in Infisical and be read at runtime through the machine-identity
+resolver. Cloudflare Worker secrets should only need the Infisical bootstrap
+identity credentials after cutover; provider-key Worker secrets are migration
+fallback only. Important groups:
 
 | Group | Variables |
 |-------|-----------|
+| Infisical bootstrap | `INFISICAL_APP_PROJECT_ID`, `INFISICAL_APP_CLIENT_ID`, `INFISICAL_APP_CLIENT_SECRET`, `INFISICAL_SHARED_PROJECT_ID`, `INFISICAL_SHARED_CLIENT_ID`, `INFISICAL_SHARED_CLIENT_SECRET`, `INFISICAL_ENV`, `INFISICAL_ALLOW_ENV_FALLBACK` |
 | Admin | `ADMIN_TOKEN`, `INGEST_TOKEN`, `ADMIN_EMAILS`, `ACCESS_AUD`, `ACCESS_TEAM_DOMAIN`, `ADMIN_OPEN_IN_DEV` |
 | Extraction | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ARBITRATION_API_KEY`, `ARBITRATION_ENABLED`, `ARBITRATION_MODEL` |
 | Market data | `FMP_API_KEY`, `FMP_DAILY_CALL_CAP`, `SEED_HOUSE_URL`, `SEED_SENATE_URL`, `HOUSE_LIVE_SEARCH_ENABLED` |
