@@ -97,6 +97,31 @@ describe('mapRecordToTransaction', () => {
     expect(tx).toBeNull();
   });
 
+  it('rejects unparsed scanned-PDF seed placeholders', () => {
+    const tx = mapRecordToTransaction(
+      {
+        senator: 'Jane A. Smith',
+        asset_description: 'This filing was disclosed via scanned PDF. Use link in ptr_link column to view the PDF.',
+        asset_type: 'PDF Disclosed Filing',
+        type: 'Purchase',
+      },
+      'senate',
+      '2026-06-20T00:00:00.000Z',
+      resolveAll,
+    );
+    expect(tx).toBeNull();
+  });
+
+  it('does not turn unknown seed transaction types into purchases', () => {
+    const tx = mapRecordToTransaction(
+      { senator: 'Jane A. Smith', ticker: 'AAPL', asset_description: 'Apple Inc.', type: 'N/A' },
+      'senate',
+      '2026-06-20T00:00:00.000Z',
+      resolveAll,
+    );
+    expect(tx).toBeNull();
+  });
+
   it('uses the representative field for House records', () => {
     const tx = mapRecordToTransaction(
       { representative: 'Hon. Pat Q. Example', ticker: 'AAPL', type: 'sale' },

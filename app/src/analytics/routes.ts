@@ -721,7 +721,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /member-performance --------------------------------------------
-  // Per-member excess return vs the S&P 500 on their BUYS, anchored at the
+  // Per-member annualized excess return vs the S&P 500 on their BUYS, anchored at the
   // FILING (disclosure) date — the realizable "could you have followed this?"
   // number, not the trade-date hindsight figure. Buys only, options excluded,
   // small-N guarded. Defaults to the whole track record (window=all).
@@ -743,7 +743,9 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           party: str(row.party),
           photoUrl: str(row.photo_url),
           tradeCount: n,
-          // Excess return vs SPX since the filing date, equal-weighted across buys.
+          // Annualized excess return vs SPX since the filing date, equal-weighted across buys.
+          avgAnnualizedExcessReturn: num(row.avg_annualized_excess),
+          // Raw cumulative excess is kept for compatibility/debugging.
           avgExcessReturn: num(row.avg_excess),
           winRate: n > 0 ? wins / n : 0,
           estVolumeUsd: usd(row.est_volume),
@@ -754,7 +756,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         members,
         anchor: 'filing_date',
         side: 'buys',
-        note: 'Excess return vs S&P 500 from the disclosure date (realizable by a follower); buys only, options excluded.',
+        note: 'Annualized excess return vs S&P 500 from the disclosure date (realizable by a follower); 0% means matched the S&P, +3% means about 3 percentage points better per year. Buys only, options excluded.',
         estimatedAmounts: true,
       });
     });

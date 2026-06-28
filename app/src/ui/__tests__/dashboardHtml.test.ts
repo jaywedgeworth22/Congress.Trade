@@ -162,8 +162,8 @@ describe('DASHBOARD_HTML', () => {
   it('uses published timing, tighter asset defaults, and source links in drawers', () => {
     expect(DASHBOARD_HTML).toContain("var sortKey = 'published'");
     expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v2'");
-    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v5'");
-    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 96, 86, 112)");
+    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v6'");
+    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 82, 72, 92)");
     expect(DASHBOARD_HTML).toContain("p.set('sort', 'published')");
     expect(DASHBOARD_HTML).toContain("p.set('memberName', m)");
     expect(DASHBOARD_HTML).toContain('function handleFeedTextFilter(');
@@ -172,6 +172,19 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function publishedDetailText(');
     expect(DASHBOARD_HTML).toContain('function miniSourceLinkHtml(');
     expect(DASHBOARD_HTML).toContain('Official Filed');
+  });
+
+  it('keeps the polished table, drawer, and trends layout hooks', () => {
+    expect(DASHBOARD_HTML).toContain('#feedHead th { position: sticky');
+    expect(DASHBOARD_HTML).toContain('border-right: 1px solid color-mix');
+    expect(DASHBOARD_HTML).toContain('#feedTable .c-member');
+    expect(DASHBOARD_HTML).toContain('#feedTable .c-asset');
+    expect(DASHBOARD_HTML).toContain('drawer-company-title');
+    expect(DASHBOARD_HTML).toContain('drawer-stack-grid');
+    expect(DASHBOARD_HTML).toContain('trend-members-grid');
+    expect(DASHBOARD_HTML).toContain('buySellText(');
+    expect(DASHBOARD_HTML).toContain('0% means matched the S&P');
+    expect(DASHBOARD_HTML).toContain('Unparsed Historical Filing');
   });
 
   it('makes review documents linkable without showing false confidence for empty reads', () => {
@@ -265,6 +278,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("kvRow('Distinct Assets'");
     expect(DASHBOARD_HTML).not.toContain("kpi('Members'");
     expect(DASHBOARD_HTML).not.toContain("kpi('Tickers'");
+    expect(DASHBOARD_HTML).not.toContain('Most-traded tickers');
+    expect(DASHBOARD_HTML).not.toContain('0B / ');
   });
 
   it('hides trade-row source provenance from the public feed', () => {

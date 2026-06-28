@@ -452,12 +452,14 @@ export function buildLateFilersQuery(p: CommonFilters & { limit?: number }): Bui
  * follower could actually have transacted at (trade-date anchoring would bake in
  * the move that happened before the trade was public). Each trade's excess is
  *
- *   (current_price / price_at_filing − 1) − (spx_now / spx_at_filing − 1)
+ *   ((current_price / price_at_filing − 1) − (spx_now / spx_at_filing − 1))
+ *   annualized by elapsed days since the public filing anchor.
  *
  * Options are excluded (no EOD-equity anchor); only resolved, non-retracted buys
  * with both a filing anchor and a current price count. `minTrades` (validated
  * int, default 5) is a small-N guard so a 1–2 trade "leader" can't top the
- * board. Reports equal-weighted average excess, win-rate, N, and est volume.
+ * board. Reports equal-weighted annualized average excess, raw average excess
+ * for compatibility, win-rate, N, and est volume.
  */
 export function buildMemberPerformanceLeaderboardQuery(
   p: CommonFilters & { limit?: number; minTrades?: number },
@@ -468,12 +470,18 @@ export function buildMemberPerformanceLeaderboardQuery(
   // Excess return of one buy vs SPX, both legs anchored at the filing date.
   const EXCESS =
     '((sr.current_price / p.price_at_filing) - 1.0) - ((sx.spx_now / p.spx_at_filing) - 1.0)';
+  const ANCHOR_DATE = 'COALESCE(f.filed_date, f.first_seen_at, t.tx_date)';
+  const ELAPSED_DAYS = `(julianday('now') - julianday(${ANCHOR_DATE}))`;
+  const ANNUALIZED_EXCESS = `((${EXCESS}) * (365.25 / ${ELAPSED_DAYS}))`;
   const allWhere = [
     "t.tx_type = 'P'",
     't.is_option = 0',
     'p.price_at_filing IS NOT NULL AND p.price_at_filing > 0',
     'p.spx_at_filing IS NOT NULL AND p.spx_at_filing > 0',
-    'sr.current_price IS NOT NULL',
+    'sr.current_price IS NOT NULL AND sr.current_price > 0',
+    'sx.spx_now IS NOT NULL AND sx.spx_now > 0',
+    `julianday(${ANCHOR_DATE}) IS NOT NULL`,
+    `${ELAPSED_DAYS} > 0`,
     't.filer_id IS NOT NULL',
     ...where,
   ];
@@ -481,8 +489,9 @@ export function buildMemberPerformanceLeaderboardQuery(
     'SELECT t.filer_id AS filer_id, fl.full_name AS full_name, fl.party AS party, ' +
     'fl.photo_url AS photo_url, ' +
     'COUNT(*) AS trade_count, ' +
+    `AVG(${ANNUALIZED_EXCESS}) AS avg_annualized_excess, ` +
     `AVG(${EXCESS}) AS avg_excess, ` +
-    `SUM(CASE WHEN ${EXCESS} > 0 THEN 1 ELSE 0 END) AS wins, ` +
+    `SUM(CASE WHEN ${ANNUALIZED_EXCESS} > 0 THEN 1 ELSE 0 END) AS wins, ` +
     `SUM(${MID}) AS est_volume ` +
     'FROM transactions t ' +
     'JOIN tx_performance p ON p.tx_id = t.id ' +
@@ -493,7 +502,7 @@ export function buildMemberPerformanceLeaderboardQuery(
     whereSql(allWhere) +
     'GROUP BY t.filer_id ' +
     `HAVING trade_count >= ${minTrades} ` +
-    'ORDER BY avg_excess DESC ' +
+    'ORDER BY avg_annualized_excess DESC ' +
     `LIMIT ${limit}`;
   return { sql, params };
 }
