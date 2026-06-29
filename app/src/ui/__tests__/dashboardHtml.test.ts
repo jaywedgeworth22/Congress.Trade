@@ -204,10 +204,19 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function openReviewEditor(');
     expect(DASHBOARD_HTML).toContain('Review / Confirm');
     expect(DASHBOARD_HTML).toContain('Use This Model');
+    expect(DASHBOARD_HTML).toContain('Bake-Off Runs (');
+    expect(DASHBOARD_HTML).toContain('Queued Extracted Rows');
     expect(DASHBOARD_HTML).toContain('Prefilled Rows');
+    expect(DASHBOARD_HTML).toContain('REVIEW_AMOUNT_BRACKETS');
+    expect(DASHBOARD_HTML).toContain('class="me-bracket"');
     expect(DASHBOARD_HTML).toContain('class="me-asset-type"');
+    expect(DASHBOARD_HTML).toContain('Stocks (ST)');
+    expect(DASHBOARD_HTML).toContain('Other (OT)');
     expect(DASHBOARD_HTML).toContain('class="me-option"');
+    expect(DASHBOARD_HTML).toContain('Option Contract');
     expect(DASHBOARD_HTML).toContain('class="me-cap"');
+    expect(DASHBOARD_HTML).not.toContain('class="me-min"');
+    expect(DASHBOARD_HTML).not.toContain('class="me-max"');
     expect(DASHBOARD_HTML).toContain('JSON.stringify({ decision: decision, edits: edits })');
     expect(DASHBOARD_HTML).not.toContain('JSON.stringify({ decision: decision, edits: [] })');
   });
@@ -226,6 +235,16 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('id="diagErrors"');
     expect(DASHBOARD_HTML).toContain("fetch('/api/admin/diagnostics'");
     expect(DASHBOARD_HTML).toContain('function loadDiagnostics(');
+  });
+
+  it('surfaces market-data coverage and bounded backfill controls in Admin', () => {
+    expect(DASHBOARD_HTML).toContain('Market Data Coverage');
+    expect(DASHBOARD_HTML).toContain('id="marketCoverage"');
+    expect(DASHBOARD_HTML).toContain('function loadMarketCoverage(');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/enrich-securities/status'");
+    expect(DASHBOARD_HTML).toContain('function runMarketBackfill(');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/backfill-market'");
+    expect(DASHBOARD_HTML).toContain('Missing Asset Samples');
   });
 
   it('keeps the educational + dollar-estimate disclaimers in the Trends view', () => {
