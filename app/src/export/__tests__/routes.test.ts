@@ -115,6 +115,39 @@ describe('GET /api/export/bulk-snapshot — auth', () => {
   });
 });
 
+describe('GET /api/export/capabilities', () => {
+  it('401 without the scoped ingest token', async () => {
+    expect((await req('/capabilities', baseEnv())).status).toBe(401);
+  });
+
+  it('returns the cross-app contract without leaking configured secret values', async () => {
+    const res = await req(
+      '/capabilities',
+      baseEnv({
+        APP_B_IMPORT_URL: 'https://app-b.example/api/admin/securities/import',
+        APP_B_INGEST_TOKEN: 'peer-secret',
+        IMPORT_MAX_REFS: '123',
+      }),
+      TOKEN,
+    );
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain(TOKEN);
+    expect(text).not.toContain('peer-secret');
+    expect(text).not.toContain('https://app-b.example');
+    const body = JSON.parse(text) as {
+      contractVersion: string;
+      configured: { ingestToken: boolean; appBReturnPath: boolean };
+      endpoints: { imports: { securities: { limits: { refs: number }; accepts: string[] } }; exports: { pitScores: { scoreVersion: string } } };
+    };
+    expect(body.contractVersion).toBe('congress-trade-crossapp-v1');
+    expect(body.configured).toEqual({ ingestToken: true, appBReturnPath: true });
+    expect(body.endpoints.imports.securities.limits.refs).toBe(123);
+    expect(body.endpoints.imports.securities.accepts).toContain('fundamentals');
+    expect(body.endpoints.exports.pitScores.scoreVersion).toBe('congress-pit-v2');
+  });
+});
+
 describe('GET /api/export/congress-pit-scores', () => {
   it('401 without a token', async () => {
     expect((await req('/congress-pit-scores', baseEnv())).status).toBe(401);
