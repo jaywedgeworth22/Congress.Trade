@@ -60,12 +60,38 @@ const PAGE_SIZE = 200;
  * Returns a `text/event-stream` Response. If the subscription is missing or not
  * an SSE subscription, returns a 404/409 JSON error instead.
  */
+export let LATEST_CURSOR_SEQ: number | null = null;
+
+export async function refreshLatestCursorSeq(db: D1Database): Promise<number> {
+  const row = await get<{ max_seq: number | null }>(
+    db,
+    'SELECT MAX(cursor_seq) AS max_seq FROM transactions'
+  );
+  const maxSeq = row?.max_seq ?? 0;
+  LATEST_CURSOR_SEQ = maxSeq;
+  return maxSeq;
+}
+
+export function updateLatestCursorSeq(seq: number) {
+  if (LATEST_CURSOR_SEQ === null || seq > LATEST_CURSOR_SEQ) {
+    LATEST_CURSOR_SEQ = seq;
+  }
+}
+
 export async function openSseStream(
   env: Env,
   subscriptionId: string,
   since?: number,
   streamToken?: string,
 ): Promise<Response> {
+  if (LATEST_CURSOR_SEQ === null) {
+    try {
+      await refreshLatestCursorSeq(env.DB);
+    } catch (err) {
+      console.warn('sse: failed to fetch initial LATEST_CURSOR_SEQ', (err as Error).message);
+    }
+  }
+
   const subRow = await get<SubscriptionRow>(
     env.DB,
     'SELECT id, client_id, delivery, target_url, secret, filters, cursor, active, created_at FROM subscriptions WHERE id = ?',
@@ -120,17 +146,23 @@ export async function openSseStream(
 
       try {
         // 1) Catch-up replay (drain everything newer than `since`).
-        cursor = await drain(env, sub, cursor, send);
+        if (LATEST_CURSOR_SEQ === null || cursor < LATEST_CURSOR_SEQ) {
+          cursor = await drain(env, sub, cursor, send);
+        }
 
         // 2) Live poll loop.
         while (!closed && Date.now() - startedAt < MAX_STREAM_MS) {
           await sleep(POLL_INTERVAL_MS);
           if (closed) break;
           const before = cursor;
-          cursor = await drain(env, sub, cursor, send);
-          if (cursor === before) {
-            // Idle tick — heartbeat so intermediaries keep the socket open.
+          if (LATEST_CURSOR_SEQ !== null && cursor >= LATEST_CURSOR_SEQ) {
             send(`event: ping\ndata: ${Date.now()}\n\n`);
+          } else {
+            cursor = await drain(env, sub, cursor, send);
+            if (cursor === before) {
+              // Idle tick — heartbeat so intermediaries keep the socket open.
+              send(`event: ping\ndata: ${Date.now()}\n\n`);
+            }
           }
         }
 

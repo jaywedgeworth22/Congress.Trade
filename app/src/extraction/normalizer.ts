@@ -19,6 +19,7 @@
  */
 
 import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../shared/types';
+import { refreshLatestCursorSeq } from '../delivery/sse';
 import { all, run, fromBool, parseJson } from '../shared/db';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets';
 import { canonicalizeAssetType } from '../shared/assetTypes';
@@ -314,6 +315,8 @@ function buildTransaction(
       amountMin: s.amountMin,
       amountMax: s.amountMax,
     }),
+    firstSeenAt: filing.firstSeenAt,
+    filedDate: filing.filedDate,
     createdAt: nowIso,
     // cursor_seq is assigned by the DB trigger on insert.
     cursorSeq: 0,
@@ -497,8 +500,9 @@ const INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
   id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
   tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
   raw_text, asset_type_name, filing_status, subholding, location, description,
-  supplemental_text, row_key, confidence, source, created_at, cursor_seq
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`;
+  supplemental_text, row_key, confidence, source, created_at, cursor_seq,
+  first_seen_at, filed_date
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`;
 
 /** Insert each validated transaction. cursor_seq is assigned by the DB trigger. */
 export async function persistTransactions(env: Env, transactions: Transaction[]): Promise<string[]> {
@@ -529,8 +533,17 @@ export async function persistTransactions(env: Env, transactions: Transaction[])
       tx.confidence,
       tx.source,
       tx.createdAt,
+      tx.firstSeenAt ?? null,
+      tx.filedDate ?? null,
     ]);
     if ((res.meta?.changes ?? 1) > 0) insertedIds.push(tx.id);
+  }
+  if (insertedIds.length > 0) {
+    try {
+      await refreshLatestCursorSeq(env.DB);
+    } catch (err) {
+      console.error('persistTransactions: failed to refresh latest cursor seq', (err as Error).message);
+    }
   }
   return insertedIds;
 }

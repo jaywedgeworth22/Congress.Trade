@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 struct BootstrapResponse: Decodable {
     let serverTime: String
@@ -34,52 +35,82 @@ struct ClientFeedResponse: Decodable {
     let nextPollAfterSec: Int
 }
 
-struct ClientTrade: Decodable, Identifiable {
-    let id: String
-    let cursor: Int
-    let docId: String
-    let member: Member
-    let asset: Asset
-    let transaction: Transaction
-    let filing: Filing
-    let confidence: Double
-    let source: Source
+@Model
+final class ClientTrade: Decodable, Identifiable {
+    @Attribute(.unique) var id: String
+    var cursor: Int
+    var docId: String
+    var member: Member
+    var asset: Asset
+    var transaction: Transaction
+    var filing: Filing
+    var confidence: Double
+    var source: Source
 
-    enum Source: String, Decodable {
+    enum Source: String, Codable {
         case primary
         case seedDataset = "seed_dataset"
     }
 
-    struct Member: Decodable {
-        let id: String?
-        let name: String?
-        let chamber: String?
-        let party: String?
-        let state: String?
-        let photoUrl: String?
+    struct Member: Codable {
+        var id: String?
+        var name: String?
+        var chamber: String?
+        var party: String?
+        var state: String?
+        var photoUrl: String?
     }
 
-    struct Asset: Decodable {
-        let name: String
-        let ticker: String?
-        let type: String?
-        let sector: String?
-        let marketCapBucket: String?
+    struct Asset: Codable {
+        var name: String
+        var ticker: String?
+        var type: String?
+        var sector: String?
+        var marketCapBucket: String?
     }
 
-    struct Transaction: Decodable {
-        let date: String?
-        let type: String
-        let owner: String?
-        let amountMin: Int?
-        let amountMax: Int?
-        let isOption: Bool
+    struct Transaction: Codable {
+        var date: String?
+        var type: String
+        var owner: String?
+        var amountMin: Int?
+        var amountMax: Int?
+        var isOption: Bool
     }
 
-    struct Filing: Decodable {
-        let filedDate: String?
-        let firstSeenAt: String?
-        let sourceUrl: String?
+    struct Filing: Codable {
+        var filedDate: String?
+        var firstSeenAt: String?
+        var sourceUrl: String?
+    }
+
+    init(id: String, cursor: Int, docId: String, member: Member, asset: Asset, transaction: Transaction, filing: Filing, confidence: Double, source: Source) {
+        self.id = id
+        self.cursor = cursor
+        self.docId = docId
+        self.member = member
+        self.asset = asset
+        self.transaction = transaction
+        self.filing = filing
+        self.confidence = confidence
+        self.source = source
+    }
+
+    required init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(String.self, forKey: .id)
+        self.cursor = try container.decode(Int.self, forKey: .cursor)
+        self.docId = try container.decode(String.self, forKey: .docId)
+        self.member = try container.decode(Member.self, forKey: .member)
+        self.asset = try container.decode(Asset.self, forKey: .asset)
+        self.transaction = try container.decode(Transaction.self, forKey: .transaction)
+        self.filing = try container.decode(Filing.self, forKey: .filing)
+        self.confidence = try container.decode(Double.self, forKey: .confidence)
+        self.source = try container.decode(Source.self, forKey: .source)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, cursor, docId, member, asset, transaction, filing, confidence, source
     }
 }
 
@@ -217,3 +248,4 @@ enum JSONValue: Codable, Hashable {
         }
     }
 }
+EOF

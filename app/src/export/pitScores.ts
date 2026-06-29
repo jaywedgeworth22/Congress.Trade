@@ -208,8 +208,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TICKER_RE = /^[A-Z0-9._-]{1,20}$/;
 const SOURCE_FILTERS = new Set(['primary', 'seed_dataset', 'manual', 'all']);
 
-const ASOF_SQL =
-  "COALESCE(f.first_seen_at, CASE WHEN f.filed_date IS NOT NULL THEN f.filed_date || 'T00:00:00.000Z' END, t.created_at)";
+const ASOF_SQL = 't.disclosure_available_at';
 
 interface AvailabilityInfo {
   timestamp: string | null;
