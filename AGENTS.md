@@ -25,7 +25,11 @@ This repo is worked by multiple agents. Read this before editing.
 - Create or switch to a separate branch before non-trivial edits.
 - Codex branches: `codex/<short-topic>`.
 - Claude branches: `claude/<short-topic>`.
-- Shared feature branches are acceptable when explicitly coordinated.
+- Cursor/Cursor Cloud branches: `cursor/<short-topic>`.
+- Copilot branches: `copilot/<short-topic>`.
+- Antigravity branches: `antigravity/<short-topic>`.
+- Shared feature or integration branches are acceptable when explicitly
+  coordinated.
 - Do not edit another agent's branch unless asked.
 - Treat a dirty worktree as owned by the agent that created those edits. Do not
   reformat, revert, stage, or "clean up" files outside your assigned slice.
@@ -161,7 +165,14 @@ npm test
 For deployment/config changes, also inspect `app/wrangler.toml`, relevant docs,
 and whether migrations need to be applied separately.
 
-## Cursor Cloud specific instructions
+## Cursor / Cursor Cloud Instructions
+
+Cursor is a peer agent platform for this repo, not a separate product lane. Use
+the same backend-owned contracts, branch hygiene, verification standard, and
+production-safety rules as Codex, Claude, Copilot, and Antigravity work.
+
+Cursor project rules live in `.cursor/rules/`. They should point back to this
+file rather than duplicating long policy text.
 
 The VM startup update script runs `bash scripts/cloud-setup.sh` (idempotent:
 `npm ci` in `app/` + applies local D1 migrations). After it runs, the dev

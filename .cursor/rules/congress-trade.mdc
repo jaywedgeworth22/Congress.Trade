@@ -1,0 +1,34 @@
+---
+description: Congress.Trade coordination, branch, and production-safety rules
+alwaysApply: true
+---
+
+Read `AGENTS.md` first and treat it as the source of truth for this repo.
+
+Cursor-owned branches use `cursor/<short-topic>` unless Jay explicitly asks for
+a shared feature or integration branch. Cursor and Cursor Cloud work is peer
+work alongside Codex, Claude, Copilot, and Antigravity; do not edit another
+agent's branch, worktree, dirty files, or PR unless Jay explicitly asks.
+
+Before editing, run:
+
+```bash
+git status --short --branch
+git worktree list
+gh pr list --state open
+```
+
+If an open PR or another worktree touches the same files, inspect changed files
+and checks, then choose a disjoint slice, coordinate through a deliberate
+integration branch, or stop and report the overlap.
+
+The runnable app is in `app/`. Do not deploy, push, provision Cloudflare
+resources, apply remote D1 migrations, run production scripts, or start
+production backfills/ingestion unless Jay explicitly asks.
+
+For code changes, verify from `app/` with:
+
+```bash
+npm run typecheck
+npm test
+```

@@ -11,9 +11,9 @@ truth; this file is the short operational snapshot for the current integration.
   (`claude/transactions-from-filter`), `#27` (`claude/sse-backlog`), and `#28`
   (`feat/managed-payments`).
 - Current integration branch: `codex/production-integration-mobile-api`.
-- Active app work may be happening on separate Codex/Claude branches. Before
-  editing, run the AGENTS.md preflight commands and inspect open PR changed
-  files/checks for overlap.
+- Active app work may be happening on separate Codex, Claude, Cursor, Copilot,
+  Antigravity, or other coordinated branches. Before editing, run the AGENTS.md
+  preflight commands and inspect open PR changed files/checks for overlap.
 - Current product direction: mobile dashboard polish plus a phone-first
   Next.js/PWA and SwiftUI iPhone app that share one backend-owned
   `/api/client/v1/*` contract and command/status model.
@@ -74,6 +74,7 @@ production ingestion jobs unless Jay explicitly asks for production action.
 reviews dismissed, force pushes disabled, deletions disabled. Agents should not
 direct-push or deploy unless Jay explicitly asks.
 
-Use separate branches for separate agents. If another branch or PR is touching
-the same files, either pick a disjoint slice, ask Jay which branch owns the
-work, or create a deliberate integration branch.
+Use separate branches for separate agents: `codex/`, `claude/`, `cursor/`,
+`copilot/`, or `antigravity/` unless explicitly coordinated otherwise. If
+another branch or PR is touching the same files, either pick a disjoint slice,
+ask Jay which branch owns the work, or create a deliberate integration branch.
