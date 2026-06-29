@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 @main
 struct CongressTradeApp: App {
@@ -9,6 +10,7 @@ struct CongressTradeApp: App {
             PrototypeRootView()
                 .environmentObject(store)
         }
+        .modelContainer(for: ClientTrade.self)
     }
 }
 
@@ -26,11 +28,17 @@ final class CongressTradeStore: ObservableObject {
     @Published var isLoading = false
     @Published var message: String?
     @Published var lastCommand: ClientCommand?
+    @Published var sessionTokenInput = ""
+
+    var modelContext: ModelContext?
 
     private let api: CongressTradeAPIClient
 
     init(api: CongressTradeAPIClient) {
         self.api = api
+        if let token = try? api.tokenStore.load() {
+            self.sessionTokenInput = token
+        }
     }
 
     var signedIn: Bool {
@@ -48,29 +56,25 @@ final class CongressTradeStore: ObservableObject {
             .filter { !$0.isEmpty }
     }
 
-    var filteredTrades: [ClientTrade] {
-        let items = feed?.items ?? []
-        let needle = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !needle.isEmpty else { return items }
-        return items.filter { trade in
-            [
-                trade.asset.ticker,
-                trade.asset.name,
-                trade.member.name,
-                trade.member.state,
-                trade.member.chamber
-            ].contains { ($0 ?? "").lowercased().contains(needle) }
-        }
-    }
-
     func refresh() async {
         isLoading = true
         message = nil
         do {
+            let maxCursor = fetchMaxLocalCursor()
             async let bootstrapTask = api.bootstrap()
-            async let feedTask = api.feed(query: FeedQuery(limit: 50, order: "desc"))
+            async let feedTask = api.feed(query: FeedQuery(limit: 50, since: maxCursor, order: "desc"))
+            
             bootstrap = try await bootstrapTask
-            feed = try await feedTask
+            let response = try await feedTask
+            
+            if let context = modelContext {
+                for item in response.items {
+                    context.insert(item)
+                }
+                try context.save()
+            }
+            
+            feed = response
             if signedIn {
                 await refreshSignedInState()
             }
@@ -78,6 +82,19 @@ final class CongressTradeStore: ObservableObject {
             message = error.localizedDescription
         }
         isLoading = false
+    }
+
+    private func fetchMaxLocalCursor() -> Int? {
+        guard let context = modelContext else { return nil }
+        var descriptor = FetchDescriptor<ClientTrade>()
+        descriptor.sortBy = [SortDescriptor(\.cursor, order: .reverse)]
+        descriptor.fetchLimit = 1
+        do {
+            let results = try context.fetch(descriptor)
+            return results.first?.cursor
+        } catch {
+            return nil
+        }
     }
 
     func refreshSignedInState() async {
@@ -121,6 +138,31 @@ final class CongressTradeStore: ObservableObject {
         }
     }
 
+    func saveSessionToken() {
+        do {
+            try api.tokenStore.save(sessionTokenInput)
+            message = "Session token saved to Keychain."
+            Task {
+                await refresh()
+            }
+        } catch {
+            message = "Failed to save token: \(error.localizedDescription)"
+        }
+    }
+
+    func clearSessionToken() {
+        do {
+            try api.tokenStore.clear()
+            sessionTokenInput = ""
+            message = "Session token cleared."
+            Task {
+                await refresh()
+            }
+        } catch {
+            message = "Failed to clear token: \(error.localizedDescription)"
+        }
+    }
+
     private func runCommand<ResultPayload: Decodable>(
         _ operation: () async throws -> ClientCommandResponse<ResultPayload>
     ) async {
@@ -146,6 +188,7 @@ enum DeliveryMode: String, CaseIterable, Identifiable {
 
 struct PrototypeRootView: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         TabView {
@@ -171,6 +214,7 @@ struct PrototypeRootView: View {
         }
         .tint(.blue)
         .task {
+            store.modelContext = modelContext
             if store.feed == nil {
                 await store.refresh()
             }
@@ -180,6 +224,21 @@ struct PrototypeRootView: View {
 
 struct FeedDashboardView: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @Query(sort: \ClientTrade.cursor, order: .reverse) private var cachedTrades: [ClientTrade]
+
+    var filteredTrades: [ClientTrade] {
+        let needle = store.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else { return cachedTrades }
+        return cachedTrades.filter { trade in
+            [
+                trade.asset.ticker,
+                trade.asset.name,
+                trade.member.name,
+                trade.member.state,
+                trade.member.chamber
+            ].contains { ($0 ?? "").lowercased().contains(needle) }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -194,7 +253,7 @@ struct FeedDashboardView: View {
                     }
 
                     LazyVStack(spacing: 10) {
-                        ForEach(store.filteredTrades) { trade in
+                        ForEach(filteredTrades) { trade in
                             TradeCard(trade: trade)
                                 .onTapGesture {
                                     store.selectedTrade = trade
@@ -235,6 +294,7 @@ struct FeedDashboardView: View {
 
 struct HeaderSummary: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @Query(sort: \ClientTrade.cursor, order: .reverse) private var cachedTrades: [ClientTrade]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -251,8 +311,8 @@ struct HeaderSummary: View {
             }
 
             HStack(spacing: 8) {
-                MetricTile(title: "Trades", value: "\(store.feed?.total ?? 0)")
-                MetricTile(title: "Cursor", value: "\(store.feed?.cursor ?? 0)")
+                MetricTile(title: "Trades", value: "\(cachedTrades.count)")
+                MetricTile(title: "Cursor", value: "\(cachedTrades.first?.cursor ?? 0)")
                 MetricTile(title: "Plan", value: store.entitlementLabel)
             }
         }
@@ -419,6 +479,22 @@ struct WatchlistView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Keychain Authentication") {
+                    SecureField("Session Token", text: $store.sessionTokenInput)
+                    Button {
+                        store.saveSessionToken()
+                    } label: {
+                        Label("Save Session Token", systemImage: "key.fill")
+                    }
+                    if store.signedIn {
+                        Button(role: .destructive) {
+                            store.clearSessionToken()
+                        } label: {
+                            Label("Clear Session Token", systemImage: "trash")
+                        }
+                    }
+                }
+
                 Section("Saved Tickers") {
                     TextField("AAPL, MSFT, NVDA", text: $store.watchlistText, axis: .vertical)
                         .tickerAutocapitalized()
@@ -841,3 +917,4 @@ extension View {
         #endif
     }
 }
+EOF

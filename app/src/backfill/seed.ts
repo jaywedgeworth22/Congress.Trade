@@ -347,6 +347,8 @@ export function mapRecordToTransaction(
     }),
     confidence: scored.confidence,
     source,
+    firstSeenAt: null,
+    filedDate: normalizeDate(rec.disclosure_date) ?? null,
     createdAt: nowIso,
     cursorSeq: 0,
   };
@@ -396,8 +398,9 @@ function buildSeedTxStatement(tx: Transaction): SqlStatement {
     `INSERT INTO transactions (
        id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
        tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
-       raw_text, confidence, source, created_at, cursor_seq
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'seed_dataset', ?, NULL)
+       raw_text, confidence, source, created_at, cursor_seq,
+       first_seen_at, filed_date
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'seed_dataset', ?, NULL, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        asset_name = excluded.asset_name,
        ticker = excluded.ticker,
@@ -406,7 +409,9 @@ function buildSeedTxStatement(tx: Transaction): SqlStatement {
        amount_min = excluded.amount_min,
        amount_max = excluded.amount_max,
        raw_text = excluded.raw_text,
-       confidence = excluded.confidence
+       confidence = excluded.confidence,
+       first_seen_at = excluded.first_seen_at,
+       filed_date = excluded.filed_date
      WHERE transactions.source = 'seed_dataset'`,
     [
       tx.id,
@@ -425,6 +430,8 @@ function buildSeedTxStatement(tx: Transaction): SqlStatement {
       tx.rawText,
       tx.confidence,
       tx.createdAt,
+      tx.firstSeenAt ?? null,
+      tx.filedDate ?? null,
     ],
   ];
 }

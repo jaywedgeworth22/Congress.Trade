@@ -174,6 +174,54 @@ async function fetchSourceSecrets(baseUrl: string, infisicalEnv: string, source:
   return Object.fromEntries(secretEntries(body).map((entry) => [entry.key, entry.value]));
 }
 
+
+async function getCryptoKey(secretString: string): Promise<CryptoKey> {
+  const enc = new TextEncoder();
+  const keyData = await crypto.subtle.digest('SHA-256', enc.encode(secretString));
+  return crypto.subtle.importKey(
+    'raw',
+    keyData,
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+async function encryptData(text: string, secretString: string): Promise<string> {
+  const key = await getCryptoKey(secretString);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const enc = new TextEncoder();
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    enc.encode(text)
+  );
+  
+  const ivHex = Array.from(iv).map(b => b.toString(16).padStart(2, '0')).join('');
+  const ciphertextBytes = new Uint8Array(encrypted);
+  const ciphertextHex = Array.from(ciphertextBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  
+  return `${ivHex}:${ciphertextHex}`;
+}
+
+async function decryptData(encryptedStr: string, secretString: string): Promise<string> {
+  const [ivHex, ciphertextHex] = encryptedStr.split(':');
+  if (!ivHex || !ciphertextHex) throw new Error('Invalid encrypted format');
+  
+  const key = await getCryptoKey(secretString);
+  const iv = new Uint8Array(ivHex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+  const ciphertext = new Uint8Array(ciphertextHex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+  
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    ciphertext
+  );
+  
+  const dec = new TextDecoder();
+  return dec.decode(decrypted);
+}
+
 export async function refreshSecrets(env: Env): Promise<SecretResolverStatus> {
   const key = cacheKey(env);
   const ttlMs = cacheTtlSeconds(env) * 1000;
@@ -210,6 +258,19 @@ export async function refreshSecrets(env: Env): Promise<SecretResolverStatus> {
     sources: sourceStatus,
   };
   cache.set(key, entry);
+
+  if (env.CONFIG_KV && errors.length === 0 && Object.keys(values).length > 0) {
+    try {
+      const kvKey = `infisical_secrets_cache:${key}`;
+      const secretString = env.INFISICAL_SHARED_CLIENT_SECRET || env.ADMIN_TOKEN || 'fallback_salt_321';
+      const encrypted = await encryptData(JSON.stringify(entry), secretString);
+      const ttlSec = cacheTtlSeconds(env);
+      await env.CONFIG_KV.put(kvKey, encrypted, { expirationTtl: ttlSec });
+    } catch (err) {
+      console.warn('infisical: failed to encrypt or write to KV cache', (err as Error).message);
+    }
+  }
+
   return statusFromEntry(env, entry);
 }
 
@@ -218,6 +279,25 @@ async function cacheEntry(env: Env): Promise<CacheEntry | null> {
   const key = cacheKey(env);
   const existing = cache.get(key);
   if (existing && existing.expiresAt > Date.now()) return existing;
+
+  if (env.CONFIG_KV) {
+    try {
+      const kvKey = `infisical_secrets_cache:${key}`;
+      const encrypted = await env.CONFIG_KV.get(kvKey);
+      if (encrypted) {
+        const secretString = env.INFISICAL_SHARED_CLIENT_SECRET || env.ADMIN_TOKEN || 'fallback_salt_321';
+        const decryptedJson = await decryptData(encrypted, secretString);
+        const entry = JSON.parse(decryptedJson) as CacheEntry;
+        if (entry && entry.expiresAt > Date.now()) {
+          cache.set(key, entry);
+          return entry;
+        }
+      }
+    } catch (err) {
+      console.warn('infisical: failed to read or decrypt KV cache', (err as Error).message);
+    }
+  }
+
   await refreshSecrets(env);
   return cache.get(key) ?? null;
 }

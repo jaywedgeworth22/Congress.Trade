@@ -167,17 +167,30 @@ function resolveModels(e: AgreementEnv): AgreementModels {
 export async function enqueueAgreementCheck(env: Env, docId: string, rawObjectKey: string | null): Promise<boolean> {
   const e = env as unknown as AgreementEnv;
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return false;
+  
+  const now = new Date().toISOString();
+  let dbUpdated = false;
+  try {
+    await run(env.DB, 'UPDATE review_queue SET agreement_attempted_at = ? WHERE doc_id = ?', [now, docId]);
+    dbUpdated = true;
+  } catch (err) {
+    console.warn('enqueueAgreementCheck DB stamp failed:', docId, (err as Error).message);
+  }
+
   try {
     await env.INGEST_QUEUE.send({ type: 'agreement.check', docId, rawObjectKey });
+    return true;
   } catch (err) {
     console.warn('enqueueAgreementCheck send failed:', docId, (err as Error).message);
+    if (dbUpdated) {
+      try {
+        await run(env.DB, 'UPDATE review_queue SET agreement_attempted_at = NULL WHERE doc_id = ?', [docId]);
+      } catch (rollbackErr) {
+        console.error('enqueueAgreementCheck rollback failed:', docId, (rollbackErr as Error).message);
+      }
+    }
     return false;
   }
-  // Stamp attempted so neither the cron backstop nor the inline path re-enqueues
-  // it. Best-effort: the migration may not be applied yet in some environments.
-  try {
-    await run(env.DB, 'UPDATE review_queue SET agreement_attempted_at = ? WHERE doc_id = ?', [new Date().toISOString(), docId]);
-  } catch { /* best-effort */ }
   return true;
 }
 

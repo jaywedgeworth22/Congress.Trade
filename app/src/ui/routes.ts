@@ -38,5 +38,40 @@ export function buildUiRouter(): Hono<{ Bindings: Env }> {
   r.get('/terms-of-service', (c) => c.html(TOS_HTML));
   r.get('/privacy-policy', (c) => c.html(PRIVACY_HTML));
 
+  // robots.txt — allow search engines, block AI/LLM crawlers and scrapers.
+  // Follows the same policy as capitoltrades.com/robots.txt.
+  r.get('/robots.txt', (c) => c.text(`User-Agent: *
+Allow: /
+Disallow: /api/
+
+User-Agent: GPTBot
+User-Agent: ChatGPT-User
+User-Agent: OAI-SearchBot
+User-Agent: ClaudeBot
+User-Agent: anthropic-ai
+User-Agent: Claude-Web
+User-Agent: CCBot
+User-Agent: Google-Extended
+User-Agent: Applebot-Extended
+User-Agent: PerplexityBot
+User-Agent: Perplexity-User
+User-Agent: Bytespider
+User-Agent: Amazonbot
+User-Agent: meta-externalagent
+User-Agent: Meta-ExternalAgent
+User-Agent: FacebookBot
+User-Agent: Diffbot
+User-Agent: ImagesiftBot
+User-Agent: Omgilibot
+User-Agent: Omgili
+User-Agent: YouBot
+User-Agent: cohere-ai
+User-Agent: cohere-training-data-crawler
+User-Agent: Timpibot
+User-Agent: VelenPublicWebCrawler
+User-Agent: Scrapy
+Disallow: /
+`, 200, { 'content-type': 'text/plain; charset=utf-8' }));
+
   return r;
 }
