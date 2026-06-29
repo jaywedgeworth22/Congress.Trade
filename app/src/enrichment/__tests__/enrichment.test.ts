@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { marketCapBucket, sicToSector, remainingBudget, mergeRefs } from '../compute';
 import { parseFmpProfile } from '../fmp';
 import { parseCompanyTickers, parseSecSubmissions, padCik } from '../sec';
+import { enrichmentNeededSql, hasConfiguredKeyedEnrichmentProvider } from '../service';
 
 describe('marketCapBucket', () => {
   it('buckets by the standard thresholds', () => {
@@ -49,6 +50,26 @@ describe('remainingBudget', () => {
     expect(remainingBudget(230, 999)).toBe(0);
     expect(remainingBudget(230, 100, 50)).toBe(50); // runMax wins
     expect(remainingBudget(230, 220, 50)).toBe(10); // budget wins
+  });
+});
+
+describe('enrichmentNeededSql', () => {
+  it('retries incomplete EDGAR/imported rows only when a keyed provider exists', () => {
+    expect(enrichmentNeededSql('sr', false)).toBe('(sr.ticker IS NULL OR sr.enriched_at IS NULL)');
+    const withKey = enrichmentNeededSql('sr', true);
+    expect(withKey).toContain('sr.company_name IS NULL');
+    expect(withKey).toContain('sr.country IS NULL');
+    expect(withKey).toContain('sr.market_cap IS NULL');
+    expect(withKey).toContain("sr.source LIKE '%fmp%'");
+    expect(withKey).toContain('AND NOT');
+  });
+});
+
+describe('hasConfiguredKeyedEnrichmentProvider', () => {
+  it('detects any configured keyed market-data provider', () => {
+    expect(hasConfiguredKeyedEnrichmentProvider({} as never)).toBe(false);
+    expect(hasConfiguredKeyedEnrichmentProvider({ FMP_API_KEY: 'k' } as never)).toBe(true);
+    expect(hasConfiguredKeyedEnrichmentProvider({ MASSIVE_API_KEY: 'k' } as never)).toBe(true);
   });
 });
 

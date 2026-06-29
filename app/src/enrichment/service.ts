@@ -43,6 +43,48 @@ interface ChainEntry {
   budgeted: boolean;
 }
 
+const KEYED_PROVIDER_SOURCE_MARKERS = ['fmp', 'massive', 'intrinio', 'twelvedata', 'finnhub'];
+
+function keyedSourceTriedSql(alias: string): string {
+  return '(' + KEYED_PROVIDER_SOURCE_MARKERS.map((s) => `${alias}.source LIKE '%${s}%'`).join(' OR ') + ')';
+}
+
+function missingDisplayCriticalSql(alias: string): string {
+  return `(${alias}.company_name IS NULL OR ${alias}.company_name = ''
+          OR ${alias}.sector IS NULL OR ${alias}.sector = ''
+          OR ${alias}.country IS NULL OR ${alias}.country = ''
+          OR (${alias}.market_cap IS NULL AND (${alias}.market_cap_bucket IS NULL OR ${alias}.market_cap_bucket = '')))`;
+}
+
+/**
+ * SQL predicate for tickers still worth enriching. With no keyed provider, one
+ * SEC/EDGAR pass is enough; EDGAR cannot fill country or market cap. Once a
+ * keyed provider exists, retry EDGAR/imported rows that are still missing
+ * display-critical company metadata. Rows already attempted by a keyed source
+ * are not hammered forever if the provider itself lacks a field.
+ */
+export function enrichmentNeededSql(alias = 'sr', retryIncompleteWithKeyedProvider = false): string {
+  if (!retryIncompleteWithKeyedProvider) {
+    return `(${alias}.ticker IS NULL OR ${alias}.enriched_at IS NULL)`;
+  }
+  return `(${alias}.ticker IS NULL
+          OR ${alias}.enriched_at IS NULL
+          OR (${missingDisplayCriticalSql(alias)}
+              AND NOT ${keyedSourceTriedSql(alias)}
+              AND (${alias}.enrichment_error IS NULL OR ${alias}.enrichment_error = '')))`;
+}
+
+export function hasConfiguredKeyedEnrichmentProvider(env: Env): boolean {
+  const envx = env as EnvX;
+  return Boolean(
+    envx.FMP_API_KEY ||
+      envx.MASSIVE_API_KEY ||
+      envx.INTRINIO_API_KEY ||
+      envx.TWELVEDATA_API_KEY ||
+      envx.FINNHUB_API_KEY,
+  );
+}
+
 /**
  * Quality-ranked enrichment chain (best first), gated by configured keys.
  * Ranking is from the provider benchmark: FMP has the cleanest, widest profile
@@ -106,7 +148,11 @@ export async function addDailyUsed(env: Env, n: number): Promise<number> {
 }
 
 /** Distinct tickers that still need enrichment, newest-traded first. */
-export async function selectTickersToEnrich(env: Env, limit: number): Promise<string[]> {
+export async function selectTickersToEnrich(
+  env: Env,
+  limit: number,
+  retryIncompleteWithKeyedProvider = false,
+): Promise<string[]> {
   if (limit <= 0) return [];
   const rows = await all<{ ticker: string }>(
     env.DB,
@@ -114,7 +160,7 @@ export async function selectTickersToEnrich(env: Env, limit: number): Promise<st
        FROM transactions t
        LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
       WHERE t.ticker IS NOT NULL AND t.ticker <> ''
-        AND (sr.ticker IS NULL OR sr.enriched_at IS NULL)
+        AND ${enrichmentNeededSql('sr', retryIncompleteWithKeyedProvider)}
       GROUP BY t.ticker
       ORDER BY MAX(t.cursor_seq) DESC
       LIMIT ?`,
@@ -171,9 +217,9 @@ export async function runEnrichment(
   };
   if (selectLimit <= 0) return result;
 
-  const tickers = await selectTickersToEnrich(env, selectLimit);
   const chain = buildEnrichmentChain(envx, hasFmp);
   const hasKeyedProvider = chain.some((e) => e.name !== 'edgar');
+  const tickers = await selectTickersToEnrich(env, selectLimit, hasKeyedProvider);
   const pace = createPacer(opts.maxPerMinute);
   let fmpCalls = 0;
 
@@ -297,15 +343,32 @@ async function upsertRef(env: Env, ref: SecurityRef): Promise<void> {
        source, enriched_at, enrichment_error
      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)
      ON CONFLICT(ticker) DO UPDATE SET
-       company_name=excluded.company_name, sector=excluded.sector, industry=excluded.industry,
-       asset_class=excluded.asset_class, is_etf=excluded.is_etf, is_adr=excluded.is_adr,
-       country=excluded.country, state_hq=excluded.state_hq, state_of_incorp=excluded.state_of_incorp,
-       exchange=excluded.exchange, exchange_short=excluded.exchange_short, currency=excluded.currency,
-       market_cap=excluded.market_cap, market_cap_bucket=excluded.market_cap_bucket,
+       company_name=COALESCE(excluded.company_name, securities_ref.company_name),
+       sector=COALESCE(excluded.sector, securities_ref.sector),
+       industry=COALESCE(excluded.industry, securities_ref.industry),
+       asset_class=COALESCE(excluded.asset_class, securities_ref.asset_class),
+       is_etf=CASE WHEN excluded.is_etf = 1 THEN 1 ELSE securities_ref.is_etf END,
+       is_adr=CASE WHEN excluded.is_adr = 1 THEN 1 ELSE securities_ref.is_adr END,
+       country=COALESCE(excluded.country, securities_ref.country),
+       state_hq=COALESCE(excluded.state_hq, securities_ref.state_hq),
+       state_of_incorp=COALESCE(excluded.state_of_incorp, securities_ref.state_of_incorp),
+       exchange=COALESCE(excluded.exchange, securities_ref.exchange),
+       exchange_short=COALESCE(excluded.exchange_short, securities_ref.exchange_short),
+       currency=COALESCE(excluded.currency, securities_ref.currency),
+       market_cap=COALESCE(excluded.market_cap, securities_ref.market_cap),
+       market_cap_bucket=COALESCE(excluded.market_cap_bucket, securities_ref.market_cap_bucket),
        shares_outstanding=COALESCE(excluded.shares_outstanding, securities_ref.shares_outstanding),
-       ipo_date=excluded.ipo_date,
-       cik=excluded.cik, sic_code=excluded.sic_code, sic_description=excluded.sic_description,
-       source=excluded.source, enriched_at=excluded.enriched_at, enrichment_error=NULL`,
+       ipo_date=COALESCE(excluded.ipo_date, securities_ref.ipo_date),
+       cik=COALESCE(excluded.cik, securities_ref.cik),
+       sic_code=COALESCE(excluded.sic_code, securities_ref.sic_code),
+       sic_description=COALESCE(excluded.sic_description, securities_ref.sic_description),
+       source=CASE
+         WHEN securities_ref.source IS NULL OR securities_ref.source = '' THEN excluded.source
+         WHEN excluded.source IS NULL OR excluded.source = '' THEN securities_ref.source
+         WHEN securities_ref.source LIKE '%' || excluded.source || '%' THEN securities_ref.source
+         ELSE securities_ref.source || '+' || excluded.source
+       END,
+       enriched_at=excluded.enriched_at, enrichment_error=NULL`,
     [
       ref.ticker, ref.companyName, ref.sector, ref.industry, ref.assetClass,
       ref.isEtf ? 1 : 0, ref.isAdr ? 1 : 0, ref.country, ref.stateHq, ref.stateOfIncorp,

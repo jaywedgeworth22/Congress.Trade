@@ -59,7 +59,13 @@ import {
   type Provider,
 } from '../extraction/bakeoff';
 import { isBatchProvider, submitBatch, pollBatch, type BatchDoc } from '../extraction/batchExtract';
-import { runEnrichment, getDailyUsed, prepareImportSecurityRef } from '../enrichment/service';
+import {
+  runEnrichment,
+  getDailyUsed,
+  prepareImportSecurityRef,
+  enrichmentNeededSql,
+  hasConfiguredKeyedEnrichmentProvider,
+} from '../enrichment/service';
 import { mergeRefs } from '../enrichment/compute';
 import type { SecurityRef } from '../enrichment/types';
 import { runPriceRefresh } from '../prices/service';
@@ -2014,13 +2020,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // Today's FMP call usage + how many tickers still need enrichment.
   r.get('/enrich-securities/status', async (c) => {
     const used = await getDailyUsed(c.env);
+    const retryIncomplete = hasConfiguredKeyedEnrichmentProvider(c.env);
     const row = await get<{ pending: number }>(
       c.env.DB,
       `SELECT COUNT(*) AS pending FROM (
          SELECT t.ticker FROM transactions t
          LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
          WHERE t.ticker IS NOT NULL AND t.ticker <> ''
-           AND (sr.ticker IS NULL OR sr.enriched_at IS NULL)
+           AND ${enrichmentNeededSql('sr', retryIncomplete)}
          GROUP BY t.ticker)`,
     );
     const enriched = await get<{ n: number }>(
@@ -2028,12 +2035,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'SELECT COUNT(*) AS n FROM securities_ref WHERE enriched_at IS NOT NULL',
     );
     const pending = await marketPending(c.env);
+    const coverage = await marketCoverage(c.env);
     return c.json({
       fmpCallsToday: used,
       pendingTickers: row?.pending ?? 0,
       pricePendingTickers: pending.prices,
       enrichedTickers: enriched?.n ?? 0,
+      coverage,
       hasFmpKey: !!(c.env as Env & { FMP_API_KEY?: string }).FMP_API_KEY,
+      hasKeyedEnrichmentProvider: retryIncomplete,
     });
   });
 
@@ -2478,19 +2488,188 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   return r;
 }
 
+function ratio(n: number, d: number): number | null {
+  if (!d) return null;
+  return Math.round((n / d) * 10_000) / 10_000;
+}
+
+interface MarketCoverage {
+  trades: {
+    total: number;
+    tickered: number;
+    companyName: number;
+    sector: number;
+    country: number;
+    marketCap: number;
+    companyNamePctOfTickered: number | null;
+    sectorPctOfTickered: number | null;
+    countryPctOfTickered: number | null;
+    marketCapPctOfTickered: number | null;
+  };
+  assets: {
+    total: number;
+    companyName: number;
+    sector: number;
+    country: number;
+    marketCap: number;
+    companyNamePct: number | null;
+    sectorPct: number | null;
+    countryPct: number | null;
+    marketCapPct: number | null;
+  };
+  missingSamples: Array<{
+    ticker: string;
+    name: string | null;
+    trades: number;
+    missing: string[];
+    source: string | null;
+    enrichedAt: string | null;
+    enrichmentError: string | null;
+  }>;
+}
+
+async function marketCoverage(env: Env): Promise<MarketCoverage> {
+  const trade = await get<{
+    total: number;
+    tickered: number;
+    company_name: number;
+    sector: number;
+    country: number;
+    market_cap: number;
+  }>(
+    env.DB,
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' THEN 1 ELSE 0 END) AS tickered,
+            SUM(CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' AND sr.company_name IS NOT NULL AND sr.company_name <> '' THEN 1 ELSE 0 END) AS company_name,
+            SUM(CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' AND sr.sector IS NOT NULL AND sr.sector <> '' THEN 1 ELSE 0 END) AS sector,
+            SUM(CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' AND sr.country IS NOT NULL AND sr.country <> '' THEN 1 ELSE 0 END) AS country,
+            SUM(CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' AND (sr.market_cap IS NOT NULL OR (sr.market_cap_bucket IS NOT NULL AND sr.market_cap_bucket <> '')) THEN 1 ELSE 0 END) AS market_cap
+       FROM transactions t
+       LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+      WHERE t.deprecated_at IS NULL`,
+  );
+  const asset = await get<{
+    total: number;
+    company_name: number;
+    sector: number;
+    country: number;
+    market_cap: number;
+  }>(
+    env.DB,
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN company_name IS NOT NULL AND company_name <> '' THEN 1 ELSE 0 END) AS company_name,
+            SUM(CASE WHEN sector IS NOT NULL AND sector <> '' THEN 1 ELSE 0 END) AS sector,
+            SUM(CASE WHEN country IS NOT NULL AND country <> '' THEN 1 ELSE 0 END) AS country,
+            SUM(CASE WHEN market_cap IS NOT NULL OR (market_cap_bucket IS NOT NULL AND market_cap_bucket <> '') THEN 1 ELSE 0 END) AS market_cap
+       FROM (
+         SELECT t.ticker,
+                MAX(sr.company_name) AS company_name,
+                MAX(sr.sector) AS sector,
+                MAX(sr.country) AS country,
+                MAX(sr.market_cap) AS market_cap,
+                MAX(sr.market_cap_bucket) AS market_cap_bucket
+           FROM transactions t
+           LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+          WHERE t.deprecated_at IS NULL AND t.ticker IS NOT NULL AND t.ticker <> ''
+          GROUP BY t.ticker
+       )`,
+  );
+  const samples = await all<{
+    ticker: string;
+    name: string | null;
+    trades: number;
+    company_name: string | null;
+    sector: string | null;
+    country: string | null;
+    market_cap: number | null;
+    market_cap_bucket: string | null;
+    source: string | null;
+    enriched_at: string | null;
+    enrichment_error: string | null;
+  }>(
+    env.DB,
+    `SELECT t.ticker,
+            COALESCE(MAX(sr.company_name), MAX(sm.name), MAX(t.asset_name)) AS name,
+            COUNT(*) AS trades,
+            MAX(sr.company_name) AS company_name,
+            MAX(sr.sector) AS sector,
+            MAX(sr.country) AS country,
+            MAX(sr.market_cap) AS market_cap,
+            MAX(sr.market_cap_bucket) AS market_cap_bucket,
+            MAX(sr.source) AS source,
+            MAX(sr.enriched_at) AS enriched_at,
+            MAX(sr.enrichment_error) AS enrichment_error
+       FROM transactions t
+       LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+       LEFT JOIN securities_master sm ON sm.ticker = t.ticker
+      WHERE t.deprecated_at IS NULL AND t.ticker IS NOT NULL AND t.ticker <> ''
+      GROUP BY t.ticker
+     HAVING company_name IS NULL OR company_name = ''
+         OR sector IS NULL OR sector = ''
+         OR country IS NULL OR country = ''
+         OR (market_cap IS NULL AND (market_cap_bucket IS NULL OR market_cap_bucket = ''))
+      ORDER BY trades DESC
+      LIMIT 20`,
+  );
+  const tickered = trade?.tickered ?? 0;
+  const totalAssets = asset?.total ?? 0;
+  return {
+    trades: {
+      total: trade?.total ?? 0,
+      tickered,
+      companyName: trade?.company_name ?? 0,
+      sector: trade?.sector ?? 0,
+      country: trade?.country ?? 0,
+      marketCap: trade?.market_cap ?? 0,
+      companyNamePctOfTickered: ratio(trade?.company_name ?? 0, tickered),
+      sectorPctOfTickered: ratio(trade?.sector ?? 0, tickered),
+      countryPctOfTickered: ratio(trade?.country ?? 0, tickered),
+      marketCapPctOfTickered: ratio(trade?.market_cap ?? 0, tickered),
+    },
+    assets: {
+      total: totalAssets,
+      companyName: asset?.company_name ?? 0,
+      sector: asset?.sector ?? 0,
+      country: asset?.country ?? 0,
+      marketCap: asset?.market_cap ?? 0,
+      companyNamePct: ratio(asset?.company_name ?? 0, totalAssets),
+      sectorPct: ratio(asset?.sector ?? 0, totalAssets),
+      countryPct: ratio(asset?.country ?? 0, totalAssets),
+      marketCapPct: ratio(asset?.market_cap ?? 0, totalAssets),
+    },
+    missingSamples: samples.map((s) => {
+      const missing: string[] = [];
+      if (!s.company_name) missing.push('companyName');
+      if (!s.sector) missing.push('sector');
+      if (!s.country) missing.push('country');
+      if (s.market_cap == null && !s.market_cap_bucket) missing.push('marketCap');
+      return {
+        ticker: s.ticker,
+        name: s.name,
+        trades: s.trades,
+        missing,
+        source: s.source,
+        enrichedAt: s.enriched_at,
+        enrichmentError: s.enrichment_error,
+      };
+    }),
+  };
+}
+
 /**
- * Count tickers still needing work: `enrich` = traded tickers with no enriched
- * securities_ref row; `prices` = traded (dated) tickers with no cached price_eod.
- * Drives the `done` flag for the backfill-market loop.
+ * Count tickers still needing work: `enrich` = traded tickers with no useful
+ * securities_ref coverage; `prices` = traded (dated) tickers with no cached
+ * price_eod. Drives the `done` flag for the backfill-market loop.
  */
 async function marketPending(env: Env): Promise<{ enrich: number; prices: number }> {
+  const retryIncomplete = hasConfiguredKeyedEnrichmentProvider(env);
   const e = await get<{ n: number }>(
     env.DB,
     `SELECT COUNT(*) AS n FROM (
        SELECT t.ticker FROM transactions t
        LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
        WHERE t.ticker IS NOT NULL AND t.ticker <> ''
-         AND (sr.ticker IS NULL OR sr.enriched_at IS NULL)
+         AND ${enrichmentNeededSql('sr', retryIncomplete)}
        GROUP BY t.ticker)`,
   );
   const p = await get<{ n: number }>(
