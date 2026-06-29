@@ -438,6 +438,13 @@ export interface Env {
   XAI_API_KEY?: string;
   /** LlamaIndex Cloud API key — LlamaParse OCR + structured extraction candidate. */
   LLAMAINDEX_API_KEY?: string;
+  /** Additional market/enrichment provider keys. */
+  MASSIVE_API_KEY?: string;
+  INTRINIO_API_KEY?: string;
+  TWELVEDATA_API_KEY?: string;
+  FINNHUB_API_KEY?: string;
+  /** Logo.dev public token for the ticker-logo proxy. */
+  LOGODEV_PUBLISHABLE_KEY?: string;
   /** 'true' enables the per-minute autonomous cross-vendor agreement → auto-publish pass. */
   AGREEMENT_AUTOPUBLISH_ENABLED?: string;
   /** Agreement model A as "provider:model" (default mistral:mistral-ocr-latest). */
@@ -450,6 +457,8 @@ export interface Env {
   FMP_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */
   FMP_DAILY_CALL_CAP?: string;
+  /** Which price provider to prefer: 'fmp' or 'massive'. */
+  PRICE_PROVIDER?: string;
   /** HMAC key for signing outbound webhook payloads. */
   WEBHOOK_SIGNING_KEY?: string;
 
@@ -464,6 +473,20 @@ export interface Env {
   ALERT_EMAIL?: string;
   /** Public base URL (e.g. https://congress.trade) for OAuth redirects + links. */
   APP_BASE_URL?: string;
+  /** Cross-app share endpoint + token for pushing refreshed market refs/prices. */
+  APP_B_IMPORT_URL?: string;
+  APP_B_INGEST_TOKEN?: string;
+  /** Admin + scoped import bearer tokens. */
+  ADMIN_TOKEN?: string;
+  /** Admin email allowlist for site-session admin access and Cloudflare Access. */
+  ADMIN_EMAILS?: string;
+  /** Cloudflare Access team name/hostname for admin API JWT verification. */
+  ACCESS_TEAM_DOMAIN?: string;
+  /** Cloudflare Access application AUD tag for admin API JWT verification. */
+  ACCESS_AUD?: string;
+  INGEST_TOKEN?: string;
+  /** LlamaParse legacy key name; LLAMAINDEX_API_KEY remains the runtime key used by extraction. */
+  LLAMAPARSE_API_KEY?: string;
 
   // --- Billing (Stripe) ---
   /** Stripe secret key (`sk_…`) for the REST API. Presence enables billing. */
@@ -479,6 +502,26 @@ export interface Env {
    *  Leave off until the account is approved for Managed Payments and products
    *  carry an eligible digital tax code. */
   STRIPE_MANAGED_PAYMENTS?: string;
+
+  // --- Infisical runtime secret resolver ---
+  /** Optional Infisical API origin. Defaults to https://app.infisical.com. */
+  INFISICAL_BASE_URL?: string;
+  /** Infisical environment/slug for both app + shared projects. Defaults to prod. */
+  INFISICAL_ENV?: string;
+  /** Short-lived in-isolate secret cache TTL. Defaults to 600 seconds. */
+  INFISICAL_CACHE_TTL_SECONDS?: string;
+  /** Set "false" after cutover to disable fallback to Cloudflare Worker secrets. */
+  INFISICAL_ALLOW_ENV_FALLBACK?: string;
+  /** App-specific Infisical machine identity + project. */
+  INFISICAL_APP_PROJECT_ID?: string;
+  INFISICAL_APP_CLIENT_ID?: string;
+  INFISICAL_APP_CLIENT_SECRET?: string;
+  INFISICAL_APP_SECRET_PATH?: string;
+  /** Shared Infisical machine identity + project for shared-at-ct secrets. */
+  INFISICAL_SHARED_PROJECT_ID?: string;
+  INFISICAL_SHARED_CLIENT_ID?: string;
+  INFISICAL_SHARED_CLIENT_SECRET?: string;
+  INFISICAL_SHARED_SECRET_PATH?: string;
 
   // --- Plain vars (.dev.vars / [vars]) ---
   /** "true" to force arbitration on when configured. */

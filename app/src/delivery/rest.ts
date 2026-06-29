@@ -43,6 +43,7 @@ import {
 } from './subscriptions';
 import { openSseStream } from './sse';
 import { handleTickerLogoRequest } from '../ui/tickerLogos';
+import { resolveSecret } from '../secrets/infisical';
 import { constantTimeEqual } from '../auth/tokens';
 
 function parseIntOrUndef(v: string | undefined): number | undefined {
@@ -221,7 +222,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // freemium boundary is premium-only *full-history export* (see
     // /export/transactions.csv), not hiding feed rows or public analytics.
     // (Earlier this gated the
-    // feed to the last 30 days for logged-out visitors, which emptied the page
+    // feed to a short recent window for logged-out visitors, which emptied the page
     // on datasets without recent filings.)
     const params: TxQueryParams = {
       since: parseIntOrUndef(q.since),
@@ -280,7 +281,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // hint so the UI can route them to checkout.
   r.get('/export/transactions.csv', async (c) => {
     if (!isPremiumUser(await getCurrentUser(c))) {
-      return c.json({ error: 'premium subscription required', upgradeRequired: true }, 402);
+      return c.json({ error: 'CSV export requires Premium', upgradeRequired: true, feature: 'exportCsv' }, 402);
     }
     const built = buildTransactionsExportQuery(filtersFromQuery(c.req.query()));
     const rows = await all<
@@ -353,8 +354,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // --- GET /logos/ticker --------------------------------------------------
   // Cached company-logo proxy (see ui/tickerLogos.ts). Reachable at
   // /api/logos/ticker?symbol=AAPL, matching the dashboard's <img> src.
-  r.get('/logos/ticker', (c) =>
-    handleTickerLogoRequest(new URL(c.req.url), (c.env as { LOGODEV_PUBLISHABLE_KEY?: string }).LOGODEV_PUBLISHABLE_KEY),
+  r.get('/logos/ticker', async (c) =>
+    handleTickerLogoRequest(new URL(c.req.url), (await resolveSecret(c.env, 'LOGODEV_PUBLISHABLE_KEY')).value),
   );
 
   // --- GET /filings/:docId ------------------------------------------------

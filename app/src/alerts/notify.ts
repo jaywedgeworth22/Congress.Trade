@@ -9,7 +9,8 @@
  */
 
 import type { Env } from '../shared/types';
-import { sendEmail, emailConfigured } from '../auth/email';
+import { sendEmail, emailConfiguredAsync } from '../auth/email';
+import { resolveSecret } from '../secrets/infisical';
 
 type EnvAlert = Env & { ALERT_EMAIL?: string };
 
@@ -35,9 +36,9 @@ export async function notifyAdmin(
   env: Env,
   opts: { subject: string; text: string; dedupeKey: string; throttleSec?: number },
 ): Promise<AlertResult> {
-  const to = (env as EnvAlert).ALERT_EMAIL?.trim();
+  const to = ((await resolveSecret(env, 'ALERT_EMAIL')).value ?? (env as EnvAlert).ALERT_EMAIL)?.trim();
   if (!to) return { sent: false, reason: 'ALERT_EMAIL not set' };
-  if (!emailConfigured(env)) return { sent: false, reason: 'email not configured (RESEND_API_KEY/EMAIL_FROM)' };
+  if (!(await emailConfiguredAsync(env))) return { sent: false, reason: 'email not configured (RESEND_API_KEY/EMAIL_FROM)' };
 
   const throttleKey = 'alert:' + opts.dedupeKey;
   try {

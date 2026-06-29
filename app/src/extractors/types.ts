@@ -150,9 +150,10 @@ export interface Extractor {
  * Behaviour (the env-driven WIRING is real; the compare/merge is a documented
  * stub returning the primary result for now):
  *   - ALWAYS runs the primary extractor.
- *   - If a secondary is present AND `env.ARBITRATION_API_KEY` is set AND the
- *     arbitration flag is enabled (env.ARBITRATION_ENABLED === 'true'), ALSO
- *     runs the secondary and arbitrates between the two results.
+ *   - If a secondary is present AND the arbitration flag is enabled
+ *     (env.ARBITRATION_ENABLED === 'true'), ALSO runs the secondary and
+ *     arbitrates between the two results. The secondary resolves its key lazily
+ *     so it can come from Infisical at extraction time.
  *   - Otherwise returns the primary result unchanged.
  */
 export class ArbitratingExtractor implements Extractor {
@@ -174,8 +175,6 @@ export class ArbitratingExtractor implements Extractor {
   private arbitrationEnabled(): boolean {
     return (
       this.secondary !== undefined &&
-      typeof this.env.ARBITRATION_API_KEY === 'string' &&
-      this.env.ARBITRATION_API_KEY.length > 0 &&
       this.env.ARBITRATION_ENABLED === 'true'
     );
   }
@@ -260,11 +259,11 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
   const textPdf = new TextPdfExtractor();
   const visionLlm = new VisionLlmExtractor(env);
 
-  // Build a secondary only when an arbitration key is present; otherwise the
-  // ArbitratingExtractor resolves to the primary result (see arbitrationEnabled).
-  const secondary = env.ARBITRATION_API_KEY
+  // Build a secondary when arbitration is enabled; the key is resolved lazily so
+  // it can come from Infisical at extraction time rather than env construction.
+  const secondary = env.ARBITRATION_ENABLED === 'true' || env.ARBITRATION_API_KEY
     ? new VisionLlmExtractor(env, {
-        apiKey: env.ARBITRATION_API_KEY,
+        apiKeyName: 'ARBITRATION_API_KEY',
         model: (env as { ARBITRATION_MODEL?: string }).ARBITRATION_MODEL || 'gemini-2.5-flash',
         name: 'visionLlm-secondary',
       })

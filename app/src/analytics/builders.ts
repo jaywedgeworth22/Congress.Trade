@@ -421,7 +421,7 @@ export function buildFilingLagHistogramQuery(p: CommonFilters): BuiltQuery {
 /** Per-member average/max/late-count disclosure lag (the "late filers" board). */
 export function buildLateFilersQuery(p: CommonFilters & { limit?: number }): BuiltQuery {
   const { where, params } = buildCommonFilters(p);
-  const limit = clampLimit(p.limit, 15, 100);
+  const limit = clampLimit(p.limit, 50, 100);
   const lag = '(julianday(f.filed_date) - julianday(t.tx_date))';
   const allWhere = [
     't.filer_id IS NOT NULL',
@@ -689,7 +689,9 @@ export function buildTickerRecentTradesQuery(
   const { where, params } = tickerFilters(ticker, p);
   const limit = clampLimit(p.limit, 15, 100);
   const sql =
-    'SELECT t.id AS id, t.doc_id AS doc_id, t.tx_date AS tx_date, t.tx_type AS tx_type, t.owner AS owner, ' +
+    'SELECT t.id AS id, t.doc_id AS doc_id, t.ticker AS ticker, t.asset_name AS asset_name, ' +
+    't.asset_type AS asset_type, t.asset_type_name AS asset_type_name, t.raw_text AS raw_text, ' +
+    't.source AS source, t.tx_date AS tx_date, t.tx_type AS tx_type, t.owner AS owner, ' +
     't.amount_min AS amount_min, t.amount_max AS amount_max, t.is_option AS is_option, ' +
     't.created_at AS created_at, t.filer_id AS filer_id, fl.full_name AS full_name, ' +
     'fl.party AS party, fl.photo_url AS photo_url, f.filed_date AS filed_date, ' +
@@ -778,7 +780,8 @@ export function buildMemberRecentTradesQuery(
   const limit = clampLimit(p.limit, 10, 100);
   const sql =
     'SELECT t.id AS id, t.doc_id AS doc_id, t.ticker AS ticker, t.asset_name AS asset_name, ' +
-    't.tx_type AS tx_type, t.tx_date AS tx_date, t.owner AS owner, t.is_option AS is_option, ' +
+    't.asset_type AS asset_type, t.asset_type_name AS asset_type_name, t.raw_text AS raw_text, ' +
+    't.source AS source, t.tx_type AS tx_type, t.tx_date AS tx_date, t.owner AS owner, t.is_option AS is_option, ' +
     't.amount_min AS amount_min, t.amount_max AS amount_max, t.created_at AS created_at, sm.name AS name, ' +
     'f.filed_date AS filed_date, f.first_seen_at AS first_seen_at, f.source_url AS source_url ' +
     ANALYTICS_FROM_JOINS_SECURITIES +

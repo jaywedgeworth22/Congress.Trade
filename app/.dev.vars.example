@@ -1,6 +1,24 @@
 # Copy to `.dev.vars` for local development (`wrangler dev`).
 # `.dev.vars` is gitignored — never commit real secrets.
 
+# Infisical runtime secret resolver. In production, Cloudflare should only need
+# these bootstrap machine-identity credentials; provider/app secrets are fetched
+# from Infisical at runtime and cached briefly in Worker memory.
+INFISICAL_BASE_URL="https://app.infisical.com"
+INFISICAL_ENV="prod"
+INFISICAL_CACHE_TTL_SECONDS="600"
+# Keep "true" during migration so existing Worker secrets remain a compatibility
+# fallback. Set to "false" after Infisical runtime resolution is verified.
+INFISICAL_ALLOW_ENV_FALLBACK="true"
+INFISICAL_APP_PROJECT_ID=""
+INFISICAL_APP_CLIENT_ID=""
+INFISICAL_APP_CLIENT_SECRET=""
+INFISICAL_APP_SECRET_PATH="/"
+INFISICAL_SHARED_PROJECT_ID=""
+INFISICAL_SHARED_CLIENT_ID=""
+INFISICAL_SHARED_CLIENT_SECRET=""
+INFISICAL_SHARED_SECRET_PATH="/"
+
 # Vision/LLM extraction for scanned PDFs (Google Gemini).
 GEMINI_API_KEY=""
 # Optional extractor bake-off candidates used by /api/admin/extractor-bakeoff.

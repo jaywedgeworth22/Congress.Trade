@@ -9,12 +9,21 @@
 import type { BillingPlan, Env, User } from '../shared/types';
 import { get, run } from '../shared/db';
 import { getUserById } from '../auth/users';
+import { resolveSecrets } from '../secrets/infisical';
 
 /** Map a Stripe Price id to our plan cadence, or null if it isn't ours. */
 export function planForPrice(env: Env, priceId: string | null | undefined): BillingPlan | null {
   if (!priceId) return null;
   if (priceId === env.STRIPE_PRICE_MONTHLY) return 'monthly';
   if (priceId === env.STRIPE_PRICE_ANNUAL) return 'annual';
+  return null;
+}
+
+export async function planForPriceAsync(env: Env, priceId: string | null | undefined): Promise<BillingPlan | null> {
+  if (!priceId) return null;
+  const prices = await resolveSecrets(env, ['STRIPE_PRICE_MONTHLY', 'STRIPE_PRICE_ANNUAL']);
+  if (priceId === (prices.STRIPE_PRICE_MONTHLY ?? env.STRIPE_PRICE_MONTHLY)) return 'monthly';
+  if (priceId === (prices.STRIPE_PRICE_ANNUAL ?? env.STRIPE_PRICE_ANNUAL)) return 'annual';
   return null;
 }
 
@@ -114,7 +123,7 @@ export async function applySubscription(env: Env, sub: ParsedSubscription): Prom
       sub.customerId,
       sub.id,
       sub.status,
-      planForPrice(env, sub.priceId),
+      await planForPriceAsync(env, sub.priceId),
       sub.currentPeriodEnd,
       sub.cancelAtPeriodEnd ? 1 : 0,
       sub.trialEnd,

@@ -10,6 +10,7 @@
  */
 
 import type { Env } from '../shared/types';
+import { resolveSecret } from '../secrets/infisical';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
 // Pin an API version so server-side behaviour/field shapes are stable.
@@ -18,6 +19,10 @@ const STRIPE_API_VERSION = '2025-03-31.basil'; // Managed Payments requires basi
 /** True when the secret key is present (billing can operate). */
 export function stripeConfigured(env: Env): boolean {
   return !!env.STRIPE_SECRET_KEY;
+}
+
+export async function stripeConfiguredAsync(env: Env): Promise<boolean> {
+  return Boolean((await resolveSecret(env, 'STRIPE_SECRET_KEY')).value);
 }
 
 /**
@@ -44,11 +49,12 @@ export function encodeForm(params: Record<string, unknown>): string {
 }
 
 async function stripePost<T>(env: Env, path: string, params: Record<string, unknown>): Promise<T> {
-  if (!env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY not configured');
+  const secretKey = (await resolveSecret(env, 'STRIPE_SECRET_KEY')).value;
+  if (!secretKey) throw new Error('STRIPE_SECRET_KEY not configured');
   const res = await fetch(`${STRIPE_API}${path}`, {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${env.STRIPE_SECRET_KEY}`,
+      authorization: `Bearer ${secretKey}`,
       'content-type': 'application/x-www-form-urlencoded',
       'Stripe-Version': STRIPE_API_VERSION,
     },

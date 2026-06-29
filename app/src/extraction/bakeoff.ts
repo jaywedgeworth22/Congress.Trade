@@ -24,6 +24,7 @@ import {
   arrayBufferToBase64,
   VisionLlmExtractor,
 } from './visionLlm';
+import { resolveSecret } from '../secrets/infisical';
 
 export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral' | 'xai' | 'llamaparse';
 
@@ -92,13 +93,17 @@ const label = (c: { provider: Provider; model: string }): string => `${c.provide
 // ---------------------------------------------------------------------------
 
 /** Resolve the API key for a provider, or null when it isn't configured. */
-function keyFor(env: Env, provider: Provider): string | null {
-  if (provider === 'gemini') return env.GEMINI_API_KEY ?? null;
-  if (provider === 'openai') return env.OPENAI_API_KEY ?? null;
-  if (provider === 'anthropic') return env.ANTHROPIC_API_KEY ?? null;
-  if (provider === 'mistral') return env.MISTRAL_API_KEY ?? null;
-  if (provider === 'xai') return env.XAI_API_KEY ?? null;
-  if (provider === 'llamaparse') return env.LLAMAINDEX_API_KEY ?? null;
+async function keyFor(env: Env, provider: Provider): Promise<string | null> {
+  if (provider === 'gemini') return (await resolveSecret(env, 'GEMINI_API_KEY')).value ?? null;
+  if (provider === 'openai') return (await resolveSecret(env, 'OPENAI_API_KEY')).value ?? null;
+  if (provider === 'anthropic') return (await resolveSecret(env, 'ANTHROPIC_API_KEY')).value ?? null;
+  if (provider === 'mistral') return (await resolveSecret(env, 'MISTRAL_API_KEY')).value ?? null;
+  if (provider === 'xai') return (await resolveSecret(env, 'XAI_API_KEY')).value ?? null;
+  if (provider === 'llamaparse') {
+    return (await resolveSecret(env, 'LLAMAINDEX_API_KEY')).value
+      ?? (await resolveSecret(env, 'LLAMAPARSE_API_KEY')).value
+      ?? null;
+  }
   return null;
 }
 
@@ -416,7 +421,7 @@ export async function runCandidateOnDoc(
 ): Promise<CandidateDocResult> {
   const { provider, model } = candidate;
   const base = { provider, model, docId };
-  const key = keyFor(env, provider);
+  const key = await keyFor(env, provider);
   if (!key) {
     return { ...base, ok: false, error: `${provider} API key not configured`, latencyMs: 0, rowCount: 0, rowKeys: [], avgConfidence: 0, rows: [] };
   }
