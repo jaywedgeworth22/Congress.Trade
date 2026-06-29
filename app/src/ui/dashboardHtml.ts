@@ -1387,6 +1387,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </table>
     </div>
     <div class="section">
+      <h3>Market Data Coverage</h3>
+      <p class="sub">Ticker enrichment coverage for company name, sector, country, and market-cap fields. This is the data behind company drawers, Sector, Country, and Market Cap columns.</p>
+      <div class="row-flex">
+        <label class="lbl">Max</label>
+        <input id="mdMax" type="number" min="1" max="200" value="40" style="width:90px" />
+        <label class="lbl">Calls / Min</label>
+        <input id="mdPerMin" type="number" min="1" max="1000" value="250" style="width:100px" />
+        <button class="btn ghost sm" onclick="runMarketBackfill(true)">Dry Run</button>
+        <button class="btn" onclick="runMarketBackfill(false)">Run One Pass</button>
+        <button class="btn ghost sm" onclick="loadMarketCoverage()">Reload</button>
+        <span id="mdMsg" class="note"></span>
+      </div>
+      <div id="marketCoverage" aria-live="polite"></div>
+    </div>
+    <div class="section">
       <h3>Connection Status</h3>
       <p class="sub">Provider and integration status from production data. Secret values are never shown.</p>
       <div id="diagConnections" class="diag-grid" aria-live="polite"></div>
@@ -2955,7 +2970,7 @@ function saveAdminToken() {
   el('adminTokenMsg').textContent = v ? 'Saved in this browser.' : 'Cleared.';
   setTimeout(function () { el('adminTokenMsg').textContent = ''; }, 2500);
   renderFeedHeader(); renderColChooser(); renderFeed();
-  loadPollConfig(); loadHealth(); loadDiagnostics();
+  loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics();
 }
 function clearAdminToken() {
   try { localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
@@ -3174,6 +3189,78 @@ function loadDiagnostics() {
     .catch(function (e) {
       if (cards) cards.innerHTML = '<div class="state">' + esc(isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load diagnostics: ' + e.message)) + '</div>';
       if (errors) errors.innerHTML = stateRow(4, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load diagnostics: ' + e.message));
+    });
+}
+
+function pctText(v) {
+  return v == null ? '—' : Math.round(Number(v) * 100) + '%';
+}
+function coverageCard(title, count, total, pct, note) {
+  return '<div class="diag-card">' +
+    '<div class="diag-head"><div class="diag-title">' + esc(title) + '</div><span class="diag-status ' + (pct != null && pct >= 0.8 ? 'ok' : 'warn') + '">' + esc(pctText(pct)) + '</span></div>' +
+    '<div class="diag-meta"><span>Covered</span><strong>' + esc(count || 0) + '</strong><span>Total</span><strong>' + esc(total || 0) + '</strong></div>' +
+    (note ? '<div class="diag-note">' + esc(note) + '</div>' : '') +
+  '</div>';
+}
+function loadMarketCoverage() {
+  var box = el('marketCoverage');
+  var msg = el('mdMsg');
+  if (box) box.innerHTML = '<div class="state">Loading market-data coverage…</div>';
+  if (msg) msg.textContent = '';
+  return fetch('/api/admin/enrich-securities/status', { headers: adminHeaders() })
+    .then(okOrThrow)
+    .then(function (data) {
+      var c = data.coverage || {};
+      var t = c.trades || {}, a = c.assets || {};
+      var pending = data.pendingTickers == null ? '—' : data.pendingTickers;
+      var prices = data.pricePendingTickers == null ? '—' : data.pricePendingTickers;
+      var samples = c.missingSamples || [];
+      var cards = '<div class="diag-grid">' +
+        coverageCard('Trade Sectors', t.sector, t.tickered, t.sectorPctOfTickered, 'Tickered trades with enriched sector.') +
+        coverageCard('Trade Countries', t.country, t.tickered, t.countryPctOfTickered, 'Tickered trades with issuer country.') +
+        coverageCard('Trade Market Caps', t.marketCap, t.tickered, t.marketCapPctOfTickered, 'Tickered trades with cap or cap bucket.') +
+        coverageCard('Asset Coverage', a.marketCap, a.total, a.marketCapPct, 'Distinct traded assets with cap coverage.') +
+      '</div>';
+      var summary = '<p class="note">Pending enrichment assets: <strong>' + esc(pending) + '</strong> · Pending price assets: <strong>' + esc(prices) + '</strong> · FMP calls today: <strong>' + esc(data.fmpCallsToday || 0) + '</strong> · Keyed provider configured: <strong>' + esc(data.hasKeyedEnrichmentProvider ? 'Yes' : 'No') + '</strong></p>';
+      var rows = samples.length
+        ? samples.map(function (s) {
+            return '<tr class="row"><td><span class="tkr">' + esc(s.ticker) + '</span></td>' +
+              '<td>' + esc(s.name || '—') + '</td>' +
+              '<td class="est">' + esc(s.trades || 0) + '</td>' +
+              '<td class="muted">' + esc((s.missing || []).join(', ') || '—') + '</td>' +
+              '<td class="muted">' + esc(s.source || '—') + '</td>' +
+              '<td class="muted">' + esc(s.enrichmentError || '—') + '</td></tr>';
+          }).join('')
+        : '<tr><td class="state" colspan="6">No missing tickered assets in the current coverage sample.</td></tr>';
+      if (box) box.innerHTML = summary + cards +
+        '<h3 style="margin-top:14px">Missing Asset Samples</h3>' +
+        '<div class="table-wrap"><table><thead><tr><th>Asset</th><th>Name</th><th>Trades</th><th>Missing</th><th>Source</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    })
+    .catch(function (e) {
+      if (box) box.innerHTML = '<div class="state">' + esc(isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load market coverage: ' + e.message)) + '</div>';
+    });
+}
+function runMarketBackfill(dryRun) {
+  var msg = el('mdMsg');
+  var max = Number(el('mdMax') && el('mdMax').value) || 40;
+  var perMin = Number(el('mdPerMin') && el('mdPerMin').value) || 250;
+  if (msg) msg.textContent = dryRun ? 'Checking…' : 'Running one bounded pass…';
+  return fetch('/api/admin/backfill-market', {
+    method: 'POST',
+    headers: adminHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ max: max, maxPerMinute: perMin, dryRun: !!dryRun })
+  })
+    .then(okOrThrow)
+    .then(function (data) {
+      if (msg) msg.textContent = (dryRun ? 'Dry run' : 'Pass complete') + ': ' +
+        'enriched ' + ((data.enrich && data.enrich.enriched) || 0) +
+        ', priced ' + ((data.prices && data.prices.tickersPriced) || 0) +
+        ', pending ' + ((data.pending && data.pending.enrich) || 0) + ' enrichment / ' +
+        ((data.pending && data.pending.prices) || 0) + ' prices.';
+      return loadMarketCoverage();
+    })
+    .catch(function (e) {
+      if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Market backfill failed: ' + e.message);
     });
 }
 
@@ -4081,7 +4168,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     if (b.dataset.view === 'trends') loadTrends();
     if (b.dataset.view === 'review') loadReview();
     if (b.dataset.view === 'subs') loadSubs();
-    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadDiagnostics(); }
+    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); }
   };
 });
 
@@ -4167,6 +4254,7 @@ el('feedBody').innerHTML = stateRow(visibleCols().length, 'Loading live feed…'
 el('reviewBody').innerHTML = stateRow(5, 'Loading…');
 el('subsBody').innerHTML = stateRow(5, 'Loading…');
 el('healthBody').innerHTML = stateRow(7, 'Loading…');
+el('marketCoverage').innerHTML = '<div class="state">Loading market-data coverage…</div>';
 el('diagConnections').innerHTML = '<div class="state">Loading connection status…</div>';
 el('diagErrors').innerHTML = stateRow(4, 'Loading…');
 
