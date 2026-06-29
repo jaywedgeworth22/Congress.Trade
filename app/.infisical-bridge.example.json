@@ -1,0 +1,8 @@
+{
+  "env": "prod",
+  "projectId": "",
+  "sharedProjectId": "",
+  "token": "",
+  "wranglerConfig": "wrangler.toml",
+  "requiredKeys": ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET"]
+}

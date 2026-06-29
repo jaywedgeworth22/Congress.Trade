@@ -1,4 +1,6 @@
 node_modules
 .wrangler
 .dev.vars
+.infisical.json
+.infisical-bridge.json
 dist
