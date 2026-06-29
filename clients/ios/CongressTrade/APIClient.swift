@@ -31,20 +31,44 @@ struct FeedQuery: Equatable {
     }
 }
 
+protocol RequestInterceptor {
+    func intercept(_ request: inout URLRequest) throws
+}
+
+final class AuthHeaderInterceptor: RequestInterceptor {
+    private let tokenStore: SessionTokenStore
+
+    init(tokenStore: SessionTokenStore) {
+        self.tokenStore = tokenStore
+    }
+
+    func intercept(_ request: inout URLRequest) throws {
+        if let token = try tokenStore.load() {
+            let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                request.setValue("Bearer \(trimmed)", forHTTPHeaderField: "authorization")
+            }
+        }
+    }
+}
+
 final class CongressTradeAPIClient {
     private let baseURL: URL
-    private let tokenStore: SessionTokenStore
+    let tokenStore: SessionTokenStore
     private let session: URLSession
+    private let interceptor: RequestInterceptor
     private let decoder: JSONDecoder
 
     init(
         baseURL: URL = CongressTradeAPIClient.defaultBaseURL,
         tokenStore: SessionTokenStore = KeychainTokenStore(),
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        interceptor: RequestInterceptor? = nil
     ) {
         self.baseURL = baseURL
         self.tokenStore = tokenStore
         self.session = session
+        self.interceptor = interceptor ?? AuthHeaderInterceptor(tokenStore: tokenStore)
         self.decoder = JSONDecoder()
     }
 
@@ -167,12 +191,7 @@ final class CongressTradeAPIClient {
     private func makeRequest(_ url: URL) throws -> URLRequest {
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "accept")
-        if let token = try tokenStore.load() {
-            let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                request.setValue("Bearer \(trimmed)", forHTTPHeaderField: "authorization")
-            }
-        }
+        try interceptor.intercept(&request)
         return request
     }
 
@@ -206,3 +225,4 @@ enum APIError: LocalizedError {
         }
     }
 }
+EOF
