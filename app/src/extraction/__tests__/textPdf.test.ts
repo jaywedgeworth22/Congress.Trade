@@ -158,6 +158,46 @@ describe('parseHousePtrText', () => {
     expect(rows[3].assetName).not.toContain('Kent Street Group');
   });
 
+  it('parses digit-prefixed House asset-type codes in inline text', () => {
+    const rows = parseHousePtrText(
+      'Periodic Transaction Report ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200? ' +
+        'SELF 401K Retirement Plan [4K] P 05/01/2026 05/02/2026 $1,001 - $15,000 F S: New ' +
+        'SP 529 College Savings Account [5C] P 05/03/2026 05/04/2026 $15,001 - $50,000 F S: New ' +
+        'DC 529 Growth Portfolio [5F] S 05/05/2026 05/06/2026 $1,001 - $15,000 F S: New ' +
+        'JT State Prepaid Tuition Plan [5P] P 05/07/2026 05/08/2026 $1,001 - $15,000 F S: New',
+    );
+
+    expect(rows).toHaveLength(4);
+    expect(rows.map((row) => row.assetType)).toEqual(['4K', '5C', '5F', '5P']);
+    expect(rows.map((row) => row.assetTypeName)).toEqual([
+      '401K and Other Non-Federal Retirement Accounts',
+      '529 College Savings Plan',
+      '529 Portfolio',
+      '529 Prepaid Tuition Plan',
+    ]);
+    expect(rows.every((row) => row.ticker === null)).toBe(true);
+  });
+
+  it('parses digit-prefixed House asset-type codes in multiline blocks', () => {
+    const rows = parseHousePtrText(`
+      Filer Information
+      SP 529 Prepaid Tuition [5P]
+      P 05/07/2026 05/08/2026 $1,001 - $15,000
+    `);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      owner: 'spouse',
+      assetName: '529 Prepaid Tuition',
+      ticker: null,
+      assetType: '5P',
+      assetTypeName: '529 Prepaid Tuition Plan',
+      txType: 'P',
+      amountMin: 1001,
+      amountMax: 15000,
+    });
+  });
+
   it('preserves row-specific House PTR detail text and checked capital gains flags', () => {
     const rows = parseHousePtrText(`
       Filer Information
