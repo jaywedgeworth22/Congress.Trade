@@ -20,6 +20,7 @@ import type {
   TxType,
 } from '../shared/types';
 import { parseJson, toBool } from '../shared/db';
+import { canonicalizeAssetType } from '../shared/assetTypes';
 
 // ---------------------------------------------------------------------------
 // Raw row shapes (mirror the D1 column names in migrations/0001_init.sql)
@@ -112,6 +113,11 @@ export interface FilingRow {
 // ---------------------------------------------------------------------------
 
 export function mapTransaction(row: TransactionRow): Transaction {
+  const isOption = toBool(row.is_option);
+  const assetType = canonicalizeAssetType(row.asset_type, row.asset_type_name ?? null, {
+    isOption,
+    assetName: row.asset_name ?? null,
+  });
   return {
     id: row.id,
     docId: row.doc_id,
@@ -122,10 +128,12 @@ export function mapTransaction(row: TransactionRow): Transaction {
     ticker: row.ticker,
     assetType: row.asset_type,
     assetTypeName: row.asset_type_name ?? null,
+    assetTypeCategory: assetType.category,
+    assetTypeCategoryLabel: assetType.categoryLabel,
     txType: (row.tx_type as TxType) ?? 'P',
     amountMin: row.amount_min,
     amountMax: row.amount_max,
-    isOption: toBool(row.is_option),
+    isOption,
     capGainsOver200: toBool(row.cap_gains_over_200),
     rawText: row.raw_text ?? '',
     filingStatus: row.filing_status ?? null,

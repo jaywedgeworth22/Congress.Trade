@@ -21,6 +21,7 @@
 import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../shared/types';
 import { all, run, fromBool, parseJson } from '../shared/db';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets';
+import { canonicalizeAssetType } from '../shared/assetTypes';
 import { uuid } from '../shared/ids';
 import { isPlaceholderTicker, resolveTickerDeterministic, TICKER_ALIASES } from './tickerNormalize';
 
@@ -238,6 +239,10 @@ function buildTransaction(
     filing.filedDate,
     resolve,
   );
+  const assetType = canonicalizeAssetType(p.assetType, p.assetTypeName ?? null, {
+    isOption: p.isOption,
+    assetName: p.assetName,
+  });
 
   const tx: Transaction = {
     id: uuid(),
@@ -249,6 +254,8 @@ function buildTransaction(
     ticker: s.ticker,
     assetType: p.assetType,
     assetTypeName: p.assetTypeName ?? null,
+    assetTypeCategory: assetType.category,
+    assetTypeCategoryLabel: assetType.categoryLabel,
     txType: s.txType,
     amountMin: s.amountMin,
     amountMax: s.amountMax,

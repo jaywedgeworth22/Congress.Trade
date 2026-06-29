@@ -236,7 +236,8 @@ feed rows or public analytics.
 Per-transaction object (each item in `transactions[]`):
 
 ```
-{ id, docId, filerId, txDate, owner, assetName, ticker, assetType, txType,
+{ id, docId, filerId, txDate, owner, assetName, ticker, assetType,
+  assetTypeName, assetTypeCategory, assetTypeCategoryLabel, txType,
   amountMin, amountMax, isOption, capGainsOver200, rawText, confidence,
   source, createdAt, cursorSeq,
   fullName, state, photoUrl, filedDate, firstSeenAt,

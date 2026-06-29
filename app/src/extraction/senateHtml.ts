@@ -231,13 +231,15 @@ function rowToParsedTx(cells: string[], map: ColumnMap, confidence: number): Par
   const ticker = normalizeTicker(tickerRaw);
   const combinedText = cells.join(' ');
   const capGainsCell = get(map.capGains);
+  const assetType = get(map.assetType).trim() || null;
 
   return {
     txDate: normalizeDate(get(map.date)),
     owner: normalizeOwner(get(map.owner), assetName),
     assetName: assetName || tickerRaw || '(unknown)',
     ticker,
-    assetType: get(map.assetType).trim() || null,
+    assetType,
+    assetTypeName: assetType,
     txType,
     amountMin: min,
     amountMax: max,

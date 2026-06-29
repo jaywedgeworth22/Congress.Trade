@@ -14,6 +14,7 @@ import { bracketMidpoint, netSentiment, round } from '../analytics/compute';
 import { committeeConflict } from '../analytics/conflicts';
 import { TICKER_ALIASES } from '../extraction/tickerNormalize';
 import { pctChange } from '../prices/compute';
+import { canonicalizeAssetType } from '../shared/assetTypes';
 
 export const PIT_SCORE_VERSION = 'congress-pit-v2';
 export const TICKER_MAP_VERSION = 'ticker-normalize-v1';
@@ -158,6 +159,10 @@ interface PitScoreRow {
   cusip: string | null;
   cik: string | null;
   assetType: string | null;
+  assetTypeName: string | null;
+  assetTypeCategory: string;
+  assetTypeCategoryLabel: string;
+  assetTypeCategorySource: string;
   tickerMapVersion: string;
   delistingTickerChangeMetadata: Record<string, unknown>;
   asOf: string;
@@ -1197,25 +1202,39 @@ async function buildRow(
   const signedScore = score == null ? null : direction === 'SELL' ? -score : direction === 'BUY' ? score : 0;
   const price = await (priceCache.get(ticker) ?? priceCache.set(ticker, priceSeries(env, ticker)).get(ticker)!);
   const ref = txs.find((t) => t.company_name || t.cik || t.asset_class || t.sector) ?? txs[0];
-  const includedDisclosures = txs.map((t) => ({
-    availabilitySource: availabilityFor(t).source,
-    availabilityPrecision: availabilityFor(t).precision,
-    disclosureId: t.id,
-    docId: t.doc_id,
-    sourceUrl: t.source_url,
-    hashedFilerId: stableFilerHash(t.filer_id),
-    txDate: t.tx_date,
-    disclosedAt: isoTimestamp(t.first_seen_at) ?? isoTimestamp(t.filed_date) ?? t.created_at,
-    filedAt: t.filed_date,
-    side: t.tx_type,
-    owner: t.owner,
-    amountLow: finiteOrNull(t.amount_min),
-    amountHigh: finiteOrNull(t.amount_max),
-    amountEstimate: Math.round(midpoint(t)),
-    chamber: t.filer_chamber ?? t.filing_chamber,
-    amendmentFlag: false,
-    cancelFlag: false,
-  }));
+  const canonicalAssetType = canonicalizeAssetType(ref?.asset_type ?? null, ref?.asset_type_name ?? null, {
+    isOption: txs.some((t) => t.is_option === 1),
+    assetName: ref?.asset_name ?? null,
+  });
+  const includedDisclosures = txs.map((t) => {
+    const disclosureAssetType = canonicalizeAssetType(t.asset_type, t.asset_type_name, {
+      isOption: t.is_option === 1,
+      assetName: t.asset_name,
+    });
+    return {
+      availabilitySource: availabilityFor(t).source,
+      availabilityPrecision: availabilityFor(t).precision,
+      disclosureId: t.id,
+      docId: t.doc_id,
+      sourceUrl: t.source_url,
+      hashedFilerId: stableFilerHash(t.filer_id),
+      txDate: t.tx_date,
+      disclosedAt: isoTimestamp(t.first_seen_at) ?? isoTimestamp(t.filed_date) ?? t.created_at,
+      filedAt: t.filed_date,
+      side: t.tx_type,
+      owner: t.owner,
+      amountLow: finiteOrNull(t.amount_min),
+      amountHigh: finiteOrNull(t.amount_max),
+      amountEstimate: Math.round(midpoint(t)),
+      chamber: t.filer_chamber ?? t.filing_chamber,
+      assetType: t.asset_type,
+      assetTypeName: t.asset_type_name,
+      assetTypeCategory: disclosureAssetType.category,
+      assetTypeCategoryLabel: disclosureAssetType.categoryLabel,
+      amendmentFlag: false,
+      cancelFlag: false,
+    };
+  });
   const aliasesFrom = Object.entries(TICKER_ALIASES).filter(([, to]) => to === ticker).map(([from]) => from);
   const clusterConsensus = buildClusterConsensus(ticker, asOf, txs, allTxRows, memberSkill);
   const pitValidity = buildPitValidity(txs);
@@ -1226,6 +1245,10 @@ async function buildRow(
     cusip: null,
     cik: ref?.cik ?? null,
     assetType: ref?.asset_class ?? ref?.asset_type ?? null,
+    assetTypeName: ref?.asset_type_name ?? null,
+    assetTypeCategory: canonicalAssetType.category,
+    assetTypeCategoryLabel: canonicalAssetType.categoryLabel,
+    assetTypeCategorySource: canonicalAssetType.source,
     tickerMapVersion: TICKER_MAP_VERSION,
     delistingTickerChangeMetadata: {
       knownPriorTickers: aliasesFrom,

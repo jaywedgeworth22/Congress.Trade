@@ -144,6 +144,16 @@ describe('buildPitScoreExport pagination', () => {
     const first = await buildPitScoreExport(env as never, { limit: 1, format: 'json', placebo: 'none', source: 'all' }, new Date('2026-03-01T00:00:00.000Z'));
     expect(first.rows.map((r) => r.ticker)).toEqual(['AAPL']);
     expect(first.pagination.nextCursor).toBe('2026-01-01T00:00:00.000Z~AAPL');
+    expect(first.rows[0]).toMatchObject({
+      assetTypeCategory: 'public_equity',
+      assetTypeCategoryLabel: 'Public Equity',
+      assetTypeCategorySource: 'label',
+    });
+    expect(first.rows[0].includedDisclosures[0]).toMatchObject({
+      assetType: 'STOCK',
+      assetTypeName: 'Stock',
+      assetTypeCategory: 'public_equity',
+    });
     expect(first.validationReadiness).toMatchObject({
       historicalValidationReady: false,
       scoreInputsPitSafeRows: 1,
