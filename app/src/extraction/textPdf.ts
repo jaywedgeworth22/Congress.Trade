@@ -20,6 +20,7 @@ import { extractText, getDocumentProxy } from 'unpdf';
 
 import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types';
 import type { Filing, Owner, ParsedTx, TxType } from '../shared/types';
+import { HOUSE_ASSET_TYPE_NAMES, houseAssetTypeCodePattern } from '../shared/assetTypes';
 import { parseAmountRange } from './amounts';
 import { detectOption } from './senateHtml';
 
@@ -80,62 +81,8 @@ const OWNER_CODES: Record<string, Owner> = {
   SELF: 'self',
 };
 
-const HOUSE_ASSET_TYPE_NAMES: Record<string, string> = {
-  '4K': '401K and Other Non-Federal Retirement Accounts',
-  '5C': '529 College Savings Plan',
-  '5F': '529 Portfolio',
-  '5P': '529 Prepaid Tuition Plan',
-  AB: 'Asset-Backed Securities',
-  BA: 'Bank Accounts, Money Market Accounts and CDs',
-  BK: 'Brokerage Accounts',
-  CO: 'Collectibles',
-  CS: 'Corporate Securities (Bonds and Notes)',
-  CT: 'Cryptocurrency',
-  DB: 'Defined Benefit Pension',
-  DO: 'Debts Owed to the Filer',
-  DS: 'Delaware Statutory Trust',
-  EF: 'Exchange Traded Funds (ETF)',
-  EQ: 'Excepted/Qualified Blind Trust',
-  ET: 'Exchange Traded Notes',
-  FA: 'Farms',
-  FE: 'Foreign Exchange Position (Currency)',
-  FN: 'Fixed Annuity',
-  FU: 'Futures',
-  GS: 'Government Securities and Agency Debt',
-  HE: 'Hedge Funds & Private Equity Funds (EIF)',
-  HN: 'Hedge Funds & Private Equity Funds (non-EIF)',
-  IC: 'Investment Club',
-  IH: 'IRA (Held in Cash)',
-  IP: 'Intellectual Property & Royalties',
-  IR: 'IRA',
-  MA: 'Managed Accounts (e.g., SMA and UMA)',
-  MF: 'Mutual Funds',
-  MO: 'Mineral/Oil/Solar Energy Rights',
-  OI: 'Ownership Interest (Holding Investments)',
-  OL: 'Ownership Interest (Engaged in a Trade or Business)',
-  OP: 'Options',
-  OT: 'Other',
-  PE: 'Pensions',
-  PM: 'Precious Metals',
-  PS: 'Stock (Not Publicly Traded)',
-  RE: 'Real Estate Invest. Trust (REIT)',
-  RF: 'REIT (EIF)',
-  RN: 'REIT (non-EIF)',
-  RP: 'Real Property',
-  RS: 'Restricted Stock Units (RSUs)',
-  SA: 'Stock Appreciation Right',
-  ST: 'Stocks (including ADRs)',
-  TR: 'Trust',
-  VA: 'Variable Annuity',
-  VI: 'Variable Insurance',
-  WU: 'Whole/Universal Insurance',
-};
-
 // Asset-type bracket codes used by the House template, e.g. [ST] [OP] [GS] [4K].
-const HOUSE_ASSET_TYPE_CODE_PATTERN = Object.keys(HOUSE_ASSET_TYPE_NAMES)
-  .sort((a, b) => b.length - a.length)
-  .map(escapeRegExp)
-  .join('|');
+const HOUSE_ASSET_TYPE_CODE_PATTERN = houseAssetTypeCodePattern();
 const ASSET_TYPE_RE = new RegExp(`\\[(${HOUSE_ASSET_TYPE_CODE_PATTERN})\\]`, 'i');
 // A date in MM/DD/YYYY.
 const DATE_RE = /\b(\d{1,2}\/\d{1,2}\/\d{2,4})\b/g;
@@ -273,10 +220,6 @@ function cleanInlineAssetName(value: string): string {
 
 function stripLeadingOwnerCode(value: string): string {
   return value.replace(/^(SP|DC|JT|SELF)\b\s*/i, '').trim();
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function normalizeTicker(value: string | null): string | null {

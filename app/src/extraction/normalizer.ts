@@ -21,7 +21,9 @@
 import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../shared/types';
 import { all, run, fromBool, parseJson } from '../shared/db';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets';
+import { canonicalizeAssetType } from '../shared/assetTypes';
 import { uuid } from '../shared/ids';
+import { recordIngestionDecision } from '../shared/ingestionDecisions';
 import { isPlaceholderTicker, resolveTickerDeterministic, TICKER_ALIASES } from './tickerNormalize';
 
 /**
@@ -94,7 +96,7 @@ export function transactionRowKey(
     normalizeText(fields.assetName),
     (fields.ticker ?? '').toUpperCase(),
     normalizeText(fields.assetType),
-    normalizeText(fields.assetTypeName ?? null),
+    rowKeyAssetTypeName(fields.assetType, fields.assetTypeName ?? null),
     fields.txType ?? '',
     fields.amountMin ?? '',
     fields.amountMax ?? '',
@@ -108,6 +110,12 @@ export function transactionRowKey(
     normalizeText(fields.supplementalText ?? null),
   ].join('\u001f');
   return `v1:${source}:${rowIndex}:${fnv1a32(payload)}`;
+}
+
+function rowKeyAssetTypeName(assetType: string | null | undefined, assetTypeName: string | null): string {
+  const type = normalizeText(assetType ?? null);
+  const name = normalizeText(assetTypeName);
+  return name && name !== type ? name : '';
 }
 
 /**
@@ -185,9 +193,23 @@ export async function normalize(
   );
 
   if (needsReview) {
+    const reason = reviewReason(flagged, minConfidence);
     await routeToReview(env, filing, flagged, minConfidence, nowIso, {
       extractor: extractorName,
       modelVersion,
+    });
+    await recordIngestionDecision(env.DB, {
+      docId: filing.docId,
+      action: 'review_opened',
+      source: 'pipeline',
+      reason,
+      payload: {
+        minConfidence,
+        extractor: extractorName,
+        modelVersion,
+        transactionCount: transactions.length,
+      },
+      createdAt: nowIso,
     });
     return { transactions, minConfidence, needsReview: true };
   }
@@ -198,6 +220,23 @@ export async function normalize(
   await run(env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [filing.docId]);
 
   const insertedIds = await persistTransactions(env, transactions);
+  if (insertedIds.length > 0) {
+    await recordIngestionDecision(env.DB, {
+      docId: filing.docId,
+      action: 'auto_published',
+      source: 'pipeline',
+      reason: 'passed_normalization',
+      transactionIds: insertedIds,
+      payload: {
+        minConfidence,
+        extractor: extractorName,
+        modelVersion,
+        transactionCount: transactions.length,
+        inserted: insertedIds.length,
+      },
+      createdAt: nowIso,
+    });
+  }
 
   // Fan out delivery only for rows D1 actually inserted. Retries/concurrent
   // normalizations hit the unique row key and are ignored without duplicate
@@ -238,6 +277,10 @@ function buildTransaction(
     filing.filedDate,
     resolve,
   );
+  const assetType = canonicalizeAssetType(p.assetType, p.assetTypeName ?? null, {
+    isOption: p.isOption,
+    assetName: p.assetName,
+  });
 
   const tx: Transaction = {
     id: uuid(),
@@ -249,6 +292,8 @@ function buildTransaction(
     ticker: s.ticker,
     assetType: p.assetType,
     assetTypeName: p.assetTypeName ?? null,
+    assetTypeCategory: assetType.category,
+    assetTypeCategoryLabel: assetType.categoryLabel,
     txType: s.txType,
     amountMin: s.amountMin,
     amountMax: s.amountMax,
@@ -499,12 +544,7 @@ async function routeToReview(
   nowIso: string,
   meta: { extractor: string | null; modelVersion: string | null },
 ): Promise<void> {
-  const reasons = new Set<string>();
-  for (const f of flagged) for (const flag of f.flags) reasons.add(flag);
-  if (flagged.length === 0) reasons.add('no_transactions_extracted');
-  if (minConfidence < CONFIDENCE_THRESHOLD) reasons.add('low_confidence');
-
-  const reason = Array.from(reasons).join(',') || 'needs_review';
+  const reason = reviewReason(flagged, minConfidence);
   const payload = JSON.stringify({
     minConfidence,
     extractor: meta.extractor,
@@ -529,6 +569,14 @@ async function routeToReview(
     "UPDATE filings SET ingest_status = 'needs_review' WHERE doc_id = ?",
     [filing.docId],
   );
+}
+
+function reviewReason(flagged: FlaggedTx[], minConfidence: number): string {
+  const reasons = new Set<string>();
+  for (const f of flagged) for (const flag of f.flags) reasons.add(flag);
+  if (flagged.length === 0) reasons.add('no_transactions_extracted');
+  if (minConfidence < CONFIDENCE_THRESHOLD) reasons.add('low_confidence');
+  return Array.from(reasons).join(',') || 'needs_review';
 }
 
 // ---------------------------------------------------------------------------

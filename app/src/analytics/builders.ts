@@ -15,6 +15,7 @@
  */
 
 import type { SqlParam } from '../shared/db';
+import { canonicalAssetTypeCategorySql } from '../shared/assetTypes';
 import {
   ANALYTICS_FROM_JOINS,
   ANALYTICS_FROM_JOINS_SECURITIES,
@@ -321,21 +322,23 @@ export function buildPartySplitOverTimeQuery(
 }
 
 // ---------------------------------------------------------------------------
-// 8. Sector breakdown — by asset_type (the only classification we have)
+// 8. Instrument-type breakdown - canonicalized across House codes and Senate labels.
 // ---------------------------------------------------------------------------
 
 export function buildSectorBreakdownQuery(p: CommonFilters & { limit?: number }): BuiltQuery {
   const { where, params } = buildCommonFilters(p);
   const limit = clampLimit(p.limit, 20, 100);
+  const categorySql = canonicalAssetTypeCategorySql('t.asset_type', 't.asset_type_name', 't.is_option');
   const sql =
-    "SELECT COALESCE(NULLIF(t.asset_type, ''), 'Unknown') AS asset_type, " +
+    `SELECT ${categorySql} AS asset_type_category, ` +
+    "GROUP_CONCAT(DISTINCT COALESCE(NULLIF(t.asset_type, ''), 'Unknown')) AS raw_asset_types, " +
     'COUNT(*) AS trade_count, ' +
     `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
     `SUM(${MID}) AS est_volume, ` +
     `COUNT(DISTINCT CASE WHEN ${TICKER_RESOLVED_SQL} THEN t.ticker END) AS unique_tickers ` +
     ANALYTICS_FROM_JOINS +
     whereSql(where) +
-    'GROUP BY asset_type ORDER BY trade_count DESC ' +
+    'GROUP BY asset_type_category ORDER BY trade_count DESC ' +
     `LIMIT ${limit}`;
   return { sql, params };
 }

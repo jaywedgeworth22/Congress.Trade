@@ -75,6 +75,8 @@ describe('SenateHtmlExtractor', () => {
     expect(r1.owner).toBe('spouse');
     expect(r1.ticker).toBe('AAPL');
     expect(r1.assetName).toContain('Apple');
+    expect(r1.assetType).toBe('Stock');
+    expect(r1.assetTypeName).toBe('Stock');
     expect(r1.txType).toBe('P');
     expect(r1.amountMin).toBe(1001);
     expect(r1.amountMax).toBe(15000);
