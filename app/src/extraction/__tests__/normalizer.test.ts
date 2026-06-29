@@ -106,6 +106,10 @@ describe('normalize', () => {
     const enriched = tx({ assetType: 'Stock', assetTypeName: 'Stock' });
 
     expect(transactionRowKey('primary', 0, enriched)).toBe(transactionRowKey('primary', 0, parsed));
+
+    const house = tx({ assetType: 'ST', assetTypeName: 'Stocks (including ADRs)' });
+    const houseWithoutLabel = tx({ assetType: 'ST', assetTypeName: null });
+    expect(transactionRowKey('primary', 0, house)).not.toBe(transactionRowKey('primary', 0, houseWithoutLabel));
   });
 
   it('publishes high-confidence, resolved, valid rows', async () => {

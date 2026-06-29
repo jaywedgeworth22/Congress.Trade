@@ -179,6 +179,33 @@ describe('buildPitScoreExport pagination', () => {
     expect(second.pagination.nextCursor).toBeNull();
   });
 
+  it('uses securities_ref asset class when disclosure asset type is missing', async () => {
+    const env = {
+      DB: fakeDb({
+        transactions: [
+          tx('tx1', 'AAPL', '2026-01-01T00:00:00.000Z', {
+            asset_type: null,
+            asset_type_name: null,
+            asset_class: 'equity',
+          }),
+        ],
+        price_eod: [],
+        spx_eod: [],
+      }),
+    };
+    const result = await buildPitScoreExport(
+      env as never,
+      { limit: 1, format: 'json', placebo: 'none', source: 'all' },
+      new Date('2026-03-01T00:00:00.000Z'),
+    );
+
+    expect(result.rows[0]).toMatchObject({
+      assetType: 'equity',
+      assetTypeCategory: 'public_equity',
+      assetTypeCategorySource: 'label',
+    });
+  });
+
   it('flags seed/date-only rows as not true historical validation rows', async () => {
     const env = {
       DB: fakeDb({

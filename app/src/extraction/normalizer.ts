@@ -66,6 +66,7 @@ type RowKeyFields = Pick<
   | 'assetName'
   | 'ticker'
   | 'assetType'
+  | 'assetTypeName'
   | 'txType'
   | 'amountMin'
   | 'amountMax'
@@ -95,6 +96,7 @@ export function transactionRowKey(
     normalizeText(fields.assetName),
     (fields.ticker ?? '').toUpperCase(),
     normalizeText(fields.assetType),
+    rowKeyAssetTypeName(fields.assetType, fields.assetTypeName ?? null),
     fields.txType ?? '',
     fields.amountMin ?? '',
     fields.amountMax ?? '',
@@ -108,6 +110,12 @@ export function transactionRowKey(
     normalizeText(fields.supplementalText ?? null),
   ].join('\u001f');
   return `v1:${source}:${rowIndex}:${fnv1a32(payload)}`;
+}
+
+function rowKeyAssetTypeName(assetType: string | null | undefined, assetTypeName: string | null): string {
+  const type = normalizeText(assetType ?? null);
+  const name = normalizeText(assetTypeName);
+  return name && name !== type ? name : '';
 }
 
 /**

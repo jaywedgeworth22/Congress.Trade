@@ -1202,10 +1202,16 @@ async function buildRow(
   const signedScore = score == null ? null : direction === 'SELL' ? -score : direction === 'BUY' ? score : 0;
   const price = await (priceCache.get(ticker) ?? priceCache.set(ticker, priceSeries(env, ticker)).get(ticker)!);
   const ref = txs.find((t) => t.company_name || t.cik || t.asset_class || t.sector) ?? txs[0];
-  const canonicalAssetType = canonicalizeAssetType(ref?.asset_type ?? null, ref?.asset_type_name ?? null, {
+  const disclosureAssetType = canonicalizeAssetType(ref?.asset_type ?? null, ref?.asset_type_name ?? null, {
     isOption: txs.some((t) => t.is_option === 1),
     assetName: ref?.asset_name ?? null,
   });
+  const canonicalAssetType = disclosureAssetType.category === 'unknown' && ref?.asset_class
+    ? canonicalizeAssetType(ref.asset_class, ref?.asset_type_name ?? null, {
+        isOption: txs.some((t) => t.is_option === 1),
+        assetName: ref?.asset_name ?? null,
+      })
+    : disclosureAssetType;
   const includedDisclosures = txs.map((t) => {
     const disclosureAssetType = canonicalizeAssetType(t.asset_type, t.asset_type_name, {
       isOption: t.is_option === 1,

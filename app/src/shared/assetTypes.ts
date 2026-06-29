@@ -250,7 +250,7 @@ const LABEL_CATEGORY_ALIASES: Record<string, AssetTypeCategory> = {
   'whole universal insurance': 'insurance_annuity',
 };
 
-const UNKNOWN_LABELS = new Set(['', 'unknown', 'pdf disclosed filing', 'n/a', 'na', '--', '-']);
+const UNKNOWN_LABELS = new Set(['', 'unknown', 'pdf disclosed filing', 'n/a', 'n a', 'na', '--', '-']);
 
 export function houseAssetTypeCodePattern(): string {
   return Object.keys(HOUSE_ASSET_TYPE_NAMES).sort((a, b) => b.length - a.length).map(escapeRegExp).join('|');
@@ -287,11 +287,11 @@ export function canonicalizeAssetType(
   }
 
   for (const value of [name, type, opts?.assetName ?? null]) {
-    const key = normalizeAssetTypeKey(value);
-    if (!key) continue;
-    if (UNKNOWN_LABELS.has(key)) {
+    if (isUnknownAssetTypeValue(value)) {
       return canonical('unknown', type, name, value, 'missing');
     }
+    const key = normalizeAssetTypeKey(value);
+    if (!key) continue;
     const category = LABEL_CATEGORY_ALIASES[key];
     if (category) return canonical(category, type, name, value, 'label');
   }
@@ -359,6 +359,14 @@ function normalizeAssetTypeKey(value: string | null | undefined): string {
     .replace(/[^a-z0-9]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function isUnknownAssetTypeValue(value: string | null | undefined): boolean {
+  if (value == null) return false;
+  const raw = value.trim().toLowerCase();
+  if (UNKNOWN_LABELS.has(raw)) return true;
+  const key = normalizeAssetTypeKey(value);
+  return key ? UNKNOWN_LABELS.has(key) : false;
 }
 
 function cleanNullable(value: string | null | undefined): string | null {

@@ -790,6 +790,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         assetName: e.assetName ?? '',
         ticker: e.ticker ?? null,
         assetType: e.assetType ?? null,
+        assetTypeName,
         txType: (e.txType as TxType) ?? 'P',
         amountMin: e.amountMin ?? null,
         amountMax: e.amountMax ?? null,

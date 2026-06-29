@@ -45,6 +45,9 @@ describe('canonicalizeAssetType', () => {
   it('treats blank and PDF placeholder rows as unknown', () => {
     expect(canonicalizeAssetType(null).category).toBe('unknown');
     expect(canonicalizeAssetType('PDF Disclosed Filing').category).toBe('unknown');
+    expect(canonicalizeAssetType('N/A').category).toBe('unknown');
+    expect(canonicalizeAssetType('-').category).toBe('unknown');
+    expect(canonicalizeAssetType('--').category).toBe('unknown');
     expect(assetTypeCategoryLabel('unknown')).toBe('Unknown');
   });
 
