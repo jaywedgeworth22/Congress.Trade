@@ -1286,6 +1286,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <tbody id="reviewBody"></tbody>
       </table>
       <p class="note">Confirm promotes the read to the live feed; Manual lets you hand-key the rows (recorded as <code>source=manual</code>) when the automated read is wrong or too low-confidence; Reject discards it. Models / readings come from <code>extraction_runs</code> (populated by <code>POST /api/admin/bakeoff</code>). <code>POST /api/admin/review/:docId {decision}</code></p>
+      <div style="margin-top:14px">
+        <h3>Decision History</h3>
+        <table>
+          <thead><tr><th>Time</th><th>Doc</th><th>Action</th><th>Source</th><th>Reason</th><th>Rows</th></tr></thead>
+          <tbody id="decisionBody"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -1472,6 +1479,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 /* ============================ STATE ============================ */
 var TRADES = [];          // live transactions (newest first)
 var REVIEW = [];          // review-queue items
+var DECISIONS = [];       // ingestion decision audit rows
 var REVIEW_RUNS = {};     // docId -> full extraction runs loaded on demand
 var SCHEDULE = [];        // PollWindow[]
 var aggressive = false;
@@ -2565,10 +2573,69 @@ function loadReview() {
   // API HOOK: GET /api/admin/review-queue?resolved=
   return fetch('/api/admin/review-queue?resolved=' + REVIEW_RESOLVED, { headers: adminHeaders() })
     .then(okOrThrow)
-    .then(function (data) { REVIEW = data.items || []; renderReview(); })
+    .then(function (data) { REVIEW = data.items || []; renderReview(); loadDecisionHistory(); })
     .catch(function (e) {
       el('reviewBody').innerHTML = stateRow(6, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load review queue: ' + e.message));
     });
+}
+function loadDecisionHistory() {
+  // API HOOK: GET /api/admin/ingestion-decisions
+  return fetch('/api/admin/ingestion-decisions?limit=100', { headers: adminHeaders() })
+    .then(okOrThrow)
+    .then(function (data) {
+      DECISIONS = data.items || [];
+      renderDecisionHistory(data.available !== false);
+    })
+    .catch(function (e) {
+      var body = el('decisionBody');
+      if (body) body.innerHTML = stateRow(6, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load decision history: ' + e.message));
+    });
+}
+function decisionActionLabel(action) {
+  return String(action || '').replace(/_/g, ' ');
+}
+function decisionRowsText(d) {
+  var ids = d && Array.isArray(d.transactionIds) ? d.transactionIds : [];
+  if (!ids.length) return '—';
+  return ids.length + ' row' + (ids.length === 1 ? '' : 's');
+}
+function decisionReasonText(d) {
+  var reason = d && d.reason ? String(d.reason) : '';
+  var payload = d && d.payload && typeof d.payload === 'object' ? d.payload : null;
+  var bits = [];
+  if (reason) bits.push(reason.replace(/_/g, ' '));
+  if (payload && typeof payload.minConfidence === 'number') bits.push('conf ' + Math.round(payload.minConfidence * 100) + '%');
+  if (payload && typeof payload.inserted === 'number') bits.push('inserted ' + payload.inserted);
+  if (payload && typeof payload.deprecatedTransactions === 'number') bits.push('retracted ' + payload.deprecatedTransactions);
+  return bits.join(' · ') || '—';
+}
+function decisionDocHtml(d) {
+  var docId = d.docId || '';
+  var url = safeDocUrl(d.sourceUrl);
+  if (!url) return '<span class="tkr">' + esc(docId) + '</span>';
+  return '<a class="tkr" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="Open source filing">' + esc(docId) + '</a>';
+}
+function renderDecisionHistory(available) {
+  var body = el('decisionBody');
+  if (!body) return;
+  if (!available) {
+    body.innerHTML = stateRow(6, 'Decision history is not migrated yet.');
+    return;
+  }
+  if (!DECISIONS.length) {
+    body.innerHTML = stateRow(6, 'No decisions recorded yet.');
+    return;
+  }
+  body.innerHTML = DECISIONS.map(function (d) {
+    return '<tr class="row">' +
+      '<td class="muted">' + esc(dateTimeText(d.createdAt)) + '</td>' +
+      '<td>' + decisionDocHtml(d) + '</td>' +
+      '<td>' + statusBadge(decisionActionLabel(d.action)) + '</td>' +
+      '<td class="muted">' + esc([d.source || '', d.actor || ''].filter(Boolean).join(' · ')) + '</td>' +
+      '<td class="muted" style="max-width:320px">' + esc(decisionReasonText(d)) + '</td>' +
+      '<td class="muted">' + esc(decisionRowsText(d)) + '</td>' +
+    '</tr>';
+  }).join('');
 }
 /* Translate review reason codes + payload into plain English for non-engineers. */
 var REASON_LABELS = {
@@ -2823,6 +2890,7 @@ function resolveReview(docId, decision) {
     .then(function () {
       if (isUnpublish) { loadReview(); } // item returns to pending; reload current tab
       else { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); renderReview(); }
+      loadDecisionHistory();
       loadFeed();
     })
     .catch(function (e) {
@@ -2993,7 +3061,7 @@ function meSubmit(docId) {
     body: JSON.stringify({ decision: decision, edits: edits })
   })
     .then(okOrThrow)
-    .then(function () { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); if (tr && tr.parentNode) tr.parentNode.removeChild(tr); renderReview(); loadFeed(); })
+    .then(function () { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); if (tr && tr.parentNode) tr.parentNode.removeChild(tr); renderReview(); loadDecisionHistory(); loadFeed(); })
     .catch(function (e) {
       if (tr) tr.querySelectorAll('button,input,select').forEach(function (b) { b.disabled = false; });
       alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review submit failed: ' + e.message));

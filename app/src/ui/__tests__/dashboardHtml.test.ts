@@ -203,6 +203,10 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function useModelRows(');
     expect(DASHBOARD_HTML).toContain('function openReviewEditor(');
     expect(DASHBOARD_HTML).toContain('Review / Confirm');
+    expect(DASHBOARD_HTML).toContain('Decision History');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/ingestion-decisions?limit=100'");
+    expect(DASHBOARD_HTML).toContain('function renderDecisionHistory(');
+    expect(DASHBOARD_HTML).toContain('var DECISIONS');
     expect(DASHBOARD_HTML).toContain('Use This Model');
     expect(DASHBOARD_HTML).toContain('Bake-Off Runs (');
     expect(DASHBOARD_HTML).toContain('Queued Extracted Rows');

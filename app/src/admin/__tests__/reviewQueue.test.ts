@@ -100,6 +100,44 @@ describe('review queue admin API', () => {
     expect(body.items[0]).toMatchObject({ resolved: true, ingestStatus: 'persisted' });
   });
 
+  it('lists ingestion decision history separately from the review queue', async () => {
+    const res = await app.request(
+      '/ingestion-decisions',
+      { headers: { Authorization: 'Bearer admin-secret' } },
+      {
+        ADMIN_TOKEN: 'admin-secret',
+        DB: fakeDb([
+          {
+            id: 'dec-1',
+            doc_id: 'S-1',
+            action: 'auto_published',
+            source: 'pipeline',
+            actor: null,
+            reason: 'passed_normalization',
+            payload: '{"inserted":2}',
+            transaction_ids: '["tx1","tx2"]',
+            created_at: '2026-06-29T00:00:00.000Z',
+            chamber: 'senate',
+            ingest_status: 'persisted',
+            source_url: 'https://example/senate',
+          },
+        ]),
+      } as never,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      available: boolean;
+      items: Array<{ docId: string; action: string; payload: { inserted: number }; transactionIds: string[] }>;
+    };
+    expect(body.available).toBe(true);
+    expect(body.items[0]).toMatchObject({
+      docId: 'S-1',
+      action: 'auto_published',
+      payload: { inserted: 2 },
+      transactionIds: ['tx1', 'tx2'],
+    });
+  });
+
   it('unpublishes a persisted filing: soft-deletes rows, reverts, re-opens review', async () => {
     // fakeDb whose filing lookup resolves and whose UPDATE reports 3 retracted rows.
     const db = {
@@ -217,12 +255,14 @@ describe('review queue admin API', () => {
   it("decision='manual' records hand-entered rows as source='manual'", async () => {
     // Capture the INSERT bind params so we can assert the source column = 'manual'.
     const binds: unknown[][] = [];
+    const auditBinds: unknown[][] = [];
     const db = {
       prepare(sql: string) {
         return {
           _sql: sql,
           bind(...args: unknown[]) {
             if (/INSERT OR IGNORE INTO transactions/.test(sql)) binds.push(args);
+            if (/INSERT INTO ingestion_decisions/.test(sql)) auditBinds.push(args);
             return this;
           },
           async all<T>() {
@@ -259,5 +299,8 @@ describe('review queue admin API', () => {
     // The transactions INSERT bound source='manual' (it's the 17th positional bind).
     expect(binds.length).toBe(1);
     expect(binds[0]).toContain('manual');
+    expect(auditBinds.length).toBe(1);
+    expect(auditBinds[0]).toContain('manual');
+    expect(auditBinds[0]).toContain('admin-token');
   });
 });

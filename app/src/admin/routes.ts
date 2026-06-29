@@ -30,6 +30,7 @@ import { Hono } from 'hono';
 import type { Env, PollConfig, PollWindow, TxType, TxSource } from '../shared/types';
 import { all, get, run, type SqlParam } from '../shared/db';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
+import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
 import { getConfig, setConfig } from '../shared/config';
 import { uuid } from '../shared/ids';
 import { listSubscriptions } from '../delivery/subscriptions';
@@ -110,6 +111,14 @@ let warnedClosedAdmin = false;
 
 function isExplicitOpenAdmin(env: EnvWithAdmin): boolean {
   return env.ADMIN_OPEN_IN_DEV === 'true';
+}
+
+function adminActor(c: { req: { header(name: string): string | undefined } }): string {
+  const accessEmail =
+    c.req.header('Cf-Access-Authenticated-User-Email') ||
+    c.req.header('cf-access-authenticated-user-email');
+  if (accessEmail) return accessEmail;
+  return c.req.header('authorization') ? 'admin-token' : 'admin';
 }
 
 /**
@@ -615,6 +624,25 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     return c.json({ items, count: items.length, resolved: resolved === 1 });
   });
 
+  // --- GET /ingestion-decisions ------------------------------------------
+  // Append-only filing/trade decision history. Unlike review_queue, this also
+  // includes clean auto-published filings that never needed human review.
+  r.get('/ingestion-decisions', async (c) => {
+    const rawLimit = parseInt(c.req.query('limit') || '100', 10);
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
+    const docId = c.req.query('docId') || null;
+    try {
+      const items = await listIngestionDecisions(c.env.DB, { limit, docId });
+      return c.json({ items, count: items.length, available: true });
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (/no such table|ingestion_decisions/i.test(msg)) {
+        return c.json({ items: [], count: 0, available: false });
+      }
+      return c.json({ error: msg }, 500);
+    }
+  });
+
   // --- GET /review/:docId/extractions -------------------------------------
   // Full stored readings (result_json) for one document, newest first — powers
   // the dashboard's "view each model's reading" panel. Separate from the list
@@ -695,11 +723,24 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
 
     if (decision === 'reject') {
+      const nowIso = new Date().toISOString();
       await run(c.env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [docId]);
       await run(c.env.DB, 'UPDATE filings SET ingest_status = ? WHERE doc_id = ?', [
         'error',
         docId,
       ]);
+      await recordIngestionDecision(c.env.DB, {
+        docId,
+        action: 'rejected',
+        source: 'admin',
+        actor: adminActor(c),
+        reason: review.reason ?? 'rejected',
+        payload: {
+          reviewCreatedAt: review.created_at,
+          reviewPayload: review.payload ? safeJson(review.payload) : null,
+        },
+        createdAt: nowIso,
+      });
       return c.json({ docId, decision: 'reject', resolved: true });
     }
 
@@ -805,6 +846,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
     }
 
+    await recordIngestionDecision(c.env.DB, {
+      docId,
+      action: decision === 'manual' ? 'manual' : 'confirmed',
+      source: 'admin',
+      actor: adminActor(c),
+      reason: review.reason ?? null,
+      transactionIds: insertedIds,
+      payload: {
+        source,
+        editCount: edits.length,
+        inserted: insertedIds.length,
+        reviewCreatedAt: review.created_at,
+      },
+      createdAt: nowIso,
+    });
+
     return c.json({
       docId,
       decision,
@@ -861,6 +918,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
        ON CONFLICT(doc_id) DO UPDATE SET resolved = 0, reason = excluded.reason, created_at = excluded.created_at`,
       [docId, 'unpublished: ' + reason, null, nowIso],
     );
+
+    await recordIngestionDecision(c.env.DB, {
+      docId,
+      action: 'unpublished',
+      source: 'admin',
+      actor: adminActor(c),
+      reason,
+      payload: { deprecatedTransactions: deprecated },
+      createdAt: nowIso,
+    });
 
     return c.json({ docId, unpublished: true, deprecatedTransactions: deprecated, reason });
   });
@@ -1987,6 +2054,21 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       // 0018_agreement_attempted.sql — one autonomous agreement attempt per review doc.
       'ALTER TABLE review_queue ADD COLUMN agreement_attempted_at TEXT',
       'CREATE INDEX IF NOT EXISTS idx_review_queue_agreement ON review_queue (agreement_attempted_at)',
+      // 0019_ingestion_decisions.sql — append-only audit trail for publication/review decisions.
+      `CREATE TABLE IF NOT EXISTS ingestion_decisions (
+         id TEXT PRIMARY KEY,
+         doc_id TEXT NOT NULL,
+         action TEXT NOT NULL,
+         source TEXT NOT NULL,
+         actor TEXT,
+         reason TEXT,
+         payload TEXT,
+         transaction_ids TEXT NOT NULL DEFAULT '[]',
+         created_at TEXT NOT NULL
+       )`,
+      'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_doc ON ingestion_decisions (doc_id, created_at DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_created ON ingestion_decisions (created_at DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_action ON ingestion_decisions (action, created_at DESC)',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
