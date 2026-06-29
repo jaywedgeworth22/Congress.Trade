@@ -26,7 +26,10 @@ whether returned rows are safe for historical validation.
 Rows are keyed by ticker and market-available disclosure timestamp:
 
 - `observationId`
-- `ticker`, `stableSecurityId`, `cusip`, `cik`, `assetType`
+- `ticker`, `stableSecurityId`, `cusip`, `cik`
+- raw/security asset context: `assetType`, `assetTypeName`
+- cross-chamber canonical asset context: `assetTypeCategory`,
+  `assetTypeCategoryLabel`, `assetTypeCategorySource`
 - `tickerMapVersion`, `delistingTickerChangeMetadata`
 - `asOf`, `disclosureAvailableAt`, `computedAt`, `dataCutoffAt`
 - `scoreVersion`, `parameterManifest`

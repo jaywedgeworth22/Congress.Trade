@@ -28,6 +28,7 @@ import {
   type FeedTransactionRow,
   type TxQueryParams,
 } from '../delivery/rows';
+import { canonicalizeAssetType } from '../shared/assetTypes';
 import {
   createSubscription,
   getSubscription,
@@ -203,6 +204,10 @@ function clientLogoUrl(ticker: string | null): string | null {
 
 function clientTradeFromRow(row: FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null; __party?: string | null }): ClientTrade {
   const tx = mapFeedTransaction(row);
+  const assetType = canonicalizeAssetType(tx.assetType, tx.assetTypeName, {
+    isOption: tx.isOption,
+    assetName: tx.assetName,
+  });
   return {
     id: tx.id,
     cursor: tx.cursorSeq,
@@ -221,6 +226,9 @@ function clientTradeFromRow(row: FeedTransactionRow & { __chamber?: string | nul
       companyName: tx.refCompanyName ?? null,
       logoUrl: clientLogoUrl(tx.ticker),
       type: tx.assetType,
+      typeName: tx.assetTypeName ?? null,
+      typeCategory: assetType.category,
+      typeCategoryLabel: assetType.categoryLabel,
       sector: tx.refSector ?? null,
       marketCapBucket: tx.refMarketCapBucket ?? null,
     },

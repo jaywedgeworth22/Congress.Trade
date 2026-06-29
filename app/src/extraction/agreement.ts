@@ -16,6 +16,7 @@ import { runCandidateOnDoc, type BakeoffCandidate, type CandidateDocResult } fro
 import { arbitrationRowKey } from '../extractors/types';
 import { recomputeTransactions, persistTransactions, HARD_FAILURE_FLAGS } from './normalizer';
 import { mapFiling, type FilingRow } from '../delivery/rows';
+import { recordIngestionDecision } from '../shared/ingestionDecisions';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -102,6 +103,24 @@ export async function processAgreementDoc(
   const insertedIds = await persistTransactions(env, txs);
   await run(env.DB, "UPDATE filings SET ingest_status = 'persisted', error = NULL WHERE doc_id = ?", [docId]);
   await run(env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [docId]);
+  if (insertedIds.length > 0) {
+    await recordIngestionDecision(env.DB, {
+      docId,
+      action: 'agreement_published',
+      source: 'agreement',
+      reason: 'model_agreement',
+      transactionIds: insertedIds,
+      payload: {
+        rowCount: flagged.length,
+        inserted: insertedIds.length,
+        models: {
+          a: `${models.a.provider}:${models.a.model}`,
+          b: `${models.b.provider}:${models.b.model}`,
+          ...(models.c ? { c: `${models.c.provider}:${models.c.model}` } : {}),
+        },
+      },
+    });
+  }
   for (const txId of insertedIds) {
     try { await env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId }); } catch { /* best-effort */ }
   }
