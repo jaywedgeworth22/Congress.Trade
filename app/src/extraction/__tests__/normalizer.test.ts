@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalize, CONFIDENCE_THRESHOLD } from '../normalizer';
+import { normalize, CONFIDENCE_THRESHOLD, transactionRowKey } from '../normalizer';
 import type { Env, Filing, ParsedTx } from '../../shared/types';
 
 // ---------------------------------------------------------------------------
@@ -101,6 +101,13 @@ const tx = (over: Partial<ParsedTx> = {}): ParsedTx => ({
 });
 
 describe('normalize', () => {
+  it('keeps row identity stable when asset type labels are added as enrichment', () => {
+    const parsed = tx({ assetType: 'Stock', assetTypeName: null });
+    const enriched = tx({ assetType: 'Stock', assetTypeName: 'Stock' });
+
+    expect(transactionRowKey('primary', 0, enriched)).toBe(transactionRowKey('primary', 0, parsed));
+  });
+
   it('publishes high-confidence, resolved, valid rows', async () => {
     const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '["Apple"]' }]);
     const result = await normalize(env, filing(), [tx()]);

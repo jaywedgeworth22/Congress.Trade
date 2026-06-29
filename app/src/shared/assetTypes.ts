@@ -326,9 +326,11 @@ export function canonicalAssetTypeCategorySql(
     )
     .join(' ');
   const unknownWhen = Array.from(UNKNOWN_LABELS)
+    .filter(Boolean)
     .map((label) => `${raw} = ${sqlQuote(label)} OR ${name} = ${sqlQuote(label)}`)
     .join(' OR ');
-  return `(CASE ${optionFlag} ${houseWhen} ${houseLabelWhen} ${labelWhen} WHEN ${unknownWhen} THEN 'unknown' ELSE 'other' END)`;
+  const unknownCase = unknownWhen ? `WHEN ${unknownWhen} THEN 'unknown'` : '';
+  return `(CASE ${houseWhen} ${houseLabelWhen} ${labelWhen} ${unknownCase} ${optionFlag} WHEN ${raw} = '' AND ${name} = '' THEN 'unknown' ELSE 'other' END)`;
 }
 
 function canonical(

@@ -210,8 +210,16 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('REVIEW_AMOUNT_BRACKETS');
     expect(DASHBOARD_HTML).toContain('class="me-bracket"');
     expect(DASHBOARD_HTML).toContain('class="me-asset-type"');
-    expect(DASHBOARD_HTML).toContain('Stocks (ST)');
-    expect(DASHBOARD_HTML).toContain('Other (OT)');
+    expect(DASHBOARD_HTML).toContain('HOUSE_REVIEW_ASSET_TYPES');
+    expect(DASHBOARD_HTML).toContain('SENATE_REVIEW_ASSET_TYPES');
+    expect(DASHBOARD_HTML).toContain('function reviewAssetTypeDatalistId(');
+    expect(DASHBOARD_HTML).toContain('function reviewNormalizeAssetTypeValue(');
+    expect(DASHBOARD_HTML).toContain('list="');
+    expect(DASHBOARD_HTML).toContain('5P');
+    expect(DASHBOARD_HTML).toContain('Municipal Security');
+    expect(DASHBOARD_HTML).toContain('Stock Option');
+    expect(DASHBOARD_HTML).toContain('assetTypeName: reviewAssetTypeName(assetType) || null');
+    expect(DASHBOARD_HTML).toContain("tr.setAttribute('data-chamber', chamber || '')");
     expect(DASHBOARD_HTML).toContain('class="me-option"');
     expect(DASHBOARD_HTML).toContain('Option Contract');
     expect(DASHBOARD_HTML).toContain('class="me-cap"');

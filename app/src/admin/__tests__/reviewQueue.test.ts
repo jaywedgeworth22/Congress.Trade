@@ -43,6 +43,7 @@ describe('review queue admin API', () => {
               'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/2003695.pdf',
             raw_object_key: 'raw/H-2026-2003695',
             doc_kind: 'scanned_pdf',
+            chamber: 'house',
           },
         ]),
       } as never,
@@ -55,6 +56,7 @@ describe('review queue admin API', () => {
         sourceUrl: string;
         rawObjectKey: string;
         docKind: string;
+        chamber: string;
         payload: { minConfidence: number; transactions: unknown[] };
       }>;
     };
@@ -63,6 +65,7 @@ describe('review queue admin API', () => {
       sourceUrl: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/2003695.pdf',
       rawObjectKey: 'raw/H-2026-2003695',
       docKind: 'scanned_pdf',
+      chamber: 'house',
       payload: { minConfidence: 0, transactions: [] },
     });
   });

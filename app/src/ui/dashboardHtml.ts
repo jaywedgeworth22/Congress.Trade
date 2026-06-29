@@ -438,6 +438,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .me-row { margin: 8px 0; display:grid; grid-template-columns:minmax(80px,.6fr) 130px 165px 150px 125px 155px minmax(220px,1.8fr) minmax(210px,.9fr); gap:8px; align-items:center; }
   .me-row input, .me-row select { min-height:34px; width:100%; min-width:0; }
   .me-row .me-asset { width:100%; }
+  .me-asset-type-wrap { min-width:0; }
+  .me-asset-type-category { display:block; margin-top:2px; color:var(--text-dim); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .me-flags { display:flex; align-items:center; gap:6px 10px; flex-wrap:wrap; min-width:0; }
   .me-check { display:inline-flex; align-items:center; gap:4px; color:var(--text-dim); font-size:12px; white-space:nowrap; }
   .me-check input { min-height:0; width:auto; }
@@ -1543,24 +1545,131 @@ function assetClassLabel(c) {
   if (!s) return '';
   return ASSET_CLASS_UP[s.toLowerCase()] || (s.charAt(0).toUpperCase() + s.slice(1));
 }
-/* Friendlier label for STOCK Act asset-type codes (ST = Stocks, etc.). */
-var ASSET_TYPE_LABEL = { ST: 'Stocks', OP: 'Options', GS: 'Govt Securities', CS: 'Corporate Bonds', EF: 'Funds / ETFs', MF: 'Mutual Funds', OT: 'Other', PE: 'Private Equity', RP: 'Real Property', Unknown: 'Unclassified' };
-var REVIEW_ASSET_TYPES = [
-  ['ST', 'Stocks (ST)'],
-  ['OP', 'Options (OP)'],
-  ['GS', 'Govt Securities (GS)'],
-  ['CS', 'Corporate Bonds (CS)'],
-  ['EF', 'Funds / ETFs (EF)'],
-  ['MF', 'Mutual Funds (MF)'],
-  ['OT', 'Other (OT)'],
-  ['PE', 'Private Equity (PE)'],
-  ['RP', 'Real Property (RP)'],
-  ['Unknown', 'Unclassified']
+/* Friendlier labels for raw STOCK Act asset-type codes / Senate eFD labels. */
+var HOUSE_REVIEW_ASSET_TYPES = [
+  ['4K', '401K and Other Non-Federal Retirement Accounts', 'Retirement / 529 Accounts'],
+  ['5C', '529 College Savings Plan', 'Retirement / 529 Accounts'],
+  ['5F', '529 Portfolio', 'Retirement / 529 Accounts'],
+  ['5P', '529 Prepaid Tuition Plan', 'Retirement / 529 Accounts'],
+  ['AB', 'Asset-Backed Securities', 'Asset-Backed Securities'],
+  ['BA', 'Bank Accounts, Money Market Accounts and CDs', 'Cash / Bank Accounts'],
+  ['BK', 'Brokerage Accounts', 'Cash / Bank Accounts'],
+  ['CO', 'Collectibles', 'Commodities / Collectibles'],
+  ['CS', 'Corporate Securities (Bonds and Notes)', 'Corporate Debt'],
+  ['CT', 'Cryptocurrency', 'Crypto'],
+  ['DB', 'Defined Benefit Pension', 'Retirement / 529 Accounts'],
+  ['DO', 'Debts Owed to the Filer', 'Receivables'],
+  ['DS', 'Delaware Statutory Trust', 'Trusts'],
+  ['EF', 'Exchange Traded Funds (ETF)', 'Funds / ETFs / REITs'],
+  ['EQ', 'Excepted/Qualified Blind Trust', 'Trusts'],
+  ['ET', 'Exchange Traded Notes', 'Funds / ETFs / REITs'],
+  ['FA', 'Farms', 'Commodities / Collectibles'],
+  ['FE', 'Foreign Exchange Position (Currency)', 'Derivatives / Rights'],
+  ['FN', 'Fixed Annuity', 'Insurance / Annuities'],
+  ['FU', 'Futures', 'Derivatives / Rights'],
+  ['GS', 'Government Securities and Agency Debt', 'Government / Municipal Debt'],
+  ['HE', 'Hedge Funds & Private Equity Funds (EIF)', 'Private Funds'],
+  ['HN', 'Hedge Funds & Private Equity Funds (non-EIF)', 'Private Funds'],
+  ['IC', 'Investment Club', 'Business Interests'],
+  ['IH', 'IRA (Held in Cash)', 'Retirement / 529 Accounts'],
+  ['IP', 'Intellectual Property & Royalties', 'Intellectual Property'],
+  ['IR', 'IRA', 'Retirement / 529 Accounts'],
+  ['MA', 'Managed Accounts (e.g., SMA and UMA)', 'Funds / ETFs / REITs'],
+  ['MF', 'Mutual Funds', 'Funds / ETFs / REITs'],
+  ['MO', 'Mineral/Oil/Solar Energy Rights', 'Commodities / Collectibles'],
+  ['OI', 'Ownership Interest (Holding Investments)', 'Business Interests'],
+  ['OL', 'Ownership Interest (Engaged in a Trade or Business)', 'Business Interests'],
+  ['OP', 'Options', 'Options'],
+  ['OT', 'Other', 'Other'],
+  ['PE', 'Pensions', 'Retirement / 529 Accounts'],
+  ['PM', 'Precious Metals', 'Commodities / Collectibles'],
+  ['PS', 'Stock (Not Publicly Traded)', 'Private Equity'],
+  ['RE', 'Real Estate Invest. Trust (REIT)', 'Real Estate'],
+  ['RF', 'REIT (EIF)', 'Real Estate'],
+  ['RN', 'REIT (non-EIF)', 'Real Estate'],
+  ['RP', 'Real Property', 'Real Estate'],
+  ['RS', 'Restricted Stock Units (RSUs)', 'Derivatives / Rights'],
+  ['SA', 'Stock Appreciation Right', 'Derivatives / Rights'],
+  ['ST', 'Stocks (including ADRs)', 'Public Equity'],
+  ['TR', 'Trust', 'Trusts'],
+  ['VA', 'Variable Annuity', 'Insurance / Annuities'],
+  ['VI', 'Variable Insurance', 'Insurance / Annuities'],
+  ['WU', 'Whole/Universal Insurance', 'Insurance / Annuities']
 ];
+var SENATE_REVIEW_ASSET_TYPES = [
+  ['Stock', 'Stock', 'Public Equity'],
+  ['Stock Option', 'Stock Option', 'Options'],
+  ['Municipal Security', 'Municipal Security', 'Government / Municipal Debt'],
+  ['Corporate Bond', 'Corporate Bond', 'Corporate Debt'],
+  ['Other Securities', 'Other Securities', 'Other Securities'],
+  ['Non-Public Stock', 'Non-Public Stock', 'Private Equity']
+];
+var REVIEW_UNKNOWN_ASSET_TYPES = [['Unknown', 'Unclassified', 'Unknown']];
+var REVIEW_ASSET_TYPES = HOUSE_REVIEW_ASSET_TYPES.concat(SENATE_REVIEW_ASSET_TYPES).concat(REVIEW_UNKNOWN_ASSET_TYPES);
+var ASSET_TYPE_LABEL = {};
+var ASSET_TYPE_CATEGORY_LABEL = {};
+REVIEW_ASSET_TYPES.forEach(function (pair) {
+  ASSET_TYPE_LABEL[pair[0]] = pair[1];
+  ASSET_TYPE_LABEL[String(pair[0]).toUpperCase()] = pair[1];
+  ASSET_TYPE_CATEGORY_LABEL[pair[0]] = pair[2];
+  ASSET_TYPE_CATEGORY_LABEL[String(pair[0]).toUpperCase()] = pair[2];
+});
 function assetTypeLabel(t) {
   var s = String(t == null ? '' : t).trim();
   if (!s) return 'Unclassified';
   return ASSET_TYPE_LABEL[s] || ASSET_TYPE_LABEL[s.toUpperCase()] || s;
+}
+function reviewAssetTypeName(t) {
+  var s = String(t == null ? '' : t).trim();
+  if (!s || s.toLowerCase() === 'unknown') return '';
+  return ASSET_TYPE_LABEL[s] || ASSET_TYPE_LABEL[s.toUpperCase()] || '';
+}
+function reviewNormalizeAssetTypeValue(t) {
+  var s = String(t == null ? '' : t).trim();
+  if (!s) return '';
+  var upper = s.toUpperCase();
+  for (var i = 0; i < HOUSE_REVIEW_ASSET_TYPES.length; i++) {
+    if (HOUSE_REVIEW_ASSET_TYPES[i][0] === upper) return upper;
+  }
+  var lower = s.toLowerCase();
+  for (var j = 0; j < SENATE_REVIEW_ASSET_TYPES.length; j++) {
+    if (String(SENATE_REVIEW_ASSET_TYPES[j][0]).toLowerCase() === lower) return SENATE_REVIEW_ASSET_TYPES[j][0];
+  }
+  if (lower === 'unknown' || lower === 'unclassified') return 'Unknown';
+  return s;
+}
+function reviewAssetTypeCategoryLabel(t) {
+  var s = String(t == null ? '' : t).trim();
+  if (!s) return '';
+  return ASSET_TYPE_CATEGORY_LABEL[s] || ASSET_TYPE_CATEGORY_LABEL[s.toUpperCase()] || '';
+}
+function reviewAssetPairsForChamber(chamber) {
+  var c = String(chamber == null ? '' : chamber).toLowerCase();
+  if (c === 'house') return HOUSE_REVIEW_ASSET_TYPES.concat(REVIEW_UNKNOWN_ASSET_TYPES);
+  if (c === 'senate') return SENATE_REVIEW_ASSET_TYPES.concat(REVIEW_UNKNOWN_ASSET_TYPES);
+  var seen = {};
+  return REVIEW_ASSET_TYPES.filter(function (pair) {
+    var key = String(pair[0]).toLowerCase();
+    if (seen[key]) return false;
+    seen[key] = true;
+    return true;
+  });
+}
+function reviewAssetTypeDatalistId(chamber) {
+  var c = String(chamber == null ? '' : chamber).toLowerCase();
+  return c === 'house' ? 'review-asset-types-house' : c === 'senate' ? 'review-asset-types-senate' : 'review-asset-types-all';
+}
+function ensureReviewAssetTypeDatalists() {
+  if (document.getElementById('review-asset-types-all')) return;
+  ['house', 'senate', 'all'].forEach(function (chamber) {
+    var dl = document.createElement('datalist');
+    dl.id = reviewAssetTypeDatalistId(chamber);
+    dl.innerHTML = reviewAssetPairsForChamber(chamber).map(function (pair) {
+      var label = pair[0] === pair[1] ? pair[2] : pair[1] + ' - ' + pair[2];
+      return '<option value="' + esc(pair[0]) + '" label="' + esc(label) + '"></option>';
+    }).join('');
+    document.body.appendChild(dl);
+  });
 }
 /* Normalize a date string to YYYY-MM-DD without timezone drift. Accepts ISO
    ("2026-06-15...") and US ("6/15/2026") forms (Senate filings use the latter). */
@@ -2539,6 +2648,7 @@ function normalizeReviewEdit(t, sourceLabel) {
     txDate: String(t.txDate || '').slice(0, 10) || null,
     owner: owner,
     assetType: cleanAsset(t.assetType || ''),
+    assetTypeName: cleanAsset(t.assetTypeName || ''),
     isOption: Boolean(t.isOption),
     capGainsOver200: Boolean(t.capGainsOver200),
     confidence: t.confidence == null ? null : n(t.confidence),
@@ -2749,16 +2859,14 @@ function amountBracketSelectHtml(tx) {
   });
   return '<select class="me-bracket" title="Canonical STOCK Act amount bracket">' + opts + '</select>';
 }
-function assetTypeSelectHtml(tx) {
+function assetTypeInputHtml(tx, chamber) {
+  ensureReviewAssetTypeDatalists();
   var current = String(tx.assetType || '').trim();
-  var seen = {};
-  var opts = '<option value="">Asset Type</option>';
-  REVIEW_ASSET_TYPES.forEach(function (pair) {
-    seen[pair[0]] = true;
-    opts += '<option value="' + esc(pair[0]) + '"' + selectedOption(pair[0], current) + '>' + esc(pair[1]) + '</option>';
-  });
-  if (current && !seen[current]) opts += '<option value="' + esc(current) + '" selected>' + esc(assetTypeLabel(current) + ' (' + current + ')') + '</option>';
-  return '<select class="me-asset-type" title="ST = Stocks; OT = Other; OP = Options contract" onchange="syncReviewOptionFlag(this)">' + opts + '</select>';
+  var category = reviewAssetTypeCategoryLabel(current);
+  return '<span class="me-asset-type-wrap">' +
+    '<input class="me-asset-type" list="' + esc(reviewAssetTypeDatalistId(chamber)) + '" placeholder="Asset type" value="' + valueAttr(current) + '" title="Start typing to pick a suggested type; custom values are allowed." oninput="syncReviewAssetTypeInput(this)" onchange="syncReviewAssetTypeInput(this)" />' +
+    '<span class="me-asset-type-category">' + esc(category) + '</span>' +
+    '</span>';
 }
 function parseBracketValue(v) {
   var s = String(v || '');
@@ -2766,14 +2874,18 @@ function parseBracketValue(v) {
   var p = s.split(':');
   return { min: p[0] === '' ? null : Number(p[0]), max: p[1] === '' ? null : Number(p[1]) };
 }
-function syncReviewOptionFlag(selectEl) {
-  var row = selectEl && selectEl.closest ? selectEl.closest('.me-row') : null;
+function syncReviewAssetTypeInput(inputEl) {
+  var row = inputEl && inputEl.closest ? inputEl.closest('.me-row') : null;
   var cb = row && row.querySelector ? row.querySelector('.me-option') : null;
-  if (cb && selectEl.value === 'OP') cb.checked = true;
+  var value = inputEl ? String(inputEl.value || '').trim() : '';
+  var category = reviewAssetTypeCategoryLabel(value);
+  if (cb && (value.toUpperCase() === 'OP' || category === 'Options')) cb.checked = true;
+  var label = row && row.querySelector ? row.querySelector('.me-asset-type-category') : null;
+  if (label) label.textContent = category || '';
 }
 /* Shared review editor. It can start blank for manual entry, from the queued
    review payload, or from any selected model run. Submit stays explicit. */
-function meRowHtml(tx) {
+function meRowHtml(tx, chamber) {
   tx = normalizeReviewEdit(tx || {}, 'review editor');
   return '<div class="me-row">' +
     '<input class="me-ticker" placeholder="Symbol" maxlength="12" value="' + valueAttr(tx.ticker || '') + '" /> ' +
@@ -2781,7 +2893,7 @@ function meRowHtml(tx) {
     amountBracketSelectHtml(tx) +
     '<input class="me-date" type="date" value="' + valueAttr(tx.txDate || '') + '" /> ' +
     '<select class="me-owner"><option value="self"' + selectedOption('self', tx.owner) + '>self</option><option value="spouse"' + selectedOption('spouse', tx.owner) + '>spouse</option><option value="joint"' + selectedOption('joint', tx.owner) + '>joint</option><option value="dependent"' + selectedOption('dependent', tx.owner) + '>dependent</option></select> ' +
-    assetTypeSelectHtml(tx) +
+    assetTypeInputHtml(tx, chamber) +
     '<input class="me-asset" placeholder="Asset name" value="' + valueAttr(tx.assetName || '') + '" />' +
     '<span class="me-flags">' +
       '<label class="me-check" title="Marks this row as an options contract rather than a plain equity/security transaction."><input class="me-option" type="checkbox"' + checkedAttr(tx.isOption || tx.assetType === 'OP') + ' /> Option Contract</label>' +
@@ -2791,21 +2903,33 @@ function meRowHtml(tx) {
     '<input class="me-conf" type="hidden" value="' + valueAttr(tx.confidence == null ? '' : tx.confidence) + '" />' +
     '</div>';
 }
-function meAddRow(docId, tx) { var c = el('me-rows-' + docId); if (c) c.insertAdjacentHTML('beforeend', meRowHtml(tx)); }
+function meAddRow(docId, tx) {
+  var c = el('me-rows-' + docId);
+  var tr = el('me-' + docId);
+  var chamber = tr ? tr.getAttribute('data-chamber') : '';
+  if (c) c.insertAdjacentHTML('beforeend', meRowHtml(tx, chamber));
+}
 function meCancel(docId) { var tr = el('me-' + docId); if (tr) tr.parentNode.removeChild(tr); }
+function reviewItemForDoc(docId) {
+  for (var i = 0; i < REVIEW.length; i++) { if (REVIEW[i].docId === docId) return REVIEW[i]; }
+  return null;
+}
 function openQueuedReviewEditor(docId) {
-  var item = null;
-  for (var i = 0; i < REVIEW.length; i++) { if (REVIEW[i].docId === docId) { item = REVIEW[i]; break; } }
+  var item = reviewItemForDoc(docId);
   var rows = reviewPayloadTransactions(item && item.payload);
-  openReviewEditor(docId, rows, 'confirm', 'queued extracted rows');
+  openReviewEditor(docId, rows, 'confirm', 'queued extracted rows', item && item.chamber);
 }
 function useModelRows(docId, idx) {
   var run = REVIEW_RUNS[docId] && REVIEW_RUNS[docId][idx];
   if (!run || !run.rows || !run.rows.length) { alert('That model run has no rows to use.'); return; }
-  openReviewEditor(docId, run.rows, 'confirm', run.provider + ':' + run.model);
+  var item = reviewItemForDoc(docId);
+  openReviewEditor(docId, run.rows, 'confirm', run.provider + ':' + run.model, item && item.chamber);
 }
-function manualEntry(docId) { openReviewEditor(docId, [], 'manual', 'manual entry'); }
-function openReviewEditor(docId, rows, decision, label) {
+function manualEntry(docId) {
+  var item = reviewItemForDoc(docId);
+  openReviewEditor(docId, [], 'manual', 'manual entry', item && item.chamber);
+}
+function openReviewEditor(docId, rows, decision, label, chamber) {
   var old = el('me-' + docId);
   if (old && old.parentNode) old.parentNode.removeChild(old);
   var row = el('rv-' + docId);
@@ -2813,6 +2937,7 @@ function openReviewEditor(docId, rows, decision, label) {
   var tr = document.createElement('tr');
   tr.id = 'me-' + docId;
   tr.setAttribute('data-decision', decision);
+  tr.setAttribute('data-chamber', chamber || '');
   var safeLabel = label || (decision === 'manual' ? 'manual entry' : 'selected rows');
   var title = decision === 'manual' ? 'Manual Entry' : 'Edit Rows To Confirm';
   var submit = decision === 'manual' ? 'Submit Manual Entry' : 'Confirm Edited Rows';
@@ -2844,7 +2969,7 @@ function meSubmit(docId) {
     if (!t && !asset) return; // skip blank rows
     var bracket = parseBracketValue(g.querySelector('.me-bracket').value);
     var conf = g.querySelector('.me-conf').value;
-    var assetType = (g.querySelector('.me-asset-type').value || '').trim();
+    var assetType = reviewNormalizeAssetTypeValue(g.querySelector('.me-asset-type').value || '');
     edits.push({
       ticker: t || null,
       assetName: asset || t || '(review entry)',
@@ -2854,7 +2979,8 @@ function meSubmit(docId) {
       txDate: g.querySelector('.me-date').value || null,
       owner: g.querySelector('.me-owner').value,
       assetType: assetType || null,
-      isOption: g.querySelector('.me-option').checked || assetType === 'OP',
+      assetTypeName: reviewAssetTypeName(assetType) || null,
+      isOption: g.querySelector('.me-option').checked || assetType === 'OP' || reviewAssetTypeCategoryLabel(assetType) === 'Options',
       capGainsOver200: g.querySelector('.me-cap').checked,
       rawText: (g.querySelector('.me-raw').value || '').trim() || (decision === 'manual' ? 'manual entry' : 'review editor'),
       confidence: conf === '' ? (decision === 'manual' ? 1 : null) : Number(conf)

@@ -65,7 +65,6 @@ type RowKeyFields = Pick<
   | 'assetName'
   | 'ticker'
   | 'assetType'
-  | 'assetTypeName'
   | 'txType'
   | 'amountMin'
   | 'amountMax'
@@ -95,7 +94,6 @@ export function transactionRowKey(
     normalizeText(fields.assetName),
     (fields.ticker ?? '').toUpperCase(),
     normalizeText(fields.assetType),
-    normalizeText(fields.assetTypeName ?? null),
     fields.txType ?? '',
     fields.amountMin ?? '',
     fields.amountMax ?? '',

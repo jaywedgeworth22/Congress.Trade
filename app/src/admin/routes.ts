@@ -29,6 +29,7 @@
 import { Hono } from 'hono';
 import type { Env, PollConfig, PollWindow, TxType, TxSource } from '../shared/types';
 import { all, get, run, type SqlParam } from '../shared/db';
+import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
 import { getConfig, setConfig } from '../shared/config';
 import { uuid } from '../shared/ids';
 import { listSubscriptions } from '../delivery/subscriptions';
@@ -209,6 +210,7 @@ interface ReviewRow {
   source_url: string | null;
   raw_object_key: string | null;
   doc_kind: string | null;
+  chamber?: string | null;
 }
 
 interface DiagnosticConnection {
@@ -268,6 +270,7 @@ interface EditedTx {
   assetName?: string;
   ticker?: string | null;
   assetType?: string | null;
+  assetTypeName?: string | null;
   txType?: TxType;
   amountMin?: number | null;
   amountMax?: number | null;
@@ -275,6 +278,15 @@ interface EditedTx {
   capGainsOver200?: boolean;
   rawText?: string;
   confidence?: number;
+}
+
+function reviewAssetTypeName(e: EditedTx): string | null {
+  const supplied = typeof e.assetTypeName === 'string' ? e.assetTypeName.trim() : '';
+  if (supplied) return supplied;
+  const raw = typeof e.assetType === 'string' ? e.assetType.trim() : '';
+  if (!raw || raw.toLowerCase() === 'unknown') return null;
+  const code = raw.toUpperCase();
+  return HOUSE_ASSET_TYPE_NAMES[code] ?? raw;
 }
 
 // --- Member photo enrichment (name -> bioguide -> unitedstates/images CDN) ---
@@ -514,6 +526,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           f.source_url,
           f.raw_object_key,
           f.doc_kind,
+          f.chamber,
           f.ingest_status,
           (SELECT COUNT(*) FROM transactions t
              WHERE t.doc_id = rq.doc_id AND t.source = 'manual' AND t.deprecated_at IS NULL) AS manual_rows,
@@ -595,6 +608,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         sourceUrl: row.source_url ?? '',
         rawObjectKey: row.raw_object_key ?? '',
         docKind: row.doc_kind ?? '',
+        chamber: row.chamber ?? '',
         models: modelsByDoc.get(row.doc_id) ?? [],
       };
     });
@@ -726,6 +740,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const nowIso = new Date().toISOString();
     for (const [rowIndex, e] of edits.entries()) {
       const id = uuid();
+      const assetTypeName = reviewAssetTypeName(e);
       const rowKey = transactionRowKey(source, rowIndex, {
         txDate: e.txDate ?? null,
         owner: e.owner === 'self' || e.owner === 'spouse' || e.owner === 'joint' || e.owner === 'dependent'
@@ -747,8 +762,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         `INSERT OR IGNORE INTO transactions (
            id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
            tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
-           raw_text, row_key, confidence, source, created_at, cursor_seq
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+           raw_text, asset_type_name, row_key, confidence, source, created_at, cursor_seq
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
         [
           id,
           docId,
@@ -764,6 +779,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           e.isOption ? 1 : 0,
           e.capGainsOver200 ? 1 : 0,
           e.rawText ?? '',
+          assetTypeName,
           rowKey,
           e.confidence ?? 1,
           source,

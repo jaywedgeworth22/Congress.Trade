@@ -34,6 +34,14 @@ describe('canonicalizeAssetType', () => {
     expect(canonicalizeAssetType(null, null, { isOption: true }).category).toBe('option');
   });
 
+  it('lets disclosed type labels override the option flag', () => {
+    expect(canonicalizeAssetType('Stock', null, { isOption: true }).category).toBe('public_equity');
+  });
+
+  it('keeps present but unmapped values separate from missing values', () => {
+    expect(canonicalizeAssetType('Bespoke Security').category).toBe('other');
+  });
+
   it('treats blank and PDF placeholder rows as unknown', () => {
     expect(canonicalizeAssetType(null).category).toBe('unknown');
     expect(canonicalizeAssetType('PDF Disclosed Filing').category).toBe('unknown');
@@ -53,5 +61,16 @@ describe('canonicalAssetTypeCategorySql', () => {
     expect(sql).toContain("THEN 'public_equity'");
     expect(sql).toContain("THEN 'fixed_income_government'");
     expect(sql).toContain('t.is_option = 1');
+  });
+
+  it('matches the canonical fallback order in SQL', () => {
+    const sql = canonicalAssetTypeCategorySql('t.asset_type', 't.asset_type_name', 't.is_option');
+    expect(sql.indexOf("WHEN t.is_option = 1 THEN 'option'")).toBeGreaterThan(
+      sql.indexOf("THEN 'public_equity'"),
+    );
+    expect(sql).toContain(
+      "WHEN lower(trim(coalesce(t.asset_type, ''))) = '' AND lower(trim(coalesce(t.asset_type_name, ''))) = '' THEN 'unknown'",
+    );
+    expect(sql).not.toContain("lower(trim(coalesce(t.asset_type_name, ''))) = '' OR");
   });
 });
