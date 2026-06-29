@@ -26,6 +26,33 @@ function fakeDb() {
               ] as T[],
             };
           }
+          if (/FROM securities_ref/i.test(sql) && /CASE\s+WHEN lower\(source\)/i.test(sql)) {
+            return {
+              results: [
+                {
+                  provider: 'massive',
+                  calls_total: 2,
+                  calls_last_24h: 1,
+                  calls_today: 1,
+                  last_used_at: '2026-06-24T11:30:00.000Z',
+                  errors_last_24h: 0,
+                },
+              ] as T[],
+            };
+          }
+          if (/FROM securities_ref/i.test(sql) && /COUNT\(\*\) AS calls_total/i.test(sql)) {
+            return {
+              results: [
+                {
+                  calls_total: 5,
+                  calls_last_24h: 2,
+                  calls_today: 1,
+                  last_used_at: '2026-06-24T11:00:00.000Z',
+                  errors_last_24h: 1,
+                },
+              ] as T[],
+            };
+          }
           if (/FROM securities_ref/i.test(sql) && /enrichment_error/i.test(sql)) {
             return {
               results: [
@@ -33,6 +60,42 @@ function fakeDb() {
                   enriched_at: '2026-06-24T11:00:00.000Z',
                   ticker: 'AAPL',
                   enrichment_error: 'FMP_HTTP_429 rate limited',
+                },
+              ] as T[],
+            };
+          }
+          if (/FROM price_eod/i.test(sql)) {
+            return {
+              results: [
+                {
+                  calls_total: 7,
+                  calls_last_24h: 20,
+                  calls_today: 3,
+                  last_used_at: '2026-06-24',
+                },
+              ] as T[],
+            };
+          }
+          if (/FROM spx_eod/i.test(sql)) {
+            return {
+              results: [
+                {
+                  calls_total: 100,
+                  calls_last_24h: 1,
+                  calls_today: 1,
+                  last_used_at: '2026-06-24',
+                },
+              ] as T[],
+            };
+          }
+          if (/FROM tx_performance/i.test(sql)) {
+            return {
+              results: [
+                {
+                  calls_total: 50,
+                  calls_last_24h: 10,
+                  calls_today: 5,
+                  last_used_at: '2026-06-24T12:30:00.000Z',
                 },
               ] as T[],
             };
@@ -72,6 +135,8 @@ describe('admin diagnostics API', () => {
         ADMIN_TOKEN: 'admin-secret',
         GEMINI_API_KEY: 'gemini-secret',
         FMP_API_KEY: 'fmp-secret',
+        MASSIVE_API_KEY: 'massive-secret',
+        PRICE_PROVIDER: 'massive',
         DB: fakeDb(),
       } as never,
     );
@@ -91,10 +156,15 @@ describe('admin diagnostics API', () => {
           callsToday: 1,
         }),
         expect.objectContaining({ id: 'source:house', status: 'ok', callsToday: 2 }),
+        expect.objectContaining({ id: 'provider:massive', status: 'ok', configured: true, callsToday: 1 }),
+        expect.objectContaining({ id: 'cache:prices', status: 'ok', configured: true, callsToday: 3 }),
+        expect.objectContaining({ id: 'cache:spx', status: 'ok', configured: true, callsToday: 1 }),
+        expect.objectContaining({ id: 'cache:performance', status: 'ok', configured: true, callsToday: 5 }),
       ]),
     );
     expect(JSON.stringify(body)).not.toContain('gemini-secret');
     expect(JSON.stringify(body)).not.toContain('fmp-secret');
+    expect(JSON.stringify(body)).not.toContain('massive-secret');
     expect(body.errors).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
