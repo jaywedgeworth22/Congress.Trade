@@ -7,14 +7,15 @@
 
 import type { Env } from '../shared/types';
 import type { GoogleProfile } from './users';
+import { resolveSecrets } from '../secrets/infisical';
 
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 const USERINFO_ENDPOINT = 'https://openidconnect.googleapis.com/v1/userinfo';
 
 /** Build the Google consent-screen URL to redirect the user to. */
-export function buildGoogleAuthUrl(env: Env, redirectUri: string, state: string): string {
-  const clientId = env.GOOGLE_OAUTH_CLIENT_ID;
+export async function buildGoogleAuthUrl(env: Env, redirectUri: string, state: string): Promise<string> {
+  const { GOOGLE_OAUTH_CLIENT_ID: clientId } = await resolveSecrets(env, ['GOOGLE_OAUTH_CLIENT_ID']);
   if (!clientId) throw new Error('GOOGLE_OAUTH_CLIENT_ID not configured');
   const p = new URLSearchParams({
     client_id: clientId,
@@ -42,8 +43,10 @@ export async function exchangeGoogleCode(
   redirectUri: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<string> {
-  const clientId = env.GOOGLE_OAUTH_CLIENT_ID;
-  const clientSecret = env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const { GOOGLE_OAUTH_CLIENT_ID: clientId, GOOGLE_OAUTH_CLIENT_SECRET: clientSecret } = await resolveSecrets(env, [
+    'GOOGLE_OAUTH_CLIENT_ID',
+    'GOOGLE_OAUTH_CLIENT_SECRET',
+  ]);
   if (!clientId || !clientSecret) throw new Error('Google OAuth not configured');
   const res = await fetchImpl(TOKEN_ENDPOINT, {
     method: 'POST',

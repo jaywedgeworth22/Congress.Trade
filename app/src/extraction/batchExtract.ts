@@ -23,6 +23,7 @@
 import type { Env, ParsedTx } from '../shared/types';
 import { SYSTEM_PROMPT, parseModelJson, toParsedTx, arrayBufferToBase64 } from './visionLlm';
 import { MISTRAL_ANNOTATION_SCHEMA, parseMistralOcrResponse, extractXaiResponseText } from './bakeoff';
+import { resolveSecret } from '../secrets/infisical';
 
 export type BatchProvider = 'anthropic' | 'openai' | 'mistral' | 'xai';
 
@@ -51,12 +52,12 @@ export interface BatchPoll {
 const PROMPT_OBJECT = `${SYSTEM_PROMPT}\nReturn a JSON object {"transactions": [...]} .`;
 const PROMPT_ARRAY = `${SYSTEM_PROMPT}\nReturn ONLY the JSON array.`;
 
-function keyFor(env: Env, provider: BatchProvider): string {
+async function keyFor(env: Env, provider: BatchProvider): Promise<string> {
   const key =
-    provider === 'anthropic' ? env.ANTHROPIC_API_KEY
-    : provider === 'openai' ? env.OPENAI_API_KEY
-    : provider === 'xai' ? env.XAI_API_KEY
-    : env.MISTRAL_API_KEY;
+    provider === 'anthropic' ? (await resolveSecret(env, 'ANTHROPIC_API_KEY')).value
+    : provider === 'openai' ? (await resolveSecret(env, 'OPENAI_API_KEY')).value
+    : provider === 'xai' ? (await resolveSecret(env, 'XAI_API_KEY')).value
+    : (await resolveSecret(env, 'MISTRAL_API_KEY')).value;
   if (!key) throw new Error(`${provider} API key not configured`);
   return key;
 }
@@ -105,9 +106,10 @@ function anthropicRequest(doc: BatchDoc, model: string): unknown {
 }
 
 async function submitAnthropic(env: Env, model: string, docs: BatchDoc[]): Promise<string> {
+  const key = await keyFor(env, 'anthropic');
   const res = await fetch('https://api.anthropic.com/v1/messages/batches', {
     method: 'POST',
-    headers: { 'x-api-key': keyFor(env, 'anthropic'), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({ requests: docs.map((d) => anthropicRequest(d, model)) }),
   });
   if (!res.ok) throw new Error(`anthropic batch create ${res.status} ${await safeText(res)}`);
@@ -132,7 +134,7 @@ export function decodeAnthropicLine(line: unknown): BatchDocResult {
 }
 
 async function pollAnthropic(env: Env, batchId: string): Promise<BatchPoll> {
-  const key = keyFor(env, 'anthropic');
+  const key = await keyFor(env, 'anthropic');
   const headers = { 'x-api-key': key, 'anthropic-version': '2023-06-01' };
   const res = await fetch(`https://api.anthropic.com/v1/messages/batches/${encodeURIComponent(batchId)}`, { headers });
   if (!res.ok) throw new Error(`anthropic batch get ${res.status} ${await safeText(res)}`);
@@ -184,7 +186,7 @@ async function uploadJsonl(url: string, key: string, jsonl: string, extra: Recor
 }
 
 async function submitOpenAi(env: Env, model: string, docs: BatchDoc[]): Promise<string> {
-  const key = keyFor(env, 'openai');
+  const key = await keyFor(env, 'openai');
   // 1) upload each PDF to the Files API (purpose=user_data) → file_id.
   const lines: string[] = [];
   for (const d of docs) {
@@ -220,7 +222,7 @@ export function decodeOpenAiLine(line: unknown): BatchDocResult {
 }
 
 async function pollOpenAi(env: Env, batchId: string): Promise<BatchPoll> {
-  const key = keyFor(env, 'openai');
+  const key = await keyFor(env, 'openai');
   const res = await fetch(`https://api.openai.com/v1/batches/${encodeURIComponent(batchId)}`, { headers: { authorization: `Bearer ${key}` } });
   if (!res.ok) throw new Error(`openai batch get ${res.status} ${await safeText(res)}`);
   const j = (await res.json()) as { status?: string; output_file_id?: string | null; error_file_id?: string | null };
@@ -253,7 +255,7 @@ function mistralLine(doc: BatchDoc): string {
 }
 
 async function submitMistral(env: Env, model: string, docs: BatchDoc[]): Promise<string> {
-  const key = keyFor(env, 'mistral');
+  const key = await keyFor(env, 'mistral');
   const jsonl = docs.map((d) => mistralLine(d)).join('\n');
   const fileId = await uploadJsonl('https://api.mistral.ai/v1/files', key, jsonl, { purpose: 'batch' });
   const res = await fetch('https://api.mistral.ai/v1/batch/jobs', {
@@ -283,7 +285,7 @@ export function decodeMistralLine(line: unknown): BatchDocResult {
 }
 
 async function pollMistral(env: Env, jobId: string): Promise<BatchPoll> {
-  const key = keyFor(env, 'mistral');
+  const key = await keyFor(env, 'mistral');
   const res = await fetch(`https://api.mistral.ai/v1/batch/jobs/${encodeURIComponent(jobId)}`, { headers: { authorization: `Bearer ${key}` } });
   if (!res.ok) throw new Error(`mistral batch get ${res.status} ${await safeText(res)}`);
   const j = (await res.json()) as { status?: string; output_file?: string | null };
@@ -307,7 +309,7 @@ async function pollMistral(env: Env, jobId: string): Promise<BatchPoll> {
 // ---------------------------------------------------------------------------
 
 async function submitXai(env: Env, model: string, docs: BatchDoc[]): Promise<string> {
-  const key = keyFor(env, 'xai');
+  const key = await keyFor(env, 'xai');
   // 1) upload each PDF → file id.
   const uploads: Array<{ docId: string; fileId: string }> = [];
   for (const d of docs) {
@@ -371,7 +373,7 @@ export function decodeXaiResult(item: unknown): BatchDocResult {
 }
 
 async function pollXai(env: Env, batchId: string): Promise<BatchPoll> {
-  const key = keyFor(env, 'xai');
+  const key = await keyFor(env, 'xai');
   const headers = { authorization: `Bearer ${key}` };
   const res = await fetch(`https://api.x.ai/v1/batches/${encodeURIComponent(batchId)}`, { headers });
   if (!res.ok) throw new Error(`xai batch get ${res.status} ${await safeText(res)}`);

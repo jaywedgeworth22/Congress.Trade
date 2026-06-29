@@ -34,6 +34,7 @@ import { all, get, run } from '../shared/db';
 import { prefixedId } from '../shared/ids';
 import { mapSubscription, mapTransaction, type SubscriptionRow, type TransactionRow } from './rows';
 import { matchesFiltersWithContext } from './subscriptions';
+import { resolveSecret } from '../secrets/infisical';
 
 /** Max delivery attempts before we give up (initial try + retries). */
 const MAX_ATTEMPTS = 5;
@@ -61,7 +62,7 @@ interface DispatchMessage {
  * WEBHOOK_SIGNING_KEY. Uses WebCrypto (Workers-compatible).
  */
 export async function signWebhookPayload(env: Env, body: string, secret?: string): Promise<string> {
-  const keyMaterial = secret ?? env.WEBHOOK_SIGNING_KEY ?? '';
+  const keyMaterial = secret ?? (await resolveSecret(env, 'WEBHOOK_SIGNING_KEY')).value ?? '';
   const enc = new TextEncoder();
   const cryptoKey = await crypto.subtle.importKey(
     'raw',

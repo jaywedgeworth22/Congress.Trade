@@ -40,7 +40,59 @@ describe('auth router', () => {
     const app = buildAuthRouter();
     const res = await app.request('http://localhost/me', {}, fakeEnv());
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ user: null, entitlement: ANONYMOUS_ENTITLEMENT });
+    expect(await res.json()).toEqual({
+      user: null,
+      entitlement: ANONYMOUS_ENTITLEMENT,
+      admin: { allowed: false },
+    });
+  });
+
+  it('GET /me marks allowlisted signed-in users as admin', async () => {
+    const app = buildAuthRouter();
+    const kv = new Map<string, string>([['sess:tok', JSON.stringify({ userId: 'u1' })]]);
+    const env = fakeEnv({
+      ADMIN_EMAILS: 'admin@example.com',
+      CONFIG_KV: {
+        get: async (k: string) => (kv.has(k) ? kv.get(k)! : null),
+        put: async (k: string, v: string) => {
+          kv.set(k, v);
+        },
+        delete: async (k: string) => {
+          kv.delete(k);
+        },
+      },
+      DB: {
+        prepare: () => ({
+          bind() {
+            return this;
+          },
+          async first() {
+            return {
+              id: 'u1',
+              email: 'admin@example.com',
+              name: 'Admin User',
+              picture: null,
+              google_sub: 'g-1',
+              email_verified: 1,
+              created_at: '2026-06-28T00:00:00.000Z',
+              last_login_at: '2026-06-28T00:00:00.000Z',
+            };
+          },
+          async run() {
+            return {};
+          },
+          async all() {
+            return { results: [] };
+          },
+        }),
+      },
+    });
+    const res = await app.request('http://localhost/me', { headers: { cookie: 'ct_session=tok' } }, env);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      user: { email: 'admin@example.com' },
+      admin: { allowed: true },
+    });
   });
 
   it('GET /google/start is 503 when Google is not configured', async () => {

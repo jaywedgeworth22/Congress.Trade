@@ -31,13 +31,15 @@ import { issueMagicToken, consumeMagicToken, magicLinkEmail } from './magic';
 import { sendEmail } from './email';
 import { constantTimeEqual, randomToken } from './tokens';
 import { entitlementOf } from '../billing/entitlement';
+import { resolveSecret } from '../secrets/infisical';
+import { isAdminSessionEmail } from '../admin/identity';
 
 const OAUTH_STATE_COOKIE = 'ct_oauth_state';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** Public-facing origin for redirects + links (APP_BASE_URL, else request origin). */
-function baseUrl(c: Context<{ Bindings: Env }>): string {
-  const configured = c.env.APP_BASE_URL?.trim();
+async function baseUrl(c: Context<{ Bindings: Env }>): Promise<string> {
+  const configured = (await resolveSecret(c.env, 'APP_BASE_URL')).value?.trim() ?? c.env.APP_BASE_URL?.trim();
   if (configured) return configured.replace(/\/$/, '');
   return new URL(c.req.url).origin;
 }
@@ -54,7 +56,12 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   // One bootstrap call for the client: identity + derived access level.
   r.get('/me', async (c) => {
     const user = await getCurrentUser(c);
-    return c.json({ user: user ? publicUser(user) : null, entitlement: entitlementOf(user) });
+    const adminAllowed = user ? await isAdminSessionEmail(c.env, user.email) : false;
+    return c.json({
+      user: user ? publicUser(user) : null,
+      entitlement: entitlementOf(user),
+      admin: { allowed: adminAllowed },
+    });
   });
 
   // --- POST /auth/logout --------------------------------------------------
@@ -65,8 +72,8 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /auth/google/start ---------------------------------------------
-  r.get('/google/start', (c) => {
-    if (!c.env.GOOGLE_OAUTH_CLIENT_ID) return c.json({ error: 'google login not configured' }, 503);
+  r.get('/google/start', async (c) => {
+    if (!(await resolveSecret(c.env, 'GOOGLE_OAUTH_CLIENT_ID')).value) return c.json({ error: 'google login not configured' }, 503);
     const state = randomToken(16);
     setCookie(c, OAUTH_STATE_COOKIE, state, {
       httpOnly: true,
@@ -75,7 +82,8 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       path: '/',
       maxAge: 600,
     });
-    const url = buildGoogleAuthUrl(c.env, `${baseUrl(c)}/auth/google/callback`, state);
+    const base = await baseUrl(c);
+    const url = await buildGoogleAuthUrl(c.env, `${base}/auth/google/callback`, state);
     return c.redirect(url);
   });
 
@@ -87,18 +95,19 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     const cookieState = getCookie(c, OAUTH_STATE_COOKIE);
     deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/' });
     if (!code || !state || !cookieState || !(await constantTimeEqual(state, cookieState))) {
-      return c.redirect(`${baseUrl(c)}/?login=error`);
+      return c.redirect(`${await baseUrl(c)}/?login=error`);
     }
     try {
-      const redirectUri = `${baseUrl(c)}/auth/google/callback`;
+      const base = await baseUrl(c);
+      const redirectUri = `${base}/auth/google/callback`;
       const accessToken = await exchangeGoogleCode(c.env, code, redirectUri);
       const profile = await fetchGoogleProfile(accessToken);
       const user = await upsertUserFromGoogle(c.env, profile);
       setSessionCookie(c, await createSession(c.env, user.id));
-      return c.redirect(`${baseUrl(c)}/?login=ok`);
+      return c.redirect(`${base}/?login=ok`);
     } catch (err) {
       console.error('google callback failed:', (err as Error).message);
-      return c.redirect(`${baseUrl(c)}/?login=error`);
+      return c.redirect(`${await baseUrl(c)}/?login=error`);
     }
   });
 
@@ -115,7 +124,7 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     if (!EMAIL_RE.test(email)) return c.json({ error: 'valid email required' }, 400);
     try {
       const token = await issueMagicToken(c.env, email);
-      const verifyUrl = `${baseUrl(c)}/auth/magic/verify?token=${encodeURIComponent(token)}`;
+      const verifyUrl = `${await baseUrl(c)}/auth/magic/verify?token=${encodeURIComponent(token)}`;
       const mail = magicLinkEmail(verifyUrl);
       await sendEmail(c.env, { to: email, subject: mail.subject, html: mail.html, text: mail.text });
     } catch (err) {
@@ -129,10 +138,10 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   r.get('/magic/verify', async (c) => {
     const token = new URL(c.req.url).searchParams.get('token') ?? '';
     const email = token ? await consumeMagicToken(c.env, token) : null;
-    if (!email) return c.redirect(`${baseUrl(c)}/?login=expired`);
+    if (!email) return c.redirect(`${await baseUrl(c)}/?login=expired`);
     const user = await upsertUserByEmail(c.env, email);
     setSessionCookie(c, await createSession(c.env, user.id));
-    return c.redirect(`${baseUrl(c)}/?login=ok`);
+    return c.redirect(`${await baseUrl(c)}/?login=ok`);
   });
 
   return r;

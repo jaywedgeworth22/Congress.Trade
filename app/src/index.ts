@@ -34,6 +34,7 @@ import { buildExportRouter } from './export/routes';
 import { buildUiRouter } from './ui/routes';
 import { maybeRunDailyJobs } from './jobs';
 import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement';
+import { refreshSecrets } from './secrets/infisical';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -149,6 +150,7 @@ export default {
    *  Daily enrichment + price refresh self-gate via a KV date stamp. */
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     await runWatcher(env, new Date());
+    ctx.waitUntil(refreshSecrets(env).catch((err) => console.warn('infisical secret refresh failed:', (err as Error).message)));
     ctx.waitUntil(maybeRunDailyJobs(env));
     // Autonomous cross-vendor agreement → auto-publish for a few newly-reviewed
     // docs each minute (self-gates on AGREEMENT_AUTOPUBLISH_ENABLED; cron-safe).

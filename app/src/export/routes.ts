@@ -28,6 +28,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../shared/types';
 import { constantTimeEqual } from '../auth/tokens';
+import { resolveSecret } from '../secrets/infisical';
 import {
   runBulkSnapshot,
   readManifest,
@@ -55,7 +56,7 @@ function todayUtc(now = new Date()): string {
 
 /** True when the request carries a valid `Bearer <INGEST_TOKEN>` header. */
 async function isAuthorized(env: ExportEnv, authorization?: string): Promise<boolean> {
-  const token = env.INGEST_TOKEN;
+  const token = (await resolveSecret(env, 'INGEST_TOKEN')).value;
   if (!token) return false; // closed by default when the token isn't configured
   return constantTimeEqual(authorization ?? '', `Bearer ${token}`);
 }

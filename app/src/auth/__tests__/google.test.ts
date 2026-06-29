@@ -8,8 +8,8 @@ const env = {
 } as unknown as Env;
 
 describe('buildGoogleAuthUrl', () => {
-  it('includes client_id, redirect_uri, scope, state, response_type', () => {
-    const url = new URL(buildGoogleAuthUrl(env, 'https://app/cb', 'st8'));
+  it('includes client_id, redirect_uri, scope, state, response_type', async () => {
+    const url = new URL(await buildGoogleAuthUrl(env, 'https://app/cb', 'st8'));
     expect(url.origin + url.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth');
     expect(url.searchParams.get('client_id')).toBe('cid');
     expect(url.searchParams.get('redirect_uri')).toBe('https://app/cb');
@@ -18,8 +18,8 @@ describe('buildGoogleAuthUrl', () => {
     expect(url.searchParams.get('response_type')).toBe('code');
   });
 
-  it('throws when the client id is missing', () => {
-    expect(() => buildGoogleAuthUrl({} as unknown as Env, 'x', 's')).toThrow();
+  it('throws when the client id is missing', async () => {
+    await expect(buildGoogleAuthUrl({} as unknown as Env, 'x', 's')).rejects.toThrow();
   });
 });
 

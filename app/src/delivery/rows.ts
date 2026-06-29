@@ -271,9 +271,9 @@ export const DEFAULT_TX_LIMIT = 100;
 export const MAX_TX_LIMIT = 500;
 
 /**
- * Freemium gate for non-premium visitors: only the most recent
- * FREE_WINDOW_DAYS of trades, capped at FREE_TX_LIMIT rows per page. Premium
- * subscribers get full history up to MAX_TX_LIMIT. See delivery/rest.ts.
+ * Historical freemium feed constants retained for compatibility. The public
+ * transactions feed is not currently gated; Premium is enforced on CSV export
+ * and UI enrichment workflows.
  */
 export const FREE_WINDOW_DAYS = 30;
 export const FREE_TX_LIMIT = 50;

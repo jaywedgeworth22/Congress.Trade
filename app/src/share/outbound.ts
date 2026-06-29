@@ -18,6 +18,7 @@
 import type { Env } from '../shared/types';
 import type { SecurityRef } from '../enrichment/types';
 import type { Close } from '../prices/compute';
+import { resolveSecrets } from '../secrets/infisical';
 
 type PeerEnv = Env & { APP_B_IMPORT_URL?: string; APP_B_INGEST_TOKEN?: string };
 
@@ -68,7 +69,8 @@ export async function shareWithPeer(
   input: PeerShareInput,
   fetchImpl: typeof fetch = fetch,
 ): Promise<PeerShareResult> {
-  const { APP_B_IMPORT_URL: url, APP_B_INGEST_TOKEN: token } = env as PeerEnv;
+  const runtimeSecrets = await resolveSecrets(env, ['APP_B_IMPORT_URL', 'APP_B_INGEST_TOKEN']);
+  const { APP_B_IMPORT_URL: url, APP_B_INGEST_TOKEN: token } = { ...(env as PeerEnv), ...runtimeSecrets };
   if (!url || !token) return { sent: false, reason: 'peer not configured' };
 
   const refs = input.refs ?? [];

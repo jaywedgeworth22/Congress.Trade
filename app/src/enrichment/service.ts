@@ -24,6 +24,7 @@ import {
 } from './providers';
 import { createPacer } from '../shared/pace';
 import type { EnrichmentProvider, SecurityRef } from './types';
+import { resolveSecrets } from '../secrets/infisical';
 
 const DEFAULT_DAILY_CAP = 230;
 
@@ -192,7 +193,15 @@ export async function runEnrichment(
   env: Env,
   opts: { max?: number; dryRun?: boolean; maxPerMinute?: number } = {},
 ): Promise<EnrichResult> {
-  const envx = env as EnvX;
+  const runtimeSecrets = await resolveSecrets(env, [
+    'FMP_API_KEY',
+    'FMP_DAILY_CALL_CAP',
+    'MASSIVE_API_KEY',
+    'INTRINIO_API_KEY',
+    'TWELVEDATA_API_KEY',
+    'FINNHUB_API_KEY',
+  ]);
+  const envx = { ...(env as EnvX), ...runtimeSecrets };
   const dryRun = opts.dryRun === true;
   const cap = parseInt(envx.FMP_DAILY_CALL_CAP || '', 10) || DEFAULT_DAILY_CAP;
   const hasFmp = !!envx.FMP_API_KEY;

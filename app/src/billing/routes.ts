@@ -19,12 +19,13 @@ import type { BillingPlan, Env } from '../shared/types';
 import { getCurrentUser } from '../auth/session';
 import { entitlementOf } from './entitlement';
 import {
-  stripeConfigured,
+  stripeConfiguredAsync,
   createCustomer,
   createCheckoutSession,
   createBillingPortalSession,
   verifyStripeSignature,
 } from './stripe';
+import { resolveSecret, resolveSecrets } from '../secrets/infisical';
 import {
   linkCustomerToUser,
   parseSubscription,
@@ -35,19 +36,22 @@ import {
 const DEFAULT_TRIAL_DAYS = 7;
 
 /** Public-facing origin for redirects (APP_BASE_URL, else request origin). */
-function baseUrl(c: Context<{ Bindings: Env }>): string {
-  const configured = c.env.APP_BASE_URL?.trim();
+async function baseUrl(c: Context<{ Bindings: Env }>): Promise<string> {
+  const configured = (await resolveSecret(c.env, 'APP_BASE_URL')).value?.trim() ?? c.env.APP_BASE_URL?.trim();
   if (configured) return configured.replace(/\/$/, '');
   return new URL(c.req.url).origin;
 }
 
-function trialDays(env: Env): number {
-  const n = Number(env.STRIPE_TRIAL_DAYS);
+async function trialDays(env: Env): Promise<number> {
+  const n = Number((await resolveSecret(env, 'STRIPE_TRIAL_DAYS')).value ?? env.STRIPE_TRIAL_DAYS);
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_TRIAL_DAYS;
 }
 
-function priceForPlan(env: Env, plan: BillingPlan): string | undefined {
-  return plan === 'annual' ? env.STRIPE_PRICE_ANNUAL : env.STRIPE_PRICE_MONTHLY;
+async function priceForPlan(env: Env, plan: BillingPlan): Promise<string | undefined> {
+  const prices = await resolveSecrets(env, ['STRIPE_PRICE_MONTHLY', 'STRIPE_PRICE_ANNUAL']);
+  return plan === 'annual'
+    ? prices.STRIPE_PRICE_ANNUAL ?? env.STRIPE_PRICE_ANNUAL
+    : prices.STRIPE_PRICE_MONTHLY ?? env.STRIPE_PRICE_MONTHLY;
 }
 
 export function buildBillingRouter(): Hono<{ Bindings: Env }> {
@@ -56,14 +60,14 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
   // --- GET /billing/status ------------------------------------------------
   r.get('/status', async (c) => {
     const user = await getCurrentUser(c);
-    return c.json({ configured: stripeConfigured(c.env), entitlement: entitlementOf(user) });
+    return c.json({ configured: await stripeConfiguredAsync(c.env), entitlement: entitlementOf(user) });
   });
 
   // --- POST /billing/checkout ---------------------------------------------
   r.post('/checkout', async (c) => {
     const user = await getCurrentUser(c);
     if (!user) return c.json({ error: 'sign in to subscribe', needLogin: true }, 401);
-    if (!stripeConfigured(c.env)) return c.json({ error: 'billing not configured' }, 503);
+    if (!(await stripeConfiguredAsync(c.env))) return c.json({ error: 'billing not configured' }, 503);
 
     let body: { plan?: unknown };
     try {
@@ -72,7 +76,7 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'invalid JSON' }, 400);
     }
     const plan: BillingPlan = body.plan === 'annual' ? 'annual' : 'monthly';
-    const priceId = priceForPlan(c.env, plan);
+    const priceId = await priceForPlan(c.env, plan);
     if (!priceId) return c.json({ error: `no Stripe price configured for ${plan} plan` }, 503);
 
     try {
@@ -87,14 +91,14 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
         customerId = customer.id;
         await linkCustomerToUser(c.env, user.id, customerId);
       }
-      const base = baseUrl(c);
+      const base = await baseUrl(c);
       const session = await createCheckoutSession(c.env, {
         priceId,
         customerId,
         clientReferenceId: user.id,
         successUrl: `${base}/?checkout=success`,
         cancelUrl: `${base}/?checkout=cancel`,
-        trialDays: trialDays(c.env),
+        trialDays: await trialDays(c.env),
       });
       return c.json({ url: session.url });
     } catch (err) {
@@ -107,12 +111,12 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
   r.post('/portal', async (c) => {
     const user = await getCurrentUser(c);
     if (!user) return c.json({ error: 'sign in first', needLogin: true }, 401);
-    if (!stripeConfigured(c.env)) return c.json({ error: 'billing not configured' }, 503);
+    if (!(await stripeConfiguredAsync(c.env))) return c.json({ error: 'billing not configured' }, 503);
     if (!user.stripeCustomerId) return c.json({ error: 'no billing account yet' }, 400);
     try {
       const session = await createBillingPortalSession(c.env, {
         customerId: user.stripeCustomerId,
-        returnUrl: `${baseUrl(c)}/?billing=portal`,
+        returnUrl: `${await baseUrl(c)}/?billing=portal`,
       });
       return c.json({ url: session.url });
     } catch (err) {
@@ -125,7 +129,7 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
   // Stripe event sink. Verifies the signature against STRIPE_WEBHOOK_SECRET,
   // then reconciles subscription state. Must read the RAW body for the HMAC.
   r.post('/webhook', async (c) => {
-    const secret = c.env.STRIPE_WEBHOOK_SECRET;
+    const secret = (await resolveSecret(c.env, 'STRIPE_WEBHOOK_SECRET')).value;
     if (!secret) return c.json({ error: 'webhook not configured' }, 503);
     const payload = await c.req.text();
     const sig = c.req.header('stripe-signature');
