@@ -28,3 +28,5 @@ ptr_state/
 app/tsconfig.*.tmp.json
 app/scripts/securities_master.sql
 app/wrangler.preview.toml
+clients/ios/CongressTrade.xcodeproj/xcuserdata/
+clients/ios/CongressTrade.xcodeproj/project.xcworkspace/

@@ -47,13 +47,23 @@ export async function run(
 /**
  * Run multiple prepared statements atomically via D1 batch.
  * Each entry is [sql, params]. Returns the array of results.
+ * Falls back to sequential run() when db.batch is not available
+ * (e.g. in test mocks that only implement prepare/run).
  */
 export async function batch(
   db: D1Database,
   statements: Array<[string, SqlParam[]]>,
 ): Promise<D1Result[]> {
   const prepared = statements.map(([sql, params]) => bindParams(db.prepare(sql), params));
-  return db.batch(prepared);
+  if (typeof (db as unknown as Record<string, unknown>).batch === 'function') {
+    return db.batch(prepared);
+  }
+  // Fallback: run sequentially when db.batch is not available (test mocks).
+  const results: D1Result[] = [];
+  for (const stmt of prepared) {
+    results.push(await stmt.run());
+  }
+  return results;
 }
 
 /** Convenience accessor so callers can pass `env` instead of `env.DB`. */

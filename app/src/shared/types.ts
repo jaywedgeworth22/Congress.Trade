@@ -283,6 +283,18 @@ export interface ClientTrade {
   };
   confidence: number;
   source: TxSource;
+  /** Optional composite conviction score computed from PIT score engine.
+   *  null when the trade has insufficient data for scoring (backfilled trades,
+   *  members with too little history, or scoring not yet implemented). */
+  signal?: {
+    /** 0-100 composite conviction score. */
+    score: number | null;
+    /** Sub-components for transparency. */
+    consensus: number | null;
+    flow: number | null;
+    freshness: number | null;
+    memberSkill: number | null;
+  } | null;
 }
 
 export interface ClientPreferences {
@@ -522,6 +534,10 @@ export interface Env {
   INFISICAL_SHARED_CLIENT_ID?: string;
   INFISICAL_SHARED_CLIENT_SECRET?: string;
   INFISICAL_SHARED_SECRET_PATH?: string;
+
+  // --- Cloudflare Turnstile (bot protection for magic-link) ---
+  /** Cloudflare Turnstile secret key. When set, magic-link requests require a valid token. */
+  TURNSTILE_SECRET_KEY?: string;
 
   // --- Plain vars (.dev.vars / [vars]) ---
   /** "true" to force arbitration on when configured. */

@@ -86,12 +86,18 @@ export async function getSubscription(env: Env, id: string): Promise<Subscriptio
   return row ? mapSubscription(row) : null;
 }
 
-/** List subscriptions (optionally only active ones), newest first. */
-export async function listSubscriptions(env: Env, activeOnly = false): Promise<Subscription[]> {
+/** List subscriptions (optionally only active ones), newest first. Supports optional pagination. */
+export async function listSubscriptions(
+  env: Env,
+  activeOnly = false,
+  options?: { limit?: number; offset?: number },
+): Promise<Subscription[]> {
+  const limit = options?.limit ?? 100;
+  const offset = options?.offset ?? 0;
   const sql = activeOnly
-    ? `SELECT ${SELECT_COLS} FROM subscriptions WHERE active = 1 ORDER BY created_at DESC`
-    : `SELECT ${SELECT_COLS} FROM subscriptions ORDER BY created_at DESC`;
-  const rows = await all<SubscriptionRow>(env.DB, sql);
+    ? `SELECT ${SELECT_COLS} FROM subscriptions WHERE active = 1 ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    : `SELECT ${SELECT_COLS} FROM subscriptions ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+  const rows = await all<SubscriptionRow>(env.DB, sql, [limit, offset]);
   return rows.map(mapSubscription);
 }
 

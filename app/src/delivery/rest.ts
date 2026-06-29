@@ -586,7 +586,11 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
 
   // --- GET /members -------------------------------------------------------
   // Filers that actually appear in the transaction feed, joined to filer meta.
+  // Supports ?limit= (default 100, max 500) and ?offset= (default 0).
   r.get('/members', async (c) => {
+    const q = c.req.query();
+    const limit = Math.min(parseIntOrUndef(q.limit) ?? 100, 500);
+    const offset = parseIntOrUndef(q.offset) ?? 0;
     const rows = await all<{
       filer_id: string;
       full_name: string | null;
@@ -608,7 +612,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
          LEFT JOIN filers f ON f.bioguide_id = t.filer_id
         WHERE t.filer_id IS NOT NULL
         GROUP BY t.filer_id
-        ORDER BY tx_count DESC`,
+        ORDER BY tx_count DESC
+        LIMIT ? OFFSET ?`,
+      [limit, offset],
     );
     const members = rows.map((row) => ({
       filerId: row.filer_id,
@@ -619,7 +625,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       district: row.district,
       txCount: row.tx_count,
     }));
-    return c.json({ members, count: members.length });
+    return c.json({ members, count: members.length, limit, offset });
   });
 
   // --- POST /subscriptions ------------------------------------------------

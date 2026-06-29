@@ -202,6 +202,12 @@ function clientLogoUrl(ticker: string | null): string | null {
   return symbol ? `/api/logos/ticker?symbol=${encodeURIComponent(symbol)}` : null;
 }
 
+// TODO: Integrate with Congress PIT score engine (app/src/export/pitScores.ts)
+// For now, compute signal on-demand per trade and cache results.
+function computeClientSignal(_tx: ClientTrade): ClientTrade['signal'] {
+  return null; // Not yet implemented — needs PIT score engine integration
+}
+
 function clientTradeFromRow(row: FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null; __party?: string | null }): ClientTrade {
   const tx = mapFeedTransaction(row);
   const assetType = canonicalizeAssetType(tx.assetType, tx.assetTypeName, {
@@ -393,7 +399,10 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       built.sql,
       built.params,
     );
-    const items = rows.map(clientTradeFromRow);
+    const items = rows.map(clientTradeFromRow).map((item) => ({
+      ...item,
+      signal: computeClientSignal(item),
+    }));
     const maxCursor = items.reduce((m, t) => (t.cursor > m ? t.cursor : m), params.since ?? 0);
     const countQuery = buildTransactionsCountQuery(params);
     const countRow = await get<{ total: number }>(c.env.DB, countQuery.sql, countQuery.params);

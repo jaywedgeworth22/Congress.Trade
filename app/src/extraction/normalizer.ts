@@ -19,7 +19,8 @@
  */
 
 import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../shared/types';
-import { all, run, fromBool, parseJson } from '../shared/db';
+import { all, batch, run, fromBool, parseJson } from '../shared/db';
+import type { SqlParam } from '../shared/db';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets';
 import { canonicalizeAssetType } from '../shared/assetTypes';
 import { uuid } from '../shared/ids';
@@ -500,11 +501,13 @@ const INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
   supplemental_text, row_key, confidence, source, created_at, cursor_seq
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`;
 
-/** Insert each validated transaction. cursor_seq is assigned by the DB trigger. */
+/** Insert all validated transactions in a single D1 batch. cursor_seq is assigned by the DB trigger. */
 export async function persistTransactions(env: Env, transactions: Transaction[]): Promise<string[]> {
-  const insertedIds: string[] = [];
-  for (const tx of transactions) {
-    const res = await run(env.DB, INSERT_TX_SQL, [
+  if (transactions.length === 0) return [];
+
+  const statements: Array<[string, SqlParam[]]> = transactions.map((tx) => [
+    INSERT_TX_SQL,
+    [
       tx.id,
       tx.docId,
       tx.filerId,
@@ -529,10 +532,22 @@ export async function persistTransactions(env: Env, transactions: Transaction[])
       tx.confidence,
       tx.source,
       tx.createdAt,
-    ]);
-    if ((res.meta?.changes ?? 1) > 0) insertedIds.push(tx.id);
+    ] as SqlParam[],
+  ]);
+
+  try {
+    const results = await batch(env.DB, statements);
+    const insertedIds: string[] = [];
+    for (let i = 0; i < results.length; i++) {
+      if ((results[i].meta?.changes ?? 1) > 0) {
+        insertedIds.push(transactions[i].id);
+      }
+    }
+    return insertedIds;
+  } catch (err) {
+    console.error('persistTransactions: batch insert failed', (err as Error).message);
+    throw err;
   }
-  return insertedIds;
 }
 
 /** Write (or upsert) a review_queue row and flag the filing needs_review. */

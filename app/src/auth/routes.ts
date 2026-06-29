@@ -114,14 +114,43 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   // --- POST /auth/magic/request -------------------------------------------
   // Always returns ok:true (no account enumeration); `sent` flags delivery.
   r.post('/magic/request', async (c) => {
-    let body: { email?: unknown };
+    // Rate limit: max 3 requests per 15 minutes per IP
+    const ip = c.req.header('CF-Connecting-IP') ?? 'unknown';
+    const fifteenMin = Math.floor(Date.now() / (15 * 60_000));
+    const rlKey = `magic_rl:${ip}:${fifteenMin}`;
+    const count = parseInt((await c.env.CONFIG_KV.get(rlKey)) ?? '0', 10);
+    if (count >= 3) {
+      return c.json({ error: 'too_many_requests' }, 429);
+    }
+    await c.env.CONFIG_KV.put(rlKey, String(count + 1), { expirationTtl: 1800 });
+
+    let body: { email?: unknown; turnstile_token?: unknown };
     try {
-      body = (await c.req.json()) as { email?: unknown };
+      body = (await c.req.json()) as { email?: unknown; turnstile_token?: unknown };
     } catch {
       return c.json({ error: 'invalid JSON' }, 400);
     }
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     if (!EMAIL_RE.test(email)) return c.json({ error: 'valid email required' }, 400);
+
+    // Optional Cloudflare Turnstile verification for bot protection.
+    const turnstileSecret = (await resolveSecret(c.env, 'TURNSTILE_SECRET_KEY')).value?.trim() ?? c.env.TURNSTILE_SECRET_KEY?.trim();
+    if (turnstileSecret) {
+      const token = typeof body.turnstile_token === 'string' ? body.turnstile_token.trim() : '';
+      if (!token) return c.json({ error: 'captcha_required' }, 400);
+      const verifyRes = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          secret: turnstileSecret,
+          response: token,
+          remoteip: c.req.header('CF-Connecting-IP') ?? undefined,
+        }),
+      });
+      const verifyData = (await verifyRes.json()) as { success?: boolean };
+      if (!verifyData.success) return c.json({ error: 'captcha_required' }, 400);
+    }
+
     try {
       const token = await issueMagicToken(c.env, email);
       const verifyUrl = `${await baseUrl(c)}/auth/magic/verify?token=${encodeURIComponent(token)}`;

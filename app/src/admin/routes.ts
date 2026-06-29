@@ -29,6 +29,7 @@
 import { Hono } from 'hono';
 import type { Env, PollConfig, PollWindow, TxType, TxSource } from '../shared/types';
 import { all, get, run, type SqlParam } from '../shared/db';
+import { logger } from '../shared/logger';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
 import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
 import { getConfig, setConfig } from '../shared/config';
@@ -902,7 +903,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       try {
         await c.env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId });
       } catch (err) {
-        console.error('review confirm: enqueue failed', txId, (err as Error).message);
+        logger.error('review confirm: enqueue failed', { txId, error: (err as Error).message });
       }
     }
 
@@ -1736,7 +1737,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       const result = await runSeedBackfillFromEnv(c.env, opts);
       return c.json({ ok: result.errors.length === 0, ...result });
     } catch (err) {
-      return c.json({ error: `backfill failed: ${(err as Error).message}` }, 500);
+      logger.error('route error', { route: 'admin/backfill', error: (err as Error).message });
+      return c.json({ error: 'Internal server error' }, 500);
     }
   });
 
@@ -1767,7 +1769,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       });
       return c.json(result);
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 500);
+      logger.error('route error', { route: 'admin/house-backfill', error: (err as Error).message });
+      return c.json({ error: 'Internal server error' }, 500);
     }
   });
 
@@ -2101,7 +2104,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     try {
       providerBatchId = await submitBatch(c.env, provider, model, docs);
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 502);
+      logger.error('route error', { route: 'admin/batch-submit', error: (err as Error).message });
+      return c.json({ error: 'Upstream batch service error' }, 502);
     }
 
     const jobId = uuid();
@@ -2159,7 +2163,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     try {
       poll = await pollBatch(c.env, job.provider, job.provider_batch_id);
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 502);
+      logger.error('route error', { route: 'admin/batch-status', error: (err as Error).message });
+      return c.json({ error: 'Upstream batch service error' }, 502);
     }
 
     if (!poll.done) {
@@ -2473,6 +2478,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_doc ON ingestion_decisions (doc_id, created_at DESC)',
       'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_created ON ingestion_decisions (created_at DESC)',
       'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_action ON ingestion_decisions (action, created_at DESC)',
+      // 0020_missing_indexes.sql — additional perf indexes. idx_tx_ticker and
+      // idx_tx_filer from 0001_init.sql already cover these columns;
+      // idx_tx_date and idx_tx_cursor also exist from 0001_init.sql.
+      'CREATE INDEX IF NOT EXISTS idx_transactions_ticker ON transactions(ticker)',
+      'CREATE INDEX IF NOT EXISTS idx_transactions_filer_id ON transactions(filer_id)',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -2514,7 +2524,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       const result = await runEnrichment(c.env, opts);
       return c.json({ ok: result.errors.length === 0, ...result });
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 500);
+      logger.error('route error', { route: 'admin/enrich-securities', error: (err as Error).message });
+      return c.json({ error: 'Internal server error' }, 500);
     }
   });
 
@@ -2569,7 +2580,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       const result = await runPriceRefresh(c.env, opts);
       return c.json({ ok: result.errors.length === 0, ...result });
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 500);
+      logger.error('route error', { route: 'admin/refresh-prices', error: (err as Error).message });
+      return c.json({ error: 'Internal server error' }, 500);
     }
   });
 
@@ -2606,7 +2618,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         prices,
       });
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 500);
+      logger.error('route error', { route: 'admin/backfill-market', error: (err as Error).message });
+      return c.json({ error: 'Internal server error' }, 500);
     }
   });
 
@@ -2961,7 +2974,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     try {
       return c.json(await runPhotoEnrichment(c.env));
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 500);
+      logger.error('route error', { route: 'admin/enrich-photos', error: (err as Error).message });
+      return c.json({ error: 'Internal server error' }, 500);
     }
   });
 
@@ -2976,7 +2990,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       const limit = Number(c.req.query('limit')) || 5000;
       return c.json(await runTickerBackfill(c.env, limit));
     } catch (err) {
-      return c.json({ error: (err as Error).message }, 500);
+      logger.error('route error', { route: 'admin/resolve-tickers', error: (err as Error).message });
+      return c.json({ error: 'Internal server error' }, 500);
     }
   });
 

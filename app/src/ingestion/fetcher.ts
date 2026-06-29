@@ -73,6 +73,7 @@ export async function fetchFiling(env: Env, docId: string): Promise<void> {
             : 'application/pdf,*/*',
       },
       redirect: 'follow',
+      signal: AbortSignal.timeout(30000),
     });
     if (!res.ok) {
       await markError(env, docId, `fetcher: source ${sourceUrl} -> HTTP ${res.status}`);

@@ -17,6 +17,12 @@
 
 import { Hono } from 'hono';
 import type { Env, QueueMessage } from './shared/types';
+import { logger } from './shared/logger';
+import {
+  securityHeaders,
+  corsMiddleware,
+  rateLimiter,
+} from './shared/middleware';
 
 // Stage handlers owned by their feature modules.
 import { runWatcher } from './ingestion/watcher';
@@ -29,8 +35,10 @@ import { buildAdminRouter } from './admin/routes';
 import { buildAnalyticsRouter } from './analytics/routes';
 import { buildAuthRouter } from './auth/routes';
 import { buildBillingRouter } from './billing/routes';
+import { buildComplianceRouter } from './compliance/routes';
 import { buildClientRouter } from './client/routes';
 import { buildExportRouter } from './export/routes';
+import { buildHeartbeatRouter } from './share/heartbeat';
 import { buildUiRouter } from './ui/routes';
 import { maybeRunDailyJobs } from './jobs';
 import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement';
@@ -38,8 +46,15 @@ import { refreshSecrets } from './secrets/infisical';
 
 const app = new Hono<{ Bindings: Env }>();
 
-// --- IMPLEMENTED health check -------------------------------------------------
+// --- Global middlewares ---------------------------------------------------------
+app.use('*', securityHeaders);
+app.use('*', corsMiddleware);
+
+// --- Health check (before rate limiter so it always responds) ------------------
 app.get('/health', (c) => c.json({ ok: true }));
+
+// --- Rate limiter (applied after health, before API routes) --------------------
+app.use('*', rateLimiter);
 
 /**
  * Mount the app routers defensively: a build failure is logged and does not take
@@ -49,51 +64,63 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
   try {
     root.route('/api', buildRestRouter());
   } catch (err) {
-    console.warn('delivery/rest router not mounted:', (err as Error).message);
+    logger.warn('router mount failed', { router: 'delivery/rest', error: (err as Error).message });
   }
   try {
     root.route('/api/admin', buildAdminRouter());
   } catch (err) {
-    console.warn('admin/routes router not mounted:', (err as Error).message);
+    logger.warn('router mount failed', { router: 'admin/routes', error: (err as Error).message });
   }
   try {
     // Read-only trend analytics over the transaction corpus.
     root.route('/api/analytics', buildAnalyticsRouter());
   } catch (err) {
-    console.warn('analytics/routes router not mounted:', (err as Error).message);
+    logger.warn('router mount failed', { router: 'analytics/routes', error: (err as Error).message });
   }
   try {
     // Shared backend-owned contract for the phone-first PWA and SwiftUI app.
     root.route('/api/client/v1', buildClientRouter());
   } catch (err) {
-    console.warn('client/routes router not mounted:', (err as Error).message);
+    logger.warn('router mount failed', { router: 'client/routes', error: (err as Error).message });
   }
   try {
     // Bulk market-data snapshot export (NDJSON in R2) for App B bootstrapping.
     root.route('/api/export', buildExportRouter());
   } catch (err) {
-    console.warn('export/routes router not mounted:', (err as Error).message);
+    logger.warn('router mount failed', { router: 'export/routes', error: (err as Error).message });
+  }
+  try {
+    // Public cross-app connectivity heartbeat for the sibling trading app.
+    root.route('/api/share', buildHeartbeatRouter());
+  } catch (err) {
+    logger.warn('router mount failed', { router: 'share/heartbeat', error: (err as Error).message });
   }
   // End-user auth (Google OAuth + magic-link) at /auth/*. Mounted before the UI
   // catch-all so its routes are not shadowed by the dashboard.
   try {
     root.route('/auth', buildAuthRouter());
   } catch (err) {
-    console.warn('auth/routes router not mounted:', (err as Error).message);
+    logger.warn('router mount failed', { router: 'auth/routes', error: (err as Error).message });
   }
   // Stripe billing (checkout / portal / webhook) at /billing/*. Also before the
   // UI catch-all.
   try {
     root.route('/billing', buildBillingRouter());
   } catch (err) {
-    console.warn('billing/routes router not mounted:', (err as Error).message);
+    logger.warn('router mount failed', { router: 'billing/routes', error: (err as Error).message });
+  }
+  // Compliance (GDPR/CCPA data deletion) at /api/compliance/*.
+  try {
+    root.route('/api/compliance', buildComplianceRouter());
+  } catch (err) {
+    logger.warn('router mount failed', { router: 'compliance/routes', error: (err as Error).message });
   }
   // Dashboard SPA at `/` and `/admin`. Registered after /health and /api so the
   // exact UI paths never shadow the API routers.
   try {
     root.route('/', buildUiRouter());
   } catch (err) {
-    console.warn('ui/routes router not mounted:', (err as Error).message);
+    logger.warn('router mount failed', { router: 'ui/routes', error: (err as Error).message });
   }
 }
 
@@ -125,7 +152,7 @@ async function handleIngestMessage(env: Env, msg: QueueMessage): Promise<void> {
       await handleAgreementCheck(env, msg.docId, msg.rawObjectKey);
       return;
     default:
-      console.warn('INGEST_QUEUE: unexpected message type', (msg as { type?: string }).type);
+      logger.warn('unexpected ingest message', { type: (msg as { type?: string }).type });
   }
 }
 
@@ -136,7 +163,7 @@ async function handleDeliveryMessage(env: Env, msg: QueueMessage): Promise<void>
       await dispatchWebhook(env, msg);
       return;
     default:
-      console.warn('DELIVERY_QUEUE: unexpected message type', (msg as { type?: string }).type);
+      logger.warn('unexpected delivery message', { type: (msg as { type?: string }).type });
   }
 }
 
@@ -150,13 +177,13 @@ export default {
    *  Daily enrichment + price refresh self-gate via a KV date stamp. */
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     await runWatcher(env, new Date());
-    ctx.waitUntil(refreshSecrets(env).catch((err) => console.warn('infisical secret refresh failed:', (err as Error).message)));
+    ctx.waitUntil(refreshSecrets(env).catch((err) => logger.warn('infisical secret refresh failed', { error: (err as Error).message })));
     ctx.waitUntil(maybeRunDailyJobs(env));
     // Autonomous cross-vendor agreement → auto-publish for a few newly-reviewed
     // docs each minute (self-gates on AGREEMENT_AUTOPUBLISH_ENABLED; cron-safe).
     ctx.waitUntil(
       maybeRunAgreementAutopublish(env).catch((err) =>
-        console.warn('agreement autopublish failed:', (err as Error).message),
+        logger.warn('agreement autopublish failed', { error: (err as Error).message }),
       ),
     );
   },
@@ -176,7 +203,7 @@ export default {
         }
         message.ack();
       } catch (err) {
-        console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
+        logger.error('queue message failed', { queue: batch.queue, error: (err as Error).message });
         message.retry();
       }
     }

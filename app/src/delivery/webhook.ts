@@ -200,6 +200,7 @@ async function deliverToSubscription(
         'X-Delivery-Attempt': String(attempt),
       },
       body,
+      signal: AbortSignal.timeout(10000),
     });
     ok = res.ok; // 2xx
     if (!ok) lastError = `HTTP ${res.status}`;
