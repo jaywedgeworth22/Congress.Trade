@@ -27,6 +27,7 @@
 import type { Chamber, Owner, Transaction, TxType, Env } from '../shared/types';
 import { batch } from '../shared/db';
 import { nearestBracket } from '../shared/brackets';
+import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
 import { sanitizeAssetName } from '../shared/text';
 import { scoreFields, loadResolver, type TickerResolver } from '../extraction/normalizer';
 
@@ -150,6 +151,55 @@ export interface RawWatcherRecord {
 // ---------------------------------------------------------------------------
 // Pure mapping helpers (no network, no DB — unit-tested directly)
 // ---------------------------------------------------------------------------
+
+const SEED_ASSET_TYPE_NAMES: Record<string, string> = {
+  Stock: 'Stock',
+  'Stock Option': 'Stock Option',
+  'Municipal Security': 'Municipal Security',
+  'Other Securities': 'Other Securities',
+  'Corporate Bond': 'Corporate Bond',
+  'Non-Public Stock': 'Non-Public Stock',
+};
+
+function seedAssetTypeName(assetType: string | null): string | null {
+  if (!assetType) return null;
+  return HOUSE_ASSET_TYPE_NAMES[assetType] ?? SEED_ASSET_TYPE_NAMES[assetType] ?? null;
+}
+
+function cleanSeedDetail(value: string | null): string | null {
+  const cleaned = (value ?? '').replace(/\s+/g, ' ').trim();
+  return cleaned || null;
+}
+
+function parseSeedAssetDescription(raw: string | undefined): {
+  assetName: string;
+  description: string | null;
+  supplementalText: string | null;
+} {
+  const source = raw ?? '';
+  const firstTag = source.search(/<[^>]+>/);
+  const base = firstTag >= 0 ? sanitizeAssetName(source.slice(0, firstTag)) : sanitizeAssetName(source);
+  const full = sanitizeAssetName(source);
+  let detail = full;
+  if (base && full.toLowerCase().startsWith(base.toLowerCase())) detail = full.slice(base.length);
+  detail = detail.replace(/^[-–—:;,\s]+/, '').trim();
+  const supplementalText = detail && detail.toLowerCase() !== base.toLowerCase() ? detail : null;
+  let description: string | null = null;
+  const descriptionMatch = supplementalText?.match(/\bDescription:\s*(.+)$/i);
+  const optionMatch = supplementalText?.match(/\bOption\s+Type:\s*(.+)$/i);
+  const rateMatch = supplementalText?.match(/\bRate\/Coupon:\s*(.+)$/i);
+  const companyMatch = supplementalText?.match(/\bCompany:\s*(.+)$/i);
+  if (descriptionMatch) description = cleanSeedDetail(descriptionMatch[1]);
+  else if (optionMatch) description = cleanSeedDetail(`Option Type: ${optionMatch[1]}`);
+  else if (rateMatch) description = cleanSeedDetail(`Rate/Coupon: ${rateMatch[1]}`);
+  else if (companyMatch) description = cleanSeedDetail(`Company: ${companyMatch[1]}`);
+  else description = cleanSeedDetail(supplementalText);
+  return {
+    assetName: base || full,
+    description,
+    supplementalText: cleanSeedDetail(supplementalText),
+  };
+}
 
 /** Normalize a raw transaction-type string to the TxType union P|S|E. */
 export function mapTxType(raw: string | undefined): TxType {
@@ -291,7 +341,8 @@ export function mapRecordToTransaction(
   nowIso: string,
   resolve: TickerResolver,
 ): Transaction | null {
-  const assetName = sanitizeAssetName(rec.asset_description);
+  const parsedAsset = parseSeedAssetDescription(rec.asset_description);
+  const assetName = parsedAsset.assetName;
   if (isScannedPdfPlaceholder(rec.asset_description)) return null;
   if ((rec.asset_type ?? '').trim().toLowerCase() === 'pdf disclosed filing') return null;
   if (isUnknownSeedTxType(rec.type)) return null;
@@ -304,6 +355,10 @@ export function mapRecordToTransaction(
   const rawTxType = mapTxType(rec.type);
   const { min, max } = mapAmount(rec.amount);
   const source = 'seed_dataset' as const;
+  const assetType = (rec.asset_type ?? '').trim() || null;
+  const assetTypeName = seedAssetTypeName(assetType);
+  const isOption =
+    assetType === 'Stock Option' || /\b(option\s+type|strike\s+price|expires):/i.test(parsedAsset.supplementalText ?? '');
 
   // Score with the SAME rubric the live normalizer uses, from a clean-import
   // base. Seed rows have no filing document, so there's no filed_date to check
@@ -334,17 +389,20 @@ export function mapRecordToTransaction(
     owner: mapOwner(rec.owner),
     assetName: assetName || (scored.ticker ?? ''),
     ticker: scored.ticker,
-    assetType: (rec.asset_type ?? '').trim() || null,
+    assetType,
+    assetTypeName,
     txType: scored.txType,
     amountMin: scored.amountMin,
     amountMax: scored.amountMax,
-    isOption: false,
+    isOption,
     capGainsOver200: false,
     rawText: JSON.stringify({
       member: filerName,
       type: rec.type ?? null,
       amount: rec.amount ?? null,
     }),
+    description: parsedAsset.description,
+    supplementalText: parsedAsset.supplementalText,
     confidence: scored.confidence,
     source,
     createdAt: nowIso,
@@ -395,17 +453,21 @@ function buildSeedTxStatement(tx: Transaction): SqlStatement {
   return [
     `INSERT INTO transactions (
        id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
-       tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
-       raw_text, confidence, source, created_at, cursor_seq
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'seed_dataset', ?, NULL)
+       asset_type_name, tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
+       raw_text, description, supplemental_text, confidence, source, created_at, cursor_seq
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'seed_dataset', ?, NULL)
      ON CONFLICT(id) DO UPDATE SET
        asset_name = excluded.asset_name,
        ticker = excluded.ticker,
        asset_type = excluded.asset_type,
+       asset_type_name = excluded.asset_type_name,
        tx_type = excluded.tx_type,
        amount_min = excluded.amount_min,
        amount_max = excluded.amount_max,
+       is_option = excluded.is_option,
        raw_text = excluded.raw_text,
+       description = excluded.description,
+       supplemental_text = excluded.supplemental_text,
        confidence = excluded.confidence
      WHERE transactions.source = 'seed_dataset'`,
     [
@@ -417,12 +479,15 @@ function buildSeedTxStatement(tx: Transaction): SqlStatement {
       tx.assetName,
       tx.ticker,
       tx.assetType,
+      tx.assetTypeName ?? null,
       tx.txType,
       tx.amountMin,
       tx.amountMax,
       tx.isOption ? 1 : 0,
       tx.capGainsOver200 ? 1 : 0,
       tx.rawText,
+      tx.description ?? null,
+      tx.supplementalText ?? null,
       tx.confidence,
       tx.createdAt,
     ],
