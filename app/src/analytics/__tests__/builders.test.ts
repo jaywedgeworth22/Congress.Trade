@@ -173,10 +173,12 @@ describe('buildPartySplitQuery', () => {
 });
 
 describe('buildSectorBreakdownQuery', () => {
-  it('buckets the asset_type and coalesces empties to Unknown', () => {
+  it('buckets canonical asset-type categories across raw source labels', () => {
     const q = buildSectorBreakdownQuery({ window: 'all' });
-    expect(q.sql).toContain("COALESCE(NULLIF(t.asset_type, ''), 'Unknown') AS asset_type");
-    expect(q.sql).toContain('GROUP BY asset_type');
+    expect(q.sql).toContain('AS asset_type_category');
+    expect(q.sql).toContain("THEN 'public_equity'");
+    expect(q.sql).toContain("THEN 'fixed_income_government'");
+    expect(q.sql).toContain('GROUP BY asset_type_category');
   });
 });
 

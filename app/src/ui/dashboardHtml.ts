@@ -472,14 +472,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .review-edit-panel { background: color-mix(in srgb, var(--panel-2) 70%, transparent); padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
   .review-edit-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
   .review-edit-head strong { display:block; margin-bottom:2px; }
-  .me-row { margin: 6px 0; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
-  .me-row input, .me-row select { min-height:34px; }
-  .me-row .me-ticker { width:82px; }
-  .me-row .me-min, .me-row .me-max { width:96px; }
-  .me-row .me-asset { width:190px; flex:1 1 180px; }
-  .me-row .me-asset-type { width:112px; }
+  .me-row { margin: 8px 0; display:grid; grid-template-columns:minmax(80px,.6fr) 130px 165px 150px 125px 155px minmax(220px,1.8fr) minmax(210px,.9fr); gap:8px; align-items:center; }
+  .me-row input, .me-row select { min-height:34px; width:100%; min-width:0; }
+  .me-row .me-asset { width:100%; }
+  .me-asset-type-wrap { min-width:0; }
+  .me-asset-type-category { display:block; margin-top:2px; color:var(--text-dim); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .me-flags { display:flex; align-items:center; gap:6px 10px; flex-wrap:wrap; min-width:0; }
   .me-check { display:inline-flex; align-items:center; gap:4px; color:var(--text-dim); font-size:12px; white-space:nowrap; }
-  .me-check input { min-height:0; }
+  .me-check input { min-height:0; width:auto; }
+  @media (max-width: 1100px) {
+    .me-row { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .me-row .me-asset, .me-row .me-flags { grid-column:1/-1; }
+  }
   .filing-note { background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12px; line-height:1.5; color:var(--text-dim); margin:0; }
   .filing-note-kv { background:var(--panel-2); border:1px solid var(--border); border-radius:8px; padding:9px 11px; font-size:12px; }
   .filing-note-kv dd { text-align:left; }
@@ -1351,6 +1355,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <tbody id="reviewBody"></tbody>
       </table>
       <p class="note">Confirm promotes the read to the live feed; Manual lets you hand-key the rows (recorded as <code>source=manual</code>) when the automated read is wrong or too low-confidence; Reject discards it. Models / readings come from <code>extraction_runs</code> (populated by <code>POST /api/admin/bakeoff</code>). <code>POST /api/admin/review/:docId {decision}</code></p>
+      <div style="margin-top:14px">
+        <h3>Decision History</h3>
+        <table>
+          <thead><tr><th>Time</th><th>Doc</th><th>Action</th><th>Source</th><th>Reason</th><th>Rows</th></tr></thead>
+          <tbody id="decisionBody"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -1458,6 +1469,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </table>
     </div>
     <div class="section">
+      <h3>Market Data Coverage</h3>
+      <p class="sub">Ticker enrichment coverage for company name, sector, country, and market-cap fields. This is the data behind company drawers, Sector, Country, and Market Cap columns.</p>
+      <div class="row-flex">
+        <label class="lbl">Max</label>
+        <input id="mdMax" type="number" min="1" max="200" value="40" style="width:90px" />
+        <label class="lbl">Calls / Min</label>
+        <input id="mdPerMin" type="number" min="1" max="1000" value="250" style="width:100px" />
+        <button class="btn ghost sm" onclick="runMarketBackfill(true)">Dry Run</button>
+        <button class="btn" onclick="runMarketBackfill(false)">Run One Pass</button>
+        <button class="btn ghost sm" onclick="loadMarketCoverage()">Reload</button>
+        <span id="mdMsg" class="note"></span>
+      </div>
+      <div id="marketCoverage" aria-live="polite"></div>
+    </div>
+    <div class="section">
       <h3>Connection Status</h3>
       <p class="sub">Provider and integration status from production data. Secret values are never shown.</p>
       <div class="row-flex" style="margin-bottom:10px">
@@ -1541,6 +1567,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 var TRADES = [];          // live transactions (newest first)
 var TRADE_BY_ID = {};     // trade id -> row, including mini-list rows cached from drawers
 var REVIEW = [];          // review-queue items
+var DECISIONS = [];       // ingestion decision audit rows
 var REVIEW_RUNS = {};     // docId -> full extraction runs loaded on demand
 var SCHEDULE = [];        // PollWindow[]
 var aggressive = false;
@@ -1614,62 +1641,131 @@ function assetClassLabel(c) {
   if (!s) return '';
   return ASSET_CLASS_UP[s.toLowerCase()] || (s.charAt(0).toUpperCase() + s.slice(1));
 }
-/* Plain-English labels for House STOCK Act asset-type bracket codes ([ST], [GS]...). */
-var ASSET_TYPE_LABEL = {
-  '4K': '401K and Other Non-Federal Retirement Accounts',
-  '5C': '529 College Savings Plan',
-  '5F': '529 Portfolio',
-  '5P': '529 Prepaid Tuition Plan',
-  AB: 'Asset-Backed Securities',
-  BA: 'Bank Accounts, Money Market Accounts and CDs',
-  BK: 'Brokerage Accounts',
-  CO: 'Collectibles',
-  CS: 'Corporate Securities (Bonds and Notes)',
-  CT: 'Cryptocurrency',
-  DB: 'Defined Benefit Pension',
-  DO: 'Debts Owed to the Filer',
-  DS: 'Delaware Statutory Trust',
-  EF: 'Exchange Traded Funds (ETF)',
-  EQ: 'Excepted/Qualified Blind Trust',
-  ET: 'Exchange Traded Notes',
-  FA: 'Farms',
-  FE: 'Foreign Exchange Position (Currency)',
-  FN: 'Fixed Annuity',
-  FU: 'Futures',
-  GS: 'Government Securities and Agency Debt',
-  HE: 'Hedge Funds & Private Equity Funds (EIF)',
-  HN: 'Hedge Funds & Private Equity Funds (non-EIF)',
-  IC: 'Investment Club',
-  IH: 'IRA (Held in Cash)',
-  IP: 'Intellectual Property & Royalties',
-  IR: 'IRA',
-  MA: 'Managed Accounts (e.g., SMA and UMA)',
-  MF: 'Mutual Funds',
-  MO: 'Mineral/Oil/Solar Energy Rights',
-  OI: 'Ownership Interest (Holding Investments)',
-  OL: 'Ownership Interest (Engaged in a Trade or Business)',
-  OP: 'Options',
-  OT: 'Other',
-  PE: 'Pensions',
-  PM: 'Precious Metals',
-  PS: 'Stock (Not Publicly Traded)',
-  RE: 'Real Estate Invest. Trust (REIT)',
-  RF: 'REIT (EIF)',
-  RN: 'REIT (non-EIF)',
-  RP: 'Real Property',
-  RS: 'Restricted Stock Units (RSUs)',
-  SA: 'Stock Appreciation Right',
-  ST: 'Stocks (including ADRs)',
-  TR: 'Trust',
-  VA: 'Variable Annuity',
-  VI: 'Variable Insurance',
-  WU: 'Whole/Universal Insurance',
-  Unknown: 'Unclassified'
-};
+/* Friendlier labels for raw STOCK Act asset-type codes / Senate eFD labels. */
+var HOUSE_REVIEW_ASSET_TYPES = [
+  ['4K', '401K and Other Non-Federal Retirement Accounts', 'Retirement / 529 Accounts'],
+  ['5C', '529 College Savings Plan', 'Retirement / 529 Accounts'],
+  ['5F', '529 Portfolio', 'Retirement / 529 Accounts'],
+  ['5P', '529 Prepaid Tuition Plan', 'Retirement / 529 Accounts'],
+  ['AB', 'Asset-Backed Securities', 'Asset-Backed Securities'],
+  ['BA', 'Bank Accounts, Money Market Accounts and CDs', 'Cash / Bank Accounts'],
+  ['BK', 'Brokerage Accounts', 'Cash / Bank Accounts'],
+  ['CO', 'Collectibles', 'Commodities / Collectibles'],
+  ['CS', 'Corporate Securities (Bonds and Notes)', 'Corporate Debt'],
+  ['CT', 'Cryptocurrency', 'Crypto'],
+  ['DB', 'Defined Benefit Pension', 'Retirement / 529 Accounts'],
+  ['DO', 'Debts Owed to the Filer', 'Receivables'],
+  ['DS', 'Delaware Statutory Trust', 'Trusts'],
+  ['EF', 'Exchange Traded Funds (ETF)', 'Funds / ETFs / REITs'],
+  ['EQ', 'Excepted/Qualified Blind Trust', 'Trusts'],
+  ['ET', 'Exchange Traded Notes', 'Funds / ETFs / REITs'],
+  ['FA', 'Farms', 'Commodities / Collectibles'],
+  ['FE', 'Foreign Exchange Position (Currency)', 'Derivatives / Rights'],
+  ['FN', 'Fixed Annuity', 'Insurance / Annuities'],
+  ['FU', 'Futures', 'Derivatives / Rights'],
+  ['GS', 'Government Securities and Agency Debt', 'Government / Municipal Debt'],
+  ['HE', 'Hedge Funds & Private Equity Funds (EIF)', 'Private Funds'],
+  ['HN', 'Hedge Funds & Private Equity Funds (non-EIF)', 'Private Funds'],
+  ['IC', 'Investment Club', 'Business Interests'],
+  ['IH', 'IRA (Held in Cash)', 'Retirement / 529 Accounts'],
+  ['IP', 'Intellectual Property & Royalties', 'Intellectual Property'],
+  ['IR', 'IRA', 'Retirement / 529 Accounts'],
+  ['MA', 'Managed Accounts (e.g., SMA and UMA)', 'Funds / ETFs / REITs'],
+  ['MF', 'Mutual Funds', 'Funds / ETFs / REITs'],
+  ['MO', 'Mineral/Oil/Solar Energy Rights', 'Commodities / Collectibles'],
+  ['OI', 'Ownership Interest (Holding Investments)', 'Business Interests'],
+  ['OL', 'Ownership Interest (Engaged in a Trade or Business)', 'Business Interests'],
+  ['OP', 'Options', 'Options'],
+  ['OT', 'Other', 'Other'],
+  ['PE', 'Pensions', 'Retirement / 529 Accounts'],
+  ['PM', 'Precious Metals', 'Commodities / Collectibles'],
+  ['PS', 'Stock (Not Publicly Traded)', 'Private Equity'],
+  ['RE', 'Real Estate Invest. Trust (REIT)', 'Real Estate'],
+  ['RF', 'REIT (EIF)', 'Real Estate'],
+  ['RN', 'REIT (non-EIF)', 'Real Estate'],
+  ['RP', 'Real Property', 'Real Estate'],
+  ['RS', 'Restricted Stock Units (RSUs)', 'Derivatives / Rights'],
+  ['SA', 'Stock Appreciation Right', 'Derivatives / Rights'],
+  ['ST', 'Stocks (including ADRs)', 'Public Equity'],
+  ['TR', 'Trust', 'Trusts'],
+  ['VA', 'Variable Annuity', 'Insurance / Annuities'],
+  ['VI', 'Variable Insurance', 'Insurance / Annuities'],
+  ['WU', 'Whole/Universal Insurance', 'Insurance / Annuities']
+];
+var SENATE_REVIEW_ASSET_TYPES = [
+  ['Stock', 'Stock', 'Public Equity'],
+  ['Stock Option', 'Stock Option', 'Options'],
+  ['Municipal Security', 'Municipal Security', 'Government / Municipal Debt'],
+  ['Corporate Bond', 'Corporate Bond', 'Corporate Debt'],
+  ['Other Securities', 'Other Securities', 'Other Securities'],
+  ['Non-Public Stock', 'Non-Public Stock', 'Private Equity']
+];
+var REVIEW_UNKNOWN_ASSET_TYPES = [['Unknown', 'Unclassified', 'Unknown']];
+var REVIEW_ASSET_TYPES = HOUSE_REVIEW_ASSET_TYPES.concat(SENATE_REVIEW_ASSET_TYPES).concat(REVIEW_UNKNOWN_ASSET_TYPES);
+var ASSET_TYPE_LABEL = {};
+var ASSET_TYPE_CATEGORY_LABEL = {};
+REVIEW_ASSET_TYPES.forEach(function (pair) {
+  ASSET_TYPE_LABEL[pair[0]] = pair[1];
+  ASSET_TYPE_LABEL[String(pair[0]).toUpperCase()] = pair[1];
+  ASSET_TYPE_CATEGORY_LABEL[pair[0]] = pair[2];
+  ASSET_TYPE_CATEGORY_LABEL[String(pair[0]).toUpperCase()] = pair[2];
+});
 function assetTypeLabel(t) {
   var s = String(t == null ? '' : t).trim();
   if (!s) return 'Unclassified';
   return ASSET_TYPE_LABEL[s] || ASSET_TYPE_LABEL[s.toUpperCase()] || s;
+}
+function reviewAssetTypeName(t) {
+  var s = String(t == null ? '' : t).trim();
+  if (!s || s.toLowerCase() === 'unknown') return '';
+  return ASSET_TYPE_LABEL[s] || ASSET_TYPE_LABEL[s.toUpperCase()] || '';
+}
+function reviewNormalizeAssetTypeValue(t) {
+  var s = String(t == null ? '' : t).trim();
+  if (!s) return '';
+  var upper = s.toUpperCase();
+  for (var i = 0; i < HOUSE_REVIEW_ASSET_TYPES.length; i++) {
+    if (HOUSE_REVIEW_ASSET_TYPES[i][0] === upper) return upper;
+  }
+  var lower = s.toLowerCase();
+  for (var j = 0; j < SENATE_REVIEW_ASSET_TYPES.length; j++) {
+    if (String(SENATE_REVIEW_ASSET_TYPES[j][0]).toLowerCase() === lower) return SENATE_REVIEW_ASSET_TYPES[j][0];
+  }
+  if (lower === 'unknown' || lower === 'unclassified') return 'Unknown';
+  return s;
+}
+function reviewAssetTypeCategoryLabel(t) {
+  var s = String(t == null ? '' : t).trim();
+  if (!s) return '';
+  return ASSET_TYPE_CATEGORY_LABEL[s] || ASSET_TYPE_CATEGORY_LABEL[s.toUpperCase()] || '';
+}
+function reviewAssetPairsForChamber(chamber) {
+  var c = String(chamber == null ? '' : chamber).toLowerCase();
+  if (c === 'house') return HOUSE_REVIEW_ASSET_TYPES.concat(REVIEW_UNKNOWN_ASSET_TYPES);
+  if (c === 'senate') return SENATE_REVIEW_ASSET_TYPES.concat(REVIEW_UNKNOWN_ASSET_TYPES);
+  var seen = {};
+  return REVIEW_ASSET_TYPES.filter(function (pair) {
+    var key = String(pair[0]).toLowerCase();
+    if (seen[key]) return false;
+    seen[key] = true;
+    return true;
+  });
+}
+function reviewAssetTypeDatalistId(chamber) {
+  var c = String(chamber == null ? '' : chamber).toLowerCase();
+  return c === 'house' ? 'review-asset-types-house' : c === 'senate' ? 'review-asset-types-senate' : 'review-asset-types-all';
+}
+function ensureReviewAssetTypeDatalists() {
+  if (document.getElementById('review-asset-types-all')) return;
+  ['house', 'senate', 'all'].forEach(function (chamber) {
+    var dl = document.createElement('datalist');
+    dl.id = reviewAssetTypeDatalistId(chamber);
+    dl.innerHTML = reviewAssetPairsForChamber(chamber).map(function (pair) {
+      var label = pair[0] === pair[1] ? pair[2] : pair[1] + ' - ' + pair[2];
+      return '<option value="' + esc(pair[0]) + '" label="' + esc(label) + '"></option>';
+    }).join('');
+    document.body.appendChild(dl);
+  });
 }
 function assetTypeCode(row) {
   var direct = String(row && row.assetType || '').trim().toUpperCase();
@@ -2633,10 +2729,69 @@ function loadReview() {
   // API HOOK: GET /api/admin/review-queue?resolved=
   return fetch('/api/admin/review-queue?resolved=' + REVIEW_RESOLVED, { headers: adminHeaders() })
     .then(okOrThrow)
-    .then(function (data) { REVIEW = data.items || []; renderReview(); })
+    .then(function (data) { REVIEW = data.items || []; renderReview(); loadDecisionHistory(); })
     .catch(function (e) {
       el('reviewBody').innerHTML = stateRow(6, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load review queue: ' + e.message));
     });
+}
+function loadDecisionHistory() {
+  // API HOOK: GET /api/admin/ingestion-decisions
+  return fetch('/api/admin/ingestion-decisions?limit=100', { headers: adminHeaders() })
+    .then(okOrThrow)
+    .then(function (data) {
+      DECISIONS = data.items || [];
+      renderDecisionHistory(data.available !== false);
+    })
+    .catch(function (e) {
+      var body = el('decisionBody');
+      if (body) body.innerHTML = stateRow(6, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load decision history: ' + e.message));
+    });
+}
+function decisionActionLabel(action) {
+  return String(action || '').replace(/_/g, ' ');
+}
+function decisionRowsText(d) {
+  var ids = d && Array.isArray(d.transactionIds) ? d.transactionIds : [];
+  if (!ids.length) return '—';
+  return ids.length + ' row' + (ids.length === 1 ? '' : 's');
+}
+function decisionReasonText(d) {
+  var reason = d && d.reason ? String(d.reason) : '';
+  var payload = d && d.payload && typeof d.payload === 'object' ? d.payload : null;
+  var bits = [];
+  if (reason) bits.push(reason.replace(/_/g, ' '));
+  if (payload && typeof payload.minConfidence === 'number') bits.push('conf ' + Math.round(payload.minConfidence * 100) + '%');
+  if (payload && typeof payload.inserted === 'number') bits.push('inserted ' + payload.inserted);
+  if (payload && typeof payload.deprecatedTransactions === 'number') bits.push('retracted ' + payload.deprecatedTransactions);
+  return bits.join(' · ') || '—';
+}
+function decisionDocHtml(d) {
+  var docId = d.docId || '';
+  var url = safeDocUrl(d.sourceUrl);
+  if (!url) return '<span class="tkr">' + esc(docId) + '</span>';
+  return '<a class="tkr" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="Open source filing">' + esc(docId) + '</a>';
+}
+function renderDecisionHistory(available) {
+  var body = el('decisionBody');
+  if (!body) return;
+  if (!available) {
+    body.innerHTML = stateRow(6, 'Decision history is not migrated yet.');
+    return;
+  }
+  if (!DECISIONS.length) {
+    body.innerHTML = stateRow(6, 'No decisions recorded yet.');
+    return;
+  }
+  body.innerHTML = DECISIONS.map(function (d) {
+    return '<tr class="row">' +
+      '<td class="muted">' + esc(dateTimeText(d.createdAt)) + '</td>' +
+      '<td>' + decisionDocHtml(d) + '</td>' +
+      '<td>' + statusBadge(decisionActionLabel(d.action)) + '</td>' +
+      '<td class="muted">' + esc([d.source || '', d.actor || ''].filter(Boolean).join(' · ')) + '</td>' +
+      '<td class="muted" style="max-width:320px">' + esc(decisionReasonText(d)) + '</td>' +
+      '<td class="muted">' + esc(decisionRowsText(d)) + '</td>' +
+    '</tr>';
+  }).join('');
 }
 /* Translate review reason codes + payload into plain English for non-engineers. */
 var REASON_LABELS = {
@@ -2716,6 +2871,7 @@ function normalizeReviewEdit(t, sourceLabel) {
     txDate: String(t.txDate || '').slice(0, 10) || null,
     owner: owner,
     assetType: cleanAsset(t.assetType || ''),
+    assetTypeName: cleanAsset(t.assetTypeName || ''),
     isOption: Boolean(t.isOption),
     capGainsOver200: Boolean(t.capGainsOver200),
     confidence: t.confidence == null ? null : n(t.confidence),
@@ -2800,7 +2956,7 @@ function renderReview() {
     var url = safeDocUrl(r.sourceUrl);
     var docAction = url ? '<a class="review-doc-link inline" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Document</a>' : '';
     var nModels = (r.models && r.models.length) || 0;
-    var modelsBtn = '<button class="btn ghost sm" onclick="toggleModels(\\'' + esc(r.docId) + '\\')">Models (' + nModels + ')</button>';
+    var modelsBtn = '<button class="btn ghost sm" onclick="toggleModels(\\'' + esc(r.docId) + '\\')">Bake-Off Runs (' + nModels + ')</button>';
     var actions = REVIEW_RESOLVED
       ? (r.status === 'published' || r.status === 'modified'
           ? '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'unpublish\\')">Unpublish</button> ' : '') + modelsBtn
@@ -2812,7 +2968,7 @@ function renderReview() {
       '<td>' + reviewDocHtml(r) + '</td>' +
       '<td>' + statusBadge(r.status) + '</td>' +
       '<td class="muted">' + esc(reasonText(r.reason, r.payload)) + '<div style="margin-top:3px">' + modelsSummaryHtml(r.models) + '</div></td>' +
-      '<td class="muted" style="max-width:360px">' + esc(payload) + publishRowsHtml(queuedRows, { max: 2, title: 'Queued Rows' }) + docAction + '</td>' +
+      '<td class="muted" style="max-width:360px">' + esc(payload) + publishRowsHtml(queuedRows, { max: 2, title: 'Queued Extracted Rows' }) + docAction + '</td>' +
       '<td>' + actions + '</td>' +
     '</tr>';
   }).join('');
@@ -2827,15 +2983,15 @@ function toggleModels(docId) {
   for (var i = 0; i < REVIEW.length; i++) { if (REVIEW[i].docId === docId) { item = REVIEW[i]; break; } }
   var models = (item && item.models) || [];
   var head = '<tr id="mdl-' + esc(docId) + '"><td colspan="6" style="background:rgba(127,127,127,.06)">' +
-    '<div style="padding:6px 4px"><strong>Per-model readings</strong> ' +
+    '<div style="padding:6px 4px"><strong>Per-model bake-off readings</strong> ' +
     '<button class="btn ghost sm" onclick="viewReadings(\\'' + esc(docId) + '\\')">Load Full Readings</button>' +
-    '<div class="note">Load readings, then choose a model to pre-fill editable rows before confirming.</div>' +
+    '<div class="note">Queued extracted rows come from the primary extraction pipeline. Bake-off runs are optional stored model comparisons; load one here only if you want to use that model\\'s rows instead.</div>' +
     '<div id="mdlBody-' + esc(docId) + '" style="margin-top:6px">' + modelsTableHtml(models) + '</div></div>' +
     '</td></tr>';
   rowEl.insertAdjacentHTML('afterend', head);
 }
 function modelsTableHtml(models) {
-  if (!models || !models.length) return '<span class="muted">No model runs stored for this document yet. Run a bake-off (POST /api/admin/bakeoff) to populate.</span>';
+  if (!models || !models.length) return '<span class="muted">No bake-off model runs stored for this document. The prefilled rows can still come from the queued extraction payload.</span>';
   var rows = models.map(function (m) {
     var conf = (typeof m.avgConfidence === 'number') ? Math.round(m.avgConfidence * 100) + '%' : '—';
     return '<tr><td>' + esc(m.provider + ':' + m.model) + '</td><td>' + esc(m.kind || '') + '</td>' +
@@ -2890,6 +3046,7 @@ function resolveReview(docId, decision) {
     .then(function () {
       if (isUnpublish) { loadReview(); } // item returns to pending; reload current tab
       else { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); renderReview(); }
+      loadDecisionHistory();
       loadFeed();
     })
     .catch(function (e) {
@@ -2900,40 +3057,103 @@ function resolveReview(docId, decision) {
 function selectedOption(v, current) { return String(v) === String(current) ? ' selected' : ''; }
 function checkedAttr(v) { return v ? ' checked' : ''; }
 function valueAttr(v) { return esc(v == null ? '' : v); }
+/* Mirror src/shared/brackets.ts for the browser-only admin editor. These are
+   the canonical STOCK Act disclosure ranges used by both House and Senate PTRs. */
+var REVIEW_AMOUNT_BRACKETS = [
+  [1001, 15000], [15001, 50000], [50001, 100000], [100001, 250000], [250001, 500000],
+  [500001, 1000000], [1000001, 5000000], [5000001, 25000000], [25000001, 50000000], [50000001, null]
+];
+function reviewMoney(n) {
+  return '$' + Number(n).toLocaleString();
+}
+function bracketKey(min, max) {
+  if (min == null && max == null) return '';
+  return String(min == null ? '' : min) + ':' + String(max == null ? '' : max);
+}
+function reviewBracketLabel(min, max) {
+  if (min == null && max == null) return 'Amount Range';
+  return reviewMoney(min) + (max == null ? '+' : ' - ' + reviewMoney(max));
+}
+function amountBracketSelectHtml(tx) {
+  var current = bracketKey(tx.amountMin, tx.amountMax);
+  var opts = '<option value="">Amount Range</option>';
+  REVIEW_AMOUNT_BRACKETS.forEach(function (b) {
+    var key = bracketKey(b[0], b[1]);
+    opts += '<option value="' + esc(key) + '"' + selectedOption(key, current) + '>' + esc(reviewBracketLabel(b[0], b[1])) + '</option>';
+  });
+  return '<select class="me-bracket" title="Canonical STOCK Act amount bracket">' + opts + '</select>';
+}
+function assetTypeInputHtml(tx, chamber) {
+  ensureReviewAssetTypeDatalists();
+  var current = String(tx.assetType || '').trim();
+  var category = reviewAssetTypeCategoryLabel(current);
+  return '<span class="me-asset-type-wrap">' +
+    '<input class="me-asset-type" list="' + esc(reviewAssetTypeDatalistId(chamber)) + '" placeholder="Asset type" value="' + valueAttr(current) + '" title="Start typing to pick a suggested type; custom values are allowed." oninput="syncReviewAssetTypeInput(this)" onchange="syncReviewAssetTypeInput(this)" />' +
+    '<span class="me-asset-type-category">' + esc(category) + '</span>' +
+    '</span>';
+}
+function parseBracketValue(v) {
+  var s = String(v || '');
+  if (!s) return { min: null, max: null };
+  var p = s.split(':');
+  return { min: p[0] === '' ? null : Number(p[0]), max: p[1] === '' ? null : Number(p[1]) };
+}
+function syncReviewAssetTypeInput(inputEl) {
+  var row = inputEl && inputEl.closest ? inputEl.closest('.me-row') : null;
+  var cb = row && row.querySelector ? row.querySelector('.me-option') : null;
+  var value = inputEl ? String(inputEl.value || '').trim() : '';
+  var category = reviewAssetTypeCategoryLabel(value);
+  if (cb && (value.toUpperCase() === 'OP' || category === 'Options')) cb.checked = true;
+  var label = row && row.querySelector ? row.querySelector('.me-asset-type-category') : null;
+  if (label) label.textContent = category || '';
+}
 /* Shared review editor. It can start blank for manual entry, from the queued
    review payload, or from any selected model run. Submit stays explicit. */
-function meRowHtml(tx) {
+function meRowHtml(tx, chamber) {
   tx = normalizeReviewEdit(tx || {}, 'review editor');
   return '<div class="me-row">' +
     '<input class="me-ticker" placeholder="Symbol" maxlength="12" value="' + valueAttr(tx.ticker || '') + '" /> ' +
     '<select class="me-type"><option value="P"' + selectedOption('P', tx.txType) + '>Purchase</option><option value="S"' + selectedOption('S', tx.txType) + '>Sale</option><option value="E"' + selectedOption('E', tx.txType) + '>Exchange</option></select> ' +
-    '<input class="me-min" type="number" placeholder="Amt min" value="' + valueAttr(tx.amountMin) + '" /> ' +
-    '<input class="me-max" type="number" placeholder="Amt max" value="' + valueAttr(tx.amountMax) + '" /> ' +
+    amountBracketSelectHtml(tx) +
     '<input class="me-date" type="date" value="' + valueAttr(tx.txDate || '') + '" /> ' +
     '<select class="me-owner"><option value="self"' + selectedOption('self', tx.owner) + '>self</option><option value="spouse"' + selectedOption('spouse', tx.owner) + '>spouse</option><option value="joint"' + selectedOption('joint', tx.owner) + '>joint</option><option value="dependent"' + selectedOption('dependent', tx.owner) + '>dependent</option></select> ' +
-    '<input class="me-asset-type" placeholder="Asset type" value="' + valueAttr(tx.assetType || '') + '" /> ' +
+    assetTypeInputHtml(tx, chamber) +
     '<input class="me-asset" placeholder="Asset name" value="' + valueAttr(tx.assetName || '') + '" />' +
-    '<label class="me-check"><input class="me-option" type="checkbox"' + checkedAttr(tx.isOption) + ' /> Option</label>' +
-    '<label class="me-check"><input class="me-cap" type="checkbox"' + checkedAttr(tx.capGainsOver200) + ' /> Cap gains &gt;$200</label>' +
+    '<span class="me-flags">' +
+      '<label class="me-check" title="Marks this row as an options contract rather than a plain equity/security transaction."><input class="me-option" type="checkbox"' + checkedAttr(tx.isOption || tx.assetType === 'OP') + ' /> Option Contract</label>' +
+      '<label class="me-check" title="Filer marked capital gains greater than $200 for this transaction."><input class="me-cap" type="checkbox"' + checkedAttr(tx.capGainsOver200) + ' /> Cap Gains &gt;$200</label>' +
+    '</span>' +
     '<input class="me-raw" type="hidden" value="' + valueAttr(tx.rawText || '') + '" />' +
     '<input class="me-conf" type="hidden" value="' + valueAttr(tx.confidence == null ? '' : tx.confidence) + '" />' +
     '</div>';
 }
-function meAddRow(docId, tx) { var c = el('me-rows-' + docId); if (c) c.insertAdjacentHTML('beforeend', meRowHtml(tx)); }
+function meAddRow(docId, tx) {
+  var c = el('me-rows-' + docId);
+  var tr = el('me-' + docId);
+  var chamber = tr ? tr.getAttribute('data-chamber') : '';
+  if (c) c.insertAdjacentHTML('beforeend', meRowHtml(tx, chamber));
+}
 function meCancel(docId) { var tr = el('me-' + docId); if (tr) tr.parentNode.removeChild(tr); }
+function reviewItemForDoc(docId) {
+  for (var i = 0; i < REVIEW.length; i++) { if (REVIEW[i].docId === docId) return REVIEW[i]; }
+  return null;
+}
 function openQueuedReviewEditor(docId) {
-  var item = null;
-  for (var i = 0; i < REVIEW.length; i++) { if (REVIEW[i].docId === docId) { item = REVIEW[i]; break; } }
+  var item = reviewItemForDoc(docId);
   var rows = reviewPayloadTransactions(item && item.payload);
-  openReviewEditor(docId, rows, 'confirm', 'queued review payload');
+  openReviewEditor(docId, rows, 'confirm', 'queued extracted rows', item && item.chamber);
 }
 function useModelRows(docId, idx) {
   var run = REVIEW_RUNS[docId] && REVIEW_RUNS[docId][idx];
   if (!run || !run.rows || !run.rows.length) { alert('That model run has no rows to use.'); return; }
-  openReviewEditor(docId, run.rows, 'confirm', run.provider + ':' + run.model);
+  var item = reviewItemForDoc(docId);
+  openReviewEditor(docId, run.rows, 'confirm', run.provider + ':' + run.model, item && item.chamber);
 }
-function manualEntry(docId) { openReviewEditor(docId, [], 'manual', 'manual entry'); }
-function openReviewEditor(docId, rows, decision, label) {
+function manualEntry(docId) {
+  var item = reviewItemForDoc(docId);
+  openReviewEditor(docId, [], 'manual', 'manual entry', item && item.chamber);
+}
+function openReviewEditor(docId, rows, decision, label, chamber) {
   var old = el('me-' + docId);
   if (old && old.parentNode) old.parentNode.removeChild(old);
   var row = el('rv-' + docId);
@@ -2941,6 +3161,7 @@ function openReviewEditor(docId, rows, decision, label) {
   var tr = document.createElement('tr');
   tr.id = 'me-' + docId;
   tr.setAttribute('data-decision', decision);
+  tr.setAttribute('data-chamber', chamber || '');
   var safeLabel = label || (decision === 'manual' ? 'manual entry' : 'selected rows');
   var title = decision === 'manual' ? 'Manual Entry' : 'Edit Rows To Confirm';
   var submit = decision === 'manual' ? 'Submit Manual Entry' : 'Confirm Edited Rows';
@@ -2970,18 +3191,20 @@ function meSubmit(docId) {
     var t = (g.querySelector('.me-ticker').value || '').trim().toUpperCase();
     var asset = (g.querySelector('.me-asset').value || '').trim();
     if (!t && !asset) return; // skip blank rows
-    var min = g.querySelector('.me-min').value, max = g.querySelector('.me-max').value;
+    var bracket = parseBracketValue(g.querySelector('.me-bracket').value);
     var conf = g.querySelector('.me-conf').value;
+    var assetType = reviewNormalizeAssetTypeValue(g.querySelector('.me-asset-type').value || '');
     edits.push({
       ticker: t || null,
       assetName: asset || t || '(review entry)',
       txType: g.querySelector('.me-type').value,
-      amountMin: min === '' ? null : Number(min),
-      amountMax: max === '' ? null : Number(max),
+      amountMin: bracket.min,
+      amountMax: bracket.max,
       txDate: g.querySelector('.me-date').value || null,
       owner: g.querySelector('.me-owner').value,
-      assetType: (g.querySelector('.me-asset-type').value || '').trim() || null,
-      isOption: g.querySelector('.me-option').checked,
+      assetType: assetType || null,
+      assetTypeName: reviewAssetTypeName(assetType) || null,
+      isOption: g.querySelector('.me-option').checked || assetType === 'OP' || reviewAssetTypeCategoryLabel(assetType) === 'Options',
       capGainsOver200: g.querySelector('.me-cap').checked,
       rawText: (g.querySelector('.me-raw').value || '').trim() || (decision === 'manual' ? 'manual entry' : 'review editor'),
       confidence: conf === '' ? (decision === 'manual' ? 1 : null) : Number(conf)
@@ -2994,7 +3217,7 @@ function meSubmit(docId) {
     body: JSON.stringify({ decision: decision, edits: edits })
   })
     .then(okOrThrow)
-    .then(function () { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); if (tr && tr.parentNode) tr.parentNode.removeChild(tr); renderReview(); loadFeed(); })
+    .then(function () { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); if (tr && tr.parentNode) tr.parentNode.removeChild(tr); renderReview(); loadDecisionHistory(); loadFeed(); })
     .catch(function (e) {
       if (tr) tr.querySelectorAll('button,input,select').forEach(function (b) { b.disabled = false; });
       alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review submit failed: ' + e.message));
@@ -3097,7 +3320,7 @@ function saveAdminToken() {
   el('adminTokenMsg').textContent = v ? 'Saved in this browser.' : 'Cleared.';
   setTimeout(function () { el('adminTokenMsg').textContent = ''; }, 2500);
   renderFeedHeader(); renderColChooser(); renderFeed();
-  loadPollConfig(); loadHealth(); loadDiagnostics();
+  loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics();
 }
 function clearAdminToken() {
   try { localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
@@ -3394,6 +3617,78 @@ function refreshInfisicalSecrets() {
     })
     .catch(function (e) {
       if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Refresh failed: ' + e.message);
+    });
+}
+
+function pctText(v) {
+  return v == null ? '—' : Math.round(Number(v) * 100) + '%';
+}
+function coverageCard(title, count, total, pct, note) {
+  return '<div class="diag-card">' +
+    '<div class="diag-head"><div class="diag-title">' + esc(title) + '</div><span class="diag-status ' + (pct != null && pct >= 0.8 ? 'ok' : 'warn') + '">' + esc(pctText(pct)) + '</span></div>' +
+    '<div class="diag-meta"><span>Covered</span><strong>' + esc(count || 0) + '</strong><span>Total</span><strong>' + esc(total || 0) + '</strong></div>' +
+    (note ? '<div class="diag-note">' + esc(note) + '</div>' : '') +
+  '</div>';
+}
+function loadMarketCoverage() {
+  var box = el('marketCoverage');
+  var msg = el('mdMsg');
+  if (box) box.innerHTML = '<div class="state">Loading market-data coverage…</div>';
+  if (msg) msg.textContent = '';
+  return fetch('/api/admin/enrich-securities/status', { headers: adminHeaders() })
+    .then(okOrThrow)
+    .then(function (data) {
+      var c = data.coverage || {};
+      var t = c.trades || {}, a = c.assets || {};
+      var pending = data.pendingTickers == null ? '—' : data.pendingTickers;
+      var prices = data.pricePendingTickers == null ? '—' : data.pricePendingTickers;
+      var samples = c.missingSamples || [];
+      var cards = '<div class="diag-grid">' +
+        coverageCard('Trade Sectors', t.sector, t.tickered, t.sectorPctOfTickered, 'Tickered trades with enriched sector.') +
+        coverageCard('Trade Countries', t.country, t.tickered, t.countryPctOfTickered, 'Tickered trades with issuer country.') +
+        coverageCard('Trade Market Caps', t.marketCap, t.tickered, t.marketCapPctOfTickered, 'Tickered trades with cap or cap bucket.') +
+        coverageCard('Asset Coverage', a.marketCap, a.total, a.marketCapPct, 'Distinct traded assets with cap coverage.') +
+      '</div>';
+      var summary = '<p class="note">Pending enrichment assets: <strong>' + esc(pending) + '</strong> · Pending price assets: <strong>' + esc(prices) + '</strong> · FMP calls today: <strong>' + esc(data.fmpCallsToday || 0) + '</strong> · Keyed provider configured: <strong>' + esc(data.hasKeyedEnrichmentProvider ? 'Yes' : 'No') + '</strong></p>';
+      var rows = samples.length
+        ? samples.map(function (s) {
+            return '<tr class="row"><td><span class="tkr">' + esc(s.ticker) + '</span></td>' +
+              '<td>' + esc(s.name || '—') + '</td>' +
+              '<td class="est">' + esc(s.trades || 0) + '</td>' +
+              '<td class="muted">' + esc((s.missing || []).join(', ') || '—') + '</td>' +
+              '<td class="muted">' + esc(s.source || '—') + '</td>' +
+              '<td class="muted">' + esc(s.enrichmentError || '—') + '</td></tr>';
+          }).join('')
+        : '<tr><td class="state" colspan="6">No missing tickered assets in the current coverage sample.</td></tr>';
+      if (box) box.innerHTML = summary + cards +
+        '<h3 style="margin-top:14px">Missing Asset Samples</h3>' +
+        '<div class="table-wrap"><table><thead><tr><th>Asset</th><th>Name</th><th>Trades</th><th>Missing</th><th>Source</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+    })
+    .catch(function (e) {
+      if (box) box.innerHTML = '<div class="state">' + esc(isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load market coverage: ' + e.message)) + '</div>';
+    });
+}
+function runMarketBackfill(dryRun) {
+  var msg = el('mdMsg');
+  var max = Number(el('mdMax') && el('mdMax').value) || 40;
+  var perMin = Number(el('mdPerMin') && el('mdPerMin').value) || 250;
+  if (msg) msg.textContent = dryRun ? 'Checking…' : 'Running one bounded pass…';
+  return fetch('/api/admin/backfill-market', {
+    method: 'POST',
+    headers: adminHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ max: max, maxPerMinute: perMin, dryRun: !!dryRun })
+  })
+    .then(okOrThrow)
+    .then(function (data) {
+      if (msg) msg.textContent = (dryRun ? 'Dry run' : 'Pass complete') + ': ' +
+        'enriched ' + ((data.enrich && data.enrich.enriched) || 0) +
+        ', priced ' + ((data.prices && data.prices.tickersPriced) || 0) +
+        ', pending ' + ((data.pending && data.pending.enrich) || 0) + ' enrichment / ' +
+        ((data.pending && data.pending.prices) || 0) + ' prices.';
+      return loadMarketCoverage();
+    })
+    .catch(function (e) {
+      if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Market backfill failed: ' + e.message);
     });
 }
 
@@ -4454,7 +4749,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     if (b.dataset.view === 'trends') loadTrends();
     if (b.dataset.view === 'review') loadReview();
     if (b.dataset.view === 'subs') loadSubs();
-    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadDiagnostics(); }
+    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); }
   };
 });
 
@@ -4548,6 +4843,7 @@ el('feedBody').innerHTML = stateRow(visibleCols().length, 'Loading live feed…'
 el('reviewBody').innerHTML = stateRow(5, 'Loading…');
 el('subsBody').innerHTML = stateRow(5, 'Loading…');
 el('healthBody').innerHTML = stateRow(8, 'Loading…');
+el('marketCoverage').innerHTML = '<div class="state">Loading market-data coverage…</div>';
 el('diagConnections').innerHTML = '<div class="state">Loading connection status…</div>';
 el('diagErrors').innerHTML = stateRow(4, 'Loading…');
 el('diagUsers').innerHTML = '<div class="state">Loading users…</div>';

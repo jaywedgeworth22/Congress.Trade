@@ -20,6 +20,7 @@ import { extractText, getDocumentProxy } from 'unpdf';
 
 import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types';
 import type { Filing, Owner, ParsedTx, TxType } from '../shared/types';
+import { HOUSE_ASSET_TYPE_NAMES, houseAssetTypeCodePattern } from '../shared/assetTypes';
 import { parseAmountRange } from './amounts';
 import { detectOption } from './senateHtml';
 
@@ -80,58 +81,9 @@ const OWNER_CODES: Record<string, Owner> = {
   SELF: 'self',
 };
 
-// Asset-type bracket codes used by the House template, e.g. [ST] [OP] [GS].
-const ASSET_TYPE_RE = /\[([A-Z]{2,3})\]/;
-const HOUSE_ASSET_TYPE_NAMES: Record<string, string> = {
-  '4K': '401K and Other Non-Federal Retirement Accounts',
-  '5C': '529 College Savings Plan',
-  '5F': '529 Portfolio',
-  '5P': '529 Prepaid Tuition Plan',
-  AB: 'Asset-Backed Securities',
-  BA: 'Bank Accounts, Money Market Accounts and CDs',
-  BK: 'Brokerage Accounts',
-  CO: 'Collectibles',
-  CS: 'Corporate Securities (Bonds and Notes)',
-  CT: 'Cryptocurrency',
-  DB: 'Defined Benefit Pension',
-  DO: 'Debts Owed to the Filer',
-  DS: 'Delaware Statutory Trust',
-  EF: 'Exchange Traded Funds (ETF)',
-  EQ: 'Excepted/Qualified Blind Trust',
-  ET: 'Exchange Traded Notes',
-  FA: 'Farms',
-  FE: 'Foreign Exchange Position (Currency)',
-  FN: 'Fixed Annuity',
-  FU: 'Futures',
-  GS: 'Government Securities and Agency Debt',
-  HE: 'Hedge Funds & Private Equity Funds (EIF)',
-  HN: 'Hedge Funds & Private Equity Funds (non-EIF)',
-  IC: 'Investment Club',
-  IH: 'IRA (Held in Cash)',
-  IP: 'Intellectual Property & Royalties',
-  IR: 'IRA',
-  MA: 'Managed Accounts (e.g., SMA and UMA)',
-  MF: 'Mutual Funds',
-  MO: 'Mineral/Oil/Solar Energy Rights',
-  OI: 'Ownership Interest (Holding Investments)',
-  OL: 'Ownership Interest (Engaged in a Trade or Business)',
-  OP: 'Options',
-  OT: 'Other',
-  PE: 'Pensions',
-  PM: 'Precious Metals',
-  PS: 'Stock (Not Publicly Traded)',
-  RE: 'Real Estate Invest. Trust (REIT)',
-  RF: 'REIT (EIF)',
-  RN: 'REIT (non-EIF)',
-  RP: 'Real Property',
-  RS: 'Restricted Stock Units (RSUs)',
-  SA: 'Stock Appreciation Right',
-  ST: 'Stocks (including ADRs)',
-  TR: 'Trust',
-  VA: 'Variable Annuity',
-  VI: 'Variable Insurance',
-  WU: 'Whole/Universal Insurance',
-};
+// Asset-type bracket codes used by the House template, e.g. [ST] [OP] [GS] [4K].
+const HOUSE_ASSET_TYPE_CODE_PATTERN = houseAssetTypeCodePattern();
+const ASSET_TYPE_RE = new RegExp(`\\[(${HOUSE_ASSET_TYPE_CODE_PATTERN})\\]`, 'i');
 // A date in MM/DD/YYYY.
 const DATE_RE = /\b(\d{1,2}\/\d{1,2}\/\d{2,4})\b/g;
 // An amount bracket like "$1,001 - $15,000" or "$50,000,001 +".
@@ -144,8 +96,10 @@ const HOUSE_TABLE_HEADER_RE =
   /\bID Owner Asset Transaction Type Date Notification Date Amount Cap\.?\s*Gains\s*>\s*(?:\$?\s*200\??)?/i;
 const HOUSE_TABLE_HEADER_GLOBAL_RE =
   /\b(?:Filing ID\s*#?\d+\s+)?ID Owner Asset Transaction Type Date Notification Date Amount Cap\.?\s*Gains\s*>\s*(?:\$?\s*200\??)?/gi;
-const INLINE_RECORD_RE =
-  /\b(?<owner>SP|DC|JT|SELF)\s+(?<asset>[^$]{1,220}?)\s+(?:(?:\((?<parenTicker>[A-Z][A-Z0-9.\/-]{0,9})\))|(?:NYSE[A-Z]*:\s*(?<exchangeTicker>[A-Z][A-Z0-9.\/-]{0,9})))?\s*\[(?<assetType>[A-Z]{2,3})\]\s+(?<txType>P|S|E|purchase|sale|exchange)(?:\s*\([^)]*\))?\s+(?<txDate>\d{1,2}\/\d{1,2}\/\d{2,4})\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+(?<amount>\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?)/gi;
+const INLINE_RECORD_RE = new RegExp(
+  String.raw`\b(?<owner>SP|DC|JT|SELF)\s+(?<asset>[^$]{1,220}?)\s+(?:(?:\((?<parenTicker>[A-Z][A-Z0-9.\/-]{0,9})\))|(?:NYSE[A-Z]*:\s*(?<exchangeTicker>[A-Z][A-Z0-9.\/-]{0,9})))?\s*\[(?<assetType>${HOUSE_ASSET_TYPE_CODE_PATTERN})\]\s+(?<txType>P|S|E|purchase|sale|exchange)(?:\s*\([^)]*\))?\s+(?<txDate>\d{1,2}\/\d{1,2}\/\d{2,4})\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+(?<amount>\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?)`,
+  'gi',
+);
 
 /**
  * Parse the merged House PTR text into ParsedTx[]. We segment the text into
@@ -231,8 +185,10 @@ function parseInlineRecords(text: string): ParsedTx[] {
 }
 
 function stripInlineDetailSpans(text: string): string {
-  const nextRecord =
-    /\s+[A-Z][A-Za-z0-9&.,'’:/ -]{2,180}\s+(?:(?:\([A-Z][A-Z0-9.\/-]{0,9}\)\s*)|(?:NYSE[A-Z]*:\s*[A-Z][A-Z0-9.\/-]{0,9}\s*)|)\[[A-Z]{2,3}\]\s+(?:P|S|E|purchase|sale|exchange)\b/i;
+  const nextRecord = new RegExp(
+    String.raw`\s+[A-Z][A-Za-z0-9&.,'’:/ -]{2,180}\s+(?:(?:\([A-Z][A-Z0-9.\/-]{0,9}\)\s*)|(?:NYSE[A-Z]*:\s*[A-Z][A-Z0-9.\/-]{0,9}\s*)|)\[(?:${HOUSE_ASSET_TYPE_CODE_PATTERN})\]\s+(?:P|S|E|purchase|sale|exchange)\b`,
+    'i',
+  );
   let out = '';
   let i = 0;
   while (i < text.length) {

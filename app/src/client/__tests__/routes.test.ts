@@ -288,7 +288,14 @@ describe('client API routes', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       items: Array<{
-        asset: { ticker: string | null; companyName: string | null; logoUrl: string | null; sector: string | null };
+        asset: {
+          ticker: string | null;
+          companyName: string | null;
+          logoUrl: string | null;
+          sector: string | null;
+          typeCategory: string;
+          typeCategoryLabel: string;
+        };
       }>;
     };
     expect(body.items[0].asset).toMatchObject({
@@ -296,6 +303,8 @@ describe('client API routes', () => {
       companyName: 'Apple Inc.',
       logoUrl: '/api/logos/ticker?symbol=AAPL',
       sector: 'Technology',
+      typeCategory: 'public_equity',
+      typeCategoryLabel: 'Public Equity',
     });
   });
 
@@ -336,9 +345,23 @@ describe('client API routes', () => {
     const res = await app.request('http://localhost/feed?limit=1', {}, env);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      items: Array<{ asset: { ticker: string | null; companyName: string | null; logoUrl: string | null } }>;
+      items: Array<{
+        asset: {
+          ticker: string | null;
+          companyName: string | null;
+          logoUrl: string | null;
+          typeCategory: string;
+          typeCategoryLabel: string;
+        };
+      }>;
     };
-    expect(body.items[0].asset).toMatchObject({ ticker: null, companyName: null, logoUrl: null });
+    expect(body.items[0].asset).toMatchObject({
+      ticker: null,
+      companyName: null,
+      logoUrl: null,
+      typeCategory: 'fixed_income_government',
+      typeCategoryLabel: 'Government / Municipal Debt',
+    });
   });
 
   it('updates preferences through an authenticated command', async () => {

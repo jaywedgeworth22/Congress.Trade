@@ -60,8 +60,10 @@ shared type set but still return `501`.
   `chamber`, `type`, `from`, `to`, `order`, and `limit`, and returns the
   cursor/count/total metadata used by polling clients.
 - Each feed item's `asset` object carries `name` (the disclosed asset text),
-  `ticker`, `type`, `sector`, and `marketCapBucket`, plus two enrichment fields
-  shared with the web client so every surface renders identically:
+  `ticker`, raw disclosure `type`, `typeName`, canonical cross-chamber
+  `typeCategory` / `typeCategoryLabel`, `sector`, and `marketCapBucket`, plus
+  two enrichment fields shared with the web client so every surface renders
+  identically:
   - `companyName` — the canonical company name from `securities_ref`
     (`null` until the ticker is enriched).
   - `logoUrl` — a same-origin path to the cached logo proxy, e.g.

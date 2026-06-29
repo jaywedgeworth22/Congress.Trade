@@ -6,6 +6,8 @@
  * as the source of truth — downstream agents implement against these shapes.
  */
 
+import type { AssetTypeCategory } from './assetTypes';
+
 // ---------------------------------------------------------------------------
 // Primitive unions / enums
 // ---------------------------------------------------------------------------
@@ -96,6 +98,8 @@ export interface Transaction {
   ticker: string | null;
   assetType: string | null;
   assetTypeName?: string | null;
+  assetTypeCategory?: AssetTypeCategory;
+  assetTypeCategoryLabel?: string;
   txType: TxType;
   amountMin: number | null;
   amountMax: number | null;
@@ -253,7 +257,14 @@ export interface ClientTrade {
     companyName: string | null;
     /** Same-origin cached logo proxy URL for the ticker, or null when no ticker is resolved. */
     logoUrl: string | null;
+    /** Raw disclosure asset type/code as stored in transactions.asset_type. */
     type: string | null;
+    /** Expanded raw type name when available, e.g. House code label. */
+    typeName: string | null;
+    /** Cross-chamber canonical instrument category, computed from raw type/code. */
+    typeCategory: AssetTypeCategory;
+    /** Human label for typeCategory. */
+    typeCategoryLabel: string;
     sector: string | null;
     marketCapBucket: string | null;
   };

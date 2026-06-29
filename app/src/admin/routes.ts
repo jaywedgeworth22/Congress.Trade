@@ -29,6 +29,8 @@
 import { Hono } from 'hono';
 import type { Env, PollConfig, PollWindow, TxType, TxSource } from '../shared/types';
 import { all, get, run, type SqlParam } from '../shared/db';
+import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
+import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
 import { getConfig, setConfig } from '../shared/config';
 import { uuid } from '../shared/ids';
 import { listSubscriptions } from '../delivery/subscriptions';
@@ -61,7 +63,13 @@ import {
   type Provider,
 } from '../extraction/bakeoff';
 import { isBatchProvider, submitBatch, pollBatch, type BatchDoc } from '../extraction/batchExtract';
-import { runEnrichment, getDailyUsed, prepareImportSecurityRef } from '../enrichment/service';
+import {
+  runEnrichment,
+  getDailyUsed,
+  prepareImportSecurityRef,
+  enrichmentNeededSql,
+  hasConfiguredKeyedEnrichmentProvider,
+} from '../enrichment/service';
 import { mergeRefs } from '../enrichment/compute';
 import type { SecurityRef } from '../enrichment/types';
 import { runPriceRefresh } from '../prices/service';
@@ -108,6 +116,14 @@ let warnedClosedAdmin = false;
 
 function isExplicitOpenAdmin(env: EnvWithAdmin): boolean {
   return env.ADMIN_OPEN_IN_DEV === 'true';
+}
+
+function adminActor(c: { req: { header(name: string): string | undefined } }): string {
+  const accessEmail =
+    c.req.header('Cf-Access-Authenticated-User-Email') ||
+    c.req.header('cf-access-authenticated-user-email');
+  if (accessEmail) return accessEmail;
+  return c.req.header('authorization') ? 'admin-token' : 'admin';
 }
 
 /**
@@ -217,6 +233,7 @@ interface ReviewRow {
   source_url: string | null;
   raw_object_key: string | null;
   doc_kind: string | null;
+  chamber?: string | null;
 }
 
 interface DiagnosticConnection {
@@ -312,6 +329,7 @@ interface EditedTx {
   assetName?: string;
   ticker?: string | null;
   assetType?: string | null;
+  assetTypeName?: string | null;
   txType?: TxType;
   amountMin?: number | null;
   amountMax?: number | null;
@@ -319,6 +337,15 @@ interface EditedTx {
   capGainsOver200?: boolean;
   rawText?: string;
   confidence?: number;
+}
+
+function reviewAssetTypeName(e: EditedTx): string | null {
+  const supplied = typeof e.assetTypeName === 'string' ? e.assetTypeName.trim() : '';
+  if (supplied) return supplied;
+  const raw = typeof e.assetType === 'string' ? e.assetType.trim() : '';
+  if (!raw || raw.toLowerCase() === 'unknown') return null;
+  const code = raw.toUpperCase();
+  return HOUSE_ASSET_TYPE_NAMES[code] ?? raw;
 }
 
 // --- Member photo enrichment (name -> bioguide -> unitedstates/images CDN) ---
@@ -567,6 +594,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           f.source_url,
           f.raw_object_key,
           f.doc_kind,
+          f.chamber,
           f.ingest_status,
           (SELECT COUNT(*) FROM transactions t
              WHERE t.doc_id = rq.doc_id AND t.source = 'manual' AND t.deprecated_at IS NULL) AS manual_rows,
@@ -648,10 +676,30 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         sourceUrl: row.source_url ?? '',
         rawObjectKey: row.raw_object_key ?? '',
         docKind: row.doc_kind ?? '',
+        chamber: row.chamber ?? '',
         models: modelsByDoc.get(row.doc_id) ?? [],
       };
     });
     return c.json({ items, count: items.length, resolved: resolved === 1 });
+  });
+
+  // --- GET /ingestion-decisions ------------------------------------------
+  // Append-only filing/trade decision history. Unlike review_queue, this also
+  // includes clean auto-published filings that never needed human review.
+  r.get('/ingestion-decisions', async (c) => {
+    const rawLimit = parseInt(c.req.query('limit') || '100', 10);
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 100;
+    const docId = c.req.query('docId') || null;
+    try {
+      const items = await listIngestionDecisions(c.env.DB, { limit, docId });
+      return c.json({ items, count: items.length, available: true });
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (/no such table|ingestion_decisions/i.test(msg)) {
+        return c.json({ items: [], count: 0, available: false });
+      }
+      return c.json({ error: msg }, 500);
+    }
   });
 
   // --- GET /review/:docId/extractions -------------------------------------
@@ -734,11 +782,24 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
 
     if (decision === 'reject') {
+      const nowIso = new Date().toISOString();
       await run(c.env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [docId]);
       await run(c.env.DB, 'UPDATE filings SET ingest_status = ? WHERE doc_id = ?', [
         'error',
         docId,
       ]);
+      await recordIngestionDecision(c.env.DB, {
+        docId,
+        action: 'rejected',
+        source: 'admin',
+        actor: adminActor(c),
+        reason: review.reason ?? 'rejected',
+        payload: {
+          reviewCreatedAt: review.created_at,
+          reviewPayload: review.payload ? safeJson(review.payload) : null,
+        },
+        createdAt: nowIso,
+      });
       return c.json({ docId, decision: 'reject', resolved: true });
     }
 
@@ -779,6 +840,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const nowIso = new Date().toISOString();
     for (const [rowIndex, e] of edits.entries()) {
       const id = uuid();
+      const assetTypeName = reviewAssetTypeName(e);
       const rowKey = transactionRowKey(source, rowIndex, {
         txDate: e.txDate ?? null,
         owner: e.owner === 'self' || e.owner === 'spouse' || e.owner === 'joint' || e.owner === 'dependent'
@@ -787,6 +849,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         assetName: e.assetName ?? '',
         ticker: e.ticker ?? null,
         assetType: e.assetType ?? null,
+        assetTypeName,
         txType: (e.txType as TxType) ?? 'P',
         amountMin: e.amountMin ?? null,
         amountMax: e.amountMax ?? null,
@@ -800,8 +863,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         `INSERT OR IGNORE INTO transactions (
            id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
            tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
-           raw_text, row_key, confidence, source, created_at, cursor_seq
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+           raw_text, asset_type_name, row_key, confidence, source, created_at, cursor_seq
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
         [
           id,
           docId,
@@ -817,6 +880,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           e.isOption ? 1 : 0,
           e.capGainsOver200 ? 1 : 0,
           e.rawText ?? '',
+          assetTypeName,
           rowKey,
           e.confidence ?? 1,
           source,
@@ -841,6 +905,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         console.error('review confirm: enqueue failed', txId, (err as Error).message);
       }
     }
+
+    await recordIngestionDecision(c.env.DB, {
+      docId,
+      action: decision === 'manual' ? 'manual' : 'confirmed',
+      source: 'admin',
+      actor: adminActor(c),
+      reason: review.reason ?? null,
+      transactionIds: insertedIds,
+      payload: {
+        source,
+        editCount: edits.length,
+        inserted: insertedIds.length,
+        reviewCreatedAt: review.created_at,
+      },
+      createdAt: nowIso,
+    });
 
     return c.json({
       docId,
@@ -898,6 +978,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
        ON CONFLICT(doc_id) DO UPDATE SET resolved = 0, reason = excluded.reason, created_at = excluded.created_at`,
       [docId, 'unpublished: ' + reason, null, nowIso],
     );
+
+    await recordIngestionDecision(c.env.DB, {
+      docId,
+      action: 'unpublished',
+      source: 'admin',
+      actor: adminActor(c),
+      reason,
+      payload: { deprecatedTransactions: deprecated },
+      createdAt: nowIso,
+    });
 
     return c.json({ docId, unpublished: true, deprecatedTransactions: deprecated, reason });
   });
@@ -2368,6 +2458,21 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       // 0018_agreement_attempted.sql — one autonomous agreement attempt per review doc.
       'ALTER TABLE review_queue ADD COLUMN agreement_attempted_at TEXT',
       'CREATE INDEX IF NOT EXISTS idx_review_queue_agreement ON review_queue (agreement_attempted_at)',
+      // 0019_ingestion_decisions.sql — append-only audit trail for publication/review decisions.
+      `CREATE TABLE IF NOT EXISTS ingestion_decisions (
+         id TEXT PRIMARY KEY,
+         doc_id TEXT NOT NULL,
+         action TEXT NOT NULL,
+         source TEXT NOT NULL,
+         actor TEXT,
+         reason TEXT,
+         payload TEXT,
+         transaction_ids TEXT NOT NULL DEFAULT '[]',
+         created_at TEXT NOT NULL
+       )`,
+      'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_doc ON ingestion_decisions (doc_id, created_at DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_created ON ingestion_decisions (created_at DESC)',
+      'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_action ON ingestion_decisions (action, created_at DESC)',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -2417,13 +2522,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // Today's FMP call usage + how many tickers still need enrichment.
   r.get('/enrich-securities/status', async (c) => {
     const used = await getDailyUsed(c.env);
+    const retryIncomplete = hasConfiguredKeyedEnrichmentProvider(c.env);
     const row = await get<{ pending: number }>(
       c.env.DB,
       `SELECT COUNT(*) AS pending FROM (
          SELECT t.ticker FROM transactions t
          LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
          WHERE t.ticker IS NOT NULL AND t.ticker <> ''
-           AND (sr.ticker IS NULL OR sr.enriched_at IS NULL)
+           AND ${enrichmentNeededSql('sr', retryIncomplete)}
          GROUP BY t.ticker)`,
     );
     const enriched = await get<{ n: number }>(
@@ -2431,12 +2537,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'SELECT COUNT(*) AS n FROM securities_ref WHERE enriched_at IS NOT NULL',
     );
     const pending = await marketPending(c.env);
+    const coverage = await marketCoverage(c.env);
     return c.json({
       fmpCallsToday: used,
       pendingTickers: row?.pending ?? 0,
       pricePendingTickers: pending.prices,
       enrichedTickers: enriched?.n ?? 0,
+      coverage,
       hasFmpKey: !!(c.env as Env & { FMP_API_KEY?: string }).FMP_API_KEY,
+      hasKeyedEnrichmentProvider: retryIncomplete,
     });
   });
 
@@ -2881,19 +2990,188 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   return r;
 }
 
+function ratio(n: number, d: number): number | null {
+  if (!d) return null;
+  return Math.round((n / d) * 10_000) / 10_000;
+}
+
+interface MarketCoverage {
+  trades: {
+    total: number;
+    tickered: number;
+    companyName: number;
+    sector: number;
+    country: number;
+    marketCap: number;
+    companyNamePctOfTickered: number | null;
+    sectorPctOfTickered: number | null;
+    countryPctOfTickered: number | null;
+    marketCapPctOfTickered: number | null;
+  };
+  assets: {
+    total: number;
+    companyName: number;
+    sector: number;
+    country: number;
+    marketCap: number;
+    companyNamePct: number | null;
+    sectorPct: number | null;
+    countryPct: number | null;
+    marketCapPct: number | null;
+  };
+  missingSamples: Array<{
+    ticker: string;
+    name: string | null;
+    trades: number;
+    missing: string[];
+    source: string | null;
+    enrichedAt: string | null;
+    enrichmentError: string | null;
+  }>;
+}
+
+async function marketCoverage(env: Env): Promise<MarketCoverage> {
+  const trade = await get<{
+    total: number;
+    tickered: number;
+    company_name: number;
+    sector: number;
+    country: number;
+    market_cap: number;
+  }>(
+    env.DB,
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' THEN 1 ELSE 0 END) AS tickered,
+            SUM(CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' AND sr.company_name IS NOT NULL AND sr.company_name <> '' THEN 1 ELSE 0 END) AS company_name,
+            SUM(CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' AND sr.sector IS NOT NULL AND sr.sector <> '' THEN 1 ELSE 0 END) AS sector,
+            SUM(CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' AND sr.country IS NOT NULL AND sr.country <> '' THEN 1 ELSE 0 END) AS country,
+            SUM(CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' AND (sr.market_cap IS NOT NULL OR (sr.market_cap_bucket IS NOT NULL AND sr.market_cap_bucket <> '')) THEN 1 ELSE 0 END) AS market_cap
+       FROM transactions t
+       LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+      WHERE t.deprecated_at IS NULL`,
+  );
+  const asset = await get<{
+    total: number;
+    company_name: number;
+    sector: number;
+    country: number;
+    market_cap: number;
+  }>(
+    env.DB,
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN company_name IS NOT NULL AND company_name <> '' THEN 1 ELSE 0 END) AS company_name,
+            SUM(CASE WHEN sector IS NOT NULL AND sector <> '' THEN 1 ELSE 0 END) AS sector,
+            SUM(CASE WHEN country IS NOT NULL AND country <> '' THEN 1 ELSE 0 END) AS country,
+            SUM(CASE WHEN market_cap IS NOT NULL OR (market_cap_bucket IS NOT NULL AND market_cap_bucket <> '') THEN 1 ELSE 0 END) AS market_cap
+       FROM (
+         SELECT t.ticker,
+                MAX(sr.company_name) AS company_name,
+                MAX(sr.sector) AS sector,
+                MAX(sr.country) AS country,
+                MAX(sr.market_cap) AS market_cap,
+                MAX(sr.market_cap_bucket) AS market_cap_bucket
+           FROM transactions t
+           LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+          WHERE t.deprecated_at IS NULL AND t.ticker IS NOT NULL AND t.ticker <> ''
+          GROUP BY t.ticker
+       )`,
+  );
+  const samples = await all<{
+    ticker: string;
+    name: string | null;
+    trades: number;
+    company_name: string | null;
+    sector: string | null;
+    country: string | null;
+    market_cap: number | null;
+    market_cap_bucket: string | null;
+    source: string | null;
+    enriched_at: string | null;
+    enrichment_error: string | null;
+  }>(
+    env.DB,
+    `SELECT t.ticker,
+            COALESCE(MAX(sr.company_name), MAX(sm.name), MAX(t.asset_name)) AS name,
+            COUNT(*) AS trades,
+            MAX(sr.company_name) AS company_name,
+            MAX(sr.sector) AS sector,
+            MAX(sr.country) AS country,
+            MAX(sr.market_cap) AS market_cap,
+            MAX(sr.market_cap_bucket) AS market_cap_bucket,
+            MAX(sr.source) AS source,
+            MAX(sr.enriched_at) AS enriched_at,
+            MAX(sr.enrichment_error) AS enrichment_error
+       FROM transactions t
+       LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+       LEFT JOIN securities_master sm ON sm.ticker = t.ticker
+      WHERE t.deprecated_at IS NULL AND t.ticker IS NOT NULL AND t.ticker <> ''
+      GROUP BY t.ticker
+     HAVING company_name IS NULL OR company_name = ''
+         OR sector IS NULL OR sector = ''
+         OR country IS NULL OR country = ''
+         OR (market_cap IS NULL AND (market_cap_bucket IS NULL OR market_cap_bucket = ''))
+      ORDER BY trades DESC
+      LIMIT 20`,
+  );
+  const tickered = trade?.tickered ?? 0;
+  const totalAssets = asset?.total ?? 0;
+  return {
+    trades: {
+      total: trade?.total ?? 0,
+      tickered,
+      companyName: trade?.company_name ?? 0,
+      sector: trade?.sector ?? 0,
+      country: trade?.country ?? 0,
+      marketCap: trade?.market_cap ?? 0,
+      companyNamePctOfTickered: ratio(trade?.company_name ?? 0, tickered),
+      sectorPctOfTickered: ratio(trade?.sector ?? 0, tickered),
+      countryPctOfTickered: ratio(trade?.country ?? 0, tickered),
+      marketCapPctOfTickered: ratio(trade?.market_cap ?? 0, tickered),
+    },
+    assets: {
+      total: totalAssets,
+      companyName: asset?.company_name ?? 0,
+      sector: asset?.sector ?? 0,
+      country: asset?.country ?? 0,
+      marketCap: asset?.market_cap ?? 0,
+      companyNamePct: ratio(asset?.company_name ?? 0, totalAssets),
+      sectorPct: ratio(asset?.sector ?? 0, totalAssets),
+      countryPct: ratio(asset?.country ?? 0, totalAssets),
+      marketCapPct: ratio(asset?.market_cap ?? 0, totalAssets),
+    },
+    missingSamples: samples.map((s) => {
+      const missing: string[] = [];
+      if (!s.company_name) missing.push('companyName');
+      if (!s.sector) missing.push('sector');
+      if (!s.country) missing.push('country');
+      if (s.market_cap == null && !s.market_cap_bucket) missing.push('marketCap');
+      return {
+        ticker: s.ticker,
+        name: s.name,
+        trades: s.trades,
+        missing,
+        source: s.source,
+        enrichedAt: s.enriched_at,
+        enrichmentError: s.enrichment_error,
+      };
+    }),
+  };
+}
+
 /**
- * Count tickers still needing work: `enrich` = traded tickers with no enriched
- * securities_ref row; `prices` = traded (dated) tickers with no cached price_eod.
- * Drives the `done` flag for the backfill-market loop.
+ * Count tickers still needing work: `enrich` = traded tickers with no useful
+ * securities_ref coverage; `prices` = traded (dated) tickers with no cached
+ * price_eod. Drives the `done` flag for the backfill-market loop.
  */
 async function marketPending(env: Env): Promise<{ enrich: number; prices: number }> {
+  const retryIncomplete = hasConfiguredKeyedEnrichmentProvider(env);
   const e = await get<{ n: number }>(
     env.DB,
     `SELECT COUNT(*) AS n FROM (
        SELECT t.ticker FROM transactions t
        LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
        WHERE t.ticker IS NOT NULL AND t.ticker <> ''
-         AND (sr.ticker IS NULL OR sr.enriched_at IS NULL)
+         AND ${enrichmentNeededSql('sr', retryIncomplete)}
        GROUP BY t.ticker)`,
   );
   const p = await get<{ n: number }>(

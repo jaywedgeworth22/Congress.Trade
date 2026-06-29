@@ -234,11 +234,32 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function useModelRows(');
     expect(DASHBOARD_HTML).toContain('function openReviewEditor(');
     expect(DASHBOARD_HTML).toContain('Review / Confirm');
+    expect(DASHBOARD_HTML).toContain('Decision History');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/ingestion-decisions?limit=100'");
+    expect(DASHBOARD_HTML).toContain('function renderDecisionHistory(');
+    expect(DASHBOARD_HTML).toContain('var DECISIONS');
     expect(DASHBOARD_HTML).toContain('Use This Model');
+    expect(DASHBOARD_HTML).toContain('Bake-Off Runs (');
+    expect(DASHBOARD_HTML).toContain('Queued Extracted Rows');
     expect(DASHBOARD_HTML).toContain('Prefilled Rows');
+    expect(DASHBOARD_HTML).toContain('REVIEW_AMOUNT_BRACKETS');
+    expect(DASHBOARD_HTML).toContain('class="me-bracket"');
     expect(DASHBOARD_HTML).toContain('class="me-asset-type"');
+    expect(DASHBOARD_HTML).toContain('HOUSE_REVIEW_ASSET_TYPES');
+    expect(DASHBOARD_HTML).toContain('SENATE_REVIEW_ASSET_TYPES');
+    expect(DASHBOARD_HTML).toContain('function reviewAssetTypeDatalistId(');
+    expect(DASHBOARD_HTML).toContain('function reviewNormalizeAssetTypeValue(');
+    expect(DASHBOARD_HTML).toContain('list="');
+    expect(DASHBOARD_HTML).toContain('5P');
+    expect(DASHBOARD_HTML).toContain('Municipal Security');
+    expect(DASHBOARD_HTML).toContain('Stock Option');
+    expect(DASHBOARD_HTML).toContain('assetTypeName: reviewAssetTypeName(assetType) || null');
+    expect(DASHBOARD_HTML).toContain("tr.setAttribute('data-chamber', chamber || '')");
     expect(DASHBOARD_HTML).toContain('class="me-option"');
+    expect(DASHBOARD_HTML).toContain('Option Contract');
     expect(DASHBOARD_HTML).toContain('class="me-cap"');
+    expect(DASHBOARD_HTML).not.toContain('class="me-min"');
+    expect(DASHBOARD_HTML).not.toContain('class="me-max"');
     expect(DASHBOARD_HTML).toContain('JSON.stringify({ decision: decision, edits: edits })');
     expect(DASHBOARD_HTML).not.toContain('JSON.stringify({ decision: decision, edits: [] })');
   });
@@ -257,6 +278,16 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('id="diagErrors"');
     expect(DASHBOARD_HTML).toContain("fetch('/api/admin/diagnostics'");
     expect(DASHBOARD_HTML).toContain('function loadDiagnostics(');
+  });
+
+  it('surfaces market-data coverage and bounded backfill controls in Admin', () => {
+    expect(DASHBOARD_HTML).toContain('Market Data Coverage');
+    expect(DASHBOARD_HTML).toContain('id="marketCoverage"');
+    expect(DASHBOARD_HTML).toContain('function loadMarketCoverage(');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/enrich-securities/status'");
+    expect(DASHBOARD_HTML).toContain('function runMarketBackfill(');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/backfill-market'");
+    expect(DASHBOARD_HTML).toContain('Missing Asset Samples');
   });
 
   it('keeps the educational + dollar-estimate disclaimers in the Trends view', () => {
@@ -322,8 +353,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("'jr': 'Jr'");
     expect(DASHBOARD_HTML).toContain("CA: 'California'");
     expect(DASHBOARD_HTML).toContain("etf: 'ETF'");
-    expect(DASHBOARD_HTML).toContain("GS: 'Government Securities and Agency Debt'");
-    expect(DASHBOARD_HTML).toContain("ST: 'Stocks (including ADRs)'");
+    expect(DASHBOARD_HTML).toContain("['GS', 'Government Securities and Agency Debt', 'Government / Municipal Debt']");
+    expect(DASHBOARD_HTML).toContain("['ST', 'Stocks (including ADRs)', 'Public Equity']");
     expect(DASHBOARD_HTML).toContain("kvRow('Asset Type', assetTypeDetailHtml(row))");
     expect(DASHBOARD_HTML).not.toContain("kvRow('Instrument', row.isOption ? 'Option' : 'Equity / Other')");
   });

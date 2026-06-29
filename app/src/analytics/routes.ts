@@ -20,6 +20,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../shared/types';
 import { all, get, parseJson } from '../shared/db';
+import { assetTypeCategoryLabel, isAssetTypeCategory } from '../shared/assetTypes';
 import {
   asChamber,
   asPartyBucket,
@@ -94,6 +95,14 @@ function usd(v: unknown): number {
 }
 function str(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
+}
+function assetTypeCategory(v: unknown) {
+  const s = str(v);
+  return isAssetTypeCategory(s) ? s : 'unknown';
+}
+function rawList(v: unknown): string[] {
+  const s = str(v);
+  return s ? s.split(',').map((part) => part.trim()).filter(Boolean) : [];
 }
 /** Split a list into fixed-size batches (to stay under D1's 100-bound-param cap). */
 function chunk<T>(items: T[], size: number): T[][] {
@@ -658,7 +667,9 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const built = buildSectorBreakdownQuery({ ...f, limit });
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const sectors = rows.map((row) => ({
-        assetType: str(row.asset_type) ?? 'Unknown',
+        assetType: assetTypeCategoryLabel(assetTypeCategory(row.asset_type_category)),
+        assetTypeCategory: assetTypeCategory(row.asset_type_category),
+        rawAssetTypes: rawList(row.raw_asset_types),
         tradeCount: num(row.trade_count),
         buyCount: num(row.buy_count),
         sellCount: num(row.sell_count),
