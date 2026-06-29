@@ -85,6 +85,24 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("id: 'imported'");
   });
 
+  it('uses subtle Premium cues without implying the public feed is paywalled', () => {
+    expect(DASHBOARD_HTML).toContain('Premium enrichment');
+    expect(DASHBOARD_HTML).toContain('data-premium-col');
+    expect(DASHBOARD_HTML).toContain('CSV Export Requires Premium');
+    expect(DASHBOARD_HTML).toContain('CSV export is Premium');
+    expect(DASHBOARD_HTML).toContain('Full-history CSV exports');
+    expect(DASHBOARD_HTML).not.toContain('Free view shows the last 30 days');
+    expect(DASHBOARD_HTML).not.toContain('soon) real-time alerts');
+    expect(DASHBOARD_HTML).not.toContain('Go Premium');
+  });
+
+  it('keeps account sign-out discoverable from the account menu', () => {
+    expect(DASHBOARD_HTML).toContain('id="acctMenuBtn"');
+    expect(DASHBOARD_HTML).toContain('<span class="acct-label">Account</span>');
+    expect(DASHBOARD_HTML).toContain('Sign Out');
+    expect(DASHBOARD_HTML).toContain('function logout()');
+  });
+
   it('contains mobile-first feed and navigation hooks', () => {
     expect(DASHBOARD_HTML).toContain('data-mobile="Trades"');
     expect(DASHBOARD_HTML).toContain('id="feedCards"');
@@ -149,8 +167,14 @@ describe('DASHBOARD_HTML', () => {
 
   it('renders plain-English filing notes and clickable drawer entities', () => {
     expect(DASHBOARD_HTML).toContain('function filingNotesHtml(');
+    expect(DASHBOARD_HTML).toContain('function looksLikeRawExtractionPayload(');
+    expect(DASHBOARD_HTML).toContain('function looksLikeRawTransactionLine(');
+    expect(DASHBOARD_HTML).toContain('function isExtractionNoteKey(');
     expect(DASHBOARD_HTML).toContain('Historical source note:');
+    expect(DASHBOARD_HTML).toContain("if (looksLikeRawExtractionPayload(text)) return '';");
+    expect(DASHBOARD_HTML).toContain("if (looksLikeRawTransactionLine(text)) return '';");
     expect(DASHBOARD_HTML).toContain("e.target.closest('[data-member]')");
+    expect(DASHBOARD_HTML).toContain("e.target.closest('[data-txid]')");
     // The company-drawer title is NOT clickable (it would just reopen the same drawer);
     // clickable entities are the member/asset links inside the drawer body instead.
     expect(DASHBOARD_HTML).not.toContain('drawer-title-line clickable');
@@ -162,8 +186,12 @@ describe('DASHBOARD_HTML', () => {
   it('uses published timing, tighter asset defaults, and source links in drawers', () => {
     expect(DASHBOARD_HTML).toContain("var sortKey = 'published'");
     expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v2'");
-    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v6'");
-    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 82, 72, 92)");
+    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v7'");
+    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 54, 48, 62)");
+    expect(DASHBOARD_HTML).toContain('function dateTimeCellHtml(');
+    expect(DASHBOARD_HTML).toContain('date-time-cell');
+    expect(DASHBOARD_HTML).toContain('#feedTable.resizable th { text-align: center;');
+    expect(DASHBOARD_HTML).toContain('minColWidth(key)');
     expect(DASHBOARD_HTML).toContain("p.set('sort', 'published')");
     expect(DASHBOARD_HTML).toContain("p.set('memberName', m)");
     expect(DASHBOARD_HTML).toContain('function handleFeedTextFilter(');
@@ -171,6 +199,9 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("arr.textContent = '↕'");
     expect(DASHBOARD_HTML).toContain('function publishedDetailText(');
     expect(DASHBOARD_HTML).toContain('function miniSourceLinkHtml(');
+    expect(DASHBOARD_HTML).toContain('function analyticsTradeRow(');
+    expect(DASHBOARD_HTML).toContain('TRADE_BY_ID');
+    expect(DASHBOARD_HTML).toContain("e.target.closest('a[href]')");
     expect(DASHBOARD_HTML).toContain('Official Filed');
   });
 
@@ -248,11 +279,13 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function amountTier(');
     expect(DASHBOARD_HTML).toContain('function amountBarsHtml(');
     expect(DASHBOARD_HTML).toContain('function amountCellHtml(');
-    expect(DASHBOARD_HTML).toContain("label: 'Tier I'");
-    expect(DASHBOARD_HTML).toContain("label: 'Tier V'");
+    expect(DASHBOARD_HTML).toContain("label: 'Up to $15k'");
+    expect(DASHBOARD_HTML).toContain("label: 'Over $1M'");
     expect(DASHBOARD_HTML).toContain('class="amount-bars tier-');
     expect(DASHBOARD_HTML).toContain('class="amount-range fc-amt-val"');
     expect(DASHBOARD_HTML).toContain('cell: amountCellHtml');
+    expect(DASHBOARD_HTML).not.toContain("label: 'Tier I'");
+    expect(DASHBOARD_HTML).not.toContain('<span>\' + esc(tier.label)');
   });
 
   it('does not use imported/published time as disclosure lag', () => {
@@ -261,14 +294,38 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('using Congress.Trade import date');
   });
 
+  it('explains disclosure timeliness metrics and keeps slowest filers scrollable', () => {
+    expect(DASHBOARD_HTML).toContain('class="trend-grid2 timeliness-grid"');
+    expect(DASHBOARD_HTML).toContain('id="trLagDist" class="lag-dist"');
+    expect(DASHBOARD_HTML).toContain('class="late-filers-wrap"');
+    expect(DASHBOARD_HTML).toContain('.late-filers-wrap { max-height: 232px; overflow: auto;');
+    expect(DASHBOARD_HTML).toContain('Disclosure lag is days between the transaction date and the official filing date.');
+    expect(DASHBOARD_HTML).toContain('Avg: mean number of days between transaction date and official filing date.');
+    expect(DASHBOARD_HTML).toContain('Max: longest single trade-to-filing delay');
+    expect(DASHBOARD_HTML).toContain('Late: count of this filer\\\'s dated trade rows filed more than 45 days');
+    expect(DASHBOARD_HTML).toContain('lf.slice(0, 50)');
+  });
+
+  it('uses responsive plain-English timeliness KPI labels', () => {
+    expect(DASHBOARD_HTML).toContain("kpiLabel('90<sup>th</sup> Percentile', '90th Pctl', 'P90')");
+    expect(DASHBOARD_HTML).toContain("kpiLabel('&gt;45 Day Lag', '>45d Lag', '>45d')");
+    expect(DASHBOARD_HTML).toContain('#trLagKpis .k-label .k-mid');
+    expect(DASHBOARD_HTML).not.toContain("kpi('90th Pct'");
+    expect(DASHBOARD_HTML).not.toContain("kpi('Filed >45d'");
+  });
+
   it('provides name/chamber/state/class display formatters', () => {
-    for (const fn of ['function fmtName(', 'function chamberLabel(', 'function stateName(', 'function assetClassLabel(', 'function assetTypeLabel(']) {
+    for (const fn of ['function fmtName(', 'function chamberLabel(', 'function stateName(', 'function assetClassLabel(', 'function assetTypeLabel(', 'function assetTypeDetailHtml(']) {
       expect(DASHBOARD_HTML).toContain(fn);
     }
     // suffix + state maps present
     expect(DASHBOARD_HTML).toContain("'jr': 'Jr'");
     expect(DASHBOARD_HTML).toContain("CA: 'California'");
     expect(DASHBOARD_HTML).toContain("etf: 'ETF'");
+    expect(DASHBOARD_HTML).toContain("GS: 'Government Securities and Agency Debt'");
+    expect(DASHBOARD_HTML).toContain("ST: 'Stocks (including ADRs)'");
+    expect(DASHBOARD_HTML).toContain("kvRow('Asset Type', assetTypeDetailHtml(row))");
+    expect(DASHBOARD_HTML).not.toContain("kvRow('Instrument', row.isOption ? 'Option' : 'Equity / Other')");
   });
 
   it('renames Members→Politicians and Tickers→Assets and softens Est.→Approx', () => {
@@ -298,6 +355,8 @@ describe('DASHBOARD_HTML', () => {
 
   it('differentiates the trade drawer from the company drawer', () => {
     expect(DASHBOARD_HTML).toContain('drawer-trade-head');
+    expect(DASHBOARD_HTML).toContain('drawer-trade-identity');
+    expect(DASHBOARD_HTML).toContain('drawer-trade-party');
     expect(DASHBOARD_HTML).toContain('drawer-kicker');
     expect(DASHBOARD_HTML).toContain('drawer-trade-headline');
     // ticker shown but NOT clickable in its own trade context (no data-asset on the in-line)

@@ -99,7 +99,11 @@ async function keyFor(env: Env, provider: Provider): Promise<string | null> {
   if (provider === 'anthropic') return (await resolveSecret(env, 'ANTHROPIC_API_KEY')).value ?? null;
   if (provider === 'mistral') return (await resolveSecret(env, 'MISTRAL_API_KEY')).value ?? null;
   if (provider === 'xai') return (await resolveSecret(env, 'XAI_API_KEY')).value ?? null;
-  if (provider === 'llamaparse') return (await resolveSecret(env, 'LLAMAINDEX_API_KEY')).value ?? null;
+  if (provider === 'llamaparse') {
+    return (await resolveSecret(env, 'LLAMAINDEX_API_KEY')).value
+      ?? (await resolveSecret(env, 'LLAMAPARSE_API_KEY')).value
+      ?? null;
+  }
   return null;
 }
 

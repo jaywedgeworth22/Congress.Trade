@@ -222,7 +222,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // freemium boundary is premium-only *full-history export* (see
     // /export/transactions.csv), not hiding feed rows or public analytics.
     // (Earlier this gated the
-    // feed to the last 30 days for logged-out visitors, which emptied the page
+    // feed to a short recent window for logged-out visitors, which emptied the page
     // on datasets without recent filings.)
     const params: TxQueryParams = {
       since: parseIntOrUndef(q.since),
@@ -281,7 +281,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // hint so the UI can route them to checkout.
   r.get('/export/transactions.csv', async (c) => {
     if (!isPremiumUser(await getCurrentUser(c))) {
-      return c.json({ error: 'premium subscription required', upgradeRequired: true }, 402);
+      return c.json({ error: 'CSV export requires Premium', upgradeRequired: true, feature: 'exportCsv' }, 402);
     }
     const built = buildTransactionsExportQuery(filtersFromQuery(c.req.query()));
     const rows = await all<

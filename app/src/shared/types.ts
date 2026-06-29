@@ -467,7 +467,15 @@ export interface Env {
   APP_B_INGEST_TOKEN?: string;
   /** Admin + scoped import bearer tokens. */
   ADMIN_TOKEN?: string;
+  /** Admin email allowlist for site-session admin access and Cloudflare Access. */
+  ADMIN_EMAILS?: string;
+  /** Cloudflare Access team name/hostname for admin API JWT verification. */
+  ACCESS_TEAM_DOMAIN?: string;
+  /** Cloudflare Access application AUD tag for admin API JWT verification. */
+  ACCESS_AUD?: string;
   INGEST_TOKEN?: string;
+  /** LlamaParse legacy key name; LLAMAINDEX_API_KEY remains the runtime key used by extraction. */
+  LLAMAPARSE_API_KEY?: string;
 
   // --- Billing (Stripe) ---
   /** Stripe secret key (`sk_…`) for the REST API. Presence enables billing. */

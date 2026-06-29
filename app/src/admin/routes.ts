@@ -47,9 +47,11 @@ import {
 import { mapFiling, type FilingRow } from '../delivery/rows';
 import { processAgreementDoc, type AgreementModels } from '../extraction/agreement';
 import type { Chamber } from '../shared/types';
-import { verifyAccessJwt, certsUrl, parseEmailAllowlist } from './access';
+import { verifyAccessJwt, certsUrl } from './access';
+import { adminRuntimeConfig } from './identity';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
 import { constantTimeEqual } from '../auth/tokens';
+import { getCurrentUser } from '../auth/session';
 import {
   DEFAULT_CANDIDATES,
   runCandidateOnDoc,
@@ -85,6 +87,8 @@ type EnvWithAdmin = Env & {
   INGEST_TOKEN?: string;
 };
 
+const LATENCY_RESET_KEY = 'admin:source_health:latency_reset_at';
+
 /** True when the request is a bearer-authenticated call to the import endpoint. */
 async function isAuthorizedIngest(
   env: EnvWithAdmin,
@@ -112,16 +116,18 @@ function isExplicitOpenAdmin(env: EnvWithAdmin): boolean {
  */
 async function isAuthorized(
   env: EnvWithAdmin,
-  headers: { authorization?: string; accessJwt?: string },
+  headers: { authorization?: string; accessJwt?: string; sessionEmail?: string },
 ): Promise<boolean> {
   const token = (await resolveSecret(env, 'ADMIN_TOKEN')).value;
-  const allow = parseEmailAllowlist(env.ADMIN_EMAILS);
-  const aud = env.ACCESS_AUD;
-  const teamDomain = env.ACCESS_TEAM_DOMAIN;
+  const adminConfig = await adminRuntimeConfig(env);
+  const allow = adminConfig.allow;
+  const aud = adminConfig.accessAud;
+  const teamDomain = adminConfig.accessTeamDomain;
   const tokenConfigured = !!token;
   const accessConfigured = !!(aud && teamDomain && allow.size > 0);
+  const sessionConfigured = allow.size > 0;
 
-  if (!tokenConfigured && !accessConfigured) {
+  if (!tokenConfigured && !accessConfigured && !sessionConfigured) {
     if (isExplicitOpenAdmin(env)) {
       if (!warnedOpenAdmin) {
         warnedOpenAdmin = true;
@@ -152,7 +158,14 @@ async function isAuthorized(
     return true;
   }
 
-  // 2) Cloudflare Access identity (humans). Verify signature + aud + allowlist.
+  // 2) First-party Google session identity (browser). The session itself is an
+  // opaque KV token; admin authorization is the ADMIN_EMAILS allowlist.
+  const sessionEmail = headers.sessionEmail?.trim().toLowerCase();
+  if (sessionConfigured && sessionEmail && allow.has(sessionEmail)) {
+    return true;
+  }
+
+  // 3) Cloudflare Access identity (humans). Verify signature + aud + allowlist.
   if (accessConfigured && headers.accessJwt) {
     const res = await verifyAccessJwt(headers.accessJwt, {
       aud: aud as string,
@@ -227,6 +240,22 @@ interface DiagnosticError {
   message: string;
 }
 
+interface DiagnosticUserStats {
+  totalUsers: number;
+  subscribedUsers: number;
+  deliverySubscriptions: number;
+  activeDeliverySubscriptions: number;
+  adminUsers: number;
+  loginsLast24h: number;
+  recentLogins: Array<{
+    email: string;
+    name: string | null;
+    lastLoginAt: string | null;
+    plan: string | null;
+    subscriptionStatus: string | null;
+  }>;
+}
+
 function dayStartIso(now = new Date()): string {
   return `${now.toISOString().slice(0, 10)}T00:00:00.000Z`;
 }
@@ -254,6 +283,26 @@ function connectionStatus(
   if (errorsLast24h > 0) return 'error';
   if (!lastUsedAt) return 'unknown';
   return 'ok';
+}
+
+function maxIso(...values: Array<string | null | undefined>): string | null {
+  let best: string | null = null;
+  let bestMs = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    if (!value) continue;
+    const ms = Date.parse(value);
+    if (Number.isFinite(ms) && ms > bestMs) {
+      best = value;
+      bestMs = ms;
+    }
+  }
+  return best;
+}
+
+function titleCaseSource(source: string): string {
+  if (source.toLowerCase() === 'house') return 'House';
+  if (source.toLowerCase() === 'senate') return 'Senate';
+  return source ? `${source[0].toUpperCase()}${source.slice(1)}` : 'Source';
 }
 
 interface EditedTx {
@@ -436,9 +485,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const env = c.env as EnvWithAdmin;
     const authorization = c.req.header('Authorization');
     if (await isAuthorizedIngest(env, c.req.path, authorization)) return next();
+    let sessionEmail: string | undefined;
+    if (!authorization) {
+      try {
+        sessionEmail = (await getCurrentUser(c))?.email ?? undefined;
+      } catch {
+        sessionEmail = undefined;
+      }
+    }
     const ok = await isAuthorized(env, {
       authorization,
       accessJwt: c.req.header('Cf-Access-Jwt-Assertion'),
+      sessionEmail,
     });
     if (!ok) return c.json({ error: 'unauthorized' }, 401);
     await next();
@@ -848,6 +906,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // Recent ingest_log aggregates per source: last poll, last new filing, and the
   // observed average interval between polls (seconds).
   r.get('/sources/health', async (c) => {
+    const latencyResetAt = await getLatencyResetAt(c.env);
     const rows = await all<{
       source: string;
       last_polled_at: string | null;
@@ -874,11 +933,20 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         pollCount: row.poll_count,
         totalNew: row.total_new,
         avgIntervalSec: await observedAvgInterval(c.env, row.source),
-        avgReleasedToSeenSec: await observedReleasedToSeenLag(c.env, row.source),
-        avgSeenToImportedSec: await observedSeenToImportedLag(c.env, row.source),
+        avgReleasedToSeenSec: await observedReleasedToSeenLag(c.env, row.source, latencyResetAt),
+        avgSeenToImportedSec: await observedSeenToImportedLag(c.env, row.source, latencyResetAt),
       });
     }
-    return c.json({ sources, count: sources.length });
+    return c.json({ sources, count: sources.length, latencyResetAt });
+  });
+
+  // --- POST /sources/health/latency-reset ---------------------------------
+  // Reset only the observed latency baseline. Historical rows stay untouched;
+  // future Source Health averages ignore rows first seen before this timestamp.
+  r.post('/sources/health/latency-reset', async (c) => {
+    const latencyResetAt = new Date().toISOString();
+    await setLatencyResetAt(c.env, latencyResetAt);
+    return c.json({ ok: true, latencyResetAt });
   });
 
   // --- GET /diagnostics ---------------------------------------------------
@@ -891,8 +959,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const today = dayStartIso(now);
     const runtimeSecrets = await resolveSecrets(c.env, [
       'GEMINI_API_KEY',
+      'ANTHROPIC_API_KEY',
+      'OPENAI_API_KEY',
+      'MISTRAL_API_KEY',
+      'XAI_API_KEY',
+      'LLAMAINDEX_API_KEY',
+      'LLAMAPARSE_API_KEY',
+      'ARBITRATION_API_KEY',
       'FMP_API_KEY',
       'MASSIVE_API_KEY',
+      'INTRINIO_API_KEY',
+      'TWELVEDATA_API_KEY',
+      'FINNHUB_API_KEY',
+      'LOGODEV_PUBLISHABLE_KEY',
+      'APP_B_IMPORT_URL',
+      'APP_B_INGEST_TOKEN',
+      'INGEST_TOKEN',
       'WEBHOOK_SIGNING_KEY',
       'GOOGLE_OAUTH_CLIENT_ID',
       'RESEND_API_KEY',
@@ -900,6 +982,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'STRIPE_SECRET_KEY',
     ]);
     const secretStatus = getSecretResolverStatus(c.env);
+    const adminConfig = await adminRuntimeConfig(c.env);
 
     const connections: DiagnosticConnection[] = [];
     const infisicalFailures = secretStatus.sources.filter((s) => s.configured && !s.ok).length;
@@ -938,7 +1021,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     for (const row of sourceRows) {
       connections.push({
         id: `source:${row.source}`,
-        label: `${row.source[0]?.toUpperCase() ?? ''}${row.source.slice(1)} Source`,
+        label: `${titleCaseSource(row.source)} Source`,
         status: connectionStatus(true, 0, row.last_used_at),
         configured: true,
         lastUsedAt: row.last_used_at,
@@ -946,9 +1029,30 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         callsLast24h: row.calls_last_24h,
         callsToday: row.calls_today,
         errorsLast24h: 0,
-        note: 'Polls recorded by ingest_log',
+        note: 'Source checks recorded by ingest_log',
       });
     }
+
+    const extractionRows = await optionalAll<{
+      provider: string;
+      calls_total: number;
+      calls_last_24h: number;
+      calls_today: number;
+      last_used_at: string | null;
+      errors_last_24h: number;
+    }>(
+      c.env,
+      `SELECT provider,
+              COUNT(*) AS calls_total,
+              SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
+              SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS calls_today,
+              MAX(created_at) AS last_used_at,
+              SUM(CASE WHEN ok = 0 AND created_at >= ? THEN 1 ELSE 0 END) AS errors_last_24h
+         FROM extraction_runs
+        GROUP BY provider`,
+      [last24, today, last24],
+    );
+    const extractionByProvider = new Map(extractionRows.map((row) => [row.provider.toLowerCase(), row]));
 
     const gemini = await get<{
       calls_total: number;
@@ -970,17 +1074,88 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
            OR error LIKE '%visionLlm%'`,
       [last24, today, last24],
     );
+    const geminiExtract = extractionByProvider.get('gemini');
+    const geminiLastUsed = maxIso(gemini?.last_used_at ?? null, geminiExtract?.last_used_at ?? null);
+    const geminiErrors = (gemini?.errors_last_24h ?? 0) + (geminiExtract?.errors_last_24h ?? 0);
     connections.push({
       id: 'provider:gemini',
       label: 'Gemini OCR',
-      status: connectionStatus(!!runtimeSecrets.GEMINI_API_KEY, gemini?.errors_last_24h ?? 0, gemini?.last_used_at ?? null),
+      status: connectionStatus(!!runtimeSecrets.GEMINI_API_KEY, geminiErrors, geminiLastUsed),
       configured: !!runtimeSecrets.GEMINI_API_KEY,
-      lastUsedAt: gemini?.last_used_at ?? null,
-      callsTotal: gemini?.calls_total ?? 0,
-      callsLast24h: gemini?.calls_last_24h ?? 0,
-      callsToday: gemini?.calls_today ?? 0,
-      errorsLast24h: gemini?.errors_last_24h ?? 0,
-      note: runtimeSecrets.GEMINI_API_KEY ? 'Scanned House PDFs only' : 'GEMINI_API_KEY is not available to this Worker runtime',
+      lastUsedAt: geminiLastUsed,
+      callsTotal: (gemini?.calls_total ?? 0) + (geminiExtract?.calls_total ?? 0),
+      callsLast24h: (gemini?.calls_last_24h ?? 0) + (geminiExtract?.calls_last_24h ?? 0),
+      callsToday: (gemini?.calls_today ?? 0) + (geminiExtract?.calls_today ?? 0),
+      errorsLast24h: geminiErrors,
+      note: runtimeSecrets.GEMINI_API_KEY ? 'Production OCR + bake-off extraction runs' : 'GEMINI_API_KEY is not available to this Worker runtime',
+    });
+
+    const modelProviders: Array<{ id: string; provider: string; label: string; configured: boolean; note: string }> = [
+      {
+        id: 'provider:openai',
+        provider: 'openai',
+        label: 'OpenAI OCR',
+        configured: !!runtimeSecrets.OPENAI_API_KEY,
+        note: runtimeSecrets.OPENAI_API_KEY ? 'Bake-off / review extraction candidate' : 'OPENAI_API_KEY is not available to this Worker runtime',
+      },
+      {
+        id: 'provider:anthropic',
+        provider: 'anthropic',
+        label: 'Anthropic OCR',
+        configured: !!runtimeSecrets.ANTHROPIC_API_KEY,
+        note: runtimeSecrets.ANTHROPIC_API_KEY ? 'Bake-off / review extraction candidate' : 'ANTHROPIC_API_KEY is not available to this Worker runtime',
+      },
+      {
+        id: 'provider:mistral',
+        provider: 'mistral',
+        label: 'Mistral OCR',
+        configured: !!runtimeSecrets.MISTRAL_API_KEY,
+        note: runtimeSecrets.MISTRAL_API_KEY ? 'Bake-off / batch OCR candidate' : 'MISTRAL_API_KEY is not available to this Worker runtime',
+      },
+      {
+        id: 'provider:xai',
+        provider: 'xai',
+        label: 'xAI OCR',
+        configured: !!runtimeSecrets.XAI_API_KEY,
+        note: runtimeSecrets.XAI_API_KEY ? 'Bake-off / batch OCR candidate' : 'XAI_API_KEY is not available to this Worker runtime',
+      },
+      {
+        id: 'provider:llamaparse',
+        provider: 'llamaparse',
+        label: 'LlamaParse OCR',
+        configured: !!(runtimeSecrets.LLAMAINDEX_API_KEY || runtimeSecrets.LLAMAPARSE_API_KEY),
+        note: runtimeSecrets.LLAMAINDEX_API_KEY || runtimeSecrets.LLAMAPARSE_API_KEY
+          ? 'LlamaIndex Cloud parser candidate'
+          : 'LLAMAINDEX_API_KEY/LLAMAPARSE_API_KEY is not available to this Worker runtime',
+      },
+    ];
+    for (const provider of modelProviders) {
+      const row = extractionByProvider.get(provider.provider);
+      connections.push({
+        id: provider.id,
+        label: provider.label,
+        status: connectionStatus(provider.configured, row?.errors_last_24h ?? 0, row?.last_used_at ?? null),
+        configured: provider.configured,
+        lastUsedAt: row?.last_used_at ?? null,
+        callsTotal: row?.calls_total ?? 0,
+        callsLast24h: row?.calls_last_24h ?? 0,
+        callsToday: row?.calls_today ?? 0,
+        errorsLast24h: row?.errors_last_24h ?? 0,
+        note: provider.note,
+      });
+    }
+
+    connections.push({
+      id: 'provider:arbitration',
+      label: 'Arbitration Model',
+      status: runtimeSecrets.ARBITRATION_API_KEY ? 'ok' : 'warn',
+      configured: !!runtimeSecrets.ARBITRATION_API_KEY,
+      lastUsedAt: null,
+      callsTotal: 0,
+      callsLast24h: 0,
+      callsToday: 0,
+      errorsLast24h: 0,
+      note: runtimeSecrets.ARBITRATION_API_KEY ? 'Secondary arbitration key available' : 'ARBITRATION_API_KEY is not available to this Worker runtime',
     });
 
     const fmp = await optionalAll<{
@@ -1011,6 +1186,115 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       callsToday: fmpRow?.calls_today ?? 0,
       errorsLast24h: fmpRow?.errors_last_24h ?? 0,
       note: runtimeSecrets.FMP_API_KEY ? 'Enrichment rows refreshed' : 'FMP_API_KEY is not available to this Worker runtime',
+    });
+
+    const priceRows = await optionalAll<{
+      calls_total: number;
+      last_price_date: string | null;
+    }>(
+      c.env,
+      `SELECT COUNT(*) AS calls_total, MAX(date) AS last_price_date FROM price_eod`,
+    );
+    const priceRow = priceRows[0];
+    const marketProviders: Array<{ id: string; label: string; configured: boolean; note: string }> = [
+      {
+        id: 'provider:massive',
+        label: 'Massive Market Data',
+        configured: !!runtimeSecrets.MASSIVE_API_KEY,
+        note: runtimeSecrets.MASSIVE_API_KEY ? 'Configured as price/enrichment fallback' : 'MASSIVE_API_KEY is not available to this Worker runtime',
+      },
+      {
+        id: 'provider:intrinio',
+        label: 'Intrinio Enrichment',
+        configured: !!runtimeSecrets.INTRINIO_API_KEY,
+        note: runtimeSecrets.INTRINIO_API_KEY ? 'Configured as enrichment fallback' : 'INTRINIO_API_KEY is not available to this Worker runtime',
+      },
+      {
+        id: 'provider:twelvedata',
+        label: 'TwelveData Enrichment',
+        configured: !!runtimeSecrets.TWELVEDATA_API_KEY,
+        note: runtimeSecrets.TWELVEDATA_API_KEY ? 'Configured as enrichment fallback' : 'TWELVEDATA_API_KEY is not available to this Worker runtime',
+      },
+      {
+        id: 'provider:finnhub',
+        label: 'Finnhub Enrichment',
+        configured: !!runtimeSecrets.FINNHUB_API_KEY,
+        note: runtimeSecrets.FINNHUB_API_KEY ? 'Configured as enrichment fallback' : 'FINNHUB_API_KEY is not available to this Worker runtime',
+      },
+      {
+        id: 'provider:logodev',
+        label: 'Logo.dev',
+        configured: !!runtimeSecrets.LOGODEV_PUBLISHABLE_KEY,
+        note: runtimeSecrets.LOGODEV_PUBLISHABLE_KEY ? 'Ticker logo proxy token available' : 'LOGODEV_PUBLISHABLE_KEY is not available to this Worker runtime',
+      },
+    ];
+    for (const provider of marketProviders) {
+      connections.push({
+        id: provider.id,
+        label: provider.label,
+        status: provider.configured ? 'ok' : 'warn',
+        configured: provider.configured,
+        lastUsedAt: null,
+        callsTotal: provider.id === 'provider:massive' ? priceRow?.calls_total ?? 0 : 0,
+        callsLast24h: 0,
+        callsToday: 0,
+        errorsLast24h: 0,
+        note: provider.id === 'provider:massive' && priceRow?.last_price_date
+          ? `${provider.note}; latest cached price date ${priceRow.last_price_date}`
+          : provider.note,
+      });
+    }
+
+    const appBReceivedRows = await optionalAll<{
+      imported_refs: number;
+      fundamentals_rows: number;
+      analyst_rows: number;
+      latest_import_at: string | null;
+    }>(
+      c.env,
+      `SELECT
+         (SELECT COUNT(*) FROM securities_ref WHERE source = 'imported') AS imported_refs,
+         (SELECT COUNT(*) FROM fundamentals_eod WHERE source = 'imported') AS fundamentals_rows,
+         (SELECT COUNT(*) FROM analyst_consensus WHERE source = 'imported') AS analyst_rows,
+         (SELECT MAX(updated_at)
+            FROM (
+              SELECT updated_at FROM fundamentals_eod WHERE source = 'imported'
+              UNION ALL
+              SELECT updated_at FROM analyst_consensus WHERE source = 'imported'
+            )) AS latest_import_at`,
+    );
+    const appBReceived = appBReceivedRows[0];
+    const appBReceivedTotal =
+      (appBReceived?.imported_refs ?? 0) + (appBReceived?.fundamentals_rows ?? 0) + (appBReceived?.analyst_rows ?? 0);
+    connections.push({
+      id: 'app-b:receive',
+      label: 'App B → Congress.Trade Import',
+      status: connectionStatus(!!runtimeSecrets.INGEST_TOKEN, 0, appBReceived?.latest_import_at ?? null),
+      configured: !!runtimeSecrets.INGEST_TOKEN,
+      lastUsedAt: appBReceived?.latest_import_at ?? null,
+      callsTotal: appBReceivedTotal,
+      callsLast24h: 0,
+      callsToday: 0,
+      errorsLast24h: 0,
+      note: runtimeSecrets.INGEST_TOKEN
+        ? 'Scoped import token configured; activity inferred from imported market-data rows'
+        : 'INGEST_TOKEN is not available to receive App B imports',
+    });
+
+    const appBPushConfigured = !!(runtimeSecrets.APP_B_IMPORT_URL && runtimeSecrets.APP_B_INGEST_TOKEN);
+    connections.push({
+      id: 'app-b:send',
+      label: 'Congress.Trade → App B Push',
+      status: appBPushConfigured ? 'ok' : 'warn',
+      configured: appBPushConfigured,
+      lastUsedAt: null,
+      callsTotal: 0,
+      callsLast24h: 0,
+      callsToday: 0,
+      errorsLast24h: 0,
+      note: appBPushConfigured
+        ? 'Outbound shared-data push is configured; no send audit table exists yet'
+        : 'APP_B_IMPORT_URL/APP_B_INGEST_TOKEN is missing or incomplete',
     });
 
     const webhooks = await optionalAll<{
@@ -1219,11 +1503,65 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       });
     }
 
+    const userRows = await optionalAll<{
+      total_users: number;
+      subscribed_users: number;
+      logins_last_24h: number;
+    }>(
+      c.env,
+      `SELECT COUNT(*) AS total_users,
+              SUM(CASE WHEN subscription_status IN ('active', 'trialing') THEN 1 ELSE 0 END) AS subscribed_users,
+              SUM(CASE WHEN last_login_at >= ? THEN 1 ELSE 0 END) AS logins_last_24h
+         FROM users`,
+      [last24],
+    );
+    const deliverySubRows = await optionalAll<{
+      total: number;
+      active: number;
+    }>(
+      c.env,
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END) AS active
+         FROM subscriptions`,
+    );
+    const recentLogins = await optionalAll<{
+      email: string;
+      name: string | null;
+      last_login_at: string | null;
+      plan: string | null;
+      subscription_status: string | null;
+    }>(
+      c.env,
+      `SELECT email, name, last_login_at, plan, subscription_status
+         FROM users
+        WHERE last_login_at IS NOT NULL
+        ORDER BY last_login_at DESC
+        LIMIT 10`,
+    );
+    const userRow = userRows[0];
+    const deliverySubRow = deliverySubRows[0];
+    const userStats: DiagnosticUserStats = {
+      totalUsers: userRow?.total_users ?? 0,
+      subscribedUsers: userRow?.subscribed_users ?? 0,
+      deliverySubscriptions: deliverySubRow?.total ?? 0,
+      activeDeliverySubscriptions: deliverySubRow?.active ?? 0,
+      adminUsers: adminConfig.allow.size,
+      loginsLast24h: userRow?.logins_last_24h ?? 0,
+      recentLogins: recentLogins.map((row) => ({
+        email: row.email,
+        name: row.name,
+        lastLoginAt: row.last_login_at,
+        plan: row.plan,
+        subscriptionStatus: row.subscription_status,
+      })),
+    };
+
     errors.sort((a, b) => Date.parse(b.at ?? '') - Date.parse(a.at ?? ''));
     return c.json({
       generatedAt: now.toISOString(),
       connections,
       secrets: secretStatus,
+      userStats,
       errors: errors.slice(0, 75),
       errorCount: errors.length,
     });
@@ -2570,6 +2908,19 @@ async function marketPending(env: Env): Promise<{ enrich: number; prices: number
   return { enrich: e?.n ?? 0, prices: p?.n ?? 0 };
 }
 
+async function getLatencyResetAt(env: Env): Promise<string | null> {
+  try {
+    const raw = await env.CONFIG_KV.get(LATENCY_RESET_KEY);
+    return raw && Number.isFinite(Date.parse(raw)) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+async function setLatencyResetAt(env: Env, value: string): Promise<void> {
+  await env.CONFIG_KV.put(LATENCY_RESET_KEY, value);
+}
+
 /** Observed average seconds between the most recent polls for a source. */
 async function observedAvgInterval(env: Env, source: string): Promise<number | null> {
   const rows = await all<{ polled_at: string }>(
@@ -2599,7 +2950,7 @@ async function observedAvgInterval(env: Env, source: string): Promise<number | n
  * release time), so this is APPROXIMATE; we average only non-negative diffs over
  * recent filings. Returns null when there isn't enough dated data.
  */
-async function observedReleasedToSeenLag(env: Env, source: string): Promise<number | null> {
+async function observedReleasedToSeenLag(env: Env, source: string, sinceIso: string | null): Promise<number | null> {
   const row = await get<{ avg_sec: number | null }>(
     env.DB,
     `SELECT AVG((julianday(first_seen_at) - julianday(filed_date)) * 86400.0) AS avg_sec
@@ -2610,10 +2961,11 @@ async function observedReleasedToSeenLag(env: Env, source: string): Promise<numb
             AND filed_date IS NOT NULL
             AND first_seen_at IS NOT NULL
             AND julianday(first_seen_at) >= julianday(filed_date)
+            AND (? IS NULL OR first_seen_at >= ?)
           ORDER BY first_seen_at DESC
           LIMIT 200
        )`,
-    [source],
+    [source, sinceIso, sinceIso],
   );
   return row && row.avg_sec != null ? Math.round(row.avg_sec) : null;
 }
@@ -2624,7 +2976,7 @@ async function observedReleasedToSeenLag(env: Env, source: string): Promise<numb
  * (transactions.created_at), per chamber. Both are our own timestamps, so this
  * is PRECISE. Only live-pipeline rows (source='primary') are meaningful.
  */
-async function observedSeenToImportedLag(env: Env, source: string): Promise<number | null> {
+async function observedSeenToImportedLag(env: Env, source: string, sinceIso: string | null): Promise<number | null> {
   const row = await get<{ avg_sec: number | null }>(
     env.DB,
     `SELECT AVG((julianday(t.created_at) - julianday(f.first_seen_at)) * 86400.0) AS avg_sec
@@ -2634,8 +2986,9 @@ async function observedSeenToImportedLag(env: Env, source: string): Promise<numb
         AND t.source = 'primary'
         AND f.first_seen_at IS NOT NULL
         AND t.created_at IS NOT NULL
-        AND julianday(t.created_at) >= julianday(f.first_seen_at)`,
-    [source],
+        AND julianday(t.created_at) >= julianday(f.first_seen_at)
+        AND (? IS NULL OR f.first_seen_at >= ?)`,
+    [source, sinceIso, sinceIso],
   );
   return row && row.avg_sec != null ? Math.round(row.avg_sec) : null;
 }

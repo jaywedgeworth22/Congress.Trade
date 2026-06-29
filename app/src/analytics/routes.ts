@@ -917,10 +917,16 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         recentTrades: recentRows.map((row) => ({
           id: str(row.id),
           docId: str(row.doc_id),
+          ticker: str(row.ticker),
+          assetName: str(row.asset_name),
+          assetType: str(row.asset_type),
+          assetTypeName: str(row.asset_type_name),
           txDate: str(row.tx_date),
           txType: str(row.tx_type),
           owner: str(row.owner),
           isOption: num(row.is_option) === 1,
+          amountMin: row.amount_min == null ? null : num(row.amount_min),
+          amountMax: row.amount_max == null ? null : num(row.amount_max),
           estValueUsd: Math.round(
             bracketMidpoint(
               row.amount_min == null ? null : num(row.amount_min),
@@ -935,6 +941,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           firstSeenAt: str(row.first_seen_at),
           sourceUrl: str(row.source_url),
           createdAt: str(row.created_at),
+          source: str(row.source),
+          rawText: str(row.raw_text),
         })),
       });
     });
@@ -1073,6 +1081,12 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           sourceUrl: str(row.source_url),
           owner: str(row.owner),
           isOption: num(row.is_option) === 1,
+          assetType: str(row.asset_type),
+          assetTypeName: str(row.asset_type_name),
+          amountMin: row.amount_min == null ? null : num(row.amount_min),
+          amountMax: row.amount_max == null ? null : num(row.amount_max),
+          source: str(row.source),
+          rawText: str(row.raw_text),
           estValueUsd: Math.round(
             bracketMidpoint(
               row.amount_min == null ? null : num(row.amount_min),

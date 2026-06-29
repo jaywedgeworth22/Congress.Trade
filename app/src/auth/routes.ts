@@ -32,6 +32,7 @@ import { sendEmail } from './email';
 import { constantTimeEqual, randomToken } from './tokens';
 import { entitlementOf } from '../billing/entitlement';
 import { resolveSecret } from '../secrets/infisical';
+import { isAdminSessionEmail } from '../admin/identity';
 
 const OAUTH_STATE_COOKIE = 'ct_oauth_state';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -55,7 +56,12 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   // One bootstrap call for the client: identity + derived access level.
   r.get('/me', async (c) => {
     const user = await getCurrentUser(c);
-    return c.json({ user: user ? publicUser(user) : null, entitlement: entitlementOf(user) });
+    const adminAllowed = user ? await isAdminSessionEmail(c.env, user.email) : false;
+    return c.json({
+      user: user ? publicUser(user) : null,
+      entitlement: entitlementOf(user),
+      admin: { allowed: adminAllowed },
+    });
   });
 
   // --- POST /auth/logout --------------------------------------------------

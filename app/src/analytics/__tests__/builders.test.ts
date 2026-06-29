@@ -273,6 +273,7 @@ describe('filing-lag builders', () => {
     expect(q.sql).toContain('HAVING trade_count >= 3');
     expect(q.sql).toContain('ORDER BY avg_lag_days DESC');
     expect(q.sql).toContain('AS late_count');
+    expect(q.sql).toContain('LIMIT 50');
   });
 });
 
@@ -305,6 +306,9 @@ describe('member deep-dive builders', () => {
   it('recent trades order by date desc, carry the source link, clamp limit', () => {
     const q = buildMemberRecentTradesQuery('P000197', { window: 'all', limit: 999 });
     expect(q.sql).toContain('f.source_url AS source_url');
+    expect(q.sql).toContain('t.asset_type AS asset_type');
+    expect(q.sql).toContain('t.asset_type_name AS asset_type_name');
+    expect(q.sql).toContain('t.raw_text AS raw_text');
     expect(q.sql).toContain('ORDER BY t.tx_date DESC, t.cursor_seq DESC');
     expect(q.sql).toContain('LIMIT 100');
     expect(q.params).toEqual(['P000197']);
@@ -331,6 +335,10 @@ describe('ticker deep-dive builders', () => {
     const q = buildTickerRecentTradesQuery('AAPL', { window: 'all', limit: 999 });
     expect(q.sql).toContain('t.id AS id');
     expect(q.sql).toContain('t.doc_id AS doc_id');
+    expect(q.sql).toContain('t.asset_name AS asset_name');
+    expect(q.sql).toContain('t.asset_type AS asset_type');
+    expect(q.sql).toContain('t.asset_type_name AS asset_type_name');
+    expect(q.sql).toContain('t.raw_text AS raw_text');
     expect(q.sql).toContain('t.filer_id AS filer_id');
     expect(q.sql).toContain('f.filed_date AS filed_date');
     expect(q.sql).toContain('f.source_url AS source_url');
