@@ -17,8 +17,9 @@ webhook, and SSE workflows.
 | `congress-trade-feed-design.md` | Historical design context and product rationale. |
 | `congress_trade_watch.py` | Standalone local House PTR watcher prototype. It is not the production ingest path. |
 | `dashboard-design.html` | Historical/static UI design artifact. Current UI lives in `app/src/ui/`. |
-| `AGENTS.md` | Collaboration rules for Codex, Claude, and other agents. |
+| `AGENTS.md` | Collaboration rules for Codex, Claude, Cursor, Copilot, Antigravity, and other agents. |
 | `CLAUDE.md` | Claude entrypoint that points to the same rules. |
+| `.cursor/rules/congress-trade.mdc` | Cursor project rule that points to the same rules. |
 | `STATUS.md` | Current integration snapshot and handoff checklist. |
 
 ## Daily Development
@@ -39,8 +40,10 @@ Do not deploy or run production scripts unless that is explicitly intended.
 ## Coordination
 
 Use a separate branch for every non-trivial change. Codex branches should use
-`codex/`, Claude branches should use `claude/`, and feature branches should be
-descriptive. Before editing, check:
+`codex/`, Claude branches should use `claude/`, Cursor branches should use
+`cursor/`, Copilot branches should use `copilot/`, and Antigravity branches
+should use `antigravity/`. Shared feature or integration branches should be
+explicit and descriptive. Before editing, check:
 
 ```bash
 git status --short --branch

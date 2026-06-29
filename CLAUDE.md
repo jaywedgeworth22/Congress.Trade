@@ -11,18 +11,19 @@ Key reminders:
   MCP orchestration paths.
 - Use a separate branch, normally `claude/<short-topic>`, before non-trivial
   edits.
-- Do not continue work directly on a Codex branch or another Claude branch
-  unless Jay asks you to take it over. If existing dirty files are unrelated to
-  your task, leave them untouched.
+- Do not continue work directly on a Codex, Cursor, Copilot, Antigravity, or
+  another Claude branch unless Jay asks you to take it over. If existing dirty
+  files are unrelated to your task, leave them untouched.
 - Check open PRs and worktrees before editing shared files:
   `git status --short --branch`, `git worktree list`, and
   `gh pr list --state open`.
 - For overlapping PRs, inspect changed files and checks before editing:
   `gh pr view <number> --json headRefName,baseRefName,files,statusCheckRollup`
   and `gh pr checks <number>`.
-- If a Codex branch/PR is already touching the same files, do not overwrite it.
-  Either choose a disjoint slice, ask Jay which branch should own the work, or
-  coordinate through a separate integration branch.
+- If a Codex, Cursor, Copilot, Antigravity, or another Claude branch/PR is
+  already touching the same files, do not overwrite it. Either choose a
+  disjoint slice, ask Jay which branch should own the work, or coordinate
+  through a separate integration branch.
 - When another agent resolves your PR through an integration branch, treat that
   PR as superseded after the integration PR lands; do not reopen the same work
   on the old branch without first checking current `main`.

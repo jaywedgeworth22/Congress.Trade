@@ -4,7 +4,7 @@
 
 ## Coordination
 
-- Branch prefix: `codex/`, `claude/`, or coordinated feature branch:
+- Branch prefix: `codex/`, `claude/`, `cursor/`, `copilot/`, `antigravity/`, or coordinated feature branch:
 - Checked `git status --short --branch`, `git worktree list`, and open PRs:
 - Overlapping branches/PRs and how they were handled:
 
