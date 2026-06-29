@@ -101,3 +101,4 @@ jobs:
           claude_args: |
             --max-turns 60
             --allowedTools "Edit,Write,Read,Bash"
+          allowed_bots: "chatgpt-codex-connector,chatgpt-codex-connector[bot]"
