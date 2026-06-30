@@ -34,19 +34,13 @@ jobs:
             echo "::error::GH_PAT with read access to jaywedgeworth22/congress-trading-shared is required for npm ci."
             exit 1
           fi
-          git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"
-          git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "ssh://git@github.com/"
-          git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "git@github.com:"
+          git config --global credential.helper store
+          printf 'https://x-access-token:%s@github.com\n' "$GH_PAT" > "$HOME/.git-credentials"
+          git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git ls-remote https://github.com/jaywedgeworth22/congress-trading-shared.git HEAD >/dev/null
 
       - name: Install dependencies
-        env:
-          GIT_CONFIG_COUNT: 3
-          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.GH_PAT }}@github.com/.insteadOf
-          GIT_CONFIG_VALUE_0: https://github.com/
-          GIT_CONFIG_KEY_1: url.https://x-access-token:${{ secrets.GH_PAT }}@github.com/.insteadOf
-          GIT_CONFIG_VALUE_1: ssh://git@github.com/
-          GIT_CONFIG_KEY_2: url.https://x-access-token:${{ secrets.GH_PAT }}@github.com/.insteadOf
-          GIT_CONFIG_VALUE_2: git@github.com:
         run: npm ci
 
       - name: Typecheck
