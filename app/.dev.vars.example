@@ -68,6 +68,13 @@ INGEST_TOKEN=""
 APP_B_IMPORT_URL=""
 APP_B_INGEST_TOKEN=""
 
+# API Usage Monitor app telemetry. Set USAGE_MONITOR_INGEST_TOKEN to the
+# monitor's USAGE_INGEST_TOKEN. No-op unless URL + token are both configured.
+USAGE_MONITOR_INGEST_URL="https://usage.jays.services/api/ingest/usage"
+USAGE_MONITOR_INGEST_TOKEN=""
+USAGE_MONITOR_ENVIRONMENT="local"
+USAGE_MONITOR_ENABLED=""
+
 # Cross-app import guardrails. Production wrangler.toml uses paid-plan defaults.
 # Lower these values to run a lean/free-compatible profile while keeping the
 # same code path and smaller upstream chunks.
@@ -78,6 +85,12 @@ IMPORT_MAX_PRICES="100"
 IMPORT_MAX_CLOSES_PER_TICKER="1500"
 IMPORT_MAX_INSIDER="5000"
 IMPORT_MAX_SHORT_VOLUME="5000"
+
+# Optional temporary benchmark: polls FMP's House/Senate latest-disclosure
+# endpoints and records whether Congress.Trade saw new filings before FMP did.
+# Turn on before waiting for the next new disclosures; default code path is off.
+FMP_DISCLOSURE_WATCH_ENABLED=""
+FMP_DISCLOSURE_WATCH_LIMIT="100"
 
 # Cloudflare Access (Zero Trust) sign-in for humans — an ALTERNATIVE/ADDITION to
 # the bearer token. With these set AND an Access application fronting

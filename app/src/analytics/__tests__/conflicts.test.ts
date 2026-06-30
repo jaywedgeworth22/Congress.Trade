@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { committeeConflict, oversightSectors, COMMITTEE_SECTOR_RULES } from '../conflicts';
 
 describe('committeeConflict', () => {
-  it('flags a member on a committee that oversees the traded sector', () => {
+  it('flags a politician on a committee that oversees the traded sector', () => {
     const r = committeeConflict(['Committee on Armed Services'], 'Industrials');
     expect(r.conflict).toBe(true);
     expect(r.sector).toBe('Industrials');
@@ -57,7 +57,7 @@ describe('committeeConflict', () => {
 });
 
 describe('oversightSectors', () => {
-  it('unions sectors across a member’s committees', () => {
+  it('unions sectors across a politician’s committees', () => {
     const s = oversightSectors(['Committee on Armed Services', 'Committee on Financial Services']);
     expect(s.has('Industrials')).toBe(true);
     expect(s.has('Financials')).toBe(true);

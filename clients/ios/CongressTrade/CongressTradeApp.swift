@@ -13,7 +13,6 @@ struct CongressTradeApp: App {
         .modelContainer(for: ClientTrade.self)
     }
 }
-
 @MainActor
 final class CongressTradeStore: ObservableObject {
     @Published var bootstrap: BootstrapResponse?
@@ -329,7 +328,7 @@ struct SearchField: View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField("Search ticker, member, or state", text: $text)
+            TextField("Search ticker, politician, or state", text: $text)
                 .neverAutocapitalized()
                 .autocorrectionDisabled()
             if !text.isEmpty {
@@ -370,7 +369,7 @@ struct TradeCard: View {
 
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(trade.member.name ?? "Unknown Member")
+                    Text(trade.member.name ?? "Unknown Politician")
                         .font(.subheadline.weight(.semibold))
                     Text(memberMeta)
                         .font(.caption)
@@ -431,7 +430,7 @@ struct TradeDetailView: View {
                     }
 
                     DetailSection("Trade") {
-                        DetailRow("Member", trade.member.name ?? "Unknown")
+                        DetailRow("Politician", trade.member.name ?? "Unknown")
                         DetailRow("Action", trade.transaction.type.label)
                         DetailRow("Amount", trade.amountLabel)
                         DetailRow("Owner", trade.transaction.owner?.capitalized ?? "Unavailable")
@@ -917,4 +916,3 @@ extension View {
         #endif
     }
 }
-EOF

@@ -5,7 +5,6 @@ protocol SessionTokenStore {
     func save(_ token: String) throws
     func clear() throws
 }
-
 struct FeedQuery: Equatable {
     var limit: Int = 30
     var since: Int?
@@ -225,4 +224,3 @@ enum APIError: LocalizedError {
         }
     }
 }
-EOF

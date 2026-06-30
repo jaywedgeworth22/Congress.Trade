@@ -129,6 +129,10 @@ export async function runHouseHistoricalBackfill(
         result.skipped += 1;
         continue;
       }
+      if (result.enqueued >= maxFilings) {
+        result.skipped += 1;
+        continue;
+      }
 
       // Derive docId + sourceUrl exactly as watcher.ts does: the canonical
       // pipeline doc id `H-{year}-{DocID}` (houseDocId) and the direct PTR PDF
@@ -153,8 +157,8 @@ export async function runHouseHistoricalBackfill(
       // Shared INSERT OR IGNORE + meta.changes "genuinely new" gate (watcher.ts).
       const isNew = await insertFilingIfNew(env, discoveredFiling, nowIso);
 
-      // Skip the enqueue when: not new (dup) or over the global cap.
-      if (!isNew || result.enqueued >= maxFilings) {
+      // Skip the enqueue when not new (dup).
+      if (!isNew) {
         result.skipped += 1;
         continue;
       }

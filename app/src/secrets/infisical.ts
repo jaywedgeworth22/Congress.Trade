@@ -3,8 +3,9 @@
  *
  * Cloudflare Worker secrets should only need to hold the Infisical bootstrap
  * credentials. Provider keys are read from Infisical on demand and cached in
- * isolate memory for a short TTL. No resolved secret values are written to KV,
- * D1, R2, logs, or diagnostics.
+ * isolate memory for a short TTL. Optional KV caching is encrypted only when
+ * strong runtime secret material is configured; no resolved secret values are
+ * written to D1, R2, logs, or diagnostics.
  */
 
 import type { Env } from '../shared/types';
@@ -66,6 +67,21 @@ function envName(env: Env): string {
 
 function envFallbackAllowed(env: Env): boolean {
   return env.INFISICAL_ALLOW_ENV_FALLBACK !== 'false';
+}
+
+function strongSecret(value: string | undefined): string | null {
+  const clean = value?.trim();
+  if (!clean || clean.length < 32) return null;
+  if (/^(changeme|password|secret|test|dev)$/i.test(clean)) return null;
+  return clean;
+}
+
+function kvCacheSecret(env: Env): string | null {
+  return (
+    strongSecret(env.INFISICAL_APP_CLIENT_SECRET) ??
+    strongSecret(env.INFISICAL_SHARED_CLIENT_SECRET) ??
+    strongSecret(env.ADMIN_TOKEN)
+  );
 }
 
 function sourceConfigs(env: Env): SourceConfig[] {
@@ -259,11 +275,11 @@ export async function refreshSecrets(env: Env): Promise<SecretResolverStatus> {
   };
   cache.set(key, entry);
 
-  if (env.CONFIG_KV && errors.length === 0 && Object.keys(values).length > 0) {
+  const kvSecret = kvCacheSecret(env);
+  if (env.CONFIG_KV && kvSecret && errors.length === 0 && Object.keys(values).length > 0) {
     try {
       const kvKey = `infisical_secrets_cache:${key}`;
-      const secretString = env.INFISICAL_SHARED_CLIENT_SECRET || env.ADMIN_TOKEN || 'fallback_salt_321';
-      const encrypted = await encryptData(JSON.stringify(entry), secretString);
+      const encrypted = await encryptData(JSON.stringify(entry), kvSecret);
       const ttlSec = cacheTtlSeconds(env);
       await env.CONFIG_KV.put(kvKey, encrypted, { expirationTtl: ttlSec });
     } catch (err) {
@@ -280,13 +296,13 @@ async function cacheEntry(env: Env): Promise<CacheEntry | null> {
   const existing = cache.get(key);
   if (existing && existing.expiresAt > Date.now()) return existing;
 
-  if (env.CONFIG_KV) {
+  const kvSecret = kvCacheSecret(env);
+  if (env.CONFIG_KV && kvSecret) {
     try {
       const kvKey = `infisical_secrets_cache:${key}`;
       const encrypted = await env.CONFIG_KV.get(kvKey);
       if (encrypted) {
-        const secretString = env.INFISICAL_SHARED_CLIENT_SECRET || env.ADMIN_TOKEN || 'fallback_salt_321';
-        const decryptedJson = await decryptData(encrypted, secretString);
+        const decryptedJson = await decryptData(encrypted, kvSecret);
         const entry = JSON.parse(decryptedJson) as CacheEntry;
         if (entry && entry.expiresAt > Date.now()) {
           cache.set(key, entry);

@@ -64,6 +64,14 @@ export interface FlaggedTx {
 
 /** Flags that force a filing to human review regardless of soft confidence. */
 export const HARD_FAILURE_FLAGS = ['no_amount', 'invalid_amount', 'bad_tx_type', 'bad_asset_name'];
+const HARD_FAILURE_FLAG_SET = new Set<string>(HARD_FAILURE_FLAGS);
+
+export function hasHardFailureFlags(flagged: Iterable<{ flags: readonly string[] }>): boolean {
+  for (const f of flagged) {
+    if (f.flags.some((flag) => HARD_FAILURE_FLAG_SET.has(flag))) return true;
+  }
+  return false;
+}
 
 type RowKeyFields = Pick<
   ParsedTx,
@@ -178,13 +186,7 @@ export async function normalize(
     : 0;
 
   // Hard structural failures force review regardless of the soft confidence.
-  const hasHardFailure = flagged.some(
-    (f) =>
-      f.flags.includes('no_amount') ||
-      f.flags.includes('invalid_amount') ||
-      f.flags.includes('bad_tx_type') ||
-      f.flags.includes('bad_asset_name'),
-  );
+  const hasHardFailure = hasHardFailureFlags(flagged);
 
   const needsReview =
     flagged.length === 0 || minConfidence < CONFIDENCE_THRESHOLD || hasHardFailure;

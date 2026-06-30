@@ -269,11 +269,11 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
 
   // --- GET /conviction ---------------------------------------------------
   // Per-ticker composite 0-100 "congressional conviction" score (expert-panel
-  // synthesis, see computeConvictionScore): distinct-member consensus base,
+  // synthesis, see computeConvictionScore): distinct-politician consensus base,
   // cross-party + skew + momentum + small net-flow, anti-gaming gates, hard
   // caps, direction-aware. Defaults to a recent window so the ranking reflects
   // what Congress is actually converging on now. Currently runs the documented
-  // data-gap fallback (member-skill rollup activates as price coverage densifies;
+  // data-gap fallback (politician-skill rollup activates as price coverage densifies;
   // the integrity gate uses the neutral 0.9 until per-ticker filing-lag is wired).
   r.get('/conviction', async (c) => {
     const q = c.req.query();
@@ -327,7 +327,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       );
       // Cluster rows are per (ticker, tx_type); keep BOTH the buy ('P') and sell
       // ('S') side so the route can attach the party split for the side the
-      // conviction actually resolves to — not just whichever side had more members.
+      // conviction actually resolves to — not just whichever side had more politicians.
       const clByTickerSide = new Map<string, { P?: Record<string, unknown>; S?: Record<string, unknown> }>();
       for (const row of clRows) {
         const t = str(row.ticker);
@@ -345,7 +345,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         const side = str(row.tx_type) === 'S' ? 'S' : 'P';
         trByTickerSide.set(`${t}|${side}`, row);
       }
-      // Skill links keyed by ticker+side: the members who traded each candidate on
+      // Skill links keyed by ticker+side: the politicians who traded each candidate on
       // each side, so the rollup uses ONLY the side the signal resolves to.
       const membersByTickerSide = new Map<string, string[]>();
       const allFilers = new Set<string>();
@@ -358,7 +358,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         (membersByTickerSide.get(k) ?? membersByTickerSide.set(k, []).get(k)!).push(fid);
         allFilers.add(fid);
       }
-      // Per-member realized skill over their full track record (chunked under the
+      // Per-politician realized skill over their full track record (chunked under the
       // bind cap; honors source/minConf, omits the window intentionally).
       const memberSkill = new Map<string, { scored: number; wins: number; avgExcess: number }>();
       await Promise.all(
@@ -372,17 +372,17 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           });
         }),
       );
-      // Roll up a ticker's RESOLVED-SIDE members into a ConvictionSkill: weighted
-      // win-rate, total scored coverage, and a true MEDIAN of member excess (a
+      // Roll up a ticker's RESOLVED-SIDE politicians into a ConvictionSkill: weighted
+      // win-rate, total scored coverage, and a true MEDIAN of politician excess (a
       // skewed history with one big loser shouldn't flip the gate). null when no
-      // resolved direction or no contributing member has enough realized history
+      // resolved direction or no contributing politician has enough realized history
       // → the scorer falls back, so nothing regresses where data is sparse.
       const skillFor = (
         ticker: string | null,
         direction: 'BUY' | 'SELL' | null,
       ): ConvictionSkill | null => {
         // Skill applies ONLY to BUY conviction: the realized track record measures
-        // members' BUYS (filing-anchored excess), which is evidence for a buy
+        // politicians' BUYS (filing-anchored excess), which is evidence for a buy
         // signal but says nothing about sell timing. SELL conviction stays in the
         // fallback (no-realized-evidence cap) until sell-side skill is modeled —
         // a strong buy-picker must not lift a bearish SELL score.
@@ -423,8 +423,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           const momentumSide = direction === 'SELL' ? 'S' : 'P';
           const tr = ticker ? trByTickerSide.get(`${ticker}|${momentumSide}`) : undefined;
           // Breadth and trade count reflect ONLY the resolved side: a concentrated
-          // SELL must not borrow breadth from opposing BUY members (and vice
-          // versa), so it can't dodge the single-member cap. Purely non-directional
+          // SELL must not borrow breadth from opposing BUY politicians (and vice
+          // versa), so it can't dodge the single-politician cap. Purely non-directional
           // rows (exchanges, type-changes) never count. For a no-direction ticker
           // (capped at 20 anyway) fall back to the directional union.
           const buyMembers = num(row.buy_member_count);
@@ -519,7 +519,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const data = await cached(c.env, key, 300, async () => {
       const built = buildClusterBuysQuery({ ...f, minMembers, limit });
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
-      // Follow-up: representative members for each cluster ticker (one query).
+      // Follow-up: representative politicians for each cluster ticker (one query).
       const tickers = Array.from(new Set(rows.map((row) => str(row.ticker)).filter(Boolean))) as string[];
       let byKey = new Map<string, Array<Record<string, unknown>>>();
       if (tickers.length) {
@@ -734,7 +734,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /member-performance --------------------------------------------
-  // Per-member annualized excess return vs the S&P 500 on their BUYS, anchored at the
+  // Per-politician annualized excess return vs the S&P 500 on their BUYS, anchored at the
   // FILING (disclosure) date — the realizable "could you have followed this?"
   // number, not the trade-date hindsight figure. Buys only, options excluded,
   // small-N guarded. Defaults to the whole track record (window=all).
@@ -811,7 +811,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   // --- GET /ticker/:ticker/backtest --------------------------------------
   // "How did this name perform after Congress BOUGHT it, vs the S&P, by horizon
   // (21/63/126/252 trading days)?" Forward return from each buy's tx_date, vs
-  // SPX over the same span. Optional ?filerId= scopes to one member. Returns are
+  // SPX over the same span. Optional ?filerId= scopes to one politician. Returns are
   // fractions; horizons with n < BACKTEST_MIN_N report null (not noise). Coverage
   // is honest: tradeCount (cohort) vs n (events with forward history) per horizon.
   // MUST be registered before /ticker/:ticker (Hono matches in declaration order).
@@ -1018,7 +1018,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   // --- GET /member/:filerId (politician deep dive) -----------------------
   r.get('/member/:filerId', async (c) => {
     const q = c.req.query();
-    // Member view defaults to the full history (window=all) unless overridden.
+    // Politician view defaults to the full history (window=all) unless overridden.
     const f = { ...commonFromQuery(q), window: asWindow(q.window, 'all') };
     const filerId = c.req.param('filerId') || '';
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(filerId)) {
@@ -1113,7 +1113,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /member/:filerId/performance (realized "skill" aggregate) ------
-  // Aggregates the member's trades' realized return + alpha vs S&P from the
+  // Aggregates the politician's trades' realized return + alpha vs S&P from the
   // cached price anchors (tx_performance + securities_ref.current_price). All
   // returns are fractions (0.18 = +18%); winRate is the share (0..1) beating
   // the market. Lights up as filer_id resolves and prices populate; until then
@@ -1142,7 +1142,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /conflicts ----------------------------------------------------
-  // Committee conflict-of-interest signal: trades where the member sits on a
+  // Committee conflict-of-interest signal: trades where the politician sits on a
   // committee that oversees the traded stock's GICS sector (curated map in
   // analytics/conflicts.ts). Per-trade flags, newest first. Honors the shared
   // window/chamber/party/source/minConf filters.

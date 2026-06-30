@@ -5,6 +5,7 @@ import {
   parseSenateRows,
   formatSenateDate,
   CookieJar,
+  fetchSenatePtrFilings,
 } from '../senateSource';
 
 describe('parseCsrfMiddlewareToken', () => {
@@ -92,5 +93,63 @@ describe('CookieJar', () => {
     jar.absorbString('csrftoken=old');
     jar.absorbString('csrftoken=new; Path=/');
     expect(jar.get('csrftoken')).toBe('new');
+  });
+});
+
+describe('fetchSenatePtrFilings', () => {
+  function senateRow(id: string): string[] {
+    return [
+      'Jane',
+      'Smith',
+      `<a href="/search/view/ptr/${id}/">Smith, Jane</a>`,
+      'Periodic Transaction Report',
+      '06/30/2026',
+    ];
+  }
+
+  it('paginates beyond the first DataTables page and stops at recordsFiltered', async () => {
+    const starts: string[] = [];
+    const lengths: string[] = [];
+    const fetchImpl = async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ): Promise<Response> => {
+      const url = String(input);
+      if (url.endsWith('/search/')) {
+        return new Response(
+          `<form><input type="hidden" name="csrfmiddlewaretoken" value="csrf-hidden"></form>`,
+          { headers: { 'set-cookie': 'csrftoken=csrf-cookie; Path=/' } },
+        );
+      }
+      if (url.endsWith('/search/home/')) {
+        return new Response('', { status: 302, headers: { 'set-cookie': 'sessionid=sess; Path=/' } });
+      }
+      if (url.endsWith('/search/report/data/')) {
+        const body = new URLSearchParams(String(init?.body ?? ''));
+        starts.push(body.get('start') ?? '');
+        lengths.push(body.get('length') ?? '');
+        const start = Number(body.get('start') ?? '0');
+        const data = start === 0 ? [senateRow('a'), senateRow('b')] : [senateRow('c')];
+        return new Response(JSON.stringify({ data, recordsFiltered: 3 }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    };
+
+    const out = await fetchSenatePtrFilings(
+      {
+        since: new Date('2026-06-30T00:00:00.000Z'),
+        now: new Date('2026-06-30T23:59:59.000Z'),
+        pageSize: 2,
+        maxPages: 5,
+        politeDelayMs: 0,
+      },
+      fetchImpl,
+    );
+
+    expect(starts).toEqual(['0', '2']);
+    expect(lengths).toEqual(['2', '2']);
+    expect(out.map((f) => f.pipelineDocId)).toEqual(['S-a', 'S-b', 'S-c']);
   });
 });

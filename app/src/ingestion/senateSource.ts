@@ -195,6 +195,8 @@ const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const POLITE_DELAY_MS = 750;
+const SENATE_PAGE_SIZE = 100;
+const SENATE_MAX_PAGES = 25;
 
 /** Browser-like base headers shared across the efdsearch request flow. */
 const BROWSER_HEADERS: Record<string, string> = {
@@ -205,6 +207,32 @@ const BROWSER_HEADERS: Record<string, string> = {
   'sec-ch-ua-platform': '"macOS"',
 };
 
+export interface FetchSenatePtrFilingsOptions {
+  since?: Date;
+  now?: Date;
+  /** Test/ops escape hatch; production stays bounded by SENATE_MAX_PAGES. */
+  maxPages?: number;
+  /** DataTables page length. Capped at the source's 100-row page size. */
+  pageSize?: number;
+  /** Injectable for tests so pagination does not sleep. */
+  politeDelayMs?: number;
+}
+
+function boundedPositiveInt(raw: number | undefined, fallback: number, max: number): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return fallback;
+  return Math.min(Math.max(Math.floor(raw), 1), max);
+}
+
+function boundedNonNegativeInt(raw: number | undefined, fallback: number): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return fallback;
+  return Math.max(Math.floor(raw), 0);
+}
+
+function parseDataTablesCount(raw: unknown): number | null {
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
 /**
  * Run the full efdsearch flow and return discovered PTR filings submitted within
  * the [since, now] window. `since` defaults to 7 days ago.
@@ -212,11 +240,14 @@ const BROWSER_HEADERS: Record<string, string> = {
  * `fetchImpl` is injectable for tests; defaults to global fetch.
  */
 export async function fetchSenatePtrFilings(
-  opts: { since?: Date; now?: Date } = {},
+  opts: FetchSenatePtrFilingsOptions = {},
   fetchImpl: typeof fetch = fetch,
 ): Promise<SenateFiling[]> {
   const now = opts.now ?? new Date();
   const since = opts.since ?? new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const pageSize = boundedPositiveInt(opts.pageSize, SENATE_PAGE_SIZE, SENATE_PAGE_SIZE);
+  const maxPages = boundedPositiveInt(opts.maxPages, SENATE_MAX_PAGES, SENATE_MAX_PAGES);
+  const politeDelayMs = boundedNonNegativeInt(opts.politeDelayMs, POLITE_DELAY_MS);
   const jar = new CookieJar();
 
   // 1) GET landing page -> csrftoken cookie + hidden middleware token.
@@ -238,7 +269,7 @@ export async function fetchSenatePtrFilings(
   const middlewareToken = parseCsrfMiddlewareToken(landingHtml);
   if (!middlewareToken) throw new Error('senate: csrfmiddlewaretoken not found on landing page');
 
-  await delay(POLITE_DELAY_MS);
+  await delay(politeDelayMs);
 
   // 2) POST agreement acceptance (carry cookies).
   const agreeBody = new URLSearchParams({
@@ -263,45 +294,57 @@ export async function fetchSenatePtrFilings(
   // 200 or 302 are both fine; we only care that cookies are refreshed.
   jar.absorb(agree);
 
-  await delay(POLITE_DELAY_MS);
+  await delay(politeDelayMs);
 
-  // 3) POST DataTables query for PTRs in the date window.
+  // 3) POST bounded DataTables pages for PTRs in the date window.
   const csrfCookie = jar.get('csrftoken') ?? middlewareToken;
-  const dataBody = new URLSearchParams();
-  dataBody.set('draw', '1');
-  dataBody.set('start', '0');
-  dataBody.set('length', '100');
-  dataBody.set('search[value]', '');
-  dataBody.set('search[regex]', 'false');
-  // DataTables column ordering: sort by filing date (col 4) descending.
-  dataBody.set('order[0][column]', '4');
-  dataBody.set('order[0][dir]', 'desc');
-  dataBody.set('report_types', '[11]'); // PTR
-  dataBody.set('filer_types', '[]');
-  dataBody.set('submitted_start_date', formatSenateDate(since));
-  dataBody.set('submitted_end_date', formatSenateDate(now));
-  dataBody.set('first_name', '');
-  dataBody.set('last_name', '');
+  const rows: string[][] = [];
+  let expectedTotal: number | null = null;
 
-  const data = await fetchImpl(SENATE_DATA, {
-    method: 'POST',
-    headers: {
-      ...BROWSER_HEADERS,
-      'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-      cookie: jar.header(),
-      referer: SENATE_SEARCH,
-      origin: SENATE_BASE,
-      'x-csrftoken': csrfCookie,
-      'x-requested-with': 'XMLHttpRequest',
-      accept: 'application/json,text/javascript,*/*; q=0.01',
-      'sec-fetch-dest': 'empty',
-      'sec-fetch-mode': 'cors',
-      'sec-fetch-site': 'same-origin',
-    },
-    body: dataBody.toString(),
-  });
-  if (!data.ok) throw new Error(`senate POST report/data/ -> HTTP ${data.status}`);
-  const json = (await data.json()) as { data?: unknown };
-  const rows = Array.isArray(json.data) ? (json.data as string[][]) : [];
+  for (let page = 0; page < maxPages; page++) {
+    const dataBody = new URLSearchParams();
+    dataBody.set('draw', String(page + 1));
+    dataBody.set('start', String(page * pageSize));
+    dataBody.set('length', String(pageSize));
+    dataBody.set('search[value]', '');
+    dataBody.set('search[regex]', 'false');
+    // DataTables column ordering: sort by filing date (col 4) descending.
+    dataBody.set('order[0][column]', '4');
+    dataBody.set('order[0][dir]', 'desc');
+    dataBody.set('report_types', '[11]'); // PTR
+    dataBody.set('filer_types', '[]');
+    dataBody.set('submitted_start_date', formatSenateDate(since));
+    dataBody.set('submitted_end_date', formatSenateDate(now));
+    dataBody.set('first_name', '');
+    dataBody.set('last_name', '');
+
+    const data = await fetchImpl(SENATE_DATA, {
+      method: 'POST',
+      headers: {
+        ...BROWSER_HEADERS,
+        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        cookie: jar.header(),
+        referer: SENATE_SEARCH,
+        origin: SENATE_BASE,
+        'x-csrftoken': csrfCookie,
+        'x-requested-with': 'XMLHttpRequest',
+        accept: 'application/json,text/javascript,*/*; q=0.01',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
+      },
+      body: dataBody.toString(),
+    });
+    if (!data.ok) throw new Error(`senate POST report/data/ -> HTTP ${data.status}`);
+    const json = (await data.json()) as { data?: unknown; recordsFiltered?: unknown };
+    const pageRows = Array.isArray(json.data) ? (json.data as string[][]) : [];
+    rows.push(...pageRows);
+    expectedTotal = parseDataTablesCount(json.recordsFiltered) ?? expectedTotal;
+
+    if (pageRows.length < pageSize) break;
+    if (expectedTotal !== null && rows.length >= expectedTotal) break;
+    if (page + 1 < maxPages) await delay(politeDelayMs);
+  }
+
   return parseSenateRows(rows);
 }
