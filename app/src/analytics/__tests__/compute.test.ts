@@ -273,7 +273,7 @@ describe('computeConvictionScore', () => {
     expect(r.score).toBeLessThanOrEqual(60); // totalScoredCount<3 hard cap
   });
 
-  it('caps a single-member name at 25 (an idea, not conviction)', () => {
+  it('caps a single-politician name at 25 (an idea, not conviction)', () => {
     const r = computeConvictionScore({
       ...full,
       memberCount: 1,

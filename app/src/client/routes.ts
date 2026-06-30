@@ -18,7 +18,7 @@ import type {
   TxType,
   User,
 } from '../shared/types';
-import { all, get } from '../shared/db';
+import { all, get, parseJson } from '../shared/db';
 import { getCurrentUserFromRequest } from '../auth/session';
 import { entitlementOf } from '../billing/entitlement';
 import {
@@ -47,9 +47,85 @@ import {
 } from './state';
 
 type ClientContext = Context<{ Bindings: Env }>;
+type ClientTradeRow = FeedTransactionRow & {
+  __chamber?: string | null;
+  __member_name?: string | null;
+  __party?: string | null;
+};
+
+type ClientTradeListEnvelope = {
+  items: ClientTrade[];
+  cursor: number;
+  count: number;
+  total: number;
+  limit: number;
+};
+
+type TradeSummaryRow = {
+  total_trades: number | string | null;
+  buy_count: number | string | null;
+  sell_count: number | string | null;
+  exchange_count: number | string | null;
+  member_count?: number | string | null;
+  unique_tickers?: number | string | null;
+  unique_assets?: number | string | null;
+  est_volume: number | string | null;
+  est_net_flow: number | string | null;
+  first_trade: string | null;
+  last_trade: string | null;
+};
+
+type SecurityRefRow = {
+  ticker: string;
+  company_name: string | null;
+  sector: string | null;
+  industry: string | null;
+  asset_class: string | null;
+  country: string | null;
+  exchange_short: string | null;
+  currency: string | null;
+  market_cap: number | string | null;
+  market_cap_bucket: string | null;
+  current_price?: number | string | null;
+  current_price_date?: string | null;
+};
+
+type MemberProfileRow = {
+  bioguide_id: string;
+  chamber: string | null;
+  full_name: string | null;
+  party: string | null;
+  state: string | null;
+  district: string | null;
+  committees: string | null;
+  photo_url: string | null;
+};
+type ResolvedMember = {
+  id: string;
+  profile: MemberProfileRow | null;
+};
 
 const SUBSCRIPTION_COLS =
   'id, client_id, delivery, target_url, secret, filters, cursor, active, created_at';
+const CLIENT_TRADE_SELECT =
+  'SELECT t.*, COALESCE(fl.chamber, f.chamber) AS __chamber, fl.full_name AS __member_name, fl.party AS __party, ' +
+  'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
+  'fl.photo_url AS filer_photo_url, ' +
+  'sr.company_name AS ref_company_name, sr.sector AS ref_sector, sr.market_cap AS ref_market_cap, ' +
+  'sr.market_cap_bucket AS ref_market_cap_bucket, sr.country AS ref_country, ' +
+  'sr.exchange_short AS ref_exchange_short, sr.asset_class AS ref_asset_class, ' +
+  'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url ' +
+  'FROM transactions t ' +
+  'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
+  'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
+  'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ';
+const CLIENT_TRADE_BY_ID_SQL = CLIENT_TRADE_SELECT + 'WHERE t.deprecated_at IS NULL AND t.id = ? LIMIT 1';
+const EST_VALUE_SQL =
+  '(CASE ' +
+  'WHEN t.amount_min IS NULL AND t.amount_max IS NULL THEN 0 ' +
+  'WHEN t.amount_min IS NULL THEN t.amount_max ' +
+  'WHEN t.amount_max IS NULL THEN t.amount_min ' +
+  'ELSE (t.amount_min + t.amount_max) / 2.0 END)';
 
 class ClientInputError extends Error {
   constructor(message: string, readonly status = 400) {
@@ -176,6 +252,20 @@ function publicSubscription(sub: Subscription, includeSecret = false): Record<st
   return out;
 }
 
+function persistedCommandResult(type: ClientCommandType, result: unknown): unknown {
+  if (type !== 'create_subscription' || !result || typeof result !== 'object' || Array.isArray(result)) {
+    return result;
+  }
+  const root = result as { subscription?: unknown };
+  if (!root.subscription || typeof root.subscription !== 'object' || Array.isArray(root.subscription)) {
+    return result;
+  }
+  return {
+    ...root,
+    subscription: publicSubscription(root.subscription as Subscription),
+  };
+}
+
 function filtersFromQuery(q: Record<string, string>): TxQueryParams {
   return {
     since: parseIntOrUndef(q.since),
@@ -202,7 +292,7 @@ function clientLogoUrl(ticker: string | null): string | null {
   return symbol ? `/api/logos/ticker?symbol=${encodeURIComponent(symbol)}` : null;
 }
 
-function clientTradeFromRow(row: FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null; __party?: string | null }): ClientTrade {
+function clientTradeFromRow(row: ClientTradeRow): ClientTrade {
   const tx = mapFeedTransaction(row);
   const assetType = canonicalizeAssetType(tx.assetType, tx.assetTypeName, {
     isOption: tx.isOption,
@@ -248,6 +338,168 @@ function clientTradeFromRow(row: FeedTransactionRow & { __chamber?: string | nul
     confidence: tx.confidence,
     source: tx.source,
   };
+}
+
+function num(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function nullableNum(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function str(value: unknown): string | null {
+  return typeof value === 'string' && value.length ? value : null;
+}
+
+function usd(value: unknown): number {
+  return Math.round(num(value));
+}
+
+function detailLimit(value: string | undefined, fallback = 25): number {
+  const n = parseIntOrUndef(value);
+  if (!n || n <= 0) return fallback;
+  return Math.min(n, 100);
+}
+
+function tickerSummarySql(ticker: string): { sql: string; params: string[] } {
+  return {
+    sql:
+      'SELECT COUNT(*) AS total_trades, ' +
+      "SUM(CASE WHEN t.tx_type = 'P' THEN 1 ELSE 0 END) AS buy_count, " +
+      "SUM(CASE WHEN t.tx_type = 'S' THEN 1 ELSE 0 END) AS sell_count, " +
+      "SUM(CASE WHEN t.tx_type = 'E' THEN 1 ELSE 0 END) AS exchange_count, " +
+      'COUNT(DISTINCT t.filer_id) AS member_count, ' +
+      `SUM(${EST_VALUE_SQL}) AS est_volume, ` +
+      `SUM(CASE WHEN t.tx_type = 'P' THEN ${EST_VALUE_SQL} WHEN t.tx_type = 'S' THEN -${EST_VALUE_SQL} ELSE 0 END) AS est_net_flow, ` +
+      'MIN(t.tx_date) AS first_trade, MAX(t.tx_date) AS last_trade ' +
+      'FROM transactions t WHERE t.deprecated_at IS NULL AND t.ticker = ?',
+    params: [ticker],
+  };
+}
+
+function memberSummarySql(memberId: string): { sql: string; params: string[] } {
+  return {
+    sql:
+      'SELECT COUNT(*) AS total_trades, ' +
+      "SUM(CASE WHEN t.tx_type = 'P' THEN 1 ELSE 0 END) AS buy_count, " +
+      "SUM(CASE WHEN t.tx_type = 'S' THEN 1 ELSE 0 END) AS sell_count, " +
+      "SUM(CASE WHEN t.tx_type = 'E' THEN 1 ELSE 0 END) AS exchange_count, " +
+      "COUNT(DISTINCT CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' THEN t.ticker END) AS unique_tickers, " +
+      "COUNT(DISTINCT COALESCE(CASE WHEN t.ticker IS NOT NULL AND t.ticker <> '' THEN t.ticker END, NULLIF(t.asset_name, ''))) AS unique_assets, " +
+      `SUM(${EST_VALUE_SQL}) AS est_volume, ` +
+      `SUM(CASE WHEN t.tx_type = 'P' THEN ${EST_VALUE_SQL} WHEN t.tx_type = 'S' THEN -${EST_VALUE_SQL} ELSE 0 END) AS est_net_flow, ` +
+      'MIN(t.tx_date) AS first_trade, MAX(t.tx_date) AS last_trade ' +
+      'FROM transactions t WHERE t.deprecated_at IS NULL AND t.filer_id = ?',
+    params: [memberId],
+  };
+}
+
+function baseSummary(row: TradeSummaryRow | null) {
+  return {
+    totalTrades: num(row?.total_trades),
+    buyCount: num(row?.buy_count),
+    sellCount: num(row?.sell_count),
+    exchangeCount: num(row?.exchange_count),
+    estimatedVolumeUsd: usd(row?.est_volume),
+    estimatedNetFlowUsd: usd(row?.est_net_flow),
+    firstTrade: str(row?.first_trade),
+    lastTrade: str(row?.last_trade),
+  };
+}
+
+function securityRef(ticker: string, row: SecurityRefRow | null) {
+  return {
+    ticker,
+    companyName: row?.company_name ?? null,
+    logoUrl: clientLogoUrl(ticker),
+    sector: row?.sector ?? null,
+    industry: row?.industry ?? null,
+    assetClass: row?.asset_class ?? null,
+    country: row?.country ?? null,
+    exchangeShort: row?.exchange_short ?? null,
+    currency: row?.currency ?? null,
+    marketCap: nullableNum(row?.market_cap),
+    marketCapBucket: row?.market_cap_bucket ?? null,
+    currentPrice: nullableNum(row?.current_price),
+    currentPriceDate: row?.current_price_date ?? null,
+  };
+}
+
+function memberProfile(row: MemberProfileRow | null, id: string) {
+  if (!row) {
+    return {
+      id,
+      name: null,
+      chamber: null,
+      party: null,
+      state: null,
+      district: null,
+      committees: [],
+      photoUrl: null,
+    };
+  }
+  const committees = parseJson<string[]>(row.committees, []);
+  return {
+    id: row.bioguide_id,
+    name: row.full_name,
+    chamber: asChamber(row.chamber ?? undefined) ?? null,
+    party: row.party,
+    state: row.state,
+    district: row.district,
+    committees: Array.isArray(committees) ? committees : [],
+    photoUrl: row.photo_url,
+  };
+}
+
+async function readClientTradeList(env: Env, params: TxQueryParams): Promise<ClientTradeListEnvelope> {
+  const built = buildTransactionsQuery(params);
+  const rows = await all<ClientTradeRow>(env.DB, built.sql, built.params);
+  const items = rows.map(clientTradeFromRow);
+  const maxCursor = items.reduce((m, t) => (t.cursor > m ? t.cursor : m), params.since ?? 0);
+  const countQuery = buildTransactionsCountQuery(params);
+  const countRow = await get<{ total: number | string | null }>(env.DB, countQuery.sql, countQuery.params);
+  return {
+    items,
+    cursor: maxCursor,
+    count: items.length,
+    total: num(countRow?.total ?? items.length),
+    limit: built.limit,
+  };
+}
+
+async function getClientTrade(env: Env, id: string): Promise<ClientTrade | null> {
+  const row = await get<ClientTradeRow>(env.DB, CLIENT_TRADE_BY_ID_SQL, [id]);
+  return row ? clientTradeFromRow(row) : null;
+}
+
+async function getSecurityRef(env: Env, ticker: string): Promise<SecurityRefRow | null> {
+  return get<SecurityRefRow>(
+    env.DB,
+    'SELECT ticker, company_name, sector, industry, asset_class, country, exchange_short, currency, market_cap, market_cap_bucket, current_price, current_price_date FROM securities_ref WHERE ticker = ?',
+    [ticker],
+  );
+}
+
+async function resolveMember(env: Env, value: string): Promise<ResolvedMember | null> {
+  const term = value.trim();
+  const byId = await get<MemberProfileRow>(
+    env.DB,
+    'SELECT bioguide_id, chamber, full_name, party, state, district, committees, photo_url FROM filers WHERE LOWER(bioguide_id) = LOWER(?) LIMIT 1',
+    [term],
+  );
+  if (byId) return { id: byId.bioguide_id, profile: byId };
+  const byName = await get<MemberProfileRow>(
+    env.DB,
+    'SELECT bioguide_id, chamber, full_name, party, state, district, committees, photo_url FROM filers WHERE LOWER(full_name) = LOWER(?) OR LOWER(full_name) LIKE ? ORDER BY CASE WHEN LOWER(full_name) = LOWER(?) THEN 0 ELSE 1 END, full_name LIMIT 1',
+    [term, `%${term.toLowerCase()}%`, term],
+  );
+  if (byName) return { id: byName.bioguide_id, profile: byName };
+  if (/^[A-Za-z0-9_-]{1,64}$/.test(term)) return { id: term, profile: null };
+  return null;
 }
 
 async function listUserSubscriptions(env: Env, user: User): Promise<Subscription[]> {
@@ -373,6 +625,9 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       },
       endpoints: {
         feed: '/api/client/v1/feed',
+        trade: '/api/client/v1/trade/:id',
+        ticker: '/api/client/v1/ticker/:ticker',
+        member: '/api/client/v1/member/:memberIdOrName',
         commands: '/api/client/v1/commands',
         preferences: '/api/client/v1/preferences',
         subscriptions: '/api/client/v1/subscriptions',
@@ -387,23 +642,75 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
 
   r.get('/feed', async (c) => {
     const params = filtersFromQuery(c.req.query());
-    const built = buildTransactionsQuery(params);
-    const rows = await all<FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null; __party?: string | null }>(
-      c.env.DB,
-      built.sql,
-      built.params,
-    );
-    const items = rows.map(clientTradeFromRow);
-    const maxCursor = items.reduce((m, t) => (t.cursor > m ? t.cursor : m), params.since ?? 0);
-    const countQuery = buildTransactionsCountQuery(params);
-    const countRow = await get<{ total: number }>(c.env.DB, countQuery.sql, countQuery.params);
+    return c.json({ ...(await readClientTradeList(c.env, params)), nextPollAfterSec: 30 });
+  });
+
+  r.get('/trade/:id', async (c) => {
+    const id = (c.req.param('id') || '').trim();
+    if (!id || id.length > 128) return c.json({ error: 'invalid trade id' }, 400);
+    const item = await getClientTrade(c.env, id);
+    if (!item) return c.json({ error: 'trade not found' }, 404);
     return c.json({
-      items,
-      cursor: maxCursor,
-      count: items.length,
-      total: countRow?.total ?? items.length,
-      limit: built.limit,
-      nextPollAfterSec: 30,
+      item,
+      items: [item],
+      cursor: item.cursor,
+      count: 1,
+      total: 1,
+      limit: 1,
+    });
+  });
+
+  r.get('/ticker/:ticker', async (c) => {
+    const ticker = normalizeTickerLogoSymbol(c.req.param('ticker'));
+    if (!ticker) return c.json({ error: 'invalid ticker' }, 400);
+    const params: TxQueryParams = {
+      ticker,
+      limit: detailLimit(c.req.query('limit')),
+      order: asOrder(c.req.query('order')) ?? 'desc',
+    };
+    const summaryQ = tickerSummarySql(ticker);
+    const [list, summaryRow, refRow] = await Promise.all([
+      readClientTradeList(c.env, params),
+      get<TradeSummaryRow>(c.env.DB, summaryQ.sql, summaryQ.params),
+      getSecurityRef(c.env, ticker),
+    ]);
+    return c.json({
+      ticker,
+      asset: securityRef(ticker, refRow),
+      summary: {
+        ...baseSummary(summaryRow),
+        memberCount: num(summaryRow?.member_count),
+      },
+      ...list,
+    });
+  });
+
+  r.get('/member/:memberIdOrName', async (c) => {
+    const memberIdOrName = (c.req.param('memberIdOrName') || '').trim();
+    if (!memberIdOrName || memberIdOrName.length > 120) {
+      return c.json({ error: 'invalid member id or name' }, 400);
+    }
+    const resolved = await resolveMember(c.env, memberIdOrName);
+    if (!resolved) return c.json({ error: 'member not found' }, 404);
+    const params: TxQueryParams = {
+      member: resolved.id,
+      limit: detailLimit(c.req.query('limit')),
+      order: asOrder(c.req.query('order')) ?? 'desc',
+    };
+    const summaryQ = memberSummarySql(resolved.id);
+    const [list, summaryRow] = await Promise.all([
+      readClientTradeList(c.env, params),
+      get<TradeSummaryRow>(c.env.DB, summaryQ.sql, summaryQ.params),
+    ]);
+    if (!resolved.profile && list.total === 0) return c.json({ error: 'member not found' }, 404);
+    return c.json({
+      member: memberProfile(resolved.profile, resolved.id),
+      summary: {
+        ...baseSummary(summaryRow),
+        uniqueTickers: num(summaryRow?.unique_tickers),
+        uniqueAssets: num(summaryRow?.unique_assets),
+      },
+      ...list,
     });
   });
 
@@ -492,7 +799,9 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
     await updateCommandStatus(c.env, user.id, command.id, 'running');
     try {
       const result = await executeCommand(c.env, user, type, payload);
-      const done = await updateCommandStatus(c.env, user.id, command.id, 'succeeded', { result });
+      const done = await updateCommandStatus(c.env, user.id, command.id, 'succeeded', {
+        result: persistedCommandResult(type, result),
+      });
       return c.json({ command: done, result }, 201);
     } catch (err) {
       const e = err as ClientInputError;

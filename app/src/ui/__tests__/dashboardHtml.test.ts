@@ -50,13 +50,28 @@ describe('DASHBOARD_HTML', () => {
     expect(trendsIdx).toBeGreaterThan(0);
     expect(trendsIdx).toBeLessThan(feedIdx);
     expect(DASHBOARD_HTML).toContain('data-view="trends" data-mobile="Trends" data-icon="⌁" class="active"');
+    expect(DASHBOARD_HTML).toContain('<nav class="tabs" role="tablist" aria-label="Primary views">');
+    expect(DASHBOARD_HTML).toContain('role="tab" aria-selected="true" aria-controls="view-trends"');
+    expect(DASHBOARD_HTML).toContain('role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false"');
+    expect(DASHBOARD_HTML).toContain("x.setAttribute('aria-selected', 'false')");
+    expect(DASHBOARD_HTML).toContain("view.setAttribute('aria-hidden', 'false')");
     // The Trends section is the default-active view; the feed section is not.
-    expect(DASHBOARD_HTML).toContain('<section class="view active" id="view-trends">');
-    expect(DASHBOARD_HTML).toContain('<section class="view" id="view-feed">');
+    expect(DASHBOARD_HTML).toContain('<section class="view active" id="view-trends" role="tabpanel"');
+    expect(DASHBOARD_HTML).toContain('<section class="view" id="view-feed" role="tabpanel"');
     // The former "Live Feed" tab is now labelled "Trades".
-    expect(DASHBOARD_HTML).toContain('data-view="feed" data-mobile="Trades" data-icon="▦">Trades</button>');
+    expect(DASHBOARD_HTML).toContain('data-view="feed" data-mobile="Trades" data-icon="▦"');
+    expect(DASHBOARD_HTML).toContain('aria-controls="view-feed">Trades</button>');
     // Trends is warmed on boot since it is the landing view.
     expect(DASHBOARD_HTML).toContain('loadTrends();      // Trends is the default landing view');
+  });
+
+  it('keeps admin delivery surfaces out of public primary nav', () => {
+    expect(DASHBOARD_HTML).toMatch(/<button[^>]+data-view="subs"[^>]+data-admin-tab="true"[^>]+hidden[^>]*>Developer Delivery<\/button>/);
+    expect(DASHBOARD_HTML).toMatch(/<button[^>]+data-view="admin"[^>]+data-admin-tab="true"[^>]+hidden[^>]*>Admin · Cadence<\/button>/);
+    expect(DASHBOARD_HTML).toContain('Developer Alert Delivery');
+    expect(DASHBOARD_HTML).toContain('No alert deliveries yet. Create one below.');
+    expect(DASHBOARD_HTML).not.toContain('>Subscriptions</button>');
+    expect(DASHBOARD_HTML).not.toContain('<h3>Delivery Subscriptions</h3>');
   });
 
   it('surfaces the GICS sector flow, market-cap, and performer analytics in Trends', () => {
@@ -138,7 +153,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function openTrade(');
     expect(DASHBOARD_HTML).toContain('function openAsset(');
     expect(DASHBOARD_HTML).toContain('function openMember(');
-    // member drawer hits the per-member analytics endpoint
+    // politician drawer hits the per-politician analytics endpoint
     expect(DASHBOARD_HTML).toContain("aGet('member/");
     // the old centered ticker modal is fully replaced by the drawer
     expect(DASHBOARD_HTML).not.toContain('tickerModal');
@@ -183,7 +198,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("e.target.closest('[data-member]')");
     expect(DASHBOARD_HTML).toContain("e.target.closest('[data-txid]')");
     // The company-drawer title is NOT clickable (it would just reopen the same drawer);
-    // clickable entities are the member/asset links inside the drawer body instead.
+    // clickable entities are the politician/asset links inside the drawer body instead.
     expect(DASHBOARD_HTML).not.toContain('drawer-title-line clickable');
     expect(DASHBOARD_HTML).toContain('drawer-member-title');
     expect(DASHBOARD_HTML).toContain('color:var(--text)');
@@ -311,6 +326,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('estimates');
     expect(DASHBOARD_HTML.toLowerCase()).toContain('bracket');
     expect(DASHBOARD_HTML).toContain('from STOCK Act amount ranges');
+    expect(DASHBOARD_HTML).toContain('<em>Primary Only</em>');
+    expect(DASHBOARD_HTML).not.toContain('<em>Live Only</em>');
     expect(DASHBOARD_HTML).toContain('info-tip');
     // educational / liability framing must remain user-facing
     expect(DASHBOARD_HTML).toContain('not investment advice');

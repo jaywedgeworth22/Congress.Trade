@@ -6,7 +6,7 @@
  * to actually poll House + Senate disclosure indexes. For each NEW filing,
  * inserts a 'new' filings row (INSERT OR IGNORE) and enqueues a
  * {type:'filing.new'} INGEST_QUEUE message. Records cadence in ingest_log and
- * updates last-poll via setLastPollAt.
+ * updates last-poll via setLastPollAt after successful source polls.
  *
  * Each source is wrapped in its own try/catch: one source failing (network,
  * parse, anti-bot) must NOT block the other, and the failure is logged.
@@ -22,6 +22,7 @@ import {
 } from '../shared/config';
 import { fetchHouseIndex, pollHouseLiveSearch } from './houseSource';
 import { fetchSenatePtrFilings } from './senateSource';
+import { recordDisclosureLatencyCandidate } from './fmpDisclosureLatency';
 
 /** Env shape (read defensively — Env is the frozen foundation contract). */
 type EnvWithFlags = Env & { HOUSE_LIVE_SEARCH_ENABLED?: string };
@@ -156,6 +157,7 @@ async function persistAndEnqueue(
   let newCount = 0;
   for (const f of filings) {
     if (await insertFilingIfNew(env, f, nowIso)) {
+      await recordDisclosureLatencyCandidate(env, f, nowIso);
       await enqueueFilingNew(env, f);
       newCount += 1;
     }
@@ -266,6 +268,7 @@ async function pollSenate(env: Env, now: Date): Promise<void> {
     chamber: 'senate',
     sourceUrl: f.sourceUrl,
     filedDate: f.filedDate,
+    filerName: f.fullName || [f.first, f.last].filter(Boolean).join(' ').trim() || null,
   }));
   const newCount = await persistAndEnqueue(env, discovered, nowIso);
   await logPoll(env, 'senate', nowIso, newCount, nowIso);
@@ -288,12 +291,6 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<void
     }
   } catch (err) {
     await recordSourceError(env, 'house', now.toISOString(), err);
-    // Still stamp last-poll so a hard-failing source doesn't hammer every tick.
-    try {
-      await setLastPollAt(env, 'house', now);
-    } catch {
-      /* ignore */
-    }
   }
 
   // SENATE ----------------------------------------------------------------
@@ -304,10 +301,5 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<void
     }
   } catch (err) {
     await recordSourceError(env, 'senate', now.toISOString(), err);
-    try {
-      await setLastPollAt(env, 'senate', now);
-    } catch {
-      /* ignore */
-    }
   }
 }

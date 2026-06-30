@@ -118,10 +118,10 @@ without a DB (mirroring `src/delivery/rows.ts`).
 
 | Endpoint | What it answers |
 |----------|-----------------|
-| `GET /summary` | KPI strip: trades, members, tickers, est. volume, net flow, buy pressure |
+| `GET /summary` | KPI strip: trades, politicians, assets, est. volume, net flow, buy pressure |
 | `GET /ticker-leaderboard` | Most-traded tickers (sort `trades\|members\|volume\|netflow`) |
-| `GET /member-leaderboard` | Most active members (sort `trades\|volume\|tickers`) |
-| `GET /cluster-buys` | Consensus: ≥N distinct members trading the **same direction** |
+| `GET /member-leaderboard` | Most active politicians (sort `trades\|volume\|tickers`) |
+| `GET /cluster-buys` | Consensus: ≥N distinct politicians trading the **same direction** |
 | `GET /trending` | Momentum: tickers up most vs the prior equal period |
 | `GET /volume-over-time` | Buys vs sells bucketed by day/week/month |
 | `GET /party-split` | Buy/sell + net flow per party (D/R/Other) |

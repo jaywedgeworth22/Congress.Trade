@@ -115,19 +115,19 @@ Each component carries:
 - `fallback`
 - `sourceRecordIds`
 
-## No-Leakage Member Skill
+## No-Leakage Politician Skill
 
-Member skill is point-in-time. At each observation `asOf`, it uses only prior
+Politician skill is point-in-time. At each observation `asOf`, it uses only prior
 disclosures for the involved filers where the evaluation horizon had already
 matured before that `asOf`.
 
-Member skill is split along three axes:
+Politician skill is split along three axes:
 
 - basis: filing-date basis and trade-date basis
 - direction: buy and sell
 - horizon: `1m`, `3m`, `6m`, `12m`
 
-Current member-skill horizons and weights:
+Current politician-skill horizons and weights:
 
 ```json
 {
@@ -196,11 +196,11 @@ Each window includes:
 - `weightedDirectionTotals`
 - `tradeCount`, `startDate`, `endDate`
 
-Per-member cap and diminishing-return assumptions are included under
-`clusterConsensus.perMemberCapsAndDiminishingReturns`. Each member can contribute
+Per-politician cap and diminishing-return assumptions are included under
+`clusterConsensus.perMemberCapsAndDiminishingReturns`. Each politician can contribute
 at most `1.0` per direction per window. Contribution is quality-weighted by
 transaction confidence and bracket midpoint, then the cluster score applies a
-log diminishing return to dominant-side distinct member count.
+log diminishing return to dominant-side distinct politician count.
 
 ## Labels
 

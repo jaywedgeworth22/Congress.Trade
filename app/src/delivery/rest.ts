@@ -45,6 +45,7 @@ import { openSseStream } from './sse';
 import { handleTickerLogoRequest } from '../ui/tickerLogos';
 import { resolveSecret } from '../secrets/infisical';
 import { constantTimeEqual } from '../auth/tokens';
+import { localWebhookTargetsAllowed, validateWebhookTargetUrl } from './webhookTarget';
 
 function parseIntOrUndef(v: string | undefined): number | undefined {
   if (v === undefined || v === '') return undefined;
@@ -119,27 +120,6 @@ async function isAuthorizedForSubscription(
 ): Promise<boolean> {
   const provided = subscriptionSecretFromRequest(c, allowQueryToken);
   return Boolean(sub.secret && provided && (await constantTimeEqual(provided, sub.secret)));
-}
-
-function isLocalHttpUrl(url: URL): boolean {
-  return (
-    url.protocol === 'http:' &&
-    (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1')
-  );
-}
-
-function validateWebhookTargetUrl(targetUrl: string | null): string | null {
-  if (!targetUrl) return 'targetUrl is required for webhook subscriptions';
-  let url: URL;
-  try {
-    url = new URL(targetUrl);
-  } catch {
-    return 'targetUrl must be a valid absolute URL';
-  }
-  if (url.protocol !== 'https:' && !isLocalHttpUrl(url)) {
-    return 'targetUrl must use https:// outside localhost development';
-  }
-  return null;
 }
 
 function asChamber(v: string | undefined): Chamber | undefined {
@@ -239,7 +219,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       limit: parseIntOrUndef(q.limit),
     };
     const built = buildTransactionsQuery(params);
-    // The query SELECTs the resolved chamber + member name alongside the feed
+    // The query SELECTs the resolved chamber + politician name alongside the feed
     // columns via `__chamber` / `__member_name` (see buildTransactionsQuery).
     // mapFeedTransaction maps the filer/filing columns (fullName, state,
     // photoUrl, dates); we then attach the resolved `chamber` / `memberName`,
@@ -641,7 +621,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const targetUrl =
       typeof body.targetUrl === 'string' && body.targetUrl.length > 0 ? body.targetUrl : null;
     if (delivery === 'webhook') {
-      const targetUrlError = validateWebhookTargetUrl(targetUrl);
+      const targetUrlError = validateWebhookTargetUrl(targetUrl, {
+        allowLocalhost: localWebhookTargetsAllowed(c.env, c.req.url),
+      });
       if (targetUrlError) return c.json({ error: targetUrlError }, 400);
     }
 
@@ -705,7 +687,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     if (typeof body.targetUrl === 'string' || body.targetUrl === null) {
       patch.targetUrl = body.targetUrl as string | null;
       if (existing.delivery === 'webhook') {
-        const targetUrlError = validateWebhookTargetUrl(patch.targetUrl);
+        const targetUrlError = validateWebhookTargetUrl(patch.targetUrl, {
+          allowLocalhost: localWebhookTargetsAllowed(c.env, c.req.url),
+        });
         if (targetUrlError) return c.json({ error: targetUrlError }, 400);
       }
     }

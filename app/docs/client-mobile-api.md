@@ -1,6 +1,6 @@
 # Client Mobile API Coordination
 
-Last updated: 2026-06-23
+Last updated: 2026-06-30
 
 This is the working coordination note for the phone-first Next.js/PWA and the
 SwiftUI iPhone app. Keep it aligned with `app/docs/mobile-app-roadmap.md` and
@@ -52,13 +52,19 @@ shared type set but still return `501`.
 
 ## Initial Surface
 
-- Implemented now: bootstrap, `me`, feed, `preferences` GET/PUT, subscription
-  listing, and command-backed preference/subscription create/update.
+- Implemented now: bootstrap, `me`, feed, trade detail, ticker detail,
+  politician detail (`member` endpoint), `preferences` GET/PUT, subscription listing, and command-backed
+  preference/subscription create/update.
 - `bootstrap` currently returns `serverTime`, `auth`, `capabilities`, and an
   `endpoints` map for the current client surface.
 - `feed` currently accepts query params like `since`, `ticker`, `member`,
   `chamber`, `type`, `from`, `to`, `order`, and `limit`, and returns the
   cursor/count/total metadata used by polling clients.
+- Public detail reads use the same `ClientTrade` item DTO and feed-style
+  envelope metadata:
+  - `GET /api/client/v1/trade/:id`
+  - `GET /api/client/v1/ticker/:ticker`
+  - `GET /api/client/v1/member/:memberIdOrName`
 - Each feed item's `asset` object carries `name` (the disclosed asset text),
   `ticker`, raw disclosure `type`, `typeName`, canonical cross-chamber
   `typeCategory` / `typeCategoryLabel`, `sector`, and `marketCapBucket`, plus
@@ -71,10 +77,9 @@ shared type set but still return `501`.
     render `<img>` against this URL directly; the proxy handles the logo
     provider key and edge caching server-side and 404s on a true miss so the
     client can fall back to a monogram.
-- Next: trade detail, ticker detail, member detail, analytics summary, alert
-  create/update/pause commands, device registration for APNs and web push,
-  rotate secret, test delivery, delivery history, and foreground command
-  streaming.
+- Next: analytics summary, alert create/update/pause commands, device
+  registration for APNs and web push, rotate secret, test delivery, delivery
+  history, and foreground command streaming.
 
 ## Production Boundaries
 

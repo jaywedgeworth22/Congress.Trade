@@ -2,7 +2,7 @@
  * src/export/__tests__/pitScores.test.ts
  *
  * Regression tests for the point-in-time score export helpers. The key safety
- * property: member skill must ignore any outcome whose evaluation horizon had
+ * property: politician skill must ignore any outcome whose evaluation horizon had
  * not matured by the observation's asOf date.
  */
 
@@ -265,7 +265,7 @@ function tx(id: string, ticker: string, firstSeenAt: string | null, overrides: R
     first_seen_at: firstSeenAt,
     source_url: 'https://example.test/filing',
     filing_chamber: 'house',
-    full_name: 'Test Member',
+    full_name: 'Test Politician',
     filer_chamber: 'house',
     party: 'I',
     state: 'NA',

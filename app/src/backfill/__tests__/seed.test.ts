@@ -249,10 +249,10 @@ describe('runSeedBackfill batched writes (subrequest cap)', () => {
   it('groups upserts into bounded batches instead of one write per row', async () => {
     const { db, batchSizes } = fakeDb();
     const env = { DB: db } as unknown as Env;
-    // 120 distinct members => 120 filer upserts + 120 tx upserts = 240 statements.
+    // 120 distinct politicians => 120 filer upserts + 120 tx upserts = 240 statements.
     const rows = Array.from({ length: 120 }, (_, i) => ({
       ...SENATE_REC,
-      senator: `Member Number ${i}`,
+      senator: `Politician Number ${i}`,
     }));
     const fetchImpl = (async () =>
       new Response(JSON.stringify(rows), {

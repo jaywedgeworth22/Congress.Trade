@@ -457,6 +457,10 @@ export interface Env {
   FMP_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */
   FMP_DAILY_CALL_CAP?: string;
+  /** Enables the Congress.Trade-vs-FMP congressional disclosure latency monitor. */
+  FMP_DISCLOSURE_WATCH_ENABLED?: string;
+  /** Latest rows to fetch per FMP chamber endpoint when the latency monitor runs. */
+  FMP_DISCLOSURE_WATCH_LIMIT?: string;
   /** Which price provider to prefer: 'fmp' or 'massive'. */
   PRICE_PROVIDER?: string;
   /** HMAC key for signing outbound webhook payloads. */
@@ -478,6 +482,11 @@ export interface Env {
   /** Cross-app share endpoint + token for pushing refreshed market refs/prices. */
   APP_B_IMPORT_URL?: string;
   APP_B_INGEST_TOKEN?: string;
+  /** API Usage Monitor scoped ingest endpoint for app-provider usage telemetry. */
+  USAGE_MONITOR_ENABLED?: string;
+  USAGE_MONITOR_INGEST_URL?: string;
+  USAGE_MONITOR_INGEST_TOKEN?: string;
+  USAGE_MONITOR_ENVIRONMENT?: string;
   /** Admin + scoped import bearer tokens. */
   ADMIN_TOKEN?: string;
   /** Admin email allowlist for site-session admin access and Cloudflare Access. */

@@ -10,6 +10,8 @@ import {
   type AccessJwtPayload,
 } from '../access';
 
+const CRYPTO_TEST_TIMEOUT_MS = 15_000;
+
 // --- helpers ---------------------------------------------------------------
 
 function bytesToB64url(bytes: Uint8Array): string {
@@ -137,7 +139,7 @@ describe('verifyAccessJwt', () => {
       fetchImpl: async () => jwksFor(kp.publicKey),
     });
     expect(res).toEqual({ ok: true, email: 'me@x.com' });
-  });
+  }, CRYPTO_TEST_TIMEOUT_MS);
 
   it('rejects a token signed by a different key (bad signature)', async () => {
     const signer = await makeKeypair();
@@ -152,7 +154,7 @@ describe('verifyAccessJwt', () => {
     });
     expect(res.ok).toBe(false);
     expect(res.reason).toBe('bad signature');
-  });
+  }, CRYPTO_TEST_TIMEOUT_MS);
 
   it('rejects an allowlist miss even with a valid signature', async () => {
     const kp = await makeKeypair();
@@ -165,7 +167,7 @@ describe('verifyAccessJwt', () => {
       fetchImpl: async () => jwksFor(kp.publicKey),
     });
     expect(res).toEqual({ ok: false, reason: 'email not allowed' });
-  });
+  }, CRYPTO_TEST_TIMEOUT_MS);
 
   it('rejects when no signing key matches the kid', async () => {
     const kp = await makeKeypair();
@@ -179,7 +181,7 @@ describe('verifyAccessJwt', () => {
     });
     expect(res.ok).toBe(false);
     expect(res.reason).toBe('no matching signing key');
-  });
+  }, CRYPTO_TEST_TIMEOUT_MS);
 
   it('rejects a malformed token without fetching', async () => {
     let fetched = false;

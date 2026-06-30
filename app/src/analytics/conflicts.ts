@@ -2,7 +2,7 @@
  * src/analytics/conflicts.ts
  * OWNER: analytics
  *
- * Committee conflict-of-interest signal: flag when a member who sits on a
+ * Committee conflict-of-interest signal: flag when a politician who sits on a
  * committee trades a stock in a GICS sector that committee oversees. The
  * committee→sector mapping is the expert panel's curation. Pure + deterministic
  * (unit-tested without a DB).
@@ -16,7 +16,7 @@
 
 /** Distinctive lowercase committee token → the GICS sectors it oversees. */
 interface CommitteeRule {
-  match: string; // substring tested against a lowercased member committee name
+  match: string; // substring tested against a lowercased politician committee name
   sectors: string[]; // GICS sectors (match securities_ref.sector values)
 }
 
@@ -41,13 +41,13 @@ export const COMMITTEE_SECTOR_RULES: ReadonlyArray<CommitteeRule> = [
 
 export interface ConflictMatch {
   conflict: boolean;
-  /** GICS sectors the member's committees oversee that intersect the traded sector. */
+  /** GICS sectors the politician's committees oversee that intersect the traded sector. */
   sector: string | null;
-  /** The member-committee strings that triggered the flag. */
+  /** The politician-committee strings that triggered the flag. */
   viaCommittees: string[];
 }
 
-/** Sectors a member oversees given their (free-text) committee list. */
+/** Sectors a politician oversees given their (free-text) committee list. */
 export function oversightSectors(committees: string[]): Set<string> {
   const out = new Set<string>();
   for (const c of committees) {
@@ -61,7 +61,7 @@ export function oversightSectors(committees: string[]): Set<string> {
 }
 
 /**
- * Does this member, given their committees, have a conflict trading `sector`?
+ * Does this politician, given their committees, have a conflict trading `sector`?
  * Case-insensitive sector comparison. Returns which committees triggered it.
  */
 export function committeeConflict(committees: string[], sector: string | null): ConflictMatch {

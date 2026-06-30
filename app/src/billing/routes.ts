@@ -32,6 +32,11 @@ import {
   applySubscription,
   endSubscription,
 } from './subscription';
+import {
+  claimStripeWebhookEvent,
+  markStripeWebhookEventProcessed,
+  releaseStripeWebhookEvent,
+} from './webhookEvents';
 
 const DEFAULT_TRIAL_DAYS = 7;
 
@@ -136,14 +141,19 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
     const valid = await verifyStripeSignature(payload, sig, secret);
     if (!valid) return c.json({ error: 'invalid signature' }, 400);
 
-    let event: { type?: string; data?: { object?: unknown } };
+    let event: { id?: string; type?: string; data?: { object?: unknown } };
     try {
-      event = JSON.parse(payload) as { type?: string; data?: { object?: unknown } };
+      event = JSON.parse(payload) as { id?: string; type?: string; data?: { object?: unknown } };
     } catch {
       return c.json({ error: 'invalid JSON' }, 400);
     }
+    if (!event.id || !event.type) return c.json({ error: 'invalid Stripe event' }, 400);
 
+    let claimed = false;
     try {
+      claimed = await claimStripeWebhookEvent(c.env, event.id, event.type);
+      if (!claimed) return c.json({ received: true, duplicate: true });
+
       const obj = event.data?.object as Record<string, unknown> | undefined;
       switch (event.type) {
         case 'checkout.session.completed': {
@@ -169,7 +179,15 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
         default:
           break; // ignore unrelated events
       }
+      await markStripeWebhookEventProcessed(c.env, event.id);
     } catch (err) {
+      if (claimed) {
+        try {
+          await releaseStripeWebhookEvent(c.env, event.id);
+        } catch (releaseErr) {
+          console.error('webhook idempotency release failed:', (releaseErr as Error).message);
+        }
+      }
       console.error('webhook handling error:', (err as Error).message);
       return c.json({ error: 'webhook handling failed' }, 500);
     }

@@ -14,6 +14,7 @@ vi.mock('@sentry/cloudflare', () => ({
 
 import worker from '../../index';
 import type { Env, QueueMessage } from '../../shared/types';
+import { WEBHOOK_FETCH_TIMEOUT_MS } from '../webhook';
 
 const txRow = {
   id: 'tx_1',
@@ -48,9 +49,14 @@ const subRow = {
   created_at: '2026-06-20T00:00:00.000Z',
 };
 
-function fakeEnv(deliveryStatus: 'failed' | 'delivered' | null = 'failed') {
+function fakeEnv(
+  deliveryStatus: 'failed' | 'delivered' | null = 'failed',
+  opts: { targetUrl?: string; env?: Partial<Env> } = {},
+) {
   const sent: Array<{ body: unknown; options: unknown }> = [];
   const prepares: string[] = [];
+  const runs: Array<{ sql: string; params: unknown[] }> = [];
+  const subscription = { ...subRow, target_url: opts.targetUrl ?? subRow.target_url };
 
   const prepare = (sql: string) => {
     prepares.push(sql);
@@ -65,7 +71,7 @@ function fakeEnv(deliveryStatus: 'failed' | 'delivered' | null = 'failed') {
         if (/SELECT chamber FROM filings WHERE doc_id = \?/i.test(sql)) {
           return { chamber: 'house' } as T;
         }
-        if (/FROM subscriptions WHERE id = \?/i.test(sql)) return subRow as T;
+        if (/FROM subscriptions WHERE id = \?/i.test(sql)) return subscription as T;
         if (/FROM deliveries WHERE subscription_id = \? AND tx_id = \?/i.test(sql)) {
           return deliveryStatus
             ? ({ id: 'dlv_1', status: deliveryStatus, attempts: 2 } as T)
@@ -80,6 +86,7 @@ function fakeEnv(deliveryStatus: 'failed' | 'delivered' | null = 'failed') {
         return { results: [] as T[] };
       },
       async run() {
+        runs.push({ sql, params: this.params });
         return { success: true };
       },
     };
@@ -93,13 +100,17 @@ function fakeEnv(deliveryStatus: 'failed' | 'delivered' | null = 'failed') {
       }),
     },
     WEBHOOK_SIGNING_KEY: 'fallback_secret',
+    ...opts.env,
   } as unknown as Env;
 
-  return { env, sent, prepares };
+  return { env, sent, prepares, runs };
 }
 
 describe('delivery queue retry routing', () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
   it('preserves subscriptionId and attempt through index.queue', async () => {
     const { env, sent } = fakeEnv();
@@ -123,6 +134,8 @@ describe('delivery queue retry routing', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(init.redirect).toBe('manual');
+    expect(init.signal).toBeInstanceOf(AbortSignal);
     expect(init.headers).toMatchObject({
       'X-Subscription-Id': 'sub_retry',
       'X-Delivery-Attempt': '3',
@@ -161,6 +174,74 @@ describe('delivery queue retry routing', () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(sent).toHaveLength(0);
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it('does not POST to unsafe stored targets in production', async () => {
+    const { env, sent, runs } = fakeEnv(null, {
+      targetUrl: 'https://169.254.169.254/latest/meta-data',
+      env: { APP_BASE_URL: 'https://congress.trade' },
+    });
+    const fetchMock = vi.fn(async () => new Response('ok', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const body = {
+      type: 'delivery.dispatch',
+      txId: 'tx_1',
+      subscriptionId: 'sub_retry',
+      attempt: 1,
+    } as QueueMessage & { subscriptionId: string; attempt: number };
+    const batch = {
+      queue: 'congress-feed-delivery',
+      messages: [{ body, ack, retry }],
+    } as unknown as MessageBatch<QueueMessage>;
+
+    await worker.queue(batch, env, {} as ExecutionContext);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(sent).toHaveLength(0);
+    expect(runs.some((run) => run.params.includes('failed'))).toBe(true);
+    expect(runs.some((run) => String(run.params[2]).includes('unsafe webhook target URL'))).toBe(true);
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it('aborts slow webhook POSTs and schedules a retry', async () => {
+    vi.useFakeTimers();
+    const { env, sent, runs } = fakeEnv(null);
+    const fetchMock = vi.fn(
+      async (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('aborted', 'AbortError'));
+          });
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const body = {
+      type: 'delivery.dispatch',
+      txId: 'tx_1',
+      subscriptionId: 'sub_retry',
+      attempt: 1,
+    } as QueueMessage & { subscriptionId: string; attempt: number };
+    const batch = {
+      queue: 'congress-feed-delivery',
+      messages: [{ body, ack, retry }],
+    } as unknown as MessageBatch<QueueMessage>;
+
+    const queued = worker.queue(batch, env, {} as ExecutionContext);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(WEBHOOK_FETCH_TIMEOUT_MS);
+    await queued;
+
+    expect(sent).toHaveLength(1);
+    expect(runs.some((run) => run.params.includes(`timeout after ${WEBHOOK_FETCH_TIMEOUT_MS}ms`))).toBe(true);
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
   });

@@ -40,25 +40,23 @@ npm ci --include=dev
 # environment LATER are appended on the next run. No file is created when nothing
 # is set, so an empty .dev.vars can never lock out a later top-up.
 #
-# Keep KNOWN_VARS in sync with app/.dev.vars.example. PRICE_PROVIDER (and other
-# runtime selectors) are included so a sandbox can override the wrangler.toml
-# [vars] default — otherwise the Worker silently keeps the committed default even
-# though the provider keys were written.
+# Keep KNOWN_VARS synced from app/.dev.vars.example. A few runtime selectors and
+# provider keys are also included so a sandbox can override wrangler.toml [vars]
+# defaults or test optional providers before those names appear in the template.
 # ---------------------------------------------------------------------------
 KNOWN_VARS=(
-  GEMINI_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY MISTRAL_API_KEY XAI_API_KEY
-  ARBITRATION_API_KEY ARBITRATION_ENABLED ARBITRATION_MODEL
-  PRICE_PROVIDER FMP_API_KEY FMP_DAILY_CALL_CAP
-  WEBHOOK_SIGNING_KEY
-  ADMIN_TOKEN ADMIN_OPEN_IN_DEV INGEST_TOKEN
-  ADMIN_EMAILS ACCESS_AUD ACCESS_TEAM_DOMAIN
-  APP_B_IMPORT_URL APP_B_INGEST_TOKEN
-  SEED_HOUSE_URL SEED_SENATE_URL HOUSE_LIVE_SEARCH_ENABLED
-  GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET RESEND_API_KEY EMAIL_FROM APP_BASE_URL ALERT_EMAIL
-  STRIPE_SECRET_KEY STRIPE_WEBHOOK_SECRET STRIPE_PRICE_MONTHLY STRIPE_PRICE_ANNUAL STRIPE_TRIAL_DAYS
-  IMPORT_MAX_BYTES IMPORT_MAX_REFS IMPORT_MAX_SPX IMPORT_MAX_PRICES IMPORT_MAX_CLOSES_PER_TICKER IMPORT_MAX_INSIDER IMPORT_MAX_SHORT_VOLUME
+  PRICE_PROVIDER FMP_MAX_PER_MINUTE
+  MISTRAL_API_KEY XAI_API_KEY
   FINNHUB_API_KEY INTRINIO_API_KEY TWELVEDATA_API_KEY MASSIVE_API_KEY
 )
+if [ -f .dev.vars.example ]; then
+  while IFS= read -r name; do
+    case " ${KNOWN_VARS[*]} " in
+      *" $name "*) ;;
+      *) KNOWN_VARS+=("$name") ;;
+    esac
+  done < <(sed -nE 's/^([A-Z0-9_]+)=.*/\1/p' .dev.vars.example)
+fi
 merged=0
 for name in "${KNOWN_VARS[@]}"; do
   value="${!name:-}"

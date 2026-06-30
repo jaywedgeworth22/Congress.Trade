@@ -18,7 +18,7 @@ function filing(year: number, docId: string, filingType: string): HouseFiling {
     filingType,
     year: String(year),
     first: 'Test',
-    last: 'Member',
+    last: 'Politician',
     stateDst: 'CA01',
     filingDate: `1/2/${year}`,
     isPtr,
@@ -105,8 +105,8 @@ describe('runHouseHistoricalBackfill', () => {
     const filingWrites = writes.filter((w) => String(w[0]).startsWith('H-'));
     expect(filingWrites.map((w) => w[3])).toEqual(['2014-01-02', '2015-01-02']);
     expect(filingWrites.map((w) => w[2])).toEqual([
-      'house-ca01-test-member',
-      'house-ca01-test-member',
+      'house-ca01-test-politician',
+      'house-ca01-test-politician',
     ]);
 
     // Exactly the two PTR doc ids, with the watcher-identical message shape.
@@ -126,8 +126,8 @@ describe('runHouseHistoricalBackfill', () => {
     ]);
   });
 
-  it('respects maxFilings as a global cap on enqueued messages', async () => {
-    const { env, sent } = fakeEnv();
+  it('respects maxFilings as a global cap on persisted/enqueued messages', async () => {
+    const { env, sent, seen } = fakeEnv();
     const data: Record<number, HouseFiling[]> = {
       2014: [filing(2014, '1', 'P'), filing(2014, '2', 'P'), filing(2014, '3', 'P')],
       2015: [filing(2015, '4', 'P'), filing(2015, '5', 'P')],
@@ -140,15 +140,50 @@ describe('runHouseHistoricalBackfill', () => {
       fetchIndexImpl: indexImpl(data),
     });
 
-    // All 5 PTRs are discovered/persisted, but only 2 are enqueued (the cap).
+    // All 5 PTRs are discovered, but only 2 are persisted/enqueued (the cap).
     expect(res.discovered).toBe(5);
     expect(res.enqueued).toBe(2);
     expect(res.skipped).toBe(3);
+    expect(Array.from(seen)).toEqual(['H-2014-1', 'H-2014-2']);
     expect(sent).toHaveLength(2);
     expect(sent.map((m) => (m.type === 'filing.new' ? m.docId : ''))).toEqual([
       'H-2014-1',
       'H-2014-2',
     ]);
+  });
+
+  it('does not mark over-cap new filings as seen before a later run can enqueue them', async () => {
+    const { env, sent, seen } = fakeEnv();
+    const data: Record<number, HouseFiling[]> = {
+      2014: [filing(2014, '1', 'P'), filing(2014, '2', 'P')],
+    };
+    const fetchIndexImpl = indexImpl(data);
+
+    const first = await runHouseHistoricalBackfill(env, {
+      fromYear: 2014,
+      toYear: 2014,
+      maxFilings: 1,
+      fetchIndexImpl,
+    });
+
+    expect(first.enqueued).toBe(1);
+    expect(first.skipped).toBe(1);
+    expect(Array.from(seen)).toEqual(['H-2014-1']);
+
+    const second = await runHouseHistoricalBackfill(env, {
+      fromYear: 2014,
+      toYear: 2014,
+      maxFilings: 2,
+      fetchIndexImpl,
+    });
+
+    expect(second.enqueued).toBe(1);
+    expect(second.skipped).toBe(1);
+    expect(sent.map((m) => (m.type === 'filing.new' ? m.docId : ''))).toEqual([
+      'H-2014-1',
+      'H-2014-2',
+    ]);
+    expect(Array.from(seen)).toEqual(['H-2014-1', 'H-2014-2']);
   });
 
   it('does not write or enqueue in dryRun', async () => {

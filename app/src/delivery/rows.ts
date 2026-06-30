@@ -57,7 +57,7 @@ export interface TransactionRow {
 /**
  * A transaction row with the filer's identity joined in (LEFT JOIN filers).
  * Used by the dashboard feed + SSE stream so each row can show a resolved
- * member name + headshot. The filer columns are nullable: transactions.filer_id
+ * politician name + headshot. The filer columns are nullable: transactions.filer_id
  * may be null or may not resolve to a filers row (e.g. seed/backfill rows).
  */
 export interface FeedTransactionRow extends TransactionRow {
@@ -151,7 +151,7 @@ export function mapTransaction(row: TransactionRow): Transaction {
 
 /**
  * Map a feed row (transaction + joined filer identity) to a Transaction,
- * carrying the resolved member name/state/headshot. Kept separate from
+ * carrying the resolved politician name/state/headshot. Kept separate from
  * mapTransaction so the webhook/normalizer paths (which never join filers) are
  * unaffected.
  */
@@ -279,7 +279,7 @@ export const FREE_WINDOW_DAYS = 30;
 export const FREE_TX_LIMIT = 50;
 
 /**
- * Shared FROM/JOIN clause for the transactions feed. Chamber + member name are
+ * Shared FROM/JOIN clause for the transactions feed. Chamber + politician name are
  * resolved primarily through the `filers` table (joined on bioguide_id), which
  * is the authoritative source for the seed dataset — those rows have no owning
  * `filings` row, so a filings-only chamber join would silently drop them. We
@@ -371,7 +371,7 @@ function buildTxFilters(
  * rows with cursor_seq > since (the reconciliation backstop).
  *
  * `chamber` is resolved via the `filers` table (authoritative for seed data),
- * falling back to the owning filing's chamber. The member's full name and
+ * falling back to the owning filing's chamber. The politician's full name and
  * resolved chamber are SELECTed alongside `t.*` as `__member_name`/`__chamber`
  * so the REST handler can attach them without changing the Transaction type.
  *

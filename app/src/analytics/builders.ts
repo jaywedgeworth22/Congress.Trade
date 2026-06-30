@@ -49,7 +49,7 @@ const SELL = "SUM(CASE WHEN t.tx_type = 'S' THEN 1 ELSE 0 END)";
 // 1. Summary — KPI strip
 // ---------------------------------------------------------------------------
 
-/** Corpus-wide totals for the window: trades, members, tickers, est volume,
+/** Corpus-wide totals for the window: trades, politicians, tickers, est volume,
  *  buy/sell/exchange counts, resolved-ticker count, option count. */
 export function buildSummaryQuery(p: CommonFilters): BuiltQuery {
   const { where, params } = buildCommonFilters(p);
@@ -112,7 +112,7 @@ export function buildTickerLeaderboardQuery(
 }
 
 // ---------------------------------------------------------------------------
-// 3. Member leaderboard — "who trades the most?"
+// 3. Politician leaderboard — "who trades the most?"
 // ---------------------------------------------------------------------------
 
 export type MemberSort = 'trades' | 'volume' | 'tickers';
@@ -152,8 +152,8 @@ export function buildMemberLeaderboardQuery(
 // 4. Cluster / consensus buys — the strongest noise filter
 // ---------------------------------------------------------------------------
 
-/** Tickers where >= minMembers distinct members traded the SAME direction in
- *  the window. The headline "N members bought X" signal. */
+/** Tickers where >= minMembers distinct politicians traded the SAME direction in
+ *  the window. The headline "N politicians bought X" signal. */
 export function buildClusterBuysQuery(
   p: CommonFilters & { minMembers?: number; limit?: number },
 ): BuiltQuery {
@@ -181,8 +181,8 @@ export function buildClusterBuysQuery(
   return { sql, params };
 }
 
-/** Follow-up: per-member trade counts for a set of cluster tickers, so the route
- *  can attach a few representative member faces to each cluster card. */
+/** Follow-up: per-politician trade counts for a set of cluster tickers, so the route
+ *  can attach a few representative politician faces to each cluster card. */
 export function buildClusterMembersQuery(
   tickers: string[],
   p: CommonFilters,
@@ -352,7 +352,7 @@ export function buildSectorBreakdownQuery(p: CommonFilters & { limit?: number })
  * buildSectorBreakdownQuery, which groups by the free-text `asset_type` (an
  * instrument class, not a sector). Resolved tickers only; un-enriched/unknown
  * sectors collapse to 'Unknown'. Reports signed net flow so a sector's
- * accumulation vs distribution is visible, plus member/ticker breadth.
+ * accumulation vs distribution is visible, plus politician/ticker breadth.
  */
 export function buildSectorFlowQuery(p: CommonFilters & { limit?: number }): BuiltQuery {
   const { where, params } = buildCommonFilters(p);
@@ -418,7 +418,7 @@ export function buildFilingLagHistogramQuery(p: CommonFilters): BuiltQuery {
   return { sql, params };
 }
 
-/** Per-member average/max/late-count disclosure lag (the "late filers" board). */
+/** Per-politician average/max/late-count disclosure lag (the "late filers" board). */
 export function buildLateFilersQuery(p: CommonFilters & { limit?: number }): BuiltQuery {
   const { where, params } = buildCommonFilters(p);
   const limit = clampLimit(p.limit, 50, 100);
@@ -446,11 +446,11 @@ export function buildLateFilersQuery(p: CommonFilters & { limit?: number }): Bui
 }
 
 // ---------------------------------------------------------------------------
-// 9b. Member performance leaderboard — excess return vs the S&P 500
+// 9b. Politician performance leaderboard — excess return vs the S&P 500
 // ---------------------------------------------------------------------------
 
 /**
- * Per-member realized performance of their BUYS, measured as excess return vs
+ * Per-politician realized performance of their BUYS, measured as excess return vs
  * the S&P 500, anchored at the FILING (disclosure) date — the only price a
  * follower could actually have transacted at (trade-date anchoring would bake in
  * the move that happened before the trade was public). Each trade's excess is
@@ -515,9 +515,9 @@ export function buildMemberPerformanceLeaderboardQuery(
 // ---------------------------------------------------------------------------
 
 /**
- * Distinct (ticker, side, member) rows for the directional trades on a candidate
+ * Distinct (ticker, side, politician) rows for the directional trades on a candidate
  * ticker set in the window — i.e. "who traded each candidate, on which side".
- * Keyed by tx_type so the conviction rollup can use ONLY the members on the side
+ * Keyed by tx_type so the conviction rollup can use ONLY the politicians on the side
  * the signal resolves to. Caller must chunk `tickers` under D1's 100-bind cap.
  */
 export function buildConvictionMemberLinksQuery(tickers: string[], p: CommonFilters): BuiltQuery {
@@ -531,12 +531,12 @@ export function buildConvictionMemberLinksQuery(tickers: string[], p: CommonFilt
 }
 
 /**
- * Per-member realized "skill" over their FULL track record (all-time): scored buy
+ * Per-politician realized "skill" over their FULL track record (all-time): scored buy
  * count, wins (filing-anchored excess vs the S&P > 0), and average excess. Same
  * EXCESS basis as the performance leaderboard. The window is intentionally OMITTED
  * (skill is a career track record), but the trade-level source / minConf filters
  * ARE honored so the skill matches the requested analytics slice (e.g.
- * ?source=primary won't let seed-dataset buys leak in). Only members with >= 5
+ * ?source=primary won't let seed-dataset buys leak in). Only politicians with >= 5
  * scored buys are returned. Caller must chunk `filerIds` under D1's 100-bind cap.
  */
 export function buildMemberSkillQuery(filerIds: string[], p: CommonFilters): BuiltQuery {
@@ -600,7 +600,7 @@ export function buildTickerSummaryQuery(ticker: string, p: CommonFilters): Built
 /**
  * Purchase-cohort trade dates for a ticker backtest: BUYS only, options and
  * null/empty trade dates excluded, honoring the shared window/chamber/party/
- * source/minConf filters (+ optional single member). The route computes forward
+ * source/minConf filters (+ optional single politician). The route computes forward
  * returns in-memory from the price series (see aggregateTickerBacktest), so this
  * only needs the dates.
  */
@@ -622,7 +622,7 @@ export function buildTickerBacktestCohortQuery(
 
 /**
  * Candidate trades for the committee conflict-of-interest signal: trades by a
- * member WITH committees, in a resolved sector. The route applies the curated
+ * politician WITH committees, in a resolved sector. The route applies the curated
  * committee→sector map (see committeeConflict) to keep only true conflicts, so
  * this just pre-filters to rows that could possibly conflict.
  */
@@ -704,7 +704,7 @@ export function buildTickerRecentTradesQuery(
 }
 
 // ---------------------------------------------------------------------------
-// 11. Single-member (politician) deep dive
+// 11. Single-politician deep dive
 // ---------------------------------------------------------------------------
 
 function memberFilters(filerId: string, p: CommonFilters): { where: string[]; params: SqlParam[] } {
@@ -712,7 +712,7 @@ function memberFilters(filerId: string, p: CommonFilters): { where: string[]; pa
   return { where: ['t.filer_id = ?', ...where], params: [filerId, ...params] };
 }
 
-/** Aggregate stats for one member: trade counts, distinct tickers, est volume +
+/** Aggregate stats for one politician: trade counts, distinct tickers, est volume +
  *  net flow, and average disclosure lag. */
 export function buildMemberStatsQuery(filerId: string, p: CommonFilters): BuiltQuery {
   const { where, params } = memberFilters(filerId, p);
@@ -725,7 +725,7 @@ export function buildMemberStatsQuery(filerId: string, p: CommonFilters): BuiltQ
     `${BUY} AS buy_count, ${SELL} AS sell_count, ` +
     `COUNT(DISTINCT CASE WHEN ${TICKER_RESOLVED_SQL} THEN t.ticker END) AS unique_tickers, ` +
     // Distinct *assets* counts the resolved ticker, else the reported asset name,
-    // so members whose holdings are bonds/funds (ticker NULL) don't show 0.
+    // so politicians whose holdings are bonds/funds (ticker NULL) don't show 0.
     `COUNT(DISTINCT COALESCE(CASE WHEN ${TICKER_RESOLVED_SQL} THEN t.ticker END, NULLIF(t.asset_name, ''))) AS unique_assets, ` +
     `SUM(${MID}) AS est_volume, SUM(${SIGNED}) AS est_net_flow, ` +
     `${lag} AS avg_lag_days, ` +
@@ -736,7 +736,7 @@ export function buildMemberStatsQuery(filerId: string, p: CommonFilters): BuiltQ
 }
 
 /**
- * Per-trade performance anchors for one member's trades, backing the realized
+ * Per-trade performance anchors for one politician's trades, backing the realized
  * "skill" aggregate (see aggregateMemberPerformance). Joins the cached
  * tx_performance anchor (price + S&P at the trade date) and the security's
  * current price. Returns every windowed trade; the aggregator excludes options
@@ -754,7 +754,7 @@ export function buildMemberPerformanceQuery(filerId: string, p: CommonFilters): 
   return { sql, params };
 }
 
-/** Most-traded tickers for one member. */
+/** Most-traded tickers for one politician. */
 export function buildMemberTopTickersQuery(
   filerId: string,
   p: CommonFilters & { limit?: number },
@@ -771,7 +771,7 @@ export function buildMemberTopTickersQuery(
   return { sql, params };
 }
 
-/** Most-recent trades for one member (for the politician drawer's mini-list). */
+/** Most-recent trades for one politician (for the politician drawer's mini-list). */
 export function buildMemberRecentTradesQuery(
   filerId: string,
   p: CommonFilters & { limit?: number },
