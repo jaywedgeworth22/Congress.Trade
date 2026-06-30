@@ -8,7 +8,7 @@
  * run-scoped object key).
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { buildExportRouter } from '../routes';
 import { manifestObjectKey, snapshotObjectKey } from '../snapshot';
 
@@ -84,6 +84,10 @@ function baseEnv(extra: Record<string, unknown> = {}) {
 
 const TODAY = new Date().toISOString().slice(0, 10);
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 function manifestSeed(date: string) {
   return {
     [manifestObjectKey(date)]: JSON.stringify({
@@ -112,6 +116,85 @@ describe('GET /api/export/bulk-snapshot — auth', () => {
   });
   it('401 when INGEST_TOKEN is unset (closed by default)', async () => {
     expect((await req('/bulk-snapshot', { DB: fakeDb(), RAW_FILES: fakeR2() }, TOKEN)).status).toBe(401);
+  });
+});
+
+describe('GET /api/export/capabilities', () => {
+  it('401 without the scoped ingest token', async () => {
+    expect((await req('/capabilities', baseEnv())).status).toBe(401);
+  });
+
+  it('returns the cross-app contract without leaking configured secret values', async () => {
+    const res = await req(
+      '/capabilities',
+      baseEnv({
+        APP_B_IMPORT_URL: 'https://app-b.example/api/admin/securities/import',
+        APP_B_INGEST_TOKEN: 'peer-secret',
+        IMPORT_MAX_REFS: '123',
+      }),
+      TOKEN,
+    );
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain(TOKEN);
+    expect(text).not.toContain('peer-secret');
+    expect(text).not.toContain('https://app-b.example');
+    const body = JSON.parse(text) as {
+      contractVersion: string;
+      configured: { ingestToken: boolean; appBReturnPath: boolean };
+      endpoints: { imports: { securities: { limits: { refs: number }; accepts: string[] } }; exports: { pitScores: { scoreVersion: string } } };
+    };
+    expect(body.contractVersion).toBe('congress-trade-crossapp-v1');
+    expect(body.configured).toEqual({ ingestToken: true, appBReturnPath: true });
+    expect(body.endpoints.imports.securities.limits.refs).toBe(123);
+    expect(body.endpoints.imports.securities.accepts).toContain('fundamentals');
+    expect(body.endpoints.exports.pitScores.scoreVersion).toBe('congress-pit-v2');
+  });
+
+  it('reports configuration resolved from Infisical secrets', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.endsWith('/api/v1/auth/universal-auth/login')) {
+          return Response.json({ accessToken: 'infisical-token' });
+        }
+        if (url.includes('/api/v3/secrets/raw')) {
+          return Response.json({
+            secrets: [
+              { secretKey: 'INGEST_TOKEN', secretValue: TOKEN },
+              { secretKey: 'APP_B_IMPORT_URL', secretValue: 'https://app-b.example/api/admin/securities/import' },
+              { secretKey: 'APP_B_INGEST_TOKEN', secretValue: 'peer-secret' },
+            ],
+          });
+        }
+        return new Response('not found', { status: 404 });
+      }),
+    );
+
+    const res = await req(
+      '/capabilities',
+      baseEnv({
+        INGEST_TOKEN: undefined,
+        INFISICAL_BASE_URL: 'https://infisical.test',
+        INFISICAL_ENV: 'prod',
+        INFISICAL_APP_PROJECT_ID: 'export-capabilities-app',
+        INFISICAL_APP_CLIENT_ID: 'app-client',
+        INFISICAL_APP_CLIENT_SECRET: 'app-secret',
+      }),
+      TOKEN,
+    );
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain(TOKEN);
+    expect(text).not.toContain('peer-secret');
+    expect(text).not.toContain('https://app-b.example');
+    const body = JSON.parse(text) as {
+      configured: { ingestToken: boolean; appBReturnPath: boolean };
+      peerSharing: { appBImportUrlConfigured: boolean; appBIngestTokenConfigured: boolean };
+    };
+    expect(body.configured).toEqual({ ingestToken: true, appBReturnPath: true });
+    expect(body.peerSharing.appBImportUrlConfigured).toBe(true);
+    expect(body.peerSharing.appBIngestTokenConfigured).toBe(true);
   });
 });
 

@@ -318,6 +318,20 @@ provider — see the cross-app data-sharing plan.
 
 ## Bulk snapshot export (full-history bootstrap / catch-up)
 
+Before App B hardcodes a new route or export shape, it should read the
+machine-readable integration manifest:
+
+```
+GET https://congress.trade/api/export/capabilities
+Headers: Authorization: Bearer <INGEST_TOKEN>
+```
+
+The response lists the current cross-app contract version, supported import
+payload slots, import limits, read endpoints, PIT score export settings,
+bulk-snapshot table names, placebo exports, and whether the App B return path is
+configured. It intentionally reports only boolean secret/config status; it never
+echoes token values or peer URLs.
+
 The per-ticker reads above are for incremental, one-symbol cache-aside. To
 **bootstrap from scratch** or **catch up after a downtime gap**, App B can pull
 a daily, date-partitioned NDJSON snapshot of the whole market-data set instead of
@@ -338,7 +352,6 @@ schema, and a per-table `downloadPath`:
 ```jsonc
 {
   "generatedAt": "2026-06-25T04:01:00.000Z",
-  "snapshotDate": "2026-06-25",
   "snapshotDate": "2026-06-25",
   "runId": "9f3c…",                                  // unique per run; pinned into downloadPath
   "format": "ndjson",

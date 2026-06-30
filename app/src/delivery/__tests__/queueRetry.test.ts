@@ -4,6 +4,14 @@
  * webhook retry does not fan out to every subscriber again.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+
+// Sentry's queue instrumentation requires AsyncLocalStorage which isn't
+// available in vitest. Mock withSentry as a pass-through so tests that call
+// worker.queue() directly don't crash on isolation-scope setup.
+vi.mock('@sentry/cloudflare', () => ({
+  withSentry: (_opts: unknown, handler: unknown) => handler,
+}));
+
 import worker from '../../index';
 import type { Env, QueueMessage } from '../../shared/types';
 

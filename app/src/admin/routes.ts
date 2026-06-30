@@ -1278,63 +1278,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       note: runtimeSecrets.FMP_API_KEY ? 'Enrichment rows refreshed' : 'FMP_API_KEY is not available to this Worker runtime',
     });
 
-    const priceRows = await optionalAll<{
-      calls_total: number;
-      last_price_date: string | null;
-    }>(
-      c.env,
-      `SELECT COUNT(*) AS calls_total, MAX(date) AS last_price_date FROM price_eod`,
-    );
-    const priceRow = priceRows[0];
-    const marketProviders: Array<{ id: string; label: string; configured: boolean; note: string }> = [
-      {
-        id: 'provider:massive',
-        label: 'Massive Market Data',
-        configured: !!runtimeSecrets.MASSIVE_API_KEY,
-        note: runtimeSecrets.MASSIVE_API_KEY ? 'Configured as price/enrichment fallback' : 'MASSIVE_API_KEY is not available to this Worker runtime',
-      },
-      {
-        id: 'provider:intrinio',
-        label: 'Intrinio Enrichment',
-        configured: !!runtimeSecrets.INTRINIO_API_KEY,
-        note: runtimeSecrets.INTRINIO_API_KEY ? 'Configured as enrichment fallback' : 'INTRINIO_API_KEY is not available to this Worker runtime',
-      },
-      {
-        id: 'provider:twelvedata',
-        label: 'TwelveData Enrichment',
-        configured: !!runtimeSecrets.TWELVEDATA_API_KEY,
-        note: runtimeSecrets.TWELVEDATA_API_KEY ? 'Configured as enrichment fallback' : 'TWELVEDATA_API_KEY is not available to this Worker runtime',
-      },
-      {
-        id: 'provider:finnhub',
-        label: 'Finnhub Enrichment',
-        configured: !!runtimeSecrets.FINNHUB_API_KEY,
-        note: runtimeSecrets.FINNHUB_API_KEY ? 'Configured as enrichment fallback' : 'FINNHUB_API_KEY is not available to this Worker runtime',
-      },
-      {
-        id: 'provider:logodev',
-        label: 'Logo.dev',
-        configured: !!runtimeSecrets.LOGODEV_PUBLISHABLE_KEY,
-        note: runtimeSecrets.LOGODEV_PUBLISHABLE_KEY ? 'Ticker logo proxy token available' : 'LOGODEV_PUBLISHABLE_KEY is not available to this Worker runtime',
-      },
-    ];
-    for (const provider of marketProviders) {
-      connections.push({
-        id: provider.id,
-        label: provider.label,
-        status: provider.configured ? 'ok' : 'warn',
-        configured: provider.configured,
-        lastUsedAt: null,
-        callsTotal: provider.id === 'provider:massive' ? priceRow?.calls_total ?? 0 : 0,
-        callsLast24h: 0,
-        callsToday: 0,
-        errorsLast24h: 0,
-        note: provider.id === 'provider:massive' && priceRow?.last_price_date
-          ? `${provider.note}; latest cached price date ${priceRow.last_price_date}`
-          : provider.note,
-      });
-    }
-
     const appBReceivedRows = await optionalAll<{
       imported_refs: number;
       fundamentals_rows: number;
@@ -1385,6 +1328,155 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       note: appBPushConfigured
         ? 'Outbound shared-data push is configured; no send audit table exists yet'
         : 'APP_B_IMPORT_URL/APP_B_INGEST_TOKEN is missing or incomplete',
+    });
+
+    const providerRows = await optionalAll<{
+      provider: string;
+      calls_total: number;
+      calls_last_24h: number;
+      calls_today: number;
+      last_used_at: string | null;
+      errors_last_24h: number;
+    }>(
+      c.env,
+      `SELECT CASE
+                WHEN lower(source) LIKE '%massive%' THEN 'massive'
+                WHEN lower(source) LIKE '%intrinio%' THEN 'intrinio'
+                WHEN lower(source) LIKE '%twelvedata%' THEN 'twelvedata'
+                WHEN lower(source) LIKE '%finnhub%' THEN 'finnhub'
+                WHEN lower(source) LIKE '%edgar%' THEN 'edgar'
+                ELSE 'other'
+              END AS provider,
+              COUNT(*) AS calls_total,
+              SUM(CASE WHEN enriched_at >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
+              SUM(CASE WHEN enriched_at >= ? THEN 1 ELSE 0 END) AS calls_today,
+              MAX(enriched_at) AS last_used_at,
+              SUM(CASE WHEN enrichment_error IS NOT NULL AND enrichment_error != '' AND enriched_at >= ? THEN 1 ELSE 0 END) AS errors_last_24h
+         FROM securities_ref
+        WHERE source IS NOT NULL AND source != ''
+        GROUP BY provider`,
+      [last24, today, last24],
+    );
+    const providerUsage = new Map(providerRows.map((row) => [row.provider, row]));
+    const addMarketProvider = (id: string, label: string, configured: boolean, note: string) => {
+      const row = providerUsage.get(id);
+      connections.push({
+        id: `provider:${id}`,
+        label,
+        status: connectionStatus(configured, row?.errors_last_24h ?? 0, row?.last_used_at ?? null),
+        configured,
+        lastUsedAt: row?.last_used_at ?? null,
+        callsTotal: row?.calls_total ?? 0,
+        callsLast24h: row?.calls_last_24h ?? 0,
+        callsToday: row?.calls_today ?? 0,
+        errorsLast24h: row?.errors_last_24h ?? 0,
+        note,
+      });
+    };
+    addMarketProvider('massive', 'Massive Market Data', !!runtimeSecrets.MASSIVE_API_KEY, runtimeSecrets.MASSIVE_API_KEY ? 'Reference/price fallback configured' : 'MASSIVE_API_KEY is not available to this Worker runtime');
+    addMarketProvider('intrinio', 'Intrinio Reference Data', !!runtimeSecrets.INTRINIO_API_KEY, runtimeSecrets.INTRINIO_API_KEY ? 'Reference fallback configured' : 'INTRINIO_API_KEY is not available to this Worker runtime');
+    addMarketProvider('twelvedata', 'Twelve Data Reference', !!runtimeSecrets.TWELVEDATA_API_KEY, runtimeSecrets.TWELVEDATA_API_KEY ? 'Reference fallback configured' : 'TWELVEDATA_API_KEY is not available to this Worker runtime');
+    addMarketProvider('finnhub', 'Finnhub Reference', !!runtimeSecrets.FINNHUB_API_KEY, runtimeSecrets.FINNHUB_API_KEY ? 'Reference fallback configured' : 'FINNHUB_API_KEY is not available to this Worker runtime');
+    addMarketProvider('edgar', 'SEC EDGAR Reference', true, 'Free fallback; no secret required');
+
+    connections.push({
+      id: 'provider:logodev',
+      label: 'Logo.dev',
+      status: runtimeSecrets.LOGODEV_PUBLISHABLE_KEY ? 'ok' : 'warn',
+      configured: !!runtimeSecrets.LOGODEV_PUBLISHABLE_KEY,
+      lastUsedAt: null,
+      callsTotal: 0,
+      callsLast24h: 0,
+      callsToday: 0,
+      errorsLast24h: 0,
+      note: runtimeSecrets.LOGODEV_PUBLISHABLE_KEY ? 'Ticker logo proxy token available' : 'LOGODEV_PUBLISHABLE_KEY is not available to this Worker runtime',
+    });
+
+    const priceRows = await optionalAll<{
+      calls_total: number;
+      calls_last_24h: number;
+      calls_today: number;
+      last_used_at: string | null;
+    }>(
+      c.env,
+      `SELECT COUNT(DISTINCT ticker) AS calls_total,
+              SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
+              SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS calls_today,
+              MAX(date) AS last_used_at
+         FROM price_eod`,
+      [last24.slice(0, 10), today.slice(0, 10)],
+    );
+    const priceRow = priceRows[0];
+    const hasPriceProvider = !!(runtimeSecrets.FMP_API_KEY || runtimeSecrets.MASSIVE_API_KEY);
+    connections.push({
+      id: 'cache:prices',
+      label: 'Asset Price Cache',
+      status: connectionStatus(hasPriceProvider, 0, priceRow?.last_used_at ?? null),
+      configured: hasPriceProvider,
+      lastUsedAt: priceRow?.last_used_at ?? null,
+      callsTotal: priceRow?.calls_total ?? 0,
+      callsLast24h: priceRow?.calls_last_24h ?? 0,
+      callsToday: priceRow?.calls_today ?? 0,
+      errorsLast24h: 0,
+      note: hasPriceProvider
+        ? `PRICE_PROVIDER=${c.env.PRICE_PROVIDER || 'fmp'}; counts show cached assets/rows, not raw API calls`
+        : 'No FMP_API_KEY or MASSIVE_API_KEY configured for price history',
+    });
+
+    const spxRows = await optionalAll<{
+      calls_total: number;
+      calls_last_24h: number;
+      calls_today: number;
+      last_used_at: string | null;
+    }>(
+      c.env,
+      `SELECT COUNT(*) AS calls_total,
+              SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
+              SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS calls_today,
+              MAX(date) AS last_used_at
+         FROM spx_eod`,
+      [last24.slice(0, 10), today.slice(0, 10)],
+    );
+    const spxRow = spxRows[0];
+    connections.push({
+      id: 'cache:spx',
+      label: 'S&P Benchmark Cache',
+      status: connectionStatus(hasPriceProvider, 0, spxRow?.last_used_at ?? null),
+      configured: hasPriceProvider,
+      lastUsedAt: spxRow?.last_used_at ?? null,
+      callsTotal: spxRow?.calls_total ?? 0,
+      callsLast24h: spxRow?.calls_last_24h ?? 0,
+      callsToday: spxRow?.calls_today ?? 0,
+      errorsLast24h: 0,
+      note: 'SPY-adjusted close history used as the S&P comparison baseline',
+    });
+
+    const perfRows = await optionalAll<{
+      calls_total: number;
+      calls_last_24h: number;
+      calls_today: number;
+      last_used_at: string | null;
+    }>(
+      c.env,
+      `SELECT COUNT(*) AS calls_total,
+              SUM(CASE WHEN computed_at >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
+              SUM(CASE WHEN computed_at >= ? THEN 1 ELSE 0 END) AS calls_today,
+              MAX(computed_at) AS last_used_at
+         FROM tx_performance`,
+      [last24, today],
+    );
+    const perfRow = perfRows[0];
+    connections.push({
+      id: 'cache:performance',
+      label: 'Trade Performance Anchors',
+      status: connectionStatus(hasPriceProvider, 0, perfRow?.last_used_at ?? null),
+      configured: hasPriceProvider,
+      lastUsedAt: perfRow?.last_used_at ?? null,
+      callsTotal: perfRow?.calls_total ?? 0,
+      callsLast24h: perfRow?.calls_last_24h ?? 0,
+      callsToday: perfRow?.calls_today ?? 0,
+      errorsLast24h: 0,
+      note: 'Required for per-trade and member S&P-relative performance',
     });
 
     const webhooks = await optionalAll<{

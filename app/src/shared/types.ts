@@ -461,6 +461,8 @@ export interface Env {
   PRICE_PROVIDER?: string;
   /** HMAC key for signing outbound webhook payloads. */
   WEBHOOK_SIGNING_KEY?: string;
+  /** Sentry DSN for error monitoring (Cloudflare Workers SDK). */
+  SENTRY_DSN?: string;
 
   // --- End-user auth (public-site sign-in) ---
   /** Google OAuth client credentials for "Sign in with Google". */

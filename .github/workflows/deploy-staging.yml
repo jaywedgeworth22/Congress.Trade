@@ -1,0 +1,102 @@
+name: Deploy Preview
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch: {}
+
+# Never run two preview deploys at once; let an in-flight deploy finish.
+concurrency:
+  group: deploy-preview
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Configure private GitHub dependencies
+        env:
+          SHARED_PACKAGE_DEPLOY_KEY: ${{ secrets.SHARED_PACKAGE_DEPLOY_KEY }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -n "$SHARED_PACKAGE_DEPLOY_KEY" ]; then
+            mkdir -p "$HOME/.ssh"
+            printf '%s\n' "$SHARED_PACKAGE_DEPLOY_KEY" > "$HOME/.ssh/congress_trading_shared"
+            chmod 600 "$HOME/.ssh/congress_trading_shared"
+            ssh-keyscan github.com >> "$HOME/.ssh/known_hosts"
+            git config --global core.sshCommand "ssh -i $HOME/.ssh/congress_trading_shared -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+            git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"
+            git config --global url."ssh://git@github.com/".insteadOf "git@github.com:"
+            git ls-remote ssh://git@github.com/jaywedgeworth22/congress-trading-shared.git HEAD >/dev/null
+          elif [ -n "$GH_PAT" ]; then
+            git config --global credential.helper store
+            printf 'https://x-access-token:%s@github.com\n' "$GH_PAT" > "$HOME/.git-credentials"
+            git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+            git config --global url."https://github.com/".insteadOf "git@github.com:"
+            git ls-remote https://github.com/jaywedgeworth22/congress-trading-shared.git HEAD >/dev/null
+          else
+            echo "::error::SHARED_PACKAGE_DEPLOY_KEY or GH_PAT with read access to jaywedgeworth22/congress-trading-shared is required for npm ci."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build isolated preview config
+        run: |
+          cp wrangler.preview.example.toml wrangler.preview.toml
+          python - <<'PY'
+          from pathlib import Path
+          import os
+
+          path = Path("wrangler.preview.toml")
+          text = path.read_text()
+          replacements = {
+              "PREVIEW_D1_DATABASE_ID": os.environ["PREVIEW_D1_DATABASE_ID"],
+              "PREVIEW_KV_NAMESPACE_ID": os.environ["PREVIEW_KV_NAMESPACE_ID"],
+              "https://congress-trade-preview.<your-workers-subdomain>.workers.dev": os.environ["PREVIEW_APP_BASE_URL"],
+          }
+          for old, new in replacements.items():
+              text = text.replace(old, new)
+          path.write_text(text)
+          PY
+        env:
+          PREVIEW_D1_DATABASE_ID: ${{ secrets.PREVIEW_D1_DATABASE_ID }}
+          PREVIEW_KV_NAMESPACE_ID: ${{ secrets.PREVIEW_KV_NAMESPACE_ID }}
+          PREVIEW_APP_BASE_URL: ${{ vars.PREVIEW_APP_BASE_URL || 'https://congress-trade-preview.workers.dev' }}
+
+      - name: Deploy to Cloudflare Workers (preview)
+        id: deploy
+        run: |
+          DEPLOY_URL=$(bash scripts/deploy-preview.sh 2>&1 | tee /dev/stderr | grep -o 'https://[^ ]*\.workers\.dev' | tail -1 || true)
+          echo "deploy_url=${DEPLOY_URL:-${PREVIEW_APP_BASE_URL}}" >> "$GITHUB_OUTPUT"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREVIEW_APP_BASE_URL: ${{ vars.PREVIEW_APP_BASE_URL || 'https://congress-trade-preview.workers.dev' }}
+
+      - name: Comment deploy URL
+        if: github.event_name == 'push'
+        run: |
+          URL="${{ steps.deploy.outputs.deploy_url }}"
+          PR_NUMBER="$(gh pr list --head staging --json number -q '.[0].number')"
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --body "Preview deployed: ${URL}"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
