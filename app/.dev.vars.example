@@ -124,6 +124,10 @@ APP_BASE_URL=""
 # Throttled to at most one alert per 12h.
 ALERT_EMAIL=""
 
+# Sentry error monitoring (Cloudflare Workers SDK).
+# Get this from Sentry → Projects → congress-trade → Settings → Client Keys (DSN).
+SENTRY_DSN=""
+
 # Billing (Stripe) — freemium paywall. Premium unlocks full history + CSV export.
 #   - STRIPE_SECRET_KEY: sk_live_… / sk_test_… (enables billing; absent => 503)
 #   - STRIPE_WEBHOOK_SECRET: whsec_… from the webhook endpoint you create for

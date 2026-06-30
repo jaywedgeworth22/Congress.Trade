@@ -7,8 +7,12 @@
  */
 
 import type { AssetTypeCategory } from './assetTypes';
-import type { Chamber, Owner, TxType } from "@jaywedgeworth22/congress-trading-shared";
-export type { Chamber, Owner, TxType };
+
+// ---------------------------------------------------------------------------
+// Primitive unions / enums
+// ---------------------------------------------------------------------------
+
+export type Chamber = 'house' | 'senate';
 
 /**
  * Filing type code. STOCK Act Periodic Transaction Reports are 'P'.
@@ -29,6 +33,12 @@ export type IngestStatus =
 
 /** Detected physical form of a disclosure document. */
 export type DocKind = 'senate_html' | 'text_pdf' | 'scanned_pdf' | 'unknown';
+
+/** Beneficial owner of a transaction. */
+export type Owner = 'self' | 'spouse' | 'joint' | 'dependent';
+
+/** Transaction type: Purchase | Sale | Exchange. */
+export type TxType = 'P' | 'S' | 'E';
 
 /** Delivery transport for a subscription. */
 export type DeliveryChannel = 'webhook' | 'sse';
@@ -451,6 +461,8 @@ export interface Env {
   PRICE_PROVIDER?: string;
   /** HMAC key for signing outbound webhook payloads. */
   WEBHOOK_SIGNING_KEY?: string;
+  /** Sentry DSN for error monitoring (Cloudflare Workers SDK). */
+  SENTRY_DSN?: string;
 
   // --- End-user auth (public-site sign-in) ---
   /** Google OAuth client credentials for "Sign in with Google". */

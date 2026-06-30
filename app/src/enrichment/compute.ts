@@ -10,10 +10,17 @@
  */
 
 import type { MktCapBucket, SecurityRef } from './types';
-import { marketCapBucket } from "@jaywedgeworth22/congress-trading-shared";
 
-// Re-export for backward compatibility.
-export { marketCapBucket };
+/** Bucket a USD market cap into the standard size tiers. null for missing/≤0. */
+export function marketCapBucket(n: number | null | undefined): MktCapBucket | null {
+  if (n == null || !Number.isFinite(n) || n <= 0) return null;
+  if (n >= 200e9) return 'mega';
+  if (n >= 10e9) return 'large';
+  if (n >= 2e9) return 'mid';
+  if (n >= 300e6) return 'small';
+  if (n >= 50e6) return 'micro';
+  return 'nano';
+}
 
 /**
  * Map a numeric SIC code to a coarse sector via the SEC's SIC division ranges.
