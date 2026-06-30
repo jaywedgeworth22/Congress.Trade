@@ -186,15 +186,36 @@ describe('normalize', () => {
     expect(cap.reviewRows).toHaveLength(0);
   });
 
-  it('resolves preferred/depositary $-series and stale tickers to the master symbol', async () => {
+  it('resolves preferred/depositary ticker variants and stale tickers', async () => {
     const { env } = makeEnv([
       { ticker: 'T', name: 'AT&T Inc.', aliases: '[]' },
+      { ticker: 'JPM', name: 'JPMorgan Chase & Co.', aliases: '[]' },
       { ticker: 'AVGO', name: 'Broadcom Inc.', aliases: '[]' },
       { ticker: 'BRK-B', name: 'Berkshire Hathaway', aliases: '[]' },
     ]);
     const pref = await normalize(env, filing(), [tx({ ticker: 'T$A', assetName: 'AT&T Inc. Pfd A' })]);
-    expect(pref.transactions[0].ticker).toBe('T'); // $-series stripped to issuer
+    expect(pref.transactions[0].ticker).toBe('T^A'); // preferred variant normalized
     expect(pref.needsReview).toBe(false);
+
+    const yahooPref = await normalize(env, filing(), [tx({ ticker: 'JPM-PJ', assetName: 'JPMorgan Chase & Co. Depositary Shares, Series GG' })]);
+    expect(yahooPref.transactions[0].ticker).toBe('JPM^J');
+
+    const nameOnlyPref = await normalize(env, filing(), [
+      tx({
+        ticker: null,
+        assetName: 'JPMorgan Chase & Co. Depositary Shares, Series GG',
+      }),
+    ]);
+    expect(nameOnlyPref.transactions[0].ticker).toBe('JPM^J');
+    expect(nameOnlyPref.needsReview).toBe(false);
+
+    const issuerCollapsedPref = await normalize(env, filing(), [
+      tx({
+        ticker: 'T',
+        assetName: 'AT&T Inc. Depositary Shares, each representing a 1/1,000th interest in a share of 5.000% Perpetual Preferred Stock, Series A',
+      }),
+    ]);
+    expect(issuerCollapsedPref.transactions[0].ticker).toBe('T^A');
 
     const stale = await normalize(env, filing(), [tx({ ticker: 'BRCM', assetName: 'Broadcom' })]);
     expect(stale.transactions[0].ticker).toBe('AVGO'); // stale alias → current

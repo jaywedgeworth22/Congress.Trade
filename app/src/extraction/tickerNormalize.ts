@@ -9,7 +9,8 @@
  * (~90% of the live queue) — but the vision read is almost always correct. The
  * gap is downstream: securities_master is well-populated (~10k symbols) yet
  *   (a) carries NO aliases (the alias table is empty in prod),
- *   (b) doesn't list preferred / depositary `$`-series symbols (e.g. "T$A"),
+ *   (b) doesn't list preferred / depositary series symbols (e.g. "T$A",
+ *       "JPM^J", "JPM-PJ"),
  *   (c) stores a single punctuation form for class shares ("BRK-B", not
  *       "BRK.B" / "BRKB"), and
  *   (d) is missing a long tail of perfectly valid current symbols
@@ -18,7 +19,8 @@
  *       master list should NOT be penalized into review.
  *
  * Resolution tiers (most → least confident); every function here is pure:
- *   1. `$`-series strip: "T$A" → "T" (preferred/depositary share → issuer).
+ *   1. preferred/depositary variants: "T$A" → "T^A",
+ *      "JPM-PJ" / "JPM.PRJ" → "JPM^J".
  *   2. punctuation variants: "BRK.B" ↔ "BRK-B" ↔ "BRKB".
  *   3. curated stale → current alias map (delistings / renames / M&A).
  *   4. syntactic acceptance: a *well-formed* symbol absent from the master is
@@ -56,7 +58,7 @@ export const TICKER_ALIASES: Readonly<Record<string, string>> = {
  * with spaces, digits, or length/shape that signals header contamination
  * ("Bank of America Apple", "200? Cathay", "COMMON STOCK").
  */
-const WELL_FORMED_TICKER = /^[A-Z]{1,5}([.-][A-Z]{1,2})?$/;
+const WELL_FORMED_TICKER = /^[A-Z]{1,5}(\^[A-Z0-9]{1,2}|[.-][A-Z]{1,2})?$/;
 
 /** Placeholders the extractors sometimes emit for a genuinely ticker-less row. */
 const PLACEHOLDER_TICKERS = new Set(['', '-', '--', '---', 'N/A', 'NA', 'NONE', 'NULL', '—']);
@@ -86,6 +88,81 @@ export function stripPreferredSeries(sym: string): string {
 }
 
 /**
+ * Normalize common preferred/depositary-share ticker spellings to one canonical
+ * exchange-style form. Examples:
+ *   Nasdaq:     JPM^J
+ *   Yahoo:      JPM-PJ
+ *   MarketWatch JPM.PRJ
+ *   Legacy:     JPM$J
+ */
+export function normalizePreferredTickerVariant(raw: string | null | undefined): string | null {
+  const sym = clean(raw);
+  if (!sym) return null;
+
+  let m = /^([A-Z]{1,5})\^([A-Z0-9]{1,2})$/.exec(sym);
+  if (m) return `${m[1]}^${m[2]}`;
+
+  m = /^([A-Z]{1,5})\$([A-Z0-9]{1,2})$/.exec(sym);
+  if (m) return `${m[1]}^${m[2]}`;
+
+  m = /^([A-Z]{1,5})-P([A-Z0-9])$/.exec(sym);
+  if (m) return `${m[1]}^${m[2]}`;
+
+  m = /^([A-Z]{1,5})[.-]PR([A-Z0-9])$/.exec(sym);
+  if (m) return `${m[1]}^${m[2]}`;
+
+  m = /^([A-Z]{1,5})\s+PR\s+([A-Z0-9])$/.exec(sym);
+  if (m) return `${m[1]}^${m[2]}`;
+
+  m = /^([A-Z]{1,5})\s+P(?:R)?([A-Z0-9])$/.exec(sym);
+  if (m) return `${m[1]}^${m[2]}`;
+
+  return null;
+}
+
+function normalizedAssetText(value: string): string {
+  return value
+    .toUpperCase()
+    .replace(/&/g, ' AND ')
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function preferredIssuerName(assetName: string): string | null {
+  const idx = assetName.search(/\b(?:DEPOSITARY\s+SHARES?|PREFERRED|PREFERENCE|PFD|PREF)\b/i);
+  if (idx <= 0) return null;
+  return assetName.slice(0, idx).trim().replace(/[,;:\s]+$/g, '');
+}
+
+/**
+ * Resolve preferred/depositary-share descriptions that include no ticker. This
+ * intentionally does not derive a symbol from multi-letter issuer series like
+ * "Series GG"; exchanges assign listed preferred suffixes independently, so
+ * those need curated overrides.
+ */
+export function resolvePreferredTickerFromAssetName(
+  assetName: string | null | undefined,
+  resolveIssuerTicker: (issuerName: string) => string | null,
+): string | null {
+  if (!assetName) return null;
+  const text = normalizedAssetText(assetName);
+  if (!/\b(?:DEPOSITARY SHARES?|PREFERRED|PREFERENCE|PFD|PREF)\b/.test(text)) return null;
+
+  if (text.includes('JPMORGAN CHASE') && text.includes('DEPOSITARY SHARES') && text.includes('SERIES GG')) {
+    return 'JPM^J';
+  }
+
+  const series = /\bSERIES\s+([A-Z0-9]{1,3})\b/.exec(text)?.[1];
+  if (!series || series.length !== 1) return null;
+
+  const issuerName = preferredIssuerName(assetName);
+  if (!issuerName) return null;
+  const issuer = resolveIssuerTicker(issuerName);
+  return issuer ? `${issuer}^${series}` : null;
+}
+
+/**
  * Distinct punctuation spellings of a class share, most-specific first:
  * the symbol as-is, dotless ("BRKB"), dash form ("BRK-B"), dot form ("BRK.B").
  */
@@ -112,6 +189,9 @@ export function resolveTickerDeterministic(
 ): string | null {
   const cleaned = clean(raw);
   if (cleaned === '' || PLACEHOLDER_TICKERS.has(cleaned)) return null;
+
+  const preferred = normalizePreferredTickerVariant(cleaned);
+  if (preferred) return preferred;
 
   const base = stripPreferredSeries(cleaned) || cleaned;
 

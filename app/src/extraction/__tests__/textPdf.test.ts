@@ -73,6 +73,26 @@ describe('parseHousePtrText', () => {
     expect(rows[0].assetName).not.toContain('Clerk');
   });
 
+  it('preserves caret preferred-share tickers in House text', () => {
+    const rows = parseHousePtrText(`
+      Periodic Transaction Report
+      SP JPMorgan Chase & Co. Depositary Shares, Series GG (JPM^J) [ST]
+      P 05/01/2026 05/02/2026 $1,001 - $15,000
+    `);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      owner: 'spouse',
+      assetName: 'JPMorgan Chase & Co. Depositary Shares, Series GG',
+      ticker: 'JPM^J',
+      assetType: 'ST',
+      txType: 'P',
+      txDate: '2026-05-01',
+      amountMin: 1001,
+      amountMax: 15000,
+    });
+  });
+
   it('strips truncated single-line House table headers before inline parsing', () => {
     const rows = parseHousePtrText(
       'P T R Clerk of the House of Representatives - Legislative Resource Center - B81 Cannon Building - Washington, DC 20515 ' +
