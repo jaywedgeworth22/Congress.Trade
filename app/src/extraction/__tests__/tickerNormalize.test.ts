@@ -3,13 +3,15 @@ import {
   TICKER_ALIASES,
   isPlaceholderTicker,
   isWellFormedTicker,
+  normalizePreferredTickerVariant,
   punctuationVariants,
+  resolvePreferredTickerFromAssetName,
   resolveTickerDeterministic,
   stripPreferredSeries,
 } from '../tickerNormalize';
 
 // A tiny stand-in for the securities_master index used by the real resolver.
-const MASTER = new Set(['T', 'RF', 'AVGO', 'META', 'XYZ', 'BRK-B', 'GEHC', 'AAPL']);
+const MASTER = new Set(['T', 'JPM', 'RF', 'AVGO', 'META', 'XYZ', 'BRK-B', 'GEHC', 'AAPL']);
 const isKnown = (sym: string): string | null => (MASTER.has(sym) ? sym : null);
 
 describe('tickerNormalize pure helpers', () => {
@@ -31,8 +33,18 @@ describe('tickerNormalize pure helpers', () => {
     expect(punctuationVariants('AAPL')).toEqual(['AAPL']);
   });
 
+  it('normalizes preferred-share ticker variants to exchange caret form', () => {
+    expect(normalizePreferredTickerVariant('JPM^J')).toBe('JPM^J');
+    expect(normalizePreferredTickerVariant('JPM-PJ')).toBe('JPM^J');
+    expect(normalizePreferredTickerVariant('JPM.PRJ')).toBe('JPM^J');
+    expect(normalizePreferredTickerVariant('JPM PR J')).toBe('JPM^J');
+    expect(normalizePreferredTickerVariant('T$A')).toBe('T^A');
+    expect(normalizePreferredTickerVariant('T-PA')).toBe('T^A');
+    expect(normalizePreferredTickerVariant('T PRA')).toBe('T^A');
+  });
+
   it('recognizes well-formed symbols and rejects contamination', () => {
-    for (const ok of ['AAPL', 'K', 'NSRGY', 'KRSOX', 'BRK.B', 'BRK-B']) {
+    for (const ok of ['AAPL', 'K', 'NSRGY', 'KRSOX', 'BRK.B', 'BRK-B', 'JPM^J']) {
       expect(isWellFormedTicker(ok)).toBe(true);
     }
     for (const bad of ['BANK OF AMERICA APPLE', 'COMMON STOCK', 'TOOLONGSYMBOL', '200?', 'A B']) {
@@ -42,9 +54,12 @@ describe('tickerNormalize pure helpers', () => {
 });
 
 describe('resolveTickerDeterministic', () => {
-  it('resolves $-series preferred shares to the master issuer (T$A → T)', () => {
-    expect(resolveTickerDeterministic('T$A', isKnown)).toBe('T');
-    expect(resolveTickerDeterministic('RF$E', isKnown)).toBe('RF');
+  it('resolves preferred-share ticker variants to exchange caret form', () => {
+    expect(resolveTickerDeterministic('T$A', isKnown)).toBe('T^A');
+    expect(resolveTickerDeterministic('T-PA', isKnown)).toBe('T^A');
+    expect(resolveTickerDeterministic('JPM-PJ', isKnown)).toBe('JPM^J');
+    expect(resolveTickerDeterministic('JPM.PRJ', isKnown)).toBe('JPM^J');
+    expect(resolveTickerDeterministic('JPM PR J', isKnown)).toBe('JPM^J');
   });
 
   it('resolves a dotted/dashed class share to the master punctuation form (BRK.B → BRK-B)', () => {
@@ -78,6 +93,25 @@ describe('resolveTickerDeterministic', () => {
   it('cleans surrounding quotes/brackets before resolving', () => {
     expect(resolveTickerDeterministic('"AAPL"', isKnown)).toBe('AAPL');
     expect(resolveTickerDeterministic('[CTRA]', isKnown)).toBe('CTRA');
+  });
+
+  it('resolves preferred/depositary descriptions from asset names', () => {
+    const issuer = (name: string) => {
+      const normalized = name.toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
+      if (normalized === 'AT T INC') return 'T';
+      if (normalized === 'JPMORGAN CHASE CO') return 'JPM';
+      return null;
+    };
+
+    expect(
+      resolvePreferredTickerFromAssetName(
+        'AT&T Inc. Depositary Shares, each representing a 1/1,000th interest in a share of 5.000% Perpetual Preferred Stock, Series A',
+        issuer,
+      ),
+    ).toBe('T^A');
+    expect(resolvePreferredTickerFromAssetName('JPMorgan Chase & Co. Depositary Shares, Series GG', issuer)).toBe('JPM^J');
+    expect(resolvePreferredTickerFromAssetName('Apple Inc. Common Stock', issuer)).toBeNull();
+    expect(resolvePreferredTickerFromAssetName('Example Corp Preferred Stock, Series GG', issuer)).toBeNull();
   });
 
   it('every curated alias target is a plausible symbol', () => {

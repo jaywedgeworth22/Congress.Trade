@@ -439,10 +439,10 @@ function photoUrlFor(bioguide: string): string {
 }
 
 /**
- * Backfill ticker resolution over stored rows whose ticker is NULL/empty, so
- * name-but-no-ticker holdings become visible to the leaderboards. No PDF
- * re-extraction — just the deterministic resolver over the asset name. Bounded
- * per call; safe to re-run. Shared by POST /resolve-tickers and the daily cron.
+ * Backfill ticker resolution over stored rows whose ticker is NULL/empty or
+ * whose asset name clearly describes a preferred/depositary share. No PDF
+ * re-extraction — just the deterministic resolver over the stored asset name.
+ * Bounded per call; safe to re-run. Shared by POST /resolve-tickers and cron.
  */
 export async function runTickerBackfill(
   env: Env,
@@ -452,14 +452,20 @@ export async function runTickerBackfill(
   const rows = await all<{ id: string; ticker: string | null; asset_name: string | null }>(
     env.DB,
     "SELECT id, ticker, asset_name FROM transactions " +
-      "WHERE (ticker IS NULL OR ticker = '') AND asset_name IS NOT NULL AND asset_name <> '' " +
+      "WHERE asset_name IS NOT NULL AND asset_name <> '' " +
+      "AND ((ticker IS NULL OR ticker = '') " +
+      "OR asset_name LIKE '%Depositary Share%' " +
+      "OR asset_name LIKE '%Preferred%' " +
+      "OR asset_name LIKE '%Preference%' " +
+      "OR asset_name LIKE '%Pfd%' " +
+      "OR asset_name LIKE '%Pref%') " +
       'AND deprecated_at IS NULL LIMIT ?',
     [Math.min(limit, 20000)],
   );
   const updates: D1PreparedStatement[] = [];
   for (const row of rows) {
     const resolved = resolver(row.ticker, row.asset_name);
-    if (resolved) {
+    if (resolved && resolved !== (row.ticker ?? '').trim().toUpperCase()) {
       updates.push(env.DB.prepare('UPDATE transactions SET ticker = ? WHERE id = ?').bind(resolved, row.id));
     }
   }
@@ -3068,11 +3074,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /resolve-tickers ----------------------------------------------
-  // Backfill: re-run ticker resolution over already-stored rows whose ticker is
-  // NULL/empty (e.g. seed rows, or rows that predate a securities_master entry),
-  // so name-but-no-ticker holdings become visible to the leaderboards. No PDF
-  // re-extraction — just the deterministic resolver over the asset name. Safe to
-  // re-run; bounded per call by ?limit (default 5000).
+  // Backfill: re-run ticker resolution over already-stored ticker-less rows and
+  // preferred/depositary share rows that may have been collapsed to the common
+  // issuer. No PDF re-extraction — just the deterministic resolver over the
+  // stored asset name. Safe to re-run; bounded by ?limit (default 5000).
   r.post('/resolve-tickers', async (c) => {
     try {
       const limit = Number(c.req.query('limit')) || 5000;

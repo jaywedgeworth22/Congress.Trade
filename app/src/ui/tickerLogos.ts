@@ -21,7 +21,7 @@
 
 const TICKER_LOGO_BASE_URL =
   'https://raw.githubusercontent.com/davidepalazzo/ticker-logos/main/ticker_icons';
-const SYMBOL_PATTERN = /^[A-Z0-9._-]{1,20}$/;
+const SYMBOL_PATTERN = /^[A-Z0-9._^-]{1,20}$/;
 // logo.dev publishable keys are locked to allowed domains; the proxy sends this
 // as the Referer so a server-side fetch is accepted (the prod origin is allowed).
 const LOGO_REFERER = 'https://congress.trade';
@@ -43,9 +43,11 @@ export function tickerLogoCandidates(value: string | null | undefined): string[]
   return Array.from(
     new Set([
       symbol,
+      symbol.replace(/\^/g, '-'),
+      symbol.replace(/\^/g, '.'),
       symbol.replace(/\./g, '-'),
       symbol.replace(/-/g, '.'),
-      symbol.replace(/[.-]/g, '_'),
+      symbol.replace(/[.^-]/g, '_'),
     ]),
   );
 }
