@@ -2226,6 +2226,40 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'no House filings with a stored PDF were found to test' }, 404);
     }
 
+    // Daily spend guardrail. A bake-off fans out (docs × candidates) external
+    // vision-model calls; an admin running n=50 with the 6-model default fires
+    // ~300 paid calls in one request with no metering. Cap the per-day total so
+    // a single request (or a busy day) can't run up an unbounded LLM bill.
+    // Approximate (KV fixed window); raise BAKEOFF_DAILY_CALL_CAP to lift it.
+    const plannedCalls = docs.length * candidates.length;
+    const dailyCap =
+      Number((c.env as { BAKEOFF_DAILY_CALL_CAP?: string }).BAKEOFF_DAILY_CALL_CAP ?? '200') || 200;
+    const capDay = new Date().toISOString().slice(0, 10);
+    const capKey = `bakeoff:calls:${capDay}`;
+    let usedToday = 0;
+    try {
+      usedToday = parseInt((await c.env.CONFIG_KV.get(capKey)) || '0', 10) || 0;
+    } catch {
+      /* fail open on KV read error */
+    }
+    if (usedToday + plannedCalls > dailyCap) {
+      return c.json(
+        {
+          error: 'bake-off daily call cap reached',
+          plannedCalls,
+          usedToday,
+          dailyCap,
+          hint: 'reduce n or models, or raise BAKEOFF_DAILY_CALL_CAP',
+        },
+        429,
+      );
+    }
+    try {
+      await c.env.CONFIG_KV.put(capKey, String(usedToday + plannedCalls), { expirationTtl: 172800 });
+    } catch {
+      /* fail open on KV write error */
+    }
+
     // Persist each model's reading by default (set persist:false to skip) so the
     // results land in extraction_runs for the review dashboard + later learning.
     const persist = body.persist !== false;
@@ -2796,6 +2830,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       // 0023_disclosure_provider_timestamps.sql — provider-side publish/upload timestamp when available.
       'ALTER TABLE disclosure_latency_candidates ADD COLUMN provider_published_at TEXT',
       'ALTER TABLE disclosure_provider_observations ADD COLUMN provider_published_at TEXT',
+      // 0024_dead_letter_events.sql — operator log for terminally-failed queue messages.
+      `CREATE TABLE IF NOT EXISTS dead_letter_events (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         queue TEXT NOT NULL,
+         msg_type TEXT,
+         doc_id TEXT,
+         tx_id TEXT,
+         attempts INTEGER,
+         error TEXT,
+         created_at TEXT NOT NULL
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

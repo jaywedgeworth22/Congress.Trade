@@ -33,6 +33,7 @@ import { constantTimeEqual, randomToken } from './tokens';
 import { entitlementOf } from '../billing/entitlement';
 import { resolveSecret } from '../secrets/infisical';
 import { isAdminSessionEmail } from '../admin/identity';
+import { rateLimit, clientIp } from '../shared/rateLimit';
 
 const OAUTH_STATE_COOKIE = 'ct_oauth_state';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -122,6 +123,17 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     }
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     if (!EMAIL_RE.test(email)) return c.json({ error: 'valid email required' }, 400);
+    // Throttle to stop magic-link email-bombing: per-email (5/hr) and a per-IP
+    // burst cap (10/10min). Fails open if KV is unavailable.
+    const ip = clientIp(c.req.raw);
+    const ipRl = await rateLimit(c.env, 'magic-ip', ip, 10, 600);
+    const emailRl = await rateLimit(c.env, 'magic-email', email, 5, 3600);
+    if (!ipRl.ok || !emailRl.ok) {
+      const retryAfter = Math.max(ipRl.retryAfterSec, emailRl.retryAfterSec);
+      return c.json({ error: 'too many requests, please try again later' }, 429, {
+        'Retry-After': String(retryAfter),
+      });
+    }
     try {
       const token = await issueMagicToken(c.env, email);
       const verifyUrl = `${await baseUrl(c)}/auth/magic/verify?token=${encodeURIComponent(token)}`;

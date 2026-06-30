@@ -25,6 +25,7 @@ import { fetchFiling } from './ingestion/fetcher';
 import { classifyFiling } from './ingestion/classifier';
 import { extractAndNormalize } from './extraction/orchestrator';
 import { dispatchWebhook } from './delivery/webhook';
+import { recordDeadLetter } from './delivery/deadLetter';
 import { buildRestRouter } from './delivery/rest';
 import { buildAdminRouter } from './admin/routes';
 import { buildAnalyticsRouter } from './analytics/routes';
@@ -100,6 +101,12 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
 }
 
 mountApiRouters(app);
+
+// Max delivery attempts per queue — keep in sync with `max_retries` in
+// wrangler.toml. When a message reaches this many attempts the next failure
+// dead-letters it, so we record + alert on that final attempt (see
+// delivery/deadLetter.ts) instead of letting the message vanish silently.
+const MAX_QUEUE_ATTEMPTS = { ingest: 5, delivery: 8 } as const;
 
 // --- INGEST queue routing -----------------------------------------------------
 async function handleIngestMessage(env: Env, msg: QueueMessage): Promise<void> {
@@ -192,6 +199,18 @@ export default Sentry.withSentry(
           message.ack();
         } catch (err) {
           console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
+          // On the final attempt (about to be dead-lettered), record + alert so a
+          // terminally-failed filing/webhook is never silent. Best-effort.
+          const maxAttempts = isDelivery ? MAX_QUEUE_ATTEMPTS.delivery : MAX_QUEUE_ATTEMPTS.ingest;
+          if (message.attempts >= maxAttempts) {
+            await recordDeadLetter(
+              env,
+              batch.queue,
+              message.body as QueueMessage,
+              message.attempts,
+              err,
+            ).catch(() => {});
+          }
           message.retry();
         }
       }
