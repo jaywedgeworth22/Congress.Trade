@@ -17,7 +17,7 @@
     "preview:deploy": "bash scripts/deploy-preview.sh"
   },
   "dependencies": {
-    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#9924dd614d643dc655bbee9788d15f32f48760dc",
+    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#a33dfd3fea5bd0fa2f10f4aab5e32d4eff144f14",
     "@sentry/cloudflare": "^10.62.0",
     "fflate": "^0.8.3",
     "hono": "^4.6.0",
