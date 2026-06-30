@@ -1,8 +1,8 @@
 -- 0021_disclosure_latency_watch.sql
--- Records Congress.Trade-vs-FMP disclosure discovery timing. Candidates are
+-- Records Congress.Trade-vs-provider disclosure discovery timing. Candidates are
 -- created when our watcher first sees a new filing; provider observations are
--- populated from FMP latest endpoints so we can tell whether FMP was already
--- aware or caught up later.
+-- populated from provider latest endpoints so we can tell who was already aware
+-- or caught up later.
 
 CREATE TABLE IF NOT EXISTS disclosure_latency_candidates (
   doc_id                 TEXT NOT NULL,

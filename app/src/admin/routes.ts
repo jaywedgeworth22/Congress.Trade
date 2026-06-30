@@ -74,7 +74,7 @@ import { mergeRefs } from '../enrichment/compute';
 import type { SecurityRef } from '../enrichment/types';
 import { runPriceRefresh } from '../prices/service';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets } from '../secrets/infisical';
-import { runFmpDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
+import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -1131,12 +1131,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     return c.json({ ok: true, latencyResetAt });
   });
 
+  // --- GET /disclosure-latency/summary ------------------------------------
+  // Aggregate provider-race metrics. `publicSummary` intentionally excludes
+  // filing/member detail so it can be reviewed before any public sharing.
+  r.get('/disclosure-latency/summary', async (c) => {
+    return c.json(await getDisclosureLatencySummary(c.env));
+  });
+
   // --- GET /disclosure-latency -------------------------------------------
-  // Congress.Trade-vs-FMP race monitor. `providerDeltaSec` is FMP monitor
-  // first-observed minus Congress.Trade first_seen_at: positive means we observed
-  // first; negative means FMP was already observed first.
+  // Congress.Trade-vs-provider race monitor. `providerDeltaSec` is provider
+  // monitor first-observed minus Congress.Trade first_seen_at: positive means we
+  // observed first; negative means the provider was already observed first.
   r.get('/disclosure-latency', async (c) => {
     const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '50', 10) || 50, 1), 200);
+    const provider = (c.req.query('provider') || '').trim().toLowerCase();
+    const where = provider ? 'WHERE provider = ?' : '';
+    const params: SqlParam[] = provider ? [provider, limit] : [limit];
     const rows = await optionalAll<{
       doc_id: string;
       provider: string;
@@ -1147,6 +1157,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       congress_first_seen_at: string;
       provider_key: string | null;
       provider_first_seen_at: string | null;
+      provider_published_at: string | null;
       match_method: string | null;
       status: string;
       attempts: number;
@@ -1157,13 +1168,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }>(
       c.env,
       `SELECT doc_id, provider, chamber, source_url, filed_date, filer_name,
-              congress_first_seen_at, provider_key, provider_first_seen_at,
+              congress_first_seen_at, provider_key, provider_first_seen_at, provider_published_at,
               match_method, status, attempts, last_checked_at, error,
               created_at, updated_at
          FROM disclosure_latency_candidates
+        ${where}
         ORDER BY created_at DESC
         LIMIT ?`,
-      [limit],
+      params,
     );
     const items = rows.map((row) => ({
       docId: row.doc_id,
@@ -1176,6 +1188,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       providerKey: row.provider_key,
       providerFirstSeenAt: row.provider_first_seen_at,
       providerDeltaSec: deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at),
+      providerPublishedAt: row.provider_published_at,
+      providerPublishedDeltaSec: deltaSeconds(row.provider_published_at, row.congress_first_seen_at),
       matchMethod: row.match_method,
       status: row.status,
       attempts: row.attempts,
@@ -1188,10 +1202,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /disclosure-latency/probe -------------------------------------
-  // Force a one-off FMP latest probe, useful immediately after new filings land
-  // or before turning on the continuous cron switch.
+  // Force a one-off provider latest probe, useful immediately after new filings
+  // land or before turning on the continuous cron switch. Optional query:
+  // ?providers=fmp,unusual_whales,quiver
   r.post('/disclosure-latency/probe', async (c) => {
-    const result = await runFmpDisclosureLatencyProbe(c.env, new Date(), fetch, { force: true });
+    const providers = (c.req.query('providers') || c.req.query('provider') || '')
+      .split(/[,\s]+/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+    const result = await runDisclosureLatencyProbe(c.env, new Date(), fetch, { force: true, providers });
     return c.json({ ok: result.errors.length === 0, ...result });
   });
 
@@ -2737,6 +2756,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          congress_first_seen_at TEXT NOT NULL,
          provider_key TEXT,
          provider_first_seen_at TEXT,
+         provider_published_at TEXT,
          match_method TEXT,
          status TEXT NOT NULL DEFAULT 'pending',
          attempts INTEGER NOT NULL DEFAULT 0,
@@ -2755,6 +2775,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          provider_key TEXT NOT NULL,
          first_observed_at TEXT NOT NULL,
          last_observed_at TEXT NOT NULL,
+         provider_published_at TEXT,
          source_url TEXT,
          filed_date TEXT,
          filer_name TEXT,
@@ -2772,6 +2793,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
        )`,
       `CREATE INDEX IF NOT EXISTS idx_stripe_webhook_events_received
          ON stripe_webhook_events (received_at DESC)`,
+      // 0023_disclosure_provider_timestamps.sql — provider-side publish/upload timestamp when available.
+      'ALTER TABLE disclosure_latency_candidates ADD COLUMN provider_published_at TEXT',
+      'ALTER TABLE disclosure_provider_observations ADD COLUMN provider_published_at TEXT',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

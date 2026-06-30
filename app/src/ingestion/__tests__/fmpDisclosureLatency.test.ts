@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { matchFmpDisclosureCandidate, parseFmpDisclosureRows } from '../fmpDisclosureLatency';
+import {
+  matchDisclosureCandidate,
+  matchFmpDisclosureCandidate,
+  parseFmpDisclosureRows,
+  parseQuiverDisclosureRows,
+  parseUnusualWhalesDisclosureRows,
+} from '../fmpDisclosureLatency';
 
 describe('parseFmpDisclosureRows', () => {
   it('extracts a House doc token from PTR PDF URLs', () => {
@@ -86,6 +92,65 @@ describe('matchFmpDisclosureCandidate', () => {
         },
         row,
       ),
-    ).toEqual({ providerKey: row.providerKey, matchMethod: 'probable-filer-date' });
+    ).toEqual({ providerKey: row.providerKey, matchMethod: 'filer-date' });
+  });
+});
+
+describe('parse third-party disclosure providers', () => {
+  it('normalizes Unusual Whales recent Congress rows', () => {
+    const rows = parseUnusualWhalesDisclosureRows({
+      data: [
+        {
+          filed_at_date: '2026-06-29',
+          member_type: 'senate',
+          name: 'Jane Smith',
+          politician_id: 'abc',
+          ticker: 'MSFT',
+          transaction_date: '2026-06-20',
+          txn_type: 'Buy',
+        },
+      ],
+    });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(
+      expect.objectContaining({
+        provider: 'unusual_whales',
+        chamber: 'senate',
+        filedDate: '2026-06-29',
+        filerName: 'Jane Smith',
+        providerPublishedAt: null,
+      }),
+    );
+    expect(
+      matchDisclosureCandidate(
+        { doc_id: 'S-hidden', source_url: null, filed_date: '2026-06-29', filer_name: 'Smith, Jane' },
+        rows[0],
+      ),
+    ).toEqual({ providerKey: rows[0].providerKey, matchMethod: 'filer-date' });
+  });
+
+  it('captures Quiver upload timestamps separately from monitor observation time', () => {
+    const rows = parseQuiverDisclosureRows('house', [
+      {
+        Representative: 'Jane Smith',
+        ReportDate: '2026-06-29T00:00:00Z',
+        Date: '2026-06-20T00:00:00Z',
+        Ticker: 'MSFT',
+        Transaction: 'Purchase',
+        Quiver_Upload_Time: '2026-06-29T14:05:00Z',
+      },
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual(
+      expect.objectContaining({
+        provider: 'quiver',
+        chamber: 'house',
+        filedDate: '2026-06-29',
+        filerName: 'Jane Smith',
+        providerPublishedAt: '2026-06-29T14:05:00.000Z',
+      }),
+    );
   });
 });

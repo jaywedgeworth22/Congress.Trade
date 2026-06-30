@@ -86,11 +86,19 @@ IMPORT_MAX_CLOSES_PER_TICKER="1500"
 IMPORT_MAX_INSIDER="5000"
 IMPORT_MAX_SHORT_VOLUME="5000"
 
-# Optional temporary benchmark: polls FMP's House/Senate latest-disclosure
-# endpoints and records whether Congress.Trade saw new filings before FMP did.
+# Optional disclosure-latency benchmark: polls third-party latest-disclosure
+# endpoints and records whether Congress.Trade saw new filings first.
+# Supported direct providers: fmp, unusual_whales, quiver. Finnhub and AInvest
+# are symbol-scoped and Capitol Trades has no stable server API, so those are
+# reported in admin provider status but not automatically probed.
 # Turn on before waiting for the next new disclosures; default code path is off.
+DISCLOSURE_LATENCY_WATCH_ENABLED=""
+DISCLOSURE_LATENCY_PROVIDERS="fmp,unusual_whales,quiver"
+DISCLOSURE_LATENCY_WATCH_LIMIT="100"
 FMP_DISCLOSURE_WATCH_ENABLED=""
 FMP_DISCLOSURE_WATCH_LIMIT="100"
+# Optional provider credentials are resolved from .dev.vars or Worker secrets
+# when those providers are enabled: Unusual Whales, Quiver, and AInvest.
 
 # Cloudflare Access (Zero Trust) sign-in for humans — an ALTERNATIVE/ADDITION to
 # the bearer token. With these set AND an Access application fronting
