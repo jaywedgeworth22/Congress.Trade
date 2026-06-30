@@ -166,3 +166,8 @@ STRIPE_PRICE_MONTHLY = "price_1TlHYBEUQUPhZj0SEzG2Qx68"
 STRIPE_PRICE_ANNUAL = "price_1TlHYCEUQUPhZj0SpNVoPb3Z"
 # Flip to "true" only after the account is approved for Managed Payments.
 STRIPE_MANAGED_PAYMENTS = "false"
+
+# Isolated review deploys use app/wrangler.preview.toml, generated from
+# wrangler.preview.example.toml by scripts/provision-preview.sh locally or by
+# .github/workflows/deploy-staging.yml in CI. Keep production-only routes and
+# cron triggers in this file.

@@ -1,19 +1,25 @@
-name: CI
+name: Deploy
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type deploy-production to deploy congress.trade"
+        required: true
+        type: string
 
-# Cancel superseded runs on the same ref to save minutes.
+# Never run two deploys at once; let an in-flight deploy finish rather than
+# cancel it mid-deploy.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: deploy-production
+  cancel-in-progress: false
 
 jobs:
-  build:
-    name: typecheck + test
+  deploy:
+    if: github.event.inputs.confirm == 'deploy-production'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: app
@@ -60,5 +66,9 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Audit
-        run: npm audit
+      - name: Deploy to Cloudflare Workers
+        run: bash scripts/ship.sh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}

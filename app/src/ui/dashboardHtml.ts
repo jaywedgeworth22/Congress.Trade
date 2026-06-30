@@ -70,14 +70,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   html[data-theme="light"] header.top { background: rgba(255,255,255,.72); }
   /* ---- theme toggle ---- */
-  .theme-toggle { background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 13px; line-height: 1; }
-  .theme-toggle:hover { color: var(--text); background: var(--panel); }
   /* ---- resizable feed columns ---- */
   .table-wrap { overflow-x: auto; max-height: min(78vh, 920px); }
-  #feedTable.resizable { table-layout: fixed; width: max-content; min-width: 100%; }
+  #feedTable.resizable { table-layout: fixed; min-width: 100%; }
   #feedTable.resizable th, #feedTable.resizable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   #feedTable.resizable th { text-align: center; padding-right: 18px; }
-  #feedTable.resizable td > * { max-width: 100%; }
+  #feedTable.resizable td > * { max-width: 100%; min-width: 0; }
   #feedTable.resizable .asset-cell,
   #feedTable.resizable .member-cell { overflow: hidden; max-width: 100%; }
   #feedTable.resizable .asset-cell > div,
@@ -176,6 +174,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* let the text shrink inside the (resizable, fixed-layout) cell and clip with
      an ellipsis instead of wrapping or hard-clipping mid-word */
   .asset-cell > div { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .clip-text { display:block; min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tkr-logo { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; overflow: hidden; }
   .tkr-logo img { width: 100%; height: 100%; object-fit: contain; display: block; }
   /* "tile" = frosted-glass box; "transparent" = bare logo on the row surface. */
@@ -330,9 +329,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .note { font-size:12px; color: var(--text-dim); margin-top:8px; line-height:1.5; }
   code { font-family: var(--mono); background: var(--bg); padding:1px 6px; border-radius:5px; font-size:12px; color: var(--accent); }
   /* ================= TRENDS / ANALYTICS ================= */
-  .trend-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .trend-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+  .trend-grid2 > *, .trend-members-grid > *, .trend-side-stack > *, .timeliness-grid > * { min-width: 0; }
   @media (max-width: 760px) { .trend-grid2 { grid-template-columns: 1fr; } }
-  .trend-members-grid { display:grid; grid-template-columns:minmax(0, 1.75fr) minmax(260px, .72fr); gap:18px; align-items:start; }
+  .trend-members-grid { display:grid; grid-template-columns:minmax(0, 1.6fr) minmax(0, .85fr); gap:18px; align-items:start; }
   .trend-side-stack { display:grid; grid-template-columns:1fr; gap:18px; }
   @media (max-width: 920px) { .trend-members-grid { grid-template-columns:1fr; } }
   /* Roomier side drawer on tablets (mobile bottom-sheet still kicks in at 600px). */
@@ -361,7 +361,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .hfill.buy { background: var(--buy); } .hfill.warn { background: var(--warn); } .hfill.sell { background: var(--sell); }
   .hbar .hval { width:120px; text-align:right; font-family: var(--mono); font-size:12px; color: var(--text-dim); }
   .hbar .hval .est-money { font-family: var(--mono); }
-  .timeliness-grid { margin-top: 8px; grid-template-columns: minmax(0, 1fr) minmax(280px, .92fr); align-items: stretch; }
+  .timeliness-grid { margin-top: 8px; grid-template-columns: minmax(0, 1fr) minmax(0, .92fr); align-items: stretch; }
   .timeliness-panel { min-width: 0; }
   .timeliness-panel h3 { font-size: 13px; letter-spacing: 0; cursor: help; }
   .lag-dist { min-height: 232px; display: flex; flex-direction: column; justify-content: space-between; gap: 9px; }
@@ -492,11 +492,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .mini-date { display:flex; flex-direction:column; gap:2px; line-height:1.25; }
   .mini-date .subline { color:var(--text-dim); font-size:11px; }
   .mini-source-link { display:block; margin-top:2px; font-size:11px; font-weight:600; }
-  .colopts { display:flex; flex-wrap:wrap; gap:6px 4px; flex:1; }
-  .colopt { font-size:13px; color:var(--text); display:inline-flex; align-items:center; gap:5px; margin-right:12px; white-space:nowrap; cursor:pointer; }
+  .colopts { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:6px; flex:1; }
+  .colopt { font-size:13px; color:var(--text); display:inline-flex; align-items:center; gap:7px; margin-right:0; white-space:nowrap; cursor:pointer; min-width:0; }
   button.colopt { font-family:var(--sans); border:1px dashed var(--border); background:color-mix(in srgb,var(--panel-2) 65%,transparent); border-radius:999px; padding:3px 8px; }
   .colopt.locked { color:var(--text-dim); }
   .colopt.locked:hover { color:var(--text); border-color:color-mix(in srgb,var(--accent) 55%,var(--border)); }
+  .colopt.dragging { opacity:.45; border-color:var(--accent); }
+  .col-drag { color:var(--text-dim); cursor:grab; font-size:14px; line-height:1; }
+  .colopt input { flex:0 0 auto; }
+  .colopt-name { overflow:hidden; text-overflow:ellipsis; }
   .premium-mark { display:inline-flex; align-items:center; justify-content:center; border:1px solid color-mix(in srgb,var(--accent) 42%,var(--border)); background:color-mix(in srgb,var(--accent) 9%,transparent); color:var(--accent); border-radius:999px; padding:1px 6px; font-size:10px; font-weight:800; line-height:1.4; }
   .panel-note { flex-basis:100%; width:100%; color:var(--text-dim); font-size:12px; line-height:1.45; margin-bottom:4px; }
   .premium-count-note { margin-left:8px; color:var(--text-dim); }
@@ -533,11 +537,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .acct-menu-btn:hover { background:var(--panel-2); }
   .acct-menu-btn .acct-caret { color:var(--text-dim); font-size:11px; }
   .menu { position:relative; }
-  .menu-pop { position:absolute; right:0; top:38px; background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:6px; min-width:190px; box-shadow:0 12px 32px rgba(0,0,0,.38); display:none; z-index:30; }
+  .menu-pop { position:absolute; right:0; top:38px; background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:6px; min-width:260px; max-width:min(320px, calc(100vw - 24px)); box-shadow:0 12px 32px rgba(0,0,0,.38); display:none; z-index:30; }
   .menu-pop.open { display:block; }
   .menu-pop button { display:block; width:100%; text-align:left; background:transparent; border:none; color:var(--text); padding:8px 10px; border-radius:7px; cursor:pointer; font-size:13px; font-family:var(--sans); }
   .menu-pop button:hover { background:var(--panel-2); }
-  .menu-pop .who { padding:6px 10px 8px; font-size:12px; color:var(--text-dim); border-bottom:1px solid var(--border); margin-bottom:5px; word-break:break-all; }
+  .menu-pop .who { padding:6px 10px 8px; font-size:12px; color:var(--text-dim); border-bottom:1px solid var(--border); margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .overlay { position:fixed; inset:0; background:rgba(4,8,16,.62); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; z-index:50; padding:18px; }
   .overlay.open { display:flex; }
   .modal { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:26px; width:100%; max-width:430px; box-shadow:0 24px 60px rgba(0,0,0,.45); }
@@ -574,7 +578,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .brand { font-size: 15px; }
     #srcPill { display: none; }
     .pill { padding: 3px 7px; }
-    .theme-toggle { display:none; }
     nav.tabs {
       position: fixed; left: 0; right: 0; bottom: 0; margin: 0;
       width: 100%; max-width: 100%;
@@ -1130,10 +1133,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <button data-view="feed" data-mobile="Trades" data-icon="▦">Trades</button>
     <button data-view="review" data-mobile="Review" data-icon="✓" data-admin-tab="true" hidden>Review Queue <span id="reviewCount"></span></button>
     <button data-view="subs" data-mobile="Alerts" data-icon="↗">Subscriptions</button>
-    <button data-view="admin" data-mobile="Admin" data-icon="⚙" data-admin-tab="true" hidden>Admin · Cadence</button>
+    <button data-view="admin" data-mobile="Admin" data-icon="⚙">Admin · Cadence</button>
   </nav>
   <div id="acct" class="acct"></div>
-  <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle light / dark">🌙</button>
 </header>
 
 <main>
@@ -1180,6 +1182,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
     <div class="table-wrap">
     <table id="feedTable">
+      <colgroup id="feedCols"></colgroup>
       <thead><tr id="feedHead"></tr></thead>
       <tbody id="feedBody"></tbody>
     </table>
@@ -1345,10 +1348,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section class="view" id="view-review">
     <div class="section">
       <h3>Document Review &amp; Model Comparison</h3>
-      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts. Switch to <strong>Reviewed</strong> to see what was published / rejected / modified, and expand <strong>Models</strong> on any row to compare each model's confidence and reading.</p>
+      <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts. Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified. The <strong>All Filing Decisions</strong> table below includes auto-published filings too.</p>
       <div style="display:flex;gap:6px;margin:8px 0">
         <button class="btn sm" id="revTabPending" onclick="setReviewTab(0)">Pending</button>
-        <button class="btn ghost sm" id="revTabReviewed" onclick="setReviewTab(1)">Reviewed</button>
+        <button class="btn ghost sm" id="revTabReviewed" onclick="setReviewTab(1)">Resolved Reviews</button>
       </div>
       <table>
         <thead><tr><th>Filed</th><th>Doc</th><th>Status</th><th>Reason</th><th>Payload</th><th></th></tr></thead>
@@ -1356,7 +1359,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </table>
       <p class="note">Confirm promotes the read to the live feed; Manual lets you hand-key the rows (recorded as <code>source=manual</code>) when the automated read is wrong or too low-confidence; Reject discards it. Models / readings come from <code>extraction_runs</code> (populated by <code>POST /api/admin/bakeoff</code>). <code>POST /api/admin/review/:docId {decision}</code></p>
       <div style="margin-top:14px">
-        <h3>Decision History</h3>
+        <h3>All Filing Decisions</h3>
+        <p class="sub">Append-only filing decisions, including clean auto-published filings that never entered the review queue.</p>
         <table>
           <thead><tr><th>Time</th><th>Doc</th><th>Action</th><th>Source</th><th>Reason</th><th>Rows</th></tr></thead>
           <tbody id="decisionBody"></tbody>
@@ -1844,6 +1848,11 @@ function esc(s) {
   });
 }
 function el(id) { return document.getElementById(id); }
+function clipTextHtml(value, fallback, title) {
+  var text = String(value == null || value === '' ? (fallback || '—') : value);
+  var cls = text === '—' ? 'clip-text muted' : 'clip-text';
+  return '<span class="' + cls + '" title="' + esc(title || text) + '">' + esc(text) + '</span>';
+}
 
 /* Strip stray HTML/entities some upstream datasets embed in asset descriptions
    (e.g. "<div class=text-muted><em>Rate/Coupon:</em> 3.875%<br>…</div>"). */
@@ -1886,7 +1895,7 @@ function fmtMs(ms) {
 function applyTheme(t) {
   if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
   else document.documentElement.removeAttribute('data-theme');
-  var btn = el('themeToggle'); if (btn) btn.textContent = (t === 'light') ? '☀️' : '🌙';
+  var label = el('themeMenuLabel'); if (label) label.textContent = (t === 'light') ? 'Light Mode' : 'Dark Mode';
 }
 function toggleTheme() {
   var cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
@@ -2116,38 +2125,86 @@ var FEED_COLS = [
   { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
   { id: 'lag', label: 'Lag', sort: 'lag', def: true, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
-  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return r.refSector ? esc(r.refSector) : '<span class="muted">—</span>'; } },
-  { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: false, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return r.refMarketCapBucket ? esc(ownerLabel(r.refMarketCapBucket)) : '<span class="muted">—</span>'; } },
-  { id: 'country', label: 'Country', sort: 'refCountry', def: false, cls: 'muted', tier: 'premium', tip: 'Country of issue from enriched reference data.', cell: function (r) { return r.refCountry ? esc(r.refCountry) : '<span class="muted">—</span>'; } },
-  { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return esc(ownerLabel(r.owner) || '—'); } },
+  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
+  { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: false, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
+  { id: 'country', label: 'Country', sort: 'refCountry', def: false, cls: 'muted', tier: 'premium', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
+  { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
   { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
   { id: 'imported', label: 'Imported', sort: 'imported', def: false, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
-  { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return esc(ownerLabel(r.chamber) || '—'); } },
+  { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return clipTextHtml(ownerLabel(r.chamber)); } },
   { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
-  { id: 'source', label: 'Source', sort: 'source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return '<span class="muted" title="' + esc(sourceTitle(r.source)) + '">' + esc(sourceLabel(r.source)) + '</span>'; } },
+  { id: 'source', label: 'Source', sort: 'source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } },
   { id: 'latency', label: 'Latency', sort: null, def: false, cls: 'latency', tier: 'admin', tip: 'Released to seen, then seen to imported for primary rows.', cell: function (r) { return rowLatencyHtml(r); } }
 ];
 var COL_HIDDEN_KEY = 'feed-cols-hidden-v2';
+var COL_ORDER_KEY = 'feed-cols-order-v1';
 function isAdminView() {
-  return typeof ME !== 'undefined' && !!(ME.admin && ME.admin.allowed);
+  return typeof ME !== 'undefined' && !!((ME.admin && ME.admin.allowed) || hasAdminToken());
 }
 function canUseColumn(c) {
   if (c.tier === 'admin') return isAdminView();
   if (c.tier === 'premium') return isAdminView() || (typeof ME !== 'undefined' && isPremium());
   return true;
 }
-function availableCols() { return FEED_COLS.filter(canUseColumn); }
+function loadColOrder() { try { var v = JSON.parse(localStorage.getItem(COL_ORDER_KEY)); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+function saveColOrder(v) { try { localStorage.setItem(COL_ORDER_KEY, JSON.stringify(v)); } catch (e) {} }
+var colOrder = loadColOrder();
+function orderedCols(cols) {
+  var pos = {};
+  colOrder.forEach(function (id, i) { pos[id] = i; });
+  return cols.slice().sort(function (a, b) {
+    var ai = pos[a.id], bi = pos[b.id];
+    if (ai == null && bi == null) return FEED_COLS.indexOf(a) - FEED_COLS.indexOf(b);
+    if (ai == null) return 1;
+    if (bi == null) return -1;
+    return ai - bi;
+  });
+}
+function chooserCols() {
+  return orderedCols(FEED_COLS.filter(function (c) {
+    if (c.lock) return false;
+    if (c.tier === 'admin' && !isAdminView()) return false;
+    return true;
+  }));
+}
+function availableCols() { return orderedCols(FEED_COLS.filter(canUseColumn)); }
 function defaultHidden() { return availableCols().filter(function (c) { return !c.def; }).map(function (c) { return c.id; }); }
 function loadHiddenCols() { try { var v = JSON.parse(localStorage.getItem(COL_HIDDEN_KEY)); return v && v.length !== undefined ? v : defaultHidden(); } catch (e) { return defaultHidden(); } }
 function saveHiddenCols(h) { try { localStorage.setItem(COL_HIDDEN_KEY, JSON.stringify(h)); } catch (e) {} }
 var hiddenCols = loadHiddenCols();
 function isColVisible(id) { return hiddenCols.indexOf(id) < 0; }
 function visibleCols() { return availableCols().filter(function (c) { return isColVisible(c.id); }); }
+function renderFeedColGroup() {
+  var cg = el('feedCols'); if (!cg) return;
+  cg.innerHTML = visibleCols().map(function (c) { return '<col data-col="' + esc(c.id) + '">'; }).join('');
+}
+function parsePx(v) {
+  var n = parseFloat(v);
+  return Number.isFinite(n) ? n : 0;
+}
+function syncFeedTableWidth() {
+  var table = el('feedTable'); if (!table) return;
+  var ths = Array.prototype.slice.call(document.querySelectorAll('#feedHead th'));
+  var cols = Array.prototype.slice.call(document.querySelectorAll('#feedCols col'));
+  if (!ths.length) return;
+  var total = 0;
+  for (var i = 0; i < ths.length; i++) {
+    var w = parsePx(ths[i].style.width) || ths[i].offsetWidth || minColWidth(ths[i].dataset.col);
+    w = Math.max(minColWidth(ths[i].dataset.col), Math.round(w));
+    ths[i].style.width = w + 'px';
+    if (cols[i]) cols[i].style.width = w + 'px';
+    total += w;
+  }
+  var wrap = table.closest ? table.closest('.table-wrap') : null;
+  var min = wrap ? wrap.clientWidth : 0;
+  table.style.width = Math.max(total, min) + 'px';
+}
 
 /* Render the header from the registry, (re)attach sort handlers, and reset the
    resize state so widths re-freeze for the now-visible columns. */
 function renderFeedHeader() {
   var head = el('feedHead'); if (!head) return;
+  renderFeedColGroup();
   head.innerHTML = visibleCols().map(function (c) {
     var cls = (c.sort ? 'sortable ' : '') + 'c-' + c.id;
     var ds = c.sort ? ' data-sort="' + c.sort + '"' : '';
@@ -2157,7 +2214,7 @@ function renderFeedHeader() {
   var ths = head.querySelectorAll('th.sortable');
   for (var i = 0; i < ths.length; i++) { (function (th) { th.onclick = function () { setSort(th.dataset.sort); }; })(ths[i]); }
   // Re-init the resizable columns for the new header.
-  var table = el('feedTable'); if (table) table.classList.remove('resizable');
+  var table = el('feedTable'); if (table) { table.classList.remove('resizable'); table.style.width = ''; }
   colResizeInit = false;
   updateSortIndicators();
 }
@@ -2190,17 +2247,14 @@ function renderColChooser() {
   var note = lockedPremium
     ? '<div class="panel-note"><strong>Premium enrichment</strong><br/>Sector, market cap, and country are available with Premium.</div>'
     : '';
-  box.innerHTML = note + FEED_COLS.filter(function (c) {
-    if (c.lock) return false;
-    if (c.tier === 'admin' && !isAdminView()) return false;
-    return true;
-  }).map(function (c) {
+  note += '<div class="panel-note">Drag columns here to reorder the Trades table.</div>';
+  box.innerHTML = note + chooserCols().map(function (c) {
     var tip = c.tip ? ' title="' + esc(c.tip) + '"' : '';
     if (c.tier === 'premium' && lockedPremium) {
-      return '<button type="button" class="colopt locked" data-premium-col="' + esc(c.id) + '"' + tip + '>' +
-        esc(c.label) + ' <span class="premium-mark">Premium</span></button>';
+      return '<button type="button" class="colopt locked" draggable="true" data-colid="' + esc(c.id) + '" data-premium-col="' + esc(c.id) + '"' + tip + '>' +
+        '<span class="col-drag" aria-hidden="true">↕</span><span class="colopt-name">' + esc(c.label) + '</span> <span class="premium-mark">Premium</span></button>';
     }
-    return '<label class="colopt"' + tip + '><input type="checkbox" data-colid="' + c.id + '"' + (isColVisible(c.id) ? ' checked' : '') + ' /> ' + esc(c.label) + '</label>';
+    return '<label class="colopt" draggable="true" data-colid="' + esc(c.id) + '"' + tip + '><span class="col-drag" aria-hidden="true">↕</span><input type="checkbox" data-colid="' + c.id + '"' + (isColVisible(c.id) ? ' checked' : '') + ' /> <span class="colopt-name">' + esc(c.label) + '</span></label>';
   }).join('');
 }
 function toggleColChooser() {
@@ -2214,7 +2268,24 @@ function onColToggle(id, visible) {
   saveHiddenCols(hiddenCols);
   renderFeedHeader(); renderFeed();
 }
-function resetCols() { hiddenCols = defaultHidden(); saveHiddenCols(hiddenCols); renderColChooser(); renderFeedHeader(); renderFeed(); }
+function moveColumn(dragId, targetId) {
+  if (!dragId || !targetId || dragId === targetId) return;
+  var ids = chooserCols().map(function (c) { return c.id; });
+  ids = ids.filter(function (id) { return id !== dragId; });
+  var idx = ids.indexOf(targetId);
+  if (idx < 0) return;
+  ids.splice(idx, 0, dragId);
+  colOrder = ids;
+  saveColOrder(colOrder);
+  renderColChooser(); renderFeedHeader(); renderFeed();
+}
+function resetCols() {
+  hiddenCols = defaultHidden();
+  colOrder = [];
+  saveHiddenCols(hiddenCols);
+  saveColOrder(colOrder);
+  renderColChooser(); renderFeedHeader(); renderFeed();
+}
 
 function renderFeed() {
   var m = el('qMember').value.toLowerCase(), t = el('qTicker').value.toUpperCase(),
@@ -2251,7 +2322,7 @@ function renderFeed() {
   if (rows.length === 0) {
     body.innerHTML = stateRow(cols.length, 'No transactions match these filters.');
     if (cards) cards.innerHTML = stateCards('No transactions match these filters.');
-    updateFeedCountMsg(0); maybeInitResize(); return;
+    updateFeedCountMsg(0); maybeInitResize(); syncFeedTableWidth(); return;
   }
   body.innerHTML = rows.map(function (r) {
     var tds = cols.map(function (c) {
@@ -2262,6 +2333,7 @@ function renderFeed() {
   if (cards) cards.innerHTML = rows.map(feedCardHtml).join('');
   updateFeedCountMsg(rows.length);
   maybeInitResize();
+  syncFeedTableWidth();
 }
 
 /* "Showing X-Y of N" + previous/next controls for the bounded table page. */
@@ -2290,7 +2362,7 @@ function updateFeedCountMsg(shown) {
 }
 
 /* ---- resizable feed columns (drag the right edge of a header) ---- */
-var COL_WIDTH_KEY = 'feed-col-widths-v7';
+var COL_WIDTH_KEY = 'feed-col-widths-v8';
 var colResizeInit = false;
 function loadColWidths() { try { return JSON.parse(localStorage.getItem(COL_WIDTH_KEY) || '{}') || {}; } catch (e) { return {}; } }
 function saveColWidths(w) { try { localStorage.setItem(COL_WIDTH_KEY, JSON.stringify(w)); } catch (e) {} }
@@ -2312,7 +2384,7 @@ function estimatedColWidth(key, fallback, min, max) {
 }
 function minColWidth(key) {
   var map = {
-    asset: 48,
+    asset: 40,
     member: 62,
     amount: 56,
     imported: 62,
@@ -2355,7 +2427,7 @@ function initColumnResize() {
   // compact default (Asset fits the longest name otherwise) — short entries then
   // show in full, long ones clip to an ellipsis, and any column stays draggable.
   var DEFAULT_CAP = {
-    asset: estimatedColWidth('asset', 54, 48, 62),
+    asset: estimatedColWidth('asset', 48, 40, 54),
     member: estimatedColWidth('member', 220, 160, 286)
   };
   for (var i = 0; i < ths.length; i++) {
@@ -2366,6 +2438,7 @@ function initColumnResize() {
   }
   table.classList.add('resizable');
   for (var j = 0; j < ths.length; j++) addColResizer(ths[j]);
+  syncFeedTableWidth();
   applyColumnWidthClasses();
 }
 function addColResizer(th) {
@@ -2377,6 +2450,7 @@ function addColResizer(th) {
     var startX = e.pageX, startW = th.offsetWidth;
     function move(ev) {
       th.style.width = Math.max(minColWidth(th.dataset.col), startW + (ev.pageX - startX)) + 'px';
+      syncFeedTableWidth();
       applyColumnWidthClasses();
     }
     function up() {
@@ -2384,6 +2458,7 @@ function addColResizer(th) {
       document.removeEventListener('mouseup', up);
       document.body.style.userSelect = '';
       var w = loadColWidths(); w[th.dataset.col] = th.offsetWidth; saveColWidths(w);
+      syncFeedTableWidth();
       applyColumnWidthClasses();
     }
     document.addEventListener('mousemove', move);
@@ -2736,7 +2811,7 @@ function loadReview() {
 }
 function loadDecisionHistory() {
   // API HOOK: GET /api/admin/ingestion-decisions
-  return fetch('/api/admin/ingestion-decisions?limit=100', { headers: adminHeaders() })
+  return fetch('/api/admin/ingestion-decisions?limit=200', { headers: adminHeaders() })
     .then(okOrThrow)
     .then(function (data) {
       DECISIONS = data.items || [];
@@ -3305,13 +3380,13 @@ function adminHeaders(extra) {
 }
 // Turn a 401 into an actionable message instead of a bare "HTTP 401".
 function adminOk(r) {
-  if (r.status === 401) throw new Error('Unauthorized — paste your admin token in the Admin access box above.');
+  if (r.status === 401) throw new Error('Unauthorized — paste your admin token in the Admin tab access box.');
   if (!r.ok) throw new Error('HTTP ' + r.status);
   return r;
 }
 // Like adminOk but only intercepts 401 — lets the caller parse a JSON {error} body for other statuses.
 function admin401(r) {
-  if (r.status === 401) throw new Error('Unauthorized — paste your admin token in the Admin access box above.');
+  if (r.status === 401) throw new Error('Unauthorized — paste your admin token in the Admin tab access box.');
   return r;
 }
 function saveAdminToken() {
@@ -3319,7 +3394,9 @@ function saveAdminToken() {
   try { if (v) localStorage.setItem(ADMIN_TOKEN_KEY, v); else localStorage.removeItem(ADMIN_TOKEN_KEY); } catch (e) {}
   el('adminTokenMsg').textContent = v ? 'Saved in this browser.' : 'Cleared.';
   setTimeout(function () { el('adminTokenMsg').textContent = ''; }, 2500);
+  applyAdminVisibility();
   renderFeedHeader(); renderColChooser(); renderFeed();
+  if (v) loadReview();
   loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics();
 }
 function clearAdminToken() {
@@ -3327,6 +3404,7 @@ function clearAdminToken() {
   if (el('adminToken')) el('adminToken').value = '';
   el('adminTokenMsg').textContent = 'Cleared.';
   setTimeout(function () { el('adminTokenMsg').textContent = ''; }, 2500);
+  applyAdminVisibility();
   renderFeedHeader(); renderColChooser(); renderFeed();
 }
 // Populate the field from storage when the Admin tab opens.
@@ -4371,21 +4449,23 @@ function openTrade(row) {
     ? '<span class="clickable" data-member="' + esc(row.filerId) + '">' + esc(fmtName(row.member)) + '</span>'
     : esc(fmtName(row.member));
   var sideWord = row.type === 'P' ? 'Bought' : row.type === 'S' ? 'Sold' : 'Exchanged';
+  var displayTicker = isScannedPdfPlaceholder(row.ticker) ? '' : (row.ticker || '');
+  var displayAsset = cleanAsset(row.asset || '');
   // A trade drawer leads with the TRANSACTION (kicker + amount), not the company —
   // the ticker/company is demoted to a non-clickable "in …" line so it can't be
   // mistaken for the company drawer (the ticker is intentionally NOT clickable here).
-  var inName = (row.ticker || row.asset)
+  var inName = (displayTicker || displayAsset)
     ? '<p class="drawer-trade-in">in ' +
-        (row.ticker ? '<span class="tkr">' + esc(row.ticker) + '</span>' : '') +
-        (row.ticker && row.asset ? '<span class="dot-sep">·</span>' : '') +
-        (row.asset ? '<span class="company-name">' + esc(row.asset) + '</span>' : '') + '</p>'
+        (displayTicker ? '<span class="tkr">' + esc(displayTicker) + '</span>' : '') +
+        (displayTicker && displayAsset ? '<span class="dot-sep">·</span>' : '') +
+        (displayAsset ? '<span class="company-name">' + esc(displayAsset) + '</span>' : '') + '</p>'
     : '';
   var personCard = '<div class="drawer-trade-party"><span class="eyebrow">Politician</span><div class="member-cell">' +
     memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + '</div></div></div>';
-  var assetLabel = row.asset || row.ticker || 'Asset unavailable';
+  var assetLabel = displayAsset || displayTicker || 'Unparsed Historical Filing';
   var assetCard = '<div class="drawer-trade-party"><span class="eyebrow">Asset</span><div class="asset-cell">' +
-    tickerLogoHtml(row.ticker, assetLabel) + '<div title="' + esc((row.ticker ? row.ticker + ' · ' : '') + assetLabel) + '">' +
-    (row.ticker ? '<span class="tkr">' + esc(row.ticker) + '</span><span class="tkr-gap"></span>' : '') +
+    tickerLogoHtml(displayTicker, assetLabel) + '<div title="' + esc((displayTicker ? displayTicker + ' · ' : '') + assetLabel) + '">' +
+    (displayTicker ? '<span class="tkr">' + esc(displayTicker) + '</span><span class="tkr-gap"></span>' : '') +
     '<span class="muted">' + esc(assetLabel) + '</span></div></div></div>';
   var head =
     '<div class="drawer-trade-head">' +
@@ -4454,7 +4534,8 @@ var ME = { user: null, entitlement: { premium: false, status: null, plan: null, 
 var selectedPlan = 'monthly';
 
 function isPremium() { return !!(ME.entitlement && ME.entitlement.premium); }
-function canUseAdmin() { return !!(ME.user && ME.admin && ME.admin.allowed); }
+function hasAdminToken() { return !!getAdminToken(); }
+function canUseAdmin() { return !!((ME.user && ME.admin && ME.admin.allowed) || hasAdminToken()); }
 function updatePremiumCues() {
   var unlocked = isPremium() || isAdminView();
   document.querySelectorAll('[data-premium-cue]').forEach(function (node) { node.hidden = unlocked; });
@@ -4517,6 +4598,7 @@ function renderAccount() {
       '</button>' +
       '<div class="menu-pop" id="acctMenu">' +
         '<div class="who">' + esc(ME.user.email || '') + '</div>' +
+        '<button onclick="toggleTheme()"><span id="themeMenuLabel">' + esc(document.documentElement.getAttribute('data-theme') === 'light' ? 'Light Mode' : 'Dark Mode') + '</span></button>' +
         (ent.premium
           ? '<button onclick="manageBilling()">Manage Subscription</button>'
           : '<button onclick="closeAcctMenu();openPricing()">Premium</button>') +
@@ -4823,6 +4905,7 @@ renderFeedHeader();
 // Column chooser: toggle a column's visibility when its checkbox changes.
 (function () {
   var box = el('colChooserBody');
+  var draggingCol = null;
   if (box) box.addEventListener('click', function (e) {
     var btn = e.target && e.target.closest ? e.target.closest('[data-premium-col]') : null;
     if (btn) openPricing('columns');
@@ -4833,9 +4916,39 @@ renderFeedHeader();
       onColToggle(cb.getAttribute('data-colid'), cb.checked);
     }
   });
+  if (box) box.addEventListener('dragstart', function (e) {
+    var item = e.target && e.target.closest ? e.target.closest('.colopt[data-colid]') : null;
+    if (!item) return;
+    draggingCol = item.getAttribute('data-colid');
+    item.classList.add('dragging');
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', draggingCol);
+    }
+  });
+  if (box) box.addEventListener('dragover', function (e) {
+    var item = e.target && e.target.closest ? e.target.closest('.colopt[data-colid]') : null;
+    if (!draggingCol || !item || item.getAttribute('data-colid') === draggingCol) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  });
+  if (box) box.addEventListener('drop', function (e) {
+    var item = e.target && e.target.closest ? e.target.closest('.colopt[data-colid]') : null;
+    var target = item && item.getAttribute('data-colid');
+    var drag = draggingCol || (e.dataTransfer && e.dataTransfer.getData('text/plain'));
+    if (!drag || !target || drag === target) return;
+    e.preventDefault();
+    moveColumn(drag, target);
+  });
+  if (box) box.addEventListener('dragend', function () {
+    draggingCol = null;
+    box.querySelectorAll('.colopt.dragging').forEach(function (n) { n.classList.remove('dragging'); });
+  });
 })();
 
-// Reflect the persisted theme on the toggle button.
+window.addEventListener('resize', function () { syncFeedTableWidth(); applyColumnWidthClasses(); });
+
+// Reflect the persisted theme in the account menu.
 applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
 
 // Initial loading states + boot.
