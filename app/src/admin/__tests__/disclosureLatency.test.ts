@@ -26,6 +26,7 @@ function fakeDb() {
                   congress_first_seen_at: '2026-06-29T14:00:00.000Z',
                   provider_key: '20012345',
                   provider_first_seen_at: '2026-06-29T14:03:30.000Z',
+                  provider_published_at: '2026-06-29T14:02:00.000Z',
                   match_method: 'doc-token',
                   status: 'matched',
                   attempts: 2,
@@ -59,13 +60,36 @@ describe('admin disclosure latency API', () => {
     );
 
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { items: Array<{ docId: string; providerDeltaSec: number; status: string }> };
+    const body = (await res.json()) as {
+      items: Array<{ docId: string; providerDeltaSec: number; providerPublishedDeltaSec: number; status: string }>;
+    };
     expect(body.items).toEqual([
       expect.objectContaining({
         docId: 'H-2026-20012345',
         providerDeltaSec: 210,
+        providerPublishedDeltaSec: 120,
         status: 'matched',
       }),
     ]);
+  });
+
+  it('returns aggregate metrics and a public-safe summary payload', async () => {
+    const res = await app.request(
+      '/disclosure-latency/summary',
+      { headers: { Authorization: 'Bearer admin-secret' } },
+      { ADMIN_TOKEN: 'admin-secret', FMP_API_KEY: 'configured', DB: fakeDb() } as never,
+    );
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      totals: { candidates: number; matched: number; configuredComparableProviders: number };
+      providers: Array<{ provider: string; avgMonitorDeltaSec: number | null; avgProviderPublishedDeltaSec: number | null }>;
+      publicSummary: { providers: Array<{ provider: string }> };
+    };
+    expect(body.totals).toEqual(expect.objectContaining({ candidates: 1, matched: 1, configuredComparableProviders: 1 }));
+    expect(body.providers[0]).toEqual(
+      expect.objectContaining({ provider: 'fmp', avgMonitorDeltaSec: 210, avgProviderPublishedDeltaSec: 120 }),
+    );
+    expect(JSON.stringify(body.publicSummary)).not.toContain('H-2026-20012345');
   });
 });

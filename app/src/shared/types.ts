@@ -457,10 +457,23 @@ export interface Env {
   FMP_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */
   FMP_DAILY_CALL_CAP?: string;
-  /** Enables the Congress.Trade-vs-FMP congressional disclosure latency monitor. */
+  /** Enables the Congress.Trade-vs-provider congressional disclosure latency monitor. */
+  DISCLOSURE_LATENCY_WATCH_ENABLED?: string;
+  /** Comma-separated provider ids to race: fmp, unusual_whales, quiver. Defaults to direct comparable providers. */
+  DISCLOSURE_LATENCY_PROVIDERS?: string;
+  /** Latest rows to fetch per provider/chamber endpoint when the latency monitor runs. */
+  DISCLOSURE_LATENCY_WATCH_LIMIT?: string;
+  /** Enables the legacy Congress.Trade-vs-FMP monitor switch; kept for backward compatibility. */
   FMP_DISCLOSURE_WATCH_ENABLED?: string;
-  /** Latest rows to fetch per FMP chamber endpoint when the latency monitor runs. */
+  /** Legacy FMP-specific latest-row limit; DISCLOSURE_LATENCY_WATCH_LIMIT takes precedence. */
   FMP_DISCLOSURE_WATCH_LIMIT?: string;
+  /** Unusual Whales API key for recent Congress trades. */
+  UNUSUAL_WHALES_API_KEY?: string;
+  /** Quiver API bearer token for live Congress trading endpoints. */
+  QUIVER_API_KEY?: string;
+  QUIVER_API_TOKEN?: string;
+  /** AInvest key; currently reported as symbol-scoped and not directly comparable for this monitor. */
+  AINVEST_API_KEY?: string;
   /** Which price provider to prefer: 'fmp' or 'massive'. */
   PRICE_PROVIDER?: string;
   /** HMAC key for signing outbound webhook payloads. */

@@ -36,7 +36,7 @@ import { buildUiRouter } from './ui/routes';
 import { maybeRunDailyJobs } from './jobs';
 import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement';
 import { refreshSecrets } from './secrets/infisical';
-import { runFmpDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency';
+import { runDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -161,8 +161,8 @@ export default Sentry.withSentry(
       await runWatcher(env, new Date());
       ctx.waitUntil(refreshSecrets(env).catch((err) => console.warn('infisical secret refresh failed:', (err as Error).message)));
       ctx.waitUntil(
-        runFmpDisclosureLatencyProbe(env).catch((err) =>
-          console.warn('fmp disclosure latency probe failed:', (err as Error).message),
+        runDisclosureLatencyProbe(env).catch((err) =>
+          console.warn('disclosure latency probe failed:', (err as Error).message),
         ),
       );
       ctx.waitUntil(maybeRunDailyJobs(env));
