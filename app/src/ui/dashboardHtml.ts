@@ -2139,7 +2139,7 @@ var FEED_COLS = [
 var COL_HIDDEN_KEY = 'feed-cols-hidden-v2';
 var COL_ORDER_KEY = 'feed-cols-order-v1';
 function isAdminView() {
-  return typeof ME !== 'undefined' && !!(ME.admin && ME.admin.allowed);
+  return typeof ME !== 'undefined' && !!((ME.admin && ME.admin.allowed) || hasAdminToken());
 }
 function canUseColumn(c) {
   if (c.tier === 'admin') return isAdminView();

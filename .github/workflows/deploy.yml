@@ -32,6 +32,31 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
+      - name: Configure private GitHub dependencies
+        env:
+          SHARED_PACKAGE_DEPLOY_KEY: ${{ secrets.SHARED_PACKAGE_DEPLOY_KEY }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -n "$SHARED_PACKAGE_DEPLOY_KEY" ]; then
+            mkdir -p "$HOME/.ssh"
+            printf '%s\n' "$SHARED_PACKAGE_DEPLOY_KEY" > "$HOME/.ssh/congress_trading_shared"
+            chmod 600 "$HOME/.ssh/congress_trading_shared"
+            ssh-keyscan github.com >> "$HOME/.ssh/known_hosts"
+            git config --global core.sshCommand "ssh -i $HOME/.ssh/congress_trading_shared -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
+            git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"
+            git config --global url."ssh://git@github.com/".insteadOf "git@github.com:"
+            git ls-remote ssh://git@github.com/jaywedgeworth22/congress-trading-shared.git HEAD >/dev/null
+          elif [ -n "$GH_PAT" ]; then
+            git config --global credential.helper store
+            printf 'https://x-access-token:%s@github.com\n' "$GH_PAT" > "$HOME/.git-credentials"
+            git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+            git config --global url."https://github.com/".insteadOf "git@github.com:"
+            git ls-remote https://github.com/jaywedgeworth22/congress-trading-shared.git HEAD >/dev/null
+          else
+            echo "::error::SHARED_PACKAGE_DEPLOY_KEY or GH_PAT with read access to jaywedgeworth22/congress-trading-shared is required for npm ci."
+            exit 1
+          fi
+
       - name: Install dependencies
         run: npm ci
 

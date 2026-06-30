@@ -28,7 +28,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../shared/types';
 import { constantTimeEqual } from '../auth/tokens';
-import { resolveSecret } from '../secrets/infisical';
+import { resolveSecret, resolveSecrets } from '../secrets/infisical';
 import {
   runBulkSnapshot,
   readManifest,
@@ -139,10 +139,11 @@ function integrationImportLimits(env: ExportEnv): typeof IMPORT_DEFAULT_LIMITS {
   };
 }
 
-function integrationCapabilities(env: ExportEnv): Record<string, unknown> {
+async function integrationCapabilities(env: ExportEnv): Promise<Record<string, unknown>> {
+  const runtimeSecrets = await resolveSecrets(env, ['INGEST_TOKEN', 'APP_B_IMPORT_URL', 'APP_B_INGEST_TOKEN']);
   const configured = {
-    ingestToken: Boolean(env.INGEST_TOKEN),
-    appBReturnPath: Boolean(env.APP_B_IMPORT_URL && env.APP_B_INGEST_TOKEN),
+    ingestToken: Boolean(runtimeSecrets.INGEST_TOKEN),
+    appBReturnPath: Boolean(runtimeSecrets.APP_B_IMPORT_URL && runtimeSecrets.APP_B_INGEST_TOKEN),
   };
   return {
     app: 'congress.trade',
@@ -163,8 +164,8 @@ function integrationCapabilities(env: ExportEnv): Record<string, unknown> {
     peerSharing: {
       role: 'source-of-truth-for-congressional-disclosures-and-point-in-time-scores',
       appBReturnPathConfigured: configured.appBReturnPath,
-      appBImportUrlConfigured: Boolean(env.APP_B_IMPORT_URL),
-      appBIngestTokenConfigured: Boolean(env.APP_B_INGEST_TOKEN),
+      appBImportUrlConfigured: Boolean(runtimeSecrets.APP_B_IMPORT_URL),
+      appBIngestTokenConfigured: Boolean(runtimeSecrets.APP_B_INGEST_TOKEN),
       noEchoPolicy: 'Only freshly fetched local deltas are pushed to App B; App B-origin imports are not echoed back.',
     },
     endpoints: {
@@ -241,7 +242,7 @@ export function buildExportRouter(): Hono<{ Bindings: ExportEnv }> {
     if (!(await isAuthorized(c.env, c.req.header('authorization')))) {
       return c.json({ error: 'unauthorized' }, 401);
     }
-    return c.json(integrationCapabilities(c.env));
+    return c.json(await integrationCapabilities(c.env));
   });
 
   // --- GET /congress-pit-scores ------------------------------------------
