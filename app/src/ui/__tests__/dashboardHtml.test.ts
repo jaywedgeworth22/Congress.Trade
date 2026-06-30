@@ -77,6 +77,10 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('id="colChooser"');
     expect(DASHBOARD_HTML).toContain('id="colChooserBody"');
     expect(DASHBOARD_HTML).toContain('function resetCols(');
+    expect(DASHBOARD_HTML).toContain("var COL_ORDER_KEY = 'feed-cols-order-v1'");
+    expect(DASHBOARD_HTML).toContain('function moveColumn(');
+    expect(DASHBOARD_HTML).toContain('Drag columns here to reorder the Trades table.');
+    expect(DASHBOARD_HTML).toContain('draggable="true" data-colid');
     // the new date/lag columns the user asked for
     expect(DASHBOARD_HTML).toContain("id: 'traded'");
     expect(DASHBOARD_HTML).toContain("id: 'lag'");
@@ -99,6 +103,9 @@ describe('DASHBOARD_HTML', () => {
   it('keeps account sign-out discoverable from the account menu', () => {
     expect(DASHBOARD_HTML).toContain('id="acctMenuBtn"');
     expect(DASHBOARD_HTML).toContain('<span class="acct-label">Account</span>');
+    expect(DASHBOARD_HTML).toContain('themeMenuLabel');
+    expect(DASHBOARD_HTML).not.toContain('id="themeToggle"');
+    expect(DASHBOARD_HTML).toContain('white-space:nowrap; overflow:hidden; text-overflow:ellipsis;');
     expect(DASHBOARD_HTML).toContain('Sign Out');
     expect(DASHBOARD_HTML).toContain('function logout()');
   });
@@ -186,8 +193,10 @@ describe('DASHBOARD_HTML', () => {
   it('uses published timing, tighter asset defaults, and source links in drawers', () => {
     expect(DASHBOARD_HTML).toContain("var sortKey = 'published'");
     expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v2'");
-    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v7'");
-    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 54, 48, 62)");
+    expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v8'");
+    expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 48, 40, 54)");
+    expect(DASHBOARD_HTML).not.toContain('width: max-content');
+    expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v7');
     expect(DASHBOARD_HTML).toContain('function dateTimeCellHtml(');
     expect(DASHBOARD_HTML).toContain('date-time-cell');
     expect(DASHBOARD_HTML).toContain('#feedTable.resizable th { text-align: center;');
@@ -210,9 +219,15 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('border-right: 1px solid color-mix');
     expect(DASHBOARD_HTML).toContain('#feedTable .c-member');
     expect(DASHBOARD_HTML).toContain('#feedTable .c-asset');
+    expect(DASHBOARD_HTML).toContain('<colgroup id="feedCols"></colgroup>');
+    expect(DASHBOARD_HTML).toContain('function syncFeedTableWidth(');
+    expect(DASHBOARD_HTML).toContain('.clip-text { display:block;');
     expect(DASHBOARD_HTML).toContain('drawer-company-title');
     expect(DASHBOARD_HTML).toContain('drawer-stack-grid');
     expect(DASHBOARD_HTML).toContain('trend-members-grid');
+    expect(DASHBOARD_HTML).toContain('.trend-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));');
+    expect(DASHBOARD_HTML).toContain('.trend-members-grid { display:grid; grid-template-columns:minmax(0, 1.6fr) minmax(0, .85fr);');
+    expect(DASHBOARD_HTML).not.toContain('minmax(260px, .72fr)');
     expect(DASHBOARD_HTML).toContain('buySellText(');
     expect(DASHBOARD_HTML).toContain('0% means matched the S&P');
     expect(DASHBOARD_HTML).toContain('Unparsed Historical Filing');
@@ -234,8 +249,10 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function useModelRows(');
     expect(DASHBOARD_HTML).toContain('function openReviewEditor(');
     expect(DASHBOARD_HTML).toContain('Review / Confirm');
-    expect(DASHBOARD_HTML).toContain('Decision History');
-    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/ingestion-decisions?limit=100'");
+    expect(DASHBOARD_HTML).toContain('Resolved Reviews');
+    expect(DASHBOARD_HTML).toContain('All Filing Decisions');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/ingestion-decisions?limit=200'");
+    expect(DASHBOARD_HTML).toContain('function hasAdminToken()');
     expect(DASHBOARD_HTML).toContain('function renderDecisionHistory(');
     expect(DASHBOARD_HTML).toContain('var DECISIONS');
     expect(DASHBOARD_HTML).toContain('Use This Model');
@@ -329,6 +346,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('class="trend-grid2 timeliness-grid"');
     expect(DASHBOARD_HTML).toContain('id="trLagDist" class="lag-dist"');
     expect(DASHBOARD_HTML).toContain('class="late-filers-wrap"');
+    expect(DASHBOARD_HTML).toContain('.timeliness-grid { margin-top: 8px; grid-template-columns: minmax(0, 1fr) minmax(0, .92fr);');
+    expect(DASHBOARD_HTML).not.toContain('minmax(280px, .92fr)');
     expect(DASHBOARD_HTML).toContain('.late-filers-wrap { max-height: 232px; overflow: auto;');
     expect(DASHBOARD_HTML).toContain('Disclosure lag is days between the transaction date and the official filing date.');
     expect(DASHBOARD_HTML).toContain('Avg: mean number of days between transaction date and official filing date.');

@@ -16,6 +16,7 @@
  */
 
 import { Hono } from 'hono';
+import * as Sentry from '@sentry/cloudflare';
 import type { Env, QueueMessage } from './shared/types';
 
 // Stage handlers owned by their feature modules.
@@ -140,45 +141,54 @@ async function handleDeliveryMessage(env: Env, msg: QueueMessage): Promise<void>
   }
 }
 
-export default {
-  /** HTTP entrypoint. */
-  fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> | Response {
-    return app.fetch(request, env, ctx);
-  },
+export default Sentry.withSentry(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN,
+    // Send traces for a sample of transactions (0 = off, 1.0 = all).
+    // Defaults to 0; set to e.g. 0.1 for 10% sampling in production.
+    tracesSampleRate: 0,
+  }),
+  {
+    /** HTTP entrypoint. */
+    fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> | Response {
+      return app.fetch(request, env, ctx);
+    },
 
-  /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow.
-   *  Daily enrichment + price refresh self-gate via a KV date stamp. */
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    await runWatcher(env, new Date());
-    ctx.waitUntil(refreshSecrets(env).catch((err) => console.warn('infisical secret refresh failed:', (err as Error).message)));
-    ctx.waitUntil(maybeRunDailyJobs(env));
-    // Autonomous cross-vendor agreement → auto-publish for a few newly-reviewed
-    // docs each minute (self-gates on AGREEMENT_AUTOPUBLISH_ENABLED; cron-safe).
-    ctx.waitUntil(
-      maybeRunAgreementAutopublish(env).catch((err) =>
-        console.warn('agreement autopublish failed:', (err as Error).message),
-      ),
-    );
-  },
+    /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow.
+     *  Daily enrichment + price refresh self-gate via a KV date stamp. */
+    async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+      await runWatcher(env, new Date());
+      ctx.waitUntil(refreshSecrets(env).catch((err) => console.warn('infisical secret refresh failed:', (err as Error).message)));
+      ctx.waitUntil(maybeRunDailyJobs(env));
+      // Autonomous cross-vendor agreement → auto-publish for a few newly-reviewed
+      // docs each minute (self-gates on AGREEMENT_AUTOPUBLISH_ENABLED; cron-safe).
+      ctx.waitUntil(
+        maybeRunAgreementAutopublish(env).catch((err) =>
+          console.warn('agreement autopublish failed:', (err as Error).message),
+        ),
+      );
+    },
 
-  /**
-   * Queue consumer. Routes by the bound queue name to the ingest/delivery
-   * handlers. Messages are ack'd individually; failures retry per wrangler.toml.
-   */
-  async queue(batch: MessageBatch<QueueMessage>, env: Env, _ctx: ExecutionContext): Promise<void> {
-    const isDelivery = batch.queue.includes('delivery');
-    for (const message of batch.messages) {
-      try {
-        if (isDelivery) {
-          await handleDeliveryMessage(env, message.body);
-        } else {
-          await handleIngestMessage(env, message.body);
+    /**
+     * Queue consumer. Routes by the bound queue name to the ingest/delivery
+     * handlers. Messages are ack'd individually; failures retry per wrangler.toml.
+     */
+    async queue(batch, env: Env, _ctx: ExecutionContext): Promise<void> {
+      const isDelivery = batch.queue.includes('delivery');
+      for (const message of batch.messages) {
+        try {
+          const msg = message.body as QueueMessage;
+          if (isDelivery) {
+            await handleDeliveryMessage(env, msg);
+          } else {
+            await handleIngestMessage(env, msg);
+          }
+          message.ack();
+        } catch (err) {
+          console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
+          message.retry();
         }
-        message.ack();
-      } catch (err) {
-        console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
-        message.retry();
       }
-    }
+    },
   },
-};
+);

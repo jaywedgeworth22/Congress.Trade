@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#9924dd614d643dc655bbee9788d15f32f48760dc",
+    "@sentry/cloudflare": "^10.62.0",
     "fflate": "^0.8.3",
     "hono": "^4.6.0",
     "node-html-parser": "^7.1.0",

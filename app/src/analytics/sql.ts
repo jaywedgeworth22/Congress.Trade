@@ -22,10 +22,6 @@
 
 import type { Chamber, TxType } from '../shared/types';
 import type { SqlParam } from '../shared/db';
-import type { PartyBucket } from "@jaywedgeworth22/congress-trading-shared";
-import { WINDOW_PRESETS } from "@jaywedgeworth22/congress-trading-shared";
-
-export { type PartyBucket, WINDOW_PRESETS };
 
 // ---------------------------------------------------------------------------
 // Enumerations + validators (closed sets → safe to interpolate as literals)
@@ -36,9 +32,7 @@ export { type PartyBucket, WINDOW_PRESETS };
  * the presets below, but any positive `<N>d` is valid — so callers can request a
  * custom age (e.g. ?window=45d) without enumerating it here.
  */
-// WINDOW_PRESETS is now imported from the shared package.
-// Local Window type + validators are kept here (not shared).
-
+export const WINDOW_PRESETS = ['1d', '7d', '30d', '90d', '180d', '365d', '1825d', 'all'] as const;
 export type Window = string; // always produced via asWindow(): 'all' | `${number}d`
 const WINDOW_RE = /^(\d{1,5})d$/;
 const MAX_WINDOW_DAYS = 36500; // ~100y guardrail against absurd inputs
@@ -70,8 +64,7 @@ export function asSourceFilter(v: unknown, fallback: SourceFilter = 'all'): Sour
     : fallback;
 }
 
-// PartyBucket is now imported from the shared package and re-exported above.
-
+export type PartyBucket = 'D' | 'R' | 'O';
 export function asPartyBucket(v: unknown): PartyBucket | undefined {
   if (typeof v !== 'string' || v.length === 0) return undefined;
   const c = v[0].toUpperCase();

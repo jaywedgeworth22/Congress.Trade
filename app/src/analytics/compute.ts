@@ -10,16 +10,17 @@
  */
 
 import { computePerformance } from '../prices/compute';
-import { bracketMidpoint } from "@jaywedgeworth22/congress-trading-shared";
-
-// Re-export for backward compatibility.
-export { bracketMidpoint };
 
 /**
- * Estimated dollar value of one STOCK Act bracket. Delegate to the shared
- * cross-app implementation for consistency with Agentic Trading.
+ * Estimated dollar value of one STOCK Act bracket. Mirror of
+ * BRACKET_MIDPOINT_SQL: midpoint of [min,max]; open top tier (max == null) →
+ * floor (min); missing amount → 0.
  */
-// bracketMidpoint is now imported from the shared package (above).
+export function bracketMidpoint(min: number | null, max: number | null): number {
+  if (max != null && min != null) return (min + max) / 2;
+  if (min != null) return min; // open-ended top tier ($50M+) or max missing
+  return 0;
+}
 
 /**
  * Buy/sell sentiment in [0,1]: share of directional (P+S) activity that is
