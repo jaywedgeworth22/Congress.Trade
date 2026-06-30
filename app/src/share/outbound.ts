@@ -15,17 +15,22 @@
  * Env-gated: a no-op unless BOTH APP_B_IMPORT_URL and APP_B_INGEST_TOKEN are set.
  */
 
-import type { Env } from '../shared/types';
+import {
+  SharePayloadSchema,
+  type PriceClose,
+  type PriceSeries,
+  type SecurityRefInput,
+} from '@jaywedgeworth22/congress-trading-shared';
 import type { SecurityRef } from '../enrichment/types';
-import type { Close } from '../prices/compute';
 import { resolveSecrets } from '../secrets/infisical';
+import type { Env } from '../shared/types';
 
 type PeerEnv = Env & { APP_B_IMPORT_URL?: string; APP_B_INGEST_TOKEN?: string };
 
 export interface PeerShareInput {
   refs?: SecurityRef[];
-  prices?: Array<{ ticker: string; closes: Close[]; currentPrice: number; currentPriceDate: string }>;
-  spx?: Close[];
+  prices?: PriceSeries[];
+  spx?: PriceClose[];
 }
 
 export interface PeerShareResult {
@@ -36,7 +41,7 @@ export interface PeerShareResult {
 }
 
 /** The REF fields App B's /securities/import consumes (mirrors its REF_KEYS). */
-function toImportRef(r: SecurityRef): Record<string, unknown> {
+function toImportRef(r: SecurityRef): SecurityRefInput {
   return {
     ticker: r.ticker,
     companyName: r.companyName,
@@ -80,11 +85,16 @@ export async function shareWithPeer(
     return { sent: false, reason: 'nothing to share' };
   }
 
-  const body = JSON.stringify({
+  const payload = {
     refs: refs.map(toImportRef),
     prices,
     spx: spx.map((c) => ({ date: c.date, close: c.close })),
-  });
+  };
+  const parsed = SharePayloadSchema.safeParse(payload);
+  if (!parsed.success) {
+    return { sent: false, reason: 'invalid shared payload: ' + parsed.error.issues[0]?.message };
+  }
+  const body = JSON.stringify(parsed.data);
 
   try {
     const res = await fetchImpl(url, {
