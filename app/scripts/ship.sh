@@ -62,13 +62,29 @@ if [ "$DEPLOY_ONLY" != true ] && [ -z "${ADMIN_TOKEN:-}" ]; then
 fi
 
 check_api_health() {
-  local body
-  body="$(curl -fsS "$BASE/api/health")"
-  echo "$body"
-  if [[ "$body" != *'"ok":true'* || "$body" != *'"db":true'* ]]; then
-    echo "!! /api/health did not report ok=true and db=true." >&2
-    exit 1
-  fi
+  local attempts delay body_file body code i
+  attempts="${DEPLOY_HEALTH_ATTEMPTS:-8}"
+  delay="${DEPLOY_HEALTH_DELAY_SECONDS:-10}"
+  body_file="$(mktemp)"
+  trap 'rm -f "$body_file"' RETURN
+
+  for ((i = 1; i <= attempts; i++)); do
+    code="$(curl -sS -o "$body_file" -w '%{http_code}' "$BASE/api/health" || true)"
+    body="$(cat "$body_file")"
+    if [[ "$code" == 2* && "$body" == *'"ok":true'* && "$body" == *'"db":true'* ]]; then
+      echo "$body"
+      return
+    fi
+
+    echo "   /api/health attempt $i/$attempts failed (HTTP ${code:-curl-error})." >&2
+    if [ "$i" -lt "$attempts" ]; then
+      sleep "$delay"
+    fi
+  done
+
+  echo "$body" >&2
+  echo "!! /api/health did not report ok=true and db=true after $attempts attempt(s)." >&2
+  exit 1
 }
 
 echo "==> Deploying"
