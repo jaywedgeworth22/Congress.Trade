@@ -26,6 +26,18 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
+      - name: Configure private GitHub dependencies
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "$GH_PAT" ]; then
+            echo "::error::GH_PAT with read access to jaywedgeworth22/congress-trading-shared is required for npm ci."
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "ssh://git@github.com/"
+          git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "git@github.com:"
+
       - name: Install dependencies
         run: npm ci
 
