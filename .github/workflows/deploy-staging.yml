@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: read
       issues: write
       pull-requests: write
     defaults:
@@ -29,30 +30,16 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      - name: Configure private GitHub dependencies
+      - name: Configure GitHub Packages
         env:
-          SHARED_PACKAGE_DEPLOY_KEY: ${{ secrets.SHARED_PACKAGE_DEPLOY_KEY }}
-          GH_PAT: ${{ secrets.GH_PAT }}
+          NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN || secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
-          if [ -n "$SHARED_PACKAGE_DEPLOY_KEY" ]; then
-            mkdir -p "$HOME/.ssh"
-            printf '%s\n' "$SHARED_PACKAGE_DEPLOY_KEY" > "$HOME/.ssh/congress_trading_shared"
-            chmod 600 "$HOME/.ssh/congress_trading_shared"
-            ssh-keyscan github.com >> "$HOME/.ssh/known_hosts"
-            git config --global core.sshCommand "ssh -i $HOME/.ssh/congress_trading_shared -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes"
-            git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"
-            git config --global url."ssh://git@github.com/".insteadOf "git@github.com:"
-            git ls-remote ssh://git@github.com/jaywedgeworth22/congress-trading-shared.git HEAD >/dev/null
-          elif [ -n "$GH_PAT" ]; then
-            git config --global credential.helper store
-            printf 'https://x-access-token:%s@github.com\n' "$GH_PAT" > "$HOME/.git-credentials"
-            git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
-            git config --global url."https://github.com/".insteadOf "git@github.com:"
-            git ls-remote https://github.com/jaywedgeworth22/congress-trading-shared.git HEAD >/dev/null
-          else
-            echo "::error::SHARED_PACKAGE_DEPLOY_KEY or GH_PAT with read access to jaywedgeworth22/congress-trading-shared is required for npm ci."
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::GH_PACKAGES_TOKEN, GH_PAT, or package-accessible GITHUB_TOKEN is required for npm ci."
             exit 1
           fi
+          printf '//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" >> "$HOME/.npmrc"
+          npm view @jaywedgeworth22/congress-trading-shared@1.0.0 version >/dev/null
 
       - name: Install dependencies
         run: npm ci
