@@ -283,7 +283,7 @@ export function normalizeOwner(raw: string, assetFallback = ''): Owner | null {
 export function normalizeTicker(raw: string): string | null {
   const t = (raw || '').trim().toUpperCase();
   if (!t || t === '--' || t === '-' || t === 'N/A' || t === 'NA') return null;
-  const m = t.match(/[A-Z][A-Z0-9.\-]{0,9}/);
+  const m = t.match(/[A-Z][A-Z0-9.^\-]{0,9}/);
   return m ? m[0] : null;
 }
 

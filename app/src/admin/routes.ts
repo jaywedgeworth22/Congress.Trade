@@ -449,30 +449,103 @@ export async function runTickerBackfill(
   limit = 5000,
 ): Promise<{ scanned: number; resolved: number }> {
   const resolver = await loadResolver(env);
-  const rows = await all<{ id: string; ticker: string | null; asset_name: string | null }>(
+  type BackfillTickerRow = {
+    id: string;
+    ticker: string | null;
+    asset_name: string | null;
+    tx_date: string | null;
+    owner: string | null;
+    asset_type: string | null;
+    asset_type_name: string | null;
+    tx_type: string | null;
+    amount_min: number | null;
+    amount_max: number | null;
+    is_option: number | null;
+    cap_gains_over_200: number | null;
+    raw_text: string | null;
+    filing_status: string | null;
+    subholding: string | null;
+    location: string | null;
+    description: string | null;
+    supplemental_text: string | null;
+    source: TxSource;
+    row_key: string | null;
+  };
+  const rows = await all<BackfillTickerRow>(
     env.DB,
-    "SELECT id, ticker, asset_name FROM transactions " +
+    "SELECT id, ticker, asset_name, tx_date, owner, asset_type, asset_type_name, tx_type, " +
+      "amount_min, amount_max, is_option, cap_gains_over_200, raw_text, filing_status, " +
+      "subholding, location, description, supplemental_text, source, row_key FROM transactions " +
       "WHERE asset_name IS NOT NULL AND asset_name <> '' " +
       "AND ((ticker IS NULL OR ticker = '') " +
-      "OR asset_name LIKE '%Depositary Share%' " +
+      "OR (ticker NOT LIKE '%^%' AND (" +
+      "asset_name LIKE '%Depositary Share%' " +
       "OR asset_name LIKE '%Preferred%' " +
       "OR asset_name LIKE '%Preference%' " +
       "OR asset_name LIKE '%Pfd%' " +
-      "OR asset_name LIKE '%Pref%') " +
-      'AND deprecated_at IS NULL LIMIT ?',
+      "OR asset_name LIKE '%Pref%'))) " +
+      'AND deprecated_at IS NULL ' +
+      "ORDER BY CASE WHEN ticker IS NOT NULL AND ticker <> '' AND ticker NOT LIKE '%^%' AND (" +
+      "asset_name LIKE '%Depositary Share%' " +
+      "OR asset_name LIKE '%Preferred%' " +
+      "OR asset_name LIKE '%Preference%' " +
+      "OR asset_name LIKE '%Pfd%' " +
+      "OR asset_name LIKE '%Pref%') THEN 0 " +
+      "WHEN (ticker IS NULL OR ticker = '') AND (" +
+      "asset_name LIKE '%Depositary Share%' " +
+      "OR asset_name LIKE '%Preferred%' " +
+      "OR asset_name LIKE '%Preference%' " +
+      "OR asset_name LIKE '%Pfd%' " +
+      "OR asset_name LIKE '%Pref%') THEN 1 ELSE 2 END, id " +
+      'LIMIT ?',
     [Math.min(limit, 20000)],
   );
   const updates: D1PreparedStatement[] = [];
   for (const row of rows) {
     const resolved = resolver(row.ticker, row.asset_name);
     if (resolved && resolved !== (row.ticker ?? '').trim().toUpperCase()) {
-      updates.push(env.DB.prepare('UPDATE transactions SET ticker = ? WHERE id = ?').bind(resolved, row.id));
+      const rowIndex = parseRowIndex(row.row_key);
+      const rowKey = rowIndex === null
+        ? row.row_key ?? null
+        : transactionRowKey(row.source, rowIndex, {
+            txDate: row.tx_date,
+            owner: normalizeStoredOwner(row.owner),
+            assetName: row.asset_name ?? '',
+            ticker: resolved,
+            assetType: row.asset_type,
+            assetTypeName: row.asset_type_name,
+            txType: normalizeStoredTxType(row.tx_type),
+            amountMin: row.amount_min,
+            amountMax: row.amount_max,
+            isOption: row.is_option === 1,
+            capGainsOver200: row.cap_gains_over_200 === 1,
+            rawText: row.raw_text ?? '',
+            filingStatus: row.filing_status,
+            subholding: row.subholding,
+            location: row.location,
+            description: row.description,
+            supplementalText: row.supplemental_text,
+          });
+      updates.push(env.DB.prepare('UPDATE transactions SET ticker = ?, row_key = ? WHERE id = ?').bind(resolved, rowKey, row.id));
     }
   }
   for (let i = 0; i < updates.length; i += 50) {
     await env.DB.batch(updates.slice(i, i + 50));
   }
   return { scanned: rows.length, resolved: updates.length };
+}
+
+function parseRowIndex(rowKey: string | null): number | null {
+  const m = /^v1:[^:]+:(\d+):/.exec(rowKey ?? '');
+  return m ? Number(m[1]) : null;
+}
+
+function normalizeStoredOwner(value: string | null): 'self' | 'spouse' | 'joint' | 'dependent' | null {
+  return value === 'self' || value === 'spouse' || value === 'joint' || value === 'dependent' ? value : null;
+}
+
+function normalizeStoredTxType(value: string | null): TxType {
+  return value === 'P' || value === 'S' || value === 'E' ? value : 'P';
 }
 
 /**
