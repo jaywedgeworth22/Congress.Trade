@@ -25,7 +25,12 @@ import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets
 import { canonicalizeAssetType } from '../shared/assetTypes';
 import { uuid } from '../shared/ids';
 import { recordIngestionDecision } from '../shared/ingestionDecisions';
-import { isPlaceholderTicker, resolveTickerDeterministic, TICKER_ALIASES } from './tickerNormalize';
+import {
+  isPlaceholderTicker,
+  resolvePreferredTickerFromAssetName,
+  resolveTickerDeterministic,
+  TICKER_ALIASES,
+} from './tickerNormalize';
 
 /**
  * Per-tx confidence at or above this threshold is trusted for auto-publish. If a
@@ -473,6 +478,12 @@ function buildResolver(rows: SecRow[]): TickerResolver {
 
   return (ticker, assetName) => {
     const t = (ticker || '').trim().toUpperCase();
+    const preferred = resolvePreferredTickerFromAssetName(assetName, (issuerName) => {
+      const key = issuerName.trim().toLowerCase();
+      return byAlias.get(key) ?? byName.get(key) ?? byTicker.get(key.toUpperCase()) ?? null;
+    });
+    if (preferred) return preferred;
+
     // Curated stale→current aliases (e.g. FB→META) take precedence over the
     // master, because the master can carry a STALE row for a reassigned ticker
     // (SEC reassigned FB to a ProShares ETF after Meta moved to META).

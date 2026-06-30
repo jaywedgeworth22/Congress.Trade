@@ -81,6 +81,8 @@ import { committeeConflict } from './conflicts';
 import { computePerformance } from '../prices/compute';
 import { latestSpxClose } from '../prices/service';
 
+const TICKER_PARAM_RE = /^[A-Z0-9._^-]{1,20}$/;
+
 // ---------------------------------------------------------------------------
 // Small coercion + envelope helpers
 // ---------------------------------------------------------------------------
@@ -817,7 +819,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const q = c.req.query();
     const f = { ...commonFromQuery(q), window: asWindow(q.window, 'all') };
     const tickerParam = (c.req.param('ticker') || '').toUpperCase();
-    if (!/^[A-Z0-9._-]{1,20}$/.test(tickerParam)) {
+    if (!TICKER_PARAM_RE.test(tickerParam)) {
       return c.json({ error: 'invalid ticker' }, 400);
     }
     const filerId = q.filerId && /^[A-Za-z0-9_-]{1,64}$/.test(q.filerId) ? q.filerId : undefined;
@@ -855,7 +857,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const q = c.req.query();
     const f = commonFromQuery(q);
     const tickerParam = (c.req.param('ticker') || '').toUpperCase();
-    if (!/^[A-Z0-9._-]{1,20}$/.test(tickerParam)) {
+    if (!TICKER_PARAM_RE.test(tickerParam)) {
       return c.json({ error: 'invalid ticker' }, 400);
     }
     const granularity = granularityFromQuery(q, f.window);

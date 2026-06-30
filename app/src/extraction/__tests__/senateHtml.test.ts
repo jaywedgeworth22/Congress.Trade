@@ -117,6 +117,7 @@ describe('field normalizers', () => {
 
   it('cleans tickers and drops placeholders', () => {
     expect(normalizeTicker(' aapl ')).toBe('AAPL');
+    expect(normalizeTicker('JPM^J')).toBe('JPM^J');
     expect(normalizeTicker('--')).toBeNull();
     expect(normalizeTicker('N/A')).toBeNull();
   });

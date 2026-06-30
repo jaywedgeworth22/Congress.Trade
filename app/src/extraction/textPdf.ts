@@ -90,14 +90,15 @@ const DATE_RE = /\b(\d{1,2}\/\d{1,2}\/\d{2,4})\b/g;
 const AMOUNT_RE = /\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?/i;
 // A transaction-type token (P / S / E / S (partial) ...).
 const TXTYPE_RE = /\b(P|S|E)\b|\b(purchase|sale|exchange)\b/i;
+const TICKER_PATTERN = String.raw`[A-Z][A-Z0-9.^\/-]{0,9}`;
 // A ticker in parentheses, e.g. "(AAPL)".
-const TICKER_RE = /\(([A-Z][A-Z0-9.\-]{0,9})\)/;
+const TICKER_RE = new RegExp(String.raw`\((${TICKER_PATTERN})\)`);
 const HOUSE_TABLE_HEADER_RE =
   /\bID Owner Asset Transaction Type Date Notification Date Amount Cap\.?\s*Gains\s*>\s*(?:\$?\s*200\??)?/i;
 const HOUSE_TABLE_HEADER_GLOBAL_RE =
   /\b(?:Filing ID\s*#?\d+\s+)?ID Owner Asset Transaction Type Date Notification Date Amount Cap\.?\s*Gains\s*>\s*(?:\$?\s*200\??)?/gi;
 const INLINE_RECORD_RE = new RegExp(
-  String.raw`\b(?<owner>SP|DC|JT|SELF)\s+(?<asset>[^$]{1,220}?)\s+(?:(?:\((?<parenTicker>[A-Z][A-Z0-9.\/-]{0,9})\))|(?:NYSE[A-Z]*:\s*(?<exchangeTicker>[A-Z][A-Z0-9.\/-]{0,9})))?\s*\[(?<assetType>${HOUSE_ASSET_TYPE_CODE_PATTERN})\]\s+(?<txType>P|S|E|purchase|sale|exchange)(?:\s*\([^)]*\))?\s+(?<txDate>\d{1,2}\/\d{1,2}\/\d{2,4})\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+(?<amount>\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?)`,
+  String.raw`\b(?<owner>SP|DC|JT|SELF)\s+(?<asset>[^$]{1,220}?)\s+(?:(?:\((?<parenTicker>${TICKER_PATTERN})\))|(?:NYSE[A-Z]*:\s*(?<exchangeTicker>${TICKER_PATTERN})))?\s*\[(?<assetType>${HOUSE_ASSET_TYPE_CODE_PATTERN})\]\s+(?<txType>P|S|E|purchase|sale|exchange)(?:\s*\([^)]*\))?\s+(?<txDate>\d{1,2}\/\d{1,2}\/\d{2,4})\s+\d{1,2}\/\d{1,2}\/\d{2,4}\s+(?<amount>\$[\d,]+(?:\s*(?:-|–|—|to)\s*\$?[\d,]+|\s*\+)?)`,
   'gi',
 );
 
@@ -186,7 +187,7 @@ function parseInlineRecords(text: string): ParsedTx[] {
 
 function stripInlineDetailSpans(text: string): string {
   const nextRecord = new RegExp(
-    String.raw`\s+[A-Z][A-Za-z0-9&.,'’:/ -]{2,180}\s+(?:(?:\([A-Z][A-Z0-9.\/-]{0,9}\)\s*)|(?:NYSE[A-Z]*:\s*[A-Z][A-Z0-9.\/-]{0,9}\s*)|)\[(?:${HOUSE_ASSET_TYPE_CODE_PATTERN})\]\s+(?:P|S|E|purchase|sale|exchange)\b`,
+    String.raw`\s+[A-Z][A-Za-z0-9&.,'’:/ -]{2,180}\s+(?:(?:\(${TICKER_PATTERN}\)\s*)|(?:NYSE[A-Z]*:\s*${TICKER_PATTERN}\s*)|)\[(?:${HOUSE_ASSET_TYPE_CODE_PATTERN})\]\s+(?:P|S|E|purchase|sale|exchange)\b`,
     'i',
   );
   let out = '';
@@ -364,7 +365,7 @@ function parseAssetName(block: string[], ticker: string | null): string {
   let name = first
     .replace(/^(SP|DC|JT|SELF)\b\s*/, '')
     .replace(ASSET_TYPE_RE, '')
-    .replace(/\([A-Z][A-Z0-9.\-]{0,9}\)/, '')
+    .replace(TICKER_RE, '')
     .trim();
   // Cut off at a transaction-type / date / amount marker if they share the line.
   name = name.split(/\s+(?:P|S|E)\s+\d|\s+\d{1,2}\/\d{1,2}\/\d{2,4}|\s+\$[\d,]/)[0].trim();
