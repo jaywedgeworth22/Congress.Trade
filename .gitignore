@@ -9,6 +9,10 @@ out/
 *.tsbuildinfo
 .wrangler/
 
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+
 # Python / local watcher state
 __pycache__/
 .venv/

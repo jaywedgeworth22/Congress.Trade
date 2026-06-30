@@ -111,7 +111,7 @@ export default function Dashboard() {
   const activeFiltersSummary = useMemo(() => {
     const parts: string[] = [];
     if (filterTicker.trim()) parts.push(`Ticker: ${filterTicker.trim().toUpperCase()}`);
-    if (filterMember.trim()) parts.push(`Member: ${filterMember.trim()}`);
+    if (filterMember.trim()) parts.push(`Politician: ${filterMember.trim()}`);
     
     const chamberParts: string[] = [];
     if (filterChambers.house) chamberParts.push('House');
@@ -139,7 +139,7 @@ export default function Dashboard() {
         if (!assetTicker.includes(tickerNeedle)) return false;
       }
 
-      // 2. Member filter
+      // 2. Politician filter
       if (filterMember.trim()) {
         const memberNeedle = filterMember.trim().toLowerCase();
         const memberName = (item.member.name ?? '').toLowerCase();
@@ -366,7 +366,7 @@ export default function Dashboard() {
                 </b>
               </div>
               <div className="trade-member">
-                <span>{item.member.name ?? 'Unknown Member'}</span>
+                <span>{item.member.name ?? 'Unknown Politician'}</span>
                 <small>{[item.member.chamber, item.member.state].filter(Boolean).join(' · ') || 'Congress'}</small>
               </div>
               <dl className="trade-grid">

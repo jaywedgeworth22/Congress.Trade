@@ -27,7 +27,7 @@
  */
 
 import { Hono } from 'hono';
-import type { Env, PollConfig, PollWindow, TxType, TxSource } from '../shared/types';
+import type { Env, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
 import { all, get, run, type SqlParam } from '../shared/db';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
 import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
@@ -44,7 +44,7 @@ import {
   transactionRowKey,
   loadResolver,
   CONFIDENCE_THRESHOLD,
-  HARD_FAILURE_FLAGS,
+  hasHardFailureFlags,
 } from '../extraction/normalizer';
 import { mapFiling, type FilingRow } from '../delivery/rows';
 import { processAgreementDoc, type AgreementModels } from '../extraction/agreement';
@@ -74,6 +74,7 @@ import { mergeRefs } from '../enrichment/compute';
 import type { SecurityRef } from '../enrichment/types';
 import { runPriceRefresh } from '../prices/service';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets } from '../secrets/infisical';
+import { runFmpDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -316,10 +317,22 @@ function maxIso(...values: Array<string | null | undefined>): string | null {
   return best;
 }
 
+function deltaSeconds(later: string | null | undefined, earlier: string | null | undefined): number | null {
+  if (!later || !earlier) return null;
+  const a = Date.parse(later);
+  const b = Date.parse(earlier);
+  return Number.isFinite(a) && Number.isFinite(b) ? Math.round((a - b) / 1000) : null;
+}
+
 function titleCaseSource(source: string): string {
   if (source.toLowerCase() === 'house') return 'House';
   if (source.toLowerCase() === 'senate') return 'Senate';
   return source ? `${source[0].toUpperCase()}${source.slice(1)}` : 'Source';
+}
+
+function adminSubscription(sub: Subscription): Omit<Subscription, 'secret'> & { hasSecret: boolean } {
+  const { secret, ...rest } = sub;
+  return { ...rest, hasSecret: Boolean(secret) };
 }
 
 interface EditedTx {
@@ -348,7 +361,7 @@ function reviewAssetTypeName(e: EditedTx): string | null {
   return HOUSE_ASSET_TYPE_NAMES[code] ?? raw;
 }
 
-// --- Member photo enrichment (name -> bioguide -> unitedstates/images CDN) ---
+// --- Politician photo enrichment (name -> bioguide -> unitedstates/images CDN) ---
 
 const LEGISLATOR_SOURCES = [
   'https://unitedstates.github.io/congress-legislators/legislators-current.json',
@@ -358,7 +371,7 @@ const LEGISLATOR_SOURCES = [
 const NAME_SUFFIXES = new Set(['jr', 'sr', 'ii', 'iii', 'iv', 'v']);
 
 /**
- * Normalize a member name for matching: lowercase, strip punctuation, drop
+ * Normalize a politician name for matching: lowercase, strip punctuation, drop
  * middle initials (single letters) and suffixes. "Ron L Wyden" -> "ron wyden".
  */
 function normName(s: string | null | undefined): string {
@@ -1118,6 +1131,70 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     return c.json({ ok: true, latencyResetAt });
   });
 
+  // --- GET /disclosure-latency -------------------------------------------
+  // Congress.Trade-vs-FMP race monitor. `providerDeltaSec` is FMP monitor
+  // first-observed minus Congress.Trade first_seen_at: positive means we observed
+  // first; negative means FMP was already observed first.
+  r.get('/disclosure-latency', async (c) => {
+    const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '50', 10) || 50, 1), 200);
+    const rows = await optionalAll<{
+      doc_id: string;
+      provider: string;
+      chamber: string;
+      source_url: string | null;
+      filed_date: string | null;
+      filer_name: string | null;
+      congress_first_seen_at: string;
+      provider_key: string | null;
+      provider_first_seen_at: string | null;
+      match_method: string | null;
+      status: string;
+      attempts: number;
+      last_checked_at: string | null;
+      error: string | null;
+      created_at: string;
+      updated_at: string;
+    }>(
+      c.env,
+      `SELECT doc_id, provider, chamber, source_url, filed_date, filer_name,
+              congress_first_seen_at, provider_key, provider_first_seen_at,
+              match_method, status, attempts, last_checked_at, error,
+              created_at, updated_at
+         FROM disclosure_latency_candidates
+        ORDER BY created_at DESC
+        LIMIT ?`,
+      [limit],
+    );
+    const items = rows.map((row) => ({
+      docId: row.doc_id,
+      provider: row.provider,
+      chamber: row.chamber,
+      sourceUrl: row.source_url,
+      filedDate: row.filed_date,
+      filerName: row.filer_name,
+      congressFirstSeenAt: row.congress_first_seen_at,
+      providerKey: row.provider_key,
+      providerFirstSeenAt: row.provider_first_seen_at,
+      providerDeltaSec: deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at),
+      matchMethod: row.match_method,
+      status: row.status,
+      attempts: row.attempts,
+      lastCheckedAt: row.last_checked_at,
+      error: row.error,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+    return c.json({ count: items.length, items });
+  });
+
+  // --- POST /disclosure-latency/probe -------------------------------------
+  // Force a one-off FMP latest probe, useful immediately after new filings land
+  // or before turning on the continuous cron switch.
+  r.post('/disclosure-latency/probe', async (c) => {
+    const result = await runFmpDisclosureLatencyProbe(c.env, new Date(), fetch, { force: true });
+    return c.json({ ok: result.errors.length === 0, ...result });
+  });
+
   // --- GET /diagnostics ---------------------------------------------------
   // Admin operational snapshot: provider/source connection status, usage counts,
   // and recent errors collected from existing D1 tables. This intentionally
@@ -1829,8 +1906,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /diagnostics/secrets/refresh ----------------------------------
-  // Force-refresh the in-isolate Infisical secret cache. This does not write
-  // secrets into KV/D1/Cloudflare vars; it only updates this Worker isolate.
+  // Force-refresh the Infisical secret cache. This does not write plaintext
+  // secrets into KV/D1/Cloudflare vars; optional KV cache entries are encrypted.
   r.post('/diagnostics/secrets/refresh', async (c) => {
     return c.json({ secrets: await refreshSecrets(c.env) });
   });
@@ -2012,12 +2089,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
       const flagged = await recomputeTransactions(c.env, extracted.filing, extracted.transactions);
       const newMin = Math.min(...flagged.map((f) => f.tx.confidence));
-      const hasHardFailure = flagged.some(
-        (f) =>
-          f.flags.includes('no_amount') ||
-          f.flags.includes('invalid_amount') ||
-          f.flags.includes('bad_tx_type'),
-      );
+      const hasHardFailure = hasHardFailureFlags(flagged);
 
       const existing = await all<{ id: string }>(
         c.env.DB,
@@ -2654,6 +2726,52 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          COALESCE(first_seen_at, CASE WHEN filed_date IS NOT NULL THEN filed_date || 'T00:00:00.000Z' END, created_at)
        )`,
       'CREATE INDEX IF NOT EXISTS idx_tx_disclosure_available_ticker ON transactions (disclosure_available_at, ticker, id)',
+      // 0021_disclosure_latency_watch.sql — Congress.Trade-vs-FMP disclosure race monitor.
+      `CREATE TABLE IF NOT EXISTS disclosure_latency_candidates (
+         doc_id TEXT NOT NULL,
+         provider TEXT NOT NULL DEFAULT 'fmp',
+         chamber TEXT NOT NULL,
+         source_url TEXT,
+         filed_date TEXT,
+         filer_name TEXT,
+         congress_first_seen_at TEXT NOT NULL,
+         provider_key TEXT,
+         provider_first_seen_at TEXT,
+         match_method TEXT,
+         status TEXT NOT NULL DEFAULT 'pending',
+         attempts INTEGER NOT NULL DEFAULT 0,
+         last_checked_at TEXT,
+         error TEXT,
+         payload TEXT,
+         created_at TEXT NOT NULL,
+         updated_at TEXT NOT NULL,
+         PRIMARY KEY (doc_id, provider)
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_disc_latency_candidates_status
+         ON disclosure_latency_candidates (provider, status, created_at DESC)`,
+      `CREATE TABLE IF NOT EXISTS disclosure_provider_observations (
+         provider TEXT NOT NULL,
+         chamber TEXT NOT NULL,
+         provider_key TEXT NOT NULL,
+         first_observed_at TEXT NOT NULL,
+         last_observed_at TEXT NOT NULL,
+         source_url TEXT,
+         filed_date TEXT,
+         filer_name TEXT,
+         payload TEXT,
+         PRIMARY KEY (provider, chamber, provider_key)
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_disc_provider_seen
+         ON disclosure_provider_observations (provider, chamber, first_observed_at DESC)`,
+      // 0022_stripe_webhook_events.sql — durable Stripe webhook idempotency ledger.
+      `CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+         event_id TEXT PRIMARY KEY,
+         event_type TEXT NOT NULL,
+         received_at TEXT NOT NULL,
+         processed_at TEXT
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_stripe_webhook_events_received
+         ON stripe_webhook_events (received_at DESC)`,
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -3164,7 +3282,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.get('/subscriptions', async (c) => {
     const activeOnly = c.req.query('active') === 'true';
     const subs = await listSubscriptions(c.env, activeOnly);
-    return c.json({ subscriptions: subs, count: subs.length });
+    return c.json({ subscriptions: subs.map(adminSubscription), count: subs.length });
   });
 
   return r;

@@ -180,7 +180,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* "tile" = frosted-glass box; "transparent" = bare logo on the row surface. */
   .tkr-logo.tile { border: 1px solid var(--border); background: color-mix(in srgb, var(--panel-2) 80%, transparent); border-radius: 6px; padding: 2px; }
   .tkr-logo.transparent { border-radius: 4px; }
-  /* ---- member headshots (mirrors the ticker-logo image+fallback pattern) ---- */
+  /* ---- politician headshots (mirrors the ticker-logo image+fallback pattern) ---- */
   .member-cell { display: flex; align-items: center; gap: 9px; min-width:0; }
   .member-cell > div { min-width:0; line-height:1.25; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .member-cell .fit-sm { font-size:12px; }
@@ -364,7 +364,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .timeliness-grid { margin-top: 8px; grid-template-columns: minmax(0, 1fr) minmax(0, .92fr); align-items: stretch; }
   .timeliness-panel { min-width: 0; }
   .timeliness-panel h3 { font-size: 13px; letter-spacing: 0; cursor: help; }
-  .lag-dist { min-height: 232px; display: flex; flex-direction: column; justify-content: space-between; gap: 9px; }
+  .lag-dist { min-height: 224px; padding-top: 6px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; gap: 9px; }
   .lag-dist .hbar { margin: 0; cursor: help; }
   .lag-dist .hbar .hlabel { width: 150px; font-size: 14px; }
   .lag-dist .htrack { height: 18px; border-radius: 9px; }
@@ -375,7 +375,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .late-filers-wrap td[data-tip] { cursor: help; }
   @media (max-width: 760px) {
     .timeliness-grid { grid-template-columns: 1fr; }
-    .lag-dist { min-height: 212px; }
+    .lag-dist { min-height: 204px; }
     .late-filers-wrap { max-height: 260px; }
   }
   .mini-trade-stat { display:inline-grid; grid-template-columns:3ch 1ch minmax(5.5ch, auto); gap:6px; align-items:center; justify-content:end; }
@@ -394,8 +394,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .legend .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:middle; }
   .legend .sw.buy { background: var(--buy); } .legend .sw.sell { background: var(--sell); }
   /* ---- Trends tables: keep numeric cells on one line, let the name column
-     absorb the slack and ellipsis instead of the numbers wrapping ("3 / mbr").
-     The name/member cell is forced narrow (max-width:0 + width:99%) so its
+     absorb the slack and ellipsis instead of the numbers wrapping ("3 / pols").
+     The name/politician cell is forced narrow (max-width:0 + width:99%) so its
      inner ellipsis engages; every other cell sizes to its content. ---- */
   #view-trends td { white-space: nowrap; }
   #view-trends td:has(.asset-cell), #view-trends td:has(.member-cell) { white-space: normal; width: 99%; max-width: 0; }
@@ -408,7 +408,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .flowrow .flabel { font-size: 13px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .flowrow .fval { flex: 0 0 auto; font-family: var(--mono); font-size: 12px; color: var(--text-dim); white-space: nowrap; }
   .flowrow .fchip { margin-top: 5px; font-size: 11px; color: var(--text-dim); line-height: 1.4; }
-  /* "politicians" spelled out where there's room; collapses to "mbr" on phones. */
+  /* "politicians" spelled out where there's room; collapses to "pol(s)" on phones. */
   .u-abbr { display: none; }
   /* cluster cards */
   .cluster-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap:12px; }
@@ -1027,7 +1027,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #view-trends tr.clickable .tkr { transition: color var(--tr-fast) var(--tr-ease); }
   #view-trends tr.clickable:hover .tkr { color: var(--accent); }
   #view-trends tr.clickable:hover .tkr-logo.tile { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
-  /* Member identity cell (genuinely .clickable) takes accent on hover. */
+  /* Politician identity cell (genuinely .clickable) takes accent on hover. */
   #view-trends .member-cell.clickable { transition: color var(--tr-fast) var(--tr-ease); }
   #view-trends .member-cell.clickable:hover { color: var(--accent); text-decoration: none; }
   /* Flow / hbar fills gently saturate when their row is hovered. */
@@ -1111,7 +1111,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 /* ---- 18. Mobile guard (<=720px): keep enhancements from re-widening ----
    The base 720px query (which hides .split, #trTickers td.est, .asset-cell
-   .muted and abbreviates to "mbr") runs AFTER this block. Re-assert only the
+   .muted and abbreviates to "pol(s)") runs AFTER this block. Re-assert only the
    safe, width-neutral pieces; drop chrome that only makes sense with hover. */
 @media (max-width: 720px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
   #view-trends .section::before,
@@ -1128,12 +1128,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <div class="brand">Congress<span class="dot">.</span>Trade</div>
   <span class="pill off" id="livePill">Status</span>
   <span class="pill" id="srcPill">House + Senate</span>
-  <nav class="tabs">
-    <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active">Trends</button>
-    <button data-view="feed" data-mobile="Trades" data-icon="▦">Trades</button>
-    <button data-view="review" data-mobile="Review" data-icon="✓" data-admin-tab="true" hidden>Review Queue <span id="reviewCount"></span></button>
-    <button data-view="subs" data-mobile="Alerts" data-icon="↗">Subscriptions</button>
-    <button data-view="admin" data-mobile="Admin" data-icon="⚙">Admin · Cadence</button>
+  <nav class="tabs" role="tablist" aria-label="Primary views">
+    <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
+    <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
+    <button data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span id="reviewCount"></span></button>
+    <button data-view="subs" data-mobile="Alerts" data-icon="↗" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs" data-admin-tab="true" hidden>Developer Delivery</button>
+    <button data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence</button>
   </nav>
   <div id="acct" class="acct"></div>
 </header>
@@ -1142,14 +1142,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <div class="banner" id="banner">Connecting to the live feed…</div>
 
   <!-- ================= TRADES (LIVE FEED) ================= -->
-  <section class="view" id="view-feed">
+  <section class="view" id="view-feed" role="tabpanel" aria-labelledby="tab-feed" aria-hidden="true">
     <div class="grid-cards">
       <div class="card"><div class="k">Filings Imported Today</div><div class="v" id="kpiToday">—</div></div>
       <div class="card"><div class="k">Trades</div><div class="v" id="kpiTotal">—</div></div>
       <div class="card"><div class="k">Auto-Parsed (No LLM)</div><div class="v" id="kpiAuto">—<small>%</small></div></div>
     </div>
     <div class="toolbar">
-      <input id="qMember" placeholder="Filter Member…" oninput="handleFeedTextFilter()" />
+      <input id="qMember" placeholder="Filter Politician…" oninput="handleFeedTextFilter()" />
       <input id="qTicker" placeholder="Asset…" oninput="handleFeedTextFilter()" style="width:120px" />
       <select id="qType" onchange="resetFeedPage()">
         <option value="">All Types</option><option value="P">Purchase</option>
@@ -1175,7 +1175,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="search-panel" id="searchPanel">
       <div class="panel-head"><span class="panel-title">Search</span><button class="panel-close" onclick="closePanels()" aria-label="Close search">×</button></div>
       <span class="lbl">Search All</span>
-      <input id="qAll" placeholder="Member, Asset, Symbol, Source…" style="min-width:240px;flex:1" oninput="renderFeed()" />
+      <input id="qAll" placeholder="Politician, Asset, Symbol, Source…" style="min-width:240px;flex:1" oninput="renderFeed()" />
       <span class="lbl">Min $</span>
       <input id="qMinAmt" type="number" min="0" placeholder="0" style="width:120px" oninput="renderFeed()" />
       <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
@@ -1203,7 +1203,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   </section>
 
   <!-- ================= TRENDS / ANALYTICS ================= -->
-  <section class="view active" id="view-trends">
+  <section class="view active" id="view-trends" role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false">
     <div class="toolbar">
       <select id="trWindow" title="Time window (by trade date)">
         <option value="1d">Past Day</option>
@@ -1227,7 +1227,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="disclaimer" id="trDisclaimer">
       <button class="disclaimer-toggle" type="button" onclick="toggleDisclaimer()" aria-expanded="true" aria-controls="trDisclaimerBody"><span class="dt-label">For Educational Use, Not Investment Advice</span><span class="dt-more">More Info ↓</span></button>
       <div class="disclaimer-body" id="trDisclaimerBody">
-      <strong>For education, not investment advice.</strong> Congress.Trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any member acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. “All Data” can double-count a trade present in both the live and historic sets; use <em>Live Only</em> for a de-duplicated dollar view. Party is known for only some members. Always do your own research.
+      <strong>For education, not investment advice.</strong> Congress.Trade is an informational tool for exploring <em>public</em> STOCK Act disclosures. The summaries below are historical, observational views of those filings — they are <strong>not</strong> trading signals, recommendations, or predictions, and nothing here implies any politician acted improperly or illegally. Dollar figures are <strong>estimates</strong> from disclosed amount <em>brackets</em> (midpoint; the open “$50M+” tier uses its floor) and may be incomplete or delayed — filings are disclosed weeks after the trade. “All Data” can double-count a trade present in both the primary and historic sets; use <em>Primary Only</em> for a de-duplicated dollar view. Party is known for only some politicians. Always do your own research.
       </div>
     </div>
 
@@ -1246,7 +1246,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <label class="lbl">Rank By</label>
           <select id="trTickerSort" title="Estimated volume uses STOCK Act bracket midpoints">
             <option value="trades">Trades</option>
-            <option value="members">Distinct Members</option>
+            <option value="members">Distinct Politicians</option>
 	            <option value="volume">Est. Volume</option>
             <option value="netflow">Net $ Flow</option>
           </select>
@@ -1263,7 +1263,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Consensus / cluster buys -->
     <div class="section">
       <h3 class="tf-h">Consensus Moves <span class="chip" id="trClusterHint"></span></h3>
-      <p class="sub">Assets where several different members happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above). Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination. For an all-time view, switch the window selector to “All Time”.</p>
+      <p class="sub">Assets where several different politicians happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above). Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination. For an all-time view, switch the window selector to “All Time”.</p>
       <div class="cluster-grid" id="trClusters"></div>
     </div>
 
@@ -1300,15 +1300,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
     <div class="section">
-      <h3>Top Performers <span class="info-tip" tabindex="0" aria-label="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, members with few scored trades are filtered out." title="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, members with few scored trades are filtered out.">ⓘ</span></h3>
-      <p class="sub">Members whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade became <em>public</em>, shown as an <strong>annualized</strong> relative return. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
+      <h3>Top Performers <span class="info-tip" tabindex="0" aria-label="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out." title="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
+      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade became <em>public</em>, shown as an <strong>annualized</strong> relative return. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
       <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
     </div>
 
-    <!-- Members + Party -->
+    <!-- Politicians + Party -->
     <div class="trend-members-grid">
       <div class="section">
-        <h3 class="tf-h">Most Active Members</h3>
+        <h3 class="tf-h">Most Active Politicians</h3>
         <p class="sub">Who is trading the most in the window.</p>
         <div class="table-wrap"><table><tbody id="trMembers"></tbody></table></div>
       </div>
@@ -1345,7 +1345,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   </section>
 
   <!-- ================= REVIEW QUEUE ================= -->
-  <section class="view" id="view-review">
+  <section class="view" id="view-review" role="tabpanel" aria-labelledby="tab-review" aria-hidden="true">
     <div class="section">
       <h3>Document Review &amp; Model Comparison</h3>
       <p class="sub">Scanned / handwritten filings below the confidence threshold are held here until a human acts. Switch to <strong>Resolved Reviews</strong> to see what was published / rejected / modified. The <strong>All Filing Decisions</strong> table below includes auto-published filings too.</p>
@@ -1370,10 +1370,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   </section>
 
   <!-- ================= SUBSCRIPTIONS ================= -->
-  <section class="view" id="view-subs">
+  <section class="view" id="view-subs" role="tabpanel" aria-labelledby="tab-subs" aria-hidden="true">
     <div class="section">
-      <h3>Delivery Subscriptions</h3>
-      <p class="sub">Push new trades to your trading app (webhook) or a browser (SSE). All webhook payloads are HMAC-signed; consumers dedupe on <code>docId</code>.</p>
+      <h3>Developer Alert Delivery</h3>
+      <p class="sub">Manage signed webhook or SSE alert deliveries for downstream apps. Secrets are shown once at creation; webhook consumers dedupe on <code>docId</code>.</p>
       <table>
         <thead><tr><th>Client</th><th>Channel</th><th>Target</th><th>Filters</th><th>Status</th></tr></thead>
         <tbody id="subsBody"></tbody>
@@ -1384,7 +1384,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <option value="sse">SSE</option><option value="webhook">webhook</option>
         </select>
         <input id="newTarget" placeholder="target URL (webhook only)" style="width:240px" />
-        <button class="btn sm" onclick="createSubscription()">+ New subscription</button>
+        <button class="btn sm" onclick="createSubscription()">+ New delivery</button>
         <div id="subsMsg" class="note subs-msg" aria-live="polite"></div>
       </div>
       <p class="note">API HOOK: GET <code>/api/admin/subscriptions</code>; POST <code>/api/subscriptions</code></p>
@@ -1392,7 +1392,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   </section>
 
   <!-- ================= ADMIN · CADENCE ================= -->
-  <section class="view" id="view-admin">
+  <section class="view" id="view-admin" role="tabpanel" aria-labelledby="tab-admin" aria-hidden="true">
     <div class="section">
       <h3>Admin Access</h3>
       <p class="sub">The admin endpoints (poll cadence, review queue, backfill) are gated by a bearer token. Paste your <code>ADMIN_TOKEN</code> once — it's kept in this browser only (localStorage) and sent as <code>Authorization: Bearer …</code> on admin requests. Leave blank if the server has no token set. (Tip: if you sign in via Cloudflare Access, you don't need a token here.)</p>
@@ -1829,12 +1829,12 @@ function dateTimeText(s) {
 }
 function dateCellHtml(s, title) {
   if (!s) return '<span class="muted">Unavailable</span>';
-  var attr = title ? ' title="' + esc(title) + '"' : '';
+  var attr = ' title="' + esc(title || dateText(s)) + '"';
   return '<span' + attr + '><span class="date-full">' + esc(dateText(s)) + '</span><span class="date-short">' + esc(compactDateText(s)) + '</span></span>';
 }
 function dateTimeCellHtml(s, title) {
   if (!s) return '<span class="muted">Unavailable</span>';
-  var attr = title ? ' title="' + esc(title) + '"' : '';
+  var attr = ' title="' + esc(title || dateTimeText(s)) + '"';
   var t = timeText(s);
   var timeLine = t ? '<span class="date-sub">' + esc(t) + '</span>' : '';
   return '<span class="date-time-cell"' + attr + '>' +
@@ -1941,14 +1941,14 @@ function tickerLogoHtml(ticker, company) {
     'loading="lazy" decoding="async" onerror="logoFallback(this,\\'' + mono + '\\')" />' +
   '</span>';
 }
-/* Two-letter initials from a member name, for the avatar fallback. */
+/* Two-letter initials from a politician name, for the avatar fallback. */
 function initials(name) {
   var parts = String(name || '').trim().split(' ').filter(Boolean);
   if (!parts.length) return '?';
   if (parts.length === 1) return parts[0].slice(0, 2);
   return parts[0].charAt(0) + parts[parts.length - 1].charAt(0);
 }
-/* Build the member avatar: an initials chip with the headshot overlaid when a
+/* Build the politician avatar: an initials chip with the headshot overlaid when a
    photoUrl is present. A broken/missing image removes itself (this.remove()),
    revealing the initials underneath — mirrors the ticker-logo onerror pattern. */
 function memberAvatarHtml(name, photoUrl) {
@@ -1995,7 +1995,7 @@ function skChart() {
   return '<div class="tchart">' + bars + '</div>';
 }
 
-/* Admin surfaces (Review Queue / Subscriptions / Admin · Cadence) call
+/* Admin surfaces (Review Queue / Developer Delivery / Admin · Cadence) call
    /api/admin/* which returns 401 on the public site. Detect that cleanly and
    show a friendly notice instead of a scary "HTTP 401". */
 var ADMIN_MOVED_MSG = 'Admin tools have moved to admin.congress.trade (sign-in required).';
@@ -2065,7 +2065,7 @@ function feedCardHtml(r) {
   var lag = shortLagText(r);
   var chamber = chamberLabel(r.chamber);
   var member = fmtName(r.member);
-  // Member name is its own tappable chip; the rest of row 2 (and the chevron)
+  // Politician name is its own tappable chip; the rest of row 2 (and the chevron)
   // falls through to the trade drawer via handleFeedOpenEvent's delegation order.
   var memberHtml = r.filerId
     ? '<span class="fc-member clickable" data-member="' + esc(r.filerId) + '">' + esc(member) + (r.st ? ', ' + esc(r.st) : '') + '</span>'
@@ -2119,7 +2119,7 @@ function lagCellHtml(r) {
 }
 var FEED_COLS = [
   { id: 'published', label: 'Published', sort: 'published', def: true, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
-  { id: 'member', label: 'Member', sort: 'member', def: true, tip: 'Member who filed the disclosure.', cell: memberCellHtml },
+  { id: 'member', label: 'Politician', sort: 'member', def: true, tip: 'Politician who filed the disclosure.', cell: memberCellHtml },
   { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
   { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
   { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
@@ -2524,7 +2524,7 @@ function sourceTitle(src) {
   return src || 'Unknown source';
 }
 
-/* Map an API transaction (shared/types Transaction) to a feed row. Member name
+/* Map an API transaction (shared/types Transaction) to a feed row. Politician name
    prefers filers.full_name (memberName from the API); falls back to the raw
    filer id when the name is missing. */
 function txToRow(tx) {
@@ -3311,7 +3311,7 @@ function loadSubs() {
 }
 function renderSubs(subs) {
   var body = el('subsBody');
-  if (subs.length === 0) { body.innerHTML = stateRow(5, 'No subscriptions yet. Create one below.'); return; }
+  if (subs.length === 0) { body.innerHTML = stateRow(5, 'No alert deliveries yet. Create one below.'); return; }
   body.innerHTML = subs.map(function (s) {
     var f = s.filters || {};
     var parts = [];
@@ -3839,8 +3839,8 @@ function buySellText(buys, sells) {
   buys = Number(buys || 0); sells = Number(sells || 0);
   return buys + ' buy' + (buys === 1 ? '' : 's') + ' / ' + sells + ' sell' + (sells === 1 ? '' : 's');
 }
-/* Table-cell variant: full word where there's room, "mbr" on phones (CSS toggle). */
-function polCell(n) { n = Number(n || 0); return n + ' <span class="u-full">politician' + (n === 1 ? '' : 's') + '</span><span class="u-abbr">mbr</span>'; }
+/* Table-cell variant: full word where there's room, "pol/pols" on phones (CSS toggle). */
+function polCell(n) { n = Number(n || 0); return n + ' <span class="u-full">politician' + (n === 1 ? '' : 's') + '</span><span class="u-abbr">' + (n === 1 ? 'pol' : 'pols') + '</span>'; }
 	function kpi(k, v, tip) { return '<div class="card"' + attrTip(tip) + '><div class="k">' + esc(k) + '</div><div class="v">' + v + '</div></div>'; }
 	function kpiRaw(kHtml, v, tip) { return '<div class="card"' + attrTip(tip) + '><div class="k">' + kHtml + '</div><div class="v">' + v + '</div></div>'; }
 	function kpiLabel(fullHtml, mid, short) {
@@ -4040,7 +4040,7 @@ function loadTrMembers() {
   body.innerHTML = skRows(5, 6);
   aGet('member-leaderboard?' + trParams() + '&limit=15').then(function (d) {
     var rows = d.members || [];
-    if (!rows.length) { body.innerHTML = stateRow(5, 'No member activity in this window.'); return; }
+    if (!rows.length) { body.innerHTML = stateRow(5, 'No politician activity in this window.'); return; }
     body.innerHTML = rows.map(function (r, i) {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
       var metaBits = [chamberLabel(r.chamber), r.state].filter(Boolean).join(' · ');
@@ -4177,7 +4177,10 @@ function perfLineHtml(d, txType) {
   return tradeHtml + filingHtml;
 }
 function kvRow(k, v) { return '<dt>' + esc(k) + '</dt><dd>' + v + '</dd>'; }
-function actionBadge(type) { return '<span class="tag ' + esc(type) + '">' + esc(typeName[type] || type) + '</span>'; }
+function actionBadge(type) {
+  var label = typeName[type] || type || 'Unknown';
+  return '<span class="tag ' + esc(type || '') + '" title="' + esc(label) + '">' + esc(label) + '</span>';
+}
 function amountText(min, max) {
   if (min == null && max == null) return '—';
   return fmtBracketAmount(min) + ' - ' + (max == null ? '+' : fmtBracketAmount(max));
@@ -4391,7 +4394,7 @@ function openAsset(ticker) {
 /* ---- politician drawer (/api/analytics/member/:filerId) ---- */
 function openMember(filerId) {
   if (!filerId) return;
-  openDrawer('<div class="note">Loading member…</div>');
+  openDrawer('<div class="note">Loading politician…</div>');
   aGet('member/' + encodeURIComponent(filerId) + '?window=all').then(function (d) {
     var p = d.profile || {}, st = d.stats || {};
     var name = fmtName(p.fullName || filerId);
@@ -4439,7 +4442,7 @@ function openMember(filerId) {
       '<div class="drawer-section"><h3>Recent Trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
         (recent || '<tr><td class="state" colspan="4">No trades.</td></tr>') + '</tbody></table></div></div>'
     );
-  }).catch(function (e) { openDrawer('<div class="note">Could not load member: ' + esc(e.message) + '</div>'); });
+  }).catch(function (e) { openDrawer('<div class="note">Could not load politician: ' + esc(e.message) + '</div>'); });
 }
 
 /* ---- trade drawer (from the in-memory feed row + lazy source link) ---- */
@@ -4823,10 +4826,12 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
       openLogin();
       return;
     }
-    document.querySelectorAll('nav.tabs button').forEach(function (x) { x.classList.remove('active'); });
-    document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); });
+    document.querySelectorAll('nav.tabs button').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
+    document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); v.setAttribute('aria-hidden', 'true'); });
     b.classList.add('active');
-    el('view-' + b.dataset.view).classList.add('active');
+    b.setAttribute('aria-selected', 'true');
+    var view = el('view-' + b.dataset.view);
+    if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
     if (b.dataset.view === 'feed') window.scrollTo({ top: 0, behavior: 'auto' });
     if (b.dataset.view === 'trends') loadTrends();
     if (b.dataset.view === 'review') loadReview();
@@ -4851,7 +4856,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
   });
 })();
 
-/* Feed rows open the trade drawer; the asset chip and member open their drawers. */
+/* Feed rows open the trade drawer; the asset chip and politician open their drawers. */
 function openTradeById(id) {
   if (TRADE_BY_ID[id]) { openTrade(TRADE_BY_ID[id]); return; }
   for (var i = 0; i < TRADES.length; i++) {
@@ -4882,7 +4887,7 @@ function handleFeedOpenEvent(e) {
   }
 })();
 
-/* Inside a drawer, asset/member links drill into the next drawer. */
+/* Inside a drawer, asset/politician links drill into the next drawer. */
 (function () {
   var db = el('detailDrawerBody');
   if (db) db.addEventListener('click', function (e) {

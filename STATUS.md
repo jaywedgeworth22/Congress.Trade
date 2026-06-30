@@ -1,6 +1,6 @@
 # Current Handoff
 
-Last updated: 2026-06-23
+Last updated: 2026-06-30
 
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
@@ -10,7 +10,7 @@ truth; this file is the short operational snapshot for the current integration.
 - Main already includes integration PR `#29`, which superseded Claude PRs `#26`
   (`claude/transactions-from-filter`), `#27` (`claude/sse-backlog`), and `#28`
   (`feat/managed-payments`).
-- Current integration branch: `codex/production-integration-mobile-api`.
+- Current ops/deploy hardening branch: `codex/app-update-hardening-20260629`.
 - Active app work may be happening on separate Codex, Claude, Cursor, Copilot,
   Antigravity, or other coordinated branches. Before editing, run the AGENTS.md
   preflight commands and inspect open PR changed files/checks for overlap.
@@ -44,8 +44,9 @@ truth; this file is the short operational snapshot for the current integration.
 
 - Public reads at `congress.trade` are live.
 - Public subscription listing is closed in production.
-- Remote D1 migrations through `0008` are applied in production. Apply
-  migration `0009_client_api.sql` before deploying this branch's client API.
+- Production schema is applied through `POST /api/admin/migrate` via
+  `app/scripts/ship.sh`. Do not use or reconcile the remote Wrangler D1
+  migration log; it intentionally lags the real schema.
 
 ## Required Verification
 
@@ -56,14 +57,17 @@ npm run typecheck
 npm test
 ```
 
-If deploying a build that includes migration `0009`, apply migrations before or
-with deploy:
+If deploying a build with schema changes, mirror the SQL under `app/migrations/`
+in the idempotent admin migrate list, then use the guarded deploy path:
 
 ```bash
-npx wrangler d1 migrations apply DB --remote
+ADMIN_TOKEN=... bash scripts/ship.sh
 ```
 
-or use the secured admin migration endpoint documented in `app/DEPLOY.md`.
+`ship.sh` deploys, checks `GET /api/health`, then calls
+`POST /api/admin/migrate`. Without `ADMIN_TOKEN`, it fails before deploying
+unless `--deploy-only` is explicitly passed. Never run
+`wrangler d1 migrations apply DB --remote` for production on this account.
 
 Do not run deploys, remote migrations, production backfills, queue drains, or
 production ingestion jobs unless Jay explicitly asks for production action.

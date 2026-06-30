@@ -36,6 +36,7 @@ import { buildUiRouter } from './ui/routes';
 import { maybeRunDailyJobs } from './jobs';
 import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement';
 import { refreshSecrets } from './secrets/infisical';
+import { runFmpDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -159,6 +160,11 @@ export default Sentry.withSentry(
     async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
       await runWatcher(env, new Date());
       ctx.waitUntil(refreshSecrets(env).catch((err) => console.warn('infisical secret refresh failed:', (err as Error).message)));
+      ctx.waitUntil(
+        runFmpDisclosureLatencyProbe(env).catch((err) =>
+          console.warn('fmp disclosure latency probe failed:', (err as Error).message),
+        ),
+      );
       ctx.waitUntil(maybeRunDailyJobs(env));
       // Autonomous cross-vendor agreement → auto-publish for a few newly-reviewed
       // docs each minute (self-gates on AGREEMENT_AUTOPUBLISH_ENABLED; cron-safe).

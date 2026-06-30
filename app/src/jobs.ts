@@ -12,7 +12,7 @@
  */
 
 import type { Env } from './shared/types';
-import { runEnrichment } from './enrichment/service';
+import { getDailyUsed, runEnrichment } from './enrichment/service';
 import { runPriceRefresh } from './prices/service';
 import { hasFmpTierFailure } from './shared/fmpStatus';
 import { notifyAdmin } from './alerts/notify';
@@ -20,6 +20,7 @@ import { shareWithPeer, type PeerShareInput } from './share/outbound';
 import { runFreshnessCheck } from './share/freshness';
 import { runPhotoEnrichment, runTickerBackfill } from './admin/routes';
 import { runBulkSnapshot } from './export/snapshot';
+import { sendUsageTelemetry } from './telemetry/usage';
 
 const DAILY_KEY = 'jobs:daily:lastdate';
 
@@ -36,6 +37,10 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
 
   const errors: string[] = [];
   let hadFmpKey = false;
+  let fmpDailyCap: number | null = null;
+  let enrichmentFmpCalls = 0;
+  let priceProviderCalls = 0;
+  const fmpUsedBeforeJobs = await getDailyUsed(env);
   const share: PeerShareInput = {};
   // Paid FMP tiers are rate-limited per MINUTE (Starter ~300/min), not per day —
   // so pace calls to use that headroom without tripping 429s. Configurable via
@@ -47,6 +52,8 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   try {
     const r = await runEnrichment(env, { maxPerMinute });
     hadFmpKey = hadFmpKey || r.hasFmpKey;
+    fmpDailyCap = r.dailyCap;
+    enrichmentFmpCalls = r.fmpCalls;
     errors.push(...r.errors);
     share.refs = r.shareRefs;
   } catch (err) {
@@ -56,6 +63,7 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   try {
     const r = await runPriceRefresh(env, { maxPerMinute });
     hadFmpKey = hadFmpKey || r.hasFmpKey;
+    priceProviderCalls = r.fmpCalls;
     errors.push(...r.errors);
     share.prices = r.sharePrices;
     share.spx = r.shareSpx;
@@ -75,6 +83,37 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     }
   } catch (err) {
     console.warn('peer share error:', (err as Error).message);
+  }
+
+  try {
+    const fmpUsedToday = await getDailyUsed(env);
+    if (hadFmpKey || fmpUsedToday > 0) {
+      await sendUsageTelemetry(env, [
+        {
+          provider: 'fmp',
+          service: 'market-data',
+          label: 'FMP daily call budget',
+          billingMode: 'actual',
+          metricType: 'usage',
+          quantity: fmpUsedToday,
+          unit: 'call',
+          requests: fmpUsedToday,
+          limit: fmpDailyCap ?? undefined,
+          limitWindow: 'day',
+          confidence: 'actual',
+          metadata: {
+            job: 'daily-refresh',
+            fmpCallsThisRun: Math.max(0, fmpUsedToday - fmpUsedBeforeJobs),
+            enrichmentFmpCalls,
+            priceProviderCalls,
+            priceProvider: ((env as { PRICE_PROVIDER?: string }).PRICE_PROVIDER || 'fmp').toLowerCase(),
+            errors: errors.length,
+          },
+        },
+      ]);
+    }
+  } catch (err) {
+    console.warn('usage telemetry report failed:', (err as Error).message);
   }
 
   // Only alert when a key is configured (so we don't email about an intentional

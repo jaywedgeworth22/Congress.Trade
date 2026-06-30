@@ -122,7 +122,7 @@ export function summarizeLag(rows: LagRow[]): LagSummary {
 /**
  * Pick the top `n` items per group key from a flat list, preserving the list's
  * existing order within each group (callers pre-sort). Used to fold the
- * cluster-buy "members" follow-up query into per-cluster top-member lists.
+ * cluster-buy "politicians" follow-up query into per-cluster top-politician lists.
  */
 export function topPerGroup<T>(items: T[], keyOf: (x: T) => string, n: number): Map<string, T[]> {
   const out = new Map<string, T[]>();
@@ -139,7 +139,7 @@ export function topPerGroup<T>(items: T[], keyOf: (x: T) => string, n: number): 
 }
 
 // ---------------------------------------------------------------------------
-// Member realized-performance aggregate ("skill" signal)
+// Politician realized-performance aggregate ("skill" signal)
 // ---------------------------------------------------------------------------
 
 /** Median of a numeric list, or null when empty. */
@@ -159,7 +159,7 @@ export interface MemberPerfRow {
 }
 
 /**
- * Realized-performance aggregate for one member's trades. All return figures are
+ * Realized-performance aggregate for one politician's trades. All return figures are
  * FRACTIONS (0.18 = +18%), matching computePerformance / the /performance
  * endpoint. `winRate` is the share (0..1) of scored trades that beat the S&P.
  *
@@ -312,7 +312,7 @@ export function aggregateTickerBacktest(
 // Per-ticker composite conviction score (0-100) — expert-panel synthesis
 // ---------------------------------------------------------------------------
 //
-// Distinct-member-consensus base, gated by realized member skill + disclosure
+// Distinct-politician-consensus base, gated by realized politician skill + disclosure
 // integrity, with multiplicative anti-gaming guards and hard thin-sample caps.
 // Built ONLY from fields App A already returns. Returns are direction-aware
 // (buy vs sell conviction). All sub-factors clamp to [0,100]. See PR for the
@@ -320,11 +320,11 @@ export function aggregateTickerBacktest(
 
 const clamp = (n: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, n));
 
-/** Member-skill rollup for the ticker's contributing members (or null = data gap). */
+/** Politician-skill rollup for the ticker's contributing politicians (or null = data gap). */
 export interface ConvictionSkill {
-  /** scoredCount-weighted mean winRate over members with scoredCount>=5. */
+  /** scoredCount-weighted mean winRate over politicians with scoredCount>=5. */
   wMeanWinRate: number;
-  /** total scored trades across contributing members (coverage). */
+  /** total scored trades across contributing politicians (coverage). */
   totalScoredCount: number;
   /** aggregate medianExcess > 0 (else skill is capped at 50). */
   medianExcessPositive: boolean;
@@ -337,8 +337,8 @@ export interface ConvictionInput {
   netSentiment: number | null; // buys/(buys+sells); null = no directional activity
   estNetFlowUsd: number;
   tradeCount: number;
-  dMembers: number; // distinct D members (cluster); 0 if none
-  rMembers: number; // distinct R members
+  dMembers: number; // distinct D politicians (cluster); 0 if none
+  rMembers: number; // distinct R politicians
   deltaCount: number | null; // momentum: recent-minus-prior count (trending)
   recentMembers: number | null;
   lateShare: number | null; // share of the ticker's trades filed >45d after tx_date; null = unknown
@@ -394,7 +394,7 @@ export function computeConvictionScore(i: ConvictionInput): ConvictionResult {
   const both = (i.dMembers > 0 ? 1 : 0) + (i.rMembers > 0 ? 1 : 0);
   const fParty = both === 2 ? 100 : both === 1 ? 45 : 0;
 
-  // Member skill rollup (or fallback when sparse).
+  // Politician skill rollup (or fallback when sparse).
   const skillEnough = !!i.skill && i.skill.totalScoredCount >= 3;
   let fSkill: number | null = null;
   if (skillEnough && i.skill) {

@@ -270,7 +270,7 @@ Headers: Authorization: Bearer <INGEST_TOKEN>
 ```
 
 It returns one row per `(ticker, disclosureAvailableAt)` observation using the
-market-available disclosure timestamp, not the private trade date. Member skill
+market-available disclosure timestamp, not the private trade date. Politician skill
 is point-in-time and split by filing-date vs trade-date basis, buy vs sell side,
 and 1/3/6/12m horizons; cluster fields include both 21d/1m and 63d/3m windows.
 Large historical ranges page with `pagination.nextCursor` in JSON responses or
@@ -283,7 +283,7 @@ contract/research rows, not validation truth. A row with
 `scoreInputsPitSafe=true` can validate scoring mechanics, but it still must not
 be used for historical performance claims until `historicalValidationReady=true`.
 It also supports null/placebo exports via `?placebo=...` for validation robustness:
-within-date score permutation, member shuffle, disclosure-date jitter, buy/sell
+within-date score permutation, politician shuffle, disclosure-date jitter, buy/sell
 flip, component ablations, future-shift leakage detection, and the currently
 empty split/dividend stress subset.
 

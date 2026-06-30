@@ -37,13 +37,13 @@ describe('buildTransactionsQuery', () => {
     expect(q.params).toEqual([5, 'AAPL']);
   });
 
-  it('filters by member (filer_id)', () => {
+  it('filters by politician (member/filer_id)', () => {
     const q = buildTransactionsQuery({ member: 'M000001' });
     expect(q.sql).toContain('t.filer_id = ?');
     expect(q.params).toEqual([0, 'M000001']);
   });
 
-  it('filters by fuzzy member name server-side', () => {
+  it('filters by fuzzy politician name server-side', () => {
     const q = buildTransactionsQuery({ memberName: 'Pelo' });
     expect(q.sql).toContain("LOWER(COALESCE(fl.full_name, t.filer_id, '')) LIKE ?");
     expect(q.params).toEqual([0, '%pelo%']);
@@ -66,13 +66,13 @@ describe('buildTransactionsQuery', () => {
     expect(q.params).toEqual([0, 'senate']);
   });
 
-  it('selects the resolved chamber + member name alongside t.*', () => {
+  it('selects the resolved chamber + politician name alongside t.*', () => {
     const q = buildTransactionsQuery({});
     expect(q.sql).toContain('SELECT t.*, COALESCE(fl.chamber, f.chamber) AS __chamber');
     expect(q.sql).toContain('fl.full_name AS __member_name');
   });
 
-  it('joins filers to project the member name/state/headshot for the feed', () => {
+  it('joins filers to project the politician name/state/headshot for the feed', () => {
     const q = buildTransactionsQuery({});
     expect(q.sql).toContain('LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id');
     expect(q.sql).toContain('fl.full_name AS filer_full_name');
@@ -81,7 +81,7 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain('f.source_url AS filing_source_url');
   });
 
-  it('composes all filters in a stable param order (since, ticker, member, type, chamber)', () => {
+  it('composes all filters in a stable param order (since, ticker, member/filer, type, chamber)', () => {
     const params: TxQueryParams = {
       since: 10,
       ticker: 'msft',
@@ -179,7 +179,7 @@ describe('buildTransactionsQuery', () => {
     expect(q.params).toEqual([0]);
   });
 
-  it('does not interpolate untrusted values directly (ticker/member are bound, not inlined)', () => {
+  it('does not interpolate untrusted values directly (ticker/member-filer are bound, not inlined)', () => {
     const q = buildTransactionsQuery({ ticker: "'; DROP TABLE transactions;--" });
     // The malicious string must appear only as a bound parameter, never in SQL.
     expect(q.sql).not.toContain('DROP TABLE');
@@ -196,7 +196,7 @@ describe('buildTransactionsCountQuery', () => {
     expect(q.params).toEqual([]);
   });
 
-  it('reuses the same ticker/member/type filters (minus the cursor)', () => {
+  it('reuses the same ticker/member-filer/type filters (minus the cursor)', () => {
     const q = buildTransactionsCountQuery({
       since: 99,
       ticker: 'msft',

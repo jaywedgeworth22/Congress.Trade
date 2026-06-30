@@ -3,7 +3,7 @@ import { buildRestRouter } from '../rest';
 import type { Env } from '../../shared/types';
 import type { SubscriptionRow } from '../rows';
 
-function makeEnv(seed: SubscriptionRow[] = []) {
+function makeEnv(seed: SubscriptionRow[] = [], overrides: Partial<Env> = {}) {
   const rows = new Map(seed.map((row) => [row.id, { ...row }]));
 
   const prepare = (sql: string) => ({
@@ -60,6 +60,7 @@ function makeEnv(seed: SubscriptionRow[] = []) {
     env: {
       DB: { prepare } as unknown as D1Database,
       CONFIG_KV: { get: async () => null, put: async () => {}, delete: async () => {} },
+      ...overrides,
     } as unknown as Env,
     rows,
   };
@@ -163,5 +164,33 @@ describe('subscription routes', () => {
     });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toContain('https://');
+  });
+
+  it('allows localhost webhook target URLs only for local development requests', async () => {
+    const { env } = makeEnv();
+    const res = await createSubscription(env, {
+      clientId: 'client_local',
+      delivery: 'webhook',
+      targetUrl: 'http://localhost:8788/hook',
+      filters: {},
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it.each([
+    'http://localhost:8788/hook',
+    'https://127.0.0.1/hook',
+    'https://192.168.1.10/hook',
+    'https://169.254.169.254/latest/meta-data',
+    'https://[fe80::1]/hook',
+  ])('rejects unsafe production webhook target URL %s', async (targetUrl) => {
+    const { env } = makeEnv([], { APP_BASE_URL: 'https://congress.trade' });
+    const res = await createSubscription(env, {
+      clientId: 'client_prod',
+      delivery: 'webhook',
+      targetUrl,
+      filters: {},
+    });
+    expect(res.status).toBe(400);
   });
 });

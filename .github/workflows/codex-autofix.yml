@@ -57,7 +57,7 @@ jobs:
 
         Repo: Congress.Trade (Cloudflare Worker; the app lives in `app/`).
         Verify before committing: `cd app && npm run typecheck && npm test`.
-        Read app/AGENTS.md and app/CLAUDE.md first — follow them as the source
+        Read AGENTS.md and CLAUDE.md first — follow them as the source
         of truth (migrations, deploy gates, do-not-deploy rules). The git
         author email MUST be 12656028+jaywedgeworth22@users.noreply.github.com.
         Do NOT deploy, run remote D1 migrations, or run production crawlers.
@@ -76,7 +76,7 @@ jobs:
            and skip it.
         4. If `git merge origin/main` is needed (branch behind main), merge it
            and resolve conflicts. If a migration is added, add SQL under
-           app/migrations/ and update POST /api/admin/migrate per app/AGENTS.md.
+           app/migrations/ and update POST /api/admin/migrate per AGENTS.md.
         5. Run `cd app && npm run typecheck && npm test`. Only commit if it
            passes. Commit message must start with "[codex-autofix] ". Push to
            the PR branch.

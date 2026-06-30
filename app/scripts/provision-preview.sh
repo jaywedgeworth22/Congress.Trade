@@ -11,6 +11,8 @@ cd "$(dirname "$0")/.."
 WRANGLER="${WRANGLER:-npx wrangler}"
 CONFIG="wrangler.preview.toml"
 EXAMPLE="wrangler.preview.example.toml"
+PREVIEW_WORKERS_SUBDOMAIN="${PREVIEW_WORKERS_SUBDOMAIN:-jaywedgeworth22}"
+PREVIEW_APP_BASE_URL="${PREVIEW_APP_BASE_URL:-https://congress-trade-preview.${PREVIEW_WORKERS_SUBDOMAIN}.workers.dev}"
 
 say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 need_id() {
@@ -47,13 +49,14 @@ if [ -z "$KV_ID" ]; then
 fi
 need_id "KV" "$KV_ID"
 
-python3 - "$CONFIG" "$D1_ID" "$KV_ID" <<'PY'
+python3 - "$CONFIG" "$D1_ID" "$KV_ID" "$PREVIEW_APP_BASE_URL" <<'PY'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 text = path.read_text()
 text = text.replace("PREVIEW_D1_DATABASE_ID", sys.argv[2])
 text = text.replace("PREVIEW_KV_NAMESPACE_ID", sys.argv[3])
+text = text.replace("https://congress-trade-preview.<your-workers-subdomain>.workers.dev", sys.argv[4])
 path.write_text(text)
 PY
 
@@ -77,4 +80,5 @@ say "Seed preview fixture rows"
 $WRANGLER d1 execute DB --remote --config "$CONFIG" --file scripts/seed-preview-fixtures.sql
 
 say "Preview resources ready"
+echo "Preview URL: $PREVIEW_APP_BASE_URL"
 echo "Next: bash scripts/deploy-preview.sh"

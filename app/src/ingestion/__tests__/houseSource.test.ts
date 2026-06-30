@@ -72,7 +72,7 @@ describe('parseHouseIndexXml', () => {
 
 // Shaped like the real disclosures-clerk.house.gov/FinancialDisclosure/
 // ViewMemberSearchResult markup: relative hrefs (no leading slash), an "Hon.."
-// honorific in the member name, and a data-label="Office" StateDst cell.
+// honorific in the filer name, and a data-label="Office" StateDst cell.
 const SEARCH_HTML = `
 <table><tbody>
   <tr role="row">

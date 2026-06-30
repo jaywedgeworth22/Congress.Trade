@@ -4,7 +4,7 @@
  *
  * Subscription CRUD + matching logic. Creates/updates/cancels subscriptions and
  * decides whether a given transaction matches a subscription's filters
- * (members/tickers/chambers/amount range/sides/sectors/market-cap buckets).
+ * (politicians/tickers/chambers/amount range/sides/sectors/market-cap buckets).
  */
 
 import type { Env, Subscription, SubscriptionFilters, Transaction } from '../shared/types';
@@ -151,7 +151,7 @@ export async function updateSubscription(
  *   - chambers[]: NOTE — Transaction carries no chamber column; chamber filtering
  *                 is applied at the query layer (REST join on filings). This
  *                 predicate therefore treats `chambers` as advisory and only
- *                 enforces members/tickers/minAmount. Webhook dispatch resolves
+   *                 enforces members/tickers/minAmount. Webhook dispatch resolves
  *                 chamber separately (see webhook.ts).
  *   - minAmount:  tx.amountMin must be >= filter.minAmount.
  */

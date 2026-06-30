@@ -23,7 +23,8 @@ npm run preview:provision
 This creates preview Cloudflare resources, writes `wrangler.preview.toml`, applies
 D1 migrations, and seeds a tiny fixture dataset so the public feed, search,
 drawers, and Pelosi option rows are visible even before real preview ingestion is
-configured.
+configured. `npm run preview:deploy` also runs this automatically when
+`wrangler.preview.toml` is missing.
 
 ## Deploy the current checkout
 
@@ -38,10 +39,10 @@ The deploy script runs `npm run typecheck`, `npm test`, then:
 npx wrangler deploy --config wrangler.preview.toml
 ```
 
-Wrangler prints the `workers.dev` URL after a successful deploy, normally:
+Wrangler prints the `workers.dev` URL after a successful deploy:
 
 ```text
-https://congress-trade-preview.<your-workers-subdomain>.workers.dev
+https://congress-trade-preview.jaywedgeworth22.workers.dev
 ```
 
 Use that URL to review branch work. Do not use `npm run deploy`,

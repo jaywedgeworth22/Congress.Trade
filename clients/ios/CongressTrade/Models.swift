@@ -12,7 +12,6 @@ struct BootstrapResponse: Decodable {
         let entitlement: Entitlement
     }
 }
-
 struct User: Decodable {
     let id: String
     let email: String
@@ -248,4 +247,3 @@ enum JSONValue: Codable, Hashable {
         }
     }
 }
-EOF

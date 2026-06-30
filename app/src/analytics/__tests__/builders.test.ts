@@ -68,7 +68,7 @@ describe('buildTickerLeaderboardQuery', () => {
     expect(q.sql).toContain('LIMIT 200');
   });
 
-  it('exposes directional + per-side distinct-member counts (for conviction breadth)', () => {
+  it('exposes directional + per-side distinct-politician counts (for conviction breadth)', () => {
     const q = buildTickerLeaderboardQuery({ window: 'all' });
     expect(q.sql).toContain("CASE WHEN t.tx_type IN ('P', 'S') THEN t.filer_id END) AS directional_member_count");
     expect(q.sql).toContain("CASE WHEN t.tx_type = 'P' THEN t.filer_id END) AS buy_member_count");
@@ -90,7 +90,7 @@ describe('buildMemberLeaderboardQuery', () => {
 });
 
 describe('buildClusterBuysQuery', () => {
-  it('filters to P/S, counts distinct members + party split, applies HAVING', () => {
+  it('filters to P/S, counts distinct politicians + party split, applies HAVING', () => {
     const q = buildClusterBuysQuery({ window: '30d', minMembers: 4, limit: 10 });
     expect(q.sql).toContain('t.tx_type IN (?, ?)');
     expect(q.sql).toContain('GROUP BY t.ticker, t.tx_type');
@@ -204,7 +204,7 @@ describe('buildMarketCapBreakdownQuery', () => {
 });
 
 describe('conviction realized-skill inputs', () => {
-  it('buildConvictionMemberLinksQuery: distinct (ticker, side, member) for the candidate set', () => {
+  it('buildConvictionMemberLinksQuery: distinct (ticker, side, politician) for the candidate set', () => {
     const q = buildConvictionMemberLinksQuery(['AAPL', 'MSFT'], { window: '90d' });
     expect(q.sql).toContain('SELECT DISTINCT t.ticker AS ticker, t.tx_type AS tx_type, t.filer_id AS filer_id');
     expect(q.sql).toContain('t.ticker IN (?, ?)');
@@ -214,7 +214,7 @@ describe('conviction realized-skill inputs', () => {
     expect(q.params).toEqual(['-90 days', 'P', 'S', 'AAPL', 'MSFT']);
   });
 
-  it('buildMemberSkillQuery: per-member scored/wins/avg-excess for the given filers (>=5)', () => {
+  it('buildMemberSkillQuery: per-politician scored/wins/avg-excess for the given filers (>=5)', () => {
     const q = buildMemberSkillQuery(['A1', 'B2', 'C3'], { window: 'all' });
     expect(q.sql).toContain('JOIN tx_performance p ON p.tx_id = t.id');
     expect(q.sql).toContain('COUNT(*) AS scored');
@@ -279,13 +279,13 @@ describe('filing-lag builders', () => {
   });
 });
 
-describe('member deep-dive builders', () => {
+describe('politician deep-dive builders', () => {
   it('stats filter by filer id (bound first) and average disclosure lag', () => {
     const q = buildMemberStatsQuery('P000197', { window: 'all' });
     expect(q.sql).toContain('t.filer_id = ?');
     expect(q.sql).toContain('AS avg_lag_days');
     // Distinct *assets* falls back to the asset name when ticker is unresolved,
-    // so members holding only bonds/funds (ticker NULL) don't show 0.
+    // so politicians holding only bonds/funds (ticker NULL) don't show 0.
     expect(q.sql).toContain('AS unique_assets');
     expect(q.sql).toContain('NULLIF(t.asset_name');
     expect(q.params).toEqual(['P000197']);

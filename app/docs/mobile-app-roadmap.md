@@ -81,11 +81,11 @@ Read endpoints:
 - `GET /api/client/v1/feed?since=&limit=&ticker=&member=&chamber=&type=&from=&to=&order=...`
   - phone-shaped trade cards plus cursor/count/total metadata.
 - `GET /api/client/v1/trades/:id`
-  - trade detail, filing, company/member summaries, legal/educational notices.
+  - trade detail, filing, company/politician summaries, legal/educational notices.
 - `GET /api/client/v1/tickers/:ticker`
   - market bundle + congressional activity.
 - `GET /api/client/v1/members/:id`
-  - member profile + activity.
+  - politician profile + activity.
 - `GET /api/client/v1/analytics/summary`
   - compact KPI and trend cards for phone dashboards.
 - `GET /api/client/v1/preferences`
@@ -174,7 +174,7 @@ Build the PWA phone-first, not as a desktop dashboard squeezed down.
 - Bottom tab bar: Feed, Trends, Alerts, Developer, Account.
 - Card feed on phones; dense table can remain desktop/tablet only.
 - Sticky filter/search affordance with a sheet-style filter editor.
-- Fast ticker/member detail sheets with filing links and educational context.
+- Fast ticker/politician detail sheets with filing links and educational context.
 - Alert builder as a guided flow with clear delivery channel choices.
 - Developer delivery screen for webhook/SSE configuration, secret rotation,
   test delivery, and delivery history.
@@ -254,7 +254,7 @@ Security requirements before broad mobile exposure:
    - Define `/api/client/v1/*` DTOs, command statuses, idempotency rules, and typed
      clients for TypeScript and Swift.
 2. **Phone-first Next.js/PWA**
-   - Feed, search/filter, ticker/member details, analytics summary, offline
+   - Feed, search/filter, ticker/politician details, analytics summary, offline
      shell, installable manifest, and foreground polling.
 3. **SwiftUI read-only MVP**
    - Same feed/detail/analytics model, local cursor cache, Keychain-ready client

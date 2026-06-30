@@ -35,6 +35,7 @@ import { prefixedId } from '../shared/ids';
 import { mapSubscription, mapTransaction, type SubscriptionRow, type TransactionRow } from './rows';
 import { matchesFiltersWithContext } from './subscriptions';
 import { resolveSecret } from '../secrets/infisical';
+import { localWebhookTargetsAllowed, validateWebhookTargetUrl } from './webhookTarget';
 
 /** Max delivery attempts before we give up (initial try + retries). */
 const MAX_ATTEMPTS = 5;
@@ -42,6 +43,8 @@ const MAX_ATTEMPTS = 5;
 const BASE_BACKOFF_SEC = 5;
 /** Cap a single backoff delay (Cloudflare Queues allow up to 12h; keep modest). */
 const MAX_BACKOFF_SEC = 900;
+/** Stop waiting on a slow receiver before this Worker invocation is pinned. */
+export const WEBHOOK_FETCH_TIMEOUT_MS = 10_000;
 
 /**
  * Wire shape of the delivery message. Extends the frozen union additively with
@@ -185,13 +188,30 @@ async function deliverToSubscription(
     deliveredAt,
   };
   const body = JSON.stringify(payload);
+  const targetUrlError = validateWebhookTargetUrl(sub.targetUrl, {
+    allowLocalhost: localWebhookTargetsAllowed(env),
+  });
+  if (targetUrlError) {
+    const error = `unsafe webhook target URL: ${targetUrlError}`;
+    console.warn(`dispatchWebhook: ${error} sub=${sub.id}`);
+    await recordDelivery(env, claim.id, false, attempt, error);
+    return;
+  }
   const signature = await signWebhookPayload(env, body, sub.secret ?? undefined);
 
   let ok = false;
   let lastError: string | null = null;
+  let timedOut = false;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, WEBHOOK_FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(sub.targetUrl as string, {
       method: 'POST',
+      redirect: 'manual',
+      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         'X-Signature': `sha256=${signature}`,
@@ -205,7 +225,11 @@ async function deliverToSubscription(
     if (!ok) lastError = `HTTP ${res.status}`;
   } catch (err) {
     ok = false;
-    lastError = (err as Error).message ?? 'fetch failed';
+    lastError = timedOut
+      ? `timeout after ${WEBHOOK_FETCH_TIMEOUT_MS}ms`
+      : (err as Error).message ?? 'fetch failed';
+  } finally {
+    clearTimeout(timeout);
   }
 
   await recordDelivery(env, claim.id, ok, attempt, lastError);

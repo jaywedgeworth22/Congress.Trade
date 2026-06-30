@@ -236,7 +236,7 @@ const ANCHOR_PTR_RE =
 /**
  * Parse the House live-search result HTML into HouseFiling[]. Only rows that
  * link to a PTR PDF (`/public_disc/ptr-pdfs/{year}/{docId}.pdf`) are returned;
- * the member name is taken from the linking anchor's text when meaningful, else
+ * the filer name is taken from the linking anchor's text when meaningful, else
  * the first table cell. Pure + unit-testable.
  */
 export function parseHouseSearchHtml(html: string, defaultYear: string): HouseFiling[] {
@@ -254,7 +254,7 @@ export function parseHouseSearchHtml(html: string, defaultYear: string): HouseFi
     if (seen.has(docId)) continue;
     seen.add(docId);
 
-    // Prefer the anchor's own text as the member name; fall back to the first
+    // Prefer the anchor's own text as the filer name; fall back to the first
     // non-empty cell (the anchor text is sometimes a generic "View"/"PDF").
     let name = '';
     const anchor = ANCHOR_PTR_RE.exec(chunk);
