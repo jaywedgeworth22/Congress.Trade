@@ -49,6 +49,18 @@ describe('shareWithPeer', () => {
     expect(res).toEqual({ sent: true, status: 200, counts: { refs: 1, prices: 1, spx: 1 } });
   });
 
+  it('rejects invalid shared payloads before POSTing', async () => {
+    const spy = vi.fn(async () => new Response('{"ok":true}', { status: 200 }));
+    const res = await shareWithPeer(
+      env({ APP_B_IMPORT_URL: 'https://b/import', APP_B_INGEST_TOKEN: 'tok' }),
+      { spx: [{ date: '2026-02-31', close: 1 }] },
+      spy as unknown as typeof fetch,
+    );
+    expect(spy).not.toHaveBeenCalled();
+    expect(res.sent).toBe(false);
+    expect(res.reason).toMatch(/invalid shared payload/);
+  });
+
   it('reports a failed peer import without throwing', async () => {
     const res = await shareWithPeer(
       env({ APP_B_IMPORT_URL: 'https://b/import', APP_B_INGEST_TOKEN: 'tok' }),
