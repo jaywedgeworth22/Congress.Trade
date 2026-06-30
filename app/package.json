@@ -21,7 +21,7 @@
     "@sentry/cloudflare": "^10.62.0",
     "fflate": "^0.8.3",
     "hono": "^4.6.0",
-    "node-html-parser": "^7.1.0",
+    "node-html-parser": "^8.0.4",
     "unpdf": "^1.6.2"
   },
   "devDependencies": {
