@@ -41,14 +41,37 @@ import {
   buildPitScoreExport,
   parsePitScoreQuery,
   pitScoreRowsToNdjson,
+  PIT_PLACEBOS,
+  PIT_SCORE_VERSION,
 } from './pitScores';
 
-/** Env augmented with the scoped cross-app ingest token (mirrors admin/routes). */
-type ExportEnv = Env & { INGEST_TOKEN?: string };
+/** Env augmented with cross-app sharing config (mirrors admin/share routes). */
+type ExportEnv = Env & { INGEST_TOKEN?: string; APP_B_IMPORT_URL?: string; APP_B_INGEST_TOKEN?: string };
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const RUN_ID_RE = /^[A-Za-z0-9-]{1,64}$/; // crypto.randomUUID() shape (hex + dashes)
 const VALID_TABLES = new Set<string>(SNAPSHOT_TABLES.map((t) => t.name));
+const CAPABILITIES_VERSION = 'congress-trade-crossapp-v1';
+
+const IMPORT_DEFAULT_LIMITS = {
+  bytes: 1_500_000,
+  refs: 2_000,
+  spx: 5_000,
+  prices: 100,
+  closesPerTicker: 1_500,
+  insider: 5_000,
+  shortVolume: 5_000,
+};
+
+const IMPORT_MAX_LIMITS = {
+  bytes: 3_000_000,
+  refs: 5_000,
+  spx: 10_000,
+  prices: 250,
+  closesPerTicker: 3_000,
+  insider: 10_000,
+  shortVolume: 10_000,
+};
 
 function todayUtc(now = new Date()): string {
   return now.toISOString().slice(0, 10);
@@ -94,8 +117,132 @@ function shapeManifest(manifest: SnapshotManifest, tables: SnapshotTableName[]):
   };
 }
 
+function positiveIntSetting(raw: string | undefined, fallback: number, max: number): number {
+  const n = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(Math.floor(n), max);
+}
+
+function integrationImportLimits(env: ExportEnv): typeof IMPORT_DEFAULT_LIMITS {
+  return {
+    bytes: positiveIntSetting(env.IMPORT_MAX_BYTES, IMPORT_DEFAULT_LIMITS.bytes, IMPORT_MAX_LIMITS.bytes),
+    refs: positiveIntSetting(env.IMPORT_MAX_REFS, IMPORT_DEFAULT_LIMITS.refs, IMPORT_MAX_LIMITS.refs),
+    spx: positiveIntSetting(env.IMPORT_MAX_SPX, IMPORT_DEFAULT_LIMITS.spx, IMPORT_MAX_LIMITS.spx),
+    prices: positiveIntSetting(env.IMPORT_MAX_PRICES, IMPORT_DEFAULT_LIMITS.prices, IMPORT_MAX_LIMITS.prices),
+    closesPerTicker: positiveIntSetting(
+      env.IMPORT_MAX_CLOSES_PER_TICKER,
+      IMPORT_DEFAULT_LIMITS.closesPerTicker,
+      IMPORT_MAX_LIMITS.closesPerTicker,
+    ),
+    insider: positiveIntSetting(env.IMPORT_MAX_INSIDER, IMPORT_DEFAULT_LIMITS.insider, IMPORT_MAX_LIMITS.insider),
+    shortVolume: positiveIntSetting(env.IMPORT_MAX_SHORT_VOLUME, IMPORT_DEFAULT_LIMITS.shortVolume, IMPORT_MAX_LIMITS.shortVolume),
+  };
+}
+
+function integrationCapabilities(env: ExportEnv): Record<string, unknown> {
+  const configured = {
+    ingestToken: Boolean(env.INGEST_TOKEN),
+    appBReturnPath: Boolean(env.APP_B_IMPORT_URL && env.APP_B_INGEST_TOKEN),
+  };
+  return {
+    app: 'congress.trade',
+    generatedAt: new Date().toISOString(),
+    contractVersion: CAPABILITIES_VERSION,
+    auth: {
+      scheme: 'bearer',
+      tokenName: 'INGEST_TOKEN',
+      requiredFor: [
+        '/api/admin/securities/import',
+        '/api/export/capabilities',
+        '/api/export/congress-pit-scores',
+        '/api/export/bulk-snapshot',
+        '/api/export/bulk-snapshot/file',
+      ],
+    },
+    configured,
+    peerSharing: {
+      role: 'source-of-truth-for-congressional-disclosures-and-point-in-time-scores',
+      appBReturnPathConfigured: configured.appBReturnPath,
+      appBImportUrlConfigured: Boolean(env.APP_B_IMPORT_URL),
+      appBIngestTokenConfigured: Boolean(env.APP_B_INGEST_TOKEN),
+      noEchoPolicy: 'Only freshly fetched local deltas are pushed to App B; App B-origin imports are not echoed back.',
+    },
+    endpoints: {
+      imports: {
+        securities: {
+          method: 'POST',
+          path: '/api/admin/securities/import',
+          auth: 'bearer INGEST_TOKEN',
+          accepts: ['refs', 'prices', 'spx', 'insider', 'shortVolume', 'fundamentals', 'analyst', 'origin'],
+          limits: integrationImportLimits(env),
+        },
+      },
+      publicReads: {
+        marketBundle: { method: 'GET', path: '/api/market/bundle/:ticker?from=&to=' },
+        marketRef: { method: 'GET', path: '/api/market/ref/:ticker' },
+        marketRefs: { method: 'GET', path: '/api/market/refs?tickers=AAPL,MSFT' },
+        prices: { method: 'GET', path: '/api/market/prices/:ticker?from=&to=' },
+        spx: { method: 'GET', path: '/api/market/spx?from=&to=' },
+        insider: { method: 'GET', path: '/api/market/insider/:ticker?from=&to=' },
+        shortVolume: { method: 'GET', path: '/api/market/short-volume/:ticker?from=&to=' },
+        fundamentals: { method: 'GET', path: '/api/market/fundamentals/:ticker?from=&to=' },
+        analyst: { method: 'GET', path: '/api/market/analyst/:ticker?from=&to=' },
+        transactions: { method: 'GET', path: '/api/transactions?cursor=&limit=&member=&ticker=&type=&chamber=' },
+      },
+      analytics: {
+        tickerLeaderboard: { method: 'GET', path: '/api/analytics/ticker-leaderboard?window=&rankBy=' },
+        clusterBuys: { method: 'GET', path: '/api/analytics/cluster-buys?window=' },
+        memberLeaderboard: { method: 'GET', path: '/api/analytics/member-leaderboard?window=&rankBy=' },
+        memberPerformance: { method: 'GET', path: '/api/analytics/member/:filerId/performance?from=&to=' },
+        conviction: { method: 'GET', path: '/api/analytics/conviction?ticker=&window=' },
+        tickerBacktest: { method: 'GET', path: '/api/analytics/ticker/:ticker/backtest?from=&to=' },
+        conflicts: { method: 'GET', path: '/api/analytics/conflicts?ticker=&sector=' },
+      },
+      exports: {
+        pitScores: {
+          method: 'GET',
+          path: '/api/export/congress-pit-scores?from=&to=&ticker=&cursor=&limit=&format=json|ndjson&placebo=&source=&minConf=',
+          auth: 'bearer INGEST_TOKEN',
+          scoreVersion: PIT_SCORE_VERSION,
+          maxLimit: 500,
+          placebosAvailable: PIT_PLACEBOS,
+        },
+        bulkSnapshot: {
+          method: 'GET',
+          path: '/api/export/bulk-snapshot?date=&tables=&format=ndjson',
+          auth: 'bearer INGEST_TOKEN',
+          format: 'ndjson',
+          tables: SNAPSHOT_TABLES.map((t) => ({ name: t.name, keyColumns: t.keyCols })),
+        },
+        bulkSnapshotFile: {
+          method: 'GET',
+          path: '/api/export/bulk-snapshot/file?date=&runId=&table=',
+          auth: 'bearer INGEST_TOKEN',
+          format: 'ndjson',
+        },
+      },
+    },
+    recommendedSync: {
+      bootstrap: 'Pull /api/export/bulk-snapshot, persist manifest runId/objectKeys, then stream each downloadPath.',
+      incrementalMarketData: 'Use /api/market/* reads as a cache-aside tier before paid providers.',
+      congressionalSignals: 'Use /api/export/congress-pit-scores for historical validation and /api/analytics/* for live overlays.',
+      writeBack: 'POST newly fetched refs/prices/spx/enrichment deltas to /api/admin/securities/import with origin set by the sender.',
+    },
+  };
+}
+
 export function buildExportRouter(): Hono<{ Bindings: ExportEnv }> {
   const r = new Hono<{ Bindings: ExportEnv }>();
+
+  // --- GET /capabilities --------------------------------------------------
+  // Token-gated machine-readable integration contract for sibling apps. App B
+  // can use this before hardcoding a new route, limit, or export shape.
+  r.get('/capabilities', async (c) => {
+    if (!(await isAuthorized(c.env, c.req.header('authorization')))) {
+      return c.json({ error: 'unauthorized' }, 401);
+    }
+    return c.json(integrationCapabilities(c.env));
+  });
 
   // --- GET /congress-pit-scores ------------------------------------------
   // Token-gated point-in-time score export for App B historical validation.
