@@ -112,6 +112,7 @@ export async function insertFilingIfNew(
       [f.filerId, f.chamber, f.filerName, f.state ?? null, f.district ?? null],
     );
   }
+  const filedDate = normalizeFilingDate(f.filedDate);
   const res = await run(
     env.DB,
     `INSERT OR IGNORE INTO filings
@@ -120,8 +121,19 @@ export async function insertFilingIfNew(
         confidence, first_seen_at, source_updated_at, error)
      VALUES (?, ?, ?, 'P', ?, ?, NULL, 'new', 'unknown', NULL, NULL,
              NULL, ?, NULL, NULL)`,
-    [f.docId, f.chamber, f.filerId ?? null, normalizeFilingDate(f.filedDate), f.sourceUrl, nowIso],
+    [f.docId, f.chamber, f.filerId ?? null, filedDate, f.sourceUrl, nowIso],
   );
+  // Backfill filed_date when a later, richer discovery of the same doc supplies
+  // one. A House PTR first seen via the intraday live search carries no
+  // FilingDate (the live-search HTML omits it -> filed_date NULL); the daily bulk
+  // ZIP later surfaces the same doc WITH a date, so COALESCE it in then instead
+  // of leaving the row permanently dateless.
+  if (filedDate) {
+    await run(env.DB, 'UPDATE filings SET filed_date = COALESCE(filed_date, ?) WHERE doc_id = ?', [
+      filedDate,
+      f.docId,
+    ]);
+  }
   if (f.filerId) {
     await run(env.DB, 'UPDATE filings SET filer_id = COALESCE(filer_id, ?) WHERE doc_id = ?', [
       f.filerId,
