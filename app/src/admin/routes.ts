@@ -1423,6 +1423,69 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       note: runtimeSecrets.ARBITRATION_API_KEY ? 'Secondary arbitration key available' : 'ARBITRATION_API_KEY is not available to this Worker runtime',
     });
 
+    // Cross-app trade delivery health: outbound push to peer apps (Agentic
+    // Trading) over webhook + SSE subscriptions. Surfaces 24h delivery outcomes
+    // and any dead-lettered messages so a silently-broken peer connection is
+    // visible to admins instead of failing unseen.
+    const deliveryStats = await optionalAll<{
+      total: number;
+      delivered: number;
+      failed: number;
+      pending: number;
+      today: number;
+      last_delivered: string | null;
+      last_failed: string | null;
+    }>(
+      c.env,
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) AS delivered,
+              SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+              SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+              SUM(CASE WHEN updated_at >= ? THEN 1 ELSE 0 END) AS today,
+              MAX(CASE WHEN status = 'delivered' THEN updated_at END) AS last_delivered,
+              MAX(CASE WHEN status = 'failed' THEN updated_at END) AS last_failed
+         FROM deliveries
+        WHERE updated_at >= ?`,
+      [today, last24],
+    );
+    const subCounts = await optionalAll<{ active: number; webhook: number; sse: number }>(
+      c.env,
+      `SELECT COUNT(*) AS active,
+              SUM(CASE WHEN delivery = 'webhook' THEN 1 ELSE 0 END) AS webhook,
+              SUM(CASE WHEN delivery = 'sse' THEN 1 ELSE 0 END) AS sse
+         FROM subscriptions WHERE active = 1`,
+    );
+    const dlq = await optionalAll<{ n: number; last_at: string | null }>(
+      c.env,
+      `SELECT COUNT(*) AS n, MAX(created_at) AS last_at FROM dead_letter_events
+        WHERE queue LIKE '%delivery%' AND created_at >= ?`,
+      [last24],
+    );
+    const ds = deliveryStats[0] ?? { total: 0, delivered: 0, failed: 0, pending: 0, today: 0, last_delivered: null, last_failed: null };
+    const sc = subCounts[0] ?? { active: 0, webhook: 0, sse: 0 };
+    const dlqCount = dlq[0]?.n ?? 0;
+    const crossAppErrors = (ds.failed ?? 0) + dlqCount;
+    connections.push({
+      id: 'delivery:cross-app',
+      label: 'Cross-App Trade Delivery',
+      status:
+        dlqCount > 0 ? 'error'
+        : crossAppErrors > 0 ? 'warn'
+        : (sc.active ?? 0) === 0 ? 'unknown'
+        : (ds.delivered ?? 0) > 0 ? 'ok'
+        : 'unknown',
+      configured: (sc.active ?? 0) > 0,
+      lastUsedAt: maxIso(ds.last_delivered, ds.last_failed),
+      callsTotal: ds.total ?? 0,
+      callsLast24h: ds.total ?? 0,
+      callsToday: ds.today ?? 0,
+      errorsLast24h: crossAppErrors,
+      note:
+        `${sc.active ?? 0} active subscription(s) (${sc.webhook ?? 0} webhook, ${sc.sse ?? 0} SSE); ` +
+        `24h: ${ds.delivered ?? 0} delivered, ${ds.failed ?? 0} failed, ${ds.pending ?? 0} pending` +
+        (dlqCount ? `; ${dlqCount} dead-lettered (see delivery DLQ)` : ''),
+    });
+
     const fmp = await optionalAll<{
       calls_total: number;
       calls_last_24h: number;
