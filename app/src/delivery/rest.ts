@@ -19,6 +19,7 @@
  */
 
 import { Hono, type Context } from 'hono';
+import { MAX_REFS_BATCH } from '@jaywedgeworth22/congress-trading-shared';
 import type { Chamber, Env, Subscription, SubscriptionFilters, TxType } from '../shared/types';
 import { all, get } from '../shared/db';
 import {
@@ -383,7 +384,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       .split(',')
       .map((t) => t.trim().toUpperCase())
       .filter(Boolean)
-      .slice(0, 500);
+      .slice(0, MAX_REFS_BATCH);
     if (tickers.length === 0) return c.json({ refs: [] });
     const placeholders = tickers.map(() => '?').join(',');
     const rows = await all<SecurityRefRow>(
