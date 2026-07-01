@@ -36,21 +36,17 @@
  * company name / sector / logo from FMP, so the master fills in over time.
  */
 
+import { TICKER_ALIASES } from '@jaywedgeworth22/congress-trading-shared';
+
 /**
- * Curated stale → current ticker map. Keep this SMALL and unambiguous: only
- * well-known delistings / rebrands / acquisitions where the mapping is certain.
- * A wrong entry silently mis-attributes a trade, so err toward omission. All
- * targets are verified present in securities_master.
+ * Curated stale -> current ticker map. Sourced from the shared cross-app package
+ * (@jaywedgeworth22/congress-trading-shared) so App A and App B (Agentic Trading) never drift on
+ * corporate-action renames -- a divergent copy would mis-attribute / fragment a trade differently
+ * between the two apps. Keep additions in the shared package, not here. Re-exported so existing
+ * importers keep their `../extraction/tickerNormalize` path. (Retired the content-identical local
+ * copy 2026-07-01 per Workstream C1; the shared map holds BRCM/FB/SQ/GEHCV/TWX/ATVI/RHT.)
  */
-export const TICKER_ALIASES: Readonly<Record<string, string>> = {
-  BRCM: 'AVGO', // Broadcom Corp (old) → Broadcom Inc
-  FB: 'META', // Facebook → Meta Platforms
-  SQ: 'XYZ', // Square → Block, Inc.
-  GEHCV: 'GEHC', // GE HealthCare when-issued/odd variant → GEHC
-  TWX: 'WBD', // Time Warner → (via WarnerMedia) Warner Bros. Discovery
-  ATVI: 'MSFT', // Activision Blizzard (acquired by Microsoft, 2023)
-  RHT: 'IBM', // Red Hat (acquired by IBM, 2019)
-};
+export { TICKER_ALIASES };
 
 /**
  * A well-formed US/OTC symbol: 1–5 letters, optionally a class suffix
