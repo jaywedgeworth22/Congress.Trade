@@ -38,6 +38,7 @@ import { maybeRunDailyJobs } from './jobs';
 import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement';
 import { refreshSecrets } from './secrets/infisical';
 import { runDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency';
+import { buildDetectionRouter } from './ingestion/detectionRoutes';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -76,6 +77,12 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
     root.route('/api/export', buildExportRouter());
   } catch (err) {
     console.warn('export/routes router not mounted:', (err as Error).message);
+  }
+  try {
+    // Residential detection scout push (INGEST_TOKEN) -> disclosure-latency race.
+    root.route('/api/ingest', buildDetectionRouter());
+  } catch (err) {
+    console.warn('ingestion/detectionRoutes router not mounted:', (err as Error).message);
   }
   // End-user auth (Google OAuth + magic-link) at /auth/*. Mounted before the UI
   // catch-all so its routes are not shadowed by the dashboard.
