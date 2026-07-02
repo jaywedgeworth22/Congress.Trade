@@ -56,6 +56,7 @@ import { constantTimeEqual } from '../auth/tokens';
 import { getCurrentUser } from '../auth/session';
 import {
   DEFAULT_CANDIDATES,
+  keyFor,
   runCandidateOnDoc,
   summarizeModels,
   type BakeoffCandidate,
@@ -2300,7 +2301,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     // ~300 paid calls in one request with no metering. Cap the per-day total so
     // a single request (or a busy day) can't run up an unbounded LLM bill.
     // Approximate (KV fixed window); raise BAKEOFF_DAILY_CALL_CAP to lift it.
-    const plannedCalls = docs.length * candidates.length;
+    // Only candidates with a configured API key actually reach a provider
+    // (runCandidateOnDoc below short-circuits to an "API key not configured"
+    // result otherwise) — charge the cap for those only, so an environment
+    // with just one or two providers configured doesn't exhaust the daily
+    // budget on calls that were never going to happen.
+    const configuredCount = (
+      await Promise.all(candidates.map((cand) => keyFor(c.env, cand.provider)))
+    ).filter(Boolean).length;
+    const plannedCalls = docs.length * configuredCount;
     const dailyCap =
       Number((c.env as { BAKEOFF_DAILY_CALL_CAP?: string }).BAKEOFF_DAILY_CALL_CAP ?? '200') || 200;
     const capDay = new Date().toISOString().slice(0, 10);
