@@ -162,6 +162,11 @@ FMP_MAX_PER_MINUTE = "250"
 # Price-history source: "fmp" (default) or "massive" (Polygon aggregates,
 # unlimited on the paid plan, not metered against the FMP budget). Flip to A/B.
 PRICE_PROVIDER = "fmp"
+# Disclosure-latency watch: each cron tick, poll FMP's latest disclosures and
+# match them against candidates (created by ingestion + the residential detection
+# scout via POST /api/ingest/detection) to measure who surfaced each filing
+# first. Enables the FMP-vs-us lead readout that answers the front-running thesis.
+DISCLOSURE_LATENCY_WATCH_ENABLED = "true"
 # API Usage Monitor app telemetry. Token is secret/Infisical-only.
 USAGE_MONITOR_INGEST_URL = "https://usage.jays.services/api/ingest/usage"
 USAGE_MONITOR_ENVIRONMENT = "production"

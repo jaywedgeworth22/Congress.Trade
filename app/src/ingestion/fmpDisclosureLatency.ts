@@ -13,6 +13,7 @@ import { all, run } from '../shared/db';
 import { resolveSecret } from '../secrets/infisical';
 import { notifyAdmin } from '../alerts/notify';
 import { assertFmpTierOk } from '../shared/fmpStatus';
+import { getLastPollAt, setLastPollAt } from '../shared/config';
 import type { DiscoveredFiling } from './watcher';
 
 type Chamber = 'house' | 'senate';
@@ -574,7 +575,9 @@ export async function recordDisclosureLatencyCandidate(
            (doc_id, provider, chamber, source_url, filed_date, filer_name,
             congress_first_seen_at, status, attempts, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
-         ON CONFLICT(doc_id, provider) DO NOTHING`,
+         ON CONFLICT(doc_id, provider) DO UPDATE SET
+           congress_first_seen_at = MIN(congress_first_seen_at, excluded.congress_first_seen_at),
+           updated_at = excluded.updated_at`,
         [
           filing.docId,
           provider,
@@ -798,6 +801,19 @@ async function runProviderProbe(
   }
 }
 
+/** KV key (via getLastPollAt/setLastPollAt) tracking this probe's own cadence. */
+const PROBE_POLL_SOURCE = 'fmp-disclosure-latency';
+/**
+ * Cron calls this every minute with no cap of its own; each run fetches
+ * house-latest + senate-latest from every configured provider. Unthrottled,
+ * that's ~2,880 FMP requests/day against FMP_DAILY_CALL_CAP (1000 in
+ * production, shared with enrichment/price refresh). Throttling to once per
+ * MIN_PROBE_INTERVAL_SEC bounds this probe to ~576 calls/day, leaving budget
+ * for the other FMP consumers, while still resolving "who was first" to
+ * within a few minutes.
+ */
+const MIN_PROBE_INTERVAL_SEC = 300;
+
 export async function runDisclosureLatencyProbe(
   env: Env,
   now: Date = new Date(),
@@ -817,10 +833,26 @@ export async function runDisclosureLatencyProbe(
     };
   }
 
+  if (!opts.force) {
+    const lastPolledAt = await getLastPollAt(env, PROBE_POLL_SOURCE);
+    if (lastPolledAt && now.getTime() - lastPolledAt.getTime() < MIN_PROBE_INTERVAL_SEC * 1000) {
+      return {
+        enabled: true,
+        reason: `throttled: runs at most every ${MIN_PROBE_INTERVAL_SEC}s to stay within FMP_DAILY_CALL_CAP`,
+        fetchedRows: 0,
+        pending: 0,
+        matched: 0,
+        errors: [],
+        providers: [],
+      };
+    }
+  }
+
   const runs: DisclosureLatencyProviderRun[] = [];
   for (const providerId of requestedProviderIds(envx, opts)) {
     runs.push(await runProviderProbe(env, definition(providerId), now, fetchImpl, limit(envx)));
   }
+  await setLastPollAt(env, PROBE_POLL_SOURCE, now);
   return {
     enabled: true,
     fetchedRows: runs.reduce((sum, r) => sum + r.fetchedRows, 0),
