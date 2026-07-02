@@ -123,15 +123,21 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     }
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     if (!EMAIL_RE.test(email)) return c.json({ error: 'valid email required' }, 400);
-    // Throttle to stop magic-link email-bombing: per-email (5/hr) and a per-IP
-    // burst cap (10/10min). Fails open if KV is unavailable.
+    // Throttle to stop magic-link email-bombing: per-IP burst cap (10/10min)
+    // checked first and short-circuited so an already-throttled IP can't keep
+    // spending a victim email's separate 5/hr quota while never itself getting
+    // a magic link sent. Fails open if KV is unavailable.
     const ip = clientIp(c.req.raw);
     const ipRl = await rateLimit(c.env, 'magic-ip', ip, 10, 600);
-    const emailRl = await rateLimit(c.env, 'magic-email', email, 5, 3600);
-    if (!ipRl.ok || !emailRl.ok) {
-      const retryAfter = Math.max(ipRl.retryAfterSec, emailRl.retryAfterSec);
+    if (!ipRl.ok) {
       return c.json({ error: 'too many requests, please try again later' }, 429, {
-        'Retry-After': String(retryAfter),
+        'Retry-After': String(ipRl.retryAfterSec),
+      });
+    }
+    const emailRl = await rateLimit(c.env, 'magic-email', email, 5, 3600);
+    if (!emailRl.ok) {
+      return c.json({ error: 'too many requests, please try again later' }, 429, {
+        'Retry-After': String(emailRl.retryAfterSec),
       });
     }
     try {

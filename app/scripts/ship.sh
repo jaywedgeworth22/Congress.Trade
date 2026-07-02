@@ -20,6 +20,13 @@ BASE="${BASE:-https://congress.trade}"
 DEPLOY_ONLY=false
 ADMIN_STEPS=()
 
+# congress.trade sits behind a Cloudflare managed challenge that 403s requests
+# with no browser User-Agent (e.g. a CI runner's or script's bare curl). Send a
+# real browser UA on every request to the app — both the health check and the
+# admin POST steps below — so a plain `ADMIN_TOKEN=... bash scripts/ship.sh`
+# doesn't pass health and then 403 on /api/admin/migrate.
+UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'
+
 usage() {
   cat <<'EOF'
 Usage: ADMIN_TOKEN=... bash scripts/ship.sh [--enrich] [--backfill] [--house]
@@ -68,13 +75,8 @@ check_api_health() {
   body_file="$(mktemp)"
   trap 'rm -f "$body_file"' RETURN
 
-  # congress.trade sits behind a Cloudflare managed challenge that 403s requests
-  # with no browser User-Agent (e.g. a CI runner's bare curl), which made this
-  # smoke check fail even on a healthy deploy. Send a real browser UA so the
-  # challenge passes; the worker still must report ok=true and db=true below.
-  local ua='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'
   for ((i = 1; i <= attempts; i++)); do
-    code="$(curl -sS -A "$ua" -o "$body_file" -w '%{http_code}' "$BASE/api/health" || true)"
+    code="$(curl -sS -A "$UA" -o "$body_file" -w '%{http_code}' "$BASE/api/health" || true)"
     body="$(cat "$body_file")"
     if [[ "$code" == 2* && "$body" == *'"ok":true'* && "$body" == *'"db":true'* ]]; then
       echo "$body"
@@ -101,7 +103,7 @@ echo
 
 post() { # $1 = admin path, $2 = json body (optional)
   echo "==> POST /api/admin/$1"
-  curl -fsS -X POST "$BASE/api/admin/$1" \
+  curl -fsS -A "$UA" -X POST "$BASE/api/admin/$1" \
     -H "authorization: Bearer $ADMIN_TOKEN" \
     -H "content-type: application/json" -d "${2:-{}}" && echo
 }

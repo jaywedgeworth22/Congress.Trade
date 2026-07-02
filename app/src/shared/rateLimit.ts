@@ -26,6 +26,20 @@ export interface RateLimitResult {
 type KvEnv = Env & { CONFIG_KV?: KVNamespace };
 
 /**
+ * Hash an identifier before it becomes part of a KV key name. `magic-email`
+ * buckets on the raw submitted address; the magic-link endpoint is public and
+ * accepts arbitrary addresses, so an unhashed key would leak victim email PII
+ * into listable KV key metadata even when no login occurs. SHA-256 truncated
+ * to 32 hex chars is plenty of collision resistance for a rate-limit bucket.
+ */
+async function hashIdentifier(identifier: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(identifier));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32);
+}
+
+/**
  * Returns ok=false when `identifier` has already made `limit` requests in the
  * current `windowSec` window for `bucket`. Counting increments only when ok.
  */
@@ -41,7 +55,7 @@ export async function rateLimit(
 
   const now = Math.floor(Date.now() / 1000);
   const windowStart = now - (now % windowSec);
-  const key = `rl:${bucket}:${identifier}:${windowStart}`;
+  const key = `rl:${bucket}:${await hashIdentifier(identifier)}:${windowStart}`;
 
   let count = 0;
   try {

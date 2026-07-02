@@ -2285,6 +2285,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       );
     }
 
+    // Only docs with a stored raw PDF actually reach runCandidateOnDoc below;
+    // filter before charging the cap so a request full of explicit docIds with
+    // no raw_object_key can't burn the whole daily quota on rows that will be
+    // skipped without calling any provider.
+    docs = docs.filter((d) => d.raw_object_key);
+
     if (docs.length === 0) {
       return c.json({ error: 'no House filings with a stored PDF were found to test' }, 404);
     }
