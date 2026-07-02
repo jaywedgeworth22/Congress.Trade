@@ -61,6 +61,15 @@ head_sampling_rate = 0.05
 mode = "smart"
 
 # ---------------------------------------------------------------------------
+# Sentry release detection
+# Exposes the deployed Worker version to the Sentry Cloudflare SDK so error
+# events are tagged with a release automatically (no manual release string to
+# keep in sync). See src/index.ts / Sentry.withSentry.
+# ---------------------------------------------------------------------------
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
+# ---------------------------------------------------------------------------
 # Cron Triggers
 # Fires every minute. The watcher decides INTERNALLY (via shouldPollNow) whether
 # to actually poll, based on poll_config schedule + last poll time. This keeps
@@ -175,6 +184,11 @@ STRIPE_PRICE_MONTHLY = "price_1TlHYBEUQUPhZj0SEzG2Qx68"
 STRIPE_PRICE_ANNUAL = "price_1TlHYCEUQUPhZj0SpNVoPb3Z"
 # Flip to "true" only after the account is approved for Managed Payments.
 STRIPE_MANAGED_PAYMENTS = "false"
+# Sentry — tags events with this environment; the Sentry Cloudflare SDK reads
+# it from env automatically. SENTRY_DSN itself is a secret (wrangler secret
+# put SENTRY_DSN), not set here. Override SENTRY_TRACES_SAMPLE_RATE (0-1) here
+# without a redeploy if the default in src/index.ts is too chatty/quiet.
+SENTRY_ENVIRONMENT = "production"
 
 # Isolated review deploys use app/wrangler.preview.toml, generated from
 # wrangler.preview.example.toml by scripts/provision-preview.sh locally or by

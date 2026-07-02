@@ -160,9 +160,20 @@ async function handleDeliveryMessage(env: Env, msg: QueueMessage): Promise<void>
 export default Sentry.withSentry(
   (env: Env) => ({
     dsn: env.SENTRY_DSN,
-    // Send traces for a sample of transactions (0 = off, 1.0 = all).
-    // Defaults to 0; set to e.g. 0.1 for 10% sampling in production.
-    tracesSampleRate: 0,
+    environment: env.SENTRY_ENVIRONMENT,
+    // Send traces for a sample of requests (0 = off, 1.0 = all). Override via
+    // the SENTRY_TRACES_SAMPLE_RATE var without a redeploy; defaults to a cheap
+    // 10% so HTTP/D1/outbound-fetch spans show up without full tracing cost.
+    tracesSampleRate: env.SENTRY_TRACES_SAMPLE_RATE ? Number(env.SENTRY_TRACES_SAMPLE_RATE) : 0.1,
+    // Structured logs (Sentry Logs product), plus forward console.warn/error as
+    // logs too — the many existing console.error(...) call sites across the
+    // codebase become searchable in Sentry for free, without touching each one.
+    enableLogs: true,
+    integrations: [Sentry.consoleLoggingIntegration({ levels: ['warn', 'error'] })],
+    // Outbound fetch also hits third-party providers (FMP, Stripe, Resend,
+    // Infisical) and arbitrary subscriber webhook URLs (delivery/webhook.ts).
+    // Only attach Sentry trace headers to our own domain.
+    tracePropagationTargets: [/^https:\/\/([\w-]+\.)?congress\.trade/],
   }),
   {
     /** HTTP entrypoint. */
@@ -173,7 +184,18 @@ export default Sentry.withSentry(
     /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow.
      *  Daily enrichment + price refresh self-gate via a KV date stamp. */
     async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-      await runWatcher(env, new Date());
+      // Sentry Crons: alerts if the per-minute watcher tick stops checking in or
+      // starts overrunning, independent of whether shouldPollNow decides to poll.
+      await Sentry.withMonitor(
+        'watcher-cron',
+        () => runWatcher(env, new Date()),
+        {
+          schedule: { type: 'crontab', value: '* * * * *' },
+          checkinMargin: 2,
+          maxRuntime: 5,
+          timezone: 'UTC',
+        },
+      );
       ctx.waitUntil(refreshSecrets(env).catch((err) => console.warn('infisical secret refresh failed:', (err as Error).message)));
       ctx.waitUntil(
         runDisclosureLatencyProbe(env).catch((err) =>
@@ -207,6 +229,9 @@ export default Sentry.withSentry(
           message.ack();
         } catch (err) {
           console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
+          // console.error above is only a breadcrumb/log; the retry swallows the
+          // throw, so without this the failure would never create a Sentry Issue.
+          Sentry.captureException(err, { tags: { queue: batch.queue } });
           // On the final attempt (about to be dead-lettered), record + alert so a
           // terminally-failed filing/webhook is never silent. Best-effort.
           // Cloudflare Queues counts the first delivery as attempts=1 and

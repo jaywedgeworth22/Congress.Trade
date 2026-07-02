@@ -148,6 +148,9 @@ ALERT_EMAIL=""
 # Sentry error monitoring (Cloudflare Workers SDK).
 # Get this from Sentry → Projects → congress-trade → Settings → Client Keys (DSN).
 SENTRY_DSN=""
+# Tags events/logs with this environment. Defaults to unset in local dev; the
+# production/preview values are already set as wrangler.toml [vars].
+SENTRY_ENVIRONMENT="development"
 
 # Billing (Stripe) — freemium paywall. Premium unlocks full history + CSV export.
 #   - STRIPE_SECRET_KEY: sk_live_… / sk_test_… (enables billing; absent => 503)
