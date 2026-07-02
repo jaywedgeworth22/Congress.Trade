@@ -69,6 +69,23 @@ function houseFilerId(first: string, last: string, stateDst: string): string | n
   return `house-${district}-${name}`;
 }
 
+/**
+ * Mint a stable synthetic filer id for a Senate PTR. The Senate feed (unlike the
+ * House index) carries no district code, so we key on the disclosed name only.
+ * Returns null when no name is available, leaving filer_id NULL rather than
+ * minting a meaningless id.
+ *
+ * Mirrors houseFilerId so insertFilingIfNew writes the `filers` row and
+ * back-fills filer_id on filings + transactions. Previously pollSenate set only
+ * filerName (never filerId), so insertFilingIfNew's `if (f.filerId && f.filerName)`
+ * guard skipped the filers row and every Senate trade surfaced with no member
+ * attribution in the feed/API/SSE/exports.
+ */
+export function senateFilerId(fullName: string | null): string | null {
+  const name = slugPart(fullName ?? '');
+  return name ? `senate-${name}` : null;
+}
+
 function splitStateDistrict(stateDst: string): { state: string | null; district: string | null } {
   const m = /^([A-Z]{2})(\d{1,2})$/i.exec((stateDst || '').trim());
   if (!m) return { state: null, district: null };
@@ -293,13 +310,17 @@ async function pollHouse(env: Env, now: Date): Promise<void> {
 async function pollSenate(env: Env, now: Date): Promise<void> {
   const nowIso = now.toISOString();
   const filings = await fetchSenatePtrFilings({ now });
-  const discovered: DiscoveredFiling[] = filings.map((f) => ({
-    docId: f.pipelineDocId,
-    chamber: 'senate',
-    sourceUrl: f.sourceUrl,
-    filedDate: f.filedDate,
-    filerName: f.fullName || [f.first, f.last].filter(Boolean).join(' ').trim() || null,
-  }));
+  const discovered: DiscoveredFiling[] = filings.map((f) => {
+    const filerName = f.fullName || [f.first, f.last].filter(Boolean).join(' ').trim() || null;
+    return {
+      docId: f.pipelineDocId,
+      chamber: 'senate' as const,
+      sourceUrl: f.sourceUrl,
+      filedDate: f.filedDate,
+      filerId: senateFilerId(filerName),
+      filerName,
+    };
+  });
   const newCount = await persistAndEnqueue(env, discovered, nowIso);
   await logPoll(env, 'senate', nowIso, newCount, nowIso);
   await setLastPollAt(env, 'senate', now);

@@ -25,6 +25,7 @@ import { fetchFiling } from './ingestion/fetcher';
 import { classifyFiling } from './ingestion/classifier';
 import { extractAndNormalize } from './extraction/orchestrator';
 import { dispatchWebhook } from './delivery/webhook';
+import { recordDeadLetter } from './delivery/deadLetter';
 import { buildRestRouter } from './delivery/rest';
 import { buildAdminRouter } from './admin/routes';
 import { buildAnalyticsRouter } from './analytics/routes';
@@ -107,6 +108,13 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
 }
 
 mountApiRouters(app);
+
+// max_retries per queue from wrangler.toml — NOT total attempts. Cloudflare
+// Queues counts the first delivery as attempts=1, then retries up to this many
+// more times, so the final attempt is max_retries + 1; that's the one we
+// record + alert on (see delivery/deadLetter.ts) instead of letting the
+// message vanish silently once it's actually dead-lettered.
+const MAX_QUEUE_ATTEMPTS = { ingest: 5, delivery: 8 } as const;
 
 // --- INGEST queue routing -----------------------------------------------------
 async function handleIngestMessage(env: Env, msg: QueueMessage): Promise<void> {
@@ -199,6 +207,21 @@ export default Sentry.withSentry(
           message.ack();
         } catch (err) {
           console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
+          // On the final attempt (about to be dead-lettered), record + alert so a
+          // terminally-failed filing/webhook is never silent. Best-effort.
+          // Cloudflare Queues counts the first delivery as attempts=1 and
+          // dead-letters after max_retries RETRIES beyond that — i.e. the last
+          // attempt is max_retries + 1, not max_retries itself.
+          const maxAttempts = isDelivery ? MAX_QUEUE_ATTEMPTS.delivery : MAX_QUEUE_ATTEMPTS.ingest;
+          if (message.attempts > maxAttempts) {
+            await recordDeadLetter(
+              env,
+              batch.queue,
+              message.body as QueueMessage,
+              message.attempts,
+              err,
+            ).catch(() => {});
+          }
           message.retry();
         }
       }

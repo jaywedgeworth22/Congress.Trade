@@ -182,7 +182,15 @@ async function deliverToSubscription(
   if (!claim) return;
 
   const deliveredAt = new Date().toISOString();
+  // Superset payload: the canonical cross-app contract fields
+  // (congress-trading-shared CongressEvent — peers key delivery on
+  // `type === 'congress.trade'` + `data.trades` + `id` for idempotency) plus the
+  // legacy `event`/`transaction` fields, so existing external subscribers keep
+  // working while contract-aware consumers (Agentic Trading) ingest it directly.
   const payload = {
+    type: 'congress.trade' as const,
+    id: `ct-tx-${tx.id}`,
+    data: { trades: [tx] },
     event: 'trade.new' as const,
     transaction: tx,
     deliveredAt,
