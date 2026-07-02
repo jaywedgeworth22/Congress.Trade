@@ -168,8 +168,11 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
       ? `orchestrator: ${extractor.name} temporarily unavailable: provider quota/rate limit. Reprocess this filing later.`
       : `orchestrator: ${extractor.name} failed: ${detail}`;
     await markError(env, docId, message);
-    if (isProviderRateLimit(err)) return null;
-    // Re-throw so the queue retries non-quota transient failures.
+    // Re-throw so the queue retries transient failures, including a rate limit
+    // that's still exhausted after visionLlm's in-request fetchWithRetry backoff
+    // (a few seconds) — the queue's own retry cadence (max_retries in
+    // wrangler.toml) covers a longer provider quota window than a single
+    // message attempt can.
     throw err;
   }
 
