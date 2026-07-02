@@ -56,6 +56,7 @@ import { constantTimeEqual } from '../auth/tokens';
 import { getCurrentUser } from '../auth/session';
 import {
   DEFAULT_CANDIDATES,
+  keyFor,
   runCandidateOnDoc,
   summarizeModels,
   type BakeoffCandidate,
@@ -1423,6 +1424,69 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       note: runtimeSecrets.ARBITRATION_API_KEY ? 'Secondary arbitration key available' : 'ARBITRATION_API_KEY is not available to this Worker runtime',
     });
 
+    // Cross-app trade delivery health: outbound push to peer apps (Agentic
+    // Trading) over webhook + SSE subscriptions. Surfaces 24h delivery outcomes
+    // and any dead-lettered messages so a silently-broken peer connection is
+    // visible to admins instead of failing unseen.
+    const deliveryStats = await optionalAll<{
+      total: number;
+      delivered: number;
+      failed: number;
+      pending: number;
+      today: number;
+      last_delivered: string | null;
+      last_failed: string | null;
+    }>(
+      c.env,
+      `SELECT COUNT(*) AS total,
+              SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) AS delivered,
+              SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed,
+              SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+              SUM(CASE WHEN updated_at >= ? THEN 1 ELSE 0 END) AS today,
+              MAX(CASE WHEN status = 'delivered' THEN updated_at END) AS last_delivered,
+              MAX(CASE WHEN status = 'failed' THEN updated_at END) AS last_failed
+         FROM deliveries
+        WHERE updated_at >= ?`,
+      [today, last24],
+    );
+    const subCounts = await optionalAll<{ active: number; webhook: number; sse: number }>(
+      c.env,
+      `SELECT COUNT(*) AS active,
+              SUM(CASE WHEN delivery = 'webhook' THEN 1 ELSE 0 END) AS webhook,
+              SUM(CASE WHEN delivery = 'sse' THEN 1 ELSE 0 END) AS sse
+         FROM subscriptions WHERE active = 1`,
+    );
+    const dlq = await optionalAll<{ n: number; last_at: string | null }>(
+      c.env,
+      `SELECT COUNT(*) AS n, MAX(created_at) AS last_at FROM dead_letter_events
+        WHERE queue LIKE '%delivery%' AND created_at >= ?`,
+      [last24],
+    );
+    const ds = deliveryStats[0] ?? { total: 0, delivered: 0, failed: 0, pending: 0, today: 0, last_delivered: null, last_failed: null };
+    const sc = subCounts[0] ?? { active: 0, webhook: 0, sse: 0 };
+    const dlqCount = dlq[0]?.n ?? 0;
+    const crossAppErrors = (ds.failed ?? 0) + dlqCount;
+    connections.push({
+      id: 'delivery:cross-app',
+      label: 'Cross-App Trade Delivery',
+      status:
+        dlqCount > 0 ? 'error'
+        : crossAppErrors > 0 ? 'warn'
+        : (sc.active ?? 0) === 0 ? 'unknown'
+        : (ds.delivered ?? 0) > 0 ? 'ok'
+        : 'unknown',
+      configured: (sc.active ?? 0) > 0,
+      lastUsedAt: maxIso(ds.last_delivered, ds.last_failed),
+      callsTotal: ds.total ?? 0,
+      callsLast24h: ds.total ?? 0,
+      callsToday: ds.today ?? 0,
+      errorsLast24h: crossAppErrors,
+      note:
+        `${sc.active ?? 0} active subscription(s) (${sc.webhook ?? 0} webhook, ${sc.sse ?? 0} SSE); ` +
+        `24h: ${ds.delivered ?? 0} delivered, ${ds.failed ?? 0} failed, ${ds.pending ?? 0} pending` +
+        (dlqCount ? `; ${dlqCount} dead-lettered (see delivery DLQ)` : ''),
+    });
+
     const fmp = await optionalAll<{
       calls_total: number;
       calls_last_24h: number;
@@ -2222,8 +2286,56 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       );
     }
 
+    // Only docs with a stored raw PDF actually reach runCandidateOnDoc below;
+    // filter before charging the cap so a request full of explicit docIds with
+    // no raw_object_key can't burn the whole daily quota on rows that will be
+    // skipped without calling any provider.
+    docs = docs.filter((d) => d.raw_object_key);
+
     if (docs.length === 0) {
       return c.json({ error: 'no House filings with a stored PDF were found to test' }, 404);
+    }
+
+    // Daily spend guardrail. A bake-off fans out (docs × candidates) external
+    // vision-model calls; an admin running n=50 with the 6-model default fires
+    // ~300 paid calls in one request with no metering. Cap the per-day total so
+    // a single request (or a busy day) can't run up an unbounded LLM bill.
+    // Approximate (KV fixed window); raise BAKEOFF_DAILY_CALL_CAP to lift it.
+    // Only candidates with a configured API key actually reach a provider
+    // (runCandidateOnDoc below short-circuits to an "API key not configured"
+    // result otherwise) — charge the cap for those only, so an environment
+    // with just one or two providers configured doesn't exhaust the daily
+    // budget on calls that were never going to happen.
+    const configuredCount = (
+      await Promise.all(candidates.map((cand) => keyFor(c.env, cand.provider)))
+    ).filter(Boolean).length;
+    const plannedCalls = docs.length * configuredCount;
+    const dailyCap =
+      Number((c.env as { BAKEOFF_DAILY_CALL_CAP?: string }).BAKEOFF_DAILY_CALL_CAP ?? '200') || 200;
+    const capDay = new Date().toISOString().slice(0, 10);
+    const capKey = `bakeoff:calls:${capDay}`;
+    let usedToday = 0;
+    try {
+      usedToday = parseInt((await c.env.CONFIG_KV.get(capKey)) || '0', 10) || 0;
+    } catch {
+      /* fail open on KV read error */
+    }
+    if (usedToday + plannedCalls > dailyCap) {
+      return c.json(
+        {
+          error: 'bake-off daily call cap reached',
+          plannedCalls,
+          usedToday,
+          dailyCap,
+          hint: 'reduce n or models, or raise BAKEOFF_DAILY_CALL_CAP',
+        },
+        429,
+      );
+    }
+    try {
+      await c.env.CONFIG_KV.put(capKey, String(usedToday + plannedCalls), { expirationTtl: 172800 });
+    } catch {
+      /* fail open on KV write error */
     }
 
     // Persist each model's reading by default (set persist:false to skip) so the
@@ -2796,6 +2908,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       // 0023_disclosure_provider_timestamps.sql — provider-side publish/upload timestamp when available.
       'ALTER TABLE disclosure_latency_candidates ADD COLUMN provider_published_at TEXT',
       'ALTER TABLE disclosure_provider_observations ADD COLUMN provider_published_at TEXT',
+      // 0024_dead_letter_events.sql — operator log for terminally-failed queue messages.
+      `CREATE TABLE IF NOT EXISTS dead_letter_events (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         queue TEXT NOT NULL,
+         msg_type TEXT,
+         doc_id TEXT,
+         tx_id TEXT,
+         attempts INTEGER,
+         error TEXT,
+         created_at TEXT NOT NULL
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

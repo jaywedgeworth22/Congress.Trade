@@ -2746,24 +2746,34 @@ function startStream() {
   try {
     es = new EventSource('/api/stream?subscription=dashboard');
     es.onopen = function () { setLivePill('live', 'Status'); };
-    es.addEventListener('trade.new', function (e) {
+    // Canonical cross-app event is congress.trade carrying { trades: [...] }
+    // (see congress-trading-shared and src/delivery/sse.ts formatTradeEvent).
+    es.addEventListener('congress.trade', function (e) {
       try {
-        var tx = JSON.parse(e.data);
-        if (!tx || !tx.id) return;
-        if (feedPage !== 0) return;
-        var row = txToRow(tx);
-        rememberTradeRow(row);
-        var today = new Date().toISOString().slice(0, 10);
-        var alreadyDoc = TRADES.some(function (r) { return r.docId && r.docId === row.docId; });
-        if ((row.imported || '').slice(0, 10) === today && row.docId && !alreadyDoc) filingsImportedToday += 1;
-        TRADES.unshift(row);
-        TRADES = TRADES.slice(0, feedPageSize);
-        if (tx.cursorSeq && tx.cursorSeq > cursor) cursor = tx.cursorSeq;
-        if (totalRows) totalRows += 1;
-        setFeedKpis();
-        renderFeed();
-        setLivePill('live', 'Updated');
-        setTimeout(function () { if (es && es.readyState === 1) setLivePill('live', 'Status'); }, 1800);
+        var payload = JSON.parse(e.data);
+        var trades = (payload && payload.trades) || [];
+        var changed = false;
+        for (var ti = 0; ti < trades.length; ti++) {
+          var tx = trades[ti];
+          if (!tx || !tx.id) continue;
+          if (tx.cursorSeq && tx.cursorSeq > cursor) cursor = tx.cursorSeq;
+          if (feedPage !== 0) continue;
+          var row = txToRow(tx);
+          rememberTradeRow(row);
+          var today = new Date().toISOString().slice(0, 10);
+          var alreadyDoc = TRADES.some(function (r) { return r.docId && r.docId === row.docId; });
+          if ((row.imported || '').slice(0, 10) === today && row.docId && !alreadyDoc) filingsImportedToday += 1;
+          TRADES.unshift(row);
+          TRADES = TRADES.slice(0, feedPageSize);
+          if (totalRows) totalRows += 1;
+          changed = true;
+        }
+        if (changed) {
+          setFeedKpis();
+          renderFeed();
+          setLivePill('live', 'Updated');
+          setTimeout(function () { if (es && es.readyState === 1) setLivePill('live', 'Status'); }, 1800);
+        }
       } catch (err) { /* ignore malformed frame */ }
     });
     es.addEventListener('reconnect', function (e) {
