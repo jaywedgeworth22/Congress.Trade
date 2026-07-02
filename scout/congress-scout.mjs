@@ -103,7 +103,14 @@ async function detectSenate() {
   }
   if (!res.ok) throw new Error(`GET /search/ HTTP ${res.status}`);
   const html = await res.text();
-  const token = (/name="csrfmiddlewaretoken"\s+value="([^"]+)"/.exec(html) || [])[1];
+  // The hidden input's name/value attribute order isn't guaranteed by eFD's
+  // template, so try both orders (mirrors app/src/ingestion/senateSource.ts
+  // parseCsrfMiddlewareToken).
+  const token = (
+    /name=["']csrfmiddlewaretoken["']\s+value=["']([^"']+)["']/i.exec(html) ||
+    /value=["']([^"']+)["']\s+name=["']csrfmiddlewaretoken["']/i.exec(html) ||
+    []
+  )[1];
   if (!token) throw new Error('csrfmiddlewaretoken not found (blocked?)');
   await fetch(`${SENATE}/search/home/`, {
     method: 'POST',
@@ -114,8 +121,13 @@ async function detectSenate() {
   const now = new Date();
   const since = new Date(now.getTime() - 45 * 864e5);
   const body = new URLSearchParams({
+    // eFD inserted an "office" display column ahead of the PTR link, shifting
+    // the submitted-date column from index 4 to 5 (see the 6-column fixture in
+    // app/src/ingestion/__tests__/senateSource.test.ts). Sorting by the old
+    // index-4 no longer orders by date, which can omit the newest filings once
+    // a 45-day window has more than `length` rows.
     draw: '1', start: '0', length: '100', 'search[value]': '', 'search[regex]': 'false',
-    'order[0][column]': '4', 'order[0][dir]': 'desc', report_types: '[11]', filer_types: '[]',
+    'order[0][column]': '5', 'order[0][dir]': 'desc', report_types: '[11]', filer_types: '[]',
     submitted_start_date: fmtSenate(since), submitted_end_date: fmtSenate(now), first_name: '', last_name: '',
   });
   const data = await fetch(`${SENATE}/search/report/data/`, {
@@ -129,15 +141,22 @@ async function detectSenate() {
   const out = [];
   for (const r of Array.isArray(rows) ? rows : []) {
     // eFD's DataTables column order shifts (it recently inserted an "office"
-    // display column, moving the anchor from index 2 to 3), so find the cell
-    // that actually contains the /search/view/ptr/ anchor rather than trusting
-    // a fixed index.
-    const anchorCell = (Array.isArray(r) ? r : []).find((c) => typeof c === 'string' && /\/search\/view\/ptr\//i.test(c));
+    // display column, moving the anchor from index 2 to 3), so find each cell
+    // by content rather than trusting a fixed index.
+    const cells = (Array.isArray(r) ? r : []).map((c) => (typeof c === 'string' ? c : ''));
+    const anchorCell = cells.find((c) => /\/search\/view\/ptr\//i.test(c));
     const href = anchorCell ? (/href=["']([^"']+)["']/i.exec(anchorCell) || [])[1] : null;
     const key = keyFromLink(href || '');
     if (!key) continue;
-    const nameCell = (Array.isArray(r) ? r : []).find((c) => typeof c === 'string' && /\(Senator\)/i.test(c) && !/</.test(c));
-    out.push({ source: 'senate', key, link: href.startsWith('http') ? href : `${SENATE}${href}`, name: stripTags(nameCell) || `${r[0]} ${r[1]}`.trim() });
+    const nameCell = cells.find((c) => /\(Senator\)/i.test(c) && !/</.test(c));
+    const filedDate = (cells.find((c) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.trim())) ?? '').trim();
+    out.push({
+      source: 'senate',
+      key,
+      link: href.startsWith('http') ? href : `${SENATE}${href}`,
+      name: stripTags(nameCell) || `${r[0]} ${r[1]}`.trim(),
+      filedDate: filedDate || undefined,
+    });
   }
   return out;
 }
@@ -162,7 +181,12 @@ async function detectHouseLiveSearch() {
   while ((m = re.exec(html))) {
     if (seen.has(m[3])) continue;
     seen.add(m[3]);
-    out.push({ source: 'house', key: `H-${m[2]}-${m[3]}`, link: m[1].startsWith('http') ? m[1] : `https://disclosures-clerk.house.gov${m[1]}` });
+    // Rebuild the absolute URL from the captured year/docId via the known-good
+    // HOUSE_PDF base instead of the raw matched href: the live-search markup
+    // sometimes omits the leading slash (e.g. href="public_disc/ptr-pdfs/...")
+    // which naive prefixing turns into an unusable
+    // ".../house.govpublic_disc/..." URL.
+    out.push({ source: 'house', key: `H-${m[2]}-${m[3]}`, link: `${HOUSE_PDF}/${m[2]}/${m[3]}.pdf` });
   }
   return out;
 }
@@ -189,8 +213,13 @@ async function pollFmp() {
     const url = `https://financialmodelingprep.com/stable/${ch}-latest?page=0&limit=100&apikey=${encodeURIComponent(FMP_KEY)}`;
     const r = await fetch(url, { headers: { accept: 'application/json' } });
     if (!r.ok) throw new Error(`${ch}-latest HTTP ${r.status}`);
-    for (const row of (await r.json()) || []) {
-      const key = keyFromLink(row.link || '');
+    const json = await r.json();
+    // FMP sometimes wraps the array as {data: [...]} and Senate rows can carry
+    // the source link under `url` instead of `link` (see the repo's own FMP
+    // parser + fixtures: app/src/ingestion/__tests__/fmpDisclosureLatency.test.ts).
+    const rows = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
+    for (const row of rows) {
+      const key = keyFromLink(row?.link || row?.url || '');
       if (key) out.push({ key });
     }
   }
@@ -198,26 +227,68 @@ async function pollFmp() {
 }
 
 // --- optional: push detections to the Cloudflare app ------------------------
+// Returns true on success (or when CT_INGEST_URL isn't configured, i.e.
+// nothing to retry) and false on failure so the caller can retry on a later
+// cycle instead of silently dropping the detection forever.
 async function maybePost(d, ts) {
-  if (!CT_INGEST_URL) return;
+  if (!CT_INGEST_URL) return true;
   try {
-    await fetch(CT_INGEST_URL, {
+    const res = await fetch(CT_INGEST_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(CT_INGEST_TOKEN ? { authorization: `Bearer ${CT_INGEST_TOKEN}` } : {}) },
-      body: JSON.stringify({ source: d.source, docKey: d.key, link: d.link, detectedAt: ts }),
+      body: JSON.stringify({
+        source: d.source,
+        docKey: d.key,
+        link: d.link,
+        detectedAt: ts,
+        filerName: d.name || undefined,
+        filedDate: d.filedDate || undefined,
+      }),
     });
-  } catch (e) { warn('ct-post', e); }
+    if (!res.ok) {
+      warn('ct-post', new Error(`HTTP ${res.status}`));
+      return false;
+    }
+    return true;
+  } catch (e) {
+    warn('ct-post', e);
+    return false;
+  }
 }
 
 // --- state ------------------------------------------------------------------
 function loadState() {
-  if (existsSync(STATE_FILE)) { try { return JSON.parse(readFileSync(STATE_FILE, 'utf8')); } catch { /* reset */ } }
-  return { startedAt: nowIso(), ourSeen: {}, fmpSeen: {}, leadsLogged: {}, houseMaxDocId: 0 };
+  const fresh = { startedAt: nowIso(), baselineEstablishedAt: null, ourSeen: {}, posted: {}, fmpSeen: {}, leadsLogged: {}, houseMaxDocId: 0 };
+  if (existsSync(STATE_FILE)) {
+    try {
+      // Merge onto `fresh` so a state file saved before these fields existed
+      // (baselineEstablishedAt, posted) doesn't crash on the new code paths.
+      return { ...fresh, ...JSON.parse(readFileSync(STATE_FILE, 'utf8')) };
+    } catch { /* reset */ }
+  }
+  return fresh;
 }
 const saveState = (s) => writeFileSync(STATE_FILE, JSON.stringify(s, null, 2));
 
 // --- one cycle --------------------------------------------------------------
 async function cycle(state) {
+  // The very first cycle (per persisted state, so a launchctl/process restart
+  // does NOT re-trigger this) is a startup snapshot of whatever's already
+  // public, not a real detection race — those entries would otherwise get
+  // posted to the app and scored as us "winning" a race that never happened.
+  const isBaselineCycle = !state.baselineEstablishedAt;
+
+  // Poll FMP BEFORE running our own detection. Both happen within the same
+  // cycle a few hundred ms apart; detecting first would always stamp
+  // `ourSeen` ahead of `fmpSeen` for anything FMP already had by this cycle,
+  // silently inflating our measured lead. Polling FMP first errs the other way
+  // (conservative), which is the correct bias for an experiment measuring
+  // whether we're actually ahead.
+  if (FMP_KEY) {
+    try { for (const f of await pollFmp()) if (!state.fmpSeen[f.key]) state.fmpSeen[f.key] = { at: nowIso() }; }
+    catch (e) { warn('fmp', e); }
+  }
+
   const detections = [];
   if (SOURCES.has('house')) {
     try { detections.push(...(await detectHouseLiveSearch())); } catch (e) { warn('house-live', e); }
@@ -229,18 +300,25 @@ async function cycle(state) {
     if (d.key.startsWith('H-')) { const n = Number(d.key.split('-').pop()); if (n > state.houseMaxDocId) state.houseMaxDocId = n; }
     if (!state.ourSeen[d.key]) {
       const at = nowIso();
-      state.ourSeen[d.key] = { at, source: d.source, link: d.link, name: d.name || null };
+      state.ourSeen[d.key] = { at, source: d.source, link: d.link, name: d.name || null, filedDate: d.filedDate || null };
       log('DETECT', d.source.padEnd(6), d.key, d.name || '');
-      maybePost(d, at);
     }
   }
 
-  if (FMP_KEY) {
-    try { for (const f of await pollFmp()) if (!state.fmpSeen[f.key]) state.fmpSeen[f.key] = { at: nowIso() }; }
-    catch (e) { warn('fmp', e); }
+  // Post (or retry a previously-failed post for) every detection, skipping the
+  // baseline cycle entirely so pre-existing filings never reach the app as
+  // "just detected". `state.posted` only flips to true on a successful POST,
+  // so a detection whose post failed (bad token, app down, ...) keeps
+  // retrying on later cycles instead of vanishing once the config is fixed.
+  if (!isBaselineCycle) {
+    for (const [key, entry] of Object.entries(state.ourSeen)) {
+      if (state.posted[key]) continue;
+      const ok = await maybePost({ source: entry.source, key, link: entry.link, name: entry.name, filedDate: entry.filedDate }, entry.at);
+      if (ok) state.posted[key] = true;
+    }
   }
 
-  const startMs = Date.parse(state.startedAt) + 5000;
+  const startMs = state.baselineEstablishedAt ? Date.parse(state.baselineEstablishedAt) : Date.parse(state.startedAt);
   for (const key of Object.keys(state.ourSeen)) {
     if (state.leadsLogged[key]) continue;
     const our = state.ourSeen[key];
@@ -252,6 +330,10 @@ async function cycle(state) {
     appendFileSync(LEADS_FILE, JSON.stringify(rec) + '\n');
     state.leadsLogged[key] = true;
     log('LEAD  ', `${leadSec >= 0 ? '+' : ''}${leadSec}s`, live ? '(live race)' : '(baseline)', key, our.name || '');
+  }
+  if (isBaselineCycle) {
+    state.baselineEstablishedAt = nowIso();
+    log(`baseline established: ${Object.keys(state.ourSeen).length} pre-existing filing(s) will not be posted or scored as races`);
   }
   saveState(state);
   summarize(state);
