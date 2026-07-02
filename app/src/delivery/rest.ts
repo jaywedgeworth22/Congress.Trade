@@ -47,6 +47,7 @@ import { handleTickerLogoRequest } from '../ui/tickerLogos';
 import { resolveSecret } from '../secrets/infisical';
 import { constantTimeEqual } from '../auth/tokens';
 import { localWebhookTargetsAllowed, validateWebhookTargetUrl } from './webhookTarget';
+import { rateLimit, clientIp } from '../shared/rateLimit';
 
 function parseIntOrUndef(v: string | undefined): number | undefined {
   if (v === undefined || v === '') return undefined;
@@ -263,6 +264,14 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   r.get('/export/transactions.csv', async (c) => {
     if (!isPremiumUser(await getCurrentUser(c))) {
       return c.json({ error: 'CSV export requires Premium', upgradeRequired: true, feature: 'exportCsv' }, 402);
+    }
+    // Even for premium users, a full-history CSV is a heavy D1 scan; cap per IP
+    // so it can't be scripted into unbounded read/CPU cost. Fails open if KV down.
+    const exRl = await rateLimit(c.env, 'export-ip', clientIp(c.req.raw), 30, 600);
+    if (!exRl.ok) {
+      return c.json({ error: 'too many export requests' }, 429, {
+        'Retry-After': String(exRl.retryAfterSec),
+      });
     }
     const built = buildTransactionsExportQuery(filtersFromQuery(c.req.query()));
     const rows = await all<
@@ -605,6 +614,15 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
 
   // --- POST /subscriptions ------------------------------------------------
   r.post('/subscriptions', async (c) => {
+    // This endpoint is unauthenticated and registers webhook targets backed by
+    // our egress; cap creation per IP so it can't be scripted into an abuse
+    // amplifier. Fails open if KV is unavailable.
+    const subRl = await rateLimit(c.env, 'sub-create-ip', clientIp(c.req.raw), 20, 3600);
+    if (!subRl.ok) {
+      return c.json({ error: 'too many subscription requests' }, 429, {
+        'Retry-After': String(subRl.retryAfterSec),
+      });
+    }
     let body: Record<string, unknown>;
     try {
       body = (await c.req.json()) as Record<string, unknown>;

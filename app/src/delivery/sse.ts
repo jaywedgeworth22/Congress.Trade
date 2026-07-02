@@ -56,6 +56,20 @@ const MAX_STREAM_MS = 25 * 60 * 1_000;
 const PAGE_SIZE = 200;
 
 /**
+ * Format one live trade as an SSE frame on the shared cross-app contract.
+ *
+ * The canonical event type is `congress.trade` carrying a `{ trades: [...] }`
+ * envelope — this is what `@jaywedgeworth22/congress-trading-shared`
+ * (`CONGRESS_EVENT_TYPES`) defines and what Agentic Trading's stream consumer
+ * keys delivery on. The stream previously emitted `event: trade.new` with a bare
+ * transaction object, which the peer app silently dropped (every streamed trade
+ * lost). The `id:` line still carries `cursorSeq` for Last-Event-ID resume.
+ */
+export function formatTradeEvent(tx: Transaction): string {
+  return `id: ${tx.cursorSeq}\nevent: congress.trade\ndata: ${JSON.stringify({ trades: [tx] })}\n\n`;
+}
+
+/**
  * Open an SSE stream for a subscription, replaying from `since` then live.
  * Returns a `text/event-stream` Response. If the subscription is missing or not
  * an SSE subscription, returns a 404/409 JSON error instead.
@@ -238,7 +252,7 @@ async function drain(
       };
       hwm = Math.max(hwm, tx.cursorSeq);
       if (!matchesFiltersWithContext(tx, sub.filters, ctx)) continue;
-      send(`id: ${tx.cursorSeq}\nevent: trade.new\ndata: ${JSON.stringify(tx)}\n\n`);
+      send(formatTradeEvent(tx));
     }
 
     if (rows.length < PAGE_SIZE) break;
