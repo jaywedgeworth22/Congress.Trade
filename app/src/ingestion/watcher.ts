@@ -22,7 +22,7 @@ import {
 } from '../shared/config';
 import { fetchHouseIndex, pollHouseLiveSearch } from './houseSource';
 import { fetchSenatePtrFilings } from './senateSource';
-import { recordDisclosureLatencyCandidate } from './fmpDisclosureLatency';
+import { recordDisclosureLatencyCandidate, storageMissing } from './fmpDisclosureLatency';
 
 /** Env shape (read defensively — Env is the frozen foundation contract). */
 type EnvWithFlags = Env & { HOUSE_LIVE_SEARCH_ENABLED?: string };
@@ -138,12 +138,19 @@ export async function insertFilingIfNew(
     // duplicate discovery that finally supplies a filed_date (e.g. the bulk ZIP
     // confirming a live-search-only doc) would otherwise leave
     // disclosure_latency_candidates.filed_date permanently NULL, breaking the
-    // FMP matcher's filer/date fallback for that filing.
-    await run(
-      env.DB,
-      'UPDATE disclosure_latency_candidates SET filed_date = COALESCE(filed_date, ?) WHERE doc_id = ?',
-      [filedDate, f.docId],
-    );
+    // FMP matcher's filer/date fallback for that filing. disclosure_latency_candidates
+    // is an optional table (migration 0021); swallow a missing-table error the
+    // same way recordDisclosureLatencyCandidate does rather than aborting the
+    // whole discovery on a deployment where it hasn't been applied yet.
+    try {
+      await run(
+        env.DB,
+        'UPDATE disclosure_latency_candidates SET filed_date = COALESCE(filed_date, ?) WHERE doc_id = ?',
+        [filedDate, f.docId],
+      );
+    } catch (err) {
+      if (!storageMissing(err)) throw err;
+    }
   }
   if (f.filerId) {
     await run(env.DB, 'UPDATE filings SET filer_id = COALESCE(filer_id, ?) WHERE doc_id = ?', [
