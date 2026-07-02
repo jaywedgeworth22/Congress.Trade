@@ -22,7 +22,7 @@ import {
 } from '../shared/config';
 import { fetchHouseIndex, pollHouseLiveSearch } from './houseSource';
 import { fetchSenatePtrFilings } from './senateSource';
-import { recordDisclosureLatencyCandidate } from './fmpDisclosureLatency';
+import { recordDisclosureLatencyCandidate, storageMissing } from './fmpDisclosureLatency';
 
 /** Env shape (read defensively — Env is the frozen foundation contract). */
 type EnvWithFlags = Env & { HOUSE_LIVE_SEARCH_ENABLED?: string };
@@ -112,6 +112,7 @@ export async function insertFilingIfNew(
       [f.filerId, f.chamber, f.filerName, f.state ?? null, f.district ?? null],
     );
   }
+  const filedDate = normalizeFilingDate(f.filedDate);
   const res = await run(
     env.DB,
     `INSERT OR IGNORE INTO filings
@@ -120,8 +121,37 @@ export async function insertFilingIfNew(
         confidence, first_seen_at, source_updated_at, error)
      VALUES (?, ?, ?, 'P', ?, ?, NULL, 'new', 'unknown', NULL, NULL,
              NULL, ?, NULL, NULL)`,
-    [f.docId, f.chamber, f.filerId ?? null, normalizeFilingDate(f.filedDate), f.sourceUrl, nowIso],
+    [f.docId, f.chamber, f.filerId ?? null, filedDate, f.sourceUrl, nowIso],
   );
+  // Backfill filed_date when a later, richer discovery of the same doc supplies
+  // one. A House PTR first seen via the intraday live search carries no
+  // FilingDate (the live-search HTML omits it -> filed_date NULL); the daily bulk
+  // ZIP later surfaces the same doc WITH a date, so COALESCE it in then instead
+  // of leaving the row permanently dateless.
+  if (filedDate) {
+    await run(env.DB, 'UPDATE filings SET filed_date = COALESCE(filed_date, ?) WHERE doc_id = ?', [
+      filedDate,
+      f.docId,
+    ]);
+    // Same backfill on the latency candidate row: recordDisclosureLatencyCandidate
+    // only runs for genuinely-new discoveries (see persistAndEnqueue), so a
+    // duplicate discovery that finally supplies a filed_date (e.g. the bulk ZIP
+    // confirming a live-search-only doc) would otherwise leave
+    // disclosure_latency_candidates.filed_date permanently NULL, breaking the
+    // FMP matcher's filer/date fallback for that filing. disclosure_latency_candidates
+    // is an optional table (migration 0021); swallow a missing-table error the
+    // same way recordDisclosureLatencyCandidate does rather than aborting the
+    // whole discovery on a deployment where it hasn't been applied yet.
+    try {
+      await run(
+        env.DB,
+        'UPDATE disclosure_latency_candidates SET filed_date = COALESCE(filed_date, ?) WHERE doc_id = ?',
+        [filedDate, f.docId],
+      );
+    } catch (err) {
+      if (!storageMissing(err)) throw err;
+    }
+  }
   if (f.filerId) {
     await run(env.DB, 'UPDATE filings SET filer_id = COALESCE(filer_id, ?) WHERE doc_id = ?', [
       f.filerId,
