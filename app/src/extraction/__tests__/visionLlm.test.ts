@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { VisionLlmExtractor } from '../visionLlm';
+import { VisionLlmExtractor, fetchWithRetry } from '../visionLlm';
 import type { Env, Filing } from '../../shared/types';
 
 const filing = (): Filing => ({
@@ -103,5 +103,43 @@ describe('VisionLlmExtractor', () => {
     );
     const ex = new VisionLlmExtractor(env);
     await expect(ex.extract({ filing: filing(), bytes })).rejects.toThrow(/503/);
+  });
+});
+
+describe('fetchWithRetry', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('retries a 429 then returns the success (no real delay)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await fetchWithRetry('https://x', { method: 'POST' }, 'test', {
+      sleep: async () => {},
+      jitter: () => 0,
+    });
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up after maxAttempts on a persistent 429', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 429 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await fetchWithRetry('https://x', {}, 'test', {
+      maxAttempts: 3,
+      sleep: async () => {},
+      jitter: () => 0,
+    });
+    expect(res.status).toBe(429);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry a non-429 status', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('bad', { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await fetchWithRetry('https://x', {}, 'test', { sleep: async () => {} });
+    expect(res.status).toBe(500);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

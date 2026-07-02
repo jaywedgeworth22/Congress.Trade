@@ -230,7 +230,8 @@ function limit(env: EnvWithWatch): number {
   return Number.isFinite(n) && n > 0 ? Math.min(n, 500) : DEFAULT_LIMIT;
 }
 
-function storageMissing(err: unknown): boolean {
+/** True when `err` reflects an optional table/column that hasn't been migrated yet. */
+export function storageMissing(err: unknown): boolean {
   return /no such table|no column named|no such column/i.test(err instanceof Error ? err.message : String(err));
 }
 

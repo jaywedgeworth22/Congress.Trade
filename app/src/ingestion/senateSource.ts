@@ -145,24 +145,37 @@ function stripTags(s: string): string {
 
 /**
  * Map a DataTables `data` array (rows of string columns) into SenateFiling[].
- * Each row: [first, last, nameLinkHtml, filingTypeLabel, filedDate].
+ *
+ * eFD's column order is NOT stable: it inserted an "office" display column, which
+ * shifted the report anchor from index 2 to index 3 (and the type/date columns
+ * with it). Hardcoding index 2 (as this did) silently parsed ZERO rows once that
+ * change shipped — the likely cause of "0 Senate filings ever." So we now locate
+ * each field by CONTENT, not position: the anchor is whichever cell contains a
+ * /search/view/{ptr,paper}/ link, the filed date is the MM/DD/YYYY cell, etc.
  * Rows whose link can't be parsed are skipped.
  */
 export function parseSenateRows(rows: string[][]): SenateFiling[] {
   const out: SenateFiling[] = [];
   for (const row of rows) {
-    if (!Array.isArray(row) || row.length < 5) continue;
-    const [first, last, link, filingTypeLabel, filedDate] = row;
-    const parsed = parseReportLink(link ?? '');
+    if (!Array.isArray(row)) continue;
+    const cells = row.map((c) => (typeof c === 'string' ? c : ''));
+    const linkCell = cells.find((c) => /\/search\/view\/(?:ptr|paper)\//i.test(c)) ?? '';
+    const parsed = parseReportLink(linkCell);
     if (!parsed) continue;
-    const fullName = stripTags(link ?? '') || `${(first ?? '').trim()} ${(last ?? '').trim()}`.trim();
+    const first = (cells[0] ?? '').trim();
+    const last = (cells[1] ?? '').trim();
+    const anchorName = stripTags(linkCell);
+    const nameCell = cells.find((c) => /\(Senator\)/i.test(c) && !/</.test(c)) ?? '';
+    const fullName = (anchorName || nameCell || `${first} ${last}`).trim();
+    const filedDate = (cells.find((c) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.trim())) ?? '').trim();
+    const filingTypeLabel = (cells.find((c) => /report/i.test(c) && !/</.test(c)) ?? '').trim();
     out.push({
       reportId: parsed.reportId,
-      first: (first ?? '').trim(),
-      last: (last ?? '').trim(),
+      first,
+      last,
       fullName,
-      filingTypeLabel: (filingTypeLabel ?? '').trim(),
-      filedDate: (filedDate ?? '').trim(),
+      filingTypeLabel,
+      filedDate,
       reportPath: parsed.reportPath,
       sourceUrl: parsed.reportPath.startsWith('http')
         ? parsed.reportPath
