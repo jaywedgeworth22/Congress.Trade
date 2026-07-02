@@ -133,6 +133,17 @@ export async function insertFilingIfNew(
       filedDate,
       f.docId,
     ]);
+    // Same backfill on the latency candidate row: recordDisclosureLatencyCandidate
+    // only runs for genuinely-new discoveries (see persistAndEnqueue), so a
+    // duplicate discovery that finally supplies a filed_date (e.g. the bulk ZIP
+    // confirming a live-search-only doc) would otherwise leave
+    // disclosure_latency_candidates.filed_date permanently NULL, breaking the
+    // FMP matcher's filer/date fallback for that filing.
+    await run(
+      env.DB,
+      'UPDATE disclosure_latency_candidates SET filed_date = COALESCE(filed_date, ?) WHERE doc_id = ?',
+      [filedDate, f.docId],
+    );
   }
   if (f.filerId) {
     await run(env.DB, 'UPDATE filings SET filer_id = COALESCE(filer_id, ?) WHERE doc_id = ?', [
