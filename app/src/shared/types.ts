@@ -480,6 +480,12 @@ export interface Env {
   WEBHOOK_SIGNING_KEY?: string;
   /** Sentry DSN for error monitoring (Cloudflare Workers SDK). */
   SENTRY_DSN?: string;
+  /** Sentry event/log environment tag, e.g. "production" | "preview". */
+  SENTRY_ENVIRONMENT?: string;
+  /** Uniform trace sampling rate (0-1) for the Sentry Cloudflare SDK; overrides the code default. */
+  SENTRY_TRACES_SAMPLE_RATE?: string;
+  /** Cloudflare Workers version metadata binding; used by Sentry to auto-tag the release. */
+  CF_VERSION_METADATA?: { id: string; tag: string; timestamp?: string };
 
   // --- End-user auth (public-site sign-in) ---
   /** Google OAuth client credentials for "Sign in with Google". */

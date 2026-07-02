@@ -45,7 +45,13 @@ dead_letter_queue = "congress-feed-preview-delivery-dlq"
 binding = "CONFIG_KV"
 id = "PREVIEW_KV_NAMESPACE_ID"
 
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
 [vars]
 APP_BASE_URL = "https://congress-trade-preview.<your-workers-subdomain>.workers.dev"
 STRIPE_MANAGED_PAYMENTS = "false"
 PREVIEW_DEPLOYMENT = "true"
+# Same SENTRY_DSN secret as production is fine to reuse; this tag keeps preview
+# noise separate from production issues/alerts in the Sentry UI.
+SENTRY_ENVIRONMENT = "preview"
