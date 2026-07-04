@@ -94,10 +94,9 @@ Set `CT_INGEST_URL` (+ token) to POST `{source, docKey, link, detectedAt}` to a
 Worker endpoint so detections + the measured lead land in the app's admin. Until
 that endpoint exists, the scout is fully self-contained.
 
-## Note found while building this
+## Note found while building this (RESOLVED)
 
 eFD's DataTables response inserted an "office" column, shifting the `/ptr/…`
 anchor from index 2 to 3. The scout finds the anchor by content (robust to that);
-**the app's `src/ingestion/senateSource.ts parseSenateRows` still hardcodes index
-2**, so it parses 0 Senate rows — a likely (and Worker-fixable) cause of the
-Senate-zero problem, independent of egress.
+**the app's `src/ingestion/senateSource.ts parseSenateRows` was fixed to locate
+fields by content instead of hardcoded indexes**, resolving the Senate-zero problem.
