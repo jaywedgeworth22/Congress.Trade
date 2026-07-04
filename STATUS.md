@@ -1,9 +1,42 @@
 # Current Handoff
 
-Last updated: 2026-06-30
+Last updated: 2026-07-04
 
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
+
+## 2026-07-04 — Tokenless git dependency for congress-trading-shared (Claude)
+
+Owner-directed: `congress-trading-shared` (this repo's App B/App A shared
+contract package) was made **public**, so `app/package.json`'s dependency spec
+switched from the private GitHub Packages registry (`^1.2.0` against
+`npm.pkg.github.com`, requiring `NODE_AUTH_TOKEN`/`GH_PACKAGES_TOKEN` in every
+CI job) to a **tokenless git dependency**:
+`github:jaywedgeworth22/congress-trading-shared#semver:^1.2.x`. That range
+resolves against the shared repo's new `v1.2.0` tag (first tag in that repo).
+
+- Removed `app/.npmrc` (only had the now-unneeded scoped-registry line).
+- Removed the "Configure GitHub Packages" step (`NODE_AUTH_TOKEN` +
+  `npm.pkg.github.com` `.npmrc` write + stale `npm view ...@1.0.0` sanity
+  check) from `.github/workflows/ci.yml`, `deploy.yml`, `deploy-staging.yml`;
+  dropped the now-unused `packages: read` permission from each.
+- `.github/workflows/shared-package-pin-check.yml` still needs
+  `GH_PACKAGES_TOKEN`, but only to read the peer app repo's `package.json` via
+  the GitHub API (that repo is still private) — unrelated to npm registry
+  auth. Updated its version-comparison logic to also handle a
+  `github:...#<ref>` git-dep spec (extract the ref after `#`) instead of only
+  bare semver ranges.
+- Regenerated `app/package-lock.json` with a clean, fully tokenless
+  `npm install` (no `NODE_AUTH_TOKEN`/`GITHUB_TOKEN`/`GH_TOKEN` set). Verified
+  `npm ci` also succeeds with `GIT_SSH_COMMAND=false` (forces SSH to fail) —
+  npm falls back to anonymous HTTPS for this public repo, so no SSH key is
+  needed in CI.
+- Verify: `npm run typecheck` clean; `npm test` — 77 files / 669 tests passed.
+
+See `/Users/jay/apps/CONGRESS-TRADE-EFFORT-LOG.md` for the cross-repo effort
+entry (this repo has no `docs/EFFORT-LOG.md` mirror / rollout-notes
+convention today — `AGENTS.md` doesn't mandate one — so this STATUS.md entry
+is the paper trail).
 
 ## Active Integration
 
