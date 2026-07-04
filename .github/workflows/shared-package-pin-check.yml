@@ -57,19 +57,17 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Both consumers now pin this package as a tokenless git dependency (github:.../congress-trading-shared#<ref>),
-          # not a registry semver range, since the shared repo went public (2026-07-04). Compare git-dep specs by
-          # extracting the ref after '#' (works for '#semver:^1.2.x' and an exact '#vX.Y.Z' tag alike); fall back to
+          # Both consumers now pin this package as a tokenless git dependency. Compare git-dep specs by
+          # extracting the ref after '#', then normalize refs like v1.2.0 and semver:^1.2.x; fall back to
           # stripping a leading range operator for any spec that is still a bare registry version.
           norm() {
+            local spec="$1"
             case "$1" in
               github:*|git+*|*"#"*)
-                printf '%s' "$1" | sed -E 's/^.*#//'
-                ;;
-              *)
-                printf '%s' "$1" | sed -E 's/^[[:space:]]*[~^><=]+//; s/[[:space:]]//g'
+                spec=$(printf '%s' "$spec" | sed -E 's/^.*#//')
                 ;;
             esac
+            printf '%s' "$spec" | sed -E 's/^semver://; s/^[[:space:]]*[~^><=]+//; s/^v//; s/[[:space:]]//g'
           }
 
           LOCAL_SPEC=$(node -p "require('./${LOCAL_PACKAGE_JSON_PATH}').dependencies['${PKG}'] ?? ''")
