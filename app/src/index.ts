@@ -25,6 +25,7 @@ import { fetchFiling } from './ingestion/fetcher';
 import { classifyFiling } from './ingestion/classifier';
 import { extractAndNormalize } from './extraction/orchestrator';
 import { dispatchWebhook } from './delivery/webhook';
+import { recordDeadLetter } from './delivery/deadLetter';
 import { buildRestRouter } from './delivery/rest';
 import { buildAdminRouter } from './admin/routes';
 import { buildAnalyticsRouter } from './analytics/routes';
@@ -37,6 +38,7 @@ import { maybeRunDailyJobs } from './jobs';
 import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement';
 import { refreshSecrets } from './secrets/infisical';
 import { runDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency';
+import { buildDetectionRouter } from './ingestion/detectionRoutes';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -76,6 +78,12 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
   } catch (err) {
     console.warn('export/routes router not mounted:', (err as Error).message);
   }
+  try {
+    // Residential detection scout push (INGEST_TOKEN) -> disclosure-latency race.
+    root.route('/api/ingest', buildDetectionRouter());
+  } catch (err) {
+    console.warn('ingestion/detectionRoutes router not mounted:', (err as Error).message);
+  }
   // End-user auth (Google OAuth + magic-link) at /auth/*. Mounted before the UI
   // catch-all so its routes are not shadowed by the dashboard.
   try {
@@ -100,6 +108,13 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
 }
 
 mountApiRouters(app);
+
+// max_retries per queue from wrangler.toml — NOT total attempts. Cloudflare
+// Queues counts the first delivery as attempts=1, then retries up to this many
+// more times, so the final attempt is max_retries + 1; that's the one we
+// record + alert on (see delivery/deadLetter.ts) instead of letting the
+// message vanish silently once it's actually dead-lettered.
+const MAX_QUEUE_ATTEMPTS = { ingest: 5, delivery: 8 } as const;
 
 // --- INGEST queue routing -----------------------------------------------------
 async function handleIngestMessage(env: Env, msg: QueueMessage): Promise<void> {
@@ -145,8 +160,20 @@ async function handleDeliveryMessage(env: Env, msg: QueueMessage): Promise<void>
 export default Sentry.withSentry(
   (env: Env) => ({
     dsn: env.SENTRY_DSN,
-    // Performance monitoring: sample 10% of HTTP transactions for traces.
-    tracesSampleRate: 0.1,
+    environment: env.SENTRY_ENVIRONMENT,
+    // Send traces for a sample of requests (0 = off, 1.0 = all). Override via
+    // the SENTRY_TRACES_SAMPLE_RATE var without a redeploy; defaults to a cheap
+    // 10% so HTTP/D1/outbound-fetch spans show up without full tracing cost.
+    tracesSampleRate: env.SENTRY_TRACES_SAMPLE_RATE ? Number(env.SENTRY_TRACES_SAMPLE_RATE) : 0.1,
+    // Structured logs (Sentry Logs product), plus forward console.warn/error as
+    // logs too — the many existing console.error(...) call sites across the
+    // codebase become searchable in Sentry for free, without touching each one.
+    enableLogs: true,
+    integrations: [Sentry.consoleLoggingIntegration({ levels: ['warn', 'error'] })],
+    // Outbound fetch also hits third-party providers (FMP, Stripe, Resend,
+    // Infisical) and arbitrary subscriber webhook URLs (delivery/webhook.ts).
+    // Only attach Sentry trace headers to our own domain.
+    tracePropagationTargets: [/^https:\/\/([\w-]+\.)?congress\.trade/],
   }),
   {
     /** HTTP entrypoint. */
@@ -157,30 +184,41 @@ export default Sentry.withSentry(
     /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow.
      *  Daily enrichment + price refresh self-gate via a KV date stamp. */
     async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-      await Sentry.withMonitor('cron.watcher', () => runWatcher(env, new Date()));
+      // Sentry Crons: alerts if the per-minute watcher tick stops checking in or
+      // starts overrunning, independent of whether shouldPollNow decides to poll.
+      await Sentry.withMonitor(
+        'watcher-cron',
+        () => runWatcher(env, new Date()),
+        {
+          schedule: { type: 'crontab', value: '* * * * *' },
+          checkinMargin: 2,
+          maxRuntime: 5,
+          timezone: 'UTC',
+        },
+      );
       ctx.waitUntil(
-        Sentry.withMonitor('cron.secrets-refresh', () =>
+        Sentry.withMonitor('secrets-refresh-cron', () =>
           refreshSecrets(env),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'secrets-refresh' } }),
         ),
       );
       ctx.waitUntil(
-        Sentry.withMonitor('cron.disclosure-latency', () =>
+        Sentry.withMonitor('disclosure-latency-cron', () =>
           runDisclosureLatencyProbe(env),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'disclosure-latency' } }),
         ),
       );
       ctx.waitUntil(
-        Sentry.withMonitor('cron.daily-jobs', () =>
+        Sentry.withMonitor('daily-jobs-cron', () =>
           maybeRunDailyJobs(env),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'daily-jobs' } }),
         ),
       );
       ctx.waitUntil(
-        Sentry.withMonitor('cron.agreement-autopublish', () =>
+        Sentry.withMonitor('agreement-autopublish-cron', () =>
           maybeRunAgreementAutopublish(env),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'agreement-autopublish' } }),
@@ -208,12 +246,25 @@ export default Sentry.withSentry(
           }
           message.ack();
         } catch (err) {
-          Sentry.captureException(err as Error, {
-            tags: {
-              queue: isDelivery ? 'delivery' : 'ingest',
-              messageType: (message.body as QueueMessage).type ?? 'unknown',
-            },
-          });
+          console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
+          // console.error above is only a breadcrumb/log; the retry swallows the
+          // throw, so without this the failure would never create a Sentry Issue.
+          Sentry.captureException(err as Error, { tags: { queue: batch.queue, messageType: (message.body as QueueMessage).type ?? 'unknown' } });
+          // On the final attempt (about to be dead-lettered), record + alert so a
+          // terminally-failed filing/webhook is never silent. Best-effort.
+          // Cloudflare Queues counts the first delivery as attempts=1 and
+          // dead-letters after max_retries RETRIES beyond that — i.e. the last
+          // attempt is max_retries + 1, not max_retries itself.
+          const maxAttempts = isDelivery ? MAX_QUEUE_ATTEMPTS.delivery : MAX_QUEUE_ATTEMPTS.ingest;
+          if (message.attempts > maxAttempts) {
+            await recordDeadLetter(
+              env,
+              batch.queue,
+              message.body as QueueMessage,
+              message.attempts,
+              err,
+            ).catch(() => {});
+          }
           message.retry();
         }
       }

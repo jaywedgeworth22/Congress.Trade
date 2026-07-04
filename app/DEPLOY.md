@@ -92,6 +92,35 @@ Admin auth fails closed by default. Set `ADMIN_TOKEN` or configure Cloudflare
 Access (`ADMIN_EMAILS`, `ACCESS_AUD`, `ACCESS_TEAM_DOMAIN`). Only local
 development should use `ADMIN_OPEN_IN_DEV="true"`.
 
+## 3a. Sentry error monitoring
+The Worker is instrumented with `@sentry/cloudflare` (`Sentry.withSentry` in
+`src/index.ts`) — errors from `fetch`, the per-minute `scheduled` cron, and both
+queue consumers are captured automatically, plus D1 query spans, outbound-fetch
+spans, and a Sentry Crons check-in per cron tick. It's fully wired but inert
+until a DSN is set:
+
+```bash
+npx wrangler secret put SENTRY_DSN
+```
+
+Get the DSN from Sentry → Projects → congress-trade → Settings → Client Keys.
+`SENTRY_ENVIRONMENT` is already set in `wrangler.toml` / `wrangler.preview.example.toml`
+(`production` / `preview`); local dev reads it from `.dev.vars`.
+
+Two optional steps require an interactive Sentry login and can't be scripted by
+an agent — run them yourself when you're ready:
+
+- **Readable stack traces (source maps):** `npx @sentry/wizard@latest -i sourcemaps`
+  from `app/`, which wires `SENTRY_AUTH_TOKEN` + source map upload into the build.
+  Without this, Sentry shows minified stack traces.
+- **Native Cloudflare↔Sentry integration** (the one at
+  [sentry.io/integrations/cloudflare](https://sentry.io/integrations/cloudflare)):
+  in Sentry → Settings → Integrations → Cloudflare, connect the Cloudflare
+  account via OAuth. This is separate from the SDK above — it lets Sentry pull
+  Workers Logs/analytics and auto-manage source map uploads at the account
+  level. Free/cheap on Sentry's Developer plan; skip it if the SDK-level
+  coverage above is enough.
+
 ## 3b. End-user auth + Stripe paywall (Wave 4)
 The public-site account system (Google OAuth + email magic-link) and freemium
 paywall (Stripe) have their own copy-paste runbook — Stripe products/webhook,

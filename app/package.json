@@ -19,15 +19,15 @@
     "postdeploy": "npm run sentry:sourcemaps"
   },
   "dependencies": {
-    "@jaywedgeworth22/congress-trading-shared": "^1.0.0",
+    "@jaywedgeworth22/congress-trading-shared": "^1.2.0",
     "@sentry/cloudflare": "^10.62.0",
     "fflate": "^0.8.3",
-    "hono": "^4.6.0",
+    "hono": "^4.12.27",
     "node-html-parser": "^8.0.4",
     "unpdf": "^1.6.2"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.16.18",
+    "@cloudflare/vitest-pool-workers": "^0.17.0",
     "@cloudflare/workers-types": "^4.20240909.0",
     "@sentry/cli": "^2.58.6",
     "typescript": "^6.0.3",

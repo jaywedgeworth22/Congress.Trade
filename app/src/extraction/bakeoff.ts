@@ -93,7 +93,7 @@ const label = (c: { provider: Provider; model: string }): string => `${c.provide
 // ---------------------------------------------------------------------------
 
 /** Resolve the API key for a provider, or null when it isn't configured. */
-async function keyFor(env: Env, provider: Provider): Promise<string | null> {
+export async function keyFor(env: Env, provider: Provider): Promise<string | null> {
   if (provider === 'gemini') return (await resolveSecret(env, 'GEMINI_API_KEY')).value ?? null;
   if (provider === 'openai') return (await resolveSecret(env, 'OPENAI_API_KEY')).value ?? null;
   if (provider === 'anthropic') return (await resolveSecret(env, 'ANTHROPIC_API_KEY')).value ?? null;
