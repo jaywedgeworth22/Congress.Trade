@@ -145,9 +145,8 @@ async function handleDeliveryMessage(env: Env, msg: QueueMessage): Promise<void>
 export default Sentry.withSentry(
   (env: Env) => ({
     dsn: env.SENTRY_DSN,
-    // Send traces for a sample of transactions (0 = off, 1.0 = all).
-    // Defaults to 0; set to e.g. 0.1 for 10% sampling in production.
-    tracesSampleRate: 0,
+    // Performance monitoring: sample 10% of HTTP transactions for traces.
+    tracesSampleRate: 0.1,
   }),
   {
     /** HTTP entrypoint. */
@@ -158,19 +157,33 @@ export default Sentry.withSentry(
     /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow.
      *  Daily enrichment + price refresh self-gate via a KV date stamp. */
     async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-      await runWatcher(env, new Date());
-      ctx.waitUntil(refreshSecrets(env).catch((err) => console.warn('infisical secret refresh failed:', (err as Error).message)));
+      await Sentry.withMonitor('cron.watcher', () => runWatcher(env, new Date()));
       ctx.waitUntil(
-        runDisclosureLatencyProbe(env).catch((err) =>
-          console.warn('disclosure latency probe failed:', (err as Error).message),
+        Sentry.withMonitor('cron.secrets-refresh', () =>
+          refreshSecrets(env),
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'secrets-refresh' } }),
         ),
       );
-      ctx.waitUntil(maybeRunDailyJobs(env));
-      // Autonomous cross-vendor agreement → auto-publish for a few newly-reviewed
-      // docs each minute (self-gates on AGREEMENT_AUTOPUBLISH_ENABLED; cron-safe).
       ctx.waitUntil(
-        maybeRunAgreementAutopublish(env).catch((err) =>
-          console.warn('agreement autopublish failed:', (err as Error).message),
+        Sentry.withMonitor('cron.disclosure-latency', () =>
+          runDisclosureLatencyProbe(env),
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'disclosure-latency' } }),
+        ),
+      );
+      ctx.waitUntil(
+        Sentry.withMonitor('cron.daily-jobs', () =>
+          maybeRunDailyJobs(env),
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'daily-jobs' } }),
+        ),
+      );
+      ctx.waitUntil(
+        Sentry.withMonitor('cron.agreement-autopublish', () =>
+          maybeRunAgreementAutopublish(env),
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'agreement-autopublish' } }),
         ),
       );
     },
@@ -184,6 +197,10 @@ export default Sentry.withSentry(
       for (const message of batch.messages) {
         try {
           const msg = message.body as QueueMessage;
+          Sentry.setTags({
+            queue: isDelivery ? 'delivery' : 'ingest',
+            messageType: msg.type ?? 'unknown',
+          });
           if (isDelivery) {
             await handleDeliveryMessage(env, msg);
           } else {
@@ -191,7 +208,12 @@ export default Sentry.withSentry(
           }
           message.ack();
         } catch (err) {
-          console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
+          Sentry.captureException(err as Error, {
+            tags: {
+              queue: isDelivery ? 'delivery' : 'ingest',
+              messageType: (message.body as QueueMessage).type ?? 'unknown',
+            },
+          });
           message.retry();
         }
       }

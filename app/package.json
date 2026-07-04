@@ -7,14 +7,16 @@
   "scripts": {
     "dev": "wrangler dev",
     "build": "tsc --noEmit",
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler deploy --outdir dist --upload-source-maps --var SENTRY_RELEASE:$(sentry-cli releases propose-version)",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "migrate": "wrangler d1 migrations apply DB --local",
     "migrate:remote": "echo 'NOT used on this account: wrangler --remote D1 migrations are deliberately avoided (OAuth issues; the remote d1_migrations log intentionally lags). Prod schema is applied idempotently via POST /api/admin/migrate — run: bash scripts/ship.sh. See AGENTS.md.' && exit 1",
     "deploy:full": "bash scripts/ship.sh",
     "preview:provision": "bash scripts/provision-preview.sh",
-    "preview:deploy": "bash scripts/deploy-preview.sh"
+    "preview:deploy": "bash scripts/deploy-preview.sh",
+    "sentry:sourcemaps": "_SENTRY_RELEASE=$(sentry-cli releases propose-version) && sentry-cli releases new $_SENTRY_RELEASE --org=jays-services --project=congress-trade && sentry-cli sourcemaps upload --org=jays-services --project=congress-trade --release=$_SENTRY_RELEASE --strip-prefix 'dist/..' dist",
+    "postdeploy": "npm run sentry:sourcemaps"
   },
   "dependencies": {
     "@jaywedgeworth22/congress-trading-shared": "^1.0.0",
@@ -27,6 +29,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.16.18",
     "@cloudflare/workers-types": "^4.20240909.0",
+    "@sentry/cli": "^2.58.6",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9",
     "wrangler": "^4.104.0"

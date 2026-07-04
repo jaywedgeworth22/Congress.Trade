@@ -9,7 +9,7 @@
  *
  * SecurityRef/MktCapBucket are re-exported from the cross-app contract package
  * (@jaywedgeworth22/congress-trading-shared) rather than redefined here, so this
- * app's enrichment layer can't silently drift from the shape Agentic Trading
+ * app's enrichment layer can't silently drift from the shape Socratic Trade
  * imports/exports against.
  */
 

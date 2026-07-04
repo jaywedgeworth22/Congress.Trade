@@ -169,7 +169,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .btn.ghost.sm.on { color: var(--accent); border-color: var(--accent); }
   td.state { text-align: center; color: var(--text-dim); padding: 22px 13px; }
   .tkr { font-family: var(--mono); font-weight: 700; }
-  /* ---- ticker logos (ported from agentic-trading) ---- */
+  /* ---- ticker logos (ported from socratictrade.com) ---- */
   .asset-cell { display: flex; align-items: center; gap: 9px; min-width: 0; }
   /* let the text shrink inside the (resizable, fixed-layout) cell and clip with
      an ellipsis instead of wrapping or hard-clipping mid-word */
@@ -1904,7 +1904,7 @@ function toggleTheme() {
   applyTheme(next);
 }
 
-/* ---- ticker logos (ported from agentic-trading) ---- */
+/* ---- ticker logos (ported from socratictrade.com) ---- */
 /* logoDisplay is a SITE-WIDE setting the admin controls; the value is injected
    server-side as window.__LOGO_DISPLAY__ so every visitor gets the same style. */
 var LOGO_DISPLAYS = ['tile', 'transparent', 'off'];
