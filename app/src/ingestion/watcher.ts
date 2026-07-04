@@ -22,7 +22,7 @@ import {
 } from '../shared/config';
 import { fetchHouseIndex, pollHouseLiveSearch } from './houseSource';
 import { fetchSenatePtrFilings } from './senateSource';
-import { recordDisclosureLatencyCandidate } from './fmpDisclosureLatency';
+import { recordDisclosureLatencyCandidate, storageMissing } from './fmpDisclosureLatency';
 
 /** Env shape (read defensively — Env is the frozen foundation contract). */
 type EnvWithFlags = Env & { HOUSE_LIVE_SEARCH_ENABLED?: string };
@@ -69,6 +69,23 @@ function houseFilerId(first: string, last: string, stateDst: string): string | n
   return `house-${district}-${name}`;
 }
 
+/**
+ * Mint a stable synthetic filer id for a Senate PTR. The Senate feed (unlike the
+ * House index) carries no district code, so we key on the disclosed name only.
+ * Returns null when no name is available, leaving filer_id NULL rather than
+ * minting a meaningless id.
+ *
+ * Mirrors houseFilerId so insertFilingIfNew writes the `filers` row and
+ * back-fills filer_id on filings + transactions. Previously pollSenate set only
+ * filerName (never filerId), so insertFilingIfNew's `if (f.filerId && f.filerName)`
+ * guard skipped the filers row and every Senate trade surfaced with no member
+ * attribution in the feed/API/SSE/exports.
+ */
+export function senateFilerId(fullName: string | null): string | null {
+  const name = slugPart(fullName ?? '');
+  return name ? `senate-${name}` : null;
+}
+
 function splitStateDistrict(stateDst: string): { state: string | null; district: string | null } {
   const m = /^([A-Z]{2})(\d{1,2})$/i.exec((stateDst || '').trim());
   if (!m) return { state: null, district: null };
@@ -112,6 +129,7 @@ export async function insertFilingIfNew(
       [f.filerId, f.chamber, f.filerName, f.state ?? null, f.district ?? null],
     );
   }
+  const filedDate = normalizeFilingDate(f.filedDate);
   const res = await run(
     env.DB,
     `INSERT OR IGNORE INTO filings
@@ -120,8 +138,37 @@ export async function insertFilingIfNew(
         confidence, first_seen_at, source_updated_at, error)
      VALUES (?, ?, ?, 'P', ?, ?, NULL, 'new', 'unknown', NULL, NULL,
              NULL, ?, NULL, NULL)`,
-    [f.docId, f.chamber, f.filerId ?? null, normalizeFilingDate(f.filedDate), f.sourceUrl, nowIso],
+    [f.docId, f.chamber, f.filerId ?? null, filedDate, f.sourceUrl, nowIso],
   );
+  // Backfill filed_date when a later, richer discovery of the same doc supplies
+  // one. A House PTR first seen via the intraday live search carries no
+  // FilingDate (the live-search HTML omits it -> filed_date NULL); the daily bulk
+  // ZIP later surfaces the same doc WITH a date, so COALESCE it in then instead
+  // of leaving the row permanently dateless.
+  if (filedDate) {
+    await run(env.DB, 'UPDATE filings SET filed_date = COALESCE(filed_date, ?) WHERE doc_id = ?', [
+      filedDate,
+      f.docId,
+    ]);
+    // Same backfill on the latency candidate row: recordDisclosureLatencyCandidate
+    // only runs for genuinely-new discoveries (see persistAndEnqueue), so a
+    // duplicate discovery that finally supplies a filed_date (e.g. the bulk ZIP
+    // confirming a live-search-only doc) would otherwise leave
+    // disclosure_latency_candidates.filed_date permanently NULL, breaking the
+    // FMP matcher's filer/date fallback for that filing. disclosure_latency_candidates
+    // is an optional table (migration 0021); swallow a missing-table error the
+    // same way recordDisclosureLatencyCandidate does rather than aborting the
+    // whole discovery on a deployment where it hasn't been applied yet.
+    try {
+      await run(
+        env.DB,
+        'UPDATE disclosure_latency_candidates SET filed_date = COALESCE(filed_date, ?) WHERE doc_id = ?',
+        [filedDate, f.docId],
+      );
+    } catch (err) {
+      if (!storageMissing(err)) throw err;
+    }
+  }
   if (f.filerId) {
     await run(env.DB, 'UPDATE filings SET filer_id = COALESCE(filer_id, ?) WHERE doc_id = ?', [
       f.filerId,
@@ -263,13 +310,17 @@ async function pollHouse(env: Env, now: Date): Promise<void> {
 async function pollSenate(env: Env, now: Date): Promise<void> {
   const nowIso = now.toISOString();
   const filings = await fetchSenatePtrFilings({ now });
-  const discovered: DiscoveredFiling[] = filings.map((f) => ({
-    docId: f.pipelineDocId,
-    chamber: 'senate',
-    sourceUrl: f.sourceUrl,
-    filedDate: f.filedDate,
-    filerName: f.fullName || [f.first, f.last].filter(Boolean).join(' ').trim() || null,
-  }));
+  const discovered: DiscoveredFiling[] = filings.map((f) => {
+    const filerName = f.fullName || [f.first, f.last].filter(Boolean).join(' ').trim() || null;
+    return {
+      docId: f.pipelineDocId,
+      chamber: 'senate' as const,
+      sourceUrl: f.sourceUrl,
+      filedDate: f.filedDate,
+      filerId: senateFilerId(filerName),
+      filerName,
+    };
+  });
   const newCount = await persistAndEnqueue(env, discovered, nowIso);
   await logPoll(env, 'senate', nowIso, newCount, nowIso);
   await setLastPollAt(env, 'senate', now);

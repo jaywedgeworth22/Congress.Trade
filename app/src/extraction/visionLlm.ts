@@ -76,11 +76,15 @@ export class VisionLlmExtractor implements Extractor {
 
     const body = buildRequestBody(input.bytes);
 
-    const res = await fetch(ENDPOINT(this.model, key), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    const res = await fetchWithRetry(
+      ENDPOINT(this.model, key),
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      this.name,
+    );
 
     if (!res.ok) {
       const detail = await safeText(res);
@@ -110,6 +114,55 @@ export class VisionLlmExtractor implements Extractor {
       modelVersion: this.model,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Transient-failure retry
+// ---------------------------------------------------------------------------
+
+/** Retry only 429 (rate limit / quota) — the failure mode that took out ~192
+ *  House filings in a backfill burst. 5xx is left to fail fast (rarer, and often
+ *  a real provider outage where retrying inline just wastes queue time). */
+function isRetryable(status: number): boolean {
+  return status === 429;
+}
+
+/**
+ * Fetch with capped exponential backoff + jitter on retryable statuses, honoring
+ * Retry-After. Runs inside the ingest queue consumer (generous per-message
+ * duration), so short waits are safe — this turns a Gemini rate-limit BURST
+ * (e.g. a bulk backfill firing hundreds of requests at once, which is exactly
+ * how ~192 House filings hard-failed with `429 Too Many Requests`) into a brief
+ * delay instead of a permanent extraction failure. Injectable `sleep`/`maxAttempts`
+ * for tests.
+ */
+export async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  name = 'fetch',
+  opts: { maxAttempts?: number; sleep?: (ms: number) => Promise<void>; jitter?: () => number } = {},
+): Promise<Response> {
+  const maxAttempts = opts.maxAttempts ?? 4;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const jitter = opts.jitter ?? (() => Math.floor(Math.random() * 250));
+  let res = await fetch(url, init);
+  for (let attempt = 1; attempt < maxAttempts && isRetryable(res.status); attempt++) {
+    const retryAfterSec = Number(res.headers.get('retry-after'));
+    const backoffMs =
+      Number.isFinite(retryAfterSec) && retryAfterSec > 0
+        ? Math.min(retryAfterSec * 1000, 30_000)
+        : Math.min(500 * 2 ** (attempt - 1), 8_000) + jitter();
+    // Release the errored response body so the connection can be reused.
+    try {
+      await res.body?.cancel();
+    } catch {
+      /* ignore */
+    }
+    console.warn(`${name}: ${res.status} — retry ${attempt}/${maxAttempts - 1} in ${backoffMs}ms`);
+    await sleep(backoffMs);
+    res = await fetch(url, init);
+  }
+  return res;
 }
 
 // ---------------------------------------------------------------------------

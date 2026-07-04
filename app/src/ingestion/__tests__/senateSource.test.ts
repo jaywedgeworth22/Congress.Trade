@@ -68,6 +68,33 @@ describe('parseSenateRows', () => {
     expect(f.filedDate).toBe('01/15/2024');
     expect(f.sourceUrl).toBe('https://efdsearch.senate.gov/search/view/ptr/0f8b12cd/');
   });
+
+  it('locates the anchor by content when eFD shifts columns (inserted office col)', () => {
+    // The live eFD response now returns 6 columns with the anchor at index 3:
+    // [first, last, office, anchorHtml, filingType, filedDate]. The old index-2
+    // parse yielded 0 rows; the content-based parse must still map it.
+    const rows: string[][] = [
+      [
+        'John R',
+        'Curtis',
+        'Curtis, John R. (Senator)',
+        `<a href="/search/view/ptr/96d0794e/" target="_blank">Curtis, John R. (Senator)</a>`,
+        'Periodic Transaction Report',
+        '06/30/2026',
+      ],
+    ];
+    const out = parseSenateRows(rows);
+    expect(out).toHaveLength(1);
+    const f = out[0];
+    expect(f.reportId).toBe('96d0794e');
+    expect(f.pipelineDocId).toBe('S-96d0794e');
+    expect(f.first).toBe('John R');
+    expect(f.last).toBe('Curtis');
+    expect(f.fullName).toBe('Curtis, John R. (Senator)');
+    expect(f.filedDate).toBe('06/30/2026');
+    expect(f.filingTypeLabel).toBe('Periodic Transaction Report');
+    expect(f.sourceUrl).toBe('https://efdsearch.senate.gov/search/view/ptr/96d0794e/');
+  });
 });
 
 describe('formatSenateDate', () => {
