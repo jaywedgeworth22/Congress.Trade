@@ -196,18 +196,32 @@ export default Sentry.withSentry(
           timezone: 'UTC',
         },
       );
-      ctx.waitUntil(refreshSecrets(env).catch((err) => console.warn('infisical secret refresh failed:', (err as Error).message)));
       ctx.waitUntil(
-        runDisclosureLatencyProbe(env).catch((err) =>
-          console.warn('disclosure latency probe failed:', (err as Error).message),
+        Sentry.withMonitor('secrets-refresh-cron', () =>
+          refreshSecrets(env),
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'secrets-refresh' } }),
         ),
       );
-      ctx.waitUntil(maybeRunDailyJobs(env));
-      // Autonomous cross-vendor agreement → auto-publish for a few newly-reviewed
-      // docs each minute (self-gates on AGREEMENT_AUTOPUBLISH_ENABLED; cron-safe).
       ctx.waitUntil(
-        maybeRunAgreementAutopublish(env).catch((err) =>
-          console.warn('agreement autopublish failed:', (err as Error).message),
+        Sentry.withMonitor('disclosure-latency-cron', () =>
+          runDisclosureLatencyProbe(env),
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'disclosure-latency' } }),
+        ),
+      );
+      ctx.waitUntil(
+        Sentry.withMonitor('daily-jobs-cron', () =>
+          maybeRunDailyJobs(env),
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'daily-jobs' } }),
+        ),
+      );
+      ctx.waitUntil(
+        Sentry.withMonitor('agreement-autopublish-cron', () =>
+          maybeRunAgreementAutopublish(env),
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'agreement-autopublish' } }),
         ),
       );
     },
@@ -221,6 +235,10 @@ export default Sentry.withSentry(
       for (const message of batch.messages) {
         try {
           const msg = message.body as QueueMessage;
+          Sentry.setTags({
+            queue: isDelivery ? 'delivery' : 'ingest',
+            messageType: msg.type ?? 'unknown',
+          });
           if (isDelivery) {
             await handleDeliveryMessage(env, msg);
           } else {
@@ -231,7 +249,7 @@ export default Sentry.withSentry(
           console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
           // console.error above is only a breadcrumb/log; the retry swallows the
           // throw, so without this the failure would never create a Sentry Issue.
-          Sentry.captureException(err, { tags: { queue: batch.queue } });
+          Sentry.captureException(err as Error, { tags: { queue: batch.queue, messageType: (message.body as QueueMessage).type ?? 'unknown' } });
           // On the final attempt (about to be dead-lettered), record + alert so a
           // terminally-failed filing/webhook is never silent. Best-effort.
           // Cloudflare Queues counts the first delivery as attempts=1 and
