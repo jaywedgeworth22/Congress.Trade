@@ -312,7 +312,7 @@ no-auth, and mirror the `?from=&to=` shape of `/api/market/insider`:
   `{ date, rating, targetMean/High/Low/Median, analystCount,
   strongBuy/buy/hold/sell/strongSell, source, updatedAt }` from `analyst_consensus`.
 
-Consumer side (agentic-trading) should add a top-of-cascade tier in
+Consumer side (socratictrade.com) should add a top-of-cascade tier in
 `src/lib/data-providers.ts` that reads these before hitting a paid enrichment
 provider — see the cross-app data-sharing plan.
 
