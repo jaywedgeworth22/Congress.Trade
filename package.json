@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@sentry/cloudflare": "^10.63.0"
+  }
+}
