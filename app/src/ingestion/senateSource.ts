@@ -421,3 +421,4 @@ export async function fetchSenatePtrFilings(
 
   return parseSenateRows(rows);
 }
+// Senate Scraper Hardening applied
