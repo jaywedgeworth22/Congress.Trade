@@ -161,11 +161,13 @@ export async function dispatchWebhook(
 
   const attempt = msg.attempt ?? 1;
 
+  const deliverPromises: Promise<void>[] = [];
   for (const sub of subs) {
     if (!sub.targetUrl) continue;
     if (!matchesFiltersWithContext(tx, sub.filters, ctx)) continue;
-    await deliverToSubscription(env, sub, tx, attempt);
+    deliverPromises.push(deliverToSubscription(env, sub, tx, attempt));
   }
+  await Promise.all(deliverPromises);
 }
 
 /**
@@ -265,11 +267,15 @@ async function deliverToSubscription(
       await env.DELIVERY_QUEUE.send(retryMsg, { delaySeconds });
     } catch (err) {
       console.error('dispatchWebhook: failed to enqueue retry', (err as Error).message);
+    
+      throw err;
     }
   } else {
     console.warn(
       `dispatchWebhook: giving up on sub=${sub.id} tx=${tx.id} after ${attempt} attempts: ${lastError}`,
     );
+  
+    throw new Error(`dispatchWebhook: max attempts reached for sub=${sub.id} tx=${tx.id}: ${lastError}`);
   }
 }
 
