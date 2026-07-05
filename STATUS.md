@@ -34,19 +34,38 @@ resolves against the shared repo's new `v1.2.0` tag (first tag in that repo).
 - Verify: `npm run typecheck` clean; `npm test` — 77 files / 669 tests passed.
 
 See `/Users/jay/apps/CONGRESS-TRADE-EFFORT-LOG.md` for the cross-repo effort
-entry (this repo has no `docs/EFFORT-LOG.md` mirror / rollout-notes
-convention today — `AGENTS.md` doesn't mandate one — so this STATUS.md entry
-is the paper trail).
+entry (2026-07-05 (CLAUDE next-wave): this repo now DOES have a
+`docs/EFFORT-LOG.md` mirror and `AGENTS.md` mandates it — added via #137/#141
+— so only the rollout-notes half of the original claim below is still true:
+this repo has no `docs/rollouts/` convention yet, so this STATUS.md entry
+remains the paper trail for that part).
 
 ## Active Integration
+
+2026-07-05 (CLAUDE next-wave) correction: this section was dated 2026-07-04 and
+stale — the Codex house-live-search lane below has since MERGED (PR #160,
+`3e2d622c`, 2026-07-05), and it omitted the effort-issues-sync work (#141/#162)
+and the red Deploy/Uptime pipelines (see the live board's Deployed-section
+correction: 3 deploys 6/30-7/3 failed the health gate on a Cloudflare managed
+challenge, so `POST /api/admin/migrate` never ran). Refreshing below:
 
 - Main already includes integration PR `#29`, which superseded Claude PRs `#26`
   (`claude/transactions-from-filter`), `#27` (`claude/sse-backlog`), and `#28`
   (`feat/managed-payments`).
-- Current Codex lane `codex/house-live-search` rechecked the House intraday
-  path and found the watcher/live-search overlay already implemented on
-  `main`; this branch is limited to focused `pollHouseLiveSearch()` +
-  watcher-behavior coverage and removing stale "TODO/stub" wording in docs.
+- `codex/house-live-search` MERGED 2026-07-05 (PR #160, merge `3e2d622c`): the
+  House intraday watcher/live-search overlay was already implemented on
+  `main`; that branch added focused `pollHouseLiveSearch()` + watcher-behavior
+  coverage and removed stale "TODO/stub" wording in docs. Preview deployed and
+  health-checked; production deploy still needs explicit owner approval and is
+  currently blocked by the Cloudflare health-gate issue above.
+- `claude/agent-coordination + effort-issues-sync` (PRs #137, #141, #162) MERGED:
+  the GitHub Issues mirror of the effort board, plus secondary-rate-limit
+  hardening for the sync script, are live on `main`.
+- **Known blocker:** the Deploy workflow's health check 403s on a Cloudflare
+  managed challenge from GitHub-runner IPs (affected the 6/30, 7/2, 7/3 runs);
+  see the live board's new Planned row for the fix. Uptime Monitor is also
+  currently crashing (bad heredoc delimiter on challenge-page HTML) rather than
+  reporting real uptime.
 - Current ops/deploy hardening branch: `codex/app-update-hardening-20260629`.
 - Active app work may be happening on separate Codex, Claude, Cursor, Copilot,
   Antigravity, or other coordinated branches. Before editing, run the AGENTS.md
