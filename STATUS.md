@@ -43,6 +43,10 @@ is the paper trail).
 - Main already includes integration PR `#29`, which superseded Claude PRs `#26`
   (`claude/transactions-from-filter`), `#27` (`claude/sse-backlog`), and `#28`
   (`feat/managed-payments`).
+- Current Codex lane `codex/house-live-search` rechecked the House intraday
+  path and found the watcher/live-search overlay already implemented on
+  `main`; this branch is limited to focused `pollHouseLiveSearch()` +
+  watcher-behavior coverage and removing stale "TODO/stub" wording in docs.
 - Current ops/deploy hardening branch: `codex/app-update-hardening-20260629`.
 - Active app work may be happening on separate Codex, Claude, Cursor, Copilot,
   Antigravity, or other coordinated branches. Before editing, run the AGENTS.md
