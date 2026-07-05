@@ -5,6 +5,13 @@ Last updated: 2026-07-04
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
 
+## 2026-07-05 (Antigravity) — Senate Scraper KV Caching
+
+Owner-directed: Added Cloudflare KV session caching for the Senate eFD scraper. The scraper logic now caches the session CSRF token and cookies to reduce the frequency of agreement gate handshakes, making ingestion more reliable and less likely to be throttled or blocked. A 24h TTL is set for the cache, with automatic invalidation and retry upon any 403 or parse error from the Senate site.
+
+- Tested locally and typechecked successfully.
+- Code added in `app/src/ingestion/senateSource.ts` and `app/src/ingestion/watcher.ts`.
+
 ## 2026-07-04 — Tokenless git dependency for congress-trading-shared (Claude)
 
 Owner-directed: `congress-trading-shared` (this repo's App B/App A shared

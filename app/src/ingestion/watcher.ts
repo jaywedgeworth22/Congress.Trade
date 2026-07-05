@@ -309,7 +309,7 @@ async function pollHouse(env: Env, now: Date): Promise<void> {
  */
 async function pollSenate(env: Env, now: Date): Promise<void> {
   const nowIso = now.toISOString();
-  const filings = await fetchSenatePtrFilings({ now });
+  const filings = await fetchSenatePtrFilings({ now, kv: env.CONFIG_KV });
   const discovered: DiscoveredFiling[] = filings.map((f) => {
     const filerName = f.fullName || [f.first, f.last].filter(Boolean).join(' ').trim() || null;
     return {

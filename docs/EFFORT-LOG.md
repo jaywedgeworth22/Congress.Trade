@@ -88,6 +88,11 @@ Sync run closes #149-#154 and re-labels #155/#161.
   other should be marked as a duplicate/closed manually if the sync doesn't merge them.
 
 ## In Progress
+- **Congress.Trade Improvements (AG, M)** — Comprehensive improvements across UI, data sharing, and scraping. Worktree `~/apps/trading-antigravity`, branch `agent/antigravity`.
+  1. [x] **UI/UX Mobile Refactor**: Implement responsive cards/scroll for data tables in `dashboardHtml.ts`.
+  2. [ ] **Shared Ticker Aliases**: Move ticker alias resolution logic into `congress-trading-shared`.
+  3. [ ] **Typed API Client SDK**: Build and export a strongly-typed `CongressTradeClient` in the shared repo.
+  4. [x] **Senate Scraper Handshake**: Implement Cloudflare KV session caching for the Senate eFD agreement gate.
 - Codex global coordination + fleet monitoring setup (Codex, shared `/Users/jay/apps`
   infra) — ensure Congress.Trade is included in the standardized effort-log
   registry and future-repo bootstrap path without editing non-Codex app code.
