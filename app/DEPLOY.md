@@ -229,8 +229,9 @@ cron → watcher (House XML diff + Senate eFD) → INGEST_QUEUE
   require the `typecheck + test` check, and prohibit force pushes/deletions.
 - **Senate eFD** scraping depends on the agreement-gate + CSRF flow; if Senate
   changes its markup, `src/ingestion/senateSource.ts` is the place to adjust.
-- **House bulk XML** refreshes ~daily; the intraday live-search hook
-  (`pollHouseLiveSearch()`) is stubbed for when you want sub-day House latency.
+- **House bulk XML** refreshes ~daily; `pollHouseLiveSearch()` overlays the
+  intraday live-search result when enabled so newly filed House PTRs can appear
+  before the next bulk XML refresh.
 - **Vision model** id lives in `src/extraction/visionLlm.ts`; review that
   constant before changing extraction cost/quality.
 - **Observability and Smart Placement** are configured in `wrangler.toml`.

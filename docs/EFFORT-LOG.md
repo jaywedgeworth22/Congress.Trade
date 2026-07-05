@@ -33,6 +33,14 @@ Protocol: /Users/jay/apps/EFFORT-LOG-PROTOCOL.md (canonical). Live board:
 
 ## In Progress
 - Shared-dep tokenless git-dependency switch (CLAUDE, cross-app — see TRADING board row; sync-26).
+- Wire the live/intraday House search path (CODEX, M) — IN PROGRESS 2026-07-04 on
+  branch `codex/house-live-search` in worktree
+  `/Users/jay/.codex/worktrees/congress-house-live-search`; validation found the implementation
+  already exists, so this branch adds direct `pollHouseLiveSearch()` coverage and removes stale
+  stub/TODO documentation.
+  2026-07-05 (Codex): added watcher merge/disable/fail-soft coverage; focused ingestion tests
+  pass, `npm run typecheck` passes, and full `npm test` passes (77 files / 673 tests).
+  Branch not pushed or merged.
 
 ## Planned / Reserved
 
@@ -40,8 +48,6 @@ _2026-07-04 backlog exhaustiveness pass (CLAUDE, owner-directed). Tags: CURSOR =
 agents (DeepSeek v4 Pro), CODEX = Codex, AG = Antigravity/Gemini, CLAUDE = Claude Code. Assignments
 are reservations, not locks — re-negotiate in #agent-sync._
 
-- **Wire the live/intraday House search path (CODEX, M)** — `pollHouseLiveSearch()` TODO in
-  `app/src/ingestion/houseSource.ts`; only the daily/backfill path exists today.
 - **Acquisition-vs-rename guard for ticker aliases (AG, M, cross-app)** — `app/src/export/pitScores.ts`
   + `app/src/extraction/normalizer.ts` consume the flat shared `TICKER_ALIASES` (ATVI→MSFT
   undifferentiated from true renames), the same bug class fixed consumer-side in Socratic.Trade#291;

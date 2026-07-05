@@ -15,11 +15,11 @@
  *   is flat and regular, so a dependency-free regex/scan parser is robust and
  *   avoids pulling in fast-xml-parser.
  *
- * LIVE SEARCH (intraday path — TODO hook below):
+ * LIVE SEARCH (intraday path):
  *   The interactive UI at https://disclosures-clerk.house.gov/FinancialDisclosure
  *   is backed by a search endpoint that surfaces filings INTRADAY, before the
- *   yearly XML refreshes. For sub-day latency we will eventually poll that live
- *   search; see pollHouseLiveSearch() for the clearly-marked TODO.
+ *   yearly XML refreshes. pollHouseLiveSearch() uses that endpoint as a
+ *   fail-soft overlay on top of the daily bulk XML path.
  */
 
 import { unzipSync } from 'fflate';
