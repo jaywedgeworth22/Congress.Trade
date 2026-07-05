@@ -1,12 +1,13 @@
 # Congress.Trade Effort Log — cross-agent board
-Protocol: /Users/jay/apps/EFFORT-LOG-PROTOCOL.md (canonical). Live board:
-`/Users/jay/apps/CONGRESS-TRADE-EFFORT-LOG.md` (mirror: this file). As of 2026-07-05.
+Protocol: /Users/jay/apps/EFFORT-LOG-PROTOCOL.md (canonical). Live board: this file
+(mirror: docs/EFFORT-LOG.md in the repo). As of 2026-07-05.
 
-2026-07-05 (CLAUDE next-wave): this mirror was stale vs the live board — missing the CURSOR
-completed batch, both MONET sentry-ci-report updates, and the #160 completion, so the GitHub
-Issues mirror still showed CURSOR tasks #149-#154 as open `state:planned` even though all six are
-done. This commit (`claude/board-nextwave-c2`) re-syncs the full mirror so the next Effort Issues
-Sync run closes #149-#154 and re-labels #155/#161.
+2026-07-05 (CLAUDE next-wave) correction: the repo mirror `docs/EFFORT-LOG.md` at origin/main was
+stale vs this live board — missing the CURSOR completed batch, both MONET sentry-ci-report
+updates, and the #160 completion, so the GitHub Issues mirror still showed CURSOR tasks #149-#154
+as open `state:planned` even though all six are done. A mirror-sync commit lands this on
+`claude/board-nextwave-c2` so the next Effort Issues Sync run closes #149-#154 and re-labels
+#155/#161.
 
 ## Deployed
 - (record production Worker releases here after explicit owner-approved deploys)
@@ -80,25 +81,28 @@ Sync run closes #149-#154 and re-labels #155/#161.
   test`, `gitleaks`). Preview deployed and health-checked at
   `https://congress-trade-preview.jaywedgeworth22.workers.dev` (`ok=true`,
   `db=true`); production deploy still requires explicit owner approval.
-  2026-07-05 (CLAUDE next-wave): moved here from In Progress — row text already said
-  COMPLETED but it sat under the wrong heading; the repo mirror docs/EFFORT-LOG.md at
-  origin/main still said "Branch not pushed or merged" (now corrected in the same pass).
-  Duplicate open GitHub issues #161 (in-progress) and #146 (planned) both track this same
-  effort — flagging for the sync de-dup fix below; whichever survives should close, the
-  other should be marked as a duplicate/closed manually if the sync doesn't merge them.
+- **Congress.Trade Improvements (AG, M) — COMPLETED 2026-07-05.** Comprehensive improvements across UI, data sharing, and scraping. Worktree `~/apps/trading-antigravity`, branch `agent/antigravity`.
+  1. [x] **UI/UX Mobile Refactor**: Implement responsive cards/scroll for data tables in `dashboardHtml.ts`.
+  2. [x] **Shared Ticker Aliases**: Move ticker alias resolution logic into `congress-trading-shared`.
+  3. [x] **Typed API Client SDK**: Build and export a strongly-typed `CongressTradeClient` in the shared repo.
+  4. [x] **Senate Scraper Handshake**: Implement Cloudflare KV session caching for the Senate eFD agreement gate.
+- **Acquisition-vs-rename guard for ticker aliases (AG, M, cross-app) — COMPLETED 2026-07-05.** Upstream fold sites in `normalizer.ts` and `tickerNormalize.ts` migrated to `resolveContinuousTicker` / `TICKER_RENAMES` to ensure acquisitions remain distinct, and `pitScores.ts` updated to classify prior tickers and delisted flag.
+- **Congress push/SSE contract repair (AG, M, cross-app) — COMPLETED 2026-07-05.** Replaced database queries with a single joined query, formatted `trades` array payload, and attached bearer `Authorization` headers.
+- **Prep the shared-pkg v1.3.0 adoption PR as a matched pair behind the owner tag (AG, M) — COMPLETED 2026-07-05.** Completed as part of the acquisition-vs-rename guard consumer migration.
 
 ## In Progress
-- **Congress.Trade Improvements (AG, M)** — Comprehensive improvements across UI, data sharing, and scraping. Worktree `~/apps/trading-antigravity`, branch `agent/antigravity`.
-  1. [x] **UI/UX Mobile Refactor**: Implement responsive cards/scroll for data tables in `dashboardHtml.ts`.
-  2. [ ] **Shared Ticker Aliases**: Move ticker alias resolution logic into `congress-trading-shared`.
-  3. [ ] **Typed API Client SDK**: Build and export a strongly-typed `CongressTradeClient` in the shared repo.
-  4. [x] **Senate Scraper Handshake**: Implement Cloudflare KV session caching for the Senate eFD agreement gate.
 - Codex global coordination + fleet monitoring setup (Codex, shared `/Users/jay/apps`
   infra) — ensure Congress.Trade is included in the standardized effort-log
   registry and future-repo bootstrap path without editing non-Codex app code.
   2026-07-05 (Codex): corrected stale row after recheck — PR #137
   (`codex/agent-coordination-bootstrap`) is merged as `4f327be5`; docs-only,
   checks green, no preview or production deploy.
+- **Codex Cloud Slack + effort-log readiness across all four apps (CODEX, shared fleet-infra) —
+  DONE-local 2026-07-05; awaiting owner approval to push/open PRs.** Scope: audit/standardize Codex Cloud repo-visible setup so remote
+  Codex sessions can read `docs/EFFORT-LOG.md` and use #agent-sync with the configured
+  `SLACK_AGENT_NAME`, `SLACK_CHANNEL_ID`, `SLACK_PROJECT`, and runtime token/env settings. Keep
+  work out of dirty Cursor/Monet worktrees; reuse/adapt the closed PR #367 Slack helper rather than
+  creating a competing Slack Socket Mode client. Cross-app rows mirrored in the other live boards.
 - **Sentry CI failure reporter (MONET, S)** — IN PROGRESS 2026-07-05, implemented locally on branch
   `monet/sentry-ci-report`; NOT pushed/merged (repo rule: no push/deploy without owner). Added the
   additive fleet-standard `.github/workflows/sentry-ci-report.yml` (`workflow_run` observer) +
@@ -122,6 +126,12 @@ Sync run closes #149-#154 and re-labels #155/#161.
   (was `return 1`) so it can never red-X observed workflows. Re-verified `py_compile` + behavioral
   (malformed/empty/benign all exit 0) + no-DSN-leak. Still blocked on owner push/PR + `SENTRY_FLEET_DSN`
   secret.
+  2026-07-05 (MONET): owner authorized push. Rebased clean onto `da03ebb` and DROPPED the branch's
+  `docs/EFFORT-LOG.md` hunk (main already carries this row via the #164 mirror-sync), reducing the
+  branch to a minimal 2-file additive change (`sentry-ci-report.yml` + `sentry-ci-report.py`). Final
+  independent push-readiness audit = PUSH-READY (2 files, clean 3-way merge, secret-safe + exit-0 on
+  every path, zero workflow/cron drift). Pushed + opened **PR #181**. NOW awaiting: owner review/merge
+  + adding the `SENTRY_FLEET_DSN` repo secret (no-ops safely until set).
 
 ## Planned / Reserved
 
@@ -129,12 +139,6 @@ _2026-07-04 backlog exhaustiveness pass (CLAUDE, owner-directed). Tags: CURSOR =
 agents (DeepSeek v4 Pro), CODEX = Codex, AG = Antigravity/Gemini, CLAUDE = Claude Code. Assignments
 are reservations, not locks — re-negotiate in #agent-sync._
 
-- **Acquisition-vs-rename guard for ticker aliases (AG, M, cross-app)** — `app/src/export/pitScores.ts`
-  + `app/src/extraction/normalizer.ts` consume the flat shared `TICKER_ALIASES` (ATVI→MSFT
-  undifferentiated from true renames), the same bug class fixed consumer-side in Socratic.Trade#291;
-  pairs with the shared-package split row on the congress-trading-shared board.
-- **Congress push/SSE contract repair (AG, M, cross-app)** — App A pushes a shape App B never
-  accepts, so the push path is dead; paired row on the Socratic.Trade board.
 - **Sentry CI failure reporter (CLAUDE, S)** — copy the additive `sentry-ci-report.yml` fleet
   standard from Socratic.Trade per AGENT-SYNC.md observability rules. **MONET (Claude seat) claimed
   2026-07-05 → see In Progress; implemented + verified locally on `monet/sentry-ci-report`, awaiting
@@ -195,13 +199,6 @@ bypass, and adjudicate the two open product decisions above._
   `configured:false` while price IDs are already in `wrangler.toml` — issue #20's checklist is
   half-done with no verifiable finish line; a smoke script turns the owner's secret-setting session
   into a 5-minute verified cutover.
-- **Prep the shared-pkg v1.3.0 adoption PR as a matched pair behind the owner tag (AG, M)** — Once
-  v1.3.0 is pushed/tagged: bump `app/package.json` to `#semver:^1.3.x` in lockstep with
-  Socratic.Trade (pin-check wants matched pairs), and migrate `normalizer.ts:492` +
-  `tickerNormalize.ts:201` fold sites to `TICKER_RENAMES`/`resolveContinuousTicker()`, add
-  delisting metadata in `pitScores.ts`. Why now: MONET finished the shared-library half locally
-  (commit `03d33bd`, v1.3.0, +26 tests) — the consumer migration is the AG-reserved remainder of
-  board row/issue #147 and can be staged now so it lands the day the owner tags.
 - **Reconcile live-search overlay rows against the official House index (data-quality job)
   (CODEX, M)** — Nightly/admin job that re-checks recent `pollHouseLiveSearch()`-sourced
   transactions against the next-day official House disclosure index, flagging missed, mutated, or

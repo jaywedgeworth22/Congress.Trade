@@ -36,17 +36,7 @@
  * company name / sector / logo from FMP, so the master fills in over time.
  */
 
-import { TICKER_ALIASES } from '@jaywedgeworth22/congress-trading-shared';
-
-/**
- * Curated stale -> current ticker map. Sourced from the shared cross-app package
- * (@jaywedgeworth22/congress-trading-shared) so App A and App B (Agentic Trading) never drift on
- * corporate-action renames -- a divergent copy would mis-attribute / fragment a trade differently
- * between the two apps. Keep additions in the shared package, not here. Re-exported so existing
- * importers keep their `../extraction/tickerNormalize` path. (Retired the content-identical local
- * copy 2026-07-01 per Workstream C1; the shared map holds BRCM/FB/SQ/GEHCV/TWX/ATVI/RHT.)
- */
-export { TICKER_ALIASES };
+import { resolveContinuousTicker } from '@jaywedgeworth22/congress-trading-shared';
 
 /**
  * A well-formed US/OTC symbol: 1–5 letters, optionally a class suffix
@@ -197,9 +187,14 @@ export function resolveTickerDeterministic(
     if (hit) return hit;
   }
 
-  // Tier 3: curated stale → current alias (try the cleaned form and the base).
-  const alias = TICKER_ALIASES[cleaned] ?? TICKER_ALIASES[base];
-  if (alias) return isKnown(alias) ?? alias;
+  // Tier 3: curated stale → current continuous alias (try the cleaned form and the base).
+  // This intentionally ignores acquisitions (ATVI→MSFT) because we want those to stay
+  // distinct for point-in-time correctness.
+  const aliasCleaned = resolveContinuousTicker(cleaned);
+  if (aliasCleaned !== cleaned) return isKnown(aliasCleaned) ?? aliasCleaned;
+  
+  const aliasBase = resolveContinuousTicker(base);
+  if (aliasBase !== base) return isKnown(aliasBase) ?? aliasBase;
 
   // Tier 4: accept a well-formed symbol the master simply doesn't list yet.
   if (isWellFormedTicker(base)) return base;
