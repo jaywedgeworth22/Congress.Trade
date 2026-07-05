@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   parseHouseIndexXml,
   parseHouseSearchHtml,
   buildHouseSearchBody,
+  pollHouseLiveSearch,
   houseBulkZipUrl,
   housePtrPdfUrl,
   houseDocId,
@@ -134,6 +135,40 @@ describe('buildHouseSearchBody', () => {
     const body = buildHouseSearchBody(2026);
     expect(body.get('FilingYear')).toBe('2026');
     expect(body.get('LastName')).toBe('');
+  });
+});
+
+describe('pollHouseLiveSearch', () => {
+  it('gets a session cookie before posting the live search form', async () => {
+    const fetchMock = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => {
+      if (fetchMock.mock.calls.length === 1) {
+        return new Response('<html></html>', {
+          status: 200,
+          headers: { 'set-cookie': 'HOUSESESSION=abc123; Path=/; HttpOnly' },
+        });
+      }
+
+      return new Response(SEARCH_HTML, {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      });
+    });
+
+    const rows = await pollHouseLiveSearch(2026, fetchMock as unknown as typeof fetch);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/FinancialDisclosure/ViewSearch');
+    expect(String(fetchMock.mock.calls[1][0])).toContain('/FinancialDisclosure/ViewMemberSearchResult');
+
+    const postInit = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(postInit.method).toBe('POST');
+    expect(String(postInit.body)).toContain('FilingYear=2026');
+    expect(postInit.headers).toMatchObject({
+      cookie: 'HOUSESESSION=abc123',
+      'x-requested-with': 'XMLHttpRequest',
+    });
+
+    expect(rows.map((row) => row.pipelineDocId)).toEqual(['H-2026-20026001', 'H-2026-20026002']);
   });
 });
 
