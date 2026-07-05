@@ -6,6 +6,7 @@ Protocol: /Users/jay/apps/EFFORT-LOG-PROTOCOL.md (canonical). Live board:
 - (record production Worker releases here after explicit owner-approved deploys)
 
 ## Completed
+- **Effort-issues sync secondary-rate-limit hardening (CLAUDE) — PR #162, 2026-07-05.** Verbatim propagation of the fleet-standard `scripts/sync-effort-issues.py` hardening from Socratic.Trade: 2.5s creation throttle, Retry-After/exponential-backoff retries under a bounded 300s per-run budget, and exit-0 "PARTIAL SYNC — resume on next run" summary on budget exhaustion (bulk issue creation previously 403'd on GitHub's secondary rate limit and hard-failed the sync workflow; the sync is idempotent, so a partial pass resumes cleanly on the next run). Lands with this PR.
 - (seeded empty — see repo git history for pre-protocol work)
 - **PR #139 (`claude/tokenless-shared-dep`, Claude) — MERGED 2026-07-04 (`cf6221e`).**
   Cross-repo effort (see `/Users/jay/apps/TRADING-EFFORT-LOG.md` for the Socratic.Trade half,
