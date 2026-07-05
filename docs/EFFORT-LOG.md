@@ -81,14 +81,6 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   test`, `gitleaks`). Preview deployed and health-checked at
   `https://congress-trade-preview.jaywedgeworth22.workers.dev` (`ok=true`,
   `db=true`); production deploy still requires explicit owner approval.
-- **Congress.Trade Improvements (AG, M) — COMPLETED 2026-07-05.** Comprehensive improvements across UI, data sharing, and scraping. Worktree `~/apps/trading-antigravity`, branch `agent/antigravity`.
-  1. [x] **UI/UX Mobile Refactor**: Implement responsive cards/scroll for data tables in `dashboardHtml.ts`.
-  2. [x] **Shared Ticker Aliases**: Move ticker alias resolution logic into `congress-trading-shared`.
-  3. [x] **Typed API Client SDK**: Build and export a strongly-typed `CongressTradeClient` in the shared repo.
-  4. [x] **Senate Scraper Handshake**: Implement Cloudflare KV session caching for the Senate eFD agreement gate.
-- **Acquisition-vs-rename guard for ticker aliases (AG, M, cross-app) — COMPLETED 2026-07-05.** Upstream fold sites in `normalizer.ts` and `tickerNormalize.ts` migrated to `resolveContinuousTicker` / `TICKER_RENAMES` to ensure acquisitions remain distinct, and `pitScores.ts` updated to classify prior tickers and delisted flag.
-- **Congress push/SSE contract repair (AG, M, cross-app) — COMPLETED 2026-07-05.** Replaced database queries with a single joined query, formatted `trades` array payload, and attached bearer `Authorization` headers.
-- **Prep the shared-pkg v1.3.0 adoption PR as a matched pair behind the owner tag (AG, M) — COMPLETED 2026-07-05.** Completed as part of the acquisition-vs-rename guard consumer migration.
 
 ## In Progress
 - Codex global coordination + fleet monitoring setup (Codex, shared `/Users/jay/apps`
@@ -132,8 +124,21 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   independent push-readiness audit = PUSH-READY (2 files, clean 3-way merge, secret-safe + exit-0 on
   every path, zero workflow/cron drift). Pushed + opened **PR #181**. NOW awaiting: owner review/merge
   + adding the `SENTRY_FLEET_DSN` repo secret (no-ops safely until set).
+- **Congress.Trade Improvements (AG, M) — IN PROGRESS 2026-07-05 (PR #182 open).** Comprehensive UI, data sharing, and scraping improvements on branch `ag/client-and-ticker`.
+  1. [x] **UI/UX Mobile Refactor**: Implement responsive cards/scroll for data tables in `dashboardHtml.ts`.
+  2. [x] **Shared Ticker Aliases**: Move ticker alias resolution logic into `congress-trading-shared`.
+  3. [x] **Typed API Client SDK**: Build and export a strongly-typed `CongressTradeClient` in the shared repo.
+  4. [x] **Senate Scraper Handshake**: Implement Cloudflare KV session caching for the Senate eFD agreement gate.
+- **Acquisition-vs-rename guard for ticker aliases (AG, M, cross-app) — IN PROGRESS 2026-07-05 (PR #182 open).** Upstream fold sites in `normalizer.ts` and `tickerNormalize.ts` migrated to `resolveContinuousTicker` / `TICKER_RENAMES` to ensure acquisitions remain distinct, and `pitScores.ts` updated to classify prior tickers and delisted flag.
+- **Congress push/SSE contract repair (AG, M, cross-app) — IN PROGRESS 2026-07-05 (PR #182 open).** Replaced database queries with a single joined query, formatted `trades` array payload, and attached bearer `Authorization` headers.
+- **Prep the shared-pkg v1.3.0 adoption PR as a matched pair behind the owner tag (AG, M) — IN PROGRESS 2026-07-05 (PR #182 open).** Pin `ag/client-and-ticker` branch version in App A package.json.
 
 ## Planned / Reserved
+- **Push account status metrics to Usage Monitor (AG) — 2026-07-05.** Send telemetry events with `metricType: "balance"` or `"limit"` to the API Usage Monitor to track tech account caps and credits.
+- **Senate Scraper Hardening (AG, M) — 2026-07-05.** Overcome WAF IP blocks via residential scout proxying, implement content-based field extraction for DataTables, and cache session handshakes in KV.
+- **Codebase Performance & Queues (AG, M) — 2026-07-05.** Fix silent DLQ webhook failures, implement `DB.batch` for `persistTransactions`, use `sendBatch` for queue dispatching, and run webhook fetch requests concurrently.
+- **UI/UX Improvements (AG, M) — 2026-07-05.** Fix mobile tab grid spacing, hide mobile columns button, consolidate search/filters + add Max $, fix theme toggle labels, group pagination controls, sticky-lock columns, and add charts to Trends.
+- **Architecture & Shared Dependency (AG, M) — 2026-07-05.** Use `createCongressEvent` from shared package, promote duplicate types to `schemas.ts`, upgrade Socratic.Trade to validate HMAC `X-Signature`, and replace SSE D1-polling with a push mechanism.
 
 _2026-07-04 backlog exhaustiveness pass (CLAUDE, owner-directed). Tags: CURSOR = Cursor background
 agents (DeepSeek v4 Pro), CODEX = Codex, AG = Antigravity/Gemini, CLAUDE = Claude Code. Assignments
