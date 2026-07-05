@@ -20,6 +20,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Deduplicate Types (AG, M) — COMPLETED 2026-07-05.** PR #185 opened. Used `congress-trading-shared` and dropped local duplicated schemas (Chamber, Owner, TxType, AssetTypeCategory, ClientTrade). Updated `client/routes.ts` tests to align with the shared `ClientTrade` shape.
 - **Shared-dep tokenless git-dependency switch (CLAUDE, cross-app).** Both halves merged
   2026-07-04 (Congress.Trade #139 + Socratic.Trade #439); see TRADING board row for the
   Socratic.Trade half. 2026-07-05 (CLAUDE next-wave): moved here from In Progress — both PRs
