@@ -19,12 +19,13 @@
     "postdeploy": "npm run sentry:sourcemaps"
   },
   "dependencies": {
-    "@jaywedgeworth22/congress-trading-shared": "file:../../congress-trading-shared",
+    "@jaywedgeworth22/congress-trading-shared": "git+https://github.com/jaywedgeworth22/congress-trading-shared.git#ag/client-and-ticker",
     "@sentry/cloudflare": "^10.62.0",
     "fflate": "^0.8.3",
     "hono": "^4.12.27",
     "node-html-parser": "^8.0.4",
-    "unpdf": "^1.6.2"
+    "unpdf": "^1.6.2",
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.17.0",
