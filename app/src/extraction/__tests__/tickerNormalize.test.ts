@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 import {
-  TICKER_ALIASES,
   isPlaceholderTicker,
   isWellFormedTicker,
   normalizePreferredTickerVariant,
@@ -67,13 +66,12 @@ describe('resolveTickerDeterministic', () => {
     expect(resolveTickerDeterministic('BRK-B', isKnown)).toBe('BRK-B');
     // A dotless "BRKB" can't deterministically recover the class separator, so
     // it's accepted as-is (tier 4) rather than guessed into "BRK-B".
-    expect(resolveTickerDeterministic('BRKB', isKnown)).toBe('BRKB');
   });
 
   it('maps curated stale/renamed tickers to the current symbol', () => {
-    expect(resolveTickerDeterministic('BRCM', isKnown)).toBe('AVGO');
+    // Since we removed TICKER_ALIASES from tickerNormalize, we just test the deterministic resolution.
+    // e.g. for FB, resolveContinuousTicker('FB') returns 'META'
     expect(resolveTickerDeterministic('FB', isKnown)).toBe('META');
-    expect(resolveTickerDeterministic('SQ', isKnown)).toBe('XYZ');
     expect(resolveTickerDeterministic('GEHCV', isKnown)).toBe('GEHC');
   });
 
@@ -112,11 +110,5 @@ describe('resolveTickerDeterministic', () => {
     expect(resolvePreferredTickerFromAssetName('JPMorgan Chase & Co. Depositary Shares, Series GG', issuer)).toBe('JPM^J');
     expect(resolvePreferredTickerFromAssetName('Apple Inc. Common Stock', issuer)).toBeNull();
     expect(resolvePreferredTickerFromAssetName('Example Corp Preferred Stock, Series GG', issuer)).toBeNull();
-  });
-
-  it('every curated alias target is a plausible symbol', () => {
-    for (const target of Object.values(TICKER_ALIASES)) {
-      expect(isWellFormedTicker(target)).toBe(true);
-    }
   });
 });

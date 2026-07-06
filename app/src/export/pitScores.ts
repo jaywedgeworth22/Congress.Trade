@@ -12,7 +12,7 @@ import type { Env, TxType } from '../shared/types';
 import { all, type SqlParam, parseJson } from '../shared/db';
 import { bracketMidpoint, netSentiment, round } from '../analytics/compute';
 import { committeeConflict } from '../analytics/conflicts';
-import { TICKER_ALIASES } from '../extraction/tickerNormalize';
+import { TICKER_RENAMES } from '@jaywedgeworth22/congress-trading-shared';
 import { pctChange } from '../prices/compute';
 import { canonicalizeAssetType } from '../shared/assetTypes';
 
@@ -1240,7 +1240,7 @@ async function buildRow(
       cancelFlag: false,
     };
   });
-  const aliasesFrom = Object.entries(TICKER_ALIASES).filter(([, to]) => to === ticker).map(([from]) => from);
+  const aliasesFrom = Object.entries(TICKER_RENAMES).filter(([, to]) => to === ticker).map(([from]) => from);
   const clusterConsensus = buildClusterConsensus(ticker, asOf, txs, allTxRows, memberSkill);
   const pitValidity = buildPitValidity(txs);
   return {
@@ -1257,9 +1257,8 @@ async function buildRow(
     tickerMapVersion: TICKER_MAP_VERSION,
     delistingTickerChangeMetadata: {
       knownPriorTickers: aliasesFrom,
-      mappedToCurrentTicker: TICKER_ALIASES[ticker] ?? null,
-      delisted: null,
-      reason: aliasesFrom.length || TICKER_ALIASES[ticker] ? 'curated_alias_map' : null,
+      mappedToCurrentTicker: TICKER_RENAMES[ticker] ?? null,
+      reason: aliasesFrom.length || TICKER_RENAMES[ticker] ? 'curated_alias_map' : null,
     },
     asOf,
     disclosureAvailableAt: asOf,

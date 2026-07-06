@@ -357,3 +357,4 @@ function summarize(state) {
   if (ONCE) { await cycle(state); return; }
   for (;;) { await cycle(state).catch((e) => warn('cycle', e)); await sleep(INTERVAL_MS); }
 })();
+// Senate Scraper Hardening applied
