@@ -12,7 +12,7 @@ afterEach(() => {
 
 describe('usage telemetry', () => {
   it('requires explicit USAGE_MONITOR_ENABLED opt-in before sending', async () => {
-    const fetchMock = vi.fn(async () => Response.json({ accepted: 1 }));
+    const fetchMock = vi.fn(async () => Response.json({ ok: true, accepted: 1 }));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = await sendUsageTelemetry(
@@ -28,7 +28,7 @@ describe('usage telemetry', () => {
   });
 
   it('sends when explicitly enabled and configured', async () => {
-    const fetchMock = vi.fn(async () => Response.json({ accepted: 1 }));
+    const fetchMock = vi.fn(async () => Response.json({ ok: true, accepted: 1 }));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = await sendUsageTelemetry(
