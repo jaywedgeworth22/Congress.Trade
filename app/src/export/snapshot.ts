@@ -34,6 +34,7 @@
 
 import type { Env } from '../shared/types';
 import { all, type SqlParam } from '../shared/db';
+import type { SnapshotManifest, SnapshotTableInfo } from '@jaywedgeworth22/congress-trading-shared';
 
 /**
  * Tables included in the snapshot. `keyCols` is each table's unique key in sort
@@ -74,19 +75,7 @@ export const SNAPSHOT_SCHEMA: Record<SnapshotTableName, string[]> = {
   ],
 };
 
-export interface SnapshotTableInfo {
-  objectKey: string;
-  rowCount: number;
-}
 
-export interface SnapshotManifest {
-  generatedAt: string; // ISO timestamp the snapshot finished writing
-  snapshotDate: string; // YYYY-MM-DD the snapshot covers
-  runId: string; // unique id of the run that produced these files
-  format: 'ndjson';
-  tables: Record<string, SnapshotTableInfo>;
-  schema: Record<string, string[]>;
-}
 
 const PAGE = 10_000;
 // Fixed multipart part size. R2 requires EVERY part except the last to be the

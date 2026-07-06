@@ -34,9 +34,9 @@ import {
   readManifest,
   snapshotObjectKey,
   SNAPSHOT_TABLES,
-  type SnapshotManifest,
   type SnapshotTableName,
 } from './snapshot';
+import type { SnapshotManifest } from '@jaywedgeworth22/congress-trading-shared';
 import {
   buildPitScoreExport,
   parsePitScoreQuery,
