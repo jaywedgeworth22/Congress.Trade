@@ -32,7 +32,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   // Apply the persisted theme before first paint to avoid a flash.
   try { if (localStorage.getItem('ui-theme') === 'light') document.documentElement.setAttribute('data-theme', 'light'); } catch (e) {}
 </script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
   :root {
     /* ---- THEME ---- */
@@ -42,7 +41,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     --panel-2:   #1b2747;
     --border:    #243154;
     --text:      #e6edf6;
-    --text-dim:  #8da2c0;
+    --text-dim:  #9db1cd;
     --accent:    #4f8cff;
     --buy:       #22c55e;
     --sell:      #ef4444;
@@ -61,7 +60,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     --panel-2:   #eef3fa;
     --border:    #d3dced;
     --text:      #142036;
-    --text-dim:  #5a6b86;
+    --text-dim:  #4f607c;
     --accent:    #2563eb;
     --buy:       #15803d;
     --sell:      #dc2626;
@@ -81,7 +80,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #feedTable.resizable .member-cell { overflow: hidden; max-width: 100%; }
   #feedTable.resizable .asset-cell > div,
   #feedTable.resizable .member-cell > div { flex: 1 1 auto; }
-  #feedHead th { position: sticky; top: 0; z-index: 4; background: var(--panel); text-align: center; min-width: 100px; }
+  #feedHead th { position: sticky; top: 0; z-index: 4; background: var(--panel); text-align: center; }
   #feedHead th .arr { display: inline-block; width: 1em; margin-left: 4px; text-align: center; color: var(--text-dim); }
   .col-resizer { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; user-select: none; touch-action: none; }
   .col-resizer:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
@@ -90,6 +89,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .tkr-logo.mono { font-family: var(--mono); font-size: 9px; font-weight: 700; color: var(--text-dim); background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; }
   .tkr-logo.mono::after { content: attr(data-mono); }
   * { box-sizing: border-box; }
+  body, header.top, nav.tabs, .card, .section, .drawer-panel, .ccard { transition: background-color 0.25s ease, background 0.25s ease, color 0.25s ease, border-color 0.25s ease; }
   body {
     margin: 0; background: radial-gradient(1200px 600px at 70% -10%, var(--bg-2), var(--bg));
     color: var(--text); font-family: var(--sans); font-size: 14px; min-height: 100vh;
@@ -218,7 +218,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .conf.hi { color: var(--good); } .conf.mid { color: var(--warn); } .conf.lo { color: var(--sell); }
   .muted { color: var(--text-dim); }
   .mobile-only { display: none; }
-  .desktop-only { display: inline-block; }
   .feed-cards { display: none; gap: 10px; min-width: 0; max-width: 100%; }
   /* Compact 2-row trade card: row1 = asset + side/amount, row2 = one muted meta line. */
   .feed-card { position: relative; display: grid; grid-template-columns: 1fr 16px; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 11px 12px; cursor: pointer; min-width: 0; max-width: 100%; overflow: hidden; }
@@ -340,7 +339,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Roomier side drawer on tablets (mobile bottom-sheet still kicks in at 600px). */
   @media (min-width: 601px) and (max-width: 980px) { .drawer-panel { width: 560px; } }
   /* Let the feed toolbar wrap instead of overflowing on tablet widths. */
-  @media (min-width: 721px) and (max-width: 900px) { .toolbar { flex-wrap: wrap; } .toolbar input, .toolbar select { flex: 1 1 160px; } }
+  @media (min-width: 769px) and (max-width: 900px) { .toolbar { flex-wrap: wrap; } .toolbar input, .toolbar select { flex: 1 1 160px; } }
   @media (min-width: 1080px) { #trKpis { grid-template-columns: repeat(6,minmax(0,1fr)); } }
   .est, .est-money { color: var(--text-dim); }
   .est-money::first-letter { font-size: .82em; vertical-align: .3em; margin-right: .5px; }
@@ -570,13 +569,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .toast.show { display:block; }
   .toast.err { border-color:color-mix(in srgb,var(--sell) 55%,transparent); color:var(--sell); }
   .gate-note { font-size:12px; color:var(--text-dim); display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
-  @media (max-width: 720px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
+  @media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
     html, body { width:100%; max-width:100%; overflow-x:hidden; }
-    .desktop-only { display: none !important; }
     body { background: var(--bg); font-size: 13px; }
     header.top {
       display: grid; grid-template-columns: 1fr auto auto; gap: 8px;
-      padding: 10px 12px; align-items: center; backdrop-filter: none;
+      padding: 6px 10px; align-items: center; backdrop-filter: none;
     }
     .brand { font-size: 15px; }
     #srcPill { display: none; }
@@ -584,7 +582,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     nav.tabs {
       position: fixed; left: 0; right: 0; bottom: 0; margin: 0;
       width: 100%; max-width: 100%;
-      display: flex; justify-content: space-around; flex-wrap: wrap;
+      display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 4px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
       background: var(--panel);
       border-top: 1px solid var(--border); backdrop-filter: none; z-index: 45;
@@ -1162,7 +1160,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="">Both Chambers</option><option value="house">House</option><option value="senate">Senate</option>
       </select>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
-      <button class="btn ghost sm desktop-only" onclick="toggleColChooser()" title="Show / Hide Columns">⚙ Columns</button>
+      <button class="btn ghost sm" onclick="toggleColChooser()" title="Show / Hide Columns">⚙ Columns</button>
       <button class="btn ghost sm" id="exportCsvBtn" onclick="exportCsv()" title="Download the filtered feed as CSV">⤓ Export CSV <span class="premium-mark" data-premium-cue="exportCsv">Premium</span></button>
       <label class="lbl" for="pageSize">Rows</label>
       <select id="pageSize" onchange="setPageSize(this.value)" title="Rows shown per page">
@@ -1180,9 +1178,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <span class="lbl">Search All</span>
       <input id="qAll" placeholder="Politician, Asset, Symbol, Source…" style="min-width:240px;flex:1" oninput="renderFeed()" />
       <span class="lbl">Min $</span>
-      <input id="qMinAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderFeed()" />
-      <span class="lbl">Max $</span>
-      <input id="qMaxAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderFeed()" />
+      <input id="qMinAmt" type="number" min="0" placeholder="0" style="width:120px" oninput="renderFeed()" />
       <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
     </div>
     <div class="table-wrap">
@@ -1286,7 +1282,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
       <p class="sub">Trade counts bucketed by period (own time range, independent of the page window). The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.</p>
       <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
-      <div id="trTime" style="position: relative; height: 180px; width: 100%;"></div>
+      <div id="trTime"></div>
     </div>
 
     <!-- Real GICS sector flow + market-cap size tilt (securities_ref-backed) -->
@@ -2298,7 +2294,6 @@ function renderFeed() {
   // Fold-out advanced search (panel may be collapsed; inputs still honored).
   var qa = (el('qAll').value || '').toLowerCase().trim();
   var minAmt = parseFloat(el('qMinAmt').value);
-  var maxAmt = parseFloat(el('qMaxAmt').value);
   var body = el('feedBody');
   var cards = el('feedCards');
   var cols = visibleCols();
@@ -2319,7 +2314,6 @@ function renderFeed() {
       if (hay.indexOf(qa) < 0) return false;
     }
     if (!isNaN(minAmt) && !((r.min != null ? r.min : 0) >= minAmt)) return false;
-    if (!isNaN(maxAmt) && !((r.max != null ? r.max : r.min) <= maxAmt)) return false;
     return (!m || (r.member || '').toLowerCase().indexOf(m) >= 0) &&
            (!t || (r.ticker || '').indexOf(t) >= 0) &&
            (!ty || r.type === ty) &&
@@ -2517,7 +2511,7 @@ function toggleSearch() {
   if (open) setTimeout(function () { el('qAll').focus(); }, 0);
 }
 function clearSearch() {
-  el('qAll').value = ''; el('qMinAmt').value = ''; el('qMaxAmt').value = '';
+  el('qAll').value = ''; el('qMinAmt').value = '';
   renderFeed();
 }
 

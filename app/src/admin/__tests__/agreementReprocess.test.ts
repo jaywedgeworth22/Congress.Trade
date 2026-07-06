@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { buildAdminRouter } from '../routes';
 
 /**
@@ -51,7 +51,7 @@ function makeEnv() {
     ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k',
     DB: db,
     RAW_FILES: { get: async () => ({ arrayBuffer: async () => new TextEncoder().encode('%PDF').buffer }) },
-    DELIVERY_QUEUE: { send: async () => {}, sendBatch: async () => {} },
+    DELIVERY_QUEUE: { send: async () => {} },
   } as never;
   return { env, insertedTx, reviewResolved };
 }

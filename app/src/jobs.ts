@@ -21,7 +21,7 @@ import { runFreshnessCheck } from './share/freshness';
 import { runPhotoEnrichment, runTickerBackfill } from './admin/routes';
 import { runBulkSnapshot } from './export/snapshot';
 import { sendUsageTelemetry } from './telemetry/usage';
-import { runHouseReconciler } from './ingestion/houseReconciler';
+// runHouseReconciler reserved for future scheduled job wiring
 
 const DAILY_KEY = 'jobs:daily:lastdate';
 
