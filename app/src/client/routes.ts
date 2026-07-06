@@ -313,12 +313,7 @@ function clientTradeFromRow(row: ClientTradeRow): ClientTrade {
     asset: {
       name: tx.assetName,
       ticker: tx.ticker,
-      companyName: tx.refCompanyName ?? null,
-      logoUrl: clientLogoUrl(tx.ticker),
       type: tx.assetType,
-      typeName: tx.assetTypeName ?? null,
-      typeCategory: assetType.category,
-      typeCategoryLabel: assetType.categoryLabel,
       sector: tx.refSector ?? null,
       marketCapBucket: tx.refMarketCapBucket ?? null,
     },
@@ -336,7 +331,7 @@ function clientTradeFromRow(row: ClientTradeRow): ClientTrade {
       sourceUrl: tx.sourceUrl ?? null,
     },
     confidence: tx.confidence,
-    source: tx.source,
+    source: (tx.source === 'manual' ? 'primary' : tx.source) as "primary" | "seed_dataset",
   };
 }
 
