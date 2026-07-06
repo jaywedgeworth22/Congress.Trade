@@ -17,7 +17,7 @@ import { pctChange } from '../prices/compute';
 import { canonicalizeAssetType } from '../shared/assetTypes';
 
 export const PIT_SCORE_VERSION = 'congress-pit-v2';
-export const TICKER_MAP_VERSION = 'ticker-normalize-v1';
+export const TICKER_MAP_VERSION = 'ticker-normalize-v2';
 export const COMMITTEE_SECTOR_MAPPING_VERSION = 'committee-sector-v1';
 export const MEMBER_SKILL_VERSION = 'member-skill-pit-v1';
 export const MEMBER_SKILL_HORIZON_DAYS = 63;
