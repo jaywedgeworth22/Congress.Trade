@@ -9,7 +9,8 @@
  */
 
 import type { Env } from '../shared/types';
-import { all, run } from '../shared/db';
+import { all, run, batch } from '../shared/db';
+import type { SqlParam } from '../shared/db';
 import { resolveSecret } from '../secrets/infisical';
 import { notifyAdmin } from '../alerts/notify';
 import { assertFmpTierOk } from '../shared/fmpStatus';
@@ -697,6 +698,9 @@ async function matchPendingCandidates(
   const providerRows = await loadProviderRows(env, provider.id, now);
 
   let matched = 0;
+  const updates: Array<[string, SqlParam[]]> = [];
+  const alerts: Array<() => Promise<void>> = [];
+
   for (const candidate of candidates) {
     let match: ProviderObservationRow | null = null;
     let method: string | null = null;
@@ -722,8 +726,7 @@ async function matchPendingCandidates(
     }
 
     if (match) {
-      await run(
-        env.DB,
+      updates.push([
         `UPDATE disclosure_latency_candidates
             SET status = 'matched',
                 provider_key = ?,
@@ -747,19 +750,27 @@ async function matchPendingCandidates(
           candidate.doc_id,
           provider.id,
         ],
-      );
+      ]);
       matched++;
-      await alertMatch(env, provider, candidate, match);
+      const m = match;
+      alerts.push(() => alertMatch(env, provider, candidate, m));
     } else {
-      await run(
-        env.DB,
+      updates.push([
         `UPDATE disclosure_latency_candidates
             SET attempts = attempts + 1, last_checked_at = ?, updated_at = ?, error = ?
           WHERE doc_id = ? AND provider = ?`,
         [nowIso, nowIso, errors[0] ?? null, candidate.doc_id, provider.id],
-      );
+      ]);
     }
   }
+
+  if (updates.length > 0) {
+    await batch(env.DB, updates);
+  }
+  for (const alertFn of alerts) {
+    await alertFn();
+  }
+
   return { pending: candidates.length, matched };
 }
 

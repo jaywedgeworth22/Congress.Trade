@@ -7,12 +7,14 @@
  */
 
 import type { AssetTypeCategory } from './assetTypes';
+import type { Chamber, Owner, TxType, ClientTrade } from '@jaywedgeworth22/congress-trading-shared';
+
+export type { Chamber, Owner, TxType, ClientTrade };
 
 // ---------------------------------------------------------------------------
 // Primitive unions / enums
 // ---------------------------------------------------------------------------
 
-export type Chamber = 'house' | 'senate';
 
 /**
  * Filing type code. STOCK Act Periodic Transaction Reports are 'P'.
@@ -35,10 +37,8 @@ export type IngestStatus =
 export type DocKind = 'senate_html' | 'text_pdf' | 'scanned_pdf' | 'unknown';
 
 /** Beneficial owner of a transaction. */
-export type Owner = 'self' | 'spouse' | 'joint' | 'dependent';
 
 /** Transaction type: Purchase | Sale | Exchange. */
-export type TxType = 'P' | 'S' | 'E';
 
 /** Delivery transport for a subscription. */
 export type DeliveryChannel = 'webhook' | 'sse';
@@ -238,52 +238,6 @@ export interface ReviewItem {
 // Client API contracts (shared PWA + SwiftUI backend surface)
 // ---------------------------------------------------------------------------
 
-export interface ClientTrade {
-  id: string;
-  cursor: number;
-  docId: string;
-  member: {
-    id: string | null;
-    name: string | null;
-    chamber: Chamber | null;
-    party: string | null;
-    state: string | null;
-    photoUrl: string | null;
-  };
-  asset: {
-    name: string;
-    ticker: string | null;
-    /** Canonical company name from securities_ref (null until the ticker is enriched). */
-    companyName: string | null;
-    /** Same-origin cached logo proxy URL for the ticker, or null when no ticker is resolved. */
-    logoUrl: string | null;
-    /** Raw disclosure asset type/code as stored in transactions.asset_type. */
-    type: string | null;
-    /** Expanded raw type name when available, e.g. House code label. */
-    typeName: string | null;
-    /** Cross-chamber canonical instrument category, computed from raw type/code. */
-    typeCategory: AssetTypeCategory;
-    /** Human label for typeCategory. */
-    typeCategoryLabel: string;
-    sector: string | null;
-    marketCapBucket: string | null;
-  };
-  transaction: {
-    date: string | null;
-    type: TxType;
-    owner: Owner | null;
-    amountMin: number | null;
-    amountMax: number | null;
-    isOption: boolean;
-  };
-  filing: {
-    filedDate: string | null;
-    firstSeenAt: string | null;
-    sourceUrl: string | null;
-  };
-  confidence: number;
-  source: TxSource;
-}
 
 export interface ClientPreferences {
   userId: string;

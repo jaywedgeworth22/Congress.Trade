@@ -117,7 +117,8 @@ let warnedOpenAdmin = false;
 let warnedClosedAdmin = false;
 
 function isExplicitOpenAdmin(env: EnvWithAdmin): boolean {
-  return env.ADMIN_OPEN_IN_DEV === 'true';
+  const isProduction = env.SENTRY_ENVIRONMENT === 'production' || env.USAGE_MONITOR_ENVIRONMENT === 'production';
+  return env.ADMIN_OPEN_IN_DEV === 'true' && !isProduction;
 }
 
 function adminActor(c: { req: { header(name: string): string | undefined } }): string {

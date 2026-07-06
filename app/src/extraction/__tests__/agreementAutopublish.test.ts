@@ -54,7 +54,7 @@ function makeEnv(flag: string | undefined) {
     DB: db,
     RAW_FILES: { get: async () => ({ arrayBuffer: async () => new TextEncoder().encode('%PDF').buffer }) },
     INGEST_QUEUE: { send: async (m: unknown) => { sent.push(m); } },
-    DELIVERY_QUEUE: { send: async () => {} },
+    DELIVERY_QUEUE: { send: async () => {}, sendBatch: async () => {} },
   } as never;
   return { env, inserted, attempted, resolved, sent };
 }
