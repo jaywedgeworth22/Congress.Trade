@@ -27,12 +27,17 @@ Key reminders:
 - When another agent resolves your PR through an integration branch, treat that
   PR as superseded after the integration PR lands; do not reopen the same work
   on the old branch without first checking current `main`.
-- Do not deploy, push, provision Cloudflare resources, or apply remote D1
-  migrations unless Jay explicitly asks.
-- Do not run production backfills, queue drains, production ingestion crawlers,
-  `npm run deploy`, `npm run deploy:full`, `scripts/ship.sh`,
-  `scripts/provision.sh`, or remote Wrangler D1 commands without explicit
-  production intent.
+- **Production deploys are auto-deploy, no ask** (owner directive 2026-07-06, canonical in
+  `/Users/jay/apps/AGENT-SYNC.md` "Production deploys" section). Once work is MERGED to `main`
+  (via the normal PR → required checks → threads-resolved gate, which is UNCHANGED), deploy it to
+  production without waiting for Jay. Sanctioned path: `gh workflow run deploy.yml -f
+  confirm=deploy-production`; then verify `https://congress.trade/api/health` with a **browser UA**
+  (the workflow's own health step 403s on the Cloudflare managed challenge — a known FALSE failure;
+  the Worker still deploys). Roll back + flag in #agent-sync on a real failure.
+- Still owner-gated / do NOT do under cover of "deploy": provisioning Cloudflare resources,
+  applying remote D1 migrations, and destructive prod one-offs (production backfills, queue drains,
+  production ingestion crawlers, `scripts/provision.sh`, remote Wrangler D1 commands). Auto-deploy
+  covers releasing MERGED CODE only, not arbitrary production mutations.
 - If you add a migration, add the SQL under `app/migrations/`, update
   `POST /api/admin/migrate` in `app/src/admin/routes.ts`, and note the
   migration in the PR body.
