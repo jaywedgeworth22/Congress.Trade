@@ -19,7 +19,7 @@
     "postdeploy": "npm run sentry:sourcemaps"
   },
   "dependencies": {
-    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#v1.4.0",
+    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#v1.4.1",
     "@sentry/cloudflare": "^10.62.0",
     "fflate": "^0.8.3",
     "hono": "^4.12.27",
