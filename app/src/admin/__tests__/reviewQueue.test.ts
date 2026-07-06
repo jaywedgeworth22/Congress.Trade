@@ -281,7 +281,7 @@ describe('review queue admin API', () => {
     const env = {
       ADMIN_TOKEN: 'admin-secret',
       DB: db,
-      DELIVERY_QUEUE: { send: async () => {} },
+      DELIVERY_QUEUE: { send: async () => {}, sendBatch: async () => {} },
     } as never;
 
     const res = await app.request(

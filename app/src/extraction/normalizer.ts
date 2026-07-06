@@ -20,7 +20,7 @@
 
 import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../shared/types';
 import { refreshLatestCursorSeq } from '../delivery/sse';
-import { all, run, fromBool, parseJson } from '../shared/db';
+import { all, run, batch, fromBool, parseJson } from '../shared/db';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets';
 import { canonicalizeAssetType } from '../shared/assetTypes';
 import { uuid } from '../shared/ids';
@@ -29,8 +29,8 @@ import {
   isPlaceholderTicker,
   resolvePreferredTickerFromAssetName,
   resolveTickerDeterministic,
-  TICKER_ALIASES,
 } from './tickerNormalize';
+import { resolveContinuousTicker } from '@jaywedgeworth22/congress-trading-shared';
 
 /**
  * Per-tx confidence at or above this threshold is trusted for auto-publish. If a
@@ -249,11 +249,14 @@ export async function normalize(
   // Fan out delivery only for rows D1 actually inserted. Retries/concurrent
   // normalizations hit the unique row key and are ignored without duplicate
   // webhook/SSE delivery.
-  for (const txId of insertedIds) {
-    try {
-      await env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId });
-    } catch (err) {
-      console.error('normalize: delivery enqueue failed', txId, (err as Error).message);
+  if (insertedIds.length > 0) {
+    const messages = insertedIds.map((txId) => ({ body: { type: 'delivery.dispatch' as const, txId } }));
+    for (let i = 0; i < messages.length; i += 100) {
+      try {
+        await env.DELIVERY_QUEUE.sendBatch(messages.slice(i, i + 100));
+      } catch (err) {
+        console.error('normalize: delivery enqueue batch failed', (err as Error).message);
+      }
     }
   }
 
@@ -489,7 +492,8 @@ function buildResolver(rows: SecRow[]): TickerResolver {
     // Curated stale→current aliases (e.g. FB→META) take precedence over the
     // master, because the master can carry a STALE row for a reassigned ticker
     // (SEC reassigned FB to a ProShares ETF after Meta moved to META).
-    if (t && TICKER_ALIASES[t] && byTicker.has(TICKER_ALIASES[t])) return byTicker.get(TICKER_ALIASES[t])!;
+    const continuous = resolveContinuousTicker(t);
+    if (continuous !== t && byTicker.has(continuous)) return byTicker.get(continuous)!;
     if (t && byTicker.has(t)) return byTicker.get(t)!;
     const name = (assetName || '').trim().toLowerCase();
     if (name && byAlias.has(name)) return byAlias.get(name)!;
@@ -519,9 +523,11 @@ const INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
 
 /** Insert each validated transaction. cursor_seq is assigned by the DB trigger. */
 export async function persistTransactions(env: Env, transactions: Transaction[]): Promise<string[]> {
+  if (transactions.length === 0) return [];
   const insertedIds: string[] = [];
-  for (const tx of transactions) {
-    const res = await run(env.DB, INSERT_TX_SQL, [
+  const statements = transactions.map((tx) => [
+    INSERT_TX_SQL,
+    [
       tx.id,
       tx.docId,
       tx.filerId,
@@ -548,9 +554,16 @@ export async function persistTransactions(env: Env, transactions: Transaction[])
       tx.createdAt,
       tx.firstSeenAt ?? null,
       tx.filedDate ?? null,
-    ]);
-    if ((res.meta?.changes ?? 1) > 0) insertedIds.push(tx.id);
+    ],
+  ] as [string, any[]]);
+
+  const results = await batch(env.DB, statements);
+  for (let i = 0; i < results.length; i++) {
+    if ((results[i].meta?.changes ?? 1) > 0) {
+      insertedIds.push(transactions[i].id);
+    }
   }
+
   if (insertedIds.length > 0) {
     try {
       await refreshLatestCursorSeq(env.DB);

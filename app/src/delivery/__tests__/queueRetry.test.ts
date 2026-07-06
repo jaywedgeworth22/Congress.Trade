@@ -101,6 +101,9 @@ function fakeEnv(
       send: vi.fn(async (body: unknown, options: unknown) => {
         sent.push({ body, options });
       }),
+      sendBatch: vi.fn(async (msgs: any[]) => {
+        for (const m of msgs) sent.push({ body: m.body, options: undefined });
+      }),
     },
     WEBHOOK_SIGNING_KEY: 'fallback_secret',
     ...opts.env,

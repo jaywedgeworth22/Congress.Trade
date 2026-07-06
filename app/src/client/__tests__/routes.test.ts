@@ -266,8 +266,8 @@ function makeEnv() {
         kv.delete(k);
       },
     },
-    INGEST_QUEUE: { send: async (_msg: QueueMessage) => {} },
-    DELIVERY_QUEUE: { send: async (_msg: QueueMessage) => {} },
+    INGEST_QUEUE: { send: async (_msg: QueueMessage) => {}, sendBatch: async () => {} },
+    DELIVERY_QUEUE: { send: async (_msg: QueueMessage) => {}, sendBatch: async () => {} },
   } as unknown as Env;
 
   return { env, subscriptions, commands, preferences, filers, securities, feedRows };
@@ -368,7 +368,7 @@ describe('client API routes', () => {
     });
   });
 
-  it('surfaces company name + same-origin logo URL on enriched feed rows', async () => {
+  it('surfaces enriched sector and market cap on feed rows', async () => {
     const { env, feedRows } = makeEnv();
     feedRows.push({
       id: 'tx_2',
@@ -411,25 +411,17 @@ describe('client API routes', () => {
       items: Array<{
         asset: {
           ticker: string | null;
-          companyName: string | null;
-          logoUrl: string | null;
           sector: string | null;
-          typeCategory: string;
-          typeCategoryLabel: string;
         };
       }>;
     };
     expect(body.items[0].asset).toMatchObject({
       ticker: 'AAPL',
-      companyName: 'Apple Inc.',
-      logoUrl: '/api/logos/ticker?symbol=AAPL',
       sector: 'Technology',
-      typeCategory: 'public_equity',
-      typeCategoryLabel: 'Public Equity',
     });
   });
 
-  it('emits null company name + logo URL when a row has no resolved ticker', async () => {
+  it('emits null ticker when a row has no resolved ticker', async () => {
     const { env, feedRows } = makeEnv();
     feedRows.push({
       id: 'tx_3',
@@ -469,19 +461,11 @@ describe('client API routes', () => {
       items: Array<{
         asset: {
           ticker: string | null;
-          companyName: string | null;
-          logoUrl: string | null;
-          typeCategory: string;
-          typeCategoryLabel: string;
         };
       }>;
     };
     expect(body.items[0].asset).toMatchObject({
       ticker: null,
-      companyName: null,
-      logoUrl: null,
-      typeCategory: 'fixed_income_government',
-      typeCategoryLabel: 'Government / Municipal Debt',
     });
   });
 
@@ -525,7 +509,7 @@ describe('client API routes', () => {
     const res = await app.request('http://localhost/trade/tx_detail', {}, env);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      item: { id: string; member: { name: string; party: string }; asset: { logoUrl: string | null; companyName: string | null } };
+      item: { id: string; member: { name: string; party: string }; asset: { ticker: string | null } };
       items: unknown[];
       count: number;
       total: number;
@@ -533,7 +517,7 @@ describe('client API routes', () => {
     expect(body.item).toMatchObject({
       id: 'tx_detail',
       member: { name: 'Scott Peters', party: 'D' },
-      asset: { companyName: 'Apple Inc.', logoUrl: '/api/logos/ticker?symbol=AAPL' },
+      asset: { ticker: 'AAPL' },
     });
     expect(body.items).toHaveLength(1);
     expect(body.count).toBe(1);

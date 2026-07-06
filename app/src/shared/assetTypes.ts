@@ -6,29 +6,8 @@
  * labels can roll up together without erasing provenance.
  */
 
-export type AssetTypeCategory =
-  | 'public_equity'
-  | 'private_equity'
-  | 'option'
-  | 'fund'
-  | 'fixed_income_government'
-  | 'fixed_income_corporate'
-  | 'fixed_income_asset_backed'
-  | 'cash'
-  | 'retirement_or_529'
-  | 'real_estate'
-  | 'private_fund'
-  | 'business_interest'
-  | 'crypto'
-  | 'insurance_annuity'
-  | 'trust'
-  | 'commodity_collectible'
-  | 'derivative'
-  | 'intellectual_property'
-  | 'receivable'
-  | 'other_security'
-  | 'other'
-  | 'unknown';
+import type { AssetTypeCategory } from '@jaywedgeworth22/congress-trading-shared';
+export type { AssetTypeCategory };
 
 export type AssetTypeSource = 'house_code' | 'label' | 'option_flag' | 'missing' | 'unknown';
 

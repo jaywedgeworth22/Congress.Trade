@@ -59,6 +59,9 @@ function makeEnv(securities: Array<{ ticker: string; name: string | null; aliase
       async send(msg: { type: string; txId: string }) {
         cap.enqueued.push(msg);
       },
+      async sendBatch(msgs: { body: any }[]) {
+        for (const m of msgs) cap.enqueued.push(m.body);
+      },
     } as unknown as Env['DELIVERY_QUEUE'],
   } as unknown as Env;
 
@@ -218,7 +221,7 @@ describe('normalize', () => {
     expect(issuerCollapsedPref.transactions[0].ticker).toBe('T^A');
 
     const stale = await normalize(env, filing(), [tx({ ticker: 'BRCM', assetName: 'Broadcom' })]);
-    expect(stale.transactions[0].ticker).toBe('AVGO'); // stale alias → current
+    expect(stale.transactions[0].ticker).toBe('BRCM'); // acquisition; point-in-time ticker preserved
 
     const klass = await normalize(env, filing(), [tx({ ticker: 'BRK.B', assetName: 'Berkshire' })]);
     expect(klass.transactions[0].ticker).toBe('BRK-B'); // punctuation variant

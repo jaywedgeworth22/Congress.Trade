@@ -5,6 +5,20 @@ Last updated: 2026-07-04
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
 
+## 2026-07-05 (Antigravity) — Shared Ticker Alias Logic and SSE Client
+
+Owner-directed: Migrated ticker normalization and point-in-time score builders to use the centralized `resolveContinuousTicker` and `TICKER_RENAMES` from `congress-trading-shared`. This fixes the "Acquisition-vs-rename guard" issue where acquisitions like ATVI->MSFT were grouped indistinguishably from true renames (e.g., FB->META). We now ensure acquisitions are point-in-time correct and uncollapsed. Also prepared the repo to use the shared typed `CongressTradeClient` for SSE subscriptions.
+
+- Tested locally and typechecked successfully.
+- Code modified in `app/src/extraction/normalizer.ts`, `app/src/extraction/tickerNormalize.ts`, `app/src/export/pitScores.ts`, and their tests.
+
+## 2026-07-05 (Antigravity) — Senate Scraper KV Caching
+
+Owner-directed: Added Cloudflare KV session caching for the Senate eFD scraper. The scraper logic now caches the session CSRF token and cookies to reduce the frequency of agreement gate handshakes, making ingestion more reliable and less likely to be throttled or blocked. A 24h TTL is set for the cache, with automatic invalidation and retry upon any 403 or parse error from the Senate site.
+
+- Tested locally and typechecked successfully.
+- Code added in `app/src/ingestion/senateSource.ts` and `app/src/ingestion/watcher.ts`.
+
 ## 2026-07-04 — Tokenless git dependency for congress-trading-shared (Claude)
 
 Owner-directed: `congress-trading-shared` (this repo's App B/App A shared
