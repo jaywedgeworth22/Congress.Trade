@@ -31,7 +31,7 @@
     "@cloudflare/workers-types": "^4.20240909.0",
     "@sentry/cli": "^2.58.6",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.9",
+    "vitest": "^4.1.10",
     "wrangler": "^4.104.0"
   }
 }
