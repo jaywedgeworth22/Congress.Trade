@@ -59,6 +59,9 @@ function makeEnv(securities: Array<{ ticker: string; name: string | null; aliase
       async send(msg: { type: string; txId: string }) {
         cap.enqueued.push(msg);
       },
+      async sendBatch(msgs: { body: any }[]) {
+        for (const m of msgs) cap.enqueued.push(m.body);
+      },
     } as unknown as Env['DELIVERY_QUEUE'],
   } as unknown as Env;
 

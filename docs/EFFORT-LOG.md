@@ -84,6 +84,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   `db=true`); production deploy still requires explicit owner approval.
 
 ## In Progress
+- **Codebase Performance & Queues (AG, M) — IN PROGRESS 2026-07-05.** Fix silent DLQ webhook failures, implement `DB.batch` for `persistTransactions`, use `sendBatch` for queue dispatching, and run webhook fetch requests concurrently.
+
 - Codex global coordination + fleet monitoring setup (Codex, shared `/Users/jay/apps`
   infra) — ensure Congress.Trade is included in the standardized effort-log
   registry and future-repo bootstrap path without editing non-Codex app code.
@@ -137,7 +139,6 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 ## Planned / Reserved
 - **Push account status metrics to Usage Monitor (AG) — 2026-07-05.** Send telemetry events with `metricType: "balance"` or `"limit"` to the API Usage Monitor to track tech account caps and credits.
 - **Senate Scraper Hardening (AG, M) — 2026-07-05.** Overcome WAF IP blocks via residential scout proxying, implement content-based field extraction for DataTables, and cache session handshakes in KV.
-- **Codebase Performance & Queues (AG, M) — 2026-07-05.** Fix silent DLQ webhook failures, implement `DB.batch` for `persistTransactions`, use `sendBatch` for queue dispatching, and run webhook fetch requests concurrently.
 - **UI/UX Improvements (AG, M) — 2026-07-05.** Fix mobile tab grid spacing, hide mobile columns button, consolidate search/filters + add Max $, fix theme toggle labels, group pagination controls, sticky-lock columns, and add charts to Trends.
 - **Architecture & Shared Dependency (AG, M) — 2026-07-05.** Use `createCongressEvent` from shared package, promote duplicate types to `schemas.ts`, upgrade Socratic.Trade to validate HMAC `X-Signature`, and replace SSE D1-polling with a push mechanism.
 

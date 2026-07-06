@@ -53,7 +53,16 @@ export async function batch(
   statements: Array<[string, SqlParam[]]>,
 ): Promise<D1Result[]> {
   const prepared = statements.map(([sql, params]) => bindParams(db.prepare(sql), params));
-  return db.batch(prepared);
+  if (typeof db.batch === 'function') {
+    return db.batch(prepared);
+  }
+  
+  // Fallback for mock environments (e.g., vitest without db.batch implemented)
+  const results: D1Result[] = [];
+  for (const stmt of prepared) {
+    results.push(await stmt.run());
+  }
+  return results;
 }
 
 /** Convenience accessor so callers can pass `env` instead of `env.DB`. */

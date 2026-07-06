@@ -266,8 +266,8 @@ function makeEnv() {
         kv.delete(k);
       },
     },
-    INGEST_QUEUE: { send: async (_msg: QueueMessage) => {} },
-    DELIVERY_QUEUE: { send: async (_msg: QueueMessage) => {} },
+    INGEST_QUEUE: { send: async (_msg: QueueMessage) => {}, sendBatch: async () => {} },
+    DELIVERY_QUEUE: { send: async (_msg: QueueMessage) => {}, sendBatch: async () => {} },
   } as unknown as Env;
 
   return { env, subscriptions, commands, preferences, filers, securities, feedRows };
