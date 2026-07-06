@@ -29,8 +29,8 @@ import {
   isPlaceholderTicker,
   resolvePreferredTickerFromAssetName,
   resolveTickerDeterministic,
-  TICKER_ALIASES,
 } from './tickerNormalize';
+import { resolveContinuousTicker } from '@jaywedgeworth22/congress-trading-shared';
 
 /**
  * Per-tx confidence at or above this threshold is trusted for auto-publish. If a
@@ -489,7 +489,8 @@ function buildResolver(rows: SecRow[]): TickerResolver {
     // Curated stale→current aliases (e.g. FB→META) take precedence over the
     // master, because the master can carry a STALE row for a reassigned ticker
     // (SEC reassigned FB to a ProShares ETF after Meta moved to META).
-    if (t && TICKER_ALIASES[t] && byTicker.has(TICKER_ALIASES[t])) return byTicker.get(TICKER_ALIASES[t])!;
+    const continuous = resolveContinuousTicker(t);
+    if (continuous !== t && byTicker.has(continuous)) return byTicker.get(continuous)!;
     if (t && byTicker.has(t)) return byTicker.get(t)!;
     const name = (assetName || '').trim().toLowerCase();
     if (name && byAlias.has(name)) return byAlias.get(name)!;
