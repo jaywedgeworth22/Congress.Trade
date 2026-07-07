@@ -78,7 +78,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   `db=true`); production deploy still requires explicit owner approval.
 
 ## In Progress
-- **Consolidate usage telemetry clients in consumer apps (AG) - IN PROGRESS 2026-07-06.** Replacing hand-rolled usage telemetry clients with `@jaywedgeworth22/congress-trading-shared` in Congress.Trade.
+- **Consolidate usage telemetry clients in consumer apps (AG) - COMPLETED 2026-07-06.** Replacing hand-rolled usage telemetry clients with `@jaywedgeworth22/congress-trading-shared` in Congress.Trade.
 - **Codex autofix storm guard (CODEX, workflow/fleet-infra) — DONE-local 2026-07-05; awaiting push/PR.**
   Scope: reduce `codex-autofix.yml` storm odds/frequency by running the autofix loop once per
   Codex submitted review plus manual `workflow_dispatch`, not on every Codex inline/issue
