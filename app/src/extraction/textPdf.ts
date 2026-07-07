@@ -65,7 +65,7 @@ export class TextPdfExtractor implements Extractor {
 
 async function extractPdfText(bytes: ArrayBuffer): Promise<string> {
   // unpdf accepts a Uint8Array; mergePages joins page text with newlines.
-  const pdf = await getDocumentProxy(new Uint8Array(bytes));
+  const pdf = await getDocumentProxy(new Uint8Array(bytes.slice(0)));
   const { text } = await extractText(pdf, { mergePages: true });
   return typeof text === 'string' ? text : (text as string[]).join('\n');
 }
