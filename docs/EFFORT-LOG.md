@@ -78,7 +78,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   `db=true`); production deploy still requires explicit owner approval.
 
 ## In Progress
-- **Consolidate usage telemetry clients in consumer apps (AG) - IN PROGRESS 2026-07-06.** Replacing hand-rolled usage telemetry clients with `@jaywedgeworth22/congress-trading-shared` in Congress.Trade.
+- **Consolidate usage telemetry clients in consumer apps (AG) - COMPLETED 2026-07-06.** Replacing hand-rolled usage telemetry clients with `@jaywedgeworth22/congress-trading-shared` in Congress.Trade.
 - **Codex autofix storm guard (CODEX, workflow/fleet-infra) — DONE-local 2026-07-05; awaiting push/PR.**
   Scope: reduce `codex-autofix.yml` storm odds/frequency by running the autofix loop once per
   Codex submitted review plus manual `workflow_dispatch`, not on every Codex inline/issue
@@ -255,6 +255,7 @@ Jul 8 18:10 CT)._
 - **Consolidate AG's six overlapping PRs #182-#187 into one stacked/sequenced landing plan (AG, L)** — The six AG branches each re-include the same 231-line senateSource rewrite + tickerNormalize + eslint/vitest config, so parallel merges will conflict. Pick a single base branch, rebase the unique deltas (dashboardHtml, fmpDisclosureLatency, shared/types dedup, D1-batch/queue perf, senate KV caching) on top of it in order, and close the redundant duplicates — after the shared v1.3.1 tag exists so check-pin can pass.
 - **Remove stray patch.py scratch script from antigravity/performance-queues (#186) before it lands (AG, S)** — PR #186 accidentally commits patch.py, a 47-line Python string-patcher for webhook.ts. Delete it so a dev-only artifact does not ship into the repo.
 - **Rescue CURSOR stash into a committed, pushed branch + PR (CURSOR, M) — COMPLETED 2026-07-06.** PR #211 (`cursor/assigned-tasks-v2`). Stash@{1} rescued from base 892b45e onto current origin/main. Dropped already-merged hunks from #139/#140. Genuine work committed: tsconfig strict flags, tsconfig.ingestcheck deletion, ESLint deps + scripts, lockfile-based pin-check, AGENTS.md dedup, unused-code removal across 8 files, dashboard CSS cleanup. Gates: typecheck 0 errors, lint 0 errors, 672 tests pass.
+- **Add manual queue reprocess button to admin dashboard (AG, S) — COMPLETED 2026-07-06.** Added a UI widget to `dashboardHtml.ts` to trigger `POST /api/admin/reprocess` directly from the admin panel.
 
 ## Changelog of this log
 - 2026-07-06 — CURSOR: rescued stash@{1} → PR #211; fixed uptime-monitor.yml crash + CF challenge bypass; adopted rollouts convention; created Wave-4 smoke script; fixed deploy health gate (workers.dev fallback); noted patch.py on AG's PR #186.
