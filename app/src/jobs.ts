@@ -20,7 +20,8 @@ import { shareWithPeer, type PeerShareInput } from './share/outbound';
 import { runFreshnessCheck } from './share/freshness';
 import { runPhotoEnrichment, runTickerBackfill } from './admin/routes';
 import { runBulkSnapshot } from './export/snapshot';
-import { sendUsageTelemetry } from './telemetry/usage';
+import { createUsageTelemetryClient } from '@jaywedgeworth22/congress-trading-shared';
+import { resolveSecrets } from './secrets/infisical';
 import { runHouseReconciler } from './ingestion/houseReconciler';
 
 const DAILY_KEY = 'jobs:daily:lastdate';
@@ -89,9 +90,23 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   try {
     const fmpUsedToday = await getDailyUsed(env);
     if (hadFmpKey || fmpUsedToday > 0) {
-      await sendUsageTelemetry(env, [
-        {
-          provider: 'fmp',
+      const secrets = await resolveSecrets(env, [
+        'USAGE_MONITOR_ENABLED',
+        'USAGE_MONITOR_INGEST_URL',
+        'USAGE_MONITOR_INGEST_TOKEN',
+        'USAGE_MONITOR_ENVIRONMENT',
+      ]);
+      const isEnabled = /^(1|true|yes|on)$/i.test((secrets.USAGE_MONITOR_ENABLED ?? '').trim());
+      if (isEnabled && secrets.USAGE_MONITOR_INGEST_URL && secrets.USAGE_MONITOR_INGEST_TOKEN) {
+        const client = createUsageTelemetryClient({
+          baseUrl: secrets.USAGE_MONITOR_INGEST_URL.trim(),
+          token: secrets.USAGE_MONITOR_INGEST_TOKEN.trim(),
+        });
+        await client.send([
+          {
+            sourceApp: 'congress-trade',
+            environment: secrets.USAGE_MONITOR_ENVIRONMENT || env.INFISICAL_ENV,
+            provider: 'fmp',
           service: 'market-data',
           label: 'FMP daily call budget',
           billingMode: 'actual',
@@ -110,8 +125,9 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
             priceProvider: ((env as { PRICE_PROVIDER?: string }).PRICE_PROVIDER || 'fmp').toLowerCase(),
             errors: errors.length,
           },
-        },
-      ]);
+        }
+        ]);
+      }
     }
   } catch (err) {
     console.warn('usage telemetry report failed:', (err as Error).message);
