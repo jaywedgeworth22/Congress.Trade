@@ -11,7 +11,8 @@ about GitHub Actions beyond reading those env vars — all the wiring lives in
 the workflow file.
 
 Two independent signals are sent per completed run:
-  1. If conclusion == "failure": a Sentry error event tagged with
+  1. If the run's conclusion warrants an alert (failure / timed_out /
+     startup_failure — see ALERT_CONCLUSIONS): a Sentry error event tagged with
      {app, workflow, branch, actor}, carrying the run URL, fingerprinted on
      [app, workflow, branch] so repeated failures on the same branch/workflow
      group into one Sentry issue instead of paging separately every time.
@@ -63,6 +64,14 @@ CRON_SCHEDULES = {
     "Shared package pin check": "0 13 * * 1",
 }
 
+# Terminal workflow_run conclusions that should raise a Sentry error event.
+# Beyond a plain "failure", a run GitHub kills counts as broken: "timed_out"
+# (hung past its limit) and "startup_failure" (the run never started) would
+# otherwise slip through silently. Deliberately EXCLUDES "cancelled" / "skipped"
+# / "neutral" / "stale" / "action_required" — those are normally intentional and
+# alerting on them would just be pager noise.
+ALERT_CONCLUSIONS = frozenset({"failure", "timed_out", "startup_failure"})
+
 
 def slugify(name: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -103,6 +112,12 @@ def send_envelope(envelope_url: str, auth_header: str, item_type: str, item_payl
         print(f"::warning::Sentry envelope POST ({item_type}) failed: HTTP {exc.code}: {detail}")
     except urllib.error.URLError as exc:
         print(f"::warning::Sentry envelope POST ({item_type}) failed: {exc.reason}")
+    except Exception as exc:  # noqa: BLE001 — fail open on ANY transient network error
+        # Broad by design: a raw ConnectionResetError/OSError (e.g. the peer resets
+        # the connection before returning any HTTP response) is NOT wrapped in
+        # URLError, and must never red-X the observed workflow. Print only the
+        # exception TYPE — never str(exc), which could echo the URL/auth header/DSN.
+        print(f"::warning::Sentry envelope POST ({item_type}) failed: {type(exc).__name__}")
 
 
 def main() -> int:
@@ -136,22 +151,22 @@ def main() -> int:
     )
 
     # ── 1. Failure event ────────────────────────────────────────────────────
-    if conclusion == "failure":
+    if conclusion in ALERT_CONCLUSIONS:
         event_payload = {
             "event_id": uuid.uuid4().hex,
             "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "platform": "other",
             "level": "error",
             "environment": "fleet-ci",
-            "message": f"CI workflow failed: {workflow_name} (branch {branch}) [{APP}]",
+            "message": f"CI workflow {conclusion}: {workflow_name} (branch {branch}) [{APP}]",
             "tags": {"app": APP, "workflow": workflow_name, "branch": branch, "actor": actor},
             "extra": {"run_url": run_url, "run_id": run_id},
             "fingerprint": ["ci-failure", APP, workflow_name, branch],
         }
         send_envelope(envelope_url, auth_header, "event", event_payload)
-        print(f"Sent Sentry failure event for workflow '{workflow_name}' on branch '{branch}'.")
+        print(f"Sent Sentry {conclusion} event for workflow '{workflow_name}' on branch '{branch}'.")
     else:
-        print(f"Workflow '{workflow_name}' concluded '{conclusion}' (not failure); no error event sent.")
+        print(f"Workflow '{workflow_name}' concluded '{conclusion}' (no alert); no error event sent.")
 
     # ── 2. Cron check-in (only for schedule-triggered runs) ─────────────────
     if event == "schedule":
@@ -163,7 +178,7 @@ def main() -> int:
             )
         else:
             checkin_status = "ok" if conclusion == "success" else "error"
-            monitor_slug = f"ci-{slugify(workflow_name)}"
+            monitor_slug = f"ci-{APP}-{slugify(workflow_name)}"
             checkin_payload = {
                 "check_in_id": uuid.uuid4().hex,
                 "monitor_slug": monitor_slug,
