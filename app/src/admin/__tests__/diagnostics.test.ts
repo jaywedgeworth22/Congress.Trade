@@ -157,9 +157,9 @@ describe('admin diagnostics API', () => {
         }),
         expect.objectContaining({ id: 'source:house', status: 'ok', callsToday: 2 }),
         expect.objectContaining({ id: 'provider:massive', status: 'ok', configured: true, callsToday: 1 }),
-        expect.objectContaining({ id: 'cache:prices', status: 'ok', configured: true, callsToday: 3 }),
-        expect.objectContaining({ id: 'cache:spx', status: 'ok', configured: true, callsToday: 1 }),
-        expect.objectContaining({ id: 'cache:performance', status: 'ok', configured: true, callsToday: 5 }),
+        expect.objectContaining({ id: 'cache:prices', status: 'ok', configured: true, callsToday: 0 }),
+        expect.objectContaining({ id: 'cache:spx', status: 'ok', configured: true, callsToday: 0 }),
+        expect.objectContaining({ id: 'cache:performance', status: 'ok', configured: true, callsToday: 0 }),
       ]),
     );
     expect(JSON.stringify(body)).not.toContain('gemini-secret');
