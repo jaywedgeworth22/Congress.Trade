@@ -55,10 +55,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Resolve the actually installed version from a package-lock.json.
+          # Resolve the actually installed ref from a package-lock.json. Prefer the
+          # 'resolved' field (git URL + ref/commit sha) so a moved git tag or a
+          # different pinned commit is caught even when the package's internal
+          # 'version' is unchanged; fall back to 'version' for registry/tarball deps
+          # whose lock entry has no 'resolved'.
           resolve_installed() {
             local LOCKFILE="$1"
-            node -e "const pkg = require('./${LOCKFILE}'); console.log(pkg.packages['node_modules/${PKG}']?.version || '')"
+            node -e "const pkg = require('./${LOCKFILE}'); const e = pkg.packages['node_modules/${PKG}'] || {}; console.log(e.resolved || e.version || '')"
           }
 
           LOCAL_V=$(resolve_installed "${LOCAL_PACKAGE_LOCK_PATH}")
@@ -66,7 +70,7 @@ jobs:
             echo "::error::${PKG} not installed (missing from ${LOCAL_PACKAGE_LOCK_PATH})"
             exit 1
           fi
-          echo "Local installed version (${LOCAL_PACKAGE_LOCK_PATH}): $LOCAL_V"
+          echo "Local installed ref (${LOCAL_PACKAGE_LOCK_PATH}): $LOCAL_V"
 
           if [ -z "${GH_TOKEN}" ]; then
             echo "::notice::GH_PACKAGES_TOKEN is unset - skipping the peer divergence check (it needs read access to ${PEER_REPO})."
@@ -78,16 +82,16 @@ jobs:
             echo "::warning::could not fetch ${PEER_REPO}/${PEER_PACKAGE_LOCK_PATH} (auth/scope/transient error) - skipping peer check"
             exit 0
           fi
-          PEER_V=$(printf '%s' "$PEER_LOCK_JSON" | PKG="$PKG" node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log((JSON.parse(s).packages||{})['node_modules/'+process.env.PKG]?.version||'')}catch{console.log('')}})")
+          PEER_V=$(printf '%s' "$PEER_LOCK_JSON" | PKG="$PKG" node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{const e=(JSON.parse(s).packages||{})['node_modules/'+process.env.PKG]||{};console.log(e.resolved||e.version||'')}catch{console.log('')}})")
           if [ -z "$PEER_V" ]; then
             echo "::error::${PKG} not installed (missing from ${PEER_REPO}/${PEER_PACKAGE_LOCK_PATH})"
             exit 1
           fi
-          echo "Peer installed version (${PEER_REPO}/${PEER_PACKAGE_LOCK_PATH}): $PEER_V"
+          echo "Peer installed ref (${PEER_REPO}/${PEER_PACKAGE_LOCK_PATH}): $PEER_V"
 
           if [ "$LOCAL_V" = "$PEER_V" ]; then
-            echo "OK: both consumers install ${PKG}@${LOCAL_V}."
+            echo "OK: both consumers install ${PKG} at the same ref (${LOCAL_V})."
           else
-            echo "::error::${PKG} version DIVERGED: this repo installs version '${LOCAL_V}' but ${PEER_REPO} installs version '${PEER_V}'. Bump BOTH repos to the same exact version (bump them as a matched pair)."
+            echo "::error::${PKG} ref DIVERGED: this repo installs '${LOCAL_V}' but ${PEER_REPO} installs '${PEER_V}'. Bump BOTH repos to the same exact ref (bump them as a matched pair)."
             exit 1
           fi

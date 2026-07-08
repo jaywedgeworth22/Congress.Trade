@@ -1178,7 +1178,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <span class="lbl">Search All</span>
       <input id="qAll" placeholder="Politician, Asset, Symbol, Source…" style="min-width:240px;flex:1" oninput="renderFeed()" />
       <span class="lbl">Min $</span>
-      <input id="qMinAmt" type="number" min="0" placeholder="0" style="width:120px" oninput="renderFeed()" />
+      <input id="qMinAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderFeed()" />
+      <span class="lbl">Max $</span>
+      <input id="qMaxAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderFeed()" />
       <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
     </div>
     <div class="table-wrap">
@@ -2308,6 +2310,7 @@ function renderFeed() {
   // Fold-out advanced search (panel may be collapsed; inputs still honored).
   var qa = (el('qAll').value || '').toLowerCase().trim();
   var minAmt = parseFloat(el('qMinAmt').value);
+  var maxAmt = parseFloat(el('qMaxAmt').value);
   var body = el('feedBody');
   var cards = el('feedCards');
   var cols = visibleCols();
@@ -2328,6 +2331,7 @@ function renderFeed() {
       if (hay.indexOf(qa) < 0) return false;
     }
     if (!isNaN(minAmt) && !((r.min != null ? r.min : 0) >= minAmt)) return false;
+    if (!isNaN(maxAmt) && !((r.max != null ? r.max : r.min) <= maxAmt)) return false;
     return (!m || (r.member || '').toLowerCase().indexOf(m) >= 0) &&
            (!t || (r.ticker || '').indexOf(t) >= 0) &&
            (!ty || r.type === ty) &&
@@ -2525,7 +2529,7 @@ function toggleSearch() {
   if (open) setTimeout(function () { el('qAll').focus(); }, 0);
 }
 function clearSearch() {
-  el('qAll').value = ''; el('qMinAmt').value = '';
+  el('qAll').value = ''; el('qMinAmt').value = ''; el('qMaxAmt').value = '';
   renderFeed();
 }
 

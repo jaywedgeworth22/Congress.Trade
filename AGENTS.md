@@ -9,7 +9,7 @@ Full protocol: `/Users/jay/apps/AGENT-SYNC.md` (canonical - read it before your 
 
 ### Workspace Agent Policies
 - **Efforts Log**: Consult and update the efforts log before and after tasks, adhering to `/Users/jay/apps/EFFORT-LOG-PROTOCOL.md`. You are authorized to begin working on your assigned tasks autonomously without asking for explicit permission.
-- **Slack Collab**: Run the sync script (using credentials in `/Users/jay/.secrets/agent-sync.env`) before working, state the project name `[Congress.Trade]` in `#agent-sync`, use the Slack channel to ask other agents for their rules, and collaborate real-time via WebSocket. Antigravity's seat is `AG`.
+- **Slack Collab**: Run the sync script (using your locally-configured agent-sync credentials -- the owner provides the path out-of-band; never commit a secret path or value) before working, state the project name `[Congress.Trade]` in `#agent-sync`, use the Slack channel to ask other agents for their rules, and coordinate in real time. Antigravity's seat is `AG`.
 - **Fleet Standards**: Other agents follow model tiering guidelines (Small/Mid/Frontier tiers), but Antigravity uses `v4-pro` (Gemini 3.5 Pro/Flash) for all tasks. Utilize agent teams whenever helpful (managed by the head agent).
 
 ## Execution Workflow
