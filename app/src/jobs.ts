@@ -22,7 +22,9 @@ import { runPhotoEnrichment, runTickerBackfill } from './admin/routes';
 import { runBulkSnapshot } from './export/snapshot';
 import { createUsageTelemetryClient } from '@jaywedgeworth22/congress-trading-shared';
 import { resolveSecrets } from './secrets/infisical';
-import { runHouseReconciler } from './ingestion/houseReconciler';
+// NOTE: runHouseReconciler (./ingestion/houseReconciler) is intentionally not
+// imported here yet -- it is reserved for future scheduled-job wiring. Importing
+// it unused would trip noUnusedLocals (enabled in this PR).
 
 const DAILY_KEY = 'jobs:daily:lastdate';
 

@@ -40,13 +40,11 @@ import { extractParsed } from '../extraction/orchestrator';
 import {
   normalize,
   recomputeTransactions,
-  persistTransactions,
   transactionRowKey,
   loadResolver,
   CONFIDENCE_THRESHOLD,
   hasHardFailureFlags,
 } from '../extraction/normalizer';
-import { mapFiling, type FilingRow } from '../delivery/rows';
 import { processAgreementDoc, type AgreementModels } from '../extraction/agreement';
 import type { Chamber } from '../shared/types';
 import { verifyAccessJwt, certsUrl } from './access';

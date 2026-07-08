@@ -185,29 +185,6 @@ function parseInlineRecords(text: string): ParsedTx[] {
   return rows;
 }
 
-function stripInlineDetailSpans(text: string): string {
-  const nextRecord = new RegExp(
-    String.raw`\s+[A-Z][A-Za-z0-9&.,'’:/ -]{2,180}\s+(?:(?:\(${TICKER_PATTERN}\)\s*)|(?:NYSE[A-Z]*:\s*${TICKER_PATTERN}\s*)|)\[(?:${HOUSE_ASSET_TYPE_CODE_PATTERN})\]\s+(?:P|S|E|purchase|sale|exchange)\b`,
-    'i',
-  );
-  let out = '';
-  let i = 0;
-  while (i < text.length) {
-    const detail = /\s+F\s+S:\s+New\b/i.exec(text.slice(i));
-    if (!detail) {
-      out += text.slice(i);
-      break;
-    }
-    const start = i + detail.index;
-    out += text.slice(i, start);
-    const restStart = start + detail[0].length;
-    const next = nextRecord.exec(text.slice(restStart));
-    if (!next) break;
-    i = restStart + next.index;
-  }
-  return out.replace(/\s+/g, ' ').trim();
-}
-
 function cleanInlineAssetName(value: string): string {
   return value
     .replace(/^.*(?:\/share|shares)\s+/i, '')
@@ -217,10 +194,6 @@ function cleanInlineAssetName(value: string): string {
     .replace(/\bD:\s+.*$/i, '')
     .replace(/\s+/g, ' ')
     .trim();
-}
-
-function stripLeadingOwnerCode(value: string): string {
-  return value.replace(/^(SP|DC|JT|SELF)\b\s*/i, '').trim();
 }
 
 function normalizeTicker(value: string | null): string | null {
