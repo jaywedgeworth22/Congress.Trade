@@ -65,6 +65,11 @@ export class TextPdfExtractor implements Extractor {
 
 async function extractPdfText(bytes: ArrayBuffer): Promise<string> {
   // unpdf accepts a Uint8Array; mergePages joins page text with newlines.
+  // Copy the buffer first (bytes.slice(0)): getDocumentProxy/pdf.js transfers and
+  // detaches the ArrayBuffer it is handed, so passing `bytes` directly would leave
+  // the caller's buffer detached and break the HousePdfExtractor vision fallback,
+  // which reuses the same ArrayBuffer after text extraction. Do not remove the copy
+  // (regression guard for Sentry CONGRESS-TRADE-2).
   const pdf = await getDocumentProxy(new Uint8Array(bytes.slice(0)));
   const { text } = await extractText(pdf, { mergePages: true });
   return typeof text === 'string' ? text : (text as string[]).join('\n');
