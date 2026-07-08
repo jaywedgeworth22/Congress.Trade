@@ -1630,19 +1630,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       note: runtimeSecrets.LOGODEV_PUBLISHABLE_KEY ? 'Ticker logo proxy token available' : 'LOGODEV_PUBLISHABLE_KEY is not available to this Worker runtime',
     });
 
-    const priceRows = await optionalAll<{
-      calls_total: number;
-      calls_last_24h: number;
-      calls_today: number;
-      last_used_at: string | null;
-    }>(
+    const priceRows = await optionalAll<{ last_used_at: string | null }>(
       c.env,
-      `SELECT COUNT(DISTINCT ticker) AS calls_total,
-              SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
-              SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS calls_today,
-              MAX(date) AS last_used_at
-         FROM price_eod`,
-      [last24.slice(0, 10), today.slice(0, 10)],
+      `SELECT MAX(date) AS last_used_at FROM price_eod`
     );
     const priceRow = priceRows[0];
     const hasPriceProvider = !!(runtimeSecrets.FMP_API_KEY || runtimeSecrets.MASSIVE_API_KEY);
@@ -1652,28 +1642,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       status: connectionStatus(hasPriceProvider, 0, priceRow?.last_used_at ?? null),
       configured: hasPriceProvider,
       lastUsedAt: priceRow?.last_used_at ?? null,
-      callsTotal: priceRow?.calls_total ?? 0,
-      callsLast24h: priceRow?.calls_last_24h ?? 0,
-      callsToday: priceRow?.calls_today ?? 0,
+      callsTotal: 0,
+      callsLast24h: 0,
+      callsToday: 0,
       errorsLast24h: 0,
       note: hasPriceProvider
         ? `PRICE_PROVIDER=${c.env.PRICE_PROVIDER || 'fmp'}; counts show cached assets/rows, not raw API calls`
         : 'No FMP_API_KEY or MASSIVE_API_KEY configured for price history',
     });
 
-    const spxRows = await optionalAll<{
-      calls_total: number;
-      calls_last_24h: number;
-      calls_today: number;
-      last_used_at: string | null;
-    }>(
+    const spxRows = await optionalAll<{ last_used_at: string | null }>(
       c.env,
-      `SELECT COUNT(*) AS calls_total,
-              SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
-              SUM(CASE WHEN date >= ? THEN 1 ELSE 0 END) AS calls_today,
-              MAX(date) AS last_used_at
-         FROM spx_eod`,
-      [last24.slice(0, 10), today.slice(0, 10)],
+      `SELECT MAX(date) AS last_used_at FROM spx_eod`
     );
     const spxRow = spxRows[0];
     connections.push({
@@ -1682,26 +1662,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       status: connectionStatus(hasPriceProvider, 0, spxRow?.last_used_at ?? null),
       configured: hasPriceProvider,
       lastUsedAt: spxRow?.last_used_at ?? null,
-      callsTotal: spxRow?.calls_total ?? 0,
-      callsLast24h: spxRow?.calls_last_24h ?? 0,
-      callsToday: spxRow?.calls_today ?? 0,
+      callsTotal: 0,
+      callsLast24h: 0,
+      callsToday: 0,
       errorsLast24h: 0,
       note: 'SPY-adjusted close history used as the S&P comparison baseline',
     });
 
-    const perfRows = await optionalAll<{
-      calls_total: number;
-      calls_last_24h: number;
-      calls_today: number;
-      last_used_at: string | null;
-    }>(
+    const perfRows = await optionalAll<{ last_used_at: string | null }>(
       c.env,
-      `SELECT COUNT(*) AS calls_total,
-              SUM(CASE WHEN computed_at >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
-              SUM(CASE WHEN computed_at >= ? THEN 1 ELSE 0 END) AS calls_today,
-              MAX(computed_at) AS last_used_at
-         FROM tx_performance`,
-      [last24, today],
+      `SELECT MAX(computed_at) AS last_used_at FROM tx_performance`
     );
     const perfRow = perfRows[0];
     connections.push({
@@ -1710,9 +1680,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       status: connectionStatus(hasPriceProvider, 0, perfRow?.last_used_at ?? null),
       configured: hasPriceProvider,
       lastUsedAt: perfRow?.last_used_at ?? null,
-      callsTotal: perfRow?.calls_total ?? 0,
-      callsLast24h: perfRow?.calls_last_24h ?? 0,
-      callsToday: perfRow?.calls_today ?? 0,
+      callsTotal: 0,
+      callsLast24h: 0,
+      callsToday: 0,
       errorsLast24h: 0,
       note: 'Required for per-trade and member S&P-relative performance',
     });

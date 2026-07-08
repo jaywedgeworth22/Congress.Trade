@@ -1462,6 +1462,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <p class="note">API HOOK: <code>POST /api/admin/house-backfill</code>. Pulls past-year House bulk ZIPs (official, always reachable) and runs each PTR through the live pipeline — high-fidelity, but heavier than the seed import. Dry Run only counts; Backfill is capped by Max filings.</p>
     </div>
     <div class="section">
+      <h3>Review Queue Maintenance</h3>
+      <p class="sub">Manually trigger the background reprocess routine for items in the review queue. This is normally handled by the cron auto-publish, but can be forced here.</p>
+      <div class="row-flex">
+        <select id="reprocChamber">
+          <option value="house">House</option>
+          <option value="senate">Senate</option>
+        </select>
+        <input id="reprocLimit" type="number" min="1" max="2000" value="500" title="Maximum filings to reprocess" style="width:120px" />
+        <button class="btn" onclick="runQueueReprocess()">Reprocess Queue</button>
+        <span id="reprocMsg" class="note"></span>
+      </div>
+      <p class="note">API HOOK: <code>POST /api/admin/reprocess</code>.</p>
+    </div>
+    <div class="section">
       <h3>Source Health</h3>
       <p class="sub">First-seen timestamps are logged per filing so real refresh cadence is measured, not assumed.</p>
       <div class="row-flex" style="margin-bottom:10px">
@@ -3545,6 +3559,28 @@ function runHouseIndex(dryRun) {
         : ('Enqueued ' + (j.enqueued || 0) + ' new filing(s) from ' + (j.discovered || 0) + ' PTRs.' + (j.errors && j.errors.length ? ' Errors: ' + j.errors.join('; ') : ''));
     })
     .catch(function (e) { el('hiMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
+}
+
+function runQueueReprocess() {
+  // API HOOK: POST /api/admin/reprocess
+  var chamber = el('reprocChamber').value;
+  var limit = parseInt(el('reprocLimit').value, 10);
+  if (isNaN(limit) || limit < 1) limit = 500;
+  
+  el('reprocMsg').textContent = 'Reprocessing...';
+  fetch('/api/admin/reprocess', {
+    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ chamber: chamber, limit: limit })
+  })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) { var ae = new Error(ADMIN_MOVED_MSG); ae.isAuth = true; throw ae; }
+      return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
+    })
+    .then(function (j) {
+      el('reprocMsg').textContent = 'Success! Reprocessed ' + (j.processed || 0) + ' items.';
+      loadReview();
+    })
+    .catch(function (e) { el('reprocMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
 }
 
 /* ============================ SOURCE HEALTH ============================ */
