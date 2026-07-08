@@ -90,6 +90,19 @@ gh pr checks <number>
 If checks are failing, fix them on the owning branch only when explicitly asked;
 otherwise coordinate through a new integration branch.
 
+## Rollout Notes
+
+Major changes, migrations, and infrastructure work must leave a durable
+decision record in `docs/rollouts/YYYY-MM-DD-slug.md`. The file should
+cover:
+- **Summary** — what changed and why
+- **Files changed** — key paths
+- **Verification** — how to confirm the change is live and correct
+- **Follow-ups** — any deferred items or known gaps
+
+`STATUS.md` remains the live snapshot; rollout notes are chronological
+reference for the permanent record.
+
 ## Development Commands
 
 Run from `app/`:

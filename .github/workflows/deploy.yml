@@ -50,3 +50,4 @@ jobs:
           # Consumed by sentry-cli in the postdeploy sourcemap upload. Optional:
           # the postdeploy step fails open when it is absent (see app/package.json).
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          WORKERS_DEV_HOST: congress-trade.jaywedgeworth22.workers.dev

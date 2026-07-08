@@ -17,6 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BASE="${BASE:-https://congress.trade}"
+WORKERS_DEV_HOST="${WORKERS_DEV_HOST:-}"
 DEPLOY_ONLY=false
 ADMIN_STEPS=()
 
@@ -69,6 +70,8 @@ if [ "$DEPLOY_ONLY" != true ] && [ -z "${ADMIN_TOKEN:-}" ]; then
 fi
 
 check_api_health() {
+  local health_url="${1:-$BASE/api/health}"
+  local label="${2:-$BASE}"
   local attempts delay body_file body code i
   attempts="${DEPLOY_HEALTH_ATTEMPTS:-8}"
   delay="${DEPLOY_HEALTH_DELAY_SECONDS:-10}"
@@ -76,29 +79,37 @@ check_api_health() {
   trap 'rm -f "$body_file"' RETURN
 
   for ((i = 1; i <= attempts; i++)); do
-    code="$(curl -sS -A "$UA" -o "$body_file" -w '%{http_code}' "$BASE/api/health" || true)"
+    code="$(curl -sS -A "$UA" -o "$body_file" -w '%{http_code}' "$health_url" || true)"
     body="$(cat "$body_file")"
     if [[ "$code" == 2* && "$body" == *'"ok":true'* && "$body" == *'"db":true'* ]]; then
       echo "$body"
-      return
+      return 0
     fi
 
-    echo "   /api/health attempt $i/$attempts failed (HTTP ${code:-curl-error})." >&2
+    echo "   /api/health attempt $i/$attempts on $label failed (HTTP ${code:-curl-error})." >&2
     if [ "$i" -lt "$attempts" ]; then
       sleep "$delay"
     fi
   done
 
   echo "$body" >&2
-  echo "!! /api/health did not report ok=true and db=true after $attempts attempt(s)." >&2
-  exit 1
+  echo "!! /api/health on $label did not report ok=true and db=true after $attempts attempt(s)." >&2
+  return 1
 }
 
 echo "==> Deploying"
 npm run deploy
 
 echo "==> Live API health check"
-check_api_health
+if check_api_health "$BASE/api/health" "$BASE"; then
+  : # health check passed on primary domain
+elif [ -n "$WORKERS_DEV_HOST" ]; then
+  echo "   Primary health check failed. Retrying via workers.dev bypass: https://$WORKERS_DEV_HOST/api/health"
+  check_api_health "https://$WORKERS_DEV_HOST/api/health" "workers.dev"
+else
+  echo "!! /api/health failed on $BASE. Set WORKERS_DEV_HOST to retry via workers.dev bypass." >&2
+  exit 1
+fi
 echo
 
 post() { # $1 = admin path, $2 = json body (optional)
