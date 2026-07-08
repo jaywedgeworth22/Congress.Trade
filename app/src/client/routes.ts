@@ -28,7 +28,6 @@ import {
   type FeedTransactionRow,
   type TxQueryParams,
 } from '../delivery/rows';
-import { canonicalizeAssetType } from '../shared/assetTypes';
 import {
   createSubscription,
   getSubscription,

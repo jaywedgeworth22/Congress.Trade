@@ -10,6 +10,8 @@
     "deploy": "wrangler deploy --outdir dist --upload-source-maps --var SENTRY_RELEASE:$(sentry-cli releases propose-version)",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "lint": "eslint src/",
+    "coverage": "vitest run --coverage",
     "migrate": "wrangler d1 migrations apply DB --local",
     "migrate:remote": "echo 'NOT used on this account: wrangler --remote D1 migrations are deliberately avoided (OAuth issues; the remote d1_migrations log intentionally lags). Prod schema is applied idempotently via POST /api/admin/migrate — run: bash scripts/ship.sh. See AGENTS.md.' && exit 1",
     "deploy:full": "bash scripts/ship.sh",
@@ -30,6 +32,9 @@
     "@cloudflare/vitest-pool-workers": "^0.17.0",
     "@cloudflare/workers-types": "^4.20240909.0",
     "@sentry/cli": "^3.6.0",
+    "@typescript-eslint/eslint-plugin": "^8.62.1",
+    "@typescript-eslint/parser": "^8.62.1",
+    "eslint": "^10.6.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10",
     "wrangler": "^4.104.0"

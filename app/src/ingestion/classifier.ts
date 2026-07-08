@@ -92,7 +92,7 @@ export function classifyPdfBytes(bytes: Uint8Array): 'text_pdf' | 'scanned_pdf' 
 export function decideDocKind(
   bytes: Uint8Array,
   contentType: string,
-  chamber: string | null,
+  _chamber: string | null,
 ): DocKind {
   if (looksLikePdf(bytes)) {
     return classifyPdfBytes(bytes);
