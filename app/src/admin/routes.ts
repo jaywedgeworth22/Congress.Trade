@@ -1328,14 +1328,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     );
     const extractionByProvider = new Map(extractionRows.map((row) => [row.provider.toLowerCase(), row]));
 
-    const gemini = await get<{
+    const geminiArray = await optionalAll<{
       calls_total: number;
       calls_last_24h: number;
       calls_today: number;
       last_used_at: string | null;
       errors_last_24h: number;
     }>(
-      c.env.DB,
+      c.env,
       `SELECT COUNT(*) AS calls_total,
               SUM(CASE WHEN first_seen_at >= ? THEN 1 ELSE 0 END) AS calls_last_24h,
               SUM(CASE WHEN first_seen_at >= ? THEN 1 ELSE 0 END) AS calls_today,
@@ -1348,6 +1348,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
            OR error LIKE '%visionLlm%'`,
       [last24, today, last24],
     );
+    const gemini = geminiArray[0];
     const geminiExtract = extractionByProvider.get('gemini');
     const geminiLastUsed = maxIso(gemini?.last_used_at ?? null, geminiExtract?.last_used_at ?? null);
     const geminiErrors = (gemini?.errors_last_24h ?? 0) + (geminiExtract?.errors_last_24h ?? 0);
