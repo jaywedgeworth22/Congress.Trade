@@ -58,12 +58,12 @@ describe('round', () => {
 
 describe('lagBucket', () => {
   it('assigns days to the right display bucket', () => {
-    expect(lagBucket(0)).toBe('0–7d');
-    expect(lagBucket(7)).toBe('0–7d');
-    expect(lagBucket(8)).toBe('8–14d');
-    expect(lagBucket(30)).toBe('15–30d');
-    expect(lagBucket(45)).toBe('31–45d');
-    expect(lagBucket(60)).toBe('46–60d');
+    expect(lagBucket(0)).toBe('0-7d');
+    expect(lagBucket(7)).toBe('0-7d');
+    expect(lagBucket(8)).toBe('8-14d');
+    expect(lagBucket(30)).toBe('15-30d');
+    expect(lagBucket(45)).toBe('31-45d');
+    expect(lagBucket(60)).toBe('46-60d');
     expect(lagBucket(900)).toBe('60d+');
   });
 });
@@ -88,18 +88,18 @@ describe('percentileFromHistogram', () => {
 describe('summarizeLag', () => {
   it('summarizes count, median, p90, over-45 share, and buckets', () => {
     const rows: LagRow[] = [
-      { lagDays: 3, count: 5 }, // 0–7d
-      { lagDays: 12, count: 3 }, // 8–14d
-      { lagDays: 50, count: 2 }, // 46–60d, also > 45
+      { lagDays: 3, count: 5 }, // 0-7d
+      { lagDays: 12, count: 3 }, // 8-14d
+      { lagDays: 50, count: 2 }, // 46-60d, also > 45
     ];
     const s = summarizeLag(rows);
     expect(s.count).toBe(10);
     expect(s.medianLagDays).toBe(3);
     expect(s.overFortyFivePct).toBe(0.2);
     const byBucket = Object.fromEntries(s.distribution.map((d) => [d.bucket, d.count]));
-    expect(byBucket['0–7d']).toBe(5);
-    expect(byBucket['8–14d']).toBe(3);
-    expect(byBucket['46–60d']).toBe(2);
+    expect(byBucket['0-7d']).toBe(5);
+    expect(byBucket['8-14d']).toBe(3);
+    expect(byBucket['46-60d']).toBe(2);
     // every fixed bucket is present (zero-filled)
     expect(s.distribution).toHaveLength(6);
   });
