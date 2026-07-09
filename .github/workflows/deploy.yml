@@ -17,7 +17,11 @@ concurrency:
 jobs:
   deploy:
     if: github.event.inputs.confirm == 'deploy-production'
-    runs-on: ubuntu-latest
+    # Self-hosted runner on the Hetzner box (Coolify service "github-runner",
+    # container coolify-hetzner-congress). Its egress IP 91.98.44.8 is allowlisted
+    # in Cloudflare (IP Access Rule) so the post-deploy /api/health + /api/admin
+    # calls bypass Bot Fight Mode — which GitHub-hosted datacenter runners cannot.
+    runs-on: [self-hosted, congress-deploy]
     permissions:
       contents: read
     defaults:
