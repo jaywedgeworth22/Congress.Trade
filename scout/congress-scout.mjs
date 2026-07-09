@@ -61,6 +61,32 @@ const HOUSE_FD = 'https://disclosures-clerk.house.gov/FinancialDisclosure';
 const HOUSE_PDF = 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const _originalFetch = fetch;
+const fetchWithRetry = async (url, options = {}, retries = 3) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const res = await _originalFetch(url, options);
+      if (res.status === 503 || res.status === 403 || res.status === 429) {
+        if (i < retries - 1) {
+          await sleep(2000 * (i + 1));
+          continue;
+        }
+      }
+      return res;
+    } catch (err) {
+      if (err.message && err.message.includes('fetch failed')) {
+        if (i < retries - 1) {
+          await sleep(5000 * (i + 1));
+          continue;
+        }
+      }
+      throw err;
+    }
+  }
+};
+globalThis.fetch = fetchWithRetry;
+
 const nowIso = () => new Date().toISOString();
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const warn = (tag, e) => console.warn(new Date().toISOString().slice(11, 19), `! ${tag}:`, e?.message || e);
@@ -357,4 +383,3 @@ function summarize(state) {
   if (ONCE) { await cycle(state); return; }
   for (;;) { await cycle(state).catch((e) => warn('cycle', e)); await sleep(INTERVAL_MS); }
 })();
-// Senate Scraper Hardening applied
