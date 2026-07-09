@@ -100,21 +100,25 @@ function fakeDb() {
               ] as T[],
             };
           }
+          if (/FROM filings/i.test(sql) && /COUNT\(\*\)/i.test(sql)) {
+            return {
+              results: [
+                {
+                  calls_total: 3,
+                  calls_last_24h: 1,
+                  calls_today: 1,
+                  last_used_at: '2026-06-24T10:00:00.000Z',
+                  errors_last_24h: 1,
+                },
+              ] as T[],
+            };
+          }
           if (/FROM deliveries/i.test(sql)) return { results: [] as T[] };
           if (/FROM review_queue/i.test(sql)) return { results: [] as T[] };
           if (/FROM client_commands/i.test(sql)) return { results: [] as T[] };
           return { results: [] as T[] };
         },
         async first<T>() {
-          if (/FROM filings/i.test(sql) && /COUNT\(\*\)/i.test(sql)) {
-            return {
-              calls_total: 3,
-              calls_last_24h: 1,
-              calls_today: 1,
-              last_used_at: '2026-06-24T10:00:00.000Z',
-              errors_last_24h: 1,
-            } as T;
-          }
           return null as T | null;
         },
         async run() {
