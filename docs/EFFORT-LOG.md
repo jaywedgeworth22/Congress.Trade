@@ -86,6 +86,13 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   no preview or production deploy.
 
 ## In Progress
+- **Adopt remaining shared-package duplicates (CURSOR, M) — started 2026-07-09.**
+  Branch `cursor/shared-dep-adoption-9577`. Replaced local `shared/brackets.ts` + most of
+  `extraction/tickerNormalize.ts` with shared re-exports; wired `marketCapBucket`,
+  `bracketMidpoint`, `WINDOW_PRESETS`, `LAG_BUCKETS` from shared; SSE/webhook use
+  `createCongressEvent`; inbound `/securities/import` filters rows with shared Zod schemas;
+  FMP telemetry sends `occurredAt` for idempotency. Verified: typecheck clean; focused tests
+  (tickerNormalize/amounts/analytics/sse/enrichment/outbound/import) pass.
 - **Consolidate usage telemetry clients in consumer apps (AG) - COMPLETED 2026-07-06.** Replacing hand-rolled usage telemetry clients with `@jaywedgeworth22/congress-trading-shared` in Congress.Trade.
 - **Codebase Performance & Queues (AG, M) — IN PROGRESS 2026-07-05.** Fix silent DLQ webhook failures, implement `DB.batch` for `persistTransactions`, use `sendBatch` for queue dispatching, and run webhook fetch requests concurrently.
 

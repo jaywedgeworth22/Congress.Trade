@@ -20,6 +20,7 @@
  *     party stays NULL rather than being treated as Independent.
  */
 
+import { WINDOW_PRESETS as SHARED_WINDOW_PRESETS } from '@jaywedgeworth22/congress-trading-shared';
 import type { Chamber, TxType } from '../shared/types';
 import type { SqlParam } from '../shared/db';
 
@@ -32,7 +33,7 @@ import type { SqlParam } from '../shared/db';
  * the presets below, but any positive `<N>d` is valid — so callers can request a
  * custom age (e.g. ?window=45d) without enumerating it here.
  */
-export const WINDOW_PRESETS = ['1d', '7d', '30d', '90d', '180d', '365d', '1825d', 'all'] as const;
+export const WINDOW_PRESETS = SHARED_WINDOW_PRESETS;
 export type Window = string; // always produced via asWindow(): 'all' | `${number}d`
 const WINDOW_RE = /^(\d{1,5})d$/;
 const MAX_WINDOW_DAYS = 36500; // ~100y guardrail against absurd inputs

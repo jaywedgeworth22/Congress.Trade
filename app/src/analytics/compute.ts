@@ -9,6 +9,10 @@
  * are pure + deterministic so they unit-test without a database.
  */
 
+import {
+  bracketMidpoint as sharedBracketMidpoint,
+  LAG_BUCKETS as SHARED_LAG_BUCKETS,
+} from '@jaywedgeworth22/congress-trading-shared';
 import { computePerformance } from '../prices/compute';
 
 /**
@@ -17,9 +21,7 @@ import { computePerformance } from '../prices/compute';
  * floor (min); missing amount → 0.
  */
 export function bracketMidpoint(min: number | null, max: number | null): number {
-  if (max != null && min != null) return (min + max) / 2;
-  if (min != null) return min; // open-ended top tier ($50M+) or max missing
-  return 0;
+  return sharedBracketMidpoint(min, max);
 }
 
 /**
@@ -44,14 +46,7 @@ export function round(n: number, dp = 2): number {
 // ---------------------------------------------------------------------------
 
 /** Fixed buckets (in days) for the disclosure-lag histogram, in display order. */
-export const LAG_BUCKETS: ReadonlyArray<{ label: string; max: number | null }> = [
-  { label: '0–7d', max: 7 },
-  { label: '8–14d', max: 14 },
-  { label: '15–30d', max: 30 },
-  { label: '31–45d', max: 45 },
-  { label: '46–60d', max: 60 },
-  { label: '60d+', max: null },
-];
+export const LAG_BUCKETS: ReadonlyArray<{ label: string; max: number | null }> = SHARED_LAG_BUCKETS;
 
 /** Assign a lag (in whole days) to its display bucket label. */
 export function lagBucket(days: number): string {

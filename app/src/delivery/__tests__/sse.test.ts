@@ -24,12 +24,15 @@ describe('formatTradeEvent (SSE cross-app contract)', () => {
     expect(frame).not.toContain('trade.new');
   });
 
-  it('wraps the transaction in a { trades: [...] } envelope', () => {
+  it('emits a shared CongressEvent envelope with data.trades', () => {
     const dataLine = frame.split('\n').find((l) => l.startsWith('data: '))!;
     const payload = JSON.parse(dataLine.slice('data: '.length));
-    expect(Array.isArray(payload.trades)).toBe(true);
-    expect(payload.trades).toHaveLength(1);
-    expect(payload.trades[0].id).toBe('tx_123');
+    expect(payload.type).toBe('congress.trade');
+    expect(payload.id).toBe('42');
+    expect(typeof payload.emittedAt).toBe('string');
+    expect(Array.isArray(payload.data?.trades)).toBe(true);
+    expect(payload.data.trades).toHaveLength(1);
+    expect(payload.data.trades[0].id).toBe('tx_123');
   });
 
   it('carries cursorSeq as the SSE id for Last-Event-ID resume', () => {
