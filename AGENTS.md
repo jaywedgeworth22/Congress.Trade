@@ -216,15 +216,37 @@ Durable, non-obvious notes for running/testing locally (all from `app/`):
   `wrangler.toml`, NOT from the OS environment. The update script merges
   known env vars into `.dev.vars`; if you add a var later, re-run
   `bash scripts/cloud-setup.sh` to merge it.
-- Admin/ingest routes (`/api/admin/*`) fail closed. For local testing only, set
-  `ADMIN_OPEN_IN_DEV="true"` in `app/.dev.vars` to open them.
+- Admin/ingest routes (`/api/admin/*`) fail closed. For local testing,
+  `ADMIN_OPEN_IN_DEV="true"` alone is NOT enough: `wrangler.toml` `[vars]` set
+  `SENTRY_ENVIRONMENT="production"` and `USAGE_MONITOR_ENVIRONMENT="production"`,
+  which mark the run as production and disable open-admin. To actually open admin
+  locally, also override those two in `app/.dev.vars` (`.dev.vars` wins over
+  `[vars]`), e.g. `SENTRY_ENVIRONMENT="development"` and
+  `USAGE_MONITOR_ENVIRONMENT="local"`. Confirm via the wrangler log line
+  `admin API is CLOSED` vs the absence of it (`admin API is OPEN`).
 - The cron `scheduled()` handler does NOT auto-fire in `wrangler dev`. Trigger
   it manually: `curl "http://localhost:8787/cdn-cgi/handler/scheduled"`.
 - Queue consumers run inside the same `wrangler dev` process. Ingest is async:
   e.g. `POST /api/admin/backfill {"chambers":["senate"],"limit":N}` enqueues
   work; poll `GET /api/transactions` a few seconds later to see normalized rows.
-  The Senate backfill default source (GitHub mirror) needs outbound network.
+  The seed sources need outbound network and are flaky: the House S3 default
+  (`house-stock-watcher-data.s3...`) currently returns 403, and the Senate GitHub
+  raw mirror intermittently 429s — just retry the senate backfill after a short
+  wait, or override `SEED_HOUSE_URL`/`SEED_SENATE_URL`.
 - Quick smoke test: `GET /api/health` returns `{"ok":true,"db":true,...}`.
+
+Client apps (peer clients of the backend, not separate products):
+
+- `clients/pwa` is a Next.js client. Deps are a separate install (`npm ci` in
+  `clients/pwa`); typecheck with `npm run typecheck`, dev with `npm run dev`.
+  It calls the backend at `${NEXT_PUBLIC_API_BASE_URL}/api/client/v1/*` and the
+  backend sends NO CORS headers, so it is designed to run SAME-ORIGIN with the
+  Worker (leave `NEXT_PUBLIC_API_BASE_URL` blank → relative `/api/...`). Pointing
+  it cross-origin at `http://localhost:8787` fails in the browser with CORS. For
+  local dev with live data, front both behind one origin (a reverse proxy routing
+  `/api/*`→8787 and everything else→Next) and keep the base URL blank.
+- `clients/ios` is a SwiftUI app requiring Xcode/macOS; it cannot be built or run
+  in this Linux cloud environment.
 
 ## Delegation & model economics (fleet rule — binding for every agent)
 
