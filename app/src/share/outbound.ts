@@ -89,6 +89,7 @@ export async function shareWithPeer(
     refs: refs.map(toImportRef),
     prices,
     spx: spx.map((c) => ({ date: c.date, close: c.close })),
+    origin: 'app-a',
   };
   const parsed = SharePayloadSchema.safeParse(payload);
   if (!parsed.success) {

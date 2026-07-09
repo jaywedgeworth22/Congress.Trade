@@ -29,6 +29,7 @@
  *   exactly-once if it crashes after POST but before recording success.
  */
 
+import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, Subscription, Transaction } from '../shared/types';
 import { all, get, run } from '../shared/db';
 import { prefixedId } from '../shared/ids';
@@ -184,15 +185,13 @@ async function deliverToSubscription(
   if (!claim) return;
 
   const deliveredAt = new Date().toISOString();
-  // Superset payload: the canonical cross-app contract fields
-  // (congress-trading-shared CongressEvent — peers key delivery on
-  // `type === 'congress.trade'` + `data.trades` + `id` for idempotency) plus the
-  // legacy `event`/`transaction` fields, so existing external subscribers keep
-  // working while contract-aware consumers (Agentic Trading) ingest it directly.
+  // Superset payload: the canonical cross-app contract fields from
+  // createCongressEvent (peers key delivery on `type === 'congress.trade'` +
+  // `data.trades` + `id` for idempotency) plus the legacy `event`/`transaction`
+  // fields, so existing external subscribers keep working while contract-aware
+  // consumers (Socratic Trade) ingest it directly.
   const payload = {
-    type: 'congress.trade' as const,
-    id: `ct-tx-${tx.id}`,
-    data: { trades: [tx] },
+    ...createCongressEvent('congress.trade', { trades: [tx] }, { id: `ct-tx-${tx.id}` }),
     event: 'trade.new' as const,
     transaction: tx,
     deliveredAt,

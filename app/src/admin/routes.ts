@@ -27,6 +27,15 @@
  */
 
 import { Hono } from 'hono';
+import {
+  AnalystRowSchema,
+  FundamentalRowSchema,
+  InsiderRowSchema,
+  PriceCloseSchema,
+  PriceSeriesSchema,
+  SecurityRefInputSchema,
+  ShortVolumeRowSchema,
+} from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
 import { all, get, run, type SqlParam } from '../shared/db';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
@@ -3074,6 +3083,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       errors: [] as string[],
     };
     const nowIso = new Date().toISOString();
+    // Size-limit checks before schema work so oversized batches still get a
+    // cheap 413 without walking every row through Zod.
     const oversized =
       countArray(body.refs) > limits.refs ||
       countArray(body.spx) > limits.spx ||
@@ -3091,6 +3102,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         413,
       );
     }
+    // Per-row shared-schema filter (same contract App B uses in dropInvalidShareRows).
+    // Invalid / incomplete rows are dropped rather than rejecting the whole batch —
+    // producers may include ticker-less stubs that the import path has always skipped.
+    if (body.origin != null && typeof body.origin !== 'string') {
+      return c.json({ error: 'invalid shared payload: origin must be a string' }, 400);
+    }
+    body = {
+      ...body,
+      refs: filterShareRows(body.refs, SecurityRefInputSchema),
+      prices: filterShareRows(body.prices, PriceSeriesSchema),
+      spx: filterShareRows(body.spx, PriceCloseSchema),
+      insider: filterShareRows(body.insider, InsiderRowSchema),
+      shortVolume: filterShareRows(body.shortVolume, ShortVolumeRowSchema),
+      fundamentals: filterShareRows(body.fundamentals, FundamentalRowSchema, normalizeFundamentalAliases),
+      analyst: filterShareRows(body.analyst, AnalystRowSchema),
+    };
 
     const REF_KEYS = [
       'companyName', 'sector', 'industry', 'assetClass', 'isEtf', 'isAdr', 'country',
@@ -3763,6 +3790,34 @@ function importLimitResponse(limits: ImportLimits): Omit<ImportLimits, 'bytes'> 
 
 function countArray(v: unknown): number {
   return Array.isArray(v) ? v.length : 0;
+}
+
+/**
+ * Drop rows that fail a shared Zod row schema. Mirrors App B's
+ * `dropInvalidShareRows` — keep the original object (so App-A-only aliases like
+ * `52wHigh` / `analystCount` survive) when the shared schema accepts it.
+ */
+function filterShareRows(
+  rows: unknown,
+  schema: { safeParse: (v: unknown) => { success: boolean } },
+  normalize?: (row: Record<string, unknown>) => Record<string, unknown>,
+): unknown[] | undefined {
+  if (!Array.isArray(rows)) return undefined;
+  const out: unknown[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue;
+    const candidate = normalize ? normalize(row as Record<string, unknown>) : (row as Record<string, unknown>);
+    if (schema.safeParse(candidate).success) out.push(candidate);
+  }
+  return out;
+}
+
+/** Map App-A-accepted `52wHigh`/`52wLow` aliases onto shared FundamentalRow fields. */
+function normalizeFundamentalAliases(row: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...row };
+  if (out.week52High == null && out['52wHigh'] != null) out.week52High = out['52wHigh'];
+  if (out.week52Low == null && out['52wLow'] != null) out.week52Low = out['52wLow'];
+  return out;
 }
 
 /** Coerce an unknown to a finite number or null (for defensive ingest). */

@@ -47,6 +47,7 @@ import { all, get } from '../shared/db';
 import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows';
 import { matchesFiltersWithContext } from './subscriptions';
 import { constantTimeEqual } from '../auth/tokens';
+import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
 
 /** How often to poll D1 for new rows. */
 const POLL_INTERVAL_MS = 5_000;
@@ -58,15 +59,15 @@ const PAGE_SIZE = 200;
 /**
  * Format one live trade as an SSE frame on the shared cross-app contract.
  *
- * The canonical event type is `congress.trade` carrying a `{ trades: [...] }`
- * envelope — this is what `@jaywedgeworth22/congress-trading-shared`
- * (`CONGRESS_EVENT_TYPES`) defines and what Agentic Trading's stream consumer
- * keys delivery on. The stream previously emitted `event: trade.new` with a bare
- * transaction object, which the peer app silently dropped (every streamed trade
- * lost). The `id:` line still carries `cursorSeq` for Last-Event-ID resume.
+ * The SSE `event:` line is `congress.trade` and the `data:` payload is the
+ * shared `CongressEvent` envelope from `createCongressEvent` (type + id +
+ * data.trades + emittedAt). Socratic Trade's stream consumer accepts this
+ * shape (and still tolerates flattened/legacy variants). The `id:` line
+ * carries `cursorSeq` for Last-Event-ID resume.
  */
 export function formatTradeEvent(tx: Transaction): string {
-  return `id: ${tx.cursorSeq}\nevent: congress.trade\ndata: ${JSON.stringify({ trades: [tx] })}\n\n`;
+  const event = createCongressEvent('congress.trade', { trades: [tx] }, { id: String(tx.cursorSeq) });
+  return `id: ${tx.cursorSeq}\nevent: congress.trade\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
 /**
