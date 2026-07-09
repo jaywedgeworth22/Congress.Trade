@@ -79,11 +79,16 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 
 ## In Progress
 - **Consolidate usage telemetry clients in consumer apps (AG) - COMPLETED 2026-07-06.** Replacing hand-rolled usage telemetry clients with `@jaywedgeworth22/congress-trading-shared` in Congress.Trade.
-- **Codex autofix storm guard (CODEX, workflow/fleet-infra) — DONE-local 2026-07-05; awaiting push/PR.**
+- **Codex autofix storm guard (CODEX, workflow/fleet-infra) — DONE-local 2026-07-08; awaiting push/PR approval.**
   Scope: reduce `codex-autofix.yml` storm odds/frequency by running the autofix loop once per
   Codex submitted review plus manual `workflow_dispatch`, not on every Codex inline/issue
   comment. Touch workflow callers only in clean Codex worktrees; preserve manual dispatch and
   round-cap behavior.
+  2026-07-08 (Codex): refreshed on branch `codex/congress-autofix-storm-guard`
+  from current `origin/main`; removed `pull_request_review_comment` and
+  `issue_comment` triggers, tightened concurrency to PR/manual input only, and
+  verified `npm run typecheck` plus full `npm test` (76 files / 670 tests). No
+  edits in the dirty primary checkout; preparing PR.
 - **Codebase Performance & Queues (AG, M) — IN PROGRESS 2026-07-05.** Fix silent DLQ webhook failures, implement `DB.batch` for `persistTransactions`, use `sendBatch` for queue dispatching, and run webhook fetch requests concurrently.
 
 - Codex global coordination + fleet monitoring setup (Codex, shared `/Users/jay/apps`

@@ -6,9 +6,10 @@ name: Codex Autofix
 #
 # Roles are DISTINCT so the two bots never compete to "review first":
 #   • Codex  = reviewer — fires on every push, posts P1/P2 suggestions.
-#   • Claude = fixer    — fires ONLY when Codex posts feedback, addresses it,
-#                         then pushes. The push makes Codex review again →
-#                         clean ping-pong, capped to avoid an infinite loop.
+#   • Claude = fixer    — fires only once per submitted Codex review, addresses
+#                         review threads, then pushes. The push makes Codex
+#                         review again -> clean ping-pong, capped to avoid an
+#                         infinite loop.
 #
 # Prerequisites:
 #   1. Secret  ANTHROPIC_API_KEY  (Settings → Secrets and variables → Actions).
@@ -20,10 +21,6 @@ name: Codex Autofix
 on:
   pull_request_review:
     types: [submitted]
-  pull_request_review_comment:
-    types: [created]
-  issue_comment:
-    types: [created]
   workflow_dispatch:
     inputs:
       pr:
@@ -37,16 +34,16 @@ permissions:
 
 # One run per PR; let an in-flight run finish rather than cancel mid-push.
 concurrency:
-  group: codex-autofix-${{ github.event.pull_request.number || github.event.issue.number || github.event.inputs.pr || github.run_id }}
+  group: codex-autofix-${{ github.event.pull_request.number || github.event.inputs.pr || github.run_id }}
   cancel-in-progress: false
 
 jobs:
   autofix:
+    # Deliberately ignore inline/issue comments: a single Codex review can
+    # create many comment events and fan out into autofix storms.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request_review' && github.event.review.user.login == 'chatgpt-codex-connector[bot]') ||
-      (github.event_name == 'pull_request_review_comment' && github.event.comment.user.login == 'chatgpt-codex-connector[bot]') ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
+      (github.event_name == 'pull_request_review' && github.event.review.user.login == 'chatgpt-codex-connector[bot]')
     uses: jaywedgeworth22/congress-trading-shared/.github/workflows/codex-autofix-reusable.yml@main
     with:
       allowed_bots: "chatgpt-codex-connector,chatgpt-codex-connector[bot]"
