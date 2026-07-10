@@ -15,6 +15,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { Env, User } from '../shared/types';
 import { getUserById } from './users';
 import { randomToken } from './tokens';
+import { resolveSecret } from '../secrets/infisical';
 
 export const SESSION_COOKIE = 'ct_session';
 const SESSION_TTL_SEC = 60 * 60 * 24 * 30; // 30 days
@@ -62,18 +63,40 @@ function isHttps(c: Context): boolean {
   }
 }
 
-export function setSessionCookie(c: Context, token: string): void {
+export async function getCookieDomain(c: Context<{ Bindings: Env }>): Promise<string | undefined> {
+  const configured = (await resolveSecret(c.env, 'APP_BASE_URL')).value?.trim() ?? c.env.APP_BASE_URL?.trim();
+  if (!configured) return undefined;
+  try {
+    const hostname = new URL(configured).hostname;
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname.endsWith('.localhost') ||
+      hostname.includes(':')
+    ) {
+      return undefined;
+    }
+    return hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function setSessionCookie(c: Context<{ Bindings: Env }>, token: string): Promise<void> {
+  const domain = await getCookieDomain(c);
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
     secure: isHttps(c),
     sameSite: 'Lax',
     path: '/',
     maxAge: SESSION_TTL_SEC,
+    domain,
   });
 }
 
-export function clearSessionCookie(c: Context): void {
-  deleteCookie(c, SESSION_COOKIE, { path: '/' });
+export async function clearSessionCookie(c: Context<{ Bindings: Env }>): Promise<void> {
+  const domain = await getCookieDomain(c);
+  deleteCookie(c, SESSION_COOKIE, { path: '/', domain });
 }
 
 export function getSessionToken(c: Context): string | undefined {

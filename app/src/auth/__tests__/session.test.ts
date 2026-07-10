@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Hono } from 'hono';
-import { createSession, resolveSession, destroySession, getCurrentUserFromRequest } from '../session';
+import { createSession, resolveSession, destroySession, getCurrentUserFromRequest, getCookieDomain } from '../session';
 import type { Env } from '../../shared/types';
 
 function fakeEnv(user?: { id: string }) {
@@ -81,5 +81,17 @@ describe('sessions', () => {
     const res = await app.request('http://localhost/me', { headers: { authorization: `Bearer ${token}` } }, env);
     expect(res.status).toBe(200);
     expect(((await res.json()) as { user: { id: string } }).user.id).toBe('user-1');
+  });
+
+  it('getCookieDomain resolves domain from APP_BASE_URL correctly', async () => {
+    const { env: envProd } = fakeEnv();
+    (envProd as any).APP_BASE_URL = 'https://congress.trade';
+    const cProd = { env: envProd } as any;
+    expect(await getCookieDomain(cProd)).toBe('congress.trade');
+
+    const { env: envLocal } = fakeEnv();
+    (envLocal as any).APP_BASE_URL = 'http://localhost:8787';
+    const cLocal = { env: envLocal } as any;
+    expect(await getCookieDomain(cLocal)).toBeUndefined();
   });
 });
