@@ -139,7 +139,7 @@ async function handleIngestMessage(env: Env, msg: QueueMessage): Promise<void> {
       // Slow cross-vendor agreement read + auto-publish for one review doc. Runs
       // here (generous per-message duration) rather than in the cron, whose
       // scheduled-handler waitUntil cancels long model work.
-      await handleAgreementCheck(env, msg.docId, msg.rawObjectKey);
+      await handleAgreementCheck(env, msg.docId, msg.rawObjectKey, msg.escalationTier);
       return;
     default:
       console.warn('INGEST_QUEUE: unexpected message type', (msg as { type?: string }).type);

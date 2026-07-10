@@ -87,6 +87,25 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   no preview or production deploy.
 
 ## In Progress
+- **Review-queue automation: model choice + multi-model consensus + escalation cascade (MONET, L) —
+  built 2026-07-10 on `monet/review-queue-automation`, owner-directed ("do all 3 phases").** P1: agreement
+  candidate readings persisted to `extraction_runs` (kind `agreement`); review-UI "Re-read with model…"
+  multi-select posting the existing bakeoff endpoint; `VISION_PRIMARY_MODEL` env override for the
+  hardcoded vision model. P2: new pure `extraction/consensus.ts` (per-transaction per-field majority
+  vote, amount bracket voted as a unit, {value, votes, dissenters}, tie→contested) + `consensus` block
+  on GET /review/:docId/extractions + UI superimposition grid (unanimous/majority/contested cells) +
+  opt-in "Use Consensus" editor prefill (majority fields only). P3: agreement autopublish extended to a
+  tiered cascade (tier1 = existing pair, tier2 = +model C via `AGREEMENT_MODEL_C`, tier3 = 2-of-3
+  majority publish gated on per-field majority for type/date/amount + hard-fail flags; big docs may
+  start at tier2), `agreement_attempts`/`agreement_tier` replacing the once-ever stamp (cap
+  `AGREEMENT_MAX_ATTEMPTS`=3), `page_count`/`raw_bytes` complexity signals, daily LLM budget
+  `AGREEMENT_DAILY_LLM_BUDGET`=300 (cascade only; operator bakeoff uncapped; budget-exhausted defers
+  without consuming attempts), machine-resolved docs audit-tagged `agreement-cascade` in
+  ingestion_decisions. Migrations 0025-0027 mirrored in POST /api/admin/migrate. Built by 15 tiered
+  subagents (haiku/sonnet/opus); 4-lens adversarial verify caught + fixed 3 real defects pre-commit
+  (tier-3 multi-lot drop → bail-to-review guard; duplicate-model-id false majority → distinct-voter
+  electorate; UI minority-row prefill → row-majority gate). Gates: typecheck clean, 718/718 tests
+  (82 files). Local commit only — push/PR awaiting owner approval.
 - **Adopt remaining shared-package duplicates (CURSOR, M) — started 2026-07-09.**
   Branch `cursor/shared-dep-adoption-9577`. Replaced local `shared/brackets.ts` + most of
   `extraction/tickerNormalize.ts` with shared re-exports; wired `marketCapBucket`,
