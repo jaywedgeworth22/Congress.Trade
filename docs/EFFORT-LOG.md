@@ -20,6 +20,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Preserve login subdomain origin on redirect (AG) — COMPLETED 2026-07-10 via PR #253.** Implemented origin tracking via a short-lived `ct_auth_origin` cookie for Google OAuth and `origin` query parameter for Magic Links, returning users back to the starting subdomain (e.g. `admin.congress.trade`) instead of default apex domain. Added unit tests for redirect origin validation.
 - **Wave-4 go-live smoke script (AG, S) — COMPLETED 2026-07-06 via PR #214.** Small script that probes `GET /auth/me`, `GET /billing/status` (expect `configured:true`), Google OAuth start redirect, magic-link send, and a Stripe test-mode checkout round-trip, printing a go/no-go checklist. Fixes the arithmetic exit issue and adds missing probe endpoints.
 - **Reconcile live-search overlay rows against the official House index (data-quality job) (AG, M) — COMPLETED 2026-07-06.** PR #194 opened. Nightly/admin job that re-checks recent `pollHouseLiveSearch()`-sourced transactions against the next-day official House disclosure index, flagging missed, mutated, or orphaned filings into the existing DLQ/diagnostics surface.
 - **Deduplicate Types (AG, M) — COMPLETED 2026-07-05.** PR #185 opened. Used `congress-trading-shared` and dropped local duplicated schemas (Chamber, Owner, TxType, AssetTypeCategory, ClientTrade). Updated `client/routes.ts` tests to align with the shared `ClientTrade` shape.
