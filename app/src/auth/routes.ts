@@ -25,6 +25,7 @@ import {
   clearSessionCookie,
   getSessionToken,
   getCookieDomain,
+  getSafeRedirectUrl,
 } from './session';
 import { buildGoogleAuthUrl, exchangeGoogleCode, fetchGoogleProfile } from './google';
 import { upsertUserFromGoogle, upsertUserByEmail } from './users';
@@ -96,6 +97,24 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     if (!(await resolveSecret(c.env, 'GOOGLE_OAUTH_CLIENT_ID')).value) return c.json({ error: 'google login not configured' }, 503);
     const state = randomToken(16);
     const domain = await getCookieDomain(c);
+
+    // Save the initiator's origin so we can redirect back to it on callback
+    const referer = c.req.header('Referer');
+    let requestOrigin = new URL(c.req.url).origin;
+    if (referer) {
+      try {
+        requestOrigin = new URL(referer).origin;
+      } catch {}
+    }
+    setCookie(c, 'ct_auth_origin', requestOrigin, {
+      httpOnly: true,
+      secure: new URL(c.req.url).protocol === 'https:',
+      sameSite: 'Lax',
+      path: '/',
+      maxAge: 600,
+      domain,
+    });
+
     setCookie(c, OAUTH_STATE_COOKIE, state, {
       httpOnly: true,
       secure: new URL(c.req.url).protocol === 'https:',
@@ -117,20 +136,26 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     const cookieState = getCookie(c, OAUTH_STATE_COOKIE);
     const domain = await getCookieDomain(c);
     deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/', domain });
+
+    const authOrigin = getCookie(c, 'ct_auth_origin');
+    deleteCookie(c, 'ct_auth_origin', { path: '/', domain });
+
+    const base = await baseUrl(c);
+    const targetOrigin = getSafeRedirectUrl(authOrigin, base, domain);
+
     if (!code || !state || !cookieState || !(await constantTimeEqual(state, cookieState))) {
-      return c.redirect(`${await baseUrl(c)}/?login=error`);
+      return c.redirect(`${targetOrigin}/?login=error`);
     }
     try {
-      const base = await baseUrl(c);
       const redirectUri = `${base}/auth/google/callback`;
       const accessToken = await exchangeGoogleCode(c.env, code, redirectUri);
       const profile = await fetchGoogleProfile(accessToken);
       const user = await upsertUserFromGoogle(c.env, profile);
-      setSessionCookie(c, await createSession(c.env, user.id));
-      return c.redirect(`${base}/?login=ok`);
+      await setSessionCookie(c, await createSession(c.env, user.id));
+      return c.redirect(`${targetOrigin}/?login=ok`);
     } catch (err) {
       console.error('google callback failed:', (err as Error).message);
-      return c.redirect(`${await baseUrl(c)}/?login=error`);
+      return c.redirect(`${targetOrigin}/?login=error`);
     }
   });
 
@@ -164,7 +189,14 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     }
     try {
       const token = await issueMagicToken(c.env, email);
-      const verifyUrl = `${await baseUrl(c)}/auth/magic/verify?token=${encodeURIComponent(token)}`;
+      const referer = c.req.header('Referer');
+      let requestOrigin = new URL(c.req.url).origin;
+      if (referer) {
+        try {
+          requestOrigin = new URL(referer).origin;
+        } catch {}
+      }
+      const verifyUrl = `${await baseUrl(c)}/auth/magic/verify?token=${encodeURIComponent(token)}&origin=${encodeURIComponent(requestOrigin)}`;
       const mail = magicLinkEmail(verifyUrl);
       await sendEmail(c.env, { to: email, subject: mail.subject, html: mail.html, text: mail.text });
     } catch (err) {
@@ -177,11 +209,17 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   // --- GET /auth/magic/verify ---------------------------------------------
   r.get('/magic/verify', async (c) => {
     const token = new URL(c.req.url).searchParams.get('token') ?? '';
+    const originParam = new URL(c.req.url).searchParams.get('origin') ?? '';
     const email = token ? await consumeMagicToken(c.env, token) : null;
-    if (!email) return c.redirect(`${await baseUrl(c)}/?login=expired`);
+
+    const base = await baseUrl(c);
+    const domain = await getCookieDomain(c);
+    const targetOrigin = getSafeRedirectUrl(originParam || undefined, base, domain);
+
+    if (!email) return c.redirect(`${targetOrigin}/?login=expired`);
     const user = await upsertUserByEmail(c.env, email);
-    setSessionCookie(c, await createSession(c.env, user.id));
-    return c.redirect(`${await baseUrl(c)}/?login=ok`);
+    await setSessionCookie(c, await createSession(c.env, user.id));
+    return c.redirect(`${targetOrigin}/?login=ok`);
   });
 
   return r;
