@@ -106,6 +106,18 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   (tier-3 multi-lot drop → bail-to-review guard; duplicate-model-id false majority → distinct-voter
   electorate; UI minority-row prefill → row-majority gate). Gates: typecheck clean, 718/718 tests
   (82 files). Local commit only — push/PR awaiting owner approval.
+- **Codex autofix: migrate CI loop from Anthropic to DeepSeek (MONET, S)** — IN PROGRESS
+  2026-07-10, PR [#258](https://github.com/jaywedgeworth22/Congress.Trade/pull/258) open
+  (unmerged), branch `monet/codex-autofix-deepseek-migration-aff0b7`. The Anthropic key funding
+  the Codex autofix loop was deleted, breaking `codex-autofix.yml`; caller now passes
+  `DEEPSEEK_API_KEY` (existing repo secret) through to the shared reusable workflow instead of
+  the deleted `ANTHROPIC_API_KEY`. Companion PR
+  [congress-trading-shared#140](https://github.com/jaywedgeworth22/congress-trading-shared/pull/140)
+  does the reusable-workflow side (secret rename + DeepSeek Anthropic-compatible endpoint routing
+  on `claude-code-action`) — both must merge together for the loop to work. Gates:
+  `cd app && npm run typecheck && npm test` (672/672 pass). Next: once both merge, dispatch
+  `codex-autofix.yml` once to confirm; swap `deepseek-v4-flash` → `deepseek-chat` in the reusable
+  workflow if "model not found". KEEPOUT: only touches `.github/workflows/codex-autofix.yml`.
 - **Adopt remaining shared-package duplicates (CURSOR, M) — started 2026-07-09.**
   Branch `cursor/shared-dep-adoption-9577`. Replaced local `shared/brackets.ts` + most of
   `extraction/tickerNormalize.ts` with shared re-exports; wired `marketCapBucket`,
