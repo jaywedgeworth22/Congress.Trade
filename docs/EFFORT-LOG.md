@@ -10,6 +10,24 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Deployed
+- **Codex autofix: migrate CI loop from Anthropic to DeepSeek (MONET, S)** — DEPLOYED
+  2026-07-10, owner-approved ("merge deploy"). Merged
+  [#258](https://github.com/jaywedgeworth22/Congress.Trade/pull/258) (`a9bc198`) — caller passes
+  `DEEPSEEK_API_KEY` (existing repo secret) through to the shared reusable workflow instead of
+  the deleted `ANTHROPIC_API_KEY`. Companion
+  [congress-trading-shared#140](https://github.com/jaywedgeworth22/congress-trading-shared/pull/140)
+  merged first (required — the caller references the reusable workflow via `@main`), which
+  renames the `workflow_call` secret and routes `claude-code-action` to DeepSeek's
+  Anthropic-compatible endpoint. Codex review on #140 caught that the action's buffered-inline-
+  comment classifier hardcodes `https://api.anthropic.com` and would 401 + post every buffered
+  comment unfiltered under a DeepSeek key — fixed by setting `classify_inline_comments: "false"`
+  (verified against the action's actual source, not assumed). Ran `deploy.yml` via
+  `workflow_dispatch` (run 29130234879, `confirm=deploy-production`): typecheck + test passed,
+  Cloudflare Workers deploy succeeded. Verified `GET /api/health` → `{"ok":true,"db":true}` with
+  a browser UA (bypasses the Cloudflare managed challenge). Gates: `cd app && npm run typecheck
+  && npm test` (672/672 pass) before merge. Not yet done: dispatch `codex-autofix.yml` itself
+  once against a real PR to confirm the DeepSeek-routed action runs end to end; swap
+  `deepseek-v4-flash` → `deepseek-chat` in the reusable workflow if "model not found".
 - (record production Worker releases here after explicit owner-approved deploys)
 - 2026-07-05 (CLAUDE next-wave) correction: this section read as empty/no-deploys, but production
   actually received Worker uploads on **6/30, 7/2, and 7/3** via Deploy runs that then **FAILED the
@@ -87,18 +105,6 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   no preview or production deploy.
 
 ## In Progress
-- **Codex autofix: migrate CI loop from Anthropic to DeepSeek (MONET, S)** — IN PROGRESS
-  2026-07-10, PR [#258](https://github.com/jaywedgeworth22/Congress.Trade/pull/258) open
-  (unmerged), branch `monet/codex-autofix-deepseek-migration-aff0b7`. The Anthropic key funding
-  the Codex autofix loop was deleted, breaking `codex-autofix.yml`; caller now passes
-  `DEEPSEEK_API_KEY` (existing repo secret) through to the shared reusable workflow instead of
-  the deleted `ANTHROPIC_API_KEY`. Companion PR
-  [congress-trading-shared#140](https://github.com/jaywedgeworth22/congress-trading-shared/pull/140)
-  does the reusable-workflow side (secret rename + DeepSeek Anthropic-compatible endpoint routing
-  on `claude-code-action`) — both must merge together for the loop to work. Gates:
-  `cd app && npm run typecheck && npm test` (672/672 pass). Next: once both merge, dispatch
-  `codex-autofix.yml` once to confirm; swap `deepseek-v4-flash` → `deepseek-chat` in the reusable
-  workflow if "model not found". KEEPOUT: only touches `.github/workflows/codex-autofix.yml`.
 - **Adopt remaining shared-package duplicates (CURSOR, M) — started 2026-07-09.**
   Branch `cursor/shared-dep-adoption-9577`. Replaced local `shared/brackets.ts` + most of
   `extraction/tickerNormalize.ts` with shared re-exports; wired `marketCapBucket`,
