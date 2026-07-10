@@ -296,6 +296,36 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('JSON.stringify({ decision: decision, edits: [] })');
   });
 
+  it('wires a per-doc "Re-read with model…" bake-off control with multi-select', () => {
+    expect(DASHBOARD_HTML).toContain('var REREAD_MODELS');
+    expect(DASHBOARD_HTML).toContain('function rereadModelOptionsHtml(');
+    expect(DASHBOARD_HTML).toContain('function rereadControlHtml(');
+    expect(DASHBOARD_HTML).toContain('function rereadWithModel(');
+    expect(DASHBOARD_HTML).toContain('Re-read with model');
+    // multi-select allows picking 2-3 models in one submit
+    expect(DASHBOARD_HTML).toContain('id="reread-sel-\' + esc(docId) + \'" multiple');
+    expect(DASHBOARD_HTML).toContain('id="reread-btn-\' + esc(docId) + \'"');
+    expect(DASHBOARD_HTML).toContain('id="reread-msg-\' + esc(docId) + \'"');
+    // curated provider/model pairs mirror DEFAULT_CANDIDATES in src/extraction/bakeoff.ts
+    expect(DASHBOARD_HTML).toContain("{ provider: 'gemini', model: 'gemini-3.5-flash' }");
+    expect(DASHBOARD_HTML).toContain("{ provider: 'openai', model: 'gpt-4o' }");
+    expect(DASHBOARD_HTML).toContain("{ provider: 'anthropic', model: 'claude-sonnet-4-6' }");
+    expect(DASHBOARD_HTML).toContain("{ provider: 'anthropic', model: 'claude-haiku-4-5' }");
+    expect(DASHBOARD_HTML).toContain("{ provider: 'mistral', model: 'mistral-ocr-latest' }");
+    expect(DASHBOARD_HTML).toContain("{ provider: 'xai', model: 'grok-4.3' }");
+    // grouped by provider via optgroup
+    expect(DASHBOARD_HTML).toContain("'<optgroup label=\"' + esc(p) + '\">'");
+    // posts the existing bake-off endpoint scoped to this doc, persisted
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/bakeoff'");
+    expect(DASHBOARD_HTML).toContain('JSON.stringify({ docIds: [docId], models: chosen, persist: true })');
+    // in-flight state + inline error handling reuses the file\'s existing patterns
+    expect(DASHBOARD_HTML).toContain('btn.disabled = true; sel.disabled = true;');
+    expect(DASHBOARD_HTML).toContain("msg.textContent = 'Select at least one model.'");
+    expect(DASHBOARD_HTML).toContain("isAuthError(e) ? ADMIN_MOVED_MSG : ('Re-read failed: ' + e.message)");
+    // refreshes this doc's runs display after a successful re-read
+    expect(DASHBOARD_HTML).toContain('viewReadings(docId); // refresh this doc\'s runs display with the new reading(s)');
+  });
+
   it('keeps House history backfill bounded from the admin UI', () => {
     expect(DASHBOARD_HTML).toContain('id="hiMax"');
     expect(DASHBOARD_HTML).toContain('value="500"');
@@ -482,5 +512,320 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function anchorChartRight(');
     expect(DASHBOARD_HTML).toContain('function trTimeParams(');
     expect(DASHBOARD_HTML).toContain('tc.scrollLeft = tc.scrollWidth');
+  });
+
+  it('wires the consensus grid + "Use Consensus" prefill alongside the per-model bake-off panel', () => {
+    expect(DASHBOARD_HTML).toContain('var REVIEW_CONSENSUS');
+    expect(DASHBOARD_HTML).toContain('function consensusGridHtml(');
+    expect(DASHBOARD_HTML).toContain('function useConsensusRows(');
+    expect(DASHBOARD_HTML).toContain('function consensusFieldValueForEdit(');
+    expect(DASHBOARD_HTML).toContain('REVIEW_CONSENSUS[docId] = data.consensus || null;');
+    expect(DASHBOARD_HTML).toContain("}).join('') + consensusGridHtml(docId, data.consensus);");
+    // reuses the existing .conf hi/mid/lo confidence-color classes — no new stylesheet
+    expect(DASHBOARD_HTML).toContain('function consensusFieldClass(fc) {');
+    expect(DASHBOARD_HTML).toContain("if (fc.unanimous) return 'hi';");
+    expect(DASHBOARD_HTML).toContain('<span class="conf hi">');
+    expect(DASHBOARD_HTML).toContain('<span class="conf mid"');
+    expect(DASHBOARD_HTML).toContain('<span class="conf lo"');
+    expect(DASHBOARD_HTML).not.toContain('.consensus-cell');
+    expect(DASHBOARD_HTML).not.toContain('.consensus-grid {');
+    // "Use This Model" and the queued-payload prefill stay wired unchanged (consensus is opt-in)
+    expect(DASHBOARD_HTML).toContain('function useModelRows(docId, idx) {');
+    expect(DASHBOARD_HTML).toContain("openReviewEditor(docId, rows, 'confirm', 'queued extracted rows', item && item.chamber);");
+  });
+});
+
+/**
+ * The consensus grid + "Use Consensus" prefill do real per-field branching
+ * (majority vs. contested) that a plain `toContain` check on the template
+ * literal can't exercise. These tests pull the actual function/var source
+ * back out of DASHBOARD_HTML and compile it with `new Function`, so they run
+ * the shipped logic itself rather than a re-implementation. DOM-touching
+ * collaborators (openReviewEditor, reviewItemForDoc, reviewPayloadTransactions,
+ * alert) are swapped for recording stubs since this suite runs outside a DOM.
+ */
+describe('consensus grid + Use Consensus prefill (executed)', () => {
+  function extractFn(html: string, name: string): string {
+    const marker = 'function ' + name + '(';
+    const start = html.indexOf(marker);
+    if (start < 0) throw new Error('function not found in DASHBOARD_HTML: ' + name);
+    const braceStart = html.indexOf('{', start);
+    let depth = 0;
+    let i = braceStart;
+    for (; i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+    }
+    return html.slice(start, i);
+  }
+
+  function extractVarDecl(html: string, name: string): string {
+    const re = new RegExp('var ' + name + ' = [\\s\\S]*?;');
+    const m = re.exec(html);
+    if (!m) throw new Error('var not found in DASHBOARD_HTML: ' + name);
+    return m[0];
+  }
+
+  interface ConsensusSandbox {
+    consensusGridHtml: (docId: string, consensus: unknown) => string;
+    useConsensusRows: (docId: string) => void;
+    setReviewItem: (item: unknown) => void;
+    setQueued: (rows: unknown[]) => void;
+    setConsensus: (docId: string, consensus: unknown) => void;
+    getEditorCall: () => null | { docId: string; rows: any[]; decision: string; label: string; chamber: string };
+    getAlerts: () => string[];
+  }
+
+  function loadConsensusSandbox(): ConsensusSandbox {
+    const html = DASHBOARD_HTML;
+    const src = [
+      'var CAPTURED_EDITOR_CALL = null;',
+      'var ALERTS = [];',
+      'var REVIEW_ITEM_FOR_TEST = null;',
+      'var QUEUED_FOR_TEST = [];',
+      'function alert(msg) { ALERTS.push(msg); }',
+      'function openReviewEditor(docId, rows, decision, label, chamber) { CAPTURED_EDITOR_CALL = { docId: docId, rows: rows, decision: decision, label: label, chamber: chamber }; }',
+      'function reviewItemForDoc(docId) { return REVIEW_ITEM_FOR_TEST; }',
+      'function reviewPayloadTransactions(payload) { return QUEUED_FOR_TEST; }',
+      'var REVIEW_CONSENSUS = {};',
+      extractVarDecl(html, 'CONSENSUS_FIELD_ORDER'),
+      extractVarDecl(html, 'CONSENSUS_FIELD_LABEL'),
+      extractFn(html, 'esc'),
+      extractFn(html, 'reviewMoney'),
+      extractFn(html, 'reviewBracketLabel'),
+      extractFn(html, 'consensusHasMajority'),
+      extractFn(html, 'consensusFieldClass'),
+      extractFn(html, 'consensusFieldDisplay'),
+      extractFn(html, 'consensusModelFieldValue'),
+      extractFn(html, 'consensusFieldCellHtml'),
+      extractFn(html, 'consensusModelCellHtml'),
+      extractFn(html, 'consensusGridHtml'),
+      extractFn(html, 'consensusQueuedRowKey'),
+      extractFn(html, 'consensusFieldValueForEdit'),
+      extractFn(html, 'useConsensusRows'),
+      'return { consensusGridHtml: consensusGridHtml, useConsensusRows: useConsensusRows, ' +
+        'setReviewItem: function (item) { REVIEW_ITEM_FOR_TEST = item; }, ' +
+        'setQueued: function (rows) { QUEUED_FOR_TEST = rows; }, ' +
+        'setConsensus: function (docId, c) { REVIEW_CONSENSUS[docId] = c; }, ' +
+        'getEditorCall: function () { return CAPTURED_EDITOR_CALL; }, ' +
+        'getAlerts: function () { return ALERTS; } };',
+    ].join('\n');
+    // eslint-disable-next-line no-new-func -- executing the real shipped source, see comment above
+    const factory = new Function(src);
+    return factory() as ConsensusSandbox;
+  }
+
+  const MODELS = ['anthropic:claude-sonnet-4-6', 'gemini:gemini-3.5-flash', 'openai:gpt-4o'];
+
+  function fieldConsensus(
+    value: unknown,
+    votes: number,
+    total: number,
+    dissenters: Array<{ model: string; value: unknown }>,
+    unanimous: boolean,
+  ) {
+    return { value, votes, total, dissenters, unanimous };
+  }
+
+  // Every model agrees on every field.
+  const unanimousRow = {
+    rowKey: 'AAPL|2024-01-05|P',
+    presentIn: MODELS,
+    missingFrom: [],
+    rowConsensus: 'unanimous',
+    fields: {
+      ticker: fieldConsensus('AAPL', 3, 3, [], true),
+      txType: fieldConsensus('P', 3, 3, [], true),
+      transactionDate: fieldConsensus('2024-01-05', 3, 3, [], true),
+      owner: fieldConsensus('self', 3, 3, [], true),
+      assetName: fieldConsensus('Apple Inc', 3, 3, [], true),
+      amount: fieldConsensus({ amountMin: 1001, amountMax: 15000 }, 3, 3, [], true),
+    },
+  };
+
+  // Every field has a strict majority, but "owner" has one dissenter (2-1).
+  const majorityRow = {
+    rowKey: 'MSFT|2024-02-01|S',
+    presentIn: MODELS,
+    missingFrom: [],
+    rowConsensus: 'majority',
+    fields: {
+      ticker: fieldConsensus('MSFT', 3, 3, [], true),
+      txType: fieldConsensus('S', 3, 3, [], true),
+      transactionDate: fieldConsensus('2024-02-01', 3, 3, [], true),
+      owner: fieldConsensus('joint', 2, 3, [{ model: 'openai:gpt-4o', value: 'spouse' }], false),
+      assetName: fieldConsensus('Microsoft Corp', 3, 3, [], true),
+      amount: fieldConsensus({ amountMin: 15001, amountMax: 50000 }, 3, 3, [], true),
+    },
+  };
+
+  // "amount" is a 1-1 tie between the two present models -> no majority ->
+  // contested (winner value null, every present value listed as a dissenter).
+  const contestedRow = {
+    rowKey: 'TSLA|2024-03-10|P',
+    presentIn: ['anthropic:claude-sonnet-4-6', 'gemini:gemini-3.5-flash'],
+    missingFrom: ['openai:gpt-4o'],
+    rowConsensus: 'contested',
+    fields: {
+      ticker: fieldConsensus('TSLA', 2, 2, [], true),
+      txType: fieldConsensus('P', 2, 2, [], true),
+      transactionDate: fieldConsensus('2024-03-10', 2, 2, [], true),
+      owner: fieldConsensus('self', 2, 2, [], true),
+      assetName: fieldConsensus('Tesla Inc', 2, 2, [], true),
+      amount: fieldConsensus(
+        null,
+        1,
+        2,
+        [
+          { model: 'anthropic:claude-sonnet-4-6', value: { amountMin: 1001, amountMax: 15000 } },
+          { model: 'gemini:gemini-3.5-flash', value: { amountMin: 15001, amountMax: 50000 } },
+        ],
+        false,
+      ),
+    },
+  };
+
+  it('colors a unanimous field green with no dissent', () => {
+    const sandbox = loadConsensusSandbox();
+    const consensus = {
+      rows: [unanimousRow],
+      summary: { models: MODELS, rowsUnanimous: 1, rowsMajority: 0, rowsContested: 0, perFieldAgreementPct: {} },
+    };
+    const html = sandbox.consensusGridHtml('doc-1', consensus);
+    expect(html).toContain('<span class="conf hi">AAPL</span>');
+    expect(html).toContain('<th>anthropic:claude-sonnet-4-6</th>');
+    expect(html).toContain('<th>Consensus</th>');
+    expect(html).toContain("useConsensusRows('doc-1')");
+    expect(html).toContain('>Use Consensus<');
+  });
+
+  it('colors a majority-with-dissent field amber and shows the dissenting value', () => {
+    const sandbox = loadConsensusSandbox();
+    const consensus = {
+      rows: [majorityRow],
+      summary: { models: MODELS, rowsUnanimous: 0, rowsMajority: 1, rowsContested: 0, perFieldAgreementPct: {} },
+    };
+    const html = sandbox.consensusGridHtml('doc-1', consensus);
+    expect(html).toContain('<span class="conf mid" title="openai:gpt-4o: spouse">joint</span>');
+    // the winning value is what a reviewer sees inline; the dissent is in the title, not duplicated in the body
+    expect(html).not.toContain('>spouse<');
+  });
+
+  it('colors a contested field red and shows every present model\'s value', () => {
+    const sandbox = loadConsensusSandbox();
+    const consensus = {
+      rows: [contestedRow],
+      summary: { models: MODELS, rowsUnanimous: 0, rowsMajority: 0, rowsContested: 1, perFieldAgreementPct: {} },
+    };
+    const html = sandbox.consensusGridHtml('doc-1', consensus);
+    expect(html).toContain('conf lo');
+    expect(html).toContain('anthropic:claude-sonnet-4-6: $1,001 - $15,000');
+    expect(html).toContain('gemini:gemini-3.5-flash: $15,001 - $50,000');
+    // the model missing from this row gets a muted placeholder, not a blank cell
+    expect(html).toContain('— (no row)');
+  });
+
+  // Seen by only ONE of the three models. Its row-level consensus is 'contested'
+  // (minority presence), yet every field's local electorate is that single
+  // model, so votes*2 > total is trivially true for each field.
+  const minorityRow = {
+    rowKey: 'NVDA|2024-04-01|P',
+    presentIn: ['openai:gpt-4o'],
+    missingFrom: ['anthropic:claude-sonnet-4-6', 'gemini:gemini-3.5-flash'],
+    rowConsensus: 'contested',
+    fields: {
+      ticker: fieldConsensus('NVDA', 1, 1, [], true),
+      txType: fieldConsensus('P', 1, 1, [], true),
+      transactionDate: fieldConsensus('2024-04-01', 1, 1, [], true),
+      owner: fieldConsensus('self', 1, 1, [], true),
+      assetName: fieldConsensus('Nvidia Corp', 1, 1, [], true),
+      amount: fieldConsensus({ amountMin: 1001, amountMax: 15000 }, 1, 1, [], true),
+    },
+  };
+
+  it('renders nothing when there is no consensus block for the document', () => {
+    const sandbox = loadConsensusSandbox();
+    expect(sandbox.consensusGridHtml('doc-1', null)).toBe('');
+    expect(
+      sandbox.consensusGridHtml('doc-1', { rows: [], summary: { models: [], rowsUnanimous: 0, rowsMajority: 0, rowsContested: 0, perFieldAgreementPct: {} } }),
+    ).toBe('');
+  });
+
+  it('"Use Consensus" feeds the editor majority values only, falling back to the queued payload for contested fields', () => {
+    const sandbox = loadConsensusSandbox();
+    sandbox.setConsensus('doc-2', {
+      rows: [majorityRow, contestedRow],
+      summary: { models: MODELS, rowsUnanimous: 0, rowsMajority: 1, rowsContested: 1, perFieldAgreementPct: {} },
+    });
+    sandbox.setReviewItem({ docId: 'doc-2', chamber: 'house', payload: null });
+    // Only the contested row's ticker/date/type match this queued transaction's key
+    // (TSLA|2024-03-10|P); it exists purely to backstop the contested "amount" field.
+    sandbox.setQueued([
+      { ticker: 'TSLA', txType: 'P', txDate: '2024-03-10', owner: 'spouse', assetName: 'Tesla Inc (queued)', amountMin: 999, amountMax: 1000 },
+    ]);
+
+    sandbox.useConsensusRows('doc-2');
+
+    const call = sandbox.getEditorCall();
+    expect(call).toBeTruthy();
+    expect(call!.docId).toBe('doc-2');
+    expect(call!.decision).toBe('confirm');
+    expect(call!.label).toBe('model consensus');
+    expect(call!.chamber).toBe('house');
+    expect(call!.rows).toHaveLength(2);
+
+    const [majority, contested] = call!.rows;
+    // majority row: the vote winner is used for every field, including "owner"
+    // (2-1 majority) — the dissenting model's "spouse" value must not leak in.
+    expect(majority.ticker).toBe('MSFT');
+    expect(majority.owner).toBe('joint');
+
+    // contested row: ticker/type/date/owner/asset all reached a majority and use
+    // the consensus value; only "amount" (no majority) falls back to the queued row.
+    expect(contested.ticker).toBe('TSLA');
+    expect(contested.owner).toBe('self');
+    expect(contested.amountMin).toBe(999);
+    expect(contested.amountMax).toBe(1000);
+  });
+
+  it('"Use Consensus" falls a minority-presence row entirely back to the queued payload', () => {
+    const sandbox = loadConsensusSandbox();
+    sandbox.setConsensus('doc-4', {
+      rows: [minorityRow],
+      summary: { models: MODELS, rowsUnanimous: 0, rowsMajority: 0, rowsContested: 1, perFieldAgreementPct: {} },
+    });
+    sandbox.setReviewItem({ docId: 'doc-4', chamber: 'house', payload: null });
+    // Queued payload for the same row key, with values that differ from the lone
+    // model's reading so a leak would be visible.
+    sandbox.setQueued([
+      { ticker: 'NVDA', txType: 'P', txDate: '2024-04-01', owner: 'spouse', assetName: 'Nvidia (queued)', amountMin: 1, amountMax: 2 },
+    ]);
+
+    sandbox.useConsensusRows('doc-4');
+
+    const call = sandbox.getEditorCall();
+    expect(call).toBeTruthy();
+    expect(call!.rows).toHaveLength(1);
+    const [only] = call!.rows;
+    // The row was seen by only 1 of 3 models → not authoritative → every field
+    // uses the queued value, NOT the single model's unverified reading.
+    expect(only.owner).toBe('spouse');
+    expect(only.assetName).toBe('Nvidia (queued)');
+    expect(only.amountMin).toBe(1);
+    expect(only.amountMax).toBe(2);
+  });
+
+  it('alerts instead of opening the editor when the document has no consensus rows', () => {
+    const sandbox = loadConsensusSandbox();
+    sandbox.setReviewItem({ docId: 'doc-3', chamber: 'senate', payload: null });
+    sandbox.useConsensusRows('doc-3'); // no setConsensus() call for doc-3
+    expect(sandbox.getEditorCall()).toBeNull();
+    expect(sandbox.getAlerts()).toHaveLength(1);
   });
 });

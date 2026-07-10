@@ -21,6 +21,8 @@ INFISICAL_SHARED_SECRET_PATH="/"
 
 # Vision/LLM extraction for scanned PDFs (Google Gemini).
 GEMINI_API_KEY=""
+# Primary vision model override (defaults to 'gemini-3.5-flash').
+VISION_PRIMARY_MODEL=""
 # Optional extractor bake-off candidates used by /api/admin/extractor-bakeoff.
 ANTHROPIC_API_KEY=""
 OPENAI_API_KEY=""
@@ -29,6 +31,15 @@ OPENAI_API_KEY=""
 # Use as agreement model: AGREEMENT_AUTOPUBLISH_MODEL_B="llamaparse:cost-effective"
 # Tiers (credits/page): fast=1, cost-effective=3, agentic=10, agentic-plus=45
 LLAMAINDEX_API_KEY=""
+
+# Daily budget guardrail for the AUTONOMOUS agreement/cascade LLM candidate
+# doc-reads (one model reading one doc = 1 read; see src/extraction/agreement.ts
+# handleAgreementCheck). Does NOT cap the operator-triggered
+# POST /api/admin/agreement-reprocess endpoint — humans clicking buttons stay
+# uncapped. Unset/"0"/non-numeric all fall back to the 300/day default; set to
+# "-1" explicitly for unlimited. Backed by the llm_budget D1 table (migration
+# 0027), one row per UTC calendar day.
+AGREEMENT_DAILY_LLM_BUDGET=""
 
 # Financial Modeling Prep — enables asset enrichment (sector, market cap, country,
 # exchange) and, later, price + performance-vs-S&P. Without it, the SEC-EDGAR

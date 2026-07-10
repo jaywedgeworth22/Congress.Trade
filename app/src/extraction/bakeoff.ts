@@ -25,6 +25,8 @@ import {
   VisionLlmExtractor,
 } from './visionLlm';
 import { resolveSecret } from '../secrets/infisical';
+import { run } from '../shared/db';
+import { uuid } from '../shared/ids';
 
 export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral' | 'xai' | 'llamaparse';
 
@@ -466,6 +468,48 @@ export async function runCandidateOnDoc(
       avgConfidence: 0,
       rows: [],
     };
+  }
+}
+
+/** Discriminates which caller produced an extraction_runs row. */
+export type ExtractionRunKind = 'bakeoff' | 'batch' | 'production' | 'agreement';
+
+/**
+ * Persist one candidate's per-doc reading to `extraction_runs` (shape shared
+ * with the /bake-off and /batch-status admin endpoints). Best-effort: swallows
+ * write errors so a pre-migration DB (or a transient D1 hiccup) never breaks
+ * the caller — the reading is nice-to-have, not a required side effect.
+ */
+export async function persistExtractionRun(
+  env: Env,
+  result: CandidateDocResult,
+  kind: ExtractionRunKind,
+  batchId: string | null = null,
+): Promise<void> {
+  try {
+    await run(
+      env.DB,
+      `INSERT INTO extraction_runs
+         (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        uuid(),
+        batchId,
+        result.docId,
+        result.provider,
+        result.model,
+        kind,
+        result.ok ? 1 : 0,
+        result.error ?? null,
+        result.rowCount,
+        result.latencyMs,
+        result.avgConfidence,
+        JSON.stringify(result.rows ?? []),
+        new Date().toISOString(),
+      ],
+    );
+  } catch {
+    // Table may not exist yet (pre-migration) — keep callers read/write-path-safe.
   }
 }
 

@@ -26,8 +26,9 @@ import { resolveSecret } from '../secrets/infisical';
  * NOTE: Flash model ids rotate; if calls start 404-ing, update this to the
  * current Flash generation — the request/response contract below is unchanged
  * across Flash generations. Current as of 2026-06: 'gemini-3.5-flash'.
+ * Override via env var VISION_PRIMARY_MODEL.
  */
-const MODEL = 'gemini-3.5-flash';
+const DEFAULT_MODEL = 'gemini-3.5-flash';
 
 const ENDPOINT = (model: string, key: string): string =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
@@ -60,7 +61,7 @@ export class VisionLlmExtractor implements Extractor {
     options: VisionLlmOptions = {},
   ) {
     this.name = options.name ?? 'visionLlm';
-    this.model = options.model ?? MODEL;
+    this.model = options.model ?? (env.VISION_PRIMARY_MODEL || DEFAULT_MODEL);
     this.apiKeyOverride = options.apiKey;
     this.apiKeyName = options.apiKeyName ?? 'GEMINI_API_KEY';
   }
