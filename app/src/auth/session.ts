@@ -82,6 +82,30 @@ export async function getCookieDomain(c: Context<{ Bindings: Env }>): Promise<st
   }
 }
 
+export function getSafeRedirectUrl(origin: string | undefined, defaultBase: string, domain: string | undefined): string {
+  if (!origin) return defaultBase;
+  try {
+    const originUrl = new URL(origin);
+    const defaultUrl = new URL(defaultBase);
+
+    // If it exactly matches the default origin, it's safe
+    if (originUrl.origin === defaultUrl.origin) return origin;
+
+    // If it's localhost or 127.0.0.1 (local dev), it's safe
+    if (originUrl.hostname === 'localhost' || originUrl.hostname === '127.0.0.1') return origin;
+
+    // If we have a shared root domain configured, allow any subdomain of it
+    if (domain) {
+      if (originUrl.hostname.endsWith('.' + domain) || originUrl.hostname === domain) {
+        return origin;
+      }
+    }
+    return defaultBase;
+  } catch {
+    return defaultBase;
+  }
+}
+
 export async function setSessionCookie(c: Context<{ Bindings: Env }>, token: string): Promise<void> {
   const domain = await getCookieDomain(c);
   setCookie(c, SESSION_COOKIE, token, {

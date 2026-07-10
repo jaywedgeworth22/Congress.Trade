@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Hono } from 'hono';
-import { createSession, resolveSession, destroySession, getCurrentUserFromRequest, getCookieDomain } from '../session';
+import { createSession, resolveSession, destroySession, getCurrentUserFromRequest, getCookieDomain, getSafeRedirectUrl } from '../session';
 import type { Env } from '../../shared/types';
 
 function fakeEnv(user?: { id: string }) {
@@ -93,5 +93,19 @@ describe('sessions', () => {
     (envLocal as any).APP_BASE_URL = 'http://localhost:8787';
     const cLocal = { env: envLocal } as any;
     expect(await getCookieDomain(cLocal)).toBeUndefined();
+  });
+
+  it('getSafeRedirectUrl validates and sanitizes origins correctly', () => {
+    const base = 'https://congress.trade';
+    const domain = 'congress.trade';
+
+    // Allowed domains
+    expect(getSafeRedirectUrl('https://congress.trade/path', base, domain)).toBe('https://congress.trade/path');
+    expect(getSafeRedirectUrl('https://admin.congress.trade/path', base, domain)).toBe('https://admin.congress.trade/path');
+    expect(getSafeRedirectUrl('http://localhost:8787/path', base, domain)).toBe('http://localhost:8787/path');
+
+    // Mismatched domains fallback to defaultBase
+    expect(getSafeRedirectUrl('https://malicious.com/path', base, domain)).toBe(base);
+    expect(getSafeRedirectUrl(undefined, base, domain)).toBe(base);
   });
 });
