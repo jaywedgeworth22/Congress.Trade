@@ -24,6 +24,7 @@ import {
   setSessionCookie,
   clearSessionCookie,
   getSessionToken,
+  getCookieDomain,
 } from './session';
 import { buildGoogleAuthUrl, exchangeGoogleCode, fetchGoogleProfile } from './google';
 import { upsertUserFromGoogle, upsertUserByEmail } from './users';
@@ -32,7 +33,8 @@ import { sendEmail } from './email';
 import { constantTimeEqual, randomToken } from './tokens';
 import { entitlementOf } from '../billing/entitlement';
 import { resolveSecret } from '../secrets/infisical';
-import { isAdminSessionEmail } from '../admin/identity';
+import { isAdminSessionEmail, adminRuntimeConfig } from '../admin/identity';
+import { verifyAccessJwt, certsUrl } from '../admin/access';
 import { rateLimit, clientIp } from '../shared/rateLimit';
 
 const OAUTH_STATE_COOKIE = 'ct_oauth_state';
@@ -57,7 +59,24 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   // One bootstrap call for the client: identity + derived access level.
   r.get('/me', async (c) => {
     const user = await getCurrentUser(c);
-    const adminAllowed = user ? await isAdminSessionEmail(c.env, user.email) : false;
+    let adminAllowed = user ? await isAdminSessionEmail(c.env, user.email) : false;
+
+    // Check Cloudflare Access JWT assertion if present (when requesting via admin.congress.trade)
+    const accessJwt = c.req.header('Cf-Access-Jwt-Assertion');
+    if (!adminAllowed && accessJwt) {
+      const cfg = await adminRuntimeConfig(c.env);
+      if (cfg.accessAud && cfg.accessTeamDomain && cfg.allow.size > 0) {
+        const res = await verifyAccessJwt(accessJwt, {
+          aud: cfg.accessAud,
+          allow: cfg.allow,
+          jwksUrl: certsUrl(cfg.accessTeamDomain),
+        });
+        if (res.ok) {
+          adminAllowed = true;
+        }
+      }
+    }
+
     return c.json({
       user: user ? publicUser(user) : null,
       entitlement: entitlementOf(user),
@@ -68,7 +87,7 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   // --- POST /auth/logout --------------------------------------------------
   r.post('/logout', async (c) => {
     await destroySession(c.env, getSessionToken(c));
-    clearSessionCookie(c);
+    await clearSessionCookie(c);
     return c.json({ ok: true });
   });
 
@@ -76,12 +95,14 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   r.get('/google/start', async (c) => {
     if (!(await resolveSecret(c.env, 'GOOGLE_OAUTH_CLIENT_ID')).value) return c.json({ error: 'google login not configured' }, 503);
     const state = randomToken(16);
+    const domain = await getCookieDomain(c);
     setCookie(c, OAUTH_STATE_COOKIE, state, {
       httpOnly: true,
       secure: new URL(c.req.url).protocol === 'https:',
       sameSite: 'Lax',
       path: '/',
       maxAge: 600,
+      domain,
     });
     const base = await baseUrl(c);
     const url = await buildGoogleAuthUrl(c.env, `${base}/auth/google/callback`, state);
@@ -94,7 +115,8 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     const code = url.searchParams.get('code');
     const state = url.searchParams.get('state');
     const cookieState = getCookie(c, OAUTH_STATE_COOKIE);
-    deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/' });
+    const domain = await getCookieDomain(c);
+    deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/', domain });
     if (!code || !state || !cookieState || !(await constantTimeEqual(state, cookieState))) {
       return c.redirect(`${await baseUrl(c)}/?login=error`);
     }

@@ -4589,7 +4589,7 @@ var selectedPlan = 'monthly';
 
 function isPremium() { return !!(ME.entitlement && ME.entitlement.premium); }
 function hasAdminToken() { return !!getAdminToken(); }
-function canUseAdmin() { return !!((ME.user && ME.admin && ME.admin.allowed) || hasAdminToken()); }
+function canUseAdmin() { return !!((ME.admin && ME.admin.allowed) || hasAdminToken()); }
 function updatePremiumCues() {
   var unlocked = isPremium() || isAdminView();
   document.querySelectorAll('[data-premium-cue]').forEach(function (node) { node.hidden = unlocked; });
