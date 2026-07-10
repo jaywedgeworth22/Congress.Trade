@@ -3045,7 +3045,10 @@ var REREAD_MODELS = [
   { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   { provider: 'anthropic', model: 'claude-haiku-4-5' },
   { provider: 'mistral', model: 'mistral-ocr-latest' },
-  { provider: 'xai', model: 'grok-4.3' }
+  { provider: 'xai', model: 'grok-4.3' },
+  { provider: 'llamaparse', model: 'fast' },
+  { provider: 'llamaparse', model: 'cost-effective' },
+  { provider: 'llamaparse', model: 'agentic' }
 ];
 /* <optgroup> per provider for the "Re-read with model…" multi-select. */
 function rereadModelOptionsHtml() {

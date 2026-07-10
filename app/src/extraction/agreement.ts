@@ -385,7 +385,27 @@ async function leaveInReviewHighPriority(
   votes: unknown,
   reason: string,
 ): Promise<AgreementDocResult> {
-  const payload = { resolvedBy: 'agreement-cascade', priority: 'high', tier, models, votes, detail: reason };
+  // Preserve any existing payload (e.g. transactions queued for human review) by
+  // reading it first, then merging cascade metadata fields on top, so the human
+  // reviewer does not lose the extracted rows that need attention.
+  let existingPayload: Record<string, unknown> = {};
+  try {
+    const row = await get<{ payload: string | null }>(env.DB, 'SELECT payload FROM review_queue WHERE doc_id = ?', [docId]);
+    if (row?.payload) {
+      existingPayload = JSON.parse(row.payload) as Record<string, unknown>;
+    }
+  } catch (err) {
+    console.warn('leaveInReviewHighPriority failed to read existing payload:', docId, (err as Error).message);
+  }
+  const payload = {
+    ...existingPayload,
+    resolvedBy: 'agreement-cascade',
+    priority: 'high',
+    tier,
+    models,
+    votes,
+    detail: reason,
+  };
   try {
     await run(
       env.DB,
