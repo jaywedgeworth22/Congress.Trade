@@ -437,6 +437,15 @@ export async function processAgreementCascadeTier2(
     return finalizePublish(env, frow, docId, rA.rows, dryRun, { tier: 2, models: labels, unanimous: true });
   }
 
+  // If any model's read failed (ok: false, rows: []) it would be counted as
+  // "saw nothing" by buildConsensusRows, turning a 2/3 majority into a false
+  // publish quorum. Only proceed to majority resolve when ALL three reads
+  // succeeded; otherwise leave the doc for human review.
+  if (!rA.ok || !rB.ok || !rC.ok) {
+    if (dryRun) return { docId, outcome: 'review_flagged', tier: 3, reason: 'model_read_failed' };
+    return leaveInReviewHighPriority(env, docId, 3, labels, null, 'model_read_failed');
+  }
+
   // Tier 3 — majority resolve over the three reads (no extra model calls).
   const consensus = buildConsensusRows([
     { model: labels.a, rows: rA.rows },
@@ -717,6 +726,14 @@ export async function handleAgreementCheck(
   const readsNeeded = tier >= 2 ? 3 : 2;
   if (!(await reserveLlmBudget(env, budget, readsNeeded))) {
     await deferForBudgetExhausted(env, docId, tier, budget);
+    // Clear the agreement_attempted_at stamp that enqueueAgreementCheck set,
+    // so the cron backstop picks this doc up again after the budget resets
+    // (next UTC day) rather than permanently ignoring it.
+    try {
+      await run(env.DB, 'UPDATE review_queue SET agreement_attempted_at = NULL WHERE doc_id = ?', [docId]);
+    } catch (err) {
+      console.warn('handleAgreementCheck failed to clear stamp on budget-exhausted:', docId, (err as Error).message);
+    }
     console.log(`agreement.check ${docId} tier${tier}: LLM budget exhausted (cap ${budget}/day) → deferred, no attempt spent`);
     return;
   }
@@ -735,6 +752,15 @@ export async function handleAgreementCheck(
   if (res.outcome === 'disagree') {
     if (attempts < max) {
       const escalated = await enqueueAgreementCheck(env, docId, rawObjectKey, 2, false);
+      if (!escalated) {
+        // Enqueue failed — the doc still has its tier-1 agreement_attempted_at
+        // stamp so the cron backstop won't retry. Escalation is the only path
+        // to tier 2/3, so flag for human review rather than leaving the doc in
+        // invisible limbo.
+        await leaveInReviewHighPriority(
+          env, docId, 1, modelLabels(resolveModels(e)), res.rows ?? null, 'escalation_enqueue_failed',
+        );
+      }
       console.log(`agreement.check ${docId} tier1: disagree → ${escalated ? 'escalated to tier2' : 'escalation enqueue failed'}`);
       return;
     }
