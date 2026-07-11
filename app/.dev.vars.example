@@ -191,3 +191,8 @@ STRIPE_WEBHOOK_SECRET=""
 STRIPE_PRICE_MONTHLY=""
 STRIPE_PRICE_ANNUAL=""
 STRIPE_TRIAL_DAYS="7"
+
+# Public-API anti-scraping guard. wrangler.toml [vars] turns it on for
+# production AND local `wrangler dev`; set "false" here if you need plain
+# curl/scripts against local /api/* data endpoints (or send a browser UA).
+SCRAPE_GUARD_ENABLED="true"

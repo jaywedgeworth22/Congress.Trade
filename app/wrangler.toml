@@ -220,6 +220,11 @@ PRICE_PROVIDER = "fmp"
 # scout via POST /api/ingest/detection) to measure who surfaced each filing
 # first. Enables the FMP-vs-us lead readout that answers the front-running thesis.
 DISCLOSURE_LATENCY_WATCH_ENABLED = "true"
+# Public-API anti-scraping guard (src/security/botDefense.ts): blocks scraper/
+# AI-crawler user agents and applies per-IP request + daily row budgets on the
+# public data endpoints. Infisical can override SCRAPE_GUARD_ENABLED to "false"
+# for a zero-redeploy kill switch if it ever throttles legitimate traffic.
+SCRAPE_GUARD_ENABLED = "true"
 # API Usage Monitor app telemetry. Token is secret/Infisical-only.
 USAGE_MONITOR_INGEST_URL = "https://usage.jays.services/api/ingest/usage"
 USAGE_MONITOR_ENVIRONMENT = "production"
