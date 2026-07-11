@@ -116,8 +116,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 ## In Progress
 - **Whole-app improvement roadmap implementation (CODEX, XL) — IMPLEMENTATION COMPLETE LOCALLY +
   PREVIEWED 2026-07-11; PRODUCTION RELEASE IN PROGRESS (owner authorized merge + deploy).** Integration branch
-  `codex/app-hardening-integration` has 11 implementation commits plus its closeout record over
-  `origin/main`; all backend,
+  `codex/app-hardening-integration`, PR #284, has 11 implementation commits plus its closeout
+  record over `origin/main`; all backend,
   billing/security, iOS, and PWA lanes are integrated and independently reviewed. Isolated preview
   version `85417928-cae4-4bb6-8706-96c739846533` is healthy at
   `https://congress-trade-preview.jaywedgeworth22.workers.dev` (`ok/db/schema=true`) after readiness
