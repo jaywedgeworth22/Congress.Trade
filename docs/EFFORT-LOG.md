@@ -124,15 +124,6 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   no preview or production deploy.
 
 ## In Progress
-- **Backend delivery + ingestion reliability hardening (CODEX/HERSCHEL, L) — INTEGRATED +
-  INDEPENDENTLY VERIFIED LOCALLY 2026-07-11.** Transactional ingestion/delivery outboxes, real DLQ
-  consumers and bounded recovery, completion-before-ACK, stale-enqueued replay, cross-isolate SSE
-  leases/backpressure, bounded fetches, public webhook SSRF controls, quotas, truthful source
-  health, atomic publication/review receipts, schema readiness, and preview/production migration
-  parity are in `codex/app-hardening-integration`. Final semantic review PASS; real SQLite coverage
-  applies all migrations, compares the admin migration tail, runs readiness, and executes
-  idempotent transaction/cursor/estimate/outbox writes. Deployed in PR #284 / Worker
-  `d1dcd17f-8724-40db-9980-6d4f7f6f88e3`; tracked by the deployed program row above.
 - **Review Queue current drain + durable automation integration (CODEX, L) — IN PROGRESS 2026-07-11.** Owner-directed. Audit the live unresolved queue and provenance, verify rather than blind-resolve each class, integrate/review existing PR #257 without editing MONET's branch, close any scheduler/observability/retry gaps on `codex/review-queue-resolution`, run full gates serially, deploy an isolated preview, and report the separate current/preview/production states. KEEPOUT: preserve the dirty main checkout and MONET's review-automation worktree.
 - **Implement `est_value` column in transactions table (AG, S) — IN PROGRESS 2026-07-10.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
 - **Refactor client API routes (AG, M) — IN PROGRESS 2026-07-10.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
