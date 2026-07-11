@@ -9,14 +9,53 @@ export interface ReadinessResult {
 
 const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
   ['filings', 'SELECT doc_id, first_seen_at, filed_date FROM filings LIMIT 0'],
-  ['transactions', 'SELECT row_key, disclosure_available_at, deprecated_at, asset_type_name FROM transactions LIMIT 0'],
+  [
+    'transactions',
+    `SELECT row_key, disclosure_available_at, deprecated_at, asset_type_name,
+            amount_min, amount_max, est_value
+       FROM transactions LIMIT 0`,
+  ],
   ['subscriptions', 'SELECT id, secret, filters FROM subscriptions LIMIT 0'],
-  ['deliveries', 'SELECT subscription_id, tx_id, attempts, claim_token, lease_until FROM deliveries LIMIT 0'],
-  ['delivery_outbox', 'SELECT tx_id, status, available_at, dead_letter_cycles FROM delivery_outbox LIMIT 0'],
-  ['ingestion_outbox', 'SELECT doc_id, chamber, source_url, status, available_at, dead_letter_cycles FROM ingestion_outbox LIMIT 0'],
-  ['sse_leases', 'SELECT subscription_id, client_id, expires_at FROM sse_leases LIMIT 0'],
-  ['source_attempts', 'SELECT source, attempted_at, outcome FROM source_attempts LIMIT 0'],
-  ['users', 'SELECT id, email, plan, subscription_status FROM users LIMIT 0'],
+  [
+    'deliveries',
+    `SELECT id, subscription_id, tx_id, status, attempts, last_error, updated_at,
+            claim_token, lease_until
+       FROM deliveries LIMIT 0`,
+  ],
+  [
+    'delivery_outbox',
+    `SELECT tx_id, status, attempts, dead_letter_cycles, available_at, last_error,
+            created_at, updated_at
+       FROM delivery_outbox LIMIT 0`,
+  ],
+  [
+    'ingestion_outbox',
+    `SELECT doc_id, chamber, source_url, status, attempts, dead_letter_cycles,
+            available_at, last_error, created_at, updated_at
+       FROM ingestion_outbox LIMIT 0`,
+  ],
+  ['sse_leases', 'SELECT id, subscription_id, client_id, expires_at, created_at FROM sse_leases LIMIT 0'],
+  [
+    'source_attempts',
+    'SELECT id, source, attempted_at, outcome, new_count, error FROM source_attempts LIMIT 0',
+  ],
+  [
+    'users',
+    `SELECT id, email, stripe_customer_id, stripe_subscription_id, plan,
+            subscription_status, current_period_end, cancel_at_period_end, trial_end
+       FROM users LIMIT 0`,
+  ],
+  [
+    'stripe_webhook_events',
+    `SELECT event_id, event_type, received_at, processed_at, claim_token, claim_expires_at
+       FROM stripe_webhook_events LIMIT 0`,
+  ],
+  [
+    'stripe_subscription_event_state',
+    `SELECT subscription_id, customer_id, last_event_created, last_event_priority,
+            last_event_id, last_event_type, updated_at
+       FROM stripe_subscription_event_state LIMIT 0`,
+  ],
   ['review_queue', 'SELECT doc_id, resolved, agreement_attempted_at FROM review_queue LIMIT 0'],
   ['ingestion_decisions', 'SELECT doc_id, action, transaction_ids FROM ingestion_decisions LIMIT 0'],
   ['client_commands', 'SELECT id, user_id, status, idempotency_key FROM client_commands LIMIT 0'],
@@ -28,6 +67,42 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
     `SELECT name FROM sqlite_master
       WHERE type = 'index' AND name = 'idx_deliveries_subscription_tx'
         AND UPPER(sql) LIKE 'CREATE UNIQUE INDEX%'`,
+    true,
+  ],
+  [
+    'idx_transactions_doc_source_rowkey',
+    `SELECT name FROM sqlite_master
+      WHERE type = 'index' AND name = 'idx_transactions_doc_source_rowkey'
+        AND UPPER(sql) LIKE 'CREATE UNIQUE INDEX%'`,
+    true,
+  ],
+  [
+    'idx_users_stripe_customer',
+    `SELECT name FROM sqlite_master
+      WHERE type = 'index' AND name = 'idx_users_stripe_customer'
+        AND UPPER(sql) LIKE 'CREATE UNIQUE INDEX%'`,
+    true,
+  ],
+  ...[
+    'idx_tx_cursor',
+    'idx_delivery_outbox_ready',
+    'idx_ingestion_outbox_ready',
+    'idx_deliveries_lease',
+    'idx_sse_leases_expiry',
+    'idx_sse_leases_subscription',
+    'idx_sse_leases_client',
+    'idx_source_attempts_source_time',
+    'idx_stripe_webhook_events_claim_expiry',
+    'idx_stripe_subscription_event_customer',
+  ].map((name): [string, string, boolean] => [
+    name,
+    `SELECT name FROM sqlite_master WHERE type = 'index' AND name = '${name}'`,
+    true,
+  ]),
+  [
+    'trg_transactions_cursor',
+    `SELECT name FROM sqlite_master
+      WHERE type = 'trigger' AND name = 'trg_transactions_cursor'`,
     true,
   ],
   ...[

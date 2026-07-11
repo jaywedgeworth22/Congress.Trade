@@ -111,12 +111,12 @@ ADMIN_BASE="$BASE"
 if check_liveness "$BASE"; then
   :
 elif [ -n "$WORKERS_DEV_HOST" ]; then
-  echo "   Primary health check failed. Retrying via workers.dev bypass: https://$WORKERS_DEV_HOST/api/health"
-  if check_api_health "https://$WORKERS_DEV_HOST/api/health" "workers.dev"; then
+  echo "   Primary liveness check failed. Retrying via workers.dev bypass: https://$WORKERS_DEV_HOST/health"
+  if check_liveness "https://$WORKERS_DEV_HOST"; then
     ADMIN_BASE="https://$WORKERS_DEV_HOST"
     echo "   Using workers.dev bypass for admin API calls."
   else
-    echo "!! /api/health failed on workers.dev bypass as well." >&2
+    echo "!! /health failed on workers.dev bypass as well." >&2
     exit 1
   fi
 else

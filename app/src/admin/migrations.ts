@@ -25,6 +25,16 @@ export const BASE_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_ingest_log_source ON ingest_log (source, polled_at)',
 ] as const;
 
+export const EST_VALUE_SCHEMA_STATEMENTS = [
+  'ALTER TABLE transactions ADD COLUMN est_value REAL',
+  `UPDATE transactions SET est_value = CASE
+     WHEN amount_min IS NULL AND amount_max IS NULL THEN 0
+     WHEN amount_min IS NULL THEN amount_max
+     WHEN amount_max IS NULL THEN amount_min
+     ELSE (amount_min + amount_max) / 2.0
+   END WHERE est_value IS NULL`,
+] as const;
+
 export const RELIABILITY_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS delivery_outbox (tx_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, dead_letter_cycles INTEGER NOT NULL DEFAULT 0, available_at TEXT NOT NULL, last_error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
   'CREATE INDEX IF NOT EXISTS idx_delivery_outbox_ready ON delivery_outbox(status, available_at)',
@@ -47,4 +57,32 @@ export const RELIABILITY_SCHEMA_STATEMENTS = [
   `CREATE TRIGGER IF NOT EXISTS trg_subscriptions_active_update_quota BEFORE UPDATE OF active, client_id ON subscriptions WHEN NEW.active = 1 AND (OLD.active != 1 OR OLD.client_id != NEW.client_id) AND (SELECT COUNT(*) FROM subscriptions WHERE client_id = NEW.client_id AND active = 1 AND id != OLD.id) >= 10 BEGIN SELECT RAISE(ABORT, 'subscription active quota exceeded'); END`,
   `CREATE TABLE IF NOT EXISTS source_attempts (id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT NOT NULL, attempted_at TEXT NOT NULL, outcome TEXT NOT NULL, new_count INTEGER NOT NULL DEFAULT 0, error TEXT)`,
   'CREATE INDEX IF NOT EXISTS idx_source_attempts_source_time ON source_attempts(source, attempted_at DESC)',
+] as const;
+
+export const STRIPE_EVENT_SCHEMA_STATEMENTS = [
+  'ALTER TABLE stripe_webhook_events ADD COLUMN claim_token TEXT',
+  'ALTER TABLE stripe_webhook_events ADD COLUMN claim_expires_at TEXT',
+  `CREATE INDEX IF NOT EXISTS idx_stripe_webhook_events_claim_expiry
+     ON stripe_webhook_events (processed_at, claim_expires_at)`,
+  `CREATE TABLE IF NOT EXISTS stripe_subscription_event_state (
+     subscription_id TEXT PRIMARY KEY,
+     customer_id TEXT NOT NULL,
+     last_event_created INTEGER NOT NULL,
+     last_event_priority INTEGER NOT NULL,
+     last_event_id TEXT NOT NULL,
+     last_event_type TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_stripe_subscription_event_customer
+     ON stripe_subscription_event_state (customer_id, last_event_created DESC)`,
+] as const;
+
+/**
+ * Ordered schema tail shared by POST /api/admin/migrate and migration parity
+ * tests. Keep this in the same order as file migrations 0029 through 0032.
+ */
+export const POST_0024_SCHEMA_STATEMENTS = [
+  ...EST_VALUE_SCHEMA_STATEMENTS,
+  ...RELIABILITY_SCHEMA_STATEMENTS,
+  ...STRIPE_EVENT_SCHEMA_STATEMENTS,
 ] as const;

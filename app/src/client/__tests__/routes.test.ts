@@ -85,7 +85,7 @@ function feedRow(overrides: Partial<FeedTransactionRow> & { __chamber?: string }
   };
 }
 
-function makeEnv() {
+function makeEnv(opts: { quotaRace?: boolean } = {}) {
   const kv = new Map<string, string>();
   const subscriptions = new Map<string, SubscriptionRow>();
   const commands = new Map<string, CommandRow>();

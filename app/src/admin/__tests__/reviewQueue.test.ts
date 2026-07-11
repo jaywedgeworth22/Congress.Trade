@@ -289,16 +289,23 @@ describe('review queue admin API', () => {
       {
         method: 'POST',
         headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
-        body: JSON.stringify({ decision: 'manual', edits: [{ assetName: 'Apple Inc.', ticker: 'AAPL', txType: 'P', amountMin: 1001, amountMax: 15000, txDate: '2026-06-01' }] }),
+        body: JSON.stringify({
+          decision: 'manual',
+          edits: [
+            { assetName: 'Apple Inc.', ticker: 'AAPL', txType: 'P', amountMin: 1001, amountMax: 15000, txDate: '2026-06-01' },
+            { assetName: 'Treasury note', ticker: null, txType: 'P', amountMin: 50000001, amountMax: null, txDate: '2026-06-02' },
+          ],
+        }),
       },
       env,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { decision: string; source: string; inserted: number };
-    expect(body).toMatchObject({ decision: 'manual', source: 'manual', inserted: 1 });
-    // The transactions INSERT bound source='manual' (it's the 17th positional bind).
-    expect(binds.length).toBe(1);
+    expect(body).toMatchObject({ decision: 'manual', source: 'manual', inserted: 2 });
+    expect(binds.length).toBe(2);
     expect(binds[0]).toContain('manual');
+    expect(binds[0].at(-1)).toBe(8000.5);
+    expect(binds[1].at(-1)).toBe(50000001);
     expect(auditBinds.length).toBe(1);
     expect(auditBinds[0]).toContain('manual');
     expect(auditBinds[0]).toContain('admin-token');

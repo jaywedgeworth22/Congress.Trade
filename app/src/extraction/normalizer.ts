@@ -19,7 +19,7 @@
  */
 
 import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../shared/types';
-import { all, run, batch, fromBool, parseJson } from '../shared/db';
+import { all, batch, fromBool, parseJson } from '../shared/db';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets';
 import { canonicalizeAssetType } from '../shared/assetTypes';
 import { uuid } from '../shared/ids';
@@ -212,18 +212,15 @@ export async function normalize(
     return { transactions, minConfidence, needsReview: true };
   }
 
-  // Publication state is committed by persistTransactions below; retain the
-  // extraction metadata update for clean auto-publish documents.
-  await run(
-    env.DB,
-    'UPDATE filings SET confidence = ?, extractor = ?, model_version = ? WHERE doc_id = ?',
-    [minConfidence, extractorName, modelVersion, filing.docId],
-  );
-
   const insertedIds = await persistTransactions(env, transactions, {
     publication: {
       docId: filing.docId,
       resolveReview: true,
+      metadata: {
+        confidence: minConfidence,
+        extractor: extractorName,
+        modelVersion,
+      },
       audit: {
         action: 'auto_published',
         source: 'pipeline',
@@ -509,45 +506,24 @@ const INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
   first_seen_at, filed_date, est_value
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`;
 
-/** Insert each validated transaction. cursor_seq is assigned by the DB trigger. */
-export async function persistTransactions(env: Env, transactions: Transaction[]): Promise<string[]> {
-  if (transactions.length === 0) return [];
-  const insertedIds: string[] = [];
-  const statements = transactions.map((tx) => [
-    INSERT_TX_SQL,
-    [
-      tx.id,
-      tx.docId,
-      tx.filerId,
-      tx.txDate,
-      tx.owner,
-      tx.assetName,
-      tx.ticker,
-      tx.assetType,
-      tx.txType,
-      tx.amountMin,
-      tx.amountMax,
-      fromBool(tx.isOption),
-      fromBool(tx.capGainsOver200),
-      tx.rawText,
-      tx.assetTypeName ?? null,
-      tx.filingStatus ?? null,
-      tx.subholding ?? null,
-      tx.location ?? null,
-      tx.description ?? null,
-      tx.supplementalText ?? null,
-      tx.rowKey ?? null,
-      tx.confidence,
-      tx.source,
-      tx.createdAt,
-      tx.firstSeenAt ?? null,
-      tx.filedDate ?? null,
-      tx.amountMin === null && tx.amountMax === null ? 0 :
-        tx.amountMin === null ? tx.amountMax :
-        tx.amountMax === null ? tx.amountMin :
-        (tx.amountMin + tx.amountMax) / 2.0,
-    ],
-  ] as [string, any[]]);
+export interface PersistTransactionsOptions {
+  publication?: {
+    docId: string;
+    resolveReview?: boolean;
+    metadata?: {
+      confidence: number;
+      extractor: string | null;
+      modelVersion: string | null;
+    };
+    audit?: {
+      action: 'auto_published' | 'agreement_published';
+      source: 'pipeline' | 'agreement';
+      reason: string;
+      payload?: Record<string, unknown>;
+      createdAt?: string;
+    };
+  };
+}
 
 /** Insert rows/outbox and optional publication metadata in one D1 batch. */
 export async function persistTransactions(
@@ -592,6 +568,10 @@ export async function persistTransactions(
         tx.createdAt,
         tx.firstSeenAt ?? null,
         tx.filedDate ?? null,
+        tx.amountMin === null && tx.amountMax === null ? 0
+          : tx.amountMin === null ? tx.amountMax
+          : tx.amountMax === null ? tx.amountMin
+          : (tx.amountMin + tx.amountMax) / 2.0,
       ],
     ];
     const outbox = tx.rowKey
@@ -601,10 +581,19 @@ export async function persistTransactions(
   });
 
   if (opts.publication) {
-    statements.push([
-      "UPDATE filings SET ingest_status = 'persisted', error = NULL WHERE doc_id = ?",
-      [opts.publication.docId],
-    ]);
+    const metadata = opts.publication.metadata;
+    statements.push(metadata
+      ? [
+          `UPDATE filings
+              SET ingest_status = 'persisted', error = NULL,
+                  confidence = ?, extractor = ?, model_version = ?
+            WHERE doc_id = ?`,
+          [metadata.confidence, metadata.extractor, metadata.modelVersion, opts.publication.docId],
+        ]
+      : [
+          "UPDATE filings SET ingest_status = 'persisted', error = NULL WHERE doc_id = ?",
+          [opts.publication.docId],
+        ]);
     if (opts.publication.resolveReview) {
       statements.push(['UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [opts.publication.docId]]);
     }
@@ -639,7 +628,7 @@ export async function persistTransactions(
 
   const results = await batch(env.DB, statements);
   for (let i = 0; i < transactions.length; i += 1) {
-    if ((results[i * 2].meta?.changes ?? 1) > 0) {
+    if (results[i * 2].meta.changes > 0) {
       insertedIds.push(transactions[i].id);
     }
   }

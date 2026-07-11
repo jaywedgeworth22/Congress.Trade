@@ -7,6 +7,7 @@ import { parseJson } from '../shared/db';
 import type { Context } from 'hono';
 import type { Env } from '../shared/types';
 import { getCurrentUserFromRequest } from '../auth/session';
+import { validateSubscriptionFilters } from '../delivery/subscriptions';
 
 export type ClientContext = Context<{ Bindings: Env }>;
 
@@ -16,10 +17,12 @@ export class ClientInputError extends Error {
   }
 }
 
-export type ClientErrorStatus = 400 | 401 | 404 | 500 | 501;
+export type ClientErrorStatus = 400 | 401 | 404 | 409 | 429 | 500 | 501;
 
 export function errorStatus(err: ClientInputError): ClientErrorStatus {
-  if (err.status === 401 || err.status === 404 || err.status === 501) return err.status;
+  if (err.status === 401 || err.status === 404 || err.status === 409 || err.status === 429 || err.status === 501) {
+    return err.status;
+  }
   if (err.status === 400) return 400;
   return 500;
 }
@@ -77,26 +80,6 @@ export function asDelivery(v: unknown): DeliveryChannel {
   throw new ClientInputError("delivery must be 'sse' or 'webhook'");
 }
 
-export function isLocalHttpUrl(url: URL): boolean {
-  return (
-    url.protocol === 'http:' &&
-    (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1')
-  );
-}
-
-export function validateWebhookTargetUrl(targetUrl: string | null): void {
-  if (!targetUrl) throw new ClientInputError('targetUrl is required for webhook subscriptions');
-  let url: URL;
-  try {
-    url = new URL(targetUrl);
-  } catch {
-    throw new ClientInputError('targetUrl must be a valid absolute URL');
-  }
-  if (url.protocol !== 'https:' && !isLocalHttpUrl(url)) {
-    throw new ClientInputError('targetUrl must use https:// outside localhost development');
-  }
-}
-
 export function arrayOfStrings(value: unknown, opts: { upper?: boolean } = {}): string[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) throw new ClientInputError('filters arrays must contain strings');
@@ -109,28 +92,9 @@ export function arrayOfStrings(value: unknown, opts: { upper?: boolean } = {}): 
 }
 
 export function normalizeFilters(value: unknown): SubscriptionFilters {
-  if (value === undefined || value === null) return {};
-  if (typeof value !== 'object' || Array.isArray(value)) {
-    throw new ClientInputError('filters must be an object');
-  }
-  const input = value as Record<string, unknown>;
-  const chambers = arrayOfStrings(input.chambers);
-  const out: SubscriptionFilters = {};
-  const members = arrayOfStrings(input.members);
-  const tickers = arrayOfStrings(input.tickers, { upper: true });
-  if (members && members.length) out.members = members;
-  if (tickers && tickers.length) out.tickers = tickers;
-  if (chambers && chambers.length) {
-    const valid = chambers.filter((c): c is Chamber => c === 'house' || c === 'senate');
-    if (valid.length !== chambers.length) throw new ClientInputError("chambers must be 'house' or 'senate'");
-    out.chambers = valid;
-  }
-  if (input.minAmount !== undefined && input.minAmount !== null && input.minAmount !== '') {
-    const n = Number(input.minAmount);
-    if (!Number.isFinite(n) || n < 0) throw new ClientInputError('minAmount must be a positive number');
-    out.minAmount = Math.floor(n);
-  }
-  return out;
+  const result = validateSubscriptionFilters(value);
+  if (!result.ok) throw new ClientInputError(result.error);
+  return result.filters;
 }
 
 export function publicSubscription(sub: Subscription, includeSecret = false): Record<string, unknown> {

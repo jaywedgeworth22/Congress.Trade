@@ -40,6 +40,16 @@ import { refreshSecrets } from './secrets/infisical';
 import { runDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency';
 import { buildDetectionRouter } from './ingestion/detectionRoutes';
 import { browserSecurityHeadersMiddleware } from './security/headers';
+import {
+  completeDeliveryOutbox,
+  flushDeliveryOutbox,
+  reconnectDeadLetteredOutbox,
+} from './delivery/outbox';
+import {
+  completeIngestionOutbox,
+  flushIngestionOutbox,
+  reconnectDeadLetteredIngestionOutbox,
+} from './ingestion/outbox';
 
 const app = new Hono<{ Bindings: Env }>();
 

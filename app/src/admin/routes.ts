@@ -99,7 +99,10 @@ import {
   flushDeliveryOutbox,
   type SqlStatement,
 } from '../delivery/outbox';
-import { BASE_SCHEMA_STATEMENTS, RELIABILITY_SCHEMA_STATEMENTS } from './migrations';
+import {
+  BASE_SCHEMA_STATEMENTS,
+  POST_0024_SCHEMA_STATEMENTS,
+} from './migrations';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -385,6 +388,13 @@ function reviewAssetTypeName(e: EditedTx): string | null {
   if (!raw || raw.toLowerCase() === 'unknown') return null;
   const code = raw.toUpperCase();
   return HOUSE_ASSET_TYPE_NAMES[code] ?? raw;
+}
+
+function estimatedTransactionValue(amountMin: number | null, amountMax: number | null): number {
+  if (amountMin === null && amountMax === null) return 0;
+  if (amountMin === null) return amountMax as number;
+  if (amountMax === null) return amountMin;
+  return (amountMin + amountMax) / 2.0;
 }
 
 function validateReviewEdits(value: unknown): { edits?: EditedTx[]; error?: string } {
@@ -1028,8 +1038,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
            id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
            tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
            raw_text, asset_type_name, row_key, confidence, source, created_at, cursor_seq,
-           first_seen_at, filed_date
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+           first_seen_at, filed_date, est_value
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
         [
           id,
           docId,
@@ -1052,6 +1062,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           nowIso,
           filing?.first_seen_at ?? null,
           filing?.filed_date ?? null,
+          estimatedTransactionValue(e.amountMin ?? null, e.amountMax ?? null),
         ],
       ]);
       statements.push(deliveryOutboxInsertForRowKey(docId, source, rowKey, nowIso));
@@ -1063,7 +1074,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     statements.push(['UPDATE filings SET ingest_status = ? WHERE doc_id = ?', ['persisted', docId]]);
     const results = await batch(c.env.DB, statements);
     for (let i = 0; i < candidates.length; i += 1) {
-      if ((results[i * 2].meta?.changes ?? 1) > 0) insertedIds.push(candidates[i]);
+      if (results[i * 2].meta.changes > 0) insertedIds.push(candidates[i]);
     }
 
     await flushDeliveryOutbox(c.env, { txIds: insertedIds, limit: Math.max(insertedIds.length, 1) }).catch((err) =>
@@ -2301,9 +2312,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             await run(
               c.env.DB,
               `UPDATE transactions
-                  SET confidence = ?, amount_min = ?, amount_max = ?, ticker = ?
+                  SET confidence = ?, amount_min = ?, amount_max = ?, est_value = ?, ticker = ?
                 WHERE id = ?`,
-              [tx.confidence, tx.amountMin, tx.amountMax, tx.ticker, existing[i].id],
+              [
+                tx.confidence,
+                tx.amountMin,
+                tx.amountMax,
+                estimatedTransactionValue(tx.amountMin, tx.amountMax),
+                tx.ticker,
+                existing[i].id,
+              ],
             );
           }
           await run(c.env.DB, 'UPDATE filings SET confidence = ? WHERE doc_id = ?', [
@@ -3029,31 +3047,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          created_at TEXT NOT NULL
        )`,
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
-      // 0029_est_value.sql — materialized computed column for estimated transaction value.
-      'ALTER TABLE transactions ADD COLUMN est_value REAL',
-      `UPDATE transactions SET est_value = CASE
-         WHEN amount_min IS NULL AND amount_max IS NULL THEN 0
-         WHEN amount_min IS NULL THEN amount_max
-         WHEN amount_max IS NULL THEN amount_min
-         ELSE (amount_min + amount_max) / 2.0
-       END WHERE est_value IS NULL`,
-      // 0032_stripe_subscription_event_order.sql — reject stale Stripe
-      // subscription events and make abandoned webhook claims reclaimable.
-      'ALTER TABLE stripe_webhook_events ADD COLUMN claim_token TEXT',
-      'ALTER TABLE stripe_webhook_events ADD COLUMN claim_expires_at TEXT',
-      `CREATE INDEX IF NOT EXISTS idx_stripe_webhook_events_claim_expiry
-         ON stripe_webhook_events (processed_at, claim_expires_at)`,
-      `CREATE TABLE IF NOT EXISTS stripe_subscription_event_state (
-         subscription_id TEXT PRIMARY KEY,
-         customer_id TEXT NOT NULL,
-         last_event_created INTEGER NOT NULL,
-         last_event_priority INTEGER NOT NULL,
-         last_event_id TEXT NOT NULL,
-         last_event_type TEXT NOT NULL,
-         updated_at TEXT NOT NULL
-       )`,
-      `CREATE INDEX IF NOT EXISTS idx_stripe_subscription_event_customer
-         ON stripe_subscription_event_state (customer_id, last_event_created DESC)`,
+      // 0029–0032 — value materialization, outbox reliability, truthful source
+      // attempts, and ordered/reclaimable Stripe event processing.
+      ...POST_0024_SCHEMA_STATEMENTS,
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

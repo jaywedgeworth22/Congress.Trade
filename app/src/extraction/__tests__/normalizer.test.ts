@@ -207,12 +207,19 @@ describe('normalize', () => {
     // Persisted + delivery fan-out happened; no review row.
     expect(cap.insertedTx).toHaveLength(1);
     expect(cap.insertedTx[0][20]).toEqual(expect.stringMatching(/^v1:primary:0:/));
+    expect(cap.insertedTx[0].at(-1)).toBe((1001 + 15000) / 2);
     expect(cap.reviewRows).toHaveLength(0);
     // Queue publication is now reconciled from the durable outbox. This minimal
     // fake does not materialize SELECT-based outbox rows for the flusher.
     expect(cap.enqueued).toEqual([]);
-    // filings updated (metadata + persisted status).
-    expect(cap.filingUpdates.length).toBeGreaterThanOrEqual(2);
+    // Filing metadata and persisted status are committed by one atomic update.
+    expect(cap.filingUpdates).toHaveLength(1);
+    expect(cap.filingUpdates[0]).toEqual([
+      result.minConfidence,
+      'senateHtml',
+      null,
+      'doc1',
+    ]);
     expect(cap.batches).toEqual([
       expect.arrayContaining([
         expect.stringMatching(/INSERT OR IGNORE INTO transactions/),
