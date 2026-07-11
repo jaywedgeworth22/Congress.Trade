@@ -172,6 +172,46 @@ describe('createCheckoutSession', () => {
     });
     expect(new URLSearchParams(body).get('managed_payments[enabled]')).toBe('true');
   });
+
+  it('resolves STRIPE_MANAGED_PAYMENTS from Infisical secrets, overriding the env/wrangler.toml fallback', async () => {
+    let captured: { url: string; body: string } | null = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const u = String(url);
+        if (u.endsWith('/api/v1/auth/universal-auth/login')) {
+          return Response.json({ accessToken: 'infisical-token' });
+        }
+        if (u.includes('/api/v3/secrets/raw')) {
+          return Response.json({ secrets: [{ secretKey: 'STRIPE_MANAGED_PAYMENTS', secretValue: 'true' }] });
+        }
+        captured = { url: u, body: String(init?.body) };
+        return new Response(JSON.stringify({ id: 'cs_1', url: 'https://stripe/checkout' }), { status: 200 });
+      }),
+    );
+    const env = {
+      STRIPE_SECRET_KEY: 'sk_test',
+      // wrangler.toml-backed fallback ("false"); must be overridden by the
+      // Infisical-provided "true" above, proving createCheckoutSession() is
+      // now resolveSecret-backed rather than reading env.STRIPE_MANAGED_PAYMENTS
+      // directly.
+      STRIPE_MANAGED_PAYMENTS: 'false',
+      INFISICAL_BASE_URL: 'https://infisical.test',
+      INFISICAL_ENV: 'prod',
+      INFISICAL_APP_PROJECT_ID: 'billing-managed-payments',
+      INFISICAL_APP_CLIENT_ID: 'app-client',
+      INFISICAL_APP_CLIENT_SECRET: 'app-secret',
+    } as unknown as Env;
+    await createCheckoutSession(env, {
+      priceId: 'price_m',
+      successUrl: 'https://app/?checkout=success',
+      cancelUrl: 'https://app/?checkout=cancel',
+      clientReferenceId: 'u1',
+      idempotencyKey: 'checkout-key-4',
+    });
+    const p = new URLSearchParams(captured!.body);
+    expect(p.get('managed_payments[enabled]')).toBe('true');
+  });
 });
 
 describe('Stripe write idempotency', () => {

@@ -46,15 +46,29 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   let priceProviderCalls = 0;
   const fmpUsedBeforeJobs = await getDailyUsed(env);
   const share: PeerShareInput = {};
+  // Resolve provider-pacing + usage-monitor telemetry vars together (Infisical-backed,
+  // falling back to the wrangler.toml env var whenever a name isn't set in Infisical)
+  // so the whole daily run only pays for one resolveSecrets round trip.
+  const secrets = await resolveSecrets(env, [
+    'FMP_MAX_PER_MINUTE',
+    'EDGAR_MAX_PER_MINUTE',
+    'USAGE_MONITOR_ENABLED',
+    'USAGE_MONITOR_INGEST_URL',
+    'USAGE_MONITOR_INGEST_TOKEN',
+    'USAGE_MONITOR_ENVIRONMENT',
+    'PRICE_PROVIDER',
+  ]);
   // Paid FMP tiers are rate-limited per MINUTE (Starter ~300/min), not per day —
   // so pace calls to use that headroom without tripping 429s. Configurable via
   // FMP_MAX_PER_MINUTE; unset = no pacing (prior behavior). The per-day ceiling
   // is FMP_DAILY_CALL_CAP (raise it on a paid plan so enrichment isn't throttled).
-  const maxPerMinute =
-    parseInt((env as { FMP_MAX_PER_MINUTE?: string }).FMP_MAX_PER_MINUTE || '', 10) || undefined;
+  const maxPerMinute = parseInt(secrets.FMP_MAX_PER_MINUTE || '', 10) || undefined;
+  // SEC EDGAR has its own, separate fair-access pacer (not the FMP budget above)
+  // — configurable via EDGAR_MAX_PER_MINUTE, unset = no pacing.
+  const edgarMaxPerMinute = parseInt(secrets.EDGAR_MAX_PER_MINUTE || '', 10) || undefined;
 
   try {
-    const r = await runEnrichment(env, { maxPerMinute });
+    const r = await runEnrichment(env, { maxPerMinute, edgarMaxPerMinute });
     hadFmpKey = hadFmpKey || r.hasFmpKey;
     fmpDailyCap = r.dailyCap;
     enrichmentFmpCalls = r.fmpCalls;
@@ -92,12 +106,9 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   try {
     const fmpUsedToday = await getDailyUsed(env);
     if (hadFmpKey || fmpUsedToday > 0) {
-      const secrets = await resolveSecrets(env, [
-        'USAGE_MONITOR_ENABLED',
-        'USAGE_MONITOR_INGEST_URL',
-        'USAGE_MONITOR_INGEST_TOKEN',
-        'USAGE_MONITOR_ENVIRONMENT',
-      ]);
+      // Reuses the `secrets` resolved near the top of this function (same
+      // resolveSecrets call as FMP_MAX_PER_MINUTE / EDGAR_MAX_PER_MINUTE) rather
+      // than resolving USAGE_MONITOR_*/PRICE_PROVIDER a second time here.
       const isEnabled = /^(1|true|yes|on)$/i.test((secrets.USAGE_MONITOR_ENABLED ?? '').trim());
       if (isEnabled && secrets.USAGE_MONITOR_INGEST_URL && secrets.USAGE_MONITOR_INGEST_TOKEN) {
         const client = createUsageTelemetryClient({
@@ -126,7 +137,7 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
               fmpCallsThisRun: Math.max(0, fmpUsedToday - fmpUsedBeforeJobs),
               enrichmentFmpCalls,
               priceProviderCalls,
-              priceProvider: ((env as { PRICE_PROVIDER?: string }).PRICE_PROVIDER || 'fmp').toLowerCase(),
+              priceProvider: (secrets.PRICE_PROVIDER || 'fmp').toLowerCase(),
               errors: errors.length,
             },
           },

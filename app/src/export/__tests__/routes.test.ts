@@ -164,6 +164,7 @@ describe('GET /api/export/capabilities', () => {
               { secretKey: 'INGEST_TOKEN', secretValue: TOKEN },
               { secretKey: 'APP_B_IMPORT_URL', secretValue: 'https://app-b.example/api/admin/securities/import' },
               { secretKey: 'APP_B_INGEST_TOKEN', secretValue: 'peer-secret' },
+              { secretKey: 'IMPORT_MAX_REFS', secretValue: '777' },
             ],
           });
         }
@@ -175,6 +176,10 @@ describe('GET /api/export/capabilities', () => {
       '/capabilities',
       baseEnv({
         INGEST_TOKEN: undefined,
+        // wrangler.toml-backed fallback value; must be overridden by the
+        // Infisical-provided '777' above, proving importLimits() is now
+        // resolveSecret-backed rather than reading env.IMPORT_MAX_REFS directly.
+        IMPORT_MAX_REFS: '2000',
         INFISICAL_BASE_URL: 'https://infisical.test',
         INFISICAL_ENV: 'prod',
         INFISICAL_APP_PROJECT_ID: 'export-capabilities-app',
@@ -191,10 +196,14 @@ describe('GET /api/export/capabilities', () => {
     const body = JSON.parse(text) as {
       configured: { ingestToken: boolean; appBReturnPath: boolean };
       peerSharing: { appBImportUrlConfigured: boolean; appBIngestTokenConfigured: boolean };
+      endpoints: { imports: { securities: { limits: { refs: number } } } };
     };
     expect(body.configured).toEqual({ ingestToken: true, appBReturnPath: true });
     expect(body.peerSharing.appBImportUrlConfigured).toBe(true);
     expect(body.peerSharing.appBIngestTokenConfigured).toBe(true);
+    // Proves integrationImportLimits() now resolves IMPORT_MAX_REFS via
+    // resolveSecrets (Infisical value wins over the env/wrangler.toml fallback).
+    expect(body.endpoints.imports.securities.limits.refs).toBe(777);
   });
 });
 

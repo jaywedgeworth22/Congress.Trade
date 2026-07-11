@@ -14,9 +14,10 @@ import type { Env } from '../shared/types';
 import { all, get, run } from '../shared/db';
 import { remainingBudget } from '../enrichment/compute';
 import { getDailyUsed, addDailyUsed } from '../enrichment/service';
-import { createPacer } from '../shared/pace';
+import { getSharedFmpPacer } from '../shared/pace';
 import { buildFmpPriceClient, type PriceClient } from './fmp';
 import { buildMassivePriceClient } from './massive';
+import { buildTiingoPriceClient } from './tiingo';
 import { nearestClose, type Close } from './compute';
 import { resolveSecrets } from '../secrets/infisical';
 
@@ -25,7 +26,8 @@ type EnvX = Env & {
   FMP_API_KEY?: string;
   FMP_DAILY_CALL_CAP?: string;
   MASSIVE_API_KEY?: string;
-  /** Which provider supplies price history: 'fmp' (default) or 'massive'. */
+  TIINGO_API_KEY?: string;
+  /** Which provider supplies price history: 'fmp' (default), 'massive', or 'tiingo'. */
   PRICE_PROVIDER?: string;
 };
 
@@ -38,15 +40,22 @@ interface PricePlan {
 /**
  * Pick the price client from PRICE_PROVIDER (default 'fmp'), gated by configured
  * keys. 'massive' uses Polygon aggregates (unlimited on the paid plan, so it is
- * NOT metered against the FMP daily budget). Falls back to whichever key exists.
+ * NOT metered against the FMP daily budget); 'tiingo' is the same shape — an
+ * explicitly-selectable, unmetered fallback. Falls back to whichever key exists,
+ * in FMP -> Massive -> Tiingo order, when PRICE_PROVIDER is unset/doesn't match
+ * a configured key.
  */
 function pricePlan(env: EnvX): PricePlan | null {
   const provider = (env.PRICE_PROVIDER || 'fmp').trim().toLowerCase();
   if (provider === 'massive' && env.MASSIVE_API_KEY) {
     return { client: buildMassivePriceClient(env.MASSIVE_API_KEY), fmpBudgeted: false };
   }
+  if (provider === 'tiingo' && env.TIINGO_API_KEY) {
+    return { client: buildTiingoPriceClient(env.TIINGO_API_KEY), fmpBudgeted: false };
+  }
   if (env.FMP_API_KEY) return { client: buildFmpPriceClient(env.FMP_API_KEY), fmpBudgeted: true };
   if (env.MASSIVE_API_KEY) return { client: buildMassivePriceClient(env.MASSIVE_API_KEY), fmpBudgeted: false };
+  if (env.TIINGO_API_KEY) return { client: buildTiingoPriceClient(env.TIINGO_API_KEY), fmpBudgeted: false };
   return null;
 }
 
@@ -111,7 +120,13 @@ export async function runPriceRefresh(
   env: Env,
   opts: { max?: number; dryRun?: boolean; maxPerMinute?: number } = {},
 ): Promise<PriceRefreshResult> {
-  const runtimeSecrets = await resolveSecrets(env, ['FMP_API_KEY', 'FMP_DAILY_CALL_CAP', 'MASSIVE_API_KEY']);
+  const runtimeSecrets = await resolveSecrets(env, [
+    'FMP_API_KEY',
+    'FMP_DAILY_CALL_CAP',
+    'MASSIVE_API_KEY',
+    'PRICE_PROVIDER',
+    'TIINGO_API_KEY',
+  ]);
   const envx = { ...(env as EnvX), ...runtimeSecrets };
   const dryRun = opts.dryRun === true;
   const result: PriceRefreshResult = {
@@ -137,7 +152,13 @@ export async function runPriceRefresh(
   result.budgetRemaining = budget;
   if (budget <= 0) return result;
 
-  const pace = createPacer(opts.maxPerMinute);
+  // Shared per-isolate FMP pacer (same instance enrichment + the disclosure
+  // probe use), so concurrent FMP work stays under the per-minute cap together.
+  // Fall back to FMP_MAX_PER_MINUTE when the caller omits it (e.g. an admin
+  // endpoint), so the shared singleton isn't memoized into a no-op.
+  const fmpMaxPerMinute =
+    opts.maxPerMinute ?? (parseInt((envx as { FMP_MAX_PER_MINUTE?: string }).FMP_MAX_PER_MINUTE || '', 10) || undefined);
+  const pace = getSharedFmpPacer(fmpMaxPerMinute);
   let calls = 0;
 
   // 1) Refresh the S&P 500 series (one call), covering the oldest trade onward.

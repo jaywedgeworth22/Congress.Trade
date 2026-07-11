@@ -60,6 +60,11 @@ FMP_API_KEY=""
 # backfills history with the remainder). Defaults to 230 when unset.
 FMP_DAILY_CALL_CAP=""
 
+# Optional additional market-data fallback provider (enrichment chain + price
+# history, PRICE_PROVIDER="tiingo"). Unused unless this key is set. Free-tier
+# key at https://api.tiingo.com.
+TIINGO_API_KEY=""
+
 # Secondary extractor / arbitration provider key. When set, buildExtractorPipeline
 # builds a second, independent vision extractor; with ARBITRATION_ENABLED="true"
 # it cross-checks every scanned doc and ArbitratingExtractor merges the results.
