@@ -22,11 +22,13 @@ truth; this file is the short operational snapshot for the current integration.
   0, desktop/mobile rendered QA; iOS generic Simulator build and
   build-for-testing. XCTest execution still needs an installed concrete
   Simulator runtime.
-- State boundaries: PR #284 merged as `8a855cb`; production Worker
-  `d1dcd17f-8724-40db-9980-6d4f7f6f88e3` is live with schema-aware readiness
-  green. No ingestion, queue drain, backfill, or billing activation ran. PWA and
-  iOS source is on `main`, but neither prototype has a configured standalone
-  production host/App Store release target.
+- State boundaries: PR #284 merged as `8a855cb`; that code-bearing production
+  release is live with schema-aware readiness green. Canonical `ship.sh`
+  deployment version `d1dcd17f-8724-40db-9980-6d4f7f6f88e3` is the immutable
+  release receipt; later docs-only `main` pushes may create newer no-code Worker
+  version IDs. No ingestion, queue drain, backfill, or billing activation ran.
+  PWA and iOS source is on `main`, but neither prototype has a configured
+  standalone production host/App Store release target.
 
 ## 2026-07-05 (Antigravity) — Shared Ticker Alias Logic and SSE Client
 

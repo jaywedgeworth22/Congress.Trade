@@ -16,10 +16,13 @@ missing invariant. The preview contained no duplicate row keys, so the index was
 recreated on the preview database and readiness then returned
 `ok=true`, `db=true`, `schema=true`.
 
-Production Worker version `d1dcd17f-8724-40db-9980-6d4f7f6f88e3` was deployed
-from the exact merged commit with `app/scripts/ship.sh`. The script verified
-liveness, applied the idempotent schema through the Worker D1 binding, and then
-required `ok=true`, `db=true`, and `schema=true` from `/api/health`. No
+Code-bearing production Worker version
+`d1dcd17f-8724-40db-9980-6d4f7f6f88e3` was deployed from the exact merged code
+commit with `app/scripts/ship.sh`. The script verified liveness, applied the
+idempotent schema through the Worker D1 binding, and then required `ok=true`,
+`db=true`, and `schema=true` from `/api/health`. Later docs-only `main` pushes
+can create newer no-code Worker version IDs while preserving this app bundle;
+the Cloudflare deployment list is authoritative for the current ID. No
 production ingestion, queue drain, backfill, or billing activation ran.
 
 The PWA and iOS source is merged to `main`, but the repository has no configured
