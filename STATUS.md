@@ -19,8 +19,14 @@ truth; this file is the short operational snapshot for the current integration.
   PR #257's model readings/consensus/cascade and PR #263's working model-B fix,
   then adds material-field multiset agreement, human-vs-automation leases/CAS,
   one-time legacy replay, reopen resets, budget/backoff state, and safe reviewer
-  consensus behavior.
-- Nothing from this branch is merged or production-deployed. See
+  consensus behavior. It additionally version-guards every human action,
+  commits normalizer/agreement/human rows + filing state + delivery intent
+  atomically, and materializes `est_value` through every transaction writer.
+- Full gate: typecheck + 85 files / 764 tests. Isolated preview is live and
+  healthy at `https://congress-trade-preview.jaywedgeworth22.workers.dev`
+  (version `8414f8c5-48cf-45b2-83d9-b5555b5f6bfc`, migrations through `0034`).
+- Nothing from this branch is merged or production-deployed. Final production
+  recheck remains 91 total / 27 pending / 64 resolved. See
   `docs/rollouts/2026-07-11-review-queue-autonomy-hardening.md`.
 
 ## 2026-07-05 (Antigravity) — Shared Ticker Alias Logic and SSE Client
