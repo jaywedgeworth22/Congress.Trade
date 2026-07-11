@@ -1253,13 +1253,50 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 	            <option value="volume">Est. Volume</option>
             <option value="netflow">Net $ Flow</option>
           </select>
+          <label class="lbl" style="margin-left:8px">Asset Type</label>
+          <select id="trTickerAsset" title="Filter by Asset Type">
+            <option value="all">All Assets</option>
+            <option value="exclude_options">Stocks &amp; ETFs Only</option>
+          </select>
         </div>
-        <div class="table-wrap"><table><tbody id="trTickers"></tbody></table></div>
+        <div class="table-wrap">
+          <table id="tableTrTickers">
+            <thead>
+              <tr>
+                <th class="sortable" onclick="setTickerSort('trades')">Asset</th>
+                <th class="sortable r" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades"></span></th>
+                <th class="sortable r" onclick="setTickerSort('members')">Politicians <span class="sort-icon" data-sort="members"></span></th>
+                <th class="sortable r" onclick="setTickerSort('volume')">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
+                <th class="sortable r" onclick="setTickerSort('netflow')">Net $ Flow <span class="sort-icon" data-sort="netflow"></span></th>
+              </tr>
+            </thead>
+            <tbody id="trTickers"></tbody>
+          </table>
+        </div>
       </div>
       <div class="section">
         <h3 class="tf-h">Rising Activity</h3>
         <p class="sub">Assets whose disclosed trade count rose most vs the prior equal period. A descriptive view of filing activity — not a forecast.</p>
-        <div class="table-wrap"><table><tbody id="trTrending"></tbody></table></div>
+        <div class="row-flex" style="margin:-6px 0 12px">
+          <label class="lbl">Asset Type</label>
+          <select id="trTrendingAsset" title="Filter by Asset Type">
+            <option value="all">All Assets</option>
+            <option value="exclude_options">Stocks &amp; ETFs Only</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table id="tableTrTrending">
+            <thead>
+              <tr>
+                <th>Asset</th>
+                <th class="r">Recent Trades</th>
+                <th class="r">Prior Trades</th>
+                <th class="r">Change</th>
+              </tr>
+            </thead>
+            <tbody id="trTrending"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -4239,9 +4276,66 @@ function polCell(n) { n = Number(n || 0); return n + ' <span class="u-full">poli
 	function infoLabel(text, tip) {
 	  return esc(text) + ' <span class="info-tip" tabindex="0" aria-label="' + esc(tip) + '" title="' + esc(tip) + '">ⓘ</span>';
 	}
-	function kpiInfo(k, v, tip) {
-	  return '<div class="card"><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + '</div></div>';
+	function kpiInfo(k, v, tip, onClickStr, extraHtml) {
+	  var attr = onClickStr ? ' class="card clickable" onclick="' + esc(onClickStr) + '"' : ' class="card"';
+	  return '<div' + attr + '><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + '</div>' + (extraHtml || '') + '</div>';
 	}
+function setTickerSort(val) {
+  var elSort = el('trTickerSort');
+  if (elSort) {
+    elSort.value = val;
+    loadTrTickers();
+  }
+}
+function sparklineHtml(series, metric) {
+  if (!series || !series.length) return '';
+  var vals = series.map(function(p) {
+    if (metric === 'netflow') return p.netFlow || 0;
+    if (metric === 'buypressure') return (p.buys + p.sells) > 0 ? (p.buys / (p.buys + p.sells)) : 0.5;
+    return 0;
+  });
+  var max = 0.001, min = 0;
+  if (metric === 'netflow') {
+    vals.forEach(function(v) { max = Math.max(max, Math.abs(v)); });
+  } else {
+    max = 1; min = 0;
+  }
+  return '<div style="display:flex; height:16px; align-items:flex-end; gap:1px; margin-top:12px; opacity:0.8; width:100%">' +
+    vals.map(function(v, i) {
+      var h, color;
+      if (metric === 'netflow') {
+        h = Math.max(1, Math.round(100 * Math.abs(v) / max));
+        color = v >= 0 ? 'var(--buy)' : 'var(--sell)';
+      } else {
+        h = Math.max(1, Math.round(100 * v));
+        color = 'var(--accent)';
+      }
+      return '<div style="flex:1; background:' + color + '; height:' + h + '%; border-radius:1px" title="' + esc(series[i].period) + '"></div>';
+    }).join('') + '</div>';
+}
+function scrollToChart(id) {
+  var chart = el(id);
+  if (chart) {
+    chart.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    var oldTransition = chart.style.transition;
+    var oldOutline = chart.style.outline;
+    var oldOffset = chart.style.outlineOffset;
+    var oldRadius = chart.style.borderRadius;
+    chart.style.transition = 'outline 0.3s';
+    chart.style.outline = '2px solid var(--accent)';
+    chart.style.outlineOffset = '4px';
+    chart.style.borderRadius = '8px';
+    setTimeout(function() {
+      chart.style.outline = 'transparent';
+      setTimeout(function() {
+        chart.style.transition = oldTransition;
+        chart.style.outline = oldOutline;
+        chart.style.outlineOffset = oldOffset;
+        chart.style.borderRadius = oldRadius;
+      }, 300);
+    }, 1500);
+  }
+}
 /* Mini CSS-column time chart of buys vs sells (no chart library). */
 function timeChartHtml(series, labelStep) {
   var max = 1; series.forEach(function (p) { max = Math.max(max, p.buys, p.sells); });
@@ -4327,21 +4421,39 @@ function loadTrPerformers() {
 }
 
 function loadTrSummary() {
-  var box = el('trKpis');
-  box.innerHTML = skCards(6);
-  aGet('summary?' + trParams()).then(function (d) {
+  var box = el('trSummary');
+  box.innerHTML = skSummary();
+  Promise.all([
+    aGet('summary?' + trParams()),
+    aGet('volume-over-time?' + trParams()) // Using trParams() so it matches the global window length
+  ]).then(function (res) {
+    var d = res[0];
+    var s = res[1].series || [];
     var sent = d.netSentiment == null ? '—' : Math.round(d.netSentiment * 100) + '<small>% buys</small>';
+    var sparkNetFlow = sparklineHtml(s, 'netflow');
+    var sparkBuyPressure = sparklineHtml(s, 'buypressure');
     box.innerHTML =
       kpi('Trades', d.totalTrades) + kpi('Politicians', d.uniqueMembers) + kpi('Assets', d.uniqueTickers) +
-	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP) + kpiInfo('Net Flow', netHtml(d.estimatedNetFlowUsd), NET_FLOW_TIP) +
-      kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP);
+	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP) + 
+      kpiInfo('Net Flow', netHtml(d.estimatedNetFlowUsd), NET_FLOW_TIP, "scrollToChart('trTime')", sparkNetFlow) +
+      kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP, "scrollToChart('trTime')", sparkBuyPressure);
   }).catch(function (e) { box.innerHTML = kpi('Summary', '<span style="font-size:13px">' + esc(e.message) + '</span>'); });
 }
 
 function loadTrTickers() {
   var body = el('trTickers');
   body.innerHTML = skRows(6, 6);
-  aGet('ticker-leaderboard?' + trParams() + '&sort=' + el('trTickerSort').value + '&limit=15').then(function (d) {
+  var assetVal = el('trTickerAsset') ? el('trTickerAsset').value : 'all';
+  var sortVal = el('trTickerSort') ? el('trTickerSort').value : 'trades';
+  var queryParams = trParams() + '&sort=' + sortVal + '&limit=15' + (assetVal === 'exclude_options' ? '&excludeOptions=true' : '');
+  
+  // Update header sort icons
+  var icons = document.querySelectorAll('#tableTrTickers .sort-icon');
+  for (var i = 0; i < icons.length; i++) {
+    icons[i].innerHTML = icons[i].getAttribute('data-sort') === sortVal ? ' ▼' : '';
+  }
+
+  aGet('ticker-leaderboard?' + queryParams).then(function (d) {
     var rows = d.tickers || [];
     if (!rows.length) { body.innerHTML = stateRow(6, 'No trades in this window.'); return; }
     body.innerHTML = rows.map(function (r, i) {
@@ -4360,7 +4472,9 @@ function loadTrTickers() {
 function loadTrTrending() {
   var body = el('trTrending');
   body.innerHTML = skRows(4, 6);
-  aGet('trending?' + trParams() + '&limit=12').then(function (d) {
+  var assetVal = el('trTrendingAsset') ? el('trTrendingAsset').value : 'all';
+  var queryParams = trParams() + '&limit=12' + (assetVal === 'exclude_options' ? '&excludeOptions=true' : '');
+  aGet('trending?' + queryParams).then(function (d) {
     var rows = (d.trending || []).filter(function (r) { return r.deltaCount > 0; });
     if (!rows.length) { body.innerHTML = stateRow(4, 'Not enough history to rank momentum.'); return; }
     body.innerHTML = rows.map(function (r) {
@@ -5271,6 +5385,8 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
   var e = el(id); if (e) e.addEventListener('change', loadTrends);
 });
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
+(function () { var ta = el('trTickerAsset'); if (ta) ta.addEventListener('change', loadTrTickers); })();
+(function () { var tta = el('trTrendingAsset'); if (tta) tta.addEventListener('change', loadTrTrending); })();
 (function () {
   var v = el('view-trends');
   if (v) v.addEventListener('click', function (e) {
