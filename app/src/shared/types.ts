@@ -372,7 +372,14 @@ export type QueueMessage =
       /** Durable review_queue lease owner; optional for pre-0031 queued messages. */
       claimToken?: string;
     }
-  | { type: 'delivery.dispatch'; txId: string };
+  | {
+      type: 'delivery.dispatch';
+      txId: string;
+      /** Legacy targeted dispatch retained for already-enqueued messages. */
+      subscriptionId?: string;
+      /** Keyset cursor for one-page-per-message webhook fanout. */
+      afterSubscriptionId?: string;
+    };
 
 // ---------------------------------------------------------------------------
 // Worker environment bindings + secrets

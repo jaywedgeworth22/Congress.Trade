@@ -1,4 +1,4 @@
--- 0034_review_revision.sql
+-- 0037_review_revision.sql
 -- Optimistic concurrency version for queued review content. Admin decisions
 -- must name the version they reviewed so a later normalizer/cascade update
 -- cannot be overwritten by a stale editor tab.

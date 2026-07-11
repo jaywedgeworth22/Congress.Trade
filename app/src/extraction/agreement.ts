@@ -52,14 +52,17 @@ import type { Env, ParsedTx, Transaction } from '../shared/types';
 import { all, batch, fromBool, get, run } from '../shared/db';
 import { runCandidateOnDoc, persistExtractionRun, type BakeoffCandidate, type CandidateDocResult } from './bakeoff';
 import { arbitrationRowKey } from '../extractors/types';
-import { recomputeTransactions, HARD_FAILURE_FLAGS } from './normalizer';
+import {
+  recomputeTransactions,
+  HARD_FAILURE_FLAGS,
+  MAX_PUBLISH_TRANSACTIONS_PER_FILING,
+} from './normalizer';
 import { mapFiling, type FilingRow } from '../delivery/rows';
-import { refreshLatestCursorSeq } from '../delivery/sse';
 import { recordIngestionDecision } from '../shared/ingestionDecisions';
-import { drainReviewDeliveryOutbox } from '../delivery/reviewOutbox';
 import { buildConsensusRows, type AmountBracket, type ConsensusResult } from './consensus';
 import { uuid } from '../shared/ids';
 import { estimateTransactionValue } from '../shared/transactionValue';
+import { flushDeliveryOutbox } from '../delivery/outbox';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -323,7 +326,9 @@ async function persistClaimedPublish(
   docId: string,
   claimToken: string,
   transactions: Transaction[],
+  audit: CascadeAudit,
 ): Promise<{ published: boolean; insertedIds: string[] }> {
+  const nowIso = new Date().toISOString();
   const rowKeysJson = JSON.stringify(transactions.map((tx) => tx.rowKey ?? ''));
   const insertRowsJson = JSON.stringify(transactions.map((tx) => ({
     id: tx.id,
@@ -384,8 +389,9 @@ async function persistClaimedPublish(
     ],
   ]);
   statements.push([
-    `INSERT OR IGNORE INTO review_delivery_outbox (tx_id, doc_id, created_at)
-      SELECT id, doc_id, ? FROM transactions
+    `INSERT OR IGNORE INTO delivery_outbox
+       (tx_id, status, attempts, available_at, last_error, created_at, updated_at)
+      SELECT id, 'pending', 0, ?, NULL, ?, ? FROM transactions
        WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
          AND row_key IN (SELECT value FROM json_each(?))
          AND EXISTS (
@@ -393,7 +399,43 @@ async function persistClaimedPublish(
             WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
               AND agreement_claim_token = ?
          )`,
-    [new Date().toISOString(), docId, rowKeysJson, docId, claimToken],
+    [nowIso, nowIso, nowIso, docId, rowKeysJson, docId, claimToken],
+  ]);
+  statements.push([
+    `INSERT INTO ingestion_decisions
+       (id, doc_id, action, source, actor, reason, payload, transaction_ids, created_at)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1 FROM review_queue
+         WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+           AND agreement_claim_token = ?
+      ) AND ${exactLiveSetPredicate}
+     ON CONFLICT(id) DO NOTHING`,
+    [
+      `decision:agreement_published:${docId}`,
+      docId,
+      'agreement_published',
+      'agreement',
+      null,
+      'model_agreement',
+      JSON.stringify({
+        resolvedBy: 'agreement-cascade',
+        tier: audit.tier,
+        unanimous: audit.unanimous ?? undefined,
+        rowCount: transactions.length,
+        models: audit.models,
+        votes: audit.votes ?? undefined,
+      }),
+      JSON.stringify(transactions.map((tx) => tx.id)),
+      nowIso,
+      docId,
+      claimToken,
+      docId,
+      transactions.length,
+      docId,
+      rowKeysJson,
+      transactions.length,
+    ],
   ]);
   statements.push([
     `UPDATE filings SET ingest_status = 'persisted', error = NULL
@@ -442,13 +484,6 @@ async function persistClaimedPublish(
   } catch (err) {
     console.error('agreement publish: live transaction lookup failed', docId, (err as Error).message);
   }
-  if (insertedCount > 0) {
-    try {
-      await refreshLatestCursorSeq(env.DB);
-    } catch (err) {
-      console.error('agreement publish: failed to refresh latest cursor seq', (err as Error).message);
-    }
-  }
   return { published: true, insertedIds };
 }
 
@@ -495,6 +530,15 @@ async function finalizePublish(
     };
   }
   const flagged = await recomputeTransactions(env, mapFiling(frow), parsed);
+  if (flagged.length > MAX_PUBLISH_TRANSACTIONS_PER_FILING) {
+    return {
+      docId,
+      outcome: 'agree_but_hardfail',
+      tier: audit.tier,
+      rowCount: flagged.length,
+      flags: ['row_limit_exceeded'],
+    };
+  }
   const hardFlags = Array.from(
     new Set(flagged.flatMap((f) => f.flags).filter((fl) => HARD_FAILURE_FLAGS.includes(fl))),
   );
@@ -517,32 +561,17 @@ async function finalizePublish(
   if (!publishToken) {
     return { docId, outcome: 'skipped', tier: audit.tier, reason: 'review_resolved_or_claim_lost' };
   }
-  const persisted = await persistClaimedPublish(env, docId, publishToken, txs);
+  const persisted = await persistClaimedPublish(env, docId, publishToken, txs, audit);
   if (!persisted.published) {
     return { docId, outcome: 'skipped', tier: audit.tier, reason: 'review_resolved_or_claim_lost' };
   }
   const insertedIds = persisted.insertedIds;
-  if (insertedIds.length > 0) {
-    await recordIngestionDecision(env.DB, {
-      docId,
-      action: 'agreement_published',
-      source: 'agreement',
-      reason: 'model_agreement',
-      transactionIds: insertedIds,
-      payload: {
-        resolvedBy: 'agreement-cascade',
-        tier: audit.tier,
-        unanimous: audit.unanimous ?? undefined,
-        rowCount: flagged.length,
-        inserted: insertedIds.length,
-        models: audit.models,
-        votes: audit.votes ?? undefined,
-      },
-    });
-  }
-  await drainReviewDeliveryOutbox(env).catch((err) => {
-    // The committed outbox rows remain pending for the independent minute cron.
-    console.error('agreement publish: delivery outbox drain failed', docId, (err as Error).message);
+  await flushDeliveryOutbox(env, {
+    txIds: insertedIds,
+    limit: Math.max(insertedIds.length, 1),
+  }).catch((err) => {
+    // The committed generic outbox rows remain pending for the reconciler.
+    console.error('agreement publish: delivery outbox flush failed', docId, (err as Error).message);
   });
   return { docId, outcome: 'published', tier: audit.tier, inserted: insertedIds.length };
 }

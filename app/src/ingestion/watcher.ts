@@ -13,7 +13,7 @@
  */
 
 import type { Env } from '../shared/types';
-import { run } from '../shared/db';
+import { batch, run } from '../shared/db';
 import {
   getConfig,
   getLastPollAt,
@@ -23,6 +23,7 @@ import {
 import { fetchHouseIndex, pollHouseLiveSearch } from './houseSource';
 import { fetchSenatePtrFilings } from './senateSource';
 import { recordDisclosureLatencyCandidate, storageMissing } from './fmpDisclosureLatency';
+import { enqueueIngestionOutboxNow, ingestionOutboxInsertForDoc } from './outbox';
 
 /** Env shape (read defensively — Env is the frozen foundation contract). */
 type EnvWithFlags = Env & { HOUSE_LIVE_SEARCH_ENABLED?: string };
@@ -130,16 +131,18 @@ export async function insertFilingIfNew(
     );
   }
   const filedDate = normalizeFilingDate(f.filedDate);
-  const res = await run(
-    env.DB,
-    `INSERT OR IGNORE INTO filings
+  const [res] = await batch(env.DB, [
+    [
+      `INSERT OR IGNORE INTO filings
        (doc_id, chamber, filer_id, filing_type, filed_date, source_url,
         raw_object_key, ingest_status, doc_kind, extractor, model_version,
         confidence, first_seen_at, source_updated_at, error)
      VALUES (?, ?, ?, 'P', ?, ?, NULL, 'new', 'unknown', NULL, NULL,
              NULL, ?, NULL, NULL)`,
-    [f.docId, f.chamber, f.filerId ?? null, filedDate, f.sourceUrl, nowIso],
-  );
+      [f.docId, f.chamber, f.filerId ?? null, filedDate, f.sourceUrl, nowIso],
+    ],
+    ingestionOutboxInsertForDoc(f.docId, nowIso),
+  ]);
   // Backfill filed_date when a later, richer discovery of the same doc supplies
   // one. A House PTR first seen via the intraday live search carries no
   // FilingDate (the live-search HTML omits it -> filed_date NULL); the daily bulk
@@ -183,13 +186,8 @@ export async function insertFilingIfNew(
 }
 
 /** Enqueue the canonical filing.new INGEST_QUEUE message for a discovered filing. */
-export async function enqueueFilingNew(env: Env, f: DiscoveredFiling): Promise<void> {
-  await env.INGEST_QUEUE.send({
-    type: 'filing.new',
-    docId: f.docId,
-    chamber: f.chamber,
-    sourceUrl: f.sourceUrl,
-  });
+export async function enqueueFilingNew(env: Env, f: DiscoveredFiling): Promise<boolean> {
+  return enqueueIngestionOutboxNow(env, f.docId);
 }
 
 /**
@@ -228,6 +226,31 @@ async function logPoll(
   );
 }
 
+export type SourceAttemptOutcome = 'success' | 'failure';
+
+async function recordSourceAttempt(
+  env: Env,
+  source: 'house' | 'senate',
+  attemptedAt: string,
+  outcome: SourceAttemptOutcome,
+  newCount: number,
+  error: string | null,
+): Promise<void> {
+  try {
+    await run(
+      env.DB,
+      `INSERT INTO source_attempts (source, attempted_at, outcome, new_count, error)
+       VALUES (?, ?, ?, ?, ?)`,
+      [source, attemptedAt, outcome, newCount, error?.slice(0, 1000) ?? null],
+    );
+  } catch (err) {
+    // Deploys briefly run new code before /api/admin/migrate. Do not convert a
+    // source success/failure into a different result solely because the new
+    // observability table is not present yet.
+    console.warn('watcher: failed to record source attempt:', source, (err as Error).message);
+  }
+}
+
 /**
  * A source failure is "transient" when it reflects a recoverable upstream or
  * platform condition rather than a bug: anti-bot blocks (403), rate limits
@@ -247,29 +270,22 @@ export function isTransientSourceError(message: string): boolean {
   );
 }
 
-/** Record a source-level failure against the source's ingest_log row. */
-async function recordSourceError(env: Env, source: string, nowIso: string, err: unknown): Promise<void> {
+/** Record a source-level failure without presenting it as a successful poll. */
+async function recordSourceError(env: Env, source: 'house' | 'senate', nowIso: string, err: unknown): Promise<void> {
   const message = err instanceof Error ? err.message : String(err);
   if (isTransientSourceError(message)) {
     console.warn(`watcher: ${source} source degraded (transient, bulk path still authoritative):`, message);
   } else {
     console.error(`watcher: ${source} source failed:`, message);
   }
-  try {
-    // new_count=0 with an error message in first_seen_at slot would corrupt the
-    // cadence column; instead we just emit a log row with 0 yield so the poll
-    // attempt is still visible, and surface the error to the console.
-    await logPoll(env, source, nowIso, 0, nowIso);
-  } catch (logErr) {
-    console.error(`watcher: failed to write ingest_log for ${source}:`, logErr);
-  }
+  await recordSourceAttempt(env, source, nowIso, 'failure', 0, message);
 }
 
 /**
  * Poll the House yearly bulk index, diff against D1, enqueue new PTRs.
  * Throws on any failure (caught by the per-source guard in runWatcher).
  */
-async function pollHouse(env: Env, now: Date): Promise<void> {
+async function pollHouse(env: Env, now: Date): Promise<number> {
   const nowIso = now.toISOString();
   const year = Number(
     new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', year: 'numeric' }).format(now),
@@ -301,13 +317,15 @@ async function pollHouse(env: Env, now: Date): Promise<void> {
   const newCount = await persistAndEnqueue(env, discovered, nowIso);
   await logPoll(env, 'house', nowIso, newCount, nowIso);
   await setLastPollAt(env, 'house', now);
+  await recordSourceAttempt(env, 'house', nowIso, 'success', newCount, null);
+  return newCount;
 }
 
 /**
  * Poll the Senate efdsearch DataTables API, diff against D1, enqueue new PTRs.
  * Throws on any failure (caught by the per-source guard in runWatcher).
  */
-async function pollSenate(env: Env, now: Date): Promise<void> {
+async function pollSenate(env: Env, now: Date): Promise<number> {
   const nowIso = now.toISOString();
   const filings = await fetchSenatePtrFilings({ now, kv: env.CONFIG_KV });
   const discovered: DiscoveredFiling[] = filings.map((f) => {
@@ -324,6 +342,8 @@ async function pollSenate(env: Env, now: Date): Promise<void> {
   const newCount = await persistAndEnqueue(env, discovered, nowIso);
   await logPoll(env, 'senate', nowIso, newCount, nowIso);
   await setLastPollAt(env, 'senate', now);
+  await recordSourceAttempt(env, 'senate', nowIso, 'success', newCount, null);
+  return newCount;
 }
 
 /**
@@ -331,17 +351,25 @@ async function pollSenate(env: Env, now: Date): Promise<void> {
  * per source, then polls + enqueues new filings. Never throws: a failing source
  * is logged and recorded, leaving the other source unaffected.
  */
-export async function runWatcher(env: Env, now: Date = new Date()): Promise<void> {
+export interface WatcherResult {
+  house: SourceAttemptOutcome | 'skipped';
+  senate: SourceAttemptOutcome | 'skipped';
+}
+
+export async function runWatcher(env: Env, now: Date = new Date()): Promise<WatcherResult> {
   const cfg = await getConfig(env);
+  const result: WatcherResult = { house: 'skipped', senate: 'skipped' };
 
   // HOUSE -----------------------------------------------------------------
   try {
     const lastHouse = await getLastPollAt(env, 'house');
     if (shouldPollNow(now, cfg, lastHouse)) {
       await pollHouse(env, now);
+      result.house = 'success';
     }
   } catch (err) {
     await recordSourceError(env, 'house', now.toISOString(), err);
+    result.house = 'failure';
   }
 
   // SENATE ----------------------------------------------------------------
@@ -349,8 +377,11 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<void
     const lastSenate = await getLastPollAt(env, 'senate');
     if (shouldPollNow(now, cfg, lastSenate)) {
       await pollSenate(env, now);
+      result.senate = 'success';
     }
   } catch (err) {
     await recordSourceError(env, 'senate', now.toISOString(), err);
+    result.senate = 'failure';
   }
+  return result;
 }

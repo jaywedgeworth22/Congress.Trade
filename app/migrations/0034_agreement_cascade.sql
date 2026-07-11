@@ -1,9 +1,9 @@
--- 0031_agreement_cascade.sql
+-- 0034_agreement_cascade.sql
 -- Durable eligibility, retry, and lease state for the autonomous agreement
 -- cascade. `agreement_attempted_at` is retained as a last-attempt audit stamp;
 -- eligibility is driven by attempts, next_attempt_at, and the expiring claim.
 -- Reopen paths reset this state while preserving agreement_legacy_replay_at.
--- Mirrored idempotently in POST /api/admin/migrate (src/admin/routes.ts).
+-- Mirrored idempotently in POST /api/admin/migrate (src/admin/migrations.ts).
 
 ALTER TABLE review_queue ADD COLUMN agreement_attempts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE review_queue ADD COLUMN agreement_tier INTEGER;

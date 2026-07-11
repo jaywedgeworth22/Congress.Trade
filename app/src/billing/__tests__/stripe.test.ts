@@ -2,8 +2,13 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   encodeForm,
   verifyStripeSignature,
-  stripeConfigured,
+  billingCapabilities,
+  billingCapabilitiesAsync,
+  checkoutConfigured,
+  portalConfigured,
+  createCustomer,
   createCheckoutSession,
+  createBillingPortalSession,
 } from '../stripe';
 import type { Env } from '../../shared/types';
 
@@ -40,10 +45,43 @@ describe('encodeForm', () => {
   });
 });
 
-describe('stripeConfigured', () => {
-  it('reflects presence of the secret key', () => {
-    expect(stripeConfigured({} as Env)).toBe(false);
-    expect(stripeConfigured({ STRIPE_SECRET_KEY: 'sk' } as Env)).toBe(true);
+describe('billing capabilities', () => {
+  const ready = {
+    STRIPE_SECRET_KEY: 'sk',
+    STRIPE_WEBHOOK_SECRET: 'whsec',
+    STRIPE_PRICE_MONTHLY: 'price_m',
+    STRIPE_PRICE_ANNUAL: 'price_a',
+  } as Env;
+
+  it('requires the complete operational billing configuration', () => {
+    expect(billingCapabilities({} as Env)).toEqual({
+      configured: false,
+      checkoutConfigured: false,
+      portalConfigured: false,
+    });
+    expect(checkoutConfigured({ STRIPE_SECRET_KEY: 'sk' } as Env)).toBe(false);
+    expect(portalConfigured({ STRIPE_SECRET_KEY: 'sk' } as Env)).toBe(true);
+    expect(billingCapabilities(ready)).toEqual({
+      configured: true,
+      checkoutConfigured: true,
+      portalConfigured: true,
+    });
+  });
+
+  it('respects fail-closed secret resolution instead of reading env bindings directly', async () => {
+    expect(await billingCapabilitiesAsync(ready)).toEqual({
+      configured: true,
+      checkoutConfigured: true,
+      portalConfigured: true,
+    });
+    expect(await billingCapabilitiesAsync({
+      ...ready,
+      INFISICAL_ALLOW_ENV_FALLBACK: 'false',
+    } as Env)).toEqual({
+      configured: false,
+      checkoutConfigured: false,
+      portalConfigured: false,
+    });
   });
 });
 
@@ -82,9 +120,9 @@ describe('createCheckoutSession', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('POSTs subscription params with trial + customer and returns the URL', async () => {
-    let captured: { url: string; body: string } | null = null;
+    let captured: { url: string; body: string; headers: Headers } | null = null;
     vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
-      captured = { url: String(url), body: String(init.body) };
+      captured = { url: String(url), body: String(init.body), headers: new Headers(init.headers) };
       return new Response(JSON.stringify({ id: 'cs_1', url: 'https://stripe/checkout' }), { status: 200 });
     });
     const env = { STRIPE_SECRET_KEY: 'sk_test' } as Env;
@@ -95,9 +133,12 @@ describe('createCheckoutSession', () => {
       clientReferenceId: 'u1',
       customerId: 'cus_1',
       trialDays: 7,
+      idempotencyKey: 'checkout-key-1',
     });
     expect(res.url).toBe('https://stripe/checkout');
     expect(captured!.url).toContain('/checkout/sessions');
+    expect(captured!.headers.get('Idempotency-Key')).toBe('checkout-key-1');
+    expect(captured!.headers.get('Stripe-Version')).toBe('2025-03-31.basil');
     const p = new URLSearchParams(captured!.body);
     expect(p.get('mode')).toBe('subscription');
     expect(p.get('line_items[0][price]')).toBe('price_m');
@@ -114,7 +155,45 @@ describe('createCheckoutSession', () => {
         successUrl: 's',
         cancelUrl: 'c',
         clientReferenceId: 'u1',
+        idempotencyKey: 'checkout-key-2',
       }),
     ).rejects.toThrow(/STRIPE_SECRET_KEY/);
+  });
+
+  it('preserves the managed-payments env fallback from PR #262', async () => {
+    let body = '';
+    vi.stubGlobal('fetch', async (_url: string, init: RequestInit) => {
+      body = String(init.body);
+      return Response.json({ id: 'cs_1', url: 'https://stripe/checkout' });
+    });
+    await createCheckoutSession({ STRIPE_SECRET_KEY: 'sk', STRIPE_MANAGED_PAYMENTS: 'true' } as Env, {
+      priceId: 'price_m', successUrl: 's', cancelUrl: 'c', clientReferenceId: 'u1',
+      idempotencyKey: 'checkout-key-3',
+    });
+    expect(new URLSearchParams(body).get('managed_payments[enabled]')).toBe('true');
+  });
+});
+
+describe('Stripe write idempotency', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('sends explicit keys for customer and portal creation', async () => {
+    const calls: Array<{ path: string; key: string | null }> = [];
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ path: new URL(url).pathname, key: new Headers(init?.headers).get('Idempotency-Key') });
+      return url.endsWith('/customers')
+        ? Response.json({ id: 'cus_1' })
+        : Response.json({ id: 'bps_1', url: 'https://stripe/portal' });
+    });
+    const env = { STRIPE_SECRET_KEY: 'sk' } as Env;
+    await createCustomer(env, { email: 'u@example.com', idempotencyKey: 'customer-key' });
+    await createBillingPortalSession(env, {
+      customerId: 'cus_1', returnUrl: 'https://app/', idempotencyKey: 'portal-key',
+    });
+    expect(calls).toEqual([
+      { path: '/v1/customers', key: 'customer-key' },
+      { path: '/v1/billing_portal/sessions', key: 'portal-key' },
+    ]);
   });
 });

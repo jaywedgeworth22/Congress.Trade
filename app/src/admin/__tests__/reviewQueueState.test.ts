@@ -15,23 +15,31 @@ function setting(text: string, key: string): string {
 }
 
 describe('review queue durable state migration', () => {
-  it('uses collision-safe 0030-0034 files and guards replay + human holds', () => {
-    const migration30 = new URL('../../../migrations/0030_doc_complexity_signals.sql', testModuleUrl);
-    const migration31 = new URL('../../../migrations/0031_agreement_cascade.sql', testModuleUrl);
-    const migration32 = new URL('../../../migrations/0032_llm_budget.sql', testModuleUrl);
-    const migration33 = new URL('../../../migrations/0033_review_resolution_safety.sql', testModuleUrl);
-    const migration34 = new URL('../../../migrations/0034_review_revision.sql', testModuleUrl);
+  it('uses collision-safe 0033-0037 files and guards replay + human holds', () => {
+    const deliveryMigration = new URL('../../../migrations/0030_delivery_outbox.sql', testModuleUrl);
+    const migration33 = new URL('../../../migrations/0033_doc_complexity_signals.sql', testModuleUrl);
+    const migration34 = new URL('../../../migrations/0034_agreement_cascade.sql', testModuleUrl);
+    const migration35 = new URL('../../../migrations/0035_llm_budget.sql', testModuleUrl);
+    const migration36 = new URL('../../../migrations/0036_review_resolution_safety.sql', testModuleUrl);
+    const migration37 = new URL('../../../migrations/0037_review_revision.sql', testModuleUrl);
 
-    expect(existsSync(migration30)).toBe(true);
-    expect(existsSync(migration31)).toBe(true);
-    expect(existsSync(migration32)).toBe(true);
+    expect(existsSync(deliveryMigration)).toBe(true);
     expect(existsSync(migration33)).toBe(true);
     expect(existsSync(migration34)).toBe(true);
+    expect(existsSync(migration35)).toBe(true);
+    expect(existsSync(migration36)).toBe(true);
+    expect(existsSync(migration37)).toBe(true);
     expect(existsSync(new URL('../../../migrations/0025_doc_complexity_signals.sql', testModuleUrl))).toBe(false);
     expect(existsSync(new URL('../../../migrations/0026_agreement_cascade.sql', testModuleUrl))).toBe(false);
     expect(existsSync(new URL('../../../migrations/0027_llm_budget.sql', testModuleUrl))).toBe(false);
+    expect(existsSync(new URL('../../../migrations/0030_doc_complexity_signals.sql', testModuleUrl))).toBe(false);
+    expect(existsSync(new URL('../../../migrations/0031_agreement_cascade.sql', testModuleUrl))).toBe(false);
+    expect(existsSync(new URL('../../../migrations/0032_llm_budget.sql', testModuleUrl))).toBe(false);
 
-    const sql = readFileSync(migration31, 'utf8') as string;
+    expect(readFileSync(deliveryMigration, 'utf8') as string).toMatch(
+      /CREATE TABLE IF NOT EXISTS delivery_outbox/i,
+    );
+    const sql = readFileSync(migration34, 'utf8') as string;
     expect(sql).toMatch(/ADD COLUMN agreement_next_attempt_at TEXT/i);
     expect(sql).toMatch(/ADD COLUMN agreement_claim_token TEXT/i);
     expect(sql).toMatch(/ADD COLUMN agreement_claimed_at TEXT/i);
@@ -42,7 +50,7 @@ describe('review queue durable state migration', () => {
     expect(sql).toMatch(/agreement_attempted_at >= '2026-06-26T00:00:00\.000Z'/i);
     expect(sql).toMatch(/agreement_attempted_at < '2026-07-11T00:00:00\.000Z'/i);
 
-    const safetySql = readFileSync(migration33, 'utf8') as string;
+    const safetySql = readFileSync(migration36, 'utf8') as string;
     expect(safetySql).toMatch(/ADD COLUMN agreement_suppressed_at TEXT/i);
     expect(safetySql).toMatch(/reason LIKE 'unpublished:%'/i);
     const createLiveIndex = safetySql.indexOf('CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_live_doc_source_rowkey');
@@ -50,9 +58,8 @@ describe('review queue durable state migration', () => {
     expect(createLiveIndex).toBeGreaterThan(-1);
     expect(dropOldIndex).toBeGreaterThan(createLiveIndex);
     expect(safetySql).toMatch(/deprecated_at IS NULL/i);
-    expect(safetySql).toMatch(/CREATE TABLE IF NOT EXISTS review_delivery_outbox/i);
-    expect(safetySql).toMatch(/idx_review_delivery_outbox_pending/i);
-    expect(readFileSync(migration34, 'utf8') as string).toMatch(
+    expect(safetySql).not.toMatch(/review_delivery_outbox/i);
+    expect(readFileSync(migration37, 'utf8') as string).toMatch(
       /ADD COLUMN review_revision INTEGER NOT NULL DEFAULT 1/i,
     );
   });
@@ -86,17 +93,19 @@ describe('review queue durable state migration', () => {
     const addSuppression = statements.findIndex((sql) => /ADD COLUMN agreement_suppressed_at/i.test(sql));
     const createLiveIndex = statements.findIndex((sql) => /idx_transactions_live_doc_source_rowkey/i.test(sql));
     const dropOldIndex = statements.findIndex((sql) => /DROP INDEX IF EXISTS idx_transactions_doc_source_rowkey/i.test(sql));
-    const outbox = statements.findIndex((sql) => /CREATE TABLE IF NOT EXISTS review_delivery_outbox/i.test(sql));
+    const outbox = statements.findIndex((sql) => /CREATE TABLE IF NOT EXISTS delivery_outbox/i.test(sql));
     const addReviewRevision = statements.findIndex((sql) => /ADD COLUMN review_revision/i.test(sql));
+    expect(outbox).toBeGreaterThan(-1);
     expect(addLegacy).toBeGreaterThan(-1);
+    expect(addLegacy).toBeGreaterThan(outbox);
     expect(eligibleIndex).toBeGreaterThan(addLegacy);
     expect(replay).toBeGreaterThan(eligibleIndex);
     expect(statements[replay]).toMatch(/WHERE resolved = 0[\s\S]*agreement_legacy_replay_at IS NULL/i);
     expect(addSuppression).toBeGreaterThan(replay);
     expect(createLiveIndex).toBeGreaterThan(addSuppression);
     expect(dropOldIndex).toBeGreaterThan(createLiveIndex);
-    expect(outbox).toBeGreaterThan(dropOldIndex);
-    expect(addReviewRevision).toBeGreaterThan(outbox);
+    expect(addReviewRevision).toBeGreaterThan(dropOldIndex);
+    expect(statements.some((sql) => /review_delivery_outbox/i.test(sql))).toBe(false);
   });
 });
 

@@ -14,9 +14,20 @@ Phone-first Next.js client for the shared backend API.
 
 ```bash
 cd clients/pwa
-npm install
+npm ci
 npm run dev
 ```
 
-Set `NEXT_PUBLIC_API_BASE_URL=https://congress.trade` when running on a different
-origin from the Worker API. Same-origin deploys can leave it blank.
+The PWA is intentionally same-origin with the Worker because browser sessions use
+HTTP-only cookies and the Worker does not expose CORS headers. Leave
+`NEXT_PUBLIC_API_BASE_URL` blank in deployed builds. For local live-data work,
+front Next.js and `wrangler dev` with one reverse proxy origin that sends `/api/*`
+and `/auth/*` to Wrangler and all other paths to Next.js.
+
+## Verification
+
+```bash
+npm run typecheck
+npm test
+npm run build
+```

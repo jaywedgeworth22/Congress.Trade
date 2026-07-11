@@ -5,6 +5,28 @@ Last updated: 2026-07-11
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
 
+## 2026-07-11 — Whole-App Hardening Production Landing
+
+- PR #284 (`codex/app-hardening-integration`) merged to `main` as
+  `8a855cbac5a1ae6e088e4aa380fc6bdbd233eecb`, landing the completed backend
+  reliability, billing/security, PWA, and iOS audit follow-through. Independent
+  semantic and schema reviews pass.
+- Isolated preview Worker version `85417928-cae4-4bb6-8706-96c739846533` is
+  healthy at `https://congress-trade-preview.jaywedgeworth22.workers.dev` with
+  `ok=true`, `db=true`, and `schema=true`. A legacy preview-only missing
+  transaction row-key index was detected by readiness and repaired after
+  duplicate-key verification.
+- Final app gate: typecheck; 95 files / 808 tests; coverage
+  67.90/60.14/71.91/70.15; lint 0 errors; npm audit 0; fresh 28-migration D1;
+  production and preview Wrangler dry-runs. Final client gate: PWA typecheck,
+  3 files / 13 tests, production build, audit 0, desktop/mobile rendered QA;
+  iOS generic Simulator build and build-for-testing.
+- Code is merged and production-deployed as Worker version
+  `d1dcd17f-8724-40db-9980-6d4f7f6f88e3`. Apex and workers.dev health both
+  returned `ok=true`, `db=true`, `schema=true`, and `missing=[]`. An initial
+  16:05 code upload briefly exposed `schema=false`/HTTP 503; the canonical
+  ship-and-migrate path restored readiness by 16:13.
+
 ## 2026-07-11 (CODEX) — Review Queue safety integration
 
 - Production Review Queue is **27 pending**, down from 30 after three explicit,
@@ -22,11 +44,17 @@ truth; this file is the short operational snapshot for the current integration.
   consensus behavior. It additionally version-guards every human action,
   commits normalizer/agreement/human rows + filing state + delivery intent
   atomically, and materializes `est_value` through every transaction writer.
-- Full gate: typecheck + 85 files / 764 tests. Isolated preview is live and
-  healthy at `https://congress-trade-preview.jaywedgeworth22.workers.dev`
-  (version `8414f8c5-48cf-45b2-83d9-b5555b5f6bfc`, migrations through `0034`).
-- Nothing from this branch is merged or production-deployed. Final production
-  recheck remains 91 total / 27 pending / 64 resolved. See
+- Combined post-#284 gate: typecheck + 104 files / 903 tests; lint 0 errors;
+  migration/admin-parity/readiness coverage through `0037`; and real D1 proof
+  that a 223-row human confirmation commits every row and delivery intent while
+  immediate outbox flushes remain below D1's bind-parameter ceiling. The earlier
+  isolated preview was healthy at `https://congress-trade-preview.jaywedgeworth22.workers.dev`
+  (version `8414f8c5-48cf-45b2-83d9-b5555b5f6bfc`); a fresh combined preview is
+  the next release gate.
+- The owner authorized production release. The branch is reconciling the landed
+  #284 changes before its own PR, merge, schema application, and bounded queue
+  narrowing; none of this review-queue hardening is production-live yet. Final
+  pre-release production recheck remains 91 total / 27 pending / 64 resolved. See
   `docs/rollouts/2026-07-11-review-queue-autonomy-hardening.md`.
 
 ## 2026-07-05 (Antigravity) — Shared Ticker Alias Logic and SSE Client
