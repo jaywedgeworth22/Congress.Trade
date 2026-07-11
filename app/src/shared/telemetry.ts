@@ -56,6 +56,7 @@ export async function reportAiUsage(env: Env, params: AiUsageParams): Promise<vo
           quantity: params.promptTokens,
           unit: 'token',
           confidence: 'actual',
+          project: 'congress-trade',
           metadata: {
             model: params.model,
             cachedTokens: params.cachedTokens ?? null,
@@ -77,6 +78,7 @@ export async function reportAiUsage(env: Env, params: AiUsageParams): Promise<vo
           quantity: params.completionTokens,
           unit: 'token',
           confidence: 'actual',
+          project: 'congress-trade',
           metadata: {
             model: params.model,
           },
