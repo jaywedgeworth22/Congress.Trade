@@ -104,7 +104,7 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
           baseUrl: secrets.USAGE_MONITOR_INGEST_URL.trim(),
           token: secrets.USAGE_MONITOR_INGEST_TOKEN.trim(),
         });
-        await client.send([
+        const events: any[] = [
           {
             sourceApp: 'congress-trade',
             environment: secrets.USAGE_MONITOR_ENVIRONMENT || env.INFISICAL_ENV,
@@ -130,7 +130,26 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
               errors: errors.length,
             },
           },
-        ]);
+        ];
+
+        if (fmpDailyCap != null) {
+          events.push({
+            sourceApp: 'congress-trade',
+            environment: secrets.USAGE_MONITOR_ENVIRONMENT || env.INFISICAL_ENV,
+            provider: 'fmp',
+            service: 'market-data',
+            label: 'FMP daily call budget',
+            billingMode: 'actual',
+            metricType: 'limit',
+            quantity: fmpDailyCap,
+            unit: 'call',
+            limitWindow: 'day',
+            confidence: 'actual',
+            occurredAt: new Date().toISOString(),
+          });
+        }
+
+        await client.send(events);
       }
     }
   } catch (err) {
