@@ -72,6 +72,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('No alert deliveries yet. Create one below.');
     expect(DASHBOARD_HTML).not.toContain('>Subscriptions</button>');
     expect(DASHBOARD_HTML).not.toContain('<h3>Delivery Subscriptions</h3>');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/subscriptions', {");
+    expect(DASHBOARD_HTML).toContain("headers: adminHeaders({ 'content-type': 'application/json' })");
   });
 
   it('surfaces the GICS sector flow, market-cap, and performer analytics in Trends', () => {
@@ -113,6 +115,32 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('Free view shows the last 30 days');
     expect(DASHBOARD_HTML).not.toContain('soon) real-time alerts');
     expect(DASHBOARD_HTML).not.toContain('Go Premium');
+  });
+
+  it('gates Premium checkout copy and actions on server billing availability', () => {
+    expect(DASHBOARD_HTML).toContain('billing: { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }');
+    expect(DASHBOARD_HTML).toContain('function checkoutConfigured()');
+    expect(DASHBOARD_HTML).toContain("ME.billing = d.billing || { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }");
+    expect(DASHBOARD_HTML).toContain('Premium checkout is not available yet.');
+    expect(DASHBOARD_HTML).toContain("el('subscribeBtn').disabled = !available");
+    expect(DASHBOARD_HTML).toContain('checkoutConfigured() ? \'<button class="btn sm" onclick="openPricing()">Premium</button>\' : \'\'');
+    expect(DASHBOARD_HTML).not.toContain('function billingConfigured()');
+  });
+
+  it('keeps Billing Portal management independent from checkout readiness', () => {
+    expect(DASHBOARD_HTML).toContain('function portalConfigured()');
+    expect(DASHBOARD_HTML).toContain('function hasBillingAccount()');
+    expect(DASHBOARD_HTML).toContain('hasBillingAccount() && portalConfigured()');
+    expect(DASHBOARD_HTML).toContain('if (!portalConfigured() || !hasBillingAccount())');
+    expect(DASHBOARD_HTML).toContain('Manage Subscription');
+  });
+
+  it('sends stable per-operation idempotency keys for Stripe writes', () => {
+    expect(DASHBOARD_HTML).toContain('function newBillingRequestId()');
+    expect(DASHBOARD_HTML).toContain("'Idempotency-Key': checkoutRequestId");
+    expect(DASHBOARD_HTML).toContain("'Idempotency-Key': portalRequestId");
+    expect(DASHBOARD_HTML.match(/checkoutRequestId = null/g)).toHaveLength(2); // declaration + plan change
+    expect(DASHBOARD_HTML.match(/portalRequestId = null/g)).toHaveLength(1); // declaration only
   });
 
   it('keeps account sign-out discoverable from the account menu', () => {
@@ -482,5 +510,12 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function anchorChartRight(');
     expect(DASHBOARD_HTML).toContain('function trTimeParams(');
     expect(DASHBOARD_HTML).toContain('tc.scrollLeft = tc.scrollWidth');
+  });
+
+  it('surfaces source error and stale status instead of showing only successful polls', () => {
+    expect(DASHBOARD_HTML).toContain('<th>Status</th>');
+    expect(DASHBOARD_HTML).toContain('s.lastError');
+    expect(DASHBOARD_HTML).toContain('s.stale');
+    expect(DASHBOARD_HTML).toContain("stateRow(9, 'No source check activity logged yet.')");
   });
 });

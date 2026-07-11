@@ -21,11 +21,11 @@ import type { Env, QueueMessage } from './shared/types';
 
 // Stage handlers owned by their feature modules.
 import { runWatcher } from './ingestion/watcher';
-import { fetchFiling } from './ingestion/fetcher';
+import { classifyTransientIngestError, fetchFiling, IngestRetryError } from './ingestion/fetcher';
 import { classifyFiling } from './ingestion/classifier';
 import { extractAndNormalize } from './extraction/orchestrator';
-import { dispatchWebhook } from './delivery/webhook';
-import { recordDeadLetter } from './delivery/deadLetter';
+import { DeliveryRetryError, dispatchWebhook } from './delivery/webhook';
+import { recordDeadLetterDurable } from './delivery/deadLetter';
 import { buildRestRouter } from './delivery/rest';
 import { buildAdminRouter } from './admin/routes';
 import { buildAnalyticsRouter } from './analytics/routes';
@@ -39,8 +39,23 @@ import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction
 import { refreshSecrets } from './secrets/infisical';
 import { runDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency';
 import { buildDetectionRouter } from './ingestion/detectionRoutes';
+import { browserSecurityHeadersMiddleware } from './security/headers';
+import {
+  completeDeliveryOutbox,
+  flushDeliveryOutbox,
+  reconnectDeadLetteredOutbox,
+} from './delivery/outbox';
+import {
+  completeIngestionOutbox,
+  flushIngestionOutbox,
+  reconnectDeadLetteredIngestionOutbox,
+} from './ingestion/outbox';
 
 const app = new Hono<{ Bindings: Env }>();
+
+// Attach defense-in-depth browser headers to every Worker-generated response,
+// including error and redirect responses. HSTS is added only for HTTPS.
+app.use('*', browserSecurityHeadersMiddleware);
 
 // --- IMPLEMENTED health check -------------------------------------------------
 app.get('/health', (c) => c.json({ ok: true }));
@@ -109,18 +124,11 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
 
 mountApiRouters(app);
 
-// max_retries per queue from wrangler.toml — NOT total attempts. Cloudflare
-// Queues counts the first delivery as attempts=1, then retries up to this many
-// more times, so the final attempt is max_retries + 1; that's the one we
-// record + alert on (see delivery/deadLetter.ts) instead of letting the
-// message vanish silently once it's actually dead-lettered.
-const MAX_QUEUE_ATTEMPTS = { ingest: 5, delivery: 8 } as const;
-
 // --- INGEST queue routing -----------------------------------------------------
-async function handleIngestMessage(env: Env, msg: QueueMessage): Promise<void> {
+async function handleIngestMessage(env: Env, msg: QueueMessage, queueAttempt = 1): Promise<void> {
   switch (msg.type) {
     case 'filing.new':
-      await fetchFiling(env, msg.docId);
+      await fetchFiling(env, msg.docId, queueAttempt);
       return;
     case 'filing.fetched':
       await classifyFiling(env, msg.docId);
@@ -147,14 +155,44 @@ async function handleIngestMessage(env: Env, msg: QueueMessage): Promise<void> {
 }
 
 // --- DELIVERY queue routing ---------------------------------------------------
-async function handleDeliveryMessage(env: Env, msg: QueueMessage): Promise<void> {
+async function handleDeliveryMessage(env: Env, msg: QueueMessage): Promise<boolean> {
   switch (msg.type) {
-    case 'delivery.dispatch':
-      await dispatchWebhook(env, msg);
-      return;
+    case 'delivery.dispatch': {
+      const result = await dispatchWebhook(env, msg);
+      return result.outboxComplete;
+    }
     default:
       console.warn('DELIVERY_QUEUE: unexpected message type', (msg as { type?: string }).type);
+      return false;
   }
+}
+
+/** Authoritative terminal recovery path for the configured Queue DLQs. */
+async function handleDeadLetterMessage(
+  env: Env,
+  queue: string,
+  msg: QueueMessage,
+  attempts: number,
+): Promise<void> {
+  const recoveryError = new Error(`consumer retry budget exhausted; received by ${queue}`);
+  await recordDeadLetterDurable(env, queue, msg, attempts, recoveryError);
+
+  if (queue.includes('delivery')) {
+    if (msg.type !== 'delivery.dispatch') throw new Error('delivery DLQ message has no transaction identity');
+    const recovered = await reconnectDeadLetteredOutbox(env, msg.txId, recoveryError.message);
+    if (recovered.status === 'missing') throw new Error(`delivery outbox missing for ${msg.txId}`);
+    return;
+  }
+
+  if (!('docId' in msg) || !msg.docId) throw new Error('ingest DLQ message has no filing identity');
+  const recovered = await reconnectDeadLetteredIngestionOutbox(
+    env,
+    msg.docId,
+    recoveryError.message,
+    new Date(),
+    { reopenCompleted: msg.type !== 'filing.new' },
+  );
+  if (recovered.status === 'missing') throw new Error(`ingestion outbox missing for ${msg.docId}`);
 }
 
 export default Sentry.withSentry(
@@ -184,17 +222,21 @@ export default Sentry.withSentry(
     /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow.
      *  Daily enrichment + price refresh self-gate via a KV date stamp. */
     async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-      // Sentry Crons: alerts if the per-minute watcher tick stops checking in or
-      // starts overrunning, independent of whether shouldPollNow decides to poll.
-      await Sentry.withMonitor(
-        'watcher-cron',
-        () => runWatcher(env, new Date()),
-        {
-          schedule: { type: 'crontab', value: '* * * * *' },
-          checkinMargin: 2,
-          maxRuntime: 5,
-          timezone: 'UTC',
-        },
+      // Register independent maintenance first. A watcher/config failure must
+      // never prevent durable outboxes, secrets, or daily jobs from running.
+      ctx.waitUntil(
+        Sentry.withMonitor('delivery-outbox-cron', () =>
+          flushDeliveryOutbox(env, { limit: 100 }),
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'delivery-outbox' } }),
+        ),
+      );
+      ctx.waitUntil(
+        Sentry.withMonitor('ingestion-outbox-cron', () =>
+          flushIngestionOutbox(env, { limit: 100 }),
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'ingestion-outbox' } }),
+        ),
       );
       ctx.waitUntil(
         Sentry.withMonitor('secrets-refresh-cron', () =>
@@ -224,6 +266,22 @@ export default Sentry.withSentry(
           Sentry.captureException(err, { tags: { cron: 'agreement-autopublish' } }),
         ),
       );
+      // Sentry Crons: alerts if the per-minute watcher tick stops checking in or
+      // starts overrunning, independent of whether shouldPollNow decides to poll.
+      ctx.waitUntil(
+        Sentry.withMonitor(
+          'watcher-cron',
+          () => runWatcher(env, new Date()),
+          {
+            schedule: { type: 'crontab', value: '* * * * *' },
+            checkinMargin: 2,
+            maxRuntime: 5,
+            timezone: 'UTC',
+          },
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'watcher' } }),
+        ),
+      );
     },
 
     /**
@@ -231,6 +289,27 @@ export default Sentry.withSentry(
      * handlers. Messages are ack'd individually; failures retry per wrangler.toml.
      */
     async queue(batch, env: Env, _ctx: ExecutionContext): Promise<void> {
+      const isDeadLetterQueue = batch.queue.endsWith('-dlq');
+      if (isDeadLetterQueue) {
+        for (const message of batch.messages) {
+          try {
+            await handleDeadLetterMessage(
+              env,
+              batch.queue,
+              message.body as QueueMessage,
+              message.attempts,
+            );
+            message.ack();
+          } catch (err) {
+            Sentry.captureException(err as Error, {
+              tags: { queue: batch.queue, recovery: 'dead-letter' },
+            });
+            message.retry({ delaySeconds: 60 });
+          }
+        }
+        return;
+      }
+
       const isDelivery = batch.queue.includes('delivery');
       for (const message of batch.messages) {
         try {
@@ -240,32 +319,40 @@ export default Sentry.withSentry(
             messageType: msg.type ?? 'unknown',
           });
           if (isDelivery) {
-            await handleDeliveryMessage(env, msg);
+            const shouldComplete = await handleDeliveryMessage(env, msg);
+            if (shouldComplete && msg.type === 'delivery.dispatch') {
+              const completion = await completeDeliveryOutbox(env, msg.txId);
+              if (completion === 'missing') {
+                // Legacy/direct queue messages predate the outbox. Their work
+                // is complete, and retrying cannot manufacture an origin row.
+                console.warn('delivery outbox completion skipped: missing', msg.txId);
+              }
+            }
           } else {
-            await handleIngestMessage(env, msg);
+            await handleIngestMessage(env, msg, message.attempts);
+            if (msg.type === 'filing.new') {
+              const completion = await completeIngestionOutbox(env, msg.docId);
+              if (completion === 'missing') {
+                console.warn('ingestion outbox completion skipped: missing', msg.docId);
+              }
+            }
           }
           message.ack();
         } catch (err) {
+          const ingestRetry = isDelivery
+            ? null
+            : classifyTransientIngestError(err, message.attempts);
           console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
           // console.error above is only a breadcrumb/log; the retry swallows the
           // throw, so without this the failure would never create a Sentry Issue.
           Sentry.captureException(err as Error, { tags: { queue: batch.queue, messageType: (message.body as QueueMessage).type ?? 'unknown' } });
-          // On the final attempt (about to be dead-lettered), record + alert so a
-          // terminally-failed filing/webhook is never silent. Best-effort.
-          // Cloudflare Queues counts the first delivery as attempts=1 and
-          // dead-letters after max_retries RETRIES beyond that — i.e. the last
-          // attempt is max_retries + 1, not max_retries itself.
-          const maxAttempts = isDelivery ? MAX_QUEUE_ATTEMPTS.delivery : MAX_QUEUE_ATTEMPTS.ingest;
-          if (message.attempts > maxAttempts) {
-            await recordDeadLetter(
-              env,
-              batch.queue,
-              message.body as QueueMessage,
-              message.attempts,
-              err,
-            ).catch(() => {});
+          if (err instanceof DeliveryRetryError || err instanceof IngestRetryError) {
+            message.retry({ delaySeconds: err.delaySeconds });
+          } else if (ingestRetry) {
+            message.retry({ delaySeconds: ingestRetry.delaySeconds });
+          } else {
+            message.retry();
           }
-          message.retry();
         }
       }
     },

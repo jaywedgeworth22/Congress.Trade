@@ -43,6 +43,8 @@ function fakeEnv(
   const dbRuns: Array<{ sql: string; params: unknown[] }> = [];
   const queueSends: Array<unknown> = [];
   const insertedDocIds = new Set<string>();
+  const filingByDoc = new Map<string, { chamber: 'house' | 'senate'; sourceUrl: string }>();
+  const outbox = new Map<string, { doc_id: string; chamber: 'house' | 'senate'; source_url: string; status: string; attempts: number; available_at: string }>();
 
   const env = {
     ...overrides,
@@ -67,6 +69,11 @@ function fakeEnv(
             return null as T | null;
           },
           async all<T>() {
+            if (/FROM ingestion_outbox/i.test(sql)) {
+              const docId = String(params[0] ?? '');
+              const row = outbox.get(docId);
+              return { results: row && row.status === 'pending' ? [row as T] : [] as T[] };
+            }
             return { results: [] as T[] };
           },
           async run() {
@@ -75,7 +82,22 @@ function fakeEnv(
               const docId = String(params[0] ?? '');
               const isNew = !insertedDocIds.has(docId);
               insertedDocIds.add(docId);
+              filingByDoc.set(docId, {
+                chamber: String(params[1]) as 'house' | 'senate', sourceUrl: String(params[4]),
+              });
               return { success: true, meta: { changes: isNew ? 1 : 0 } };
+            }
+            if (/INSERT OR IGNORE INTO ingestion_outbox/i.test(sql)) {
+              const docId = String(params[3]);
+              const filing = filingByDoc.get(docId);
+              if (filing && !outbox.has(docId)) outbox.set(docId, {
+                doc_id: docId, chamber: filing.chamber, source_url: filing.sourceUrl,
+                status: 'pending', attempts: 0, available_at: String(params[0]),
+              });
+            }
+            if (/UPDATE ingestion_outbox/i.test(sql) && /status = 'enqueued'/i.test(sql)) {
+              const row = outbox.get(String(params[2]));
+              if (row) { row.status = 'enqueued'; row.attempts += 1; }
             }
             return { success: true, meta: { changes: 1 } };
           },
@@ -113,7 +135,10 @@ describe('runWatcher', () => {
 
     expect(kvPuts.map(([key]) => key)).not.toContain('last_poll:house');
     expect(kvPuts.map(([key]) => key)).not.toContain('last_poll:senate');
-    expect(dbRuns.filter((run) => /INSERT INTO ingest_log/i.test(run.sql))).toHaveLength(2);
+    expect(dbRuns.filter((run) => /INSERT INTO ingest_log/i.test(run.sql))).toHaveLength(0);
+    const attempts = dbRuns.filter((run) => /INSERT INTO source_attempts/i.test(run.sql));
+    expect(attempts).toHaveLength(2);
+    expect(attempts.map((run) => run.params[2])).toEqual(['failure', 'failure']);
   });
 
   it('polls the live House search by default and de-dupes overlap against the bulk index', async () => {

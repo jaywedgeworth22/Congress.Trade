@@ -93,6 +93,10 @@ final class CongressTradeAPIClient {
         try await get("subscriptions")
     }
 
+    func preferences() async throws -> PreferencesResponse {
+        try await get("preferences")
+    }
+
     func commands(limit: Int = 20) async throws -> CommandListResponse {
         var components = URLComponents(url: endpointURL("commands"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
@@ -103,9 +107,12 @@ final class CongressTradeAPIClient {
         try await get("commands/\(id)")
     }
 
-    func createSSESubscription(tickers: [String]) async throws -> ClientCommandResponse<SubscriptionCommandResult> {
+    func createSSESubscription(
+        tickers: [String],
+        idempotencyKey: String
+    ) async throws -> ClientCommandResponse<SubscriptionCommandResult> {
         try await postCommand(
-            idempotencyKey: "ios-sse-\(tickers.map { $0.uppercased() }.joined(separator: "-"))",
+            idempotencyKey: idempotencyKey,
             body: [
                 "type": "create_subscription",
                 "payload": [
@@ -116,9 +123,13 @@ final class CongressTradeAPIClient {
         )
     }
 
-    func createWebhookSubscription(targetURL: String, tickers: [String]) async throws -> ClientCommandResponse<SubscriptionCommandResult> {
+    func createWebhookSubscription(
+        targetURL: String,
+        tickers: [String],
+        idempotencyKey: String
+    ) async throws -> ClientCommandResponse<SubscriptionCommandResult> {
         try await postCommand(
-            idempotencyKey: "ios-webhook-\(targetURL)",
+            idempotencyKey: idempotencyKey,
             body: [
                 "type": "create_subscription",
                 "payload": [
@@ -130,9 +141,12 @@ final class CongressTradeAPIClient {
         )
     }
 
-    func updatePreferences(tickers: [String]) async throws -> ClientCommandResponse<JSONValue> {
+    func updatePreferences(
+        tickers: [String],
+        idempotencyKey: String
+    ) async throws -> ClientCommandResponse<PreferencesCommandResult> {
         try await postCommand(
-            idempotencyKey: "ios-prefs-\(tickers.map { $0.uppercased() }.joined(separator: "-"))",
+            idempotencyKey: idempotencyKey,
             body: [
                 "type": "update_preferences",
                 "payload": [
@@ -143,27 +157,46 @@ final class CongressTradeAPIClient {
         )
     }
 
-    func updateSubscription(
+    func setSubscriptionActive(
         id: String,
-        active: Bool?,
-        targetURL: String?,
-        tickers: [String]
+        active: Bool,
+        idempotencyKey: String
     ) async throws -> ClientCommandResponse<SubscriptionCommandResult> {
-        var payload: [String: Any] = ["id": id]
-        if let active {
-            payload["active"] = active
-        }
-        if let targetURL {
-            payload["targetUrl"] = targetURL
-        }
-        payload["filters"] = ["tickers": tickers]
         return try await postCommand(
-            idempotencyKey: "ios-update-\(id)-\(active.map(String.init) ?? "noop")-\(tickers.joined(separator: "-"))",
+            idempotencyKey: idempotencyKey,
             body: [
                 "type": "update_subscription",
-                "payload": payload
+                "payload": ["id": id, "active": active]
             ]
         )
+    }
+
+    func logout() async throws {
+        var request = try makeRequest(originURL.appendingPathComponent("auth/logout"))
+        request.httpMethod = "POST"
+        let (_, response) = try await perform(request)
+        guard let http = response as? HTTPURLResponse else {
+            throw APIError.invalidResponse
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            throw APIError.server(status: http.statusCode, message: "Could not revoke this session")
+        }
+    }
+
+    func absoluteClientURL(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        if let url = URL(string: value), url.scheme != nil {
+            return url.absoluteString
+        }
+        return URL(string: value, relativeTo: originURL)?.absoluteURL.absoluteString
+    }
+
+    private var originURL: URL {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
+        components.path = ""
+        components.query = nil
+        components.fragment = nil
+        return components.url!
     }
 
     private func endpointURL(_ path: String) -> URL {
@@ -189,13 +222,15 @@ final class CongressTradeAPIClient {
 
     private func makeRequest(_ url: URL) throws -> URLRequest {
         var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "accept")
         try interceptor.intercept(&request)
         return request
     }
 
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await perform(request)
         guard let http = response as? HTTPURLResponse else {
             throw APIError.invalidResponse
         }
@@ -204,6 +239,14 @@ final class CongressTradeAPIClient {
             throw APIError.server(status: http.statusCode, message: error?.error ?? "Request failed")
         }
         return try decoder.decode(T.self, from: data)
+    }
+
+    private func perform(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            return try await session.data(for: request)
+        } catch let error as URLError {
+            throw APIError.transport(error)
+        }
     }
 }
 
@@ -214,6 +257,18 @@ struct APIErrorResponse: Decodable {
 enum APIError: LocalizedError {
     case invalidResponse
     case server(status: Int, message: String)
+    case transport(URLError)
+
+    var isOffline: Bool {
+        guard case .transport(let error) = self else { return false }
+        return [
+            .notConnectedToInternet,
+            .networkConnectionLost,
+            .cannotFindHost,
+            .cannotConnectToHost,
+            .dnsLookupFailed
+        ].contains(error.code)
+    }
 
     var errorDescription: String? {
         switch self {
@@ -221,6 +276,8 @@ enum APIError: LocalizedError {
             return "Invalid server response."
         case .server(_, let message):
             return message
+        case .transport(let error):
+            return error.localizedDescription
         }
     }
 }

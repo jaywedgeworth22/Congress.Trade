@@ -4,6 +4,7 @@
 # Node
 node_modules/
 dist/
+coverage/
 .next/
 out/
 *.tsbuildinfo

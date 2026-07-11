@@ -11,7 +11,7 @@
  *                 EventSource('/api/stream?subscription=<id>')
  *   Review        GET /api/admin/review-queue
  *                 POST /api/admin/review/:docId  {decision}
- *   Subscriptions GET /api/admin/subscriptions, POST /api/subscriptions
+ *   Subscriptions GET/POST /api/admin/subscriptions
  *   Admin cadence GET/PUT /api/admin/poll-config
  *   Source health GET /api/admin/sources/health
  *
@@ -1390,7 +1390,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button class="btn sm" onclick="createSubscription()">+ New delivery</button>
         <div id="subsMsg" class="note subs-msg" aria-live="polite"></div>
       </div>
-      <p class="note">API HOOK: GET <code>/api/admin/subscriptions</code>; POST <code>/api/subscriptions</code></p>
+      <p class="note">API HOOK: GET/POST <code>/api/admin/subscriptions</code></p>
     </div>
   </section>
 
@@ -1485,7 +1485,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <span id="latencyResetMsg" class="note"></span>
       </div>
       <table>
-        <thead><tr><th>Source</th><th>Last Check</th><th>Last New Filing</th><th title="Watcher checks recorded in ingest_log, not filing count.">Checks</th><th title="Discovered filings summed from ingest_log.new_count.">New Filings</th><th title="Average seconds between the most recent 50 watcher checks for this source.">Avg Refresh (Observed)</th><th title="Official disclosure date → when our watcher first saw it. Approximate: the disclosure systems publish a date, not an exact release time. Reset Latency starts this average from the reset timestamp forward.">Released→Seen ≈</th><th title="When we first saw the filing → when we wrote its parsed rows. Precise (both are our timestamps). Reset Latency starts this average from the reset timestamp forward.">Seen→Imported</th></tr></thead>
+        <thead><tr><th>Source</th><th>Status</th><th>Last Check</th><th>Last New Filing</th><th title="Watcher checks recorded in ingest_log, not filing count.">Checks</th><th title="Discovered filings summed from ingest_log.new_count.">New Filings</th><th title="Average seconds between the most recent 50 watcher checks for this source.">Avg Refresh (Observed)</th><th title="Official disclosure date → when our watcher first saw it. Approximate: the disclosure systems publish a date, not an exact release time. Reset Latency starts this average from the reset timestamp forward.">Released→Seen ≈</th><th title="When we first saw the filing → when we wrote its parsed rows. Precise (both are our timestamps). Reset Latency starts this average from the reset timestamp forward.">Seen→Imported</th></tr></thead>
         <tbody id="healthBody"></tbody>
       </table>
     </div>
@@ -1564,7 +1564,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <li>Full-history CSV exports</li>
       <li>Enrichment columns: sector, market cap, and country</li>
     </ul>
-    <div class="plan-grid">
+    <div class="plan-grid" id="pricingPlans">
       <div class="plan sel" id="planMonthly" onclick="selectPlan('monthly')">
         <div class="cad">Monthly</div>
         <div class="price">$15<span class="per">/mo</span></div>
@@ -1575,7 +1575,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="price">$140<span class="per">/yr</span></div>
       </div>
     </div>
-    <p class="trial-note">7-day trial. No charge today.</p>
+    <p class="trial-note" id="pricingTrialNote">7-day trial. No charge today.</p>
     <button class="btn" style="width:100%;padding:11px" id="subscribeBtn" onclick="startCheckout()">Start Free Trial</button>
     <p class="note" id="pricingMsg"></p>
   </div>
@@ -3357,15 +3357,15 @@ function renderSubs(subs) {
   }).join('');
 }
 function createSubscription() {
-  // API HOOK: POST /api/subscriptions
+  // API HOOK: POST /api/admin/subscriptions
   var clientId = el('newClientId').value.trim();
   var delivery = el('newDelivery').value;
   var targetUrl = el('newTarget').value.trim();
   if (!clientId) { el('subsMsg').textContent = 'clientId is required.'; return; }
   if (delivery === 'webhook' && !targetUrl) { el('subsMsg').textContent = 'webhook needs a target URL.'; return; }
   el('subsMsg').textContent = 'Creating…';
-  fetch('/api/subscriptions', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
+  fetch('/api/admin/subscriptions', {
+    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ clientId: clientId, delivery: delivery, targetUrl: targetUrl || null, filters: {} })
   })
     .then(function (r) {
@@ -3597,13 +3597,17 @@ function loadHealth() {
       var body = el('healthBody');
       var resetMsg = el('latencyResetMsg');
       if (resetMsg) resetMsg.textContent = data.latencyResetAt ? ('Latency reset: ' + dateTimeText(data.latencyResetAt)) : '';
-      if (sources.length === 0) { body.innerHTML = stateRow(8, 'No source check activity logged yet.'); return; }
+      if (sources.length === 0) { body.innerHTML = stateRow(9, 'No source check activity logged yet.'); return; }
       body.innerHTML = sources.map(function (s) {
         var avg = s.avgIntervalSec == null ? '—' : '~' + fmtDuration(s.avgIntervalSec);
         var rts = s.avgReleasedToSeenSec == null ? '—' : '~' + fmtDuration(s.avgReleasedToSeenSec);
         var sti = s.avgSeenToImportedSec == null ? '—' : fmtDuration(s.avgSeenToImportedSec);
+        var status = s.status || 'unknown';
+        if (s.stale && status === 'error') status += ' · stale';
+        var statusTitle = s.lastError || (s.stale ? ('No successful check within ' + fmtDuration(s.staleAfterSec || 0)) : '');
         return '<tr class="row">' +
           '<td>' + esc(chamberLabel(s.source)) + '</td>' +
+          '<td title="' + esc(statusTitle) + '">' + esc(status) + '</td>' +
           '<td class="muted">' + esc(dateTimeText(s.lastPolledAt)) + '</td>' +
           '<td class="muted">' + esc(dateTimeText(s.lastNewFilingAt)) + '</td>' +
           '<td class="muted">' + esc(s.pollCount != null ? s.pollCount : '—') + '</td>' +
@@ -3615,7 +3619,7 @@ function loadHealth() {
       }).join('');
     })
     .catch(function (e) {
-      el('healthBody').innerHTML = stateRow(8, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load source health: ' + e.message));
+      el('healthBody').innerHTML = stateRow(9, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load source health: ' + e.message));
     });
 }
 
@@ -4584,15 +4588,27 @@ function reconstructFilingUrl(docId) {
 }
 
 /* ============================ ACCOUNT (auth + billing) ============================ */
-var ME = { user: null, entitlement: { premium: false, status: null, plan: null, trialing: false }, admin: { allowed: false } };
+var ME = {
+  user: null,
+  entitlement: { premium: false, status: null, plan: null, trialing: false },
+  admin: { allowed: false },
+  billing: { checkoutConfigured: false, portalConfigured: false, hasCustomer: false },
+};
 var selectedPlan = 'monthly';
+var checkoutRequestId = null;
+var portalRequestId = null;
 
 function isPremium() { return !!(ME.entitlement && ME.entitlement.premium); }
+function checkoutConfigured() { return !!(ME.billing && ME.billing.checkoutConfigured); }
+function portalConfigured() { return !!(ME.billing && ME.billing.portalConfigured); }
+function hasBillingAccount() {
+  return !!(ME.billing && ME.billing.hasCustomer) || !!(ME.entitlement && ME.entitlement.status);
+}
 function hasAdminToken() { return !!getAdminToken(); }
 function canUseAdmin() { return !!((ME.admin && ME.admin.allowed) || hasAdminToken()); }
 function updatePremiumCues() {
   var unlocked = isPremium() || isAdminView();
-  document.querySelectorAll('[data-premium-cue]').forEach(function (node) { node.hidden = unlocked; });
+  document.querySelectorAll('[data-premium-cue]').forEach(function (node) { node.hidden = unlocked || !checkoutConfigured(); });
 }
 function applyAdminVisibility() {
   var allowed = canUseAdmin();
@@ -4611,11 +4627,12 @@ function applyAdminVisibility() {
 /* Bootstrap identity + entitlement in one call (GET /auth/me). */
 function loadMe() {
   return fetch('/auth/me', { headers: { accept: 'application/json' } })
-    .then(function (r) { return r.ok ? r.json() : { user: null, entitlement: { premium: false }, admin: { allowed: false } }; })
+    .then(function (r) { return r.ok ? r.json() : { user: null, entitlement: { premium: false }, admin: { allowed: false }, billing: { checkoutConfigured: false, portalConfigured: false, hasCustomer: false } }; })
     .then(function (d) {
       ME.user = d.user || null;
       ME.entitlement = d.entitlement || { premium: false };
       ME.admin = d.admin || { allowed: false };
+      ME.billing = d.billing || { checkoutConfigured: false, portalConfigured: false, hasCustomer: false };
       renderAccount();
       applyAdminVisibility();
       updatePremiumCues();
@@ -4626,21 +4643,21 @@ function loadMe() {
       renderColChooser();
       renderFeed();
     })
-    .catch(function () { ME.admin = { allowed: false }; renderAccount(); applyAdminVisibility(); updatePremiumCues(); });
+    .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; renderAccount(); applyAdminVisibility(); updatePremiumCues(); });
 }
 
 function renderAccount() {
   var box = el('acct'); if (!box) return;
   if (!ME.user) {
     box.innerHTML = '<button class="btn ghost sm" onclick="openLogin()">Sign In</button>' +
-      '<button class="btn sm" onclick="openPricing()">Premium</button>';
+      (checkoutConfigured() ? '<button class="btn sm" onclick="openPricing()">Premium</button>' : '');
     return;
   }
   var ent = ME.entitlement || {};
   var badge = ent.premium
     ? '<span class="badge premium">' + (ent.trialing ? 'Trial' : 'Premium') + '</span>'
     : '<span class="badge">Free</span>';
-  var upgrade = ent.premium ? '' : '<button class="btn sm" onclick="openPricing()">Premium</button>';
+  var upgrade = ent.premium || !checkoutConfigured() ? '' : '<button class="btn sm" onclick="openPricing()">Premium</button>';
   var label = ME.user.name || ME.user.email || 'Account';
   box.innerHTML = badge + upgrade +
     '<div class="menu">' +
@@ -4653,9 +4670,9 @@ function renderAccount() {
       '<div class="menu-pop" id="acctMenu">' +
         '<div class="who">' + esc(ME.user.email || '') + '</div>' +
         '<button onclick="toggleTheme()"><span id="themeMenuLabel">' + esc(document.documentElement.getAttribute('data-theme') === 'light' ? 'Light Mode' : 'Dark Mode') + '</span></button>' +
-        (ent.premium
+        (hasBillingAccount() && portalConfigured()
           ? '<button onclick="manageBilling()">Manage Subscription</button>'
-          : '<button onclick="closeAcctMenu();openPricing()">Premium</button>') +
+          : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMenu();openPricing()">Premium</button>' : '')) +
         '<button onclick="logout()">Sign Out</button>' +
       '</div>' +
     '</div>';
@@ -4695,6 +4712,12 @@ function logout() {
 
 /* ---- pricing / checkout ---- */
 var pricingIntent = 'default';
+function newBillingRequestId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  var bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.prototype.map.call(bytes, function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+}
 function pricingCopy(intent) {
   if (intent === 'csv') return {
     title: 'CSV Export Requires Premium',
@@ -4720,28 +4743,43 @@ function openPricing(intent) {
   if (el('pricingSub')) el('pricingSub').textContent = copy.sub;
   if (el('pricingFeatures')) el('pricingFeatures').innerHTML = copy.features.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('');
   selectPlan(selectedPlan);
-  el('pricingMsg').textContent = '';
+  var available = checkoutConfigured();
+  if (el('pricingPlans')) el('pricingPlans').hidden = !available;
+  if (el('pricingTrialNote')) el('pricingTrialNote').hidden = !available;
+  if (el('subscribeBtn')) {
+    el('subscribeBtn').disabled = !available;
+    el('subscribeBtn').textContent = available ? 'Start Free Trial' : 'Billing Unavailable';
+  }
+  el('pricingMsg').textContent = available ? '' : 'Premium checkout is not available yet.';
   el('pricingOverlay').classList.add('open');
 }
 function closePricing() { el('pricingOverlay').classList.remove('open'); }
 function selectPlan(p) {
+  if (selectedPlan !== ((p === 'annual') ? 'annual' : 'monthly')) checkoutRequestId = null;
   selectedPlan = (p === 'annual') ? 'annual' : 'monthly';
   var m = el('planMonthly'), a = el('planAnnual');
   if (m) m.classList.toggle('sel', selectedPlan === 'monthly');
   if (a) a.classList.toggle('sel', selectedPlan === 'annual');
 }
 function startCheckout() {
+  if (!checkoutConfigured()) {
+    el('pricingMsg').textContent = 'Premium checkout is not available yet.';
+    return;
+  }
   if (!ME.user) {
     var feature = pricingIntent === 'csv' ? ' for CSV export' : pricingIntent === 'columns' ? ' for Premium columns' : '';
     closePricing(); openLogin(); el('loginMsg').textContent = 'Sign in to start your Premium trial' + feature + '.';
     return;
   }
   var btn = el('subscribeBtn'); if (btn) btn.disabled = true;
+  if (!checkoutRequestId) checkoutRequestId = newBillingRequestId();
   el('pricingMsg').textContent = 'Starting secure checkout…';
-  fetch('/billing/checkout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ plan: selectedPlan }) })
+  fetch('/billing/checkout', { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': checkoutRequestId }, body: JSON.stringify({ plan: selectedPlan }) })
     .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }); })
     .then(function (res) {
       if (res.ok && res.j && res.j.url) { window.location.href = res.j.url; return; }
+      // Preserve the key across ambiguous failures so retry cannot create a
+      // second Stripe write. Selecting a different plan starts a new operation.
       if (res.status === 401) { closePricing(); openLogin(); return; }
       el('pricingMsg').textContent = (res.j && res.j.error) || 'Could not start checkout.';
       if (btn) btn.disabled = false;
@@ -4749,9 +4787,11 @@ function startCheckout() {
     .catch(function () { el('pricingMsg').textContent = 'Network error — try again.'; if (btn) btn.disabled = false; });
 }
 function manageBilling() {
+  if (!portalConfigured() || !hasBillingAccount()) { showToast('Billing management is unavailable right now.', true); return; }
   closeAcctMenu();
   showToast('Opening billing portal…');
-  fetch('/billing/portal', { method: 'POST' })
+  if (!portalRequestId) portalRequestId = newBillingRequestId();
+  fetch('/billing/portal', { method: 'POST', headers: { 'Idempotency-Key': portalRequestId } })
     .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
     .then(function (res) {
       if (res.ok && res.j && res.j.url) { window.location.href = res.j.url; }
@@ -4772,7 +4812,7 @@ function exportCsv() {
 }
 
 /* ---- gated feed CTA + post-redirect toasts ---- */
-function updateGateRow() { var g = el('gateRow'); if (g) g.style.display = feedGated ? '' : 'none'; }
+function updateGateRow() { var g = el('gateRow'); if (g) g.style.display = feedGated && checkoutConfigured() ? '' : 'none'; }
 var TOAST_TIMER = null;
 function showToast(text, isErr) {
   var t = el('toast'); if (!t) return;
@@ -5011,7 +5051,7 @@ applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'li
 el('feedBody').innerHTML = stateRow(visibleCols().length, 'Loading live feed…');
 el('reviewBody').innerHTML = stateRow(5, 'Loading…');
 el('subsBody').innerHTML = stateRow(5, 'Loading…');
-el('healthBody').innerHTML = stateRow(8, 'Loading…');
+el('healthBody').innerHTML = stateRow(9, 'Loading…');
 el('marketCoverage').innerHTML = '<div class="state">Loading market-data coverage…</div>';
 el('diagConnections').innerHTML = '<div class="state">Loading connection status…</div>';
 el('diagErrors').innerHTML = stateRow(4, 'Loading…');

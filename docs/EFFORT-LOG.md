@@ -114,6 +114,28 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   no preview or production deploy.
 
 ## In Progress
+- **Whole-app improvement roadmap implementation (CODEX, XL) — IMPLEMENTATION COMPLETE LOCALLY +
+  PREVIEWED 2026-07-11; PRODUCTION RELEASE IN PROGRESS (owner authorized merge + deploy).** Integration branch
+  `codex/app-hardening-integration`, PR #284, has 11 implementation commits plus its closeout
+  record over `origin/main`; all backend,
+  billing/security, iOS, and PWA lanes are integrated and independently reviewed. Isolated preview
+  version `85417928-cae4-4bb6-8706-96c739846533` is healthy at
+  `https://congress-trade-preview.jaywedgeworth22.workers.dev` (`ok/db/schema=true`) after readiness
+  correctly detected and CODEX repaired one legacy preview-only missing row-key index. Final gates:
+  app typecheck; 95 files / 808 tests; coverage 67.90/60.14/71.91/70.15; lint 0 errors; audit 0;
+  fresh 28-migration D1; prod/preview dry-runs; PWA typecheck + 3 files / 13 tests + production build
+  + audit 0; iOS generic Simulator build + build-for-testing; desktop/mobile rendered QA with no
+  overflow or console warnings/errors. Release claim: push/PR/merge the verified integration, then
+  deploy the exact merged commit through `app/scripts/ship.sh`; no production ingestion, queue
+  operation, or billing activation is authorized by this release.
+- **Backend delivery + ingestion reliability hardening (CODEX/HERSCHEL, L) — INTEGRATED +
+  INDEPENDENTLY VERIFIED LOCALLY 2026-07-11.** Transactional ingestion/delivery outboxes, real DLQ
+  consumers and bounded recovery, completion-before-ACK, stale-enqueued replay, cross-isolate SSE
+  leases/backpressure, bounded fetches, public webhook SSRF controls, quotas, truthful source
+  health, atomic publication/review receipts, schema readiness, and preview/production migration
+  parity are in `codex/app-hardening-integration`. Final semantic review PASS; real SQLite coverage
+  applies all migrations, compares the admin migration tail, runs readiness, and executes
+  idempotent transaction/cursor/estimate/outbox writes. Production pending approval.
 - **Review Queue current drain + durable automation integration (CODEX, L) — IN PROGRESS 2026-07-11.** Owner-directed. Audit the live unresolved queue and provenance, verify rather than blind-resolve each class, integrate/review existing PR #257 without editing MONET's branch, close any scheduler/observability/retry gaps on `codex/review-queue-resolution`, run full gates serially, deploy an isolated preview, and report the separate current/preview/production states. KEEPOUT: preserve the dirty main checkout and MONET's review-automation worktree.
 - **Implement `est_value` column in transactions table (AG, S) — IN PROGRESS 2026-07-10.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
 - **Refactor client API routes (AG, M) — IN PROGRESS 2026-07-10.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
@@ -202,6 +224,49 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   bail-to-review guard; duplicate-model-id false 2-of-3 majority → distinct-voter electorate; UI
   minority-row prefill → row-majority gate); 1 finding refuted with rationale. Independent final gates:
   typecheck clean, 718/718 tests / 82 files. NOT pushed — awaiting owner push/PR approval.
+- **iOS client correctness + performance hardening (CODEX/HUBBLE, L) — INTEGRATED LOCALLY + REVIEWED
+  2026-07-11; FINAL PROGRAM GATES PASS.** Lane branch `codex/ios-client-hardening`; integration
+  branch `codex/app-hardening-integration`. Preserves one-time
+  delivery credentials, sends active-only subscription patches, hydrates server preferences before
+  edit, retains UUID intent keys for uncertain retries, revokes bearer sessions, and adds scoped
+  loading/error/offline state, cache limits, accessibility, formatter/search improvements, an
+  XCTest target, and a compiled 1024x1024 opaque AppIcon/accent-color catalog derived from the
+  existing PWA mark. `git diff --check`, generic Simulator build, build-for-testing, compiled icon
+  inspection, and asset validation pass; executing XCTest still requires a concrete installed
+  Simulator runtime. No deploy or production action.
+- **PWA release hardening + CI coverage (CODEX/VOLTA, L) — INTEGRATED LOCALLY 2026-07-11;
+  FINAL PROGRAM GATES PASS.** Lane branch `codex/pwa-release-hardening`; integration branch
+  `codex/app-hardening-integration` is rebased onto current `origin/main` after AG's PR #266 merged.
+  AG's corrected handoff `c6201fb` was integrated as `6456cb8`; Codex added server-backed
+  latest-first filters, runtime
+  `estValue`, saved-preference hydration/failure locking, auth-gated writes, UUID intent keys
+  retained for uncertain retries, one-time delivery credential handling, an accessible filter
+  dialog, same-origin docs, focused Vitest coverage, and a PWA CI audit/build gate. Integration adds
+  192/512/maskable/Apple PNG icons plus a registered service worker with network-first navigation
+  caching and an offline fallback; API requests are never cached. Verified: PWA `npm audit` (0
+  vulnerabilities), typecheck, 13 tests, production build, generated-manifest/SW syntax/icon
+  inspection; desktop/mobile rendered QA with zero overflow or console errors; and a readable
+  API-unavailable state. No push or production action.
+- **Billing + platform security hardening (CODEX, M) — INTEGRATED LOCALLY + ADVERSARIALLY REVIEWED
+  2026-07-11; FINAL PROGRAM GATES PASS.** Lane branch `codex/billing-security-hardening`;
+  integration branch `codex/app-hardening-integration`. Adds reclaimable
+  Stripe event leases, stale/deletion ordering, non-overwriting customer links, mandatory stable
+  checkout/portal idempotency keys, the Managed-Payments-compatible Basil pin, split checkout/portal
+  readiness with the legacy `configured` alias, dual cookie/bearer logout, fail-closed resolver use,
+  browser security headers, and CI coverage floors. Review fixes prevent malformed supported events
+  from being silently acknowledged, handle expanded Stripe IDs, permit safe same-second
+  terminal-to-active resubscription across subscription IDs, and keep Billing Portal available to
+  existing payers when checkout configuration is incomplete. Verified: 79 test files / 714 tests,
+  typecheck, coverage 64.11/56.61/69.46/65.92, lint 0 errors, `npm audit` 0 vulnerabilities, fresh
+  migration through 0032, and `git diff --check`; the integrated 808-test gate and isolated preview
+  also pass. Billing remains unconfigured in preview and was not activated.
+- **Adopt remaining shared-package duplicates (CURSOR, M) — started 2026-07-09.**
+  Branch `cursor/shared-dep-adoption-9577`. Replaced local `shared/brackets.ts` + most of
+  `extraction/tickerNormalize.ts` with shared re-exports; wired `marketCapBucket`,
+  `bracketMidpoint`, `WINDOW_PRESETS`, `LAG_BUCKETS` from shared; SSE/webhook use
+  `createCongressEvent`; inbound `/securities/import` filters rows with shared Zod schemas;
+  FMP telemetry sends `occurredAt` for idempotency. Verified: typecheck clean; focused tests
+  (tickerNormalize/amounts/analytics/sse/enrichment/outbound/import) pass.
 - **Consolidate usage telemetry clients in consumer apps (AG) - COMPLETED 2026-07-06.** Replacing hand-rolled usage telemetry clients with `@jaywedgeworth22/congress-trading-shared` in Congress.Trade.
 - **Codebase Performance & Queues (AG, M) — IN PROGRESS 2026-07-05.** Fix silent DLQ webhook failures, implement `DB.batch` for `persistTransactions`, use `sendBatch` for queue dispatching, and run webhook fetch requests concurrently.
 

@@ -14,9 +14,14 @@ import type { Env } from '../shared/types';
 import { all, get, run } from '../shared/db';
 import { runCandidateOnDoc, type BakeoffCandidate, type CandidateDocResult } from './bakeoff';
 import { arbitrationRowKey } from '../extractors/types';
-import { recomputeTransactions, persistTransactions, HARD_FAILURE_FLAGS } from './normalizer';
+import {
+  recomputeTransactions,
+  persistTransactions,
+  HARD_FAILURE_FLAGS,
+  MAX_PUBLISH_TRANSACTIONS_PER_FILING,
+} from './normalizer';
 import { mapFiling, type FilingRow } from '../delivery/rows';
-import { recordIngestionDecision } from '../shared/ingestionDecisions';
+import { flushDeliveryOutbox } from '../delivery/outbox';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -91,6 +96,14 @@ export async function processAgreementDoc(
   if (!frow) return { docId, outcome: 'skipped', reason: 'filing row missing' };
 
   const flagged = await recomputeTransactions(env, mapFiling(frow), rA.rows);
+  if (flagged.length > MAX_PUBLISH_TRANSACTIONS_PER_FILING) {
+    return {
+      docId,
+      outcome: 'agree_but_hardfail',
+      rowCount: flagged.length,
+      flags: ['row_limit_exceeded'],
+    };
+  }
   const hardFlags = Array.from(new Set(flagged.flatMap((f) => f.flags).filter((fl) => HARD_FAILURE_FLAGS.includes(fl))));
   if (hardFlags.length) return { docId, outcome: 'agree_but_hardfail', rowCount: rA.rowCount, flags: hardFlags };
 
@@ -100,30 +113,28 @@ export async function processAgreementDoc(
 
   // Publish — agreement overrides the soft confidence cap.
   const txs = flagged.map((f) => ({ ...f.tx, source: 'primary' as const, confidence: Math.max(f.tx.confidence, 0.95) }));
-  const insertedIds = await persistTransactions(env, txs);
-  await run(env.DB, "UPDATE filings SET ingest_status = 'persisted', error = NULL WHERE doc_id = ?", [docId]);
-  await run(env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [docId]);
-  if (insertedIds.length > 0) {
-    await recordIngestionDecision(env.DB, {
+  const insertedIds = await persistTransactions(env, txs, {
+    publication: {
       docId,
-      action: 'agreement_published',
-      source: 'agreement',
-      reason: 'model_agreement',
-      transactionIds: insertedIds,
-      payload: {
-        rowCount: flagged.length,
-        inserted: insertedIds.length,
-        models: {
-          a: `${models.a.provider}:${models.a.model}`,
-          b: `${models.b.provider}:${models.b.model}`,
-          ...(models.c ? { c: `${models.c.provider}:${models.c.model}` } : {}),
+      resolveReview: true,
+      audit: {
+        action: 'agreement_published',
+        source: 'agreement',
+        reason: 'model_agreement',
+        payload: {
+          rowCount: flagged.length,
+          models: {
+            a: `${models.a.provider}:${models.a.model}`,
+            b: `${models.b.provider}:${models.b.model}`,
+            ...(models.c ? { c: `${models.c.provider}:${models.c.model}` } : {}),
+          },
         },
       },
-    });
-  }
-  for (const txId of insertedIds) {
-    try { await env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId }); } catch { /* best-effort */ }
-  }
+    },
+  });
+  await flushDeliveryOutbox(env, { txIds: insertedIds, limit: Math.max(insertedIds.length, 1) }).catch((err) =>
+    console.warn('agreement publish: delivery outbox flush failed', docId, (err as Error).message),
+  );
   return { docId, outcome: 'published', inserted: insertedIds.length };
 }
 

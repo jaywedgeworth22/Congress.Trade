@@ -1,7 +1,7 @@
 name = "congress-trade-preview"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
-compatibility_flags = ["nodejs_compat"]
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 workers_dev = true
 
 # Preview deliberately has no custom-domain routes and no cron trigger. It is
@@ -40,6 +40,18 @@ max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 8
 dead_letter_queue = "congress-feed-preview-delivery-dlq"
+
+[[queues.consumers]]
+queue = "congress-feed-preview-ingest-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 100
+
+[[queues.consumers]]
+queue = "congress-feed-preview-delivery-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 100
 
 [[kv_namespaces]]
 binding = "CONFIG_KV"

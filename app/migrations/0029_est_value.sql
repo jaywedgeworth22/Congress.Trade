@@ -1,4 +1,4 @@
--- 0025_est_value.sql
+-- 0029_est_value.sql
 -- Materialized computed column for estimated transaction value.
 
 ALTER TABLE transactions ADD COLUMN est_value REAL;

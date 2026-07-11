@@ -117,6 +117,19 @@ struct SubscriptionListResponse: Decodable {
     let subscriptions: [Subscription]
 }
 
+struct PreferencesResponse: Decodable {
+    let preferences: ClientPreferences
+}
+
+struct ClientPreferences: Decodable, Equatable {
+    let userId: String
+    let savedFilters: [String: JSONValue]
+    let watchlist: [String]
+    let notificationSettings: [String: JSONValue]
+    let defaultWindow: String?
+    let updatedAt: String
+}
+
 struct CommandListResponse: Decodable {
     let commands: [ClientCommand]
 }
@@ -160,16 +173,34 @@ struct SubscriptionCommandResult: Decodable {
     let subscription: Subscription
 }
 
+struct PreferencesCommandResult: Decodable {
+    let preferences: ClientPreferences
+}
+
 struct Subscription: Decodable, Identifiable {
     let id: String
     let delivery: String
     let targetUrl: String?
+    let filters: SubscriptionFilters
     let cursor: Int
     let active: Bool
     let createdAt: String
     let hasSecret: Bool
     let secret: String?
     let streamUrl: String?
+}
+
+struct DeliveryCredential: Identifiable, Equatable {
+    let id: String
+    let delivery: String
+    let streamURL: String?
+    let secret: String?
+
+    var shareText: String {
+        [streamURL, secret.map { "Subscription secret: \($0)" }]
+            .compactMap { $0 }
+            .joined(separator: "\n")
+    }
 }
 
 enum JSONValue: Codable, Hashable {

@@ -1,7 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { buildBillingRouter } from '../routes';
 import { ANONYMOUS_ENTITLEMENT } from '../entitlement';
 import type { Env } from '../../shared/types';
+
+const BILLING_READY = {
+  STRIPE_SECRET_KEY: 'sk_test',
+  STRIPE_WEBHOOK_SECRET: 'whsec',
+  STRIPE_PRICE_MONTHLY: 'price_m',
+  STRIPE_PRICE_ANNUAL: 'price_a',
+} as const;
 
 async function sign(secret: string, ts: number, body: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -42,12 +49,37 @@ interface FakeCounters {
   webhookEventReleased: number;
 }
 
+interface SubscriptionEventState {
+  created: number;
+  priority: number;
+  eventId: string;
+}
+
+interface FakeWebhookEvent {
+  eventType: string;
+  receivedAt: string;
+  processedAt: string | null;
+  claimToken: string | null;
+  claimExpiresAt: string | null;
+}
+
+function compareOrder(a: SubscriptionEventState, b: SubscriptionEventState): number {
+  return a.created - b.created || a.priority - b.priority || a.eventId.localeCompare(b.eventId);
+}
+
 function fakeEnv(
   over: Record<string, unknown> = {},
   seed: URow[] = [],
-): { env: Env; rows: Map<string, URow>; counters: FakeCounters } {
+): {
+  env: Env;
+  rows: Map<string, URow>;
+  counters: FakeCounters;
+  webhookEvents: Map<string, FakeWebhookEvent>;
+  subscriptionEvents: Map<string, SubscriptionEventState>;
+} {
   const rows = new Map<string, URow>(seed.map((r) => [r.id, r]));
-  const webhookEvents = new Map<string, { eventType: string; receivedAt: string; processedAt: string | null }>();
+  const webhookEvents = new Map<string, FakeWebhookEvent>();
+  const subscriptionEvents = new Map<string, SubscriptionEventState>();
   const counters: FakeCounters = {
     customerLinks: 0,
     subscriptionApplies: 0,
@@ -79,58 +111,132 @@ function fakeEnv(
           if (/SELECT \* FROM users WHERE id/i.test(sql)) {
             return ((rows.get(this._p[0] as string) ?? null) as unknown) as T | null;
           }
+          if (/SELECT processed_at FROM stripe_webhook_events/i.test(sql)) {
+            const event = webhookEvents.get(this._p[0] as string);
+            return (event ? { processed_at: event.processedAt } : null) as T | null;
+          }
           return null as T | null;
         },
         async run() {
           const p = this._p;
+          if (/INSERT INTO stripe_subscription_event_state/i.test(sql)) {
+            const [subscriptionId, , created, priority, eventId] = p as [string, string, number, number, string];
+            const incoming = { created, priority, eventId };
+            const current = subscriptionEvents.get(subscriptionId);
+            if (!current || compareOrder(incoming, current) >= 0) {
+              subscriptionEvents.set(subscriptionId, incoming);
+              return { success: true, meta: { changes: 1 } } as unknown as D1Result;
+            }
+            return { success: true, meta: { changes: 0 } } as unknown as D1Result;
+          }
           if (/INSERT OR IGNORE INTO stripe_webhook_events/i.test(sql)) {
-            const [eventId, eventType, receivedAt] = p as [string, string, string];
+            const [eventId, eventType, receivedAt, claimToken, claimExpiresAt] = p as [
+              string, string, string, string, string,
+            ];
             if (webhookEvents.has(eventId)) {
               return { success: true, meta: { changes: 0 } } as unknown as D1Result;
             }
-            webhookEvents.set(eventId, { eventType, receivedAt, processedAt: null });
+            webhookEvents.set(eventId, { eventType, receivedAt, processedAt: null, claimToken, claimExpiresAt });
             counters.webhookEventClaims += 1;
             return { success: true, meta: { changes: 1 } } as unknown as D1Result;
           }
-          if (/UPDATE stripe_webhook_events\s+SET processed_at/i.test(sql)) {
-            const [processedAt, eventId] = p as [string, string];
+          if (/SET event_type = \?, claim_token = \?/i.test(sql)) {
+            const [eventType, claimToken, claimExpiresAt, eventId, now] = p as [
+              string, string, string, string, string,
+            ];
             const event = webhookEvents.get(eventId);
-            if (event) {
+            if (
+              event
+              && !event.processedAt
+              && (!event.claimToken || !event.claimExpiresAt || event.claimExpiresAt <= now)
+            ) {
+              Object.assign(event, { eventType, claimToken, claimExpiresAt });
+              counters.webhookEventClaims += 1;
+              return { success: true, meta: { changes: 1 } } as unknown as D1Result;
+            }
+            return { success: true, meta: { changes: 0 } } as unknown as D1Result;
+          }
+          if (/SET processed_at = \?, claim_token = NULL/i.test(sql)) {
+            const [processedAt, eventId, claimToken] = p as [string, string, string];
+            const event = webhookEvents.get(eventId);
+            if (event && !event.processedAt && event.claimToken === claimToken) {
               event.processedAt = processedAt;
+              event.claimToken = null;
+              event.claimExpiresAt = null;
               counters.webhookEventProcessed += 1;
               return { success: true, meta: { changes: 1 } } as unknown as D1Result;
             }
             return { success: true, meta: { changes: 0 } } as unknown as D1Result;
           }
-          if (/DELETE FROM stripe_webhook_events/i.test(sql)) {
-            const [eventId] = p as [string];
+          if (/SET claim_token = NULL, claim_expires_at = NULL/i.test(sql)) {
+            const [eventId, claimToken] = p as [string, string];
             const event = webhookEvents.get(eventId);
-            const changes = event && !event.processedAt ? 1 : 0;
-            if (changes) {
-              webhookEvents.delete(eventId);
+            const changes = event && !event.processedAt && event.claimToken === claimToken ? 1 : 0;
+            if (event && changes) {
+              event.claimToken = null;
+              event.claimExpiresAt = null;
               counters.webhookEventReleased += 1;
             }
             return { success: true, meta: { changes } } as unknown as D1Result;
           }
           if (/SET\s+stripe_customer_id = \?,\s+stripe_subscription_id/i.test(sql)) {
-            const [cust, sub, status, plan, cpe, cape, trial, id] = p as [
+            const [
+              cust, sub, status, plan, cpe, cape, trial, id, expectedCustomer,
+              stateSub, created, priority, eventId, sameSub, newerCreated,
+              sameSecondCreated, eventType, crossStatus,
+            ] = p as [
               string, string, string, string | null, string | null, number, string | null, string,
+              string, string, number, number, string, string, number, number, string, string,
             ];
             const r = rows.get(id);
-            if (r) Object.assign(r, {
+            const applied = subscriptionEvents.get(stateSub);
+            const current = r?.stripe_subscription_id ? subscriptionEvents.get(r.stripe_subscription_id) : undefined;
+            const crossSubscriptionAllowed = current && (
+              current.created < newerCreated
+              || (
+                current.created === sameSecondCreated
+                && eventType === 'customer.subscription.created'
+                && (crossStatus === 'active' || crossStatus === 'trialing')
+                && (r?.subscription_status === 'canceled' || r?.subscription_status === 'incomplete_expired')
+              )
+            );
+            if (
+              r
+              && (r.stripe_customer_id === null || r.stripe_customer_id === expectedCustomer)
+              && applied?.created === created
+              && applied.priority === priority
+              && applied.eventId === eventId
+              && (
+                r.stripe_subscription_id === null
+                || r.stripe_subscription_id === sameSub
+                || crossSubscriptionAllowed
+              )
+            ) Object.assign(r, {
               stripe_customer_id: cust, stripe_subscription_id: sub, subscription_status: status,
               plan, current_period_end: cpe, cancel_at_period_end: cape, trial_end: trial,
             });
-            counters.subscriptionApplies += 1;
-          } else if (/UPDATE users SET stripe_customer_id = \? WHERE id/i.test(sql)) {
-            const [customerId, userId] = p as [string, string];
+            if (r?.subscription_status === status) counters.subscriptionApplies += 1;
+          } else if (/SET stripe_customer_id = \?[\s\S]+stripe_customer_id IS NULL/i.test(sql)) {
+            const [customerId, userId] = p as [string, string, string];
             const r = rows.get(userId);
-            if (r) r.stripe_customer_id = customerId;
-            counters.customerLinks += 1;
+            const changes = r && (r.stripe_customer_id === null || r.stripe_customer_id === customerId) ? 1 : 0;
+            if (r && changes) {
+              r.stripe_customer_id = customerId;
+              counters.customerLinks += 1;
+            }
+            return { success: true, meta: { changes } } as unknown as D1Result;
           } else if (/subscription_status = 'canceled'/i.test(sql)) {
-            const [id] = p as [string];
+            const [id, subscriptionId, stateSub, created, priority, eventId] = p as [
+              string, string, string, number, number, string,
+            ];
             const r = rows.get(id);
-            if (r) {
+            const applied = subscriptionEvents.get(stateSub);
+            if (
+              r?.stripe_subscription_id === subscriptionId
+              && applied?.created === created
+              && applied.priority === priority
+              && applied.eventId === eventId
+            ) {
               r.subscription_status = 'canceled';
               r.cancel_at_period_end = 0;
               r.trial_end = null;
@@ -146,7 +252,7 @@ function fakeEnv(
     },
     ...over,
   } as unknown as Env;
-  return { env, rows, counters };
+  return { env, rows, counters, webhookEvents, subscriptionEvents };
 }
 
 async function postWebhook(
@@ -165,11 +271,46 @@ async function postWebhook(
 }
 
 describe('billing router', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it('GET /status reports unconfigured + anonymous entitlement when signed out', async () => {
     const app = buildBillingRouter();
     const res = await app.request('http://localhost/status', {}, fakeEnv().env);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ configured: false, entitlement: ANONYMOUS_ENTITLEMENT });
+    expect(await res.json()).toEqual({
+      configured: false,
+      checkoutConfigured: false,
+      portalConfigured: false,
+      hasCustomer: false,
+      entitlement: ANONYMOUS_ENTITLEMENT,
+    });
+  });
+
+  it('GET /status exposes portal-only readiness and an existing customer', async () => {
+    const seed: URow = {
+      id: 'u1', stripe_customer_id: 'cus_1', subscription_status: 'canceled', plan: 'monthly',
+      stripe_subscription_id: 'sub_1', current_period_end: null, cancel_at_period_end: 0, trial_end: null,
+      email: 'u1@x.com', name: null, picture: null, google_sub: null, email_verified: 1,
+      created_at: 'now', last_login_at: null,
+    };
+    const sessionKv = {
+      get: async () => JSON.stringify({ userId: 'u1' }),
+      put: async () => {},
+      delete: async () => {},
+    };
+    const { env } = fakeEnv({ STRIPE_SECRET_KEY: 'sk_test', CONFIG_KV: sessionKv }, [seed]);
+    const res = await buildBillingRouter().request(
+      'http://localhost/status',
+      { headers: { cookie: 'ct_session=session-token' } },
+      env,
+    );
+    expect(await res.json()).toMatchObject({
+      configured: false,
+      checkoutConfigured: false,
+      portalConfigured: true,
+      hasCustomer: true,
+      entitlement: { status: 'canceled' },
+    });
   });
 
   it('POST /checkout requires sign-in (401 needLogin)', async () => {
@@ -189,6 +330,197 @@ describe('billing router', () => {
     expect(res.status).toBe(401);
   });
 
+  it('POST /checkout stays disabled when only Billing Portal is configured', async () => {
+    const seed: URow = {
+      id: 'u1', stripe_customer_id: 'cus_1', subscription_status: 'canceled', plan: 'monthly',
+      stripe_subscription_id: 'sub_1', current_period_end: null, cancel_at_period_end: 0, trial_end: null,
+      email: 'u1@x.com', name: null, picture: null, google_sub: null, email_verified: 1,
+      created_at: 'now', last_login_at: null,
+    };
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const sessionKv = {
+      get: async () => JSON.stringify({ userId: 'u1' }),
+      put: async () => {},
+      delete: async () => {},
+    };
+    const { env } = fakeEnv({ STRIPE_SECRET_KEY: 'sk_test', CONFIG_KV: sessionKv }, [seed]);
+    const res = await buildBillingRouter().request('http://localhost/checkout', {
+      method: 'POST',
+      headers: {
+        cookie: 'ct_session=session-token',
+        'content-type': 'application/json',
+        'Idempotency-Key': 'checkout-disabled-1',
+      },
+      body: JSON.stringify({ plan: 'monthly' }),
+    }, env);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'checkout not configured' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('scopes deterministic Stripe idempotency keys to the user and checkout request', async () => {
+    const seed: URow = {
+      id: 'u1', stripe_customer_id: null, subscription_status: null, plan: null,
+      stripe_subscription_id: null, current_period_end: null, cancel_at_period_end: 0, trial_end: null,
+      email: 'u1@x.com', name: null, picture: null, google_sub: null, email_verified: 1,
+      created_at: 'now', last_login_at: null,
+    };
+    const calls: Array<{ path: string; key: string | null }> = [];
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ path: new URL(url).pathname, key: new Headers(init?.headers).get('Idempotency-Key') });
+      if (url.endsWith('/customers')) return Response.json({ id: 'cus_1' });
+      return Response.json({ id: 'cs_1', url: 'https://stripe.test/checkout' });
+    });
+    const sessionKv = {
+      get: async (key: string) => key === 'sess:session-token' ? JSON.stringify({ userId: 'u1' }) : null,
+      put: async () => {},
+      delete: async () => {},
+    };
+    const { env } = fakeEnv({ ...BILLING_READY, CONFIG_KV: sessionKv }, [seed]);
+    const app = buildBillingRouter();
+    const request = {
+      method: 'POST',
+      body: JSON.stringify({ plan: 'monthly' }),
+      headers: {
+        cookie: 'ct_session=session-token',
+        'content-type': 'application/json',
+        'Idempotency-Key': 'checkout-request-1',
+      },
+    };
+
+    const first = await app.request('http://localhost/checkout', request, env);
+    const second = await app.request('http://localhost/checkout', request, env);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(calls).toEqual([
+      { path: '/v1/customers', key: 'congress-trade:customer:u1' },
+      { path: '/v1/checkout/sessions', key: 'congress-trade:checkout:monthly:u1:checkout-request-1' },
+      { path: '/v1/checkout/sessions', key: 'congress-trade:checkout:monthly:u1:checkout-request-1' },
+    ]);
+  });
+
+  it('uses the authoritative customer when checkout loses a customer-link race', async () => {
+    const seed: URow = {
+      id: 'u1', stripe_customer_id: null, subscription_status: null, plan: null,
+      stripe_subscription_id: null, current_period_end: null, cancel_at_period_end: 0, trial_end: null,
+      email: 'u1@x.com', name: null, picture: null, google_sub: null, email_verified: 1,
+      created_at: 'now', last_login_at: null,
+    };
+    const sessionKv = {
+      get: async () => JSON.stringify({ userId: 'u1' }),
+      put: async () => {},
+      delete: async () => {},
+    };
+    const { env, rows } = fakeEnv({ ...BILLING_READY, CONFIG_KV: sessionKv }, [seed]);
+    let checkoutBody = '';
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/customers')) {
+        const row = rows.get('u1');
+        if (row) row.stripe_customer_id = 'cus_authoritative';
+        return Response.json({ id: 'cus_created' });
+      }
+      checkoutBody = String(init?.body);
+      return Response.json({ id: 'cs_1', url: 'https://stripe.test/checkout' });
+    });
+    const res = await buildBillingRouter().request('http://localhost/checkout', {
+      method: 'POST',
+      headers: {
+        cookie: 'ct_session=session-token',
+        'content-type': 'application/json',
+        'Idempotency-Key': 'checkout-race-1',
+      },
+      body: JSON.stringify({ plan: 'monthly' }),
+    }, env);
+    expect(res.status).toBe(200);
+    expect(rows.get('u1')?.stripe_customer_id).toBe('cus_authoritative');
+    expect(new URLSearchParams(checkoutBody).get('customer')).toBe('cus_authoritative');
+  });
+
+  it('scopes portal idempotency to the user and request', async () => {
+    const seed: URow = {
+      id: 'u1', stripe_customer_id: 'cus_1', subscription_status: 'active', plan: 'monthly',
+      stripe_subscription_id: 'sub_1', current_period_end: null, cancel_at_period_end: 0, trial_end: null,
+      email: 'u1@x.com', name: null, picture: null, google_sub: null, email_verified: 1,
+      created_at: 'now', last_login_at: null,
+    };
+    let key: string | null = null;
+    vi.stubGlobal('fetch', async (_input: string | URL | Request, init?: RequestInit) => {
+      key = new Headers(init?.headers).get('Idempotency-Key');
+      return Response.json({ id: 'bps_1', url: 'https://stripe.test/portal' });
+    });
+    const sessionKv = {
+      get: async (name: string) => name === 'sess:session-token' ? JSON.stringify({ userId: 'u1' }) : null,
+      put: async () => {},
+      delete: async () => {},
+    };
+    const { env } = fakeEnv({ STRIPE_SECRET_KEY: 'sk_test', CONFIG_KV: sessionKv }, [seed]);
+    const app = buildBillingRouter();
+    const res = await app.request('http://localhost/portal', {
+      method: 'POST',
+      headers: { cookie: 'ct_session=session-token', 'Idempotency-Key': 'portal-request-1' },
+    }, env);
+    expect(res.status).toBe(200);
+    expect(key).toBe('congress-trade:portal:u1:portal-request-1');
+  });
+
+  it('rejects malformed client idempotency keys before calling Stripe', async () => {
+    const seed: URow = {
+      id: 'u1', stripe_customer_id: 'cus_1', subscription_status: null, plan: null,
+      stripe_subscription_id: null, current_period_end: null, cancel_at_period_end: 0, trial_end: null,
+      email: 'u1@x.com', name: null, picture: null, google_sub: null, email_verified: 1,
+      created_at: 'now', last_login_at: null,
+    };
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const sessionKv = {
+      get: async () => JSON.stringify({ userId: 'u1' }),
+      put: async () => {},
+      delete: async () => {},
+    };
+    const { env } = fakeEnv({ STRIPE_SECRET_KEY: 'sk_test', CONFIG_KV: sessionKv }, [seed]);
+    const res = await buildBillingRouter().request('http://localhost/portal', {
+      method: 'POST',
+      headers: { cookie: 'ct_session=session-token', 'Idempotency-Key': 'not valid spaces' },
+    }, env);
+    expect(res.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { path: '/checkout', body: JSON.stringify({ plan: 'monthly' }) },
+    { path: '/portal', body: undefined },
+  ])('rejects a missing client idempotency key on $path before calling Stripe', async ({ path, body }) => {
+    const seed: URow = {
+      id: 'u1', stripe_customer_id: 'cus_1', subscription_status: 'active', plan: 'monthly',
+      stripe_subscription_id: 'sub_1', current_period_end: null, cancel_at_period_end: 0, trial_end: null,
+      email: 'u1@x.com', name: null, picture: null, google_sub: null, email_verified: 1,
+      created_at: 'now', last_login_at: null,
+    };
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const sessionKv = {
+      get: async () => JSON.stringify({ userId: 'u1' }),
+      put: async () => {},
+      delete: async () => {},
+    };
+    const { env } = fakeEnv({ ...BILLING_READY, CONFIG_KV: sessionKv }, [seed]);
+    const res = await buildBillingRouter().request(`http://localhost${path}`, {
+      method: 'POST',
+      body,
+      headers: {
+        cookie: 'ct_session=session-token',
+        ...(body ? { 'content-type': 'application/json' } : {}),
+      },
+    }, env);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Idempotency-Key required' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('POST /webhook is 503 when the signing secret is not configured', async () => {
     const app = buildBillingRouter();
     const res = await app.request('http://localhost/webhook', { method: 'POST', body: '{}' }, fakeEnv().env);
@@ -205,6 +537,51 @@ describe('billing router', () => {
     expect(res.status).toBe(400);
   });
 
+  it('POST /webhook returns retryable busy when another live claim owns the event', async () => {
+    const { env, webhookEvents } = fakeEnv({ STRIPE_WEBHOOK_SECRET: 'whsec' });
+    webhookEvents.set('evt_busy', {
+      eventType: 'customer.subscription.updated',
+      receivedAt: '2026-01-01T00:00:00.000Z',
+      processedAt: null,
+      claimToken: 'other-worker',
+      claimExpiresAt: '2999-01-01T00:00:00.000Z',
+    });
+    const res = await postWebhook(buildBillingRouter(), env, {
+      id: 'evt_busy',
+      created: 100,
+      type: 'customer.subscription.updated',
+      data: { object: {} },
+    });
+    expect(res.status).toBe(503);
+    expect(res.headers.get('Retry-After')).toBe('5');
+    expect(await res.json()).toEqual({ error: 'webhook event is already being processed' });
+  });
+
+  it.each([
+    { type: 'checkout.session.completed', object: { client_reference_id: 'u1' } },
+    { type: 'customer.subscription.created', object: { id: 'sub_1', customer: 'cus_1' } },
+    { type: 'customer.subscription.updated', object: { id: 'sub_1', status: 'active', customer: {} } },
+    { type: 'customer.subscription.deleted', object: { id: 'sub_1' } },
+  ])('POST /webhook releases malformed supported $type events instead of acknowledging them', async ({ type, object }) => {
+    const { env, counters, webhookEvents } = fakeEnv({ STRIPE_WEBHOOK_SECRET: 'whsec' });
+    const eventId = `evt_malformed_${type.replaceAll('.', '_')}`;
+    const res = await postWebhook(buildBillingRouter(), env, {
+      id: eventId,
+      created: 100,
+      type,
+      data: { object },
+    });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'webhook handling failed' });
+    expect(counters.webhookEventProcessed).toBe(0);
+    expect(counters.webhookEventReleased).toBe(1);
+    expect(webhookEvents.get(eventId)).toMatchObject({
+      processedAt: null,
+      claimToken: null,
+      claimExpiresAt: null,
+    });
+  });
+
   it('POST /webhook applies a subscription update on a valid signature', async () => {
     const seed: URow = {
       id: 'u1', stripe_customer_id: 'cus_1', subscription_status: null, plan: null,
@@ -215,10 +592,11 @@ describe('billing router', () => {
     const { env, rows } = fakeEnv({ STRIPE_WEBHOOK_SECRET: 'whsec' }, [seed]);
     const event = {
       id: 'evt_sub_update_1',
+      created: 100,
       type: 'customer.subscription.updated',
       data: {
         object: {
-          id: 'sub_1', status: 'active', customer: 'cus_1',
+          id: 'sub_1', status: 'active', customer: { id: 'cus_1' },
           items: { data: [{ price: { id: 'price_m' } }] },
           current_period_end: 1_900_000_000, cancel_at_period_end: false, trial_end: null,
         },
@@ -228,7 +606,7 @@ describe('billing router', () => {
     const res = await postWebhook(app, env, event);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ received: true });
-    expect(rows.get('u1')!.subscription_status).toBe('active');
+    expect(rows.get('u1')?.subscription_status).toBe('active');
     expect(rows.get('u1')!.plan).toBe('monthly');
   });
 
@@ -242,8 +620,9 @@ describe('billing router', () => {
     const { env, rows, counters } = fakeEnv({ STRIPE_WEBHOOK_SECRET: 'whsec' }, [seed]);
     const event = {
       id: 'evt_checkout_1',
+      created: 100,
       type: 'checkout.session.completed',
-      data: { object: { client_reference_id: 'u1', customer: 'cus_1' } },
+      data: { object: { client_reference_id: 'u1', customer: { id: 'cus_1' } } },
     };
     const app = buildBillingRouter();
 
@@ -269,6 +648,7 @@ describe('billing router', () => {
     const { env, rows, counters } = fakeEnv({ STRIPE_WEBHOOK_SECRET: 'whsec' }, [seed]);
     const event = {
       id: 'evt_sub_update_duplicate',
+      created: 100,
       type: 'customer.subscription.updated',
       data: {
         object: {
@@ -290,6 +670,28 @@ describe('billing router', () => {
     expect(counters.webhookEventProcessed).toBe(1);
   });
 
+  it('POST /webhook ignores an older subscription event delivered later', async () => {
+    const seed: URow = {
+      id: 'u1', stripe_customer_id: 'cus_1', subscription_status: null, plan: null,
+      stripe_subscription_id: null, current_period_end: null, cancel_at_period_end: 0, trial_end: null,
+      email: 'u1@x.com', name: null, picture: null, google_sub: null, email_verified: 1,
+      created_at: 'now', last_login_at: null,
+    };
+    const { env, rows, counters } = fakeEnv({ STRIPE_WEBHOOK_SECRET: 'whsec' }, [seed]);
+    const object = (status: string) => ({
+      id: 'sub_1', status, customer: 'cus_1', items: { data: [{ price: { id: 'price_m' } }] },
+    });
+    const app = buildBillingRouter();
+    await postWebhook(app, env, {
+      id: 'evt_newer', created: 200, type: 'customer.subscription.updated', data: { object: object('active') },
+    });
+    await postWebhook(app, env, {
+      id: 'evt_older', created: 100, type: 'customer.subscription.updated', data: { object: object('past_due') },
+    });
+    expect(rows.get('u1')?.subscription_status).toBe('active');
+    expect(counters.subscriptionApplies).toBe(1);
+  });
+
   it('POST /webhook ignores duplicate subscription deleted events', async () => {
     const seed: URow = {
       id: 'u1', stripe_customer_id: 'cus_1', subscription_status: 'active', plan: 'monthly',
@@ -300,8 +702,9 @@ describe('billing router', () => {
     const { env, rows, counters } = fakeEnv({ STRIPE_WEBHOOK_SECRET: 'whsec' }, [seed]);
     const event = {
       id: 'evt_sub_deleted_1',
+      created: 100,
       type: 'customer.subscription.deleted',
-      data: { object: { customer: 'cus_1' } },
+      data: { object: { id: 'sub_1', customer: { id: 'cus_1' } } },
     };
     const app = buildBillingRouter();
 
@@ -341,7 +744,7 @@ describe('billing router', () => {
             if (/INSERT OR IGNORE INTO stripe_webhook_events/i.test(sql)) {
               return { success: true, meta: { changes: 1 } } as unknown as D1Result;
             }
-            if (/DELETE FROM stripe_webhook_events/i.test(sql)) {
+            if (/SET claim_token = NULL, claim_expires_at = NULL/i.test(sql)) {
               return { success: true, meta: { changes: 1 } } as unknown as D1Result;
             }
             throw new Error('d1 unavailable');
@@ -354,6 +757,7 @@ describe('billing router', () => {
     } as Env;
     const event = {
       id: 'evt_sub_update_fails',
+      created: 100,
       type: 'customer.subscription.updated',
       data: {
         object: {

@@ -64,7 +64,7 @@ function isHttps(c: Context): boolean {
 }
 
 export async function getCookieDomain(c: Context<{ Bindings: Env }>): Promise<string | undefined> {
-  const configured = (await resolveSecret(c.env, 'APP_BASE_URL')).value?.trim() ?? c.env.APP_BASE_URL?.trim();
+  const configured = (await resolveSecret(c.env, 'APP_BASE_URL')).value?.trim();
   if (!configured) return undefined;
   try {
     const hostname = new URL(configured).hostname;
@@ -138,7 +138,16 @@ function bearerSessionToken(c: Context): string | undefined {
 /** Resolve a session from the httpOnly cookie first, then a bearer token.
  * Native clients use the bearer path; browser/PWA clients keep the cookie path. */
 export function getSessionTokenFromRequest(c: Context): string | undefined {
-  return getSessionToken(c) ?? bearerSessionToken(c);
+  return getSessionTokensFromRequest(c)[0];
+}
+
+/** Return every distinct session credential presented by the request. Logout
+ * uses this to revoke a browser cookie and native bearer token together. */
+export function getSessionTokensFromRequest(c: Context): string[] {
+  const tokens = [getSessionToken(c), bearerSessionToken(c)].filter(
+    (token): token is string => Boolean(token),
+  );
+  return [...new Set(tokens)];
 }
 
 /** Resolve the current end user from the request cookie (or null). */

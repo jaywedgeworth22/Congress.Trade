@@ -5,24 +5,67 @@
  * webhook signature verification, so we hit the form-encoded REST API directly
  * rather than pulling in the Node-oriented `stripe` SDK.
  *
- * All calls require STRIPE_SECRET_KEY; webhook verification requires
- * STRIPE_WEBHOOK_SECRET. `stripeConfigured()` lets routes degrade to 503.
+ * All calls require STRIPE_SECRET_KEY; checkout readiness additionally requires
+ * webhook reconciliation and both prices. Portal readiness intentionally only
+ * requires the secret key so existing customers can always manage/cancel.
  */
 
 import type { Env } from '../shared/types';
-import { resolveSecret } from '../secrets/infisical';
+import { resolveSecret, resolveSecrets } from '../secrets/infisical';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
 // Pin an API version so server-side behaviour/field shapes are stable.
 const STRIPE_API_VERSION = '2025-03-31.basil'; // Managed Payments requires basil+
+const CHECKOUT_KEYS = [
+  'STRIPE_SECRET_KEY',
+  'STRIPE_WEBHOOK_SECRET',
+  'STRIPE_PRICE_MONTHLY',
+  'STRIPE_PRICE_ANNUAL',
+] as const;
+const PORTAL_KEYS = ['STRIPE_SECRET_KEY'] as const;
 
-/** True when the secret key is present (billing can operate). */
-export function stripeConfigured(env: Env): boolean {
-  return !!env.STRIPE_SECRET_KEY;
+export interface BillingCapabilities {
+  /** Backward-compatible alias for checkoutConfigured. */
+  configured: boolean;
+  checkoutConfigured: boolean;
+  portalConfigured: boolean;
 }
 
-export async function stripeConfiguredAsync(env: Env): Promise<boolean> {
-  return Boolean((await resolveSecret(env, 'STRIPE_SECRET_KEY')).value);
+/** True when new subscriptions can be safely created and reconciled. */
+export function checkoutConfigured(env: Env): boolean {
+  return CHECKOUT_KEYS.every((key) => Boolean(env[key]));
+}
+
+/** True when an existing Stripe customer can open Billing Portal. */
+export function portalConfigured(env: Env): boolean {
+  return PORTAL_KEYS.every((key) => Boolean(env[key]));
+}
+
+export function billingCapabilities(env: Env): BillingCapabilities {
+  const canCheckout = checkoutConfigured(env);
+  return {
+    configured: canCheckout,
+    checkoutConfigured: canCheckout,
+    portalConfigured: portalConfigured(env),
+  };
+}
+
+export async function billingCapabilitiesAsync(env: Env): Promise<BillingCapabilities> {
+  const resolved = await resolveSecrets(env, [...CHECKOUT_KEYS]);
+  const canCheckout = CHECKOUT_KEYS.every((key) => Boolean(resolved[key]));
+  return {
+    configured: canCheckout,
+    checkoutConfigured: canCheckout,
+    portalConfigured: PORTAL_KEYS.every((key) => Boolean(resolved[key])),
+  };
+}
+
+export async function checkoutConfiguredAsync(env: Env): Promise<boolean> {
+  return (await billingCapabilitiesAsync(env)).checkoutConfigured;
+}
+
+export async function portalConfiguredAsync(env: Env): Promise<boolean> {
+  return (await billingCapabilitiesAsync(env)).portalConfigured;
 }
 
 /**
@@ -48,7 +91,12 @@ export function encodeForm(params: Record<string, unknown>): string {
   return out.toString();
 }
 
-async function stripePost<T>(env: Env, path: string, params: Record<string, unknown>): Promise<T> {
+async function stripePost<T>(
+  env: Env,
+  path: string,
+  params: Record<string, unknown>,
+  idempotencyKey: string,
+): Promise<T> {
   const secretKey = (await resolveSecret(env, 'STRIPE_SECRET_KEY')).value;
   if (!secretKey) throw new Error('STRIPE_SECRET_KEY not configured');
   const res = await fetch(`${STRIPE_API}${path}`, {
@@ -57,6 +105,7 @@ async function stripePost<T>(env: Env, path: string, params: Record<string, unkn
       authorization: `Bearer ${secretKey}`,
       'content-type': 'application/x-www-form-urlencoded',
       'Stripe-Version': STRIPE_API_VERSION,
+      'Idempotency-Key': idempotencyKey,
     },
     body: encodeForm(params),
   });
@@ -74,12 +123,12 @@ export interface StripeCustomer {
 /** Create a Stripe customer for a signed-in user. */
 export function createCustomer(
   env: Env,
-  args: { email: string; metadata?: Record<string, string> },
+  args: { email: string; metadata?: Record<string, string>; idempotencyKey: string },
 ): Promise<StripeCustomer> {
   return stripePost<StripeCustomer>(env, '/customers', {
     email: args.email,
     metadata: args.metadata,
-  });
+  }, args.idempotencyKey);
 }
 
 export interface CheckoutSession {
@@ -88,7 +137,7 @@ export interface CheckoutSession {
 }
 
 /** Create a subscription Checkout Session and return its hosted URL. */
-export function createCheckoutSession(
+export async function createCheckoutSession(
   env: Env,
   args: {
     priceId: string;
@@ -98,8 +147,12 @@ export function createCheckoutSession(
     customerId?: string | null;
     customerEmail?: string | null;
     trialDays?: number;
+    idempotencyKey: string;
   },
 ): Promise<CheckoutSession> {
+  // Keep PR #262's secret-manager override semantics: an Infisical value wins,
+  // while wrangler/env remains the local and migration fallback.
+  const managedPayments = (await resolveSecret(env, 'STRIPE_MANAGED_PAYMENTS')).value;
   const params: Record<string, unknown> = {
     mode: 'subscription',
     line_items: [{ price: args.priceId, quantity: 1 }],
@@ -109,7 +162,7 @@ export function createCheckoutSession(
     allow_promotion_codes: true,
     // Stripe Managed Payments (merchant-of-record). Gated by env so it only
     // turns on once the account is approved + prices carry an eligible tax code.
-    ...(env.STRIPE_MANAGED_PAYMENTS === 'true' ? { managed_payments: { enabled: true } } : {}),
+    ...(managedPayments === 'true' ? { managed_payments: { enabled: true } } : {}),
     // Carry the user id on the subscription too, so subscription.* webhooks can
     // resolve the user even before the customer<->user link is persisted.
     subscription_data: {
@@ -120,7 +173,7 @@ export function createCheckoutSession(
   // A Checkout Session takes EITHER an existing customer OR an email to create one.
   if (args.customerId) params.customer = args.customerId;
   else if (args.customerEmail) params.customer_email = args.customerEmail;
-  return stripePost<CheckoutSession>(env, '/checkout/sessions', params);
+  return stripePost<CheckoutSession>(env, '/checkout/sessions', params, args.idempotencyKey);
 }
 
 export interface PortalSession {
@@ -131,12 +184,12 @@ export interface PortalSession {
 /** Create a Billing Portal session so a customer can manage their subscription. */
 export function createBillingPortalSession(
   env: Env,
-  args: { customerId: string; returnUrl: string },
+  args: { customerId: string; returnUrl: string; idempotencyKey: string },
 ): Promise<PortalSession> {
   return stripePost<PortalSession>(env, '/billing_portal/sessions', {
     customer: args.customerId,
     return_url: args.returnUrl,
-  });
+  }, args.idempotencyKey);
 }
 
 // ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@
  *   GET   /sources/health           -> ingest_log aggregates per source
  *   GET   /diagnostics              -> connection status + recent app errors
  *   GET   /subscriptions            -> admin list of subscriptions
+ *   POST  /subscriptions            -> operator-provisioned subscription
  *
  * AUTH (deny-by-default once provisioned). A request is authorized if EITHER:
  *   1. Bearer token — env.ADMIN_TOKEN is set and the request carries a matching
@@ -37,12 +38,21 @@ import {
   ShortVolumeRowSchema,
 } from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
-import { all, get, run, type SqlParam } from '../shared/db';
+import { all, batch, get, run, type SqlParam } from '../shared/db';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
 import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
-import { getConfig, setConfig } from '../shared/config';
+import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config';
 import { uuid } from '../shared/ids';
-import { listSubscriptions } from '../delivery/subscriptions';
+import {
+  assertSubscriptionQuota,
+  createSubscription,
+  listSubscriptions,
+  SubscriptionQuotaError,
+  subscriptionSecretError,
+  validateSubscriptionFilters,
+  webhookTargetLengthError,
+} from '../delivery/subscriptions';
+import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget';
 import { runSeedBackfillFromEnv } from '../backfill/seed';
 import { runHouseHistoricalBackfill } from '../backfill/houseCrawler';
 import { extractParsed } from '../extraction/orchestrator';
@@ -83,6 +93,16 @@ import type { SecurityRef } from '../enrichment/types';
 import { runPriceRefresh } from '../prices/service';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets } from '../secrets/infisical';
 import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
+import { isValidBracket } from '../shared/brackets';
+import {
+  deliveryOutboxInsertForRowKey,
+  flushDeliveryOutbox,
+  type SqlStatement,
+} from '../delivery/outbox';
+import {
+  BASE_SCHEMA_STATEMENTS,
+  POST_0024_SCHEMA_STATEMENTS,
+} from './migrations';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -368,6 +388,56 @@ function reviewAssetTypeName(e: EditedTx): string | null {
   if (!raw || raw.toLowerCase() === 'unknown') return null;
   const code = raw.toUpperCase();
   return HOUSE_ASSET_TYPE_NAMES[code] ?? raw;
+}
+
+function estimatedTransactionValue(amountMin: number | null, amountMax: number | null): number {
+  if (amountMin === null && amountMax === null) return 0;
+  if (amountMin === null) return amountMax as number;
+  if (amountMax === null) return amountMin;
+  return (amountMin + amountMax) / 2.0;
+}
+
+function validateReviewEdits(value: unknown): { edits?: EditedTx[]; error?: string } {
+  if (!Array.isArray(value)) return { error: 'edits must be an array' };
+  if (value.length === 0) return { edits: [] };
+  if (value.length > 50) return { error: 'edits cannot contain more than 50 rows' };
+
+  for (const [i, raw] of value.entries()) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: `edits[${i}] must be an object` };
+    const e = raw as Record<string, unknown>;
+    if (e.txType !== 'P' && e.txType !== 'S' && e.txType !== 'E') {
+      return { error: `edits[${i}].txType must be P, S, or E` };
+    }
+    if (typeof e.assetName !== 'string' || !e.assetName.trim() || e.assetName.length > 500) {
+      return { error: `edits[${i}].assetName is required and must be at most 500 characters` };
+    }
+    if (e.txDate != null && (typeof e.txDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(e.txDate))) {
+      return { error: `edits[${i}].txDate must be YYYY-MM-DD or null` };
+    }
+    if (e.owner != null && !['self', 'spouse', 'joint', 'dependent'].includes(String(e.owner))) {
+      return { error: `edits[${i}].owner is invalid` };
+    }
+    if (e.ticker != null && (typeof e.ticker !== 'string' || e.ticker.length > 20 || !/^[A-Za-z0-9.^$-]+$/.test(e.ticker))) {
+      return { error: `edits[${i}].ticker is invalid` };
+    }
+    if (typeof e.amountMin !== 'number' || !Number.isFinite(e.amountMin)) {
+      return { error: `edits[${i}].amountMin is required` };
+    }
+    if (e.amountMax != null && (typeof e.amountMax !== 'number' || !Number.isFinite(e.amountMax))) {
+      return { error: `edits[${i}].amountMax must be a number or null` };
+    }
+    if (!isValidBracket(e.amountMin, (e.amountMax as number | null | undefined) ?? null)) {
+      return { error: `edits[${i}] amount must be a canonical STOCK Act bracket` };
+    }
+    if (e.confidence != null && (typeof e.confidence !== 'number' || !Number.isFinite(e.confidence) || e.confidence < 0 || e.confidence > 1)) {
+      return { error: `edits[${i}].confidence must be between 0 and 1` };
+    }
+    if (e.isOption != null && typeof e.isOption !== 'boolean') return { error: `edits[${i}].isOption must be boolean` };
+    if (e.capGainsOver200 != null && typeof e.capGainsOver200 !== 'boolean') {
+      return { error: `edits[${i}].capGainsOver200 must be boolean` };
+    }
+  }
+  return { edits: value as EditedTx[] };
 }
 
 // --- Politician photo enrichment (name -> bioguide -> unitedstates/images CDN) ---
@@ -918,7 +988,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         400,
       );
     }
-    const edits = body.edits as EditedTx[];
+    const validated = validateReviewEdits(body.edits);
+    if (validated.error) return c.json({ error: validated.error }, 400);
+    const edits = validated.edits ?? [];
     if (edits.length === 0) {
       return c.json(
         {
@@ -930,15 +1002,17 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         400,
       );
     }
-    const filing = await get<{ filer_id: string | null }>(
+    const filing = await get<{ filer_id: string | null; first_seen_at: string | null; filed_date: string | null }>(
       c.env.DB,
-      'SELECT filer_id FROM filings WHERE doc_id = ?',
+      'SELECT filer_id, first_seen_at, filed_date FROM filings WHERE doc_id = ?',
       [docId],
     );
     const filingFilerId = filing?.filer_id ?? null;
 
     const insertedIds: string[] = [];
     const nowIso = new Date().toISOString();
+    const statements: SqlStatement[] = [];
+    const candidates: string[] = [];
     for (const [rowIndex, e] of edits.entries()) {
       const id = uuid();
       const assetTypeName = reviewAssetTypeName(e);
@@ -959,13 +1033,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         rawText: e.rawText ?? '',
       });
       // cursor_seq is DB-assigned by trg_transactions_cursor (insert with NULL).
-      const res = await run(
-        c.env.DB,
+      statements.push([
         `INSERT OR IGNORE INTO transactions (
            id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
            tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
-           raw_text, asset_type_name, row_key, confidence, source, created_at, cursor_seq
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+           raw_text, asset_type_name, row_key, confidence, source, created_at, cursor_seq,
+           first_seen_at, filed_date, est_value
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
         [
           id,
           docId,
@@ -986,26 +1060,26 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           e.confidence ?? 1,
           source,
           nowIso,
+          filing?.first_seen_at ?? null,
+          filing?.filed_date ?? null,
+          estimatedTransactionValue(e.amountMin ?? null, e.amountMax ?? null),
         ],
-      );
-      if ((res.meta?.changes ?? 1) > 0) insertedIds.push(id);
+      ]);
+      statements.push(deliveryOutboxInsertForRowKey(docId, source, rowKey, nowIso));
+      candidates.push(id);
     }
 
-    // Mark review resolved + filing persisted.
-    await run(c.env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [docId]);
-    await run(c.env.DB, 'UPDATE filings SET ingest_status = ? WHERE doc_id = ?', [
-      'persisted',
-      docId,
-    ]);
-
-    // Enqueue delivery fan-out for each newly inserted transaction.
-    for (const txId of insertedIds) {
-      try {
-        await c.env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId });
-      } catch (err) {
-        console.error('review confirm: enqueue failed', txId, (err as Error).message);
-      }
+    // Publish rows, their delivery outbox records, and review state atomically.
+    statements.push(['UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [docId]]);
+    statements.push(['UPDATE filings SET ingest_status = ? WHERE doc_id = ?', ['persisted', docId]]);
+    const results = await batch(c.env.DB, statements);
+    for (let i = 0; i < candidates.length; i += 1) {
+      if (results[i * 2].meta.changes > 0) insertedIds.push(candidates[i]);
     }
+
+    await flushDeliveryOutbox(c.env, { txIds: insertedIds, limit: Math.max(insertedIds.length, 1) }).catch((err) =>
+      console.warn('review confirm: delivery outbox flush failed', docId, (err as Error).message),
+    );
 
     await recordIngestionDecision(c.env.DB, {
       docId,
@@ -1098,6 +1172,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // observed average interval between polls (seconds).
   r.get('/sources/health', async (c) => {
     const latencyResetAt = await getLatencyResetAt(c.env);
+    const now = new Date();
+    const config = await getConfig(c.env);
+    const window = activeWindow(now, config);
+    const effectivePollIntervalSec = window
+      ? effectiveInterval(window, config)
+      : Math.max(60, ...config.schedule.map((entry) => entry.intervalSec));
+    const staleAfterSec = Math.max(300, effectivePollIntervalSec * 3);
     const rows = await all<{
       source: string;
       last_polled_at: string | null;
@@ -1115,17 +1196,76 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         GROUP BY source`,
     );
 
+    const attempts = await optionalAll<{
+      id: number;
+      source: string;
+      attempted_at: string;
+      outcome: string;
+      new_count: number;
+      error: string | null;
+    }>(
+      c.env,
+      `WITH ranked AS (
+         SELECT id, source, attempted_at, outcome, new_count, error,
+                ROW_NUMBER() OVER (PARTITION BY source ORDER BY attempted_at DESC, id DESC) AS rn
+           FROM source_attempts
+       )
+       SELECT id, source, attempted_at, outcome, new_count, error
+         FROM ranked
+        WHERE rn <= ?
+        ORDER BY source ASC, attempted_at DESC, id DESC`,
+      [100],
+    );
+    const attemptsBySource = new Map<string, typeof attempts>();
+    for (const attempt of attempts) {
+      const list = attemptsBySource.get(attempt.source) ?? [];
+      list.push(attempt);
+      attemptsBySource.set(attempt.source, list);
+    }
+    const aggregateBySource = new Map(rows.map((row) => [row.source, row]));
+    const sourceNames = new Set<string>(['house', 'senate', ...rows.map((row) => row.source), ...attempts.map((row) => row.source)]);
+
     const sources = [];
-    for (const row of rows) {
+    for (const source of sourceNames) {
+      const row = aggregateBySource.get(source);
+      const history = attemptsBySource.get(source) ?? [];
+      const latest = history[0];
+      const lastSuccess = history.find((attempt) => attempt.outcome === 'success');
+      const lastFailure = history.find((attempt) => attempt.outcome === 'failure');
+      let consecutiveFailures = 0;
+      for (const attempt of history) {
+        if (attempt.outcome !== 'failure') break;
+        consecutiveFailures += 1;
+      }
+      const lastAttemptAt = latest?.attempted_at ?? row?.last_polled_at ?? null;
+      const lastAttemptMs = lastAttemptAt ? Date.parse(lastAttemptAt) : Number.NaN;
+      const stale = !Number.isFinite(lastAttemptMs)
+        || now.getTime() - lastAttemptMs > staleAfterSec * 1000;
+      const status = latest?.outcome === 'failure'
+        ? 'error'
+        : stale
+          ? 'stale'
+          : latest?.outcome === 'success'
+            ? 'ok'
+            : 'unknown';
       sources.push({
-        source: row.source,
-        lastPolledAt: row.last_polled_at,
-        lastNewFilingAt: row.last_new_at,
-        pollCount: row.poll_count,
-        totalNew: row.total_new,
-        avgIntervalSec: await observedAvgInterval(c.env, row.source),
-        avgReleasedToSeenSec: await observedReleasedToSeenLag(c.env, row.source, latencyResetAt),
-        avgSeenToImportedSec: await observedSeenToImportedLag(c.env, row.source, latencyResetAt),
+        source,
+        status,
+        stale,
+        staleAfterSec,
+        effectivePollIntervalSec,
+        lastAttemptAt,
+        lastSuccessAt: lastSuccess?.attempted_at ?? row?.last_polled_at ?? null,
+        lastFailureAt: lastFailure?.attempted_at ?? null,
+        lastError: latest?.outcome === 'failure' ? latest.error : null,
+        consecutiveFailures,
+        lastPolledAt: row?.last_polled_at ?? null,
+        lastNewFilingAt: row?.last_new_at ?? null,
+        pollCount: row?.poll_count ?? 0,
+        totalNew: row?.total_new ?? 0,
+        avgIntervalSec: await observedAvgInterval(c.env, source),
+        avgReleasedToSeenSec: await observedReleasedToSeenLag(c.env, source, latencyResetAt),
+        avgSeenToImportedSec: await observedSeenToImportedLag(c.env, source, latencyResetAt),
       });
     }
     return c.json({ sources, count: sources.length, latencyResetAt });
@@ -2172,9 +2312,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             await run(
               c.env.DB,
               `UPDATE transactions
-                  SET confidence = ?, amount_min = ?, amount_max = ?, ticker = ?
+                  SET confidence = ?, amount_min = ?, amount_max = ?, est_value = ?, ticker = ?
                 WHERE id = ?`,
-              [tx.confidence, tx.amountMin, tx.amountMax, tx.ticker, existing[i].id],
+              [
+                tx.confidence,
+                tx.amountMin,
+                tx.amountMax,
+                estimatedTransactionValue(tx.amountMin, tx.amountMax),
+                tx.ticker,
+                existing[i].id,
+              ],
             );
           }
           await run(c.env.DB, 'UPDATE filings SET confidence = ? WHERE doc_id = ?', [
@@ -2650,6 +2797,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // as already-applied.
   r.post('/migrate', async (c) => {
     const statements = [
+      ...BASE_SCHEMA_STATEMENTS,
       'ALTER TABLE filers ADD COLUMN photo_url TEXT',
       // 0003_users.sql — end-user accounts (public-site auth). Idempotent.
       `CREATE TABLE IF NOT EXISTS users (
@@ -2899,14 +3047,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          created_at TEXT NOT NULL
        )`,
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
-      // 0025_est_value.sql — materialized computed column for estimated transaction value.
-      'ALTER TABLE transactions ADD COLUMN est_value REAL',
-      `UPDATE transactions SET est_value = CASE
-         WHEN amount_min IS NULL AND amount_max IS NULL THEN 0
-         WHEN amount_min IS NULL THEN amount_max
-         WHEN amount_max IS NULL THEN amount_min
-         ELSE (amount_min + amount_max) / 2.0
-       END WHERE est_value IS NULL`,
+      // 0029–0032 — value materialization, outbox reliability, truthful source
+      // attempts, and ordered/reclaimable Stripe event processing.
+      ...POST_0024_SCHEMA_STATEMENTS,
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -3436,6 +3579,61 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const activeOnly = c.req.query('active') === 'true';
     const subs = await listSubscriptions(c.env, activeOnly);
     return c.json({ subscriptions: subs.map(adminSubscription), count: subs.length });
+  });
+
+  // Operator provisioning keeps explicit integration client ids; end-user
+  // routes derive ownership from the authenticated account instead.
+  r.post('/subscriptions', async (c) => {
+    let body: Record<string, unknown>;
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(clientId)) {
+      return c.json({ error: 'clientId must be 1-128 URL-safe characters' }, 400);
+    }
+    const delivery = body.delivery;
+    if (delivery !== 'webhook' && delivery !== 'sse') {
+      return c.json({ error: "delivery must be 'webhook' or 'sse'" }, 400);
+    }
+    const targetUrl = delivery === 'webhook' && typeof body.targetUrl === 'string'
+      ? body.targetUrl.trim()
+      : null;
+    const targetLengthError = webhookTargetLengthError(targetUrl);
+    if (targetLengthError) return c.json({ error: targetLengthError }, 400);
+    if (delivery === 'webhook') {
+      const targetError = await validatePublicWebhookTarget(targetUrl, {
+        allowLocalhost: localWebhookTargetsAllowed(c.env, c.req.url),
+      });
+      if (targetError) return c.json({ error: targetError }, 400);
+    }
+    const validatedFilters = validateSubscriptionFilters(body.filters);
+    if (!validatedFilters.ok) return c.json({ error: validatedFilters.error }, 400);
+    const secretError = subscriptionSecretError(body.secret);
+    if (secretError) return c.json({ error: secretError }, 400);
+    const secret = typeof body.secret === 'string' ? body.secret : undefined;
+    try {
+      await assertSubscriptionQuota(c.env, clientId, { creating: true });
+      const sub = await createSubscription(c.env, {
+        clientId,
+        delivery,
+        targetUrl,
+        secret: secret ?? null,
+        filters: validatedFilters.filters,
+      });
+      return c.json({
+        ...adminSubscription(sub),
+        secret: sub.secret,
+        ...(delivery === 'sse' && sub.secret
+          ? { streamUrl: `/api/stream?subscription=${encodeURIComponent(sub.id)}&token=${encodeURIComponent(sub.secret)}` }
+          : {}),
+      }, 201);
+    } catch (err) {
+      if (err instanceof SubscriptionQuotaError) return c.json({ error: err.message }, 409);
+      throw err;
+    }
   });
 
   return r;
