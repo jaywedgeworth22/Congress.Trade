@@ -36,6 +36,18 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
+Unit tests cover ticker normalization, server preference loading, active-only
+subscription patches, bearer/idempotency headers, and stream URL resolution.
+Run them against an installed simulator device:
+
+```bash
+xcodebuild \
+  -project clients/ios/CongressTrade.xcodeproj \
+  -scheme CongressTrade \
+  -destination 'platform=iOS Simulator,name=iPhone 16' \
+  test
+```
+
 ## Auth
 
 The prototype can read the public feed without sign-in. Signed-in actions need an
@@ -61,5 +73,9 @@ For local Worker testing, set the `CONGRESS_TRADE_API_BASE_URL` environment
 variable in the Xcode scheme, for example:
 
 ```text
-http://127.0.0.1:8788/api/client/v1
+http://127.0.0.1:8787/api/client/v1
 ```
+
+The app keeps at most 500 recent trades on-device for offline viewing. The
+current client API supports fetching newer rows with `since`; it does not yet
+expose an older-page cursor, so historical paging remains a backend follow-up.

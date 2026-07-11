@@ -19,18 +19,20 @@
  *   so EventSource tracks the resume point automatically across reconnects.
  *
  * APPROACH (Workers-friendly poll loop):
- *   We back the Response with a ReadableStream. On open we replay the catch-up
- *   backlog (cursor_seq > since) immediately, then enter an async poll loop that
- *   queries D1 every POLL_INTERVAL_MS for rows with cursor_seq beyond the last
- *   one we emitted, advancing an in-memory high-water cursor. Heartbeats
+ *   We back the Response with a TransformStream and await writer.ready plus
+ *   writer.write for every frame. This propagates downstream backpressure and
+ *   keeps at most one encoded frame in flight instead of growing an unbounded
+ *   ReadableStream controller queue. On open we replay the catch-up backlog
+ *   (cursor_seq > since), then enter an async poll loop that queries D1 every
+ *   POLL_INTERVAL_MS for rows beyond the last accepted cursor. Heartbeats
  *   (`event: ping`) are emitted on each idle tick so proxies/clients keep the
  *   connection alive and can detect a dead stream.
  *
  *   We use a plain `await new Promise(setTimeout)` between polls — there is no
  *   Workers `scheduler` primitive needed; the runtime keeps the streaming
- *   response alive while the loop awaits. The loop exits cleanly when the client
- *   disconnects (the stream `cancel()` fires, flipping `closed`) or when the
- *   self-imposed MAX_STREAM_MS budget is hit.
+ *   response alive while the loop awaits. The loop exits cleanly when a
+ *   downstream write rejects after client disconnect or when the self-imposed
+ *   MAX_STREAM_MS budget is hit.
  *
  * MAX-DURATION CAVEAT:
  *   Cloudflare Workers cap wall-clock / streaming duration (and a long-lived SSE
@@ -40,21 +42,36 @@
  *   exactly where it left off (no gaps, the catch-up replay covers the seam).
  *   This is a deliberate at-least-once, resumable design rather than a truly
  *   infinite socket. For sub-second push semantics, prefer a webhook subscription.
+ *
+ * FOLLOW-UP: if SSE demand outgrows the durable connection caps, replace the
+ * per-connection D1 poll loop with one shared Durable Object fanout per feed.
  */
 
 import type { Env, Subscription, Transaction } from '../shared/types';
-import { all, get } from '../shared/db';
+import { all, get, run } from '../shared/db';
 import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows';
 import { matchesFiltersWithContext } from './subscriptions';
 import { constantTimeEqual } from '../auth/tokens';
 import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
+import { prefixedId } from '../shared/ids';
+import { rateLimit } from '../shared/rateLimit';
 
 /** How often to poll D1 for new rows. */
 const POLL_INTERVAL_MS = 5_000;
 /** Max lifetime of a single SSE connection before asking the client to reconnect. */
-const MAX_STREAM_MS = 25 * 60 * 1_000;
+export const MAX_STREAM_MS = 25 * 60 * 1_000;
+/** Keep the durable lease alive slightly beyond the response lifetime. */
+export const SSE_LEASE_MS = MAX_STREAM_MS + 60_000;
+export const SSE_SUBSCRIPTION_OPEN_RATE = 10;
+export const SSE_IP_OPEN_RATE = 30;
+/** A client that cannot accept one frame within this budget is disconnected. */
+export const SSE_SLOW_READER_TIMEOUT_MS = 15_000;
+/** Leave time near the hard deadline for a resumable reconnect frame. */
+export const SSE_RECONNECT_GRACE_MS = 1_000;
 /** Page size when draining the catch-up / live backlog. */
 const PAGE_SIZE = 200;
+/** Bound D1 work per poll tick; later ticks continue from the returned HWM. */
+export const MAX_DRAIN_PAGES_PER_TICK = 5;
 
 /**
  * Format one live trade as an SSE frame on the shared cross-app contract.
@@ -70,27 +87,113 @@ export function formatTradeEvent(tx: Transaction): string {
   return `id: ${tx.cursorSeq}\nevent: congress.trade\ndata: ${JSON.stringify(event)}\n\n`;
 }
 
-/**
- * Open an SSE stream for a subscription, replaying from `since` then live.
- * Returns a `text/event-stream` Response. If the subscription is missing or not
- * an SSE subscription, returns a 404/409 JSON error instead.
- */
-export let LATEST_CURSOR_SEQ: number | null = null;
-
-export async function refreshLatestCursorSeq(db: D1Database): Promise<number> {
-  const row = await get<{ max_seq: number | null }>(
-    db,
-    'SELECT MAX(cursor_seq) AS max_seq FROM transactions'
-  );
-  const maxSeq = row?.max_seq ?? 0;
-  LATEST_CURSOR_SEQ = maxSeq;
-  return maxSeq;
+export class SseSlowReaderError extends Error {
+  constructor(message = 'SSE client stopped accepting data') {
+    super(message);
+    this.name = 'SseSlowReaderError';
+  }
 }
 
-export function updateLatestCursorSeq(seq: number) {
-  if (LATEST_CURSOR_SEQ === null || seq > LATEST_CURSOR_SEQ) {
-    LATEST_CURSOR_SEQ = seq;
+export class SseStreamDeadlineError extends Error {
+  constructor(message = 'SSE stream deadline reached') {
+    super(message);
+    this.name = 'SseStreamDeadlineError';
   }
+}
+
+class SseStreamClosedError extends Error {
+  constructor(message = 'SSE stream is closed') {
+    super(message);
+    this.name = 'SseStreamClosedError';
+  }
+}
+
+export interface SseBackpressureStream {
+  readable: ReadableStream<Uint8Array>;
+  write(chunk: string, deadlineAt: number): Promise<void>;
+  close(deadlineAt: number): Promise<void>;
+  abort(reason: unknown): void;
+}
+
+/**
+ * Create a byte stream whose producer cannot outrun its consumer.
+ *
+ * Cloudflare's TransformStream is an identity stream. Awaiting both `ready`
+ * and `write` means a frame is only considered accepted after downstream
+ * capacity is available. The explicit single-write guard prevents accidental
+ * callers from building a second application-level queue around the writer.
+ */
+export function createSseBackpressureStream(
+  slowReaderTimeoutMs = SSE_SLOW_READER_TIMEOUT_MS,
+): SseBackpressureStream {
+  const stream = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = stream.writable.getWriter();
+  const encoder = new TextEncoder();
+  let state: 'open' | 'closing' | 'closed' | 'aborted' = 'open';
+  let writeInFlight = false;
+
+  const abort = (reason: unknown): void => {
+    if (state === 'closed' || state === 'aborted') return;
+    state = 'aborted';
+    // Do not await abort: on the Streams standard it can remain pending until
+    // the readable side observes the error. Initiating it immediately rejects
+    // the pending write and discards buffered chunks without extending the
+    // request deadline.
+    void writer.abort(reason).catch(() => {});
+  };
+
+  return {
+    readable: stream.readable,
+    async write(chunk: string, deadlineAt: number): Promise<void> {
+      if (state !== 'open') throw new SseStreamClosedError();
+      if (writeInFlight) throw new SseStreamClosedError('concurrent SSE write rejected');
+      writeInFlight = true;
+      try {
+        const deadlineRemainingMs = deadlineAt - Date.now();
+        if (deadlineRemainingMs <= 0) throw new SseStreamDeadlineError();
+        const budgetMs = Math.min(slowReaderTimeoutMs, deadlineRemainingMs);
+        const timeoutError = deadlineRemainingMs <= slowReaderTimeoutMs
+          ? new SseStreamDeadlineError()
+          : new SseSlowReaderError();
+        const encoded = encoder.encode(chunk);
+        await settleWithin(
+          (async () => {
+            await writer.ready;
+            await writer.write(encoded);
+          })(),
+          budgetMs,
+          timeoutError,
+        );
+      } catch (err) {
+        abort(err);
+        throw err;
+      } finally {
+        writeInFlight = false;
+      }
+    },
+    async close(deadlineAt: number): Promise<void> {
+      if (state === 'closed' || state === 'aborted') return;
+      if (writeInFlight) throw new SseStreamClosedError('cannot close during an SSE write');
+      state = 'closing';
+      try {
+        const remainingMs = deadlineAt - Date.now();
+        if (remainingMs <= 0) throw new SseStreamDeadlineError();
+        await settleWithin(writer.close(), remainingMs, new SseStreamDeadlineError());
+        state = 'closed';
+      } catch (err) {
+        abort(err);
+        throw err;
+      }
+    },
+    abort,
+  };
+}
+
+export interface SseStreamTimingOptions {
+  maxStreamMs?: number;
+  pollIntervalMs?: number;
+  slowReaderTimeoutMs?: number;
+  reconnectGraceMs?: number;
 }
 
 export async function openSseStream(
@@ -98,15 +201,9 @@ export async function openSseStream(
   subscriptionId: string,
   since?: number,
   streamToken?: string,
+  requestIp = 'unknown',
+  timingOptions: SseStreamTimingOptions = {},
 ): Promise<Response> {
-  if (LATEST_CURSOR_SEQ === null) {
-    try {
-      await refreshLatestCursorSeq(env.DB);
-    } catch (err) {
-      console.warn('sse: failed to fetch initial LATEST_CURSOR_SEQ', (err as Error).message);
-    }
-  }
-
   const subRow = await get<SubscriptionRow>(
     env.DB,
     'SELECT id, client_id, delivery, target_url, secret, filters, cursor, active, created_at FROM subscriptions WHERE id = ?',
@@ -138,69 +235,117 @@ export async function openSseStream(
     });
   }
 
-  const encoder = new TextEncoder();
+  // Authentication deliberately precedes rate counters and lease writes so an
+  // attacker cannot consume another subscription's capacity with a guessed id.
+  const subscriptionRate = await rateLimit(
+    env, 'sse-open-subscription', sub.id, SSE_SUBSCRIPTION_OPEN_RATE, 60,
+  );
+  const ipRate = await rateLimit(env, 'sse-open-ip', requestIp, SSE_IP_OPEN_RATE, 60);
+  if (!subscriptionRate.ok || !ipRate.ok) {
+    const retryAfter = Math.max(subscriptionRate.retryAfterSec, ipRate.retryAfterSec, 1);
+    return new Response(JSON.stringify({ error: 'stream open rate limit exceeded' }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json', 'Retry-After': String(retryAfter) },
+    });
+  }
+
+  let leaseId: string;
+  try {
+    leaseId = await acquireSseLease(env, sub.id, sub.clientId);
+  } catch (err) {
+    if (err instanceof SseLeaseQuotaError) {
+      return new Response(JSON.stringify({ error: err.message }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': '60' },
+      });
+    }
+    throw err;
+  }
+
+  const maxStreamMs = positiveDuration(timingOptions.maxStreamMs, MAX_STREAM_MS);
+  const pollIntervalMs = positiveDuration(timingOptions.pollIntervalMs, POLL_INTERVAL_MS);
+  const slowReaderTimeoutMs = positiveDuration(
+    timingOptions.slowReaderTimeoutMs,
+    SSE_SLOW_READER_TIMEOUT_MS,
+  );
+  const reconnectGraceMs = Math.min(
+    positiveDuration(timingOptions.reconnectGraceMs, SSE_RECONNECT_GRACE_MS),
+    maxStreamMs,
+  );
+  const startedAt = Date.now();
+  const deadlineAt = startedAt + maxStreamMs;
   let cursor = Number.isFinite(since) ? Number(since) : 0;
   let closed = false;
+  const stream = createSseBackpressureStream(slowReaderTimeoutMs);
+  const send = async (chunk: string): Promise<void> => {
+    if (closed) throw new SseStreamClosedError();
+    await stream.write(chunk, deadlineAt);
+  };
 
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const send = (chunk: string): void => {
-        if (closed) return;
+  const produce = async (): Promise<void> => {
+    // Opening comment + initial cursor so clients know the resume point.
+    await send(`: connected\n`);
+    await send(`event: cursor\ndata: ${cursor}\n\n`);
+
+    // 1) Catch-up replay (drain everything newer than `since`). D1 is the
+    // source of truth; module globals are isolate-local and cannot safely gate
+    // this query in a distributed Worker.
+    cursor = await drainSseBacklog(env, sub, cursor, send);
+
+    // 2) Live poll loop. Stop early enough to enqueue a resumable reconnect
+    // frame, while the outer hard deadline still guarantees termination if a
+    // D1 operation or downstream write stalls.
+    while (!closed) {
+      const remainingBeforeSleep = deadlineAt - Date.now();
+      if (remainingBeforeSleep <= reconnectGraceMs) break;
+      await sleep(Math.min(pollIntervalMs, remainingBeforeSleep - reconnectGraceMs));
+      if (closed || Date.now() >= deadlineAt - reconnectGraceMs) break;
+      const before = cursor;
+      cursor = await drainSseBacklog(env, sub, cursor, send);
+      if (cursor === before) {
+        // Idle tick — heartbeat so intermediaries keep the socket open.
+        await send(`event: ping\ndata: ${Date.now()}\n\n`);
+      }
+    }
+
+    if (!closed && Date.now() < deadlineAt) {
+      await send(`event: reconnect\ndata: ${JSON.stringify({ since: cursor })}\n\n`);
+    }
+  };
+
+  // The response body keeps this producer alive in Workers. The promise is
+  // explicitly handled here: a hard race bounds the entire producer, including
+  // D1 calls, and the finally block always terminates the transport and lease.
+  void (async () => {
+    let abortReason: unknown;
+    try {
+      await settleWithin(produce(), deadlineAt - Date.now(), new SseStreamDeadlineError());
+    } catch (err) {
+      if (isTerminalStreamError(err)) {
+        abortReason = err;
+      } else {
         try {
-          controller.enqueue(encoder.encode(chunk));
-        } catch {
-          closed = true;
-        }
-      };
-
-      // Opening comment + initial cursor so clients know the resume point.
-      send(`: connected\n`);
-      send(`event: cursor\ndata: ${cursor}\n\n`);
-
-      const startedAt = Date.now();
-
-      try {
-        // 1) Catch-up replay (drain everything newer than `since`).
-        if (LATEST_CURSOR_SEQ === null || cursor < LATEST_CURSOR_SEQ) {
-          cursor = await drain(env, sub, cursor, send);
-        }
-
-        // 2) Live poll loop.
-        while (!closed && Date.now() - startedAt < MAX_STREAM_MS) {
-          await sleep(POLL_INTERVAL_MS);
-          if (closed) break;
-          const before = cursor;
-          if (LATEST_CURSOR_SEQ !== null && cursor >= LATEST_CURSOR_SEQ) {
-            send(`event: ping\ndata: ${Date.now()}\n\n`);
-          } else {
-            cursor = await drain(env, sub, cursor, send);
-            if (cursor === before) {
-              // Idle tick — heartbeat so intermediaries keep the socket open.
-              send(`event: ping\ndata: ${Date.now()}\n\n`);
-            }
-          }
-        }
-
-        if (!closed) {
-          // Hit the duration budget — ask the client to reconnect and resume.
-          send(`event: reconnect\ndata: ${JSON.stringify({ since: cursor })}\n\n`);
-        }
-      } catch (err) {
-        send(`event: error\ndata: ${JSON.stringify({ message: (err as Error).message })}\n\n`);
-      } finally {
-        try {
-          controller.close();
-        } catch {
-          /* already closed */
+          await send(`event: error\ndata: ${JSON.stringify({ message: errorMessage(err) })}\n\n`);
+        } catch (writeErr) {
+          abortReason = writeErr;
         }
       }
-    },
-    cancel() {
+    } finally {
       closed = true;
-    },
-  });
+      if (abortReason !== undefined) {
+        stream.abort(abortReason);
+      } else {
+        try {
+          await stream.close(deadlineAt);
+        } catch (err) {
+          stream.abort(err);
+        }
+      }
+      await releaseSseLease(env, leaseId);
+    }
+  })();
 
-  return new Response(stream, {
+  return new Response(stream.readable, {
     status: 200,
     headers: {
       'Content-Type': 'text/event-stream; charset=utf-8',
@@ -211,20 +356,58 @@ export async function openSseStream(
   });
 }
 
+export class SseLeaseQuotaError extends Error {}
+
+/**
+ * Race-safe connection admission. D1 triggers enforce both caps against the
+ * same durable insert; expired rows are ignored and opportunistically removed.
+ */
+export async function acquireSseLease(
+  env: Env,
+  subscriptionId: string,
+  clientId: string,
+  now = new Date(),
+): Promise<string> {
+  const id = prefixedId('sse');
+  const createdAt = now.toISOString();
+  const expiresAt = new Date(now.getTime() + SSE_LEASE_MS).toISOString();
+  await run(env.DB, 'DELETE FROM sse_leases WHERE expires_at <= ?', [createdAt]).catch(() => {});
+  try {
+    await run(
+      env.DB,
+      `INSERT INTO sse_leases (id, subscription_id, client_id, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [id, subscriptionId, clientId, expiresAt, createdAt],
+    );
+  } catch (err) {
+    const message = (err as Error).message;
+    if (/sse .* connection quota exceeded/i.test(message)) {
+      throw new SseLeaseQuotaError('too many concurrent streams for this subscription or client');
+    }
+    throw err;
+  }
+  return id;
+}
+
+export async function releaseSseLease(env: Env, leaseId: string): Promise<void> {
+  await run(env.DB, 'DELETE FROM sse_leases WHERE id = ?', [leaseId]).catch(() => {});
+}
+
 /**
  * Emit every matching transaction with cursor_seq > `cursor`, paging through the
  * backlog. Returns the new high-water cursor (max cursor_seq seen, matched or
  * not, so we never re-scan rows that were merely filtered out).
  */
-async function drain(
+export async function drainSseBacklog(
   env: Env,
   sub: Subscription,
   cursor: number,
-  send: (chunk: string) => void,
+  send: (chunk: string) => Promise<void>,
 ): Promise<number> {
   let hwm = cursor;
-  // Loop pages until a short page (fewer than PAGE_SIZE rows) is returned.
-  for (;;) {
+  // Drain a bounded number of pages. If more history remains, the next poll
+  // tick continues from this exact high-water cursor without gaps.
+  for (let page = 0; page < MAX_DRAIN_PAGES_PER_TICK; page += 1) {
     const rows = await all<
       FeedTransactionRow & { __chamber: string | null; __sector: string | null; __bucket: string | null }
     >(
@@ -251,9 +434,13 @@ async function drain(
         sector: row.__sector ?? null,
         marketCapBucket: row.__bucket ?? null,
       };
+      if (matchesFiltersWithContext(tx, sub.filters, ctx)) {
+        // Never acknowledge a matching cursor until its frame has crossed the
+        // backpressure boundary. If the reader stalls, reconnect resumes from
+        // the caller's prior cursor and replays this transaction.
+        await send(formatTradeEvent(tx));
+      }
       hwm = Math.max(hwm, tx.cursorSeq);
-      if (!matchesFiltersWithContext(tx, sub.filters, ctx)) continue;
-      send(formatTradeEvent(tx));
     }
 
     if (rows.length < PAGE_SIZE) break;
@@ -263,4 +450,31 @@ async function drain(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function settleWithin<T>(promise: Promise<T>, timeoutMs: number, timeoutError: Error): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw timeoutError;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(timeoutError), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+function positiveDuration(value: number | undefined, fallback: number): number {
+  return Number.isFinite(value) && Number(value) > 0 ? Number(value) : fallback;
+}
+
+function isTerminalStreamError(err: unknown): boolean {
+  return err instanceof SseSlowReaderError
+    || err instanceof SseStreamDeadlineError
+    || err instanceof SseStreamClosedError;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

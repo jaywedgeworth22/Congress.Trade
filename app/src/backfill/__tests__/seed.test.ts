@@ -271,4 +271,46 @@ describe('runSeedBackfill batched writes (subrequest cap)', () => {
     expect(Math.max(...batchSizes)).toBeLessThanOrEqual(51);
     expect(batchSizes.reduce((a, b) => a + b, 0)).toBe(240);
   });
+
+  it('materializes est_value on insert and refreshes it during seed reconciliation', async () => {
+    const prepared: Array<{ sql: string; params: unknown[] }> = [];
+    const db = {
+      prepare(sql: string) {
+        const captured = { sql, params: [] as unknown[] };
+        prepared.push(captured);
+        return {
+          bind(...params: unknown[]) {
+            captured.params = params;
+            return this;
+          },
+          async all() {
+            return { results: [] };
+          },
+          async run() {
+            return { meta: { changes: 1 } };
+          },
+        };
+      },
+      async batch(stmts: unknown[]) {
+        return stmts.map(() => ({ meta: { changes: 1 } }));
+      },
+    };
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify([SENATE_REC]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as unknown as typeof fetch;
+
+    const res = await runSeedBackfill({ DB: db } as unknown as Env, {
+      chambers: ['senate'],
+      fetchImpl,
+    });
+
+    expect(res.errors).toEqual([]);
+    const txUpsert = prepared.find(({ sql }) => sql.includes('INSERT INTO transactions'));
+    expect(txUpsert).toBeDefined();
+    expect(txUpsert?.sql).toContain('first_seen_at, filed_date, est_value');
+    expect(txUpsert?.sql).toContain('est_value = excluded.est_value');
+    expect(txUpsert?.params.at(-1)).toBe((250001 + 500000) / 2);
+  });
 });

@@ -3,7 +3,11 @@ import { buildRestRouter } from '../rest';
 import type { Env } from '../../shared/types';
 import type { SubscriptionRow } from '../rows';
 
-function makeEnv(seed: SubscriptionRow[] = [], overrides: Partial<Env> = {}) {
+function makeEnv(
+  seed: SubscriptionRow[] = [],
+  overrides: Partial<Env> = {},
+  opts: { quotaRace?: boolean } = {},
+) {
   const rows = new Map(seed.map((row) => [row.id, { ...row }]));
 
   const prepare = (sql: string) => ({
@@ -13,6 +17,18 @@ function makeEnv(seed: SubscriptionRow[] = [], overrides: Partial<Env> = {}) {
       return this;
     },
     async first<T>() {
+      if (/SELECT \* FROM users WHERE id = \?/i.test(sql)) {
+        return ({
+          id: 'user_1', email: 'user@example.com', name: 'User', picture: null,
+          google_sub: null, email_verified: 1, created_at: '2026-01-01T00:00:00.000Z',
+          last_login_at: null,
+        } as T);
+      }
+      if (/COUNT\(\*\) AS total/i.test(sql)) {
+        const clientId = String(this.params[0]);
+        const owned = Array.from(rows.values()).filter((row) => row.client_id === clientId);
+        return ({ total: owned.length, active: owned.filter((row) => row.active === 1).length } as T);
+      }
       if (/FROM subscriptions WHERE id = \?/i.test(sql)) {
         return (rows.get(String(this.params[0])) ?? null) as T | null;
       }
@@ -49,6 +65,7 @@ function makeEnv(seed: SubscriptionRow[] = [], overrides: Partial<Env> = {}) {
           created_at: String(createdAt),
         });
       } else if (/UPDATE subscriptions SET active = \? WHERE id = \?/i.test(sql)) {
+        if (opts.quotaRace) throw new Error('D1_ERROR: subscription active quota exceeded');
         const row = rows.get(String(this.params[1]));
         if (row) row.active = this.params[0] ? 1 : 0;
       }
@@ -59,7 +76,10 @@ function makeEnv(seed: SubscriptionRow[] = [], overrides: Partial<Env> = {}) {
   return {
     env: {
       DB: { prepare } as unknown as D1Database,
-      CONFIG_KV: { get: async () => null, put: async () => {}, delete: async () => {} },
+      CONFIG_KV: {
+        get: async (key: string) => key === 'sess:user-token' ? JSON.stringify({ userId: 'user_1' }) : null,
+        put: async () => {}, delete: async () => {},
+      },
       ...overrides,
     } as unknown as Env,
     rows,
@@ -69,13 +89,14 @@ function makeEnv(seed: SubscriptionRow[] = [], overrides: Partial<Env> = {}) {
 async function createSubscription(
   env: Env,
   body: Record<string, unknown> = { clientId: 'client_1', delivery: 'sse', filters: {} },
+  requestUrl = 'http://localhost/subscriptions',
 ) {
   const app = buildRestRouter();
   return app.request(
-    'http://localhost/subscriptions',
+    requestUrl,
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: 'Bearer user-token' },
       body: JSON.stringify(body),
     },
     env,
@@ -83,6 +104,71 @@ async function createSubscription(
 }
 
 describe('subscription routes', () => {
+  it('rejects oversized secrets and webhook targets before persistence or DNS', async () => {
+    const { env } = makeEnv();
+    const secret = await createSubscription(env, {
+      delivery: 'sse', filters: {}, secret: 's'.repeat(257),
+    });
+    expect(secret.status).toBe(400);
+
+    const target = await createSubscription(env, {
+      delivery: 'webhook', filters: {}, targetUrl: `https://example.com/${'x'.repeat(2049)}`,
+    });
+    expect(target.status).toBe(400);
+  });
+
+  it('requires authentication for every durable subscription', async () => {
+    const { env } = makeEnv();
+    const app = buildRestRouter();
+    const res = await app.request('http://localhost/subscriptions', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ delivery: 'sse', filters: {} }),
+    }, env);
+    expect(res.status).toBe(401);
+  });
+
+  it('enforces a durable per-user total subscription quota', async () => {
+    const seed: SubscriptionRow[] = Array.from({ length: 20 }, (_, i) => ({
+      id: `sub_${i}`, client_id: 'user:user_1', delivery: 'sse', target_url: null,
+      secret: `secret_${i}`, filters: '{}', cursor: 0, active: i < 10 ? 1 : 0,
+      created_at: '2026-01-01T00:00:00.000Z',
+    }));
+    const { env } = makeEnv(seed);
+    const res = await createSubscription(env);
+    expect(res.status).toBe(409);
+  });
+
+  it('returns 409 when the active-quota trigger wins an update race', async () => {
+    const seed: SubscriptionRow = {
+      id: 'sub_inactive', client_id: 'user:user_1', delivery: 'sse', target_url: null,
+      secret: 'whsec_inactive_subscription', filters: '{}', cursor: 0, active: 0,
+      created_at: '2026-01-01T00:00:00.000Z',
+    };
+    const { env } = makeEnv([seed], {}, { quotaRace: true });
+    const app = buildRestRouter();
+    const res = await app.request('http://localhost/subscriptions/sub_inactive', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-subscription-secret': seed.secret ?? '' },
+      body: JSON.stringify({ active: true }),
+    }, env);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain('active subscription limit');
+  });
+
+  it('rejects an oversized target on update', async () => {
+    const seed: SubscriptionRow = {
+      id: 'sub_webhook', client_id: 'user:user_1', delivery: 'webhook',
+      target_url: 'https://example.com/hook', secret: 'whsec_update_secret', filters: '{}',
+      cursor: 0, active: 1, created_at: '2026-01-01T00:00:00.000Z',
+    };
+    const { env } = makeEnv([seed]);
+    const response = await buildRestRouter().request('http://localhost/subscriptions/sub_webhook', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-subscription-secret': seed.secret ?? '' },
+      body: JSON.stringify({ targetUrl: `https://example.com/${'x'.repeat(2049)}` }),
+    }, env);
+    expect(response.status).toBe(400);
+  });
   it('returns a generated secret once when creating an SSE subscription', async () => {
     const { env } = makeEnv();
     const res = await createSubscription(env);
@@ -127,16 +213,15 @@ describe('subscription routes', () => {
   });
 
   it('requires a token for SSE streams and rejects non-SSE subscriptions', async () => {
-    const { env } = makeEnv();
+    const { env, rows } = makeEnv();
     const sse = (await (await createSubscription(env)).json()) as { id: string; secret: string };
-    const webhook = (await (
-      await createSubscription(env, {
-        clientId: 'client_2',
-        delivery: 'webhook',
-        targetUrl: 'https://example.com/hook',
-        filters: {},
-      })
-    ).json()) as { id: string; secret: string };
+    const webhook = {
+      id: 'sub_webhook', secret: 'whsec_webhook_test_secret',
+    };
+    rows.set(webhook.id, {
+      id: webhook.id, client_id: 'user:u1', delivery: 'webhook', target_url: 'https://example.com/hook',
+      secret: webhook.secret, filters: '{}', cursor: 0, active: 1, created_at: new Date().toISOString(),
+    });
     const app = buildRestRouter();
 
     const missingToken = await app.request(
@@ -166,7 +251,7 @@ describe('subscription routes', () => {
     expect(((await res.json()) as { error: string }).error).toContain('https://');
   });
 
-  it('allows localhost webhook target URLs only for local development requests', async () => {
+  it('allows an authenticated localhost webhook target only in local development', async () => {
     const { env } = makeEnv();
     const res = await createSubscription(env, {
       clientId: 'client_local',
@@ -183,14 +268,15 @@ describe('subscription routes', () => {
     'https://192.168.1.10/hook',
     'https://169.254.169.254/latest/meta-data',
     'https://[fe80::1]/hook',
+    'https://93.184.216.34/hook',
+    'https://[2606:2800:220:1:248:1893:25c8:1946]/hook',
   ])('rejects unsafe production webhook target URL %s', async (targetUrl) => {
     const { env } = makeEnv([], { APP_BASE_URL: 'https://congress.trade' });
-    const res = await createSubscription(env, {
-      clientId: 'client_prod',
-      delivery: 'webhook',
-      targetUrl,
-      filters: {},
-    });
+    const res = await createSubscription(
+      env,
+      { clientId: 'client_prod', delivery: 'webhook', targetUrl, filters: {} },
+      'https://congress.trade/subscriptions',
+    );
     expect(res.status).toBe(400);
   });
 });

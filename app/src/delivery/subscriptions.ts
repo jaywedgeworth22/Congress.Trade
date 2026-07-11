@@ -15,6 +15,114 @@ import { mapSubscription, type SubscriptionRow } from './rows';
 const SELECT_COLS =
   'id, client_id, delivery, target_url, secret, filters, cursor, active, created_at';
 
+export const MAX_SUBSCRIPTIONS_PER_USER = 20;
+export const MAX_ACTIVE_SUBSCRIPTIONS_PER_USER = 10;
+export const MAX_SUBSCRIPTION_SECRET_LENGTH = 256;
+export const MAX_WEBHOOK_TARGET_URL_LENGTH = 2048;
+
+export class SubscriptionQuotaError extends Error {}
+
+export function subscriptionSecretError(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'string') return 'secret must be a string';
+  if (value.length < 16 || value.length > MAX_SUBSCRIPTION_SECRET_LENGTH) {
+    return `secret must be 16-${MAX_SUBSCRIPTION_SECRET_LENGTH} characters`;
+  }
+  return null;
+}
+
+export function webhookTargetLengthError(value: string | null): string | null {
+  return value && value.length > MAX_WEBHOOK_TARGET_URL_LENGTH
+    ? `targetUrl must be at most ${MAX_WEBHOOK_TARGET_URL_LENGTH} characters`
+    : null;
+}
+
+function normalizedSubscriptionQuotaError(err: unknown): SubscriptionQuotaError | null {
+  if (err instanceof SubscriptionQuotaError) return err;
+  const message = err instanceof Error ? err.message : String(err);
+  if (/subscription total quota exceeded/i.test(message)) {
+    return new SubscriptionQuotaError(`subscription limit reached (${MAX_SUBSCRIPTIONS_PER_USER} total)`);
+  }
+  if (/subscription active quota exceeded/i.test(message)) {
+    return new SubscriptionQuotaError(`active subscription limit reached (${MAX_ACTIVE_SUBSCRIPTIONS_PER_USER})`);
+  }
+  return null;
+}
+
+async function runSubscriptionWrite(
+  env: Env,
+  sql: string,
+  params: Array<string | number | null>,
+): Promise<void> {
+  try {
+    await run(env.DB, sql, params);
+  } catch (err) {
+    const quotaError = normalizedSubscriptionQuotaError(err);
+    if (quotaError) throw quotaError;
+    throw err;
+  }
+}
+
+/** Durable D1-backed quota preflight; migration triggers are the race-safe backstop. */
+export async function assertSubscriptionQuota(
+  env: Env,
+  clientId: string,
+  opts: { creating?: boolean; activating?: boolean } = {},
+): Promise<void> {
+  const row = await get<{ total: number; active: number }>(
+    env.DB,
+    `SELECT COUNT(*) AS total,
+            COALESCE(SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END), 0) AS active
+       FROM subscriptions WHERE client_id = ?`,
+    [clientId],
+  );
+  if (opts.creating && (row?.total ?? 0) >= MAX_SUBSCRIPTIONS_PER_USER) {
+    throw new SubscriptionQuotaError(`subscription limit reached (${MAX_SUBSCRIPTIONS_PER_USER} total)`);
+  }
+  if ((opts.creating || opts.activating) && (row?.active ?? 0) >= MAX_ACTIVE_SUBSCRIPTIONS_PER_USER) {
+    throw new SubscriptionQuotaError(`active subscription limit reached (${MAX_ACTIVE_SUBSCRIPTIONS_PER_USER})`);
+  }
+}
+
+export function validateSubscriptionFilters(value: unknown):
+  | { ok: true; filters: SubscriptionFilters }
+  | { ok: false; error: string } {
+  if (value == null) return { ok: true, filters: {} };
+  if (typeof value !== 'object' || Array.isArray(value)) return { ok: false, error: 'filters must be an object' };
+  const raw = value as Record<string, unknown>;
+  const allowed = new Set(['members', 'tickers', 'chambers', 'minAmount', 'maxAmount', 'sides', 'sectors', 'marketCapBuckets']);
+  if (Object.keys(raw).some((key) => !allowed.has(key))) return { ok: false, error: 'filters contain unsupported fields' };
+
+  const strings = (key: string, limit: number, maxLength: number): string[] | string => {
+    const input = raw[key];
+    if (input == null) return [];
+    if (!Array.isArray(input) || input.length > limit || input.some((v) => typeof v !== 'string' || !v.trim() || v.length > maxLength)) {
+      return `${key} must contain at most ${limit} bounded strings`;
+    }
+    return [...new Set(input.map((v) => (v as string).trim()))];
+  };
+  const members = strings('members', 50, 64); if (typeof members === 'string') return { ok: false, error: members };
+  const tickersRaw = strings('tickers', 50, 20); if (typeof tickersRaw === 'string') return { ok: false, error: tickersRaw };
+  const chambers = strings('chambers', 2, 10); if (typeof chambers === 'string') return { ok: false, error: chambers };
+  const sides = strings('sides', 3, 1); if (typeof sides === 'string') return { ok: false, error: sides };
+  const sectors = strings('sectors', 25, 100); if (typeof sectors === 'string') return { ok: false, error: sectors };
+  const buckets = strings('marketCapBuckets', 6, 10); if (typeof buckets === 'string') return { ok: false, error: buckets };
+  if (chambers.some((v) => v !== 'house' && v !== 'senate')) return { ok: false, error: 'chambers contains an invalid value' };
+  if (sides.some((v) => v !== 'P' && v !== 'S' && v !== 'E')) return { ok: false, error: 'sides contains an invalid value' };
+  if (buckets.some((v) => !['mega', 'large', 'mid', 'small', 'micro', 'nano'].includes(v))) return { ok: false, error: 'marketCapBuckets contains an invalid value' };
+  const min = raw.minAmount; const max = raw.maxAmount;
+  if (min != null && (typeof min !== 'number' || !Number.isFinite(min) || min < 0)) return { ok: false, error: 'minAmount must be a non-negative number' };
+  if (max != null && (typeof max !== 'number' || !Number.isFinite(max) || max < 0)) return { ok: false, error: 'maxAmount must be a non-negative number' };
+  if (typeof min === 'number' && typeof max === 'number' && min > max) return { ok: false, error: 'minAmount cannot exceed maxAmount' };
+  return { ok: true, filters: {
+    ...(members.length ? { members } : {}), ...(tickersRaw.length ? { tickers: [...new Set(tickersRaw.map((v) => v.toUpperCase()))] } : {}),
+    ...(chambers.length ? { chambers: chambers as SubscriptionFilters['chambers'] } : {}),
+    ...(typeof min === 'number' ? { minAmount: min } : {}), ...(typeof max === 'number' ? { maxAmount: max } : {}),
+    ...(sides.length ? { sides: sides as SubscriptionFilters['sides'] } : {}), ...(sectors.length ? { sectors } : {}),
+    ...(buckets.length ? { marketCapBuckets: buckets } : {}),
+  } };
+}
+
 /**
  * Generate a webhook signing secret (256 bits of entropy, hex). Uses WebCrypto
  * so it is Workers-compatible.
@@ -38,6 +146,10 @@ export async function createSubscription(
   input: Omit<Subscription, 'id' | 'cursor' | 'active' | 'createdAt'> &
     Partial<Pick<Subscription, 'cursor' | 'active'>>,
 ): Promise<Subscription> {
+  const suppliedSecretError = input.secret == null ? null : subscriptionSecretError(input.secret);
+  if (suppliedSecretError) throw new Error(suppliedSecretError);
+  const targetLengthError = webhookTargetLengthError(input.targetUrl ?? null);
+  if (targetLengthError) throw new Error(targetLengthError);
   const id = prefixedId('sub');
   const createdAt = new Date().toISOString();
   const cursor = input.cursor ?? 0;
@@ -56,22 +168,22 @@ export async function createSubscription(
     createdAt,
   };
 
-  await run(
-    env.DB,
-    `INSERT INTO subscriptions (${SELECT_COLS})
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      sub.id,
-      sub.clientId,
-      sub.delivery,
-      sub.targetUrl,
-      sub.secret,
-      JSON.stringify(sub.filters),
-      sub.cursor,
-      sub.active ? 1 : 0,
-      sub.createdAt,
-    ],
-  );
+  await runSubscriptionWrite(
+      env,
+      `INSERT INTO subscriptions (${SELECT_COLS})
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        sub.id,
+        sub.clientId,
+        sub.delivery,
+        sub.targetUrl,
+        sub.secret,
+        JSON.stringify(sub.filters),
+        sub.cursor,
+        sub.active ? 1 : 0,
+        sub.createdAt,
+      ],
+    );
 
   return sub;
 }
@@ -104,6 +216,12 @@ export async function updateSubscription(
   id: string,
   patch: Partial<Pick<Subscription, 'filters' | 'targetUrl' | 'secret' | 'active' | 'cursor'>>,
 ): Promise<Subscription> {
+  const suppliedSecretError = patch.secret == null ? null : subscriptionSecretError(patch.secret);
+  if (suppliedSecretError) throw new Error(suppliedSecretError);
+  const targetLengthError = patch.targetUrl === undefined
+    ? null
+    : webhookTargetLengthError(patch.targetUrl);
+  if (targetLengthError) throw new Error(targetLengthError);
   const sets: string[] = [];
   const params: Array<string | number | null> = [];
 
@@ -130,8 +248,8 @@ export async function updateSubscription(
 
   if (sets.length > 0) {
     params.push(id);
-    await run(
-      env.DB,
+    await runSubscriptionWrite(
+      env,
       `UPDATE subscriptions SET ${sets.join(', ')} WHERE id = ?`,
       params,
     );

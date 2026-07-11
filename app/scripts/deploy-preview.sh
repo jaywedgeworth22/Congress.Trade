@@ -7,13 +7,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="wrangler.preview.toml"
-if [ ! -f "$CONFIG" ]; then
-  echo "$CONFIG is missing; provisioning isolated preview resources first."
+if [ ! -f "$CONFIG" ] \
+  || ! grep -q 'global_fetch_strictly_public' "$CONFIG" \
+  || ! grep -q 'queue = "congress-feed-preview-ingest-dlq"' "$CONFIG" \
+  || ! grep -q 'queue = "congress-feed-preview-delivery-dlq"' "$CONFIG"; then
+  echo "$CONFIG is missing or stale; provisioning/refreshing isolated preview resources first."
   bash scripts/provision-preview.sh
 fi
 
 npm run typecheck
 npm test
+npx wrangler d1 migrations apply DB --remote --config "$CONFIG"
+npx wrangler d1 execute DB --remote --config "$CONFIG" --file scripts/seed-preview-fixtures.sql
 npx wrangler deploy --config "$CONFIG"
 
 PREVIEW_BASE="${PREVIEW_APP_BASE_URL:-$(sed -nE 's/^[[:space:]]*APP_BASE_URL[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$CONFIG" | tail -1)}"
