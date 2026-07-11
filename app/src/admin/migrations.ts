@@ -82,6 +82,8 @@ export const STRIPE_EVENT_SCHEMA_STATEMENTS = [
  * tests. Keep this in the same order as file migrations 0029 through 0032.
  */
 export const POST_0024_SCHEMA_STATEMENTS = [
+  // 0025_extraction_runs_usage.sql
+  'ALTER TABLE extraction_runs ADD COLUMN usage_json TEXT',
   ...EST_VALUE_SCHEMA_STATEMENTS,
   ...RELIABILITY_SCHEMA_STATEMENTS,
   ...STRIPE_EVENT_SCHEMA_STATEMENTS,

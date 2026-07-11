@@ -27,6 +27,7 @@ interface ExtractionRunRow {
   latency_ms: number | null;
   avg_confidence: number | null;
   result_json: string | null;
+  usage_json: string | null;
   created_at: string;
 }
 
@@ -92,7 +93,8 @@ function makeEnv() {
           latency_ms: p[8] == null ? null : Number(p[8]),
           avg_confidence: p[9] == null ? null : Number(p[9]),
           result_json: p[10] == null ? null : String(p[10]),
-          created_at: String(p[11]),
+          usage_json: p[11] == null ? null : String(p[11]),
+          created_at: String(p[12]),
         });
       }
       return { success: true, meta: { changes: 1 } };
@@ -102,6 +104,7 @@ function makeEnv() {
   const env = {
     ADMIN_TOKEN: 'test-admin',
     ANTHROPIC_API_KEY: 'sk-ant-test',
+    OPENAI_API_KEY: 'sk-openai-test',
     DB: { prepare } as unknown as D1Database,
     RAW_FILES: {
       get: async () => ({ arrayBuffer: async () => new TextEncoder().encode('%PDF-1.4 fake').buffer }),
@@ -179,5 +182,88 @@ describe('extraction_runs E2E: bake-off → store → dashboard', () => {
     const extBody = (await ext.json()) as { runs: Array<{ provider: string; rows: Array<{ ticker: string }> }> };
     expect(extBody.runs).toHaveLength(1);
     expect(extBody.runs[0].rows[0].ticker).toBe('AAPL');
+  });
+});
+
+describe('extraction_runs E2E: openai token usage capture', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('persists usage_json when the openai response includes a usage field', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).includes('api.openai.com')) {
+          return {
+            ok: true,
+            json: async () => ({
+              choices: [{ message: { content: '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}' } }],
+              usage: {
+                prompt_tokens: 1200,
+                completion_tokens: 80,
+                prompt_tokens_details: { cached_tokens: 300 },
+              },
+            }),
+          } as unknown as Response;
+        }
+        return { ok: false, status: 404, text: async () => 'not stubbed' } as unknown as Response;
+      }),
+    );
+
+    const { env, extractionRuns } = makeEnv();
+    const bake = await app.request(
+      '/bakeoff',
+      {
+        method: 'POST',
+        headers: { ...AUTH, 'content-type': 'application/json' },
+        body: JSON.stringify({ docIds: ['H-TEST-1'], models: [{ provider: 'openai', model: 'gpt-4o' }] }),
+      },
+      env,
+    );
+    expect(bake.status).toBe(200);
+    const bakeBody = (await bake.json()) as { ok: boolean; persisted: boolean };
+    expect(bakeBody.ok).toBe(true);
+    expect(bakeBody.persisted).toBe(true);
+
+    expect(extractionRuns).toHaveLength(1);
+    expect(extractionRuns[0]).toMatchObject({ doc_id: 'H-TEST-1', provider: 'openai', ok: 1, row_count: 1 });
+    expect(JSON.parse(extractionRuns[0].usage_json!)).toEqual({
+      promptTokens: 1200,
+      completionTokens: 80,
+      cachedTokens: 300,
+    });
+  });
+
+  it('persists usage_json as null when the openai response omits usage', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).includes('api.openai.com')) {
+          return {
+            ok: true,
+            json: async () => ({
+              choices: [{ message: { content: '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}' } }],
+              // no `usage` field — older models / some error paths omit it.
+            }),
+          } as unknown as Response;
+        }
+        return { ok: false, status: 404, text: async () => 'not stubbed' } as unknown as Response;
+      }),
+    );
+
+    const { env, extractionRuns } = makeEnv();
+    const bake = await app.request(
+      '/bakeoff',
+      {
+        method: 'POST',
+        headers: { ...AUTH, 'content-type': 'application/json' },
+        body: JSON.stringify({ docIds: ['H-TEST-1'], models: [{ provider: 'openai', model: 'gpt-4o' }] }),
+      },
+      env,
+    );
+    expect(bake.status).toBe(200);
+
+    expect(extractionRuns).toHaveLength(1);
+    expect(extractionRuns[0]).toMatchObject({ doc_id: 'H-TEST-1', provider: 'openai', ok: 1 });
+    expect(JSON.parse(extractionRuns[0].usage_json!)).toBeNull();
   });
 });

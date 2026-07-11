@@ -69,6 +69,8 @@ export interface CandidateDocResult {
   avgConfidence: number;
   /** The model's extracted rows, retained so the bake-off can persist each reading. */
   rows: ParsedTx[];
+  /** Token usage reported by the provider API, when available (currently openai only). */
+  usage?: { promptTokens?: number; completionTokens?: number; cachedTokens?: number };
 }
 
 /** Per-model rollup across all documents. */
@@ -115,8 +117,15 @@ async function safeText(res: Response): Promise<string> {
   }
 }
 
+/** Token usage extracted from a provider response, shared shape across providers. */
+type UsageInfo = { promptTokens?: number; completionTokens?: number; cachedTokens?: number };
+
 /** OpenAI chat-completions vision call (PDF as a base64 data URL `file` part). */
-async function runOpenAi(model: string, key: string, bytes: ArrayBuffer): Promise<ParsedTx[]> {
+async function runOpenAi(
+  model: string,
+  key: string,
+  bytes: ArrayBuffer,
+): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
   const dataUrl = `data:application/pdf;base64,${arrayBufferToBase64(bytes)}`;
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -139,10 +148,34 @@ async function runOpenAi(model: string, key: string, bytes: ArrayBuffer): Promis
   if (!res.ok) throw new Error(`openai ${res.status} ${await safeText(res)}`);
   const payload = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      prompt_tokens_details?: { cached_tokens?: number };
+    };
   };
+  // Extract usage *before* parsing so it survives parse failures.
+  const usageInfo = payload.usage
+    ? {
+        promptTokens: payload.usage.prompt_tokens,
+        completionTokens: payload.usage.completion_tokens,
+        cachedTokens: payload.usage.prompt_tokens_details?.cached_tokens,
+      }
+    : undefined;
+
   const text = payload.choices?.[0]?.message?.content;
   if (!text) throw new Error('openai: empty completion');
-  return parseModelJson(text).map(toParsedTx);
+
+  try {
+    return { rows: parseModelJson(text).map(toParsedTx), usage: usageInfo };
+  } catch (parseErr) {
+    // Parse failed but tokens were still consumed — attach usage to the error
+    // so runCandidateOnDoc can persist it alongside the failure.
+    throw Object.assign(
+      new Error(`openai: parse error: ${(parseErr as Error).message}`),
+      { usage: usageInfo },
+    );
+  }
 }
 
 /** Anthropic messages call (base64 `document` block BEFORE the text block). */
@@ -429,6 +462,10 @@ export async function runCandidateOnDoc(
   const started = Date.now();
   try {
     let rows: ParsedTx[];
+    // Per-provider return shape: only openai currently reports token usage
+    // alongside its rows, so its branch destructures {rows, usage} while every
+    // other provider keeps returning a bare ParsedTx[] unchanged.
+    let usage: CandidateDocResult['usage'];
     if (provider === 'gemini') {
       const result = await new VisionLlmExtractor(env, { model, apiKey: key }).extract({
         filing: { docKind: 'scanned_pdf' } as never,
@@ -436,7 +473,9 @@ export async function runCandidateOnDoc(
       });
       rows = result.transactions;
     } else if (provider === 'openai') {
-      rows = await runOpenAi(model, key, bytes);
+      const openai = await runOpenAi(model, key, bytes);
+      rows = openai.rows;
+      usage = openai.usage;
     } else if (provider === 'mistral') {
       rows = await runMistral(model, key, bytes);
     } else if (provider === 'xai') {
@@ -454,17 +493,22 @@ export async function runCandidateOnDoc(
       rowKeys: rows.map(arbitrationRowKey),
       avgConfidence: meanConfidence(rows),
       rows,
+      usage,
     };
   } catch (err) {
+    const cast = err as Error & { usage?: CandidateDocResult['usage'] };
     return {
       ...base,
       ok: false,
-      error: (err as Error).message.slice(0, 300),
+      error: cast.message.slice(0, 300),
       latencyMs: Date.now() - started,
       rowCount: 0,
       rowKeys: [],
       avgConfidence: 0,
       rows: [],
+      // Preserve token usage when the provider attached it to the error
+      // (e.g. OpenAI parse failures — tokens were consumed but parsing failed).
+      usage: cast.usage,
     };
   }
 }
