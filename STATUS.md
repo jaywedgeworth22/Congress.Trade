@@ -20,12 +20,17 @@ truth; this file is the short operational snapshot for the current integration.
   67.90/60.14/71.91/70.15; lint 0 errors; npm audit 0; fresh 28-migration D1;
   production and preview Wrangler dry-runs. Final client gate: PWA typecheck,
   3 files / 13 tests, production build, audit 0, desktop/mobile rendered QA;
-  iOS generic Simulator build and build-for-testing.
+  iOS generic Simulator build and build-for-testing; XCTest execution still
+  needs an installed concrete Simulator runtime.
 - Code is merged and production-deployed as Worker version
   `d1dcd17f-8724-40db-9980-6d4f7f6f88e3`. Apex and workers.dev health both
   returned `ok=true`, `db=true`, `schema=true`, and `missing=[]`. An initial
   16:05 code upload briefly exposed `schema=false`/HTTP 503; the canonical
-  ship-and-migrate path restored readiness by 16:13.
+  ship-and-migrate path restored readiness by 16:13. That version is the
+  immutable code-release receipt; later docs-only `main` pushes may create
+  newer no-code Worker versions. No ingestion, queue drain, backfill, or billing
+  activation ran. The PWA and iOS prototypes still have no standalone
+  production host/App Store release target.
 
 ## 2026-07-11 (CODEX) — Review Queue safety integration
 
@@ -56,7 +61,6 @@ truth; this file is the short operational snapshot for the current integration.
   narrowing; none of this review-queue hardening is production-live yet. Final
   pre-release production recheck remains 91 total / 27 pending / 64 resolved. See
   `docs/rollouts/2026-07-11-review-queue-autonomy-hardening.md`.
-
 ## 2026-07-05 (Antigravity) — Shared Ticker Alias Logic and SSE Client
 
 Owner-directed: Migrated ticker normalization and point-in-time score builders to use the centralized `resolveContinuousTicker` and `TICKER_RENAMES` from `congress-trading-shared`. This fixes the "Acquisition-vs-rename guard" issue where acquisitions like ATVI->MSFT were grouped indistinguishably from true renames (e.g., FB->META). We now ensure acquisitions are point-in-time correct and uncollapsed. Also prepared the repo to use the shared typed `CongressTradeClient` for SSE subscriptions.

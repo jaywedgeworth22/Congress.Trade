@@ -10,6 +10,18 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Deployed
+- **Whole-app improvement roadmap implementation (CODEX, XL) — IMPLEMENTATION COMPLETE LOCALLY +
+  PREVIEWED 2026-07-11; PRODUCTION WORKER DEPLOYED 2026-07-11.** PR #284 merged as
+  `8a855cb`; canonical `app/scripts/ship.sh` deployed code-bearing Worker version
+  `d1dcd17f-8724-40db-9980-6d4f7f6f88e3`, applied the idempotent schema through the Worker D1
+  binding, and verified `https://congress.trade/api/health` with `ok/db/schema=true`. Production
+  liveness, public UI, client bootstrap, security headers, authenticated diagnostics, both active
+  DLQ consumers, and Infisical app/shared reads were verified. Main CI/security/pin/PWA checks are
+  green. Later docs-only `main` pushes may create newer no-code Worker version IDs while preserving
+  the same app bundle; use Cloudflare's deployment list for the current ID. No ingestion, queue
+  drain, backfill, or billing activation ran; live billing capability
+  remains explicitly unconfigured. PWA and iOS source is merged to `main`, but those prototypes have
+  no configured production host/App Store target and are not falsely claimed as separately released.
 - **Codex autofix: migrate CI loop from Anthropic to DeepSeek (MONET, S)** — DEPLOYED
   2026-07-10, owner-approved ("merge deploy"). Merged
   [#258](https://github.com/jaywedgeworth22/Congress.Trade/pull/258) (`a9bc198`) + docs
@@ -114,28 +126,6 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   no preview or production deploy.
 
 ## In Progress
-- **Whole-app improvement roadmap implementation (CODEX, XL) — MERGED VIA PR #284 +
-  PRODUCTION DEPLOYED 2026-07-11.** `codex/app-hardening-integration`
-  landed on `main` as `8a855cbac5a1ae6e088e4aa380fc6bdbd233eecb`; backend,
-  billing/security, iOS, and PWA lanes are integrated and independently reviewed. Isolated preview
-  version `85417928-cae4-4bb6-8706-96c739846533` is healthy at
-  `https://congress-trade-preview.jaywedgeworth22.workers.dev` (`ok/db/schema=true`) after readiness
-  detected and CODEX repaired one legacy preview-only missing row-key index. Final gates: app
-  typecheck; 95 files / 808 tests; coverage 67.90/60.14/71.91/70.15; lint 0 errors; audit 0; fresh
-  28-migration D1; prod/preview dry-runs; PWA typecheck + 3 files / 13 tests + production build +
-  audit 0; iOS generic Simulator build + build-for-testing; desktop/mobile rendered QA. Production
-  Worker `d1dcd17f-8724-40db-9980-6d4f7f6f88e3` is live with apex and workers.dev health reporting
-  `ok/db/schema=true` and no missing schema objects. An initial 16:05 code upload briefly returned
-  schema-false HTTP 503 until the canonical ship-and-migrate path restored readiness by 16:13.
-  This release alone does not authorize ingestion, queue operation, or billing activation.
-- **Backend delivery + ingestion reliability hardening (CODEX/HERSCHEL, L) — LANDED IN PR #284 +
-  PRODUCTION DEPLOYED + INDEPENDENTLY VERIFIED 2026-07-11.** Transactional
-  ingestion/delivery outboxes, real DLQ consumers and bounded recovery, completion-before-ACK,
-  stale-enqueued replay, cross-isolate SSE leases/backpressure, bounded fetches, public webhook
-  SSRF controls, quotas, truthful source health, atomic publication/review receipts, schema
-  readiness, and preview/production migration parity are on `main`. Final semantic review PASS;
-  real SQLite coverage applies all migrations, compares the admin migration tail, runs readiness,
-  and executes idempotent transaction/cursor/estimate/outbox writes.
 - **Review Queue current drain + durable automation integration (CODEX, L) — PRODUCTION RELEASE IN
   PROGRESS 2026-07-11 (owner authorized merge, deploy, and bounded queue narrowing).** Production
   remains 91 total / 27 pending / 64 resolved after three dry-run-first House passes; all three
@@ -247,7 +237,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   XCTest target, and a compiled 1024x1024 opaque AppIcon/accent-color catalog derived from the
   existing PWA mark. `git diff --check`, generic Simulator build, build-for-testing, compiled icon
   inspection, and asset validation pass; executing XCTest still requires a concrete installed
-  Simulator runtime. No deploy or production action.
+  Simulator runtime. Source is merged to `main`; no signing/App Store production target is configured.
 - **PWA release hardening + CI coverage (CODEX/VOLTA, L) — INTEGRATED LOCALLY 2026-07-11;
   FINAL PROGRAM GATES PASS.** Lane branch `codex/pwa-release-hardening`; integration branch
   `codex/app-hardening-integration` is rebased onto current `origin/main` after AG's PR #266 merged.
@@ -260,7 +250,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   caching and an offline fallback; API requests are never cached. Verified: PWA `npm audit` (0
   vulnerabilities), typecheck, 13 tests, production build, generated-manifest/SW syntax/icon
   inspection; desktop/mobile rendered QA with zero overflow or console errors; and a readable
-  API-unavailable state. No push or production action.
+  API-unavailable state. Source is merged to `main`; no same-origin PWA production hosting target or
+  reverse-proxy route is configured.
 - **Billing + platform security hardening (CODEX, M) — INTEGRATED LOCALLY + ADVERSARIALLY REVIEWED
   2026-07-11; FINAL PROGRAM GATES PASS.** Lane branch `codex/billing-security-hardening`;
   integration branch `codex/app-hardening-integration`. Adds reclaimable
@@ -273,7 +264,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   existing payers when checkout configuration is incomplete. Verified: 79 test files / 714 tests,
   typecheck, coverage 64.11/56.61/69.46/65.92, lint 0 errors, `npm audit` 0 vulnerabilities, fresh
   migration through 0032, and `git diff --check`; the integrated 808-test gate and isolated preview
-  also pass. Billing remains unconfigured in preview and was not activated.
+  also pass. The hardened billing code is live in production; checkout/portal capability remains
+  unconfigured, and no billing activation was performed.
 - **Adopt remaining shared-package duplicates (CURSOR, M) — started 2026-07-09.**
   Branch `cursor/shared-dep-adoption-9577`. Replaced local `shared/brackets.ts` + most of
   `extraction/tickerNormalize.ts` with shared re-exports; wired `marketCapBucket`,
