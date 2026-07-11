@@ -475,3 +475,5 @@ Jul 8 18:10 CT)._
   "2026-07-05 audit cycle-3": merge shared v1.3.1 (AG), consolidate the 6 AG PRs (AG), remove
   patch.py (AG), rescue CURSOR's stash (CURSOR).
 - **Whole-App Evaluation & Next.js PWA Implementation (AG, L) — COMPLETED 2026-07-11.** Refactored monolithic backend routes to a layered architecture (types, queries, utils, routes), implemented the `est_value` materialized column in D1 to optimize feed queries, and established the Next.js PWA frontend using SWR for data fetching, responsive glassmorphism dark-mode UI, and reusable components like `TradeCard`.
+
+- **Bump shared to v1.5.0 (AG, S) — COMPLETED 2026-07-11.** Bumping `@jaywedgeworth22/congress-trading-shared` to `^1.5.0` (exact resolution `2222baeb`) to unblock Socratic.Trade PR #1426.
