@@ -26,6 +26,7 @@ import { classifyFiling } from './ingestion/classifier';
 import { extractAndNormalize } from './extraction/orchestrator';
 import { dispatchWebhook } from './delivery/webhook';
 import { recordDeadLetter } from './delivery/deadLetter';
+import { drainReviewDeliveryOutbox } from './delivery/reviewOutbox';
 import { buildRestRouter } from './delivery/rest';
 import { buildAdminRouter } from './admin/routes';
 import { buildAnalyticsRouter } from './analytics/routes';
@@ -139,7 +140,7 @@ async function handleIngestMessage(env: Env, msg: QueueMessage): Promise<void> {
       // Slow cross-vendor agreement read + auto-publish for one review doc. Runs
       // here (generous per-message duration) rather than in the cron, whose
       // scheduled-handler waitUntil cancels long model work.
-      await handleAgreementCheck(env, msg.docId, msg.rawObjectKey, msg.escalationTier);
+      await handleAgreementCheck(env, msg.docId, msg.rawObjectKey, msg.escalationTier, msg.claimToken);
       return;
     default:
       console.warn('INGEST_QUEUE: unexpected message type', (msg as { type?: string }).type);
@@ -186,15 +187,23 @@ export default Sentry.withSentry(
     async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
       // Sentry Crons: alerts if the per-minute watcher tick stops checking in or
       // starts overrunning, independent of whether shouldPollNow decides to poll.
-      await Sentry.withMonitor(
-        'watcher-cron',
-        () => runWatcher(env, new Date()),
-        {
-          schedule: { type: 'crontab', value: '* * * * *' },
-          checkinMargin: 2,
-          maxRuntime: 5,
-          timezone: 'UTC',
-        },
+      // Register every lane before any one of them can fail. The watcher reads
+      // hot config before its per-source guards, so awaiting it here used to
+      // suppress agreement recovery (and every other maintenance lane) when
+      // that config read failed.
+      ctx.waitUntil(
+        Sentry.withMonitor(
+          'watcher-cron',
+          () => runWatcher(env, new Date()),
+          {
+            schedule: { type: 'crontab', value: '* * * * *' },
+            checkinMargin: 2,
+            maxRuntime: 5,
+            timezone: 'UTC',
+          },
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'watcher' } }),
+        ),
       );
       ctx.waitUntil(
         Sentry.withMonitor('secrets-refresh-cron', () =>
@@ -218,10 +227,37 @@ export default Sentry.withSentry(
         ),
       );
       ctx.waitUntil(
-        Sentry.withMonitor('agreement-autopublish-cron', () =>
-          maybeRunAgreementAutopublish(env),
+        Sentry.withMonitor(
+          'agreement-autopublish-cron',
+          () => maybeRunAgreementAutopublish(env),
+          {
+            schedule: { type: 'crontab', value: '* * * * *' },
+            checkinMargin: 2,
+            maxRuntime: 2,
+            timezone: 'UTC',
+          },
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'agreement-autopublish' } }),
+        ),
+      );
+      ctx.waitUntil(
+        Sentry.withMonitor(
+          'review-delivery-outbox-cron',
+          async () => {
+            const result = await drainReviewDeliveryOutbox(env);
+            if (result.failed > 0) {
+              throw new Error(`review delivery outbox: ${result.failed}/${result.selected} sends failed`);
+            }
+            return result;
+          },
+          {
+            schedule: { type: 'crontab', value: '* * * * *' },
+            checkinMargin: 2,
+            maxRuntime: 2,
+            timezone: 'UTC',
+          },
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'review-delivery-outbox' } }),
         ),
       );
     },

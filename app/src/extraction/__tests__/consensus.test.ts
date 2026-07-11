@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildConsensusRows,
   type AmountBracket,
+  type ConsensusFieldName,
   type ConsensusRun,
 } from '../consensus';
 import type { ParsedTx } from '../../shared/types';
@@ -39,7 +40,23 @@ describe('buildConsensusRows', () => {
     expect(row.rowConsensus).toBe('unanimous');
     expect(row.presentIn).toEqual(['m1', 'm2', 'm3']);
     expect(row.missingFrom).toEqual([]);
-    for (const field of ['txType', 'transactionDate', 'owner', 'assetName', 'ticker', 'amount'] as const) {
+    for (const field of [
+      'txType',
+      'transactionDate',
+      'owner',
+      'assetName',
+      'ticker',
+      'assetType',
+      'assetTypeName',
+      'isOption',
+      'capGainsOver200',
+      'filingStatus',
+      'subholding',
+      'location',
+      'description',
+      'supplementalText',
+      'amount',
+    ] satisfies ConsensusFieldName[]) {
       expect(row.fields[field].unanimous).toBe(true);
       expect(row.fields[field].votes).toBe(3);
       expect(row.fields[field].total).toBe(3);
@@ -183,24 +200,76 @@ describe('buildConsensusRows', () => {
     expect(row.rowConsensus).toBe('contested');
   });
 
-  it('dedupes duplicate rows within one model, keeping the highest-confidence copy', () => {
-    // m1 emits the same row twice; the higher-confidence copy (owner=spouse)
-    // must win the intra-model dedupe before cross-model voting.
-    const dupLow = tx({ owner: 'self', confidence: 0.4 });
-    const dupHigh = tx({ owner: 'spouse', confidence: 0.95 });
+  it('preserves duplicate lots with the same ticker/date/type as separate occurrences', () => {
+    // Two real disclosure lots may share arbitrationRowKey while carrying
+    // different brackets/details. Neither may be collapsed as a "duplicate".
+    const lot1 = tx({ amountMin: 1001, amountMax: 15000, description: 'Lot one' });
+    const lot2 = tx({ amountMin: 15001, amountMax: 50000, description: 'Lot two' });
     const runs = [
-      run('m1', [dupLow, dupHigh]),
-      run('m2', [tx({ owner: 'spouse' })]),
+      run('m1', [lot1, lot2]),
+      run('m2', [lot1, lot2]),
     ];
     const { rows } = buildConsensusRows(runs);
-    expect(rows).toHaveLength(1);
-    const owner = rows[0].fields.owner;
-    // Both surviving rows say spouse -> unanimous, no trace of the self duplicate.
-    expect(owner.value).toBe('spouse');
-    expect(owner.votes).toBe(2);
-    expect(owner.total).toBe(2);
-    expect(owner.dissenters).toEqual([]);
-    expect(rows[0].presentIn).toEqual(['m1', 'm2']);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.rowKey)).toEqual([
+      'AAPL|2026-01-15|P#1',
+      'AAPL|2026-01-15|P#2',
+    ]);
+    expect(rows.map((row) => row.baseRowKey)).toEqual([
+      'AAPL|2026-01-15|P',
+      'AAPL|2026-01-15|P',
+    ]);
+    expect(rows.map((row) => row.occurrence)).toEqual([1, 2]);
+    expect(rows[0].fields.amount.value).toEqual({ amountMin: 1001, amountMax: 15000 });
+    expect(rows[1].fields.amount.value).toEqual({ amountMin: 15001, amountMax: 50000 });
+    expect(rows[0].fields.description.value).toBe('Lot one');
+    expect(rows[1].fields.description.value).toBe('Lot two');
+    // Occurrence order is not a trustworthy cross-model lot identity. Preserve
+    // both rows for review, but never label a duplicate-key group safe to apply.
+    expect(rows.every((row) => row.rowConsensus === 'contested')).toBe(true);
+  });
+
+  it('fails closed when a majority of models reverse same-key duplicate lots', () => {
+    const lot1 = tx({ amountMin: 1001, amountMax: 15000, description: 'Lot one' });
+    const lot2 = tx({ amountMin: 15001, amountMax: 50000, description: 'Lot two' });
+    const { rows } = buildConsensusRows([
+      run('m1', [lot1, lot2]),
+      run('m2', [lot2, lot1]),
+      run('m3', [lot2, lot1]),
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.rowConsensus === 'contested')).toBe(true);
+  });
+
+  it('votes option, asset, cap-gains, and structured-detail fields explicitly', () => {
+    const majority = tx({
+      assetType: 'OP',
+      assetTypeName: 'Stock Option',
+      isOption: true,
+      capGainsOver200: true,
+      filingStatus: 'N',
+      subholding: 'Brokerage A',
+      location: 'Delaware',
+      description: 'Call option',
+      supplementalText: 'Expires 2027-01-15',
+    });
+    const runs = [
+      run('m1', [majority]),
+      run('m2', [majority]),
+      run('m3', [tx({ description: 'Equity', supplementalText: null })]),
+    ];
+
+    const [row] = buildConsensusRows(runs).rows;
+    expect(row.fields.assetType).toMatchObject({ value: 'OP', votes: 2, total: 3 });
+    expect(row.fields.assetTypeName).toMatchObject({ value: 'Stock Option', votes: 2, total: 3 });
+    expect(row.fields.isOption).toMatchObject({ value: true, votes: 2, total: 3 });
+    expect(row.fields.capGainsOver200).toMatchObject({ value: true, votes: 2, total: 3 });
+    expect(row.fields.filingStatus.value).toBe('N');
+    expect(row.fields.subholding.value).toBe('Brokerage A');
+    expect(row.fields.location.value).toBe('Delaware');
+    expect(row.fields.description).toMatchObject({ value: 'Call option', votes: 2 });
+    expect(row.fields.supplementalText).toMatchObject({ value: 'Expires 2027-01-15', votes: 2 });
+    expect(row.rowConsensus).toBe('majority');
   });
 
   it('does not double-count a duplicate model id into a false majority', () => {

@@ -13,12 +13,11 @@
  *   Tier 2  three models (A + B + C). All three unanimous → publish. Otherwise
  *           fall through to tier 3 over the SAME three reads (no extra model
  *           calls).
- *   Tier 3  MAJORITY RESOLVE via buildConsensusRows over the three readings.
- *           Publish the majority row set ONLY IF every majority-present row has a
- *           per-field majority for txType, transactionDate, and the amount
- *           bracket (owner/assetName may fall back to the highest-confidence
- *           model's value) AND no hard-fail flags on any published row.
- *           Otherwise the doc stays in human review, flagged high-priority.
+ *   Tier 3  MAJORITY RESOLVE over the same three readings. Publish only when
+ *           every union row is majority-present, every material field has a
+ *           strict majority, no minority-only/ambiguous duplicate row would be
+ *           dropped, and no hard-fail flag remains. Otherwise the doc stays in
+ *           human review, flagged high-priority.
  *
  * When a doc trips cheap complexity signals (page_count / raw_bytes over their
  * thresholds) the cascade starts directly at tier 2 (AGREEMENT_BIG_DOC_START_TIER2,
@@ -49,13 +48,15 @@
  * comes from the ingestion_decisions audit row instead.
  */
 
-import type { Env, ParsedTx, Owner, TxType } from '../shared/types';
-import { all, get, run } from '../shared/db';
+import type { Env, ParsedTx, Transaction } from '../shared/types';
+import { all, batch, fromBool, get, run } from '../shared/db';
 import { runCandidateOnDoc, persistExtractionRun, type BakeoffCandidate, type CandidateDocResult } from './bakeoff';
 import { arbitrationRowKey } from '../extractors/types';
-import { recomputeTransactions, persistTransactions, HARD_FAILURE_FLAGS } from './normalizer';
+import { recomputeTransactions, HARD_FAILURE_FLAGS } from './normalizer';
 import { mapFiling, type FilingRow } from '../delivery/rows';
+import { refreshLatestCursorSeq } from '../delivery/sse';
 import { recordIngestionDecision } from '../shared/ingestionDecisions';
+import { drainReviewDeliveryOutbox } from '../delivery/reviewOutbox';
 import { buildConsensusRows, type AmountBracket, type ConsensusResult } from './consensus';
 import { uuid } from '../shared/ids';
 
@@ -100,19 +101,84 @@ const label = (c: BakeoffCandidate): string => `${c.provider}:${c.model}`;
 interface CascadeAudit {
   tier: number;
   models: Record<string, string>;
+  /** Autonomous lease owner; omitted for an operator-triggered reprocess. */
+  claimToken?: string;
   unanimous?: boolean;
   /** Per-field vote summary (tier-3 majority resolve); omitted for unanimous tiers. */
   votes?: unknown;
 }
 
-/** True when two candidate reads carry the identical row-key SET (not just count). */
+/** Canonical comparison form for text-valued material fields. */
+function canonicalText(value: string | null | undefined): string {
+  return (value ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
+/**
+ * True only for a real calendar date in the model contract's YYYY-MM-DD form.
+ * Date.parse alone is deliberately not used because it normalizes impossible
+ * dates (for example 2026-02-31) instead of rejecting them.
+ */
+function isValidTransactionDate(value: string | null | undefined): value is string {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  const calendarValid = parsed.getUTCFullYear() === year
+    && parsed.getUTCMonth() === month - 1
+    && parsed.getUTCDate() === day;
+  return calendarValid && value <= new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Exact material-row fingerprint used by the unanimous tiers. Confidence and
+ * rawText are intentionally excluded: they are model/audit metadata, not facts
+ * disclosed by the filer. Every other publishable filing-row detail is part of
+ * the comparison so agreement cannot hide a different owner, bracket, asset
+ * classification, option/capital-gain flag, or structured row detail.
+ */
+function materialRowFingerprint(tx: ParsedTx): string | null {
+  if (!isValidTransactionDate(tx.txDate)) return null;
+  return JSON.stringify([
+    canonicalText(tx.ticker),
+    canonicalText(tx.assetName),
+    tx.txDate,
+    canonicalText(tx.txType),
+    tx.amountMin,
+    tx.amountMax,
+    canonicalText(tx.owner),
+    canonicalText(tx.assetType),
+    canonicalText(tx.assetTypeName),
+    tx.isOption === true,
+    tx.capGainsOver200 === true,
+    canonicalText(tx.filingStatus),
+    canonicalText(tx.subholding),
+    canonicalText(tx.location),
+    canonicalText(tx.description),
+    canonicalText(tx.supplementalText),
+  ]);
+}
+
+/**
+ * True when two successful reads carry the identical material-row MULTISET.
+ * Sorting fingerprints makes row order irrelevant while retaining duplicate
+ * multiplicity (two identical disclosed lots never compare equal to one).
+ */
 export function sameRowSet(a: CandidateDocResult, b: CandidateDocResult): boolean {
   if (!a.ok || !b.ok || a.rows.length === 0) return false;
-  const ka = new Set(a.rows.map(arbitrationRowKey));
-  const kb = new Set(b.rows.map(arbitrationRowKey));
-  if (ka.size !== kb.size) return false;
-  for (const k of ka) if (!kb.has(k)) return false;
-  return true;
+  if (a.rows.length !== b.rows.length) return false;
+  const ka = a.rows.map(materialRowFingerprint);
+  const kb = b.rows.map(materialRowFingerprint);
+  if (ka.some((k) => k === null) || kb.some((k) => k === null)) return false;
+  const sortedA = (ka as string[]).sort();
+  const sortedB = (kb as string[]).sort();
+  return sortedA.every((key, index) => key === sortedB[index]);
+}
+
+/** Reject a lineup that would let one provider corroborate itself. */
+function duplicateLineupReason(models: BakeoffCandidate[]): string | null {
+  const ids = models.map((m) => label(m).trim().toLowerCase());
+  if (new Set(ids).size !== ids.length) return 'duplicate_model_lineup';
+  const providers = models.map((m) => m.provider.trim().toLowerCase());
+  return new Set(providers).size === providers.length ? null : 'duplicate_provider_lineup';
 }
 
 /**
@@ -139,6 +205,242 @@ async function loadFilingRow(env: Env, docId: string): Promise<FilingRow | null>
             source_updated_at, error FROM filings WHERE doc_id = ?`,
     [docId],
   );
+}
+
+interface AgreementReviewState {
+  resolved: number;
+  agreement_attempts: number | null;
+  agreement_tier: number | null;
+  agreement_next_attempt_at: string | null;
+  agreement_claim_token: string | null;
+  agreement_claimed_at: string | null;
+  agreement_suppressed_at: string | null;
+  agreement_suppression_reason: string | null;
+}
+
+const AGREEMENT_CLAIM_LEASE_MS = 15 * 60 * 1000;
+
+async function loadReviewState(env: Env, docId: string): Promise<AgreementReviewState | null> {
+  return get<AgreementReviewState>(
+    env.DB,
+    `SELECT resolved, agreement_attempts, agreement_tier, agreement_next_attempt_at,
+            agreement_claim_token, agreement_claimed_at, agreement_suppressed_at,
+            agreement_suppression_reason
+       FROM review_queue WHERE doc_id = ?`,
+    [docId],
+  );
+}
+
+/** Fail-closed unresolved/lease ownership check immediately before model spend. */
+async function ownsUnresolvedReview(env: Env, docId: string, claimToken: string): Promise<boolean> {
+  try {
+    const row = await loadReviewState(env, docId);
+    return row?.resolved === 0
+      && row.agreement_suppressed_at == null
+      && row.agreement_claim_token === claimToken;
+  } catch (err) {
+    console.warn('agreement review-state check failed:', docId, (err as Error).message);
+    return false;
+  }
+}
+
+/**
+ * Acquire a short publish lease by CAS. Autonomous calls must still own their
+ * consumer claim; operator-triggered calls may acquire only an unclaimed or
+ * expired row. The returned token is used by every write in the atomic publish
+ * batch, preventing a completed human action from being overwritten.
+ */
+async function acquirePublishLease(
+  env: Env,
+  docId: string,
+  expectedClaimToken?: string,
+): Promise<string | null> {
+  const publishToken = uuid();
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const expiredBefore = new Date(now.getTime() - AGREEMENT_CLAIM_LEASE_MS).toISOString();
+  const result = expectedClaimToken
+    ? await run(
+        env.DB,
+        `UPDATE review_queue
+            SET agreement_claim_token = ?, agreement_claimed_at = ?
+          WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+            AND agreement_claim_token = ?`,
+        [publishToken, nowIso, docId, expectedClaimToken],
+      )
+    : await run(
+        env.DB,
+        `UPDATE review_queue
+            SET agreement_claim_token = ?, agreement_claimed_at = ?
+          WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+            AND (agreement_claim_token IS NULL OR agreement_claimed_at IS NULL OR agreement_claimed_at <= ?)`,
+        [publishToken, nowIso, docId, expiredBefore],
+      );
+  return (result.meta?.changes ?? 0) > 0 ? publishToken : null;
+}
+
+const CONDITIONAL_BULK_INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
+  id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
+  tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
+  raw_text, asset_type_name, filing_status, subholding, location, description,
+  supplemental_text, row_key, confidence, source, created_at, cursor_seq,
+  first_seen_at, filed_date
+) SELECT
+  json_extract(value, '$.id'), json_extract(value, '$.docId'),
+  json_extract(value, '$.filerId'), json_extract(value, '$.txDate'),
+  json_extract(value, '$.owner'), json_extract(value, '$.assetName'),
+  json_extract(value, '$.ticker'), json_extract(value, '$.assetType'),
+  json_extract(value, '$.txType'), json_extract(value, '$.amountMin'),
+  json_extract(value, '$.amountMax'), json_extract(value, '$.isOption'),
+  json_extract(value, '$.capGainsOver200'), json_extract(value, '$.rawText'),
+  json_extract(value, '$.assetTypeName'), json_extract(value, '$.filingStatus'),
+  json_extract(value, '$.subholding'), json_extract(value, '$.location'),
+  json_extract(value, '$.description'), json_extract(value, '$.supplementalText'),
+  json_extract(value, '$.rowKey'), json_extract(value, '$.confidence'),
+  json_extract(value, '$.source'), json_extract(value, '$.createdAt'), NULL,
+  json_extract(value, '$.firstSeenAt'), json_extract(value, '$.filedDate')
+  FROM json_each(?)
+   WHERE EXISTS (
+      SELECT 1 FROM review_queue
+       WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+         AND agreement_claim_token = ?
+    )`;
+
+/**
+ * Persist all rows and resolve the review item in one D1 batch. Every statement
+ * is guarded by the same unresolved+claim predicate, so a human resolution that
+ * lands before this batch causes zero transaction inserts and a zero-change CAS.
+ */
+async function persistClaimedPublish(
+  env: Env,
+  docId: string,
+  claimToken: string,
+  transactions: Transaction[],
+): Promise<{ published: boolean; insertedIds: string[] }> {
+  const rowKeysJson = JSON.stringify(transactions.map((tx) => tx.rowKey ?? ''));
+  const insertRowsJson = JSON.stringify(transactions.map((tx) => ({
+    id: tx.id,
+    docId: tx.docId,
+    filerId: tx.filerId,
+    txDate: tx.txDate,
+    owner: tx.owner,
+    assetName: tx.assetName,
+    ticker: tx.ticker,
+    assetType: tx.assetType,
+    txType: tx.txType,
+    amountMin: tx.amountMin,
+    amountMax: tx.amountMax,
+    isOption: fromBool(tx.isOption),
+    capGainsOver200: fromBool(tx.capGainsOver200),
+    rawText: tx.rawText,
+    assetTypeName: tx.assetTypeName ?? null,
+    filingStatus: tx.filingStatus ?? null,
+    subholding: tx.subholding ?? null,
+    location: tx.location ?? null,
+    description: tx.description ?? null,
+    supplementalText: tx.supplementalText ?? null,
+    rowKey: tx.rowKey ?? null,
+    confidence: tx.confidence,
+    source: tx.source,
+    createdAt: tx.createdAt,
+    firstSeenAt: tx.firstSeenAt ?? null,
+    filedDate: tx.filedDate ?? null,
+  })));
+  const exactLiveSetPredicate = `(SELECT COUNT(*) FROM transactions
+      WHERE doc_id = ? AND source IN ('primary', 'manual')
+        AND deprecated_at IS NULL) = ?
+    AND (SELECT COUNT(*) FROM transactions
+      WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
+        AND row_key IN (SELECT value FROM json_each(?))) = ?`;
+  const statements: Array<[string, any[]]> = [[
+    CONDITIONAL_BULK_INSERT_TX_SQL,
+    [insertRowsJson, docId, claimToken],
+  ]];
+  // D1 batch rolls back only on a statement error, not on a later UPDATE with
+  // meta.changes=0. Deliberately attempt the already-existing review_queue PK
+  // when the post-insert live set is not exact; the constraint error rolls the
+  // whole batch back so no undelivered partial transaction set can leak out.
+  statements.push([
+    `INSERT INTO review_queue (doc_id)
+      SELECT ?
+       WHERE EXISTS (
+         SELECT 1 FROM review_queue
+          WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+            AND agreement_claim_token = ?
+       )
+         AND NOT (${exactLiveSetPredicate})`,
+    [
+      docId, docId, claimToken,
+      docId, transactions.length,
+      docId, rowKeysJson, transactions.length,
+    ],
+  ]);
+  statements.push([
+    `INSERT OR IGNORE INTO review_delivery_outbox (tx_id, doc_id, created_at)
+      SELECT id, doc_id, ? FROM transactions
+       WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
+         AND row_key IN (SELECT value FROM json_each(?))
+         AND EXISTS (
+           SELECT 1 FROM review_queue
+            WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+              AND agreement_claim_token = ?
+         )`,
+    [new Date().toISOString(), docId, rowKeysJson, docId, claimToken],
+  ]);
+  statements.push([
+    `UPDATE filings SET ingest_status = 'persisted', error = NULL
+      WHERE doc_id = ? AND EXISTS (
+        SELECT 1 FROM review_queue
+         WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+           AND agreement_claim_token = ?
+      ) AND ${exactLiveSetPredicate}`,
+    [
+      docId, docId, claimToken,
+      docId, transactions.length,
+      docId, rowKeysJson, transactions.length,
+    ],
+  ]);
+  statements.push([
+    `UPDATE review_queue
+        SET resolved = 1,
+            agreement_next_attempt_at = NULL,
+            agreement_claim_token = NULL,
+            agreement_claimed_at = NULL
+      WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+        AND agreement_claim_token = ? AND ${exactLiveSetPredicate}`,
+    [
+      docId, claimToken,
+      docId, transactions.length,
+      docId, rowKeysJson, transactions.length,
+    ],
+  ]);
+
+  const results = await batch(env.DB, statements);
+  const resolvedResult = results[results.length - 1];
+  if ((resolvedResult?.meta?.changes ?? 0) === 0) return { published: false, insertedIds: [] };
+
+  const insertedCount = results[0]?.meta?.changes ?? 0;
+  let insertedIds = insertedCount === transactions.length ? transactions.map((tx) => tx.id) : [];
+  try {
+    const liveRows = await all<{ id: string }>(
+      env.DB,
+      `SELECT id FROM transactions
+        WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
+          AND row_key IN (SELECT value FROM json_each(?))`,
+      [docId, rowKeysJson],
+    );
+    if (liveRows.length > 0) insertedIds = liveRows.map((row) => row.id);
+  } catch (err) {
+    console.error('agreement publish: live transaction lookup failed', docId, (err as Error).message);
+  }
+  if (insertedCount > 0) {
+    try {
+      await refreshLatestCursorSeq(env.DB);
+    } catch (err) {
+      console.error('agreement publish: failed to refresh latest cursor seq', (err as Error).message);
+    }
+  }
+  return { published: true, insertedIds };
 }
 
 /** Run each model over the doc and persist every reading to extraction_runs. */
@@ -173,6 +475,16 @@ async function finalizePublish(
   dryRun: boolean,
   audit: CascadeAudit,
 ): Promise<AgreementDocResult> {
+  const filedDate = frow.filed_date?.slice(0, 10) ?? null;
+  if (parsed.some((tx) => !isValidTransactionDate(tx.txDate) || (filedDate !== null && tx.txDate! > filedDate))) {
+    return {
+      docId,
+      outcome: 'agree_but_hardfail',
+      tier: audit.tier,
+      rowCount: parsed.length,
+      flags: ['invalid_transaction_date'],
+    };
+  }
   const flagged = await recomputeTransactions(env, mapFiling(frow), parsed);
   const hardFlags = Array.from(
     new Set(flagged.flatMap((f) => f.flags).filter((fl) => HARD_FAILURE_FLAGS.includes(fl))),
@@ -192,9 +504,15 @@ async function finalizePublish(
   }
 
   const txs = flagged.map((f) => ({ ...f.tx, source: 'primary' as const, confidence: Math.max(f.tx.confidence, 0.95) }));
-  const insertedIds = await persistTransactions(env, txs);
-  await run(env.DB, "UPDATE filings SET ingest_status = 'persisted', error = NULL WHERE doc_id = ?", [docId]);
-  await run(env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [docId]);
+  const publishToken = await acquirePublishLease(env, docId, audit.claimToken);
+  if (!publishToken) {
+    return { docId, outcome: 'skipped', tier: audit.tier, reason: 'review_resolved_or_claim_lost' };
+  }
+  const persisted = await persistClaimedPublish(env, docId, publishToken, txs);
+  if (!persisted.published) {
+    return { docId, outcome: 'skipped', tier: audit.tier, reason: 'review_resolved_or_claim_lost' };
+  }
+  const insertedIds = persisted.insertedIds;
   if (insertedIds.length > 0) {
     await recordIngestionDecision(env.DB, {
       docId,
@@ -213,9 +531,10 @@ async function finalizePublish(
       },
     });
   }
-  for (const txId of insertedIds) {
-    try { await env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId }); } catch { /* best-effort */ }
-  }
+  await drainReviewDeliveryOutbox(env).catch((err) => {
+    // The committed outbox rows remain pending for the independent minute cron.
+    console.error('agreement publish: delivery outbox drain failed', docId, (err as Error).message);
+  });
   return { docId, outcome: 'published', tier: audit.tier, inserted: insertedIds.length };
 }
 
@@ -241,8 +560,17 @@ export async function processAgreementDoc(
   // recognizable as one agreement pass in the extraction_runs dashboard.
   const runBatchId = uuid();
   const lineup = [models.a, models.b, ...(models.c ? [models.c] : [])];
+  const lineupError = duplicateLineupReason(lineup);
+  if (lineupError) return { docId, outcome: 'skipped', reason: lineupError };
+  if (audit?.claimToken && !(await ownsUnresolvedReview(env, docId, audit.claimToken))) {
+    return { docId, outcome: 'skipped', tier: audit.tier, reason: 'review_resolved_or_claim_lost' };
+  }
   const reads = await readAndPersist(env, lineup, docId, loaded.bytes, runBatchId);
   const [rA, rB, rC] = [reads[0], reads[1], reads[2] ?? null];
+
+  if (!rA.ok || !rB.ok || (rC !== null && !rC.ok)) {
+    return { docId, outcome: 'skipped', tier: audit?.tier, reason: 'model_read_failed' };
+  }
 
   const agree = sameRowSet(rA, rB) && (!rC || (sameRowSet(rA, rC) && sameRowSet(rB, rC)));
   if (!agree) {
@@ -263,6 +591,7 @@ export async function processAgreementDoc(
   return finalizePublish(env, frow, docId, rA.rows, dryRun, {
     tier: audit?.tier ?? (models.c ? 2 : 1),
     models: modelLabels(models),
+    claimToken: audit?.claimToken,
     unanimous: true,
     votes: audit?.votes,
   });
@@ -281,18 +610,6 @@ function modelLabels(models: AgreementModels): Record<string, string> {
 // Tier 3 — majority resolve over three reads (pure-ish helpers)
 // ---------------------------------------------------------------------------
 
-/** The highest-confidence model's reading of a given row key, across all reads. */
-function baseRowFor(reads: CandidateDocResult[], rowKey: string): ParsedTx | null {
-  let best: ParsedTx | null = null;
-  for (const r of reads) {
-    for (const tx of r.rows) {
-      if (arbitrationRowKey(tx) !== rowKey) continue;
-      if (!best || (tx.confidence ?? 0) > (best.confidence ?? 0)) best = tx;
-    }
-  }
-  return best;
-}
-
 interface MajorityBuild {
   ok: boolean;
   rows: ParsedTx[];
@@ -300,60 +617,115 @@ interface MajorityBuild {
 }
 
 /**
- * Build the publishable majority row set from a consensus over `totalModels`
- * reads. A row qualifies only when it is present in a strict majority of the
- * models AND has a per-field majority for txType, transactionDate, and the
- * amount bracket. owner/assetName/ticker fall back to the highest-confidence
- * model's value when they lack a majority. If ANY majority-present row fails the
- * type/date/amount gate the whole doc is rejected (ok:false) — the caller then
- * leaves it in human review.
- *
- * Multi-lot guard: the consensus row key is ticker|date|type (amount excluded),
- * so two genuinely-distinct lots disclosed on the same day with the same type
- * but different dollar brackets share one key and collapse to a single voted
- * row — auto-publishing would silently DROP the other lot(s). Whenever any
- * single read reported 2+ distinct amount brackets for a majority row key we
- * cannot faithfully represent the set, so the whole doc is rejected to human
- * review rather than published incomplete.
+ * Build a fail-closed tier-3 majority. Unlike the reviewer-facing consensus
+ * grid, publishing may not ignore minority-only rows or fall back to one
+ * high-confidence model for a material field. Every union row must be backed by
+ * at least two of the three models, and every publishable field must itself
+ * receive at least two votes. A duplicate arbitration key is ambiguous to align
+ * across models, so tier 3 rejects it instead of collapsing a disclosed lot.
  */
 function buildMajorityRows(
   reads: CandidateDocResult[],
-  consensus: ConsensusResult,
   totalModels: number,
 ): MajorityBuild {
-  const majorityRows = consensus.rows.filter((r) => r.presentIn.length * 2 > totalModels);
-  if (majorityRows.length === 0) return { ok: false, rows: [], reason: 'no_majority_rows' };
-
-  const amountKey = (tx: ParsedTx): string => `${tx.amountMin ?? ''}|${tx.amountMax ?? ''}`;
-  for (const r of majorityRows) {
-    for (const read of reads) {
-      const brackets = new Set<string>();
-      for (const tx of read.rows) {
-        if (arbitrationRowKey(tx) === r.rowKey) brackets.add(amountKey(tx));
+  type MaterialField =
+    | 'ticker'
+    | 'assetName'
+    | 'txDate'
+    | 'txType'
+    | 'amount'
+    | 'owner'
+    | 'assetType'
+    | 'assetTypeName'
+    | 'isOption'
+    | 'capGainsOver200'
+    | 'filingStatus'
+    | 'subholding'
+    | 'location'
+    | 'description'
+    | 'supplementalText';
+  const fields: MaterialField[] = [
+    'ticker', 'assetName', 'txDate', 'txType', 'amount', 'owner', 'assetType',
+    'assetTypeName', 'isOption', 'capGainsOver200', 'filingStatus', 'subholding',
+    'location', 'description', 'supplementalText',
+  ];
+  const valueFor = (tx: ParsedTx, field: MaterialField): unknown => {
+    if (field === 'amount') return { amountMin: tx.amountMin, amountMax: tx.amountMax };
+    return tx[field];
+  };
+  const voteKey = (tx: ParsedTx, field: MaterialField): string => {
+    if (field === 'amount') return JSON.stringify([tx.amountMin, tx.amountMax]);
+    if (field === 'isOption' || field === 'capGainsOver200') return tx[field] === true ? '1' : '0';
+    if (field === 'txDate') return tx.txDate ?? '';
+    return canonicalText(valueFor(tx, field) as string | null | undefined);
+  };
+  const groups = reads.map((read) => {
+    const grouped = new Map<string, ParsedTx[]>();
+    for (const tx of read.rows) {
+      if (!isValidTransactionDate(tx.txDate)) {
+        return { grouped, error: `invalid_transaction_date:${arbitrationRowKey(tx)}` };
       }
-      if (brackets.size > 1) return { ok: false, rows: [], reason: `multi_lot:${r.rowKey}` };
+      const key = arbitrationRowKey(tx);
+      const rows = grouped.get(key) ?? [];
+      rows.push(tx);
+      grouped.set(key, rows);
     }
-  }
+    for (const [key, rows] of grouped) {
+      if (rows.length > 1) return { grouped, error: `ambiguous_multi_lot:${key}` };
+    }
+    return { grouped, error: null };
+  });
+  const groupError = groups.find((group) => group.error)?.error;
+  if (groupError) return { ok: false, rows: [], reason: groupError };
 
-  const hasMaj = (f: { votes: number; total: number }): boolean => f.votes * 2 > f.total;
+  const allKeys = new Set<string>();
+  for (const { grouped } of groups) for (const key of grouped.keys()) allKeys.add(key);
+  if (allKeys.size === 0) return { ok: false, rows: [], reason: 'no_majority_rows' };
+
   const built: ParsedTx[] = [];
-  for (const r of majorityRows) {
-    const { txType, transactionDate, amount, owner, assetName, ticker } = r.fields;
-    if (!(hasMaj(txType) && hasMaj(transactionDate) && hasMaj(amount))) {
-      return { ok: false, rows: [], reason: `field_disagreement:${r.rowKey}` };
+  for (const rowKey of [...allKeys].sort()) {
+    const present = groups
+      .map(({ grouped }) => grouped.get(rowKey)?.[0] ?? null)
+      .filter((tx): tx is ParsedTx => tx !== null);
+    if (present.length * 2 <= totalModels) {
+      return { ok: false, rows: [], reason: `minority_extra_row:${rowKey}` };
     }
-    const base = baseRowFor(reads, r.rowKey);
-    if (!base) return { ok: false, rows: [], reason: `no_base:${r.rowKey}` };
-    const amt = amount.value as AmountBracket;
+    const base = [...present].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))[0];
+    const winners = new Map<MaterialField, unknown>();
+    for (const field of fields) {
+      const blocs = new Map<string, { count: number; value: unknown }>();
+      for (const tx of present) {
+        const key = voteKey(tx, field);
+        const bloc = blocs.get(key);
+        if (bloc) bloc.count += 1;
+        else blocs.set(key, { count: 1, value: valueFor(tx, field) });
+      }
+      const winner = [...blocs.entries()]
+        .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))[0]?.[1];
+      if (!winner || winner.count * 2 <= totalModels) {
+        return { ok: false, rows: [], reason: `field_disagreement:${rowKey}:${field}` };
+      }
+      winners.set(field, winner.value);
+    }
+    const amount = winners.get('amount') as AmountBracket;
     built.push({
       ...base,
-      txType: ((txType.value as TxType | null) ?? base.txType),
-      txDate: transactionDate.value as string | null,
-      owner: (hasMaj(owner) ? (owner.value as Owner | null) : base.owner),
-      assetName: (hasMaj(assetName) ? (assetName.value as string | null) : base.assetName) || base.assetName,
-      ticker: (hasMaj(ticker) ? (ticker.value as string | null) : base.ticker),
-      amountMin: amt.amountMin,
-      amountMax: amt.amountMax,
+      ticker: winners.get('ticker') as ParsedTx['ticker'],
+      assetName: winners.get('assetName') as ParsedTx['assetName'],
+      txDate: winners.get('txDate') as ParsedTx['txDate'],
+      txType: winners.get('txType') as ParsedTx['txType'],
+      amountMin: amount.amountMin,
+      amountMax: amount.amountMax,
+      owner: winners.get('owner') as ParsedTx['owner'],
+      assetType: winners.get('assetType') as ParsedTx['assetType'],
+      assetTypeName: winners.get('assetTypeName') as ParsedTx['assetTypeName'],
+      isOption: winners.get('isOption') as boolean,
+      capGainsOver200: winners.get('capGainsOver200') as boolean,
+      filingStatus: winners.get('filingStatus') as ParsedTx['filingStatus'],
+      subholding: winners.get('subholding') as ParsedTx['subholding'],
+      location: winners.get('location') as ParsedTx['location'],
+      description: winners.get('description') as ParsedTx['description'],
+      supplementalText: winners.get('supplementalText') as ParsedTx['supplementalText'],
     });
   }
   return { ok: true, rows: built };
@@ -384,6 +756,7 @@ async function leaveInReviewHighPriority(
   models: Record<string, string>,
   votes: unknown,
   reason: string,
+  claimToken?: string,
 ): Promise<AgreementDocResult> {
   // Preserve any existing payload (e.g. transactions queued for human review) by
   // reading it first, then merging cascade metadata fields on top, so the human
@@ -406,14 +779,28 @@ async function leaveInReviewHighPriority(
     votes,
     detail: reason,
   };
+  let updated = false;
   try {
-    await run(
-      env.DB,
-      'UPDATE review_queue SET reason = ?, payload = ? WHERE doc_id = ?',
-      ['agreement_cascade_unresolved', JSON.stringify(payload), docId],
-    );
+    const result = claimToken
+      ? await run(
+          env.DB,
+          `UPDATE review_queue SET reason = ?, payload = ?
+            WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+              AND agreement_claim_token = ?`,
+          ['agreement_cascade_unresolved', JSON.stringify(payload), docId, claimToken],
+        )
+      : await run(
+          env.DB,
+          `UPDATE review_queue SET reason = ?, payload = ?
+            WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL`,
+          ['agreement_cascade_unresolved', JSON.stringify(payload), docId],
+        );
+    updated = (result.meta?.changes ?? 0) > 0;
   } catch (err) {
     console.warn('leaveInReviewHighPriority update failed:', docId, (err as Error).message);
+  }
+  if (!updated) {
+    return { docId, outcome: 'skipped', tier, reason: 'review_resolved_or_claim_lost' };
   }
   await recordIngestionDecision(env.DB, {
     docId,
@@ -437,12 +824,19 @@ export async function processAgreementCascadeTier2(
   docId: string,
   rawObjectKey: string | null,
   dryRun: boolean,
+  claimToken?: string,
 ): Promise<AgreementDocResult> {
   const loaded = await loadDocBytes(env, docId, rawObjectKey);
   if ('skip' in loaded) return loaded.skip;
 
+  const lineup = [models.a, models.b, models.c];
+  const lineupError = duplicateLineupReason(lineup);
+  if (lineupError) return { docId, outcome: 'skipped', reason: lineupError };
+  if (claimToken && !(await ownsUnresolvedReview(env, docId, claimToken))) {
+    return { docId, outcome: 'skipped', tier: 2, reason: 'review_resolved_or_claim_lost' };
+  }
   const runBatchId = uuid();
-  const reads = await readAndPersist(env, [models.a, models.b, models.c], docId, loaded.bytes, runBatchId);
+  const reads = await readAndPersist(env, lineup, docId, loaded.bytes, runBatchId);
   const [rA, rB, rC] = reads;
 
   const frow = await loadFilingRow(env, docId);
@@ -454,16 +848,16 @@ export async function processAgreementCascadeTier2(
   const unanimous = rA.ok && rB.ok && rC.ok
     && sameRowSet(rA, rB) && sameRowSet(rA, rC) && sameRowSet(rB, rC);
   if (unanimous) {
-    return finalizePublish(env, frow, docId, rA.rows, dryRun, { tier: 2, models: labels, unanimous: true });
+    return finalizePublish(env, frow, docId, rA.rows, dryRun, {
+      tier: 2, models: labels, unanimous: true, claimToken,
+    });
   }
 
-  // If any model's read failed (ok: false, rows: []) it would be counted as
-  // "saw nothing" by buildConsensusRows, turning a 2/3 majority into a false
-  // publish quorum. Only proceed to majority resolve when ALL three reads
-  // succeeded; otherwise leave the doc for human review.
+  // A provider failure is operational, not semantic disagreement. Return a
+  // retryable skip so the autonomous handler applies bounded backoff/cap logic;
+  // never count an error as "saw nothing" in a false 2/3 publish quorum.
   if (!rA.ok || !rB.ok || !rC.ok) {
-    if (dryRun) return { docId, outcome: 'review_flagged', tier: 3, reason: 'model_read_failed' };
-    return leaveInReviewHighPriority(env, docId, 3, labels, null, 'model_read_failed');
+    return { docId, outcome: 'skipped', tier: 3, reason: 'model_read_failed' };
   }
 
   // Tier 3 — majority resolve over the three reads (no extra model calls).
@@ -472,23 +866,26 @@ export async function processAgreementCascadeTier2(
     { model: labels.b, rows: rB.rows },
     { model: labels.c, rows: rC.rows },
   ]);
-  const majority = buildMajorityRows(reads, consensus, 3);
+  const majority = buildMajorityRows(reads, 3);
   const votes = voteSummary(consensus, 3);
   if (!majority.ok) {
     if (dryRun) return { docId, outcome: 'review_flagged', tier: 3, reason: majority.reason };
-    return leaveInReviewHighPriority(env, docId, 3, labels, votes, majority.reason ?? 'no_majority');
+    return leaveInReviewHighPriority(env, docId, 3, labels, votes, majority.reason ?? 'no_majority', claimToken);
   }
 
   const res = await finalizePublish(env, frow, docId, majority.rows, dryRun, {
     tier: 3,
     models: labels,
+    claimToken,
     unanimous: false,
     votes,
   });
   // A hard-fail on the majority row set is NOT publishable — flag high-priority.
   if (res.outcome === 'agree_but_hardfail') {
     if (dryRun) return res;
-    return leaveInReviewHighPriority(env, docId, 3, labels, votes, `hard_fail:${(res.flags ?? []).join(',')}`);
+    return leaveInReviewHighPriority(
+      env, docId, 3, labels, votes, `hard_fail:${(res.flags ?? []).join(',')}`, claimToken,
+    );
   }
   return res;
 }
@@ -530,7 +927,7 @@ function resolveModels(e: AgreementEnv): AgreementModels {
 /** Resolve the A/B/C lineup for a tier-2+ pass (C defaults to a third vendor). */
 function resolveModelsWithC(e: AgreementEnv): AgreementModelsC {
   const ab = resolveModels(e);
-  const c = parseCandidate(e.AGREEMENT_MODEL_C, { provider: 'openai', model: 'gpt-4o' });
+  const c = parseCandidate(e.AGREEMENT_MODEL_C, { provider: 'anthropic', model: 'claude-haiku-4-5' });
   return { a: ab.a, b: ab.b, c };
 }
 
@@ -598,6 +995,26 @@ async function reserveLlmBudget(env: Env, budget: number, count: number): Promis
   }
 }
 
+/** Best-effort refund when a post-reservation ownership check prevents all reads. */
+async function refundLlmBudget(env: Env, budget: number, count: number): Promise<void> {
+  if (budget === LLM_BUDGET_UNLIMITED) return;
+  try {
+    await run(
+      env.DB,
+      'UPDATE llm_budget SET reads = MAX(reads - ?, 0) WHERE day = ?',
+      [count, llmBudgetDay()],
+    );
+  } catch (err) {
+    console.warn('agreement LLM budget refund failed:', (err as Error).message);
+  }
+}
+
+function nextUtcMidnight(now = new Date()): string {
+  return new Date(Date.UTC(
+    now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1,
+  )).toISOString();
+}
+
 /**
  * Record a diagnostics receipt when the daily LLM budget is exhausted, using
  * the same recordIngestionDecision "receipt" pattern as leaveInReviewHighPriority
@@ -606,7 +1023,17 @@ async function reserveLlmBudget(env: Env, budget: number, count: number): Promis
  * operational throttle, not a model disagreement) and gets a fresh shot once
  * the day's budget resets.
  */
-async function deferForBudgetExhausted(env: Env, docId: string, tier: number, budget: number): Promise<void> {
+async function deferForBudgetExhausted(
+  env: Env,
+  docId: string,
+  tier: number,
+  budget: number,
+  claimToken: string,
+): Promise<void> {
+  if (!(await ownsUnresolvedReview(env, docId, claimToken))) {
+    await releaseAgreementClaim(env, docId, claimToken);
+    return;
+  }
   await recordIngestionDecision(env.DB, {
     docId,
     action: 'review_opened',
@@ -614,6 +1041,7 @@ async function deferForBudgetExhausted(env: Env, docId: string, tier: number, bu
     reason: 'llm_budget_exhausted',
     payload: { resolvedBy: 'agreement-cascade', tier, budget, detail: 'budget_exhausted' },
   });
+  await rollbackUnspentAttempt(env, docId, claimToken, nextUtcMidnight());
 }
 
 /**
@@ -640,76 +1068,189 @@ async function resolveStartTier(env: Env, e: AgreementEnv, docId: string): Promi
   return 1;
 }
 
-/**
- * Increment the doc's cascade attempt counter and stamp the current tier +
- * attempted-at. Returns the NEW attempt count (1-based). Never throws; a
- * pre-migration DB (missing columns) reads as 0 attempts and the UPDATE is a
- * best-effort no-op.
- */
-async function bumpAttempt(env: Env, docId: string, tier: number): Promise<number> {
-  let prior = 0;
+function leaseExpiredBefore(now: Date): string {
+  return new Date(now.getTime() - AGREEMENT_CLAIM_LEASE_MS).toISOString();
+}
+
+/** Acquire/renew the queue lease before enqueueing or consuming a legacy message. */
+async function acquireAgreementLease(
+  env: Env,
+  docId: string,
+  max: number,
+  existingClaimToken?: string,
+): Promise<string | null> {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const token = existingClaimToken ?? uuid();
   try {
-    const row = await get<{ agreement_attempts: number | null }>(
-      env.DB,
-      'SELECT agreement_attempts FROM review_queue WHERE doc_id = ?',
-      [docId],
-    );
-    prior = row?.agreement_attempts ?? 0;
-  } catch { /* column missing pre-migration */ }
-  const next = prior + 1;
-  try {
-    await run(
-      env.DB,
-      'UPDATE review_queue SET agreement_attempts = ?, agreement_tier = ?, agreement_attempted_at = ? WHERE doc_id = ?',
-      [next, tier, new Date().toISOString(), docId],
-    );
+    const result = existingClaimToken
+      ? await run(
+          env.DB,
+          `UPDATE review_queue
+              SET agreement_claimed_at = ?, agreement_next_attempt_at = NULL
+            WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+              AND agreement_claim_token = ?
+              AND COALESCE(agreement_attempts, 0) < ?
+              AND NOT EXISTS (
+                SELECT 1 FROM transactions t
+                 WHERE t.doc_id = review_queue.doc_id
+                   AND t.source IN ('primary', 'manual') AND t.deprecated_at IS NULL
+              )`,
+          [nowIso, docId, existingClaimToken, max],
+        )
+      : await run(
+          env.DB,
+          `UPDATE review_queue
+              SET agreement_claim_token = ?, agreement_claimed_at = ?, agreement_next_attempt_at = NULL
+            WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+              AND COALESCE(agreement_attempts, 0) < ?
+              AND NOT EXISTS (
+                SELECT 1 FROM transactions t
+                 WHERE t.doc_id = review_queue.doc_id
+                   AND t.source IN ('primary', 'manual') AND t.deprecated_at IS NULL
+              )
+              AND (agreement_next_attempt_at IS NULL OR agreement_next_attempt_at <= ?)
+              AND (
+                agreement_claim_token IS NULL OR agreement_claimed_at IS NULL OR agreement_claimed_at <= ?
+              )`,
+          [token, nowIso, docId, max, nowIso, leaseExpiredBefore(now)],
+        );
+    return (result.meta?.changes ?? 0) > 0 ? token : null;
   } catch (err) {
-    console.warn('bumpAttempt failed:', docId, (err as Error).message);
+    console.warn('agreement lease acquire failed:', docId, (err as Error).message);
+    return null;
   }
-  return next;
 }
 
 /**
- * Enqueue an `agreement.check` for one doc at a given tier. Optionally stamps the
- * legacy agreement_attempted_at marker (used by the cron's fresh pickup to avoid
- * re-enqueuing the same doc every minute); the tier-2 escalation path skips the
- * stamp since the doc is already in-flight. The stamp is written only when a
- * send is about to happen and rolled back on send failure so a transient error
- * lets the backstop retry. Returns true when a check was enqueued.
+ * Consume a queue-message token exactly once while atomically incrementing the
+ * attempt counter under its cap. Rotating the token makes concurrent delivery
+ * of the same message lose the CAS; escalation sends the resulting owner token
+ * onward and the next tier rotates it again.
+ */
+async function claimAgreementAttempt(
+  env: Env,
+  docId: string,
+  expectedClaimToken: string,
+  tier: number,
+  max: number,
+): Promise<{ token: string; attempts: number } | null> {
+  const token = uuid();
+  const nowIso = new Date().toISOString();
+  // Read before mutation, then CAS the exact observed attempt count. This
+  // avoids the old update-then-read gap where a successful token rotation plus
+  // failed follow-up read made the old queue message ACK as a no-op forever.
+  const state = await loadReviewState(env, docId);
+  const attempts = state?.agreement_attempts ?? 0;
+  if (
+    !state || state.resolved !== 0 || state.agreement_suppressed_at != null
+    || state.agreement_claim_token !== expectedClaimToken || attempts >= max
+    || (state.agreement_next_attempt_at !== null && state.agreement_next_attempt_at > nowIso)
+  ) return null;
+  const result = await run(
+    env.DB,
+    `UPDATE review_queue
+        SET agreement_attempts = ?,
+            agreement_tier = ?,
+            agreement_attempted_at = ?,
+            agreement_claim_token = ?,
+            agreement_claimed_at = ?,
+            agreement_next_attempt_at = NULL
+      WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+        AND agreement_claim_token = ?
+        AND COALESCE(agreement_attempts, 0) = ?
+        AND COALESCE(agreement_attempts, 0) < ?
+        AND (agreement_next_attempt_at IS NULL OR agreement_next_attempt_at <= ?)`,
+    [attempts + 1, tier, nowIso, token, nowIso, docId, expectedClaimToken, attempts, max, nowIso],
+  );
+  return (result.meta?.changes ?? 0) > 0 ? { token, attempts: attempts + 1 } : null;
+}
+
+async function releaseAgreementClaim(env: Env, docId: string, claimToken: string): Promise<void> {
+  await run(
+    env.DB,
+    `UPDATE review_queue
+        SET agreement_claim_token = NULL, agreement_claimed_at = NULL
+      WHERE doc_id = ? AND agreement_claim_token = ?`,
+    [docId, claimToken],
+  );
+}
+
+async function rollbackUnspentAttempt(
+  env: Env,
+  docId: string,
+  claimToken: string,
+  nextAttemptAt: string | null,
+): Promise<void> {
+  await run(
+    env.DB,
+    `UPDATE review_queue
+        SET agreement_attempts = MAX(COALESCE(agreement_attempts, 0) - 1, 0),
+            agreement_next_attempt_at = ?,
+            agreement_claim_token = NULL,
+            agreement_claimed_at = NULL
+      WHERE doc_id = ? AND agreement_claim_token = ?`,
+    [nextAttemptAt, docId, claimToken],
+  );
+}
+
+function retryAt(attempts: number, now = new Date()): string {
+  const delay = Math.min(5 * 60 * 1000 * (2 ** Math.max(attempts - 1, 0)), 6 * 60 * 60 * 1000);
+  return new Date(now.getTime() + delay).toISOString();
+}
+
+async function releaseForRetry(env: Env, docId: string, claimToken: string, attempts: number): Promise<void> {
+  await run(
+    env.DB,
+    `UPDATE review_queue
+        SET agreement_next_attempt_at = ?, agreement_claim_token = NULL, agreement_claimed_at = NULL
+      WHERE doc_id = ? AND agreement_claim_token = ?`,
+    [retryAt(attempts), docId, claimToken],
+  );
+}
+
+async function finishTerminalClaim(
+  env: Env,
+  docId: string,
+  claimToken: string,
+  max: number,
+): Promise<void> {
+  await run(
+    env.DB,
+    `UPDATE review_queue
+        SET agreement_attempts = MAX(COALESCE(agreement_attempts, 0), ?),
+            agreement_next_attempt_at = NULL,
+            agreement_claim_token = NULL,
+            agreement_claimed_at = NULL
+      WHERE doc_id = ? AND agreement_claim_token = ?`,
+    [max, docId, claimToken],
+  );
+}
+
+/**
+ * Enqueue an `agreement.check` only after acquiring its durable lease. A fresh
+ * enqueue mints a token with a guarded due/cap/expiry UPDATE; escalation renews
+ * and reuses the current consumer token. Send failure releases only that token.
  */
 export async function enqueueAgreementCheck(
   env: Env,
   docId: string,
   rawObjectKey: string | null,
   escalationTier = 1,
-  stampAttempt = true,
+  existingClaimToken?: string,
 ): Promise<boolean> {
   const e = env as unknown as AgreementEnv;
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return false;
-
-  let dbUpdated = false;
-  if (stampAttempt) {
-    const now = new Date().toISOString();
-    try {
-      await run(env.DB, 'UPDATE review_queue SET agreement_attempted_at = ? WHERE doc_id = ?', [now, docId]);
-      dbUpdated = true;
-    } catch (err) {
-      console.warn('enqueueAgreementCheck DB stamp failed:', docId, (err as Error).message);
-    }
-  }
+  const token = await acquireAgreementLease(env, docId, maxAttempts(e), existingClaimToken);
+  if (!token) return false;
 
   try {
-    await env.INGEST_QUEUE.send({ type: 'agreement.check', docId, rawObjectKey, escalationTier });
+    await env.INGEST_QUEUE.send({ type: 'agreement.check', docId, rawObjectKey, escalationTier, claimToken: token });
     return true;
   } catch (err) {
     console.warn('enqueueAgreementCheck send failed:', docId, (err as Error).message);
-    if (dbUpdated) {
-      try {
-        await run(env.DB, 'UPDATE review_queue SET agreement_attempted_at = NULL WHERE doc_id = ?', [docId]);
-      } catch (rollbackErr) {
-        console.error('enqueueAgreementCheck rollback failed:', docId, (rollbackErr as Error).message);
-      }
-    }
+    const state = await loadReviewState(env, docId).catch(() => null);
+    await releaseForRetry(env, docId, token, Math.max(state?.agreement_attempts ?? 0, 1));
     return false;
   }
 }
@@ -734,76 +1275,214 @@ export async function handleAgreementCheck(
   docId: string,
   rawObjectKey: string | null,
   escalationTier?: number,
+  claimToken?: string,
 ): Promise<void> {
   const e = env as unknown as AgreementEnv;
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return;
+  const max = maxAttempts(e);
 
   // A fresh check (tier unset) may start at tier 2 for a complex doc.
   let tier = escalationTier ?? 1;
   if (tier === 1) tier = await resolveStartTier(env, e, docId);
 
-  const budget = dailyLlmBudget(e);
-  const readsNeeded = tier >= 2 ? 3 : 2;
-  if (!(await reserveLlmBudget(env, budget, readsNeeded))) {
-    await deferForBudgetExhausted(env, docId, tier, budget);
-    // Clear the agreement_attempted_at stamp that enqueueAgreementCheck set,
-    // so the cron backstop picks this doc up again after the budget resets
-    // (next UTC day) rather than permanently ignoring it.
-    try {
-      await run(env.DB, 'UPDATE review_queue SET agreement_attempted_at = NULL WHERE doc_id = ?', [docId]);
-    } catch (err) {
-      console.warn('handleAgreementCheck failed to clear stamp on budget-exhausted:', docId, (err as Error).message);
-    }
-    console.log(`agreement.check ${docId} tier${tier}: LLM budget exhausted (cap ${budget}/day) → deferred, no attempt spent`);
+  // Backward-compatible tokenless messages acquire a fresh lease. Modern queue
+  // messages carry the enqueue lease, which the attempt CAS consumes below.
+  const queuedToken = claimToken ?? await acquireAgreementLease(env, docId, max);
+  if (!queuedToken) return;
+
+  const models = tier >= 2 ? resolveModelsWithC(e) : resolveModels(e);
+  const lineupError = duplicateLineupReason(
+    tier >= 2
+      ? [(models as AgreementModelsC).a, (models as AgreementModelsC).b, (models as AgreementModelsC).c]
+      : [(models as AgreementModels).a, (models as AgreementModels).b],
+  );
+  if (lineupError) {
+    await leaveInReviewHighPriority(
+      env, docId, tier, modelLabels(models), null, lineupError, queuedToken,
+    );
+    await finishTerminalClaim(env, docId, queuedToken, max);
     return;
   }
 
-  const attempts = await bumpAttempt(env, docId, tier);
-  const max = maxAttempts(e);
+  const claimed = await claimAgreementAttempt(env, docId, queuedToken, tier, max);
+  if (!claimed) return; // duplicate/redelivered message, cap, resolved row, or lost lease
 
-  if (tier >= 2) {
-    const res = await processAgreementCascadeTier2(env, resolveModelsWithC(e), docId, rawObjectKey, false);
-    console.log(`agreement.check ${docId} tier${tier}: ${res.outcome}${res.inserted ? ` (+${res.inserted} tx)` : ''}`);
-    return;
-  }
-
-  // Tier 1 — two-model cross-vendor check (unchanged publish behavior).
-  const res = await processAgreementDoc(env, resolveModels(e), docId, rawObjectKey, false, { tier: 1 });
-  if (res.outcome === 'disagree') {
-    if (attempts < max) {
-      const escalated = await enqueueAgreementCheck(env, docId, rawObjectKey, 2, false);
-      if (!escalated) {
-        // Enqueue failed — the doc still has its tier-1 agreement_attempted_at
-        // stamp so the cron backstop won't retry. Escalation is the only path
-        // to tier 2/3, so flag for human review rather than leaving the doc in
-        // invisible limbo.
-        await leaveInReviewHighPriority(
-          env, docId, 1, modelLabels(resolveModels(e)), res.rows ?? null, 'escalation_enqueue_failed',
-        );
-      }
-      console.log(`agreement.check ${docId} tier1: disagree → ${escalated ? 'escalated to tier2' : 'escalation enqueue failed'}`);
+  try {
+    const budget = dailyLlmBudget(e);
+    const readsNeeded = tier >= 2 ? 3 : 2;
+    if (!(await reserveLlmBudget(env, budget, readsNeeded))) {
+      await deferForBudgetExhausted(env, docId, tier, budget, claimed.token);
+      console.log(`agreement.check ${docId} tier${tier}: LLM budget exhausted (cap ${budget}/day) → deferred, no attempt spent`);
       return;
     }
-    // Attempt cap reached — leave in human review, flagged high-priority.
-    await leaveInReviewHighPriority(env, docId, 1, modelLabels(resolveModels(e)), res.rows ?? null, 'attempt_cap_reached');
-    console.log(`agreement.check ${docId} tier1: disagree, attempt cap (${max}) reached → human review`);
-    return;
+
+    // A human may resolve the row after enqueue/claim but before the model calls.
+    // Recheck ownership after budget reservation and refund without spending.
+    if (!(await ownsUnresolvedReview(env, docId, claimed.token))) {
+      await refundLlmBudget(env, budget, readsNeeded);
+      await rollbackUnspentAttempt(env, docId, claimed.token, null);
+      return;
+    }
+
+    if (tier >= 2) {
+      const res = await processAgreementCascadeTier2(
+        env, models as AgreementModelsC, docId, rawObjectKey, false, claimed.token,
+      );
+      if (res.outcome === 'review_flagged') {
+        await finishTerminalClaim(env, docId, claimed.token, max);
+      } else if (res.outcome === 'skipped') {
+        if (res.reason === 'review_resolved_or_claim_lost') {
+          await releaseAgreementClaim(env, docId, claimed.token);
+        } else if (claimed.attempts >= max) {
+          await leaveInReviewHighPriority(
+            env, docId, tier, modelLabels(models), null, 'attempt_cap_reached', claimed.token,
+          );
+          await finishTerminalClaim(env, docId, claimed.token, max);
+        } else {
+          await releaseForRetry(env, docId, claimed.token, claimed.attempts);
+        }
+      }
+      console.log(`agreement.check ${docId} tier${tier}: ${res.outcome}${res.inserted ? ` (+${res.inserted} tx)` : ''}`);
+      return;
+    }
+
+    const tier1Models = models as AgreementModels;
+    const res = await processAgreementDoc(
+      env, tier1Models, docId, rawObjectKey, false, { tier: 1, claimToken: claimed.token },
+    );
+    if (res.outcome === 'disagree') {
+      if (claimed.attempts < max) {
+        const escalated = await enqueueAgreementCheck(env, docId, rawObjectKey, 2, claimed.token);
+        console.log(`agreement.check ${docId} tier1: disagree → ${escalated ? 'escalated to tier2' : 'escalation enqueue failed'}`);
+        return;
+      }
+      // Attempt cap reached — leave in human review, flagged high-priority.
+      await leaveInReviewHighPriority(
+        env, docId, 1, modelLabels(tier1Models), res.rows ?? null, 'attempt_cap_reached', claimed.token,
+      );
+      await finishTerminalClaim(env, docId, claimed.token, max);
+      console.log(`agreement.check ${docId} tier1: disagree, attempt cap (${max}) reached → human review`);
+      return;
+    }
+    if (res.outcome === 'agree_but_hardfail') {
+      await leaveInReviewHighPriority(
+        env, docId, 1, modelLabels(tier1Models), null,
+        `hard_fail:${(res.flags ?? []).join(',')}`, claimed.token,
+      );
+      await finishTerminalClaim(env, docId, claimed.token, max);
+    } else if (res.outcome === 'skipped') {
+      if (res.reason === 'review_resolved_or_claim_lost') {
+        await releaseAgreementClaim(env, docId, claimed.token);
+      } else if (claimed.attempts >= max) {
+        await leaveInReviewHighPriority(
+          env, docId, 1, modelLabels(tier1Models), null, 'attempt_cap_reached', claimed.token,
+        );
+        await finishTerminalClaim(env, docId, claimed.token, max);
+      } else {
+        await releaseForRetry(env, docId, claimed.token, claimed.attempts);
+      }
+    }
+    console.log(`agreement.check ${docId} tier1: ${res.outcome}${res.inserted ? ` (+${res.inserted} tx)` : ''}`);
+  } catch (err) {
+    console.error(`agreement.check ${docId} tier${tier} failed after claim:`, (err as Error).message);
+    if (claimed.attempts >= max) {
+      await leaveInReviewHighPriority(
+        env, docId, tier, modelLabels(models), null, 'handler_error_attempt_cap', claimed.token,
+      ).catch(() => {});
+      await finishTerminalClaim(env, docId, claimed.token, max);
+    } else {
+      await releaseForRetry(env, docId, claimed.token, claimed.attempts);
+    }
+    // Preserve the queue-level Sentry issue/dead-letter signal. The old message
+    // token will no-op on redelivery; the cron later acquires the due row with a
+    // fresh token after backoff.
+    throw err;
   }
-  console.log(`agreement.check ${docId} tier1: ${res.outcome}${res.inserted ? ` (+${res.inserted} tx)` : ''}`);
 }
 
 /**
- * Autonomous per-minute backstop: pick up to `limit` review docs that have NOT
- * yet had an agreement attempt and ENQUEUE a fresh tier-1 agreement.check for
- * each (fast — no model work, so it never gets canceled like inline cron work
- * does). Each doc is stamped on enqueue (agreement_attempted_at) so it is not
- * re-enqueued every minute; the tiered cascade thereafter runs in the queue
- * consumer. Self-gates on AGREEMENT_AUTOPUBLISH_ENABLED; never throws (cron-safe).
+ * Repair a capped row whose previous consumer died before it could write the
+ * terminal human-review flag. A fresh CAS lease makes this safe under
+ * concurrent cron ticks; failures retain the lease and are retried after its
+ * 15-minute expiry instead of silently stranding the row at the attempt cap.
  */
-export async function maybeRunAgreementAutopublish(env: Env): Promise<{ attempted: number; enqueued: number } | null> {
+async function recoverExpiredCappedReviews(
+  env: Env,
+  max: number,
+  limit: number,
+): Promise<number> {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const expiredBefore = leaseExpiredBefore(now);
+  const rows = await all<{ doc_id: string; agreement_tier: number | null }>(
+    env.DB,
+    `SELECT doc_id, agreement_tier FROM review_queue
+      WHERE resolved = 0 AND agreement_suppressed_at IS NULL
+        AND COALESCE(agreement_attempts, 0) >= ?
+        AND COALESCE(reason, '') <> 'agreement_cascade_unresolved'
+        AND (
+          agreement_claim_token IS NULL OR agreement_claimed_at IS NULL
+          OR agreement_claimed_at <= ?
+        )
+      ORDER BY created_at ASC LIMIT ?`,
+    [max, expiredBefore, limit],
+  );
+  let terminalized = 0;
+  for (const row of rows) {
+    const token = uuid();
+    try {
+      const leased = await run(
+        env.DB,
+        `UPDATE review_queue
+            SET agreement_claim_token = ?, agreement_claimed_at = ?
+          WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+            AND COALESCE(agreement_attempts, 0) >= ?
+            AND COALESCE(reason, '') <> 'agreement_cascade_unresolved'
+            AND (
+              agreement_claim_token IS NULL OR agreement_claimed_at IS NULL
+              OR agreement_claimed_at <= ?
+            )`,
+        [token, nowIso, row.doc_id, max, expiredBefore],
+      );
+      if ((leased.meta?.changes ?? 0) === 0) continue;
+      const flagged = await leaveInReviewHighPriority(
+        env,
+        row.doc_id,
+        row.agreement_tier ?? 1,
+        {},
+        null,
+        'attempt_cap_recovery',
+        token,
+      );
+      if (flagged.outcome === 'review_flagged') {
+        await finishTerminalClaim(env, row.doc_id, token, max);
+        terminalized += 1;
+      } else {
+        await releaseAgreementClaim(env, row.doc_id, token);
+      }
+    } catch (err) {
+      console.error('agreement capped-row recovery failed:', row.doc_id, (err as Error).message);
+    }
+  }
+  return terminalized;
+}
+
+/**
+ * Autonomous per-minute backstop: pick up to `limit` unresolved, due, under-cap
+ * review docs whose lease is free/expired and enqueue a fresh tier-1 check. The
+ * enqueue helper repeats the same predicates in its guarded lease UPDATE, so
+ * concurrent schedulers cannot both send the same document.
+ */
+export async function maybeRunAgreementAutopublish(
+  env: Env,
+): Promise<{ attempted: number; enqueued: number; terminalized: number } | null> {
   const e = env as unknown as AgreementEnv;
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return null;
   const limit = Math.min(Math.max(parseInt(e.AGREEMENT_AUTOPUBLISH_LIMIT || '3', 10) || 3, 1), 10);
+  const max = maxAttempts(e);
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const terminalized = await recoverExpiredCappedReviews(env, max, limit);
 
   let docs: Array<{ doc_id: string; raw_object_key: string | null }>;
   try {
@@ -811,12 +1490,25 @@ export async function maybeRunAgreementAutopublish(env: Env): Promise<{ attempte
       env.DB,
       `SELECT f.doc_id, f.raw_object_key
          FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
-        WHERE rq.resolved = 0 AND rq.agreement_attempted_at IS NULL AND f.raw_object_key IS NOT NULL
-        ORDER BY rq.created_at DESC LIMIT ?`,
-      [limit],
+        WHERE rq.resolved = 0
+          AND rq.agreement_suppressed_at IS NULL
+          AND COALESCE(rq.agreement_attempts, 0) < ?
+          AND (rq.agreement_next_attempt_at IS NULL OR rq.agreement_next_attempt_at <= ?)
+          AND (
+            rq.agreement_claim_token IS NULL OR rq.agreement_claimed_at IS NULL OR rq.agreement_claimed_at <= ?
+          )
+          AND f.raw_object_key IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM transactions t
+             WHERE t.doc_id = rq.doc_id AND t.source IN ('primary', 'manual')
+               AND t.deprecated_at IS NULL
+          )
+        ORDER BY rq.created_at ASC LIMIT ?`,
+      [max, nowIso, leaseExpiredBefore(now), limit],
     );
-  } catch {
-    return null; // migration not applied yet
+  } catch (err) {
+    console.error('agreement autopublish selector failed:', (err as Error).message);
+    throw err;
   }
 
   let enqueued = 0;
@@ -824,5 +1516,5 @@ export async function maybeRunAgreementAutopublish(env: Env): Promise<{ attempte
     if (await enqueueAgreementCheck(env, d.doc_id, d.raw_object_key)) enqueued++;
   }
   if (docs.length) console.log(`agreement autopublish: enqueued ${enqueued}/${docs.length} checks`);
-  return { attempted: docs.length, enqueued };
+  return { attempted: docs.length, enqueued, terminalized };
 }

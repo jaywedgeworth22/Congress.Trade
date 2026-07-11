@@ -74,6 +74,20 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('<h3>Delivery Subscriptions</h3>');
   });
 
+  it('requires explicit review type/date and preserves an unknown owner', () => {
+    expect(DASHBOARD_HTML).toContain('>Transaction type</option>');
+    expect(DASHBOARD_HTML).toContain('>Owner unknown</option>');
+    expect(DASHBOARD_HTML).not.toContain("t.txType || t.type || 'P'");
+    expect(DASHBOARD_HTML).not.toContain("t.owner || 'self'");
+    expect(DASHBOARD_HTML).toContain("needs an explicit transaction type and date");
+  });
+
+  it('surfaces durable human holds with an explicit Retry Auto action', () => {
+    expect(DASHBOARD_HTML).toContain('agreementSuppressedAt');
+    expect(DASHBOARD_HTML).toContain('>Retry Auto</button>');
+    expect(DASHBOARD_HTML).toContain('/retry-auto');
+  });
+
   it('surfaces the GICS sector flow, market-cap, and performer analytics in Trends', () => {
     for (const id of ['trSectorFlow', 'trCapFlow', 'trPerformers']) {
       expect(DASHBOARD_HTML).toContain('id="' + id + '"');
@@ -285,11 +299,17 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('5P');
     expect(DASHBOARD_HTML).toContain('Municipal Security');
     expect(DASHBOARD_HTML).toContain('Stock Option');
-    expect(DASHBOARD_HTML).toContain('assetTypeName: reviewAssetTypeName(assetType) || null');
+    expect(DASHBOARD_HTML).toContain("assetTypeName: reviewAssetTypeName(assetType) || (g.querySelector('.me-asset-type-name').value || '').trim() || null");
     expect(DASHBOARD_HTML).toContain("tr.setAttribute('data-chamber', chamber || '')");
     expect(DASHBOARD_HTML).toContain('class="me-option"');
     expect(DASHBOARD_HTML).toContain('Option Contract');
     expect(DASHBOARD_HTML).toContain('class="me-cap"');
+    expect(DASHBOARD_HTML).toContain('class="me-filing-status"');
+    expect(DASHBOARD_HTML).toContain('class="me-subholding"');
+    expect(DASHBOARD_HTML).toContain('class="me-location"');
+    expect(DASHBOARD_HTML).toContain('class="me-description"');
+    expect(DASHBOARD_HTML).toContain('class="me-supplemental"');
+    expect(DASHBOARD_HTML).toContain("filingStatus: (g.querySelector('.me-filing-status').value || '').trim() || null");
     expect(DASHBOARD_HTML).not.toContain('class="me-min"');
     expect(DASHBOARD_HTML).not.toContain('class="me-max"');
     expect(DASHBOARD_HTML).toContain('JSON.stringify({ decision: decision, edits: edits })');
@@ -519,14 +539,19 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function consensusGridHtml(');
     expect(DASHBOARD_HTML).toContain('function useConsensusRows(');
     expect(DASHBOARD_HTML).toContain('function consensusFieldValueForEdit(');
+    expect(DASHBOARD_HTML).toContain('function consensusApplyField(');
     expect(DASHBOARD_HTML).toContain('REVIEW_CONSENSUS[docId] = data.consensus || null;');
-    expect(DASHBOARD_HTML).toContain("}).join('') + consensusGridHtml(docId, data.consensus);");
+    expect(DASHBOARD_HTML).toContain('REVIEW_CONSENSUS_STATUS[docId] = data.consensusStatus || null;');
+    expect(DASHBOARD_HTML).toContain("}).join('') + consensusGridHtml(docId, data.consensus, data.consensusStatus);");
     // reuses the existing .conf hi/mid/lo confidence-color classes — no new stylesheet
     expect(DASHBOARD_HTML).toContain('function consensusFieldClass(fc) {');
     expect(DASHBOARD_HTML).toContain("if (fc.unanimous) return 'hi';");
-    expect(DASHBOARD_HTML).toContain('<span class="conf hi">');
-    expect(DASHBOARD_HTML).toContain('<span class="conf mid"');
-    expect(DASHBOARD_HTML).toContain('<span class="conf lo"');
+    expect(DASHBOARD_HTML).toContain('<div class="conf hi">');
+    expect(DASHBOARD_HTML).toContain('<div class="conf mid"');
+    expect(DASHBOARD_HTML).toContain('<div class="conf lo"');
+    expect(DASHBOARD_HTML).toContain('Queue-first safety');
+    expect(DASHBOARD_HTML).toContain('Missing row from:');
+    expect(DASHBOARD_HTML).toContain('Contested ');
     expect(DASHBOARD_HTML).not.toContain('.consensus-cell');
     expect(DASHBOARD_HTML).not.toContain('.consensus-grid {');
     // "Use This Model" and the queued-payload prefill stay wired unchanged (consensus is opt-in)
@@ -573,7 +598,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
   }
 
   interface ConsensusSandbox {
-    consensusGridHtml: (docId: string, consensus: unknown) => string;
+    consensusGridHtml: (docId: string, consensus: unknown, status?: unknown) => string;
     useConsensusRows: (docId: string) => void;
     setReviewItem: (item: unknown) => void;
     setQueued: (rows: unknown[]) => void;
@@ -605,9 +630,11 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
       extractFn(html, 'consensusModelFieldValue'),
       extractFn(html, 'consensusFieldCellHtml'),
       extractFn(html, 'consensusModelCellHtml'),
+      extractFn(html, 'consensusStatusHtml'),
       extractFn(html, 'consensusGridHtml'),
       extractFn(html, 'consensusQueuedRowKey'),
       extractFn(html, 'consensusFieldValueForEdit'),
+      extractFn(html, 'consensusApplyField'),
       extractFn(html, 'useConsensusRows'),
       'return { consensusGridHtml: consensusGridHtml, useConsensusRows: useConsensusRows, ' +
         'setReviewItem: function (item) { REVIEW_ITEM_FOR_TEST = item; }, ' +
@@ -698,7 +725,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
       summary: { models: MODELS, rowsUnanimous: 1, rowsMajority: 0, rowsContested: 0, perFieldAgreementPct: {} },
     };
     const html = sandbox.consensusGridHtml('doc-1', consensus);
-    expect(html).toContain('<span class="conf hi">AAPL</span>');
+    expect(html).toContain('<div class="conf hi"><strong>Symbol:</strong> AAPL');
     expect(html).toContain('<th>anthropic:claude-sonnet-4-6</th>');
     expect(html).toContain('<th>Consensus</th>');
     expect(html).toContain("useConsensusRows('doc-1')");
@@ -712,9 +739,8 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
       summary: { models: MODELS, rowsUnanimous: 0, rowsMajority: 1, rowsContested: 0, perFieldAgreementPct: {} },
     };
     const html = sandbox.consensusGridHtml('doc-1', consensus);
-    expect(html).toContain('<span class="conf mid" title="openai:gpt-4o: spouse">joint</span>');
-    // the winning value is what a reviewer sees inline; the dissent is in the title, not duplicated in the body
-    expect(html).not.toContain('>spouse<');
+    expect(html).toContain('<div class="conf mid" title="openai:gpt-4o: spouse"><strong>Owner:</strong> joint');
+    expect(html).toContain('Dissent: openai:gpt-4o: spouse');
   });
 
   it('colors a contested field red and shows every present model\'s value', () => {
@@ -728,7 +754,8 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     expect(html).toContain('anthropic:claude-sonnet-4-6: $1,001 - $15,000');
     expect(html).toContain('gemini:gemini-3.5-flash: $15,001 - $50,000');
     // the model missing from this row gets a muted placeholder, not a blank cell
-    expect(html).toContain('— (no row)');
+    expect(html).toContain('Missing row');
+    expect(html).toContain('Missing row from:');
   });
 
   // Seen by only ONE of the three models. Its row-level consensus is 'contested'
@@ -757,16 +784,15 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     ).toBe('');
   });
 
-  it('"Use Consensus" feeds the editor majority values only, falling back to the queued payload for contested fields', () => {
+  it('"Use Consensus" updates complete majority rows but preserves contested rows wholesale', () => {
     const sandbox = loadConsensusSandbox();
     sandbox.setConsensus('doc-2', {
       rows: [majorityRow, contestedRow],
       summary: { models: MODELS, rowsUnanimous: 0, rowsMajority: 1, rowsContested: 1, perFieldAgreementPct: {} },
     });
     sandbox.setReviewItem({ docId: 'doc-2', chamber: 'house', payload: null });
-    // Only the contested row's ticker/date/type match this queued transaction's key
-    // (TSLA|2024-03-10|P); it exists purely to backstop the contested "amount" field.
     sandbox.setQueued([
+      { ticker: 'MSFT', txType: 'S', txDate: '2024-02-01', owner: 'spouse', assetName: 'Microsoft (queued)', amountMin: 1, amountMax: 2 },
       { ticker: 'TSLA', txType: 'P', txDate: '2024-03-10', owner: 'spouse', assetName: 'Tesla Inc (queued)', amountMin: 999, amountMax: 1000 },
     ]);
 
@@ -786,10 +812,10 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     expect(majority.ticker).toBe('MSFT');
     expect(majority.owner).toBe('joint');
 
-    // contested row: ticker/type/date/owner/asset all reached a majority and use
-    // the consensus value; only "amount" (no majority) falls back to the queued row.
+    // Any contested field makes the row human-only: no fieldwise partial merge.
     expect(contested.ticker).toBe('TSLA');
-    expect(contested.owner).toBe('self');
+    expect(contested.owner).toBe('spouse');
+    expect(contested.assetName).toBe('Tesla Inc (queued)');
     expect(contested.amountMin).toBe(999);
     expect(contested.amountMax).toBe(1000);
   });
@@ -819,6 +845,116 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     expect(only.assetName).toBe('Nvidia (queued)');
     expect(only.amountMin).toBe(1);
     expect(only.amountMax).toBe(2);
+  });
+
+  it('preserves queued-only rows and every queued metadata/detail field', () => {
+    const sandbox = loadConsensusSandbox();
+    sandbox.setConsensus('doc-5', {
+      // MSFT is consensus-only and must not be injected; AAPL matches queue.
+      rows: [unanimousRow, majorityRow],
+      summary: { models: MODELS, rowsUnanimous: 1, rowsMajority: 1, rowsContested: 0, perFieldAgreementPct: {} },
+    });
+    sandbox.setReviewItem({ docId: 'doc-5', chamber: 'house', payload: null });
+    sandbox.setQueued([
+      {
+        ticker: 'AAPL', txType: 'P', txDate: '2024-01-05', owner: 'self',
+        assetName: 'Apple queued', amountMin: 1001, amountMax: 15000,
+        assetType: 'OP', assetTypeName: 'Stock Option', isOption: true,
+        capGainsOver200: true, rawText: 'verbatim queued row', confidence: 0.42,
+        filingStatus: 'N', subholding: 'Brokerage A', location: 'Delaware',
+        description: 'Call option', supplementalText: 'Expires 2027-01-15',
+      },
+      {
+        ticker: 'GOOG', txType: 'S', txDate: '2024-05-01', owner: 'spouse',
+        assetName: 'Alphabet queued-only', amountMin: 50001, amountMax: 100000,
+        assetType: 'ST', assetTypeName: 'Stock', isOption: false,
+        capGainsOver200: false, rawText: 'queued-only raw', confidence: 0.81,
+        filingStatus: 'A', subholding: 'Trust', location: 'California',
+        description: 'Queued-only description', supplementalText: 'Queued-only note',
+      },
+    ]);
+
+    sandbox.useConsensusRows('doc-5');
+
+    const rows = sandbox.getEditorCall()!.rows;
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.ticker)).toEqual(['AAPL', 'GOOG']);
+    expect(rows[0]).toMatchObject({
+      assetType: 'OP', assetTypeName: 'Stock Option', isOption: true,
+      capGainsOver200: true, rawText: 'verbatim queued row', confidence: 0.42,
+      filingStatus: 'N', subholding: 'Brokerage A', location: 'Delaware',
+      description: 'Call option', supplementalText: 'Expires 2027-01-15',
+    });
+    expect(rows[1]).toMatchObject({
+      ticker: 'GOOG', assetName: 'Alphabet queued-only', rawText: 'queued-only raw',
+      filingStatus: 'A', subholding: 'Trust', location: 'California',
+      description: 'Queued-only description', supplementalText: 'Queued-only note',
+    });
+  });
+
+  it('corrects a single unresolved-ticker row when key matching drifts unambiguously', () => {
+    const sandbox = loadConsensusSandbox();
+    sandbox.setConsensus('doc-key-drift', {
+      rows: [unanimousRow],
+      summary: { models: MODELS, rowsUnanimous: 1, rowsMajority: 0, rowsContested: 0, perFieldAgreementPct: {} },
+    });
+    sandbox.setReviewItem({ docId: 'doc-key-drift', chamber: 'house', payload: null });
+    sandbox.setQueued([{
+      ticker: null, assetName: 'Apple Inc.', txType: 'P', txDate: '2024-01-05',
+      owner: 'self', amountMin: 1, amountMax: 2, rawText: 'queued unresolved ticker',
+    }]);
+
+    sandbox.useConsensusRows('doc-key-drift');
+
+    const [row] = sandbox.getEditorCall()!.rows;
+    expect(row.ticker).toBe('AAPL');
+    expect(row.rawText).toBe('queued unresolved ticker');
+  });
+
+  it('leaves duplicate queued lots untouched because occurrence order is ambiguous', () => {
+    const sandbox = loadConsensusSandbox();
+    const lot1 = {
+      ...unanimousRow,
+      rowKey: 'AAPL|2024-01-05|P#1', baseRowKey: 'AAPL|2024-01-05|P', occurrence: 1,
+      fields: { ...unanimousRow.fields, amount: fieldConsensus({ amountMin: 1001, amountMax: 15000 }, 3, 3, [], true) },
+    };
+    const lot2 = {
+      ...unanimousRow,
+      rowKey: 'AAPL|2024-01-05|P#2', baseRowKey: 'AAPL|2024-01-05|P', occurrence: 2,
+      fields: { ...unanimousRow.fields, amount: fieldConsensus({ amountMin: 15001, amountMax: 50000 }, 3, 3, [], true) },
+    };
+    sandbox.setConsensus('doc-6', {
+      rows: [lot1, lot2],
+      summary: { models: MODELS, rowsUnanimous: 2, rowsMajority: 0, rowsContested: 0, perFieldAgreementPct: {} },
+    });
+    sandbox.setReviewItem({ docId: 'doc-6', chamber: 'house', payload: null });
+    sandbox.setQueued([
+      { ticker: 'AAPL', txType: 'P', txDate: '2024-01-05', assetName: 'Lot 1', amountMin: 1, amountMax: 2, rawText: 'lot one' },
+      { ticker: 'AAPL', txType: 'P', txDate: '2024-01-05', assetName: 'Lot 2', amountMin: 3, amountMax: 4, rawText: 'lot two' },
+    ]);
+
+    sandbox.useConsensusRows('doc-6');
+
+    const rows = sandbox.getEditorCall()!.rows;
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => [row.amountMin, row.amountMax])).toEqual([
+      [1, 2],
+      [3, 4],
+    ]);
+    expect(rows.map((row) => row.rawText)).toEqual(['lot one', 'lot two']);
+  });
+
+  it('shows a newer failed run set instead of hiding why consensus is unavailable', () => {
+    const sandbox = loadConsensusSandbox();
+    const html = sandbox.consensusGridHtml('doc-7', null, {
+      batchId: 'new-revision', kind: 'bakeoff', createdAt: '2026-06-26T02:00:00.000Z',
+      failedModels: [{ model: 'anthropic:claude-sonnet-4-6', error: 'timeout' }],
+      blockedReason: 'Latest comparable run set has fewer than two successful model readings; older successes were not mixed in.',
+    });
+    expect(html).toContain('Run set: bakeoff · new-revision');
+    expect(html).toContain('Failed models:');
+    expect(html).toContain('anthropic:claude-sonnet-4-6 (timeout)');
+    expect(html).toContain('older successes were not mixed in');
   });
 
   it('alerts instead of opening the editor when the document has no consensus rows', () => {

@@ -5,11 +5,10 @@ import type { ParsedTx } from '../../shared/types';
 /**
  * GET /review/:docId/extractions — consensus block.
  *
- * The endpoint additionally reconciles the latest successful run per distinct
- * model (provider:model) across kinds 'agreement' | 'bakeoff' | 'batch' via
- * buildConsensusRows(), and returns it as `consensus` (null when fewer than 2
- * distinct model runs exist). Existing `runs`/`count` fields are unchanged —
- * see extractionRunsE2e.test.ts for that coverage.
+ * The endpoint reconciles one coherent batch/revision via buildConsensusRows().
+ * It never mixes independent batches or backfills a newer failed model attempt
+ * with an older successful reading. Existing `runs`/`count` fields are unchanged
+ * — see extractionRunsE2e.test.ts for that coverage.
  */
 
 const app = buildAdminRouter();
@@ -23,15 +22,17 @@ function extractionRunRow(over: {
   ok: number;
   createdAt: string;
   rows: ParsedTx[];
+  batchId?: string | null;
+  error?: string | null;
 }) {
   return {
     id: `${over.provider}-${over.model}-${over.createdAt}`,
-    batch_id: null,
+    batch_id: over.batchId ?? null,
     provider: over.provider,
     model: over.model,
     kind: over.kind,
     ok: over.ok,
-    error: null,
+    error: over.error ?? null,
     row_count: over.rows.length,
     latency_ms: 100,
     avg_confidence: 0.9,
@@ -90,9 +91,10 @@ describe('GET /review/:docId/extractions — consensus', () => {
       extractionRunRow({
         provider: 'anthropic',
         model: 'claude-sonnet-4-6',
-        kind: 'agreement',
+        kind: 'bakeoff',
         ok: 1,
         createdAt: '2026-06-25T00:00:03.000Z',
+        batchId: 'coherent-1',
         rows: [tx({ owner: 'spouse' })],
       }),
       extractionRunRow({
@@ -101,14 +103,16 @@ describe('GET /review/:docId/extractions — consensus', () => {
         kind: 'bakeoff',
         ok: 1,
         createdAt: '2026-06-25T00:00:02.000Z',
+        batchId: 'coherent-1',
         rows: [tx({ owner: 'self' })],
       }),
       extractionRunRow({
         provider: 'mistral',
         model: 'mistral-ocr-latest',
-        kind: 'batch',
+        kind: 'bakeoff',
         ok: 1,
         createdAt: '2026-06-25T00:00:01.000Z',
+        batchId: 'coherent-1',
         rows: [tx({ owner: 'self' })],
       }),
     ];
@@ -129,6 +133,12 @@ describe('GET /review/:docId/extractions — consensus', () => {
           fields: Record<string, { value: unknown; votes: number; total: number }>;
         }>;
         summary: { models: string[]; rowsMajority: number };
+      } | null;
+      consensusStatus: {
+        batchId: string;
+        attemptedModels: string[];
+        failedModels: Array<{ model: string }>;
+        blockedReason: string | null;
       } | null;
     };
 
@@ -154,6 +164,16 @@ describe('GET /review/:docId/extractions — consensus', () => {
     expect(row.rowConsensus).toBe('majority');
     expect(row.fields.owner).toMatchObject({ value: 'self', votes: 2, total: 3 });
     expect(consensus.summary.rowsMajority).toBe(1);
+    expect(body.consensusStatus).toMatchObject({
+      batchId: 'coherent-1',
+      attemptedModels: [
+        'anthropic:claude-sonnet-4-6',
+        'mistral:mistral-ocr-latest',
+        'openai:gpt-4o',
+      ],
+      failedModels: [],
+      blockedReason: null,
+    });
   });
 
   it('1 distinct model (even with 2 stored runs for it) -> consensus null', async () => {
@@ -167,6 +187,7 @@ describe('GET /review/:docId/extractions — consensus', () => {
         kind: 'bakeoff',
         ok: 1,
         createdAt: '2026-06-25T01:00:00.000Z',
+        batchId: 'single-new',
         rows: [tx()],
       }),
       extractionRunRow({
@@ -175,6 +196,7 @@ describe('GET /review/:docId/extractions — consensus', () => {
         kind: 'bakeoff',
         ok: 1,
         createdAt: '2026-06-24T01:00:00.000Z',
+        batchId: 'single-old',
         rows: [tx()],
       }),
     ];
@@ -185,9 +207,10 @@ describe('GET /review/:docId/extractions — consensus', () => {
       { ADMIN_TOKEN: 'admin-secret', DB: fakeDb(rowsDesc) } as never,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { count: number; consensus: unknown };
+    const body = (await res.json()) as { count: number; consensus: unknown; consensusStatus: unknown };
     expect(body.count).toBe(2);
     expect(body.consensus).toBeNull();
+    expect(body.consensusStatus).toBeNull();
   });
 
   it('a failed run does not count toward the distinct-model threshold', async () => {
@@ -200,6 +223,8 @@ describe('GET /review/:docId/extractions — consensus', () => {
         kind: 'bakeoff',
         ok: 0,
         createdAt: '2026-06-25T02:00:00.000Z',
+        batchId: 'failed-pair',
+        error: 'provider unavailable',
         rows: [],
       }),
       extractionRunRow({
@@ -208,6 +233,7 @@ describe('GET /review/:docId/extractions — consensus', () => {
         kind: 'bakeoff',
         ok: 1,
         createdAt: '2026-06-25T01:00:00.000Z',
+        batchId: 'failed-pair',
         rows: [tx()],
       }),
     ];
@@ -218,7 +244,88 @@ describe('GET /review/:docId/extractions — consensus', () => {
       { ADMIN_TOKEN: 'admin-secret', DB: fakeDb(rowsDesc) } as never,
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { consensus: unknown };
+    const body = (await res.json()) as {
+      consensus: unknown;
+      consensusStatus: {
+        batchId: string;
+        failedModels: Array<{ model: string; error: string }>;
+        blockedReason: string | null;
+      };
+    };
     expect(body.consensus).toBeNull();
+    expect(body.consensusStatus.batchId).toBe('failed-pair');
+    expect(body.consensusStatus.failedModels).toEqual([
+      { model: 'xai:grok-4.3', error: 'provider unavailable' },
+    ]);
+    expect(body.consensusStatus.blockedReason).toMatch(/fewer than two successful/i);
+  });
+
+  it('does not mix successful models from different batches', async () => {
+    const rowsDesc = [
+      extractionRunRow({
+        provider: 'openai', model: 'gpt-4o', kind: 'bakeoff', ok: 1,
+        createdAt: '2026-06-25T03:00:00.000Z', batchId: 'openai-only', rows: [tx()],
+      }),
+      extractionRunRow({
+        provider: 'anthropic', model: 'claude-sonnet-4-6', kind: 'bakeoff', ok: 1,
+        createdAt: '2026-06-25T02:00:00.000Z', batchId: 'anthropic-only', rows: [tx()],
+      }),
+    ];
+
+    const res = await app.request(
+      '/review/H-CONSENSUS-4/extractions',
+      { headers: AUTH },
+      { ADMIN_TOKEN: 'admin-secret', DB: fakeDb(rowsDesc) } as never,
+    );
+    const body = (await res.json()) as { consensus: unknown; consensusStatus: unknown };
+    expect(body.consensus).toBeNull();
+    expect(body.consensusStatus).toBeNull();
+  });
+
+  it('a newer failed comparable batch blocks fallback to an older successful batch', async () => {
+    const rowsDesc = [
+      // Latest two-model revision: one model failed. It must be selected and
+      // reported as blocked instead of borrowing anthropic's older success.
+      extractionRunRow({
+        provider: 'openai', model: 'gpt-4o', kind: 'bakeoff', ok: 1,
+        createdAt: '2026-06-26T02:00:00.000Z', batchId: 'new-revision',
+        rows: [tx({ owner: 'joint' })],
+      }),
+      extractionRunRow({
+        provider: 'anthropic', model: 'claude-sonnet-4-6', kind: 'bakeoff', ok: 0,
+        createdAt: '2026-06-26T02:00:00.000Z', batchId: 'new-revision',
+        error: 'timeout', rows: [],
+      }),
+      extractionRunRow({
+        provider: 'openai', model: 'gpt-4o', kind: 'bakeoff', ok: 1,
+        createdAt: '2026-06-25T02:00:00.000Z', batchId: 'old-revision', rows: [tx()],
+      }),
+      extractionRunRow({
+        provider: 'anthropic', model: 'claude-sonnet-4-6', kind: 'bakeoff', ok: 1,
+        createdAt: '2026-06-25T02:00:00.000Z', batchId: 'old-revision', rows: [tx()],
+      }),
+    ];
+
+    const res = await app.request(
+      '/review/H-CONSENSUS-5/extractions',
+      { headers: AUTH },
+      { ADMIN_TOKEN: 'admin-secret', DB: fakeDb(rowsDesc) } as never,
+    );
+    const body = (await res.json()) as {
+      consensus: unknown;
+      consensusStatus: {
+        batchId: string;
+        successfulModels: string[];
+        failedModels: Array<{ model: string; error: string }>;
+        blockedReason: string | null;
+      };
+    };
+    expect(body.consensus).toBeNull();
+    expect(body.consensusStatus).toMatchObject({
+      batchId: 'new-revision',
+      successfulModels: ['openai:gpt-4o'],
+      failedModels: [{ model: 'anthropic:claude-sonnet-4-6', error: 'timeout' }],
+    });
+    expect(body.consensusStatus.blockedReason).toContain('older successes were not mixed in');
   });
 });

@@ -11,12 +11,13 @@ import type { Env, Filing, ParsedTx } from '../../shared/types';
 interface Captured {
   insertedTx: unknown[][];
   reviewRows: unknown[][];
+  reviewSql: string[];
   filingUpdates: unknown[][];
   enqueued: Array<{ type: string; txId: string }>;
 }
 
 function makeEnv(securities: Array<{ ticker: string; name: string | null; aliases: string | null }>) {
-  const cap: Captured = { insertedTx: [], reviewRows: [], filingUpdates: [], enqueued: [] };
+  const cap: Captured = { insertedTx: [], reviewRows: [], reviewSql: [], filingUpdates: [], enqueued: [] };
   const insertedRowKeys = new Set<string>();
 
   const prepare = (sql: string) => {
@@ -45,7 +46,10 @@ function makeEnv(securities: Array<{ ticker: string; name: string | null; aliase
             insertedRowKeys.add(rowKey);
             cap.insertedTx.push(this._params);
           }
-        } else if (/INSERT INTO review_queue/i.test(sql)) cap.reviewRows.push(this._params);
+        } else if (/INSERT INTO review_queue/i.test(sql)) {
+          cap.reviewRows.push(this._params);
+          cap.reviewSql.push(sql);
+        }
         else if (/UPDATE filings/i.test(sql)) cap.filingUpdates.push(this._params);
         return { success: true, meta: { changes } } as unknown;
       },
@@ -175,6 +179,13 @@ describe('normalize', () => {
       extractor: 'visionLlm',
       modelVersion: 'gemini-test',
     });
+    expect(cap.reviewSql[0]).toMatch(/agreement_attempted_at = CASE[\s\S]*review_queue\.resolved = 1 THEN NULL/i);
+    expect(cap.reviewSql[0]).toMatch(/agreement_attempts = CASE[\s\S]*review_queue\.resolved = 1 THEN 0/i);
+    expect(cap.reviewSql[0]).toMatch(/agreement_next_attempt_at = CASE[\s\S]*ELSE review_queue\.agreement_next_attempt_at/i);
+    expect(cap.reviewSql[0]).toMatch(/agreement_claim_token = CASE[\s\S]*ELSE review_queue\.agreement_claim_token/i);
+    expect(cap.reviewSql[0]).toMatch(/agreement_claimed_at = CASE[\s\S]*ELSE review_queue\.agreement_claimed_at/i);
+    expect(cap.reviewSql[0]).toMatch(/created_at = CASE[\s\S]*ELSE review_queue\.created_at/i);
+    expect(cap.reviewSql[0]).not.toMatch(/agreement_legacy_replay_at\s*=/i);
   });
 
   it('publishes a well-formed symbol the master does not list yet (no false review)', async () => {
