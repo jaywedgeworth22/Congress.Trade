@@ -11,7 +11,18 @@
 		5A1000010000000000000002 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000012 /* APIClient.swift */; };
 		5A1000010000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000013 /* Models.swift */; };
 		5A1000010000000000000004 /* KeychainTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000014 /* KeychainTokenStore.swift */; };
+		5A2000010000000000000001 /* CongressTradeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A2000010000000000000011 /* CongressTradeTests.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5A2000010000000000000090 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5A1000010000000000000070 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5A1000010000000000000040;
+			remoteInfo = CongressTrade;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		5A1000010000000000000010 /* CongressTrade.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CongressTrade.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -19,10 +30,19 @@
 		5A1000010000000000000012 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		5A1000010000000000000013 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		5A1000010000000000000014 /* KeychainTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainTokenStore.swift; sourceTree = "<group>"; };
+		5A2000010000000000000010 /* CongressTradeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CongressTradeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5A2000010000000000000011 /* CongressTradeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CongressTradeTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		5A1000010000000000000020 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5A2000010000000000000020 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -36,6 +56,7 @@
 			isa = PBXGroup;
 			children = (
 				5A1000010000000000000031 /* CongressTrade */,
+				5A2000010000000000000031 /* CongressTradeTests */,
 				5A1000010000000000000032 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -55,8 +76,17 @@
 			isa = PBXGroup;
 			children = (
 				5A1000010000000000000010 /* CongressTrade.app */,
+				5A2000010000000000000010 /* CongressTradeTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		5A2000010000000000000031 /* CongressTradeTests */ = {
+			isa = PBXGroup;
+			children = (
+				5A2000010000000000000011 /* CongressTradeTests.swift */,
+			);
+			path = CongressTradeTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -79,6 +109,24 @@
 			productReference = 5A1000010000000000000010 /* CongressTrade.app */;
 			productType = "com.apple.product-type.application";
 		};
+		5A2000010000000000000040 /* CongressTradeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5A2000010000000000000080 /* Build configuration list for PBXNativeTarget "CongressTradeTests" */;
+			buildPhases = (
+				5A2000010000000000000050 /* Sources */,
+				5A2000010000000000000020 /* Frameworks */,
+				5A2000010000000000000060 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5A2000010000000000000091 /* PBXTargetDependency */,
+			);
+			name = CongressTradeTests;
+			productName = CongressTradeTests;
+			productReference = 5A2000010000000000000010 /* CongressTradeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -91,6 +139,10 @@
 				TargetAttributes = {
 					5A1000010000000000000040 = {
 						CreatedOnToolsVersion = 16.0;
+					};
+					5A2000010000000000000040 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = 5A1000010000000000000040;
 					};
 				};
 			};
@@ -108,12 +160,20 @@
 			projectRoot = "";
 			targets = (
 				5A1000010000000000000040 /* CongressTrade */,
+				5A2000010000000000000040 /* CongressTradeTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		5A1000010000000000000060 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5A2000010000000000000060 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -134,7 +194,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		5A2000010000000000000050 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5A2000010000000000000001 /* CongressTradeTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		5A2000010000000000000091 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5A1000010000000000000040 /* CongressTrade */;
+			targetProxy = 5A2000010000000000000090 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		5A1000010000000000000072 /* Debug */ = {
@@ -304,6 +380,42 @@
 			};
 			name = Release;
 		};
+		5A2000010000000000000081 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = trade.congress.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CongressTrade.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CongressTrade";
+			};
+			name = Debug;
+		};
+		5A2000010000000000000082 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = trade.congress.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/CongressTrade.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/CongressTrade";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -321,6 +433,15 @@
 			buildConfigurations = (
 				5A1000010000000000000081 /* Debug */,
 				5A1000010000000000000082 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5A2000010000000000000080 /* Build configuration list for PBXNativeTarget "CongressTradeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5A2000010000000000000081 /* Debug */,
+				5A2000010000000000000082 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

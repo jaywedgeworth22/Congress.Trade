@@ -202,6 +202,20 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   bail-to-review guard; duplicate-model-id false 2-of-3 majority → distinct-voter electorate; UI
   minority-row prefill → row-majority gate); 1 finding refuted with rationale. Independent final gates:
   typecheck clean, 718/718 tests / 82 files. NOT pushed — awaiting owner push/PR approval.
+- **iOS client correctness + performance hardening (CODEX/HUBBLE, L) — BUILT + REVIEWED LOCALLY
+  2026-07-11; INTEGRATION PENDING.** Branch `codex/ios-client-hardening`. Preserves one-time
+  delivery credentials, sends active-only subscription patches, hydrates server preferences before
+  edit, retains UUID intent keys for uncertain retries, revokes bearer sessions, and adds scoped
+  loading/error/offline state, cache limits, accessibility, formatter/search improvements, plus an
+  XCTest target. `git diff --check`, generic Simulator build, and build-for-testing pass; executing
+  XCTest still requires a concrete installed Simulator runtime. No deploy or production action.
+- **Adopt remaining shared-package duplicates (CURSOR, M) — started 2026-07-09.**
+  Branch `cursor/shared-dep-adoption-9577`. Replaced local `shared/brackets.ts` + most of
+  `extraction/tickerNormalize.ts` with shared re-exports; wired `marketCapBucket`,
+  `bracketMidpoint`, `WINDOW_PRESETS`, `LAG_BUCKETS` from shared; SSE/webhook use
+  `createCongressEvent`; inbound `/securities/import` filters rows with shared Zod schemas;
+  FMP telemetry sends `occurredAt` for idempotency. Verified: typecheck clean; focused tests
+  (tickerNormalize/amounts/analytics/sse/enrichment/outbound/import) pass.
 - **Consolidate usage telemetry clients in consumer apps (AG) - COMPLETED 2026-07-06.** Replacing hand-rolled usage telemetry clients with `@jaywedgeworth22/congress-trading-shared` in Congress.Trade.
 - **Codebase Performance & Queues (AG, M) — IN PROGRESS 2026-07-05.** Fix silent DLQ webhook failures, implement `DB.batch` for `persistTransactions`, use `sendBatch` for queue dispatching, and run webhook fetch requests concurrently.
 
