@@ -71,6 +71,7 @@ import {
   type Provider,
 } from '../extraction/bakeoff';
 import { isBatchProvider, submitBatch, pollBatch, type BatchDoc } from '../extraction/batchExtract';
+import { buildConsensusRows, type ConsensusRun } from '../extraction/consensus';
 import {
   runEnrichment,
   getDailyUsed,
@@ -810,6 +811,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.get('/review/:docId/extractions', async (c) => {
     const docId = c.req.param('docId');
     let runs: Array<Record<string, unknown>> = [];
+    let consensus: ReturnType<typeof buildConsensusRows> | null = null;
     try {
       const rowsE = await all<{
         id: string;
@@ -844,10 +846,33 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         rows: er.result_json ? safeJson(er.result_json) : [],
         createdAt: er.created_at,
       }));
+
+      // Consensus: latest SUCCESSFUL run per distinct model (provider:model),
+      // among the kinds that represent a full model reading of the doc
+      // (cross-vendor agreement / bake-off / async batch reprocessing) —
+      // same "latest per provider:model" pattern as /review-queue above.
+      // rowsE is already ordered DESC by created_at, so the first hit per
+      // key is the latest one; a failed run (ok=0) has no rows to vote with,
+      // so it doesn't count as a model reading.
+      const CONSENSUS_KINDS = new Set(['agreement', 'bakeoff', 'batch']);
+      const latestByModel = new Map<string, ConsensusRun>();
+      for (const er of rowsE) {
+        if (er.ok !== 1 || !CONSENSUS_KINDS.has(er.kind)) continue;
+        const key = `${er.provider}:${er.model}`;
+        if (latestByModel.has(key)) continue;
+        const parsed = er.result_json ? safeJson(er.result_json) : [];
+        latestByModel.set(key, {
+          model: key,
+          rows: Array.isArray(parsed) ? (parsed as ConsensusRun['rows']) : [],
+        });
+      }
+      if (latestByModel.size >= 2) {
+        consensus = buildConsensusRows([...latestByModel.values()]);
+      }
     } catch {
       /* extraction_runs not migrated yet */
     }
-    return c.json({ docId, runs, count: runs.length });
+    return c.json({ docId, runs, count: runs.length, consensus });
   });
 
   // --- POST /review/:docId ------------------------------------------------
@@ -2225,12 +2250,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     // Candidate lineup (default provider-neutral set, overridable).
     let candidates: BakeoffCandidate[] = DEFAULT_CANDIDATES;
     if (Array.isArray(body.models)) {
-      const valid: Provider[] = ['gemini', 'openai', 'anthropic', 'mistral', 'xai'];
+      const valid: Provider[] = ['gemini', 'openai', 'anthropic', 'mistral', 'xai', 'llamaparse'];
       const parsed: BakeoffCandidate[] = [];
       for (const m of body.models) {
         const o = m as { provider?: unknown; model?: unknown };
         if (!valid.includes(o.provider as Provider) || typeof o.model !== 'string') {
-          return c.json({ error: 'each model must be {provider:gemini|openai|anthropic|mistral|xai, model:string}' }, 400);
+          return c.json({ error: 'each model must be {provider:gemini|openai|anthropic|mistral|xai|llamaparse, model:string}' }, 400);
         }
         parsed.push({ provider: o.provider as Provider, model: o.model });
       }
@@ -2899,6 +2924,19 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          created_at TEXT NOT NULL
        )`,
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
+      // 0025_doc_complexity_signals.sql — cheap doc-complexity signals for cascade tiering.
+      'ALTER TABLE filings ADD COLUMN page_count INTEGER',
+      'ALTER TABLE filings ADD COLUMN raw_bytes INTEGER',
+      // 0026_agreement_cascade.sql — capped attempt counter + escalation tier for the
+      // tiered agreement cascade (agreement_attempted_at kept + still stamped).
+      'ALTER TABLE review_queue ADD COLUMN agreement_attempts INTEGER',
+      'ALTER TABLE review_queue ADD COLUMN agreement_tier INTEGER',
+      // 0027_llm_budget.sql — daily budget guardrail for agreement-cascade LLM
+      // candidate doc-reads (one row per UTC day; reads incremented atomically).
+      `CREATE TABLE IF NOT EXISTS llm_budget (
+         day   TEXT PRIMARY KEY,
+         reads INTEGER NOT NULL DEFAULT 0
+       )`,
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

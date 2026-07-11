@@ -1590,6 +1590,7 @@ var TRADE_BY_ID = {};     // trade id -> row, including mini-list rows cached fr
 var REVIEW = [];          // review-queue items
 var DECISIONS = [];       // ingestion decision audit rows
 var REVIEW_RUNS = {};     // docId -> full extraction runs loaded on demand
+var REVIEW_CONSENSUS = {}; // docId -> { rows, summary } | null, loaded alongside REVIEW_RUNS
 var SCHEDULE = [];        // PollWindow[]
 var aggressive = false;
 var cursor = 0;           // max cursor_seq seen
@@ -3034,6 +3035,36 @@ function statusBadge(status) {
   var c = STATUS_COLORS[s] || '#57606a';
   return '<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;color:#fff;background:' + c + '">' + esc(s) + '</span>';
 }
+/* Curated provider/model pairs the backend's POST /api/admin/bakeoff accepts,
+   grouped by provider — mirrors DEFAULT_CANDIDATES in src/extraction/bakeoff.ts
+   (and the valid-provider allowlist in src/admin/routes.ts). Kept as a static
+   list rather than fetched, same as REVIEW_AMOUNT_BRACKETS above. */
+var REREAD_MODELS = [
+  { provider: 'gemini', model: 'gemini-3.5-flash' },
+  { provider: 'openai', model: 'gpt-4o' },
+  { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+  { provider: 'anthropic', model: 'claude-haiku-4-5' },
+  { provider: 'mistral', model: 'mistral-ocr-latest' },
+  { provider: 'xai', model: 'grok-4.3' },
+  { provider: 'llamaparse', model: 'fast' },
+  { provider: 'llamaparse', model: 'cost-effective' },
+  { provider: 'llamaparse', model: 'agentic' }
+];
+/* <optgroup> per provider for the "Re-read with model…" multi-select. */
+function rereadModelOptionsHtml() {
+  var byProvider = {};
+  var order = [];
+  REREAD_MODELS.forEach(function (m) {
+    if (!byProvider[m.provider]) { byProvider[m.provider] = []; order.push(m.provider); }
+    byProvider[m.provider].push(m);
+  });
+  return order.map(function (p) {
+    var opts = byProvider[p].map(function (m) {
+      return '<option value="' + esc(p + '|' + m.model) + '">' + esc(m.model) + '</option>';
+    }).join('');
+    return '<optgroup label="' + esc(p) + '">' + opts + '</optgroup>';
+  }).join('');
+}
 /* One-line per-model confidence chips for the row (full readings load on demand). */
 function modelsSummaryHtml(models) {
   if (!models || !models.length) return '<span class="muted">—</span>';
@@ -3090,9 +3121,54 @@ function toggleModels(docId) {
     '<div style="padding:6px 4px"><strong>Per-model bake-off readings</strong> ' +
     '<button class="btn ghost sm" onclick="viewReadings(\\'' + esc(docId) + '\\')">Load Full Readings</button>' +
     '<div class="note">Queued extracted rows come from the primary extraction pipeline. Bake-off runs are optional stored model comparisons; load one here only if you want to use that model\\'s rows instead.</div>' +
+    rereadControlHtml(docId) +
     '<div id="mdlBody-' + esc(docId) + '" style="margin-top:6px">' + modelsTableHtml(models) + '</div></div>' +
     '</td></tr>';
   rowEl.insertAdjacentHTML('afterend', head);
+}
+/* "Re-read with model…" control: pick 1-3 provider/model pairs and re-run the
+   bake-off for just this doc (persisted), then refresh its runs display. */
+function rereadControlHtml(docId) {
+  return '<div class="row-flex" style="margin-top:6px">' +
+    '<label class="lbl">Re-read with model&hellip;</label>' +
+    '<select id="reread-sel-' + esc(docId) + '" multiple size="4" style="min-width:220px">' + rereadModelOptionsHtml() + '</select>' +
+    '<button class="btn ghost sm" id="reread-btn-' + esc(docId) + '" onclick="rereadWithModel(\\'' + esc(docId) + '\\')">Run</button>' +
+    '<span id="reread-msg-' + esc(docId) + '" class="note"></span>' +
+    '</div>';
+}
+function rereadWithModel(docId) {
+  var sel = el('reread-sel-' + docId);
+  var msg = el('reread-msg-' + docId);
+  var btn = el('reread-btn-' + docId);
+  if (!sel || !btn) return;
+  var chosen = [];
+  for (var i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].selected) {
+      var parts = sel.options[i].value.split('|');
+      chosen.push({ provider: parts[0], model: parts[1] });
+    }
+  }
+  if (chosen.length === 0) { if (msg) msg.textContent = 'Select at least one model.'; return; }
+  btn.disabled = true; sel.disabled = true;
+  if (msg) msg.textContent = 'Running ' + chosen.length + ' model' + (chosen.length === 1 ? '' : 's') + '…';
+  fetch('/api/admin/bakeoff', {
+    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ docIds: [docId], models: chosen, persist: true })
+  })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) { var ae = new Error(ADMIN_MOVED_MSG); ae.isAuth = true; throw ae; }
+      return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
+    })
+    .then(function (data) {
+      btn.disabled = false; sel.disabled = false;
+      var tested = (typeof data.docsTested === 'number') ? data.docsTested : 1;
+      if (msg) msg.textContent = tested > 0 ? 'Re-read complete.' : ('No documents were re-read' + ((data.skipped || []).length ? (': ' + data.skipped[0]) : '.'));
+      viewReadings(docId); // refresh this doc's runs display with the new reading(s)
+    })
+    .catch(function (e) {
+      btn.disabled = false; sel.disabled = false;
+      if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Re-read failed: ' + e.message);
+    });
 }
 function modelsTableHtml(models) {
   if (!models || !models.length) return '<span class="muted">No bake-off model runs stored for this document. The prefilled rows can still come from the queued extraction payload.</span>';
@@ -3107,6 +3183,77 @@ function modelsTableHtml(models) {
   }).join('');
   return '<table style="font-size:12px;width:100%"><thead><tr><th>Model</th><th>Kind</th><th>OK</th><th style="text-align:right">Rows</th><th style="text-align:right">Conf</th><th style="text-align:right">Latency</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table>';
 }
+/* Field order + short labels for the consensus grid and the "Use Consensus"
+   prefill — mirrors ConsensusFieldName in src/extraction/consensus.ts. */
+var CONSENSUS_FIELD_ORDER = ['ticker', 'txType', 'transactionDate', 'amount', 'owner', 'assetName'];
+var CONSENSUS_FIELD_LABEL = { ticker: 'Sym', txType: 'Type', transactionDate: 'Date', amount: 'Amt', owner: 'Owner', assetName: 'Asset' };
+/* Display text for one field's raw value: a string, an amount bracket
+   ({amountMin, amountMax}), or null (no reading / no majority). */
+function consensusFieldDisplay(value) {
+  if (value == null) return '—';
+  if (typeof value === 'object') return reviewBracketLabel(value.amountMin, value.amountMax);
+  return String(value);
+}
+/* True iff a field's vote reached a strict majority (unanimous counts). */
+function consensusHasMajority(fc) { return fc.votes * 2 > fc.total; }
+/* Green (every present model agreed), amber (a majority agreed, some
+   dissent), or red (no majority — contested) — reuses the file's existing
+   .conf hi/mid/lo confidence-color classes rather than new ones. */
+function consensusFieldClass(fc) {
+  if (fc.unanimous) return 'hi';
+  return consensusHasMajority(fc) ? 'mid' : 'lo';
+}
+/* One model's own raw value for a field on a consensus row: the model backs
+   the field winner unless it is listed in that field's dissenters (present
+   but different) — which, per buildConsensusRows, also covers the fully
+   contested case where every present model appears as a dissenter. */
+function consensusModelFieldValue(row, field, model) {
+  var fc = row.fields[field];
+  for (var i = 0; i < fc.dissenters.length; i++) {
+    if (fc.dissenters[i].model === model) return fc.dissenters[i].value;
+  }
+  return fc.value;
+}
+/* The "Consensus" column's cell for one field: unanimous = green with just
+   the value; majority-with-dissent = amber with the winning value plus the
+   dissenting model(s) in the title; contested = red showing every present
+   model's value (winner is null, so there is nothing else to show inline). */
+function consensusFieldCellHtml(fc) {
+  var cls = consensusFieldClass(fc);
+  if (cls === 'hi') return '<span class="conf hi">' + esc(consensusFieldDisplay(fc.value)) + '</span>';
+  var dissentTitle = fc.dissenters.map(function (d) { return d.model + ': ' + consensusFieldDisplay(d.value); }).join('; ');
+  if (cls === 'mid') {
+    return '<span class="conf mid" title="' + esc(dissentTitle) + '">' + esc(consensusFieldDisplay(fc.value)) + '</span>';
+  }
+  var allValues = fc.dissenters.map(function (d) { return esc(d.model) + ': ' + esc(consensusFieldDisplay(d.value)); }).join('<br />');
+  return '<span class="conf lo" title="' + esc(dissentTitle) + '">' + (allValues || '—') + '</span>';
+}
+/* A model's own column cell for this row: its per-field readings, or a
+   muted placeholder when this model never produced the row at all. */
+function consensusModelCellHtml(row, model) {
+  if (row.missingFrom.indexOf(model) >= 0) return '<span class="muted">— (no row)</span>';
+  return CONSENSUS_FIELD_ORDER.map(function (f) {
+    return '<span class="chip" style="margin-right:6px">' + esc(CONSENSUS_FIELD_LABEL[f]) + ' ' + esc(consensusFieldDisplay(consensusModelFieldValue(row, f, model))) + '</span>';
+  }).join('');
+}
+/* Full consensus grid: one row per reconciled transaction, one column per
+   participating model plus a reconciled "Consensus" column. Opt-in only —
+   rendered alongside (not instead of) the per-model readings table. */
+function consensusGridHtml(docId, consensus) {
+  if (!consensus || !consensus.rows || !consensus.rows.length) return '';
+  var models = consensus.summary.models;
+  var s = consensus.summary;
+  var head = '<div style="margin:10px 0 4px"><strong>Consensus</strong> ' +
+    '<span class="chip">' + s.rowsUnanimous + ' unanimous &middot; ' + s.rowsMajority + ' majority &middot; ' + s.rowsContested + ' contested</span> ' +
+    '<button class="btn ghost sm" onclick="useConsensusRows(\\'' + esc(docId) + '\\')">Use Consensus</button></div>';
+  var thead = '<tr><th>Row</th>' + models.map(function (m) { return '<th>' + esc(m) + '</th>'; }).join('') + '<th>Consensus</th></tr>';
+  var rowsHtml = consensus.rows.map(function (row) {
+    var modelCells = models.map(function (m) { return '<td>' + consensusModelCellHtml(row, m) + '</td>'; }).join('');
+    var consensusCell = '<td>' + CONSENSUS_FIELD_ORDER.map(function (f) { return consensusFieldCellHtml(row.fields[f]); }).join(' ') + '</td>';
+    return '<tr><td class="muted">' + esc(row.rowKey) + '</td>' + modelCells + consensusCell + '</tr>';
+  }).join('');
+  return head + '<div style="overflow-x:auto"><table style="font-size:12px;width:100%"><thead>' + thead + '</thead><tbody>' + rowsHtml + '</tbody></table></div>';
+}
 /* Fetch + render the full stored readings (extracted rows) for each model. */
 function viewReadings(docId) {
   var target = el('mdlBody-' + docId);
@@ -3116,6 +3263,7 @@ function viewReadings(docId) {
     .then(function (data) {
       var runs = data.runs || [];
       REVIEW_RUNS[docId] = runs;
+      REVIEW_CONSENSUS[docId] = data.consensus || null;
       if (!runs.length) { if (target) target.innerHTML = '<span class="muted">No stored readings.</span>'; return; }
       if (target) target.innerHTML = runs.map(function (run, idx) {
         var conf = (typeof run.avgConfidence === 'number') ? Math.round(run.avgConfidence * 100) + '%' : '—';
@@ -3131,7 +3279,7 @@ function viewReadings(docId) {
             }).join('') + '</tbody></table>'
           : '<span class="muted">No rows.</span>';
         return header + rowsHtml;
-      }).join('');
+      }).join('') + consensusGridHtml(docId, data.consensus);
     })
     .catch(function (e) { if (target) target.innerHTML = '<span class="muted">' + (isAuthError(e) ? 'Admin auth required' : ('Could not load readings: ' + esc(e.message))) + '</span>'; });
 }
@@ -3252,6 +3400,56 @@ function useModelRows(docId, idx) {
   if (!run || !run.rows || !run.rows.length) { alert('That model run has no rows to use.'); return; }
   var item = reviewItemForDoc(docId);
   openReviewEditor(docId, run.rows, 'confirm', run.provider + ':' + run.model, item && item.chamber);
+}
+/* Row key matching arbitrationRowKey in src/extractors/types.ts, so a queued
+   payload transaction can be paired with its consensus row below. */
+function consensusQueuedRowKey(t) {
+  var sym = String((t && (t.ticker || t.assetName)) || '').trim().toUpperCase();
+  return sym + '|' + String((t && t.txDate) || '') + '|' + String((t && t.txType) || '');
+}
+/* Field value to prefill with: the consensus value when the ROW is backed by a
+   majority of models (rowAuthoritative) AND the field itself reached a strict
+   majority (including a unanimous null — e.g. "no ticker"); otherwise keep
+   whatever the queued extraction payload had for that row rather than leaving
+   it blank. The row gate matters because a row produced by only a MINORITY of
+   models has every field's local electorate = that minority, so votes*2>total
+   is trivially satisfied — without it a single unverified model's reading would
+   masquerade as majority-confirmed. The editor has no per-field note mechanism
+   to flag this separately, so it is intentionally omitted. */
+function consensusFieldValueForEdit(fc, queuedValue, rowAuthoritative) {
+  return (rowAuthoritative && consensusHasMajority(fc)) ? fc.value : queuedValue;
+}
+/* "Use Consensus": pre-fill the review editor with one row per reconciled
+   consensus transaction — majority value per field; contested fields fall
+   back to the matching queued-payload value. Opt-in only, same as "Use This
+   Model" — never the default prefill (that stays the queued payload). */
+function useConsensusRows(docId) {
+  var consensus = REVIEW_CONSENSUS[docId];
+  if (!consensus || !consensus.rows || !consensus.rows.length) { alert('No consensus rows available for this document.'); return; }
+  var item = reviewItemForDoc(docId);
+  var models = (consensus.summary && consensus.summary.models) || [];
+  var queuedByKey = {};
+  reviewPayloadTransactions(item && item.payload).forEach(function (t) { queuedByKey[consensusQueuedRowKey(t)] = t; });
+  var rows = consensus.rows.map(function (row) {
+    var q = queuedByKey[row.rowKey] || {};
+    // A row is authoritative only when a strict majority of the models produced
+    // it; a minority-presence row is not, so every field falls back to the
+    // queued payload instead of the lone model's unverified reading.
+    var rowAuthoritative = row.presentIn.length * 2 > models.length;
+    var amountFc = row.fields.amount;
+    var amount = (rowAuthoritative && consensusHasMajority(amountFc)) ? amountFc.value : { amountMin: q.amountMin, amountMax: q.amountMax };
+    return {
+      ticker: consensusFieldValueForEdit(row.fields.ticker, q.ticker, rowAuthoritative),
+      txType: consensusFieldValueForEdit(row.fields.txType, q.txType, rowAuthoritative),
+      txDate: consensusFieldValueForEdit(row.fields.transactionDate, q.txDate, rowAuthoritative),
+      owner: consensusFieldValueForEdit(row.fields.owner, q.owner, rowAuthoritative),
+      assetName: consensusFieldValueForEdit(row.fields.assetName, q.assetName, rowAuthoritative),
+      amountMin: amount.amountMin,
+      amountMax: amount.amountMax,
+      rawText: 'consensus (' + row.rowConsensus + ')'
+    };
+  });
+  openReviewEditor(docId, rows, 'confirm', 'model consensus', item && item.chamber);
 }
 function manualEntry(docId) {
   var item = reviewItemForDoc(docId);

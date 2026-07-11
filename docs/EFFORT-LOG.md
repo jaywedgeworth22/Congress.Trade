@@ -106,6 +106,20 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 
 ## In Progress
 - **Review Queue current drain + durable automation integration (CODEX, L) — IN PROGRESS 2026-07-11.** Owner-directed. Audit the live unresolved queue and provenance, verify rather than blind-resolve each class, integrate/review existing PR #257 without editing MONET's branch, close any scheduler/observability/retry gaps on `codex/review-queue-resolution`, run full gates serially, deploy an isolated preview, and report the separate current/preview/production states. KEEPOUT: preserve the dirty main checkout and MONET's review-automation worktree.
+- **Review-queue automation: model choice, multi-model consensus + prefill, escalation cascade (MONET, L) —
+  PR [#257](https://github.com/jaywedgeworth22/Congress.Trade/pull/257).** Built 2026-07-10,
+  owner-directed. P1: agreement candidate readings persisted to `extraction_runs` (kind `agreement`);
+  review-UI "Re-read with model…" multi-select posting bakeoff endpoint; `VISION_PRIMARY_MODEL` env
+  override. P2: pure `extraction/consensus.ts` (majority vote, amount bracket as unit, {value, votes,
+  dissenters}) + `consensus` block on GET /review/:docId/extractions + UI superimposition grid +
+  opt-in "Use Consensus" prefill. P3: tiered cascade (tier1 pair, tier2 +model C, tier3 2-of-3
+  majority), `agreement_attempts`/`agreement_tier`, daily LLM budget, migrations 0025–0027.
+  Codex autofix addressed 3 review items (budget-stamp, escalation-fail, failed-read gate).
+  **2026-07-11 CODEX integration audit:** blocked as-is; key-only set agreement can publish
+  materially different rows, human/automation races are unguarded, legacy/reopened rows stay
+  ineligible, model B/C collide after #263, and migration number 0025 overlaps two active lanes.
+  Safety integration and regression coverage are in `codex/review-queue-resolution`; MONET's
+  branch remains untouched.
 - **Adopt remaining shared-package duplicates (CURSOR, M) — started 2026-07-09.**
   Branch `cursor/shared-dep-adoption-9577`. Replaced local `shared/brackets.ts` + most of
   `extraction/tickerNormalize.ts` with shared re-exports; wired `marketCapBucket`,

@@ -362,7 +362,7 @@ export type QueueMessage =
   | { type: 'filing.fetched'; docId: string }
   | { type: 'filing.extracted'; docId: string }
   | { type: 'tx.persisted'; txId: string; docId: string }
-  | { type: 'agreement.check'; docId: string; rawObjectKey: string | null }
+  | { type: 'agreement.check'; docId: string; rawObjectKey: string | null; escalationTier?: number }
   | { type: 'delivery.dispatch'; txId: string };
 
 // ---------------------------------------------------------------------------
@@ -380,6 +380,8 @@ export interface Env {
   // --- Secrets (wrangler secret put / .dev.vars) ---
   /** Vision/text LLM key (e.g. Gemini) for scanned-PDF extraction. */
   GEMINI_API_KEY?: string;
+  /** Primary vision model override (defaults to 'gemini-3.5-flash'). */
+  VISION_PRIMARY_MODEL?: string;
   /** Secondary arbitration extractor key. Presence enables arbitration. */
   ARBITRATION_API_KEY?: string;
   /** Anthropic API key — Claude vision candidates in the extractor bake-off. */
@@ -407,6 +409,24 @@ export interface Env {
   AGREEMENT_AUTOPUBLISH_MODEL_B?: string;
   /** Max review docs the autonomous pass attempts per cron tick (default 3). */
   AGREEMENT_AUTOPUBLISH_LIMIT?: string;
+  /**
+   * Tier-2 escalation model C as "provider:model" for the agreement cascade.
+   * Default openai:gpt-4o — a third vendor distinct from the mistral (A) and
+   * gemini (B) defaults so a tier-2 read is genuinely cross-vendor.
+   */
+  AGREEMENT_MODEL_C?: string;
+  /** Max cascade attempts (tier passes) per review doc before it stays in human review (default 3). */
+  AGREEMENT_MAX_ATTEMPTS?: string;
+  /**
+   * When 'true' (default), a doc whose cheap complexity signals exceed the
+   * thresholds (page_count / raw_bytes) starts the cascade directly at tier 2
+   * (three models) instead of tier 1. Set 'false' to always start at tier 1.
+   */
+  AGREEMENT_BIG_DOC_START_TIER2?: string;
+  /** Page-count threshold for the big-doc tier-2 start heuristic (default 10). */
+  AGREEMENT_BIG_DOC_PAGE_THRESHOLD?: string;
+  /** Raw-byte threshold for the big-doc tier-2 start heuristic (default 2097152 = 2MB). */
+  AGREEMENT_BIG_DOC_BYTES_THRESHOLD?: string;
   /** Financial Modeling Prep key — enables asset enrichment + price/performance. */
   FMP_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */

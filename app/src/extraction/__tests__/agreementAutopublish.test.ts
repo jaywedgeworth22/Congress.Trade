@@ -81,7 +81,7 @@ describe('maybeRunAgreementAutopublish (cron backstop)', () => {
     const { env, sent, attempted, inserted } = makeEnv('true');
     const out = await maybeRunAgreementAutopublish(env);
     expect(out).toMatchObject({ attempted: 1, enqueued: 1 });
-    expect(sent).toEqual([{ type: 'agreement.check', docId: 'H-AP-1', rawObjectKey: 'raw/H-AP-1' }]);
+    expect(sent).toEqual([{ type: 'agreement.check', docId: 'H-AP-1', rawObjectKey: 'raw/H-AP-1', escalationTier: 1 }]);
     expect(attempted).toContain('H-AP-1'); // attempt stamped so it won't re-enqueue
     expect(inserted).toHaveLength(0); // the cron itself publishes nothing
   });
