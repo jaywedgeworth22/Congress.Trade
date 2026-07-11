@@ -63,7 +63,7 @@ import { buildConsensusRows, type AmountBracket, type ConsensusResult } from './
 import { uuid } from '../shared/ids';
 import { estimateTransactionValue } from '../shared/transactionValue';
 import { flushDeliveryOutbox } from '../delivery/outbox';
-import { resolveSecret, resolveSecrets } from '../secrets/infisical';
+import { resolveSecrets } from '../secrets/infisical';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -1063,7 +1063,6 @@ function llmBudgetDay(now = new Date()): string {
  * missing table / transient D1 error, the same policy as bumpAttempt() below —
  * a pre-migration deploy behaves like unlimited rather than wedging the cascade.
  */
-<<<<<<< HEAD
 async function reserveLlmBudget(env: Env, budget: number, count: number): Promise<boolean> {
   if (budget === LLM_BUDGET_UNLIMITED) return true;
   const day = llmBudgetDay();
@@ -1325,24 +1324,10 @@ export async function enqueueAgreementCheck(
   escalationTier = 1,
   existingClaimToken?: string,
 ): Promise<boolean> {
-  const e = env as unknown as AgreementEnv;
+  const e = await resolveAgreementEnv(env);
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return false;
   const token = await acquireAgreementLease(env, docId, maxAttempts(e), existingClaimToken);
   if (!token) return false;
-=======
-export async function enqueueAgreementCheck(env: Env, docId: string, rawObjectKey: string | null): Promise<boolean> {
-  const enabled = (await resolveSecret(env, 'AGREEMENT_AUTOPUBLISH_ENABLED')).value;
-  if (enabled !== 'true') return false;
-
-  const now = new Date().toISOString();
-  let dbUpdated = false;
-  try {
-    await run(env.DB, 'UPDATE review_queue SET agreement_attempted_at = ? WHERE doc_id = ?', [now, docId]);
-    dbUpdated = true;
-  } catch (err) {
-    console.warn('enqueueAgreementCheck DB stamp failed:', docId, (err as Error).message);
-  }
->>>>>>> fb8f3ca (feat(ops): FMP/EDGAR pacer safety, Infisical-live tunables, Tiingo provider)
 
   try {
     await env.INGEST_QUEUE.send({ type: 'agreement.check', docId, rawObjectKey, escalationTier, claimToken: token });
@@ -1370,7 +1355,6 @@ export async function enqueueAgreementCheck(env: Env, docId: string, rawObjectKe
  * a diagnostics receipt and does NOT consume an agreement attempt or escalate
  * — it gets a fresh shot once the day rolls over.
  */
-<<<<<<< HEAD
 export async function handleAgreementCheck(
   env: Env,
   docId: string,

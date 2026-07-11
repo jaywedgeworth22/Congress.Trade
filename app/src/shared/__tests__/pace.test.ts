@@ -46,12 +46,10 @@ describe('createPacer', () => {
 describe('getSharedFmpPacer', () => {
   beforeEach(() => __resetSharedFmpPacerForTests());
 
-  it('returns the SAME instance across calls (single-isolate singleton)', () => {
+  it('returns the SAME instance across calls with the same maxPerMinute', () => {
     const a = getSharedFmpPacer(285);
     const b = getSharedFmpPacer(285);
-    const c = getSharedFmpPacer(); // arg ignored after first init
     expect(a).toBe(b);
-    expect(a).toBe(c);
   });
 
   it('is a shared gate: two "consumers" drawing from it are spaced together', async () => {
@@ -64,22 +62,20 @@ describe('getSharedFmpPacer', () => {
     expect(Date.now() - t0).toBeGreaterThanOrEqual(90);
   });
 
-  it('ignores maxPerMinute after the first init (redeploy-to-change semantics)', () => {
+  it('rebuilds the pacer if the maxPerMinute ceiling changes (Infisical-live semantics)', () => {
     const first = getSharedFmpPacer(0); // no-op pacer memoized
-    const second = getSharedFmpPacer(600); // 600 ignored; still the no-op instance
-    expect(second).toBe(first);
+    const second = getSharedFmpPacer(600); // 600 differs from 0, so rebuilds
+    expect(second).not.toBe(first);
   });
 });
 
 describe('getSharedEdgarPacer', () => {
   beforeEach(() => __resetSharedEdgarPacerForTests());
 
-  it('returns the SAME instance across calls (single-isolate singleton)', () => {
+  it('returns the SAME instance across calls with the same maxPerMinute', () => {
     const a = getSharedEdgarPacer(300);
     const b = getSharedEdgarPacer(300);
-    const c = getSharedEdgarPacer(); // arg ignored after first init
     expect(a).toBe(b);
-    expect(a).toBe(c);
   });
 
   it('paces calls independently of the FMP pacer (separate budget/clock)', async () => {
@@ -93,9 +89,9 @@ describe('getSharedEdgarPacer', () => {
     expect(Date.now() - t0).toBeLessThan(80);
   });
 
-  it('ignores maxPerMinute after the first init (redeploy-to-change semantics)', () => {
+  it('rebuilds the pacer if the maxPerMinute ceiling changes (Infisical-live semantics)', () => {
     const first = getSharedEdgarPacer(0); // no-op pacer memoized
-    const second = getSharedEdgarPacer(600); // 600 ignored; still the no-op instance
-    expect(second).toBe(first);
+    const second = getSharedEdgarPacer(600); // 600 differs from 0, so rebuilds
+    expect(second).not.toBe(first);
   });
 });

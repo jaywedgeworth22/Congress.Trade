@@ -38,18 +38,20 @@ export function createPacer(maxPerMinute?: number): () => Promise<void> {
  * FMP calls against one shared minute-rate gate.
  *
  * Lazily created on first use and memoized at module scope for the lifetime of
- * the Worker isolate; `maxPerMinute` is read only on that first call and later
- * arguments are ignored. Changing FMP_MAX_PER_MINUTE therefore requires a
- * redeploy to take effect — already true of any module-scope state in Workers.
+ * the Worker isolate. To support Infisical-live updates, the pacer is rebuilt
+ * if a new caller requests a different `maxPerMinute` ceiling than the one
+ * currently cached.
  *
  * NOTE: this coordinates only calls made within the SAME isolate. Cloudflare
  * may run multiple concurrent isolates, which do not share this closure, so
  * this is NOT a global cross-instance rate limit.
  */
-let sharedFmpPacer: (() => Promise<void>) | null = null;
+let sharedFmpPacer: { pacer: () => Promise<void>; cap?: number } | null = null;
 export function getSharedFmpPacer(maxPerMinute?: number): () => Promise<void> {
-  if (!sharedFmpPacer) sharedFmpPacer = createPacer(maxPerMinute);
-  return sharedFmpPacer;
+  if (!sharedFmpPacer || sharedFmpPacer.cap !== maxPerMinute) {
+    sharedFmpPacer = { pacer: createPacer(maxPerMinute), cap: maxPerMinute };
+  }
+  return sharedFmpPacer.pacer;
 }
 
 /** Test-only: drop the memoized singleton so each test starts from a clean gate. */
@@ -63,13 +65,15 @@ export function __resetSharedFmpPacerForTests(): void {
  * fair-access limit (SEC documents an approx 10 req/s ceiling), independent of
  * FMP's per-minute plan cap. Same lazily-created, memoized-at-module-scope
  * singleton shape as `getSharedFmpPacer` — see that doc comment for the
- * per-isolate-only caveat and the "changing the env var needs a redeploy" note,
+ * per-isolate-only caveat and the ceiling-change rebuild logic,
  * both of which apply here too.
  */
-let sharedEdgarPacer: (() => Promise<void>) | null = null;
+let sharedEdgarPacer: { pacer: () => Promise<void>; cap?: number } | null = null;
 export function getSharedEdgarPacer(maxPerMinute?: number): () => Promise<void> {
-  if (!sharedEdgarPacer) sharedEdgarPacer = createPacer(maxPerMinute);
-  return sharedEdgarPacer;
+  if (!sharedEdgarPacer || sharedEdgarPacer.cap !== maxPerMinute) {
+    sharedEdgarPacer = { pacer: createPacer(maxPerMinute), cap: maxPerMinute };
+  }
+  return sharedEdgarPacer.pacer;
 }
 
 /** Test-only: drop the memoized singleton so each test starts from a clean gate. */

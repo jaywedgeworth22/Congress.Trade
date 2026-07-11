@@ -71,7 +71,10 @@ describe('hasConfiguredKeyedEnrichmentProvider', () => {
     expect(hasConfiguredKeyedEnrichmentProvider({} as never)).toBe(false);
     expect(hasConfiguredKeyedEnrichmentProvider({ FMP_API_KEY: 'k' } as never)).toBe(true);
     expect(hasConfiguredKeyedEnrichmentProvider({ MASSIVE_API_KEY: 'k' } as never)).toBe(true);
-    expect(hasConfiguredKeyedEnrichmentProvider({ TIINGO_API_KEY: 'k' } as never)).toBe(true);
+    // Tiingo is intentionally excluded — its free tier supplies only name+exchange,
+    // so it should not enable retry-incomplete mode that would endlessly re-select
+    // the same newest tickers (which already have enriched_at but not sector/market cap).
+    expect(hasConfiguredKeyedEnrichmentProvider({ TIINGO_API_KEY: 'k' } as never)).toBe(false);
   });
 });
 

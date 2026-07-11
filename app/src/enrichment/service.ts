@@ -86,6 +86,17 @@ export function enrichmentNeededSql(alias = 'sr', retryIncompleteWithKeyedProvid
               AND (${alias}.enrichment_error IS NULL OR ${alias}.enrichment_error = '')))`;
 }
 
+/**
+ * Whether any keyed enrichment provider with display-critical field coverage is
+ * configured. This intentionally mirrors `KEYED_PROVIDER_SOURCE_MARKERS`:
+ * Tiingo is excluded because its free tier supplies only name + exchange, so
+ * a Tiingo-enriched row should remain eligible for re-enrichment by a richer
+ * provider (FMP, Massive, Intrinio, etc.) that may be configured later.
+ * Without a matching keyed provider, the re-enrichment SQL skips tickers that
+ * already have an `enriched_at` timestamp, even if they are still missing
+ * sector/country/market cap — preventing an endless loop of re-selecting the
+ * newest tickers on every run.
+ */
 export function hasConfiguredKeyedEnrichmentProvider(env: Env): boolean {
   const envx = env as EnvX;
   return Boolean(
@@ -93,8 +104,7 @@ export function hasConfiguredKeyedEnrichmentProvider(env: Env): boolean {
       envx.MASSIVE_API_KEY ||
       envx.INTRINIO_API_KEY ||
       envx.TWELVEDATA_API_KEY ||
-      envx.FINNHUB_API_KEY ||
-      envx.TIINGO_API_KEY,
+      envx.FINNHUB_API_KEY,
   );
 }
 
