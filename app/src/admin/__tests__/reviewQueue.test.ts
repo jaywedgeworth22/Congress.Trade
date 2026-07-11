@@ -45,6 +45,7 @@ describe('review queue admin API', () => {
             raw_object_key: 'raw/H-2026-2003695',
             doc_kind: 'scanned_pdf',
             chamber: 'house',
+            review_revision: 7,
           },
         ]),
       } as never,
@@ -58,6 +59,7 @@ describe('review queue admin API', () => {
         rawObjectKey: string;
         docKind: string;
         chamber: string;
+        reviewRevision: number;
         payload: { minConfidence: number; transactions: unknown[] };
       }>;
     };
@@ -67,6 +69,7 @@ describe('review queue admin API', () => {
       rawObjectKey: 'raw/H-2026-2003695',
       docKind: 'scanned_pdf',
       chamber: 'house',
+      reviewRevision: 7,
       payload: { minConfidence: 0, transactions: [] },
     });
   });
@@ -153,7 +156,7 @@ describe('review queue admin API', () => {
             return { results: [] as T[] };
           },
           async first<T>() {
-            return { ingest_status: 'persisted' } as T;
+            return { ingest_status: 'persisted', resolved: 1, review_revision: 1 } as T;
           },
           async run() {
             return { success: true, meta: { changes: 3 } };
@@ -164,7 +167,10 @@ describe('review queue admin API', () => {
 
     const res = await app.request(
       '/review/H-2026-2003695/unpublish',
-      { method: 'POST', headers: { Authorization: 'Bearer admin-secret' }, body: '{"reason":"bad parse"}' },
+      {
+        method: 'POST', headers: { Authorization: 'Bearer admin-secret' },
+        body: '{"reason":"bad parse","reviewRevision":1}',
+      },
       { ADMIN_TOKEN: 'admin-secret', DB: db } as never,
     );
     expect(res.status).toBe(200);
@@ -174,7 +180,7 @@ describe('review queue admin API', () => {
       reason: string;
     };
     expect(body).toMatchObject({ unpublished: true, deprecatedTransactions: 3, reason: 'bad parse' });
-    const reopenSql = preparedSql.find((sql) => /INSERT INTO review_queue/i.test(sql));
+    const reopenSql = preparedSql.find((sql) => /UPDATE review_queue[\s\S]*SET resolved = 0/i.test(sql));
     expect(reopenSql).toMatch(/agreement_attempted_at = NULL/i);
     expect(reopenSql).toMatch(/agreement_attempts = 0/i);
     expect(reopenSql).toMatch(/agreement_tier = NULL/i);
@@ -182,10 +188,10 @@ describe('review queue admin API', () => {
     expect(reopenSql).toMatch(/agreement_claim_token = NULL/i);
     expect(reopenSql).toMatch(/agreement_claimed_at = NULL/i);
     expect(reopenSql).not.toMatch(/agreement_legacy_replay_at\s*=/i);
+    expect(reopenSql).toMatch(/review_revision = review_revision \+ 1/i);
   });
 
-  it('keeps unpublish available during deploy-before-migrate schema compatibility', async () => {
-    const reopenSql: string[] = [];
+  it('fails unpublish closed during the deploy-before-migrate revision window', async () => {
     const db = {
       prepare(sql: string) {
         return {
@@ -196,13 +202,10 @@ describe('review queue admin API', () => {
             return { results: [] as T[] };
           },
           async first<T>() {
-            return { ingest_status: 'persisted' } as T;
+            if (/review_revision/i.test(sql)) throw new Error('no such column: review_revision');
+            return null as T | null;
           },
           async run() {
-            if (/INSERT INTO review_queue/i.test(sql)) {
-              reopenSql.push(sql);
-              if (/agreement_claim_token/i.test(sql)) throw new Error('no such column: agreement_claim_token');
-            }
             return { success: true, meta: { changes: 1 } };
           },
         };
@@ -211,20 +214,23 @@ describe('review queue admin API', () => {
 
     const res = await app.request(
       '/review/H-legacy/unpublish',
-      { method: 'POST', headers: { Authorization: 'Bearer admin-secret' }, body: '' },
+      {
+        method: 'POST', headers: { Authorization: 'Bearer admin-secret' },
+        body: '{"reviewRevision":1}',
+      },
       { ADMIN_TOKEN: 'admin-secret', DB: db } as never,
     );
 
-    expect(res.status).toBe(200);
-    expect(reopenSql).toHaveLength(2);
-    expect(reopenSql[0]).toMatch(/agreement_claim_token/i);
-    expect(reopenSql[1]).not.toMatch(/agreement_claim_token/i);
+    expect(res.status).toBe(503);
   });
 
   it('unpublish 404s when the filing does not exist', async () => {
     const res = await app.request(
       '/review/NOPE/unpublish',
-      { method: 'POST', headers: { Authorization: 'Bearer admin-secret' }, body: '' },
+      {
+        method: 'POST', headers: { Authorization: 'Bearer admin-secret' },
+        body: '{"reviewRevision":1}',
+      },
       { ADMIN_TOKEN: 'admin-secret', DB: fakeDb([]) } as never,
     );
     expect(res.status).toBe(404);
@@ -255,7 +261,7 @@ describe('review queue admin API', () => {
       {
         method: 'POST',
         headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
-        body: JSON.stringify({ decision: 'confirm' }),
+        body: JSON.stringify({ decision: 'confirm', reviewRevision: 1 }),
       },
       { ADMIN_TOKEN: 'admin-secret', DB: db } as never,
     );
@@ -290,7 +296,7 @@ describe('review queue admin API', () => {
       {
         method: 'POST',
         headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
-        body: JSON.stringify({ decision: 'confirm', edits: [] }),
+        body: JSON.stringify({ decision: 'confirm', reviewRevision: 1, edits: [] }),
       },
       { ADMIN_TOKEN: 'admin-secret', DB: db } as never,
     );
@@ -332,7 +338,7 @@ describe('review queue admin API', () => {
         {
           method: 'POST',
           headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
-          body: JSON.stringify({ decision: 'confirm', edits: [edit] }),
+          body: JSON.stringify({ decision: 'confirm', reviewRevision: 1, edits: [edit] }),
         },
         { ADMIN_TOKEN: 'admin-secret', DB: db } as never,
       );
@@ -383,6 +389,7 @@ describe('review queue admin API', () => {
         headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
         body: JSON.stringify({
           decision: 'manual',
+          reviewRevision: 1,
           edits: [{
             ticker: 'AAPL',
             assetName: 'Apple Inc.',
@@ -419,6 +426,7 @@ describe('review queue admin API', () => {
       description: 'Common stock',
       supplementalText: 'Corrected by reviewer',
       source: 'manual',
+      estValue: 8000.5,
     });
     expect(inserted[0].rowKey).toBe(transactionRowKey('manual', 0, {
       txDate: '2026-06-01',

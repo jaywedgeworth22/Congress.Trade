@@ -28,6 +28,7 @@ import type { Chamber, Owner, Transaction, TxType, Env } from '../shared/types';
 import { batch } from '../shared/db';
 import { nearestBracket } from '../shared/brackets';
 import { sanitizeAssetName } from '../shared/text';
+import { estimateTransactionValue } from '../shared/transactionValue';
 import { scoreFields, loadResolver, type TickerResolver } from '../extraction/normalizer';
 
 // ---------------------------------------------------------------------------
@@ -399,8 +400,8 @@ function buildSeedTxStatement(tx: Transaction): SqlStatement {
        id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
        tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
        raw_text, confidence, source, created_at, cursor_seq,
-       first_seen_at, filed_date
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'seed_dataset', ?, NULL, ?, ?)
+       first_seen_at, filed_date, est_value
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'seed_dataset', ?, NULL, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        asset_name = excluded.asset_name,
        ticker = excluded.ticker,
@@ -411,7 +412,8 @@ function buildSeedTxStatement(tx: Transaction): SqlStatement {
        raw_text = excluded.raw_text,
        confidence = excluded.confidence,
        first_seen_at = excluded.first_seen_at,
-       filed_date = excluded.filed_date
+       filed_date = excluded.filed_date,
+       est_value = excluded.est_value
      WHERE transactions.source = 'seed_dataset'`,
     [
       tx.id,
@@ -432,6 +434,7 @@ function buildSeedTxStatement(tx: Transaction): SqlStatement {
       tx.createdAt,
       tx.firstSeenAt ?? null,
       tx.filedDate ?? null,
+      estimateTransactionValue(tx.amountMin, tx.amountMax),
     ],
   ];
 }

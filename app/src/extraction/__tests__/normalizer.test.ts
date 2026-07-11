@@ -9,16 +9,21 @@ import type { Env, Filing, ParsedTx } from '../../shared/types';
 // ---------------------------------------------------------------------------
 
 interface Captured {
-  insertedTx: unknown[][];
+  insertedTx: Array<Record<string, unknown>>;
   reviewRows: unknown[][];
   reviewSql: string[];
   filingUpdates: unknown[][];
   enqueued: Array<{ type: string; txId: string }>;
 }
 
-function makeEnv(securities: Array<{ ticker: string; name: string | null; aliases: string | null }>) {
+function makeEnv(
+  securities: Array<{ ticker: string; name: string | null; aliases: string | null }>,
+  initialReview: { resolved: number; review_revision: number; agreement_suppressed_at: string | null } | null = null,
+) {
   const cap: Captured = { insertedTx: [], reviewRows: [], reviewSql: [], filingUpdates: [], enqueued: [] };
-  const insertedRowKeys = new Set<string>();
+  const insertedByRowKey = new Map<string, Record<string, unknown>>();
+  const outboxSeen = new Set<string>();
+  const outboxPending = new Set<string>();
 
   const prepare = (sql: string) => {
     const stmt = {
@@ -31,22 +36,51 @@ function makeEnv(securities: Array<{ ticker: string; name: string | null; aliase
         if (/FROM securities_master/i.test(sql)) {
           return { results: securities as unknown as T[] };
         }
+        if (/FROM review_delivery_outbox o/i.test(sql)) {
+          return {
+            results: Array.from(outboxPending).map((txId) => ({
+              tx_id: txId,
+              doc_id: 'doc1',
+              transaction_id: txId,
+              deprecated_at: null,
+            })) as unknown as T[],
+          };
+        }
         return { results: [] as T[] };
       },
       async first<T>() {
+        if (/SELECT resolved, review_revision, agreement_suppressed_at/i.test(sql)) {
+          return initialReview as T | null;
+        }
         return null as T | null;
       },
       async run() {
         let changes = 1;
-        if (/INSERT(?: OR IGNORE)? INTO transactions/i.test(sql)) {
-          const rowKey = String(this._params[14] ?? '');
-          if (insertedRowKeys.has(rowKey)) {
-            changes = 0;
-          } else {
-            insertedRowKeys.add(rowKey);
-            cap.insertedTx.push(this._params);
+        if (/INSERT(?: OR IGNORE)? INTO transactions/i.test(sql) && /json_each/i.test(sql)) {
+          const rows = JSON.parse(String(this._params[0])) as Array<Record<string, unknown>>;
+          changes = 0;
+          for (const row of rows) {
+            const rowKey = String(row.rowKey ?? '');
+            if (!insertedByRowKey.has(rowKey)) {
+              insertedByRowKey.set(rowKey, row);
+              cap.insertedTx.push(row);
+              changes += 1;
+            }
           }
-        } else if (/INSERT INTO review_queue/i.test(sql)) {
+        } else if (/INSERT OR IGNORE INTO review_delivery_outbox/i.test(sql)) {
+          const rowKeys = JSON.parse(String(this._params[2])) as string[];
+          changes = 0;
+          for (const rowKey of rowKeys) {
+            const txId = String(insertedByRowKey.get(rowKey)?.id ?? '');
+            if (txId && !outboxSeen.has(txId)) {
+              outboxSeen.add(txId);
+              outboxPending.add(txId);
+              changes += 1;
+            }
+          }
+        } else if (/UPDATE review_delivery_outbox/i.test(sql)) {
+          outboxPending.delete(String(this._params[this._params.length - 1]));
+        } else if (/INSERT(?: OR IGNORE)? INTO review_queue/i.test(sql) || /UPDATE review_queue\s+SET reason/i.test(sql)) {
           cap.reviewRows.push(this._params);
           cap.reviewSql.push(sql);
         }
@@ -131,7 +165,7 @@ describe('normalize', () => {
 
     // Persisted + delivery fan-out happened; no review row.
     expect(cap.insertedTx).toHaveLength(1);
-    expect(cap.insertedTx[0][20]).toEqual(expect.stringMatching(/^v1:primary:0:/));
+    expect(cap.insertedTx[0].rowKey).toEqual(expect.stringMatching(/^v1:primary:0:/));
     expect(cap.reviewRows).toHaveLength(0);
     expect(cap.enqueued).toEqual([{ type: 'delivery.dispatch', txId: result.transactions[0].id }]);
     // filings updated (metadata + persisted status).
@@ -179,12 +213,7 @@ describe('normalize', () => {
       extractor: 'visionLlm',
       modelVersion: 'gemini-test',
     });
-    expect(cap.reviewSql[0]).toMatch(/agreement_attempted_at = CASE[\s\S]*review_queue\.resolved = 1 THEN NULL/i);
-    expect(cap.reviewSql[0]).toMatch(/agreement_attempts = CASE[\s\S]*review_queue\.resolved = 1 THEN 0/i);
-    expect(cap.reviewSql[0]).toMatch(/agreement_next_attempt_at = CASE[\s\S]*ELSE review_queue\.agreement_next_attempt_at/i);
-    expect(cap.reviewSql[0]).toMatch(/agreement_claim_token = CASE[\s\S]*ELSE review_queue\.agreement_claim_token/i);
-    expect(cap.reviewSql[0]).toMatch(/agreement_claimed_at = CASE[\s\S]*ELSE review_queue\.agreement_claimed_at/i);
-    expect(cap.reviewSql[0]).toMatch(/created_at = CASE[\s\S]*ELSE review_queue\.created_at/i);
+    expect(cap.reviewSql[0]).toMatch(/INSERT OR IGNORE INTO review_queue/i);
     expect(cap.reviewSql[0]).not.toMatch(/agreement_legacy_replay_at\s*=/i);
   });
 

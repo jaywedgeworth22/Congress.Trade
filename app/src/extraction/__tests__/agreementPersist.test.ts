@@ -33,6 +33,7 @@ interface ExtractionRunRow {
 function makeEnv() {
   const extractionRuns: ExtractionRunRow[] = [];
   const insertedTx: unknown[][] = [];
+  const transactionSql: string[] = [];
   const db = {
     prepare(sql: string) {
       return {
@@ -46,6 +47,19 @@ function makeEnv() {
               ingest_status: 'needs_review', doc_kind: 'scanned_pdf', extractor: null,
               model_version: null, confidence: null, first_seen_at: '2026-06-20',
               source_updated_at: null, error: null,
+            } as T;
+          }
+          if (/SELECT resolved, agreement_attempts/i.test(sql)) {
+            return {
+              resolved: 0,
+              agreement_attempts: 0,
+              agreement_tier: null,
+              agreement_next_attempt_at: null,
+              agreement_claim_token: null,
+              agreement_claimed_at: null,
+              agreement_suppressed_at: null,
+              agreement_suppression_reason: null,
+              review_revision: 1,
             } as T;
           }
           return null as T | null;
@@ -62,6 +76,7 @@ function makeEnv() {
             } as ExtractionRunRow);
           } else if (/INSERT (?:OR IGNORE )?INTO transactions/i.test(sql)) {
             insertedTx.push(this.params);
+            transactionSql.push(sql);
           }
           return { success: true, meta: { changes: 1 } };
         },
@@ -75,7 +90,7 @@ function makeEnv() {
     RAW_FILES: { get: async () => ({ arrayBuffer: async () => new TextEncoder().encode('%PDF').buffer }) },
     DELIVERY_QUEUE: { send: async () => {}, sendBatch: async () => {} },
   } as never;
-  return { env, extractionRuns, insertedTx };
+  return { env, extractionRuns, insertedTx, transactionSql };
 }
 
 /** Stub openai/anthropic/mistral so runCandidateOnDoc returns deterministic rows per provider. */
@@ -118,6 +133,20 @@ describe('processAgreementDoc extraction_runs persistence', () => {
     // Same batch id groups the two reads from one processAgreementDoc call.
     expect(extractionRuns[0].batch_id).toBe(extractionRuns[1].batch_id);
     expect(extractionRuns[0].batch_id).toBeTruthy();
+  });
+
+  it('materializes est_value in the real agreement publish payload', async () => {
+    stubProviders(ROW_AAPL, ROW_AAPL);
+    const { env, insertedTx, transactionSql } = makeEnv();
+
+    const res = await processAgreementDoc(env, MODELS, 'H-value', 'raw/H-value', false);
+
+    expect(res.outcome).toBe('published');
+    expect(insertedTx).toHaveLength(1);
+    const rows = JSON.parse(String(insertedTx[0][0])) as Array<Record<string, unknown>>;
+    expect(rows[0].estValue).toBe(8000.5);
+    expect(transactionSql[0]).toMatch(/filed_date, est_value/i);
+    expect(transactionSql[0]).toMatch(/\$\.estValue/);
   });
 
   it('persists one row per candidate even when the models disagree (no publish)', async () => {

@@ -59,6 +59,7 @@ import { recordIngestionDecision } from '../shared/ingestionDecisions';
 import { drainReviewDeliveryOutbox } from '../delivery/reviewOutbox';
 import { buildConsensusRows, type AmountBracket, type ConsensusResult } from './consensus';
 import { uuid } from '../shared/ids';
+import { estimateTransactionValue } from '../shared/transactionValue';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -103,6 +104,8 @@ interface CascadeAudit {
   models: Record<string, string>;
   /** Autonomous lease owner; omitted for an operator-triggered reprocess. */
   claimToken?: string;
+  /** Review version observed before operator-triggered model reads. */
+  reviewRevision?: number;
   unanimous?: boolean;
   /** Per-field vote summary (tier-3 majority resolve); omitted for unanimous tiers. */
   votes?: unknown;
@@ -216,6 +219,7 @@ interface AgreementReviewState {
   agreement_claimed_at: string | null;
   agreement_suppressed_at: string | null;
   agreement_suppression_reason: string | null;
+  review_revision: number;
 }
 
 const AGREEMENT_CLAIM_LEASE_MS = 15 * 60 * 1000;
@@ -225,7 +229,7 @@ async function loadReviewState(env: Env, docId: string): Promise<AgreementReview
     env.DB,
     `SELECT resolved, agreement_attempts, agreement_tier, agreement_next_attempt_at,
             agreement_claim_token, agreement_claimed_at, agreement_suppressed_at,
-            agreement_suppression_reason
+            agreement_suppression_reason, review_revision
        FROM review_queue WHERE doc_id = ?`,
     [docId],
   );
@@ -254,6 +258,7 @@ async function acquirePublishLease(
   env: Env,
   docId: string,
   expectedClaimToken?: string,
+  expectedReviewRevision?: number,
 ): Promise<string | null> {
   const publishToken = uuid();
   const now = new Date();
@@ -273,8 +278,9 @@ async function acquirePublishLease(
         `UPDATE review_queue
             SET agreement_claim_token = ?, agreement_claimed_at = ?
           WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+            AND review_revision = ?
             AND (agreement_claim_token IS NULL OR agreement_claimed_at IS NULL OR agreement_claimed_at <= ?)`,
-        [publishToken, nowIso, docId, expiredBefore],
+        [publishToken, nowIso, docId, expectedReviewRevision ?? -1, expiredBefore],
       );
   return (result.meta?.changes ?? 0) > 0 ? publishToken : null;
 }
@@ -284,7 +290,7 @@ const CONDITIONAL_BULK_INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
   tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
   raw_text, asset_type_name, filing_status, subholding, location, description,
   supplemental_text, row_key, confidence, source, created_at, cursor_seq,
-  first_seen_at, filed_date
+  first_seen_at, filed_date, est_value
 ) SELECT
   json_extract(value, '$.id'), json_extract(value, '$.docId'),
   json_extract(value, '$.filerId'), json_extract(value, '$.txDate'),
@@ -298,7 +304,8 @@ const CONDITIONAL_BULK_INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
   json_extract(value, '$.description'), json_extract(value, '$.supplementalText'),
   json_extract(value, '$.rowKey'), json_extract(value, '$.confidence'),
   json_extract(value, '$.source'), json_extract(value, '$.createdAt'), NULL,
-  json_extract(value, '$.firstSeenAt'), json_extract(value, '$.filedDate')
+  json_extract(value, '$.firstSeenAt'), json_extract(value, '$.filedDate'),
+  json_extract(value, '$.estValue')
   FROM json_each(?)
    WHERE EXISTS (
       SELECT 1 FROM review_queue
@@ -345,6 +352,7 @@ async function persistClaimedPublish(
     createdAt: tx.createdAt,
     firstSeenAt: tx.firstSeenAt ?? null,
     filedDate: tx.filedDate ?? null,
+    estValue: estimateTransactionValue(tx.amountMin, tx.amountMax),
   })));
   const exactLiveSetPredicate = `(SELECT COUNT(*) FROM transactions
       WHERE doc_id = ? AND source IN ('primary', 'manual')
@@ -405,7 +413,8 @@ async function persistClaimedPublish(
         SET resolved = 1,
             agreement_next_attempt_at = NULL,
             agreement_claim_token = NULL,
-            agreement_claimed_at = NULL
+            agreement_claimed_at = NULL,
+            review_revision = review_revision + 1
       WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
         AND agreement_claim_token = ? AND ${exactLiveSetPredicate}`,
     [
@@ -504,7 +513,7 @@ async function finalizePublish(
   }
 
   const txs = flagged.map((f) => ({ ...f.tx, source: 'primary' as const, confidence: Math.max(f.tx.confidence, 0.95) }));
-  const publishToken = await acquirePublishLease(env, docId, audit.claimToken);
+  const publishToken = await acquirePublishLease(env, docId, audit.claimToken, audit.reviewRevision);
   if (!publishToken) {
     return { docId, outcome: 'skipped', tier: audit.tier, reason: 'review_resolved_or_claim_lost' };
   }
@@ -562,6 +571,14 @@ export async function processAgreementDoc(
   const lineup = [models.a, models.b, ...(models.c ? [models.c] : [])];
   const lineupError = duplicateLineupReason(lineup);
   if (lineupError) return { docId, outcome: 'skipped', reason: lineupError };
+  let operatorReviewRevision: number | undefined;
+  if (!dryRun && !audit?.claimToken) {
+    const reviewState = await loadReviewState(env, docId);
+    if (!reviewState || reviewState.resolved !== 0 || reviewState.agreement_suppressed_at != null) {
+      return { docId, outcome: 'skipped', tier: audit?.tier, reason: 'review_resolved_or_claim_lost' };
+    }
+    operatorReviewRevision = reviewState.review_revision;
+  }
   if (audit?.claimToken && !(await ownsUnresolvedReview(env, docId, audit.claimToken))) {
     return { docId, outcome: 'skipped', tier: audit.tier, reason: 'review_resolved_or_claim_lost' };
   }
@@ -592,6 +609,7 @@ export async function processAgreementDoc(
     tier: audit?.tier ?? (models.c ? 2 : 1),
     models: modelLabels(models),
     claimToken: audit?.claimToken,
+    reviewRevision: operatorReviewRevision,
     unanimous: true,
     votes: audit?.votes,
   });
@@ -762,13 +780,22 @@ async function leaveInReviewHighPriority(
   // reading it first, then merging cascade metadata fields on top, so the human
   // reviewer does not lose the extracted rows that need attention.
   let existingPayload: Record<string, unknown> = {};
+  let existingRevision: number | null = null;
   try {
-    const row = await get<{ payload: string | null }>(env.DB, 'SELECT payload FROM review_queue WHERE doc_id = ?', [docId]);
+    const row = await get<{ payload: string | null; review_revision: number }>(
+      env.DB,
+      'SELECT payload, review_revision FROM review_queue WHERE doc_id = ?',
+      [docId],
+    );
+    existingRevision = row?.review_revision ?? null;
     if (row?.payload) {
       existingPayload = JSON.parse(row.payload) as Record<string, unknown>;
     }
   } catch (err) {
     console.warn('leaveInReviewHighPriority failed to read existing payload:', docId, (err as Error).message);
+  }
+  if (existingRevision === null) {
+    return { docId, outcome: 'skipped', tier, reason: 'review_resolved_or_claim_lost' };
   }
   const payload = {
     ...existingPayload,
@@ -784,16 +811,19 @@ async function leaveInReviewHighPriority(
     const result = claimToken
       ? await run(
           env.DB,
-          `UPDATE review_queue SET reason = ?, payload = ?
+          `UPDATE review_queue
+              SET reason = ?, payload = ?, review_revision = review_revision + 1
             WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
-              AND agreement_claim_token = ?`,
-          ['agreement_cascade_unresolved', JSON.stringify(payload), docId, claimToken],
+              AND agreement_claim_token = ? AND review_revision = ?`,
+          ['agreement_cascade_unresolved', JSON.stringify(payload), docId, claimToken, existingRevision],
         )
       : await run(
           env.DB,
-          `UPDATE review_queue SET reason = ?, payload = ?
-            WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL`,
-          ['agreement_cascade_unresolved', JSON.stringify(payload), docId],
+          `UPDATE review_queue
+              SET reason = ?, payload = ?, review_revision = review_revision + 1
+            WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+              AND review_revision = ?`,
+          ['agreement_cascade_unresolved', JSON.stringify(payload), docId, existingRevision],
         );
     updated = (result.meta?.changes ?? 0) > 0;
   } catch (err) {
@@ -832,6 +862,14 @@ export async function processAgreementCascadeTier2(
   const lineup = [models.a, models.b, models.c];
   const lineupError = duplicateLineupReason(lineup);
   if (lineupError) return { docId, outcome: 'skipped', reason: lineupError };
+  let operatorReviewRevision: number | undefined;
+  if (!dryRun && !claimToken) {
+    const reviewState = await loadReviewState(env, docId);
+    if (!reviewState || reviewState.resolved !== 0 || reviewState.agreement_suppressed_at != null) {
+      return { docId, outcome: 'skipped', tier: 2, reason: 'review_resolved_or_claim_lost' };
+    }
+    operatorReviewRevision = reviewState.review_revision;
+  }
   if (claimToken && !(await ownsUnresolvedReview(env, docId, claimToken))) {
     return { docId, outcome: 'skipped', tier: 2, reason: 'review_resolved_or_claim_lost' };
   }
@@ -849,7 +887,7 @@ export async function processAgreementCascadeTier2(
     && sameRowSet(rA, rB) && sameRowSet(rA, rC) && sameRowSet(rB, rC);
   if (unanimous) {
     return finalizePublish(env, frow, docId, rA.rows, dryRun, {
-      tier: 2, models: labels, unanimous: true, claimToken,
+      tier: 2, models: labels, unanimous: true, claimToken, reviewRevision: operatorReviewRevision,
     });
   }
 
@@ -877,6 +915,7 @@ export async function processAgreementCascadeTier2(
     tier: 3,
     models: labels,
     claimToken,
+    reviewRevision: operatorReviewRevision,
     unanimous: false,
     votes,
   });

@@ -30,6 +30,19 @@ function makeEnv() {
           if (/SELECT doc_id, chamber, filer_id/i.test(sql)) {
             return { doc_id: this.params[0], chamber: 'house', filer_id: 'P1', filing_type: 'P', filed_date: '2026-06-20', source_url: 'u', raw_object_key: 'raw/x', ingest_status: 'needs_review', doc_kind: 'scanned_pdf', extractor: null, model_version: null, confidence: null, first_seen_at: '2026-06-20', source_updated_at: null, error: null } as T;
           }
+          if (/SELECT resolved, agreement_attempts/i.test(sql)) {
+            return {
+              resolved: 0,
+              agreement_attempts: 0,
+              agreement_tier: null,
+              agreement_next_attempt_at: null,
+              agreement_claim_token: null,
+              agreement_claimed_at: null,
+              agreement_suppressed_at: null,
+              agreement_suppression_reason: null,
+              review_revision: 1,
+            } as T;
+          }
           return null as T | null;
         },
         async all<T>() {

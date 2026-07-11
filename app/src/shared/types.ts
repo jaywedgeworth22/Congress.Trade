@@ -229,6 +229,8 @@ export interface ReviewItem {
   payload: unknown;
   createdAt: string;
   resolved: boolean;
+  /** Monotonic optimistic-concurrency version for review-visible state. */
+  reviewRevision: number;
   sourceUrl?: string;
   rawObjectKey?: string;
   docKind?: string;
