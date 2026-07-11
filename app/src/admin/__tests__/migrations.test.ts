@@ -155,6 +155,7 @@ describe('admin migration bootstrap', () => {
     expect(STRIPE_EVENT_SCHEMA_STATEMENTS.join('\n')).toContain('stripe_subscription_event_state');
     expect(STRIPE_EVENT_SCHEMA_STATEMENTS.join('\n')).toContain('idx_stripe_subscription_event_customer');
     expect(POST_0024_SCHEMA_STATEMENTS).toEqual([
+      'ALTER TABLE extraction_runs ADD COLUMN usage_json TEXT',
       ...EST_VALUE_SCHEMA_STATEMENTS,
       ...RELIABILITY_SCHEMA_STATEMENTS,
       ...STRIPE_EVENT_SCHEMA_STATEMENTS,
