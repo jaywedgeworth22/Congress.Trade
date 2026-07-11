@@ -22,7 +22,7 @@ truth; this file is the short operational snapshot for the current integration.
   line. The older dynamic-delimiter fix still prevents body content from colliding with the marker.
 - Verification passed: app lint (0 errors / 100 inherited warnings), typecheck, 106 files / 940
   tests; PWA typecheck, 3 files / 13 tests, and production build; workflow YAML parse and
-  compact-JSON framing harness. The ready closeout PR is recorded in
+  compact-JSON framing harness. Ready closeout PR #297 is recorded in
   `docs/rollouts/2026-07-11-shared-v150-closeout.md`.
 
 ## 2026-07-11 — Whole-App Hardening Production Landing

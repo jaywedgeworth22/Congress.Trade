@@ -55,6 +55,7 @@ place to prevent response content from colliding with a static marker.
 
 ## Follow-ups
 
+- Ready PR #297 contains the closeout and workflow fix; it is not merged and has no auto-merge.
 - Production is deliberately not redeployed by this closeout.
 - No production D1, KV, R2, queue, config, secret, migration, ingestion, or backfill operation is in
   scope.
