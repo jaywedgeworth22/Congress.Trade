@@ -3048,8 +3048,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          created_at TEXT NOT NULL
        )`,
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
-      // 0025_extraction_runs_usage.sql — token usage/cost capture for bake-off (openai first).
-      'ALTER TABLE extraction_runs ADD COLUMN usage_json TEXT',
       // 0029–0032 — value materialization, outbox reliability, truthful source
       // attempts, and ordered/reclaimable Stripe event processing.
       ...POST_0024_SCHEMA_STATEMENTS,
