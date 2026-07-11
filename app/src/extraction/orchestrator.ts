@@ -15,7 +15,7 @@
 
 import type { Env, Filing, DocKind, Chamber, ParsedTx } from '../shared/types';
 import { get, run } from '../shared/db';
-import { buildExtractorPipeline } from '../extractors/types';
+import { buildExtractorPipeline, type ExtractorResult } from '../extractors/types';
 import { normalize } from './normalizer';
 import { enqueueAgreementCheck } from './agreement';
 
@@ -144,6 +144,16 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
   }
 
   const bytes = await obj.arrayBuffer();
+
+  // Complexity signal for cascade tiering: raw byte length. Recorded as soon as
+  // bytes are in hand (independent of whether extraction later succeeds).
+  // Best-effort — a failure here must never fail extraction.
+  try {
+    await run(env.DB, 'UPDATE filings SET raw_bytes = ? WHERE doc_id = ?', [bytes.byteLength, docId]);
+  } catch (err) {
+    console.warn('orchestrator: failed to record raw_bytes:', docId, (err as Error).message);
+  }
+
   const html =
     filing.docKind === 'senate_html'
       ? new TextDecoder('utf-8').decode(new Uint8Array(bytes))
@@ -174,6 +184,21 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
     // wrangler.toml) covers a longer provider quota window than a single
     // message attempt can.
     throw err;
+  }
+
+  // Complexity signal for cascade tiering: page count, when the extractor
+  // cheaply exposed it (e.g. TextPdfExtractor reads pdf.numPages off the
+  // document proxy it already parsed for text — no extra page merge). Not
+  // part of the ExtractorResult contract, so read it via an optional-property
+  // cast rather than widening that interface. Best-effort — a failure here
+  // must never fail extraction.
+  try {
+    const pageCount = (result as ExtractorResult & { pageCount?: number | null }).pageCount ?? null;
+    if (pageCount !== null) {
+      await run(env.DB, 'UPDATE filings SET page_count = ? WHERE doc_id = ?', [pageCount, docId]);
+    }
+  } catch (err) {
+    console.warn('orchestrator: failed to record page_count:', docId, (err as Error).message);
   }
 
   return {
