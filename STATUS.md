@@ -53,9 +53,9 @@ truth; this file is the short operational snapshot for the current integration.
   migration/admin-parity/readiness coverage through `0037`; and real D1 proof
   that a 223-row human confirmation commits every row and delivery intent while
   immediate outbox flushes remain below D1's bind-parameter ceiling. Fresh
-  isolated preview version `dca74a7f-2499-462c-b133-58eb82dbdf06` is healthy at
+  exact-tree isolated preview version `e1c8fb70-4291-4872-b1e2-f45f59367e6f` is healthy at
   `https://congress-trade-preview.jaywedgeworth22.workers.dev` with
-  `ok/db/schema=true`, `missing=[]`, and migrations tracked through `0037`.
+  `ok/db/schema=true`, `missing=[]`, with `0025` and `0030`-`0037` tracked.
 - The owner authorized production release. The branch is ready for its PR,
   merge, schema application, and bounded queue narrowing; none of this
   review-queue hardening is production-live yet. Final
