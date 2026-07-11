@@ -453,6 +453,8 @@ export interface Env {
   FMP_DAILY_CALL_CAP?: string;
   /** Enables the Congress.Trade-vs-provider congressional disclosure latency monitor. */
   DISCLOSURE_LATENCY_WATCH_ENABLED?: string;
+  /** Enables the public-API anti-scraping guard (UA blocklist + per-IP budgets). Unset = off. */
+  SCRAPE_GUARD_ENABLED?: string;
   /** Comma-separated provider ids to race: fmp, unusual_whales, quiver. Defaults to direct comparable providers. */
   DISCLOSURE_LATENCY_PROVIDERS?: string;
   /** Latest rows to fetch per provider/chamber endpoint when the latency monitor runs. */

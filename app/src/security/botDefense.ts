@@ -1,0 +1,199 @@
+/**
+ * src/security/botDefense.ts
+ * OWNER: security
+ *
+ * In-Worker anti-scraping guard for the PUBLIC data surface (/api/*). The site
+ * itself stays fully public for humans; this module makes bulk automated
+ * extraction expensive without gating any page or endpoint behind sign-in.
+ *
+ * Layers (all governed by the SCRAPE_GUARD_ENABLED switch, Infisical-tunable
+ * so it can be killed live without a redeploy):
+ *   1. User-agent blocklist — scraping libraries, headless browsers, and the
+ *      AI/LLM crawlers already disallowed by robots.txt get 403 on data APIs.
+ *      Empty/missing user agents are refused too: every legitimate consumer
+ *      (browsers, the PWA, EventSource, iOS URLSession/CFNetwork) sends one.
+ *   2. Per-IP request budget across all public data endpoints — generous for
+ *      humans driving the dashboard, throttling for scripted walkers.
+ *   3. Per-IP daily ROW budget on the corpus pagers (/api/transactions and
+ *      /api/client/v1/feed) — the actual asset is rows, so the budget counts
+ *      rows served, not requests. Incremental dashboard polls return few or
+ *      zero new rows and cost almost nothing; an offset/cursor walk of the
+ *      whole corpus at 500 rows/page exhausts the budget quickly.
+ *
+ * Deliberately NOT gated: token-gated surfaces that fail closed on their own
+ * (/api/admin, /api/ingest, /api/export), health checks, the SSE stream (has
+ * its own per-subscription + per-IP limits), and ticker logo images.
+ *
+ * Like shared/rateLimit.ts, every check fails OPEN on KV errors — a KV blip
+ * must never take down the public site. This blunts casual and mid-effort
+ * scraping; a determined adversary with rotating IPs is a Cloudflare WAF/Bot
+ * Management problem, not something Worker code can solve.
+ */
+
+import type { MiddlewareHandler } from 'hono';
+import type { Env } from '../shared/types';
+import { rateLimit, clientIp } from '../shared/rateLimit';
+import { resolveSecret } from '../secrets/infisical';
+
+/** Requests per IP per window across all guarded public data endpoints. */
+export const PUBLIC_API_LIMIT = 300;
+export const PUBLIC_API_WINDOW_SEC = 300;
+
+/** Feed rows a single IP may pull per UTC day across the corpus pagers. */
+export const DAILY_ROW_BUDGET = 20_000;
+const ROW_BUDGET_WINDOW_SEC = 86_400;
+const ROW_BUDGET_BUCKET = 'tx-rows';
+
+/**
+ * Deepest offset the public transactions pager serves. The dashboard pager
+ * (max 250 rows/page, prev/next only) stays far below this; full-history
+ * access is the Premium CSV export or the token-gated bulk snapshot.
+ */
+export const MAX_PUBLIC_TX_OFFSET = 10_000;
+
+/**
+ * Path prefixes exempt from the guard. Admin/ingest/export enforce their own
+ * bearer tokens and legitimately receive non-browser user agents (the
+ * residential scout, sibling-app integrations, ops scripts). Health stays open
+ * for uptime monitors; logos are cheap cache-friendly images; the SSE stream
+ * carries its own per-subscription and per-IP limits in delivery/sse.ts.
+ */
+const EXEMPT_PREFIXES = ['/api/admin', '/api/ingest', '/api/export', '/api/health', '/api/stream', '/api/logos'];
+
+/**
+ * Automation fingerprints refused on public data endpoints. Two families:
+ * HTTP/scraping tooling (curl, wget, python-*, Scrapy, Go, Java HTTP stacks,
+ * node-fetch/axios, headless browsers) and the AI/LLM crawlers robots.txt
+ * already disallows — this enforces that policy instead of trusting it.
+ * Kept deliberately narrow: real browsers, EventSource, and mobile app
+ * networking stacks (CFNetwork/URLSession, future clients) never match.
+ */
+const BLOCKED_UA_PATTERNS: Array<[RegExp, string]> = [
+  [/curl\//i, 'curl'],
+  [/\bwget\b/i, 'wget'],
+  [/python-requests|python-urllib|python-httpx|\baiohttp\b|\bhttpx\b|python\/\d/i, 'python-http'],
+  [/\bscrapy\b/i, 'scrapy'],
+  [/go-http-client/i, 'go-http'],
+  [/node-fetch|\bundici\b|axios\//i, 'node-http'],
+  [/apache-httpclient|\blibwww\b|winhttp|lwp::|\bcurb\b|rest-client/i, 'http-library'],
+  [/headlesschrome|phantomjs|slimerjs|electron\/|puppeteer|playwright|selenium/i, 'headless-browser'],
+  [/gptbot|chatgpt-user|oai-searchbot|claudebot|anthropic-ai|claude-web|ccbot|google-extended|applebot-extended|perplexitybot|perplexity-user|bytespider|amazonbot|meta-externalagent|facebookbot|diffbot|imagesiftbot|omgili|youbot|cohere-ai|cohere-training|timpibot|velenpublicwebcrawler/i, 'ai-crawler'],
+];
+
+/** Returns a short block label when the UA is automation, else null. */
+export function blockedUserAgent(userAgent: string | null): string | null {
+  const ua = (userAgent ?? '').trim();
+  if (!ua) return 'missing-user-agent';
+  for (const [pattern, label] of BLOCKED_UA_PATTERNS) {
+    if (pattern.test(ua)) return label;
+  }
+  return null;
+}
+
+function truthy(v: string | undefined): boolean {
+  return /^(1|true|yes|on)$/i.test((v ?? '').trim());
+}
+
+/**
+ * Live on/off switch. Reads SCRAPE_GUARD_ENABLED through the secret resolver
+ * (in-memory cached; Infisical can flip it without a redeploy) with the
+ * wrangler.toml var as fallback. Unset => guard off, so tests and local dev
+ * are unaffected unless they opt in — mirroring DISCLOSURE_LATENCY_WATCH_ENABLED.
+ */
+export async function scrapeGuardEnabled(env: Env): Promise<boolean> {
+  try {
+    const live = (await resolveSecret(env, 'SCRAPE_GUARD_ENABLED')).value ?? env.SCRAPE_GUARD_ENABLED;
+    return truthy(live);
+  } catch {
+    return truthy(env.SCRAPE_GUARD_ENABLED);
+  }
+}
+
+type KvEnv = Env & { CONFIG_KV?: KVNamespace };
+
+async function hashIdentifier(identifier: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(identifier));
+  return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32);
+}
+
+function rowBudgetWindow(nowSec: number): { windowStart: number; retryAfterSec: number } {
+  const windowStart = nowSec - (nowSec % ROW_BUDGET_WINDOW_SEC);
+  return { windowStart, retryAfterSec: windowStart + ROW_BUDGET_WINDOW_SEC - nowSec };
+}
+
+export interface RowBudgetResult {
+  ok: boolean;
+  retryAfterSec: number;
+}
+
+/**
+ * True while `ip` still has daily row budget. Read-only (the spend happens
+ * after the handler knows how many rows it served). Fails open on KV errors.
+ */
+export async function checkRowBudget(env: Env, ip: string): Promise<RowBudgetResult> {
+  const kv = (env as KvEnv).CONFIG_KV;
+  if (!kv || !(await scrapeGuardEnabled(env))) return { ok: true, retryAfterSec: 0 };
+  const { windowStart, retryAfterSec } = rowBudgetWindow(Math.floor(Date.now() / 1000));
+  try {
+    const key = `rl:${ROW_BUDGET_BUCKET}:${await hashIdentifier(ip)}:${windowStart}`;
+    const spent = parseInt((await kv.get(key)) ?? '0', 10) || 0;
+    return spent >= DAILY_ROW_BUDGET ? { ok: false, retryAfterSec } : { ok: true, retryAfterSec: 0 };
+  } catch {
+    return { ok: true, retryAfterSec: 0 };
+  }
+}
+
+/**
+ * Record `rows` served to `ip` against today's budget. Zero-row responses
+ * (the common incremental-poll case) skip the KV write entirely.
+ */
+export async function spendRowBudget(env: Env, ip: string, rows: number): Promise<void> {
+  const kv = (env as KvEnv).CONFIG_KV;
+  if (!kv || rows <= 0 || !(await scrapeGuardEnabled(env))) return;
+  const { windowStart } = rowBudgetWindow(Math.floor(Date.now() / 1000));
+  try {
+    const key = `rl:${ROW_BUDGET_BUCKET}:${await hashIdentifier(ip)}:${windowStart}`;
+    const spent = parseInt((await kv.get(key)) ?? '0', 10) || 0;
+    await kv.put(key, String(spent + rows), { expirationTtl: ROW_BUDGET_WINDOW_SEC + 60 });
+  } catch {
+    /* best-effort accounting; fail open */
+  }
+}
+
+/**
+ * Guard middleware for the public data API. Mount on `/api/*` BEFORE the
+ * feature routers. Always stamps `X-Robots-Tag: noindex` on API responses
+ * (JSON is never a search result) regardless of the enable switch; the
+ * blocking layers run only when SCRAPE_GUARD_ENABLED is truthy.
+ */
+export const publicApiGuard: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  const exempt = EXEMPT_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
+
+  if (!exempt && (await scrapeGuardEnabled(c.env))) {
+    const blocked = blockedUserAgent(c.req.header('user-agent') ?? null);
+    if (blocked) {
+      return c.json(
+        {
+          error: 'automated access is not available on this endpoint',
+          reason: blocked,
+          hint: 'Programmatic delivery is available to Premium accounts via signed webhooks and SSE; bulk data via the export API.',
+        },
+        403,
+        { 'X-Robots-Tag': 'noindex' },
+      );
+    }
+    const rl = await rateLimit(c.env, 'pub-api', clientIp(c.req.raw), PUBLIC_API_LIMIT, PUBLIC_API_WINDOW_SEC);
+    if (!rl.ok) {
+      return c.json({ error: 'too many requests' }, 429, {
+        'Retry-After': String(rl.retryAfterSec),
+        'X-Robots-Tag': 'noindex',
+      });
+    }
+  }
+
+  await next();
+  c.header('X-Robots-Tag', 'noindex');
+};

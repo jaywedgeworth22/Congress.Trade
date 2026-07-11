@@ -65,8 +65,15 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('loadTrends();      // Trends is the default landing view');
   });
 
-  it('keeps admin delivery surfaces out of public primary nav', () => {
-    expect(DASHBOARD_HTML).toMatch(/<button[^>]+data-view="subs"[^>]+data-admin-tab="true"[^>]+hidden[^>]*>Developer Delivery<\/button>/);
+  it('exposes a public Alerts tab while keeping delivery MANAGEMENT admin-only', () => {
+    // The Alerts tab is public nav (education for signed-out visitors)…
+    expect(DASHBOARD_HTML).toMatch(/<button[^>]+data-view="subs"[^>]*>Alerts<\/button>/);
+    expect(DASHBOARD_HTML).not.toMatch(/<button[^>]+data-view="subs"[^>]+data-admin-tab/);
+    // …but the management section inside it stays admin-gated and defaults hidden
+    // so anon never flashes the subscriptions table before /auth/me resolves.
+    expect(DASHBOARD_HTML).toContain('id="subsManage" data-admin-only hidden');
+    expect(DASHBOARD_HTML).toContain("document.querySelectorAll('[data-admin-only]')");
+    expect(DASHBOARD_HTML).toContain('if (canUseAdmin()) loadSubs();');
     expect(DASHBOARD_HTML).toMatch(/<button[^>]+data-view="admin"[^>]+data-admin-tab="true"[^>]+hidden[^>]*>Admin · Cadence<\/button>/);
     expect(DASHBOARD_HTML).toContain('Developer Alert Delivery');
     expect(DASHBOARD_HTML).toContain('No alert deliveries yet. Create one below.');
@@ -74,6 +81,44 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('<h3>Delivery Subscriptions</h3>');
     expect(DASHBOARD_HTML).toContain("fetch('/api/admin/subscriptions', {");
     expect(DASHBOARD_HTML).toContain("headers: adminHeaders({ 'content-type': 'application/json' })");
+  });
+
+  it('teaches the two paid delivery methods to signed-out visitors', () => {
+    expect(DASHBOARD_HTML).toContain('id="subsMarketing"');
+    expect(DASHBOARD_HTML).toContain('Get the Filing First');
+    expect(DASHBOARD_HTML).toContain('Signed Webhooks');
+    expect(DASHBOARD_HTML).toContain('HMAC-SHA256');
+    expect(DASHBOARD_HTML).toContain('Live Stream (SSE)');
+    expect(DASHBOARD_HTML).toContain('EventSource');
+    expect(DASHBOARD_HTML).toContain('openPricing(\'alerts\')');
+    // CTA hides for premium/admin via the existing premium-cue mechanism.
+    expect(DASHBOARD_HTML).toContain('data-premium-cue="alerts"');
+    // Pricing modal now sells the delivery methods.
+    expect(DASHBOARD_HTML).toContain("intent === 'alerts'");
+    expect(DASHBOARD_HTML).toContain('signed webhooks (HMAC-verified) to any URL');
+    expect(DASHBOARD_HTML).toContain('Live SSE stream of every new filing');
+  });
+
+  it('renders the honest speed-vs-providers scoreboard on Trends', () => {
+    expect(DASHBOARD_HTML).toContain('id="trLatencySection"');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/analytics/latency-summary')");
+    // Filter-independent: not stamped with the Trends window chip and not in loadTrends.
+    expect(DASHBOARD_HTML).not.toMatch(/Speed vs\. Data Providers[^<]*<\/h3[^>]*class="tf-h"/);
+    expect(DASHBOARD_HTML).toContain('function renderSpeedProof(');
+    // Honesty guard rails: lane threshold, boast threshold, empty-state copy,
+    // losses always displayed, sample sizes visible, trademark fine print.
+    expect(DASHBOARD_HTML).toContain('var SPEED_LANE_MIN_MATCHED = 5');
+    expect(DASHBOARD_HTML).toContain('var SPEED_BOAST_MIN_MATCHED = 10');
+    expect(DASHBOARD_HTML).toContain('No overlapping disclosures yet');
+    expect(DASHBOARD_HTML).toContain('Behind ');
+    expect(DASHBOARD_HTML).toContain(' of ' + "' + p.candidates + '" + ' matched');
+    expect(DASHBOARD_HTML).toContain('A live measurement, not a promise');
+    expect(DASHBOARD_HTML).toContain('trademarks of their respective owners');
+    // Accessible table twin + never buy/sell colors for the race.
+    expect(DASHBOARD_HTML).toContain('id="speedTableBody"');
+    expect(DASHBOARD_HTML).toContain('--rival');
+    // The public pager mirrors the server's anti-scrape offset cap.
+    expect(DASHBOARD_HTML).toContain('var MAX_PUBLIC_FEED_OFFSET = 10000');
   });
 
   it('requires explicit review type/date and preserves an unknown owner', () => {
