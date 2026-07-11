@@ -131,11 +131,11 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   remains 91 total / 27 pending / 64 resolved after three dry-run-first House passes; all three
   source PDFs were visually verified and 36 rows corrected in place with stable IDs/cursors and
   audit receipts. Further publishing remains paused until the hardened gate is live. Branch
-  `codex/review-queue-resolution` now reconciles merged PR #284 plus #257/#263 with exact-material
+  `codex/review-queue-resolution` now reconciles merged PRs #284/#264 plus #257/#263 with exact-material
   multiset agreement, distinct vendors, bounded retry/backoff/budget/leases, one-time legacy replay,
   monotonic review revisions, atomic human/normalizer/agreement row+filing+generic-outbox
   transitions, durable holds/retry, live-only identity, coherent reviewer consensus, and exact
-  `est_value` across all writers. Combined gates pass: typecheck; 104 files / 903 tests; lint 0
+  `est_value` across all writers. Combined gates pass: typecheck; 104 files / 908 tests; lint 0
   errors; fresh migration/admin-parity/readiness coverage through `0037`; 223-row human resolution
   persists every durable delivery intent while immediate delivery remains below D1's bind ceiling.
   Fresh isolated preview version `dca74a7f-2499-462c-b133-58eb82dbdf06` is healthy at
