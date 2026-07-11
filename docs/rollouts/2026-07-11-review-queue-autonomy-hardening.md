@@ -25,7 +25,9 @@ confirmed. The code lane integrates the existing model-consensus/cascade work
 from PR #257 and the proven model-B correction from PR #263, then hardens it to
 fail closed on material disagreement, duplicate/missing lots, stale human state,
 concurrent claims, and legacy/reopened queue rows. The completed lane is built
-and deployed to isolated preview only; production remains unchanged.
+and production-live through PR #292. Its bounded one-time replay resolved seven
+more filings without operator writes, then stopped with every remaining row at
+the configured attempt cap.
 
 ## Files changed
 
@@ -102,19 +104,44 @@ npm test -- --reporter=dot
   dashboard and seeded analytics without an error surface.
 - Preview intentionally has no cron trigger, so autonomous scheduling proof is
   the scheduler/queue test suite rather than the URL alone.
-- Final production read-only recheck: 91 total review rows, 27 pending, 64
-  resolved; all three corrected filings remain resolved and all three correction
-  receipts remain present. Production does not expose the new revision/hold
-  fields and was not deployed from this branch.
+- PR #292 merged to `main` as `f197e66da02adc053bc81f35907f9043271b585d`;
+  all hosted typecheck/test, PWA typecheck/test/build, and gitleaks checks passed.
+- Pre-deploy D1 Time Travel bookmark:
+  `000001af-0000d458-000050a5-6a11a98a065b736d72328812598fbac8`.
+- Canonical `app/scripts/ship.sh` deployed review-release Worker version
+  `69b4c3cf-8543-459f-a541-623dc7cd692c` and applied `0025` plus `0029`-`0037`
+  through `POST /api/admin/migrate`; no Wrangler remote migration command ran.
+- PR #262 subsequently advanced `main` to `bb92250` and production to Worker
+  `79945ec6-3434-472a-8d7e-76b2df1ffa04`. `f197e66` is its direct ancestor.
+  A post-deploy probe returned HTTP 200 with `ok=true`, `db=true`,
+  `schema=true`, and `missing=[]`.
+- The one-time replay and minute scheduler reduced production from 27 pending /
+  64 resolved to 20 pending / 71 resolved. Seven House filings published 13
+  rows: `H-2026-20034044`, `H-2026-20034897`, `H-2026-20034790`,
+  `H-2026-20034224`, `H-2026-20034952`, `H-2026-20034916`, and
+  `H-2026-20034923`.
+- Every autonomous publication used tier 3 with three distinct models; every
+  published row was present in all three model reads. All 13 live transactions
+  have non-null `est_value`, all 13 generic outbox intents exist, and all 13
+  completed delivery. No manual agreement write was needed.
+- The remaining 20 rows all stopped at the configured three-attempt cap as
+  `agreement_cascade_unresolved`. Final state: 0 active claims, 0 stale leases,
+  0 backoffs/scheduled retries, 0 suppressions, and 169/300 daily reads used.
+  Two consecutive quiet samples confirmed the cascade had drained. One lease
+  briefly crossed the 15-minute threshold and was reclaimed within seconds.
+- Release-window model results: Mistral 71/71 successful; OpenAI 70/70;
+  Anthropic 11/27. Its 16 failures were eight Senate objects rejected as invalid
+  PDFs and eight malformed/truncated JSON results; the final such error occurred
+  at `2026-07-11T17:00:17.977Z`, with no unsafe publication.
 
 ## Follow-ups
 
-- Production remains at 27 pending rows until this branch is pushed/reviewed,
-  landed, migrated through the canonical admin endpoint, and production-deployed
-  with explicit owner approval. Do not clear stamps or run the old agreement
-  endpoint over the backlog meanwhile.
+- Keep the remaining 20 in human review until a verified improvement exists;
+  do not clear attempt stamps simply to force another identical pass.
+- Make Anthropic handling chamber/content-aware: repair or re-render the eight
+  Senate objects that Claude rejects as invalid PDFs, and add bounded JSON
+  repair/output-size handling for the eight truncated or malformed responses.
+- Add admin/health metrics for oldest pending age, eligible/deferred/claimed
+  counts, budget remaining, model failure class, and terminal review state.
 - A dedicated low-concurrency agreement queue and replayable agreement DLQ are
   preferable to long model calls sharing the filing-ingest queue.
-- Add admin/health metrics for oldest pending age, eligible/deferred/claimed
-  counts, budget remaining, model failure class, and terminal DLQ state.
-- Production merge/deploy remains separate from this local/preview lane.
