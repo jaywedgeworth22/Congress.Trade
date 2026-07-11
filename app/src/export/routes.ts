@@ -123,19 +123,28 @@ function positiveIntSetting(raw: string | undefined, fallback: number, max: numb
   return Math.min(Math.floor(n), max);
 }
 
-function integrationImportLimits(env: ExportEnv): typeof IMPORT_DEFAULT_LIMITS {
+async function integrationImportLimits(env: ExportEnv): Promise<typeof IMPORT_DEFAULT_LIMITS> {
+  const secrets = await resolveSecrets(env, [
+    'IMPORT_MAX_BYTES',
+    'IMPORT_MAX_REFS',
+    'IMPORT_MAX_SPX',
+    'IMPORT_MAX_PRICES',
+    'IMPORT_MAX_CLOSES_PER_TICKER',
+    'IMPORT_MAX_INSIDER',
+    'IMPORT_MAX_SHORT_VOLUME',
+  ]);
   return {
-    bytes: positiveIntSetting(env.IMPORT_MAX_BYTES, IMPORT_DEFAULT_LIMITS.bytes, IMPORT_MAX_LIMITS.bytes),
-    refs: positiveIntSetting(env.IMPORT_MAX_REFS, IMPORT_DEFAULT_LIMITS.refs, IMPORT_MAX_LIMITS.refs),
-    spx: positiveIntSetting(env.IMPORT_MAX_SPX, IMPORT_DEFAULT_LIMITS.spx, IMPORT_MAX_LIMITS.spx),
-    prices: positiveIntSetting(env.IMPORT_MAX_PRICES, IMPORT_DEFAULT_LIMITS.prices, IMPORT_MAX_LIMITS.prices),
+    bytes: positiveIntSetting(secrets.IMPORT_MAX_BYTES, IMPORT_DEFAULT_LIMITS.bytes, IMPORT_MAX_LIMITS.bytes),
+    refs: positiveIntSetting(secrets.IMPORT_MAX_REFS, IMPORT_DEFAULT_LIMITS.refs, IMPORT_MAX_LIMITS.refs),
+    spx: positiveIntSetting(secrets.IMPORT_MAX_SPX, IMPORT_DEFAULT_LIMITS.spx, IMPORT_MAX_LIMITS.spx),
+    prices: positiveIntSetting(secrets.IMPORT_MAX_PRICES, IMPORT_DEFAULT_LIMITS.prices, IMPORT_MAX_LIMITS.prices),
     closesPerTicker: positiveIntSetting(
-      env.IMPORT_MAX_CLOSES_PER_TICKER,
+      secrets.IMPORT_MAX_CLOSES_PER_TICKER,
       IMPORT_DEFAULT_LIMITS.closesPerTicker,
       IMPORT_MAX_LIMITS.closesPerTicker,
     ),
-    insider: positiveIntSetting(env.IMPORT_MAX_INSIDER, IMPORT_DEFAULT_LIMITS.insider, IMPORT_MAX_LIMITS.insider),
-    shortVolume: positiveIntSetting(env.IMPORT_MAX_SHORT_VOLUME, IMPORT_DEFAULT_LIMITS.shortVolume, IMPORT_MAX_LIMITS.shortVolume),
+    insider: positiveIntSetting(secrets.IMPORT_MAX_INSIDER, IMPORT_DEFAULT_LIMITS.insider, IMPORT_MAX_LIMITS.insider),
+    shortVolume: positiveIntSetting(secrets.IMPORT_MAX_SHORT_VOLUME, IMPORT_DEFAULT_LIMITS.shortVolume, IMPORT_MAX_LIMITS.shortVolume),
   };
 }
 
@@ -175,7 +184,7 @@ async function integrationCapabilities(env: ExportEnv): Promise<Record<string, u
           path: '/api/admin/securities/import',
           auth: 'bearer INGEST_TOKEN',
           accepts: ['refs', 'prices', 'spx', 'insider', 'shortVolume', 'fundamentals', 'analyst', 'origin'],
-          limits: integrationImportLimits(env),
+          limits: await integrationImportLimits(env),
         },
       },
       publicReads: {

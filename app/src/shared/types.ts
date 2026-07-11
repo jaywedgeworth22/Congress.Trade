@@ -415,6 +415,8 @@ export interface Env {
   INTRINIO_API_KEY?: string;
   TWELVEDATA_API_KEY?: string;
   FINNHUB_API_KEY?: string;
+  /** Tiingo API key — enrichment fallback + optional price-history fallback. */
+  TIINGO_API_KEY?: string;
   /** Logo.dev public token for the ticker-logo proxy. */
   LOGODEV_PUBLISHABLE_KEY?: string;
   /** 'true' enables the per-minute autonomous cross-vendor agreement → auto-publish pass. */

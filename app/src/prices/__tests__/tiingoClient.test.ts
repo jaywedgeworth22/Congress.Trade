@@ -1,0 +1,51 @@
+import { describe, it, expect } from 'vitest';
+import { parseTiingoPrices, buildTiingoPriceClient } from '../tiingo';
+
+const fetchWith = (status: number, body: unknown = '') =>
+  (async () =>
+    new Response(typeof body === 'string' ? body : JSON.stringify(body), { status })) as unknown as typeof fetch;
+
+const prices = [
+  { date: '2024-01-02T00:00:00.000Z', close: 187.15, adjClose: 185.64, volume: 1 },
+  { date: '2024-01-03T00:00:00.000Z', close: 184.22, adjClose: 184.25, volume: 2 },
+];
+
+describe('parseTiingoPrices', () => {
+  it('maps {date, adjClose} to descending [{date, close}], preferring adjClose', () => {
+    const out = parseTiingoPrices(prices);
+    expect(out).toEqual([
+      { date: '2024-01-03', close: 184.25 },
+      { date: '2024-01-02', close: 185.64 },
+    ]);
+  });
+  it('falls back to close when adjClose is missing', () => {
+    const out = parseTiingoPrices([{ date: '2024-01-02T00:00:00.000Z', close: 187.15 }]);
+    expect(out).toEqual([{ date: '2024-01-02', close: 187.15 }]);
+  });
+  it('returns [] for an empty/error body', () => {
+    expect(parseTiingoPrices({ detail: 'Not Found.' })).toEqual([]);
+    expect(parseTiingoPrices(null)).toEqual([]);
+    expect(parseTiingoPrices([])).toEqual([]);
+  });
+});
+
+describe('buildTiingoPriceClient', () => {
+  it('parses closes on 200 (successful fetch)', async () => {
+    const out = await buildTiingoPriceClient('k', fetchWith(200, prices)).eodHistory('AAPL', '2024-01-01', '2024-01-05');
+    expect(out[0]).toEqual({ date: '2024-01-03', close: 184.25 });
+  });
+  it('spxHistory fetches SPY as the S&P proxy', async () => {
+    let calledUrl = '';
+    const fetchImpl = (async (url: string) => {
+      calledUrl = String(url);
+      return new Response(JSON.stringify(prices), { status: 200 });
+    }) as unknown as typeof fetch;
+    await buildTiingoPriceClient('k', fetchImpl).spxHistory('2024-01-01', '2024-01-05');
+    expect(calledUrl).toContain('/tiingo/daily/SPY/prices');
+  });
+  it('returns [] (no throw) on a non-OK response so a fallback chain continues (error-caught-not-thrown)', async () => {
+    expect(await buildTiingoPriceClient('k', fetchWith(403)).eodHistory('AAPL', 'a', 'b')).toEqual([]);
+    expect(await buildTiingoPriceClient('k', fetchWith(404, { detail: 'Not Found.' })).eodHistory('ZZZZ', 'a', 'b')).toEqual([]);
+    expect(await buildTiingoPriceClient('k', fetchWith(429)).spxHistory('a', 'b')).toEqual([]);
+  });
+});

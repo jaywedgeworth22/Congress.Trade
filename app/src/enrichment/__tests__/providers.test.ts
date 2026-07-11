@@ -4,7 +4,9 @@ import {
   parseFinnhubProfile,
   parseTwelveDataProfile,
   parseIntrinioCompany,
+  parseTiingoTicker,
   buildMassiveProvider,
+  buildTiingoProvider,
 } from '../providers';
 
 const fetchWith = (status: number, body: unknown = '') =>
@@ -75,9 +77,33 @@ describe('parseIntrinioCompany', () => {
   });
 });
 
+describe('parseTiingoTicker', () => {
+  it('maps name + exchange (free tier has no sector/market cap)', () => {
+    const ref = parseTiingoTicker({
+      ticker: 'AAPL', name: 'Apple Inc', exchangeCode: 'NASDAQ',
+      startDate: '1980-12-12', endDate: '2026-07-09', description: 'Apple Inc. designs…',
+    });
+    expect(ref?.companyName).toBe('Apple Inc');
+    expect(ref?.exchangeShort).toBe('NASDAQ');
+    expect(ref?.source).toBe('tiingo');
+    expect(ref?.sector).toBeUndefined();
+  });
+  it('returns null without a name', () => expect(parseTiingoTicker({})).toBeNull());
+  it('returns null on an empty / error body', () => {
+    expect(parseTiingoTicker(null)).toBeNull();
+    expect(parseTiingoTicker({ detail: 'Not Found.' })).toBeNull();
+  });
+});
+
 describe('provider fetch wrapper fails soft', () => {
   it('returns null on non-OK (no throw) so the chain continues', async () => {
     expect(await buildMassiveProvider('k', fetchWith(429)).fetchRef('AAPL')).toBeNull();
     expect(await buildMassiveProvider('k', fetchWith(403)).fetchRef('AAPL')).toBeNull();
+  });
+  it('fetches a Tiingo ref on 200 and fails soft (no throw) on non-OK / missing key gating upstream', async () => {
+    const ref = await buildTiingoProvider('k', fetchWith(200, { name: 'Apple Inc', exchangeCode: 'NASDAQ' })).fetchRef('AAPL');
+    expect(ref?.companyName).toBe('Apple Inc');
+    expect(await buildTiingoProvider('k', fetchWith(404, { detail: 'Not Found.' })).fetchRef('ZZZZ')).toBeNull();
+    expect(await buildTiingoProvider('k', fetchWith(429)).fetchRef('AAPL')).toBeNull();
   });
 });

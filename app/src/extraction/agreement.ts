@@ -63,6 +63,7 @@ import { buildConsensusRows, type AmountBracket, type ConsensusResult } from './
 import { uuid } from '../shared/ids';
 import { estimateTransactionValue } from '../shared/transactionValue';
 import { flushDeliveryOutbox } from '../delivery/outbox';
+import { resolveSecrets } from '../secrets/infisical';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -971,7 +972,7 @@ function parseCandidate(s: string | undefined, fallback: BakeoffCandidate): Bake
   return valid.includes(provider) && model ? ({ provider, model } as BakeoffCandidate) : fallback;
 }
 
-interface AgreementEnv {
+export interface AgreementEnv {
   AGREEMENT_AUTOPUBLISH_ENABLED?: string;
   AGREEMENT_AUTOPUBLISH_MODEL_A?: string;
   AGREEMENT_AUTOPUBLISH_MODEL_B?: string;
@@ -982,6 +983,22 @@ interface AgreementEnv {
   AGREEMENT_BIG_DOC_PAGE_THRESHOLD?: string;
   AGREEMENT_BIG_DOC_BYTES_THRESHOLD?: string;
   AGREEMENT_DAILY_LLM_BUDGET?: string;
+}
+
+/** Resolve the full suite of agreement env vars via Infisical / Wrangler fallback. */
+export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
+  return (await resolveSecrets(env, [
+    'AGREEMENT_AUTOPUBLISH_ENABLED',
+    'AGREEMENT_AUTOPUBLISH_MODEL_A',
+    'AGREEMENT_AUTOPUBLISH_MODEL_B',
+    'AGREEMENT_AUTOPUBLISH_LIMIT',
+    'AGREEMENT_MODEL_C',
+    'AGREEMENT_MAX_ATTEMPTS',
+    'AGREEMENT_BIG_DOC_START_TIER2',
+    'AGREEMENT_BIG_DOC_PAGE_THRESHOLD',
+    'AGREEMENT_BIG_DOC_BYTES_THRESHOLD',
+    'AGREEMENT_DAILY_LLM_BUDGET',
+  ])) as AgreementEnv;
 }
 
 /** Resolve the configured A/B agreement models (with sensible defaults). */
@@ -1307,7 +1324,7 @@ export async function enqueueAgreementCheck(
   escalationTier = 1,
   existingClaimToken?: string,
 ): Promise<boolean> {
-  const e = env as unknown as AgreementEnv;
+  const e = await resolveAgreementEnv(env);
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return false;
   const token = await acquireAgreementLease(env, docId, maxAttempts(e), existingClaimToken);
   if (!token) return false;
@@ -1345,7 +1362,7 @@ export async function handleAgreementCheck(
   escalationTier?: number,
   claimToken?: string,
 ): Promise<void> {
-  const e = env as unknown as AgreementEnv;
+  const e = await resolveAgreementEnv(env);
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return;
   const max = maxAttempts(e);
 
@@ -1544,7 +1561,7 @@ async function recoverExpiredCappedReviews(
 export async function maybeRunAgreementAutopublish(
   env: Env,
 ): Promise<{ attempted: number; enqueued: number; terminalized: number } | null> {
-  const e = env as unknown as AgreementEnv;
+  const e = await resolveAgreementEnv(env);
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return null;
   const limit = Math.min(Math.max(parseInt(e.AGREEMENT_AUTOPUBLISH_LIMIT || '3', 10) || 3, 1), 10);
   const max = maxAttempts(e);

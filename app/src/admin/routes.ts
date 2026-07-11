@@ -141,8 +141,9 @@ async function isAuthorizedIngest(
 let warnedOpenAdmin = false;
 let warnedClosedAdmin = false;
 
-function isExplicitOpenAdmin(env: EnvWithAdmin): boolean {
-  const isProduction = env.SENTRY_ENVIRONMENT === 'production' || env.USAGE_MONITOR_ENVIRONMENT === 'production';
+async function isExplicitOpenAdmin(env: EnvWithAdmin): Promise<boolean> {
+  const sentryEnvironment = (await resolveSecret(env, 'SENTRY_ENVIRONMENT')).value;
+  const isProduction = sentryEnvironment === 'production' || env.USAGE_MONITOR_ENVIRONMENT === 'production';
   return env.ADMIN_OPEN_IN_DEV === 'true' && !isProduction;
 }
 
@@ -172,7 +173,7 @@ async function isAuthorized(
   const sessionConfigured = allow.size > 0;
 
   if (!tokenConfigured && !accessConfigured && !sessionConfigured) {
-    if (isExplicitOpenAdmin(env)) {
+    if (await isExplicitOpenAdmin(env)) {
       if (!warnedOpenAdmin) {
         warnedOpenAdmin = true;
         console.warn(
@@ -1844,6 +1845,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'RESEND_API_KEY',
       'EMAIL_FROM',
       'STRIPE_SECRET_KEY',
+      'PRICE_PROVIDER',
+      'TIINGO_API_KEY',
     ]);
     const secretStatus = getSecretResolverStatus(c.env);
     const adminConfig = await adminRuntimeConfig(c.env);
@@ -2215,6 +2218,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     addMarketProvider('intrinio', 'Intrinio Reference Data', !!runtimeSecrets.INTRINIO_API_KEY, runtimeSecrets.INTRINIO_API_KEY ? 'Reference fallback configured' : 'INTRINIO_API_KEY is not available to this Worker runtime');
     addMarketProvider('twelvedata', 'Twelve Data Reference', !!runtimeSecrets.TWELVEDATA_API_KEY, runtimeSecrets.TWELVEDATA_API_KEY ? 'Reference fallback configured' : 'TWELVEDATA_API_KEY is not available to this Worker runtime');
     addMarketProvider('finnhub', 'Finnhub Reference', !!runtimeSecrets.FINNHUB_API_KEY, runtimeSecrets.FINNHUB_API_KEY ? 'Reference fallback configured' : 'FINNHUB_API_KEY is not available to this Worker runtime');
+    addMarketProvider('tiingo', 'Tiingo Reference', !!runtimeSecrets.TIINGO_API_KEY, runtimeSecrets.TIINGO_API_KEY ? 'Reference/price fallback configured' : 'TIINGO_API_KEY is not available to this Worker runtime');
     addMarketProvider('edgar', 'SEC EDGAR Reference', true, 'Free fallback; no secret required');
 
     connections.push({
@@ -2235,7 +2239,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       `SELECT MAX(date) AS last_used_at FROM price_eod`
     );
     const priceRow = priceRows[0];
-    const hasPriceProvider = !!(runtimeSecrets.FMP_API_KEY || runtimeSecrets.MASSIVE_API_KEY);
+    const hasPriceProvider = !!(runtimeSecrets.FMP_API_KEY || runtimeSecrets.MASSIVE_API_KEY || runtimeSecrets.TIINGO_API_KEY);
     connections.push({
       id: 'cache:prices',
       label: 'Asset Price Cache',
@@ -2247,7 +2251,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       callsToday: 0,
       errorsLast24h: 0,
       note: hasPriceProvider
-        ? `PRICE_PROVIDER=${c.env.PRICE_PROVIDER || 'fmp'}; counts show cached assets/rows, not raw API calls`
+        ? `PRICE_PROVIDER=${runtimeSecrets.PRICE_PROVIDER || 'fmp'}; counts show cached assets/rows, not raw API calls`
         : 'No FMP_API_KEY or MASSIVE_API_KEY configured for price history',
     });
 
@@ -3663,7 +3667,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     // This endpoint runs inside a normal Worker request. Keep callers honest.
     // Paid Workers allow larger batches, but the cap remains configurable so
     // the app can be dialed back without code changes.
-    const limits = importLimits(c.env);
+    const limits = await importLimits(c.env);
     const contentLength = Number(c.req.header('content-length') ?? 0);
     if (contentLength > limits.bytes) {
       return c.json(
@@ -4419,20 +4423,29 @@ function positiveIntSetting(raw: string | undefined, fallback: number, max: numb
   return Math.min(Math.floor(n), max);
 }
 
-function importLimits(env: Env): ImportLimits {
+async function importLimits(env: Env): Promise<ImportLimits> {
+  const secrets = await resolveSecrets(env, [
+    'IMPORT_MAX_BYTES',
+    'IMPORT_MAX_REFS',
+    'IMPORT_MAX_SPX',
+    'IMPORT_MAX_PRICES',
+    'IMPORT_MAX_CLOSES_PER_TICKER',
+    'IMPORT_MAX_INSIDER',
+    'IMPORT_MAX_SHORT_VOLUME',
+  ]);
   return {
-    bytes: positiveIntSetting(env.IMPORT_MAX_BYTES, DEFAULT_IMPORT_LIMITS.bytes, MAX_IMPORT_LIMITS.bytes),
-    refs: positiveIntSetting(env.IMPORT_MAX_REFS, DEFAULT_IMPORT_LIMITS.refs, MAX_IMPORT_LIMITS.refs),
-    spx: positiveIntSetting(env.IMPORT_MAX_SPX, DEFAULT_IMPORT_LIMITS.spx, MAX_IMPORT_LIMITS.spx),
-    prices: positiveIntSetting(env.IMPORT_MAX_PRICES, DEFAULT_IMPORT_LIMITS.prices, MAX_IMPORT_LIMITS.prices),
+    bytes: positiveIntSetting(secrets.IMPORT_MAX_BYTES, DEFAULT_IMPORT_LIMITS.bytes, MAX_IMPORT_LIMITS.bytes),
+    refs: positiveIntSetting(secrets.IMPORT_MAX_REFS, DEFAULT_IMPORT_LIMITS.refs, MAX_IMPORT_LIMITS.refs),
+    spx: positiveIntSetting(secrets.IMPORT_MAX_SPX, DEFAULT_IMPORT_LIMITS.spx, MAX_IMPORT_LIMITS.spx),
+    prices: positiveIntSetting(secrets.IMPORT_MAX_PRICES, DEFAULT_IMPORT_LIMITS.prices, MAX_IMPORT_LIMITS.prices),
     closesPerTicker: positiveIntSetting(
-      env.IMPORT_MAX_CLOSES_PER_TICKER,
+      secrets.IMPORT_MAX_CLOSES_PER_TICKER,
       DEFAULT_IMPORT_LIMITS.closesPerTicker,
       MAX_IMPORT_LIMITS.closesPerTicker,
     ),
-    insider: positiveIntSetting(env.IMPORT_MAX_INSIDER, DEFAULT_IMPORT_LIMITS.insider, MAX_IMPORT_LIMITS.insider),
+    insider: positiveIntSetting(secrets.IMPORT_MAX_INSIDER, DEFAULT_IMPORT_LIMITS.insider, MAX_IMPORT_LIMITS.insider),
     shortVolume: positiveIntSetting(
-      env.IMPORT_MAX_SHORT_VOLUME,
+      secrets.IMPORT_MAX_SHORT_VOLUME,
       DEFAULT_IMPORT_LIMITS.shortVolume,
       MAX_IMPORT_LIMITS.shortVolume,
     ),

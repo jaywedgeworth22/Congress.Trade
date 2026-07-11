@@ -5,11 +5,12 @@
  * budget arithmetic, provider-merge, and the FMP / SEC-EDGAR response parsers.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { marketCapBucket, sicToSector, remainingBudget, mergeRefs } from '../compute';
 import { parseFmpProfile } from '../fmp';
 import { parseCompanyTickers, parseSecSubmissions, padCik } from '../sec';
-import { enrichmentNeededSql, hasConfiguredKeyedEnrichmentProvider } from '../service';
+import { enrichmentNeededSql, hasConfiguredKeyedEnrichmentProvider, runEnrichment } from '../service';
+import { __resetSharedEdgarPacerForTests } from '../../shared/pace';
 
 describe('marketCapBucket', () => {
   it('buckets by the standard thresholds', () => {
@@ -70,6 +71,10 @@ describe('hasConfiguredKeyedEnrichmentProvider', () => {
     expect(hasConfiguredKeyedEnrichmentProvider({} as never)).toBe(false);
     expect(hasConfiguredKeyedEnrichmentProvider({ FMP_API_KEY: 'k' } as never)).toBe(true);
     expect(hasConfiguredKeyedEnrichmentProvider({ MASSIVE_API_KEY: 'k' } as never)).toBe(true);
+    // Tiingo is intentionally excluded — its free tier supplies only name+exchange,
+    // so it should not enable retry-incomplete mode that would endlessly re-select
+    // the same newest tickers (which already have enriched_at but not sector/market cap).
+    expect(hasConfiguredKeyedEnrichmentProvider({ TIINGO_API_KEY: 'k' } as never)).toBe(false);
   });
 });
 
@@ -138,5 +143,90 @@ describe('SEC EDGAR parsers', () => {
     expect(r!.cik).toBe('0000320193');
     expect(r!.isEtf).toBe(false);
     expect(parseSecSubmissions({ name: 'SPDR', category: 'Exchange Traded Fund' })!.isEtf).toBe(true);
+  });
+});
+
+/**
+ * Regression coverage for the throttling change: EDGAR calls used to skip
+ * pace() entirely ("EDGAR is free + unmetered"). They now await the
+ * EDGAR-dedicated pacer, same as every other provider awaits its own gate.
+ * Minimal D1/KV fakes (mirrors the pattern in
+ * ingestion/__tests__/fmpDisclosureLatency.test.ts) let this exercise the real
+ * runEnrichment provider loop instead of only the pacer unit in isolation.
+ */
+describe('runEnrichment paces SEC EDGAR calls', () => {
+  beforeEach(() => __resetSharedEdgarPacerForTests());
+  afterEach(() => vi.unstubAllGlobals());
+
+  function fakeDb(tickerRows: Array<{ ticker: string }>) {
+    const stmt = {
+      bind() {
+        return stmt;
+      },
+      async all<T>() {
+        return { results: tickerRows as unknown as T[] };
+      },
+      async first<T>() {
+        return null as T | null;
+      },
+      async run() {
+        return { success: true, meta: { changes: 0 } };
+      },
+    };
+    return { prepare: () => stmt, async batch() { return []; } } as unknown as D1Database;
+  }
+
+  function fakeKv() {
+    const store = new Map<string, string>();
+    return {
+      async get(k: string) {
+        return store.get(k) ?? null;
+      },
+      async put(k: string, v: string) {
+        store.set(k, v);
+      },
+      async delete(k: string) {
+        store.delete(k);
+      },
+    };
+  }
+
+  it('awaits the EDGAR-dedicated pacer before every EDGAR fetch, no keyed provider configured', async () => {
+    const db = fakeDb([{ ticker: 'AAA' }, { ticker: 'BBB' }]);
+    const kv = fakeKv();
+
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).includes('company_tickers.json')) {
+        return {
+          ok: true,
+          json: async () => ({
+            '0': { cik_str: 1, ticker: 'AAA' },
+            '1': { cik_str: 2, ticker: 'BBB' },
+          }),
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          name: 'Test Co', sic: '7372', exchanges: ['Nasdaq'], cik: 1, category: 'Operating',
+        }),
+      } as unknown as Response;
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const env = { DB: db, CONFIG_KV: kv } as unknown as Parameters<typeof runEnrichment>[0];
+
+    const t0 = Date.now();
+    // 600/min = 100ms min gap; a fast rate chosen for a deterministic-but-quick
+    // test, not the production default (see EDGAR_MAX_PER_MINUTE in wrangler.toml).
+    const result = await runEnrichment(env, { max: 2, dryRun: true, edgarMaxPerMinute: 600 });
+    const elapsed = Date.now() - t0;
+
+    expect(result.scanned).toBe(2);
+    expect(result.enriched).toBe(2); // both tickers resolved via the EDGAR-only chain
+    // Before this change, EDGAR calls skipped pace() entirely and this loop of
+    // 2 EDGAR fetches would finish near-instantly; now the second call is
+    // gated behind the pacer's ~100ms min gap from the first.
+    expect(elapsed).toBeGreaterThanOrEqual(90);
   });
 });
