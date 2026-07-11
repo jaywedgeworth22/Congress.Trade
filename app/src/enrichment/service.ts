@@ -4,10 +4,12 @@
  *
  * Budgeted enrichment runner. Each run enriches the tickers that most need it
  * (newest-traded first, then backfilling older un-enriched ones), spending at
- * most the day's remaining FMP budget. SEC EDGAR is free and always attempted;
- * FMP is layered on top when a key is configured and budget remains. A daily
- * call counter lives in CONFIG_KV so "today's needed + extra backfill" stays
- * within the cap and resumes the next day.
+ * most the day's remaining FMP budget. SEC EDGAR is free (no daily call cap)
+ * and always attempted, but — like every other provider in the chain — its
+ * calls are paced, against their OWN dedicated per-minute gate, separate from
+ * FMP's budget/pacer. FMP is layered on top when a key is configured and
+ * budget remains. A daily call counter lives in CONFIG_KV so "today's needed +
+ * extra backfill" stays within the cap and resumes the next day.
  */
 
 import type { Env } from '../shared/types';
@@ -21,8 +23,9 @@ import {
   buildFinnhubProvider,
   buildTwelveDataProvider,
   buildIntrinioProvider,
+  buildTiingoProvider,
 } from './providers';
-import { createPacer } from '../shared/pace';
+import { getSharedFmpPacer, getSharedEdgarPacer } from '../shared/pace';
 import type { EnrichmentProvider, SecurityRef } from './types';
 import { resolveSecrets } from '../secrets/infisical';
 
@@ -35,6 +38,7 @@ type EnvX = Env & {
   INTRINIO_API_KEY?: string;
   TWELVEDATA_API_KEY?: string;
   FINNHUB_API_KEY?: string;
+  TIINGO_API_KEY?: string;
 };
 
 interface ChainEntry {
@@ -44,7 +48,7 @@ interface ChainEntry {
   budgeted: boolean;
 }
 
-const KEYED_PROVIDER_SOURCE_MARKERS = ['fmp', 'massive', 'intrinio', 'twelvedata', 'finnhub'];
+const KEYED_PROVIDER_SOURCE_MARKERS = ['fmp', 'massive', 'intrinio', 'twelvedata', 'finnhub', 'tiingo'];
 
 function keyedSourceTriedSql(alias: string): string {
   return '(' + KEYED_PROVIDER_SOURCE_MARKERS.map((s) => `${alias}.source LIKE '%${s}%'`).join(' OR ') + ')';
@@ -82,7 +86,8 @@ export function hasConfiguredKeyedEnrichmentProvider(env: Env): boolean {
       envx.MASSIVE_API_KEY ||
       envx.INTRINIO_API_KEY ||
       envx.TWELVEDATA_API_KEY ||
-      envx.FINNHUB_API_KEY,
+      envx.FINNHUB_API_KEY ||
+      envx.TIINGO_API_KEY,
   );
 }
 
@@ -91,7 +96,9 @@ export function hasConfiguredKeyedEnrichmentProvider(env: Env): boolean {
  * Ranking is from the provider benchmark: FMP has the cleanest, widest profile
  * coverage; Massive (Polygon) adds reference + market cap + logos; Intrinio and
  * Twelve Data add classification; Finnhub adds an industry label + a directly-
- * displayable logo; SEC EDGAR is the always-on, public-domain (free) baseline.
+ * displayable logo; Tiingo (free tier: name + exchange only, no sector/market
+ * cap/CIK) sits just above the free baseline as one more freemium name/exchange
+ * fallback; SEC EDGAR is the always-on, public-domain (free) baseline.
  * These are NOT mere fallbacks — each fills fields the higher ones lack.
  */
 function buildEnrichmentChain(env: EnvX, hasFmp: boolean): ChainEntry[] {
@@ -101,6 +108,11 @@ function buildEnrichmentChain(env: EnvX, hasFmp: boolean): ChainEntry[] {
   if (env.INTRINIO_API_KEY) chain.push({ name: 'intrinio', provider: buildIntrinioProvider(env.INTRINIO_API_KEY), budgeted: false });
   if (env.TWELVEDATA_API_KEY) chain.push({ name: 'twelvedata', provider: buildTwelveDataProvider(env.TWELVEDATA_API_KEY), budgeted: false });
   if (env.FINNHUB_API_KEY) chain.push({ name: 'finnhub', provider: buildFinnhubProvider(env.FINNHUB_API_KEY), budgeted: false });
+  // Tiingo is thinner than the providers above (no sector/market cap on the free
+  // tier) but still richer than the free EDGAR baseline (adds a clean company
+  // name + exchange for tickers EDGAR can't resolve), so it slots in right
+  // before EDGAR rather than beside the other mid-tier providers above.
+  if (env.TIINGO_API_KEY) chain.push({ name: 'tiingo', provider: buildTiingoProvider(env.TIINGO_API_KEY), budgeted: false });
   chain.push({ name: 'edgar', provider: buildSecProvider(), budgeted: false }); // free public-domain baseline, always last
   return chain;
 }
@@ -191,7 +203,7 @@ export interface EnrichResult {
  */
 export async function runEnrichment(
   env: Env,
-  opts: { max?: number; dryRun?: boolean; maxPerMinute?: number } = {},
+  opts: { max?: number; dryRun?: boolean; maxPerMinute?: number; edgarMaxPerMinute?: number } = {},
 ): Promise<EnrichResult> {
   const runtimeSecrets = await resolveSecrets(env, [
     'FMP_API_KEY',
@@ -200,6 +212,7 @@ export async function runEnrichment(
     'INTRINIO_API_KEY',
     'TWELVEDATA_API_KEY',
     'FINNHUB_API_KEY',
+    'TIINGO_API_KEY',
   ]);
   const envx = { ...(env as EnvX), ...runtimeSecrets };
   const dryRun = opts.dryRun === true;
@@ -229,7 +242,20 @@ export async function runEnrichment(
   const chain = buildEnrichmentChain(envx, hasFmp);
   const hasKeyedProvider = chain.some((e) => e.name !== 'edgar');
   const tickers = await selectTickersToEnrich(env, selectLimit, hasKeyedProvider);
-  const pace = createPacer(opts.maxPerMinute);
+  // Shared per-isolate FMP pacer, so a concurrent price refresh or disclosure
+  // probe can't blow the per-minute cap by pacing only its own calls. Fall back
+  // to FMP_MAX_PER_MINUTE when a caller (e.g. an admin endpoint whose body omits
+  // it) passes nothing, so the memoized singleton is never poisoned into a
+  // permanent no-op just because an unconfigured caller happened to run first.
+  const fmpMaxPerMinute =
+    opts.maxPerMinute ?? (parseInt((env as { FMP_MAX_PER_MINUTE?: string }).FMP_MAX_PER_MINUTE || '', 10) || undefined);
+  const pace = getSharedFmpPacer(fmpMaxPerMinute);
+  // SEC EDGAR's own dedicated pacer — a separate provider with a separate
+  // fair-access limit, so it does NOT draw on the FMP budget/pacer above. Same
+  // env fallback so admin-triggered runs don't poison it either.
+  const edgarMaxPerMinute =
+    opts.edgarMaxPerMinute ?? (parseInt((env as { EDGAR_MAX_PER_MINUTE?: string }).EDGAR_MAX_PER_MINUTE || '', 10) || undefined);
+  const edgarPace = getSharedEdgarPacer(edgarMaxPerMinute);
   let fmpCalls = 0;
 
   for (const ticker of tickers) {
@@ -240,7 +266,10 @@ export async function runEnrichment(
     for (const entry of chain) {
       if (entry.budgeted && fmpCalls >= fmpBudget) continue; // out of FMP budget
       try {
-        if (entry.name !== 'edgar') await pace(); // EDGAR is free + unmetered
+        // Every provider paces before its call, each against its own budget:
+        // EDGAR uses its dedicated gate (free, but still fair-access limited);
+        // everything else shares the FMP per-minute gate.
+        await (entry.name === 'edgar' ? edgarPace() : pace());
         const ref = await entry.provider.fetchRef(ticker);
         if (entry.budgeted) fmpCalls++;
         if (ref) collected.push(ref);
@@ -269,8 +298,14 @@ export async function runEnrichment(
   }
 
   result.fmpCalls = fmpCalls;
-  if (hasFmp && !dryRun && fmpCalls > 0) await setDailyUsed(env, usedBefore + fmpCalls);
-  result.budgetRemaining = hasFmp ? remainingBudget(cap, usedBefore + fmpCalls) : 0;
+  // Increment (read-add-write) rather than write an absolute usedBefore+fmpCalls:
+  // a concurrently-running probe/price refresh may have committed its own calls
+  // to the shared counter since we read usedBefore, and an absolute write would
+  // clobber those, undercounting real usage. addDailyUsed returns the post-add
+  // total so budgetRemaining reflects that concurrent spend too.
+  const usedAfter =
+    hasFmp && !dryRun && fmpCalls > 0 ? await addDailyUsed(env, fmpCalls) : usedBefore + fmpCalls;
+  result.budgetRemaining = hasFmp ? remainingBudget(cap, usedAfter) : 0;
   return result;
 }
 

@@ -15,6 +15,8 @@ import { resolveSecret } from '../secrets/infisical';
 import { notifyAdmin } from '../alerts/notify';
 import { assertFmpTierOk } from '../shared/fmpStatus';
 import { getLastPollAt, setLastPollAt } from '../shared/config';
+import { getSharedFmpPacer } from '../shared/pace';
+import { getDailyUsed, addDailyUsed } from '../enrichment/service';
 import type { DiscoveredFiling } from './watcher';
 
 type Chamber = 'house' | 'senate';
@@ -25,6 +27,8 @@ type EnvWithWatch = Env & {
   DISCLOSURE_LATENCY_PROVIDERS?: string;
   DISCLOSURE_LATENCY_WATCH_LIMIT?: string;
   FMP_API_KEY?: string;
+  FMP_DAILY_CALL_CAP?: string;
+  FMP_MAX_PER_MINUTE?: string;
   FMP_DISCLOSURE_WATCH_ENABLED?: string;
   FMP_DISCLOSURE_WATCH_LIMIT?: string;
   UNUSUAL_WHALES_API_KEY?: string;
@@ -150,12 +154,33 @@ interface ProviderDefinition {
   supportsDirectLatest: boolean;
   timestampKind: 'provider' | 'monitor' | 'none';
   reason?: string;
-  fetchRows?: (apiKey: string, max: number, fetchImpl: typeof fetch) => Promise<DisclosureProviderRow[]>;
+  fetchRows?: (
+    apiKey: string,
+    max: number,
+    fetchImpl: typeof fetch,
+    pace?: () => Promise<void>,
+  ) => Promise<DisclosureProviderRow[]>;
 }
 
 const DEFAULT_LIMIT = 100;
 const RECENT_PROVIDER_HOURS = 72;
 const PAYLOAD_LIMIT = 20_000;
+/** Mirrors DEFAULT_DAILY_CAP in enrichment/service.ts (free-tier fallback). */
+const FMP_DEFAULT_DAILY_CAP = 230;
+/**
+ * FMP HTTP requests one probe run fires (house-latest + senate-latest, in
+ * parallel via fetchFmpRows). The daily-cap guard reserves room for the WHOLE
+ * batch before firing, so the pair can't push the shared counter past the cap.
+ * A single coarse `used >= cap` check runs once before both concurrent calls, so
+ * at used = cap-1 it would otherwise pass and leave the counter at cap+1;
+ * reserving the batch matches enrichment's per-call hard non-overshoot guarantee.
+ */
+const FMP_LATEST_CALLS_PER_RUN = 2;
+
+/** The shared FMP daily call cap (same env var enrichment/prices read). */
+function fmpDailyCap(env: EnvWithWatch): number {
+  return parseInt(env.FMP_DAILY_CALL_CAP || '', 10) || FMP_DEFAULT_DAILY_CAP;
+}
 const DIRECT_PROVIDER_IDS: ProviderId[] = ['fmp', 'unusual_whales', 'quiver'];
 
 const PROVIDERS: ProviderDefinition[] = [
@@ -222,8 +247,15 @@ function truthy(v: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test((v ?? '').trim());
 }
 
-function enabled(env: EnvWithWatch): boolean {
-  return truthy(env.DISCLOSURE_LATENCY_WATCH_ENABLED) || truthy(env.FMP_DISCLOSURE_WATCH_ENABLED);
+async function enabled(env: EnvWithWatch): Promise<boolean> {
+  // wrangler.toml carries the literal fallback (DISCLOSURE_LATENCY_WATCH_ENABLED
+  // = "true" in production); resolveSecret already falls back to env[key] when
+  // Infisical has nothing configured for this name, so passing that same value
+  // via `?? env.DISCLOSURE_LATENCY_WATCH_ENABLED` keeps zero-Infisical-configured
+  // behavior identical while letting Infisical override it when set.
+  const watchEnabled =
+    (await resolveSecret(env, 'DISCLOSURE_LATENCY_WATCH_ENABLED')).value ?? env.DISCLOSURE_LATENCY_WATCH_ENABLED;
+  return truthy(watchEnabled) || truthy(env.FMP_DISCLOSURE_WATCH_ENABLED);
 }
 
 function limit(env: EnvWithWatch): number {
@@ -504,13 +536,23 @@ async function fetchJson(url: string, headers: Record<string, string>, fetchImpl
   return res.json();
 }
 
-async function fetchFmpRows(apiKey: string, max: number, fetchImpl: typeof fetch): Promise<DisclosureProviderRow[]> {
+async function fetchFmpRows(
+  apiKey: string,
+  max: number,
+  fetchImpl: typeof fetch,
+  pace: () => Promise<void> = async () => {},
+): Promise<DisclosureProviderRow[]> {
   const fetchOne = async (chamber: Chamber) => {
     const url =
       `https://financialmodelingprep.com/stable/${chamber}-latest?page=0&limit=${max}` +
       '&apikey=' +
       encodeURIComponent(apiKey);
     try {
+      // Await the shared FMP pacer before each HTTP request (house-latest,
+      // senate-latest), exactly like enrichment/prices, so this probe's calls
+      // count toward the same per-minute gate. Concurrent house+senate requests
+      // are serialized by the pacer's shared last-call timestamp.
+      await pace();
       return parseFmpDisclosureRows(chamber, await fetchJson(url, {}, fetchImpl));
     } catch (err) {
       const status = /HTTP_(\d+)/.exec((err as Error).message)?.[1];
@@ -792,13 +834,49 @@ async function runProviderProbe(
   }
 
   const nowIso = now.toISOString();
+  const isFmp = provider.id === 'fmp';
+  const envx = env as EnvWithWatch;
   let fetchedRows = 0;
-  try {
-    const rows = await provider.fetchRows(apiKey, max, fetchImpl);
-    fetchedRows = rows.length;
-    await upsertProviderRows(env, provider.id, rows, nowIso);
-  } catch (err) {
-    errors.push((err as Error).message);
+
+  // FMP is the only provider here metered against the shared FMP budget: its
+  // calls draw on the same 'fmp:calls:<date>' daily counter and the same
+  // per-minute pacer as enrichment + price refresh. Guard the daily cap before
+  // spending calls, reserving room for the full house+senate batch so the pair
+  // never overshoots the cap; the free DB re-match below still runs so
+  // already-observed rows keep resolving.
+  let capSkipped = false;
+  if (isFmp) {
+    const cap = fmpDailyCap(envx);
+    const used = await getDailyUsed(env);
+    if (used + FMP_LATEST_CALLS_PER_RUN > cap) {
+      capSkipped = true;
+      errors.push(`FMP_DAILY_CALL_CAP reached (${used}/${cap}, need ${FMP_LATEST_CALLS_PER_RUN}); skipped latest fetch`);
+    }
+  }
+
+  if (!capSkipped) {
+    let fmpCallsMade = 0;
+    const shared = isFmp
+      ? getSharedFmpPacer(parseInt(envx.FMP_MAX_PER_MINUTE || '', 10) || undefined)
+      : null;
+    // Count every FMP HTTP request actually fired (one pace() call precedes each
+    // request in fetchFmpRows), so failed 4xx/5xx calls still consume quota just
+    // as enrichment counts them.
+    const pace = shared
+      ? async () => {
+          fmpCallsMade++;
+          await shared();
+        }
+      : undefined;
+    try {
+      const rows = await provider.fetchRows(apiKey, max, fetchImpl, pace);
+      fetchedRows = rows.length;
+      await upsertProviderRows(env, provider.id, rows, nowIso);
+    } catch (err) {
+      errors.push((err as Error).message);
+    } finally {
+      if (fmpCallsMade > 0) await addDailyUsed(env, fmpCallsMade);
+    }
   }
 
   try {
@@ -832,7 +910,7 @@ export async function runDisclosureLatencyProbe(
   opts: { force?: boolean; providers?: string[] } = {},
 ): Promise<DisclosureLatencyProbeResult> {
   const envx = env as EnvWithWatch;
-  if (!opts.force && !enabled(envx)) {
+  if (!opts.force && !(await enabled(envx))) {
     return {
       enabled: false,
       reason: 'DISCLOSURE_LATENCY_WATCH_ENABLED is not true',

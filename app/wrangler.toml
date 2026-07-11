@@ -194,8 +194,24 @@ IMPORT_MAX_SHORT_VOLUME = "5000"
 # limit, so the daily job uses the paid headroom without tripping 429s. Each
 # run stays within Cloudflare's per-invocation subrequest budget; the backlog
 # clears across at most a couple runs.
+# Shared counter: the disclosure-latency probe also draws on this cap (bounded
+# to ~576 calls/day = 288 runs x 2 by MIN_PROBE_INTERVAL_SEC). That leaves ~424
+# for steady-state enrichment+prices, which only touch newly-traded tickers and
+# need far less; large one-off backfills go through the manual /backfill-market
+# loop, not this daily cron, so they don't compete with the probe here.
 FMP_DAILY_CALL_CAP = "1000"
-FMP_MAX_PER_MINUTE = "250"
+# 285 not 300: FMP's hard account limit is 300/min. 285 leaves ~5% margin for
+# clock/ceil rounding and the fact that the shared pacer only coordinates calls
+# within one isolate — concurrent Workers isolates could still overlap.
+FMP_MAX_PER_MINUTE = "285"
+# SEC EDGAR fair-access policy documents an approx 10 req/s ceiling
+# (https://www.sec.gov/os/webmaster-faq#developers). 480/min = 8 req/s (was
+# 5 req/s / 300 per min) — owner explicitly chose 8 req/s over the more
+# conservative 5 req/s recommendation, still under the ~10 req/s ceiling with
+# margin because Cloudflare Workers share egress IPs across tenants, so SEC
+# sees aggregate traffic from the shared IP pool, not just this app's calls.
+# Separate budget/pacer from FMP_MAX_PER_MINUTE above.
+EDGAR_MAX_PER_MINUTE = "480"
 # Price-history source: "fmp" (default) or "massive" (Polygon aggregates,
 # unlimited on the paid plan, not metered against the FMP budget). Flip to A/B.
 PRICE_PROVIDER = "fmp"

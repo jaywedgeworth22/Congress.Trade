@@ -167,6 +167,39 @@ describe('maybeRunAgreementAutopublish (cron backstop)', () => {
     expect((a?.enqueued ?? 0) + (b?.enqueued ?? 0)).toBe(1);
     expect(sent).toHaveLength(1);
   });
+
+  it('resolves AGREEMENT_AUTOPUBLISH_ENABLED via Infisical, overriding the raw (unset) env value', async () => {
+    // Raw env flag is undefined — without Infisical this would stay a no-op.
+    const { env, sent } = makeEnv(undefined);
+    Object.assign(env, {
+      INFISICAL_BASE_URL: 'https://infisical.test',
+      INFISICAL_ENV: 'prod',
+      INFISICAL_APP_PROJECT_ID: 'agreement-autopublish-app',
+      INFISICAL_APP_CLIENT_ID: 'app-client',
+      INFISICAL_APP_CLIENT_SECRET: 'app-secret-agreement-autopublish',
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).endsWith('/api/v1/auth/universal-auth/login')) {
+          return Response.json({ accessToken: 'infisical-token' });
+        }
+        if (String(url).includes('/api/v3/secrets/raw')) {
+          return Response.json({ secrets: [{ secretKey: 'AGREEMENT_AUTOPUBLISH_ENABLED', secretValue: 'true' }] });
+        }
+        return new Response('not found', { status: 404 });
+      }),
+    );
+
+    const out = await maybeRunAgreementAutopublish(env);
+    expect(out).toMatchObject({ attempted: 1, enqueued: 1 });
+    expect(sent).toEqual([
+      expect.objectContaining({
+        type: 'agreement.check', docId: 'H-AP-1', rawObjectKey: 'raw/H-AP-1', escalationTier: 1,
+        claimToken: expect.any(String),
+      }),
+    ]);
+  });
 });
 
 describe('handleAgreementCheck (queue consumer)', () => {

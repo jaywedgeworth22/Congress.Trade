@@ -63,6 +63,7 @@ import { buildConsensusRows, type AmountBracket, type ConsensusResult } from './
 import { uuid } from '../shared/ids';
 import { estimateTransactionValue } from '../shared/transactionValue';
 import { flushDeliveryOutbox } from '../delivery/outbox';
+import { resolveSecret, resolveSecrets } from '../secrets/infisical';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -971,7 +972,7 @@ function parseCandidate(s: string | undefined, fallback: BakeoffCandidate): Bake
   return valid.includes(provider) && model ? ({ provider, model } as BakeoffCandidate) : fallback;
 }
 
-interface AgreementEnv {
+export interface AgreementEnv {
   AGREEMENT_AUTOPUBLISH_ENABLED?: string;
   AGREEMENT_AUTOPUBLISH_MODEL_A?: string;
   AGREEMENT_AUTOPUBLISH_MODEL_B?: string;
@@ -982,6 +983,22 @@ interface AgreementEnv {
   AGREEMENT_BIG_DOC_PAGE_THRESHOLD?: string;
   AGREEMENT_BIG_DOC_BYTES_THRESHOLD?: string;
   AGREEMENT_DAILY_LLM_BUDGET?: string;
+}
+
+/** Resolve the full suite of agreement env vars via Infisical / Wrangler fallback. */
+export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
+  return (await resolveSecrets(env, [
+    'AGREEMENT_AUTOPUBLISH_ENABLED',
+    'AGREEMENT_AUTOPUBLISH_MODEL_A',
+    'AGREEMENT_AUTOPUBLISH_MODEL_B',
+    'AGREEMENT_AUTOPUBLISH_LIMIT',
+    'AGREEMENT_MODEL_C',
+    'AGREEMENT_MAX_ATTEMPTS',
+    'AGREEMENT_BIG_DOC_START_TIER2',
+    'AGREEMENT_BIG_DOC_PAGE_THRESHOLD',
+    'AGREEMENT_BIG_DOC_BYTES_THRESHOLD',
+    'AGREEMENT_DAILY_LLM_BUDGET',
+  ])) as AgreementEnv;
 }
 
 /** Resolve the configured A/B agreement models (with sensible defaults). */
@@ -1046,6 +1063,7 @@ function llmBudgetDay(now = new Date()): string {
  * missing table / transient D1 error, the same policy as bumpAttempt() below —
  * a pre-migration deploy behaves like unlimited rather than wedging the cascade.
  */
+<<<<<<< HEAD
 async function reserveLlmBudget(env: Env, budget: number, count: number): Promise<boolean> {
   if (budget === LLM_BUDGET_UNLIMITED) return true;
   const day = llmBudgetDay();
@@ -1311,6 +1329,20 @@ export async function enqueueAgreementCheck(
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return false;
   const token = await acquireAgreementLease(env, docId, maxAttempts(e), existingClaimToken);
   if (!token) return false;
+=======
+export async function enqueueAgreementCheck(env: Env, docId: string, rawObjectKey: string | null): Promise<boolean> {
+  const enabled = (await resolveSecret(env, 'AGREEMENT_AUTOPUBLISH_ENABLED')).value;
+  if (enabled !== 'true') return false;
+
+  const now = new Date().toISOString();
+  let dbUpdated = false;
+  try {
+    await run(env.DB, 'UPDATE review_queue SET agreement_attempted_at = ? WHERE doc_id = ?', [now, docId]);
+    dbUpdated = true;
+  } catch (err) {
+    console.warn('enqueueAgreementCheck DB stamp failed:', docId, (err as Error).message);
+  }
+>>>>>>> fb8f3ca (feat(ops): FMP/EDGAR pacer safety, Infisical-live tunables, Tiingo provider)
 
   try {
     await env.INGEST_QUEUE.send({ type: 'agreement.check', docId, rawObjectKey, escalationTier, claimToken: token });
@@ -1338,6 +1370,7 @@ export async function enqueueAgreementCheck(
  * a diagnostics receipt and does NOT consume an agreement attempt or escalate
  * — it gets a fresh shot once the day rolls over.
  */
+<<<<<<< HEAD
 export async function handleAgreementCheck(
   env: Env,
   docId: string,
@@ -1345,7 +1378,7 @@ export async function handleAgreementCheck(
   escalationTier?: number,
   claimToken?: string,
 ): Promise<void> {
-  const e = env as unknown as AgreementEnv;
+  const e = await resolveAgreementEnv(env);
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return;
   const max = maxAttempts(e);
 
@@ -1544,7 +1577,7 @@ async function recoverExpiredCappedReviews(
 export async function maybeRunAgreementAutopublish(
   env: Env,
 ): Promise<{ attempted: number; enqueued: number; terminalized: number } | null> {
-  const e = env as unknown as AgreementEnv;
+  const e = await resolveAgreementEnv(env);
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return null;
   const limit = Math.min(Math.max(parseInt(e.AGREEMENT_AUTOPUBLISH_LIMIT || '3', 10) || 3, 1), 10);
   const max = maxAttempts(e);

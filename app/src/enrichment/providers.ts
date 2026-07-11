@@ -13,6 +13,7 @@
  *   - finnhub    : name, industry, market cap, exchange, IPO date, logo (CDN)
  *   - twelvedata : name, sector, industry, exchange
  *   - intrinio   : name, sector/industry classification, exchange, CIK
+ *   - tiingo     : name, exchange (free tier has no sector/market cap/CIK)
  */
 
 import { marketCapBucket, sicToSector } from './compute';
@@ -161,6 +162,31 @@ export function buildIntrinioProvider(apiKey: string, fetchImpl: typeof fetch = 
         fetchImpl,
       );
       return parseIntrinioCompany(j);
+    },
+  };
+}
+
+// --- Tiingo — GET /tiingo/daily/{ticker} (name + exchange; the free tier has no
+// sector/market-cap/CIK, so this fills less than the keyed providers above it
+// in the chain, but is a useful last-resort name/exchange fallback). ----------
+export function parseTiingoTicker(json: unknown): Partial<SecurityRef> | null {
+  const j = json as Record<string, unknown>;
+  if (!j || !str(j.name)) return null;
+  return {
+    companyName: str(j.name),
+    exchangeShort: str(j.exchangeCode),
+    source: 'tiingo',
+  };
+}
+export function buildTiingoProvider(apiKey: string, fetchImpl: typeof fetch = fetch): EnrichmentProvider {
+  return {
+    name: 'tiingo',
+    async fetchRef(ticker) {
+      const j = await getJson(
+        `https://api.tiingo.com/tiingo/daily/${encodeURIComponent(ticker)}?token=${encodeURIComponent(apiKey)}`,
+        fetchImpl,
+      );
+      return parseTiingoTicker(j);
     },
   };
 }
