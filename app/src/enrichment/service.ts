@@ -48,7 +48,14 @@ interface ChainEntry {
   budgeted: boolean;
 }
 
-const KEYED_PROVIDER_SOURCE_MARKERS = ['fmp', 'massive', 'intrinio', 'twelvedata', 'finnhub', 'tiingo'];
+/**
+ * Keyed providers whose `source` marker blocks re-enrichment of a row that is
+ * still missing display-critical fields (sector, country, market cap). Tiingo
+ * is deliberately excluded: its free tier supplies only name + exchange, so a
+ * Tiingo-enriched row should remain eligible for re-enrichment by a richer
+ * provider (FMP, Massive, Intrinio, etc.) that may be configured later.
+ */
+const KEYED_PROVIDER_SOURCE_MARKERS = ['fmp', 'massive', 'intrinio', 'twelvedata', 'finnhub'];
 
 function keyedSourceTriedSql(alias: string): string {
   return '(' + KEYED_PROVIDER_SOURCE_MARKERS.map((s) => `${alias}.source LIKE '%${s}%'`).join(' OR ') + ')';
