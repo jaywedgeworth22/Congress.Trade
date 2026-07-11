@@ -138,9 +138,10 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   `est_value` across all writers. Combined gates pass: typecheck; 104 files / 903 tests; lint 0
   errors; fresh migration/admin-parity/readiness coverage through `0037`; 223-row human resolution
   persists every durable delivery intent while immediate delivery remains below D1's bind ceiling.
-  Earlier isolated preview version `8414f8c5-48cf-45b2-83d9-b5555b5f6bfc` was healthy; a fresh
-  combined preview is next before PR/merge and canonical production ship. KEEPOUT: preserve the
-  dirty main checkout and MONET's worktree.
+  Fresh isolated preview version `dca74a7f-2499-462c-b133-58eb82dbdf06` is healthy at
+  `https://congress-trade-preview.jaywedgeworth22.workers.dev` with `ok/db/schema=true`,
+  `missing=[]`, and the isolated migration ledger reconciled through `0037`. Next: PR/merge and
+  canonical production ship. KEEPOUT: preserve the dirty main checkout and MONET's worktree.
 - **Implement `est_value` column in transactions table (AG, S) — IN PROGRESS 2026-07-10.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
 - **Refactor client API routes (AG, M) — IN PROGRESS 2026-07-10.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
 - **GPT-5.6 bake-off evaluation prep + usage/cost tracking harness (MONET, S)** — BUILT + PUSHED

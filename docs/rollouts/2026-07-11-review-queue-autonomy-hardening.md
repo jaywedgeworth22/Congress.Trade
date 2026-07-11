@@ -90,13 +90,15 @@ npm test -- --reporter=dot
 - Local D1 applied `0029` and the review-revision schema now numbered `0037`;
   schema inspection confirmed both
   `transactions.est_value` and `review_queue.review_revision`.
-- Isolated preview applied the same review schema under its pre-integration
-  numbering through `0034`; the checked-in lineage was subsequently reconciled
-  to `0033`-`0037` alongside the app-wide `0030`-`0032` migrations. Worker version
-  `8414f8c5-48cf-45b2-83d9-b5555b5f6bfc` deployed at
+- The isolated preview ledger was reconciled from the pre-integration review
+  filenames to collision-free `0033`-`0037`, alongside the app-wide
+  `0030`-`0032` migrations. The normal preview deploy then reported no pending
+  migrations and deployed combined Worker version
+  `dca74a7f-2499-462c-b133-58eb82dbdf06` at
   `https://congress-trade-preview.jaywedgeworth22.workers.dev`.
-- Preview `/api/health` returned `ok=true`, `db=true`; rendered browser QA loaded
-  the real dashboard and seeded analytics without an error surface.
+- Fresh preview `/api/health` returned `ok=true`, `db=true`, `schema=true`, and
+  `missing=[]`; the prior review build's rendered browser QA loaded the real
+  dashboard and seeded analytics without an error surface.
 - Preview intentionally has no cron trigger, so autonomous scheduling proof is
   the scheduler/queue test suite rather than the URL alone.
 - Final production read-only recheck: 91 total review rows, 27 pending, 64
