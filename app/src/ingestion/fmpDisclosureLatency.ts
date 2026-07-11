@@ -177,9 +177,12 @@ const FMP_DEFAULT_DAILY_CAP = 230;
  */
 const FMP_LATEST_CALLS_PER_RUN = 2;
 
-/** The shared FMP daily call cap (same env var enrichment/prices read). */
-function fmpDailyCap(env: EnvWithWatch): number {
-  return parseInt(env.FMP_DAILY_CALL_CAP || '', 10) || FMP_DEFAULT_DAILY_CAP;
+/** The shared FMP daily call cap (same env var enrichment/prices read).
+ *  Resolved through the secret resolver so operators can tune
+ *  `FMP_DAILY_CALL_CAP` in Infisical without redeploying the Worker. */
+async function fmpDailyCap(env: Env): Promise<number> {
+  const live = (await resolveSecret(env, 'FMP_DAILY_CALL_CAP')).value ?? env.FMP_DAILY_CALL_CAP;
+  return parseInt(live || '', 10) || FMP_DEFAULT_DAILY_CAP;
 }
 const DIRECT_PROVIDER_IDS: ProviderId[] = ['fmp', 'unusual_whales', 'quiver'];
 
@@ -846,7 +849,7 @@ async function runProviderProbe(
   // already-observed rows keep resolving.
   let capSkipped = false;
   if (isFmp) {
-    const cap = fmpDailyCap(envx);
+    const cap = await fmpDailyCap(env);
     const used = await getDailyUsed(env);
     if (used + FMP_LATEST_CALLS_PER_RUN > cap) {
       capSkipped = true;
