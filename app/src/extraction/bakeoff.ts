@@ -154,18 +154,28 @@ async function runOpenAi(
       prompt_tokens_details?: { cached_tokens?: number };
     };
   };
+  // Extract usage *before* parsing so it survives parse failures.
+  const usageInfo = payload.usage
+    ? {
+        promptTokens: payload.usage.prompt_tokens,
+        completionTokens: payload.usage.completion_tokens,
+        cachedTokens: payload.usage.prompt_tokens_details?.cached_tokens,
+      }
+    : undefined;
+
   const text = payload.choices?.[0]?.message?.content;
   if (!text) throw new Error('openai: empty completion');
-  return {
-    rows: parseModelJson(text).map(toParsedTx),
-    usage: payload.usage
-      ? {
-          promptTokens: payload.usage.prompt_tokens,
-          completionTokens: payload.usage.completion_tokens,
-          cachedTokens: payload.usage.prompt_tokens_details?.cached_tokens,
-        }
-      : undefined,
-  };
+
+  try {
+    return { rows: parseModelJson(text).map(toParsedTx), usage: usageInfo };
+  } catch (parseErr) {
+    // Parse failed but tokens were still consumed — attach usage to the error
+    // so runCandidateOnDoc can persist it alongside the failure.
+    throw Object.assign(
+      new Error(`openai: parse error: ${(parseErr as Error).message}`),
+      { usage: usageInfo },
+    );
+  }
 }
 
 /** Anthropic messages call (base64 `document` block BEFORE the text block). */
@@ -486,15 +496,19 @@ export async function runCandidateOnDoc(
       usage,
     };
   } catch (err) {
+    const cast = err as Error & { usage?: CandidateDocResult['usage'] };
     return {
       ...base,
       ok: false,
-      error: (err as Error).message.slice(0, 300),
+      error: cast.message.slice(0, 300),
       latencyMs: Date.now() - started,
       rowCount: 0,
       rowKeys: [],
       avgConfidence: 0,
       rows: [],
+      // Preserve token usage when the provider attached it to the error
+      // (e.g. OpenAI parse failures — tokens were consumed but parsing failed).
+      usage: cast.usage,
     };
   }
 }

@@ -2360,7 +2360,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                 res.latencyMs,
                 res.avgConfidence,
                 JSON.stringify(res.rows ?? []),
-                JSON.stringify(res.usage ?? null),
+                res.usage ? JSON.stringify(res.usage) : null,
                 nowIso,
               ],
             );
