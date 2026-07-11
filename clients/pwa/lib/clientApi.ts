@@ -13,9 +13,23 @@ function url(path: string) {
 }
 
 async function parse<T>(response: Response): Promise<T> {
-  const data = (await response.json()) as T & { error?: string };
-  if (!response.ok) throw new ApiError(data.error ?? `HTTP ${response.status}`, response.status);
-  return data;
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    const message = response.ok
+      ? 'The Congress.Trade API returned an invalid response.'
+      : `The Congress.Trade API is unavailable (HTTP ${response.status}).`;
+    throw new ApiError(message, response.status);
+  }
+
+  if (!response.ok) {
+    const message = data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
+      ? data.error
+      : `HTTP ${response.status}`;
+    throw new ApiError(message, response.status);
+  }
+  return data as T;
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
