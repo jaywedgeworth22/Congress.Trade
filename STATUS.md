@@ -52,13 +52,13 @@ truth; this file is the short operational snapshot for the current integration.
 - Combined post-#284 gate: typecheck + 104 files / 903 tests; lint 0 errors;
   migration/admin-parity/readiness coverage through `0037`; and real D1 proof
   that a 223-row human confirmation commits every row and delivery intent while
-  immediate outbox flushes remain below D1's bind-parameter ceiling. The earlier
-  isolated preview was healthy at `https://congress-trade-preview.jaywedgeworth22.workers.dev`
-  (version `8414f8c5-48cf-45b2-83d9-b5555b5f6bfc`); a fresh combined preview is
-  the next release gate.
-- The owner authorized production release. The branch is reconciling the landed
-  #284 changes before its own PR, merge, schema application, and bounded queue
-  narrowing; none of this review-queue hardening is production-live yet. Final
+  immediate outbox flushes remain below D1's bind-parameter ceiling. Fresh
+  isolated preview version `dca74a7f-2499-462c-b133-58eb82dbdf06` is healthy at
+  `https://congress-trade-preview.jaywedgeworth22.workers.dev` with
+  `ok/db/schema=true`, `missing=[]`, and migrations tracked through `0037`.
+- The owner authorized production release. The branch is ready for its PR,
+  merge, schema application, and bounded queue narrowing; none of this
+  review-queue hardening is production-live yet. Final
   pre-release production recheck remains 91 total / 27 pending / 64 resolved. See
   `docs/rollouts/2026-07-11-review-queue-autonomy-hardening.md`.
 ## 2026-07-05 (Antigravity) — Shared Ticker Alias Logic and SSE Client
