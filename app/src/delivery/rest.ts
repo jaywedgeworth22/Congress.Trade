@@ -20,7 +20,7 @@
 
 import { Hono, type Context } from 'hono';
 import { MAX_REFS_BATCH } from '@jaywedgeworth22/congress-trading-shared';
-import type { Chamber, Env, Subscription, SubscriptionFilters, TxType } from '../shared/types';
+import type { Chamber, Env, Subscription, TxType } from '../shared/types';
 import { all, get } from '../shared/db';
 import {
   buildTransactionsQuery,
@@ -35,19 +35,25 @@ import {
   type FeedTransactionRow,
   type TxQueryParams,
 } from './rows';
-import { getCurrentUser } from '../auth/session';
+import { getCurrentUser, getCurrentUserFromRequest } from '../auth/session';
 import { isPremiumUser } from '../billing/entitlement';
 import {
   createSubscription,
   getSubscription,
   updateSubscription,
+  validateSubscriptionFilters,
+  assertSubscriptionQuota,
+  SubscriptionQuotaError,
+  subscriptionSecretError,
+  webhookTargetLengthError,
 } from './subscriptions';
 import { openSseStream } from './sse';
 import { handleTickerLogoRequest } from '../ui/tickerLogos';
 import { resolveSecret } from '../secrets/infisical';
 import { constantTimeEqual } from '../auth/tokens';
-import { localWebhookTargetsAllowed, validateWebhookTargetUrl } from './webhookTarget';
+import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget';
 import { rateLimit, clientIp } from '../shared/rateLimit';
+import { checkReadiness } from '../shared/readiness';
 
 function parseIntOrUndef(v: string | undefined): number | undefined {
   if (v === undefined || v === '') return undefined;
@@ -169,18 +175,10 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
   // --- GET /health --------------------------------------------------------
-  // Liveness + D1 connectivity probe. Returns 200 always (so it's a usable
-  // healthcheck), with db:false when the database is unreachable/unmigrated.
+  // Deployment readiness: D1 must be reachable and the required schema current.
   r.get('/health', async (c) => {
-    let db = false;
-    let error: string | undefined;
-    try {
-      await get(c.env.DB, 'SELECT 1 AS ok');
-      db = true;
-    } catch (e) {
-      error = (e as Error).message;
-    }
-    return c.json({ ok: true, db, ...(error ? { error } : {}), time: new Date().toISOString() });
+    const readiness = await checkReadiness(c.env.DB);
+    return c.json({ ...readiness, time: new Date().toISOString() }, readiness.ok ? 200 : 503);
   });
 
   // --- GET /transactions --------------------------------------------------
@@ -338,7 +336,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     }
     const since = resolveResumeCursor(c.req.query('since'), c.req.header('Last-Event-ID'));
     const token = subscriptionSecretFromRequest(c, true) ?? undefined;
-    return openSseStream(c.env, subscription, since, token);
+    return openSseStream(c.env, subscription, since, token, clientIp(c.req.raw));
   });
 
   // --- GET /logos/ticker --------------------------------------------------
@@ -614,15 +612,6 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
 
   // --- POST /subscriptions ------------------------------------------------
   r.post('/subscriptions', async (c) => {
-    // This endpoint is unauthenticated and registers webhook targets backed by
-    // our egress; cap creation per IP so it can't be scripted into an abuse
-    // amplifier. Fails open if KV is unavailable.
-    const subRl = await rateLimit(c.env, 'sub-create-ip', clientIp(c.req.raw), 20, 3600);
-    if (!subRl.ok) {
-      return c.json({ error: 'too many subscription requests' }, 429, {
-        'Retry-After': String(subRl.retryAfterSec),
-      });
-    }
     let body: Record<string, unknown>;
     try {
       body = (await c.req.json()) as Record<string, unknown>;
@@ -634,35 +623,43 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     if (delivery !== 'webhook' && delivery !== 'sse') {
       return c.json({ error: "delivery must be 'webhook' or 'sse'" }, 400);
     }
-    const clientId = typeof body.clientId === 'string' ? body.clientId : '';
-    if (!clientId) return c.json({ error: 'clientId is required' }, 400);
+    const user = await getCurrentUserFromRequest(c);
+    if (!user) return c.json({ error: 'authentication required for durable subscriptions' }, 401);
+    const clientId = `user:${user.id}`;
+    const subRl = await rateLimit(c.env, 'sub-create-user', clientId, 10, 3600);
+    if (!subRl.ok) return c.json({ error: 'too many subscription requests' }, 429, { 'Retry-After': String(subRl.retryAfterSec) });
 
     const targetUrl =
       typeof body.targetUrl === 'string' && body.targetUrl.length > 0 ? body.targetUrl : null;
+    const targetLengthError = webhookTargetLengthError(targetUrl);
+    if (targetLengthError) return c.json({ error: targetLengthError }, 400);
     if (delivery === 'webhook') {
-      const targetUrlError = validateWebhookTargetUrl(targetUrl, {
+      const targetUrlError = await validatePublicWebhookTarget(targetUrl, {
         allowLocalhost: localWebhookTargetsAllowed(c.env, c.req.url),
       });
       if (targetUrlError) return c.json({ error: targetUrlError }, 400);
     }
 
-    const filters: SubscriptionFilters =
-      body.filters && typeof body.filters === 'object'
-        ? (body.filters as SubscriptionFilters)
-        : {};
+    const validatedFilters = validateSubscriptionFilters(body.filters);
+    if (!validatedFilters.ok) return c.json({ error: validatedFilters.error }, 400);
+    const secretError = subscriptionSecretError(body.secret);
+    if (secretError) return c.json({ error: secretError }, 400);
     const secret = typeof body.secret === 'string' ? body.secret : undefined;
-    if (secret !== undefined && secret.length < 16) {
-      return c.json({ error: 'secret must be at least 16 characters' }, 400);
-    }
 
-    const sub = await createSubscription(c.env, {
-      clientId,
-      delivery,
-      targetUrl,
-      secret: secret ?? null,
-      filters,
-    });
-    return c.json(toPublicSubscription(sub, { includeSecret: true }), 201);
+    try {
+      await assertSubscriptionQuota(c.env, clientId, { creating: true });
+      const sub = await createSubscription(c.env, {
+        clientId,
+        delivery,
+        targetUrl,
+        secret: secret ?? null,
+        filters: validatedFilters.filters,
+      });
+      return c.json(toPublicSubscription(sub, { includeSecret: true }), 201);
+    } catch (err) {
+      if (err instanceof SubscriptionQuotaError) return c.json({ error: err.message }, 409);
+      throw err;
+    }
   });
 
   // --- GET /subscriptions -------------------------------------------------
@@ -700,35 +697,54 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     }
 
     const patch: Parameters<typeof updateSubscription>[2] = {};
-    if (body.filters && typeof body.filters === 'object') {
-      patch.filters = body.filters as SubscriptionFilters;
+    if (body.filters !== undefined) {
+      const validatedFilters = validateSubscriptionFilters(body.filters);
+      if (!validatedFilters.ok) return c.json({ error: validatedFilters.error }, 400);
+      patch.filters = validatedFilters.filters;
     }
     if (typeof body.targetUrl === 'string' || body.targetUrl === null) {
       patch.targetUrl = body.targetUrl as string | null;
+      const targetLengthError = webhookTargetLengthError(patch.targetUrl);
+      if (targetLengthError) return c.json({ error: targetLengthError }, 400);
       if (existing.delivery === 'webhook') {
-        const targetUrlError = validateWebhookTargetUrl(patch.targetUrl, {
+        const targetUrlError = await validatePublicWebhookTarget(patch.targetUrl, {
           allowLocalhost: localWebhookTargetsAllowed(c.env, c.req.url),
         });
         if (targetUrlError) return c.json({ error: targetUrlError }, 400);
       }
     }
+    if (body.secret !== undefined && body.secret !== null && typeof body.secret !== 'string') {
+      return c.json({ error: 'secret must be a string' }, 400);
+    }
     if (typeof body.secret === 'string') {
-      if (body.secret.length < 16) {
-        return c.json({ error: 'secret must be at least 16 characters' }, 400);
-      }
+      const secretError = subscriptionSecretError(body.secret);
+      if (secretError) return c.json({ error: secretError }, 400);
       patch.secret = body.secret;
     } else if (body.secret === null) {
       return c.json({ error: 'secret cannot be cleared' }, 400);
     }
     if (typeof body.active === 'boolean') {
+      if (body.active && !existing.active) {
+        try {
+          await assertSubscriptionQuota(c.env, existing.clientId, { activating: true });
+        } catch (err) {
+          if (err instanceof SubscriptionQuotaError) return c.json({ error: err.message }, 409);
+          throw err;
+        }
+      }
       patch.active = body.active;
     }
     if (typeof body.cursor === 'number') {
       patch.cursor = body.cursor;
     }
 
-    const updated = await updateSubscription(c.env, id, patch);
-    return c.json(toPublicSubscription(updated, { includeSecret: patch.secret !== undefined }));
+    try {
+      const updated = await updateSubscription(c.env, id, patch);
+      return c.json(toPublicSubscription(updated, { includeSecret: patch.secret !== undefined }));
+    } catch (err) {
+      if (err instanceof SubscriptionQuotaError) return c.json({ error: err.message }, 409);
+      throw err;
+    }
   });
 
   return r;

@@ -1,12 +1,19 @@
 import type { Env, User, ClientCommandType, Subscription } from '../shared/types';
-import { createSubscription, updateSubscription } from '../delivery/subscriptions';
+import {
+  assertSubscriptionQuota,
+  createSubscription,
+  SubscriptionQuotaError,
+  updateSubscription,
+  webhookTargetLengthError,
+} from '../delivery/subscriptions';
+import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget';
+import { rateLimit } from '../shared/rateLimit';
 import { upsertPreferences } from './state';
 import {
   asDelivery,
   ClientInputError,
   normalizeFilters,
   publicSubscription,
-  validateWebhookTargetUrl,
   arrayOfStrings,
   clientIdForUser,
 } from './utils';
@@ -73,30 +80,68 @@ export async function executeCommand(env: Env, user: User, type: ClientCommandTy
   if (type === 'create_subscription') {
     const delivery = asDelivery(input.delivery);
     const targetUrl = typeof input.targetUrl === 'string' ? input.targetUrl.trim() : null;
-    if (delivery === 'webhook') validateWebhookTargetUrl(targetUrl);
-    const sub = await createSubscription(env, {
-      clientId: clientIdForUser(user),
-      delivery,
-      targetUrl: delivery === 'webhook' ? targetUrl : null,
-      secret: null,
-      filters: normalizeFilters(input.filters),
-    });
-    return { subscription: publicSubscription(sub, true) };
+    const targetLengthError = webhookTargetLengthError(targetUrl);
+    if (targetLengthError) throw new ClientInputError(targetLengthError);
+    if (delivery === 'webhook') {
+      const targetError = await validatePublicWebhookTarget(targetUrl, {
+        allowLocalhost: localWebhookTargetsAllowed(env),
+      });
+      if (targetError) throw new ClientInputError(targetError);
+    }
+    const clientId = clientIdForUser(user);
+    const limited = await rateLimit(env, 'sub-create-user', clientId, 10, 3600);
+    if (!limited.ok) throw new ClientInputError('too many subscription requests', 429);
+    try {
+      await assertSubscriptionQuota(env, clientId, { creating: true });
+      const sub = await createSubscription(env, {
+        clientId,
+        delivery,
+        targetUrl: delivery === 'webhook' ? targetUrl : null,
+        secret: null,
+        filters: normalizeFilters(input.filters),
+      });
+      return { subscription: publicSubscription(sub, true) };
+    } catch (err) {
+      if (err instanceof SubscriptionQuotaError) throw new ClientInputError(err.message, 409);
+      throw err;
+    }
   }
   if (type === 'update_subscription') {
     const id = typeof input.id === 'string' ? input.id : '';
     if (!id) throw new ClientInputError('id is required');
-    await getOwnedSubscription(env, user, id);
+    const existing = await getOwnedSubscription(env, user, id);
     const patch: Partial<Pick<Subscription, 'filters' | 'targetUrl' | 'active'>> = {};
     if (input.filters !== undefined) patch.filters = normalizeFilters(input.filters);
-    if (input.active !== undefined) patch.active = input.active === true;
+    if (input.active !== undefined) {
+      patch.active = input.active === true;
+      if (patch.active && !existing.active) {
+        try {
+          await assertSubscriptionQuota(env, existing.clientId, { activating: true });
+        } catch (err) {
+          if (err instanceof SubscriptionQuotaError) throw new ClientInputError(err.message, 409);
+          throw err;
+        }
+      }
+    }
     if (input.targetUrl !== undefined) {
       const targetUrl = typeof input.targetUrl === 'string' ? input.targetUrl.trim() : null;
-      if (targetUrl) validateWebhookTargetUrl(targetUrl);
+      const targetLengthError = webhookTargetLengthError(targetUrl);
+      if (targetLengthError) throw new ClientInputError(targetLengthError);
+      if (existing.delivery === 'webhook') {
+        const targetError = await validatePublicWebhookTarget(targetUrl, {
+          allowLocalhost: localWebhookTargetsAllowed(env),
+        });
+        if (targetError) throw new ClientInputError(targetError);
+      }
       patch.targetUrl = targetUrl;
     }
-    const updated = await updateSubscription(env, id, patch);
-    return { subscription: publicSubscription(updated) };
+    try {
+      const updated = await updateSubscription(env, id, patch);
+      return { subscription: publicSubscription(updated) };
+    } catch (err) {
+      if (err instanceof SubscriptionQuotaError) throw new ClientInputError(err.message, 409);
+      throw err;
+    }
   }
   throw new ClientInputError(`${type} is not implemented yet`, 501);
 }

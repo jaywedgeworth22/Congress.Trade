@@ -95,6 +95,13 @@ describe('sessions', () => {
     expect(await getCookieDomain(cLocal)).toBeUndefined();
   });
 
+  it('getCookieDomain does not bypass fail-closed secret resolution', async () => {
+    const { env } = fakeEnv();
+    (env as any).APP_BASE_URL = 'https://congress.trade';
+    (env as any).INFISICAL_ALLOW_ENV_FALLBACK = 'false';
+    expect(await getCookieDomain({ env } as any)).toBeUndefined();
+  });
+
   it('getSafeRedirectUrl validates and sanitizes origins correctly', () => {
     const base = 'https://congress.trade';
     const domain = 'congress.trade';

@@ -48,6 +48,7 @@ import {
 import { commandType, executeCommand, normalizePreferencePatch, persistedCommandResult } from './commands';
 import { get } from '../shared/db';
 import type { TradeSummaryRow } from './types';
+import type { TxQueryParams } from '../delivery/rows';
 
 export function buildClientRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
@@ -88,7 +89,7 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
 
   r.get('/feed', async (c) => {
     const params = filtersFromQuery(c.req.query());
-    return c.json({ ...(await readClientTradeList(c.env, params as any)), nextPollAfterSec: 30 });
+    return c.json({ ...(await readClientTradeList(c.env, params)), nextPollAfterSec: 30 });
   });
 
   r.get('/trade/:id', async (c) => {
@@ -109,7 +110,7 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
   r.get('/ticker/:ticker', async (c) => {
     const ticker = normalizeTickerLogoSymbol(c.req.param('ticker'));
     if (!ticker) return c.json({ error: 'invalid ticker' }, 400);
-    const params: any = {
+    const params: TxQueryParams = {
       ticker,
       limit: detailLimit(c.req.query('limit')),
       order: asOrder(c.req.query('order')) ?? 'desc',
@@ -138,7 +139,7 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
     }
     const resolved = await resolveMember(c.env, memberIdOrName);
     if (!resolved) return c.json({ error: 'member not found' }, 404);
-    const params: any = {
+    const params: TxQueryParams = {
       member: resolved.id,
       limit: detailLimit(c.req.query('limit')),
       order: asOrder(c.req.query('order')) ?? 'desc',

@@ -23,11 +23,6 @@ need_id() {
   fi
 }
 
-if [ ! -f "$CONFIG" ]; then
-  cp "$EXAMPLE" "$CONFIG"
-  echo "Created $CONFIG from $EXAMPLE"
-fi
-
 say "D1 preview database"
 D1_OUT=$($WRANGLER d1 create congress-feed-preview-db 2>&1 || true)
 echo "$D1_OUT"
@@ -48,6 +43,11 @@ if [ -z "$KV_ID" ]; then
   ' || true)
 fi
 need_id "KV" "$KV_ID"
+
+# Always refresh generated config from the tracked example so new safety flags,
+# queue consumers, and bindings cannot be skipped by a stale ignored file.
+cp "$EXAMPLE" "$CONFIG"
+echo "Refreshed $CONFIG from $EXAMPLE"
 
 python3 - "$CONFIG" "$D1_ID" "$KV_ID" "$PREVIEW_APP_BASE_URL" <<'PY'
 from pathlib import Path

@@ -1,7 +1,7 @@
 name = "congress-trade"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
-compatibility_flags = ["nodejs_compat"]
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 workers_dev = true
 preview_urls = false
 
@@ -121,6 +121,21 @@ max_batch_timeout = 5
 max_retries = 8
 dead_letter_queue = "congress-feed-delivery-dlq"
 
+# DLQs are actively consumed: the Worker durably records the terminal receipt,
+# reopens the owning outbox row, then ACKs. High retry count protects recovery
+# from a transient D1 outage without recursively dead-lettering a DLQ.
+[[queues.consumers]]
+queue = "congress-feed-ingest-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 100
+
+[[queues.consumers]]
+queue = "congress-feed-delivery-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 100
+
 # ---------------------------------------------------------------------------
 # KV — hot config cache (poll schedule, feature flags)
 # ---------------------------------------------------------------------------
@@ -147,9 +162,14 @@ APP_BASE_URL = "https://congress.trade"
 # independent models fully agree on a held-for-review filing's rows, it's
 # published instead of waiting for a human. Bounded: LIMIT docs/tick, each doc
 # attempted once. Set ENABLED to "" to turn off.
+# MODEL_B was "openai:gpt-4o-mini" from 2026-06-26 to 2026-07-10 -- confirmed
+# via prod review_queue data to have been effectively non-functional that
+# whole window (bakeoff.ts:38 already documented gpt-4o-mini rejecting this
+# PDF-as-file-part payload shape outright; only successes were rollout-window
+# artifacts). Switched to the bake-off-proven-working full gpt-4o.
 AGREEMENT_AUTOPUBLISH_ENABLED = "true"
 AGREEMENT_AUTOPUBLISH_MODEL_A = "mistral:mistral-ocr-latest"
-AGREEMENT_AUTOPUBLISH_MODEL_B = "openai:gpt-4o-mini"
+AGREEMENT_AUTOPUBLISH_MODEL_B = "openai:gpt-4o"
 AGREEMENT_AUTOPUBLISH_LIMIT = "3"
 # Paid-plan import guardrails. These are deliberately below platform maximums:
 # large enough to avoid tiny cross-app chunks, still bounded against runaway

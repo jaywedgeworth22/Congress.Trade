@@ -15,29 +15,39 @@ struct CongressTradeApp: App {
 }
 @MainActor
 final class CongressTradeStore: ObservableObject {
-    @Published var bootstrap: BootstrapResponse?
-    @Published var feed: ClientFeedResponse?
-    @Published var subscriptions: [Subscription] = []
-    @Published var commands: [ClientCommand] = []
-    @Published var selectedTrade: ClientTrade?
-    @Published var watchlistText = "AAPL, MSFT, NVDA"
-    @Published var webhookURL = ""
-    @Published var deliveryMode: DeliveryMode = .sse
-    @Published var searchText = ""
-    @Published var isLoading = false
-    @Published var message: String?
-    @Published var lastCommand: ClientCommand?
-    @Published var sessionTokenInput = ""
+    @Published private(set) var bootstrap: BootstrapResponse?
+    @Published private(set) var feed: ClientFeedResponse?
+    @Published private(set) var subscriptions: [Subscription] = []
+    @Published private(set) var commands: [ClientCommand] = []
+    @Published private(set) var watchlist: [String] = []
+    @Published private(set) var isRefreshing = false
+    @Published private(set) var isSavingWatchlist = false
+    @Published private(set) var isCreatingDelivery = false
+    @Published private(set) var subscriptionIDsInFlight: Set<String> = []
+    @Published private(set) var isLoggingOut = false
+    @Published private(set) var feedNotice: String?
+    @Published private(set) var watchlistNotice: String?
+    @Published private(set) var deliveryNotice: String?
+    @Published private(set) var commandNotice: String?
+    @Published private(set) var lastCommand: ClientCommand?
+    @Published var pendingDeliveryCredential: DeliveryCredential?
+    @Published private(set) var lastSuccessfulRefresh: Date?
+    @Published private(set) var isOffline = false
+    @Published private(set) var hasStoredSessionToken = false
 
     var modelContext: ModelContext?
 
     private let api: CongressTradeAPIClient
+    private var pendingWatchlistMutation: PendingWatchlistMutation?
+    private var pendingDeliveryMutation: PendingDeliveryMutation?
+    private var pendingSubscriptionMutations: [String: PendingSubscriptionMutation] = [:]
+
+    private static let cacheLimit = 500
 
     init(api: CongressTradeAPIClient) {
         self.api = api
-        if let token = try? api.tokenStore.load() {
-            self.sessionTokenInput = token
-        }
+        let storedToken = try? api.tokenStore.load()
+        self.hasStoredSessionToken = storedToken?.isEmpty == false
     }
 
     var signedIn: Bool {
@@ -48,39 +58,50 @@ final class CongressTradeStore: ObservableObject {
         bootstrap?.auth.entitlement.premium == true ? "Premium" : "Free"
     }
 
-    var tickerList: [String] {
-        watchlistText
+    static func parseTickers(_ text: String) -> [String] {
+        text
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() }
             .filter { !$0.isEmpty }
     }
 
     func refresh() async {
-        isLoading = true
-        message = nil
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        feedNotice = nil
         do {
             let maxCursor = fetchMaxLocalCursor()
             async let bootstrapTask = api.bootstrap()
             async let feedTask = api.feed(query: FeedQuery(limit: 50, since: maxCursor, order: "desc"))
-            
+
             bootstrap = try await bootstrapTask
             let response = try await feedTask
-            
+
             if let context = modelContext {
                 for item in response.items {
                     context.insert(item)
                 }
                 try context.save()
+                try trimCache(in: context)
             }
-            
+
             feed = response
+            lastSuccessfulRefresh = Date()
+            isOffline = false
             if signedIn {
                 await refreshSignedInState()
+            } else {
+                subscriptions = []
+                commands = []
+                watchlist = []
             }
         } catch {
-            message = error.localizedDescription
+            isOffline = (error as? APIError)?.isOffline == true
+            feedNotice = isOffline
+                ? "Offline. Showing saved trades from this device."
+                : error.localizedDescription
         }
-        isLoading = false
+        isRefreshing = false
     }
 
     private func fetchMaxLocalCursor() -> Int? {
@@ -96,86 +117,211 @@ final class CongressTradeStore: ObservableObject {
         }
     }
 
+    private func trimCache(in context: ModelContext) throws {
+        var descriptor = FetchDescriptor<ClientTrade>(sortBy: [SortDescriptor(\.cursor, order: .reverse)])
+        descriptor.fetchOffset = Self.cacheLimit
+        for trade in try context.fetch(descriptor) {
+            context.delete(trade)
+        }
+        if context.hasChanges {
+            try context.save()
+        }
+    }
+
     func refreshSignedInState() async {
         do {
             async let subscriptionsTask = api.subscriptions()
             async let commandsTask = api.commands(limit: 12)
+            async let preferencesTask = api.preferences()
             subscriptions = try await subscriptionsTask.subscriptions
             commands = try await commandsTask.commands
+            watchlist = try await preferencesTask.preferences.watchlist
         } catch {
             if signedIn {
-                message = error.localizedDescription
+                commandNotice = error.localizedDescription
             }
         }
     }
 
-    func saveWatchlist() async {
-        await runCommand {
-            try await api.updatePreferences(tickers: tickerList)
+    func saveWatchlist(_ text: String) async {
+        let tickers = Self.parseTickers(text)
+        guard !tickers.isEmpty else {
+            watchlistNotice = "Enter at least one ticker."
+            return
         }
+        let mutation = pendingWatchlistMutation?.tickers == tickers
+            ? pendingWatchlistMutation!
+            : PendingWatchlistMutation(tickers: tickers, idempotencyKey: UUID().uuidString)
+        pendingWatchlistMutation = mutation
+        isSavingWatchlist = true
+        watchlistNotice = nil
+        do {
+            let response = try await api.updatePreferences(
+                tickers: tickers,
+                idempotencyKey: mutation.idempotencyKey
+            )
+            pendingWatchlistMutation = nil
+            lastCommand = response.command
+            watchlist = response.result?.preferences.watchlist ?? tickers
+            watchlistNotice = response.replayed == true ? "Preferences already saved." : "Watchlist saved."
+            await refreshCommandHistory()
+        } catch {
+            watchlistNotice = "Could not save. Retry will safely reuse this request: \(error.localizedDescription)"
+        }
+        isSavingWatchlist = false
     }
 
-    func createDelivery() async {
-        await runCommand {
-            switch deliveryMode {
+    func createDelivery(mode: DeliveryMode, webhookURL: String) async {
+        let normalizedURL = webhookURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mutation = PendingDeliveryMutation(
+            mode: mode,
+            webhookURL: normalizedURL,
+            tickers: watchlist,
+            idempotencyKey: UUID().uuidString
+        )
+        let request = pendingDeliveryMutation?.matches(mutation) == true ? pendingDeliveryMutation! : mutation
+        pendingDeliveryMutation = request
+        isCreatingDelivery = true
+        deliveryNotice = nil
+        do {
+            let response: ClientCommandResponse<SubscriptionCommandResult>
+            switch mode {
             case .sse:
-                return try await api.createSSESubscription(tickers: tickerList)
+                response = try await api.createSSESubscription(
+                    tickers: watchlist,
+                    idempotencyKey: request.idempotencyKey
+                )
             case .webhook:
-                return try await api.createWebhookSubscription(targetURL: webhookURL, tickers: tickerList)
+                guard URL(string: normalizedURL)?.scheme?.lowercased() == "https" else {
+                    deliveryNotice = "Webhook URLs must use HTTPS."
+                    isCreatingDelivery = false
+                    return
+                }
+                response = try await api.createWebhookSubscription(
+                    targetURL: normalizedURL,
+                    tickers: watchlist,
+                    idempotencyKey: request.idempotencyKey
+                )
             }
+            pendingDeliveryMutation = nil
+            lastCommand = response.command
+            if let subscription = response.result?.subscription {
+                pendingDeliveryCredential = DeliveryCredential(
+                    id: subscription.id,
+                    delivery: subscription.delivery,
+                    streamURL: api.absoluteClientURL(subscription.streamUrl),
+                    secret: subscription.secret
+                )
+            }
+            deliveryNotice = response.replayed == true
+                ? "Delivery already created. A replay cannot reveal its one-time secret."
+                : "Delivery created. Save the credential shown now."
+            await refreshSignedInState()
+        } catch {
+            deliveryNotice = "Could not create delivery. Retry will safely reuse this request: \(error.localizedDescription)"
         }
+        isCreatingDelivery = false
     }
 
     func toggleSubscription(_ subscription: Subscription) async {
-        await runCommand {
-            try await api.updateSubscription(
+        let desiredActive = !subscription.active
+        let previous = pendingSubscriptionMutations[subscription.id]
+        let mutation = previous?.active == desiredActive
+            ? previous!
+            : PendingSubscriptionMutation(active: desiredActive, idempotencyKey: UUID().uuidString)
+        pendingSubscriptionMutations[subscription.id] = mutation
+        subscriptionIDsInFlight.insert(subscription.id)
+        deliveryNotice = nil
+        do {
+            let response = try await api.setSubscriptionActive(
                 id: subscription.id,
-                active: !subscription.active,
-                targetURL: nil,
-                tickers: tickerList
+                active: desiredActive,
+                idempotencyKey: mutation.idempotencyKey
             )
-        }
-    }
-
-    func saveSessionToken() {
-        do {
-            try api.tokenStore.save(sessionTokenInput)
-            message = "Session token saved to Keychain."
-            Task {
-                await refresh()
-            }
-        } catch {
-            message = "Failed to save token: \(error.localizedDescription)"
-        }
-    }
-
-    func clearSessionToken() {
-        do {
-            try api.tokenStore.clear()
-            sessionTokenInput = ""
-            message = "Session token cleared."
-            Task {
-                await refresh()
-            }
-        } catch {
-            message = "Failed to clear token: \(error.localizedDescription)"
-        }
-    }
-
-    private func runCommand<ResultPayload: Decodable>(
-        _ operation: () async throws -> ClientCommandResponse<ResultPayload>
-    ) async {
-        do {
-            let response = try await operation()
+            pendingSubscriptionMutations[subscription.id] = nil
             lastCommand = response.command
-            message = response.replayed == true
-                ? "Command replayed: \(response.command.status.rawValue.capitalized)"
-                : "Command \(response.command.status.rawValue.capitalized)"
-            await refreshSignedInState()
+            if let updated = response.result?.subscription,
+               let index = subscriptions.firstIndex(where: { $0.id == updated.id }) {
+                subscriptions[index] = updated
+            } else {
+                await refreshSignedInState()
+            }
+            deliveryNotice = desiredActive ? "Delivery resumed." : "Delivery paused."
         } catch {
-            message = error.localizedDescription
+            deliveryNotice = "Could not update delivery. Retry will safely reuse this request: \(error.localizedDescription)"
+        }
+        subscriptionIDsInFlight.remove(subscription.id)
+    }
+
+    @discardableResult
+    func saveSessionToken(_ token: String) -> Bool {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            watchlistNotice = "Enter a session token."
+            return false
+        }
+        do {
+            try api.tokenStore.save(trimmed)
+            hasStoredSessionToken = true
+            watchlistNotice = "Session token saved to Keychain."
+            Task {
+                await refresh()
+            }
+            return true
+        } catch {
+            watchlistNotice = "Failed to save token: \(error.localizedDescription)"
+            return false
         }
     }
+
+    func signOut() async {
+        guard hasStoredSessionToken, !isLoggingOut else { return }
+        isLoggingOut = true
+        watchlistNotice = nil
+        do {
+            try await api.logout()
+            try api.tokenStore.clear()
+            hasStoredSessionToken = false
+            bootstrap = nil
+            subscriptions = []
+            commands = []
+            watchlist = []
+            watchlistNotice = "Signed out and revoked the server session."
+            await refresh()
+        } catch {
+            watchlistNotice = "Sign-out failed; the token remains in Keychain so you can retry revocation: \(error.localizedDescription)"
+        }
+        isLoggingOut = false
+    }
+
+    private func refreshCommandHistory() async {
+        do {
+            commands = try await api.commands(limit: 12).commands
+        } catch {
+            commandNotice = error.localizedDescription
+        }
+    }
+}
+
+private struct PendingWatchlistMutation {
+    let tickers: [String]
+    let idempotencyKey: String
+}
+
+private struct PendingDeliveryMutation {
+    let mode: DeliveryMode
+    let webhookURL: String
+    let tickers: [String]
+    let idempotencyKey: String
+
+    func matches(_ other: PendingDeliveryMutation) -> Bool {
+        mode == other.mode && webhookURL == other.webhookURL && tickers == other.tickers
+    }
+}
+
+private struct PendingSubscriptionMutation {
+    let active: Bool
+    let idempotencyKey: String
 }
 
 enum DeliveryMode: String, CaseIterable, Identifiable {
@@ -224,39 +370,59 @@ struct PrototypeRootView: View {
 struct FeedDashboardView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @Query(sort: \ClientTrade.cursor, order: .reverse) private var cachedTrades: [ClientTrade]
+    @State private var searchText = ""
+    @State private var appliedSearch = ""
+    @State private var searchTask: Task<Void, Never>?
+    @State private var selectedTrade: ClientTrade?
 
     var filteredTrades: [ClientTrade] {
-        let needle = store.searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let needle = appliedSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !needle.isEmpty else { return cachedTrades }
-        return cachedTrades.filter { trade in
-            [
-                trade.asset.ticker,
-                trade.asset.name,
-                trade.member.name,
-                trade.member.state,
-                trade.member.chamber
-            ].contains { ($0 ?? "").lowercased().contains(needle) }
-        }
+        return cachedTrades.filter { TradeSearch.matches($0, normalizedNeedle: needle) }
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
-                    HeaderSummary()
+                    HeaderSummary(
+                        tradeCount: cachedTrades.count,
+                        cursor: cachedTrades.first?.cursor ?? 0,
+                        signedIn: store.signedIn,
+                        entitlementLabel: store.entitlementLabel
+                    )
 
-                    SearchField(text: $store.searchText)
+                    SearchField(text: $searchText)
 
-                    if let message = store.message {
-                        NoticeView(message: message)
+                    FeedFreshnessView(
+                        isOffline: store.isOffline,
+                        lastRefresh: store.lastSuccessfulRefresh,
+                        notice: store.feedNotice,
+                        onRetry: { Task { await store.refresh() } }
+                    )
+
+                    if filteredTrades.isEmpty && !store.isRefreshing {
+                        ContentUnavailableView {
+                            Label(
+                                appliedSearch.isEmpty ? "No Saved Trades" : "No Matching Trades",
+                                systemImage: "tray"
+                            )
+                        } description: {
+                            Text(appliedSearch.isEmpty ? "Refresh to load the latest disclosures." : "Try another ticker, politician, or state.")
+                        } actions: {
+                            Button("Retry") { Task { await store.refresh() } }
+                        }
                     }
 
                     LazyVStack(spacing: 10) {
                         ForEach(filteredTrades) { trade in
-                            TradeCard(trade: trade)
-                                .onTapGesture {
-                                    store.selectedTrade = trade
-                                }
+                            Button {
+                                selectedTrade = trade
+                            } label: {
+                                TradeCard(trade: trade)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Opens trade details")
                         }
                     }
                 }
@@ -266,6 +432,7 @@ struct FeedDashboardView: View {
             }
             .background(AppTheme.background)
             .navigationTitle("Congress.Trade")
+            .refreshable { await store.refresh() }
             .toolbar {
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {
                     Button {
@@ -277,23 +444,34 @@ struct FeedDashboardView: View {
                 }
             }
             .overlay {
-                if store.isLoading {
+                if store.isRefreshing {
                     ProgressView()
                         .controlSize(.large)
                         .padding(20)
                         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
                 }
             }
-            .sheet(item: $store.selectedTrade) { trade in
+            .sheet(item: $selectedTrade) { trade in
                 TradeDetailView(trade: trade)
             }
+            .onChange(of: searchText) { _, newValue in
+                searchTask?.cancel()
+                searchTask = Task {
+                    try? await Task.sleep(for: .milliseconds(180))
+                    guard !Task.isCancelled else { return }
+                    appliedSearch = newValue
+                }
+            }
+            .onDisappear { searchTask?.cancel() }
         }
     }
 }
 
 struct HeaderSummary: View {
-    @EnvironmentObject private var store: CongressTradeStore
-    @Query(sort: \ClientTrade.cursor, order: .reverse) private var cachedTrades: [ClientTrade]
+    let tradeCount: Int
+    let cursor: Int
+    let signedIn: Bool
+    let entitlementLabel: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -306,13 +484,13 @@ struct HeaderSummary: View {
                         .font(.title3.weight(.semibold))
                 }
                 Spacer()
-                StatusPill(text: store.signedIn ? "Signed In" : "Guest", color: store.signedIn ? .green : .orange)
+                StatusPill(text: signedIn ? "Signed In" : "Guest", color: signedIn ? .green : .orange)
             }
 
             HStack(spacing: 8) {
-                MetricTile(title: "Trades", value: "\(cachedTrades.count)")
-                MetricTile(title: "Cursor", value: "\(cachedTrades.first?.cursor ?? 0)")
-                MetricTile(title: "Plan", value: store.entitlementLabel)
+                MetricTile(title: "Trades", value: "\(tradeCount)")
+                MetricTile(title: "Cursor", value: "\(cursor)")
+                MetricTile(title: "Plan", value: entitlementLabel)
             }
         }
         .padding(14)
@@ -448,7 +626,9 @@ struct TradeDetailView: View {
                         DetailRow("Market Cap", trade.asset.marketCapBucket?.capitalized ?? "Not Enriched Yet")
                     }
 
-                    if let sourceURL = trade.filing.sourceUrl, let url = URL(string: sourceURL) {
+                    if let sourceURL = trade.filing.sourceUrl,
+                       let url = URL(string: sourceURL),
+                       url.scheme == "https" || url.scheme == "http" {
                         Button {
                             openURL(url)
                         } label: {
@@ -474,36 +654,52 @@ struct TradeDetailView: View {
 
 struct WatchlistView: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @State private var sessionTokenInput = ""
+    @State private var watchlistText = ""
+    @State private var hasInitializedWatchlist = false
+    @State private var lastLoadedWatchlistText = ""
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Keychain Authentication") {
-                    SecureField("Session Token", text: $store.sessionTokenInput)
+                    SecureField("Session Token", text: $sessionTokenInput)
+                        .privacySensitive()
                     Button {
-                        store.saveSessionToken()
+                        if store.saveSessionToken(sessionTokenInput) {
+                            sessionTokenInput = ""
+                        }
                     } label: {
                         Label("Save Session Token", systemImage: "key.fill")
                     }
-                    if store.signedIn {
+                    .disabled(sessionTokenInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if store.hasStoredSessionToken {
                         Button(role: .destructive) {
-                            store.clearSessionToken()
+                            Task { await store.signOut() }
                         } label: {
-                            Label("Clear Session Token", systemImage: "trash")
+                            Label("Sign Out and Revoke Session", systemImage: "rectangle.portrait.and.arrow.right")
                         }
+                        .disabled(store.isLoggingOut)
                     }
                 }
 
                 Section("Saved Tickers") {
-                    TextField("AAPL, MSFT, NVDA", text: $store.watchlistText, axis: .vertical)
+                    TextField("AAPL, MSFT, NVDA", text: $watchlistText, axis: .vertical)
                         .tickerAutocapitalized()
                         .autocorrectionDisabled()
                     Button {
-                        Task { await store.saveWatchlist() }
+                        Task { await store.saveWatchlist(watchlistText) }
                     } label: {
-                        Label("Save Through Command Gateway", systemImage: "checkmark.circle")
+                        if store.isSavingWatchlist {
+                            ProgressView()
+                        } else {
+                            Label("Save Watchlist", systemImage: "checkmark.circle")
+                        }
                     }
-                    .disabled(!store.signedIn)
+                    .disabled(!store.signedIn || store.isSavingWatchlist)
+                    if let notice = store.watchlistNotice {
+                        NoticeView(message: notice)
+                    }
                 }
 
                 Section("How It Works") {
@@ -514,37 +710,58 @@ struct WatchlistView: View {
             .scrollContentBackground(.hidden)
             .background(AppTheme.background)
             .navigationTitle("Watch")
+            .onAppear { initializeWatchlistIfNeeded() }
+            .onChange(of: store.watchlist) { _, _ in initializeWatchlistIfNeeded(force: true) }
         }
+    }
+
+    private func initializeWatchlistIfNeeded(force: Bool = false) {
+        let serverText = store.watchlist.joined(separator: ", ")
+        guard force || !hasInitializedWatchlist else { return }
+        if !hasInitializedWatchlist || watchlistText == lastLoadedWatchlistText {
+            watchlistText = serverText
+        }
+        lastLoadedWatchlistText = serverText
+        hasInitializedWatchlist = true
     }
 }
 
 struct DeliveryView: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @State private var deliveryMode: DeliveryMode = .sse
+    @State private var webhookURL = ""
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Create Delivery") {
-                    Picker("Mode", selection: $store.deliveryMode) {
+                    Picker("Mode", selection: $deliveryMode) {
                         ForEach(DeliveryMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
                         }
                     }
                     .pickerStyle(.segmented)
 
-                    if store.deliveryMode == .webhook {
-                        TextField("https://example.com/webhook", text: $store.webhookURL)
+                    if deliveryMode == .webhook {
+                        TextField("https://example.com/webhook", text: $webhookURL)
                             .urlKeyboard()
                             .neverAutocapitalized()
                             .autocorrectionDisabled()
                     }
 
                     Button {
-                        Task { await store.createDelivery() }
+                        Task { await store.createDelivery(mode: deliveryMode, webhookURL: webhookURL) }
                     } label: {
-                        Label("Create Delivery", systemImage: "paperplane")
+                        if store.isCreatingDelivery {
+                            ProgressView()
+                        } else {
+                            Label("Create Delivery", systemImage: "paperplane")
+                        }
                     }
-                    .disabled(!store.signedIn)
+                    .disabled(!store.signedIn || store.isCreatingDelivery)
+                    if let notice = store.deliveryNotice {
+                        NoticeView(message: notice)
+                    }
                 }
 
                 Section("Existing") {
@@ -556,6 +773,7 @@ struct DeliveryView: View {
                             SubscriptionRow(subscription: subscription) {
                                 Task { await store.toggleSubscription(subscription) }
                             }
+                            .disabled(store.subscriptionIDsInFlight.contains(subscription.id))
                         }
                     }
                 }
@@ -569,6 +787,10 @@ struct DeliveryView: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
+                .accessibilityLabel("Refresh deliveries")
+            }
+            .sheet(item: $store.pendingDeliveryCredential) { credential in
+                DeliveryCredentialView(credential: credential)
             }
         }
     }
@@ -605,6 +827,14 @@ struct CommandStatusView: View {
                     Task { await store.refreshSignedInState() }
                 } label: {
                     Image(systemName: "arrow.clockwise")
+                }
+                .accessibilityLabel("Refresh command status")
+            }
+            .safeAreaInset(edge: .bottom) {
+                if let notice = store.commandNotice {
+                    NoticeView(message: notice)
+                        .padding(.horizontal)
+                        .padding(.bottom, 8)
                 }
             }
         }
@@ -786,11 +1016,93 @@ struct NoticeView: View {
     }
 }
 
+struct FeedFreshnessView: View {
+    let isOffline: Bool
+    let lastRefresh: Date?
+    let notice: String?
+    let onRetry: () -> Void
+
+    var body: some View {
+        if isOffline || notice != nil || lastRefresh != nil {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Image(systemName: isOffline ? "wifi.slash" : "clock.arrow.circlepath")
+                    .foregroundStyle(isOffline ? .orange : .secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    if let notice {
+                        Text(notice)
+                            .font(.footnote)
+                    }
+                    if let lastRefresh {
+                        Text("Updated \(lastRefresh.formatted(.relative(presentation: .named)))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if notice != nil {
+                    Button("Retry", action: onRetry)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(AppTheme.border)
+        }
+    }
+}
+
+struct DeliveryCredentialView: View {
+    let credential: DeliveryCredential
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Label("Shown Once", systemImage: "exclamationmark.shield.fill")
+                        .foregroundStyle(.orange)
+                    Text("Save this credential now. Congress.Trade does not return the secret in later subscription lists.")
+                        .foregroundStyle(.secondary)
+                }
+                if let streamURL = credential.streamURL {
+                    Section("Stream URL") {
+                        Text(streamURL)
+                            .font(.footnote.monospaced())
+                            .textSelection(.enabled)
+                            .privacySensitive()
+                    }
+                }
+                if let secret = credential.secret {
+                    Section("Subscription Secret") {
+                        Text(secret)
+                            .font(.footnote.monospaced())
+                            .textSelection(.enabled)
+                            .privacySensitive()
+                    }
+                }
+                Section {
+                    ShareLink(item: credential.shareText) {
+                        Label("Share Securely", systemImage: "square.and.arrow.up")
+                    }
+                    .disabled(credential.shareText.isEmpty)
+                }
+            }
+            .navigationTitle("Delivery Credential")
+            .inlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: AppToolbarPlacement.trailing) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
 enum AppTheme {
-    static let background = Color(red: 0.04, green: 0.07, blue: 0.13)
-    static let panel = Color(red: 0.07, green: 0.12, blue: 0.21)
-    static let panelElevated = Color(red: 0.09, green: 0.16, blue: 0.28)
-    static let borderColor = Color(red: 0.15, green: 0.23, blue: 0.38)
+    static let background = Color(uiColor: .systemGroupedBackground)
+    static let panel = Color(uiColor: .secondarySystemGroupedBackground)
+    static let panelElevated = Color(uiColor: .tertiarySystemGroupedBackground)
+    static let borderColor = Color(uiColor: .separator)
 
     static var border: some View {
         RoundedRectangle(cornerRadius: 8)
@@ -798,42 +1110,79 @@ enum AppTheme {
     }
 }
 
+enum TradeSearch {
+    static func matches(_ trade: ClientTrade, normalizedNeedle: String) -> Bool {
+        [
+            trade.asset.ticker,
+            trade.asset.name,
+            trade.member.name,
+            trade.member.state,
+            trade.member.chamber
+        ].contains { ($0 ?? "").lowercased().contains(normalizedNeedle) }
+    }
+}
+
+@MainActor
+private enum DisplayFormatters {
+    static let inputDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    static let shortDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
+
+    static let longDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .long
+        formatter.timeStyle = .none
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
+
+    static let currency: NumberFormatter = {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.maximumFractionDigits = 0
+        return formatter
+    }()
+}
+
+@MainActor
 extension Optional where Wrapped == String {
     var shortDate: String {
         guard let self, !self.isEmpty else { return "Unavailable" }
-        return Self.format(self, style: .medium)
+        return Self.format(self, using: DisplayFormatters.shortDate)
     }
 
     var longDate: String {
         guard let self, !self.isEmpty else { return "Unavailable" }
-        return Self.format(self, style: .long)
+        return Self.format(self, using: DisplayFormatters.longDate)
     }
 
-    private static func format(_ value: String, style: DateFormatter.Style) -> String {
+    private static func format(_ value: String, using output: DateFormatter) -> String {
         let raw = String(value.prefix(10))
-        let input = DateFormatter()
-        input.calendar = Calendar(identifier: .gregorian)
-        input.locale = Locale(identifier: "en_US_POSIX")
-        input.timeZone = TimeZone(secondsFromGMT: 0)
-        input.dateFormat = "yyyy-MM-dd"
-        guard let date = input.date(from: raw) else { return value }
-        let output = DateFormatter()
-        output.dateStyle = style
-        output.timeStyle = .none
-        output.timeZone = TimeZone(secondsFromGMT: 0)
+        guard let date = DisplayFormatters.inputDate.date(from: raw) else { return value }
         return output.string(from: date)
     }
 }
 
+@MainActor
 extension ClientTrade {
     var amountLabel: String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.maximumFractionDigits = 0
         guard let min = transaction.amountMin else { return "Undisclosed" }
-        let low = formatter.string(from: NSNumber(value: min)) ?? "$\(min)"
+        let low = DisplayFormatters.currency.string(from: NSNumber(value: min)) ?? "$\(min)"
         guard let max = transaction.amountMax else { return "\(low)+" }
-        let high = formatter.string(from: NSNumber(value: max)) ?? "$\(max)"
+        let high = DisplayFormatters.currency.string(from: NSNumber(value: max)) ?? "$\(max)"
         return "\(low) - \(high)"
     }
 }

@@ -53,7 +53,39 @@ function userRow(id = 'user_1') {
   };
 }
 
-function makeEnv() {
+function feedRow(overrides: Partial<FeedTransactionRow> & { __chamber?: string } = {}): FeedTransactionRow {
+  return {
+    id: 'tx_default',
+    doc_id: 'H-default',
+    filer_id: 'P000197',
+    tx_date: '2026-05-05',
+    owner: 'self',
+    asset_name: 'Apple Inc.',
+    ticker: 'AAPL',
+    asset_type: 'ST',
+    tx_type: 'P',
+    amount_min: 15_001,
+    amount_max: 50_000,
+    is_option: 0,
+    cap_gains_over_200: 0,
+    raw_text: 'Apple trade',
+    confidence: 0.9,
+    source: 'primary',
+    row_key: 'default',
+    created_at: '2026-06-20T00:00:00.000Z',
+    cursor_seq: 1,
+    est_value: 32_500.5,
+    filer_full_name: 'Nancy Pelosi',
+    filer_state: 'CA',
+    filer_photo_url: null,
+    filing_filed_date: '2026-06-19',
+    filing_first_seen_at: '2026-06-20T00:00:00.000Z',
+    filing_source_url: 'https://example.com/default.pdf',
+    ...overrides,
+  };
+}
+
+function makeEnv(opts: { quotaRace?: boolean } = {}) {
   const kv = new Map<string, string>();
   const subscriptions = new Map<string, SubscriptionRow>();
   const commands = new Map<string, CommandRow>();
@@ -88,6 +120,18 @@ function makeEnv() {
     if (/t\.tx_type = \?/i.test(sql)) {
       const txType = String(params[i++]);
       rows = rows.filter((row) => row.tx_type === txType);
+    }
+    if (/COALESCE\(fl\.chamber, f\.chamber\) = \?/i.test(sql)) {
+      const chamber = String(params[i++]);
+      rows = rows.filter((row) => (row as FeedTransactionRow & { __chamber?: string }).__chamber === chamber);
+    }
+    if (/t\.amount_min >= \?/i.test(sql)) {
+      const minAmount = Number(params[i++]);
+      rows = rows.filter((row) => row.amount_min != null && row.amount_min >= minAmount);
+    }
+    if (/t\.amount_min <= \?/i.test(sql)) {
+      const maxAmount = Number(params[i++]);
+      rows = rows.filter((row) => row.amount_min != null && row.amount_min <= maxAmount);
     }
     if (/ORDER BY[^]*t\.cursor_seq DESC/i.test(sql)) {
       rows.sort((a, b) => Number(b.cursor_seq ?? 0) - Number(a.cursor_seq ?? 0));
@@ -153,6 +197,10 @@ function makeEnv() {
       }
       if (/FROM subscriptions WHERE id = \?/i.test(sql)) {
         return (subscriptions.get(String(this.params[0])) ?? null) as T | null;
+      }
+      if (/COUNT\(\*\) AS total/i.test(sql) && /FROM subscriptions WHERE client_id/i.test(sql)) {
+        const owned = Array.from(subscriptions.values()).filter((row) => row.client_id === this.params[0]);
+        return { total: owned.length, active: owned.filter((row) => row.active === 1).length } as T;
       }
       if (/FROM filers WHERE LOWER\(bioguide_id\) = LOWER\(\?\)/i.test(sql)) {
         const term = String(this.params[0]).toLowerCase();
@@ -247,6 +295,10 @@ function makeEnv() {
           active: active ? 1 : 0,
           created_at: String(createdAt),
         });
+      } else if (/UPDATE subscriptions SET active = \? WHERE id = \?/i.test(sql)) {
+        if (opts.quotaRace) throw new Error('D1_ERROR: subscription active quota exceeded');
+        const row = subscriptions.get(String(this.params[1]));
+        if (row) row.active = this.params[0] ? 1 : 0;
       }
       return { success: true, meta: { changes: 1 } };
     },
@@ -316,6 +368,31 @@ describe('client API routes', () => {
     const res = await app.request('http://localhost/me', { headers: { authorization: await bearer(env) } }, env);
     expect(res.status).toBe(200);
     expect(((await res.json()) as { user: { email: string } }).user.email).toBe('mobile@example.com');
+  });
+
+  it('serves latest-first server-filtered feed rows with estimated value', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push(
+      feedRow({ id: 'matching-old', cursor_seq: 10, __chamber: 'house' }),
+      feedRow({ id: 'matching-new', cursor_seq: 12, est_value: 40_000, __chamber: 'house' }),
+      feedRow({ id: 'wrong-chamber', cursor_seq: 13, __chamber: 'senate' }),
+      feedRow({ id: 'wrong-amount', cursor_seq: 14, amount_min: 50_001, amount_max: 100_000, __chamber: 'house' }),
+    );
+
+    const app = buildClientRouter();
+    const res = await app.request(
+      'http://localhost/feed?limit=30&sort=published&order=desc&ticker=AAPL&memberName=pelosi&chamber=house&minAmount=15001&maxAmount=50000',
+      {},
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: Array<{ id: string; transaction: { estValue: number | null } }>;
+      total: number;
+    };
+    expect(body.items.map((item) => item.id)).toEqual(['matching-new', 'matching-old']);
+    expect(body.items[0].transaction.estValue).toBe(40_000);
+    expect(body.total).toBe(2);
   });
 
   it('returns source document URLs in phone-shaped feed rows', async () => {
@@ -829,6 +906,73 @@ describe('client API routes', () => {
     expect(JSON.stringify(replayBody)).not.toContain(body.result.subscription.secret);
     expect(subscriptions.size).toBe(1);
     expect(commands.size).toBe(1);
+  });
+
+  it('enforces the same durable quota and bounded filters on client commands', async () => {
+    const { env, subscriptions } = makeEnv();
+    for (let i = 0; i < 20; i += 1) {
+      subscriptions.set(`sub_${i}`, {
+        id: `sub_${i}`, client_id: 'user:user_1', delivery: 'sse', target_url: null,
+        secret: `secret_${i}`, filters: '{}', cursor: 0, active: i < 10 ? 1 : 0,
+        created_at: '2026-01-01T00:00:00.000Z',
+      });
+    }
+    const app = buildClientRouter();
+    const auth = await bearer(env);
+    const limited = await app.request('http://localhost/commands', {
+      method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'create_subscription', payload: { delivery: 'sse', filters: {} } }),
+    }, env);
+    expect(limited.status).toBe(409);
+
+    subscriptions.clear();
+    const invalid = await app.request('http://localhost/commands', {
+      method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'create_subscription', payload: { delivery: 'sse', filters: { tickers: Array(51).fill('A') } } }),
+    }, env);
+    expect(invalid.status).toBe(400);
+  });
+
+  it('rejects oversized webhook targets in client create and update commands', async () => {
+    const { env, subscriptions } = makeEnv();
+    const app = buildClientRouter();
+    const auth = await bearer(env);
+    const oversized = `https://example.com/${'x'.repeat(2049)}`;
+    const create = await app.request('http://localhost/commands', {
+      method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'create_subscription', payload: { delivery: 'webhook', targetUrl: oversized, filters: {} } }),
+    }, env);
+    expect(create.status).toBe(400);
+
+    subscriptions.set('sub_webhook', {
+      id: 'sub_webhook', client_id: 'user:user_1', delivery: 'webhook', target_url: 'https://example.com/hook',
+      secret: 'secret', filters: '{}', cursor: 0, active: 1, created_at: '2026-01-01T00:00:00.000Z',
+    });
+    const update = await app.request('http://localhost/commands', {
+      method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'update_subscription', payload: { id: 'sub_webhook', targetUrl: oversized } }),
+    }, env);
+    expect(update.status).toBe(400);
+  });
+
+  it('returns 409 when the active-quota trigger wins a client update race', async () => {
+    const { env, subscriptions } = makeEnv({ quotaRace: true });
+    subscriptions.set('sub_inactive', {
+      id: 'sub_inactive', client_id: 'user:user_1', delivery: 'sse', target_url: null,
+      secret: 'secret', filters: '{}', cursor: 0, active: 0,
+      created_at: '2026-01-01T00:00:00.000Z',
+    });
+    const app = buildClientRouter();
+    const res = await app.request('http://localhost/commands', {
+      method: 'POST',
+      headers: { authorization: await bearer(env), 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'update_subscription',
+        payload: { id: 'sub_inactive', active: true },
+      }),
+    }, env);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain('active subscription limit');
   });
 
   it('rejects unsupported client command types with 501', async () => {
