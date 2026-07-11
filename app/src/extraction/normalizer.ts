@@ -591,17 +591,67 @@ async function routeToReview(
     transactions: flagged.map((f) => ({ ...f.tx, flags: f.flags })),
   });
 
-  await run(
-    env.DB,
-    `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved)
-       VALUES (?, ?, ?, ?, 0)
-     ON CONFLICT(doc_id) DO UPDATE SET
-       reason = excluded.reason,
-       payload = excluded.payload,
-       created_at = excluded.created_at,
-       resolved = 0`,
-    [filing.docId, reason, payload, nowIso],
-  );
+  const reviewParams = [filing.docId, reason, payload, nowIso] as const;
+  try {
+    await run(
+      env.DB,
+      `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved)
+         VALUES (?, ?, ?, ?, 0)
+       ON CONFLICT(doc_id) DO UPDATE SET
+         reason = excluded.reason,
+         payload = excluded.payload,
+         created_at = CASE
+           WHEN review_queue.resolved = 1 THEN excluded.created_at
+           ELSE review_queue.created_at
+         END,
+         resolved = 0,
+         agreement_attempted_at = CASE
+           WHEN review_queue.resolved = 1 THEN NULL
+           ELSE review_queue.agreement_attempted_at
+         END,
+         agreement_attempts = CASE
+           WHEN review_queue.resolved = 1 THEN 0
+           ELSE review_queue.agreement_attempts
+         END,
+         agreement_tier = CASE
+           WHEN review_queue.resolved = 1 THEN NULL
+           ELSE review_queue.agreement_tier
+         END,
+         agreement_next_attempt_at = CASE
+           WHEN review_queue.resolved = 1 THEN NULL
+           ELSE review_queue.agreement_next_attempt_at
+         END,
+         agreement_claim_token = CASE
+           WHEN review_queue.resolved = 1 THEN NULL
+           ELSE review_queue.agreement_claim_token
+         END,
+         agreement_claimed_at = CASE
+           WHEN review_queue.resolved = 1 THEN NULL
+           ELSE review_queue.agreement_claimed_at
+         END`,
+      [...reviewParams],
+    );
+  } catch (err) {
+    // Production deploys the Worker before POST /api/admin/migrate. Keep the
+    // reopen path functional during that short compatibility window; migration
+    // 0031 detects created_at > agreement_attempted_at and performs the missed
+    // reset once the additive columns exist.
+    if (!/no such column: agreement_|has no column named agreement_/i.test((err as Error).message)) throw err;
+    await run(
+      env.DB,
+      `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved)
+         VALUES (?, ?, ?, ?, 0)
+       ON CONFLICT(doc_id) DO UPDATE SET
+         reason = excluded.reason,
+         payload = excluded.payload,
+         created_at = CASE
+           WHEN review_queue.resolved = 1 THEN excluded.created_at
+           ELSE review_queue.created_at
+         END,
+         resolved = 0`,
+      [...reviewParams],
+    );
+  }
 
   await run(
     env.DB,

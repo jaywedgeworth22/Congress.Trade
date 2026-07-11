@@ -19,7 +19,7 @@ import { handleAgreementCheck } from '../agreement';
  */
 
 const row = (ticker: string, txType: string, amountRange: string | null) =>
-  JSON.stringify([{ ticker, assetName: `${ticker} Inc.`, txType, amountRange, confidence: 0.9 }]);
+  JSON.stringify([{ ticker, assetName: `${ticker} Inc.`, txDate: '2026-06-19', txType, amountRange, confidence: 0.9 }]);
 
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10);
@@ -51,6 +51,7 @@ function makeEnv(opts: {
 } = {}) {
   const cap: Captured = { inserted: [], attemptsBumped: [], sent: [], decisions: [] };
   const llmBudget = opts.llmBudget ?? new Map<string, number>();
+  const review = { resolved: 0, attempts: 0, tier: null as number | null, token: null as string | null, claimedAt: null as string | null, nextAttemptAt: null as string | null };
 
   const db = {
     prepare(sql: string) {
@@ -70,8 +71,15 @@ function makeEnv(opts: {
           if (/SELECT page_count, raw_bytes FROM filings/i.test(sql)) {
             return { page_count: null, raw_bytes: null } as T;
           }
-          if (/SELECT agreement_attempts FROM review_queue/i.test(sql)) {
-            return { agreement_attempts: 0 } as T;
+          if (/SELECT resolved, agreement_attempts, agreement_tier/i.test(sql)) {
+            return {
+              resolved: review.resolved,
+              agreement_attempts: review.attempts,
+              agreement_tier: review.tier,
+              agreement_next_attempt_at: review.nextAttemptAt,
+              agreement_claim_token: review.token,
+              agreement_claimed_at: review.claimedAt,
+            } as T;
           }
           return null as T | null;
         },
@@ -79,6 +87,47 @@ function makeEnv(opts: {
           return { results: [] as T[] };
         },
         async run() {
+          if (/SET agreement_attempts = \?,\s*agreement_tier = \?/i.test(sql)) {
+            const [nextAttempts, tier, , token, claimedAt, , expectedToken, observedAttempts, max] = this.params as [number, number, string, string, string, string, string, number, number];
+            if (review.resolved === 0 && review.token === expectedToken && review.attempts === observedAttempts && review.attempts < max) {
+              review.attempts = nextAttempts;
+              review.tier = tier;
+              review.token = token;
+              review.claimedAt = claimedAt;
+              cap.attemptsBumped.push(review.attempts);
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          }
+          if (/SET agreement_claim_token = \?, agreement_claimed_at = \?, agreement_next_attempt_at = NULL/i.test(sql)) {
+            const [token, claimedAt, , max] = this.params as [string, string, string, number];
+            if (review.resolved === 0 && review.attempts < max && review.token === null) {
+              review.token = token;
+              review.claimedAt = claimedAt;
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          }
+          if (/SET agreement_claim_token = \?, agreement_claimed_at = \?/i.test(sql)) {
+            const [token, claimedAt, , expected] = this.params as [string, string, string, string];
+            if (review.resolved === 0 && (review.token === expected || review.token === null)) {
+              review.token = token;
+              review.claimedAt = claimedAt;
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          }
+          if (/MAX\(COALESCE\(agreement_attempts, 0\) - 1, 0\)/i.test(sql)) {
+            const expected = String(this.params[this.params.length - 1]);
+            if (review.token === expected) {
+              review.attempts = Math.max(review.attempts - 1, 0);
+              review.nextAttemptAt = this.params[0] as string | null;
+              review.token = null;
+              review.claimedAt = null;
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          }
           if (/INSERT OR IGNORE INTO llm_budget/i.test(sql)) {
             const [day] = this.params as [string];
             const existed = llmBudget.has(day);
@@ -95,15 +144,26 @@ function makeEnv(opts: {
             return { success: true, meta: { changes: 0 } };
           }
           if (/INSERT (?:OR IGNORE )?INTO transactions/i.test(sql)) {
-            cap.inserted.push(this.params);
+            const guardToken = String(this.params[this.params.length - 1]);
+            if (review.resolved === 0 && review.token === guardToken) {
+              cap.inserted.push(this.params);
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
           } else if (/INSERT INTO ingestion_decisions/i.test(sql)) {
             const payloadRaw = this.params[6];
             cap.decisions.push({
               action: this.params[2], reason: this.params[5],
               payload: typeof payloadRaw === 'string' ? JSON.parse(payloadRaw) : null,
             });
-          } else if (/UPDATE review_queue SET agreement_attempts/i.test(sql)) {
-            cap.attemptsBumped.push(this.params[0] as number);
+          } else if (/SET resolved = 1,/i.test(sql)) {
+            const expectedToken = String(this.params[1]);
+            if (review.resolved === 0 && review.token === expectedToken) {
+              review.resolved = 1;
+              review.token = null;
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
           }
           return { success: true, meta: { changes: 1 } };
         },
@@ -122,7 +182,7 @@ function makeEnv(opts: {
     DELIVERY_QUEUE: { send: async () => {}, sendBatch: async () => {} },
     ...(opts.envVars ?? {}),
   } as never;
-  return { env, cap, llmBudget };
+  return { env, cap, llmBudget, review };
 }
 
 describe('agreement daily LLM budget guardrail', () => {
@@ -136,20 +196,21 @@ describe('agreement daily LLM budget guardrail', () => {
     expect(cap.inserted).toHaveLength(1); // tier-1 unanimous publish, unaffected
     expect(llmBudget.get(todayKey())).toBe(2); // A + B = 2 reads consumed
 
-    await handleAgreementCheck(env, 'H-2', 'raw/H-2');
+    const second = makeEnv({ llmBudget });
+    await handleAgreementCheck(second.env, 'H-2', 'raw/H-2');
     expect(llmBudget.get(todayKey())).toBe(4); // second doc consumes 2 more
   });
 
   it('defers at cap WITHOUT consuming an agreement attempt, escalating, or calling any model', async () => {
     const calls = stubUnanimous(row('AAPL', 'P', '$1,001 - $15,000'));
     const seeded = new Map([[todayKey(), 2]]); // already at the cap
-    const { env, cap } = makeEnv({ llmBudget: seeded, envVars: { AGREEMENT_DAILY_LLM_BUDGET: '2' } });
+    const { env, cap, review } = makeEnv({ llmBudget: seeded, envVars: { AGREEMENT_DAILY_LLM_BUDGET: '2' } });
 
     await handleAgreementCheck(env, 'H-3', 'raw/H-3');
 
     expect(calls).toHaveLength(0); // no candidate reads happened
     expect(cap.inserted).toHaveLength(0);
-    expect(cap.attemptsBumped).toHaveLength(0); // no agreement attempt spent
+    expect(review.attempts).toBe(0); // claim was rolled back; no agreement attempt spent
     expect(cap.sent).toHaveLength(0); // no tier-2 escalation enqueued
     expect(seeded.get(todayKey())).toBe(2); // counter untouched by the blocked attempt
     const receipt = cap.decisions.find((d) => d.reason === 'llm_budget_exhausted');

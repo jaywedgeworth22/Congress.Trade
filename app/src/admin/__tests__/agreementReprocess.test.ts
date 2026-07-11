@@ -11,8 +11,8 @@ import { buildAdminRouter } from '../routes';
 const app = buildAdminRouter();
 const AUTH = { Authorization: 'Bearer test-admin', 'content-type': 'application/json' };
 
-const ROW_AAPL = '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000","confidence":0.9}]';
-const ROW_MSFT = '[{"ticker":"MSFT","assetName":"Microsoft","txType":"S","amountRange":"$1,001 - $15,000","confidence":0.9}]';
+const ROW_AAPL = '[{"ticker":"AAPL","assetName":"Apple Inc.","txDate":"2026-06-19","txType":"P","amountRange":"$1,001 - $15,000","confidence":0.9}]';
+const ROW_MSFT = '[{"ticker":"MSFT","assetName":"Microsoft","txDate":"2026-06-19","txType":"S","amountRange":"$1,001 - $15,000","confidence":0.9}]';
 
 function makeEnv() {
   const insertedTx: unknown[][] = [];
@@ -39,7 +39,7 @@ function makeEnv() {
         async run() {
           if (/INSERT (?:OR IGNORE )?INTO transactions/i.test(sql)) insertedTx.push(this.params);
           else if (/UPDATE filings/i.test(sql)) filingUpdates.push(String(this.params[1] ?? this.params[0]));
-          else if (/UPDATE review_queue SET resolved/i.test(sql)) reviewResolved.push(String(this.params[0]));
+          else if (/UPDATE review_queue\s+SET resolved/i.test(sql)) reviewResolved.push(String(this.params[0]));
           return { success: true, meta: { changes: 1 } };
         },
       };

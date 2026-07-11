@@ -11,8 +11,8 @@ import { processAgreementDoc, type AgreementModels } from '../agreement';
  * filing/review writes.
  */
 
-const ROW_AAPL = '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000","confidence":0.9}]';
-const ROW_MSFT = '[{"ticker":"MSFT","assetName":"Microsoft","txType":"S","amountRange":"$1,001 - $15,000","confidence":0.9}]';
+const ROW_AAPL = '[{"ticker":"AAPL","assetName":"Apple Inc.","txDate":"2026-06-19","txType":"P","amountRange":"$1,001 - $15,000","confidence":0.9}]';
+const ROW_MSFT = '[{"ticker":"MSFT","assetName":"Microsoft","txDate":"2026-06-19","txType":"S","amountRange":"$1,001 - $15,000","confidence":0.9}]';
 
 interface ExtractionRunRow {
   id: string;
@@ -158,12 +158,70 @@ describe('processAgreementDoc extraction_runs persistence', () => {
     delete (env as Record<string, unknown>).MISTRAL_API_KEY;
     const modelsWithC: AgreementModels = { ...MODELS, c: { provider: 'mistral', model: 'mistral-ocr-latest' } };
     const res = await processAgreementDoc(env, modelsWithC, 'H-4', 'raw/H-4', true);
-    // mistral has no configured key in this env -> third candidate fails -> disagree.
-    expect(res.outcome).toBe('disagree');
+    // mistral has no configured key -> bounded retry classification, not a
+    // semantic disagreement that would immediately escalate/terminate.
+    expect(res).toMatchObject({ outcome: 'skipped', reason: 'model_read_failed' });
 
     expect(extractionRuns).toHaveLength(3);
     const mistralRun = extractionRuns.find((r) => r.provider === 'mistral');
     expect(mistralRun).toMatchObject({ kind: 'agreement', ok: 0, row_count: 0 });
     expect(mistralRun?.error).toMatch(/API key not configured/);
+  });
+
+  it('requires exact material fields, including amount and owner', async () => {
+    const differentAmount = ROW_AAPL.replace('$1,001 - $15,000', '$15,001 - $50,000');
+    stubProviders(ROW_AAPL, differentAmount);
+    const first = await processAgreementDoc(makeEnv().env, MODELS, 'H-5', 'raw/H-5', true);
+    expect(first.outcome).toBe('disagree');
+
+    const spouse = ROW_AAPL.replace('"confidence":0.9', '"owner":"spouse","confidence":0.9');
+    stubProviders(ROW_AAPL, spouse);
+    const second = await processAgreementDoc(makeEnv().env, MODELS, 'H-6', 'raw/H-6', true);
+    expect(second.outcome).toBe('disagree');
+  });
+
+  it('compares a multiset: 2-vs-1 fails while matching same-bracket duplicates pass', async () => {
+    const one = JSON.parse(ROW_AAPL) as unknown[];
+    const two = JSON.stringify([one[0], one[0]]);
+    stubProviders(two, ROW_AAPL);
+    expect((await processAgreementDoc(makeEnv().env, MODELS, 'H-7', 'raw/H-7', true)).outcome).toBe('disagree');
+
+    stubProviders(two, two);
+    expect(await processAgreementDoc(makeEnv().env, MODELS, 'H-8', 'raw/H-8', true)).toMatchObject({
+      outcome: 'would_publish', rowCount: 2,
+    });
+  });
+
+  it('rejects null, impossible, and future transaction dates', async () => {
+    for (const txDate of [null, '2026-02-31', '2099-01-01']) {
+      const payload = JSON.stringify([{
+        ticker: 'AAPL', assetName: 'Apple Inc.', txDate, txType: 'P',
+        amountRange: '$1,001 - $15,000', confidence: 0.9,
+      }]);
+      stubProviders(payload, payload);
+      const res = await processAgreementDoc(makeEnv().env, MODELS, `H-date-${String(txDate)}`, 'raw/x', true);
+      expect(res.outcome).toBe('disagree');
+    }
+  });
+
+  it('rejects a duplicate provider/model lineup before any candidate call', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const duplicate: AgreementModels = { a: MODELS.a, b: MODELS.a };
+    const res = await processAgreementDoc(makeEnv().env, duplicate, 'H-9', 'raw/H-9', true);
+    expect(res).toMatchObject({ outcome: 'skipped', reason: 'duplicate_model_lineup' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects two different models from the same provider', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const sameProvider: AgreementModels = {
+      a: { provider: 'openai', model: 'gpt-4o' },
+      b: { provider: 'openai', model: 'gpt-4.1' },
+    };
+    const res = await processAgreementDoc(makeEnv().env, sameProvider, 'H-10', 'raw/H-10', true);
+    expect(res).toMatchObject({ outcome: 'skipped', reason: 'duplicate_provider_lineup' });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

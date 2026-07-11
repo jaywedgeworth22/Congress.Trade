@@ -1,4 +1,4 @@
--- 0025_doc_complexity_signals.sql
+-- 0030_doc_complexity_signals.sql
 -- Document complexity signals for cascade tiering: raw byte length and (when
 -- cheaply available) page count of the source filing document. Both are
 -- nullable and populated best-effort by the extraction orchestrator; a NULL

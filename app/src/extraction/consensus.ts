@@ -5,15 +5,16 @@
  * extraction models. Given each model's ParsedTx[] (the row shape produced by
  * the bake-off's runCandidateOnDoc), this module aligns rows across models on
  * the shared stable row key (ticker|date|type — {@link arbitrationRowKey}) and
- * votes every field to a majority value, so a reviewer sees exactly where the
- * models agree and where they diverge.
+ * occurrence within that key, then votes every material field to a majority
+ * value so a reviewer sees exactly where the models agree and diverge.
  *
  * Voting contract:
- *   - Rows are matched across models by arbitrationRowKey; duplicate rows within
- *     ONE model are collapsed first (keep the highest-confidence copy).
- *   - Each field (txType, transactionDate, owner, assetName, ticker) is voted
- *     independently; AMOUNT is voted as the (amountMin, amountMax) BRACKET PAIR
- *     so a min from one model is never mixed with a max from another.
+ *   - Rows are matched across models by arbitrationRowKey + occurrence. Duplicate
+ *     lots are never collapsed: two disclosure rows with the same ticker/date/type
+ *     remain two independently reviewable rows.
+ *   - Each material field is voted independently; AMOUNT is voted as the
+ *     (amountMin, amountMax) BRACKET PAIR so a min from one model is never mixed
+ *     with a max from another.
  *   - A field needs a STRICT majority of the models that saw the row
  *     (votes * 2 > present) to reach a consensus value; anything short of that —
  *     a tie (1-1, 2-2) or a mere plurality — is contested with value = null.
@@ -42,6 +43,15 @@ export type ConsensusFieldName =
   | 'owner'
   | 'assetName'
   | 'ticker'
+  | 'assetType'
+  | 'assetTypeName'
+  | 'isOption'
+  | 'capGainsOver200'
+  | 'filingStatus'
+  | 'subholding'
+  | 'location'
+  | 'description'
+  | 'supplementalText'
   | 'amount';
 
 /** The amount bracket, voted as a single unit (never mix a min with a max). */
@@ -50,8 +60,8 @@ export interface AmountBracket {
   amountMax: number | null;
 }
 
-/** The value a model produced for a field: a string, an amount bracket, or null. */
-export type FieldValue = string | AmountBracket | null;
+/** The value a model produced for a field: scalar, amount bracket, or null. */
+export type FieldValue = string | boolean | AmountBracket | null;
 
 /** A single model's value for a field, when it differs from the winner. */
 export interface Dissenter {
@@ -80,7 +90,12 @@ export interface FieldConsensus {
 export type RowConsensus = 'unanimous' | 'majority' | 'contested';
 
 export interface ConsensusRow {
+  /** Unique display key. Duplicate lots use `${baseRowKey}#N`. */
   rowKey: string;
+  /** ticker-or-name|date|type key shared by every occurrence of this lot. */
+  baseRowKey: string;
+  /** One-based occurrence within baseRowKey, preserving source row order. */
+  occurrence: number;
   /** Model ids that produced this row, sorted. */
   presentIn: string[];
   /** Model ids that did NOT produce this row, sorted. */
@@ -110,6 +125,15 @@ const FIELD_NAMES: ConsensusFieldName[] = [
   'owner',
   'assetName',
   'ticker',
+  'assetType',
+  'assetTypeName',
+  'isOption',
+  'capGainsOver200',
+  'filingStatus',
+  'subholding',
+  'location',
+  'description',
+  'supplementalText',
   'amount',
 ];
 
@@ -131,6 +155,24 @@ function rawFieldValue(tx: ParsedTx, field: ConsensusFieldName): FieldValue {
       return tx.assetName;
     case 'ticker':
       return tx.ticker;
+    case 'assetType':
+      return tx.assetType;
+    case 'assetTypeName':
+      return tx.assetTypeName ?? null;
+    case 'isOption':
+      return tx.isOption;
+    case 'capGainsOver200':
+      return tx.capGainsOver200;
+    case 'filingStatus':
+      return tx.filingStatus ?? null;
+    case 'subholding':
+      return tx.subholding ?? null;
+    case 'location':
+      return tx.location ?? null;
+    case 'description':
+      return tx.description ?? null;
+    case 'supplementalText':
+      return tx.supplementalText ?? null;
     case 'amount':
       return { amountMin: tx.amountMin, amountMax: tx.amountMax };
   }
@@ -141,7 +183,8 @@ function fieldVoteKey(tx: ParsedTx, field: ConsensusFieldName): string {
   if (field === 'amount') {
     return `${tx.amountMin ?? ''}|${tx.amountMax ?? ''}`;
   }
-  return normStr(rawFieldValue(tx, field) as string | null);
+  const value = rawFieldValue(tx, field);
+  return typeof value === 'boolean' ? String(value) : normStr(value as string | null);
 }
 
 /** Stable ascending comparator for model-id strings. */
@@ -149,18 +192,14 @@ function byModel(a: { model: string }, b: { model: string }): number {
   return a.model < b.model ? -1 : a.model > b.model ? 1 : 0;
 }
 
-/**
- * Collapse duplicate rows within ONE model's output, keeping the
- * highest-confidence copy (ties keep the first seen). Returns rowKey -> row.
- */
-function dedupeRun(rows: ParsedTx[]): Map<string, ParsedTx> {
-  const byKey = new Map<string, ParsedTx>();
+/** Preserve every lot while grouping each model's rows by arbitration key. */
+function groupRunRows(rows: ParsedTx[]): Map<string, ParsedTx[]> {
+  const byKey = new Map<string, ParsedTx[]>();
   for (const tx of rows) {
     const key = arbitrationRowKey(tx);
-    const existing = byKey.get(key);
-    if (!existing || (tx.confidence ?? 0) > (existing.confidence ?? 0)) {
-      byKey.set(key, tx);
-    }
+    const group = byKey.get(key) ?? [];
+    group.push(tx);
+    byKey.set(key, group);
   }
   return byKey;
 }
@@ -233,9 +272,10 @@ export function buildConsensusRows(runs: ConsensusRun[]): ConsensusResult {
   const models = [...new Set(runs.map((r) => r.model))];
   const totalRuns = models.length;
 
-  // Per model: rowKey -> deduped row.
-  const perModel = new Map<string, Map<string, ParsedTx>>();
-  for (const run of runs) perModel.set(run.model, dedupeRun(run.rows));
+  // Per model: base row key -> every source-order occurrence. A later run with
+  // the same model id replaces the earlier run, but occurrences within it stay.
+  const perModel = new Map<string, Map<string, ParsedTx[]>>();
+  for (const run of runs) perModel.set(run.model, groupRunRows(run.rows));
 
   // Every row key seen by any model.
   const allKeys = new Set<string>();
@@ -257,50 +297,65 @@ export function buildConsensusRows(runs: ConsensusRun[]): ConsensusResult {
   let rowsMajority = 0;
   let rowsContested = 0;
 
-  for (const rowKey of [...allKeys].sort()) {
-    // Which models saw this row (iterate in runs order for stable bloc values).
-    const present: Array<{ model: string; tx: ParsedTx }> = [];
-    for (const model of models) {
-      const tx = perModel.get(model)!.get(rowKey);
-      if (tx) present.push({ model, tx });
-    }
-    const presentSet = new Set(present.map((p) => p.model));
-    const presentIn = present.map((p) => p.model).sort();
-    const missingFrom = models.filter((m) => !presentSet.has(m)).sort();
+  for (const baseRowKey of [...allKeys].sort()) {
+    const occurrenceCount = Math.max(
+      ...models.map((model) => perModel.get(model)!.get(baseRowKey)?.length ?? 0),
+    );
 
-    const fields = {} as Record<ConsensusFieldName, FieldConsensus>;
-    for (const field of FIELD_NAMES) {
-      const fc = voteField(present, field);
-      fields[field] = fc;
-      if (fc.total > 0) {
-        fieldAgreeSum[field] += fc.votes / fc.total;
-        fieldAgreeCount[field] += 1;
+    for (let occurrenceIndex = 0; occurrenceIndex < occurrenceCount; occurrenceIndex += 1) {
+      // Which models saw this occurrence (model input order preserves the raw
+      // display value selected for otherwise-equivalent vote keys).
+      const present: Array<{ model: string; tx: ParsedTx }> = [];
+      for (const model of models) {
+        const tx = perModel.get(model)!.get(baseRowKey)?.[occurrenceIndex];
+        if (tx) present.push({ model, tx });
       }
+      const presentSet = new Set(present.map((p) => p.model));
+      const presentIn = present.map((p) => p.model).sort();
+      const missingFrom = models.filter((m) => !presentSet.has(m)).sort();
+
+      const fields = {} as Record<ConsensusFieldName, FieldConsensus>;
+      for (const field of FIELD_NAMES) {
+        const fc = voteField(present, field);
+        fields[field] = fc;
+        if (fc.total > 0) {
+          fieldAgreeSum[field] += fc.votes / fc.total;
+          fieldAgreeCount[field] += 1;
+        }
+      }
+
+      // A row must be backed by a strict majority of models to be authoritative.
+      const majorityPresence = presentIn.length * 2 > totalRuns;
+      // Occurrence order is not a stable cross-model identity. If any model
+      // emitted more than one row for this ticker/date/type key, a reversed
+      // ordering could attach lot B's amount/details to lot A's source text.
+      // Keep every occurrence visible, but make the entire duplicate group
+      // fail closed for automatic editor substitution.
+      const ambiguousDuplicate = occurrenceCount > 1;
+      const allUnanimous = FIELD_NAMES.every((f) => fields[f].unanimous);
+      // votes*2 > total is the strict-majority test; independent of the value
+      // being null (a unanimous "no ticker" reading still has a majority).
+      const allHaveMajority = FIELD_NAMES.every((f) => fields[f].votes * 2 > fields[f].total);
+
+      let rowConsensus: RowConsensus;
+      if (!majorityPresence || ambiguousDuplicate) {
+        rowConsensus = 'contested';
+      } else if (presentIn.length === totalRuns && allUnanimous) {
+        rowConsensus = 'unanimous';
+      } else if (allHaveMajority) {
+        rowConsensus = 'majority';
+      } else {
+        rowConsensus = 'contested';
+      }
+
+      if (rowConsensus === 'unanimous') rowsUnanimous += 1;
+      else if (rowConsensus === 'majority') rowsMajority += 1;
+      else rowsContested += 1;
+
+      const occurrence = occurrenceIndex + 1;
+      const rowKey = occurrenceCount > 1 ? `${baseRowKey}#${occurrence}` : baseRowKey;
+      rows.push({ rowKey, baseRowKey, occurrence, presentIn, missingFrom, fields, rowConsensus });
     }
-
-    // A row must be backed by a strict majority of the models to be authoritative.
-    const majorityPresence = presentIn.length * 2 > totalRuns;
-    const allUnanimous = FIELD_NAMES.every((f) => fields[f].unanimous);
-    // votes*2 > total is the strict-majority test; independent of the value
-    // being null (a unanimous "no ticker" reading still has a majority).
-    const allHaveMajority = FIELD_NAMES.every((f) => fields[f].votes * 2 > fields[f].total);
-
-    let rowConsensus: RowConsensus;
-    if (!majorityPresence) {
-      rowConsensus = 'contested';
-    } else if (presentIn.length === totalRuns && allUnanimous) {
-      rowConsensus = 'unanimous';
-    } else if (allHaveMajority) {
-      rowConsensus = 'majority';
-    } else {
-      rowConsensus = 'contested';
-    }
-
-    if (rowConsensus === 'unanimous') rowsUnanimous += 1;
-    else if (rowConsensus === 'majority') rowsMajority += 1;
-    else rowsContested += 1;
-
-    rows.push({ rowKey, presentIn, missingFrom, fields, rowConsensus });
   }
 
   const perFieldAgreementPct = Object.fromEntries(

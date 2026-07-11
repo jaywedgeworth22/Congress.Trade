@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildAdminRouter } from '../routes';
+import { transactionRowKey } from '../../extraction/normalizer';
 
 const app = buildAdminRouter();
 
@@ -140,8 +141,10 @@ describe('review queue admin API', () => {
 
   it('unpublishes a persisted filing: soft-deletes rows, reverts, re-opens review', async () => {
     // fakeDb whose filing lookup resolves and whose UPDATE reports 3 retracted rows.
+    const preparedSql: string[] = [];
     const db = {
-      prepare() {
+      prepare(sql: string) {
+        preparedSql.push(sql);
         return {
           bind() {
             return this;
@@ -171,6 +174,51 @@ describe('review queue admin API', () => {
       reason: string;
     };
     expect(body).toMatchObject({ unpublished: true, deprecatedTransactions: 3, reason: 'bad parse' });
+    const reopenSql = preparedSql.find((sql) => /INSERT INTO review_queue/i.test(sql));
+    expect(reopenSql).toMatch(/agreement_attempted_at = NULL/i);
+    expect(reopenSql).toMatch(/agreement_attempts = 0/i);
+    expect(reopenSql).toMatch(/agreement_tier = NULL/i);
+    expect(reopenSql).toMatch(/agreement_next_attempt_at = NULL/i);
+    expect(reopenSql).toMatch(/agreement_claim_token = NULL/i);
+    expect(reopenSql).toMatch(/agreement_claimed_at = NULL/i);
+    expect(reopenSql).not.toMatch(/agreement_legacy_replay_at\s*=/i);
+  });
+
+  it('keeps unpublish available during deploy-before-migrate schema compatibility', async () => {
+    const reopenSql: string[] = [];
+    const db = {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return this;
+          },
+          async all<T>() {
+            return { results: [] as T[] };
+          },
+          async first<T>() {
+            return { ingest_status: 'persisted' } as T;
+          },
+          async run() {
+            if (/INSERT INTO review_queue/i.test(sql)) {
+              reopenSql.push(sql);
+              if (/agreement_claim_token/i.test(sql)) throw new Error('no such column: agreement_claim_token');
+            }
+            return { success: true, meta: { changes: 1 } };
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const res = await app.request(
+      '/review/H-legacy/unpublish',
+      { method: 'POST', headers: { Authorization: 'Bearer admin-secret' }, body: '' },
+      { ADMIN_TOKEN: 'admin-secret', DB: db } as never,
+    );
+
+    expect(res.status).toBe(200);
+    expect(reopenSql).toHaveLength(2);
+    expect(reopenSql[0]).toMatch(/agreement_claim_token/i);
+    expect(reopenSql[1]).not.toMatch(/agreement_claim_token/i);
   });
 
   it('unpublish 404s when the filing does not exist', async () => {
@@ -252,16 +300,60 @@ describe('review queue admin API', () => {
     expect(body.error).toContain('at least one explicit transaction edit');
   });
 
+  it('rejects fabricated/defaulted review fields and malformed booleans', async () => {
+    const db = {
+      prepare() {
+        return {
+          bind() { return this; },
+          async all<T>() { return { results: [] as T[] }; },
+          async first<T>() {
+            return {
+              doc_id: 'H-VALIDATE', resolved: 0, filer_id: 'P1', filed_date: '2026-06-20',
+            } as T;
+          },
+          async run() { return { success: true, meta: { changes: 1 } }; },
+        };
+      },
+    } as unknown as D1Database;
+    const base = {
+      ticker: 'AAPL', assetName: 'Apple Inc.', txType: 'P', txDate: '2026-06-19',
+      owner: null, isOption: false, capGainsOver200: false,
+    };
+    const invalid = [
+      { ...base, txType: undefined },
+      { ...base, txDate: undefined },
+      { ...base, owner: 'somebody' },
+      { ...base, isOption: 'false' },
+      { ...base, txDate: '2026-06-21' },
+    ];
+    for (const edit of invalid) {
+      const res = await app.request(
+        '/review/H-VALIDATE',
+        {
+          method: 'POST',
+          headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
+          body: JSON.stringify({ decision: 'confirm', edits: [edit] }),
+        },
+        { ADMIN_TOKEN: 'admin-secret', DB: db } as never,
+      );
+      expect(res.status).toBe(400);
+    }
+  });
+
   it("decision='manual' records hand-entered rows as source='manual'", async () => {
     // Capture the INSERT bind params so we can assert the source column = 'manual'.
     const binds: unknown[][] = [];
+    const transactionSql: string[] = [];
     const auditBinds: unknown[][] = [];
     const db = {
       prepare(sql: string) {
         return {
           _sql: sql,
           bind(...args: unknown[]) {
-            if (/INSERT OR IGNORE INTO transactions/.test(sql)) binds.push(args);
+            if (/INSERT OR IGNORE INTO transactions/.test(sql)) {
+              binds.push(args);
+              transactionSql.push(sql);
+            }
             if (/INSERT INTO ingestion_decisions/.test(sql)) auditBinds.push(args);
             return this;
           },
@@ -289,16 +381,64 @@ describe('review queue admin API', () => {
       {
         method: 'POST',
         headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
-        body: JSON.stringify({ decision: 'manual', edits: [{ ticker: 'AAPL', txType: 'P', amountMin: 1001, amountMax: 15000, txDate: '2026-06-01' }] }),
+        body: JSON.stringify({
+          decision: 'manual',
+          edits: [{
+            ticker: 'AAPL',
+            assetName: 'Apple Inc.',
+            assetType: 'ST',
+            assetTypeName: 'Stocks',
+            owner: 'self',
+            txType: 'P',
+            amountMin: 1001,
+            amountMax: 15000,
+            txDate: '2026-06-01',
+            rawText: 'Apple purchase',
+            filingStatus: 'New',
+            subholding: 'Brokerage IRA',
+            location: 'CA',
+            description: 'Common stock',
+            supplementalText: 'Corrected by reviewer',
+          }],
+        }),
       },
       env,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { decision: string; source: string; inserted: number };
     expect(body).toMatchObject({ decision: 'manual', source: 'manual', inserted: 1 });
-    // The transactions INSERT bound source='manual' (it's the 17th positional bind).
+    // Row-level filing details survive review confirmation and participate in
+    // the same stable row identity used by normal ingestion.
     expect(binds.length).toBe(1);
-    expect(binds[0]).toContain('manual');
+    expect(transactionSql[0]).toMatch(/filing_status, subholding, location,[\s\S]*description, supplemental_text/i);
+    const inserted = JSON.parse(String(binds[0][0])) as Array<Record<string, unknown>>;
+    expect(inserted[0]).toMatchObject({
+      filingStatus: 'New',
+      subholding: 'Brokerage IRA',
+      location: 'CA',
+      description: 'Common stock',
+      supplementalText: 'Corrected by reviewer',
+      source: 'manual',
+    });
+    expect(inserted[0].rowKey).toBe(transactionRowKey('manual', 0, {
+      txDate: '2026-06-01',
+      owner: 'self',
+      assetName: 'Apple Inc.',
+      ticker: 'AAPL',
+      assetType: 'ST',
+      assetTypeName: 'Stocks',
+      txType: 'P',
+      amountMin: 1001,
+      amountMax: 15000,
+      isOption: false,
+      capGainsOver200: false,
+      rawText: 'Apple purchase',
+      filingStatus: 'New',
+      subholding: 'Brokerage IRA',
+      location: 'CA',
+      description: 'Common stock',
+      supplementalText: 'Corrected by reviewer',
+    }));
     expect(auditBinds.length).toBe(1);
     expect(auditBinds[0]).toContain('manual');
     expect(auditBinds[0]).toContain('admin-token');

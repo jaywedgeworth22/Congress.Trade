@@ -26,7 +26,7 @@ const row = (
   txType: string,
   amountRange: string | null,
   extra: Record<string, unknown> = {},
-) => ({ ticker, assetName: `${ticker} Inc.`, txType, amountRange, confidence: 0.9, ...extra });
+) => ({ ticker, assetName: `${ticker} Inc.`, txDate: '2026-06-19', txType, amountRange, confidence: 0.9, ...extra });
 const asJson = (rows: unknown[]) => JSON.stringify(rows);
 
 const AB = '$1,001 - $15,000';
@@ -56,6 +56,14 @@ interface Captured {
 
 function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; priorAttempts?: number; maxAttempts?: string; env?: Record<string, unknown> } = {}) {
   const cap: Captured = { inserted: [], resolved: [], sent: [], reviewFlags: [], decisions: [] };
+  const review = {
+    resolved: 0,
+    attempts: opts.priorAttempts ?? 0,
+    tier: null as number | null,
+    nextAttemptAt: null as string | null,
+    claimToken: null as string | null,
+    claimedAt: null as string | null,
+  };
   const db = {
     prepare(sql: string) {
       return {
@@ -68,8 +76,18 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
           if (/SELECT page_count, raw_bytes FROM filings/i.test(sql)) {
             return { page_count: opts.pageCount ?? null, raw_bytes: opts.rawBytes ?? null } as T;
           }
-          if (/SELECT agreement_attempts FROM review_queue/i.test(sql)) {
-            return { agreement_attempts: opts.priorAttempts ?? 0 } as T;
+          if (/SELECT resolved, agreement_attempts, agreement_tier/i.test(sql)) {
+            return {
+              resolved: review.resolved,
+              agreement_attempts: review.attempts,
+              agreement_tier: review.tier,
+              agreement_next_attempt_at: review.nextAttemptAt,
+              agreement_claim_token: review.claimToken,
+              agreement_claimed_at: review.claimedAt,
+            } as T;
+          }
+          if (/SELECT payload FROM review_queue/i.test(sql)) {
+            return { payload: null } as T;
           }
           return null as T | null;
         },
@@ -77,7 +95,54 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
           return { results: [] as T[] };
         },
         async run() {
-          if (/INSERT (?:OR IGNORE )?INTO transactions/i.test(sql)) cap.inserted.push(this.params);
+          if (/SET agreement_attempts = \?,\s*agreement_tier = \?/i.test(sql)) {
+            const [nextAttempts, tier, , token, claimedAt, , expectedToken, observedAttempts, max] = this.params as [number, number, string, string, string, string, string, number, number];
+            if (review.resolved === 0 && review.claimToken === expectedToken && review.attempts === observedAttempts && review.attempts < max) {
+              review.attempts = nextAttempts;
+              review.tier = tier;
+              review.claimToken = token;
+              review.claimedAt = claimedAt;
+              review.nextAttemptAt = null;
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          }
+          if (/SET agreement_claimed_at = \?, agreement_next_attempt_at = NULL/i.test(sql)) {
+            const [claimedAt, , expectedToken, max] = this.params as [string, string, string, number];
+            if (review.resolved === 0 && review.claimToken === expectedToken && review.attempts < max) {
+              review.claimedAt = claimedAt;
+              review.nextAttemptAt = null;
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          }
+          if (/SET agreement_claim_token = \?, agreement_claimed_at = \?, agreement_next_attempt_at = NULL/i.test(sql)) {
+            const [token, claimedAt, , max] = this.params as [string, string, string, number];
+            if (review.resolved === 0 && review.attempts < max && review.claimToken === null) {
+              review.claimToken = token;
+              review.claimedAt = claimedAt;
+              review.nextAttemptAt = null;
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          }
+          if (/SET agreement_claim_token = \?, agreement_claimed_at = \?/i.test(sql)) {
+            const [token, claimedAt, , expected] = this.params as [string, string, string, string];
+            if (review.resolved === 0 && (review.claimToken === expected || review.claimToken === null)) {
+              review.claimToken = token;
+              review.claimedAt = claimedAt;
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          }
+          if (/INSERT (?:OR IGNORE )?INTO transactions/i.test(sql)) {
+            const guardToken = String(this.params[this.params.length - 1]);
+            if (review.resolved === 0 && review.claimToken === guardToken) {
+              cap.inserted.push(this.params);
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          }
           else if (/INSERT INTO ingestion_decisions/i.test(sql)) {
             // (id, doc_id, action, source, actor, reason, payload, transaction_ids, created_at)
             const payloadRaw = this.params[6];
@@ -85,8 +150,33 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
               action: this.params[2], source: this.params[3], reason: this.params[5],
               payload: typeof payloadRaw === 'string' ? JSON.parse(payloadRaw) : null,
             });
-          } else if (/UPDATE review_queue SET reason/i.test(sql)) cap.reviewFlags.push({ reason: this.params[0], payload: typeof this.params[1] === 'string' ? JSON.parse(this.params[1] as string) : this.params[1] });
-          else if (/UPDATE review_queue SET resolved/i.test(sql)) cap.resolved.push(String(this.params[0]));
+          } else if (/UPDATE review_queue SET reason/i.test(sql)) {
+            const expectedToken = this.params[3];
+            if (review.resolved === 0 && (expectedToken === undefined || expectedToken === review.claimToken)) {
+              cap.reviewFlags.push({ reason: this.params[0], payload: typeof this.params[1] === 'string' ? JSON.parse(this.params[1] as string) : this.params[1] });
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          } else if (/SET resolved = 1,/i.test(sql)) {
+            const [docId, expectedToken] = this.params as [string, string];
+            if (review.resolved === 0 && review.claimToken === expectedToken) {
+              review.resolved = 1;
+              review.claimToken = null;
+              review.claimedAt = null;
+              cap.resolved.push(docId);
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          } else if (/agreement_claim_token = NULL/i.test(sql)) {
+            const expectedToken = String(this.params[this.params.length - 1]);
+            if (review.claimToken === expectedToken) {
+              if (/agreement_attempts = MAX\(COALESCE/i.test(sql)) review.attempts = Math.max(review.attempts, Number(this.params[0]));
+              review.claimToken = null;
+              review.claimedAt = null;
+              return { success: true, meta: { changes: 1 } };
+            }
+            return { success: true, meta: { changes: 0 } };
+          }
           return { success: true, meta: { changes: 1 } };
         },
       };
@@ -106,7 +196,7 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
     DELIVERY_QUEUE: { send: async () => {}, sendBatch: async () => {} },
     ...(opts.env ?? {}),
   } as never;
-  return { env, cap };
+  return { env, cap, review };
 }
 
 const MODELS_C: AgreementModelsC = {
@@ -132,7 +222,12 @@ describe('agreement cascade — tier 1', () => {
     const { env, cap } = makeEnv();
     await handleAgreementCheck(env, 'H-2', 'raw/H-2');
     expect(cap.inserted).toHaveLength(0);
-    expect(cap.sent).toEqual([{ type: 'agreement.check', docId: 'H-2', rawObjectKey: 'raw/H-2', escalationTier: 2 }]);
+    expect(cap.sent).toEqual([
+      expect.objectContaining({
+        type: 'agreement.check', docId: 'H-2', rawObjectKey: 'raw/H-2', escalationTier: 2,
+        claimToken: expect.any(String),
+      }),
+    ]);
   });
 
   it('stops escalating and flags human review once AGREEMENT_MAX_ATTEMPTS is reached', async () => {
@@ -167,9 +262,14 @@ describe('agreement cascade — tier 2 / tier 3', () => {
     expect(decision?.payload).toMatchObject({ resolvedBy: 'agreement-cascade', tier: 2, unanimous: true });
   });
 
-  it('2-of-3 majority with type/date/amount majority publishes with a cascade audit (tier 3)', async () => {
-    // A+B agree on AAPL; C reads a different row (MSFT) → not unanimous → tier 3.
-    stub(asJson([row('AAPL', 'P', AB)]), asJson([row('AAPL', 'P', AB)]), asJson([row('MSFT', 'P', AB)]));
+  it('2-of-3 majority on every material field publishes with a cascade audit (tier 3)', async () => {
+    // Same row identity in all reads; C disagrees on owner, so exact tier-2
+    // unanimity fails and tier 3 resolves the 2-of-3 material-field majority.
+    stub(
+      asJson([row('AAPL', 'P', AB, { owner: 'self' })]),
+      asJson([row('AAPL', 'P', AB, { owner: 'self' })]),
+      asJson([row('AAPL', 'P', AB, { owner: 'spouse' })]),
+    );
     const { env, cap } = makeEnv();
     const res = await processAgreementCascadeTier2(env, MODELS_C, 'H-6', 'raw/H-6', false);
     expect(res).toMatchObject({ outcome: 'published', tier: 3 });
@@ -179,11 +279,23 @@ describe('agreement cascade — tier 2 / tier 3', () => {
     expect(decision?.payload?.votes).toBeTruthy(); // per-field vote summary present
   });
 
-  it('a majority row WITHOUT an amount-bracket majority does NOT publish (tier 3)', async () => {
-    // All three read AAPL (so it is majority-present) but each a different amount;
-    // A also reads an extra TSLA row to break the 3-way row-set unanimity.
+  it('does not drop a minority-only extra row', async () => {
     stub(
-      asJson([row('AAPL', 'P', AB), row('TSLA', 'P', AB)]),
+      asJson([row('AAPL', 'P', AB)]),
+      asJson([row('AAPL', 'P', AB)]),
+      asJson([row('AAPL', 'P', AB), row('MSFT', 'P', AB)]),
+    );
+    const { env, cap } = makeEnv();
+    const res = await processAgreementCascadeTier2(env, MODELS_C, 'H-minority-extra', 'raw/x', false);
+    expect(res).toMatchObject({ outcome: 'review_flagged', tier: 3 });
+    expect(String(res.reason)).toContain('minority_extra_row');
+    expect(cap.inserted).toHaveLength(0);
+  });
+
+  it('a majority row WITHOUT an amount-bracket majority does NOT publish (tier 3)', async () => {
+    // All three read AAPL but each a different amount.
+    stub(
+      asJson([row('AAPL', 'P', AB)]),
       asJson([row('AAPL', 'P', AB2)]),
       asJson([row('AAPL', 'P', AB3)]),
     );
@@ -217,8 +329,8 @@ describe('agreement cascade — tier 2 / tier 3', () => {
   });
 
   it('a hard-fail flag on the majority set blocks the publish (tier 3)', async () => {
-    // A+B agree on AAPL with a NULL amount (→ no_amount hard-fail); C reads MSFT.
-    stub(asJson([row('AAPL', 'P', null)]), asJson([row('AAPL', 'P', null)]), asJson([row('MSFT', 'P', AB)]));
+    // A+B agree on a NULL amount (→ no_amount hard-fail); C has a valid bracket.
+    stub(asJson([row('AAPL', 'P', null)]), asJson([row('AAPL', 'P', null)]), asJson([row('AAPL', 'P', AB)]));
     const { env, cap } = makeEnv();
     const res = await processAgreementCascadeTier2(env, MODELS_C, 'H-8', 'raw/H-8', false);
     expect(res.outcome).toBe('review_flagged');

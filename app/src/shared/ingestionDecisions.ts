@@ -8,6 +8,7 @@ export type IngestionDecisionAction =
   | 'manual'
   | 'rejected'
   | 'unpublished'
+  | 'auto_retry_requested'
   | 'agreement_published';
 
 export type IngestionDecisionSource = 'pipeline' | 'admin' | 'agreement';
