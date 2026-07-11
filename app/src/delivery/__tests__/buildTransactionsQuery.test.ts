@@ -263,6 +263,7 @@ describe('mapFeedTransaction', () => {
       is_option: 0,
       cap_gains_over_200: 0,
       raw_text: '',
+      est_value: 8000.5,
       confidence: 0.9,
       source: 'primary',
       created_at: '2024-01-03T00:00:00Z',
