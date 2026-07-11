@@ -49,7 +49,7 @@ truth; this file is the short operational snapshot for the current integration.
   consensus behavior. It additionally version-guards every human action,
   commits normalizer/agreement/human rows + filing state + delivery intent
   atomically, and materializes `est_value` through every transaction writer.
-- Combined post-#284 gate: typecheck + 104 files / 903 tests; lint 0 errors;
+- Combined post-#284/#264 gate: typecheck + 104 files / 908 tests; lint 0 errors;
   migration/admin-parity/readiness coverage through `0037`; and real D1 proof
   that a 223-row human confirmation commits every row and delivery intent while
   immediate outbox flushes remain below D1's bind-parameter ceiling. Fresh

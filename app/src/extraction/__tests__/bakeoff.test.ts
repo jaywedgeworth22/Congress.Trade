@@ -1,9 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import type { Env } from '../../shared/types';
 import {
   computeConsensusAgreement,
   extractXaiResponseText,
   parseLlamaParseMarkdown,
   parseMistralOcrResponse,
+  runCandidateOnDoc,
   summarizeModels,
   type BakeoffCandidate,
   type CandidateDocResult,
@@ -172,6 +174,63 @@ describe('parseLlamaParseMarkdown', () => {
 
   it('throws when no JSON array is found in the markdown', () => {
     expect(() => parseLlamaParseMarkdown('Plain text with no JSON at all.')).toThrow(/no JSON array/);
+  });
+});
+
+describe('runCandidateOnDoc (openai): token usage capture', () => {
+  const env = { OPENAI_API_KEY: 'sk-openai-test' } as unknown as Env;
+  const candidate: BakeoffCandidate = { provider: 'openai', model: 'gpt-4o' };
+  const bytes = new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
+  const okContent = '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}';
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('extracts promptTokens/completionTokens/cachedTokens from a usage field present in the response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ({
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { content: okContent } }],
+            usage: { prompt_tokens: 500, completion_tokens: 40, prompt_tokens_details: { cached_tokens: 100 } },
+          }),
+        }) as unknown as Response,
+      ),
+    );
+
+    const result = await runCandidateOnDoc(env, candidate, 'doc1', bytes);
+    expect(result.ok).toBe(true);
+    expect(result.usage).toEqual({ promptTokens: 500, completionTokens: 40, cachedTokens: 100 });
+  });
+
+  it('leaves usage undefined when the response omits the usage field (e.g. older models)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ({
+          ok: true,
+          json: async () => ({ choices: [{ message: { content: okContent } }] }),
+        }) as unknown as Response,
+      ),
+    );
+
+    const result = await runCandidateOnDoc(env, candidate, 'doc1', bytes);
+    expect(result.ok).toBe(true);
+    expect(result.usage).toBeUndefined();
+  });
+
+  it('leaves usage undefined on the API-failure error path', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ({ ok: false, status: 500, text: async () => 'server error' }) as unknown as Response,
+      ),
+    );
+
+    const result = await runCandidateOnDoc(env, candidate, 'doc1', bytes);
+    expect(result.ok).toBe(false);
+    expect(result.usage).toBeUndefined();
   });
 });
 

@@ -79,7 +79,7 @@ npm test -- --reporter=dot
 ```
 
 - Typecheck passed.
-- Combined post-#284 suite passed: 104 files / 903 tests; lint passed with 0
+- Combined post-#284/#264 suite passed: 104 files / 908 tests; lint passed with 0
   errors.
 - Real Miniflare D1 coverage passes for stale editor/normalizer races, double
   confirms, atomic reject/unpublish/retry/hold behavior, first-pass vs review
