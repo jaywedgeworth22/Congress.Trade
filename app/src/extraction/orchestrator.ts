@@ -18,6 +18,7 @@ import { get, run } from '../shared/db';
 import { buildExtractorPipeline, type ExtractorResult } from '../extractors/types';
 import { normalize } from './normalizer';
 import { enqueueAgreementCheck } from './agreement';
+import { reportAiUsage } from '../shared/telemetry';
 
 interface FilingRow {
   doc_id: string;
@@ -173,6 +174,17 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
   try {
     result = await extractor.extract({ filing, bytes, html });
   } catch (err) {
+    const cast = err as Error & { usage?: { promptTokens?: number; completionTokens?: number; cachedTokens?: number } };
+    if (cast.usage) {
+      // Fire-and-forget telemetry even on failed parses (tokens were consumed)
+      reportAiUsage(env, {
+        provider: 'gemini', // extractParsed primarily uses VisionLlmExtractor
+        model: cast.usage.promptTokens ? 'gemini-3.5-flash' : 'unknown', // fallback, actual model isn't on the error
+        component: 'orchestrator',
+        ...cast.usage,
+      }).catch(() => {});
+    }
+
     const detail = (err as Error).message;
     const message = isProviderRateLimit(err)
       ? `orchestrator: ${extractor.name} temporarily unavailable: provider quota/rate limit. Reprocess this filing later.`
@@ -184,6 +196,17 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
     // wrangler.toml) covers a longer provider quota window than a single
     // message attempt can.
     throw err;
+  }
+
+  if (result.usage && result.modelVersion) {
+    reportAiUsage(env, {
+      // orchestrator mainly runs Gemini (visionLlm), but we can infer provider
+      // broadly if we assume Gemini based on the pipeline.
+      provider: 'gemini',
+      model: result.modelVersion,
+      component: 'orchestrator',
+      ...result.usage,
+    }).catch(() => {});
   }
 
   // Complexity signal for cascade tiering: page count, when the extractor
