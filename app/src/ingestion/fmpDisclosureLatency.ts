@@ -847,6 +847,13 @@ async function runProviderProbe(
   // spending calls, reserving room for the full house+senate batch so the pair
   // never overshoots the cap; the free DB re-match below still runs so
   // already-observed rows keep resolving.
+  //
+  // To prevent overlapping probe invocations (e.g., a cron run plus an admin-
+  // forced probe) from both reading the same stale used-counter and jointly
+  // overshooting the cap, the budget is RESERVED upfront: we increment the
+  // counter before fetching and reconcile the difference in the finally block.
+  // This shrinks the race window from the duration of the full fetch (seconds)
+  // to the KV get+put pair (milliseconds).
   let capSkipped = false;
   if (isFmp) {
     const cap = await fmpDailyCap(env);
@@ -854,6 +861,9 @@ async function runProviderProbe(
     if (used + FMP_LATEST_CALLS_PER_RUN > cap) {
       capSkipped = true;
       errors.push(`FMP_DAILY_CALL_CAP reached (${used}/${cap}, need ${FMP_LATEST_CALLS_PER_RUN}); skipped latest fetch`);
+    } else {
+      // Reserve the budget for this run upfront.
+      await addDailyUsed(env, FMP_LATEST_CALLS_PER_RUN);
     }
   }
 
@@ -878,7 +888,11 @@ async function runProviderProbe(
     } catch (err) {
       errors.push((err as Error).message);
     } finally {
-      if (fmpCallsMade > 0) await addDailyUsed(env, fmpCallsMade);
+      // Return any budget that was reserved but not actually spent. Since calls
+      // are counted in the pacer wrapper above, fmpCallsMade is always ≤
+      // FMP_LATEST_CALLS_PER_RUN even on early-exit or partial-failure paths.
+      const overReserved = FMP_LATEST_CALLS_PER_RUN - fmpCallsMade;
+      if (overReserved > 0) await addDailyUsed(env, -overReserved);
     }
   }
 

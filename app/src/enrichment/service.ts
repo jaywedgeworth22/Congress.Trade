@@ -247,7 +247,13 @@ export async function runEnrichment(
   if (selectLimit <= 0) return result;
 
   const chain = buildEnrichmentChain(envx, hasFmp);
-  const hasKeyedProvider = chain.some((e) => e.name !== 'edgar');
+  // Only providers in KEYED_PROVIDER_SOURCE_MARKERS can fill display-critical
+  // fields (sector, country, market cap). Tiingo alone, for example, enriches
+  // name + exchange but never sector/market cap, so it must not enable keyed-
+  // retry mode: that would re-select the same newest tickers on every run
+  // because Tiingo's source marker is excluded from keyedSourceTriedSql,
+  // making the rows appear perpetually "not yet tried by a keyed provider."
+  const hasKeyedProvider = chain.some((e) => KEYED_PROVIDER_SOURCE_MARKERS.includes(e.name));
   const tickers = await selectTickersToEnrich(env, selectLimit, hasKeyedProvider);
   // Shared per-isolate FMP pacer, so a concurrent price refresh or disclosure
   // probe can't blow the per-minute cap by pacing only its own calls. Fall back
