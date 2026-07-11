@@ -198,6 +198,10 @@ function makeEnv() {
       if (/FROM subscriptions WHERE id = \?/i.test(sql)) {
         return (subscriptions.get(String(this.params[0])) ?? null) as T | null;
       }
+      if (/COUNT\(\*\) AS total/i.test(sql) && /FROM subscriptions WHERE client_id/i.test(sql)) {
+        const owned = Array.from(subscriptions.values()).filter((row) => row.client_id === this.params[0]);
+        return { total: owned.length, active: owned.filter((row) => row.active === 1).length } as T;
+      }
       if (/FROM filers WHERE LOWER\(bioguide_id\) = LOWER\(\?\)/i.test(sql)) {
         const term = String(this.params[0]).toLowerCase();
         const row = Array.from(filers.values()).find((filer) => filer.bioguide_id.toLowerCase() === term);
@@ -291,6 +295,10 @@ function makeEnv() {
           active: active ? 1 : 0,
           created_at: String(createdAt),
         });
+      } else if (/UPDATE subscriptions SET active = \? WHERE id = \?/i.test(sql)) {
+        if (opts.quotaRace) throw new Error('D1_ERROR: subscription active quota exceeded');
+        const row = subscriptions.get(String(this.params[1]));
+        if (row) row.active = this.params[0] ? 1 : 0;
       }
       return { success: true, meta: { changes: 1 } };
     },
@@ -898,6 +906,73 @@ describe('client API routes', () => {
     expect(JSON.stringify(replayBody)).not.toContain(body.result.subscription.secret);
     expect(subscriptions.size).toBe(1);
     expect(commands.size).toBe(1);
+  });
+
+  it('enforces the same durable quota and bounded filters on client commands', async () => {
+    const { env, subscriptions } = makeEnv();
+    for (let i = 0; i < 20; i += 1) {
+      subscriptions.set(`sub_${i}`, {
+        id: `sub_${i}`, client_id: 'user:user_1', delivery: 'sse', target_url: null,
+        secret: `secret_${i}`, filters: '{}', cursor: 0, active: i < 10 ? 1 : 0,
+        created_at: '2026-01-01T00:00:00.000Z',
+      });
+    }
+    const app = buildClientRouter();
+    const auth = await bearer(env);
+    const limited = await app.request('http://localhost/commands', {
+      method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'create_subscription', payload: { delivery: 'sse', filters: {} } }),
+    }, env);
+    expect(limited.status).toBe(409);
+
+    subscriptions.clear();
+    const invalid = await app.request('http://localhost/commands', {
+      method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'create_subscription', payload: { delivery: 'sse', filters: { tickers: Array(51).fill('A') } } }),
+    }, env);
+    expect(invalid.status).toBe(400);
+  });
+
+  it('rejects oversized webhook targets in client create and update commands', async () => {
+    const { env, subscriptions } = makeEnv();
+    const app = buildClientRouter();
+    const auth = await bearer(env);
+    const oversized = `https://example.com/${'x'.repeat(2049)}`;
+    const create = await app.request('http://localhost/commands', {
+      method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'create_subscription', payload: { delivery: 'webhook', targetUrl: oversized, filters: {} } }),
+    }, env);
+    expect(create.status).toBe(400);
+
+    subscriptions.set('sub_webhook', {
+      id: 'sub_webhook', client_id: 'user:user_1', delivery: 'webhook', target_url: 'https://example.com/hook',
+      secret: 'secret', filters: '{}', cursor: 0, active: 1, created_at: '2026-01-01T00:00:00.000Z',
+    });
+    const update = await app.request('http://localhost/commands', {
+      method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'update_subscription', payload: { id: 'sub_webhook', targetUrl: oversized } }),
+    }, env);
+    expect(update.status).toBe(400);
+  });
+
+  it('returns 409 when the active-quota trigger wins a client update race', async () => {
+    const { env, subscriptions } = makeEnv({ quotaRace: true });
+    subscriptions.set('sub_inactive', {
+      id: 'sub_inactive', client_id: 'user:user_1', delivery: 'sse', target_url: null,
+      secret: 'secret', filters: '{}', cursor: 0, active: 0,
+      created_at: '2026-01-01T00:00:00.000Z',
+    });
+    const app = buildClientRouter();
+    const res = await app.request('http://localhost/commands', {
+      method: 'POST',
+      headers: { authorization: await bearer(env), 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'update_subscription',
+        payload: { id: 'sub_inactive', active: true },
+      }),
+    }, env);
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain('active subscription limit');
   });
 
   it('rejects unsupported client command types with 501', async () => {

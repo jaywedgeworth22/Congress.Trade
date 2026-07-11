@@ -14,6 +14,7 @@ fi
 
 npm run typecheck
 npm test
+npx wrangler d1 migrations apply DB --remote --config "$CONFIG"
 npx wrangler deploy --config "$CONFIG"
 
 PREVIEW_BASE="${PREVIEW_APP_BASE_URL:-$(sed -nE 's/^[[:space:]]*APP_BASE_URL[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$CONFIG" | tail -1)}"

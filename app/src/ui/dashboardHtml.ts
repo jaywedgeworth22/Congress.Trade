@@ -11,7 +11,7 @@
  *                 EventSource('/api/stream?subscription=<id>')
  *   Review        GET /api/admin/review-queue
  *                 POST /api/admin/review/:docId  {decision}
- *   Subscriptions GET /api/admin/subscriptions, POST /api/subscriptions
+ *   Subscriptions GET/POST /api/admin/subscriptions
  *   Admin cadence GET/PUT /api/admin/poll-config
  *   Source health GET /api/admin/sources/health
  *
@@ -1390,7 +1390,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button class="btn sm" onclick="createSubscription()">+ New delivery</button>
         <div id="subsMsg" class="note subs-msg" aria-live="polite"></div>
       </div>
-      <p class="note">API HOOK: GET <code>/api/admin/subscriptions</code>; POST <code>/api/subscriptions</code></p>
+      <p class="note">API HOOK: GET/POST <code>/api/admin/subscriptions</code></p>
     </div>
   </section>
 
@@ -1485,7 +1485,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <span id="latencyResetMsg" class="note"></span>
       </div>
       <table>
-        <thead><tr><th>Source</th><th>Last Check</th><th>Last New Filing</th><th title="Watcher checks recorded in ingest_log, not filing count.">Checks</th><th title="Discovered filings summed from ingest_log.new_count.">New Filings</th><th title="Average seconds between the most recent 50 watcher checks for this source.">Avg Refresh (Observed)</th><th title="Official disclosure date → when our watcher first saw it. Approximate: the disclosure systems publish a date, not an exact release time. Reset Latency starts this average from the reset timestamp forward.">Released→Seen ≈</th><th title="When we first saw the filing → when we wrote its parsed rows. Precise (both are our timestamps). Reset Latency starts this average from the reset timestamp forward.">Seen→Imported</th></tr></thead>
+        <thead><tr><th>Source</th><th>Status</th><th>Last Check</th><th>Last New Filing</th><th title="Watcher checks recorded in ingest_log, not filing count.">Checks</th><th title="Discovered filings summed from ingest_log.new_count.">New Filings</th><th title="Average seconds between the most recent 50 watcher checks for this source.">Avg Refresh (Observed)</th><th title="Official disclosure date → when our watcher first saw it. Approximate: the disclosure systems publish a date, not an exact release time. Reset Latency starts this average from the reset timestamp forward.">Released→Seen ≈</th><th title="When we first saw the filing → when we wrote its parsed rows. Precise (both are our timestamps). Reset Latency starts this average from the reset timestamp forward.">Seen→Imported</th></tr></thead>
         <tbody id="healthBody"></tbody>
       </table>
     </div>
@@ -3357,15 +3357,15 @@ function renderSubs(subs) {
   }).join('');
 }
 function createSubscription() {
-  // API HOOK: POST /api/subscriptions
+  // API HOOK: POST /api/admin/subscriptions
   var clientId = el('newClientId').value.trim();
   var delivery = el('newDelivery').value;
   var targetUrl = el('newTarget').value.trim();
   if (!clientId) { el('subsMsg').textContent = 'clientId is required.'; return; }
   if (delivery === 'webhook' && !targetUrl) { el('subsMsg').textContent = 'webhook needs a target URL.'; return; }
   el('subsMsg').textContent = 'Creating…';
-  fetch('/api/subscriptions', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
+  fetch('/api/admin/subscriptions', {
+    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ clientId: clientId, delivery: delivery, targetUrl: targetUrl || null, filters: {} })
   })
     .then(function (r) {
@@ -3597,13 +3597,17 @@ function loadHealth() {
       var body = el('healthBody');
       var resetMsg = el('latencyResetMsg');
       if (resetMsg) resetMsg.textContent = data.latencyResetAt ? ('Latency reset: ' + dateTimeText(data.latencyResetAt)) : '';
-      if (sources.length === 0) { body.innerHTML = stateRow(8, 'No source check activity logged yet.'); return; }
+      if (sources.length === 0) { body.innerHTML = stateRow(9, 'No source check activity logged yet.'); return; }
       body.innerHTML = sources.map(function (s) {
         var avg = s.avgIntervalSec == null ? '—' : '~' + fmtDuration(s.avgIntervalSec);
         var rts = s.avgReleasedToSeenSec == null ? '—' : '~' + fmtDuration(s.avgReleasedToSeenSec);
         var sti = s.avgSeenToImportedSec == null ? '—' : fmtDuration(s.avgSeenToImportedSec);
+        var status = s.status || 'unknown';
+        if (s.stale && status === 'error') status += ' · stale';
+        var statusTitle = s.lastError || (s.stale ? ('No successful check within ' + fmtDuration(s.staleAfterSec || 0)) : '');
         return '<tr class="row">' +
           '<td>' + esc(chamberLabel(s.source)) + '</td>' +
+          '<td title="' + esc(statusTitle) + '">' + esc(status) + '</td>' +
           '<td class="muted">' + esc(dateTimeText(s.lastPolledAt)) + '</td>' +
           '<td class="muted">' + esc(dateTimeText(s.lastNewFilingAt)) + '</td>' +
           '<td class="muted">' + esc(s.pollCount != null ? s.pollCount : '—') + '</td>' +
@@ -3615,7 +3619,7 @@ function loadHealth() {
       }).join('');
     })
     .catch(function (e) {
-      el('healthBody').innerHTML = stateRow(8, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load source health: ' + e.message));
+      el('healthBody').innerHTML = stateRow(9, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load source health: ' + e.message));
     });
 }
 
@@ -5047,7 +5051,7 @@ applyTheme(document.documentElement.getAttribute('data-theme') === 'light' ? 'li
 el('feedBody').innerHTML = stateRow(visibleCols().length, 'Loading live feed…');
 el('reviewBody').innerHTML = stateRow(5, 'Loading…');
 el('subsBody').innerHTML = stateRow(5, 'Loading…');
-el('healthBody').innerHTML = stateRow(8, 'Loading…');
+el('healthBody').innerHTML = stateRow(9, 'Loading…');
 el('marketCoverage').innerHTML = '<div class="state">Loading market-data coverage…</div>';
 el('diagConnections').innerHTML = '<div class="state">Loading connection status…</div>';
 el('diagErrors').innerHTML = stateRow(4, 'Loading…');

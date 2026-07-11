@@ -363,7 +363,14 @@ export type QueueMessage =
   | { type: 'filing.extracted'; docId: string }
   | { type: 'tx.persisted'; txId: string; docId: string }
   | { type: 'agreement.check'; docId: string; rawObjectKey: string | null }
-  | { type: 'delivery.dispatch'; txId: string };
+  | {
+      type: 'delivery.dispatch';
+      txId: string;
+      /** Legacy targeted dispatch retained for already-enqueued messages. */
+      subscriptionId?: string;
+      /** Keyset cursor for one-page-per-message webhook fanout. */
+      afterSubscriptionId?: string;
+    };
 
 // ---------------------------------------------------------------------------
 // Worker environment bindings + secrets

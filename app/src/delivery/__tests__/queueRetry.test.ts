@@ -1,253 +1,304 @@
-/**
- * Regression coverage for delivery retry metadata flowing through the Worker
- * queue router. Retry messages must keep subscriptionId + attempt so a failed
- * webhook retry does not fan out to every subscriber again.
- */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-// Sentry's queue instrumentation requires AsyncLocalStorage which isn't
-// available in vitest. Mock Sentry APIs as pass-throughs so tests that call
-// worker.queue() directly don't crash on isolation-scope setup.
 vi.mock('@sentry/cloudflare', () => ({
   withSentry: (_opts: unknown, handler: unknown) => handler,
-  setTags: vi.fn(),
-  captureException: vi.fn(),
+  setTags: vi.fn(), captureException: vi.fn(),
   withMonitor: (_slug: string, callback: () => unknown) => callback(),
 }));
 
 import worker from '../../index';
+import { DeliveryRetryError, dispatchWebhook } from '../webhook';
 import type { Env, QueueMessage } from '../../shared/types';
-import { WEBHOOK_FETCH_TIMEOUT_MS } from '../webhook';
 
 const txRow = {
-  id: 'tx_1',
-  doc_id: 'doc_1',
-  filer_id: 'bio_1',
-  tx_date: '2026-06-20',
-  owner: 'self',
-  asset_name: 'Apple Inc.',
-  ticker: 'AAPL',
-  asset_type: 'stock',
-  tx_type: 'P',
-  amount_min: 1001,
-  amount_max: 15000,
-  is_option: 0,
-  cap_gains_over_200: 0,
-  raw_text: 'AAPL purchase',
-  confidence: 0.99,
-  source: 'primary',
-  created_at: '2026-06-20T00:00:00.000Z',
-  cursor_seq: 42,
+  id: 'tx_1', doc_id: 'doc_1', filer_id: 'bio_1', tx_date: '2026-06-20', owner: 'self',
+  asset_name: 'Apple Inc.', ticker: 'AAPL', asset_type: 'stock', tx_type: 'P',
+  amount_min: 1001, amount_max: 15000, is_option: 0, cap_gains_over_200: 0,
+  raw_text: 'AAPL purchase', confidence: 0.99, source: 'primary',
+  created_at: '2026-06-20T00:00:00.000Z', cursor_seq: 42,
 };
 
 const subRow = {
-  id: 'sub_retry',
-  client_id: 'client_1',
-  delivery: 'webhook',
-  target_url: 'https://example.com/hook',
-  secret: 'sub_secret',
-  filters: '{}',
-  cursor: 0,
-  active: 1,
-  created_at: '2026-06-20T00:00:00.000Z',
+  id: 'sub_retry', client_id: 'user:user_1', delivery: 'webhook',
+  target_url: 'https://hooks.example.test/trade', secret: 'sub_secret', filters: '{}',
+  cursor: 0, active: 1, created_at: '2026-06-20T00:00:00.000Z',
 };
 
-function fakeEnv(
-  deliveryStatus: 'failed' | 'delivered' | null = 'failed',
-  opts: { targetUrl?: string; env?: Partial<Env> } = {},
-) {
-  const sent: Array<{ body: unknown; options: unknown }> = [];
-  const prepares: string[] = [];
-  const runs: Array<{ sql: string; params: unknown[] }> = [];
-  const subscription = { ...subRow, target_url: opts.targetUrl ?? subRow.target_url };
-
-  const prepare = (sql: string) => {
-    prepares.push(sql);
-    return {
-      params: [] as unknown[],
-      bind(...params: unknown[]) {
-        this.params = params;
-        return this;
-      },
-      async first<T>() {
-        if (/FROM transactions WHERE id = \?/i.test(sql)) return txRow as T;
-        if (/SELECT chamber FROM filings WHERE doc_id = \?/i.test(sql)) {
-          return { chamber: 'house' } as T;
-        }
-        if (/FROM subscriptions WHERE id = \?/i.test(sql)) return subscription as T;
-        if (/FROM deliveries WHERE subscription_id = \? AND tx_id = \?/i.test(sql)) {
-          return deliveryStatus
-            ? ({ id: 'dlv_1', status: deliveryStatus, attempts: 2 } as T)
-            : (null as T | null);
-        }
-        return null as T | null;
-      },
-      async all<T>() {
-        if (/active = 1 AND delivery = 'webhook'/i.test(sql)) {
-          throw new Error('retry metadata was dropped and fan-out path was used');
-        }
-        return { results: [] as T[] };
-      },
-      async run() {
-        runs.push({ sql, params: this.params });
-        return { success: true };
-      },
-    };
-  };
-
-  const env = {
-    DB: { prepare } as unknown as D1Database,
-    DELIVERY_QUEUE: {
-      send: vi.fn(async (body: unknown, options: unknown) => {
-        sent.push({ body, options });
-      }),
-      sendBatch: vi.fn(async (msgs: any[]) => {
-        for (const m of msgs) sent.push({ body: m.body, options: undefined });
-      }),
-    },
-    WEBHOOK_SIGNING_KEY: 'fallback_secret',
-    ...opts.env,
-  } as unknown as Env;
-
-  return { env, sent, prepares, runs };
+interface DeliveryState {
+  id: string; status: string; attempts: number; updated_at: string;
+  lease_until: string | null; claim_token: string | null; last_error?: string | null;
 }
 
-describe('delivery queue retry routing', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
+function publicDnsAndTarget(status = 200) {
+  let targetCalls = 0;
+  let targetCancels = 0;
+  const deliveryAttempts: string[] = [];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith('https://cloudflare-dns.com/dns-query')) {
+      const type = new URL(url).searchParams.get('type');
+      return Response.json({ Status: 0, Answer: type === 'A' ? [{ type: 1, data: '93.184.216.34' }] : [] });
+    }
+    targetCalls += 1;
+    deliveryAttempts.push(new Headers(init?.headers).get('X-Delivery-Attempt') ?? '');
+    return new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new TextEncoder().encode(status === 200 ? 'ok' : 'nope')); },
+      cancel() { targetCancels += 1; },
+    }), { status });
+  });
+  return {
+    fetchMock,
+    targetCalls: () => targetCalls,
+    targetCancels: () => targetCancels,
+    deliveryAttempts: () => deliveryAttempts,
+  };
+}
+
+function fakeEnv(
+  initial: DeliveryState | null = null,
+  subscription = subRow,
+  opts: { completionFails?: boolean; outboxExists?: boolean } = {},
+) {
+  let delivery = initial ? { ...initial } : null;
+  const outboxExists = opts.outboxExists ?? true;
+  const runs: Array<{ sql: string; params: unknown[] }> = [];
+  const prepare = (sql: string) => ({
+    params: [] as unknown[],
+    bind(...params: unknown[]) { this.params = params; return this; },
+    async first<T>() {
+      if (/FROM transactions WHERE id = \?/i.test(sql)) return txRow as T;
+      if (/SELECT chamber FROM filings/i.test(sql)) return { chamber: 'house' } as T;
+      if (/FROM securities_ref/i.test(sql)) return { sector: 'Technology', market_cap_bucket: 'mega' } as T;
+      if (/FROM subscriptions/i.test(sql) && /WHERE id = \?/i.test(sql)) {
+        if (/active = 1/i.test(sql) && subscription.active !== 1) return null as T | null;
+        if (/delivery = 'webhook'/i.test(sql) && subscription.delivery !== 'webhook') return null as T | null;
+        return subscription as T;
+      }
+      if (/FROM deliveries WHERE subscription_id/i.test(sql)) return delivery as T | null;
+      return null as T | null;
+    },
+    async all<T>() {
+      if (/active = 1 AND delivery = 'webhook'/i.test(sql)) {
+        return { results: subscription.active === 1 && subscription.delivery === 'webhook' ? [subscription] as T[] : [] as T[] };
+      }
+      if (/FROM delivery_outbox/i.test(sql)) {
+        return {
+          results: outboxExists
+            ? [{ tx_id: 'tx_1', status: 'enqueued', attempts: 1, dead_letter_cycles: 0, available_at: '' }] as T[]
+            : [] as T[],
+        };
+      }
+      return { results: [] as T[] };
+    },
+    async run() {
+      runs.push({ sql, params: this.params });
+      if (/UPDATE delivery_outbox/i.test(sql) && /status = 'completed'/i.test(sql)) {
+        if (opts.completionFails) throw new Error('completion write unavailable');
+        return { success: true, meta: { changes: outboxExists ? 1 : 0 } };
+      }
+      if (/INSERT INTO deliveries/i.test(sql)) {
+        delivery = {
+          id: String(this.params[0]), status: 'sending', attempts: 1,
+          updated_at: String(this.params[3]), claim_token: String(this.params[4]),
+          lease_until: String(this.params[5]), last_error: null,
+        };
+        return { success: true, meta: { changes: 1 } };
+      }
+      if (/SET status = 'sending'/i.test(sql)) {
+        const matches = delivery && delivery.id === this.params[3] && delivery.status === this.params[4]
+          && delivery.attempts === this.params[5] && delivery.updated_at === this.params[6];
+        if (!matches) return { success: true, meta: { changes: 0 } };
+        const current = delivery as DeliveryState;
+        delivery = {
+          ...current, status: 'sending', attempts: current.attempts + 1,
+          claim_token: String(this.params[0]), lease_until: String(this.params[1]),
+          updated_at: String(this.params[2]), last_error: null,
+        };
+        return { success: true, meta: { changes: 1 } };
+      }
+      if (/SET claim_token = \?, lease_until = \?/i.test(sql)) {
+        const matches = delivery?.id === this.params[3] && delivery?.status === 'sending'
+          && delivery.attempts >= Number(this.params[4]) && delivery.claim_token === this.params[6];
+        if (!matches) return { success: true, meta: { changes: 0 } };
+        const current = delivery as DeliveryState;
+        delivery = {
+          ...current, claim_token: String(this.params[0]), lease_until: String(this.params[1]),
+          updated_at: String(this.params[2]), last_error: null,
+        };
+        return { success: true, meta: { changes: 1 } };
+      }
+      if (/SET status = 'failed'/i.test(sql)) {
+        const matches = delivery?.id === this.params[2] && delivery?.status === 'sending'
+          && delivery.attempts >= Number(this.params[3]) && delivery.claim_token === this.params[5];
+        if (!matches) return { success: true, meta: { changes: 0 } };
+        const current = delivery as DeliveryState;
+        delivery = {
+          ...current, status: 'failed', last_error: String(this.params[0]),
+          updated_at: String(this.params[1]), claim_token: null, lease_until: null,
+        };
+        return { success: true, meta: { changes: 1 } };
+      }
+      if (/SET status = \?, attempts = \?/i.test(sql)) {
+        const matches = delivery?.id === this.params[4] && delivery?.claim_token === this.params[5];
+        if (!matches) return { success: true, meta: { changes: 0 } };
+        const current = delivery as DeliveryState;
+        delivery = {
+          ...current, status: String(this.params[0]), attempts: Number(this.params[1]),
+          last_error: this.params[2] == null ? null : String(this.params[2]),
+          updated_at: String(this.params[3]), claim_token: null, lease_until: null,
+        };
+        return { success: true, meta: { changes: 1 } };
+      }
+      return { success: true, meta: { changes: 1 } };
+    },
+  });
+  const env = {
+    DB: { prepare } as unknown as D1Database,
+    DELIVERY_QUEUE: { send: vi.fn(), sendBatch: vi.fn() },
+    CONFIG_KV: { get: async () => null, put: async () => {}, delete: async () => {} },
+  } as unknown as Env;
+  return { env, runs, delivery: () => delivery };
+}
+
+async function queueOnce(env: Env, attempts = 1) {
+  const ack = vi.fn(); const retry = vi.fn();
+  const body = { type: 'delivery.dispatch', txId: 'tx_1' } as QueueMessage;
+  const batch = { queue: 'congress-feed-delivery', messages: [{ body, attempts, ack, retry }] } as unknown as MessageBatch<QueueMessage>;
+  await worker.queue(batch, env, {} as ExecutionContext);
+  return { ack, retry };
+}
+
+describe('native delivery retry and leases', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('uses native delayed retry and durable HTTP attempt count', async () => {
+    const { env, delivery } = fakeEnv();
+    const http = publicDnsAndTarget(503); vi.stubGlobal('fetch', http.fetchMock);
+    const { ack, retry } = await queueOnce(env);
+    expect(http.targetCalls()).toBe(1);
+    expect(http.targetCancels()).toBe(1);
+    expect(delivery()).toMatchObject({ status: 'failed', attempts: 1, last_error: 'HTTP 503' });
+    expect(retry).toHaveBeenCalledWith({ delaySeconds: expect.any(Number) });
+    expect(ack).not.toHaveBeenCalled();
+    expect(env.DELIVERY_QUEUE.send).not.toHaveBeenCalled();
   });
 
-  it('preserves subscriptionId and attempt through index.queue', async () => {
-    const { env, sent } = fakeEnv();
-    const fetchMock = vi.fn(async () => new Response('nope', { status: 500 }));
-    vi.stubGlobal('fetch', fetchMock);
+  it('does not consume an HTTP attempt while a crash lease is busy, then reclaims it stale', async () => {
+    const state: DeliveryState = {
+      id: 'dlv_1', status: 'sending', attempts: 2, updated_at: new Date().toISOString(),
+      lease_until: new Date(Date.now() + 60_000).toISOString(), claim_token: 'crashed',
+    };
+    const { env, delivery } = fakeEnv(state);
+    const http = publicDnsAndTarget(200); vi.stubGlobal('fetch', http.fetchMock);
+    const first = await queueOnce(env);
+    expect(first.retry).toHaveBeenCalledWith({ delaySeconds: expect.any(Number) });
+    expect(delivery()?.attempts).toBe(2);
+    expect(http.targetCalls()).toBe(0);
 
-    const ack = vi.fn();
-    const retry = vi.fn();
-    const body = {
-      type: 'delivery.dispatch',
-      txId: 'tx_1',
-      subscriptionId: 'sub_retry',
-      attempt: 3,
-    } as QueueMessage & { subscriptionId: string; attempt: number };
-    const batch = {
-      queue: 'congress-feed-delivery',
-      messages: [{ body, ack, retry }],
-    } as unknown as MessageBatch<QueueMessage>;
+    (delivery() as DeliveryState).lease_until = new Date(Date.now() - 1_000).toISOString();
+    const second = await queueOnce(env, 2);
+    expect(second.ack).toHaveBeenCalledOnce();
+    expect(delivery()).toMatchObject({ status: 'delivered', attempts: 3 });
+    expect(http.targetCalls()).toBe(1);
+    expect(http.targetCancels()).toBe(1);
+  });
 
-    await worker.queue(batch, env, {} as ExecutionContext);
+  it('does not ACK successful delivery until durable outbox completion succeeds', async () => {
+    const { env, runs } = fakeEnv(null, subRow, { completionFails: true });
+    const http = publicDnsAndTarget(200); vi.stubGlobal('fetch', http.fetchMock);
+    const { ack, retry } = await queueOnce(env);
+    expect(http.targetCalls()).toBe(1);
+    expect(runs.some((entry) => /UPDATE delivery_outbox/i.test(entry.sql))).toBe(true);
+    expect(ack).not.toHaveBeenCalled();
+    expect(retry).toHaveBeenCalledOnce();
+  });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
-    expect(init.redirect).toBe('manual');
-    expect(init.signal).toBeInstanceOf(AbortSignal);
-    expect(init.headers).toMatchObject({
-      'X-Subscription-Id': 'sub_retry',
-      'X-Delivery-Attempt': '3',
+  it('detects a missing legacy origin row before ACKing completed work', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { env, runs } = fakeEnv(null, subRow, { outboxExists: false });
+    const http = publicDnsAndTarget(200); vi.stubGlobal('fetch', http.fetchMock);
+    const { ack, retry } = await queueOnce(env);
+    expect(runs.some((entry) => /UPDATE delivery_outbox/i.test(entry.sql))).toBe(true);
+    expect(warn).toHaveBeenCalledWith('delivery outbox completion skipped: missing', 'tx_1');
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('CAS claim permits only one concurrent POST', async () => {
+    const state: DeliveryState = {
+      id: 'dlv_1', status: 'failed', attempts: 1,
+      updated_at: '2026-01-01T00:00:00.000Z', lease_until: null, claim_token: null,
+    };
+    const { env } = fakeEnv(state);
+    const http = publicDnsAndTarget(200); vi.stubGlobal('fetch', http.fetchMock);
+    const results = await Promise.allSettled([dispatchWebhook(env, 'tx_1'), dispatchWebhook(env, 'tx_1')]);
+    expect(http.targetCalls()).toBe(1);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')[0]).toMatchObject({
+      reason: expect.any(DeliveryRetryError),
     });
-    expect(sent).toHaveLength(1);
-    expect(sent[0].body).toMatchObject({
-      type: 'delivery.dispatch',
-      txId: 'tx_1',
-      subscriptionId: 'sub_retry',
-      attempt: 4,
-    });
-    expect(sent[0].options).toMatchObject({ delaySeconds: expect.any(Number) });
+  });
+
+  it('records the fifth HTTP failure and ACKs without another retry layer', async () => {
+    const state: DeliveryState = {
+      id: 'dlv_1', status: 'failed', attempts: 4,
+      updated_at: '2026-01-01T00:00:00.000Z', lease_until: null, claim_token: null,
+    };
+    const { env, delivery } = fakeEnv(state);
+    const http = publicDnsAndTarget(503); vi.stubGlobal('fetch', http.fetchMock);
+    const { ack, retry } = await queueOnce(env);
+    expect(delivery()).toMatchObject({ status: 'failed', attempts: 5 });
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
   });
 
-  it('skips webhook POST when delivery already succeeded', async () => {
-    const { env, sent } = fakeEnv('delivered');
-    const fetchMock = vi.fn(async () => new Response('ok', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const ack = vi.fn();
-    const retry = vi.fn();
-    const body = {
-      type: 'delivery.dispatch',
-      txId: 'tx_1',
-      subscriptionId: 'sub_retry',
-      attempt: 3,
-    } as QueueMessage & { subscriptionId: string; attempt: number };
-    const batch = {
-      queue: 'congress-feed-delivery',
-      messages: [{ body, ack, retry }],
-    } as unknown as MessageBatch<QueueMessage>;
-
-    await worker.queue(batch, env, {} as ExecutionContext);
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(sent).toHaveLength(0);
-    expect(ack).toHaveBeenCalledOnce();
-    expect(retry).not.toHaveBeenCalled();
-  });
-
-  it('does not POST to unsafe stored targets in production', async () => {
-    const { env, sent, runs } = fakeEnv(null, {
-      targetUrl: 'https://169.254.169.254/latest/meta-data',
-      env: { APP_BASE_URL: 'https://congress.trade' },
+  it('replays an expired final attempt with the same attempt number and no sixth POST', async () => {
+    const state: DeliveryState = {
+      id: 'dlv_1', status: 'sending', attempts: 5,
+      updated_at: '2026-01-01T00:00:00.000Z',
+      lease_until: '2026-01-01T00:01:00.000Z', claim_token: 'crashed-final',
+    };
+    const { env, delivery } = fakeEnv(state);
+    const http = publicDnsAndTarget(200); vi.stubGlobal('fetch', http.fetchMock);
+    const { ack, retry } = await queueOnce(env);
+    expect(http.targetCalls()).toBe(1);
+    expect(delivery()).toMatchObject({
+      status: 'delivered', attempts: 5, claim_token: null, lease_until: null,
     });
-    const fetchMock = vi.fn(async () => new Response('ok', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const ack = vi.fn();
-    const retry = vi.fn();
-    const body = {
-      type: 'delivery.dispatch',
-      txId: 'tx_1',
-      subscriptionId: 'sub_retry',
-      attempt: 1,
-    } as QueueMessage & { subscriptionId: string; attempt: number };
-    const batch = {
-      queue: 'congress-feed-delivery',
-      messages: [{ body, ack, retry }],
-    } as unknown as MessageBatch<QueueMessage>;
-
-    await worker.queue(batch, env, {} as ExecutionContext);
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(sent).toHaveLength(0);
-    expect(runs.some((run) => run.params.includes('failed'))).toBe(true);
-    expect(runs.some((run) => String(run.params[2]).includes('unsafe webhook target URL'))).toBe(true);
+    expect(http.deliveryAttempts()).toEqual(['5']);
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
   });
 
-  it('aborts slow webhook POSTs and schedules a retry', async () => {
-    vi.useFakeTimers();
-    const { env, sent, runs } = fakeEnv(null);
-    const fetchMock = vi.fn(
-      async (_url: string, init?: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => {
-            reject(new DOMException('aborted', 'AbortError'));
-          });
-        }),
-    );
-    vi.stubGlobal('fetch', fetchMock);
+  it('ACKs a legacy targeted message after opt-out without fetching', async () => {
+    const inactive = { ...subRow, active: 0 };
+    const { env } = fakeEnv(null, inactive);
+    const http = publicDnsAndTarget(200); vi.stubGlobal('fetch', http.fetchMock);
+    await dispatchWebhook(env, {
+      type: 'delivery.dispatch', txId: 'tx_1', subscriptionId: inactive.id,
+    });
+    expect(http.targetCalls()).toBe(0);
+  });
 
-    const ack = vi.fn();
-    const retry = vi.fn();
-    const body = {
-      type: 'delivery.dispatch',
-      txId: 'tx_1',
-      subscriptionId: 'sub_retry',
-      attempt: 1,
-    } as QueueMessage & { subscriptionId: string; attempt: number };
-    const batch = {
-      queue: 'congress-feed-delivery',
-      messages: [{ body, ack, retry }],
-    } as unknown as MessageBatch<QueueMessage>;
+  it('rejects a persisted public IP-literal target before outbound fetch', async () => {
+    const ipTarget = { ...subRow, target_url: 'https://93.184.216.34/hook' };
+    const { env, delivery } = fakeEnv(null, ipTarget);
+    const http = publicDnsAndTarget(200); vi.stubGlobal('fetch', http.fetchMock);
+    await expect(dispatchWebhook(env, 'tx_1')).rejects.toBeInstanceOf(DeliveryRetryError);
+    expect(http.targetCalls()).toBe(0);
+    expect(delivery()?.last_error).toContain('must use a hostname');
+  });
 
-    const queued = worker.queue(batch, env, {} as ExecutionContext);
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    await vi.advanceTimersByTimeAsync(WEBHOOK_FETCH_TIMEOUT_MS);
-    await queued;
-
-    expect(sent).toHaveLength(1);
-    expect(runs.some((run) => run.params.includes(`timeout after ${WEBHOOK_FETCH_TIMEOUT_MS}ms`))).toBe(true);
+  it('skips an already delivered row', async () => {
+    const state: DeliveryState = {
+      id: 'dlv_1', status: 'delivered', attempts: 1,
+      updated_at: '2026-01-01T00:00:00.000Z', lease_until: null, claim_token: null,
+    };
+    const { env } = fakeEnv(state);
+    const http = publicDnsAndTarget(200); vi.stubGlobal('fetch', http.fetchMock);
+    const { ack, retry } = await queueOnce(env);
+    expect(http.targetCalls()).toBe(0);
     expect(ack).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
   });

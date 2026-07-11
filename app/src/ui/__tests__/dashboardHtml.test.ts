@@ -72,6 +72,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('No alert deliveries yet. Create one below.');
     expect(DASHBOARD_HTML).not.toContain('>Subscriptions</button>');
     expect(DASHBOARD_HTML).not.toContain('<h3>Delivery Subscriptions</h3>');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/subscriptions', {");
+    expect(DASHBOARD_HTML).toContain("headers: adminHeaders({ 'content-type': 'application/json' })");
   });
 
   it('surfaces the GICS sector flow, market-cap, and performer analytics in Trends', () => {
@@ -508,5 +510,12 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function anchorChartRight(');
     expect(DASHBOARD_HTML).toContain('function trTimeParams(');
     expect(DASHBOARD_HTML).toContain('tc.scrollLeft = tc.scrollWidth');
+  });
+
+  it('surfaces source error and stale status instead of showing only successful polls', () => {
+    expect(DASHBOARD_HTML).toContain('<th>Status</th>');
+    expect(DASHBOARD_HTML).toContain('s.lastError');
+    expect(DASHBOARD_HTML).toContain('s.stale');
+    expect(DASHBOARD_HTML).toContain("stateRow(9, 'No source check activity logged yet.')");
   });
 });

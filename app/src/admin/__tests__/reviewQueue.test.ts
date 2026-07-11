@@ -289,7 +289,7 @@ describe('review queue admin API', () => {
       {
         method: 'POST',
         headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
-        body: JSON.stringify({ decision: 'manual', edits: [{ ticker: 'AAPL', txType: 'P', amountMin: 1001, amountMax: 15000, txDate: '2026-06-01' }] }),
+        body: JSON.stringify({ decision: 'manual', edits: [{ assetName: 'Apple Inc.', ticker: 'AAPL', txType: 'P', amountMin: 1001, amountMax: 15000, txDate: '2026-06-01' }] }),
       },
       env,
     );

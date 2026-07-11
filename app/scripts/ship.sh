@@ -34,7 +34,7 @@ usage() {
 Usage: ADMIN_TOKEN=... bash scripts/ship.sh [--enrich] [--backfill] [--house]
        bash scripts/ship.sh --deploy-only
 
-Default mode deploys, checks /api/health, then calls POST /api/admin/migrate.
+Default mode deploys, checks /health liveness, migrates, then checks /api/health readiness.
 Use --deploy-only only when intentionally skipping admin post-deploy steps.
 EOF
 }
@@ -98,12 +98,18 @@ check_api_health() {
   return 1
 }
 
+check_liveness() {
+  local base="$1"
+  curl -fsS -A "$UA" "$base/health" | grep -q '"ok":true'
+}
+
 echo "==> Deploying"
 npm run deploy
 
-echo "==> Live API health check"
-if check_api_health "$BASE/api/health" "$BASE"; then
-  : # health check passed on primary domain
+echo "==> Live Worker liveness check"
+ADMIN_BASE="$BASE"
+if check_liveness "$BASE"; then
+  :
 elif [ -n "$WORKERS_DEV_HOST" ]; then
   echo "   Primary health check failed. Retrying via workers.dev bypass: https://$WORKERS_DEV_HOST/api/health"
   if check_api_health "https://$WORKERS_DEV_HOST/api/health" "workers.dev"; then
@@ -114,7 +120,7 @@ elif [ -n "$WORKERS_DEV_HOST" ]; then
     exit 1
   fi
 else
-  echo "!! /api/health failed on $BASE. Set WORKERS_DEV_HOST to retry via workers.dev bypass." >&2
+  echo "!! /health failed on $BASE. Set WORKERS_DEV_HOST to retry via workers.dev bypass." >&2
   exit 1
 fi
 echo
@@ -127,13 +133,17 @@ post() { # $1 = admin path, $2 = json body (optional)
 }
 
 if [ "$DEPLOY_ONLY" = true ]; then
-  echo "==> Deploy-only mode: skipped /api/admin/migrate and other admin steps."
+  echo "==> Deploy-only mode: skipped /api/admin/migrate; verifying existing schema readiness."
+  check_api_health "$ADMIN_BASE/api/health" "$ADMIN_BASE"
   echo "==> Done."
   exit 0
 fi
 
 # Always ensure the schema is current (idempotent), via the Worker binding.
 post migrate
+
+echo "==> Live API readiness check"
+check_api_health "$ADMIN_BASE/api/health" "$ADMIN_BASE"
 
 for arg in "${ADMIN_STEPS[@]}"; do
   case "$arg" in

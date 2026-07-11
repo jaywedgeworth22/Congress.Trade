@@ -36,6 +36,8 @@ function fakeEnv(): { env: Env; sent: QueueMessage[]; seen: Set<string>; writes:
   const sent: QueueMessage[] = [];
   const seen = new Set<string>();
   const writes: unknown[][] = [];
+  const filingByDoc = new Map<string, { chamber: 'house' | 'senate'; sourceUrl: string }>();
+  const outbox = new Map<string, { doc_id: string; chamber: 'house' | 'senate'; source_url: string; status: string; attempts: number; available_at: string }>();
 
   const db = {
     prepare(sql: string) {
@@ -47,14 +49,40 @@ function fakeEnv(): { env: Env; sent: QueueMessage[]; seen: Set<string>; writes:
         },
         run() {
           writes.push(bound);
+          if (/INSERT OR IGNORE INTO ingestion_outbox/i.test(sql)) {
+            const docId = String(bound[3]);
+            const filing = filingByDoc.get(docId);
+            if (filing && !outbox.has(docId)) outbox.set(docId, {
+              doc_id: docId, chamber: filing.chamber, source_url: filing.sourceUrl,
+              status: 'pending', attempts: 0, available_at: String(bound[0]),
+            });
+            return Promise.resolve({ meta: { changes: filing ? 1 : 0 } } as unknown as D1Result);
+          }
+          if (/UPDATE ingestion_outbox/i.test(sql) && /status = 'enqueued'/i.test(sql)) {
+            const row = outbox.get(String(bound[2]));
+            if (row) { row.status = 'enqueued'; row.attempts += 1; }
+            return Promise.resolve({ meta: { changes: row ? 1 : 0 } } as unknown as D1Result);
+          }
           if (!/INSERT OR IGNORE INTO filings/i.test(sql)) {
             return Promise.resolve({ meta: { changes: 1 } } as unknown as D1Result);
           }
           // First bound param is doc_id in the crawler's filings INSERT.
           const docId = String(bound[0]);
           const isNew = !seen.has(docId);
-          if (isNew) seen.add(docId);
+          if (isNew) {
+            seen.add(docId);
+            filingByDoc.set(docId, {
+              chamber: String(bound[1]) as 'house' | 'senate', sourceUrl: String(bound[4]),
+            });
+          }
           return Promise.resolve({ meta: { changes: isNew ? 1 : 0 } } as unknown as D1Result);
+        },
+        all<T>() {
+          if (/FROM ingestion_outbox/i.test(sql)) {
+            const row = outbox.get(String(bound[0]));
+            return Promise.resolve({ results: row && row.status === 'pending' ? [row as T] : [] as T[] });
+          }
+          return Promise.resolve({ results: [] as T[] });
         },
       };
       return stmt as unknown as D1PreparedStatement;

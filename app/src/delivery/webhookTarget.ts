@@ -4,8 +4,9 @@ interface LocalEnv {
   USAGE_MONITOR_ENVIRONMENT?: string;
 }
 
-interface ValidateWebhookTargetOptions {
+export interface ValidateWebhookTargetOptions {
   allowLocalhost?: boolean;
+  fetchImpl?: typeof fetch;
 }
 
 type HostClassification = 'public' | 'loopback' | 'private';
@@ -14,15 +15,16 @@ export function localWebhookTargetsAllowed(
   env: Partial<LocalEnv>,
   requestUrl?: string,
 ): boolean {
-  if (env.ADMIN_OPEN_IN_DEV === 'true') return true;
+  // ADMIN_OPEN_IN_DEV controls admin authentication only; it must never turn a
+  // production-origin request into permission to target loopback services.
+  if (requestUrl && isLoopbackUrl(requestUrl)) return true;
   if (env.USAGE_MONITOR_ENVIRONMENT?.toLowerCase() === 'local') return true;
 
   const appBaseUrl = env.APP_BASE_URL?.trim();
   if (appBaseUrl) {
-    return isLoopbackUrl(appBaseUrl) && (!requestUrl || isLoopbackUrl(requestUrl));
+    return isLoopbackUrl(appBaseUrl) && !requestUrl;
   }
-
-  return requestUrl ? isLoopbackUrl(requestUrl) : false;
+  return false;
 }
 
 export function validateWebhookTargetUrl(
@@ -50,11 +52,66 @@ export function validateWebhookTargetUrl(
   if (hostClass === 'private') {
     return 'targetUrl cannot use private, link-local, or reserved addresses';
   }
+  // Workers fetch cannot reliably target raw IP-address URLs. Reject public
+  // literals too so an accepted subscription cannot deterministically exhaust
+  // every delivery. Explicit local development retains loopback support above.
+  if (isIpLiteral(url.hostname)) {
+    return 'targetUrl must use a hostname; IP-address URLs are not supported';
+  }
   if (url.protocol !== 'https:') {
     return 'targetUrl must use https:// outside localhost development';
   }
 
   return null;
+}
+
+interface DnsJsonResponse {
+  Status?: number;
+  Answer?: Array<{ type?: number; data?: string }>;
+}
+
+/**
+ * Resolve public hostnames through Cloudflare DNS before every persisted target
+ * change and immediately before delivery. The Workers compatibility flag is a
+ * second routing-level backstop against DNS rebinding between this check/fetch.
+ */
+export async function validatePublicWebhookTarget(
+  targetUrl: string | null,
+  opts: ValidateWebhookTargetOptions = {},
+): Promise<string | null> {
+  const literalError = validateWebhookTargetUrl(targetUrl, opts);
+  if (literalError) return literalError;
+  const url = new URL(targetUrl as string);
+  const hostClass = classifyHostname(url.hostname);
+  if (hostClass === 'loopback') return opts.allowLocalhost ? null : 'targetUrl cannot use localhost';
+  if (isIpLiteral(url.hostname)) return 'targetUrl must use a hostname; IP-address URLs are not supported';
+
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  try {
+    const answers: string[] = [];
+    for (const type of ['A', 'AAAA']) {
+      const endpoint = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(url.hostname)}&type=${type}`;
+      const response = await fetchImpl(endpoint, { headers: { accept: 'application/dns-json' } });
+      if (!response.ok) return 'webhook target DNS validation failed';
+      const body = await response.json() as DnsJsonResponse;
+      if (body.Status !== undefined && body.Status !== 0) continue;
+      for (const answer of body.Answer ?? []) {
+        if ((answer.type === 1 || answer.type === 28) && answer.data) answers.push(answer.data);
+      }
+    }
+    if (answers.length === 0) return 'webhook target did not resolve to a public address';
+    if (answers.some((answer) => classifyHostname(answer) !== 'public')) {
+      return 'webhook target resolved to a private, loopback, link-local, or reserved address';
+    }
+    return null;
+  } catch {
+    return 'webhook target DNS validation failed';
+  }
+}
+
+function isIpLiteral(hostname: string): boolean {
+  const host = normalizeHostname(hostname);
+  return parseIpv4(host) !== null || host.includes(':');
 }
 
 function isLoopbackUrl(value: string): boolean {
