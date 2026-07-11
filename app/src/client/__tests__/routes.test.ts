@@ -53,6 +53,38 @@ function userRow(id = 'user_1') {
   };
 }
 
+function feedRow(overrides: Partial<FeedTransactionRow> & { __chamber?: string } = {}): FeedTransactionRow {
+  return {
+    id: 'tx_default',
+    doc_id: 'H-default',
+    filer_id: 'P000197',
+    tx_date: '2026-05-05',
+    owner: 'self',
+    asset_name: 'Apple Inc.',
+    ticker: 'AAPL',
+    asset_type: 'ST',
+    tx_type: 'P',
+    amount_min: 15_001,
+    amount_max: 50_000,
+    is_option: 0,
+    cap_gains_over_200: 0,
+    raw_text: 'Apple trade',
+    confidence: 0.9,
+    source: 'primary',
+    row_key: 'default',
+    created_at: '2026-06-20T00:00:00.000Z',
+    cursor_seq: 1,
+    est_value: 32_500.5,
+    filer_full_name: 'Nancy Pelosi',
+    filer_state: 'CA',
+    filer_photo_url: null,
+    filing_filed_date: '2026-06-19',
+    filing_first_seen_at: '2026-06-20T00:00:00.000Z',
+    filing_source_url: 'https://example.com/default.pdf',
+    ...overrides,
+  };
+}
+
 function makeEnv() {
   const kv = new Map<string, string>();
   const subscriptions = new Map<string, SubscriptionRow>();
@@ -88,6 +120,18 @@ function makeEnv() {
     if (/t\.tx_type = \?/i.test(sql)) {
       const txType = String(params[i++]);
       rows = rows.filter((row) => row.tx_type === txType);
+    }
+    if (/COALESCE\(fl\.chamber, f\.chamber\) = \?/i.test(sql)) {
+      const chamber = String(params[i++]);
+      rows = rows.filter((row) => (row as FeedTransactionRow & { __chamber?: string }).__chamber === chamber);
+    }
+    if (/t\.amount_min >= \?/i.test(sql)) {
+      const minAmount = Number(params[i++]);
+      rows = rows.filter((row) => row.amount_min != null && row.amount_min >= minAmount);
+    }
+    if (/t\.amount_min <= \?/i.test(sql)) {
+      const maxAmount = Number(params[i++]);
+      rows = rows.filter((row) => row.amount_min != null && row.amount_min <= maxAmount);
     }
     if (/ORDER BY[^]*t\.cursor_seq DESC/i.test(sql)) {
       rows.sort((a, b) => Number(b.cursor_seq ?? 0) - Number(a.cursor_seq ?? 0));
@@ -316,6 +360,31 @@ describe('client API routes', () => {
     const res = await app.request('http://localhost/me', { headers: { authorization: await bearer(env) } }, env);
     expect(res.status).toBe(200);
     expect(((await res.json()) as { user: { email: string } }).user.email).toBe('mobile@example.com');
+  });
+
+  it('serves latest-first server-filtered feed rows with estimated value', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push(
+      feedRow({ id: 'matching-old', cursor_seq: 10, __chamber: 'house' }),
+      feedRow({ id: 'matching-new', cursor_seq: 12, est_value: 40_000, __chamber: 'house' }),
+      feedRow({ id: 'wrong-chamber', cursor_seq: 13, __chamber: 'senate' }),
+      feedRow({ id: 'wrong-amount', cursor_seq: 14, amount_min: 50_001, amount_max: 100_000, __chamber: 'house' }),
+    );
+
+    const app = buildClientRouter();
+    const res = await app.request(
+      'http://localhost/feed?limit=30&sort=published&order=desc&ticker=AAPL&memberName=pelosi&chamber=house&minAmount=15001&maxAmount=50000',
+      {},
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      items: Array<{ id: string; transaction: { estValue: number | null } }>;
+      total: number;
+    };
+    expect(body.items.map((item) => item.id)).toEqual(['matching-new', 'matching-old']);
+    expect(body.items[0].transaction.estValue).toBe(40_000);
+    expect(body.total).toBe(2);
   });
 
   it('returns source document URLs in phone-shaped feed rows', async () => {

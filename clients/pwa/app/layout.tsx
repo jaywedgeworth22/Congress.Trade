@@ -5,6 +5,10 @@ export const metadata: Metadata = {
   title: 'Congress.Trade',
   description: 'Phone-first congressional trade feed.',
   manifest: '/manifest.webmanifest',
+  icons: {
+    icon: '/icon.svg',
+    apple: '/icon.svg'
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
@@ -15,7 +19,6 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
   themeColor: '#08111f'
 };
 

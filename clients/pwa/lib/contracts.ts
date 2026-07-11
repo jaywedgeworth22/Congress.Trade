@@ -54,6 +54,19 @@ export type ClientFeedResponse = {
   nextPollAfterSec: number;
 };
 
+export type ClientPreferences = {
+  userId: string;
+  savedFilters: Record<string, unknown>;
+  watchlist: string[];
+  notificationSettings: Record<string, unknown>;
+  defaultWindow: string | null;
+  updatedAt: string;
+};
+
+export type ClientPreferencesResponse = {
+  preferences: ClientPreferences;
+};
+
 export type ClientCommandResponse = {
   command: {
     id: string;
@@ -66,6 +79,7 @@ export type ClientCommandResponse = {
       id: string;
       secret?: string;
       streamUrl?: string;
+      hasSecret?: boolean;
     };
   };
   replayed?: boolean;

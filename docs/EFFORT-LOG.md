@@ -209,6 +209,15 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   loading/error/offline state, cache limits, accessibility, formatter/search improvements, plus an
   XCTest target. `git diff --check`, generic Simulator build, and build-for-testing pass; executing
   XCTest still requires a concrete installed Simulator runtime. No deploy or production action.
+- **PWA release hardening + CI coverage (CODEX/VOLTA, L) — BUILT + REVIEWED LOCALLY
+  2026-07-11; INTEGRATION PENDING.** Branch `codex/pwa-release-hardening`. AG's corrected handoff
+  `c6201fb` was integrated as `6456cb8`; Codex added server-backed latest-first filters, runtime
+  `estValue`, saved-preference hydration/failure locking, auth-gated writes, UUID intent keys
+  retained for uncertain retries, one-time delivery credential handling, an accessible filter
+  dialog, same-origin docs, focused Vitest coverage, and a PWA CI audit/build gate. Verified: PWA
+  `npm audit` (0 vulnerabilities), typecheck, 9 tests, production build; app typecheck and 44
+  focused tests; desktop/mobile rendered QA with zero console errors; and `git diff --check`. No
+  push, preview, or production action.
 - **Adopt remaining shared-package duplicates (CURSOR, M) — started 2026-07-09.**
   Branch `cursor/shared-dep-adoption-9577`. Replaced local `shared/brackets.ts` + most of
   `extraction/tickerNormalize.ts` with shared re-exports; wired `marketCapBucket`,

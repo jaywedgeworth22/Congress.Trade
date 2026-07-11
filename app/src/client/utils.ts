@@ -61,6 +61,16 @@ export function asOrder(v: string | undefined): 'asc' | 'desc' | undefined {
   return v === 'desc' ? 'desc' : v === 'asc' ? 'asc' : undefined;
 }
 
+export function asSort(v: string | undefined): TxQueryParams['sort'] {
+  return v === 'published' ? 'published' : v === 'cursor' ? 'cursor' : undefined;
+}
+
+export function asNonNegativeNumber(v: string | undefined): number | undefined {
+  if (v === undefined || v === '') return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
 export function asDelivery(v: unknown): DeliveryChannel {
   if (v === 'sse' || v === undefined || v === null || v === '') return 'sse';
   if (v === 'webhook') return 'webhook';
@@ -148,10 +158,14 @@ export function filtersFromQuery(q: Record<string, string>): TxQueryParams {
     since: parseIntOrUndef(q.since),
     ticker: q.ticker || undefined,
     member: q.member || undefined,
+    memberName: q.memberName || undefined,
     chamber: asChamber(q.chamber),
     type: asTxType(q.type),
+    minAmount: asNonNegativeNumber(q.minAmount),
+    maxAmount: asNonNegativeNumber(q.maxAmount),
     txDateMin: q.from || q.txDateMin || undefined,
     txDateMax: q.to || q.txDateMax || undefined,
+    sort: asSort(q.sort),
     order: asOrder(q.order),
     limit: parseIntOrUndef(q.limit),
   };
@@ -164,6 +178,15 @@ export function clientLogoUrl(ticker: string | null): string | null {
 
 export function clientTradeFromRow(row: ClientTradeRow): ClientTrade {
   const tx = mapFeedTransaction(row);
+  const transaction = {
+    date: tx.txDate,
+    type: tx.txType,
+    owner: tx.owner,
+    amountMin: tx.amountMin,
+    amountMax: tx.amountMax,
+    estValue: row.est_value ?? null,
+    isOption: tx.isOption,
+  };
   return {
     id: tx.id,
     cursor: tx.cursorSeq,
@@ -183,14 +206,7 @@ export function clientTradeFromRow(row: ClientTradeRow): ClientTrade {
       sector: tx.refSector ?? null,
       marketCapBucket: tx.refMarketCapBucket ?? null,
     },
-    transaction: {
-      date: tx.txDate,
-      type: tx.txType,
-      owner: tx.owner,
-      amountMin: tx.amountMin,
-      amountMax: tx.amountMax,
-      isOption: tx.isOption,
-    },
+    transaction,
     filing: {
       filedDate: tx.filedDate ?? null,
       firstSeenAt: tx.firstSeenAt ?? null,
