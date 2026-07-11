@@ -52,6 +52,7 @@ export interface TransactionRow {
   row_key?: string | null;
   created_at: string | null;
   cursor_seq: number | null;
+  est_value: number | null;
 }
 
 /**

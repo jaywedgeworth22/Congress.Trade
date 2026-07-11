@@ -1,10 +1,11 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useMemo, useState } from 'react';
+import useSWR from 'swr';
 import type { BootstrapResponse, ClientCommandResponse, ClientFeedResponse } from '../../lib/contracts';
 import { apiGet, apiPost } from '../../lib/clientApi';
+import { TradeCard } from './TradeCard';
 
-type LoadState = 'loading' | 'ready' | 'error';
 type DeliveryMode = 'sse' | 'webhook';
 
 interface AmountBracket {
@@ -24,37 +25,6 @@ const AMOUNT_BRACKETS: AmountBracket[] = [
   { id: '1m-plus', label: '$1M+', min: 1000001, max: null }
 ];
 
-function fmtAmount(min: number | null, max: number | null) {
-  if (min == null && max == null) return 'Undisclosed';
-  const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-  return `${money.format(min ?? 0)} - ${max == null ? 'plus' : money.format(max)}`;
-}
-
-function shortDate(value: string | null) {
-  if (!value) return 'Unavailable';
-  const date = new Date(`${value.slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
-}
-
-function getLagDays(tradeDateStr: string | null, filedDateStr: string | null): number | null {
-  if (!tradeDateStr || !filedDateStr) return null;
-  const trade = new Date(tradeDateStr.slice(0, 10));
-  const filed = new Date(filedDateStr.slice(0, 10));
-  if (Number.isNaN(trade.getTime()) || Number.isNaN(filed.getTime())) return null;
-  const diffTime = filed.getTime() - trade.getTime();
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  return diffDays;
-}
-
-function getComplianceInfo(days: number | null) {
-  if (days === null) return { text: 'Unknown', className: 'compliance-unknown' };
-  if (days < 0) return { text: `${days} days (Early)`, className: 'compliance-green' };
-  if (days < 15) return { text: `${days} days`, className: 'compliance-green' };
-  if (days <= 45) return { text: `${days} days`, className: 'compliance-yellow' };
-  return { text: `${days} days`, className: 'compliance-red' };
-}
-
 function matchesBracket(min: number | null, max: number | null, bracket: AmountBracket) {
   if (min === null) return false;
   const bMin = bracket.min ?? 0;
@@ -62,10 +32,11 @@ function matchesBracket(min: number | null, max: number | null, bracket: AmountB
   return min >= bMin && (bracket.max === null || min <= bMax);
 }
 
+const fetcher = <T,>(url: string) => apiGet<T>(url);
+
 export default function Dashboard() {
-  const [state, setState] = useState<LoadState>('loading');
-  const [bootstrap, setBootstrap] = useState<BootstrapResponse | null>(null);
-  const [feed, setFeed] = useState<ClientFeedResponse | null>(null);
+  const { data: bootstrap, error: bootstrapError } = useSWR<BootstrapResponse>('/bootstrap', fetcher);
+  const { data: feed, error: feedError, mutate: refreshFeed, isLoading: isFeedLoading } = useSWR<ClientFeedResponse>('/feed?limit=30', fetcher, { refreshInterval: 15000 });
   
   // Filter panel states
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -78,26 +49,6 @@ export default function Dashboard() {
   const [delivery, setDelivery] = useState<DeliveryMode>('sse');
   const [targetUrl, setTargetUrl] = useState('');
   const [commandMessage, setCommandMessage] = useState('');
-
-  async function refresh() {
-    setState('loading');
-    try {
-      const [boot, rows] = await Promise.all([
-        apiGet<BootstrapResponse>('/bootstrap'),
-        apiGet<ClientFeedResponse>('/feed?limit=30')
-      ]);
-      setBootstrap(boot);
-      setFeed(rows);
-      setState('ready');
-    } catch (error) {
-      setCommandMessage(error instanceof Error ? error.message : 'Could not load.');
-      setState('error');
-    }
-  }
-
-  useEffect(() => {
-    void refresh();
-  }, []);
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
@@ -198,35 +149,44 @@ export default function Dashboard() {
   async function submitWatchlist(event: FormEvent) {
     event.preventDefault();
     const tickers = watchlist.split(',').map((t) => t.trim()).filter(Boolean);
-    const result = await apiPost<ClientCommandResponse>('/commands', {
-      type: 'update_preferences',
-      idempotencyKey: `prefs-${tickers.join('-').toUpperCase()}`,
-      payload: { watchlist: tickers }
-    });
-    setCommandMessage(`Preferences ${result.command.status}`);
+    try {
+      const result = await apiPost<ClientCommandResponse>('/commands', {
+        type: 'update_preferences',
+        idempotencyKey: `prefs-${tickers.join('-').toUpperCase()}`,
+        payload: { watchlist: tickers }
+      });
+      setCommandMessage(`Preferences ${result.command.status}`);
+    } catch (e) {
+      setCommandMessage(`Error: ${e instanceof Error ? e.message : 'Unknown'}`);
+    }
   }
 
   async function submitSubscription(event: FormEvent) {
     event.preventDefault();
-    const result = await apiPost<ClientCommandResponse>('/commands', {
-      type: 'create_subscription',
-      idempotencyKey: `sub-${delivery}-${targetUrl || 'local'}`,
-      payload: {
-        delivery,
-        targetUrl: delivery === 'webhook' ? targetUrl : null,
-        filters: { tickers: watchlist.split(',').map((t) => t.trim()).filter(Boolean) }
-      }
-    });
-    const subscription = result.result?.subscription;
-    setCommandMessage(
-      subscription?.streamUrl
-        ? `SSE ready: ${subscription.streamUrl}`
-        : `Subscription ${result.command.status}.`
-    );
+    try {
+      const result = await apiPost<ClientCommandResponse>('/commands', {
+        type: 'create_subscription',
+        idempotencyKey: `sub-${delivery}-${targetUrl || 'local'}`,
+        payload: {
+          delivery,
+          targetUrl: delivery === 'webhook' ? targetUrl : null,
+          filters: { tickers: watchlist.split(',').map((t) => t.trim()).filter(Boolean) }
+        }
+      });
+      const subscription = result.result?.subscription;
+      setCommandMessage(
+        subscription?.streamUrl
+          ? `SSE ready: ${subscription.streamUrl}`
+          : `Subscription ${result.command.status}.`
+      );
+    } catch (e) {
+      setCommandMessage(`Error: ${e instanceof Error ? e.message : 'Unknown'}`);
+    }
   }
 
   const user = bootstrap?.auth.user;
   const premium = bootstrap?.auth.entitlement.premium;
+  const isError = feedError || bootstrapError;
 
   return (
     <main className="app-shell">
@@ -235,7 +195,7 @@ export default function Dashboard() {
           <p className="eyebrow">Live Control Surface</p>
           <h1>Congress.Trade</h1>
         </div>
-        <button className="icon-button" onClick={() => void refresh()} aria-label="Refresh feed">↻</button>
+        <button className="icon-button" onClick={() => refreshFeed()} aria-label="Refresh feed">↻</button>
       </header>
 
       <section className="status-strip">
@@ -344,48 +304,13 @@ export default function Dashboard() {
         </div>
       ) : null}
 
-      {state === 'error' ? <p className="notice error">{commandMessage}</p> : null}
-      {commandMessage && state !== 'error' ? <p className="notice">{commandMessage}</p> : null}
+      {isError ? <p className="notice error">{isError instanceof Error ? isError.message : 'Error loading feed.'}</p> : null}
+      {commandMessage ? <p className="notice">{commandMessage}</p> : null}
 
       <section className="feed-list" id="feed" aria-label="Recent trades">
-        {state === 'loading' ? <div className="empty">Loading feed...</div> : null}
-        {state !== 'loading' && filtered.length === 0 ? <div className="empty">No matching trades.</div> : null}
-        {filtered.map((item) => {
-          const lag = getLagDays(item.transaction.date, item.filing.filedDate);
-          const compliance = getComplianceInfo(lag);
-
-          return (
-            <article className="trade-card" key={item.id}>
-              <div className="trade-card-head">
-                <div>
-                  <strong>{item.asset.ticker ?? 'Asset'}</strong>
-                  <span>{item.asset.name}</span>
-                </div>
-                <b className={item.transaction.type === 'S' ? 'sell' : 'buy'}>
-                  {item.transaction.type === 'S' ? 'Sale' : item.transaction.type === 'P' ? 'Purchase' : 'Exchange'}
-                </b>
-              </div>
-              <div className="trade-member">
-                <span>{item.member.name ?? 'Unknown Politician'}</span>
-                <small>{[item.member.chamber, item.member.state].filter(Boolean).join(' · ') || 'Congress'}</small>
-              </div>
-              <dl className="trade-grid">
-                <div><dt>Amount</dt><dd>{fmtAmount(item.transaction.amountMin, item.transaction.amountMax)}</dd></div>
-                <div><dt>Traded</dt><dd>{shortDate(item.transaction.date)}</dd></div>
-                <div><dt>Filed</dt><dd>{shortDate(item.filing.filedDate)}</dd></div>
-                <div>
-                  <dt>Reporting Lag</dt>
-                  <dd>
-                    <span className={`compliance-badge ${compliance.className}`}>
-                      {compliance.text}
-                    </span>
-                  </dd>
-                </div>
-                <div><dt>Source</dt><dd>{item.source === 'primary' ? 'Live' : 'Historical'}</dd></div>
-              </dl>
-            </article>
-          );
-        })}
+        {isFeedLoading && !feed ? <div className="empty">Loading feed...</div> : null}
+        {!isFeedLoading && filtered.length === 0 ? <div className="empty">No matching trades.</div> : null}
+        {filtered.map((item) => <TradeCard key={item.id} item={item} />)}
       </section>
 
       <section className="control-panel" id="controls">

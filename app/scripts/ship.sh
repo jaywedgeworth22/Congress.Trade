@@ -18,6 +18,7 @@ cd "$(dirname "$0")/.."
 
 BASE="${BASE:-https://congress.trade}"
 WORKERS_DEV_HOST="${WORKERS_DEV_HOST:-}"
+ADMIN_BASE="$BASE"
 DEPLOY_ONLY=false
 ADMIN_STEPS=()
 
@@ -105,7 +106,13 @@ if check_api_health "$BASE/api/health" "$BASE"; then
   : # health check passed on primary domain
 elif [ -n "$WORKERS_DEV_HOST" ]; then
   echo "   Primary health check failed. Retrying via workers.dev bypass: https://$WORKERS_DEV_HOST/api/health"
-  check_api_health "https://$WORKERS_DEV_HOST/api/health" "workers.dev"
+  if check_api_health "https://$WORKERS_DEV_HOST/api/health" "workers.dev"; then
+    ADMIN_BASE="https://$WORKERS_DEV_HOST"
+    echo "   Using workers.dev bypass for admin API calls."
+  else
+    echo "!! /api/health failed on workers.dev bypass as well." >&2
+    exit 1
+  fi
 else
   echo "!! /api/health failed on $BASE. Set WORKERS_DEV_HOST to retry via workers.dev bypass." >&2
   exit 1
@@ -114,7 +121,7 @@ echo
 
 post() { # $1 = admin path, $2 = json body (optional)
   echo "==> POST /api/admin/$1"
-  curl -fsS -A "$UA" -X POST "$BASE/api/admin/$1" \
+  curl -fsS -A "$UA" -X POST "$ADMIN_BASE/api/admin/$1" \
     -H "authorization: Bearer $ADMIN_TOKEN" \
     -H "content-type: application/json" -d "${2:-{}}" && echo
 }
