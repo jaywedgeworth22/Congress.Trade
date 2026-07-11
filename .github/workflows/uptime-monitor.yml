@@ -55,10 +55,11 @@ jobs:
             echo "status=ok" >> "$GITHUB_OUTPUT"
             echo "reason=ok" >> "$GITHUB_OUTPUT"
           fi
+          delimiter="$(openssl rand -hex 8)"
           {
-            echo "health_body<<EOF"
+            echo "health_body<<$delimiter"
             cat "$BODY"
-            echo "EOF"
+            echo "$delimiter"
           } >> "$GITHUB_OUTPUT"
 
       - name: Open issue on failure

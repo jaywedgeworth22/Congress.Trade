@@ -518,8 +518,8 @@ const INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
   tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
   raw_text, asset_type_name, filing_status, subholding, location, description,
   supplemental_text, row_key, confidence, source, created_at, cursor_seq,
-  first_seen_at, filed_date
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`;
+  first_seen_at, filed_date, est_value
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`;
 
 /** Insert each validated transaction. cursor_seq is assigned by the DB trigger. */
 export async function persistTransactions(env: Env, transactions: Transaction[]): Promise<string[]> {
@@ -554,6 +554,10 @@ export async function persistTransactions(env: Env, transactions: Transaction[])
       tx.createdAt,
       tx.firstSeenAt ?? null,
       tx.filedDate ?? null,
+      tx.amountMin === null && tx.amountMax === null ? 0 :
+        tx.amountMin === null ? tx.amountMax :
+        tx.amountMax === null ? tx.amountMin :
+        (tx.amountMin + tx.amountMax) / 2.0,
     ],
   ] as [string, any[]]);
 
