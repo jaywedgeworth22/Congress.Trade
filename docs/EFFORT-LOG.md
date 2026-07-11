@@ -12,12 +12,14 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 ## Deployed
 - **Whole-app improvement roadmap implementation (CODEX, XL) — IMPLEMENTATION COMPLETE LOCALLY +
   PREVIEWED 2026-07-11; PRODUCTION WORKER DEPLOYED 2026-07-11.** PR #284 merged as
-  `8a855cb`; canonical `app/scripts/ship.sh` deployed Worker version
+  `8a855cb`; canonical `app/scripts/ship.sh` deployed code-bearing Worker version
   `d1dcd17f-8724-40db-9980-6d4f7f6f88e3`, applied the idempotent schema through the Worker D1
   binding, and verified `https://congress.trade/api/health` with `ok/db/schema=true`. Production
   liveness, public UI, client bootstrap, security headers, authenticated diagnostics, both active
   DLQ consumers, and Infisical app/shared reads were verified. Main CI/security/pin/PWA checks are
-  green. No ingestion, queue drain, backfill, or billing activation ran; live billing capability
+  green. Later docs-only `main` pushes may create newer no-code Worker version IDs while preserving
+  the same app bundle; use Cloudflare's deployment list for the current ID. No ingestion, queue
+  drain, backfill, or billing activation ran; live billing capability
   remains explicitly unconfigured. PWA and iOS source is merged to `main`, but those prototypes have
   no configured production host/App Store target and are not falsely claimed as separately released.
 - **Codex autofix: migrate CI loop from Anthropic to DeepSeek (MONET, S)** — DEPLOYED
@@ -131,8 +133,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health, atomic publication/review receipts, schema readiness, and preview/production migration
   parity are in `codex/app-hardening-integration`. Final semantic review PASS; real SQLite coverage
   applies all migrations, compares the admin migration tail, runs readiness, and executes
-  idempotent transaction/cursor/estimate/outbox writes. Deployed in PR #284 / Worker
-  `d1dcd17f-8724-40db-9980-6d4f7f6f88e3`; tracked by the deployed program row above.
+  idempotent transaction/cursor/estimate/outbox writes. Deployed in PR #284; tracked by the deployed
+  program row above.
 - **Review Queue current drain + durable automation integration (CODEX, L) — IN PROGRESS 2026-07-11.** Owner-directed. Audit the live unresolved queue and provenance, verify rather than blind-resolve each class, integrate/review existing PR #257 without editing MONET's branch, close any scheduler/observability/retry gaps on `codex/review-queue-resolution`, run full gates serially, deploy an isolated preview, and report the separate current/preview/production states. KEEPOUT: preserve the dirty main checkout and MONET's review-automation worktree.
 - **Implement `est_value` column in transactions table (AG, S) — IN PROGRESS 2026-07-10.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
 - **Refactor client API routes (AG, M) — IN PROGRESS 2026-07-10.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
@@ -257,9 +259,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   existing payers when checkout configuration is incomplete. Verified: 79 test files / 714 tests,
   typecheck, coverage 64.11/56.61/69.46/65.92, lint 0 errors, `npm audit` 0 vulnerabilities, fresh
   migration through 0032, and `git diff --check`; the integrated 808-test gate and isolated preview
-  also pass. The hardened billing code is live in Worker
-  `d1dcd17f-8724-40db-9980-6d4f7f6f88e3`; checkout/portal capability remains unconfigured and no
-  billing activation was performed.
+  also pass. The hardened billing code is live in production; checkout/portal capability remains
+  unconfigured, and no billing activation was performed.
 - **Adopt remaining shared-package duplicates (CURSOR, M) — started 2026-07-09.**
   Branch `cursor/shared-dep-adoption-9577`. Replaced local `shared/brackets.ts` + most of
   `extraction/tickerNormalize.ts` with shared re-exports; wired `marketCapBucket`,
