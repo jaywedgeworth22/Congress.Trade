@@ -94,11 +94,27 @@ export class VisionLlmExtractor implements Extractor {
 
     const payload = (await res.json()) as GeminiResponse;
     const jsonText = extractCandidateText(payload);
+
+    const usage = payload.usageMetadata
+      ? {
+          promptTokens: payload.usageMetadata.promptTokenCount,
+          completionTokens: payload.usageMetadata.candidatesTokenCount,
+        }
+      : undefined;
+
     if (!jsonText) {
-      throw new Error(`${this.name}: Gemini returned no candidate text`);
+      throw Object.assign(
+        new Error(`${this.name}: Gemini returned no candidate text`),
+        { usage }
+      );
     }
 
-    const parsed = parseModelJson(jsonText);
+    let parsed;
+    try {
+      parsed = parseModelJson(jsonText);
+    } catch (err) {
+      throw Object.assign(err as Error, { usage });
+    }
     const rows = parsed.map(toParsedTx);
 
     // Document confidence = mean of per-row confidences (or floor when empty).
@@ -113,6 +129,7 @@ export class VisionLlmExtractor implements Extractor {
       raw: jsonText,
       extractor: this.name,
       modelVersion: this.model,
+      usage,
     };
   }
 }
@@ -355,6 +372,11 @@ interface GeminiResponse {
   candidates?: Array<{
     content?: { parts?: Array<{ text?: string }> };
   }>;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+  };
 }
 
 function extractCandidateText(payload: GeminiResponse): string | null {
