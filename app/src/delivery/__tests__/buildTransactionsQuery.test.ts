@@ -81,16 +81,20 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain('f.source_url AS filing_source_url');
   });
 
-  it('composes all filters in a stable param order (since, ticker, member/filer, type, chamber)', () => {
+  it('composes all filters in a stable param order', () => {
     const params: TxQueryParams = {
       since: 10,
       ticker: 'msft',
       member: 'M000001',
       type: 'P',
       chamber: 'house',
+      minAmount: 15_001,
+      maxAmount: 50_000,
     };
     const q = buildTransactionsQuery(params);
-    expect(q.params).toEqual([10, 'MSFT', 'M000001', 'P', 'house']);
+    expect(q.params).toEqual([10, 'MSFT', 'M000001', 'P', 'house', 15_001, 50_000]);
+    expect(q.sql).toContain('t.amount_min >= ?');
+    expect(q.sql).toContain('t.amount_min <= ?');
     // WHERE clauses AND-ed together.
     expect(q.sql).toContain(' AND ');
   });
@@ -290,6 +294,7 @@ describe('mapFeedTransaction', () => {
     // base transaction mapping still applies
     expect(tx.ticker).toBe('ACME');
     expect(tx.cursorSeq).toBe(5);
+    expect((tx as typeof tx & { estValue: number | null }).estValue).toBe(8000.5);
   });
 
   it('tolerates an unresolved filer (nulls pass through, never throws)', () => {

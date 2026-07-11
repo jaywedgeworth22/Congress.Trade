@@ -7,7 +7,7 @@
  */
 
 import type { BillingPlan, Env, User } from '../shared/types';
-import { get, run } from '../shared/db';
+import { batch, get, run } from '../shared/db';
 import { getUserById } from '../auth/users';
 import { resolveSecrets } from '../secrets/infisical';
 
@@ -22,8 +22,8 @@ export function planForPrice(env: Env, priceId: string | null | undefined): Bill
 export async function planForPriceAsync(env: Env, priceId: string | null | undefined): Promise<BillingPlan | null> {
   if (!priceId) return null;
   const prices = await resolveSecrets(env, ['STRIPE_PRICE_MONTHLY', 'STRIPE_PRICE_ANNUAL']);
-  if (priceId === (prices.STRIPE_PRICE_MONTHLY ?? env.STRIPE_PRICE_MONTHLY)) return 'monthly';
-  if (priceId === (prices.STRIPE_PRICE_ANNUAL ?? env.STRIPE_PRICE_ANNUAL)) return 'annual';
+  if (priceId === prices.STRIPE_PRICE_MONTHLY) return 'monthly';
+  if (priceId === prices.STRIPE_PRICE_ANNUAL) return 'annual';
   return null;
 }
 
@@ -38,6 +38,15 @@ export interface ParsedSubscription {
   trialEnd: string | null;
   /** `subscription_data.metadata.userId` set at checkout, if present. */
   metadataUserId: string | null;
+}
+
+export interface StripeSubscriptionEventOrder {
+  id: string;
+  created: number;
+  type:
+    | 'customer.subscription.created'
+    | 'customer.subscription.updated'
+    | 'customer.subscription.deleted';
 }
 
 interface RawStripeSubscription {
@@ -85,32 +94,99 @@ export async function getUserByStripeCustomerId(env: Env, customerId: string): P
   return row ? getUserById(env, row.id) : null;
 }
 
-/** Persist the customer<->user link (idempotent; only sets when changed). */
+/** Persist a customer<->user link without replacing an existing customer. */
 export async function linkCustomerToUser(
   env: Env,
   userId: string,
   customerId: string,
-): Promise<void> {
-  await run(env.DB, 'UPDATE users SET stripe_customer_id = ? WHERE id = ?', [customerId, userId]);
+): Promise<boolean> {
+  const result = await run(
+    env.DB,
+    `UPDATE users
+        SET stripe_customer_id = ?
+      WHERE id = ?
+        AND (stripe_customer_id IS NULL OR stripe_customer_id = ?)`,
+    [customerId, userId, customerId],
+  );
+  return (result.meta?.changes ?? 0) > 0;
+}
+
+function eventPriority(type: StripeSubscriptionEventOrder['type']): number {
+  if (type === 'customer.subscription.deleted') return 3;
+  if (type === 'customer.subscription.updated') return 2;
+  return 1;
+}
+
+const RECORD_EVENT_SQL = `INSERT INTO stripe_subscription_event_state (
+    subscription_id, customer_id, last_event_created, last_event_priority,
+    last_event_id, last_event_type, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(subscription_id) DO UPDATE SET
+    customer_id = excluded.customer_id,
+    last_event_created = excluded.last_event_created,
+    last_event_priority = excluded.last_event_priority,
+    last_event_id = excluded.last_event_id,
+    last_event_type = excluded.last_event_type,
+    updated_at = excluded.updated_at
+  WHERE excluded.last_event_created > stripe_subscription_event_state.last_event_created
+     OR (
+       excluded.last_event_created = stripe_subscription_event_state.last_event_created
+       AND excluded.last_event_priority > stripe_subscription_event_state.last_event_priority
+     )
+     OR (
+       excluded.last_event_created = stripe_subscription_event_state.last_event_created
+       AND excluded.last_event_priority = stripe_subscription_event_state.last_event_priority
+       -- Stripe event ids are opaque, not chronological. This final comparison
+       -- only makes same-second/same-type conflicts deterministic; retrieving
+       -- the current Subscription from Stripe remains the stronger follow-up.
+       AND excluded.last_event_id >= stripe_subscription_event_state.last_event_id
+     )`;
+
+function eventParams(
+  subscriptionId: string,
+  customerId: string,
+  event: StripeSubscriptionEventOrder,
+  updatedAt: string,
+): [string, string, number, number, string, string, string] {
+  return [
+    subscriptionId,
+    customerId,
+    event.created,
+    eventPriority(event.type),
+    event.id,
+    event.type,
+    updatedAt,
+  ];
 }
 
 /**
  * Apply a parsed subscription to the owning user. Resolves the user by Stripe
  * customer id, falling back to the `userId` carried in subscription metadata
- * (and persisting the customer link) to tolerate out-of-order webhook delivery.
+ * to tolerate out-of-order webhook delivery. The atomic update never replaces
+ * a different customer already linked to that user.
  * Returns the affected user id, or null if no user could be resolved.
  */
-export async function applySubscription(env: Env, sub: ParsedSubscription): Promise<string | null> {
+export async function applySubscription(
+  env: Env,
+  sub: ParsedSubscription,
+  event: StripeSubscriptionEventOrder,
+): Promise<string | null> {
   let user = await getUserByStripeCustomerId(env, sub.customerId);
   if (!user && sub.metadataUserId) {
     user = await getUserById(env, sub.metadataUserId);
-    if (user) await linkCustomerToUser(env, user.id, sub.customerId);
   }
-  if (!user) return null;
 
-  await run(
-    env.DB,
-    `UPDATE users
+  const priority = eventPriority(event.type);
+  const updatedAt = new Date().toISOString();
+  if (!user) {
+    await batch(env.DB, [
+      [RECORD_EVENT_SQL, eventParams(sub.id, sub.customerId, event, updatedAt)],
+    ]);
+    return null;
+  }
+  await batch(env.DB, [
+    [RECORD_EVENT_SQL, eventParams(sub.id, sub.customerId, event, updatedAt)],
+    [`UPDATE users
         SET stripe_customer_id = ?,
             stripe_subscription_id = ?,
             subscription_status = ?,
@@ -118,8 +194,39 @@ export async function applySubscription(env: Env, sub: ParsedSubscription): Prom
             current_period_end = ?,
             cancel_at_period_end = ?,
             trial_end = ?
-      WHERE id = ?`,
-    [
+      WHERE id = ?
+        AND (stripe_customer_id IS NULL OR stripe_customer_id = ?)
+        AND EXISTS (
+          SELECT 1
+            FROM stripe_subscription_event_state applied
+           WHERE applied.subscription_id = ?
+             AND applied.last_event_created = ?
+             AND applied.last_event_priority = ?
+             AND applied.last_event_id = ?
+        )
+        AND (
+          stripe_subscription_id IS NULL
+          OR stripe_subscription_id = ?
+          OR EXISTS (
+            SELECT 1
+              FROM stripe_subscription_event_state current_state
+             WHERE current_state.subscription_id = users.stripe_subscription_id
+               AND (
+                 current_state.last_event_created < ?
+                 OR (
+                   current_state.last_event_created = ?
+                   -- Event-type priority is only meaningful within one
+                   -- subscription. Across subscriptions, same-second ordering
+                   -- is ambiguous: only a created active/trialing subscription
+                   -- may replace a terminal current subscription. Everything
+                   -- else fails closed instead of comparing opaque event ids.
+                   AND ? = 'customer.subscription.created'
+                   AND ? IN ('active', 'trialing')
+                   AND users.subscription_status IN ('canceled', 'incomplete_expired')
+                 )
+               )
+          )
+        )`, [
       sub.customerId,
       sub.id,
       sub.status,
@@ -128,8 +235,18 @@ export async function applySubscription(env: Env, sub: ParsedSubscription): Prom
       sub.cancelAtPeriodEnd ? 1 : 0,
       sub.trialEnd,
       user.id,
-    ],
-  );
+      sub.customerId,
+      sub.id,
+      event.created,
+      priority,
+      event.id,
+      sub.id,
+      event.created,
+      event.created,
+      event.type,
+      sub.status,
+    ]],
+  ]);
   return user.id;
 }
 
@@ -137,17 +254,40 @@ export async function applySubscription(env: Env, sub: ParsedSubscription): Prom
  * Mark a subscription as ended (customer.subscription.deleted). Clears the
  * subscription fields but keeps the customer id so a re-subscribe reuses it.
  */
-export async function endSubscription(env: Env, customerId: string): Promise<string | null> {
-  const user = await getUserByStripeCustomerId(env, customerId);
-  if (!user) return null;
-  await run(
-    env.DB,
-    `UPDATE users
+export async function endSubscription(
+  env: Env,
+  customerId: string,
+  subscriptionId: string,
+  event: StripeSubscriptionEventOrder,
+  metadataUserId: string | null = null,
+): Promise<string | null> {
+  let user = await getUserByStripeCustomerId(env, customerId);
+  if (!user && metadataUserId) user = await getUserById(env, metadataUserId);
+  const priority = eventPriority(event.type);
+  const recordStatement: [string, ReturnType<typeof eventParams>] = [
+    RECORD_EVENT_SQL,
+    eventParams(subscriptionId, customerId, event, new Date().toISOString()),
+  ];
+  if (!user) {
+    await batch(env.DB, [recordStatement]);
+    return null;
+  }
+  await batch(env.DB, [
+    recordStatement,
+    [`UPDATE users
         SET subscription_status = 'canceled',
             cancel_at_period_end = 0,
             trial_end = NULL
-      WHERE id = ?`,
-    [user.id],
-  );
+      WHERE id = ?
+        AND stripe_subscription_id = ?
+        AND EXISTS (
+          SELECT 1
+            FROM stripe_subscription_event_state applied
+           WHERE applied.subscription_id = ?
+             AND applied.last_event_created = ?
+             AND applied.last_event_priority = ?
+             AND applied.last_event_id = ?
+        )`, [user.id, subscriptionId, subscriptionId, event.created, priority, event.id]],
+  ]);
   return user.id;
 }

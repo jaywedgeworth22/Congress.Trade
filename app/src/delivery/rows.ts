@@ -119,7 +119,7 @@ export function mapTransaction(row: TransactionRow): Transaction {
     isOption,
     assetName: row.asset_name ?? null,
   });
-  return {
+  const transaction: Transaction & { estValue: number | null } = {
     id: row.id,
     docId: row.doc_id,
     filerId: row.filer_id,
@@ -134,6 +134,7 @@ export function mapTransaction(row: TransactionRow): Transaction {
     txType: (row.tx_type as TxType) ?? 'P',
     amountMin: row.amount_min,
     amountMax: row.amount_max,
+    estValue: row.est_value ?? null,
     isOption,
     capGainsOver200: toBool(row.cap_gains_over_200),
     rawText: row.raw_text ?? '',
@@ -148,6 +149,7 @@ export function mapTransaction(row: TransactionRow): Transaction {
     createdAt: row.created_at ?? '',
     cursorSeq: row.cursor_seq ?? 0,
   };
+  return transaction;
 }
 
 /**
@@ -221,6 +223,10 @@ export interface TxQueryParams {
   memberName?: string;
   chamber?: Chamber;
   type?: TxType;
+  /** Inclusive filter on the disclosed bracket floor (`amount_min`). */
+  minAmount?: number;
+  /** Inclusive filter on the disclosed bracket floor (`amount_min`). */
+  maxAmount?: number;
   limit?: number;
   /**
    * Freemium gate: only rows whose filing date (or, lacking a filing, trade
@@ -344,6 +350,14 @@ function buildTxFilters(
   if (p.chamber) {
     where.push(`${CHAMBER_EXPR} = ?`);
     params.push(p.chamber);
+  }
+  if (Number.isFinite(p.minAmount)) {
+    where.push('t.amount_min >= ?');
+    params.push(Number(p.minAmount));
+  }
+  if (Number.isFinite(p.maxAmount)) {
+    where.push('t.amount_min <= ?');
+    params.push(Number(p.maxAmount));
   }
   if (p.filedSince) {
     // Prefer the filing date; seed rows without a filing fall back to tx_date.

@@ -11,6 +11,7 @@
  *   GET   /sources/health           -> ingest_log aggregates per source
  *   GET   /diagnostics              -> connection status + recent app errors
  *   GET   /subscriptions            -> admin list of subscriptions
+ *   POST  /subscriptions            -> operator-provisioned subscription
  *
  * AUTH (deny-by-default once provisioned). A request is authorized if EITHER:
  *   1. Bearer token — env.ADMIN_TOKEN is set and the request carries a matching
@@ -40,11 +41,18 @@ import type { Env, PollConfig, PollWindow, TxType, TxSource, Subscription } from
 import { all, batch, get, run, type SqlParam } from '../shared/db';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
 import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
-import { getConfig, setConfig } from '../shared/config';
+import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config';
 import { uuid } from '../shared/ids';
-import { listSubscriptions } from '../delivery/subscriptions';
-import { drainReviewDeliveryOutbox } from '../delivery/reviewOutbox';
-import { refreshLatestCursorSeq } from '../delivery/sse';
+import {
+  assertSubscriptionQuota,
+  createSubscription,
+  listSubscriptions,
+  SubscriptionQuotaError,
+  subscriptionSecretError,
+  validateSubscriptionFilters,
+  webhookTargetLengthError,
+} from '../delivery/subscriptions';
+import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget';
 import { runSeedBackfillFromEnv } from '../backfill/seed';
 import { runHouseHistoricalBackfill } from '../backfill/houseCrawler';
 import { extractParsed } from '../extraction/orchestrator';
@@ -87,6 +95,12 @@ import { runPriceRefresh } from '../prices/service';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets } from '../secrets/infisical';
 import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
 import { estimateTransactionValue } from '../shared/transactionValue';
+import { isValidBracket } from '../shared/brackets';
+import { flushDeliveryOutbox } from '../delivery/outbox';
+import {
+  BASE_SCHEMA_STATEMENTS,
+  POST_0024_SCHEMA_STATEMENTS,
+} from './migrations';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -393,6 +407,9 @@ function validateReviewEdits(
   rawEdits: unknown[],
   filedDate: string | null,
 ): { edits: ValidatedEditedTx[] } | { error: string } {
+  // The live backlog contains filings with more than 200 disclosed lots. Keep
+  // those reviewable while still bounding request and D1 work.
+  if (rawEdits.length > 500) return { error: 'edits cannot contain more than 500 rows' };
   const edits: ValidatedEditedTx[] = [];
   for (const [index, raw] of rawEdits.entries()) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -420,14 +437,20 @@ function validateReviewEdits(
     if (!ticker && !assetName) {
       return { error: `edits[${index}] requires a ticker or assetName` };
     }
-    for (const field of ['amountMin', 'amountMax'] as const) {
-      const value = e[field];
-      if (value != null && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
-        return { error: `edits[${index}].${field} must be a non-negative finite number or null` };
-      }
+    if (assetName.length > 500) {
+      return { error: `edits[${index}].assetName must be at most 500 characters` };
     }
-    if (e.amountMin != null && e.amountMax != null && e.amountMin > e.amountMax) {
-      return { error: `edits[${index}] amountMin cannot exceed amountMax` };
+    if (ticker && (ticker.length > 20 || !/^[A-Za-z0-9.^$-]+$/.test(ticker))) {
+      return { error: `edits[${index}].ticker is invalid` };
+    }
+    if (typeof e.amountMin !== 'number' || !Number.isFinite(e.amountMin)) {
+      return { error: `edits[${index}].amountMin is required` };
+    }
+    if (e.amountMax != null && (typeof e.amountMax !== 'number' || !Number.isFinite(e.amountMax))) {
+      return { error: `edits[${index}].amountMax must be a number or null` };
+    }
+    if (!isValidBracket(e.amountMin, e.amountMax ?? null)) {
+      return { error: `edits[${index}] amount must be a canonical STOCK Act bracket` };
     }
     if (e.confidence != null && (
       typeof e.confidence !== 'number' || !Number.isFinite(e.confidence)
@@ -1170,9 +1193,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         400,
       );
     }
-    const filing = await get<{ filer_id: string | null; filed_date: string | null }>(
+    const filing = await get<{ filer_id: string | null; first_seen_at: string | null; filed_date: string | null }>(
       c.env.DB,
-      'SELECT filer_id, filed_date FROM filings WHERE doc_id = ?',
+      'SELECT filer_id, first_seen_at, filed_date FROM filings WHERE doc_id = ?',
       [docId],
     );
     if (!filing) return c.json({ error: 'filing not found' }, 404);
@@ -1234,6 +1257,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         confidence: e.confidence ?? 1,
         source,
         createdAt: nowIso,
+        firstSeenAt: filing.first_seen_at ?? null,
+        filedDate: filing.filed_date ?? null,
         estValue: estimateTransactionValue(e.amountMin, e.amountMax),
       });
     }
@@ -1257,7 +1282,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
              tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
              raw_text, asset_type_name, filing_status, subholding, location,
              description, supplemental_text, row_key, confidence, source,
-             created_at, cursor_seq, est_value
+             created_at, cursor_seq, first_seen_at, filed_date, est_value
            ) SELECT
              json_extract(value, '$.id'), json_extract(value, '$.docId'),
              json_extract(value, '$.filerId'), json_extract(value, '$.txDate'),
@@ -1271,6 +1296,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
              json_extract(value, '$.description'), json_extract(value, '$.supplementalText'),
              json_extract(value, '$.rowKey'), json_extract(value, '$.confidence'),
              json_extract(value, '$.source'), json_extract(value, '$.createdAt'), NULL,
+             json_extract(value, '$.firstSeenAt'), json_extract(value, '$.filedDate'),
              json_extract(value, '$.estValue')
            FROM json_each(?)
            WHERE EXISTS (
@@ -1297,15 +1323,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           ],
         ],
         [
-          `INSERT OR IGNORE INTO review_delivery_outbox (tx_id, doc_id, created_at)
-            SELECT id, doc_id, ? FROM transactions
+          `INSERT OR IGNORE INTO delivery_outbox
+             (tx_id, status, attempts, available_at, last_error, created_at, updated_at)
+            SELECT id, 'pending', 0, ?, NULL, ?, ? FROM transactions
              WHERE doc_id = ? AND source = ? AND deprecated_at IS NULL
                AND row_key IN (SELECT value FROM json_each(?))
                AND EXISTS (
                  SELECT 1 FROM review_queue
                   WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
                )`,
-          [nowIso, docId, source, rowKeysJson, docId, reviewRevision],
+          [nowIso, nowIso, nowIso, docId, source, rowKeysJson, docId, reviewRevision],
         ],
         [
           `UPDATE filings SET ingest_status = ?
@@ -1345,13 +1372,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'review item changed or not all edited rows could be persisted' }, 409);
     }
     const insertedCount = persistResults[0]?.meta?.changes ?? 0;
-    if (insertedCount > 0) {
-      try {
-        await refreshLatestCursorSeq(c.env.DB);
-      } catch (err) {
-        console.error('review confirm: latest cursor refresh failed', docId, (err as Error).message);
-      }
-    }
     const newlyInsertedIds = insertedCount === proposedIds.length ? proposedIds : [];
     let transactionIds = newlyInsertedIds;
     try {
@@ -1367,10 +1387,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       console.error('review confirm: live transaction lookup failed', docId, (err as Error).message);
     }
 
-    // Best-effort immediate drain; the independent minute cron owns durable
-    // recovery for any producer failure or rows beyond this bounded pass.
-    const delivery = await drainReviewDeliveryOutbox(c.env).catch((err) => {
-      console.error('review confirm: delivery outbox drain failed', docId, (err as Error).message);
+    // Best-effort immediate flush; the independent delivery-outbox cron owns
+    // durable recovery for any enqueue failure or rows beyond this pass.
+    const delivery = await flushDeliveryOutbox(c.env, {
+      txIds: transactionIds,
+      limit: Math.max(transactionIds.length, 1),
+    }).catch((err) => {
+      console.warn('review confirm: delivery outbox flush failed', docId, (err as Error).message);
       return null;
     });
 
@@ -1599,6 +1622,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // observed average interval between polls (seconds).
   r.get('/sources/health', async (c) => {
     const latencyResetAt = await getLatencyResetAt(c.env);
+    const now = new Date();
+    const config = await getConfig(c.env);
+    const window = activeWindow(now, config);
+    const effectivePollIntervalSec = window
+      ? effectiveInterval(window, config)
+      : Math.max(60, ...config.schedule.map((entry) => entry.intervalSec));
+    const staleAfterSec = Math.max(300, effectivePollIntervalSec * 3);
     const rows = await all<{
       source: string;
       last_polled_at: string | null;
@@ -1616,17 +1646,76 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         GROUP BY source`,
     );
 
+    const attempts = await optionalAll<{
+      id: number;
+      source: string;
+      attempted_at: string;
+      outcome: string;
+      new_count: number;
+      error: string | null;
+    }>(
+      c.env,
+      `WITH ranked AS (
+         SELECT id, source, attempted_at, outcome, new_count, error,
+                ROW_NUMBER() OVER (PARTITION BY source ORDER BY attempted_at DESC, id DESC) AS rn
+           FROM source_attempts
+       )
+       SELECT id, source, attempted_at, outcome, new_count, error
+         FROM ranked
+        WHERE rn <= ?
+        ORDER BY source ASC, attempted_at DESC, id DESC`,
+      [100],
+    );
+    const attemptsBySource = new Map<string, typeof attempts>();
+    for (const attempt of attempts) {
+      const list = attemptsBySource.get(attempt.source) ?? [];
+      list.push(attempt);
+      attemptsBySource.set(attempt.source, list);
+    }
+    const aggregateBySource = new Map(rows.map((row) => [row.source, row]));
+    const sourceNames = new Set<string>(['house', 'senate', ...rows.map((row) => row.source), ...attempts.map((row) => row.source)]);
+
     const sources = [];
-    for (const row of rows) {
+    for (const source of sourceNames) {
+      const row = aggregateBySource.get(source);
+      const history = attemptsBySource.get(source) ?? [];
+      const latest = history[0];
+      const lastSuccess = history.find((attempt) => attempt.outcome === 'success');
+      const lastFailure = history.find((attempt) => attempt.outcome === 'failure');
+      let consecutiveFailures = 0;
+      for (const attempt of history) {
+        if (attempt.outcome !== 'failure') break;
+        consecutiveFailures += 1;
+      }
+      const lastAttemptAt = latest?.attempted_at ?? row?.last_polled_at ?? null;
+      const lastAttemptMs = lastAttemptAt ? Date.parse(lastAttemptAt) : Number.NaN;
+      const stale = !Number.isFinite(lastAttemptMs)
+        || now.getTime() - lastAttemptMs > staleAfterSec * 1000;
+      const status = latest?.outcome === 'failure'
+        ? 'error'
+        : stale
+          ? 'stale'
+          : latest?.outcome === 'success'
+            ? 'ok'
+            : 'unknown';
       sources.push({
-        source: row.source,
-        lastPolledAt: row.last_polled_at,
-        lastNewFilingAt: row.last_new_at,
-        pollCount: row.poll_count,
-        totalNew: row.total_new,
-        avgIntervalSec: await observedAvgInterval(c.env, row.source),
-        avgReleasedToSeenSec: await observedReleasedToSeenLag(c.env, row.source, latencyResetAt),
-        avgSeenToImportedSec: await observedSeenToImportedLag(c.env, row.source, latencyResetAt),
+        source,
+        status,
+        stale,
+        staleAfterSec,
+        effectivePollIntervalSec,
+        lastAttemptAt,
+        lastSuccessAt: lastSuccess?.attempted_at ?? row?.last_polled_at ?? null,
+        lastFailureAt: lastFailure?.attempted_at ?? null,
+        lastError: latest?.outcome === 'failure' ? latest.error : null,
+        consecutiveFailures,
+        lastPolledAt: row?.last_polled_at ?? null,
+        lastNewFilingAt: row?.last_new_at ?? null,
+        pollCount: row?.poll_count ?? 0,
+        totalNew: row?.total_new ?? 0,
+        avgIntervalSec: await observedAvgInterval(c.env, source),
+        avgReleasedToSeenSec: await observedReleasedToSeenLag(c.env, source, latencyResetAt),
+        avgSeenToImportedSec: await observedSeenToImportedLag(c.env, source, latencyResetAt),
       });
     }
     return c.json({ sources, count: sources.length, latencyResetAt });
@@ -2673,9 +2762,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             await run(
               c.env.DB,
               `UPDATE transactions
-                  SET confidence = ?, amount_min = ?, amount_max = ?, ticker = ?
+                  SET confidence = ?, amount_min = ?, amount_max = ?, est_value = ?, ticker = ?
                 WHERE id = ?`,
-              [tx.confidence, tx.amountMin, tx.amountMax, tx.ticker, existing[i].id],
+              [
+                tx.confidence,
+                tx.amountMin,
+                tx.amountMax,
+                estimateTransactionValue(tx.amountMin, tx.amountMax),
+                tx.ticker,
+                existing[i].id,
+              ],
             );
           }
           await run(c.env.DB, 'UPDATE filings SET confidence = ? WHERE doc_id = ?', [
@@ -3156,6 +3252,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // as already-applied.
   r.post('/migrate', async (c) => {
     const statements = [
+      ...BASE_SCHEMA_STATEMENTS,
       'ALTER TABLE filers ADD COLUMN photo_url TEXT',
       // 0003_users.sql — end-user accounts (public-site auth). Idempotent.
       `CREATE TABLE IF NOT EXISTS users (
@@ -3405,93 +3502,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          created_at TEXT NOT NULL
        )`,
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
-      // 0029_est_value.sql — materialized computed column for estimated transaction value.
-      'ALTER TABLE transactions ADD COLUMN est_value REAL',
-      `UPDATE transactions SET est_value = CASE
-         WHEN amount_min IS NULL AND amount_max IS NULL THEN 0
-         WHEN amount_min IS NULL THEN amount_max
-         WHEN amount_max IS NULL THEN amount_min
-         ELSE (amount_min + amount_max) / 2.0
-       END WHERE est_value IS NULL`,
-      // 0030_doc_complexity_signals.sql — cheap doc-complexity signals for cascade tiering.
-      'ALTER TABLE filings ADD COLUMN page_count INTEGER',
-      'ALTER TABLE filings ADD COLUMN raw_bytes INTEGER',
-      // 0031_agreement_cascade.sql — durable eligibility, retry, and lease state.
-      // agreement_attempted_at remains a last-attempt audit stamp; it is no
-      // longer the once-ever eligibility gate.
-      'ALTER TABLE review_queue ADD COLUMN agreement_attempts INTEGER NOT NULL DEFAULT 0',
-      'ALTER TABLE review_queue ADD COLUMN agreement_tier INTEGER',
-      'ALTER TABLE review_queue ADD COLUMN agreement_next_attempt_at TEXT',
-      'ALTER TABLE review_queue ADD COLUMN agreement_claim_token TEXT',
-      'ALTER TABLE review_queue ADD COLUMN agreement_claimed_at TEXT',
-      'ALTER TABLE review_queue ADD COLUMN agreement_legacy_replay_at TEXT',
-      `CREATE INDEX IF NOT EXISTS idx_review_queue_agreement_eligible
-         ON review_queue (resolved, agreement_next_attempt_at, created_at)`,
-      `CREATE INDEX IF NOT EXISTS idx_review_queue_agreement_claim
-         ON review_queue (agreement_claim_token, agreement_claimed_at)`,
-      // A review reopened during the deploy-before-migrate window carries a
-      // created_at newer than its old attempt. This guarded predicate
-      // self-invalidates when it clears the attempt stamp.
-      `UPDATE review_queue
-          SET agreement_attempted_at = NULL,
-              agreement_attempts = 0,
-              agreement_tier = NULL,
-              agreement_next_attempt_at = NULL,
-              agreement_claim_token = NULL,
-              agreement_claimed_at = NULL
-        WHERE resolved = 0
-          AND agreement_attempted_at IS NOT NULL
-          AND created_at > agreement_attempted_at`,
-      // One-time replay of the unresolved cohort attempted while gpt-4o-mini
-      // was the broken model B. The fixed cutoff + durable marker make this
-      // safe under repeated POST /migrate calls; resolved rows stay untouched.
-      `UPDATE review_queue
-          SET agreement_attempted_at = NULL,
-              agreement_attempts = 0,
-              agreement_tier = NULL,
-              agreement_next_attempt_at = NULL,
-              agreement_claim_token = NULL,
-              agreement_claimed_at = NULL,
-              agreement_legacy_replay_at = CURRENT_TIMESTAMP
-        WHERE resolved = 0
-          AND agreement_legacy_replay_at IS NULL
-          AND agreement_attempted_at >= '2026-06-26T00:00:00.000Z'
-          AND agreement_attempted_at < '2026-07-11T00:00:00.000Z'`,
-      // 0032_llm_budget.sql — daily budget guardrail for agreement-cascade LLM
-      // candidate doc-reads (one row per UTC day; reads incremented atomically).
-      `CREATE TABLE IF NOT EXISTS llm_budget (
-         day   TEXT PRIMARY KEY,
-         reads INTEGER NOT NULL DEFAULT 0
-       )`,
-      // 0033_review_resolution_safety.sql — durable human holds and live-row
-      // idempotency so Unpublish cannot be immediately undone or strand a
-      // filing with only deprecated transactions.
-      'ALTER TABLE review_queue ADD COLUMN agreement_suppressed_at TEXT',
-      'ALTER TABLE review_queue ADD COLUMN agreement_suppression_reason TEXT',
-      `UPDATE review_queue
-          SET agreement_suppressed_at = COALESCE(agreement_suppressed_at, CURRENT_TIMESTAMP),
-              agreement_suppression_reason = COALESCE(agreement_suppression_reason, reason)
-        WHERE reason LIKE 'unpublished:%' OR reason LIKE 'rejected:%'`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_live_doc_source_rowkey
-         ON transactions (doc_id, source, row_key)
-         WHERE row_key IS NOT NULL AND deprecated_at IS NULL`,
-      'DROP INDEX IF EXISTS idx_transactions_doc_source_rowkey',
-      `CREATE INDEX IF NOT EXISTS idx_review_queue_agreement_suppressed
-         ON review_queue (resolved, agreement_suppressed_at, created_at)`,
-      `CREATE TABLE IF NOT EXISTS review_delivery_outbox (
-         tx_id           TEXT PRIMARY KEY,
-         doc_id          TEXT NOT NULL,
-         created_at      TEXT NOT NULL,
-         dispatched_at   TEXT,
-         attempts        INTEGER NOT NULL DEFAULT 0,
-         last_attempt_at TEXT,
-         last_error      TEXT
-       )`,
-      `CREATE INDEX IF NOT EXISTS idx_review_delivery_outbox_pending
-         ON review_delivery_outbox (dispatched_at, created_at)`,
-      // 0034_review_revision.sql — optimistic concurrency guard so stale admin
-      // editors cannot overwrite newer normalized/cascade review content.
-      'ALTER TABLE review_queue ADD COLUMN review_revision INTEGER NOT NULL DEFAULT 1',
+      // 0029-0037 — canonical value, reliability, Stripe, and review-autonomy tail.
+      ...POST_0024_SCHEMA_STATEMENTS,
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -4021,6 +4033,61 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const activeOnly = c.req.query('active') === 'true';
     const subs = await listSubscriptions(c.env, activeOnly);
     return c.json({ subscriptions: subs.map(adminSubscription), count: subs.length });
+  });
+
+  // Operator provisioning keeps explicit integration client ids; end-user
+  // routes derive ownership from the authenticated account instead.
+  r.post('/subscriptions', async (c) => {
+    let body: Record<string, unknown>;
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(clientId)) {
+      return c.json({ error: 'clientId must be 1-128 URL-safe characters' }, 400);
+    }
+    const delivery = body.delivery;
+    if (delivery !== 'webhook' && delivery !== 'sse') {
+      return c.json({ error: "delivery must be 'webhook' or 'sse'" }, 400);
+    }
+    const targetUrl = delivery === 'webhook' && typeof body.targetUrl === 'string'
+      ? body.targetUrl.trim()
+      : null;
+    const targetLengthError = webhookTargetLengthError(targetUrl);
+    if (targetLengthError) return c.json({ error: targetLengthError }, 400);
+    if (delivery === 'webhook') {
+      const targetError = await validatePublicWebhookTarget(targetUrl, {
+        allowLocalhost: localWebhookTargetsAllowed(c.env, c.req.url),
+      });
+      if (targetError) return c.json({ error: targetError }, 400);
+    }
+    const validatedFilters = validateSubscriptionFilters(body.filters);
+    if (!validatedFilters.ok) return c.json({ error: validatedFilters.error }, 400);
+    const secretError = subscriptionSecretError(body.secret);
+    if (secretError) return c.json({ error: secretError }, 400);
+    const secret = typeof body.secret === 'string' ? body.secret : undefined;
+    try {
+      await assertSubscriptionQuota(c.env, clientId, { creating: true });
+      const sub = await createSubscription(c.env, {
+        clientId,
+        delivery,
+        targetUrl,
+        secret: secret ?? null,
+        filters: validatedFilters.filters,
+      });
+      return c.json({
+        ...adminSubscription(sub),
+        secret: sub.secret,
+        ...(delivery === 'sse' && sub.secret
+          ? { streamUrl: `/api/stream?subscription=${encodeURIComponent(sub.id)}&token=${encodeURIComponent(sub.secret)}` }
+          : {}),
+      }, 201);
+    } catch (err) {
+      if (err instanceof SubscriptionQuotaError) return c.json({ error: err.message }, 409);
+      throw err;
+    }
   });
 
   return r;

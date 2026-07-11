@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Miniflare } from 'miniflare';
 import { buildAdminRouter } from '../routes';
-import { drainReviewDeliveryOutbox } from '../../delivery/reviewOutbox';
+import { DELIVERY_TARGETED_ID_LIMIT, flushDeliveryOutbox } from '../../delivery/outbox';
 import { maybeRunAgreementAutopublish } from '../../extraction/agreement';
 import { normalize } from '../../extraction/normalizer';
 import type { Filing, ParsedTx } from '../../shared/types';
@@ -23,7 +23,7 @@ const SCHEMA = `
   CREATE TABLE filings (
     doc_id TEXT PRIMARY KEY, filer_id TEXT, filed_date TEXT, ingest_status TEXT,
     raw_object_key TEXT, confidence REAL, extractor TEXT, model_version TEXT,
-    error TEXT
+    first_seen_at TEXT, error TEXT
   );
   CREATE TABLE transactions (
     id TEXT PRIMARY KEY, doc_id TEXT, filer_id TEXT, tx_date TEXT, owner TEXT,
@@ -42,13 +42,14 @@ const SCHEMA = `
     reason TEXT, payload TEXT, transaction_ids TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL
   );
-  CREATE TABLE review_delivery_outbox (
-    tx_id TEXT PRIMARY KEY, doc_id TEXT NOT NULL, created_at TEXT NOT NULL,
-    dispatched_at TEXT, attempts INTEGER NOT NULL DEFAULT 0,
-    last_attempt_at TEXT, last_error TEXT
+  CREATE TABLE delivery_outbox (
+    tx_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0, dead_letter_cycles INTEGER NOT NULL DEFAULT 0,
+    available_at TEXT NOT NULL, last_error TEXT, created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
   );
-  CREATE INDEX idx_review_delivery_outbox_pending
-    ON review_delivery_outbox (dispatched_at, created_at);
+  CREATE INDEX idx_delivery_outbox_ready
+    ON delivery_outbox (status, available_at);
   CREATE TABLE securities_master (ticker TEXT, name TEXT, aliases TEXT);
 `;
 
@@ -145,7 +146,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await db.batch([
-    db.prepare('DELETE FROM review_delivery_outbox'),
+    db.prepare('DELETE FROM delivery_outbox'),
     db.prepare('DELETE FROM ingestion_decisions'),
     db.prepare('DELETE FROM transactions'),
     db.prepare('DELETE FROM review_queue'),
@@ -321,7 +322,9 @@ describe('review resolution on transactional D1', () => {
       `SELECT COUNT(*) AS n FROM transactions WHERE doc_id = 'H-NORMALIZER-RACE'`,
     ).first<{ n: number }>('n')).toBe(0);
     expect(await db.prepare(
-      `SELECT COUNT(*) AS n FROM review_delivery_outbox WHERE doc_id = 'H-NORMALIZER-RACE'`,
+      `SELECT COUNT(*) AS n FROM delivery_outbox o
+         JOIN transactions t ON t.id = o.tx_id
+        WHERE t.doc_id = 'H-NORMALIZER-RACE'`,
     ).first<{ n: number }>('n')).toBe(0);
     expect(await db.prepare(
       `SELECT ingest_status FROM filings WHERE doc_id = 'H-NORMALIZER-RACE'`,
@@ -349,8 +352,10 @@ describe('review resolution on transactional D1', () => {
       `SELECT ingest_status FROM filings WHERE doc_id = 'H-NORMALIZER-FRESH'`,
     ).first<string>('ingest_status')).toBe('persisted');
     expect(await db.prepare(
-      `SELECT dispatched_at FROM review_delivery_outbox WHERE doc_id = 'H-NORMALIZER-FRESH'`,
-    ).first<string>('dispatched_at')).toEqual(expect.any(String));
+      `SELECT o.status FROM delivery_outbox o
+         JOIN transactions t ON t.id = o.tx_id
+        WHERE t.doc_id = 'H-NORMALIZER-FRESH'`,
+    ).first<string>('status')).toBe('enqueued');
     expect(sent).toHaveLength(1);
   });
 
@@ -524,7 +529,9 @@ describe('review resolution on transactional D1', () => {
       `SELECT COUNT(*) AS n FROM transactions WHERE doc_id = 'H-DOUBLE' AND deprecated_at IS NULL`,
     ).first<{ n: number }>('n')).toBe(1);
     expect(await db.prepare(
-      `SELECT COUNT(*) AS n FROM review_delivery_outbox WHERE doc_id = 'H-DOUBLE'`,
+      `SELECT COUNT(*) AS n FROM delivery_outbox o
+         JOIN transactions t ON t.id = o.tx_id
+        WHERE t.doc_id = 'H-DOUBLE'`,
     ).first<{ n: number }>('n')).toBe(1);
   });
 
@@ -606,9 +613,23 @@ describe('review resolution on transactional D1', () => {
         WHERE doc_id = 'H-223' AND est_value = 8000.5`,
     ).first<{ n: number }>('n')).toBe(223);
     expect(await db.prepare(
-      `SELECT COUNT(*) AS n FROM review_delivery_outbox WHERE doc_id = 'H-223'`,
+      `SELECT COUNT(*) AS n FROM delivery_outbox o
+         JOIN transactions t ON t.id = o.tx_id
+        WHERE t.doc_id = 'H-223'`,
     ).first<{ n: number }>('n')).toBe(223);
-    expect(sent).toHaveLength(25);
+    const deliveryState = await db.prepare(
+      `SELECT
+         SUM(CASE WHEN o.status = 'pending' THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN o.status = 'enqueued' THEN 1 ELSE 0 END) AS enqueued
+       FROM delivery_outbox o
+       JOIN transactions t ON t.id = o.tx_id
+       WHERE t.doc_id = 'H-223'`,
+    ).first<{ pending: number; enqueued: number }>();
+    expect(deliveryState).toEqual({
+      pending: 223 - DELIVERY_TARGETED_ID_LIMIT,
+      enqueued: DELIVERY_TARGETED_ID_LIMIT,
+    });
+    expect(sent).toHaveLength(DELIVERY_TARGETED_ID_LIMIT);
   }, 30_000);
 
   it('atomically clears a human hold when a fresh editor confirms corrected rows', async () => {
@@ -647,14 +668,16 @@ describe('review resolution on transactional D1', () => {
     });
   });
 
-  it('retains a failed delivery intent and dispatches it on the next drain', async () => {
+  it('retains a failed delivery intent and enqueues it on the next eligible flush', async () => {
     await db.prepare(
       `INSERT INTO transactions (id, doc_id, source, row_key, deprecated_at)
        VALUES ('tx-retry', 'H-OUTBOX', 'primary', 'row-retry', NULL)`,
     ).run();
     await db.prepare(
-      `INSERT INTO review_delivery_outbox (tx_id, doc_id, created_at)
-       VALUES ('tx-retry', 'H-OUTBOX', '2026-06-20T00:00:00.000Z')`,
+      `INSERT INTO delivery_outbox
+         (tx_id, status, attempts, dead_letter_cycles, available_at, last_error, created_at, updated_at)
+       VALUES ('tx-retry', 'pending', 0, 0, '2026-06-20T00:00:00.000Z', NULL,
+               '2026-06-20T00:00:00.000Z', '2026-06-20T00:00:00.000Z')`,
     ).run();
     let fail = true;
     const outboxEnv = {
@@ -665,19 +688,29 @@ describe('review resolution on transactional D1', () => {
         },
       },
     } as never;
+    const firstAttempt = new Date('2026-06-20T00:00:00.000Z');
 
-    expect(await drainReviewDeliveryOutbox(outboxEnv, 1)).toMatchObject({ failed: 1, dispatched: 0 });
+    expect(await flushDeliveryOutbox(outboxEnv, {
+      txIds: ['tx-retry'], limit: 1, now: firstAttempt,
+    })).toEqual({ claimed: 1, failed: 1, enqueued: 0 });
     expect(await db.prepare(
-      `SELECT attempts FROM review_delivery_outbox WHERE tx_id = 'tx-retry'`,
-    ).first<number>('attempts')).toBe(1);
+      `SELECT attempts, status, last_error FROM delivery_outbox WHERE tx_id = 'tx-retry'`,
+    ).first<{ attempts: number; status: string; last_error: string | null }>()).toEqual({
+      attempts: 1,
+      status: 'pending',
+      last_error: 'producer unavailable',
+    });
 
     fail = false;
-    expect(await drainReviewDeliveryOutbox(outboxEnv, 1)).toMatchObject({ failed: 0, dispatched: 1 });
+    expect(await flushDeliveryOutbox(outboxEnv, {
+      txIds: ['tx-retry'], limit: 1, now: new Date(firstAttempt.getTime() + 6_000),
+    })).toEqual({ claimed: 1, failed: 0, enqueued: 1 });
     const final = await db.prepare(
-      `SELECT attempts, dispatched_at FROM review_delivery_outbox WHERE tx_id = 'tx-retry'`,
-    ).first<{ attempts: number; dispatched_at: string | null }>();
+      `SELECT attempts, status, last_error FROM delivery_outbox WHERE tx_id = 'tx-retry'`,
+    ).first<{ attempts: number; status: string; last_error: string | null }>();
     expect(final?.attempts).toBe(2);
-    expect(final?.dispatched_at).toEqual(expect.any(String));
+    expect(final?.status).toBe('enqueued');
+    expect(final?.last_error).toBeNull();
   });
 
   it('unpublish creates a durable hold and the live-only index permits a corrected row', async () => {

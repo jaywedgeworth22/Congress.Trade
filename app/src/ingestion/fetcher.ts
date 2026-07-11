@@ -26,6 +26,85 @@ interface FilingRow {
   ingest_status: string | null;
 }
 
+export const MAX_RAW_FILING_BYTES = 25 * 1024 * 1024;
+const MAX_INGEST_BACKOFF_SECONDS = 900;
+
+export class IngestRetryError extends Error {
+  constructor(message: string, readonly delaySeconds: number) {
+    super(message);
+  }
+}
+
+export class FilingTooLargeError extends Error {}
+
+/** HTTP responses that should be retried by the ingest queue. */
+export function isRetryableFilingHttpStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+export function retryAfterSeconds(value: string | null, nowMs = Date.now()): number | null {
+  if (!value) return null;
+  const numeric = Number(value.trim());
+  if (Number.isFinite(numeric) && numeric >= 0) {
+    return Math.max(1, Math.min(3600, Math.ceil(numeric)));
+  }
+  const at = Date.parse(value);
+  if (!Number.isFinite(at)) return null;
+  return Math.max(1, Math.min(3600, Math.ceil((at - nowMs) / 1000)));
+}
+
+/** Exponential fallback with bounded half-to-full jitter. attempt is 1-based. */
+export function ingestBackoffSeconds(attempt: number, random = Math.random): number {
+  const cap = Math.min(MAX_INGEST_BACKOFF_SECONDS, 5 * 2 ** Math.max(0, attempt - 1));
+  return Math.max(1, Math.floor(cap * (0.5 + random() * 0.5)));
+}
+
+/** Queue-boundary classifier shared by later provider-backed ingest stages. */
+export function classifyTransientIngestError(
+  error: unknown,
+  attempt: number,
+): IngestRetryError | null {
+  if (error instanceof IngestRetryError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  const transient =
+    /\bHTTP\s+(408|425|429|5\d\d)\b/i.test(message) ||
+    /rate[ -]?limit|quota|temporar(?:y|ily) unavailable|timeout|timed out|network|fetch failed|ECONN(?:RESET|REFUSED)|overloaded/i.test(message);
+  if (!transient) return null;
+  const retryAfterMatch = /retry-after\s*[:=]\s*([^\s,;]+)/i.exec(message);
+  const delay = retryAfterMatch
+    ? retryAfterSeconds(retryAfterMatch[1]) ?? ingestBackoffSeconds(attempt)
+    : ingestBackoffSeconds(attempt);
+  return new IngestRetryError(message, delay);
+}
+
+/** Stream through a byte-counting guard so chunked responses cannot exhaust an isolate. */
+export function limitedFilingBody(
+  body: ReadableStream<Uint8Array>,
+  limit = MAX_RAW_FILING_BYTES,
+): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  let bytes = 0;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const next = await reader.read();
+      if (next.done) {
+        controller.close();
+        return;
+      }
+      bytes += next.value.byteLength;
+      if (bytes > limit) {
+        await reader.cancel('filing exceeds size limit').catch(() => {});
+        controller.error(new FilingTooLargeError(`filing exceeds ${limit} byte limit`));
+        return;
+      }
+      controller.enqueue(next.value);
+    },
+    async cancel(reason) {
+      await reader.cancel(reason).catch(() => {});
+    },
+  });
+}
+
 /** R2 object key for a filing's raw original. Matches the spec: `raw/{docId}`. */
 export function rawKeyFor(docId: string): string {
   return `raw/${docId}`;
@@ -47,7 +126,7 @@ async function markError(env: Env, docId: string, message: string): Promise<void
 /**
  * Fetch + persist the raw bytes for a filing, then advance the pipeline.
  */
-export async function fetchFiling(env: Env, docId: string): Promise<void> {
+export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Promise<void> {
   const row = await get<FilingRow>(
     env.DB,
     `SELECT doc_id, chamber, source_url, ingest_status FROM filings WHERE doc_id = ?`,
@@ -75,17 +154,30 @@ export async function fetchFiling(env: Env, docId: string): Promise<void> {
       redirect: 'follow',
     });
     if (!res.ok) {
-      await markError(env, docId, `fetcher: source ${sourceUrl} -> HTTP ${res.status}`);
+      const message = `fetcher: source ${sourceUrl} -> HTTP ${res.status}`;
+      await res.body?.cancel().catch(() => {});
+      await markError(env, docId, message);
+      if (isRetryableFilingHttpStatus(res.status)) {
+        throw new IngestRetryError(
+          message,
+          retryAfterSeconds(res.headers.get('retry-after')) ?? ingestBackoffSeconds(queueAttempt),
+        );
+      }
       return;
     }
 
     const contentType = res.headers.get('content-type') ?? '';
-    const body = await res.arrayBuffer();
+    const contentLength = Number(res.headers.get('content-length'));
+    if (Number.isFinite(contentLength) && contentLength > MAX_RAW_FILING_BYTES) {
+      await res.body?.cancel().catch(() => {});
+      throw new FilingTooLargeError(`filing exceeds ${MAX_RAW_FILING_BYTES} byte limit`);
+    }
+    if (!res.body) throw new Error('source response body is missing');
     const key = rawKeyFor(docId);
 
     // Persist raw bytes verbatim; retain content-type so the classifier can use
     // it as a cheap signal without re-fetching.
-    await env.RAW_FILES.put(key, body, {
+    await env.RAW_FILES.put(key, limitedFilingBody(res.body), {
       httpMetadata: { contentType: contentType || 'application/octet-stream' },
     });
 
@@ -100,8 +192,14 @@ export async function fetchFiling(env: Env, docId: string): Promise<void> {
     await env.INGEST_QUEUE.send({ type: 'filing.fetched', docId });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof FilingTooLargeError || /filing exceeds \d+ byte limit/i.test(message)) {
+      await markError(env, docId, `fetcher: ${message}`);
+      return;
+    }
+    if (err instanceof IngestRetryError) throw err;
     await markError(env, docId, `fetcher: ${message}`);
-    // Re-throw so the queue consumer retries transient network failures.
-    throw err;
+    // Network, R2, D1, and queue failures are transient unless explicitly
+    // classified above; carry an explicit delay into the queue consumer.
+    throw new IngestRetryError(`fetcher: ${message}`, ingestBackoffSeconds(queueAttempt));
   }
 }

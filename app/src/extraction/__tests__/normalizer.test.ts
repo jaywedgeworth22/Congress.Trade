@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { normalize, CONFIDENCE_THRESHOLD, transactionRowKey } from '../normalizer';
+import {
+  normalize,
+  CONFIDENCE_THRESHOLD,
+  MAX_PUBLISH_TRANSACTIONS_PER_FILING,
+  persistTransactions,
+  TransactionPublishLimitError,
+  transactionRowKey,
+} from '../normalizer';
 import type { Env, Filing, ParsedTx } from '../../shared/types';
 
 // ---------------------------------------------------------------------------
@@ -14,19 +21,30 @@ interface Captured {
   reviewSql: string[];
   filingUpdates: unknown[][];
   enqueued: Array<{ type: string; txId: string }>;
+  batches: string[][];
+  auditRows: unknown[][];
 }
 
 function makeEnv(
   securities: Array<{ ticker: string; name: string | null; aliases: string | null }>,
-  initialReview: { resolved: number; review_revision: number; agreement_suppressed_at: string | null } | null = null,
+  opts: { failAudit?: boolean } = {},
 ) {
-  const cap: Captured = { insertedTx: [], reviewRows: [], reviewSql: [], filingUpdates: [], enqueued: [] };
+  const cap: Captured = {
+    insertedTx: [],
+    reviewRows: [],
+    reviewSql: [],
+    filingUpdates: [],
+    enqueued: [],
+    batches: [],
+    auditRows: [],
+  };
   const insertedByRowKey = new Map<string, Record<string, unknown>>();
   const outboxSeen = new Set<string>();
-  const outboxPending = new Set<string>();
+  let failAudit = opts.failAudit ?? false;
 
   const prepare = (sql: string) => {
     const stmt = {
+      _sql: sql,
       _params: [] as unknown[],
       bind(...params: unknown[]) {
         this._params = params;
@@ -36,21 +54,11 @@ function makeEnv(
         if (/FROM securities_master/i.test(sql)) {
           return { results: securities as unknown as T[] };
         }
-        if (/FROM review_delivery_outbox o/i.test(sql)) {
-          return {
-            results: Array.from(outboxPending).map((txId) => ({
-              tx_id: txId,
-              doc_id: 'doc1',
-              transaction_id: txId,
-              deprecated_at: null,
-            })) as unknown as T[],
-          };
-        }
         return { results: [] as T[] };
       },
       async first<T>() {
         if (/SELECT resolved, review_revision, agreement_suppressed_at/i.test(sql)) {
-          return initialReview as T | null;
+          return null as T | null;
         }
         return null as T | null;
       },
@@ -67,23 +75,22 @@ function makeEnv(
               changes += 1;
             }
           }
-        } else if (/INSERT OR IGNORE INTO review_delivery_outbox/i.test(sql)) {
-          const rowKeys = JSON.parse(String(this._params[2])) as string[];
+        } else if (/INSERT OR IGNORE INTO delivery_outbox/i.test(sql)) {
+          const rows = JSON.parse(String(this._params[3])) as Array<Record<string, unknown>>;
           changes = 0;
-          for (const rowKey of rowKeys) {
+          for (const row of rows) {
+            const rowKey = String(row.rowKey ?? '');
             const txId = String(insertedByRowKey.get(rowKey)?.id ?? '');
             if (txId && !outboxSeen.has(txId)) {
               outboxSeen.add(txId);
-              outboxPending.add(txId);
               changes += 1;
             }
           }
-        } else if (/UPDATE review_delivery_outbox/i.test(sql)) {
-          outboxPending.delete(String(this._params[this._params.length - 1]));
         } else if (/INSERT(?: OR IGNORE)? INTO review_queue/i.test(sql) || /UPDATE review_queue\s+SET reason/i.test(sql)) {
           cap.reviewRows.push(this._params);
           cap.reviewSql.push(sql);
         }
+        else if (/INSERT(?: OR IGNORE)? INTO ingestion_decisions/i.test(sql)) cap.auditRows.push(this._params);
         else if (/UPDATE filings/i.test(sql)) cap.filingUpdates.push(this._params);
         return { success: true, meta: { changes } } as unknown;
       },
@@ -92,7 +99,16 @@ function makeEnv(
   };
 
   const env = {
-    DB: { prepare } as unknown as D1Database,
+    DB: {
+      prepare,
+      async batch(statements: Array<{ _sql: string; run(): Promise<unknown> }>) {
+        cap.batches.push(statements.map((statement) => statement._sql));
+        if (failAudit && statements.some((statement) => /ingestion_decisions/i.test(statement._sql))) {
+          throw new Error('audit insert failed');
+        }
+        return Promise.all(statements.map((statement) => statement.run()));
+      },
+    } as unknown as D1Database,
     DELIVERY_QUEUE: {
       async send(msg: { type: string; txId: string }) {
         cap.enqueued.push(msg);
@@ -103,7 +119,7 @@ function makeEnv(
     } as unknown as Env['DELIVERY_QUEUE'],
   } as unknown as Env;
 
-  return { env, cap };
+  return { env, cap, allowAudit: () => { failAudit = false; } };
 }
 
 const filing = (over: Partial<Filing> = {}): Filing => ({
@@ -142,6 +158,61 @@ const tx = (over: Partial<ParsedTx> = {}): ParsedTx => ({
 });
 
 describe('normalize', () => {
+  it('holds an oversized extraction for review and caps its review payload', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    const parsed = Array.from(
+      { length: MAX_PUBLISH_TRANSACTIONS_PER_FILING + 1 },
+      (_, index) => tx({ rawText: `row ${index}` }),
+    );
+    const result = await normalize(env, filing(), parsed);
+    expect(result.needsReview).toBe(true);
+    expect(cap.insertedTx).toHaveLength(0);
+    expect(String(cap.reviewRows[0][1])).toBe('extraction_row_limit_exceeded');
+    const payload = JSON.parse(String(cap.reviewRows[0][2])) as {
+      transactionCount: number; truncated: boolean; transactions: unknown[];
+    };
+    expect(payload).toMatchObject({ transactionCount: 201, truncated: true });
+    expect(payload.transactions).toHaveLength(MAX_PUBLISH_TRANSACTIONS_PER_FILING);
+    await expect(persistTransactions(env, result.transactions)).rejects.toBeInstanceOf(TransactionPublishLimitError);
+  });
+
+  it('makes the publication receipt part of the atomic batch and retries it idempotently', async () => {
+    const { env, cap, allowAudit } = makeEnv(
+      [{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }],
+      { failAudit: true },
+    );
+    await expect(normalize(env, filing(), [tx()])).rejects.toThrow('audit insert failed');
+    expect(cap.insertedTx).toHaveLength(0);
+    allowAudit();
+    await normalize(env, filing(), [tx()]);
+    await normalize(env, filing(), [tx()]);
+    expect(cap.insertedTx).toHaveLength(1);
+    expect(cap.auditRows).toHaveLength(2);
+    expect(cap.auditRows[0][0]).toBe('decision:auto_published:doc1');
+    expect(cap.auditRows[1][0]).toBe(cap.auditRows[0][0]);
+  });
+
+  it('atomically retries needs-review state with one deterministic receipt', async () => {
+    const { env, cap, allowAudit } = makeEnv([], { failAudit: true });
+    const parsed = [tx({ ticker: 'Bank of America Mystery', assetName: 'Mystery Co' })];
+    await expect(normalize(env, filing(), parsed)).rejects.toThrow('audit insert failed');
+    expect(cap.reviewRows).toHaveLength(0);
+    expect(cap.filingUpdates).toHaveLength(0);
+
+    allowAudit();
+    await normalize(env, filing(), parsed);
+    await normalize(env, filing(), parsed);
+    expect(cap.reviewRows).toHaveLength(2);
+    expect(cap.auditRows).toHaveLength(2);
+    expect(cap.auditRows[0][0]).toBe('decision:review_opened:doc1');
+    expect(cap.auditRows[1][0]).toBe(cap.auditRows[0][0]);
+    expect(cap.batches.at(-1)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/UPDATE filings/),
+      expect.stringMatching(/INSERT(?: OR IGNORE)? INTO review_queue/),
+      expect.stringMatching(/INSERT OR IGNORE INTO ingestion_decisions/),
+    ]));
+  });
+
   it('keeps row identity stable when asset type labels are added as enrichment', () => {
     const parsed = tx({ assetType: 'Stock', assetTypeName: null });
     const enriched = tx({ assetType: 'Stock', assetTypeName: 'Stock' });
@@ -166,10 +237,27 @@ describe('normalize', () => {
     // Persisted + delivery fan-out happened; no review row.
     expect(cap.insertedTx).toHaveLength(1);
     expect(cap.insertedTx[0].rowKey).toEqual(expect.stringMatching(/^v1:primary:0:/));
+    expect(cap.insertedTx[0].estValue).toBe((1001 + 15000) / 2);
     expect(cap.reviewRows).toHaveLength(0);
-    expect(cap.enqueued).toEqual([{ type: 'delivery.dispatch', txId: result.transactions[0].id }]);
-    // filings updated (metadata + persisted status).
-    expect(cap.filingUpdates.length).toBeGreaterThanOrEqual(2);
+    // Queue publication is now reconciled from the durable outbox. This minimal
+    // fake does not materialize SELECT-based outbox rows for the flusher.
+    expect(cap.enqueued).toEqual([]);
+    // Filing metadata and persisted status are committed by one atomic update.
+    expect(cap.filingUpdates).toHaveLength(1);
+    expect(cap.filingUpdates[0].slice(0, 4)).toEqual([
+      result.minConfidence,
+      'senateHtml',
+      null,
+      'doc1',
+    ]);
+    expect(cap.batches).toEqual([
+      expect.arrayContaining([
+        expect.stringMatching(/INSERT OR IGNORE INTO transactions/),
+        expect.stringMatching(/INSERT OR IGNORE INTO delivery_outbox/),
+        expect.stringMatching(/ingest_status = 'persisted'/),
+        expect.stringMatching(/INSERT OR IGNORE INTO ingestion_decisions/),
+      ]),
+    ]);
   });
 
   it('does not insert or enqueue duplicates when the same filing is normalized twice', async () => {
@@ -180,8 +268,9 @@ describe('normalize', () => {
     expect(first.needsReview).toBe(false);
     expect(second.needsReview).toBe(false);
     expect(cap.insertedTx).toHaveLength(1);
-    expect(cap.enqueued).toHaveLength(1);
-    expect(cap.enqueued[0]).toEqual({ type: 'delivery.dispatch', txId: first.transactions[0].id });
+    expect(cap.enqueued).toHaveLength(0);
+    expect(cap.auditRows).toHaveLength(2);
+    expect(cap.auditRows[0][0]).toBe(cap.auditRows[1][0]);
   });
 
   it('resolves ticker via alias when raw ticker is missing', async () => {

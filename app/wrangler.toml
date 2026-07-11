@@ -1,7 +1,7 @@
 name = "congress-trade"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
-compatibility_flags = ["nodejs_compat"]
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 workers_dev = true
 preview_urls = false
 
@@ -120,6 +120,21 @@ max_batch_size = 10
 max_batch_timeout = 5
 max_retries = 8
 dead_letter_queue = "congress-feed-delivery-dlq"
+
+# DLQs are actively consumed: the Worker durably records the terminal receipt,
+# reopens the owning outbox row, then ACKs. High retry count protects recovery
+# from a transient D1 outage without recursively dead-lettering a DLQ.
+[[queues.consumers]]
+queue = "congress-feed-ingest-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 100
+
+[[queues.consumers]]
+queue = "congress-feed-delivery-dlq"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 100
 
 # ---------------------------------------------------------------------------
 # KV — hot config cache (poll schedule, feature flags)

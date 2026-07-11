@@ -3,6 +3,13 @@ import { buildAuthRouter } from '../routes';
 import { ANONYMOUS_ENTITLEMENT } from '../../billing/entitlement';
 import type { Env } from '../../shared/types';
 
+const BILLING_READY = {
+  STRIPE_SECRET_KEY: 'sk_test',
+  STRIPE_WEBHOOK_SECRET: 'whsec',
+  STRIPE_PRICE_MONTHLY: 'price_m',
+  STRIPE_PRICE_ANNUAL: 'price_a',
+} as const;
+
 function fakeEnv(over: Record<string, unknown> = {}): Env {
   const kv = new Map<string, string>();
   return {
@@ -44,6 +51,24 @@ describe('auth router', () => {
       user: null,
       entitlement: ANONYMOUS_ENTITLEMENT,
       admin: { allowed: false },
+      billing: { configured: false, checkoutConfigured: false, portalConfigured: false, hasCustomer: false },
+    });
+  });
+
+  it('GET /me exposes checkout and portal capabilities independently', async () => {
+    const app = buildAuthRouter();
+    const incomplete = await app.request(
+      'http://localhost/me',
+      {},
+      fakeEnv({ STRIPE_SECRET_KEY: 'sk_test' }),
+    );
+    expect((await incomplete.json()) as { billing: Record<string, boolean> }).toMatchObject({
+      billing: { configured: false, checkoutConfigured: false, portalConfigured: true, hasCustomer: false },
+    });
+    const ready = await app.request('http://localhost/me', {}, fakeEnv(BILLING_READY));
+    expect(ready.status).toBe(200);
+    expect((await ready.json()) as { billing: Record<string, boolean> }).toMatchObject({
+      billing: { configured: true, checkoutConfigured: true, portalConfigured: true, hasCustomer: false },
     });
   });
 
@@ -76,6 +101,7 @@ describe('auth router', () => {
               email_verified: 1,
               created_at: '2026-06-28T00:00:00.000Z',
               last_login_at: '2026-06-28T00:00:00.000Z',
+              stripe_customer_id: 'cus_1',
             };
           },
           async run() {
@@ -92,6 +118,7 @@ describe('auth router', () => {
     expect(await res.json()).toMatchObject({
       user: { email: 'admin@example.com' },
       admin: { allowed: true },
+      billing: { hasCustomer: true },
     });
   });
 
@@ -131,5 +158,64 @@ describe('auth router', () => {
     const res = await app.request('http://localhost/logout', { method: 'POST' }, fakeEnv());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it('POST /logout revokes bearer sessions used by native clients', async () => {
+    const deleted: string[] = [];
+    const env = fakeEnv({
+      CONFIG_KV: {
+        get: async () => null,
+        put: async () => {},
+        delete: async (key: string) => { deleted.push(key); },
+      },
+    });
+    const res = await buildAuthRouter().request('http://localhost/logout', {
+      method: 'POST',
+      headers: { authorization: 'Bearer native-session-token' },
+    }, env);
+    expect(res.status).toBe(200);
+    expect(deleted).toEqual(['sess:native-session-token']);
+  });
+
+  it('POST /logout revokes distinct cookie and bearer sessions together', async () => {
+    const deleted: string[] = [];
+    const env = fakeEnv({
+      CONFIG_KV: {
+        get: async () => null,
+        put: async () => {},
+        delete: async (key: string) => { deleted.push(key); },
+      },
+    });
+    const res = await buildAuthRouter().request('http://localhost/logout', {
+      method: 'POST',
+      headers: {
+        cookie: 'ct_session=cookie-session-token',
+        authorization: 'Bearer native-session-token',
+      },
+    }, env);
+    expect(res.status).toBe(200);
+    expect(deleted.sort()).toEqual([
+      'sess:cookie-session-token',
+      'sess:native-session-token',
+    ]);
+  });
+
+  it('POST /logout de-duplicates the same cookie and bearer token', async () => {
+    const deleted: string[] = [];
+    const env = fakeEnv({
+      CONFIG_KV: {
+        get: async () => null,
+        put: async () => {},
+        delete: async (key: string) => { deleted.push(key); },
+      },
+    });
+    await buildAuthRouter().request('http://localhost/logout', {
+      method: 'POST',
+      headers: {
+        cookie: 'ct_session=same-token',
+        authorization: 'Bearer same-token',
+      },
+    }, env);
+    expect(deleted).toEqual(['sess:same-token']);
   });
 });

@@ -19,20 +19,18 @@
  */
 
 import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../shared/types';
-import { refreshLatestCursorSeq } from '../delivery/sse';
-import { all, run, batch, fromBool, get, parseJson } from '../shared/db';
+import { all, batch, fromBool, get, parseJson } from '../shared/db';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets';
 import { canonicalizeAssetType } from '../shared/assetTypes';
 import { uuid } from '../shared/ids';
-import { recordIngestionDecision } from '../shared/ingestionDecisions';
 import { estimateTransactionValue } from '../shared/transactionValue';
-import { drainReviewDeliveryOutbox } from '../delivery/reviewOutbox';
 import {
   isPlaceholderTicker,
   resolvePreferredTickerFromAssetName,
   resolveTickerDeterministic,
 } from './tickerNormalize';
 import { resolveContinuousTicker } from '@jaywedgeworth22/congress-trading-shared';
+import { flushDeliveryOutbox } from '../delivery/outbox';
 
 /**
  * Per-tx confidence at or above this threshold is trusted for auto-publish. If a
@@ -40,6 +38,9 @@ import { resolveContinuousTicker } from '@jaywedgeworth22/congress-trading-share
  * fails), the whole filing is routed to review instead of being published.
  */
 export const CONFIDENCE_THRESHOLD = 0.85;
+export const MAX_PUBLISH_TRANSACTIONS_PER_FILING = 200;
+
+export class TransactionPublishLimitError extends Error {}
 
 // Multiplicative penalties applied to the extractor's per-row confidence when a
 // validation check is soft-failed. Each is in (0,1]; they compound.
@@ -197,18 +198,12 @@ export async function normalize(
 
   // Hard structural failures force review regardless of the soft confidence.
   const hasHardFailure = hasHardFailureFlags(flagged);
+  const exceedsPublishLimit = flagged.length > MAX_PUBLISH_TRANSACTIONS_PER_FILING;
 
   const needsReview =
-    flagged.length === 0 || minConfidence < CONFIDENCE_THRESHOLD || hasHardFailure;
+    flagged.length === 0 || minConfidence < CONFIDENCE_THRESHOLD || hasHardFailure || exceedsPublishLimit;
 
   const transactions = flagged.map((f) => f.tx);
-
-  // Always record the document-level extraction metadata + confidence.
-  await run(
-    env.DB,
-    'UPDATE filings SET confidence = ?, extractor = ?, model_version = ? WHERE doc_id = ?',
-    [minConfidence, extractorName, modelVersion, filing.docId],
-  );
 
   // Capture the queue version before any material state transition. The
   // review-open and publish batches below are conditional on this snapshot, so
@@ -227,35 +222,22 @@ export async function normalize(
   }
 
   if (needsReview) {
-    const reason = reviewReason(flagged, minConfidence);
+    const reason = exceedsPublishLimit
+      ? 'extraction_row_limit_exceeded'
+      : reviewReason(flagged, minConfidence);
     const routed = await routeToReview(
       env,
       filing,
       flagged,
       minConfidence,
       nowIso,
-      { extractor: extractorName, modelVersion },
+      {
+        extractor: extractorName,
+        modelVersion,
+        reasonOverride: exceedsPublishLimit ? reason : undefined,
+      },
       reviewSnapshot,
     );
-    if (routed) {
-      try {
-        await recordIngestionDecision(env.DB, {
-          docId: filing.docId,
-          action: 'review_opened',
-          source: 'pipeline',
-          reason,
-          payload: {
-            minConfidence,
-            extractor: extractorName,
-            modelVersion,
-            transactionCount: transactions.length,
-          },
-          createdAt: nowIso,
-        });
-      } catch (err) {
-        console.error('normalize: review audit receipt failed', filing.docId, (err as Error).message);
-      }
-    }
     return { transactions, minConfidence, needsReview: routed, published: false };
   }
 
@@ -265,38 +247,25 @@ export async function normalize(
     transactions,
     reviewSnapshot,
     nowIso,
+    {
+      confidence: minConfidence,
+      extractor: extractorName,
+      modelVersion,
+    },
   );
   if (!persisted.published) {
     return { transactions, minConfidence, needsReview: false, published: false };
   }
   const insertedIds = persisted.insertedIds;
-  if (insertedIds.length > 0) {
-    try {
-      await recordIngestionDecision(env.DB, {
-        docId: filing.docId,
-        action: 'auto_published',
-        source: 'pipeline',
-        reason: 'passed_normalization',
-        transactionIds: insertedIds,
-        payload: {
-          minConfidence,
-          extractor: extractorName,
-          modelVersion,
-          transactionCount: transactions.length,
-          inserted: insertedIds.length,
-        },
-        createdAt: nowIso,
-      });
-    } catch (err) {
-      console.error('normalize: publish audit receipt failed', filing.docId, (err as Error).message);
-    }
-  }
 
-  // Rows and delivery intents committed together. Producer failures leave the
-  // intent pending for the independent minute-cron drain.
-  await drainReviewDeliveryOutbox(env).catch((err) => {
-    console.error('normalize: delivery outbox drain failed', filing.docId, (err as Error).message);
-  });
+  // Best-effort immediate flush. The durable outbox row was committed in the
+  // same D1 batch as each transaction, so a queue outage cannot lose delivery;
+  // the scheduled reconciler retries any row left pending.
+  if (insertedIds.length > 0) {
+    await flushDeliveryOutbox(env, { txIds: insertedIds, limit: insertedIds.length }).catch((err) =>
+      console.error('normalize: delivery outbox flush failed', (err as Error).message),
+    );
+  }
 
   return { transactions, minConfidence, needsReview: false, published: true };
 }
@@ -606,6 +575,28 @@ function transactionInsertJson(transactions: Transaction[]): string {
   })));
 }
 
+const BULK_DELIVERY_OUTBOX_SQL = `INSERT OR IGNORE INTO delivery_outbox
+  (tx_id, status, attempts, available_at, last_error, created_at, updated_at)
+SELECT DISTINCT t.id, 'pending', 0, ?, NULL, ?, ?
+  FROM transactions t
+  JOIN json_each(?) requested
+    ON (
+      json_extract(requested.value, '$.rowKey') IS NOT NULL
+      AND t.doc_id = json_extract(requested.value, '$.docId')
+      AND t.source = json_extract(requested.value, '$.source')
+      AND t.row_key = json_extract(requested.value, '$.rowKey')
+    ) OR (
+      json_extract(requested.value, '$.rowKey') IS NULL
+      AND t.id = json_extract(requested.value, '$.id')
+    )
+ WHERE t.deprecated_at IS NULL`;
+
+interface PublicationMetadata {
+  confidence: number;
+  extractor: string | null;
+  modelVersion: string | null;
+}
+
 /**
  * Atomically publish a normalized row set. A first-pass filing is guarded by
  * the continued absence of a review row. A previously reviewed filing is
@@ -618,10 +609,15 @@ async function persistNormalizedPublish(
   transactions: Transaction[],
   review: ReviewSnapshot | null,
   nowIso: string,
+  metadata: PublicationMetadata,
 ): Promise<{ published: boolean; insertedIds: string[] }> {
+  if (transactions.length > MAX_PUBLISH_TRANSACTIONS_PER_FILING) {
+    throw new TransactionPublishLimitError(
+      `refusing to publish ${transactions.length} transactions; limit is ${MAX_PUBLISH_TRANSACTIONS_PER_FILING}`,
+    );
+  }
   const insertRowsJson = transactionInsertJson(transactions);
   const rowKeysJson = JSON.stringify(transactions.map((tx) => tx.rowKey ?? ''));
-  const proposedIdsJson = JSON.stringify(transactions.map((tx) => tx.id));
   const exactLiveSet = `(SELECT COUNT(*) FROM transactions
       WHERE doc_id = ? AND source IN ('primary', 'manual')
         AND deprecated_at IS NULL) = ?
@@ -629,7 +625,14 @@ async function persistNormalizedPublish(
       WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
         AND row_key IN (SELECT value FROM json_each(?))) = ?`;
 
+  const auditPayload = JSON.stringify({
+    minConfidence: metadata.confidence,
+    extractor: metadata.extractor,
+    modelVersion: metadata.modelVersion,
+    transactionCount: transactions.length,
+  });
   let statements: Array<[string, any[]]>;
+  let transitionIndex: number;
   if (review) {
     const revision = review.review_revision;
     statements = [
@@ -654,24 +657,46 @@ async function persistNormalizedPublish(
         ],
       ],
       [
-        `INSERT OR IGNORE INTO review_delivery_outbox (tx_id, doc_id, created_at)
-          SELECT id, doc_id, ? FROM transactions
-           WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
-             AND row_key IN (SELECT value FROM json_each(?))
-             AND EXISTS (SELECT 1 FROM review_queue
-               WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
-                 AND agreement_suppressed_at IS NULL)`,
-        [nowIso, docId, rowKeysJson, docId, revision],
+        `${BULK_DELIVERY_OUTBOX_SQL}
+          AND EXISTS (SELECT 1 FROM review_queue
+            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
+              AND agreement_suppressed_at IS NULL)`,
+        [nowIso, nowIso, nowIso, insertRowsJson, docId, revision],
       ],
       [
-        `UPDATE filings SET ingest_status = 'persisted', error = NULL
+        `UPDATE filings
+            SET ingest_status = 'persisted', error = NULL,
+                confidence = ?, extractor = ?, model_version = ?
           WHERE doc_id = ?
             AND EXISTS (SELECT 1 FROM review_queue
               WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
                 AND agreement_suppressed_at IS NULL)
             AND ${exactLiveSet}`,
         [
+          metadata.confidence, metadata.extractor, metadata.modelVersion,
           docId, docId, revision,
+          docId, transactions.length,
+          docId, rowKeysJson, transactions.length,
+        ],
+      ],
+      [
+        `INSERT OR IGNORE INTO ingestion_decisions
+           (id, doc_id, action, source, actor, reason, payload, transaction_ids, created_at)
+         SELECT ?, ?, 'auto_published', 'pipeline', NULL, 'passed_normalization', ?,
+                COALESCE((
+                  SELECT json_group_array(id) FROM (
+                    SELECT id FROM transactions
+                     WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
+                     ORDER BY id ASC
+                  )
+                ), '[]'), ?
+          WHERE EXISTS (SELECT 1 FROM review_queue
+            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
+              AND agreement_suppressed_at IS NULL)
+            AND ${exactLiveSet}`,
+        [
+          `decision:auto_published:${docId}`, docId, auditPayload, docId, nowIso,
+          docId, revision,
           docId, transactions.length,
           docId, rowKeysJson, transactions.length,
         ],
@@ -695,6 +720,7 @@ async function persistNormalizedPublish(
         ],
       ],
     ];
+    transitionIndex = statements.length - 1;
   } else {
     statements = [
       [
@@ -718,27 +744,50 @@ async function persistNormalizedPublish(
         ],
       ],
       [
-        `INSERT OR IGNORE INTO review_delivery_outbox (tx_id, doc_id, created_at)
-          SELECT id, doc_id, ? FROM transactions
-           WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
-             AND row_key IN (SELECT value FROM json_each(?))
-             AND NOT EXISTS (SELECT 1 FROM review_queue WHERE doc_id = ?)
-             AND EXISTS (SELECT 1 FROM filings
-               WHERE doc_id = ? AND ingest_status <> 'persisted')`,
-        [nowIso, docId, rowKeysJson, docId, docId],
+        `${BULK_DELIVERY_OUTBOX_SQL}
+          AND NOT EXISTS (SELECT 1 FROM review_queue WHERE doc_id = ?)
+          AND EXISTS (SELECT 1 FROM filings
+            WHERE doc_id = ? AND ingest_status <> 'persisted')`,
+        [nowIso, nowIso, nowIso, insertRowsJson, docId, docId],
       ],
       [
-        `UPDATE filings SET ingest_status = 'persisted', error = NULL
+        `UPDATE filings
+            SET ingest_status = 'persisted', error = NULL,
+                confidence = ?, extractor = ?, model_version = ?
           WHERE doc_id = ? AND ingest_status <> 'persisted'
             AND NOT EXISTS (SELECT 1 FROM review_queue WHERE doc_id = ?)
             AND ${exactLiveSet}`,
         [
+          metadata.confidence, metadata.extractor, metadata.modelVersion,
+          docId, docId,
+          docId, transactions.length,
+          docId, rowKeysJson, transactions.length,
+        ],
+      ],
+      [
+        `INSERT OR IGNORE INTO ingestion_decisions
+           (id, doc_id, action, source, actor, reason, payload, transaction_ids, created_at)
+         SELECT ?, ?, 'auto_published', 'pipeline', NULL, 'passed_normalization', ?,
+                COALESCE((
+                  SELECT json_group_array(id) FROM (
+                    SELECT id FROM transactions
+                     WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
+                     ORDER BY id ASC
+                  )
+                ), '[]'), ?
+          WHERE NOT EXISTS (SELECT 1 FROM review_queue WHERE doc_id = ?)
+            AND EXISTS (SELECT 1 FROM filings
+              WHERE doc_id = ? AND ingest_status = 'persisted')
+            AND ${exactLiveSet}`,
+        [
+          `decision:auto_published:${docId}`, docId, auditPayload, docId, nowIso,
           docId, docId,
           docId, transactions.length,
           docId, rowKeysJson, transactions.length,
         ],
       ],
     ];
+    transitionIndex = 3;
   }
 
   let results: D1Result[];
@@ -750,47 +799,86 @@ async function persistNormalizedPublish(
     }
     throw err;
   }
-  if ((results[results.length - 1]?.meta?.changes ?? 0) === 0) {
+  if ((results[transitionIndex]?.meta?.changes ?? 0) === 0) {
     return { published: false, insertedIds: [] };
   }
 
   const insertedCount = results[0]?.meta?.changes ?? 0;
-  let insertedIds = insertedCount === transactions.length ? transactions.map((tx) => tx.id) : [];
-  if (insertedCount > 0 && insertedIds.length === 0) {
-    const inserted = await all<{ id: string }>(
-      env.DB,
-      `SELECT id FROM transactions
-        WHERE doc_id = ? AND id IN (SELECT value FROM json_each(?))`,
-      [docId, proposedIdsJson],
-    );
-    insertedIds = inserted.map((row) => row.id);
-  }
-  if (insertedCount > 0) {
-    try {
-      await refreshLatestCursorSeq(env.DB);
-    } catch (err) {
-      console.error('normalized publish: latest cursor refresh failed', docId, (err as Error).message);
-    }
-  }
+  const liveRows = await all<{ id: string }>(
+    env.DB,
+    `SELECT id FROM transactions
+      WHERE doc_id = ? AND source = 'primary' AND deprecated_at IS NULL
+        AND row_key IN (SELECT value FROM json_each(?))`,
+    [docId, rowKeysJson],
+  );
+  const insertedIds = liveRows.length > 0
+    ? liveRows.map((row) => row.id)
+    : insertedCount === transactions.length
+      ? transactions.map((tx) => tx.id)
+      : [];
   return { published: true, insertedIds };
 }
 
-/** Atomically write a review version and flag the filing needs_review. */
+/** Low-level idempotent row + durable-outbox insert for non-publication callers. */
+export async function persistTransactions(env: Env, transactions: Transaction[]): Promise<string[]> {
+  if (transactions.length > MAX_PUBLISH_TRANSACTIONS_PER_FILING) {
+    throw new TransactionPublishLimitError(
+      `refusing to publish ${transactions.length} transactions; limit is ${MAX_PUBLISH_TRANSACTIONS_PER_FILING}`,
+    );
+  }
+  if (transactions.length === 0) return [];
+  const insertRowsJson = transactionInsertJson(transactions);
+  const proposedIdsJson = JSON.stringify(transactions.map((tx) => tx.id));
+  const results = await batch(env.DB, [
+    [CONDITIONAL_BULK_INSERT_TX_SQL, [insertRowsJson]],
+    [BULK_DELIVERY_OUTBOX_SQL, [
+      transactions[0].createdAt,
+      transactions[0].createdAt,
+      transactions[0].createdAt,
+      insertRowsJson,
+    ]],
+  ]);
+  if ((results[0]?.meta?.changes ?? 0) === 0) return [];
+  const inserted = await all<{ id: string }>(
+    env.DB,
+    `SELECT id FROM transactions WHERE id IN (SELECT value FROM json_each(?))`,
+    [proposedIdsJson],
+  );
+  return inserted.map((row) => row.id);
+}
+
+/** Atomically persist review state, metadata, and its idempotent audit receipt. */
 async function routeToReview(
   env: Env,
   filing: Filing,
   flagged: FlaggedTx[],
   minConfidence: number,
   nowIso: string,
-  meta: { extractor: string | null; modelVersion: string | null },
+  meta: {
+    extractor: string | null;
+    modelVersion: string | null;
+    reasonOverride?: string;
+  },
   review: ReviewSnapshot | null,
 ): Promise<boolean> {
-  const reason = reviewReason(flagged, minConfidence);
+  const reason = meta.reasonOverride ?? reviewReason(flagged, minConfidence);
+  const truncated = flagged.length > MAX_PUBLISH_TRANSACTIONS_PER_FILING;
   const payload = JSON.stringify({
     minConfidence,
     extractor: meta.extractor,
     modelVersion: meta.modelVersion,
-    transactions: flagged.map((f) => ({ ...f.tx, flags: f.flags })),
+    transactionCount: flagged.length,
+    truncated,
+    transactions: flagged
+      .slice(0, MAX_PUBLISH_TRANSACTIONS_PER_FILING)
+      .map((f) => ({ ...f.tx, flags: f.flags })),
+  });
+  const decisionPayload = JSON.stringify({
+    minConfidence,
+    extractor: meta.extractor,
+    modelVersion: meta.modelVersion,
+    transactionCount: flagged.length,
+    truncated,
   });
 
   const nextRevision = review ? review.review_revision + 1 : 1;
@@ -815,12 +903,30 @@ async function routeToReview(
   const results = await batch(env.DB, [
     transition,
     [
-      `UPDATE filings SET ingest_status = 'needs_review'
+      `UPDATE filings
+          SET confidence = ?, extractor = ?, model_version = ?,
+              ingest_status = 'needs_review'
         WHERE doc_id = ? AND EXISTS (
           SELECT 1 FROM review_queue
            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
         )`,
-      [filing.docId, filing.docId, nextRevision],
+      [minConfidence, meta.extractor, meta.modelVersion, filing.docId, filing.docId, nextRevision],
+    ],
+    [
+      `INSERT OR IGNORE INTO ingestion_decisions
+         (id, doc_id, action, source, actor, reason, payload, transaction_ids, created_at)
+       SELECT ?, ?, 'review_opened', 'pipeline', NULL, ?, ?, '[]', ?
+        WHERE EXISTS (SELECT 1 FROM review_queue
+          WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)`,
+      [
+        `decision:review_opened:${filing.docId}`,
+        filing.docId,
+        reason,
+        decisionPayload,
+        nowIso,
+        filing.docId,
+        nextRevision,
+      ],
     ],
   ]);
   return (results[0]?.meta?.changes ?? 0) > 0;

@@ -163,6 +163,9 @@ export async function runHouseHistoricalBackfill(
         continue;
       }
 
+      // The durable outbox is the accepted handoff even if the immediate Queue
+      // send is unavailable; the scheduled flusher will recover it. Count it
+      // against maxFilings so an outage cannot persist an unbounded history run.
       await enqueueFilingNew(env, discoveredFiling);
       result.enqueued += 1;
       result.byYear[yearKey] += 1;

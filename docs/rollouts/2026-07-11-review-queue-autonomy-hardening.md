@@ -31,21 +31,23 @@ and deployed to isolated preview only; production remains unchanged.
 
 - `app/src/extraction/agreement.ts` - exact material-row agreement, cascade
   safety, lease/attempt handling, guarded publish transitions, and durable
-  delivery intents.
+  delivery intents through the app-wide delivery outbox.
 - `app/src/extraction/normalizer.ts` - revision-snapshotted, exact-row atomic
   publish/review transitions so stale extraction cannot beat a human decision.
 - `app/src/extraction/consensus.ts` - fail-closed human-review consensus.
 - `app/src/admin/routes.ts` - coherent extraction-run selection, reopen-state
   reset, optimistic review revisions, atomic human decisions, JSON bulk writes,
   and the production migration mirror.
-- `app/src/delivery/reviewOutbox.ts` - bounded retryable delivery-intent drain.
+- `app/src/delivery/outbox.ts` - canonical retryable transaction-to-delivery
+  handoff shared by normal ingestion and review-created rows.
 - `app/src/ui/dashboardHtml.ts` - preserve queued rows and material metadata
   when reviewers opt into consensus; submit the revision actually edited.
 - `app/src/index.ts` - register cron lanes independently so watcher failure does
   not suppress review recovery.
-- `app/migrations/0030_doc_complexity_signals.sql` through
-  `0034_review_revision.sql` - collision-safe complexity, cascade/lease/replay,
-  budget, human-hold/live-row/outbox, and optimistic-revision schema.
+- `app/migrations/0033_doc_complexity_signals.sql` through
+  `0037_review_revision.sql` - collision-safe complexity, cascade/lease/replay,
+  budget, human-hold/live-row, and optimistic-revision schema. Review-created
+  rows use the generic `delivery_outbox` added by migration `0030`.
 - `app/src/shared/transactionValue.ts`, normalizer/agreement/admin bulk writes,
   and seed backfill - one exact `est_value` rule for every transaction writer.
 - `app/wrangler.toml`, `app/.dev.vars.example`, and shared environment types -
@@ -77,13 +79,20 @@ npm test -- --reporter=dot
 ```
 
 - Typecheck passed.
-- Full suite passed: 85 files / 764 tests.
+- Combined post-#284 suite passed: 104 files / 903 tests; lint passed with 0
+  errors.
 - Real Miniflare D1 coverage passes for stale editor/normalizer races, double
   confirms, atomic reject/unpublish/retry/hold behavior, first-pass vs review
-  races, exact rollback, outbox retry, `est_value`, and the 223-row filing.
-- Local D1 applied `0029` and `0034`; schema inspection confirmed both
+  races, exact rollback, generic-outbox retry/backoff, `est_value`, and the
+  223-row filing. That large confirmation creates all 223 durable delivery
+  intents, immediately enqueues a D1-safe 80-row page, and leaves the remainder
+  pending for the independent reconciler.
+- Local D1 applied `0029` and the review-revision schema now numbered `0037`;
+  schema inspection confirmed both
   `transactions.est_value` and `review_queue.review_revision`.
-- Isolated preview migrations applied through `0034`; Worker version
+- Isolated preview applied the same review schema under its pre-integration
+  numbering through `0034`; the checked-in lineage was subsequently reconciled
+  to `0033`-`0037` alongside the app-wide `0030`-`0032` migrations. Worker version
   `8414f8c5-48cf-45b2-83d9-b5555b5f6bfc` deployed at
   `https://congress-trade-preview.jaywedgeworth22.workers.dev`.
 - Preview `/api/health` returned `ok=true`, `db=true`; rendered browser QA loaded
