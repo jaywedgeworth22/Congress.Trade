@@ -3334,10 +3334,16 @@ function resolveReview(docId, decision) {
   var rowEl = el('rv-' + docId);
   if (rowEl) rowEl.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
   var isUnpublish = decision === 'unpublish';
+  var item = reviewItemForDoc(docId);
   var url = '/api/admin/review/' + encodeURIComponent(docId) + (isUnpublish ? '/unpublish' : '');
   fetch(url, {
     method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
-    body: isUnpublish ? JSON.stringify({ reason: 'admin unpublish from dashboard' }) : JSON.stringify({ decision: decision })
+    body: isUnpublish
+      ? JSON.stringify({
+          reason: 'admin unpublish from dashboard',
+          reviewRevision: item && item.reviewRevision
+        })
+      : JSON.stringify({ decision: decision, reviewRevision: item && item.reviewRevision })
   })
     .then(okOrThrow)
     .then(function () {
@@ -3353,9 +3359,11 @@ function resolveReview(docId, decision) {
 }
 function retryReviewAuto(docId) {
   var rowEl = el('rv-' + docId);
+  var item = reviewItemForDoc(docId);
   if (rowEl) rowEl.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
   fetch('/api/admin/review/' + encodeURIComponent(docId) + '/retry-auto', {
-    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }), body: '{}'
+    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ reviewRevision: item && item.reviewRevision })
   })
     .then(okOrThrow)
     .then(function () { loadReview(); loadDecisionHistory(); })
@@ -3580,6 +3588,8 @@ function openReviewEditor(docId, rows, decision, label, chamber) {
   tr.id = 'me-' + docId;
   tr.setAttribute('data-decision', decision);
   tr.setAttribute('data-chamber', chamber || '');
+  var item = reviewItemForDoc(docId);
+  tr.setAttribute('data-review-revision', String((item && item.reviewRevision) || 1));
   var safeLabel = label || (decision === 'manual' ? 'manual entry' : 'selected rows');
   var title = decision === 'manual' ? 'Manual Entry' : 'Edit Rows To Confirm';
   var submit = decision === 'manual' ? 'Submit Manual Entry' : 'Confirm Edited Rows';
@@ -3639,7 +3649,11 @@ function meSubmit(docId) {
   if (tr) tr.querySelectorAll('button,input,select').forEach(function (b) { b.disabled = true; });
   fetch('/api/admin/review/' + encodeURIComponent(docId), {
     method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify({ decision: decision, edits: edits })
+    body: JSON.stringify({
+      decision: decision,
+      reviewRevision: Number(tr && tr.getAttribute('data-review-revision')),
+      edits: edits
+    })
   })
     .then(okOrThrow)
     .then(function () { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); if (tr && tr.parentNode) tr.parentNode.removeChild(tr); renderReview(); loadDecisionHistory(); loadFeed(); })

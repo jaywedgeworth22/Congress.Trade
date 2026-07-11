@@ -86,6 +86,7 @@ import type { SecurityRef } from '../enrichment/types';
 import { runPriceRefresh } from '../prices/service';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets } from '../secrets/infisical';
 import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
+import { estimateTransactionValue } from '../shared/transactionValue';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -249,6 +250,7 @@ interface ReviewRow {
   chamber?: string | null;
   agreement_suppressed_at?: string | null;
   agreement_suppression_reason?: string | null;
+  review_revision?: number | null;
 }
 
 interface DiagnosticConnection {
@@ -776,6 +778,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           rq.resolved,
           rq.agreement_suppressed_at,
           rq.agreement_suppression_reason,
+          rq.review_revision,
           f.source_url,
           f.raw_object_key,
           f.doc_kind,
@@ -864,6 +867,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         chamber: row.chamber ?? '',
         agreementSuppressedAt: row.agreement_suppressed_at ?? '',
         agreementSuppressionReason: row.agreement_suppression_reason ?? '',
+        reviewRevision: row.review_revision ?? 1,
         models: modelsByDoc.get(row.doc_id) ?? [],
       };
     });
@@ -1039,7 +1043,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /review/:docId ------------------------------------------------
-  // Body: { decision: 'confirm'|'reject'|'manual', edits?: EditedTx[] }
+  // Body: { decision: 'confirm'|'reject'|'manual', reviewRevision, edits?: EditedTx[] }
   //   confirm -> insert corrected transactions (source='primary'), mark review
   //              resolved, set filing persisted, enqueue delivery.dispatch each.
   //   manual  -> same as confirm but recorded as source='manual' — the admin
@@ -1060,71 +1064,83 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: "decision must be 'confirm', 'reject', or 'manual'" }, 400);
     }
 
-    const review = await get<ReviewRow>(
-      c.env.DB,
-      'SELECT doc_id, reason, payload, created_at, resolved FROM review_queue WHERE doc_id = ?',
-      [docId],
-    );
+    let review: ReviewRow | null;
+    try {
+      review = await get<ReviewRow>(
+        c.env.DB,
+        `SELECT doc_id, reason, payload, created_at, resolved, review_revision
+           FROM review_queue WHERE doc_id = ?`,
+        [docId],
+      );
+    } catch (err) {
+      if (/review_revision|no such column/i.test((err as Error).message)) {
+        return c.json({ error: 'review revision migration is not applied yet' }, 503);
+      }
+      throw err;
+    }
     if (!review) return c.json({ error: 'review item not found' }, 404);
     if (review.resolved === 1) {
       return c.json({ error: 'review item already resolved' }, 409);
+    }
+    if (!Number.isInteger(body.reviewRevision) || Number(body.reviewRevision) < 1) {
+      return c.json({ error: 'reviewRevision must be a positive integer from the review queue item' }, 400);
+    }
+    const reviewRevision = review.review_revision ?? 1;
+    if (body.reviewRevision !== reviewRevision) {
+      return c.json({ error: 'review item changed; reload it before deciding' }, 409);
     }
 
     if (decision === 'reject') {
       const nowIso = new Date().toISOString();
       const rejectionReason = `rejected: ${review.reason ?? 'rejected by admin'}`;
-      // Install the durable human hold before the resolution batch. On a
-      // deploy-before-migrate Worker this statement fails closed (the agreement
-      // selector also references the not-yet-added column) and migration 0033
-      // backfills the hold from the `rejected:` reason below.
-      try {
-        await run(
-          c.env.DB,
-          `UPDATE review_queue
-              SET agreement_suppressed_at = ?, agreement_suppression_reason = ?
-            WHERE doc_id = ? AND resolved = 0`,
-          [nowIso, rejectionReason, docId],
-        );
-      } catch (err) {
-        if (!/agreement_suppressed_at|no such column/i.test((err as Error).message)) throw err;
-      }
       const rejectResults = await batch(c.env.DB, [
         [
           `UPDATE transactions
               SET deprecated_at = ?, deprecated_reason = ?
             WHERE doc_id = ? AND source IN ('primary', 'manual')
               AND deprecated_at IS NULL
-              AND EXISTS (SELECT 1 FROM review_queue WHERE doc_id = ? AND resolved = 0)`,
-          [nowIso, rejectionReason, docId, docId],
+              AND EXISTS (SELECT 1 FROM review_queue
+                WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)`,
+          [nowIso, rejectionReason, docId, docId, reviewRevision],
         ],
         [
           `UPDATE filings SET ingest_status = ?
             WHERE doc_id = ? AND EXISTS (
-              SELECT 1 FROM review_queue WHERE doc_id = ? AND resolved = 0
+              SELECT 1 FROM review_queue
+               WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
             )`,
-          ['error', docId, docId],
+          ['error', docId, docId, reviewRevision],
         ],
         [
-          `UPDATE review_queue SET resolved = 1, reason = ?
-            WHERE doc_id = ? AND resolved = 0`,
-          [rejectionReason, docId],
+          `UPDATE review_queue
+              SET resolved = 1,
+                  reason = ?,
+                  agreement_suppressed_at = ?,
+                  agreement_suppression_reason = ?,
+                  review_revision = review_revision + 1
+            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?`,
+          [rejectionReason, nowIso, rejectionReason, docId, reviewRevision],
         ],
       ]);
       if ((rejectResults[rejectResults.length - 1]?.meta?.changes ?? 0) === 0) {
-        return c.json({ error: 'review item was resolved by another action' }, 409);
+        return c.json({ error: 'review item changed; reload it before deciding' }, 409);
       }
-      await recordIngestionDecision(c.env.DB, {
-        docId,
-        action: 'rejected',
-        source: 'admin',
-        actor: adminActor(c),
-        reason: review.reason ?? 'rejected',
-        payload: {
-          reviewCreatedAt: review.created_at,
-          reviewPayload: review.payload ? safeJson(review.payload) : null,
-        },
-        createdAt: nowIso,
-      });
+      try {
+        await recordIngestionDecision(c.env.DB, {
+          docId,
+          action: 'rejected',
+          source: 'admin',
+          actor: adminActor(c),
+          reason: review.reason ?? 'rejected',
+          payload: {
+            reviewCreatedAt: review.created_at,
+            reviewPayload: review.payload ? safeJson(review.payload) : null,
+          },
+          createdAt: nowIso,
+        });
+      } catch (err) {
+        console.error('review reject: audit receipt failed', docId, (err as Error).message);
+      }
       return c.json({ docId, decision: 'reject', resolved: true });
     }
 
@@ -1218,6 +1234,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         confidence: e.confidence ?? 1,
         source,
         createdAt: nowIso,
+        estValue: estimateTransactionValue(e.amountMin, e.amountMax),
       });
     }
 
@@ -1240,7 +1257,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
              tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
              raw_text, asset_type_name, filing_status, subholding, location,
              description, supplemental_text, row_key, confidence, source,
-             created_at, cursor_seq
+             created_at, cursor_seq, est_value
            ) SELECT
              json_extract(value, '$.id'), json_extract(value, '$.docId'),
              json_extract(value, '$.filerId'), json_extract(value, '$.txDate'),
@@ -1253,12 +1270,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
              json_extract(value, '$.subholding'), json_extract(value, '$.location'),
              json_extract(value, '$.description'), json_extract(value, '$.supplementalText'),
              json_extract(value, '$.rowKey'), json_extract(value, '$.confidence'),
-             json_extract(value, '$.source'), json_extract(value, '$.createdAt'), NULL
+             json_extract(value, '$.source'), json_extract(value, '$.createdAt'), NULL,
+             json_extract(value, '$.estValue')
            FROM json_each(?)
            WHERE EXISTS (
-             SELECT 1 FROM review_queue WHERE doc_id = ? AND resolved = 0
+             SELECT 1 FROM review_queue
+              WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
            )`,
-          [insertRowsJson, docId],
+          [insertRowsJson, docId, reviewRevision],
         ],
         // Force a primary-key error when the post-insert live set is not exact.
         // D1 then rolls back the whole batch; a zero-change final UPDATE alone
@@ -1267,11 +1286,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           `INSERT INTO review_queue (doc_id)
             SELECT ?
              WHERE EXISTS (
-               SELECT 1 FROM review_queue WHERE doc_id = ? AND resolved = 0
+               SELECT 1 FROM review_queue
+                WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
              )
                AND NOT (${completeLiveSet})`,
           [
-            docId, docId,
+            docId, docId, reviewRevision,
             docId, source, rowKeysJson, rowKeys.length,
             docId, rowKeys.length,
           ],
@@ -1280,25 +1300,35 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           `INSERT OR IGNORE INTO review_delivery_outbox (tx_id, doc_id, created_at)
             SELECT id, doc_id, ? FROM transactions
              WHERE doc_id = ? AND source = ? AND deprecated_at IS NULL
-               AND row_key IN (SELECT value FROM json_each(?))`,
-          [nowIso, docId, source, rowKeysJson],
+               AND row_key IN (SELECT value FROM json_each(?))
+               AND EXISTS (
+                 SELECT 1 FROM review_queue
+                  WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
+               )`,
+          [nowIso, docId, source, rowKeysJson, docId, reviewRevision],
         ],
         [
           `UPDATE filings SET ingest_status = ?
             WHERE doc_id = ?
-              AND EXISTS (SELECT 1 FROM review_queue WHERE doc_id = ? AND resolved = 0)
+              AND EXISTS (SELECT 1 FROM review_queue
+                WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)
               AND ${completeLiveSet}`,
           [
-            'persisted', docId, docId,
+            'persisted', docId, docId, reviewRevision,
             docId, source, rowKeysJson, rowKeys.length,
             docId, rowKeys.length,
           ],
         ],
         [
-          `UPDATE review_queue SET resolved = 1
-            WHERE doc_id = ? AND resolved = 0 AND ${completeLiveSet}`,
+          `UPDATE review_queue
+              SET resolved = 1,
+                  agreement_suppressed_at = NULL,
+                  agreement_suppression_reason = NULL,
+                  review_revision = review_revision + 1
+            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
+              AND ${completeLiveSet}`,
           [
-            docId,
+            docId, reviewRevision,
             docId, source, rowKeysJson, rowKeys.length,
             docId, rowKeys.length,
           ],
@@ -1313,17 +1343,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const resolvedResult = persistResults[persistResults.length - 1];
     if ((resolvedResult?.meta?.changes ?? 0) === 0) {
       return c.json({ error: 'review item changed or not all edited rows could be persisted' }, 409);
-    }
-    try {
-      await run(
-        c.env.DB,
-        `UPDATE review_queue
-            SET agreement_suppressed_at = NULL, agreement_suppression_reason = NULL
-          WHERE doc_id = ? AND resolved = 1`,
-        [docId],
-      );
-    } catch (err) {
-      console.error('review confirm: suppression clear failed', docId, (err as Error).message);
     }
     const insertedCount = persistResults[0]?.meta?.changes ?? 0;
     if (insertedCount > 0) {
@@ -1393,7 +1412,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // history and lets every feed/analytics/stream read exclude the rows via
   // `deprecated_at IS NULL`. Already-delivered webhook/SSE events cannot be
   // recalled — this stops the rows being served going forward.
-  // Body (optional): { reason?: string }
+  // Body: { reviewRevision: number, reason?: string }
   r.post('/review/:docId/unpublish', async (c) => {
     const docId = c.req.param('docId');
     let body: Record<string, unknown> = {};
@@ -1404,109 +1423,136 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'invalid JSON body' }, 400);
     }
     const reason = typeof body.reason === 'string' && body.reason.length ? body.reason : 'unpublished by admin';
+    if (!Number.isInteger(body.reviewRevision) || Number(body.reviewRevision) < 1) {
+      return c.json({ error: 'reviewRevision must be a positive integer from the review queue item' }, 400);
+    }
 
-    const filing = await get<{ ingest_status: string | null }>(
-      c.env.DB,
-      'SELECT ingest_status FROM filings WHERE doc_id = ?',
-      [docId],
-    );
-    if (!filing) return c.json({ error: 'filing not found' }, 404);
+    let review: { resolved: number; review_revision: number; ingest_status: string | null } | null;
+    try {
+      review = await get(
+        c.env.DB,
+        `SELECT rq.resolved, rq.review_revision, f.ingest_status
+           FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
+          WHERE rq.doc_id = ?`,
+        [docId],
+      );
+    } catch (err) {
+      if (/review_revision|no such column/i.test((err as Error).message)) {
+        return c.json({ error: 'review revision migration is not applied yet' }, 503);
+      }
+      throw err;
+    }
+    if (!review) return c.json({ error: 'review item or filing not found' }, 404);
+    if (review.resolved !== 1) return c.json({ error: 'review item is already pending' }, 409);
+    const reviewRevision = Number(body.reviewRevision);
+    if (review.review_revision !== reviewRevision) {
+      return c.json({ error: 'review item changed; reload it before unpublishing' }, 409);
+    }
 
     const nowIso = new Date().toISOString();
     const holdReason = 'unpublished: ' + reason;
     const deprecatedSql = `UPDATE transactions
       SET deprecated_at = ?, deprecated_reason = ?
-      WHERE doc_id = ? AND source IN ('primary', 'manual') AND deprecated_at IS NULL`;
-    const filingSql = 'UPDATE filings SET ingest_status = ? WHERE doc_id = ?';
-    let results: D1Result[];
-    try {
-      results = await batch(c.env.DB, [
-        [deprecatedSql, [nowIso, reason, docId]],
-        [filingSql, ['needs_review', docId]],
-        [
-          `INSERT INTO review_queue (
-             doc_id, reason, payload, created_at, resolved,
-             agreement_suppressed_at, agreement_suppression_reason
-           ) VALUES (?, ?, ?, ?, 0, ?, ?)
-           ON CONFLICT(doc_id) DO UPDATE SET
-             resolved = 0,
-             reason = excluded.reason,
-             created_at = excluded.created_at,
-             agreement_attempted_at = NULL,
-             agreement_attempts = 0,
-             agreement_tier = NULL,
-             agreement_next_attempt_at = NULL,
-             agreement_claim_token = NULL,
-             agreement_claimed_at = NULL,
-             agreement_suppressed_at = excluded.agreement_suppressed_at,
-             agreement_suppression_reason = excluded.agreement_suppression_reason`,
-          [docId, holdReason, null, nowIso, nowIso, holdReason],
-        ],
-      ]);
-    } catch (err) {
-      // ship.sh deploys before POST /migrate. D1 batches roll back on error, so
-      // retry the whole human action atomically against the legacy schema. The
-      // new agreement selector fails closed until migration 0033 adds its hold
-      // columns, then 0033 backfills the `unpublished:` reason into a real hold.
-      if (!/no such column: agreement_|has no column named agreement_/i.test((err as Error).message)) throw err;
-      results = await batch(c.env.DB, [
-        [deprecatedSql, [nowIso, reason, docId]],
-        [filingSql, ['needs_review', docId]],
-        [
-          `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved)
-             VALUES (?, ?, ?, ?, 0)
-           ON CONFLICT(doc_id) DO UPDATE SET
-             resolved = 0,
-             reason = excluded.reason,
-             created_at = excluded.created_at`,
-          [docId, holdReason, null, nowIso],
-        ],
-      ]);
+      WHERE doc_id = ? AND source IN ('primary', 'manual') AND deprecated_at IS NULL
+        AND EXISTS (SELECT 1 FROM review_queue
+          WHERE doc_id = ? AND resolved = 1 AND review_revision = ?)`;
+    const filingSql = `UPDATE filings SET ingest_status = ?
+      WHERE doc_id = ? AND EXISTS (SELECT 1 FROM review_queue
+        WHERE doc_id = ? AND resolved = 1 AND review_revision = ?)`;
+    const results = await batch(c.env.DB, [
+      [deprecatedSql, [nowIso, reason, docId, docId, reviewRevision]],
+      [filingSql, ['needs_review', docId, docId, reviewRevision]],
+      [
+        `UPDATE review_queue
+            SET resolved = 0,
+                reason = ?,
+                created_at = ?,
+                agreement_attempted_at = NULL,
+                agreement_attempts = 0,
+                agreement_tier = NULL,
+                agreement_next_attempt_at = NULL,
+                agreement_claim_token = NULL,
+                agreement_claimed_at = NULL,
+                agreement_suppressed_at = ?,
+                agreement_suppression_reason = ?,
+                review_revision = review_revision + 1
+          WHERE doc_id = ? AND resolved = 1 AND review_revision = ?`,
+        [holdReason, nowIso, nowIso, holdReason, docId, reviewRevision],
+      ],
+    ]);
+    if ((results[results.length - 1]?.meta?.changes ?? 0) === 0) {
+      return c.json({ error: 'review item changed before it could be unpublished' }, 409);
     }
     const deprecated = results[0]?.meta?.changes ?? 0;
 
-    await recordIngestionDecision(c.env.DB, {
-      docId,
-      action: 'unpublished',
-      source: 'admin',
-      actor: adminActor(c),
-      reason,
-      payload: { deprecatedTransactions: deprecated },
-      createdAt: nowIso,
-    });
+    try {
+      await recordIngestionDecision(c.env.DB, {
+        docId,
+        action: 'unpublished',
+        source: 'admin',
+        actor: adminActor(c),
+        reason,
+        payload: { deprecatedTransactions: deprecated },
+        createdAt: nowIso,
+      });
+    } catch (err) {
+      console.error('review unpublish: audit receipt failed', docId, (err as Error).message);
+    }
 
-    return c.json({ docId, unpublished: true, deprecatedTransactions: deprecated, reason });
+    return c.json({
+      docId,
+      unpublished: true,
+      deprecatedTransactions: deprecated,
+      reason,
+      reviewRevision: reviewRevision + 1,
+    });
   });
 
   // --- POST /review/:docId/retry-auto ------------------------------------
-  // Explicitly releases a durable Reject/Unpublish human hold. This is the
+  // Explicitly releases a durable Unpublish human hold. Reject is a terminal
+  // discard decision and is deliberately never eligible for this route.
+  // This is the
   // only path (besides a completed human confirm/manual action) that lets the
   // autonomous agreement cascade reconsider the unchanged source document.
   r.post('/review/:docId/retry-auto', async (c) => {
     const docId = c.req.param('docId');
+    let body: Record<string, unknown>;
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    if (!Number.isInteger(body.reviewRevision) || Number(body.reviewRevision) < 1) {
+      return c.json({ error: 'reviewRevision must be a positive integer from the review queue item' }, 400);
+    }
     let held: {
       resolved: number;
       agreement_suppressed_at: string | null;
       agreement_suppression_reason: string | null;
       raw_object_key: string | null;
+      review_revision: number;
     } | null;
     try {
       held = await get(
         c.env.DB,
         `SELECT rq.resolved, rq.agreement_suppressed_at, rq.agreement_suppression_reason,
-                f.raw_object_key
+                rq.review_revision, f.raw_object_key
            FROM review_queue rq LEFT JOIN filings f ON f.doc_id = rq.doc_id
           WHERE rq.doc_id = ?`,
         [docId],
       );
     } catch (err) {
-      if (/agreement_suppressed_at|no such column/i.test((err as Error).message)) {
+      if (/agreement_suppressed_at|review_revision|no such column/i.test((err as Error).message)) {
         return c.json({ error: 'review safety migration is not applied yet' }, 503);
       }
       throw err;
     }
     if (!held) return c.json({ error: 'review item not found' }, 404);
     if (held.resolved === 1) return c.json({ error: 'review item is already resolved' }, 409);
+    const reviewRevision = Number(body.reviewRevision);
+    if (held.review_revision !== reviewRevision) {
+      return c.json({ error: 'review item changed; reload it before retrying' }, 409);
+    }
     if (!held.agreement_suppressed_at) return c.json({ error: 'review item is not held from automation' }, 409);
     if (!held.raw_object_key) return c.json({ error: 'review item has no source object for automatic retry' }, 409);
 
@@ -1522,24 +1568,30 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
               agreement_next_attempt_at = NULL,
               agreement_claim_token = NULL,
               agreement_claimed_at = NULL,
-              reason = ?
-        WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at = ?`,
-      [`auto_retry_requested: ${priorReason}`, docId, held.agreement_suppressed_at],
+              reason = ?,
+              review_revision = review_revision + 1
+        WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at = ?
+          AND review_revision = ?`,
+      [`auto_retry_requested: ${priorReason}`, docId, held.agreement_suppressed_at, reviewRevision],
     );
     if ((released.meta?.changes ?? 0) === 0) {
       return c.json({ error: 'review item changed before the hold could be released' }, 409);
     }
 
-    await recordIngestionDecision(c.env.DB, {
-      docId,
-      action: 'auto_retry_requested',
-      source: 'admin',
-      actor: adminActor(c),
-      reason: priorReason,
-      payload: { priorSuppressedAt: held.agreement_suppressed_at },
-    });
+    try {
+      await recordIngestionDecision(c.env.DB, {
+        docId,
+        action: 'auto_retry_requested',
+        source: 'admin',
+        actor: adminActor(c),
+        reason: priorReason,
+        payload: { priorSuppressedAt: held.agreement_suppressed_at },
+      });
+    } catch (err) {
+      console.error('review retry-auto: audit receipt failed', docId, (err as Error).message);
+    }
     const enqueued = await enqueueAgreementCheck(c.env, docId, held.raw_object_key);
-    return c.json({ docId, released: true, enqueued });
+    return c.json({ docId, released: true, enqueued, reviewRevision: reviewRevision + 1 });
   });
 
   // --- GET /sources/health ------------------------------------------------
@@ -2638,17 +2690,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       // Not in the feed yet (sitting in review / error). Does it clear the bar now?
       const passesNow = newMin >= CONFIDENCE_THRESHOLD && !hasHardFailure;
       if (passesNow) {
+        let promoted = true;
         if (!dryRun) {
-          // normalize() persists + sets ingest_status + fans out delivery
-          // (first-time delivery for these rows, which is correct).
-          await normalize(c.env, extracted.filing, extracted.transactions, {
+          // normalize() atomically persists + resolves only if this re-read's
+          // captured review revision is still current.
+          const normalized = await normalize(c.env, extracted.filing, extracted.transactions, {
             extractor: extracted.extractor,
             modelVersion: extracted.modelVersion ?? null,
           });
-          await run(c.env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [doc_id]);
+          promoted = normalized.published;
         }
-        summary.filingsPromoted += 1;
-        summary.rowsPromoted += flagged.length;
+        if (promoted) {
+          summary.filingsPromoted += 1;
+          summary.rowsPromoted += flagged.length;
+        } else {
+          summary.filingsStillInReview += 1;
+        }
       } else {
         summary.filingsStillInReview += 1;
       }
@@ -3432,6 +3489,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
        )`,
       `CREATE INDEX IF NOT EXISTS idx_review_delivery_outbox_pending
          ON review_delivery_outbox (dispatched_at, created_at)`,
+      // 0034_review_revision.sql — optimistic concurrency guard so stale admin
+      // editors cannot overwrite newer normalized/cascade review content.
+      'ALTER TABLE review_queue ADD COLUMN review_revision INTEGER NOT NULL DEFAULT 1',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

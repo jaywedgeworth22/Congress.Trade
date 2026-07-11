@@ -86,6 +86,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('agreementSuppressedAt');
     expect(DASHBOARD_HTML).toContain('>Retry Auto</button>');
     expect(DASHBOARD_HTML).toContain('/retry-auto');
+    expect(DASHBOARD_HTML).toContain('body: JSON.stringify({ reviewRevision: item && item.reviewRevision })');
   });
 
   it('surfaces the GICS sector flow, market-cap, and performer analytics in Trends', () => {
@@ -312,7 +313,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("filingStatus: (g.querySelector('.me-filing-status').value || '').trim() || null");
     expect(DASHBOARD_HTML).not.toContain('class="me-min"');
     expect(DASHBOARD_HTML).not.toContain('class="me-max"');
-    expect(DASHBOARD_HTML).toContain('JSON.stringify({ decision: decision, edits: edits })');
+    expect(DASHBOARD_HTML).toContain("tr.setAttribute('data-review-revision'");
+    expect(DASHBOARD_HTML).toContain("reviewRevision: Number(tr && tr.getAttribute('data-review-revision'))");
     expect(DASHBOARD_HTML).not.toContain('JSON.stringify({ decision: decision, edits: [] })');
   });
 

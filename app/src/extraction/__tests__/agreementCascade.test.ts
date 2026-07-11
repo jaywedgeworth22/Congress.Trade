@@ -63,6 +63,7 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
     nextAttemptAt: null as string | null,
     claimToken: null as string | null,
     claimedAt: null as string | null,
+    revision: 1,
   };
   const db = {
     prepare(sql: string) {
@@ -84,10 +85,13 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
               agreement_next_attempt_at: review.nextAttemptAt,
               agreement_claim_token: review.claimToken,
               agreement_claimed_at: review.claimedAt,
+              agreement_suppressed_at: null,
+              agreement_suppression_reason: null,
+              review_revision: review.revision,
             } as T;
           }
-          if (/SELECT payload FROM review_queue/i.test(sql)) {
-            return { payload: null } as T;
+          if (/SELECT payload, review_revision FROM review_queue/i.test(sql)) {
+            return { payload: null, review_revision: review.revision } as T;
           }
           return null as T | null;
         },
@@ -150,9 +154,10 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
               action: this.params[2], source: this.params[3], reason: this.params[5],
               payload: typeof payloadRaw === 'string' ? JSON.parse(payloadRaw) : null,
             });
-          } else if (/UPDATE review_queue SET reason/i.test(sql)) {
-            const expectedToken = this.params[3];
+          } else if (/UPDATE review_queue\s+SET reason/i.test(sql)) {
+            const expectedToken = /agreement_claim_token = \?/i.test(sql) ? this.params[3] : undefined;
             if (review.resolved === 0 && (expectedToken === undefined || expectedToken === review.claimToken)) {
+              review.revision += 1;
               cap.reviewFlags.push({ reason: this.params[0], payload: typeof this.params[1] === 'string' ? JSON.parse(this.params[1] as string) : this.params[1] });
               return { success: true, meta: { changes: 1 } };
             }
@@ -163,6 +168,7 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
               review.resolved = 1;
               review.claimToken = null;
               review.claimedAt = null;
+              review.revision += 1;
               cap.resolved.push(docId);
               return { success: true, meta: { changes: 1 } };
             }
