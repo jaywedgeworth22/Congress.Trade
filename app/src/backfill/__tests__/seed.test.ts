@@ -224,10 +224,16 @@ describe('runSeedBackfill batched writes (subrequest cap)', () => {
   // batch() records how many statements landed in each call (= one subrequest).
   function fakeDb() {
     const batchSizes: number[] = [];
+    const transactionSql: string[] = [];
+    const transactionBinds: unknown[][] = [];
     const db = {
-      prepare() {
+      prepare(sql: string) {
         return {
-          bind() {
+          bind(...params: unknown[]) {
+            if (/INSERT INTO transactions/i.test(sql)) {
+              transactionSql.push(sql);
+              transactionBinds.push(params);
+            }
             return this;
           },
           async all() {
@@ -243,11 +249,11 @@ describe('runSeedBackfill batched writes (subrequest cap)', () => {
         return stmts.map(() => ({ meta: { changes: 1 } }));
       },
     };
-    return { db, batchSizes };
+    return { db, batchSizes, transactionSql, transactionBinds };
   }
 
   it('groups upserts into bounded batches instead of one write per row', async () => {
-    const { db, batchSizes } = fakeDb();
+    const { db, batchSizes, transactionSql, transactionBinds } = fakeDb();
     const env = { DB: db } as unknown as Env;
     // 120 distinct politicians => 120 filer upserts + 120 tx upserts = 240 statements.
     const rows = Array.from({ length: 120 }, (_, i) => ({
@@ -270,6 +276,10 @@ describe('runSeedBackfill batched writes (subrequest cap)', () => {
     expect(batchSizes.length).toBeLessThan(20);
     expect(Math.max(...batchSizes)).toBeLessThanOrEqual(51);
     expect(batchSizes.reduce((a, b) => a + b, 0)).toBe(240);
+    expect(transactionSql).toHaveLength(120);
+    expect(transactionSql.every((sql) => /filed_date, est_value/i.test(sql))).toBe(true);
+    expect(transactionSql.every((sql) => /est_value = excluded\.est_value/i.test(sql))).toBe(true);
+    expect(transactionBinds.every((params) => params.at(-1) === 375000.5)).toBe(true);
   });
 
   it('materializes est_value on insert and refreshes it during seed reconciliation', async () => {

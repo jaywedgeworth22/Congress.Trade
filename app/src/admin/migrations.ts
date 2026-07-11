@@ -77,9 +77,84 @@ export const STRIPE_EVENT_SCHEMA_STATEMENTS = [
      ON stripe_subscription_event_state (customer_id, last_event_created DESC)`,
 ] as const;
 
+export const REVIEW_COMPLEXITY_SCHEMA_STATEMENTS = [
+  'ALTER TABLE filings ADD COLUMN page_count INTEGER',
+  'ALTER TABLE filings ADD COLUMN raw_bytes INTEGER',
+] as const;
+
+export const REVIEW_AGREEMENT_SCHEMA_STATEMENTS = [
+  'ALTER TABLE review_queue ADD COLUMN agreement_attempts INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE review_queue ADD COLUMN agreement_tier INTEGER',
+  'ALTER TABLE review_queue ADD COLUMN agreement_next_attempt_at TEXT',
+  'ALTER TABLE review_queue ADD COLUMN agreement_claim_token TEXT',
+  'ALTER TABLE review_queue ADD COLUMN agreement_claimed_at TEXT',
+  'ALTER TABLE review_queue ADD COLUMN agreement_legacy_replay_at TEXT',
+  `CREATE INDEX IF NOT EXISTS idx_review_queue_agreement_eligible
+     ON review_queue (resolved, agreement_next_attempt_at, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_review_queue_agreement_claim
+     ON review_queue (agreement_claim_token, agreement_claimed_at)`,
+  `UPDATE review_queue
+      SET agreement_attempted_at = NULL,
+          agreement_attempts = 0,
+          agreement_tier = NULL,
+          agreement_next_attempt_at = NULL,
+          agreement_claim_token = NULL,
+          agreement_claimed_at = NULL
+    WHERE resolved = 0
+      AND agreement_attempted_at IS NOT NULL
+      AND created_at > agreement_attempted_at`,
+  `UPDATE review_queue
+      SET agreement_attempted_at = NULL,
+          agreement_attempts = 0,
+          agreement_tier = NULL,
+          agreement_next_attempt_at = NULL,
+          agreement_claim_token = NULL,
+          agreement_claimed_at = NULL,
+          agreement_legacy_replay_at = CURRENT_TIMESTAMP
+    WHERE resolved = 0
+      AND agreement_legacy_replay_at IS NULL
+      AND agreement_attempted_at >= '2026-06-26T00:00:00.000Z'
+      AND agreement_attempted_at < '2026-07-11T00:00:00.000Z'`,
+] as const;
+
+export const REVIEW_BUDGET_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS llm_budget (
+     day   TEXT PRIMARY KEY,
+     reads INTEGER NOT NULL DEFAULT 0
+   )`,
+] as const;
+
+export const REVIEW_RESOLUTION_SCHEMA_STATEMENTS = [
+  'ALTER TABLE review_queue ADD COLUMN agreement_suppressed_at TEXT',
+  'ALTER TABLE review_queue ADD COLUMN agreement_suppression_reason TEXT',
+  `UPDATE review_queue
+      SET agreement_suppressed_at = COALESCE(agreement_suppressed_at, CURRENT_TIMESTAMP),
+          agreement_suppression_reason = COALESCE(agreement_suppression_reason, reason)
+    WHERE reason LIKE 'unpublished:%' OR reason LIKE 'rejected:%'`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_live_doc_source_rowkey
+     ON transactions (doc_id, source, row_key)
+     WHERE row_key IS NOT NULL AND deprecated_at IS NULL`,
+  'DROP INDEX IF EXISTS idx_transactions_doc_source_rowkey',
+  `CREATE INDEX IF NOT EXISTS idx_review_queue_agreement_suppressed
+     ON review_queue (resolved, agreement_suppressed_at, created_at)`,
+] as const;
+
+export const REVIEW_REVISION_SCHEMA_STATEMENTS = [
+  'ALTER TABLE review_queue ADD COLUMN review_revision INTEGER NOT NULL DEFAULT 1',
+] as const;
+
+/** Ordered review-queue autonomy schema mirrored by file migrations 0033-0037. */
+export const REVIEW_AUTONOMY_SCHEMA_STATEMENTS = [
+  ...REVIEW_COMPLEXITY_SCHEMA_STATEMENTS,
+  ...REVIEW_AGREEMENT_SCHEMA_STATEMENTS,
+  ...REVIEW_BUDGET_SCHEMA_STATEMENTS,
+  ...REVIEW_RESOLUTION_SCHEMA_STATEMENTS,
+  ...REVIEW_REVISION_SCHEMA_STATEMENTS,
+] as const;
+
 /**
  * Ordered schema tail shared by POST /api/admin/migrate and migration parity
- * tests. Keep this in the same order as file migrations 0029 through 0032.
+ * tests. Keep this in the same order as file migrations 0029 through 0037.
  */
 export const POST_0024_SCHEMA_STATEMENTS = [
   // 0025_extraction_runs_usage.sql
@@ -87,4 +162,5 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...EST_VALUE_SCHEMA_STATEMENTS,
   ...RELIABILITY_SCHEMA_STATEMENTS,
   ...STRIPE_EVENT_SCHEMA_STATEMENTS,
+  ...REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
 ] as const;

@@ -1,5 +1,40 @@
-import { describe, expect, it } from 'vitest';
-import { parseHousePtrText } from '../textPdf';
+import { describe, expect, it, vi } from 'vitest';
+import type { Filing } from '../../shared/types';
+
+// Mock unpdf so the page-count test doesn't need a real PDF fixture — it only
+// needs to prove TextPdfExtractor reads pdf.numPages off the same document
+// proxy already opened for text extraction (no extra parse, no page merge).
+// parseHousePtrText tests below don't touch unpdf, so this mock is inert for them.
+const unpdfMocks = vi.hoisted(() => ({
+  getDocumentProxy: vi.fn(),
+  extractText: vi.fn(),
+}));
+vi.mock('unpdf', () => ({
+  getDocumentProxy: unpdfMocks.getDocumentProxy,
+  extractText: unpdfMocks.extractText,
+}));
+
+import { parseHousePtrText, TextPdfExtractor } from '../textPdf';
+
+function textPdfFiling(): Filing {
+  return {
+    docId: 'H-1',
+    chamber: 'house',
+    filerId: null,
+    filingType: 'P',
+    filedDate: null,
+    sourceUrl: '',
+    rawObjectKey: null,
+    ingestStatus: 'classified',
+    docKind: 'text_pdf',
+    extractor: null,
+    modelVersion: null,
+    confidence: null,
+    firstSeenAt: '2026-01-01T00:00:00.000Z',
+    sourceUpdatedAt: null,
+    error: null,
+  };
+}
 
 describe('parseHousePtrText', () => {
   it('ignores PTR preamble text and parses the first real holding block', () => {
@@ -247,5 +282,38 @@ describe('parseHousePtrText', () => {
       capGainsOver200: true,
     });
     expect(rows[0].supplementalText).not.toContain('Hon. Josh');
+  });
+});
+
+describe('TextPdfExtractor page count', () => {
+  it('surfaces pdf.numPages from the already-open document proxy (no extra parse)', async () => {
+    unpdfMocks.getDocumentProxy.mockResolvedValue({ numPages: 3 });
+    unpdfMocks.extractText.mockResolvedValue({
+      text: 'SP Apple Inc. (AAPL) [ST]\nP 06/14/2024 06/20/2024 $1,001 - $15,000',
+    });
+
+    const extractor = new TextPdfExtractor();
+    const result = (await extractor.extract({
+      filing: textPdfFiling(),
+      bytes: new ArrayBuffer(8),
+    })) as { pageCount?: number | null };
+
+    expect(result.pageCount).toBe(3);
+    // One proxy open, one text extraction call — page count must not trigger a
+    // second parse (that's the "do NOT merge pages just to count" constraint).
+    expect(unpdfMocks.getDocumentProxy).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves page count null when the parser does not cheaply expose numPages', async () => {
+    unpdfMocks.getDocumentProxy.mockResolvedValue({});
+    unpdfMocks.extractText.mockResolvedValue({ text: '' });
+
+    const extractor = new TextPdfExtractor();
+    const result = (await extractor.extract({
+      filing: textPdfFiling(),
+      bytes: new ArrayBuffer(8),
+    })) as { pageCount?: number | null };
+
+    expect(result.pageCount).toBeNull();
   });
 });

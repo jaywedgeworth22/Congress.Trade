@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   completeDeliveryOutbox,
   DELIVERY_ENQUEUED_STALE_MS,
+  DELIVERY_TARGETED_ID_LIMIT,
   flushDeliveryOutbox,
   reconnectDeadLetteredOutbox,
 } from '../outbox';
@@ -9,7 +10,8 @@ import type { Env } from '../../shared/types';
 
 function makeEnv(sendFails = false) {
   const row = { tx_id: 'tx_1', status: 'pending', attempts: 0, dead_letter_cycles: 0, available_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z', last_error: null as string | null };
-  const prepare = (sql: string) => ({ params: [] as unknown[], bind(...params: unknown[]) { this.params = params; return this; },
+  const boundParamCounts: number[] = [];
+  const prepare = (sql: string) => ({ params: [] as unknown[], bind(...params: unknown[]) { this.params = params; boundParamCounts.push(params.length); return this; },
     async all<T>() {
       if (/WHERE tx_id = \?/i.test(sql)) return { results: [row] as T[] };
       const now = String(this.params[0]);
@@ -34,7 +36,7 @@ function makeEnv(sendFails = false) {
     },
   });
   const send = vi.fn(async () => { if (sendFails) throw new Error('queue unavailable'); });
-  return { row, send, env: { DB: { prepare } as unknown as D1Database, DELIVERY_QUEUE: { send } } as unknown as Env };
+  return { row, send, boundParamCounts, env: { DB: { prepare } as unknown as D1Database, DELIVERY_QUEUE: { send } } as unknown as Env };
 }
 
 describe('delivery outbox', () => {
@@ -79,6 +81,13 @@ describe('delivery outbox', () => {
     expect(await flushDeliveryOutbox(env, { now: new Date('2026-07-01T00:00:00.000Z') })).toEqual({ claimed: 1, enqueued: 0, failed: 1 });
     expect(row.status).toBe('pending');
     expect(row.last_error).toBe('queue unavailable');
+  });
+
+  it('pages a large targeted flush below the D1 bind-parameter ceiling', async () => {
+    const { env, boundParamCounts } = makeEnv();
+    const txIds = Array.from({ length: 223 }, (_, index) => `tx_${index}`);
+    await flushDeliveryOutbox(env, { txIds, limit: txIds.length, now: new Date('2026-07-01T00:00:00.000Z') });
+    expect(Math.max(...boundParamCounts)).toBeLessThanOrEqual(DELIVERY_TARGETED_ID_LIMIT + 2);
   });
 
   it('reconnects an unexpected dead-letter with backoff', async () => {

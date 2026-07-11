@@ -158,10 +158,10 @@ id = "b5554a8cd8b04347baeb80cd160bf1e0"
 # ---------------------------------------------------------------------------
 [vars]
 APP_BASE_URL = "https://congress.trade"
-# Autonomous cross-vendor agreement -> auto-publish (per-minute cron). When two
-# independent models fully agree on a held-for-review filing's rows, it's
-# published instead of waiting for a human. Bounded: LIMIT docs/tick, each doc
-# attempted once. Set ENABLED to "" to turn off.
+# Autonomous cross-vendor agreement -> auto-publish (per-minute cron). The
+# durable cascade leases due review rows, retries transient failures with
+# backoff, and publishes only after the configured cross-vendor checks pass.
+# Set ENABLED to "" to turn off.
 # MODEL_B was "openai:gpt-4o-mini" from 2026-06-26 to 2026-07-10 -- confirmed
 # via prod review_queue data to have been effectively non-functional that
 # whole window (bakeoff.ts:38 already documented gpt-4o-mini rejecting this
@@ -170,7 +170,15 @@ APP_BASE_URL = "https://congress.trade"
 AGREEMENT_AUTOPUBLISH_ENABLED = "true"
 AGREEMENT_AUTOPUBLISH_MODEL_A = "mistral:mistral-ocr-latest"
 AGREEMENT_AUTOPUBLISH_MODEL_B = "openai:gpt-4o"
+# ANTHROPIC_API_KEY is configured for this Worker. Keep C on Anthropic so all
+# three slots are distinct vendors (Mistral/OpenAI/Anthropic).
+AGREEMENT_MODEL_C = "anthropic:claude-sonnet-4-6"
 AGREEMENT_AUTOPUBLISH_LIMIT = "3"
+AGREEMENT_MAX_ATTEMPTS = "3"
+AGREEMENT_DAILY_LLM_BUDGET = "300"
+AGREEMENT_BIG_DOC_START_TIER2 = "true"
+AGREEMENT_BIG_DOC_PAGE_THRESHOLD = "10"
+AGREEMENT_BIG_DOC_BYTES_THRESHOLD = "2097152"
 # Paid-plan import guardrails. These are deliberately below platform maximums:
 # large enough to avoid tiny cross-app chunks, still bounded against runaway
 # JSON parse/DB-batch cost. Lower these vars for a lean/free-compatible profile.

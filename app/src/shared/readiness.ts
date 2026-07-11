@@ -8,7 +8,7 @@ export interface ReadinessResult {
 }
 
 const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
-  ['filings', 'SELECT doc_id, first_seen_at, filed_date FROM filings LIMIT 0'],
+  ['filings', 'SELECT doc_id, first_seen_at, filed_date, page_count, raw_bytes FROM filings LIMIT 0'],
   [
     'transactions',
     `SELECT row_key, disclosure_available_at, deprecated_at, asset_type_name,
@@ -56,7 +56,15 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
             last_event_id, last_event_type, updated_at
        FROM stripe_subscription_event_state LIMIT 0`,
   ],
-  ['review_queue', 'SELECT doc_id, resolved, agreement_attempted_at FROM review_queue LIMIT 0'],
+  [
+    'review_queue',
+    `SELECT doc_id, resolved, agreement_attempted_at, agreement_attempts,
+            agreement_tier, agreement_next_attempt_at, agreement_claim_token,
+            agreement_claimed_at, agreement_legacy_replay_at,
+            agreement_suppressed_at, agreement_suppression_reason, review_revision
+       FROM review_queue LIMIT 0`,
+  ],
+  ['llm_budget', 'SELECT day, reads FROM llm_budget LIMIT 0'],
   ['ingestion_decisions', 'SELECT doc_id, action, transaction_ids FROM ingestion_decisions LIMIT 0'],
   ['client_commands', 'SELECT id, user_id, status, idempotency_key FROM client_commands LIMIT 0'],
   ['securities_ref', 'SELECT ticker, sector, market_cap_bucket FROM securities_ref LIMIT 0'],
@@ -70,10 +78,11 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
     true,
   ],
   [
-    'idx_transactions_doc_source_rowkey',
+    'idx_transactions_live_doc_source_rowkey',
     `SELECT name FROM sqlite_master
-      WHERE type = 'index' AND name = 'idx_transactions_doc_source_rowkey'
-        AND UPPER(sql) LIKE 'CREATE UNIQUE INDEX%'`,
+      WHERE type = 'index' AND name = 'idx_transactions_live_doc_source_rowkey'
+        AND UPPER(sql) LIKE 'CREATE UNIQUE INDEX%'
+        AND UPPER(sql) LIKE '%DEPRECATED_AT IS NULL%'`,
     true,
   ],
   [
@@ -94,6 +103,9 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
     'idx_source_attempts_source_time',
     'idx_stripe_webhook_events_claim_expiry',
     'idx_stripe_subscription_event_customer',
+    'idx_review_queue_agreement_eligible',
+    'idx_review_queue_agreement_claim',
+    'idx_review_queue_agreement_suppressed',
   ].map((name): [string, string, boolean] => [
     name,
     `SELECT name FROM sqlite_master WHERE type = 'index' AND name = '${name}'`,
