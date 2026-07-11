@@ -94,9 +94,10 @@ npm test -- --reporter=dot
   filenames to collision-free `0033`-`0037`, alongside the app-wide
   `0030`-`0032` migrations. The normal preview deploy then reported no pending
   migrations and deployed combined Worker version
-  `dca74a7f-2499-462c-b133-58eb82dbdf06` at
+  `e1c8fb70-4291-4872-b1e2-f45f59367e6f` at
   `https://congress-trade-preview.jaywedgeworth22.workers.dev`.
-- Fresh preview `/api/health` returned `ok=true`, `db=true`, `schema=true`, and
+- The exact-tree preview also applied merged PR #264's `0025` usage migration.
+  Fresh `/api/health` returned `ok=true`, `db=true`, `schema=true`, and
   `missing=[]`; the prior review build's rendered browser QA loaded the real
   dashboard and seeded analytics without an error surface.
 - Preview intentionally has no cron trigger, so autonomous scheduling proof is
