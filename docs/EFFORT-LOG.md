@@ -115,7 +115,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 
 ## In Progress
 - **Whole-app improvement roadmap implementation (CODEX, XL) — IMPLEMENTATION COMPLETE LOCALLY +
-  PREVIEWED 2026-07-11; PRODUCTION PENDING APPROVAL.** Integration branch
+  PREVIEWED 2026-07-11; PRODUCTION RELEASE IN PROGRESS (owner authorized merge + deploy).** Integration branch
   `codex/app-hardening-integration` has 11 implementation commits plus its closeout record over
   `origin/main`; all backend,
   billing/security, iOS, and PWA lanes are integrated and independently reviewed. Isolated preview
@@ -125,8 +125,9 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   app typecheck; 95 files / 808 tests; coverage 67.90/60.14/71.91/70.15; lint 0 errors; audit 0;
   fresh 28-migration D1; prod/preview dry-runs; PWA typecheck + 3 files / 13 tests + production build
   + audit 0; iOS generic Simulator build + build-for-testing; desktop/mobile rendered QA with no
-  overflow or console warnings/errors. No push, merge, production deploy/migration, ingestion,
-  queue operation, or billing activation occurred.
+  overflow or console warnings/errors. Release claim: push/PR/merge the verified integration, then
+  deploy the exact merged commit through `app/scripts/ship.sh`; no production ingestion, queue
+  operation, or billing activation is authorized by this release.
 - **Backend delivery + ingestion reliability hardening (CODEX/HERSCHEL, L) — INTEGRATED +
   INDEPENDENTLY VERIFIED LOCALLY 2026-07-11.** Transactional ingestion/delivery outboxes, real DLQ
   consumers and bounded recovery, completion-before-ACK, stale-enqueued replay, cross-isolate SSE
