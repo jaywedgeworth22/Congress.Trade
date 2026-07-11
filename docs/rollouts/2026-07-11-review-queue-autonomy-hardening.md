@@ -24,22 +24,30 @@ Further production publishing was stopped when the underinclusive predicate was
 confirmed. The code lane integrates the existing model-consensus/cascade work
 from PR #257 and the proven model-B correction from PR #263, then hardens it to
 fail closed on material disagreement, duplicate/missing lots, stale human state,
-concurrent claims, and legacy/reopened queue rows.
+concurrent claims, and legacy/reopened queue rows. The completed lane is built
+and deployed to isolated preview only; production remains unchanged.
 
 ## Files changed
 
 - `app/src/extraction/agreement.ts` - exact material-row agreement, cascade
-  safety, lease/attempt handling, and guarded publish transitions.
+  safety, lease/attempt handling, guarded publish transitions, and durable
+  delivery intents.
+- `app/src/extraction/normalizer.ts` - revision-snapshotted, exact-row atomic
+  publish/review transitions so stale extraction cannot beat a human decision.
 - `app/src/extraction/consensus.ts` - fail-closed human-review consensus.
 - `app/src/admin/routes.ts` - coherent extraction-run selection, reopen-state
-  reset, and production migration mirror.
+  reset, optimistic review revisions, atomic human decisions, JSON bulk writes,
+  and the production migration mirror.
+- `app/src/delivery/reviewOutbox.ts` - bounded retryable delivery-intent drain.
 - `app/src/ui/dashboardHtml.ts` - preserve queued rows and material metadata
-  when reviewers opt into consensus.
+  when reviewers opt into consensus; submit the revision actually edited.
 - `app/src/index.ts` - register cron lanes independently so watcher failure does
   not suppress review recovery.
 - `app/migrations/0030_doc_complexity_signals.sql` through
-  `0032_llm_budget.sql` - collision-safe complexity, cascade/lease/replay, and
-  budget schema.
+  `0034_review_revision.sql` - collision-safe complexity, cascade/lease/replay,
+  budget, human-hold/live-row/outbox, and optimistic-revision schema.
+- `app/src/shared/transactionValue.ts`, normalizer/agreement/admin bulk writes,
+  and seed backfill - one exact `est_value` rule for every transaction writer.
 - `app/wrangler.toml`, `app/.dev.vars.example`, and shared environment types -
   explicit, distinct A/B/C and retry/limit controls.
 - Focused extraction/admin/UI regression tests.
@@ -60,23 +68,39 @@ Production evidence:
   fields, have non-null filing status/subholding, and have row keys recomputed
   from the corrected material fields.
 
-Code verification must include:
+Code verification completed:
 
 ```bash
 cd app
 npm run typecheck
-npm test
+npm test -- --reporter=dot
 ```
 
-After those gates pass, deploy only through the isolated preview configuration
-and verify preview health plus focused scheduled/queue tests. Preview has no cron
-trigger, so a preview URL alone is not proof of autonomous scheduling.
+- Typecheck passed.
+- Full suite passed: 85 files / 764 tests.
+- Real Miniflare D1 coverage passes for stale editor/normalizer races, double
+  confirms, atomic reject/unpublish/retry/hold behavior, first-pass vs review
+  races, exact rollback, outbox retry, `est_value`, and the 223-row filing.
+- Local D1 applied `0029` and `0034`; schema inspection confirmed both
+  `transactions.est_value` and `review_queue.review_revision`.
+- Isolated preview migrations applied through `0034`; Worker version
+  `8414f8c5-48cf-45b2-83d9-b5555b5f6bfc` deployed at
+  `https://congress-trade-preview.jaywedgeworth22.workers.dev`.
+- Preview `/api/health` returned `ok=true`, `db=true`; rendered browser QA loaded
+  the real dashboard and seeded analytics without an error surface.
+- Preview intentionally has no cron trigger, so autonomous scheduling proof is
+  the scheduler/queue test suite rather than the URL alone.
+- Final production read-only recheck: 91 total review rows, 27 pending, 64
+  resolved; all three corrected filings remain resolved and all three correction
+  receipts remain present. Production does not expose the new revision/hold
+  fields and was not deployed from this branch.
 
 ## Follow-ups
 
-- Production remains at 27 pending rows until the hardened code is reviewed,
-  landed, migrated, and production-deployed. Do not clear stamps or run the old
-  agreement endpoint over the backlog meanwhile.
+- Production remains at 27 pending rows until this branch is pushed/reviewed,
+  landed, migrated through the canonical admin endpoint, and production-deployed
+  with explicit owner approval. Do not clear stamps or run the old agreement
+  endpoint over the backlog meanwhile.
 - A dedicated low-concurrency agreement queue and replayable agreement DLQ are
   preferable to long model calls sharing the filing-ingest queue.
 - Add admin/health metrics for oldest pending age, eligible/deferred/claimed
