@@ -99,10 +99,7 @@ function makeEnv() {
   };
 
   const midpoint = (row: FeedTransactionRow) => {
-    if (row.amount_min == null && row.amount_max == null) return 0;
-    if (row.amount_min == null) return Number(row.amount_max ?? 0);
-    if (row.amount_max == null) return Number(row.amount_min);
-    return (Number(row.amount_min) + Number(row.amount_max)) / 2;
+    return Number(row.est_value ?? 0);
   };
 
   const summaryFor = (rows: FeedTransactionRow[]) => {
@@ -352,6 +349,7 @@ describe('client API routes', () => {
       __chamber: 'house',
       __member_name: 'Scott Peters',
       __party: null,
+      est_value: 75001,
     } as FeedTransactionRow & { __chamber: string; __member_name: string; __party: null });
 
     const app = buildClientRouter();
@@ -402,6 +400,7 @@ describe('client API routes', () => {
       __chamber: 'house',
       __member_name: 'Scott Peters',
       __party: null,
+      est_value: 8000,
     } as FeedTransactionRow & { __chamber: string; __member_name: string; __party: null });
 
     const app = buildClientRouter();
@@ -452,6 +451,7 @@ describe('client API routes', () => {
       __chamber: 'house',
       __member_name: 'Scott Peters',
       __party: null,
+      est_value: 75001,
     } as FeedTransactionRow & { __chamber: string; __member_name: string; __party: null });
 
     const app = buildClientRouter();
@@ -503,6 +503,7 @@ describe('client API routes', () => {
       __chamber: 'house',
       __member_name: 'Scott Peters',
       __party: 'D',
+      est_value: 8000,
     } as FeedTransactionRow & { __chamber: string; __member_name: string; __party: string });
 
     const app = buildClientRouter();
@@ -570,6 +571,7 @@ describe('client API routes', () => {
         __chamber: 'house',
         __member_name: 'Scott Peters',
         __party: 'D',
+        est_value: 8000,
       } as FeedTransactionRow & { __chamber: string; __member_name: string; __party: string },
       {
         id: 'tx_aapl_new',
@@ -600,6 +602,7 @@ describe('client API routes', () => {
         __chamber: 'house',
         __member_name: 'Nancy Pelosi',
         __party: 'D',
+        est_value: 32501,
       } as FeedTransactionRow & { __chamber: string; __member_name: string; __party: string },
       {
         id: 'tx_msft',
@@ -630,6 +633,7 @@ describe('client API routes', () => {
         __chamber: 'house',
         __member_name: 'Scott Peters',
         __party: 'D',
+        est_value: 8000,
       } as FeedTransactionRow & { __chamber: string; __member_name: string; __party: string },
     );
 
@@ -700,6 +704,7 @@ describe('client API routes', () => {
         __chamber: 'house',
         __member_name: 'Scott Peters',
         __party: 'D',
+        est_value: 8000,
       } as FeedTransactionRow & { __chamber: string; __member_name: string; __party: string },
       {
         id: 'tx_member_2',
@@ -730,6 +735,7 @@ describe('client API routes', () => {
         __chamber: 'house',
         __member_name: 'Scott Peters',
         __party: 'D',
+        est_value: 32501,
       } as FeedTransactionRow & { __chamber: string; __member_name: string; __party: string },
     );
 
