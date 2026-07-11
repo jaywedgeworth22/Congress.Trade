@@ -12,22 +12,20 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 ## Deployed
 - **Codex autofix: migrate CI loop from Anthropic to DeepSeek (MONET, S)** — DEPLOYED
   2026-07-10, owner-approved ("merge deploy"). Merged
-  [#258](https://github.com/jaywedgeworth22/Congress.Trade/pull/258) (`a9bc198`) — caller passes
-  `DEEPSEEK_API_KEY` (existing repo secret) through to the shared reusable workflow instead of
-  the deleted `ANTHROPIC_API_KEY`. Companion
+  [#258](https://github.com/jaywedgeworth22/Congress.Trade/pull/258) (`a9bc198`) + docs
+  follow-up [#260](https://github.com/jaywedgeworth22/Congress.Trade/pull/260) — caller passes
+  `DEEPSEEK_API_KEY` through instead of the deleted `ANTHROPIC_API_KEY`. Companion
   [congress-trading-shared#140](https://github.com/jaywedgeworth22/congress-trading-shared/pull/140)
-  merged first (required — the caller references the reusable workflow via `@main`), which
-  renames the `workflow_call` secret and routes `claude-code-action` to DeepSeek's
-  Anthropic-compatible endpoint. Codex review on #140 caught that the action's buffered-inline-
-  comment classifier hardcodes `https://api.anthropic.com` and would 401 + post every buffered
-  comment unfiltered under a DeepSeek key — fixed by setting `classify_inline_comments: "false"`
-  (verified against the action's actual source, not assumed). Ran `deploy.yml` via
-  `workflow_dispatch` (run 29130234879, `confirm=deploy-production`): typecheck + test passed,
-  Cloudflare Workers deploy succeeded. Verified `GET /api/health` → `{"ok":true,"db":true}` with
-  a browser UA (bypasses the Cloudflare managed challenge). Gates: `cd app && npm run typecheck
-  && npm test` (672/672 pass) before merge. Not yet done: dispatch `codex-autofix.yml` itself
-  once against a real PR to confirm the DeepSeek-routed action runs end to end; swap
-  `deepseek-v4-flash` → `deepseek-chat` in the reusable workflow if "model not found".
+  merged first (required — caller references the reusable workflow via `@main`); renames the
+  `workflow_call` secret and routes `claude-code-action` to DeepSeek's Anthropic-compatible
+  endpoint. Codex review on #140 caught that the action's buffered-inline-comment classifier
+  hardcodes `https://api.anthropic.com` and would 401 + post every buffered comment unfiltered
+  under a DeepSeek key — fixed with `classify_inline_comments: "false"` (verified against the
+  action's actual source). Ran `deploy.yml` via `workflow_dispatch` (run 29130234879): typecheck
+  + test passed, Cloudflare Workers deploy succeeded, `GET /api/health` → `{"ok":true,"db":true}`
+  verified with a browser UA. Not yet done: dispatch `codex-autofix.yml` itself against a real PR
+  to confirm the DeepSeek-routed action runs end to end; swap `deepseek-v4-flash` →
+  `deepseek-chat` if "model not found".
 - (record production Worker releases here after explicit owner-approved deploys)
 - 2026-07-05 (CLAUDE next-wave) correction: this section read as empty/no-deploys, but production
   actually received Worker uploads on **6/30, 7/2, and 7/3** via Deploy runs that then **FAILED the
@@ -38,8 +36,19 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Push account status metrics to Usage Monitor (AG) — COMPLETED 2026-07-11.** Updated `jobs.ts` to emit a separate `metricType: 'limit'` telemetry event to the Usage Monitor for the FMP daily call cap, alongside the existing usage tracking.
+- **Whole-app evaluation and improvement audit (CODEX, read-only) — COMPLETED 2026-07-11
+  (assessment only; no merge applicable).** Audited `origin/main` at `8b34bd5`, live desktop/mobile
+  UI, safe production GETs, backend/data/delivery/security/ops, PWA, SwiftUI, tests, dependencies,
+  CI, open PRs, and deployment/migration paths. No app-code, deploy, migration, ingestion, queue, or
+  production mutations. Report prioritizes delivery outbox/SSE/fetch retries, truthful health and
+  migration readiness, billing correctness/configuration, and client data-loss/release gaps.
+- **Fix ship.sh admin migrate 403s on workers.dev fallback (AG, S) — COMPLETED 2026-07-10.** Added `ADMIN_BASE` to `ship.sh` so `POST /api/admin/migrate` properly uses the `workers.dev` bypass when the primary health check fails due to Cloudflare managed challenges.
+- **Fix uptime-monitor.yml heredoc EOF crash (AG, S) — COMPLETED 2026-07-10.** Swapped static `EOF` delimiter for a dynamic `$(openssl rand -hex 8)` delimiter in the uptime monitor curl output parsing to prevent crashes when the body contains the string `EOF`.
 - **Preserve login subdomain origin on redirect (AG) — COMPLETED 2026-07-10 via PR #253.** Implemented origin tracking via a short-lived `ct_auth_origin` cookie for Google OAuth and `origin` query parameter for Magic Links, returning users back to the starting subdomain (e.g. `admin.congress.trade`) instead of default apex domain. Added unit tests for redirect origin validation.
+- **Fix subdomain session cookie sharing and state issues (AG) — COMPLETED 2026-07-10 via PR #251.** Added a dynamic `getCookieDomain` helper to share `ct_session` and `OAUTH_STATE_COOKIE` across subdomains. Updated `/auth/me` to support Cloudflare Access JWT assertions, allowing admins on subdomains to immediately see the admin panels even without an active first-party user session. All 671 tests passed.
 - **Wave-4 go-live smoke script (AG, S) — COMPLETED 2026-07-06 via PR #214.** Small script that probes `GET /auth/me`, `GET /billing/status` (expect `configured:true`), Google OAuth start redirect, magic-link send, and a Stripe test-mode checkout round-trip, printing a go/no-go checklist. Fixes the arithmetic exit issue and adds missing probe endpoints.
+- **Close unresolvable Dependabot PRs + cross-subdomain cookie fix (AG, S) — COMPLETED 2026-07-08.** Closed PR #247 (TypeScript 7.0.2) and PR #238 (Cloudflare group bump) — both blocked by upstream peer dependency conflicts that no alpha/beta/canary release has resolved. Added `domain: .congress.trade` to `ct_session`, `ct_oauth_state`, and clear-cookie calls so sessions work across `congress.trade` ↔ `admin.congress.trade`. Added richer error logging to Google OAuth callback (token-exchange vs profile-fetch vs unknown). All 670 tests pass, typecheck clean. Branch `copilot-antigravity-resolve-prs`.
 - **Reconcile live-search overlay rows against the official House index (data-quality job) (AG, M) — COMPLETED 2026-07-06.** PR #194 opened. Nightly/admin job that re-checks recent `pollHouseLiveSearch()`-sourced transactions against the next-day official House disclosure index, flagging missed, mutated, or orphaned filings into the existing DLQ/diagnostics surface.
 - **Deduplicate Types (AG, M) — COMPLETED 2026-07-05.** PR #185 opened. Used `congress-trading-shared` and dropped local duplicated schemas (Chamber, Owner, TxType, AssetTypeCategory, ClientTrade). Updated `client/routes.ts` tests to align with the shared `ClientTrade` shape.
 - **Shared-dep tokenless git-dependency switch (CLAUDE, cross-app).** Both halves merged
@@ -76,7 +85,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   note: `Shared package pin check` briefly showed FAILURE on `main` right after this merged —
   transient, since Socratic.Trade's own pin hadn't switched yet at that instant; not a required
   check and self-corrected once Socratic.Trade#439 merged.
-- **CURSOR-assigned backlog tasks (CURSOR, `cursor/assigned-tasks-v2`) — RESCUED 2026-07-06.**
+- **CURSOR-assigned backlog tasks (CURSOR, `cursor/assigned-tasks-v2`) — MERGED 2026-07-08 via PR #211 (`ef732f3`).**
   Six tasks across 3 subagents, all gates green (typecheck clean, lint 0 errors,
   672 tests pass). Rescued from stash@{1} into PR #211 (`cursor/assigned-tasks-v2`).
   Dropped hunks already merged via #139/#140 (CI cleanup, .npmrc, dep downgrades).
@@ -105,28 +114,94 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   no preview or production deploy.
 
 ## In Progress
-- **Review Queue current drain + durable automation integration (CODEX, L) — IN PROGRESS 2026-07-11.** Owner-directed. Audit the live unresolved queue and provenance, verify rather than blind-resolve each class, integrate/review existing PR #257 without editing MONET's branch, close any scheduler/observability/retry gaps on `codex/review-queue-resolution`, run full gates serially, deploy an isolated preview, and report the separate current/preview/production states. Live boundary 05:31Z: 30 → 27 pending after three bounded cross-vendor passes; all three source PDFs visually verified, 36 persisted rows corrected in place for owner/capital-gains/status/subholding with stable IDs/cursors and audit receipts. Further production publishing paused after proving the current gate compares only ticker/date/type. Durable integration now includes #257 + #263 locally and is adding exact-material multiset, lease/race, legacy replay, retry/backoff, and human-consensus safeguards. KEEPOUT: preserve the dirty main checkout and MONET's review-automation worktree.
-- **Review-queue automation: model choice, multi-model consensus + prefill, escalation cascade (MONET, L) —
-  PR [#257](https://github.com/jaywedgeworth22/Congress.Trade/pull/257).** Built 2026-07-10,
-  owner-directed. P1: agreement candidate readings persisted to `extraction_runs` (kind `agreement`);
-  review-UI "Re-read with model…" multi-select posting bakeoff endpoint; `VISION_PRIMARY_MODEL` env
-  override. P2: pure `extraction/consensus.ts` (majority vote, amount bracket as unit, {value, votes,
-  dissenters}) + `consensus` block on GET /review/:docId/extractions + UI superimposition grid +
-  opt-in "Use Consensus" prefill. P3: tiered cascade (tier1 pair, tier2 +model C, tier3 2-of-3
-  majority), `agreement_attempts`/`agreement_tier`, daily LLM budget, migrations 0025–0027.
-  Codex autofix addressed 3 review items (budget-stamp, escalation-fail, failed-read gate).
-  **2026-07-11 CODEX integration audit:** blocked as-is; key-only set agreement can publish
-  materially different rows, human/automation races are unguarded, legacy/reopened rows stay
-  ineligible, model B/C collide after #263, and migration number 0025 overlaps two active lanes.
-  Safety integration and regression coverage are in `codex/review-queue-resolution`; MONET's
-  branch remains untouched.
-- **Adopt remaining shared-package duplicates (CURSOR, M) — started 2026-07-09.**
-  Branch `cursor/shared-dep-adoption-9577`. Replaced local `shared/brackets.ts` + most of
-  `extraction/tickerNormalize.ts` with shared re-exports; wired `marketCapBucket`,
-  `bracketMidpoint`, `WINDOW_PRESETS`, `LAG_BUCKETS` from shared; SSE/webhook use
-  `createCongressEvent`; inbound `/securities/import` filters rows with shared Zod schemas;
-  FMP telemetry sends `occurredAt` for idempotency. Verified: typecheck clean; focused tests
-  (tickerNormalize/amounts/analytics/sse/enrichment/outbound/import) pass.
+- **Review Queue current drain + durable automation integration (CODEX, L) — IN PROGRESS 2026-07-11.** Owner-directed. Audit the live unresolved queue and provenance, verify rather than blind-resolve each class, integrate/review existing PR #257 without editing MONET's branch, close scheduler/observability/retry gaps on `codex/review-queue-resolution`, run full gates serially, deploy an isolated preview, and report current/preview/production separately. Live boundary 05:31Z: 30 → 27 pending after three bounded cross-vendor passes; all three source PDFs visually verified, 36 persisted rows corrected in place for owner/capital-gains/status/subholding with stable IDs/cursors and audit receipts. Further production publishing paused after proving the deployed gate compares only ticker/date/type. Local integration includes exact-material multiset agreement, cross-vendor enforcement, durable claim/retry/cap state, human-vs-automation CAS, Unpublish/Reject holds with explicit retry, live-only row idempotency, a delivery outbox, coherent reviewer consensus, and real D1 rollback/race/223-row tests. KEEPOUT: preserve the dirty main checkout and MONET's review-automation worktree; nothing from this branch is merged or production-deployed.
+- **Implement `est_value` column in transactions table (AG, S) — IN PROGRESS 2026-07-10.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
+- **Refactor client API routes (AG, M) — IN PROGRESS 2026-07-10.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
+- **GPT-5.6 bake-off evaluation prep + usage/cost tracking harness (MONET, S)** — BUILT + PUSHED
+  2026-07-10, PR #264. Owner asked to evaluate GPT-5.6 (sol/terra/luna, released 2026-07-09) for
+  the extraction pipeline. Research found no evidence of a capability uplift for this document type
+  (LlamaIndex ParseBench: "no change" vs GPT-5.5 on tables/text/charts/layout for insurance/finance/
+  government docs) and an unconfirmed PDF-input risk on the cheap luna tier — explicitly NOT
+  recommending an adoption based on benchmark claims alone, same discipline that would have caught
+  the gpt-4o-mini regression fixed in #263. Instead: confirmed the bake-off harness already accepts
+  arbitrary {provider,model} pairs with zero code change needed to actually test GPT-5.6 (verified
+  exact slugs: gpt-5.6-sol/-terra/-luna), but found it captures NO token-usage/cost data at all —
+  built that as a small additive harness extension (CandidateDocResult.usage, runOpenAi usage
+  parsing, migration 0025_extraction_runs_usage.sql, INSERT persist). Adversarial verify: NO DEFECTS
+  (existing gpt-4o path byte-identical, migration mirror matches, null-safe, other adapters
+  untouched). Gate: tsc clean, 76 files/677 tests, independently re-verified. BLOCKED on executing
+  the actual comparison run: needs OPENAI_API_KEY (local wrangler dev, preferred) or ADMIN_TOKEN
+  (prod) — neither available to this session (Cloudflare Worker secrets are write-only). Handed
+  owner 3 ready-to-run scripts (slug-verification ping, the n=20/4-model bakeoff call, a cost-rollup
+  reading usage_json against published per-tier pricing) — owner can run + share results, or hand
+  over a credential.
+- **Fix dead auto-publish gate: AGREEMENT_AUTOPUBLISH_MODEL_B was broken 2 weeks (MONET, S) —
+  BUILT + PUSHED 2026-07-10, PR #263.** Owner asked to compare Model B options; investigation +
+  live production D1 query (review_queue.agreement_attempted_at/resolved) found the tier-1
+  cross-vendor auto-publish gate has been effectively DEAD since 2026-06-26 (commit 500a887 switched
+  MODEL_B to openai:gpt-4o-mini, which bakeoff.ts:38 already documented as instant-4xx-rejecting
+  this pipeline's PDF payload shape): 30 consecutive resolved=0 attempts since the switch, only
+  successes cluster within 6min of the switch timestamp (rollout-artifact stale isolates), then zero
+  for 2 straight weeks through today. Fixed by switching to openai:gpt-4o (full) — proven working in
+  this exact pipeline (15/15 successful bakeoff extraction_runs on real filings), stays cross-vendor
+  from Model A (mistral:mistral-ocr-latest). Verify: tsc clean, 76 files/672 tests, config-only
+  change. Also noted (not fixed, separate scope): code fallback default mismatches wrangler.toml
+  (dead today, only matters if var ever unset); no live admin UI exists for A/B — the
+  'llamaparse:cost-effective' value the owner saw is a stale .dev.vars.example comment never read
+  by any code path.
+- **FMP pacer safety + shared-budget accounting + EDGAR throttle (MONET, M)** — IN PROGRESS 2026-07-10,
+  owner-directed, branch `monet/fmp-edgar-throttle`. Investigation (file:line receipts): FMP
+  `FMP_MAX_PER_MINUTE` pacer (`shared/pace.ts`) is per-isolate in-memory with NO cross-invocation
+  coordination; disclosure-latency probe (`ingestion/fmpDisclosureLatency.ts`, the "race to file" FMP
+  vs Unusual Whales vs Quiver comparison) makes 2 unpaced FMP calls every ~5min (~576/day), invisible
+  to the daily KV counter, plus an unthrottled force-probe admin endpoint — real correctness gap, not
+  just theoretical. Fix: single shared FMP pacer singleton used by enrichment/prices/disclosure-latency
+  so same-isolate concurrent invocations actually coordinate; disclosure-latency's calls now count
+  against the same daily budget; FMP_MAX_PER_MINUTE raised with margin (not to 300, per owner ask for
+  ~290 — see PR for exact value + rationale). Separately: SEC EDGAR calls were fully unthrottled
+  ("free + unmetered" comment) — added a dedicated `createPacer` instance (5 req/s, half SEC's 10 req/s
+  fair-access ceiling, margin for Workers' shared egress-IP pool) via new `EDGAR_MAX_PER_MINUTE` env
+  var, reusing the existing pace.ts utility rather than building new. Cross-app FMP-data sharing
+  (Congress.Trade <-> Socratic.Trade) investigated separately: mechanism is ALREADY fully built,
+  bidirectional, wired into cron on both sides (docs/fmp-data-sharing.md <-> Socratic's
+  docs/congress-trade-share.md) — nothing to code; only 4 secret/env values across 2 platforms need
+  owner confirmation/activation (not done by this row — config/secrets decision, not code).
+  2026-07-10 (MONET): BUILT + COMMITTED + PUSHED — PR #262. Two build passes: (1) shared FMP pacer
+  singleton fixing a real concurrency race (reservation-gate design after adversarial verify caught
+  the original sleep-based design failing under Promise.all-concurrent callers), disclosure-latency
+  probe's ~576/day previously-unpaced-and-uncounted FMP calls now share the same pacer + daily budget
+  counter, FMP_MAX_PER_MINUTE 250->285, dedicated EDGAR pacer added (was fully unthrottled) at
+  EDGAR_MAX_PER_MINUTE=480 (8 req/s, owner-chosen over the initially-recommended 5 req/s); (2) full
+  wrangler.toml [vars] audit (22 entries: 6 already-live, 16 needs-wiring, 0 ambiguous) -> all 16 wired
+  through the existing resolveSecret/resolveSecrets mechanism (same pattern as FMP_DAILY_CALL_CAP, no
+  runtime allowlist so pure read-site swaps) with the current wrangler.toml value kept as automatic
+  fallback (zero-regression-when-unset invariant adversarially verified: fallback-value transcription,
+  string/bool/number re-parse bugs, missed awaits on 2 sync->async conversions — all clean); plus a new
+  Tiingo fallback enrichment+price provider (key-gated, mirrors Massive/Finnhub pattern, no-op until
+  TIINGO_API_KEY provisioned). Independent re-verify (not just agent-reported): tsc clean, 705/705
+  tests / 78 files, actual wrangler.toml values confirmed by direct read. 18-entry copy-pasteable
+  Infisical checklist in the PR body. Owner action needed: paste checklist into Infisical (this PR
+  changes nothing behaviorally on its own) + optionally provision TIINGO_API_KEY.
+- **Review-queue automation: model choice + multi-model consensus + escalation cascade (MONET, L)** —
+  IN PROGRESS 2026-07-10, owner-directed ("do all 3 phases"), branch `monet/review-queue-automation`.
+  Builds on the existing agreement/bakeoff machinery (audit w/ file:line receipts 2026-07-10):
+  P1 persist agreement-model readings to `extraction_runs` + review-UI "Re-read with model…" (bakeoff
+  endpoint already supports it) + `VISION_PRIMARY_MODEL` env override for the hardcoded vision model;
+  P2 new `consensus.ts` per-transaction per-field majority vote ({value, votes, dissenters}) +
+  consensus block on GET /review/:docId/extractions + UI superimposition grid (consensus vs outliers)
+  + "Use Consensus" prefill; P3 escalation cascade in `processAgreementDoc` (tiered: pair → +model C →
+  2-of-3 majority publish gated on per-field majority + hard-fail flags), capped attempts replacing the
+  once-ever stamp, page_count/raw_bytes complexity signals, daily LLM budget guardrail, distinct audit
+  trail for machine-resolved docs. Tiered subagents (haiku=mechanical, sonnet=implementation,
+  opus=cascade/consensus + adversarial verify). Gates: typecheck + full test suite + adversarial review
+  before commit. KEEPOUT: nothing outside app/src/{extraction,admin,ui,shared}, app/migrations,
+  wrangler.toml [vars]; not touching other seats' rows/files.
+  2026-07-10 (MONET): BUILT + COMMITTED locally (`46f80cc`, 24 files, +2983/−93; migrations 0025-0027
+  mirrored in admin migrate per repo rule; mirror row updated in-branch). 15 subagents, all lanes green;
+  4-lens adversarial verify caught + FIXED 3 real defects pre-commit (tier-3 multi-lot drop →
+  bail-to-review guard; duplicate-model-id false 2-of-3 majority → distinct-voter electorate; UI
+  minority-row prefill → row-majority gate); 1 finding refuted with rationale. Independent final gates:
+  typecheck clean, 718/718 tests / 82 files. NOT pushed — awaiting owner push/PR approval.
 - **Consolidate usage telemetry clients in consumer apps (AG) - COMPLETED 2026-07-06.** Replacing hand-rolled usage telemetry clients with `@jaywedgeworth22/congress-trading-shared` in Congress.Trade.
 - **Codebase Performance & Queues (AG, M) — IN PROGRESS 2026-07-05.** Fix silent DLQ webhook failures, implement `DB.batch` for `persistTransactions`, use `sendBatch` for queue dispatching, and run webhook fetch requests concurrently.
 
@@ -213,7 +288,6 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   [AG -> AG].
 
 ## Planned / Reserved
-- **Push account status metrics to Usage Monitor (AG) — 2026-07-05.** Send telemetry events with `metricType: "balance"` or `"limit"` to the API Usage Monitor to track tech account caps and credits.
 - **Senate Scraper Hardening (AG, M) — 2026-07-05.** Overcome WAF IP blocks via residential scout proxying, implement content-based field extraction for DataTables, and cache session handshakes in KV.
 - **UI/UX Improvements (AG, M) — 2026-07-05.** Fix mobile tab grid spacing, hide mobile columns button, consolidate search/filters + add Max $, fix theme toggle labels, group pagination controls, sticky-lock columns, and add charts to Trends.
 - **Architecture & Shared Dependency (AG, M) — 2026-07-05.** Use `createCongressEvent` from shared package, promote duplicate types to `schemas.ts`, upgrade Socratic.Trade to validate HMAC `X-Signature`, and replace SSE D1-polling with a push mechanism.
@@ -247,7 +321,7 @@ reassign per the rows below. OWNER is the true bottleneck: land the cursor branc
 branches, tag v1.3.0, set `STRIPE_*`/`SENTRY_FLEET_DSN` secrets, decide the Cloudflare health-check
 bypass, and adjudicate the two open product decisions above._
 
-- **Fix the production deploy health gate blocked by Cloudflare managed challenge (CURSOR, M) — COMPLETED 2026-07-06.**
+- **Fix the production deploy health gate blocked by Cloudflare managed challenge (CURSOR, M) — COMPLETED 2026-07-06; COMMITTED 2026-07-08 via PR #237 (`cursor/rollouts-health-gate`).**
   All 3 recent Deploy runs 403'd on `/api/health` from GH runners (challenge page, `cType`
   `'managed'`); add a WAF skip/custom rule or secret-header bypass for `/api/health` (or fall back
   to the `workers.dev` hostname), then rerun Deploy end-to-end. Why now: the browser-UA workaround
@@ -276,7 +350,7 @@ bypass, and adjudicate the two open product decisions above._
   bootstrap, vitest config, PEER_REPO fix, tsconfig.ingestcheck removal) is stranded, and the dirty
   primary checkout blocks anyone else using that worktree.
 
-- **Adopt the docs/rollouts/ note convention in Congress.Trade AGENTS.md (CURSOR, S) — COMPLETED 2026-07-06.** Add the
+- **Adopt the docs/rollouts/ note convention in Congress.Trade AGENTS.md (CURSOR, S) — COMPLETED 2026-07-06; COMMITTED 2026-07-08 via PR #237 (`cursor/rollouts-health-gate`).** Add the
   Socratic.Trade-style `docs/rollouts/YYYY-MM-DD-slug.md` convention (summary/why/files/
   verification/follow-ups) to AGENTS.md and seed the directory; STATUS.md stays the snapshot. Why
   now: this repo's only paper trail is a single overwritten STATUS.md — the #139 tokenless-dep
@@ -298,10 +372,11 @@ Jul 8 18:10 CT)._
 - **Merge shared ag/client-and-ticker + release v1.3.1 so app PRs can pin a tag not a branch (AG, M)** — The shared repo's ag/client-and-ticker (commit 81b2fd3: CongressTradeClient + ticker rename/acquisition split) is unmerged and absent from v1.3.0. Every Congress.Trade PR #182-#187 fails check-pin because it must pin the branch. Merge the shared branch to shared main, cut v1.3.1, then repin app/package.json (and Socratic.Trade's peer) to that tag as a matched pair so check-pin goes green.
 - **Consolidate AG's six overlapping PRs #182-#187 into one stacked/sequenced landing plan (AG, L)** — The six AG branches each re-include the same 231-line senateSource rewrite + tickerNormalize + eslint/vitest config, so parallel merges will conflict. Pick a single base branch, rebase the unique deltas (dashboardHtml, fmpDisclosureLatency, shared/types dedup, D1-batch/queue perf, senate KV caching) on top of it in order, and close the redundant duplicates — after the shared v1.3.1 tag exists so check-pin can pass.
 - **Remove stray patch.py scratch script from antigravity/performance-queues (#186) before it lands (AG, S)** — PR #186 accidentally commits patch.py, a 47-line Python string-patcher for webhook.ts. Delete it so a dev-only artifact does not ship into the repo.
-- **Rescue CURSOR stash into a committed, pushed branch + PR (CURSOR, M) — COMPLETED 2026-07-06.** PR #211 (`cursor/assigned-tasks-v2`). Stash@{1} rescued from base 892b45e onto current origin/main. Dropped already-merged hunks from #139/#140. Genuine work committed: tsconfig strict flags, tsconfig.ingestcheck deletion, ESLint deps + scripts, lockfile-based pin-check, AGENTS.md dedup, unused-code removal across 8 files, dashboard CSS cleanup. Gates: typecheck 0 errors, lint 0 errors, 672 tests pass.
+- **Rescue CURSOR stash into a committed, pushed branch + PR (CURSOR, M) — MERGED 2026-07-08 via PR #211 (`ef732f3`).** PR #211 (`cursor/assigned-tasks-v2`). Stash@{1} rescued from base 892b45e onto current origin/main. Dropped already-merged hunks from #139/#140. Genuine work committed: tsconfig strict flags, tsconfig.ingestcheck deletion, ESLint deps + scripts, lockfile-based pin-check, AGENTS.md dedup, unused-code removal across 8 files, dashboard CSS cleanup. Gates: typecheck 0 errors, lint 0 errors, 672 tests pass.
 - **Add manual queue reprocess button to admin dashboard (AG, S) — COMPLETED 2026-07-06.** Added a UI widget to `dashboardHtml.ts` to trigger `POST /api/admin/reprocess` directly from the admin panel.
 
 ## Changelog of this log
+- 2026-07-08 — CURSOR: PR #211 merged; PR #237 opened (rollouts convention + deploy health gate workers.dev fallback, previously stranded in stash@{1}).
 - 2026-07-06 — CURSOR: rescued stash@{1} → PR #211; fixed uptime-monitor.yml crash + CF challenge bypass; adopted rollouts convention; created Wave-4 smoke script; fixed deploy health gate (workers.dev fallback); noted patch.py on AG's PR #186.
 - 2026-07-05 — CLAUDE next-wave (cycle 2): stale-row corrections (tokenless-dep switch and
   house-live-search moved to Completed; #139 docs-convention parenthetical amended; Deployed
@@ -321,3 +396,4 @@ Jul 8 18:10 CT)._
   CLAUDE, live-search reconciliation data-quality job -> AG. Added 4 new Planned rows under
   "2026-07-05 audit cycle-3": merge shared v1.3.1 (AG), consolidate the 6 AG PRs (AG), remove
   patch.py (AG), rescue CURSOR's stash (CURSOR).
+- **Whole-App Evaluation & Next.js PWA Implementation (AG, L) — COMPLETED 2026-07-11.** Refactored monolithic backend routes to a layered architecture (types, queries, utils, routes), implemented the `est_value` materialized column in D1 to optimize feed queries, and established the Next.js PWA frontend using SWR for data fetching, responsive glassmorphism dark-mode UI, and reusable components like `TradeCard`.

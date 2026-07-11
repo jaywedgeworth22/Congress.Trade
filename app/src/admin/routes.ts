@@ -44,6 +44,7 @@ import { getConfig, setConfig } from '../shared/config';
 import { uuid } from '../shared/ids';
 import { listSubscriptions } from '../delivery/subscriptions';
 import { drainReviewDeliveryOutbox } from '../delivery/reviewOutbox';
+import { refreshLatestCursorSeq } from '../delivery/sse';
 import { runSeedBackfillFromEnv } from '../backfill/seed';
 import { runHouseHistoricalBackfill } from '../backfill/houseCrawler';
 import { extractParsed } from '../extraction/orchestrator';
@@ -1325,6 +1326,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       console.error('review confirm: suppression clear failed', docId, (err as Error).message);
     }
     const insertedCount = persistResults[0]?.meta?.changes ?? 0;
+    if (insertedCount > 0) {
+      try {
+        await refreshLatestCursorSeq(c.env.DB);
+      } catch (err) {
+        console.error('review confirm: latest cursor refresh failed', docId, (err as Error).message);
+      }
+    }
     const newlyInsertedIds = insertedCount === proposedIds.length ? proposedIds : [];
     let transactionIds = newlyInsertedIds;
     try {
@@ -3340,6 +3348,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          created_at TEXT NOT NULL
        )`,
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
+      // 0029_est_value.sql — materialized computed column for estimated transaction value.
+      'ALTER TABLE transactions ADD COLUMN est_value REAL',
+      `UPDATE transactions SET est_value = CASE
+         WHEN amount_min IS NULL AND amount_max IS NULL THEN 0
+         WHEN amount_min IS NULL THEN amount_max
+         WHEN amount_max IS NULL THEN amount_min
+         ELSE (amount_min + amount_max) / 2.0
+       END WHERE est_value IS NULL`,
       // 0030_doc_complexity_signals.sql — cheap doc-complexity signals for cascade tiering.
       'ALTER TABLE filings ADD COLUMN page_count INTEGER',
       'ALTER TABLE filings ADD COLUMN raw_bytes INTEGER',
