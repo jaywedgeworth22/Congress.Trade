@@ -34,9 +34,10 @@
     "@sentry/cli": "^3.6.0",
     "@typescript-eslint/eslint-plugin": "^8.62.1",
     "@typescript-eslint/parser": "^8.62.1",
+    "@vitest/coverage-v8": "4.1.10",
     "eslint": "^10.6.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.10",
+    "vitest": "4.1.10",
     "wrangler": "^4.104.0"
   }
 }

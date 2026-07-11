@@ -23,7 +23,7 @@ import {
   destroySession,
   setSessionCookie,
   clearSessionCookie,
-  getSessionToken,
+  getSessionTokensFromRequest,
   getCookieDomain,
   getSafeRedirectUrl,
 } from './session';
@@ -33,6 +33,7 @@ import { issueMagicToken, consumeMagicToken, magicLinkEmail } from './magic';
 import { sendEmail } from './email';
 import { constantTimeEqual, randomToken } from './tokens';
 import { entitlementOf } from '../billing/entitlement';
+import { billingCapabilitiesAsync } from '../billing/stripe';
 import { resolveSecret } from '../secrets/infisical';
 import { isAdminSessionEmail, adminRuntimeConfig } from '../admin/identity';
 import { verifyAccessJwt, certsUrl } from '../admin/access';
@@ -43,7 +44,7 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /** Public-facing origin for redirects + links (APP_BASE_URL, else request origin). */
 async function baseUrl(c: Context<{ Bindings: Env }>): Promise<string> {
-  const configured = (await resolveSecret(c.env, 'APP_BASE_URL')).value?.trim() ?? c.env.APP_BASE_URL?.trim();
+  const configured = (await resolveSecret(c.env, 'APP_BASE_URL')).value?.trim();
   if (configured) return configured.replace(/\/$/, '');
   return new URL(c.req.url).origin;
 }
@@ -82,12 +83,16 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       user: user ? publicUser(user) : null,
       entitlement: entitlementOf(user),
       admin: { allowed: adminAllowed },
+      billing: {
+        ...(await billingCapabilitiesAsync(c.env)),
+        hasCustomer: Boolean(user?.stripeCustomerId),
+      },
     });
   });
 
   // --- POST /auth/logout --------------------------------------------------
   r.post('/logout', async (c) => {
-    await destroySession(c.env, getSessionToken(c));
+    await Promise.all(getSessionTokensFromRequest(c).map((token) => destroySession(c.env, token)));
     await clearSessionCookie(c);
     return c.json({ ok: true });
   });

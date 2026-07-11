@@ -1564,7 +1564,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <li>Full-history CSV exports</li>
       <li>Enrichment columns: sector, market cap, and country</li>
     </ul>
-    <div class="plan-grid">
+    <div class="plan-grid" id="pricingPlans">
       <div class="plan sel" id="planMonthly" onclick="selectPlan('monthly')">
         <div class="cad">Monthly</div>
         <div class="price">$15<span class="per">/mo</span></div>
@@ -1575,7 +1575,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="price">$140<span class="per">/yr</span></div>
       </div>
     </div>
-    <p class="trial-note">7-day trial. No charge today.</p>
+    <p class="trial-note" id="pricingTrialNote">7-day trial. No charge today.</p>
     <button class="btn" style="width:100%;padding:11px" id="subscribeBtn" onclick="startCheckout()">Start Free Trial</button>
     <p class="note" id="pricingMsg"></p>
   </div>
@@ -4584,15 +4584,27 @@ function reconstructFilingUrl(docId) {
 }
 
 /* ============================ ACCOUNT (auth + billing) ============================ */
-var ME = { user: null, entitlement: { premium: false, status: null, plan: null, trialing: false }, admin: { allowed: false } };
+var ME = {
+  user: null,
+  entitlement: { premium: false, status: null, plan: null, trialing: false },
+  admin: { allowed: false },
+  billing: { checkoutConfigured: false, portalConfigured: false, hasCustomer: false },
+};
 var selectedPlan = 'monthly';
+var checkoutRequestId = null;
+var portalRequestId = null;
 
 function isPremium() { return !!(ME.entitlement && ME.entitlement.premium); }
+function checkoutConfigured() { return !!(ME.billing && ME.billing.checkoutConfigured); }
+function portalConfigured() { return !!(ME.billing && ME.billing.portalConfigured); }
+function hasBillingAccount() {
+  return !!(ME.billing && ME.billing.hasCustomer) || !!(ME.entitlement && ME.entitlement.status);
+}
 function hasAdminToken() { return !!getAdminToken(); }
 function canUseAdmin() { return !!((ME.admin && ME.admin.allowed) || hasAdminToken()); }
 function updatePremiumCues() {
   var unlocked = isPremium() || isAdminView();
-  document.querySelectorAll('[data-premium-cue]').forEach(function (node) { node.hidden = unlocked; });
+  document.querySelectorAll('[data-premium-cue]').forEach(function (node) { node.hidden = unlocked || !checkoutConfigured(); });
 }
 function applyAdminVisibility() {
   var allowed = canUseAdmin();
@@ -4611,11 +4623,12 @@ function applyAdminVisibility() {
 /* Bootstrap identity + entitlement in one call (GET /auth/me). */
 function loadMe() {
   return fetch('/auth/me', { headers: { accept: 'application/json' } })
-    .then(function (r) { return r.ok ? r.json() : { user: null, entitlement: { premium: false }, admin: { allowed: false } }; })
+    .then(function (r) { return r.ok ? r.json() : { user: null, entitlement: { premium: false }, admin: { allowed: false }, billing: { checkoutConfigured: false, portalConfigured: false, hasCustomer: false } }; })
     .then(function (d) {
       ME.user = d.user || null;
       ME.entitlement = d.entitlement || { premium: false };
       ME.admin = d.admin || { allowed: false };
+      ME.billing = d.billing || { checkoutConfigured: false, portalConfigured: false, hasCustomer: false };
       renderAccount();
       applyAdminVisibility();
       updatePremiumCues();
@@ -4626,21 +4639,21 @@ function loadMe() {
       renderColChooser();
       renderFeed();
     })
-    .catch(function () { ME.admin = { allowed: false }; renderAccount(); applyAdminVisibility(); updatePremiumCues(); });
+    .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; renderAccount(); applyAdminVisibility(); updatePremiumCues(); });
 }
 
 function renderAccount() {
   var box = el('acct'); if (!box) return;
   if (!ME.user) {
     box.innerHTML = '<button class="btn ghost sm" onclick="openLogin()">Sign In</button>' +
-      '<button class="btn sm" onclick="openPricing()">Premium</button>';
+      (checkoutConfigured() ? '<button class="btn sm" onclick="openPricing()">Premium</button>' : '');
     return;
   }
   var ent = ME.entitlement || {};
   var badge = ent.premium
     ? '<span class="badge premium">' + (ent.trialing ? 'Trial' : 'Premium') + '</span>'
     : '<span class="badge">Free</span>';
-  var upgrade = ent.premium ? '' : '<button class="btn sm" onclick="openPricing()">Premium</button>';
+  var upgrade = ent.premium || !checkoutConfigured() ? '' : '<button class="btn sm" onclick="openPricing()">Premium</button>';
   var label = ME.user.name || ME.user.email || 'Account';
   box.innerHTML = badge + upgrade +
     '<div class="menu">' +
@@ -4653,9 +4666,9 @@ function renderAccount() {
       '<div class="menu-pop" id="acctMenu">' +
         '<div class="who">' + esc(ME.user.email || '') + '</div>' +
         '<button onclick="toggleTheme()"><span id="themeMenuLabel">' + esc(document.documentElement.getAttribute('data-theme') === 'light' ? 'Light Mode' : 'Dark Mode') + '</span></button>' +
-        (ent.premium
+        (hasBillingAccount() && portalConfigured()
           ? '<button onclick="manageBilling()">Manage Subscription</button>'
-          : '<button onclick="closeAcctMenu();openPricing()">Premium</button>') +
+          : (!ent.premium && checkoutConfigured() ? '<button onclick="closeAcctMenu();openPricing()">Premium</button>' : '')) +
         '<button onclick="logout()">Sign Out</button>' +
       '</div>' +
     '</div>';
@@ -4695,6 +4708,12 @@ function logout() {
 
 /* ---- pricing / checkout ---- */
 var pricingIntent = 'default';
+function newBillingRequestId() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  var bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.prototype.map.call(bytes, function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+}
 function pricingCopy(intent) {
   if (intent === 'csv') return {
     title: 'CSV Export Requires Premium',
@@ -4720,28 +4739,43 @@ function openPricing(intent) {
   if (el('pricingSub')) el('pricingSub').textContent = copy.sub;
   if (el('pricingFeatures')) el('pricingFeatures').innerHTML = copy.features.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('');
   selectPlan(selectedPlan);
-  el('pricingMsg').textContent = '';
+  var available = checkoutConfigured();
+  if (el('pricingPlans')) el('pricingPlans').hidden = !available;
+  if (el('pricingTrialNote')) el('pricingTrialNote').hidden = !available;
+  if (el('subscribeBtn')) {
+    el('subscribeBtn').disabled = !available;
+    el('subscribeBtn').textContent = available ? 'Start Free Trial' : 'Billing Unavailable';
+  }
+  el('pricingMsg').textContent = available ? '' : 'Premium checkout is not available yet.';
   el('pricingOverlay').classList.add('open');
 }
 function closePricing() { el('pricingOverlay').classList.remove('open'); }
 function selectPlan(p) {
+  if (selectedPlan !== ((p === 'annual') ? 'annual' : 'monthly')) checkoutRequestId = null;
   selectedPlan = (p === 'annual') ? 'annual' : 'monthly';
   var m = el('planMonthly'), a = el('planAnnual');
   if (m) m.classList.toggle('sel', selectedPlan === 'monthly');
   if (a) a.classList.toggle('sel', selectedPlan === 'annual');
 }
 function startCheckout() {
+  if (!checkoutConfigured()) {
+    el('pricingMsg').textContent = 'Premium checkout is not available yet.';
+    return;
+  }
   if (!ME.user) {
     var feature = pricingIntent === 'csv' ? ' for CSV export' : pricingIntent === 'columns' ? ' for Premium columns' : '';
     closePricing(); openLogin(); el('loginMsg').textContent = 'Sign in to start your Premium trial' + feature + '.';
     return;
   }
   var btn = el('subscribeBtn'); if (btn) btn.disabled = true;
+  if (!checkoutRequestId) checkoutRequestId = newBillingRequestId();
   el('pricingMsg').textContent = 'Starting secure checkout…';
-  fetch('/billing/checkout', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ plan: selectedPlan }) })
+  fetch('/billing/checkout', { method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': checkoutRequestId }, body: JSON.stringify({ plan: selectedPlan }) })
     .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, status: r.status, j: j }; }); })
     .then(function (res) {
       if (res.ok && res.j && res.j.url) { window.location.href = res.j.url; return; }
+      // Preserve the key across ambiguous failures so retry cannot create a
+      // second Stripe write. Selecting a different plan starts a new operation.
       if (res.status === 401) { closePricing(); openLogin(); return; }
       el('pricingMsg').textContent = (res.j && res.j.error) || 'Could not start checkout.';
       if (btn) btn.disabled = false;
@@ -4749,9 +4783,11 @@ function startCheckout() {
     .catch(function () { el('pricingMsg').textContent = 'Network error — try again.'; if (btn) btn.disabled = false; });
 }
 function manageBilling() {
+  if (!portalConfigured() || !hasBillingAccount()) { showToast('Billing management is unavailable right now.', true); return; }
   closeAcctMenu();
   showToast('Opening billing portal…');
-  fetch('/billing/portal', { method: 'POST' })
+  if (!portalRequestId) portalRequestId = newBillingRequestId();
+  fetch('/billing/portal', { method: 'POST', headers: { 'Idempotency-Key': portalRequestId } })
     .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
     .then(function (res) {
       if (res.ok && res.j && res.j.url) { window.location.href = res.j.url; }
@@ -4772,7 +4808,7 @@ function exportCsv() {
 }
 
 /* ---- gated feed CTA + post-redirect toasts ---- */
-function updateGateRow() { var g = el('gateRow'); if (g) g.style.display = feedGated ? '' : 'none'; }
+function updateGateRow() { var g = el('gateRow'); if (g) g.style.display = feedGated && checkoutConfigured() ? '' : 'none'; }
 var TOAST_TIMER = null;
 function showToast(text, isErr) {
   var t = el('toast'); if (!t) return;

@@ -39,8 +39,13 @@ import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction
 import { refreshSecrets } from './secrets/infisical';
 import { runDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency';
 import { buildDetectionRouter } from './ingestion/detectionRoutes';
+import { browserSecurityHeadersMiddleware } from './security/headers';
 
 const app = new Hono<{ Bindings: Env }>();
+
+// Attach defense-in-depth browser headers to every Worker-generated response,
+// including error and redirect responses. HSTS is added only for HTTPS.
+app.use('*', browserSecurityHeadersMiddleware);
 
 // --- IMPLEMENTED health check -------------------------------------------------
 app.get('/health', (c) => c.json({ ok: true }));

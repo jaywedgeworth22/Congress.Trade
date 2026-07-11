@@ -224,6 +224,18 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   vulnerabilities), typecheck, 9 tests, production build, generated-manifest/SW syntax/icon
   inspection; app typecheck and 44 focused tests; desktop/mobile rendered QA with zero console
   errors; and `git diff --check`. No push, preview, or production action.
+- **Billing + platform security hardening (CODEX, M) — BUILT + ADVERSARIALLY REVIEWED LOCALLY
+  2026-07-11; INTEGRATION PENDING.** Branch `codex/billing-security-hardening`. Adds reclaimable
+  Stripe event leases, stale/deletion ordering, non-overwriting customer links, mandatory stable
+  checkout/portal idempotency keys, the Managed-Payments-compatible Basil pin, split checkout/portal
+  readiness with the legacy `configured` alias, dual cookie/bearer logout, fail-closed resolver use,
+  browser security headers, and CI coverage floors. Review fixes prevent malformed supported events
+  from being silently acknowledged, handle expanded Stripe IDs, permit safe same-second
+  terminal-to-active resubscription across subscription IDs, and keep Billing Portal available to
+  existing payers when checkout configuration is incomplete. Verified: 79 test files / 714 tests,
+  typecheck, coverage 64.11/56.61/69.46/65.92, lint 0 errors, `npm audit` 0 vulnerabilities, fresh
+  migration through 0032, and `git diff --check`. No push, preview, billing activation, or
+  production action.
 - **Adopt remaining shared-package duplicates (CURSOR, M) — started 2026-07-09.**
   Branch `cursor/shared-dep-adoption-9577`. Replaced local `shared/brackets.ts` + most of
   `extraction/tickerNormalize.ts` with shared re-exports; wired `marketCapBucket`,

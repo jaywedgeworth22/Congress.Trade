@@ -115,6 +115,32 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('Go Premium');
   });
 
+  it('gates Premium checkout copy and actions on server billing availability', () => {
+    expect(DASHBOARD_HTML).toContain('billing: { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }');
+    expect(DASHBOARD_HTML).toContain('function checkoutConfigured()');
+    expect(DASHBOARD_HTML).toContain("ME.billing = d.billing || { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }");
+    expect(DASHBOARD_HTML).toContain('Premium checkout is not available yet.');
+    expect(DASHBOARD_HTML).toContain("el('subscribeBtn').disabled = !available");
+    expect(DASHBOARD_HTML).toContain('checkoutConfigured() ? \'<button class="btn sm" onclick="openPricing()">Premium</button>\' : \'\'');
+    expect(DASHBOARD_HTML).not.toContain('function billingConfigured()');
+  });
+
+  it('keeps Billing Portal management independent from checkout readiness', () => {
+    expect(DASHBOARD_HTML).toContain('function portalConfigured()');
+    expect(DASHBOARD_HTML).toContain('function hasBillingAccount()');
+    expect(DASHBOARD_HTML).toContain('hasBillingAccount() && portalConfigured()');
+    expect(DASHBOARD_HTML).toContain('if (!portalConfigured() || !hasBillingAccount())');
+    expect(DASHBOARD_HTML).toContain('Manage Subscription');
+  });
+
+  it('sends stable per-operation idempotency keys for Stripe writes', () => {
+    expect(DASHBOARD_HTML).toContain('function newBillingRequestId()');
+    expect(DASHBOARD_HTML).toContain("'Idempotency-Key': checkoutRequestId");
+    expect(DASHBOARD_HTML).toContain("'Idempotency-Key': portalRequestId");
+    expect(DASHBOARD_HTML.match(/checkoutRequestId = null/g)).toHaveLength(2); // declaration + plan change
+    expect(DASHBOARD_HTML.match(/portalRequestId = null/g)).toHaveLength(1); // declaration only
+  });
+
   it('keeps account sign-out discoverable from the account menu', () => {
     expect(DASHBOARD_HTML).toContain('id="acctMenuBtn"');
     expect(DASHBOARD_HTML).toContain('<span class="acct-label">Account</span>');

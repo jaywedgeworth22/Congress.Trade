@@ -2899,7 +2899,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          created_at TEXT NOT NULL
        )`,
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
-      // 0025_est_value.sql — materialized computed column for estimated transaction value.
+      // 0029_est_value.sql — materialized computed column for estimated transaction value.
       'ALTER TABLE transactions ADD COLUMN est_value REAL',
       `UPDATE transactions SET est_value = CASE
          WHEN amount_min IS NULL AND amount_max IS NULL THEN 0
@@ -2907,6 +2907,23 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          WHEN amount_max IS NULL THEN amount_min
          ELSE (amount_min + amount_max) / 2.0
        END WHERE est_value IS NULL`,
+      // 0032_stripe_subscription_event_order.sql — reject stale Stripe
+      // subscription events and make abandoned webhook claims reclaimable.
+      'ALTER TABLE stripe_webhook_events ADD COLUMN claim_token TEXT',
+      'ALTER TABLE stripe_webhook_events ADD COLUMN claim_expires_at TEXT',
+      `CREATE INDEX IF NOT EXISTS idx_stripe_webhook_events_claim_expiry
+         ON stripe_webhook_events (processed_at, claim_expires_at)`,
+      `CREATE TABLE IF NOT EXISTS stripe_subscription_event_state (
+         subscription_id TEXT PRIMARY KEY,
+         customer_id TEXT NOT NULL,
+         last_event_created INTEGER NOT NULL,
+         last_event_priority INTEGER NOT NULL,
+         last_event_id TEXT NOT NULL,
+         last_event_type TEXT NOT NULL,
+         updated_at TEXT NOT NULL
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_stripe_subscription_event_customer
+         ON stripe_subscription_event_state (customer_id, last_event_created DESC)`,
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

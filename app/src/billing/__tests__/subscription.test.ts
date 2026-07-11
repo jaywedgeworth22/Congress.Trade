@@ -5,6 +5,7 @@ import {
   applySubscription,
   endSubscription,
   getUserByStripeCustomerId,
+  linkCustomerToUser,
 } from '../subscription';
 import type { Env } from '../../shared/types';
 
@@ -24,6 +25,26 @@ interface Row {
   current_period_end: string | null;
   cancel_at_period_end: number;
   trial_end: string | null;
+}
+
+interface SubscriptionEventState {
+  customerId: string;
+  created: number;
+  priority: number;
+  eventId: string;
+  eventType: string;
+}
+
+function event(
+  id: string,
+  created: number,
+  type: 'customer.subscription.created' | 'customer.subscription.updated' | 'customer.subscription.deleted' = 'customer.subscription.updated',
+) {
+  return { id, created, type } as const;
+}
+
+function compareOrder(a: SubscriptionEventState, b: SubscriptionEventState): number {
+  return a.created - b.created || a.priority - b.priority || a.eventId.localeCompare(b.eventId);
 }
 
 function newRow(id: string, over: Partial<Row> = {}): Row {
@@ -50,6 +71,7 @@ function newRow(id: string, over: Partial<Row> = {}): Row {
 /** In-memory `users` table supporting exactly the queries the module issues. */
 function fakeEnv(seed: Row[] = []) {
   const rows = new Map<string, Row>(seed.map((r) => [r.id, r]));
+  const eventStates = new Map<string, SubscriptionEventState>();
   const env = {
     STRIPE_PRICE_MONTHLY: 'price_m',
     STRIPE_PRICE_ANNUAL: 'price_a',
@@ -72,15 +94,57 @@ function fakeEnv(seed: Row[] = []) {
         },
         async run() {
           const p = this._p;
-          if (/UPDATE users SET stripe_customer_id = \? WHERE id/i.test(sql)) {
-            const r = rows.get(p[1] as string);
-            if (r) r.stripe_customer_id = p[0] as string;
+          if (/INSERT INTO stripe_subscription_event_state/i.test(sql)) {
+            const [subscriptionId, customerId, created, priority, eventId, eventType] = p as [
+              string, string, number, number, string, string,
+            ];
+            const incoming = { customerId, created, priority, eventId, eventType };
+            const current = eventStates.get(subscriptionId);
+            if (!current || compareOrder(incoming, current) >= 0) {
+              eventStates.set(subscriptionId, incoming);
+              return { success: true, meta: { changes: 1 } } as unknown;
+            }
+            return { success: true, meta: { changes: 0 } } as unknown;
+          }
+          if (/UPDATE users\s+SET stripe_customer_id = \?\s+WHERE id = \?/i.test(sql)) {
+            const [customerId, userId] = p as [string, string, string];
+            const r = rows.get(userId);
+            const changes = r && (r.stripe_customer_id === null || r.stripe_customer_id === customerId) ? 1 : 0;
+            if (r && changes) r.stripe_customer_id = customerId;
+            return { success: true, meta: { changes } } as unknown;
           } else if (/UPDATE\s+users\s+SET\s+stripe_customer_id = \?,\s+stripe_subscription_id/i.test(sql)) {
-            const [cust, sub, status, plan, cpe, cape, trial, id] = p as [
+            const [
+              cust, sub, status, plan, cpe, cape, trial, id, expectedCustomer,
+              stateSub, created, priority, eventId, sameSub, newerCreated,
+              sameSecondCreated, eventType, crossStatus,
+            ] = p as [
               string, string, string, string | null, string | null, number, string | null, string,
+              string, string, number, number, string, string, number, number, string, string,
             ];
             const r = rows.get(id);
-            if (r) {
+            const applied = eventStates.get(stateSub);
+            const current = r?.stripe_subscription_id ? eventStates.get(r.stripe_subscription_id) : undefined;
+            const crossSubscriptionAllowed = current && (
+              current.created < newerCreated
+              || (
+                current.created === sameSecondCreated
+                && eventType === 'customer.subscription.created'
+                && (crossStatus === 'active' || crossStatus === 'trialing')
+                && (r?.subscription_status === 'canceled' || r?.subscription_status === 'incomplete_expired')
+              )
+            );
+            if (
+              r
+              && (r.stripe_customer_id === null || r.stripe_customer_id === expectedCustomer)
+              && applied?.created === created
+              && applied.priority === priority
+              && applied.eventId === eventId
+              && (
+                r.stripe_subscription_id === null
+                || r.stripe_subscription_id === sameSub
+                || crossSubscriptionAllowed
+              )
+            ) {
               r.stripe_customer_id = cust;
               r.stripe_subscription_id = sub;
               r.subscription_status = status;
@@ -90,8 +154,17 @@ function fakeEnv(seed: Row[] = []) {
               r.trial_end = trial;
             }
           } else if (/subscription_status = 'canceled'/i.test(sql)) {
-            const r = rows.get(p[0] as string);
-            if (r) {
+            const [id, subscriptionId, stateSub, created, priority, eventId] = p as [
+              string, string, string, number, number, string,
+            ];
+            const r = rows.get(id);
+            const applied = eventStates.get(stateSub);
+            if (
+              r?.stripe_subscription_id === subscriptionId
+              && applied?.created === created
+              && applied.priority === priority
+              && applied.eventId === eventId
+            ) {
               r.subscription_status = 'canceled';
               r.cancel_at_period_end = 0;
               r.trial_end = null;
@@ -105,7 +178,7 @@ function fakeEnv(seed: Row[] = []) {
       }),
     },
   } as unknown as Env;
-  return { env, rows };
+  return { env, rows, eventStates };
 }
 
 describe('planForPrice', () => {
@@ -149,6 +222,19 @@ describe('parseSubscription', () => {
   });
 });
 
+describe('linkCustomerToUser', () => {
+  it('sets an empty link but never replaces a different customer', async () => {
+    const { env, rows } = fakeEnv([
+      newRow('empty'),
+      newRow('linked', { stripe_customer_id: 'cus_current' }),
+    ]);
+    expect(await linkCustomerToUser(env, 'empty', 'cus_new')).toBe(true);
+    expect(await linkCustomerToUser(env, 'linked', 'cus_stale')).toBe(false);
+    expect(rows.get('empty')?.stripe_customer_id).toBe('cus_new');
+    expect(rows.get('linked')?.stripe_customer_id).toBe('cus_current');
+  });
+});
+
 describe('applySubscription', () => {
   it('updates the user resolved by stripe customer id', async () => {
     const { env, rows } = fakeEnv([newRow('u1', { stripe_customer_id: 'cus_1' })]);
@@ -161,7 +247,7 @@ describe('applySubscription', () => {
       cancelAtPeriodEnd: false,
       trialEnd: null,
       metadataUserId: null,
-    });
+    }, event('evt_active', 200));
     expect(id).toBe('u1');
     const r = rows.get('u1')!;
     expect(r.subscription_status).toBe('active');
@@ -180,7 +266,7 @@ describe('applySubscription', () => {
       cancelAtPeriodEnd: false,
       trialEnd: '2030-02-01T00:00:00.000Z',
       metadataUserId: 'u1',
-    });
+    }, event('evt_trial', 200, 'customer.subscription.created'));
     expect(id).toBe('u1');
     const r = rows.get('u1')!;
     expect(r.stripe_customer_id).toBe('cus_new');
@@ -189,7 +275,7 @@ describe('applySubscription', () => {
   });
 
   it('returns null when the subscription cannot be tied to any user', async () => {
-    const { env } = fakeEnv([newRow('u1', { stripe_customer_id: 'cus_1' })]);
+    const { env, eventStates } = fakeEnv([newRow('u1', { stripe_customer_id: 'cus_1' })]);
     const id = await applySubscription(env, {
       id: 'sub_x',
       customerId: 'cus_unknown',
@@ -199,25 +285,186 @@ describe('applySubscription', () => {
       cancelAtPeriodEnd: false,
       trialEnd: null,
       metadataUserId: null,
-    });
+    }, event('evt_unknown', 200));
     expect(id).toBeNull();
+    expect(eventStates.get('sub_x')).toMatchObject({
+      customerId: 'cus_unknown',
+      created: 200,
+      eventId: 'evt_unknown',
+    });
   });
 });
 
 describe('endSubscription', () => {
   it('marks the subscription canceled for the matching customer', async () => {
     const { env, rows } = fakeEnv([
-      newRow('u1', { stripe_customer_id: 'cus_1', subscription_status: 'active', cancel_at_period_end: 1 }),
+      newRow('u1', {
+        stripe_customer_id: 'cus_1', stripe_subscription_id: 'sub_1',
+        subscription_status: 'active', cancel_at_period_end: 1,
+      }),
     ]);
-    const id = await endSubscription(env, 'cus_1');
+    const id = await endSubscription(env, 'cus_1', 'sub_1', event('evt_deleted', 300, 'customer.subscription.deleted'));
     expect(id).toBe('u1');
     expect(rows.get('u1')!.subscription_status).toBe('canceled');
     expect(rows.get('u1')!.cancel_at_period_end).toBe(0);
   });
 
   it('returns null for an unknown customer', async () => {
-    const { env } = fakeEnv();
-    expect(await endSubscription(env, 'cus_none')).toBeNull();
+    const { env, eventStates } = fakeEnv();
+    expect(await endSubscription(env, 'cus_none', 'sub_none', event('evt_none', 300, 'customer.subscription.deleted'))).toBeNull();
+    expect(eventStates.get('sub_none')).toMatchObject({
+      customerId: 'cus_none',
+      created: 300,
+      eventType: 'customer.subscription.deleted',
+    });
+  });
+
+  it('uses deletion metadata to cancel without overwriting the customer link', async () => {
+    const { env, rows } = fakeEnv([newRow('u1', {
+      stripe_subscription_id: 'sub_1',
+      subscription_status: 'active',
+    })]);
+    const id = await endSubscription(
+      env,
+      'cus_unlinked',
+      'sub_1',
+      event('evt_deleted_metadata', 350, 'customer.subscription.deleted'),
+      'u1',
+    );
+    expect(id).toBe('u1');
+    expect(rows.get('u1')?.subscription_status).toBe('canceled');
+    expect(rows.get('u1')?.stripe_customer_id).toBeNull();
+  });
+});
+
+describe('subscription event ordering', () => {
+  it('does not let an older update roll a subscription backward', async () => {
+    const { env, rows } = fakeEnv([newRow('u1', { stripe_customer_id: 'cus_1' })]);
+    const base = {
+      id: 'sub_1', customerId: 'cus_1', priceId: 'price_m', currentPeriodEnd: null,
+      cancelAtPeriodEnd: false, trialEnd: null, metadataUserId: null,
+    };
+    await applySubscription(env, { ...base, status: 'active' }, event('evt_newer', 500));
+    await applySubscription(env, { ...base, status: 'past_due' }, event('evt_older', 400));
+    expect(rows.get('u1')?.subscription_status).toBe('active');
+  });
+
+  it('gives deletion precedence over same-second updates', async () => {
+    const { env, rows } = fakeEnv([newRow('u1', {
+      stripe_customer_id: 'cus_1', stripe_subscription_id: 'sub_1', subscription_status: 'active',
+    })]);
+    await endSubscription(env, 'cus_1', 'sub_1', event('evt_deleted', 600, 'customer.subscription.deleted'));
+    await applySubscription(env, {
+      id: 'sub_1', customerId: 'cus_1', status: 'active', priceId: 'price_m',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEnd: null, metadataUserId: null,
+    }, event('evt_updated', 600));
+    expect(rows.get('u1')?.subscription_status).toBe('canceled');
+  });
+
+  it('allows a same-second created active subscription to replace a terminal old subscription', async () => {
+    const { env, rows } = fakeEnv([newRow('u1', {
+      stripe_customer_id: 'cus_1', stripe_subscription_id: 'sub_old', subscription_status: 'active',
+    })]);
+    await endSubscription(
+      env,
+      'cus_1',
+      'sub_old',
+      event('evt_old_deleted', 650, 'customer.subscription.deleted'),
+    );
+    await applySubscription(env, {
+      id: 'sub_new', customerId: 'cus_1', status: 'active', priceId: 'price_m',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEnd: null, metadataUserId: null,
+    }, event('evt_new_created', 650, 'customer.subscription.created'));
+    expect(rows.get('u1')).toMatchObject({
+      stripe_subscription_id: 'sub_new',
+      subscription_status: 'active',
+    });
+  });
+
+  it('fails closed for a same-second cross-subscription create when the old subscription is nonterminal', async () => {
+    const { env, rows } = fakeEnv([newRow('u1', { stripe_customer_id: 'cus_1' })]);
+    const subscription = (id: string) => ({
+      id, customerId: 'cus_1', status: 'active', priceId: 'price_m',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEnd: null, metadataUserId: null,
+    });
+    await applySubscription(env, subscription('sub_old'), event('evt_old_updated', 675));
+    await applySubscription(
+      env,
+      subscription('sub_new'),
+      event('evt_new_created', 675, 'customer.subscription.created'),
+    );
+    expect(rows.get('u1')).toMatchObject({
+      stripe_subscription_id: 'sub_old',
+      subscription_status: 'active',
+    });
+  });
+
+  it('does not let an older event from another subscription replace the current one', async () => {
+    const { env, rows } = fakeEnv([newRow('u1', { stripe_customer_id: 'cus_1' })]);
+    const makeSub = (id: string, status: string) => ({
+      id, customerId: 'cus_1', status, priceId: 'price_m', currentPeriodEnd: null,
+      cancelAtPeriodEnd: false, trialEnd: null, metadataUserId: null,
+    });
+    await applySubscription(env, makeSub('sub_new', 'active'), event('evt_new', 800, 'customer.subscription.created'));
+    await applySubscription(env, makeSub('sub_old', 'past_due'), event('evt_old', 700));
+    expect(rows.get('u1')?.stripe_subscription_id).toBe('sub_new');
+    expect(rows.get('u1')?.subscription_status).toBe('active');
+  });
+
+  it('records an ownerless deletion and blocks a stale metadata create from re-enabling it', async () => {
+    const { env, rows } = fakeEnv([newRow('u1')]);
+    expect(await endSubscription(
+      env,
+      'cus_unknown',
+      'sub_1',
+      event('evt_deleted_new', 900, 'customer.subscription.deleted'),
+    )).toBeNull();
+
+    await applySubscription(env, {
+      id: 'sub_1',
+      customerId: 'cus_unknown',
+      status: 'active',
+      priceId: 'price_m',
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false,
+      trialEnd: null,
+      metadataUserId: 'u1',
+    }, event('evt_created_stale', 800, 'customer.subscription.created'));
+
+    expect(rows.get('u1')).toMatchObject({
+      stripe_customer_id: null,
+      stripe_subscription_id: null,
+      subscription_status: null,
+    });
+  });
+
+  it('does not let stale metadata replace a current customer and subscription', async () => {
+    const { env, rows } = fakeEnv([newRow('u1', { stripe_customer_id: 'cus_current' })]);
+    const subscription = (id: string, customerId: string, metadataUserId: string | null) => ({
+      id,
+      customerId,
+      status: 'active',
+      priceId: 'price_m',
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false,
+      trialEnd: null,
+      metadataUserId,
+    });
+    await applySubscription(
+      env,
+      subscription('sub_current', 'cus_current', null),
+      event('evt_current', 1_000, 'customer.subscription.created'),
+    );
+    await applySubscription(
+      env,
+      subscription('sub_stale', 'cus_stale', 'u1'),
+      event('evt_stale', 900, 'customer.subscription.created'),
+    );
+    expect(rows.get('u1')).toMatchObject({
+      stripe_customer_id: 'cus_current',
+      stripe_subscription_id: 'sub_current',
+      subscription_status: 'active',
+    });
   });
 });
 
