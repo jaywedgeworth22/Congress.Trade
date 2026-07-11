@@ -32,35 +32,40 @@ truth; this file is the short operational snapshot for the current integration.
   activation ran. The PWA and iOS prototypes still have no standalone
   production host/App Store release target.
 
-## 2026-07-11 (CODEX) — Review Queue safety integration
+## 2026-07-11 (CODEX) — Review Queue autonomy production release
 
-- Production Review Queue is **27 pending**, down from 30 after three explicit,
-  dry-run-first House filings were published with a known-working Mistral/OpenAI
-  pair. Their 36 rows were visually verified against the official PDFs and
-  corrected in place for owner, capital-gains flag, filing status, subholding,
-  and derived row key; IDs/cursors stayed stable and no delivery was replayed.
-- Further production agreement publishing is paused. The deployed predicate
-  compares only ticker-or-name/date/type and is not safe for an unattended
-  backlog drain.
-- Clean integration branch: `codex/review-queue-resolution`. It incorporates
-  PR #257's model readings/consensus/cascade and PR #263's working model-B fix,
-  then adds material-field multiset agreement, human-vs-automation leases/CAS,
-  one-time legacy replay, reopen resets, budget/backoff state, and safe reviewer
-  consensus behavior. It additionally version-guards every human action,
-  commits normalizer/agreement/human rows + filing state + delivery intent
-  atomically, and materializes `est_value` through every transaction writer.
-- Combined post-#284/#264 gate: typecheck + 104 files / 908 tests; lint 0 errors;
-  migration/admin-parity/readiness coverage through `0037`; and real D1 proof
-  that a 223-row human confirmation commits every row and delivery intent while
-  immediate outbox flushes remain below D1's bind-parameter ceiling. Fresh
-  exact-tree isolated preview version `e1c8fb70-4291-4872-b1e2-f45f59367e6f` is healthy at
-  `https://congress-trade-preview.jaywedgeworth22.workers.dev` with
-  `ok/db/schema=true`, `missing=[]`, with `0025` and `0030`-`0037` tracked.
-- The owner authorized production release. The branch is ready for its PR,
-  merge, schema application, and bounded queue narrowing; none of this
-  review-queue hardening is production-live yet. Final
-  pre-release production recheck remains 91 total / 27 pending / 64 resolved. See
-  `docs/rollouts/2026-07-11-review-queue-autonomy-hardening.md`.
+- PR #292 merged as `f197e66`; exact-tree preview Worker
+  `e1c8fb70-4291-4872-b1e2-f45f59367e6f` passed readiness before canonical
+  production Worker `69b4c3cf-8543-459f-a541-623dc7cd692c` applied `0025` plus
+  `0029`-`0037` through the Worker admin migration endpoint. The pre-deploy D1
+  Time Travel bookmark is
+  `000001af-0000d458-000050a5-6a11a98a065b736d72328812598fbac8`.
+- PR #262 subsequently advanced `main` to `bb92250` and production to Worker
+  `79945ec6-3434-472a-8d7e-76b2df1ffa04`. The review release is its direct
+  ancestor, and current `GET /api/health` is HTTP 200 with
+  `ok/db/schema=true`, `missing=[]`.
+- The one-time replay and bounded cascade reduced Review Queue from 27 to 20
+  pending: 7 House filings / 13 rows published autonomously at tier 3. Every
+  receipt names three distinct models and every published row was present in
+  all three reads. All 13 generic delivery-outbox rows completed, every live
+  transaction exists, and every row has non-null `est_value`.
+- The remaining 20 are deliberately retained as
+  `agreement_cascade_unresolved`. All reached the three-attempt cap; there are
+  zero active or stale claims, backoffs, suppressions, or scheduled retries.
+  The release spent 169/300 daily model reads. Mistral succeeded 71/71 and
+  OpenAI 70/70; Anthropic succeeded 11/27, with eight invalid Senate PDF
+  objects and eight malformed/truncated JSON responses. No manual agreement
+  write was needed.
+- The hardened path includes exact material-row multiset agreement, distinct
+  providers, bounded budget/retry/backoff/leases, one-time legacy replay,
+  monotonic review revisions, fail-closed reviewer consensus, atomic
+  row+filing+audit+generic-outbox commits, durable holds, live-only identity,
+  and consistent `est_value` materialization. Gate: typecheck, 104 files / 908
+  tests, lint 0 errors, hosted CI/PWA/gitleaks green, and two quiet post-retry
+  samples. Next high-value work is chamber/content-aware Anthropic input
+  handling and bounded JSON repair/output-size handling before retrying the 20.
+  See `docs/rollouts/2026-07-11-review-queue-autonomy-hardening.md`.
+
 ## 2026-07-05 (Antigravity) — Shared Ticker Alias Logic and SSE Client
 
 Owner-directed: Migrated ticker normalization and point-in-time score builders to use the centralized `resolveContinuousTicker` and `TICKER_RENAMES` from `congress-trading-shared`. This fixes the "Acquisition-vs-rename guard" issue where acquisitions like ATVI->MSFT were grouped indistinguishably from true renames (e.g., FB->META). We now ensure acquisitions are point-in-time correct and uncollapsed. Also prepared the repo to use the shared typed `CongressTradeClient` for SSE subscriptions.
