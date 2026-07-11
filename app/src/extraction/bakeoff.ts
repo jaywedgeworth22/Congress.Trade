@@ -530,6 +530,11 @@ export async function persistExtractionRun(
   kind: ExtractionRunKind,
   batchId: string | null = null,
 ): Promise<void> {
+  // Push telemetry concurrently (fire-and-forget internal catch)
+  import('./telemetry').then(({ pushExtractionTelemetry }) => {
+    pushExtractionTelemetry(env, result, kind);
+  }).catch(() => {});
+
   try {
     await run(
       env.DB,
