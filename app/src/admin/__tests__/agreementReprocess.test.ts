@@ -11,8 +11,8 @@ import { buildAdminRouter } from '../routes';
 const app = buildAdminRouter();
 const AUTH = { Authorization: 'Bearer test-admin', 'content-type': 'application/json' };
 
-const ROW_AAPL = '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000","confidence":0.9}]';
-const ROW_MSFT = '[{"ticker":"MSFT","assetName":"Microsoft","txType":"S","amountRange":"$1,001 - $15,000","confidence":0.9}]';
+const ROW_AAPL = '[{"ticker":"AAPL","assetName":"Apple Inc.","txDate":"2026-06-19","txType":"P","amountRange":"$1,001 - $15,000","confidence":0.9}]';
+const ROW_MSFT = '[{"ticker":"MSFT","assetName":"Microsoft","txDate":"2026-06-19","txType":"S","amountRange":"$1,001 - $15,000","confidence":0.9}]';
 
 function makeEnv() {
   const insertedTx: unknown[][] = [];
@@ -30,6 +30,19 @@ function makeEnv() {
           if (/SELECT doc_id, chamber, filer_id/i.test(sql)) {
             return { doc_id: this.params[0], chamber: 'house', filer_id: 'P1', filing_type: 'P', filed_date: '2026-06-20', source_url: 'u', raw_object_key: 'raw/x', ingest_status: 'needs_review', doc_kind: 'scanned_pdf', extractor: null, model_version: null, confidence: null, first_seen_at: '2026-06-20', source_updated_at: null, error: null } as T;
           }
+          if (/SELECT resolved, agreement_attempts/i.test(sql)) {
+            return {
+              resolved: 0,
+              agreement_attempts: 0,
+              agreement_tier: null,
+              agreement_next_attempt_at: null,
+              agreement_claim_token: null,
+              agreement_claimed_at: null,
+              agreement_suppressed_at: null,
+              agreement_suppression_reason: null,
+              review_revision: 1,
+            } as T;
+          }
           return null as T | null;
         },
         async all<T>() {
@@ -39,7 +52,7 @@ function makeEnv() {
         async run() {
           if (/INSERT (?:OR IGNORE )?INTO transactions/i.test(sql)) insertedTx.push(this.params);
           else if (/UPDATE filings/i.test(sql)) filingUpdates.push(String(this.params[1] ?? this.params[0]));
-          else if (/UPDATE review_queue SET resolved/i.test(sql)) reviewResolved.push(String(this.params[0]));
+          else if (/UPDATE review_queue\s+SET resolved/i.test(sql)) reviewResolved.push(String(this.params[0]));
           return { success: true, meta: { changes: 1 } };
         },
       };

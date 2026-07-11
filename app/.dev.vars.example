@@ -21,14 +21,35 @@ INFISICAL_SHARED_SECRET_PATH="/"
 
 # Vision/LLM extraction for scanned PDFs (Google Gemini).
 GEMINI_API_KEY=""
+# Primary vision model override (defaults to 'gemini-3.5-flash').
+VISION_PRIMARY_MODEL=""
 # Optional extractor bake-off candidates used by /api/admin/extractor-bakeoff.
 ANTHROPIC_API_KEY=""
 OPENAI_API_KEY=""
+MISTRAL_API_KEY=""
 # LlamaIndex Cloud (LlamaParse) — OCR + handwriting-aware structured extraction.
 # Get a key at https://cloud.llamaindex.ai. Free tier: 10,000 credits/month.
 # Use as agreement model: AGREEMENT_AUTOPUBLISH_MODEL_B="llamaparse:cost-effective"
 # Tiers (credits/page): fast=1, cost-effective=3, agentic=10, agentic-plus=45
 LLAMAINDEX_API_KEY=""
+
+# Autonomous review-resolution cascade. Keep A/B/C on distinct vendors; model
+# C is Anthropic because the production Worker has ANTHROPIC_API_KEY configured.
+AGREEMENT_AUTOPUBLISH_ENABLED="true"
+AGREEMENT_AUTOPUBLISH_MODEL_A="mistral:mistral-ocr-latest"
+AGREEMENT_AUTOPUBLISH_MODEL_B="openai:gpt-4o"
+AGREEMENT_MODEL_C="anthropic:claude-sonnet-4-6"
+AGREEMENT_AUTOPUBLISH_LIMIT="3"
+AGREEMENT_MAX_ATTEMPTS="3"
+# One model reading one doc = one read. This caps autonomous work only; the
+# operator-triggered POST /api/admin/agreement-reprocess remains uncapped. Use
+# -1 explicitly for unlimited. Backed by llm_budget (migration 0032).
+AGREEMENT_DAILY_LLM_BUDGET="300"
+# Large documents start with all three vendors instead of spending an A/B pass
+# first. A document is large when either threshold is exceeded.
+AGREEMENT_BIG_DOC_START_TIER2="true"
+AGREEMENT_BIG_DOC_PAGE_THRESHOLD="10"
+AGREEMENT_BIG_DOC_BYTES_THRESHOLD="2097152"
 
 # Financial Modeling Prep — enables asset enrichment (sector, market cap, country,
 # exchange) and, later, price + performance-vs-S&P. Without it, the SEC-EDGAR

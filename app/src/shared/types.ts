@@ -229,6 +229,8 @@ export interface ReviewItem {
   payload: unknown;
   createdAt: string;
   resolved: boolean;
+  /** Monotonic optimistic-concurrency version for review-visible state. */
+  reviewRevision: number;
   sourceUrl?: string;
   rawObjectKey?: string;
   docKind?: string;
@@ -362,7 +364,14 @@ export type QueueMessage =
   | { type: 'filing.fetched'; docId: string }
   | { type: 'filing.extracted'; docId: string }
   | { type: 'tx.persisted'; txId: string; docId: string }
-  | { type: 'agreement.check'; docId: string; rawObjectKey: string | null }
+  | {
+      type: 'agreement.check';
+      docId: string;
+      rawObjectKey: string | null;
+      escalationTier?: number;
+      /** Durable review_queue lease owner; optional for pre-0031 queued messages. */
+      claimToken?: string;
+    }
   | {
       type: 'delivery.dispatch';
       txId: string;
@@ -387,6 +396,8 @@ export interface Env {
   // --- Secrets (wrangler secret put / .dev.vars) ---
   /** Vision/text LLM key (e.g. Gemini) for scanned-PDF extraction. */
   GEMINI_API_KEY?: string;
+  /** Primary vision model override (defaults to 'gemini-3.5-flash'). */
+  VISION_PRIMARY_MODEL?: string;
   /** Secondary arbitration extractor key. Presence enables arbitration. */
   ARBITRATION_API_KEY?: string;
   /** Anthropic API key — Claude vision candidates in the extractor bake-off. */
@@ -410,10 +421,30 @@ export interface Env {
   AGREEMENT_AUTOPUBLISH_ENABLED?: string;
   /** Agreement model A as "provider:model" (default mistral:mistral-ocr-latest). */
   AGREEMENT_AUTOPUBLISH_MODEL_A?: string;
-  /** Agreement model B as "provider:model" (default gemini:gemini-3.5-flash). */
+  /** Agreement model B as "provider:model" (production: openai:gpt-4o). */
   AGREEMENT_AUTOPUBLISH_MODEL_B?: string;
   /** Max review docs the autonomous pass attempts per cron tick (default 3). */
   AGREEMENT_AUTOPUBLISH_LIMIT?: string;
+  /**
+   * Tier-2 escalation model C as "provider:model" for the agreement cascade.
+   * Production uses anthropic:claude-sonnet-4-6, a third vendor distinct from
+   * Mistral (A) and OpenAI (B), so a tier-2 read is genuinely cross-vendor.
+   */
+  AGREEMENT_MODEL_C?: string;
+  /** Max cascade attempts (tier passes) per review doc before it stays in human review (default 3). */
+  AGREEMENT_MAX_ATTEMPTS?: string;
+  /** Daily autonomous candidate-doc-read budget; -1 explicitly disables the cap (default 300). */
+  AGREEMENT_DAILY_LLM_BUDGET?: string;
+  /**
+   * When 'true' (default), a doc whose cheap complexity signals exceed the
+   * thresholds (page_count / raw_bytes) starts the cascade directly at tier 2
+   * (three models) instead of tier 1. Set 'false' to always start at tier 1.
+   */
+  AGREEMENT_BIG_DOC_START_TIER2?: string;
+  /** Page-count threshold for the big-doc tier-2 start heuristic (default 10). */
+  AGREEMENT_BIG_DOC_PAGE_THRESHOLD?: string;
+  /** Raw-byte threshold for the big-doc tier-2 start heuristic (default 2097152 = 2MB). */
+  AGREEMENT_BIG_DOC_BYTES_THRESHOLD?: string;
   /** Financial Modeling Prep key — enables asset enrichment + price/performance. */
   FMP_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */

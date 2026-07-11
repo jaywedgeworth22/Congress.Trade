@@ -64,7 +64,7 @@ import {
   CONFIDENCE_THRESHOLD,
   hasHardFailureFlags,
 } from '../extraction/normalizer';
-import { processAgreementDoc, type AgreementModels } from '../extraction/agreement';
+import { enqueueAgreementCheck, processAgreementDoc, type AgreementModels } from '../extraction/agreement';
 import type { Chamber } from '../shared/types';
 import { verifyAccessJwt, certsUrl } from './access';
 import { adminRuntimeConfig } from './identity';
@@ -81,6 +81,7 @@ import {
   type Provider,
 } from '../extraction/bakeoff';
 import { isBatchProvider, submitBatch, pollBatch, type BatchDoc } from '../extraction/batchExtract';
+import { buildConsensusRows, type ConsensusRun } from '../extraction/consensus';
 import {
   runEnrichment,
   getDailyUsed,
@@ -93,12 +94,9 @@ import type { SecurityRef } from '../enrichment/types';
 import { runPriceRefresh } from '../prices/service';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets } from '../secrets/infisical';
 import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
+import { estimateTransactionValue } from '../shared/transactionValue';
 import { isValidBracket } from '../shared/brackets';
-import {
-  deliveryOutboxInsertForRowKey,
-  flushDeliveryOutbox,
-  type SqlStatement,
-} from '../delivery/outbox';
+import { flushDeliveryOutbox } from '../delivery/outbox';
 import {
   BASE_SCHEMA_STATEMENTS,
   POST_0024_SCHEMA_STATEMENTS,
@@ -264,6 +262,9 @@ interface ReviewRow {
   raw_object_key: string | null;
   doc_kind: string | null;
   chamber?: string | null;
+  agreement_suppressed_at?: string | null;
+  agreement_suppression_reason?: string | null;
+  review_revision?: number | null;
 }
 
 interface DiagnosticConnection {
@@ -378,7 +379,93 @@ interface EditedTx {
   isOption?: boolean;
   capGainsOver200?: boolean;
   rawText?: string;
+  filingStatus?: string | null;
+  subholding?: string | null;
+  location?: string | null;
+  description?: string | null;
+  supplementalText?: string | null;
   confidence?: number;
+}
+
+type ValidatedEditedTx = EditedTx & {
+  txDate: string;
+  owner: 'self' | 'spouse' | 'joint' | 'dependent' | null;
+  txType: TxType;
+};
+
+function validCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year
+    && parsed.getUTCMonth() === month - 1
+    && parsed.getUTCDate() === day
+    && value <= new Date().toISOString().slice(0, 10);
+}
+
+function validateReviewEdits(
+  rawEdits: unknown[],
+  filedDate: string | null,
+): { edits: ValidatedEditedTx[] } | { error: string } {
+  // The live backlog contains filings with more than 200 disclosed lots. Keep
+  // those reviewable while still bounding request and D1 work.
+  if (rawEdits.length > 500) return { error: 'edits cannot contain more than 500 rows' };
+  const edits: ValidatedEditedTx[] = [];
+  for (const [index, raw] of rawEdits.entries()) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return { error: `edits[${index}] must be an object` };
+    }
+    const e = raw as EditedTx;
+    const txType = typeof e.txType === 'string' ? e.txType.toUpperCase() : '';
+    if (txType !== 'P' && txType !== 'S' && txType !== 'E') {
+      return { error: `edits[${index}].txType must be explicitly P, S, or E` };
+    }
+    const ownerRaw = typeof e.owner === 'string' ? e.owner.trim().toLowerCase() : '';
+    const owner = ownerRaw === '' ? null : ownerRaw;
+    if (owner !== null && owner !== 'self' && owner !== 'spouse' && owner !== 'joint' && owner !== 'dependent') {
+      return { error: `edits[${index}].owner must be self, spouse, joint, dependent, or null` };
+    }
+    const txDate = typeof e.txDate === 'string' ? e.txDate.trim() : '';
+    if (!validCalendarDate(txDate)) {
+      return { error: `edits[${index}].txDate must be a valid non-future YYYY-MM-DD date` };
+    }
+    if (filedDate && txDate > filedDate.slice(0, 10)) {
+      return { error: `edits[${index}].txDate cannot be later than the filing date` };
+    }
+    const ticker = typeof e.ticker === 'string' ? e.ticker.trim() : '';
+    const assetName = typeof e.assetName === 'string' ? e.assetName.trim() : '';
+    if (!ticker && !assetName) {
+      return { error: `edits[${index}] requires a ticker or assetName` };
+    }
+    if (assetName.length > 500) {
+      return { error: `edits[${index}].assetName must be at most 500 characters` };
+    }
+    if (ticker && (ticker.length > 20 || !/^[A-Za-z0-9.^$-]+$/.test(ticker))) {
+      return { error: `edits[${index}].ticker is invalid` };
+    }
+    if (typeof e.amountMin !== 'number' || !Number.isFinite(e.amountMin)) {
+      return { error: `edits[${index}].amountMin is required` };
+    }
+    if (e.amountMax != null && (typeof e.amountMax !== 'number' || !Number.isFinite(e.amountMax))) {
+      return { error: `edits[${index}].amountMax must be a number or null` };
+    }
+    if (!isValidBracket(e.amountMin, e.amountMax ?? null)) {
+      return { error: `edits[${index}] amount must be a canonical STOCK Act bracket` };
+    }
+    if (e.confidence != null && (
+      typeof e.confidence !== 'number' || !Number.isFinite(e.confidence)
+      || e.confidence < 0 || e.confidence > 1
+    )) {
+      return { error: `edits[${index}].confidence must be between 0 and 1` };
+    }
+    for (const field of ['isOption', 'capGainsOver200'] as const) {
+      if (e[field] !== undefined && typeof e[field] !== 'boolean') {
+        return { error: `edits[${index}].${field} must be a boolean` };
+      }
+    }
+    edits.push({ ...e, ticker: ticker || null, assetName, txDate, owner, txType });
+  }
+  return { edits };
 }
 
 function reviewAssetTypeName(e: EditedTx): string | null {
@@ -388,56 +475,6 @@ function reviewAssetTypeName(e: EditedTx): string | null {
   if (!raw || raw.toLowerCase() === 'unknown') return null;
   const code = raw.toUpperCase();
   return HOUSE_ASSET_TYPE_NAMES[code] ?? raw;
-}
-
-function estimatedTransactionValue(amountMin: number | null, amountMax: number | null): number {
-  if (amountMin === null && amountMax === null) return 0;
-  if (amountMin === null) return amountMax as number;
-  if (amountMax === null) return amountMin;
-  return (amountMin + amountMax) / 2.0;
-}
-
-function validateReviewEdits(value: unknown): { edits?: EditedTx[]; error?: string } {
-  if (!Array.isArray(value)) return { error: 'edits must be an array' };
-  if (value.length === 0) return { edits: [] };
-  if (value.length > 50) return { error: 'edits cannot contain more than 50 rows' };
-
-  for (const [i, raw] of value.entries()) {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { error: `edits[${i}] must be an object` };
-    const e = raw as Record<string, unknown>;
-    if (e.txType !== 'P' && e.txType !== 'S' && e.txType !== 'E') {
-      return { error: `edits[${i}].txType must be P, S, or E` };
-    }
-    if (typeof e.assetName !== 'string' || !e.assetName.trim() || e.assetName.length > 500) {
-      return { error: `edits[${i}].assetName is required and must be at most 500 characters` };
-    }
-    if (e.txDate != null && (typeof e.txDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(e.txDate))) {
-      return { error: `edits[${i}].txDate must be YYYY-MM-DD or null` };
-    }
-    if (e.owner != null && !['self', 'spouse', 'joint', 'dependent'].includes(String(e.owner))) {
-      return { error: `edits[${i}].owner is invalid` };
-    }
-    if (e.ticker != null && (typeof e.ticker !== 'string' || e.ticker.length > 20 || !/^[A-Za-z0-9.^$-]+$/.test(e.ticker))) {
-      return { error: `edits[${i}].ticker is invalid` };
-    }
-    if (typeof e.amountMin !== 'number' || !Number.isFinite(e.amountMin)) {
-      return { error: `edits[${i}].amountMin is required` };
-    }
-    if (e.amountMax != null && (typeof e.amountMax !== 'number' || !Number.isFinite(e.amountMax))) {
-      return { error: `edits[${i}].amountMax must be a number or null` };
-    }
-    if (!isValidBracket(e.amountMin, (e.amountMax as number | null | undefined) ?? null)) {
-      return { error: `edits[${i}] amount must be a canonical STOCK Act bracket` };
-    }
-    if (e.confidence != null && (typeof e.confidence !== 'number' || !Number.isFinite(e.confidence) || e.confidence < 0 || e.confidence > 1)) {
-      return { error: `edits[${i}].confidence must be between 0 and 1` };
-    }
-    if (e.isOption != null && typeof e.isOption !== 'boolean') return { error: `edits[${i}].isOption must be boolean` };
-    if (e.capGainsOver200 != null && typeof e.capGainsOver200 !== 'boolean') {
-      return { error: `edits[${i}].capGainsOver200 must be boolean` };
-    }
-  }
-  return { edits: value as EditedTx[] };
 }
 
 // --- Politician photo enrichment (name -> bioguide -> unitedstates/images CDN) ---
@@ -762,6 +799,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           rq.payload,
           rq.created_at,
           rq.resolved,
+          rq.agreement_suppressed_at,
+          rq.agreement_suppression_reason,
+          rq.review_revision,
           f.source_url,
           f.raw_object_key,
           f.doc_kind,
@@ -848,6 +888,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         rawObjectKey: row.raw_object_key ?? '',
         docKind: row.doc_kind ?? '',
         chamber: row.chamber ?? '',
+        agreementSuppressedAt: row.agreement_suppressed_at ?? '',
+        agreementSuppressionReason: row.agreement_suppression_reason ?? '',
+        reviewRevision: row.review_revision ?? 1,
         models: modelsByDoc.get(row.doc_id) ?? [],
       };
     });
@@ -880,6 +923,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.get('/review/:docId/extractions', async (c) => {
     const docId = c.req.param('docId');
     let runs: Array<Record<string, unknown>> = [];
+    let consensus: ReturnType<typeof buildConsensusRows> | null = null;
+    let consensusStatus: {
+      batchId: string;
+      kind: string;
+      createdAt: string;
+      attemptedModels: string[];
+      successfulModels: string[];
+      failedModels: Array<{ model: string; error: string | null }>;
+      blockedReason: string | null;
+    } | null = null;
     try {
       const rowsE = await all<{
         id: string;
@@ -914,14 +967,106 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         rows: er.result_json ? safeJson(er.result_json) : [],
         createdAt: er.created_at,
       }));
+
+      // Consensus must come from ONE coherent invocation. Never assemble a
+      // synthetic electorate from unrelated batches or replace a newer failed
+      // attempt with an older success from the same model: that can make stale
+      // readings look current and unanimous. A single-model batch is not a
+      // consensus attempt, so it does not supersede the latest batch that
+      // actually attempted at least two distinct models.
+      const CONSENSUS_KINDS = new Set(['agreement', 'bakeoff', 'batch']);
+      type ExtractionRunRow = (typeof rowsE)[number];
+      const runSets = new Map<string, {
+        batchId: string;
+        kind: string;
+        createdAt: string;
+        byModel: Map<string, ExtractionRunRow>;
+      }>();
+      for (const er of rowsE) {
+        if (!er.batch_id || !CONSENSUS_KINDS.has(er.kind)) continue;
+        const runSetKey = `${er.kind}:${er.batch_id}`;
+        let runSet = runSets.get(runSetKey);
+        if (!runSet) {
+          runSet = {
+            batchId: er.batch_id,
+            kind: er.kind,
+            createdAt: er.created_at,
+            byModel: new Map(),
+          };
+          runSets.set(runSetKey, runSet);
+        } else if (er.created_at > runSet.createdAt) {
+          runSet.createdAt = er.created_at;
+        }
+
+        const modelKey = `${er.provider}:${er.model}`;
+        const prior = runSet.byModel.get(modelKey);
+        // Duplicate model rows in one batch are abnormal. Use the newest; when
+        // timestamps tie, prefer the failure so ambiguous persistence cannot
+        // manufacture a successful vote.
+        if (
+          !prior ||
+          er.created_at > prior.created_at ||
+          (er.created_at === prior.created_at && er.ok !== 1 && prior.ok === 1)
+        ) {
+          runSet.byModel.set(modelKey, er);
+        }
+      }
+
+      const latestComparable = [...runSets.values()]
+        .filter((runSet) => runSet.byModel.size >= 2)
+        .sort((a, b) =>
+          b.createdAt.localeCompare(a.createdAt) ||
+          b.batchId.localeCompare(a.batchId) ||
+          b.kind.localeCompare(a.kind),
+        )[0];
+
+      if (latestComparable) {
+        const attemptedModels = [...latestComparable.byModel.keys()].sort();
+        const successfulModels: string[] = [];
+        const failedModels: Array<{ model: string; error: string | null }> = [];
+        const coherentRuns: ConsensusRun[] = [];
+        for (const model of attemptedModels) {
+          const er = latestComparable.byModel.get(model)!;
+          if (er.ok !== 1) {
+            failedModels.push({ model, error: er.error });
+            coherentRuns.push({ model, rows: [] });
+            continue;
+          }
+          const parsed = er.result_json ? safeJson(er.result_json) : [];
+          if (!Array.isArray(parsed)) {
+            failedModels.push({ model, error: 'stored result is not a transaction array' });
+            coherentRuns.push({ model, rows: [] });
+            continue;
+          }
+          successfulModels.push(model);
+          coherentRuns.push({
+            model,
+            rows: parsed as ConsensusRun['rows'],
+          });
+        }
+
+        const blockedReason = successfulModels.length < 2
+          ? 'Latest comparable run set has fewer than two successful model readings; older successes were not mixed in.'
+          : null;
+        consensusStatus = {
+          batchId: latestComparable.batchId,
+          kind: latestComparable.kind,
+          createdAt: latestComparable.createdAt,
+          attemptedModels,
+          successfulModels,
+          failedModels,
+          blockedReason,
+        };
+        if (!blockedReason) consensus = buildConsensusRows(coherentRuns);
+      }
     } catch {
       /* extraction_runs not migrated yet */
     }
-    return c.json({ docId, runs, count: runs.length });
+    return c.json({ docId, runs, count: runs.length, consensus, consensusStatus });
   });
 
   // --- POST /review/:docId ------------------------------------------------
-  // Body: { decision: 'confirm'|'reject'|'manual', edits?: EditedTx[] }
+  // Body: { decision: 'confirm'|'reject'|'manual', reviewRevision, edits?: EditedTx[] }
   //   confirm -> insert corrected transactions (source='primary'), mark review
   //              resolved, set filing persisted, enqueue delivery.dispatch each.
   //   manual  -> same as confirm but recorded as source='manual' — the admin
@@ -942,35 +1087,83 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: "decision must be 'confirm', 'reject', or 'manual'" }, 400);
     }
 
-    const review = await get<ReviewRow>(
-      c.env.DB,
-      'SELECT doc_id, reason, payload, created_at, resolved FROM review_queue WHERE doc_id = ?',
-      [docId],
-    );
+    let review: ReviewRow | null;
+    try {
+      review = await get<ReviewRow>(
+        c.env.DB,
+        `SELECT doc_id, reason, payload, created_at, resolved, review_revision
+           FROM review_queue WHERE doc_id = ?`,
+        [docId],
+      );
+    } catch (err) {
+      if (/review_revision|no such column/i.test((err as Error).message)) {
+        return c.json({ error: 'review revision migration is not applied yet' }, 503);
+      }
+      throw err;
+    }
     if (!review) return c.json({ error: 'review item not found' }, 404);
     if (review.resolved === 1) {
       return c.json({ error: 'review item already resolved' }, 409);
     }
+    if (!Number.isInteger(body.reviewRevision) || Number(body.reviewRevision) < 1) {
+      return c.json({ error: 'reviewRevision must be a positive integer from the review queue item' }, 400);
+    }
+    const reviewRevision = review.review_revision ?? 1;
+    if (body.reviewRevision !== reviewRevision) {
+      return c.json({ error: 'review item changed; reload it before deciding' }, 409);
+    }
 
     if (decision === 'reject') {
       const nowIso = new Date().toISOString();
-      await run(c.env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [docId]);
-      await run(c.env.DB, 'UPDATE filings SET ingest_status = ? WHERE doc_id = ?', [
-        'error',
-        docId,
+      const rejectionReason = `rejected: ${review.reason ?? 'rejected by admin'}`;
+      const rejectResults = await batch(c.env.DB, [
+        [
+          `UPDATE transactions
+              SET deprecated_at = ?, deprecated_reason = ?
+            WHERE doc_id = ? AND source IN ('primary', 'manual')
+              AND deprecated_at IS NULL
+              AND EXISTS (SELECT 1 FROM review_queue
+                WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)`,
+          [nowIso, rejectionReason, docId, docId, reviewRevision],
+        ],
+        [
+          `UPDATE filings SET ingest_status = ?
+            WHERE doc_id = ? AND EXISTS (
+              SELECT 1 FROM review_queue
+               WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
+            )`,
+          ['error', docId, docId, reviewRevision],
+        ],
+        [
+          `UPDATE review_queue
+              SET resolved = 1,
+                  reason = ?,
+                  agreement_suppressed_at = ?,
+                  agreement_suppression_reason = ?,
+                  review_revision = review_revision + 1
+            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?`,
+          [rejectionReason, nowIso, rejectionReason, docId, reviewRevision],
+        ],
       ]);
-      await recordIngestionDecision(c.env.DB, {
-        docId,
-        action: 'rejected',
-        source: 'admin',
-        actor: adminActor(c),
-        reason: review.reason ?? 'rejected',
-        payload: {
-          reviewCreatedAt: review.created_at,
-          reviewPayload: review.payload ? safeJson(review.payload) : null,
-        },
-        createdAt: nowIso,
-      });
+      if ((rejectResults[rejectResults.length - 1]?.meta?.changes ?? 0) === 0) {
+        return c.json({ error: 'review item changed; reload it before deciding' }, 409);
+      }
+      try {
+        await recordIngestionDecision(c.env.DB, {
+          docId,
+          action: 'rejected',
+          source: 'admin',
+          actor: adminActor(c),
+          reason: review.reason ?? 'rejected',
+          payload: {
+            reviewCreatedAt: review.created_at,
+            reviewPayload: review.payload ? safeJson(review.payload) : null,
+          },
+          createdAt: nowIso,
+        });
+      } catch (err) {
+        console.error('review reject: audit receipt failed', docId, (err as Error).message);
+      }
       return c.json({ docId, decision: 'reject', resolved: true });
     }
 
@@ -988,10 +1181,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         400,
       );
     }
-    const validated = validateReviewEdits(body.edits);
-    if (validated.error) return c.json({ error: validated.error }, 400);
-    const edits = validated.edits ?? [];
-    if (edits.length === 0) {
+    const rawEdits = body.edits as unknown[];
+    if (rawEdits.length === 0) {
       return c.json(
         {
           error:
@@ -1007,103 +1198,233 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'SELECT filer_id, first_seen_at, filed_date FROM filings WHERE doc_id = ?',
       [docId],
     );
+    if (!filing) return c.json({ error: 'filing not found' }, 404);
     const filingFilerId = filing?.filer_id ?? null;
+    const validated = validateReviewEdits(rawEdits, filing.filed_date);
+    if ('error' in validated) return c.json({ error: validated.error }, 400);
+    const edits = validated.edits;
 
-    const insertedIds: string[] = [];
     const nowIso = new Date().toISOString();
-    const statements: SqlStatement[] = [];
-    const candidates: string[] = [];
+    const insertRows: Array<Record<string, string | number | null>> = [];
+    const rowKeys: string[] = [];
+    const proposedIds: string[] = [];
     for (const [rowIndex, e] of edits.entries()) {
       const id = uuid();
       const assetTypeName = reviewAssetTypeName(e);
       const rowKey = transactionRowKey(source, rowIndex, {
-        txDate: e.txDate ?? null,
-        owner: e.owner === 'self' || e.owner === 'spouse' || e.owner === 'joint' || e.owner === 'dependent'
-          ? e.owner
-          : null,
+        txDate: e.txDate,
+        owner: e.owner,
         assetName: e.assetName ?? '',
         ticker: e.ticker ?? null,
         assetType: e.assetType ?? null,
         assetTypeName,
-        txType: (e.txType as TxType) ?? 'P',
+        txType: e.txType,
         amountMin: e.amountMin ?? null,
         amountMax: e.amountMax ?? null,
         isOption: Boolean(e.isOption),
         capGainsOver200: Boolean(e.capGainsOver200),
         rawText: e.rawText ?? '',
+        filingStatus: e.filingStatus ?? null,
+        subholding: e.subholding ?? null,
+        location: e.location ?? null,
+        description: e.description ?? null,
+        supplementalText: e.supplementalText ?? null,
       });
-      // cursor_seq is DB-assigned by trg_transactions_cursor (insert with NULL).
-      statements.push([
-        `INSERT OR IGNORE INTO transactions (
-           id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
-           tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
-           raw_text, asset_type_name, row_key, confidence, source, created_at, cursor_seq,
-           first_seen_at, filed_date, est_value
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+      rowKeys.push(rowKey);
+      proposedIds.push(id);
+      insertRows.push({
+        id,
+        docId,
+        filerId: e.filerId ?? filingFilerId,
+        txDate: e.txDate,
+        owner: e.owner,
+        assetName: e.assetName ?? '',
+        ticker: e.ticker ?? null,
+        assetType: e.assetType ?? null,
+        txType: e.txType,
+        amountMin: e.amountMin ?? null,
+        amountMax: e.amountMax ?? null,
+        isOption: e.isOption ? 1 : 0,
+        capGainsOver200: e.capGainsOver200 ? 1 : 0,
+        rawText: e.rawText ?? '',
+        assetTypeName,
+        filingStatus: e.filingStatus ?? null,
+        subholding: e.subholding ?? null,
+        location: e.location ?? null,
+        description: e.description ?? null,
+        supplementalText: e.supplementalText ?? null,
+        rowKey,
+        confidence: e.confidence ?? 1,
+        source,
+        createdAt: nowIso,
+        firstSeenAt: filing.first_seen_at ?? null,
+        filedDate: filing.filed_date ?? null,
+        estValue: estimateTransactionValue(e.amountMin, e.amountMax),
+      });
+    }
+
+    const rowKeysJson = JSON.stringify(rowKeys);
+    const insertRowsJson = JSON.stringify(insertRows);
+    const completeLiveSet = `(SELECT COUNT(*) FROM transactions
+      WHERE doc_id = ? AND source = ? AND deprecated_at IS NULL
+        AND row_key IN (SELECT value FROM json_each(?))) = ?
+      AND (SELECT COUNT(*) FROM transactions
+        WHERE doc_id = ? AND source IN ('primary', 'manual')
+          AND deprecated_at IS NULL) = ?`;
+    let persistResults: D1Result[];
+    try {
+      persistResults = await batch(c.env.DB, [
+        // One JSON-backed INSERT keeps even the 223-row live backlog item well
+        // below D1's per-invocation query and per-query parameter ceilings.
         [
-          id,
-          docId,
-          e.filerId ?? filingFilerId,
-          e.txDate ?? null,
-          e.owner ?? null,
-          e.assetName ?? '',
-          e.ticker ?? null,
-          e.assetType ?? null,
-          (e.txType as TxType) ?? 'P',
-          e.amountMin ?? null,
-          e.amountMax ?? null,
-          e.isOption ? 1 : 0,
-          e.capGainsOver200 ? 1 : 0,
-          e.rawText ?? '',
-          assetTypeName,
-          rowKey,
-          e.confidence ?? 1,
-          source,
-          nowIso,
-          filing?.first_seen_at ?? null,
-          filing?.filed_date ?? null,
-          estimatedTransactionValue(e.amountMin ?? null, e.amountMax ?? null),
+          `INSERT OR IGNORE INTO transactions (
+             id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
+             tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
+             raw_text, asset_type_name, filing_status, subholding, location,
+             description, supplemental_text, row_key, confidence, source,
+             created_at, cursor_seq, first_seen_at, filed_date, est_value
+           ) SELECT
+             json_extract(value, '$.id'), json_extract(value, '$.docId'),
+             json_extract(value, '$.filerId'), json_extract(value, '$.txDate'),
+             json_extract(value, '$.owner'), json_extract(value, '$.assetName'),
+             json_extract(value, '$.ticker'), json_extract(value, '$.assetType'),
+             json_extract(value, '$.txType'), json_extract(value, '$.amountMin'),
+             json_extract(value, '$.amountMax'), json_extract(value, '$.isOption'),
+             json_extract(value, '$.capGainsOver200'), json_extract(value, '$.rawText'),
+             json_extract(value, '$.assetTypeName'), json_extract(value, '$.filingStatus'),
+             json_extract(value, '$.subholding'), json_extract(value, '$.location'),
+             json_extract(value, '$.description'), json_extract(value, '$.supplementalText'),
+             json_extract(value, '$.rowKey'), json_extract(value, '$.confidence'),
+             json_extract(value, '$.source'), json_extract(value, '$.createdAt'), NULL,
+             json_extract(value, '$.firstSeenAt'), json_extract(value, '$.filedDate'),
+             json_extract(value, '$.estValue')
+           FROM json_each(?)
+           WHERE EXISTS (
+             SELECT 1 FROM review_queue
+              WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
+           )`,
+          [insertRowsJson, docId, reviewRevision],
+        ],
+        // Force a primary-key error when the post-insert live set is not exact.
+        // D1 then rolls back the whole batch; a zero-change final UPDATE alone
+        // would still commit preceding inserts.
+        [
+          `INSERT INTO review_queue (doc_id)
+            SELECT ?
+             WHERE EXISTS (
+               SELECT 1 FROM review_queue
+                WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
+             )
+               AND NOT (${completeLiveSet})`,
+          [
+            docId, docId, reviewRevision,
+            docId, source, rowKeysJson, rowKeys.length,
+            docId, rowKeys.length,
+          ],
+        ],
+        [
+          `INSERT OR IGNORE INTO delivery_outbox
+             (tx_id, status, attempts, available_at, last_error, created_at, updated_at)
+            SELECT id, 'pending', 0, ?, NULL, ?, ? FROM transactions
+             WHERE doc_id = ? AND source = ? AND deprecated_at IS NULL
+               AND row_key IN (SELECT value FROM json_each(?))
+               AND EXISTS (
+                 SELECT 1 FROM review_queue
+                  WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
+               )`,
+          [nowIso, nowIso, nowIso, docId, source, rowKeysJson, docId, reviewRevision],
+        ],
+        [
+          `UPDATE filings SET ingest_status = ?
+            WHERE doc_id = ?
+              AND EXISTS (SELECT 1 FROM review_queue
+                WHERE doc_id = ? AND resolved = 0 AND review_revision = ?)
+              AND ${completeLiveSet}`,
+          [
+            'persisted', docId, docId, reviewRevision,
+            docId, source, rowKeysJson, rowKeys.length,
+            docId, rowKeys.length,
+          ],
+        ],
+        [
+          `UPDATE review_queue
+              SET resolved = 1,
+                  agreement_suppressed_at = NULL,
+                  agreement_suppression_reason = NULL,
+                  review_revision = review_revision + 1
+            WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
+              AND ${completeLiveSet}`,
+          [
+            docId, reviewRevision,
+            docId, source, rowKeysJson, rowKeys.length,
+            docId, rowKeys.length,
+          ],
         ],
       ]);
-      statements.push(deliveryOutboxInsertForRowKey(docId, source, rowKey, nowIso));
-      candidates.push(id);
+    } catch (err) {
+      if (/UNIQUE constraint failed: review_queue\.doc_id/i.test((err as Error).message)) {
+        return c.json({ error: 'edited rows do not exactly replace the live filing rows' }, 409);
+      }
+      throw err;
+    }
+    const resolvedResult = persistResults[persistResults.length - 1];
+    if ((resolvedResult?.meta?.changes ?? 0) === 0) {
+      return c.json({ error: 'review item changed or not all edited rows could be persisted' }, 409);
+    }
+    const insertedCount = persistResults[0]?.meta?.changes ?? 0;
+    const newlyInsertedIds = insertedCount === proposedIds.length ? proposedIds : [];
+    let transactionIds = newlyInsertedIds;
+    try {
+      const liveRows = await all<{ id: string }>(
+        c.env.DB,
+        `SELECT id FROM transactions
+          WHERE doc_id = ? AND source = ? AND deprecated_at IS NULL
+            AND row_key IN (SELECT value FROM json_each(?))`,
+        [docId, source, rowKeysJson],
+      );
+      transactionIds = liveRows.map((row) => row.id);
+    } catch (err) {
+      console.error('review confirm: live transaction lookup failed', docId, (err as Error).message);
     }
 
-    // Publish rows, their delivery outbox records, and review state atomically.
-    statements.push(['UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [docId]]);
-    statements.push(['UPDATE filings SET ingest_status = ? WHERE doc_id = ?', ['persisted', docId]]);
-    const results = await batch(c.env.DB, statements);
-    for (let i = 0; i < candidates.length; i += 1) {
-      if (results[i * 2].meta.changes > 0) insertedIds.push(candidates[i]);
-    }
-
-    await flushDeliveryOutbox(c.env, { txIds: insertedIds, limit: Math.max(insertedIds.length, 1) }).catch((err) =>
-      console.warn('review confirm: delivery outbox flush failed', docId, (err as Error).message),
-    );
-
-    await recordIngestionDecision(c.env.DB, {
-      docId,
-      action: decision === 'manual' ? 'manual' : 'confirmed',
-      source: 'admin',
-      actor: adminActor(c),
-      reason: review.reason ?? null,
-      transactionIds: insertedIds,
-      payload: {
-        source,
-        editCount: edits.length,
-        inserted: insertedIds.length,
-        reviewCreatedAt: review.created_at,
-      },
-      createdAt: nowIso,
+    // Best-effort immediate flush; the independent delivery-outbox cron owns
+    // durable recovery for any enqueue failure or rows beyond this pass.
+    const delivery = await flushDeliveryOutbox(c.env, {
+      txIds: transactionIds,
+      limit: Math.max(transactionIds.length, 1),
+    }).catch((err) => {
+      console.warn('review confirm: delivery outbox flush failed', docId, (err as Error).message);
+      return null;
     });
+
+    try {
+      await recordIngestionDecision(c.env.DB, {
+        docId,
+        action: decision === 'manual' ? 'manual' : 'confirmed',
+        source: 'admin',
+        actor: adminActor(c),
+        reason: review.reason ?? null,
+        transactionIds,
+        payload: {
+          source,
+          editCount: edits.length,
+          inserted: insertedCount,
+          reviewCreatedAt: review.created_at,
+        },
+        createdAt: nowIso,
+      });
+    } catch (err) {
+      console.error('review confirm: audit receipt failed', docId, (err as Error).message);
+    }
 
     return c.json({
       docId,
       decision,
       source,
       resolved: true,
-      inserted: insertedIds.length,
-      transactionIds: insertedIds,
+      inserted: insertedCount,
+      transactionIds,
+      delivery,
     });
   });
 
@@ -1114,7 +1435,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // history and lets every feed/analytics/stream read exclude the rows via
   // `deprecated_at IS NULL`. Already-delivered webhook/SSE events cannot be
   // recalled — this stops the rows being served going forward.
-  // Body (optional): { reason?: string }
+  // Body: { reviewRevision: number, reason?: string }
   r.post('/review/:docId/unpublish', async (c) => {
     const docId = c.req.param('docId');
     let body: Record<string, unknown> = {};
@@ -1125,46 +1446,175 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'invalid JSON body' }, 400);
     }
     const reason = typeof body.reason === 'string' && body.reason.length ? body.reason : 'unpublished by admin';
+    if (!Number.isInteger(body.reviewRevision) || Number(body.reviewRevision) < 1) {
+      return c.json({ error: 'reviewRevision must be a positive integer from the review queue item' }, 400);
+    }
 
-    const filing = await get<{ ingest_status: string | null }>(
-      c.env.DB,
-      'SELECT ingest_status FROM filings WHERE doc_id = ?',
-      [docId],
-    );
-    if (!filing) return c.json({ error: 'filing not found' }, 404);
+    let review: { resolved: number; review_revision: number; ingest_status: string | null } | null;
+    try {
+      review = await get(
+        c.env.DB,
+        `SELECT rq.resolved, rq.review_revision, f.ingest_status
+           FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
+          WHERE rq.doc_id = ?`,
+        [docId],
+      );
+    } catch (err) {
+      if (/review_revision|no such column/i.test((err as Error).message)) {
+        return c.json({ error: 'review revision migration is not applied yet' }, 503);
+      }
+      throw err;
+    }
+    if (!review) return c.json({ error: 'review item or filing not found' }, 404);
+    if (review.resolved !== 1) return c.json({ error: 'review item is already pending' }, 409);
+    const reviewRevision = Number(body.reviewRevision);
+    if (review.review_revision !== reviewRevision) {
+      return c.json({ error: 'review item changed; reload it before unpublishing' }, 409);
+    }
 
     const nowIso = new Date().toISOString();
-    // Soft-delete the live primary rows for this doc.
-    const res = await run(
-      c.env.DB,
-      `UPDATE transactions
-          SET deprecated_at = ?, deprecated_reason = ?
-        WHERE doc_id = ? AND source IN ('primary', 'manual') AND deprecated_at IS NULL`,
-      [nowIso, reason, docId],
-    );
-    const deprecated = res.meta?.changes ?? 0;
+    const holdReason = 'unpublished: ' + reason;
+    const deprecatedSql = `UPDATE transactions
+      SET deprecated_at = ?, deprecated_reason = ?
+      WHERE doc_id = ? AND source IN ('primary', 'manual') AND deprecated_at IS NULL
+        AND EXISTS (SELECT 1 FROM review_queue
+          WHERE doc_id = ? AND resolved = 1 AND review_revision = ?)`;
+    const filingSql = `UPDATE filings SET ingest_status = ?
+      WHERE doc_id = ? AND EXISTS (SELECT 1 FROM review_queue
+        WHERE doc_id = ? AND resolved = 1 AND review_revision = ?)`;
+    const results = await batch(c.env.DB, [
+      [deprecatedSql, [nowIso, reason, docId, docId, reviewRevision]],
+      [filingSql, ['needs_review', docId, docId, reviewRevision]],
+      [
+        `UPDATE review_queue
+            SET resolved = 0,
+                reason = ?,
+                created_at = ?,
+                agreement_attempted_at = NULL,
+                agreement_attempts = 0,
+                agreement_tier = NULL,
+                agreement_next_attempt_at = NULL,
+                agreement_claim_token = NULL,
+                agreement_claimed_at = NULL,
+                agreement_suppressed_at = ?,
+                agreement_suppression_reason = ?,
+                review_revision = review_revision + 1
+          WHERE doc_id = ? AND resolved = 1 AND review_revision = ?`,
+        [holdReason, nowIso, nowIso, holdReason, docId, reviewRevision],
+      ],
+    ]);
+    if ((results[results.length - 1]?.meta?.changes ?? 0) === 0) {
+      return c.json({ error: 'review item changed before it could be unpublished' }, 409);
+    }
+    const deprecated = results[0]?.meta?.changes ?? 0;
 
-    // Revert the filing and re-open the review item (back into the pending queue).
-    await run(c.env.DB, 'UPDATE filings SET ingest_status = ? WHERE doc_id = ?', ['needs_review', docId]);
-    await run(
-      c.env.DB,
-      `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved)
-         VALUES (?, ?, ?, ?, 0)
-       ON CONFLICT(doc_id) DO UPDATE SET resolved = 0, reason = excluded.reason, created_at = excluded.created_at`,
-      [docId, 'unpublished: ' + reason, null, nowIso],
-    );
+    try {
+      await recordIngestionDecision(c.env.DB, {
+        docId,
+        action: 'unpublished',
+        source: 'admin',
+        actor: adminActor(c),
+        reason,
+        payload: { deprecatedTransactions: deprecated },
+        createdAt: nowIso,
+      });
+    } catch (err) {
+      console.error('review unpublish: audit receipt failed', docId, (err as Error).message);
+    }
 
-    await recordIngestionDecision(c.env.DB, {
+    return c.json({
       docId,
-      action: 'unpublished',
-      source: 'admin',
-      actor: adminActor(c),
+      unpublished: true,
+      deprecatedTransactions: deprecated,
       reason,
-      payload: { deprecatedTransactions: deprecated },
-      createdAt: nowIso,
+      reviewRevision: reviewRevision + 1,
     });
+  });
 
-    return c.json({ docId, unpublished: true, deprecatedTransactions: deprecated, reason });
+  // --- POST /review/:docId/retry-auto ------------------------------------
+  // Explicitly releases a durable Unpublish human hold. Reject is a terminal
+  // discard decision and is deliberately never eligible for this route.
+  // This is the
+  // only path (besides a completed human confirm/manual action) that lets the
+  // autonomous agreement cascade reconsider the unchanged source document.
+  r.post('/review/:docId/retry-auto', async (c) => {
+    const docId = c.req.param('docId');
+    let body: Record<string, unknown>;
+    try {
+      body = (await c.req.json()) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    if (!Number.isInteger(body.reviewRevision) || Number(body.reviewRevision) < 1) {
+      return c.json({ error: 'reviewRevision must be a positive integer from the review queue item' }, 400);
+    }
+    let held: {
+      resolved: number;
+      agreement_suppressed_at: string | null;
+      agreement_suppression_reason: string | null;
+      raw_object_key: string | null;
+      review_revision: number;
+    } | null;
+    try {
+      held = await get(
+        c.env.DB,
+        `SELECT rq.resolved, rq.agreement_suppressed_at, rq.agreement_suppression_reason,
+                rq.review_revision, f.raw_object_key
+           FROM review_queue rq LEFT JOIN filings f ON f.doc_id = rq.doc_id
+          WHERE rq.doc_id = ?`,
+        [docId],
+      );
+    } catch (err) {
+      if (/agreement_suppressed_at|review_revision|no such column/i.test((err as Error).message)) {
+        return c.json({ error: 'review safety migration is not applied yet' }, 503);
+      }
+      throw err;
+    }
+    if (!held) return c.json({ error: 'review item not found' }, 404);
+    if (held.resolved === 1) return c.json({ error: 'review item is already resolved' }, 409);
+    const reviewRevision = Number(body.reviewRevision);
+    if (held.review_revision !== reviewRevision) {
+      return c.json({ error: 'review item changed; reload it before retrying' }, 409);
+    }
+    if (!held.agreement_suppressed_at) return c.json({ error: 'review item is not held from automation' }, 409);
+    if (!held.raw_object_key) return c.json({ error: 'review item has no source object for automatic retry' }, 409);
+
+    const priorReason = held.agreement_suppression_reason ?? 'human hold';
+    const released = await run(
+      c.env.DB,
+      `UPDATE review_queue
+          SET agreement_suppressed_at = NULL,
+              agreement_suppression_reason = NULL,
+              agreement_attempted_at = NULL,
+              agreement_attempts = 0,
+              agreement_tier = NULL,
+              agreement_next_attempt_at = NULL,
+              agreement_claim_token = NULL,
+              agreement_claimed_at = NULL,
+              reason = ?,
+              review_revision = review_revision + 1
+        WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at = ?
+          AND review_revision = ?`,
+      [`auto_retry_requested: ${priorReason}`, docId, held.agreement_suppressed_at, reviewRevision],
+    );
+    if ((released.meta?.changes ?? 0) === 0) {
+      return c.json({ error: 'review item changed before the hold could be released' }, 409);
+    }
+
+    try {
+      await recordIngestionDecision(c.env.DB, {
+        docId,
+        action: 'auto_retry_requested',
+        source: 'admin',
+        actor: adminActor(c),
+        reason: priorReason,
+        payload: { priorSuppressedAt: held.agreement_suppressed_at },
+      });
+    } catch (err) {
+      console.error('review retry-auto: audit receipt failed', docId, (err as Error).message);
+    }
+    const enqueued = await enqueueAgreementCheck(c.env, docId, held.raw_object_key);
+    return c.json({ docId, released: true, enqueued, reviewRevision: reviewRevision + 1 });
   });
 
   // --- GET /sources/health ------------------------------------------------
@@ -2318,7 +2768,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                 tx.confidence,
                 tx.amountMin,
                 tx.amountMax,
-                estimatedTransactionValue(tx.amountMin, tx.amountMax),
+                estimateTransactionValue(tx.amountMin, tx.amountMax),
                 tx.ticker,
                 existing[i].id,
               ],
@@ -2336,17 +2786,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       // Not in the feed yet (sitting in review / error). Does it clear the bar now?
       const passesNow = newMin >= CONFIDENCE_THRESHOLD && !hasHardFailure;
       if (passesNow) {
+        let promoted = true;
         if (!dryRun) {
-          // normalize() persists + sets ingest_status + fans out delivery
-          // (first-time delivery for these rows, which is correct).
-          await normalize(c.env, extracted.filing, extracted.transactions, {
+          // normalize() atomically persists + resolves only if this re-read's
+          // captured review revision is still current.
+          const normalized = await normalize(c.env, extracted.filing, extracted.transactions, {
             extractor: extracted.extractor,
             modelVersion: extracted.modelVersion ?? null,
           });
-          await run(c.env.DB, 'UPDATE review_queue SET resolved = 1 WHERE doc_id = ?', [doc_id]);
+          promoted = normalized.published;
         }
-        summary.filingsPromoted += 1;
-        summary.rowsPromoted += flagged.length;
+        if (promoted) {
+          summary.filingsPromoted += 1;
+          summary.rowsPromoted += flagged.length;
+        } else {
+          summary.filingsStillInReview += 1;
+        }
       } else {
         summary.filingsStillInReview += 1;
       }
@@ -2372,12 +2827,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     // Candidate lineup (default provider-neutral set, overridable).
     let candidates: BakeoffCandidate[] = DEFAULT_CANDIDATES;
     if (Array.isArray(body.models)) {
-      const valid: Provider[] = ['gemini', 'openai', 'anthropic', 'mistral', 'xai'];
+      const valid: Provider[] = ['gemini', 'openai', 'anthropic', 'mistral', 'xai', 'llamaparse'];
       const parsed: BakeoffCandidate[] = [];
       for (const m of body.models) {
         const o = m as { provider?: unknown; model?: unknown };
         if (!valid.includes(o.provider as Provider) || typeof o.model !== 'string') {
-          return c.json({ error: 'each model must be {provider:gemini|openai|anthropic|mistral|xai, model:string}' }, 400);
+          return c.json({ error: 'each model must be {provider:gemini|openai|anthropic|mistral|xai|llamaparse, model:string}' }, 400);
         }
         parsed.push({ provider: o.provider as Provider, model: o.model });
       }
@@ -3048,8 +3503,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          created_at TEXT NOT NULL
        )`,
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
-      // 0029–0032 — value materialization, outbox reliability, truthful source
-      // attempts, and ordered/reclaimable Stripe event processing.
+      // 0029-0037 — canonical value, reliability, Stripe, and review-autonomy tail.
       ...POST_0024_SCHEMA_STATEMENTS,
     ];
     const applied: string[] = [];

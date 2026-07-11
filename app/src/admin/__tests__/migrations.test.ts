@@ -11,6 +11,7 @@ import {
   EST_VALUE_SCHEMA_STATEMENTS,
   POST_0024_SCHEMA_STATEMENTS,
   RELIABILITY_SCHEMA_STATEMENTS,
+  REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
   STRIPE_EVENT_SCHEMA_STATEMENTS,
 } from '../migrations';
 
@@ -159,10 +160,23 @@ describe('admin migration bootstrap', () => {
       ...EST_VALUE_SCHEMA_STATEMENTS,
       ...RELIABILITY_SCHEMA_STATEMENTS,
       ...STRIPE_EVENT_SCHEMA_STATEMENTS,
+      ...REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
     ]);
   });
 
-  it('matches the real 0029-0032 file schema and passes readiness on SQLite', async () => {
+  it('includes the review autonomy schema mirrored by migrations 0033-0037', () => {
+    const sql = REVIEW_AUTONOMY_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('page_count');
+    expect(sql).toContain('agreement_attempts');
+    expect(sql).toContain('agreement_legacy_replay_at');
+    expect(sql).toContain('llm_budget');
+    expect(sql).toContain('agreement_suppressed_at');
+    expect(sql).toContain('idx_transactions_live_doc_source_rowkey');
+    expect(sql).toContain('review_revision');
+    expect(sql).not.toContain('review_delivery_outbox');
+  });
+
+  it('matches the real 0029-0037 file schema and passes readiness on SQLite', async () => {
     const files = migrationFiles();
     const priorFiles = files.filter((name) => Number(name.slice(0, 4)) <= 24);
     const fileDb = await sqliteDatabase();

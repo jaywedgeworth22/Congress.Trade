@@ -41,7 +41,7 @@ export class TextPdfExtractor implements Extractor {
       throw new Error('textPdf: no bytes provided on ExtractorInput');
     }
 
-    const text = await extractPdfText(input.bytes);
+    const { text, pageCount } = await extractPdfText(input.bytes);
     const rows = parseHousePtrText(text);
 
     // Document confidence = mean of row confidences (or low if nothing found).
@@ -50,12 +50,18 @@ export class TextPdfExtractor implements Extractor {
         ? rows.reduce((s, r) => s + r.confidence, 0) / rows.length
         : 0.3;
 
-    return {
+    // `pageCount` is a complexity signal for cascade tiering (see orchestrator.ts,
+    // which persists it onto the filings row). Not part of the ExtractorResult
+    // contract, so stash it on a plain object rather than widening that interface;
+    // the orchestrator reads it via an optional-property cast.
+    const result = {
       transactions: rows,
       confidence: docConfidence,
       raw: text,
       extractor: this.name,
+      pageCount,
     };
+    return result;
   }
 }
 
@@ -63,7 +69,17 @@ export class TextPdfExtractor implements Extractor {
 // PDF text extraction
 // ---------------------------------------------------------------------------
 
-async function extractPdfText(bytes: ArrayBuffer): Promise<string> {
+interface PdfTextExtraction {
+  text: string;
+  /**
+   * Page count read off the parsed PDF's cheap `numPages` getter (no extra
+   * parse, no page merge — pdf.js already has the document open for text
+   * extraction). Null when unavailable.
+   */
+  pageCount: number | null;
+}
+
+async function extractPdfText(bytes: ArrayBuffer): Promise<PdfTextExtraction> {
   // unpdf accepts a Uint8Array; mergePages joins page text with newlines.
   // Copy the buffer first (bytes.slice(0)): getDocumentProxy/pdf.js transfers and
   // detaches the ArrayBuffer it is handed, so passing `bytes` directly would leave
@@ -72,7 +88,11 @@ async function extractPdfText(bytes: ArrayBuffer): Promise<string> {
   // (regression guard for Sentry CONGRESS-TRADE-2).
   const pdf = await getDocumentProxy(new Uint8Array(bytes.slice(0)));
   const { text } = await extractText(pdf, { mergePages: true });
-  return typeof text === 'string' ? text : (text as string[]).join('\n');
+  const pageCount = typeof pdf.numPages === 'number' && Number.isFinite(pdf.numPages) ? pdf.numPages : null;
+  return {
+    text: typeof text === 'string' ? text : (text as string[]).join('\n'),
+    pageCount,
+  };
 }
 
 // ---------------------------------------------------------------------------

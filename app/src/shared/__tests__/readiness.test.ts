@@ -63,6 +63,17 @@ describe('checkReadiness', () => {
     expect((await checkReadiness(db)).missing).toEqual(['idx_deliveries_subscription_tx']);
   });
 
+  it('requires the live-row review publication index', async () => {
+    const db = { prepare(sql: string) { return {
+      bind() { return this; },
+      async first<T>() {
+        if (sql.includes("name = 'idx_transactions_live_doc_source_rowkey'")) return null as T | null;
+        return ({ name: 'present' } as T);
+      },
+    }; } } as unknown as D1Database;
+    expect((await checkReadiness(db)).missing).toEqual(['idx_transactions_live_doc_source_rowkey']);
+  });
+
   it('requires the Stripe claim and event-order indexes', async () => {
     const db = { prepare(sql: string) { return {
       bind() { return this; },

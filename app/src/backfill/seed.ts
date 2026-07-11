@@ -28,6 +28,7 @@ import type { Chamber, Owner, Transaction, TxType, Env } from '../shared/types';
 import { batch } from '../shared/db';
 import { nearestBracket } from '../shared/brackets';
 import { sanitizeAssetName } from '../shared/text';
+import { estimateTransactionValue } from '../shared/transactionValue';
 import { scoreFields, loadResolver, type TickerResolver } from '../extraction/normalizer';
 
 // ---------------------------------------------------------------------------
@@ -394,11 +395,6 @@ function buildSeedFilerStatement(filerId: string, chamber: Chamber, fullName: st
  * that happens to share an id. Returns true when a row was inserted or updated.
  */
 function buildSeedTxStatement(tx: Transaction): SqlStatement {
-  const estValue = tx.amountMin === null && tx.amountMax === null ? 0
-    : tx.amountMin === null ? tx.amountMax
-    : tx.amountMax === null ? tx.amountMin
-    : (tx.amountMin + tx.amountMax) / 2.0;
-
   return [
     `INSERT INTO transactions (
        id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
@@ -438,7 +434,7 @@ function buildSeedTxStatement(tx: Transaction): SqlStatement {
       tx.createdAt,
       tx.firstSeenAt ?? null,
       tx.filedDate ?? null,
-      estValue,
+      estimateTransactionValue(tx.amountMin, tx.amountMax),
     ],
   ];
 }

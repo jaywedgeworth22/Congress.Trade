@@ -26,6 +26,13 @@ export type OutboxCompletionResult = 'completed' | 'missing';
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
+/**
+ * D1 accepts at most 100 bound parameters per statement. The targeted select
+ * already binds two timestamps, so keep a conservative page below that cap.
+ * Callers may supply larger sets; the durable minute reconciler drains the
+ * remainder without an IN clause.
+ */
+export const DELIVERY_TARGETED_ID_LIMIT = 80;
 const LEASE_SECONDS = 60;
 const MAX_DEAD_LETTER_CYCLES = 5;
 /** Finite fallback when a Queue message and every DLQ recovery attempt vanish. */
@@ -79,7 +86,7 @@ export async function flushDeliveryOutbox(
   const nowIso = now.toISOString();
   const staleEnqueuedBefore = new Date(now.getTime() - DELIVERY_ENQUEUED_STALE_MS).toISOString();
   const limit = Math.min(Math.max(Math.floor(opts.limit ?? DEFAULT_LIMIT), 1), MAX_LIMIT);
-  const txIds = Array.from(new Set((opts.txIds ?? []).filter(Boolean))).slice(0, MAX_LIMIT);
+  const txIds = Array.from(new Set((opts.txIds ?? []).filter(Boolean))).slice(0, DELIVERY_TARGETED_ID_LIMIT);
   const idClause = txIds.length ? ` AND tx_id IN (${txIds.map(() => '?').join(',')})` : '';
   const rows = await all<OutboxRow>(
     env.DB,

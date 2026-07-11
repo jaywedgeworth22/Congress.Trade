@@ -126,16 +126,22 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   no preview or production deploy.
 
 ## In Progress
-- **Backend delivery + ingestion reliability hardening (CODEX/HERSCHEL, L) — INTEGRATED +
-  INDEPENDENTLY VERIFIED LOCALLY 2026-07-11.** Transactional ingestion/delivery outboxes, real DLQ
-  consumers and bounded recovery, completion-before-ACK, stale-enqueued replay, cross-isolate SSE
-  leases/backpressure, bounded fetches, public webhook SSRF controls, quotas, truthful source
-  health, atomic publication/review receipts, schema readiness, and preview/production migration
-  parity are in `codex/app-hardening-integration`. Final semantic review PASS; real SQLite coverage
-  applies all migrations, compares the admin migration tail, runs readiness, and executes
-  idempotent transaction/cursor/estimate/outbox writes. Deployed in PR #284; tracked by the deployed
-  program row above.
-- **Review Queue current drain + durable automation integration (CODEX, L) — IN PROGRESS 2026-07-11.** Owner-directed. Audit the live unresolved queue and provenance, verify rather than blind-resolve each class, integrate/review existing PR #257 without editing MONET's branch, close any scheduler/observability/retry gaps on `codex/review-queue-resolution`, run full gates serially, deploy an isolated preview, and report the separate current/preview/production states. KEEPOUT: preserve the dirty main checkout and MONET's review-automation worktree.
+- **Review Queue current drain + durable automation integration (CODEX, L) — PRODUCTION RELEASE IN
+  PROGRESS 2026-07-11 (owner authorized merge, deploy, and bounded queue narrowing).** Production
+  remains 91 total / 27 pending / 64 resolved after three dry-run-first House passes; all three
+  source PDFs were visually verified and 36 rows corrected in place with stable IDs/cursors and
+  audit receipts. Further publishing remains paused until the hardened gate is live. Branch
+  `codex/review-queue-resolution` now reconciles merged PRs #284/#264 plus #257/#263 with exact-material
+  multiset agreement, distinct vendors, bounded retry/backoff/budget/leases, one-time legacy replay,
+  monotonic review revisions, atomic human/normalizer/agreement row+filing+generic-outbox
+  transitions, durable holds/retry, live-only identity, coherent reviewer consensus, and exact
+  `est_value` across all writers. Combined gates pass: typecheck; 104 files / 908 tests; lint 0
+  errors; fresh migration/admin-parity/readiness coverage through `0037`; 223-row human resolution
+  persists every durable delivery intent while immediate delivery remains below D1's bind ceiling.
+  Exact-tree isolated preview version `e1c8fb70-4291-4872-b1e2-f45f59367e6f` is healthy at
+  `https://congress-trade-preview.jaywedgeworth22.workers.dev` with `ok/db/schema=true`,
+  `missing=[]`, with the isolated ledger including `0025` plus `0030`-`0037`. Next: PR/merge and
+  canonical production ship. KEEPOUT: preserve the dirty main checkout and MONET's worktree.
 - **Implement `est_value` column in transactions table (AG, S) — IN PROGRESS 2026-07-10.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
 - **Refactor client API routes (AG, M) — IN PROGRESS 2026-07-10.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
 - **GPT-5.6 bake-off evaluation prep + usage/cost tracking harness (MONET, S)** — BUILT + PUSHED
@@ -462,4 +468,4 @@ Jul 8 18:10 CT)._
   CLAUDE, live-search reconciliation data-quality job -> AG. Added 4 new Planned rows under
   "2026-07-05 audit cycle-3": merge shared v1.3.1 (AG), consolidate the 6 AG PRs (AG), remove
   patch.py (AG), rescue CURSOR's stash (CURSOR).
-- **Whole-App Evaluation & Next.js PWA Implementation (AG, L) — COMPLETED 2026-07-11.** Refactored monolithic backend routes to a layered architecture (types, queries, utils, routes), implemented the `est_value` materialized column in D1 to optimize feed queries, and established the Next.js PWA frontend using SWR for data fetching, responsive glassmorphism dark-mode UI, and reusable components like `TradeCard`. 
+- **Whole-App Evaluation & Next.js PWA Implementation (AG, L) — COMPLETED 2026-07-11.** Refactored monolithic backend routes to a layered architecture (types, queries, utils, routes), implemented the `est_value` materialized column in D1 to optimize feed queries, and established the Next.js PWA frontend using SWR for data fetching, responsive glassmorphism dark-mode UI, and reusable components like `TradeCard`.

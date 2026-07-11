@@ -147,7 +147,7 @@ async function handleIngestMessage(env: Env, msg: QueueMessage, queueAttempt = 1
       // Slow cross-vendor agreement read + auto-publish for one review doc. Runs
       // here (generous per-message duration) rather than in the cron, whose
       // scheduled-handler waitUntil cancels long model work.
-      await handleAgreementCheck(env, msg.docId, msg.rawObjectKey);
+      await handleAgreementCheck(env, msg.docId, msg.rawObjectKey, msg.escalationTier, msg.claimToken);
       return;
     default:
       console.warn('INGEST_QUEUE: unexpected message type', (msg as { type?: string }).type);
@@ -260,8 +260,15 @@ export default Sentry.withSentry(
         ),
       );
       ctx.waitUntil(
-        Sentry.withMonitor('agreement-autopublish-cron', () =>
-          maybeRunAgreementAutopublish(env),
+        Sentry.withMonitor(
+          'agreement-autopublish-cron',
+          () => maybeRunAgreementAutopublish(env),
+          {
+            schedule: { type: 'crontab', value: '* * * * *' },
+            checkinMargin: 2,
+            maxRuntime: 2,
+            timezone: 'UTC',
+          },
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'agreement-autopublish' } }),
         ),
