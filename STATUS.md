@@ -7,10 +7,9 @@ truth; this file is the short operational snapshot for the current integration.
 
 ## 2026-07-11 — Whole-App Hardening Integration
 
-- `codex/app-hardening-integration` contains the completed backend reliability,
-  billing/security, PWA, and iOS audit follow-through: 11 implementation
-  commits plus this closeout record over `origin/main`. Independent semantic
-  and schema reviews pass.
+- PR #284 merged the completed backend reliability, billing/security, PWA, and
+  iOS audit follow-through to `main` as `8a855cb`. Independent semantic and
+  schema reviews pass.
 - Isolated preview Worker version `85417928-cae4-4bb6-8706-96c739846533` is
   healthy at `https://congress-trade-preview.jaywedgeworth22.workers.dev` with
   `ok=true`, `db=true`, and `schema=true`. A legacy preview-only missing
@@ -23,9 +22,11 @@ truth; this file is the short operational snapshot for the current integration.
   0, desktop/mobile rendered QA; iOS generic Simulator build and
   build-for-testing. XCTest execution still needs an installed concrete
   Simulator runtime.
-- State boundaries: local integration and isolated preview are complete. The
-  branch is not pushed or merged. Production code, schema, ingestion, queues,
-  and billing were not changed and still require explicit owner approval.
+- State boundaries: PR #284 merged as `8a855cb`; production Worker
+  `d1dcd17f-8724-40db-9980-6d4f7f6f88e3` is live with schema-aware readiness
+  green. No ingestion, queue drain, backfill, or billing activation ran. PWA and
+  iOS source is on `main`, but neither prototype has a configured standalone
+  production host/App Store release target.
 
 ## 2026-07-05 (Antigravity) — Shared Ticker Alias Logic and SSE Client
 

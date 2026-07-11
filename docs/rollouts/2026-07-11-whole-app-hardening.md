@@ -2,9 +2,7 @@
 
 ## Summary
 
-The 2026-07-11 audit findings are implemented on
-`codex/app-hardening-integration`, 11 implementation commits plus this closeout
-record over `origin/main`. The work
+The 2026-07-11 audit findings merged through PR #284 as `8a855cb`. The work
 closes silent-loss and false-green paths across queue ingestion/delivery,
 readiness and migrations, Stripe state, public webhook safety, the Next.js PWA,
 and the SwiftUI client.
@@ -18,8 +16,15 @@ missing invariant. The preview contained no duplicate row keys, so the index was
 recreated on the preview database and readiness then returned
 `ok=true`, `db=true`, `schema=true`.
 
-Nothing was pushed, merged, or deployed to production. No production migration,
-ingestion, queue operation, or billing activation ran.
+Production Worker version `d1dcd17f-8724-40db-9980-6d4f7f6f88e3` was deployed
+from the exact merged commit with `app/scripts/ship.sh`. The script verified
+liveness, applied the idempotent schema through the Worker D1 binding, and then
+required `ok=true`, `db=true`, and `schema=true` from `/api/health`. No
+production ingestion, queue drain, backfill, or billing activation ran.
+
+The PWA and iOS source is merged to `main`, but the repository has no configured
+same-origin PWA host/reverse-proxy target and no signed App Store release target.
+Those prototypes are therefore not falsely described as separately published.
 
 ## Files changed
 
@@ -58,7 +63,8 @@ ingestion, queue operation, or billing activation ran.
   assignment, estimate materialization, duplicate suppression, and one outbox
   row.
 - Deploy artifacts: production and preview Wrangler dry-runs passed; all deploy
-  scripts passed shell syntax checks. Only the isolated preview was deployed.
+  scripts passed shell syntax checks. Preview and production were deployed and
+  schema-aware readiness passed on both.
 - PWA: typecheck passed; 3 files / 13 tests passed; optimized Next.js production
   build passed; npm audit reported 0 vulnerabilities; manifest, service worker,
   and 192/512/Apple icon checks passed.
@@ -69,12 +75,19 @@ ingestion, queue operation, or billing activation ran.
   overflow. Dashboard window selection, Trades navigation, and the PWA filter
   dialog worked. Guest/free, billing-unconfigured, and API-unavailable states
   were verified with no browser console warnings or errors.
+- Production: main CI, PWA CI, gitleaks, and shared-package pin checks passed;
+  public UI returned 200 with CSP/HSTS/Permissions-Policy/referrer/nosniff/frame
+  protections; client bootstrap returned 200; authenticated diagnostics showed
+  both Infisical sources healthy with no resolver errors.
 
 ## Follow-ups
 
 - Run the XCTest bundle and capture device/Instruments measurements when a
   concrete iOS Simulator runtime or physical device is installed.
+- Choose and implement a same-origin production hosting strategy before
+  publishing the standalone PWA, and configure signing/App Store Connect before
+  attempting an iOS release.
 - Rebase and reconcile active migration-bearing PRs before merge; do not reuse
   another lane's migration number or overwrite its worktree.
-- Obtain explicit owner approval before push/PR merge or any production deploy,
-  schema migration, ingestion/queue action, or billing activation.
+- Billing checkout/portal remains unconfigured in live capability status; any
+  Stripe activation remains a separate owner-controlled production action.
