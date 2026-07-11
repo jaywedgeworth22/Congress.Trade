@@ -1,9 +1,27 @@
 # Current Handoff
 
-Last updated: 2026-07-04
+Last updated: 2026-07-11
 
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
+
+## 2026-07-11 (CODEX) — Review Queue safety integration
+
+- Production Review Queue is **27 pending**, down from 30 after three explicit,
+  dry-run-first House filings were published with a known-working Mistral/OpenAI
+  pair. Their 36 rows were visually verified against the official PDFs and
+  corrected in place for owner, capital-gains flag, filing status, subholding,
+  and derived row key; IDs/cursors stayed stable and no delivery was replayed.
+- Further production agreement publishing is paused. The deployed predicate
+  compares only ticker-or-name/date/type and is not safe for an unattended
+  backlog drain.
+- Clean integration branch: `codex/review-queue-resolution`. It incorporates
+  PR #257's model readings/consensus/cascade and PR #263's working model-B fix,
+  then adds material-field multiset agreement, human-vs-automation leases/CAS,
+  one-time legacy replay, reopen resets, budget/backoff state, and safe reviewer
+  consensus behavior.
+- Nothing from this branch is merged or production-deployed. See
+  `docs/rollouts/2026-07-11-review-queue-autonomy-hardening.md`.
 
 ## 2026-07-05 (Antigravity) — Shared Ticker Alias Logic and SSE Client
 
