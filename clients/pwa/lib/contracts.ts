@@ -23,6 +23,7 @@ export type ClientTrade = {
     owner: string | null;
     amountMin: number | null;
     amountMax: number | null;
+    estValue: number | null;
     isOption: boolean;
   };
   filing: {
