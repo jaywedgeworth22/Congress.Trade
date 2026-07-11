@@ -206,9 +206,11 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   2026-07-11; INTEGRATION PENDING.** Branch `codex/ios-client-hardening`. Preserves one-time
   delivery credentials, sends active-only subscription patches, hydrates server preferences before
   edit, retains UUID intent keys for uncertain retries, revokes bearer sessions, and adds scoped
-  loading/error/offline state, cache limits, accessibility, formatter/search improvements, plus an
-  XCTest target. `git diff --check`, generic Simulator build, and build-for-testing pass; executing
-  XCTest still requires a concrete installed Simulator runtime. No deploy or production action.
+  loading/error/offline state, cache limits, accessibility, formatter/search improvements, an
+  XCTest target, and a compiled 1024x1024 opaque AppIcon/accent-color catalog derived from the
+  existing PWA mark. `git diff --check`, generic Simulator build, build-for-testing, compiled icon
+  inspection, and asset validation pass; executing XCTest still requires a concrete installed
+  Simulator runtime. No deploy or production action.
 - **PWA release hardening + CI coverage (CODEX/VOLTA, L) — BUILT + REVIEWED LOCALLY
   2026-07-11; INTEGRATION PENDING.** Branch `codex/pwa-release-hardening`. AG's corrected handoff
   `c6201fb` was integrated as `6456cb8`; Codex added server-backed latest-first filters, runtime
