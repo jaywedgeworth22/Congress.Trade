@@ -2493,8 +2493,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             await run(
               c.env.DB,
               `INSERT INTO extraction_runs
-                 (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, created_at)
-               VALUES (?, ?, ?, ?, ?, 'bakeoff', ?, ?, ?, ?, ?, ?, ?)`,
+                 (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, usage_json, created_at)
+               VALUES (?, ?, ?, ?, ?, 'bakeoff', ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 uuid(),
                 batchId,
@@ -2507,6 +2507,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                 res.latencyMs,
                 res.avgConfidence,
                 JSON.stringify(res.rows ?? []),
+                res.usage ? JSON.stringify(res.usage) : null,
                 nowIso,
               ],
             );
