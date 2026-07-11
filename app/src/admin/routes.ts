@@ -2346,8 +2346,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             await run(
               c.env.DB,
               `INSERT INTO extraction_runs
-                 (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, created_at)
-               VALUES (?, ?, ?, ?, ?, 'bakeoff', ?, ?, ?, ?, ?, ?, ?)`,
+                 (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, usage_json, created_at)
+               VALUES (?, ?, ?, ?, ?, 'bakeoff', ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 uuid(),
                 batchId,
@@ -2360,6 +2360,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                 res.latencyMs,
                 res.avgConfidence,
                 JSON.stringify(res.rows ?? []),
+                JSON.stringify(res.usage ?? null),
                 nowIso,
               ],
             );
@@ -2899,6 +2900,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          created_at TEXT NOT NULL
        )`,
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
+      // 0025_extraction_runs_usage.sql — token usage/cost capture for bake-off (openai first).
+      'ALTER TABLE extraction_runs ADD COLUMN usage_json TEXT',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
