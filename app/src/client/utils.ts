@@ -1,0 +1,284 @@
+import type { Chamber, TxType, DeliveryChannel, SubscriptionFilters, Subscription, ClientTrade, User } from '../shared/types';
+import { normalizeTickerLogoSymbol } from '../ui/tickerLogos';
+import { mapFeedTransaction } from '../delivery/rows';
+import type { TxQueryParams } from '../delivery/rows';
+import type { ClientTradeRow, TradeSummaryRow, SecurityRefRow, MemberProfileRow } from './types';
+import { parseJson } from '../shared/db';
+import type { Context } from 'hono';
+import type { Env } from '../shared/types';
+import { getCurrentUserFromRequest } from '../auth/session';
+
+export type ClientContext = Context<{ Bindings: Env }>;
+
+export class ClientInputError extends Error {
+  constructor(message: string, readonly status = 400) {
+    super(message);
+  }
+}
+
+export type ClientErrorStatus = 400 | 401 | 404 | 500 | 501;
+
+export function errorStatus(err: ClientInputError): ClientErrorStatus {
+  if (err.status === 401 || err.status === 404 || err.status === 501) return err.status;
+  if (err.status === 400) return 400;
+  return 500;
+}
+
+export async function readJson(c: ClientContext): Promise<Record<string, unknown>> {
+  try {
+    const raw = await c.req.text();
+    return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  } catch {
+    throw new ClientInputError('invalid JSON body');
+  }
+}
+
+export async function requireUser(c: ClientContext): Promise<User> {
+  const user = await getCurrentUserFromRequest(c);
+  if (!user) throw new ClientInputError('sign in required', 401);
+  return user;
+}
+
+export function clientIdForUser(user: User): string {
+  return `user:${user.id}`;
+}
+
+export function parseIntOrUndef(v: string | undefined): number | undefined {
+  if (v === undefined || v === '') return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+export function asChamber(v: string | undefined): Chamber | undefined {
+  return v === 'house' || v === 'senate' ? v : undefined;
+}
+
+export function asTxType(v: string | undefined): TxType | undefined {
+  return v === 'P' || v === 'S' || v === 'E' ? v : undefined;
+}
+
+export function asOrder(v: string | undefined): 'asc' | 'desc' | undefined {
+  return v === 'desc' ? 'desc' : v === 'asc' ? 'asc' : undefined;
+}
+
+export function asDelivery(v: unknown): DeliveryChannel {
+  if (v === 'sse' || v === undefined || v === null || v === '') return 'sse';
+  if (v === 'webhook') return 'webhook';
+  throw new ClientInputError("delivery must be 'sse' or 'webhook'");
+}
+
+export function isLocalHttpUrl(url: URL): boolean {
+  return (
+    url.protocol === 'http:' &&
+    (url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1')
+  );
+}
+
+export function validateWebhookTargetUrl(targetUrl: string | null): void {
+  if (!targetUrl) throw new ClientInputError('targetUrl is required for webhook subscriptions');
+  let url: URL;
+  try {
+    url = new URL(targetUrl);
+  } catch {
+    throw new ClientInputError('targetUrl must be a valid absolute URL');
+  }
+  if (url.protocol !== 'https:' && !isLocalHttpUrl(url)) {
+    throw new ClientInputError('targetUrl must use https:// outside localhost development');
+  }
+}
+
+export function arrayOfStrings(value: unknown, opts: { upper?: boolean } = {}): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new ClientInputError('filters arrays must contain strings');
+  const out = value
+    .filter((v): v is string => typeof v === 'string')
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .map((v) => (opts.upper ? v.toUpperCase() : v));
+  return Array.from(new Set(out));
+}
+
+export function normalizeFilters(value: unknown): SubscriptionFilters {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new ClientInputError('filters must be an object');
+  }
+  const input = value as Record<string, unknown>;
+  const chambers = arrayOfStrings(input.chambers);
+  const out: SubscriptionFilters = {};
+  const members = arrayOfStrings(input.members);
+  const tickers = arrayOfStrings(input.tickers, { upper: true });
+  if (members && members.length) out.members = members;
+  if (tickers && tickers.length) out.tickers = tickers;
+  if (chambers && chambers.length) {
+    const valid = chambers.filter((c): c is Chamber => c === 'house' || c === 'senate');
+    if (valid.length !== chambers.length) throw new ClientInputError("chambers must be 'house' or 'senate'");
+    out.chambers = valid;
+  }
+  if (input.minAmount !== undefined && input.minAmount !== null && input.minAmount !== '') {
+    const n = Number(input.minAmount);
+    if (!Number.isFinite(n) || n < 0) throw new ClientInputError('minAmount must be a positive number');
+    out.minAmount = Math.floor(n);
+  }
+  return out;
+}
+
+export function publicSubscription(sub: Subscription, includeSecret = false): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    id: sub.id,
+    delivery: sub.delivery,
+    targetUrl: sub.targetUrl,
+    filters: sub.filters,
+    cursor: sub.cursor,
+    active: sub.active,
+    createdAt: sub.createdAt,
+    hasSecret: Boolean(sub.secret),
+  };
+  if (includeSecret && sub.secret) {
+    out.secret = sub.secret;
+    if (sub.delivery === 'sse') {
+      out.streamUrl = `/api/stream?subscription=${encodeURIComponent(sub.id)}&token=${encodeURIComponent(sub.secret)}`;
+    }
+  }
+  return out;
+}
+
+export function filtersFromQuery(q: Record<string, string>): TxQueryParams {
+  return {
+    since: parseIntOrUndef(q.since),
+    ticker: q.ticker || undefined,
+    member: q.member || undefined,
+    chamber: asChamber(q.chamber),
+    type: asTxType(q.type),
+    txDateMin: q.from || q.txDateMin || undefined,
+    txDateMax: q.to || q.txDateMax || undefined,
+    order: asOrder(q.order),
+    limit: parseIntOrUndef(q.limit),
+  };
+}
+
+export function clientLogoUrl(ticker: string | null): string | null {
+  const symbol = normalizeTickerLogoSymbol(ticker);
+  return symbol ? `/api/logos/ticker?symbol=${encodeURIComponent(symbol)}` : null;
+}
+
+export function clientTradeFromRow(row: ClientTradeRow): ClientTrade {
+  const tx = mapFeedTransaction(row);
+  return {
+    id: tx.id,
+    cursor: tx.cursorSeq,
+    docId: tx.docId,
+    member: {
+      id: tx.filerId,
+      name: tx.fullName ?? row.__member_name ?? null,
+      chamber: (row.__chamber as Chamber | null) ?? null,
+      party: row.__party ?? null,
+      state: tx.state ?? null,
+      photoUrl: tx.photoUrl ?? null,
+    },
+    asset: {
+      name: tx.assetName,
+      ticker: tx.ticker,
+      type: tx.assetType,
+      sector: tx.refSector ?? null,
+      marketCapBucket: tx.refMarketCapBucket ?? null,
+    },
+    transaction: {
+      date: tx.txDate,
+      type: tx.txType,
+      owner: tx.owner,
+      amountMin: tx.amountMin,
+      amountMax: tx.amountMax,
+      isOption: tx.isOption,
+    },
+    filing: {
+      filedDate: tx.filedDate ?? null,
+      firstSeenAt: tx.firstSeenAt ?? null,
+      sourceUrl: tx.sourceUrl ?? null,
+    },
+    confidence: tx.confidence,
+    source: (tx.source === 'manual' ? 'primary' : tx.source) as "primary" | "seed_dataset",
+  };
+}
+
+export function num(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function nullableNum(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+export function str(value: unknown): string | null {
+  return typeof value === 'string' && value.length ? value : null;
+}
+
+export function usd(value: unknown): number {
+  return Math.round(num(value));
+}
+
+export function detailLimit(value: string | undefined, fallback = 25): number {
+  const n = parseIntOrUndef(value);
+  if (!n || n <= 0) return fallback;
+  return Math.min(n, 100);
+}
+
+export function baseSummary(row: TradeSummaryRow | null) {
+  return {
+    totalTrades: num(row?.total_trades),
+    buyCount: num(row?.buy_count),
+    sellCount: num(row?.sell_count),
+    exchangeCount: num(row?.exchange_count),
+    estimatedVolumeUsd: usd(row?.est_volume),
+    estimatedNetFlowUsd: usd(row?.est_net_flow),
+    firstTrade: str(row?.first_trade),
+    lastTrade: str(row?.last_trade),
+  };
+}
+
+export function securityRef(ticker: string, row: SecurityRefRow | null) {
+  return {
+    ticker,
+    companyName: row?.company_name ?? null,
+    logoUrl: clientLogoUrl(ticker),
+    sector: row?.sector ?? null,
+    industry: row?.industry ?? null,
+    assetClass: row?.asset_class ?? null,
+    country: row?.country ?? null,
+    exchangeShort: row?.exchange_short ?? null,
+    currency: row?.currency ?? null,
+    marketCap: nullableNum(row?.market_cap),
+    marketCapBucket: row?.market_cap_bucket ?? null,
+    currentPrice: nullableNum(row?.current_price),
+    currentPriceDate: row?.current_price_date ?? null,
+  };
+}
+
+export function memberProfile(row: MemberProfileRow | null, id: string) {
+  if (!row) {
+    return {
+      id,
+      name: null,
+      chamber: null,
+      party: null,
+      state: null,
+      district: null,
+      committees: [],
+      photoUrl: null,
+    };
+  }
+  const committees = parseJson<string[]>(row.committees, []);
+  return {
+    id: row.bioguide_id,
+    name: row.full_name,
+    chamber: asChamber(row.chamber ?? undefined) ?? null,
+    party: row.party,
+    state: row.state,
+    district: row.district,
+    committees: Array.isArray(committees) ? committees : [],
+    photoUrl: row.photo_url,
+  };
+}
