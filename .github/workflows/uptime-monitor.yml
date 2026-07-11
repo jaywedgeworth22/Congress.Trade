@@ -59,7 +59,9 @@ jobs:
           {
             echo "health_body<<$delimiter"
             cat "$BODY"
-            echo "$delimiter"
+            # curl writes compact JSON without a trailing newline. Force one so the
+            # GitHub-output terminator always starts on its own line.
+            printf '\n%s\n' "$delimiter"
           } >> "$GITHUB_OUTPUT"
 
       - name: Open issue on failure
