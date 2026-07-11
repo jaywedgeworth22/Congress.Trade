@@ -10,6 +10,28 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Deployed
+- **Review Queue current drain + durable automation integration (CODEX, L) — DEPLOYED
+  2026-07-11 via PR #292 (`f197e66`).** Exact-tree preview Worker
+  `e1c8fb70-4291-4872-b1e2-f45f59367e6f` passed health/schema checks before the
+  canonical production ship deployed review-release Worker
+  `69b4c3cf-8543-459f-a541-623dc7cd692c` and applied `0025` plus `0029`-`0037`
+  through `POST /api/admin/migrate`. Time Travel bookmark:
+  `000001af-0000d458-000050a5-6a11a98a065b736d72328812598fbac8`.
+  PR #262 subsequently advanced `main` to `bb92250` and production to Worker
+  `79945ec6-3434-472a-8d7e-76b2df1ffa04`; the review release is its direct
+  ancestor and live health remains HTTP 200 with `ok/db/schema=true`,
+  `missing=[]`. Autonomous replay/cascade reduced the queue from 27 to 20
+  pending by publishing 7 House filings / 13 rows at tier 3, each with three
+  distinct models and every row present in all three reads. All 13 delivery
+  intents completed and all live rows have `est_value`. The remaining 20 safely
+  reached the three-attempt cap with no claims, stale leases, backoffs,
+  suppressions, or scheduled work; budget stopped at 169/300. Mistral completed
+  71/71 reads, OpenAI 70/70, and Anthropic 11/27; its 16 failures were evenly
+  split between invalid Senate PDF objects and malformed/truncated JSON. No
+  manual agreement write was needed. Follow-up: chamber/content-aware Anthropic
+  handling plus bounded JSON repair/output-size handling. Gates: typecheck, 104
+  files / 908 tests, lint 0 errors, hosted CI/PWA/gitleaks green, and two quiet
+  post-retry samples.
 - **Whole-app improvement roadmap implementation (CODEX, XL) — IMPLEMENTATION COMPLETE LOCALLY +
   PREVIEWED 2026-07-11; PRODUCTION WORKER DEPLOYED 2026-07-11.** PR #284 merged as
   `8a855cb`; canonical `app/scripts/ship.sh` deployed code-bearing Worker version
@@ -126,22 +148,6 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   no preview or production deploy.
 
 ## In Progress
-- **Review Queue current drain + durable automation integration (CODEX, L) — PRODUCTION RELEASE IN
-  PROGRESS 2026-07-11 (owner authorized merge, deploy, and bounded queue narrowing).** Production
-  remains 91 total / 27 pending / 64 resolved after three dry-run-first House passes; all three
-  source PDFs were visually verified and 36 rows corrected in place with stable IDs/cursors and
-  audit receipts. Further publishing remains paused until the hardened gate is live. Branch
-  `codex/review-queue-resolution` now reconciles merged PRs #284/#264 plus #257/#263 with exact-material
-  multiset agreement, distinct vendors, bounded retry/backoff/budget/leases, one-time legacy replay,
-  monotonic review revisions, atomic human/normalizer/agreement row+filing+generic-outbox
-  transitions, durable holds/retry, live-only identity, coherent reviewer consensus, and exact
-  `est_value` across all writers. Combined gates pass: typecheck; 104 files / 908 tests; lint 0
-  errors; fresh migration/admin-parity/readiness coverage through `0037`; 223-row human resolution
-  persists every durable delivery intent while immediate delivery remains below D1's bind ceiling.
-  Exact-tree isolated preview version `e1c8fb70-4291-4872-b1e2-f45f59367e6f` is healthy at
-  `https://congress-trade-preview.jaywedgeworth22.workers.dev` with `ok/db/schema=true`,
-  `missing=[]`, with the isolated ledger including `0025` plus `0030`-`0037`. Next: PR/merge and
-  canonical production ship. KEEPOUT: preserve the dirty main checkout and MONET's worktree.
 - **Implement `est_value` column in transactions table (AG, S) — IN PROGRESS 2026-07-10.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
 - **Refactor client API routes (AG, M) — IN PROGRESS 2026-07-10.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
 - **GPT-5.6 bake-off evaluation prep + usage/cost tracking harness (MONET, S)** — BUILT + PUSHED
