@@ -164,7 +164,8 @@ async function runOpenAi(
     : undefined;
 
   const text = payload.choices?.[0]?.message?.content;
-  if (!text) throw new Error('openai: empty completion');
+  if (!text)
+    throw Object.assign(new Error('openai: empty completion'), { usage: usageInfo });
 
   try {
     return { rows: parseModelJson(text).map(toParsedTx), usage: usageInfo };
