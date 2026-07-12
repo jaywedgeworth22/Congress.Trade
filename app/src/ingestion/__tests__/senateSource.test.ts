@@ -62,7 +62,7 @@ describe('parseSenateRows', () => {
     const f = out[0];
     expect(f.reportId).toBe('0f8b12cd');
     expect(f.pipelineDocId).toBe('S-0f8b12cd');
-    expect(f.fullName).toBe('Smith, Jane');
+    expect(f.fullName).toBe('Jane Smith');
     expect(f.first).toBe('Jane');
     expect(f.last).toBe('Smith');
     expect(f.filedDate).toBe('01/15/2024');

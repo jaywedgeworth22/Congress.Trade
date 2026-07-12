@@ -755,6 +755,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           filerId: str(row.filer_id),
           fullName: str(row.full_name),
           party: str(row.party),
+          partyBucket: asPartyBucket(row.party) ?? null,
           photoUrl: str(row.photo_url),
           tradeCount: n,
           // Annualized excess return vs SPX since the filing date, equal-weighted across buys.
