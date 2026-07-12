@@ -30,23 +30,50 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
-  if (request.method !== 'GET' || request.mode !== 'navigate') return;
+  if (request.method !== 'GET') return;
 
+  const url = new URL(request.url);
+
+  // Cache-first for static assets
+  if (url.pathname.startsWith('/_next/static/')) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
+        return fetch(request).then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  // Network-first for everything else (HTML, API calls)
   event.respondWith(
     fetch(request)
       .then((response) => {
-        if (response.ok) {
+        if (response.ok && url.origin === self.location.origin) {
           const copy = response.clone();
           event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)));
         }
         return response;
       })
       .catch(async () => {
-        const cached = await caches.match(request) ?? await caches.match('/');
-        return cached ?? new Response(
-          '<!doctype html><title>Congress.Trade offline</title><main><h1>Offline</h1><p>Reconnect to refresh congressional trade data.</p></main>',
-          { status: 503, headers: { 'content-type': 'text/html; charset=utf-8' } },
-        );
+        const cached = await caches.match(request);
+        if (cached) return cached;
+
+        if (request.mode === 'navigate') {
+          const cachedRoot = await caches.match('/');
+          return cachedRoot ?? new Response(
+            '<!doctype html><title>Congress.Trade offline</title><main><h1>Offline</h1><p>Reconnect to refresh congressional trade data.</p></main>',
+            { status: 503, headers: { 'content-type': 'text/html; charset=utf-8' } },
+          );
+        }
+
+        return new Response('', { status: 503 });
       }),
   );
 });
