@@ -206,3 +206,13 @@ STRIPE_TRIAL_DAYS="7"
 # production AND local `wrangler dev`; set "false" here if you need plain
 # curl/scripts against local /api/* data endpoints (or send a browser UA).
 SCRAPE_GUARD_ENABLED="true"
+
+# Executive-branch (OGE Form 278-T) filings watcher — Presidential trades.
+# Polls the OGE President/VP index (~6h, fail-soft); rows land as
+# chamber='executive' and stay OUT of the default feed/analytics until the
+# Executive chip / chamber filter opts in. Filings over OGE_MAX_VISION_BYTES
+# (default 6MB) route straight to review instead of vision extraction.
+OGE_WATCH_ENABLED="true"
+OGE_INDEX_URL=""
+OGE_POLL_INTERVAL_SEC="21600"
+OGE_MAX_VISION_BYTES="6000000"

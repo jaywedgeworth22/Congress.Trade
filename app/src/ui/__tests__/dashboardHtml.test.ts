@@ -99,6 +99,23 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('Live SSE stream of every new filing');
   });
 
+  it('filters by branch via House/Senate/Executive chips, congressional by default', () => {
+    // Chip groups replace the old two-option chamber selects in BOTH views
+    // (the admin seed-backfill selector stays congressional by design).
+    expect(DASHBOARD_HTML).not.toContain('>Both Chambers</option><option value="house">House</option>');
+    expect(DASHBOARD_HTML).toContain('class="chamber-chips" id="qChamber"');
+    expect(DASHBOARD_HTML).toContain('class="chamber-chips" id="trChamber"');
+    expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*aria-pressed="false"/);
+    expect(DASHBOARD_HTML).toMatch(/data-ch="house"[^>]*aria-pressed="true"/);
+    // Default (House+Senate) sends NO chamber param; selections send a CSV.
+    expect(DASHBOARD_HTML).toContain("var CHAMBER_DEFAULT = ['house', 'senate']");
+    expect(DASHBOARD_HTML).toContain('function chamberParam(');
+    expect(DASHBOARD_HTML).toContain("initChamberChips('qChamber', 'feed-chambers-v1'");
+    expect(DASHBOARD_HTML).toContain("initChamberChips('trChamber', 'trends-chambers-v1'");
+    // At least one branch always stays selected.
+    expect(DASHBOARD_HTML).toContain('chipSel(groupId).length <= 1) return');
+  });
+
   it('renders the honest speed-vs-providers scoreboard on Trends', () => {
     expect(DASHBOARD_HTML).toContain('id="trLatencySection"');
     expect(DASHBOARD_HTML).toContain("fetch('/api/analytics/latency-summary')");

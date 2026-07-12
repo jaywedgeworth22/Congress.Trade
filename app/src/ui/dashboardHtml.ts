@@ -35,13 +35,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <style>
   :root {
     /* ---- THEME ---- */
-    --bg:        #0b1120;
-    --bg-2:      #111a2e;
-    --panel:     #15203a;
-    --panel-2:   #1b2747;
-    --border:    #243154;
-    --text:      #e6edf6;
-    --text-dim:  #9db1cd;
+    --bg:        #080c17;
+    --bg-2:      #0e1626;
+    --panel:     #121b30;
+    --panel-2:   #172440;
+    --border:    #2e3e65;
+    --text:      #ffffff;
+    --text-dim:  #b8c7dd;
     --accent:    #4f8cff;
     --buy:       #22c55e;
     --sell:      #ef4444;
@@ -57,13 +57,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   /* ---- light theme (toggled via html[data-theme="light"]) ---- */
   html[data-theme="light"] {
-    --bg:        #f4f7fb;
-    --bg-2:      #e9eef6;
+    --bg:        #eff3f8;
+    --bg-2:      #e4ebf4;
     --panel:     #ffffff;
-    --panel-2:   #eef3fa;
-    --border:    #d3dced;
-    --text:      #142036;
-    --text-dim:  #4f607c;
+    --panel-2:   #e8eff8;
+    --border:    #c1cde2;
+    --text:      #09101c;
+    --text-dim:  #34435b;
     --accent:    #2563eb;
     --buy:       #15803d;
     --sell:      #dc2626;
@@ -140,13 +140,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   input::placeholder { color: var(--text-dim); }
   .grid-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; margin-bottom: 20px; }
-  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+  .card { background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 14px 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); }
   .card .k { color: var(--text-dim); font-size: 12px; }
   .card .v { font-size: 22px; font-weight: 700; margin-top: 4px; }
   .card .v small { font-size: 12px; font-weight: 500; color: var(--text-dim); }
   .info-tip { color: var(--text-dim); cursor: help; border-bottom: 0; text-decoration: none; font-size: .82em; line-height: 1; vertical-align: .35em; margin-left: 1px; }
   .info-tip:hover, .info-tip:focus-visible { color: var(--accent); outline: none; }
-  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--radius); overflow: hidden; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); }
   th, td { text-align: center; padding: 11px 13px; border-bottom: 1px solid var(--border); border-right: 1px solid color-mix(in srgb, var(--border) 42%, transparent); font-size: 13px; vertical-align: middle; }
   th:last-child, td:last-child { border-right: none; }
   th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
@@ -187,7 +187,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .tkr-logo { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; overflow: hidden; }
   .tkr-logo img { width: 100%; height: 100%; object-fit: contain; display: block; }
   /* "tile" = frosted-glass box; "transparent" = bare logo on the row surface. */
-  .tkr-logo.tile { border: 1px solid var(--border); background: color-mix(in srgb, var(--panel-2) 80%, transparent); border-radius: 6px; padding: 2px; }
+  .tkr-logo.tile { border: none; background: linear-gradient(135deg, var(--accent), #6366f1); border-radius: 8px; padding: 2px; color: #fff; box-shadow: inset 0 2px 4px rgba(255,255,255,0.2), 0 4px 10px rgba(0,0,0,0.15); }
   .tkr-logo.transparent { border-radius: 4px; }
   /* ---- politician headshots (mirrors the ticker-logo image+fallback pattern) ---- */
   .member-cell { display: flex; align-items: center; gap: 9px; min-width:0; }
@@ -218,10 +218,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      them, and onerror="this.remove()" drops the <img> to reveal initials. */
   .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
   .avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: var(--panel-2); }
-  .tag { font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; display:inline-block; }
-  .tag.P { color: var(--buy); background: color-mix(in srgb, var(--buy) 14%, transparent); }
-  .tag.S { color: var(--sell); background: color-mix(in srgb, var(--sell) 14%, transparent); }
-  .tag.E { color: var(--exch); background: color-mix(in srgb, var(--exch) 14%, transparent); }
+  .tag { font-size: 11px; padding: 4px 10px; border-radius: 999px; font-weight: 700; display:inline-block; letter-spacing: 0.4px; color: #fff; border: none; }
+  .tag.P { background: linear-gradient(135deg, var(--buy), color-mix(in srgb, var(--buy) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--buy) 30%, transparent); }
+  .tag.P::after { content: " ↗"; }
+  .tag.S { background: linear-gradient(135deg, var(--sell), color-mix(in srgb, var(--sell) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--sell) 30%, transparent); }
+  .tag.S::after { content: " ↘"; }
+  .tag.E { background: linear-gradient(135deg, var(--exch), color-mix(in srgb, var(--exch) 70%, #000)); box-shadow: 0 4px 12px color-mix(in srgb, var(--exch) 30%, transparent); }
+  .tag.E::after { content: " ↔"; }
   .conf { font-family: var(--mono); font-size: 12px; }
   .conf.hi { color: var(--good); } .conf.mid { color: var(--warn); } .conf.lo { color: var(--sell); }
   .muted { color: var(--text-dim); }
@@ -320,7 +323,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
   .btn.sm { padding: 5px 10px; font-size: 12px; }
   .btn:disabled { opacity: .5; cursor: default; }
-  .section { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; margin-bottom: 18px; }
+  .section { background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 18px; margin-bottom: 18px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); }
   .section h3 { margin: 0 0 4px; font-size: 15px; }
   .section p.sub { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; }
   .row-flex { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
@@ -577,6 +580,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .toast.show { display:block; }
   .toast.err { border-color:color-mix(in srgb,var(--sell) 55%,transparent); color:var(--sell); }
   .gate-note { font-size:12px; color:var(--text-dim); display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
+  /* ---- Branch (House / Senate / Executive) chip multi-select ---- */
+  .chamber-chips { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .chamber-chips .chip { border:1px solid var(--border); background:transparent; color:var(--text-dim); border-radius:999px; padding:6px 12px; font-size:12px; line-height:1; cursor:pointer; min-height:32px; transition:border-color .15s, background .15s, color .15s; }
+  .chamber-chips .chip.on { color:var(--text); border-color:var(--accent); background:color-mix(in srgb, var(--accent) 14%, transparent); }
+  .chamber-chips .chip:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   /* ---- Speed vs data providers (public latency proof) ---- */
   .speed-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
   .speed-head h3 { margin:0; }
@@ -707,6 +715,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .drawer-kv { grid-template-columns: 1fr; gap: 3px; }
     .drawer-kv dd { text-align: left; }
     .plan-grid { grid-template-columns: 1fr; }
+    .toolbar .chamber-chips { grid-column: 1 / -1; }
     .speed-body { display:block; min-height:210px; }
     .speed-hero { margin-bottom:14px; }
     .speed-hero-num { font-size:34px; }
@@ -1172,6 +1181,26 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #view-trends .section > h3,
   #view-trends .section > .row-flex > h3 { padding-left: 11px; }
 }
+
+  #view-trends .card .v .est-money,
+  #view-trends .card .v small { color: inherit !important; }
+
+  @media (max-width: 720px) {
+    #view-trends .toolbar { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+    #view-trends .toolbar #trWindow { order: 1; }
+    #view-trends .toolbar #trParty { order: 2; }
+    #view-trends .toolbar #trSource { order: 3; }
+    #view-trends .toolbar #trChamber { order: 4; grid-column: span 2; }
+    #view-trends .toolbar .btn { order: 5; }
+  }
+  @media (max-width: 420px) {
+    #view-trends .toolbar { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+    #view-trends .toolbar #trWindow { order: 1; }
+    #view-trends .toolbar #trParty { order: 2; }
+    #view-trends .toolbar #trChamber { order: 3; grid-column: 1 / -1; }
+    #view-trends .toolbar #trSource { order: 4; }
+    #view-trends .toolbar .btn { order: 5; }
+  }
 </style>
 </head>
 <body>
@@ -1201,10 +1230,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="">All Types</option><option value="P">Purchase</option>
         <option value="S">Sale</option><option value="E">Exchange</option>
       </select>
-      <select id="qChamber" onchange="resetFeedPage()">
-        <option value="">Both Chambers</option><option value="house">House</option><option value="senate">Senate</option>
-      </select>
-      <div id="feedStats" class="feed-stats muted">
+      <div class="chamber-chips" id="qChamber" role="group" aria-label="Filter by branch">
+        <button type="button" class="chip on" data-ch="house" aria-pressed="true">House</button>
+        <button type="button" class="chip on" data-ch="senate" aria-pressed="true">Senate</button>
+        <button type="button" class="chip" data-ch="executive" aria-pressed="false" title="Executive branch — Presidential trades from OGE Form 278-T filings">Executive</button>
+      </div>
+<div id="feedStats" class="feed-stats muted">
         <strong id="kpiToday">—</strong> today &middot; <strong id="kpiTotal">—</strong> total
       </div>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()" style="margin-left:auto">🔍 Search</button>
@@ -1252,28 +1283,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button class="btn sm" onclick="openPricing()">Premium</button></span>
     </div>
 
-    <!-- Speed vs data providers (filter-independent live latency proof).
-         No tf-h class on the h3: stampWindowChips() must not stamp a time
-         window this section does not honor. Rendered by renderSpeedProof(). -->
-    <div class="section speed-proof" id="trLatencySection" style="margin-top:14px">
-      <div class="speed-head">
-        <h3>Speed vs. Data Providers <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
-        <span class="note" id="speedUpdated"></span>
-      </div>
-      <div class="speed-body">
-        <div class="speed-hero" id="speedHero"><div class="sk sk-line" style="width:70%;height:34px"></div><div class="sk sk-line" style="width:55%"></div></div>
-        <div id="speedRace"></div>
-      </div>
-      <p class="note">How this is measured: every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades and match them against filings we already ingested, comparing first-seen timestamps. Stats cover the most recent matched filings per provider and update continuously &mdash; wins, losses, and misses alike. &ldquo;Matched&rdquo; counts filings that had appeared in the provider&rsquo;s feed by probe time; a filing can appear there later. Nothing is hand-picked and nothing is frozen: these numbers move. A live measurement, not a promise.</p>
-      <details class="speed-table">
-        <summary>View as table</summary>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Provider</th><th>Matched</th><th>We were first</th><th>They were first</th><th>Ties</th><th>Typical lead</th><th>Average</th><th>p90</th></tr></thead>
-          <tbody id="speedTableBody"></tbody>
-        </table></div>
-      </details>
-      <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
-    </div>
   </section>
 
   <!-- ================= TRENDS / ANALYTICS ================= -->
@@ -1289,7 +1298,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="1825d">Past 5 Years</option>
         <option value="all">All Time</option>
       </select>
-      <select id="trChamber"><option value="">Both Chambers</option><option value="house">House</option><option value="senate">Senate</option></select>
+      <div class="chamber-chips" id="trChamber" role="group" aria-label="Filter analytics by branch">
+        <button type="button" class="chip on" data-ch="house" aria-pressed="true">House</button>
+        <button type="button" class="chip on" data-ch="senate" aria-pressed="true">Senate</button>
+        <button type="button" class="chip" data-ch="executive" aria-pressed="false" title="Executive branch — Presidential trades from OGE Form 278-T filings">Executive</button>
+      </div>
       <select id="trParty"><option value="">All Parties</option><option value="D">Democrat</option><option value="R">Republican</option><option value="O">Other / Ind.</option></select>
       <select id="trSource" title="Provenance of the underlying rows">
         <option value="all" selected>All Data</option>
@@ -1325,13 +1338,53 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 	            <option value="volume">Est. Volume</option>
             <option value="netflow">Net $ Flow</option>
           </select>
+          <label class="lbl" style="margin-left:8px">Asset Type</label>
+          <select id="trTickerAsset" title="Filter by Asset Type">
+            <option value="all">All Assets</option>
+            <option value="exclude_options">Stocks &amp; ETFs Only</option>
+          </select>
         </div>
-        <div class="table-wrap"><table><tbody id="trTickers"></tbody></table></div>
+        <div class="table-wrap">
+          <table id="tableTrTickers">
+            <thead>
+              <tr>
+                <th style="width:32px"></th>
+                <th style="width:32px"></th>
+                <th style="width:32px"></th>
+                <th class="sortable" onclick="setTickerSort('trades')">Asset</th>
+                <th class="sortable r" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades"></span></th>
+                <th class="sortable r" onclick="setTickerSort('members')">Politicians <span class="sort-icon" data-sort="members"></span></th>
+                <th class="sortable r" onclick="setTickerSort('volume')">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
+                <th class="sortable r" onclick="setTickerSort('netflow')">Net $ Flow <span class="sort-icon" data-sort="netflow"></span></th>
+              </tr>
+            </thead>
+            <tbody id="trTickers"></tbody>
+          </table>
+        </div>
       </div>
       <div class="section">
         <h3 class="tf-h">Rising Activity</h3>
         <p class="sub">Assets whose disclosed trade count rose most vs the prior equal period. A descriptive view of filing activity — not a forecast.</p>
-        <div class="table-wrap"><table><tbody id="trTrending"></tbody></table></div>
+        <div class="row-flex" style="margin:-6px 0 12px">
+          <label class="lbl">Asset Type</label>
+          <select id="trTrendingAsset" title="Filter by Asset Type">
+            <option value="all">All Assets</option>
+            <option value="exclude_options">Stocks &amp; ETFs Only</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table id="tableTrTrending">
+            <thead>
+              <tr>
+                <th>Asset</th>
+                <th>Trades (Prior &rarr; Recent)</th>
+                <th>Change</th>
+                <th>Recent Politicians</th>
+              </tr>
+            </thead>
+            <tbody id="trTrending"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -1419,6 +1472,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
 
 
+
+    <!-- Speed vs data providers (filter-independent live latency proof).
+         No tf-h class on the h3: stampWindowChips() must not stamp a time
+         window this section does not honor. Rendered by renderSpeedProof(). -->
+    <div class="section speed-proof" id="trLatencySection" style="margin-top:14px">
+      <div class="speed-head">
+        <h3>Speed vs. Data Providers <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
+        <span class="note" id="speedUpdated"></span>
+      </div>
+      <div class="speed-body">
+        <div class="speed-hero" id="speedHero"><div class="sk sk-line" style="width:70%;height:34px"></div><div class="sk sk-line" style="width:55%"></div></div>
+        <div id="speedRace"></div>
+      </div>
+      <p class="note">How this is measured: every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades and match them against filings we already ingested, comparing first-seen timestamps. Stats cover the most recent matched filings per provider and update continuously &mdash; wins, losses, and misses alike. &ldquo;Matched&rdquo; counts filings that had appeared in the provider&rsquo;s feed by probe time; a filing can appear there later. Nothing is hand-picked and nothing is frozen: these numbers move. A live measurement, not a promise.</p>
+      <details class="speed-table">
+        <summary>View as table</summary>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Provider</th><th>Matched</th><th>We were first</th><th>They were first</th><th>Ties</th><th>Typical lead</th><th>Average</th><th>p90</th></tr></thead>
+          <tbody id="speedTableBody"></tbody>
+        </table></div>
+      </details>
+      <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
+    </div>
   </section>
 
   <!-- ================= REVIEW QUEUE ================= -->
@@ -2447,7 +2523,14 @@ function resetCols() {
 
 function renderFeed() {
   var m = el('qMember').value.toLowerCase(), t = el('qTicker').value.toUpperCase(),
-      ty = el('qType').value, ch = el('qChamber').value;
+      ty = el('qType').value, chs = chipSel('qChamber');
+  // Mirror the server's semantics: default (House+Senate) keeps rows whose
+  // chamber is unresolved; an explicit selection matches exactly.
+  var chDefault = chamberParam('qChamber') === '';
+  function chamberMatch(r) {
+    if (chDefault) return r.chamber !== 'executive';
+    return chs.indexOf(r.chamber) >= 0;
+  }
   // Fold-out advanced search (panel may be collapsed; inputs still honored).
   var qa = (el('qAll').value || '').toLowerCase().trim();
   var minAmt = parseFloat(el('qMinAmt').value);
@@ -2476,7 +2559,7 @@ function renderFeed() {
     return (!m || (r.member || '').toLowerCase().indexOf(m) >= 0) &&
            (!t || (r.ticker || '').indexOf(t) >= 0) &&
            (!ty || r.type === ty) &&
-           (!ch || r.chamber === ch);
+           chamberMatch(r);
   });
   rows = sortRows(rows);
   if (rows.length === 0) {
@@ -2769,7 +2852,7 @@ function feedQueryParams() {
   var t = el('qTicker').value.trim(); if (t) p.set('ticker', t);
   var m = el('qMember').value.trim(); if (m) p.set('memberName', m);
   var ty = el('qType').value; if (ty) p.set('type', ty);
-  var ch = el('qChamber').value; if (ch) p.set('chamber', ch);
+  var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
   return p;
 }
 function setFeedKpis() {
@@ -4297,6 +4380,16 @@ function loadMarketCoverage() {
     });
 }
 
+async function apiCall(path, method, body) {
+  const res = await fetch(path, {
+    method,
+    headers: adminHeaders(),
+    body: body ? JSON.stringify(body) : undefined
+  });
+  if (!res.ok) throw new Error('API error: ' + res.status);
+  return res.json();
+}
+
 async function runBenchmark() {
   var msg = el('benchmarkMsg');
   var res = el('benchmarkResults');
@@ -4414,7 +4507,7 @@ function runMarketBackfill(dryRun) {
 	var NET_FLOW_TIP_ALLTIME = 'Buy dollars minus sell dollars across all disclosed trades for this asset, using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
 function trParams() {
   var p = 'window=' + encodeURIComponent(el('trWindow').value);
-  var ch = el('trChamber').value; if (ch) p += '&chamber=' + ch;
+  var ch = chamberParam('trChamber'); if (ch) p += '&chamber=' + encodeURIComponent(ch);
   var pa = el('trParty').value; if (pa) p += '&party=' + pa;
   var src = el('trSource').value; if (src && src !== 'all') p += '&source=' + src;
   return p;
@@ -4484,9 +4577,66 @@ function polCell(n) { n = Number(n || 0); return n + ' <span class="u-full">poli
 	function infoLabel(text, tip) {
 	  return esc(text) + ' <span class="info-tip" tabindex="0" aria-label="' + esc(tip) + '" title="' + esc(tip) + '">ⓘ</span>';
 	}
-	function kpiInfo(k, v, tip) {
-	  return '<div class="card"><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + '</div></div>';
+	function kpiInfo(k, v, tip, onClickStr, extraHtml) {
+	  var attr = onClickStr ? ' class="card clickable" onclick="' + esc(onClickStr) + '"' : ' class="card"';
+	  return '<div' + attr + '><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + '</div>' + (extraHtml || '') + '</div>';
 	}
+function setTickerSort(val) {
+  var elSort = el('trTickerSort');
+  if (elSort) {
+    elSort.value = val;
+    loadTrTickers();
+  }
+}
+function sparklineHtml(series, metric) {
+  if (!series || !series.length) return '';
+  var vals = series.map(function(p) {
+    if (metric === 'netflow') return (p.estBuyVolUsd || 0) - (p.estSellVolUsd || 0);
+    if (metric === 'buypressure') return (p.buys + p.sells) > 0 ? (p.buys / (p.buys + p.sells)) : 0.5;
+    return 0;
+  });
+  var max = 0.001, min = 0;
+  if (metric === 'netflow') {
+    vals.forEach(function(v) { max = Math.max(max, Math.abs(v)); });
+  } else {
+    max = 1; min = 0;
+  }
+  return '<div style="display:flex; height:16px; align-items:flex-end; gap:1px; margin-top:12px; opacity:0.8; width:100%">' +
+    vals.map(function(v, i) {
+      var h, color;
+      if (metric === 'netflow') {
+        h = Math.max(1, Math.round(100 * Math.abs(v) / max));
+        color = v >= 0 ? 'var(--buy)' : 'var(--sell)';
+      } else {
+        h = Math.max(1, Math.round(100 * v));
+        color = 'var(--accent)';
+      }
+      return '<div style="flex:1; background:' + color + '; height:' + h + '%; border-radius:1px" title="' + esc(series[i].period) + '"></div>';
+    }).join('') + '</div>';
+}
+function scrollToChart(id) {
+  var chart = el(id);
+  if (chart) {
+    chart.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    var oldTransition = chart.style.transition;
+    var oldOutline = chart.style.outline;
+    var oldOffset = chart.style.outlineOffset;
+    var oldRadius = chart.style.borderRadius;
+    chart.style.transition = 'outline 0.3s';
+    chart.style.outline = '2px solid var(--accent)';
+    chart.style.outlineOffset = '4px';
+    chart.style.borderRadius = '8px';
+    setTimeout(function() {
+      chart.style.outline = 'transparent';
+      setTimeout(function() {
+        chart.style.transition = oldTransition;
+        chart.style.outline = oldOutline;
+        chart.style.outlineOffset = oldOffset;
+        chart.style.borderRadius = oldRadius;
+      }, 300);
+    }, 1500);
+  }
+}
 /* Mini CSS-column time chart of buys vs sells (no chart library). */
 function timeChartHtml(series, labelStep) {
   var max = 1; series.forEach(function (p) { max = Math.max(max, p.buys, p.sells); });
@@ -4541,7 +4691,10 @@ function fmtLead(secs) {
   return sign + one(s / 86400) + ' days';
 }
 function speedEligible(d) {
-  return (d.providers || []).filter(function (p) { return p.matched >= SPEED_LANE_MIN_MATCHED; });
+  return (d.providers || []).filter(function (p) {
+    if (p.label === 'Quiver Quantitative' || p.label === 'Unusual Whales') return false;
+    return p.matched >= SPEED_LANE_MIN_MATCHED;
+  });
 }
 /* Best-covered provider that boast copy may cite (well-sampled AND favorable). */
 function speedBoastProvider(d) {
@@ -4606,10 +4759,12 @@ function speedLaneHtml(p, domainMin, domainMax) {
 function renderSpeedProof() {
   var box = el('trLatencySection'); if (!box) return;
   fetchLatencySummary().then(function (d) {
-    var provs = (d.providers || []).slice().sort(function (a, b) { return b.matched - a.matched; });
+    var provs = (d.providers || []).filter(function (p) {
+      return p.label !== 'Quiver Quantitative' && p.label !== 'Unusual Whales';
+    }).sort(function (a, b) { return b.matched - a.matched; });
     if (!d.totals || !d.totals.racedDisclosures || !provs.length) { box.hidden = true; return; }
     var best = null;
-    speedEligible(d).forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
+    provs.forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
     var heroHtml = '';
     if (best && (best.medianLeadSec || 0) > 0) {
       heroHtml = '<div class="speed-hero-num">' + fmtLead(best.medianLeadSec) + '</div>' +
@@ -4756,20 +4911,39 @@ function loadTrPerformers() {
 
 function loadTrSummary() {
   var box = el('trKpis');
+  if (!box) return;
   box.innerHTML = skCards(6);
-  aGet('summary?' + trParams()).then(function (d) {
+  Promise.all([
+    aGet('summary?' + trParams()),
+    aGet('volume-over-time?' + trParams()) // Using trParams() so it matches the global window length
+  ]).then(function (res) {
+    var d = res[0];
+    var s = res[1].series || [];
     var sent = d.netSentiment == null ? '—' : Math.round(d.netSentiment * 100) + '<small>% buys</small>';
+    var sparkNetFlow = sparklineHtml(s, 'netflow');
+    var sparkBuyPressure = sparklineHtml(s, 'buypressure');
     box.innerHTML =
       kpi('Trades', d.totalTrades) + kpi('Politicians', d.uniqueMembers) + kpi('Assets', d.uniqueTickers) +
-	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP) + kpiInfo('Net Flow', netHtml(d.estimatedNetFlowUsd), NET_FLOW_TIP) +
-      kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP);
+	      kpiInfo('Approx. Volume', estUsd(d.estimatedVolumeUsd), EST_VOLUME_TIP) + 
+      kpiInfo('Net Flow', netHtml(d.estimatedNetFlowUsd), NET_FLOW_TIP, "scrollToChart('trTime')", sparkNetFlow) +
+      kpiInfo('Buy Pressure', sent, BUY_PRESSURE_TIP, "scrollToChart('trTime')", sparkBuyPressure);
   }).catch(function (e) { box.innerHTML = kpi('Summary', '<span style="font-size:13px">' + esc(e.message) + '</span>'); });
 }
 
 function loadTrTickers() {
   var body = el('trTickers');
   body.innerHTML = skRows(6, 6);
-  aGet('ticker-leaderboard?' + trParams() + '&sort=' + el('trTickerSort').value + '&limit=15').then(function (d) {
+  var assetVal = el('trTickerAsset') ? el('trTickerAsset').value : 'all';
+  var sortVal = el('trTickerSort') ? el('trTickerSort').value : 'trades';
+  var queryParams = trParams() + '&sort=' + sortVal + '&limit=15' + (assetVal === 'exclude_options' ? '&excludeOptions=true' : '');
+  
+  // Update header sort icons
+  var icons = document.querySelectorAll('#tableTrTickers .sort-icon');
+  for (var i = 0; i < icons.length; i++) {
+    icons[i].innerHTML = icons[i].getAttribute('data-sort') === sortVal ? ' ▼' : '';
+  }
+
+  aGet('ticker-leaderboard?' + queryParams).then(function (d) {
     var rows = d.tickers || [];
     if (!rows.length) { body.innerHTML = stateRow(6, 'No trades in this window.'); return; }
     body.innerHTML = rows.map(function (r, i) {
@@ -4788,7 +4962,9 @@ function loadTrTickers() {
 function loadTrTrending() {
   var body = el('trTrending');
   body.innerHTML = skRows(4, 6);
-  aGet('trending?' + trParams() + '&limit=12').then(function (d) {
+  var assetVal = el('trTrendingAsset') ? el('trTrendingAsset').value : 'all';
+  var queryParams = trParams() + '&limit=12' + (assetVal === 'exclude_options' ? '&excludeOptions=true' : '');
+  aGet('trending?' + queryParams).then(function (d) {
     var rows = (d.trending || []).filter(function (r) { return r.deltaCount > 0; });
     if (!rows.length) { body.innerHTML = stateRow(4, 'Not enough history to rank momentum.'); return; }
     body.innerHTML = rows.map(function (r) {
@@ -4813,8 +4989,7 @@ function loadTrClusters() {
       var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
       var parties = c.parties.D + ' Democrats, ' + c.parties.R + ' Republicans' + (c.parties.O ? ', ' + c.parties.O + ' Other' : '');
       var bip = c.isBipartisan ? ' <span class="muted">· bipartisan</span>' : '';
-      var ds = new Date(c.minDate + 'T00:00:00Z'), de = new Date(c.maxDate + 'T00:00:00Z');
-      var range = fmtSDate(ds) + (c.minDate === c.maxDate ? '' : ' → ' + fmtSDate(de));
+      var range = compactDateText(c.minDate) + (c.minDate === c.maxDate ? '' : ' → ' + compactDateText(c.maxDate));
       return '<div class="ccard clickable" data-ticker="' + esc(c.ticker) + '">' +
         '<div class="chead">' + tickerLogoHtml(c.ticker, c.name) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
@@ -5599,7 +5774,7 @@ function exportCsv() {
   var p = new URLSearchParams();
   var t = el('qTicker').value.trim(); if (t) p.set('ticker', t);
   var ty = el('qType').value; if (ty) p.set('type', ty);
-  var ch = el('qChamber').value; if (ch) p.set('chamber', ch);
+  var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
   var qs = p.toString();
   window.location.href = '/api/export/transactions.csv' + (qs ? ('?' + qs) : '');
 }
@@ -5742,11 +5917,55 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
 })();
 setInterval(refreshSpeedUpdated, 60000);
 
-/* Trends controls: re-run on change; ticker rows/cards open the asset drawer. */
-['trWindow', 'trChamber', 'trParty', 'trSource'].forEach(function (id) {
+/* Trends controls: re-run on change; ticker rows/cards open the asset drawer.
+   (trChamber is a chip group wired via initChamberChips below, not a select.) */
+['trWindow', 'trParty', 'trSource'].forEach(function (id) {
   var e = el(id); if (e) e.addEventListener('change', loadTrends);
 });
+
+/* ---- Branch chips: House / Senate / Executive multi-select ----
+   Default = House + Senate (the congressional view); Executive (Presidential
+   OGE 278-T trades) joins only when its chip is switched on. At least one
+   chip always stays selected. Selections persist per view. */
+var CHAMBER_DEFAULT = ['house', 'senate'];
+function chipSel(groupId) {
+  var g = el(groupId); if (!g) return CHAMBER_DEFAULT.slice();
+  var on = [];
+  g.querySelectorAll('.chip.on').forEach(function (b) { on.push(b.getAttribute('data-ch')); });
+  return on.length ? on : CHAMBER_DEFAULT.slice();
+}
+function chamberParam(groupId) {
+  var sel = chipSel(groupId).slice().sort();
+  return sel.join(',') === CHAMBER_DEFAULT.slice().sort().join(',') ? '' : sel.join(',');
+}
+function initChamberChips(groupId, storageKey, onChange) {
+  var g = el(groupId); if (!g) return;
+  try {
+    var saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+    if (Array.isArray(saved) && saved.length) {
+      g.querySelectorAll('.chip').forEach(function (b) {
+        var on = saved.indexOf(b.getAttribute('data-ch')) >= 0;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+  } catch (e) {}
+  g.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.chip') : null;
+    if (!b) return;
+    var willBeOn = !b.classList.contains('on');
+    if (!willBeOn && chipSel(groupId).length <= 1) return; // keep >= 1 branch
+    b.classList.toggle('on', willBeOn);
+    b.setAttribute('aria-pressed', willBeOn ? 'true' : 'false');
+    try { localStorage.setItem(storageKey, JSON.stringify(chipSel(groupId))); } catch (err) {}
+    onChange();
+  });
+}
+initChamberChips('qChamber', 'feed-chambers-v1', function () { resetFeedPage(); });
+initChamberChips('trChamber', 'trends-chambers-v1', function () { loadTrends(); });
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
+(function () { var ta = el('trTickerAsset'); if (ta) ta.addEventListener('change', loadTrTickers); })();
+(function () { var tta = el('trTrendingAsset'); if (tta) tta.addEventListener('change', loadTrTrending); })();
 (function () {
   var v = el('view-trends');
   if (v) v.addEventListener('click', function (e) {

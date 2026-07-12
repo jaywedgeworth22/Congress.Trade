@@ -132,7 +132,17 @@ async function isAuthorizedForSubscription(
 }
 
 function asChamber(v: string | undefined): Chamber | undefined {
-  return v === 'house' || v === 'senate' ? v : undefined;
+  return v === 'house' || v === 'senate' || v === 'executive' ? v : undefined;
+}
+
+/** CSV multi-chamber selection; undefined = default congressional view
+ *  (executive rows excluded — see TxQueryParams.chambers). */
+function asChambers(v: string | undefined): Chamber[] | undefined {
+  if (!v || !v.trim()) return undefined;
+  const parsed = Array.from(
+    new Set(v.split(',').map((part) => asChamber(part.trim())).filter((c): c is Chamber => !!c)),
+  ).sort();
+  return parsed.length ? parsed : undefined;
 }
 
 function asTxType(v: string | undefined): TxType | undefined {
@@ -159,7 +169,7 @@ function filtersFromQuery(q: Record<string, string>): TxQueryParams {
     ticker: q.ticker || undefined,
     member: q.member || undefined,
     memberName: q.memberName || undefined,
-    chamber: asChamber(q.chamber),
+    chambers: asChambers(q.chamber),
     type: asTxType(q.type),
     txDateMin: q.from || q.txDateMin || undefined,
     txDateMax: q.to || q.txDateMax || undefined,
@@ -211,7 +221,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       ticker: q.ticker || undefined,
       member: q.member || undefined,
       memberName: q.memberName || undefined,
-      chamber: asChamber(q.chamber),
+      chambers: asChambers(q.chamber),
       type: asTxType(q.type),
       txDateMin: q.from || q.txDateMin || undefined,
       txDateMax: q.to || q.txDateMax || undefined,
@@ -860,7 +870,8 @@ export function priceRangeQuery(
   const clause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
   // price_eod carries a daily volume column; spx_eod does not.
   const cols = table === 'price_eod' ? 'date, close, volume' : 'date, close';
-  return { sql: `SELECT ${cols} FROM ${table}${clause} ORDER BY date ASC`, params };
+  const limitClause = (!from && !to) ? ' LIMIT 1000' : '';
+  return { sql: `SELECT ${cols} FROM ${table}${clause} ORDER BY date ASC${limitClause}`, params };
 }
 
 /** JSON.parse that returns null instead of throwing. */

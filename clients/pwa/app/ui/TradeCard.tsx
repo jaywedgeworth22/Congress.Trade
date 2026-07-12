@@ -13,17 +13,19 @@ export function TradeCard({ item }: { item: ClientTrade }) {
 
   return (
     <article className="trade-card">
-      <div className="trade-card-head">
-        <div>
-          <strong>{item.asset.ticker ?? 'Asset'}</strong>
-          <span>{item.asset.name}</span>
+      <div className="trade-card-head" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div className="gradient-asset">
+          {item.asset.ticker ?? 'N/A'}
         </div>
-        <b className={item.transaction.type === 'S' ? 'sell' : 'buy'}>
-          {item.transaction.type === 'S' ? 'Sale' : item.transaction.type === 'P' ? 'Purchase' : 'Exchange'}
+        <div style={{ flex: 1 }}>
+          <strong style={{ fontSize: '18px', color: 'var(--text)' }}>{item.asset.name}</strong>
+          <span style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>{item.member.name ?? 'Unknown Politician'}</span>
+        </div>
+        <b className={item.transaction.type === 'S' ? 'sell' : 'buy'} style={{ borderRadius: '999px', padding: '6px 14px' }}>
+          {item.transaction.type === 'S' ? 'Sale ↘' : item.transaction.type === 'P' ? 'Purchase ↗' : 'Exchange ↔'}
         </b>
       </div>
       <div className="trade-member">
-        <span>{item.member.name ?? 'Unknown Politician'}</span>
         <small>{[item.member.chamber, item.member.state].filter(Boolean).join(' · ') || 'Congress'}</small>
       </div>
       <dl className="trade-grid">

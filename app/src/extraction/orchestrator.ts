@@ -155,6 +155,8 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
     console.warn('orchestrator: failed to record raw_bytes:', docId, (err as Error).message);
   }
 
+  
+
   const html =
     filing.docKind === 'senate_html'
       ? new TextDecoder('utf-8').decode(new Uint8Array(bytes))

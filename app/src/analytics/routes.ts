@@ -22,7 +22,7 @@ import type { Env } from '../shared/types';
 import { all, get, parseJson } from '../shared/db';
 import { assetTypeCategoryLabel, isAssetTypeCategory } from '../shared/assetTypes';
 import {
-  asChamber,
+  asChambers,
   asPartyBucket,
   asSourceFilter,
   asWindow,
@@ -152,12 +152,17 @@ interface CommonQuery extends CommonFilters {
 /** Resolve the shared filter params from the query string. */
 function commonFromQuery(q: Record<string, string>): CommonQuery {
   const minConf = q.minConf !== undefined && q.minConf !== '' ? Number(q.minConf) : undefined;
+  // `chamber` accepts a CSV multi-selection (e.g. "house,executive"). Absent =>
+  // the default congressional view (executive excluded — see asChambers).
+  const chambers = asChambers(q.chamber);
   return {
     window: asWindow(q.window),
-    chamber: asChamber(q.chamber),
+    chamber: chambers && chambers.length === 1 ? chambers[0] : undefined,
+    chambers,
     party: asPartyBucket(q.party),
     source: asSourceFilter(q.source),
     minConf: minConf !== undefined && Number.isFinite(minConf) ? minConf : undefined,
+    excludeOptions: q.excludeOptions === 'true',
   };
 }
 
@@ -195,7 +200,7 @@ async function cached<T>(env: Env, key: string, ttlSec: number, fn: () => Promis
 function meta(f: CommonQuery, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     window: f.window,
-    chamber: f.chamber ?? null,
+    chamber: f.chambers ? f.chambers.join(',') : f.chamber ?? null,
     party: f.party ?? null,
     source: f.source ?? 'all',
     estimatedAmounts: true,

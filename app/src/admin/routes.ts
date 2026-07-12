@@ -65,7 +65,6 @@ import {
   hasHardFailureFlags,
 } from '../extraction/normalizer';
 import { enqueueAgreementCheck, processAgreementDoc, type AgreementModels } from '../extraction/agreement';
-import type { Chamber } from '../shared/types';
 import { verifyAccessJwt, certsUrl } from './access';
 import { adminRuntimeConfig } from './identity';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
@@ -94,6 +93,8 @@ import type { SecurityRef } from '../enrichment/types';
 import { runPriceRefresh } from '../prices/service';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets } from '../secrets/infisical';
 import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
+import { pollExecutive } from '../ingestion/watcher';
+import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox';
 import { estimateTransactionValue } from '../shared/transactionValue';
 import { isValidBracket } from '../shared/brackets';
 import { flushDeliveryOutbox } from '../delivery/outbox';
@@ -1850,6 +1851,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         'SCRAPE_GUARD_ENABLED', 'DISCLOSURE_LATENCY_WATCH_ENABLED', 'DISCLOSURE_LATENCY_PROVIDERS',
         'DISCLOSURE_LATENCY_WATCH_LIMIT', 'FMP_DISCLOSURE_WATCH_ENABLED', 'FMP_DISCLOSURE_WATCH_LIMIT',
         'HOUSE_LIVE_SEARCH_ENABLED', 'SEED_HOUSE_URL', 'SEED_SENATE_URL',
+        'OGE_WATCH_ENABLED', 'OGE_INDEX_URL', 'OGE_POLL_INTERVAL_SEC', 'OGE_MAX_VISION_BYTES',
         'VISION_PRIMARY_MODEL', 'ARBITRATION_ENABLED', 'ARBITRATION_MODEL',
         'AGREEMENT_AUTOPUBLISH_ENABLED', 'AGREEMENT_AUTOPUBLISH_MODEL_A', 'AGREEMENT_AUTOPUBLISH_MODEL_B',
         'AGREEMENT_MODEL_C', 'AGREEMENT_AUTOPUBLISH_LIMIT', 'AGREEMENT_MAX_ATTEMPTS', 'AGREEMENT_DAILY_LLM_BUDGET',
@@ -2685,7 +2687,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       ) {
         return c.json({ error: "chambers must be an array of 'house'|'senate'" }, 400);
       }
-      opts.chambers = body.chambers as Chamber[];
+      opts.chambers = body.chambers as Array<'house' | 'senate'>;
     }
     if (body.sinceYear !== undefined) {
       if (typeof body.sinceYear !== 'number' || !Number.isFinite(body.sinceYear)) {
@@ -2711,6 +2713,20 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ ok: result.errors.length === 0, ...result });
     } catch (err) {
       return c.json({ error: `backfill failed: ${(err as Error).message}` }, 500);
+    }
+  });
+
+  // --- POST /oge-backfill ---------------------------------------------------
+  // Force-poll the OGE President/VP index and enqueue any new executive 278-T
+  // filings through the normal pipeline (same filing.new message the cron
+  // watcher emits). Idempotent: INSERT OR IGNORE means re-runs only pick up
+  // genuinely-new filings.
+  r.post('/oge-backfill', async (c) => {
+    try {
+      const newCount = await pollExecutive(c.env, new Date(), { force: true });
+      return c.json({ ok: true, newFilings: newCount ?? 0 });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
     }
   });
 
@@ -2740,6 +2756,40 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         dryRun: body.dryRun === true,
       });
       return c.json(result);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /ingest-requeue-failed ------------------------------------------
+  // Reopen dead-lettered ingestion_outbox rows (status='failed') after a deploy
+  // fixes a systemic fetch failure, then flush a first batch immediately; the
+  // per-minute scheduled flush drains the rest. Idempotent: only rows still in
+  // 'failed' are touched, and re-fetching an errored filing is safe (same R2
+  // key, ingest_status transitions back through 'fetched').
+  // Body (all optional): { docIdPrefix?: string, dryRun?: boolean }
+  r.post('/ingest-requeue-failed', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const docIdPrefix = typeof body.docIdPrefix === 'string' ? body.docIdPrefix : undefined;
+    try {
+      if (body.dryRun === true) {
+        const prefix = docIdPrefix?.replace(/[%_]/g, '') ?? '';
+        const rows = await all<{ n: number }>(
+          c.env.DB,
+          `SELECT COUNT(*) AS n FROM ingestion_outbox WHERE status = 'failed'${prefix ? ' AND doc_id LIKE ?' : ''}`,
+          prefix ? [`${prefix}%`] : [],
+        );
+        return c.json({ ok: true, dryRun: true, failedRows: rows[0]?.n ?? 0 });
+      }
+      const requeued = await requeueFailedIngestionOutbox(c.env, { docIdPrefix });
+      const flushed = await flushIngestionOutbox(c.env, { limit: 100 });
+      return c.json({ ok: true, requeued, flushed });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }

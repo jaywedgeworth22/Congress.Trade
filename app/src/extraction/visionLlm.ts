@@ -19,6 +19,7 @@
 import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types';
 import type { Env, Filing, Owner, ParsedTx, TxType } from '../shared/types';
 import { parseAmountRange } from './amounts';
+import { PDFDocument } from 'pdf-lib';
 import { resolveSecret } from '../secrets/infisical';
 
 /**
@@ -90,64 +91,97 @@ export class VisionLlmExtractor implements Extractor {
     }
   }
 
-  async extract(input: ExtractorInput): Promise<ExtractorResult> {
+    async extract(input: ExtractorInput): Promise<ExtractorResult> {
     const key = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
     if (!key) throw new Error(`${this.name}: API key is not configured`);
     if (!input.bytes) throw new Error(`${this.name}: no bytes provided on ExtractorInput`);
 
     const model = await this.resolveModel();
-    const body = buildRequestBody(input.bytes);
 
-    const res = await fetchWithRetry(
-      ENDPOINT(model, key),
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      },
-      this.name,
-    );
-
-    if (!res.ok) {
-      const detail = await safeText(res);
-      throw new Error(`${this.name}: Gemini API ${res.status} ${res.statusText} ${detail}`);
-    }
-
-    const payload = (await res.json()) as GeminiResponse;
-    const jsonText = extractCandidateText(payload);
-
-    const usage = payload.usageMetadata
-      ? {
-          promptTokens: payload.usageMetadata.promptTokenCount,
-          completionTokens: payload.usageMetadata.candidatesTokenCount,
-        }
-      : undefined;
-
-    if (!jsonText) {
-      throw Object.assign(
-        new Error(`${this.name}: Gemini returned no candidate text`),
-        { usage }
-      );
-    }
-
-    let parsed;
+    // Check if we need to chunk (only for scanned_pdf which is all this extractor handles)
+    let chunks: ArrayBuffer[] = [input.bytes];
+    let pageCount = 0;
     try {
-      parsed = parseModelJson(jsonText);
+      const pdfDoc = await PDFDocument.load(input.bytes, { ignoreEncryption: true });
+      pageCount = pdfDoc.getPageCount();
+      const MAX_PAGES = 15;
+      if (pageCount > MAX_PAGES) {
+        chunks = [];
+        for (let i = 0; i < pageCount; i += MAX_PAGES) {
+          const end = Math.min(i + MAX_PAGES, pageCount);
+          const newPdf = await PDFDocument.create();
+          const copiedPages = await newPdf.copyPages(pdfDoc, Array.from({ length: end - i }, (_, idx) => i + idx));
+          copiedPages.forEach((page) => newPdf.addPage(page));
+          const newBytes = await newPdf.save();
+          chunks.push((newBytes.buffer as ArrayBuffer).slice(newBytes.byteOffset, newBytes.byteOffset + newBytes.byteLength));
+        }
+      }
     } catch (err) {
-      throw Object.assign(err as Error, { usage });
+      console.warn(`${this.name}: Failed to parse PDF for chunking (${(err as Error).message}), falling back to raw bytes`);
     }
-    const rows = parsed.map(toParsedTx);
 
-    // Document confidence = mean of per-row confidences (or floor when empty).
+    let allRows: ParsedTx[] = [];
+    let combinedRaw = '';
+    let totalPromptTokens = 0;
+    let totalCompletionTokens = 0;
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunkBytes = chunks[i];
+      const body = buildRequestBody(chunkBytes);
+
+      const res = await fetchWithRetry(
+        ENDPOINT(model, key),
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(120_000), // Slightly longer timeout for large chunks
+        },
+        this.name,
+      );
+
+      if (!res.ok) {
+        const detail = await safeText(res);
+        throw new Error(`${this.name}: Gemini API ${res.status} ${res.statusText} ${detail}`);
+      }
+
+      const payload = (await res.json()) as GeminiResponse;
+      const jsonText = extractCandidateText(payload);
+
+      if (payload.usageMetadata) {
+        totalPromptTokens += payload.usageMetadata.promptTokenCount ?? 0;
+        totalCompletionTokens += payload.usageMetadata.candidatesTokenCount ?? 0;
+      }
+
+      if (!jsonText) {
+        throw new Error(`${this.name}: Gemini returned no candidate text for chunk ${i + 1}/${chunks.length}`);
+      }
+
+      combinedRaw += (i > 0 ? '\n\n--- CHUNK ---\n\n' : '') + jsonText;
+
+      let parsed;
+      try {
+        parsed = parseModelJson(jsonText);
+      } catch (err) {
+        throw new Error(`${this.name}: could not parse model JSON in chunk ${i + 1}/${chunks.length}: ${(err as Error).message}`);
+      }
+      
+      allRows.push(...parsed.map(toParsedTx));
+    }
+
     const docConfidence =
-      rows.length > 0
-        ? rows.reduce((s, r) => s + r.confidence, 0) / rows.length
+      allRows.length > 0
+        ? allRows.reduce((s, r) => s + r.confidence, 0) / allRows.length
         : DEFAULT_CONFIDENCE;
 
+    const usage = totalPromptTokens > 0 || totalCompletionTokens > 0
+      ? { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens }
+      : undefined;
+
     return {
-      transactions: rows,
+      transactions: allRows,
       confidence: docConfidence,
-      raw: jsonText,
+      raw: combinedRaw,
       extractor: this.name,
       modelVersion: model,
       usage,

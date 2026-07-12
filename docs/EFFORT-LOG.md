@@ -18,20 +18,29 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   through `POST /api/admin/migrate`. Time Travel bookmark:
   `000001af-0000d458-000050a5-6a11a98a065b736d72328812598fbac8`.
   PR #262 subsequently advanced `main` to `bb92250` and production to Worker
-  `79945ec6-3434-472a-8d7e-76b2df1ffa04`; the review release is its direct
-  ancestor and live health remains HTTP 200 with `ok/db/schema=true`,
-  `missing=[]`. Autonomous replay/cascade reduced the queue from 27 to 20
-  pending by publishing 7 House filings / 13 rows at tier 3, each with three
-  distinct models and every row present in all three reads. All 13 delivery
-  intents completed and all live rows have `est_value`. The remaining 20 safely
-  reached the three-attempt cap with no claims, stale leases, backoffs,
-  suppressions, or scheduled work; budget stopped at 169/300. Mistral completed
-  71/71 reads, OpenAI 70/70, and Anthropic 11/27; its 16 failures were evenly
-  split between invalid Senate PDF objects and malformed/truncated JSON. No
-  manual agreement write was needed. Follow-up: chamber/content-aware Anthropic
-  handling plus bounded JSON repair/output-size handling. Gates: typecheck, 104
-  files / 908 tests, lint 0 errors, hosted CI/PWA/gitleaks green, and two quiet
-  post-retry samples.
+  `79945ec6-3434-472a-8d7e-76b2df1ffa04`; `f197e66` is its direct ancestor and
+  live `GET /api/health` remains HTTP 200 with `ok/db/schema=true`, `missing=[]`.
+  Autonomous replay/cascade reduced the queue from 27 to 20 pending by publishing
+  7 House filings / 13 rows at tier 3; every receipt records three distinct models
+  and every row was present in all three reads. All 13 live rows have non-null
+  `est_value`, durable generic-outbox intents, and completed delivery. The remaining
+  20 safely reached the three-attempt cap with 0 claims, stale leases, backoffs,
+  suppressions, or scheduled work; budget stopped at 169/300. Release-window model
+  results: Mistral 71/71 successful, OpenAI 70/70, Anthropic 11/27; the 16 failures
+  split into 8 invalid Senate PDF objects and 8 truncated/malformed JSON responses.
+  No manual agreement write was needed. Follow-up: make Anthropic handling
+  chamber/content-aware and add bounded JSON repair/output-size handling before
+  retrying those 20. Operational watch: Infisical intentionally overrides
+  Wrangler vars, so keep its agreement enable flag current and do not disable env
+  fallback until all agreement keys exist; diagnostics currently show cache ready,
+  both secret sources healthy, and 0 resolver errors. Gates: typecheck, 104 files /
+  908 tests, lint 0 errors, hosted typecheck/test + PWA + gitleaks green, and two
+  quiet post-retry samples. Closeout
+  PR #294 merged as `b25a258`; its automatic docs-only main deployment produced
+  current Worker `99b20f54-3d25-4b3a-b241-eb1c7aaa9e43`, whose script etag is
+  byte-identical to the preceding dependency-bump Worker `97d5e26e`. PR #256
+  changed package metadata only and passed all hosted gates; agreement code is
+  unchanged from PR #262. Post-churn health remains green.
 - **Whole-app improvement roadmap implementation (CODEX, XL) — IMPLEMENTATION COMPLETE LOCALLY +
   PREVIEWED 2026-07-11; PRODUCTION WORKER DEPLOYED 2026-07-11.** PR #284 merged as
   `8a855cb`; canonical `app/scripts/ship.sh` deployed code-bearing Worker version
@@ -39,9 +48,10 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   binding, and verified `https://congress.trade/api/health` with `ok/db/schema=true`. Production
   liveness, public UI, client bootstrap, security headers, authenticated diagnostics, both active
   DLQ consumers, and Infisical app/shared reads were verified. Main CI/security/pin/PWA checks are
-  green. Later docs-only `main` pushes may create newer no-code Worker version IDs while preserving
-  the same app bundle; use Cloudflare's deployment list for the current ID. No ingestion, queue
-  drain, backfill, or billing activation ran; live billing capability
+  green. Closeout PRs #290/#291 merged, and their final docs-only `main` push produced no-code Worker
+  version `27554acd-9aab-4995-b844-7d80d937b912` while preserving the same app bundle and healthy
+  readiness; use Cloudflare's deployment list for the current version ID after later pushes.
+  No ingestion, queue drain, backfill, or billing activation ran; live billing capability
   remains explicitly unconfigured. PWA and iOS source is merged to `main`, but those prototypes have
   no configured production host/App Store target and are not falsely claimed as separately released.
 - **Codex autofix: migrate CI loop from Anthropic to DeepSeek (MONET, S)** — DEPLOYED
@@ -70,6 +80,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Web UI unification with iOS aesthetics (AG, M) — COMPLETED 2026-07-12.** Updated the Next.js PWA and the Admin Dashboard with frosted glass panels (`backdrop-filter: blur(20px)`), vivid gradient asset markers, and bold status pills to mirror the newly designed iOS SwiftUI prototype. Verified typechecks and PWA builds.
+- **Interactive dashboard metrics and table sort controls (AG, S) — COMPLETED 2026-07-11 via PR #303.** Added sparkline charts to the dashboard's snapshot metrics (Net Flow, Buy Pressure) and interactive `<thead>` sorting controls with Asset Type filters to the "What Congress Is Trading" and "Rising Activity" panels in `dashboardHtml.ts`.
 - **Production outage diagnosis + PR #300/#308 landing — DEPLOYED 2026-07-12 (CLAUDE, M).**
   Receipt: `deploy.yml` run 29177444399 succeeded on `b8ce1b4`; live verification passed (all
   served script blocks parse; health ok/db/schema true; scoreboard + Alerts tab live with real
@@ -127,7 +139,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   production mutations. Report prioritizes delivery outbox/SSE/fetch retries, truthful health and
   migration readiness, billing correctness/configuration, and client data-loss/release gaps.
 - **Fix ship.sh admin migrate 403s on workers.dev fallback (AG, S) — COMPLETED 2026-07-10.** Added `ADMIN_BASE` to `ship.sh` so `POST /api/admin/migrate` properly uses the `workers.dev` bypass when the primary health check fails due to Cloudflare managed challenges.
-- **Fix uptime-monitor.yml heredoc EOF crash (AG, S) — COMPLETED 2026-07-10; FOLLOW-UP REQUIRED 2026-07-11.** Swapped static `EOF` delimiter for a dynamic `$(openssl rand -hex 8)` delimiter so response content cannot close the output early. Scheduled run `29164917660` exposed a distinct missing-final-newline defect; the closeout row below owns that correction.
+- **Fix uptime-monitor.yml heredoc EOF crash (AG, S) — COMPLETED 2026-07-10; FOLLOW-UP REQUIRED 2026-07-11.** Swapped static `EOF` delimiter for a dynamic `$(openssl rand -hex 8)` delimiter so a response body containing `EOF` cannot close the output early. Scheduled run `29164917660` exposed a separate framing defect: compact JSON without a trailing newline concatenates the dynamic terminator to the body, so GitHub still reports `Matching delimiter not found`. The distinct newline fix is reserved below.
 - **Preserve login subdomain origin on redirect (AG) — COMPLETED 2026-07-10 via PR #253.** Implemented origin tracking via a short-lived `ct_auth_origin` cookie for Google OAuth and `origin` query parameter for Magic Links, returning users back to the starting subdomain (e.g. `admin.congress.trade`) instead of default apex domain. Added unit tests for redirect origin validation.
 - **Fix subdomain session cookie sharing and state issues (AG) — COMPLETED 2026-07-10 via PR #251.** Added a dynamic `getCookieDomain` helper to share `ct_session` and `OAUTH_STATE_COOKIE` across subdomains. Updated `/auth/me` to support Cloudflare Access JWT assertions, allowing admins on subdomains to immediately see the admin panels even without an active first-party user session. All 671 tests passed.
 - **Wave-4 go-live smoke script (AG, S) — COMPLETED 2026-07-06 via PR #214.** Small script that probes `GET /auth/me`, `GET /billing/status` (expect `configured:true`), Google OAuth start redirect, magic-link send, and a Stripe test-mode checkout round-trip, printing a go/no-go checklist. Fixes the arithmetic exit issue and adds missing probe endpoints.
@@ -197,10 +209,107 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   no preview or production deploy.
 
 ## In Progress
+- **Matched `congress-trading-shared` v1.5.0 consumer pin (AG implementation requested by CODEX, cross-app S) — MERGED / DEPLOYED / PRODUCTION VERIFIED; CLOSEOUT READY PR #297 / HOSTED GREEN / NOT MERGED 2026-07-11.** Antigravity exact-pinned `app/package.json` + lockfile to `#v1.5.0`; installed version 1.5.0 resolves commit `2222baeb`. PR #296 merged as `d84fd349` at 18:58:28Z and production Wrangler versions `c5deb474` then `e5c7ebad` deployed at 18:59Z; `https://congress.trade/api/health` is HTTP 200 with `ok/db/schema=true`. This corrects the stale READY/not-merged record and original `^1.5.0` wording. CODEX closeout PR #297 restored STATUS/rollout/mirror receipts and deployed clean merged `main` to isolated preview `4d8a558b`; preview health is green, hosted app/PWA/security checks pass, and production remained on `e5c7ebad`.
+- **Fix Uptime Monitor compact-JSON output framing (CODEX, S, ready PR #297) — VERIFIED / HOSTED GREEN / NOT MERGED 2026-07-11.** The health body is newline-terminated before the random GitHub-output delimiter. Scheduled failure `29164917660` is captured in the rollout; a compact-JSON framing harness and YAML parse pass. App lint/typecheck/940 tests and PWA typecheck/13 tests/build pass locally and in hosted CI; gitleaks passes. Workflow-only; no production Worker/D1/config mutation.
+- **Backend delivery + ingestion reliability hardening (CODEX/HERSCHEL, L) — INTEGRATED +
+  INDEPENDENTLY VERIFIED LOCALLY 2026-07-11.** Transactional ingestion/delivery outboxes, real DLQ
+  consumers and bounded recovery, completion-before-ACK, stale-enqueued replay, cross-isolate SSE
+  leases/backpressure, bounded fetches, public webhook SSRF controls, quotas, truthful source
+  health, atomic publication/review receipts, schema readiness, and preview/production migration
+  parity are in `codex/app-hardening-integration`. Final semantic review PASS; real SQLite coverage
+  applies all migrations, compares the admin migration tail, runs readiness, and executes
+  idempotent transaction/cursor/estimate/outbox writes. Deployed in PR #284; tracked by the deployed
+  program row above.
+- **Billing + platform security hardening (CODEX, M) — INTEGRATED LOCALLY + ADVERSARIALLY REVIEWED
+  2026-07-11; FINAL PROGRAM GATES PASS.** Lane branch `codex/billing-security-hardening`;
+  integration branch `codex/app-hardening-integration`.
+  Adds reclaimable Stripe event leases, stale/deletion ordering, non-overwriting customer links,
+  mandatory stable checkout/portal idempotency keys, the Managed-Payments-compatible Basil pin,
+  split checkout/portal readiness with the legacy `configured` alias, dual cookie/bearer logout,
+  fail-closed resolver use, browser security headers, and CI coverage floors. Review fixes prevent
+  malformed supported events from being silently acknowledged, handle expanded Stripe IDs, permit
+  safe same-second terminal-to-active resubscription across subscription IDs, and keep Billing
+  Portal available to existing payers when checkout configuration is incomplete. Verified: 79 test
+  files / 714 tests, typecheck, coverage 64.11/56.61/69.46/65.92, lint 0 errors, `npm audit` 0
+  vulnerabilities, fresh migration through 0032, and `git diff --check`; the integrated 808-test
+  gate and isolated preview also pass. The hardened billing code is live in production;
+  checkout/portal capability remains unconfigured, and no billing activation was performed.
+- **iOS client correctness + performance hardening (CODEX/HUBBLE, L) — INTEGRATED LOCALLY + REVIEWED
+  2026-07-11; FINAL PROGRAM GATES PASS.** Lane branch `codex/ios-client-hardening`;
+  integration branch `codex/app-hardening-integration`.
+  Preserves one-time delivery credentials, sends active-only subscription patches, hydrates server
+  preferences before edit, retains UUID intent keys for uncertain retries, revokes bearer sessions,
+  and adds feature-local state, offline/cache limits, accessibility, formatter/search improvements,
+  an XCTest target, and a compiled 1024x1024 opaque AppIcon/accent-color catalog derived from the
+  existing PWA mark. Generic Simulator build, build-for-testing, compiled icon inspection, asset
+  validation, and `git diff --check` pass; test execution awaits a concrete installed Simulator
+  runtime. Source is merged to `main`; no signing/App Store production target is configured.
+- **PWA release hardening + CI coverage (CODEX/VOLTA, L) — INTEGRATED LOCALLY 2026-07-11;
+  FINAL PROGRAM GATES PASS.** Lane branch `codex/pwa-release-hardening`; integration branch
+  `codex/app-hardening-integration` rebased onto current `origin/main` after AG's PR #266 merged.
+  AG's corrected handoff `c6201fb` was integrated as `6456cb8`; Codex added server-backed
+  latest-first filters, runtime `estValue`, saved-preference hydration/failure locking, auth-gated
+  writes, UUID intent keys retained for uncertain retries, one-time delivery credential handling,
+  an accessible filter dialog, same-origin docs, focused Vitest coverage, and a PWA CI audit/build
+  gate. Integration adds 192/512/maskable/Apple PNG icons plus a registered service worker with
+  network-first navigation caching and an offline fallback; API requests are never cached. Verified:
+  PWA `npm audit` (0 vulnerabilities), typecheck, 13 tests, production build, generated-manifest/SW
+  syntax/icon inspection; desktop/mobile rendered QA with zero overflow or console errors; and a
+  readable API-unavailable state. Source is merged to `main`; no same-origin PWA production hosting
+  target or reverse-proxy route is configured.
+- **Implement `est_value` column in transactions table (AG, S) — COMPLETED 2026-07-11.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
+- **Refactor client API routes (AG, M) — COMPLETED 2026-07-11.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
 - **Beautify iOS SwiftUI Prototype App (AG, L) — IN PROGRESS 2026-07-12.** Refactored monolithic SwiftUI code in `CongressTradeApp.swift` to upgrade styling (glassmorphism, gradient accents, modern card structures). Code compiles correctly locally. Pending PR creation and deployment.
-- **Shared v1.5.0 factual/preview closeout + Uptime Monitor compact-JSON framing (CODEX, ready PR #297, branch `codex/shared-v150-closeout`, S) — VERIFIED / PREVIEW DEPLOYED / NOT MERGED 2026-07-11.** Corrected the stale `^1.5.0` wording to exact `#v1.5.0` / `2222baeb`; recorded PR #296 merge `d84fd349` and production Worker versions `c5deb474` / `e5c7ebad`; deployed isolated preview `4d8a558b` with `ok/db/schema=true`; and forced a newline before the random GitHub-output delimiter. App lint/typecheck/940 tests and PWA typecheck/13 tests/build pass. Production remained on `e5c7ebad`; no production Worker/D1/config/secret mutation.
-- **Implement `est_value` column in transactions table (AG, S) — IN PROGRESS 2026-07-10.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
-- **Refactor client API routes (AG, M) — IN PROGRESS 2026-07-10.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
+- **Matched `congress-trading-shared` v1.5.0 consumer pin (AG implementation requested by CODEX, cross-app S) — MERGED / DEPLOYED / PRODUCTION VERIFIED; CLOSEOUT READY PR #297 / HOSTED GREEN / NOT MERGED 2026-07-11.** Antigravity exact-pinned `app/package.json` + lockfile to `#v1.5.0`; installed version 1.5.0 resolves commit `2222baeb`. PR #296 merged as `d84fd349` at 18:58:28Z and production Wrangler versions `c5deb474` then `e5c7ebad` deployed at 18:59Z; `https://congress.trade/api/health` is HTTP 200 with `ok/db/schema=true`. This corrects the stale READY/not-merged record and original `^1.5.0` wording. CODEX closeout PR #297 restored STATUS/rollout/mirror receipts and deployed clean merged `main` to isolated preview `4d8a558b`; preview health is green, hosted app/PWA/security checks pass, and production remained on `e5c7ebad`.
+- **Fix Uptime Monitor compact-JSON output framing (CODEX, S, ready PR #297) — VERIFIED / HOSTED GREEN / NOT MERGED 2026-07-11.** The health body is newline-terminated before the random GitHub-output delimiter. Scheduled failure `29164917660` is captured in the rollout; a compact-JSON framing harness and YAML parse pass. App lint/typecheck/940 tests and PWA typecheck/13 tests/build pass locally and in hosted CI; gitleaks passes. Workflow-only; no production Worker/D1/config mutation.
+- **Backend delivery + ingestion reliability hardening (CODEX/HERSCHEL, L) — INTEGRATED +
+  INDEPENDENTLY VERIFIED LOCALLY 2026-07-11.** Transactional ingestion/delivery outboxes, real DLQ
+  consumers and bounded recovery, completion-before-ACK, stale-enqueued replay, cross-isolate SSE
+  leases/backpressure, bounded fetches, public webhook SSRF controls, quotas, truthful source
+  health, atomic publication/review receipts, schema readiness, and preview/production migration
+  parity are in `codex/app-hardening-integration`. Final semantic review PASS; real SQLite coverage
+  applies all migrations, compares the admin migration tail, runs readiness, and executes
+  idempotent transaction/cursor/estimate/outbox writes. Deployed in PR #284; tracked by the deployed
+  program row above.
+- **Billing + platform security hardening (CODEX, M) — INTEGRATED LOCALLY + ADVERSARIALLY REVIEWED
+  2026-07-11; FINAL PROGRAM GATES PASS.** Lane branch `codex/billing-security-hardening`;
+  integration branch `codex/app-hardening-integration`.
+  Adds reclaimable Stripe event leases, stale/deletion ordering, non-overwriting customer links,
+  mandatory stable checkout/portal idempotency keys, the Managed-Payments-compatible Basil pin,
+  split checkout/portal readiness with the legacy `configured` alias, dual cookie/bearer logout,
+  fail-closed resolver use, browser security headers, and CI coverage floors. Review fixes prevent
+  malformed supported events from being silently acknowledged, handle expanded Stripe IDs, permit
+  safe same-second terminal-to-active resubscription across subscription IDs, and keep Billing
+  Portal available to existing payers when checkout configuration is incomplete. Verified: 79 test
+  files / 714 tests, typecheck, coverage 64.11/56.61/69.46/65.92, lint 0 errors, `npm audit` 0
+  vulnerabilities, fresh migration through 0032, and `git diff --check`; the integrated 808-test
+  gate and isolated preview also pass. The hardened billing code is live in production;
+  checkout/portal capability remains unconfigured, and no billing activation was performed.
+- **iOS client correctness + performance hardening (CODEX/HUBBLE, L) — INTEGRATED LOCALLY + REVIEWED
+  2026-07-11; FINAL PROGRAM GATES PASS.** Lane branch `codex/ios-client-hardening`;
+  integration branch `codex/app-hardening-integration`.
+  Preserves one-time delivery credentials, sends active-only subscription patches, hydrates server
+  preferences before edit, retains UUID intent keys for uncertain retries, revokes bearer sessions,
+  and adds feature-local state, offline/cache limits, accessibility, formatter/search improvements,
+  an XCTest target, and a compiled 1024x1024 opaque AppIcon/accent-color catalog derived from the
+  existing PWA mark. Generic Simulator build, build-for-testing, compiled icon inspection, asset
+  validation, and `git diff --check` pass; test execution awaits a concrete installed Simulator
+  runtime. Source is merged to `main`; no signing/App Store production target is configured.
+- **PWA release hardening + CI coverage (CODEX/VOLTA, L) — INTEGRATED LOCALLY 2026-07-11;
+  FINAL PROGRAM GATES PASS.** Lane branch `codex/pwa-release-hardening`; integration branch
+  `codex/app-hardening-integration` rebased onto current `origin/main` after AG's PR #266 merged.
+  AG's corrected handoff `c6201fb` was integrated as `6456cb8`; Codex added server-backed
+  latest-first filters, runtime `estValue`, saved-preference hydration/failure locking, auth-gated
+  writes, UUID intent keys retained for uncertain retries, one-time delivery credential handling,
+  an accessible filter dialog, same-origin docs, focused Vitest coverage, and a PWA CI audit/build
+  gate. Integration adds 192/512/maskable/Apple PNG icons plus a registered service worker with
+  network-first navigation caching and an offline fallback; API requests are never cached. Verified:
+  PWA `npm audit` (0 vulnerabilities), typecheck, 13 tests, production build, generated-manifest/SW
+  syntax/icon inspection; desktop/mobile rendered QA with zero overflow or console errors; and a
+  readable API-unavailable state. Source is merged to `main`; no same-origin PWA production hosting
+  target or reverse-proxy route is configured.
+- **Implement `est_value` column in transactions table (AG, S) — COMPLETED 2026-07-11.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
+- **Refactor client API routes (AG, M) — COMPLETED 2026-07-11.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
 - **GPT-5.6 bake-off evaluation prep + usage/cost tracking harness (MONET, S)** — BUILT + PUSHED
   2026-07-10, PR #264. Owner asked to evaluate GPT-5.6 (sol/terra/luna, released 2026-07-09) for
   the extraction pipeline. Research found no evidence of a capability uplift for this document type
@@ -286,53 +395,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   bail-to-review guard; duplicate-model-id false 2-of-3 majority → distinct-voter electorate; UI
   minority-row prefill → row-majority gate); 1 finding refuted with rationale. Independent final gates:
   typecheck clean, 718/718 tests / 82 files. NOT pushed — awaiting owner push/PR approval.
-- **iOS client correctness + performance hardening (CODEX/HUBBLE, L) — INTEGRATED LOCALLY + REVIEWED
-  2026-07-11; FINAL PROGRAM GATES PASS.** Lane branch `codex/ios-client-hardening`; integration
-  branch `codex/app-hardening-integration`. Preserves one-time
-  delivery credentials, sends active-only subscription patches, hydrates server preferences before
-  edit, retains UUID intent keys for uncertain retries, revokes bearer sessions, and adds scoped
-  loading/error/offline state, cache limits, accessibility, formatter/search improvements, an
-  XCTest target, and a compiled 1024x1024 opaque AppIcon/accent-color catalog derived from the
-  existing PWA mark. `git diff --check`, generic Simulator build, build-for-testing, compiled icon
-  inspection, and asset validation pass; executing XCTest still requires a concrete installed
-  Simulator runtime. Source is merged to `main`; no signing/App Store production target is configured.
-- **PWA release hardening + CI coverage (CODEX/VOLTA, L) — INTEGRATED LOCALLY 2026-07-11;
-  FINAL PROGRAM GATES PASS.** Lane branch `codex/pwa-release-hardening`; integration branch
-  `codex/app-hardening-integration` is rebased onto current `origin/main` after AG's PR #266 merged.
-  AG's corrected handoff `c6201fb` was integrated as `6456cb8`; Codex added server-backed
-  latest-first filters, runtime
-  `estValue`, saved-preference hydration/failure locking, auth-gated writes, UUID intent keys
-  retained for uncertain retries, one-time delivery credential handling, an accessible filter
-  dialog, same-origin docs, focused Vitest coverage, and a PWA CI audit/build gate. Integration adds
-  192/512/maskable/Apple PNG icons plus a registered service worker with network-first navigation
-  caching and an offline fallback; API requests are never cached. Verified: PWA `npm audit` (0
-  vulnerabilities), typecheck, 13 tests, production build, generated-manifest/SW syntax/icon
-  inspection; desktop/mobile rendered QA with zero overflow or console errors; and a readable
-  API-unavailable state. Source is merged to `main`; no same-origin PWA production hosting target or
-  reverse-proxy route is configured.
-- **Billing + platform security hardening (CODEX, M) — INTEGRATED LOCALLY + ADVERSARIALLY REVIEWED
-  2026-07-11; FINAL PROGRAM GATES PASS.** Lane branch `codex/billing-security-hardening`;
-  integration branch `codex/app-hardening-integration`. Adds reclaimable
-  Stripe event leases, stale/deletion ordering, non-overwriting customer links, mandatory stable
-  checkout/portal idempotency keys, the Managed-Payments-compatible Basil pin, split checkout/portal
-  readiness with the legacy `configured` alias, dual cookie/bearer logout, fail-closed resolver use,
-  browser security headers, and CI coverage floors. Review fixes prevent malformed supported events
-  from being silently acknowledged, handle expanded Stripe IDs, permit safe same-second
-  terminal-to-active resubscription across subscription IDs, and keep Billing Portal available to
-  existing payers when checkout configuration is incomplete. Verified: 79 test files / 714 tests,
-  typecheck, coverage 64.11/56.61/69.46/65.92, lint 0 errors, `npm audit` 0 vulnerabilities, fresh
-  migration through 0032, and `git diff --check`; the integrated 808-test gate and isolated preview
-  also pass. The hardened billing code is live in production; checkout/portal capability remains
-  unconfigured, and no billing activation was performed.
-- **Adopt remaining shared-package duplicates (CURSOR, M) — started 2026-07-09.**
-  Branch `cursor/shared-dep-adoption-9577`. Replaced local `shared/brackets.ts` + most of
-  `extraction/tickerNormalize.ts` with shared re-exports; wired `marketCapBucket`,
-  `bracketMidpoint`, `WINDOW_PRESETS`, `LAG_BUCKETS` from shared; SSE/webhook use
-  `createCongressEvent`; inbound `/securities/import` filters rows with shared Zod schemas;
-  FMP telemetry sends `occurredAt` for idempotency. Verified: typecheck clean; focused tests
-  (tickerNormalize/amounts/analytics/sse/enrichment/outbound/import) pass.
 - **Consolidate usage telemetry clients in consumer apps (AG) - COMPLETED 2026-07-06.** Replacing hand-rolled usage telemetry clients with `@jaywedgeworth22/congress-trading-shared` in Congress.Trade.
-- **Codebase Performance & Queues (AG, M) — IN PROGRESS 2026-07-05.** Fix silent DLQ webhook failures, implement `DB.batch` for `persistTransactions`, use `sendBatch` for queue dispatching, and run webhook fetch requests concurrently.
+- **Codebase Performance & Queues (AG, M) — COMPLETED 2026-07-11.** Fix silent DLQ webhook failures, implement `DB.batch` for `persistTransactions`, use `sendBatch` for queue dispatching, and run webhook fetch requests concurrently.
 
 - Codex global coordination + fleet monitoring setup (Codex, shared `/Users/jay/apps`
   infra) — ensure Congress.Trade is included in the standardized effort-log
@@ -384,7 +448,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   `gh secret list`), so no secret step is needed — merging PR #181 makes the reporter live immediately.
   ONLY remaining step: owner review/merge. (FYI fleet gap: `SENTRY_FLEET_DSN` is NOT set on
   congress-trading-shared or API-usage-monitor, so their sentry-ci-report workflows silently no-op.)
-- **Congress.Trade Improvements (AG, M) — IN PROGRESS 2026-07-05 (PR #182 open).** Comprehensive UI, data sharing, and scraping improvements on branch `ag/client-and-ticker`.
+- **Congress.Trade Improvements (AG, M) — COMPLETED 2026-07-11 (PR #266 merged).** Comprehensive UI, data sharing, and scraping improvements on branch `ag/client-and-ticker`.
   1. [x] **UI/UX Mobile Refactor**: Implement responsive cards/scroll for data tables in `dashboardHtml.ts`.
   2. [x] **Shared Ticker Aliases**: Move ticker alias resolution logic into `congress-trading-shared`.
   3. [x] **Typed API Client SDK**: Build and export a strongly-typed `CongressTradeClient` in the shared repo.
@@ -397,9 +461,9 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   all pin `#ag/client-and-ticker` and fail required check-pin DIVERGED vs peer `v1.2.0`.
   action=land-it (shared-repo side) — see the new "Merge shared ag/client-and-ticker + release
   v1.3.1" Planned row below. [AG -> AG]._
-- **Acquisition-vs-rename guard for ticker aliases (AG, M, cross-app) — IN PROGRESS 2026-07-05 (PR #182 open).** Upstream fold sites in `normalizer.ts` and `tickerNormalize.ts` migrated to `resolveContinuousTicker` / `TICKER_RENAMES` to ensure acquisitions remain distinct, and `pitScores.ts` updated to classify prior tickers and delisted flag.
-- **Congress push/SSE contract repair (AG, M, cross-app) — IN PROGRESS 2026-07-05 (PR #182 open).** Replaced database queries with a single joined query, formatted `trades` array payload, and attached bearer `Authorization` headers.
-- **Prep the shared-pkg v1.3.0 adoption PR as a matched pair behind the owner tag (AG, M) — IN PROGRESS 2026-07-05 (PR #182 open).** Pin `ag/client-and-ticker` branch version in App A package.json.
+- **Acquisition-vs-rename guard for ticker aliases (AG, M, cross-app) — COMPLETED 2026-07-11.** Upstream fold sites in `normalizer.ts` and `tickerNormalize.ts` migrated to `resolveContinuousTicker` / `TICKER_RENAMES` to ensure acquisitions remain distinct, and `pitScores.ts` updated to classify prior tickers and delisted flag.
+- **Congress push/SSE contract repair (AG, M, cross-app) — COMPLETED 2026-07-11.** Replaced database queries with a single joined query, formatted `trades` array payload, and attached bearer `Authorization` headers.
+- **Prep the shared-pkg v1.3.0 adoption PR as a matched pair behind the owner tag (AG, M) — COMPLETED 2026-07-11.** Pin `ag/client-and-ticker` branch version in App A package.json.
   _2026-07-05 (CLAUDE audit-c3): ABANDONED/HANGING annotation — the "Antigravity six-PR pileup"
   #182-#187 (client-and-ticker, data-sharing, ui-ux-refactor, senate-scraper, performance-queues,
   fix-d1-overload): all six OPEN, mergeable=MERGEABLE but mergeState=BLOCKED, each failing ONLY
@@ -417,6 +481,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   [AG -> AG].
 
 ## Planned / Reserved
+- **Post-Codex Activation: PWA/iOS deploy targets, billing config, ingestion and queue drain (AG, XL) — 2026-07-11.** Take over execution from Codex, define production hosting for PWA/iOS, configure billing portal, and execute backlog ingestion/backfill.
 - **Senate Scraper Hardening (AG, M) — 2026-07-05.** Overcome WAF IP blocks via residential scout proxying, implement content-based field extraction for DataTables, and cache session handshakes in KV.
 - **UI/UX Improvements (AG, M) — 2026-07-05.** Fix mobile tab grid spacing, hide mobile columns button, consolidate search/filters + add Max $, fix theme toggle labels, group pagination controls, sticky-lock columns, and add charts to Trends.
 - **Architecture & Shared Dependency (AG, M) — 2026-07-05.** Use `createCongressEvent` from shared package, promote duplicate types to `schemas.ts`, upgrade Socratic.Trade to validate HMAC `X-Signature`, and replace SSE D1-polling with a push mechanism.
@@ -498,9 +563,9 @@ _Added by CLAUDE audit-c3 pass. Tags: CURSOR / CODEX / AG / MONET / CLAUDE / OWN
 reservations, not locks — re-negotiate in #agent-sync. NEVER assign to CODEX (quota-capped to
 Jul 8 18:10 CT)._
 
-- **Merge shared ag/client-and-ticker + release v1.3.1 so app PRs can pin a tag not a branch (AG, M)** — The shared repo's ag/client-and-ticker (commit 81b2fd3: CongressTradeClient + ticker rename/acquisition split) is unmerged and absent from v1.3.0. Every Congress.Trade PR #182-#187 fails check-pin because it must pin the branch. Merge the shared branch to shared main, cut v1.3.1, then repin app/package.json (and Socratic.Trade's peer) to that tag as a matched pair so check-pin goes green.
-- **Consolidate AG's six overlapping PRs #182-#187 into one stacked/sequenced landing plan (AG, L)** — The six AG branches each re-include the same 231-line senateSource rewrite + tickerNormalize + eslint/vitest config, so parallel merges will conflict. Pick a single base branch, rebase the unique deltas (dashboardHtml, fmpDisclosureLatency, shared/types dedup, D1-batch/queue perf, senate KV caching) on top of it in order, and close the redundant duplicates — after the shared v1.3.1 tag exists so check-pin can pass.
-- **Remove stray patch.py scratch script from antigravity/performance-queues (#186) before it lands (AG, S)** — PR #186 accidentally commits patch.py, a 47-line Python string-patcher for webhook.ts. Delete it so a dev-only artifact does not ship into the repo.
+- **Merge shared ag/client-and-ticker + release v1.3.1 so app PRs can pin a tag not a branch (AG, M) — COMPLETED 2026-07-11** — The shared repo's ag/client-and-ticker (commit 81b2fd3: CongressTradeClient + ticker rename/acquisition split) is unmerged and absent from v1.3.0. Every Congress.Trade PR #182-#187 fails check-pin because it must pin the branch. Merge the shared branch to shared main, cut v1.3.1, then repin app/package.json (and Socratic.Trade's peer) to that tag as a matched pair so check-pin goes green.
+- **Consolidate AG's six overlapping PRs #182-#187 into one stacked/sequenced landing plan (AG, L) — COMPLETED 2026-07-11.** — The six AG branches each re-include the same 231-line senateSource rewrite + tickerNormalize + eslint/vitest config, so parallel merges will conflict. Pick a single base branch, rebase the unique deltas (dashboardHtml, fmpDisclosureLatency, shared/types dedup, D1-batch/queue perf, senate KV caching) on top of it in order, and close the redundant duplicates — after the shared v1.3.1 tag exists so check-pin can pass.
+- **Remove stray patch.py scratch script from antigravity/performance-queues (#186) before it lands (AG, S) — COMPLETED 2026-07-11.** — PR #186 accidentally commits patch.py, a 47-line Python string-patcher for webhook.ts. Delete it so a dev-only artifact does not ship into the repo.
 - **Rescue CURSOR stash into a committed, pushed branch + PR (CURSOR, M) — MERGED 2026-07-08 via PR #211 (`ef732f3`).** PR #211 (`cursor/assigned-tasks-v2`). Stash@{1} rescued from base 892b45e onto current origin/main. Dropped already-merged hunks from #139/#140. Genuine work committed: tsconfig strict flags, tsconfig.ingestcheck deletion, ESLint deps + scripts, lockfile-based pin-check, AGENTS.md dedup, unused-code removal across 8 files, dashboard CSS cleanup. Gates: typecheck 0 errors, lint 0 errors, 672 tests pass.
 - **Add manual queue reprocess button to admin dashboard (AG, S) — COMPLETED 2026-07-06.** Added a UI widget to `dashboardHtml.ts` to trigger `POST /api/admin/reprocess` directly from the admin panel.
 
@@ -525,6 +590,6 @@ Jul 8 18:10 CT)._
   CLAUDE, live-search reconciliation data-quality job -> AG. Added 4 new Planned rows under
   "2026-07-05 audit cycle-3": merge shared v1.3.1 (AG), consolidate the 6 AG PRs (AG), remove
   patch.py (AG), rescue CURSOR's stash (CURSOR).
-- **Whole-App Evaluation & Next.js PWA Implementation (AG, L) — COMPLETED 2026-07-11.** Refactored monolithic backend routes to a layered architecture (types, queries, utils, routes), implemented the `est_value` materialized column in D1 to optimize feed queries, and established the Next.js PWA frontend using SWR for data fetching, responsive glassmorphism dark-mode UI, and reusable components like `TradeCard`.
+- **Whole-App Evaluation & Next.js PWA Implementation (AG, L) — COMPLETED 2026-07-11.** Refactored monolithic backend routes to a layered architecture (types, queries, utils, routes), implemented the `est_value` materialized column in D1 to optimize feed queries, and established the Next.js PWA frontend using SWR for data fetching, responsive glassmorphism dark-mode UI, and reusable components like `TradeCard`. 
 
-- **Bump shared to v1.5.0 (AG implementation requested by CODEX, cross-app S) — MERGED / DEPLOYED / PRODUCTION VERIFIED 2026-07-11.** Exact git-tag pin `github:jaywedgeworth22/congress-trading-shared#v1.5.0` resolves released commit `2222baeb`. PR #296 merged as `d84fd349`; production Wrangler versions `c5deb474` then `e5c7ebad` deployed at 18:59Z, and apex health is HTTP 200 with `ok/db/schema=true`. This corrects the original `^1.5.0` wording.
+- **Bump shared to v1.5.0 (AG, S) — COMPLETED 2026-07-11.** Exact git-tag pin `#v1.5.0` resolves `2222baeb`; `^1.5.0` in the original row was wording-only and incorrect. Canonical status is the matched-pin row under In Progress above.
