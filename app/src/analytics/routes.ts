@@ -162,6 +162,7 @@ function commonFromQuery(q: Record<string, string>): CommonQuery {
     party: asPartyBucket(q.party),
     source: asSourceFilter(q.source),
     minConf: minConf !== undefined && Number.isFinite(minConf) ? minConf : undefined,
+    excludeOptions: q.excludeOptions === 'true',
   };
 }
 

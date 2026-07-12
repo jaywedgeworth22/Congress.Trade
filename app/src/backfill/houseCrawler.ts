@@ -28,6 +28,7 @@
 import type { Env } from '../shared/types';
 import { fetchHouseIndex, type HouseFiling } from '../ingestion/houseSource';
 import { insertFilingIfNew, enqueueFilingNew, type DiscoveredFiling } from '../ingestion/watcher';
+import { cleanFilerName } from '../extraction/nameNormalizer';
 
 // ---------------------------------------------------------------------------
 // Public contract (mirrors the *BackfillOptions/*BackfillResult conventions in
@@ -137,18 +138,18 @@ export async function runHouseHistoricalBackfill(
       // Derive docId + sourceUrl exactly as watcher.ts does: the canonical
       // pipeline doc id `H-{year}-{DocID}` (houseDocId) and the direct PTR PDF
       // url (housePtrPdfUrl), both precomputed on HouseFiling.
+      const rawName = [f.first, f.last].filter(Boolean).join(' ');
+      const cleanName = cleanFilerName(rawName);
       const discoveredFiling: DiscoveredFiling = {
         docId: f.pipelineDocId,
         chamber: 'house',
         sourceUrl: f.sourceUrl,
         filedDate: f.filingDate,
-        filerId: `house-${f.stateDst.toLowerCase()}-${[f.first, f.last]
-          .filter(Boolean)
-          .join(' ')
+        filerId: `house-${f.stateDst.toLowerCase()}-${cleanName
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/^-+|-+$/g, '')}`,
-        filerName: [f.first, f.last].filter(Boolean).join(' ').trim() || null,
+        filerName: cleanName || null,
         state: f.stateDst.slice(0, 2).toUpperCase() || null,
         district: f.stateDst.length > 2 ? String(Number(f.stateDst.slice(2))) : null,
       };

@@ -4193,6 +4193,36 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     return c.json({ subscriptions: subs.map(adminSubscription), count: subs.length });
   });
 
+  r.post('/clean-asset-names', async (c) => {
+    // Note: D1 query limit is 100 statements or results.
+    // We will page through transactions and clean the asset names.
+    const { offset = 0, limit = 500 } = c.req.query() as { offset?: string | number, limit?: string | number };
+    const numOffset = Number(offset);
+    const numLimit = Number(limit);
+    
+    const rows = await all<{ id: string, asset_name: string }>(
+      c.env.DB,
+      'SELECT id, asset_name FROM transactions ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      [numLimit, numOffset]
+    );
+    
+    if (rows.length === 0) return c.json({ ok: true, cleaned: 0, done: true });
+
+    let cleaned = 0;
+    const { cleanAssetString } = await import('../extraction/nameNormalizer');
+
+    // Run sequentially to avoid D1 limits on concurrent batches
+    for (const row of rows) {
+      const cleanName = cleanAssetString(row.asset_name);
+      if (cleanName !== row.asset_name) {
+        await c.env.DB.prepare('UPDATE transactions SET asset_name = ? WHERE id = ?').bind(cleanName, row.id).run();
+        cleaned++;
+      }
+    }
+
+    return c.json({ ok: true, cleaned, processed: rows.length, nextOffset: numOffset + numLimit, done: rows.length < numLimit });
+  });
+
   // Operator provisioning keeps explicit integration client ids; end-user
   // routes derive ownership from the authenticated account instead.
   r.post('/subscriptions', async (c) => {

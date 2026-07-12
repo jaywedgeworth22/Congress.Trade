@@ -3,11 +3,11 @@
   --bg: hsl(222, 47%, 7%);
   --panel: hsla(217, 30%, 15%, 0.7);
   --panel-2: hsla(217, 30%, 22%, 0.85);
-  --border: hsla(217, 30%, 25%, 0.5);
-  --border-hover: hsla(217, 30%, 40%, 0.85);
+  --border: hsla(217, 30%, 35%, 0.6);
+  --border-hover: hsla(217, 30%, 45%, 0.85);
   --border-glow: hsla(222, 100%, 64%, 0.4);
-  --text: hsl(210, 40%, 98%);
-  --muted: hsl(215, 20%, 65%);
+  --text: hsl(210, 40%, 100%);
+  --muted: hsl(215, 20%, 80%);
   --accent: hsl(222, 100%, 64%);
   --accent-glow: hsla(222, 100%, 64%, 0.25);
   --buy: hsl(142, 70%, 45%);
