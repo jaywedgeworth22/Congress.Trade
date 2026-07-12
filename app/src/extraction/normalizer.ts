@@ -29,6 +29,7 @@ import {
   resolvePreferredTickerFromAssetName,
   resolveTickerDeterministic,
 } from './tickerNormalize';
+import { cleanAssetString } from './nameNormalizer';
 import { resolveContinuousTicker } from '@jaywedgeworth22/congress-trading-shared';
 import { flushDeliveryOutbox } from '../delivery/outbox';
 
@@ -282,11 +283,12 @@ function buildTransaction(
   nowIso: string,
   rowIndex: number,
 ): FlaggedTx {
+  const cleanedAssetName = cleanAssetString(p.assetName);
   const s = scoreFields(
     p.confidence,
     {
       ticker: p.ticker,
-      assetName: p.assetName,
+      assetName: cleanedAssetName,
       amountMin: p.amountMin,
       amountMax: p.amountMax,
       txType: p.txType,
@@ -297,7 +299,7 @@ function buildTransaction(
   );
   const assetType = canonicalizeAssetType(p.assetType, p.assetTypeName ?? null, {
     isOption: p.isOption,
-    assetName: p.assetName,
+    assetName: cleanedAssetName,
   });
 
   const tx: Transaction = {
@@ -306,7 +308,7 @@ function buildTransaction(
     filerId: filing.filerId,
     txDate: p.txDate,
     owner: normalizeOwner(p.owner),
-    assetName: p.assetName || s.ticker || '(unknown)',
+    assetName: cleanedAssetName || s.ticker || '(unknown)',
     ticker: s.ticker,
     assetType: p.assetType,
     assetTypeName: p.assetTypeName ?? null,
