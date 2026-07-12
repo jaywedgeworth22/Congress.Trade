@@ -1580,6 +1580,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <p class="note">API HOOK: <code>POST /api/admin/reprocess</code>.</p>
     </div>
     <div class="section">
+      <h3>Model Benchmarking</h3>
+      <p class="sub">Run systematic tests of different model combinations against a sample of human-resolved filings (ground truth) to evaluate autonomy vs accuracy. Note: Benchmark evaluates up to 100 docs per run to control LLM costs. Requires ~90-95% certainty.</p>
+      <div class="row-flex" style="margin-bottom:10px">
+        <button class="btn" id="btnRunBenchmark" onclick="runBenchmark()">Run Benchmark Evaluation</button>
+        <span id="benchmarkMsg" class="note"></span>
+      </div>
+      <div id="benchmarkResults" class="diag-grid" aria-live="polite"></div>
+    </div>
+    <div class="section">
       <h3>Source Health</h3>
       <p class="sub">First-seen timestamps are logged per filing so real refresh cadence is measured, not assumed.</p>
       <div class="row-flex" style="margin-bottom:10px">
@@ -1595,10 +1604,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <h3>Market Data Coverage</h3>
       <p class="sub">Ticker enrichment coverage for company name, sector, country, and market-cap fields. This is the data behind company drawers, Sector, Country, and Market Cap columns.</p>
       <div class="row-flex">
-        <label class="lbl">Max</label>
-        <input id="mdMax" type="number" min="1" max="200" value="40" style="width:90px" />
-        <label class="lbl">Calls / Min</label>
-        <input id="mdPerMin" type="number" min="1" max="1000" value="250" style="width:100px" />
+        <label class="lbl">Max Rows</label>
+        <input id="mdMax" type="number" min="1" max="200" value="40" style="width:90px" title="Maximum ticker rows to process in this run" />
+        <label class="lbl">Max Calls / Min</label>
+        <input id="mdPerMin" type="number" min="1" max="1000" value="250" style="width:100px" title="API throttle limit" />
         <button class="btn ghost sm" onclick="runMarketBackfill(true)">Dry Run</button>
         <button class="btn" onclick="runMarketBackfill(false)">Run One Pass</button>
         <button class="btn ghost sm" onclick="loadMarketCoverage()">Reload</button>
@@ -1672,12 +1681,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="plan-grid" id="pricingPlans">
       <div class="plan sel" id="planMonthly" onclick="selectPlan('monthly')">
         <div class="cad">Monthly</div>
-        <div class="price">$15<span class="per">/mo</span></div>
+        <div class="price">$9<span class="per">/mo</span></div>
       </div>
       <div class="plan" id="planAnnual" onclick="selectPlan('annual')">
-        <span class="save">SAVE ~22%</span>
+        <span class="save">SAVE ~17%</span>
         <div class="cad">Annual</div>
-        <div class="price">$140<span class="per">/yr</span></div>
+        <div class="price">$90<span class="per">/yr</span></div>
       </div>
     </div>
     <p class="trial-note" id="pricingTrialNote">7-day trial. No charge today.</p>
@@ -4050,6 +4059,7 @@ function loadHealth() {
         var rts = s.avgReleasedToSeenSec == null ? '—' : '~' + fmtDuration(s.avgReleasedToSeenSec);
         var sti = s.avgSeenToImportedSec == null ? '—' : fmtDuration(s.avgSeenToImportedSec);
         var status = s.status || 'unknown';
+        if (status === 'unknown') status = 'unknown (TBD)';
         if (s.stale && status === 'error') status += ' · stale';
         var statusTitle = s.lastError || (s.stale ? ('No successful check within ' + fmtDuration(s.staleAfterSec || 0)) : '');
         return '<tr class="row">' +
@@ -4108,10 +4118,11 @@ function loadDiagnostics() {
         } else {
           cards.innerHTML = connections.map(function (c) {
             var st = c.status || 'unknown';
+            if (st === 'unknown') st = 'unknown (TBD)';
             var configured = c.configured == null ? '—' : (c.configured ? 'Yes' : 'No');
             return '<div class="diag-card">' +
               '<div class="diag-head"><div class="diag-title">' + esc(c.label || c.id || 'Connection') + '</div>' +
-                '<span class="diag-status ' + esc(st) + '">' + esc(st) + '</span></div>' +
+                '<span class="diag-status ' + esc(st.split(' ')[0]) + '">' + esc(st) + '</span></div>' +
               '<div class="diag-meta">' +
                 '<span>Configured</span><strong>' + esc(configured) + '</strong>' +
                 '<span>Last Used</span><strong>' + esc(dateTimeText(c.lastUsedAt)) + '</strong>' +
@@ -4247,6 +4258,91 @@ function loadMarketCoverage() {
     .catch(function (e) {
       if (box) box.innerHTML = '<div class="state">' + esc(isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load market coverage: ' + e.message)) + '</div>';
     });
+}
+
+async function runBenchmark() {
+  var msg = el('benchmarkMsg');
+  var res = el('benchmarkResults');
+  var btn = el('btnRunBenchmark');
+  msg.innerText = 'Fetching ground-truth docs...';
+  msg.style.color = '';
+  res.innerHTML = '';
+  btn.disabled = true;
+
+  const lineups = [
+    {
+      name: "Baseline (Mistral + Gemini -> Anthropic)",
+      models: {
+        a: { provider: 'mistral', model: 'mistral-ocr-latest' },
+        b: { provider: 'gemini', model: 'gemini-3.5-flash' },
+        c: { provider: 'anthropic', model: 'claude-haiku-4-5' }
+      }
+    },
+    {
+      name: "Tier 4 Vision (Mistral + Gemini -> Anthropic -> Gemini Pro)",
+      models: {
+        a: { provider: 'mistral', model: 'mistral-ocr-latest' },
+        b: { provider: 'gemini', model: 'gemini-3.5-flash' },
+        c: { provider: 'anthropic', model: 'claude-haiku-4-5' },
+        d: { provider: 'gemini', model: 'gemini-2.5-pro' }
+      }
+    }
+  ];
+
+  try {
+    const docsData = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=50', 'GET');
+    const docs = docsData.docs || [];
+    if (!docs.length) {
+      msg.innerText = 'No ground-truth docs found.';
+      btn.disabled = false;
+      return;
+    }
+
+    var html = '<table><thead><tr><th>Lineup</th><th>Autonomy Rate (90-95% certainty)</th><th>Human Review Req.</th></tr></thead><tbody id="benchmarkTbody">';
+    for (var i = 0; i < lineups.length; i++) {
+      html += '<tr id="lineup-' + i + '"><td><strong>' + esc(lineups[i].name) + '</strong></td><td id="auto-' + i + '">Pending...</td><td id="human-' + i + '">Pending...</td></tr>';
+    }
+    html += '</tbody></table>';
+    res.innerHTML = html;
+
+    for (let i = 0; i < lineups.length; i++) {
+      let published = 0;
+      let flagged = 0;
+      msg.innerText = 'Evaluating Lineup ' + (i + 1) + '/' + lineups.length + '... (0/' + docs.length + ')';
+      
+      for (let j = 0; j < docs.length; j++) {
+        msg.innerText = 'Evaluating Lineup ' + (i + 1) + '/' + lineups.length + '... (' + (j + 1) + '/' + docs.length + ')';
+        try {
+          const result = await apiCall('/api/admin/benchmark/dry-run/' + docs[j], 'POST', { models: lineups[i].models });
+          const autoPublished = result.outcome === 'published' || result.outcome === 'would_publish';
+          // Check if confidence is >= 0.90 for published
+          let confidence = 1;
+          if (result.rows && result.rows.length) {
+            confidence = result.rows.reduce((min, r) => Math.min(min, r.confidence || 0), 1);
+          }
+          if (autoPublished && confidence >= 0.90) {
+            published++;
+          } else {
+            flagged++;
+          }
+        } catch (e) {
+          flagged++; // treat error as flagged for review
+        }
+        
+        let autoRate = ((published / (j + 1)) * 100).toFixed(1) + '%';
+        let humanRate = ((flagged / (j + 1)) * 100).toFixed(1) + '%';
+        el('auto-' + i).innerText = autoRate + ' (' + published + '/' + (j + 1) + ')';
+        el('human-' + i).innerText = humanRate + ' (' + flagged + '/' + (j + 1) + ')';
+      }
+    }
+    msg.innerText = 'Benchmark completed!';
+    msg.style.color = 'var(--accent)';
+  } catch (err) {
+    msg.innerText = 'Error: ' + err.message;
+    msg.style.color = 'var(--err)';
+  } finally {
+    btn.disabled = false;
+  }
 }
 function runMarketBackfill(dryRun) {
   var msg = el('mdMsg');
@@ -4612,7 +4708,7 @@ function loadTrPerformers() {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.party) +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.partyBucket) +
           esc(name) + '</div></div></td>' +
         '<td class="muted">' + r.tradeCount + ' buys</td>' +
         '<td class="muted">' + Math.round(100 * (r.winRate || 0)) + '% win</td>' +
@@ -4679,14 +4775,15 @@ function loadTrClusters() {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) { return memberAvatarHtml(m.fullName, m.photoUrl); }).join('');
       var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
       var parties = c.parties.D + ' Democrats, ' + c.parties.R + ' Republicans' + (c.parties.O ? ', ' + c.parties.O + ' Other' : '');
-      var bip = (c.parties.D > 0 && c.parties.R > 0) ? ' <span class="chip" title="Both parties traded">· bipartisan</span>' : '';
-      var range = dateText(c.firstSeen) + (c.lastSeen && c.lastSeen !== c.firstSeen ? ' → ' + dateText(c.lastSeen) : '');
+      var bip = c.isBipartisan ? ' <span class="muted">· bipartisan</span>' : '';
+      var ds = new Date(c.minDate + 'T00:00:00Z'), de = new Date(c.maxDate + 'T00:00:00Z');
+      var range = fmtSDate(ds) + (c.minDate === c.maxDate ? '' : ' → ' + fmtSDate(de));
       return '<div class="ccard clickable" data-ticker="' + esc(c.ticker) + '">' +
         '<div class="chead">' + tickerLogoHtml(c.ticker, c.name) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
         '<div><strong>' + c.memberCount + '</strong> ' + (c.memberCount === 1 ? 'politician' : 'politicians') + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
-        '<div class="chip">' + esc(parties) + '</div>' +
-        '<div class="chip">' + esc(range) + ' · ' + estUsd(c.estVolumeUsd) + '</div>' +
+        '<div class="muted" style="margin-top:2px">' + esc(parties) + '</div>' +
+        '<div class="muted" style="margin-top:2px">' + esc(range) + ' · ' + estUsd(c.estVolumeUsd) + '</div>' +
         '<div class="faces">' + faces + '</div></div>';
     }).join('');
   }).catch(function (e) { box.innerHTML = '<div class="chip">Could not load: ' + esc(e.message) + '</div>'; });
