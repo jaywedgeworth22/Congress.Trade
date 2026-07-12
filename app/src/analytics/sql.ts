@@ -73,7 +73,22 @@ export function asPartyBucket(v: unknown): PartyBucket | undefined {
 }
 
 export function asChamber(v: unknown): Chamber | undefined {
-  return v === 'house' || v === 'senate' ? v : undefined;
+  return v === 'house' || v === 'senate' || v === 'executive' ? v : undefined;
+}
+
+/**
+ * Parse a CSV chamber selection (e.g. "house,executive"). Returns undefined
+ * for an empty/absent/fully-invalid value — the DEFAULT selection, which every
+ * query below treats as house+senate: executive (OGE 278-T) rows only appear
+ * when explicitly requested, so a single mega-filing can't swamp the
+ * congressional analytics.
+ */
+export function asChambers(v: unknown): Chamber[] | undefined {
+  if (typeof v !== 'string' || !v.trim()) return undefined;
+  const parsed = Array.from(
+    new Set(v.split(',').map((part) => asChamber(part.trim())).filter((c): c is Chamber => !!c)),
+  ).sort(); // sorted so KV cache keys are stable across selection order
+  return parsed.length ? parsed : undefined;
 }
 
 /**
@@ -173,6 +188,12 @@ export interface CommonFilters {
   /** Time window applied to t.tx_date. 'all' drops the date clause. */
   window?: Window;
   chamber?: Chamber;
+  /**
+   * Multi-chamber selection (takes precedence over `chamber`). ABSENT means
+   * the default congressional view: house + senate + unresolved, with
+   * executive rows excluded (see {@link asChambers}).
+   */
+  chambers?: Chamber[];
   /** Party bucket (D/R/O); matched against {@link PARTY_BUCKET_SQL}. */
   party?: PartyBucket;
   /** 'all' (default) applies no source filter; else t.source = source. */
@@ -206,9 +227,16 @@ export function buildCommonFilters(p: CommonFilters): { where: string[]; params:
     where.push("t.tx_date >= date('now', ?)");
     params.push(offset);
   }
-  if (p.chamber) {
+  if (p.chambers && p.chambers.length) {
+    where.push(`${CHAMBER_EXPR} IN (${p.chambers.map(() => '?').join(', ')})`);
+    for (const c of p.chambers) params.push(c);
+  } else if (p.chamber) {
     where.push(`${CHAMBER_EXPR} = ?`);
     params.push(p.chamber);
+  } else {
+    // Default view = congressional. Executive (OGE 278-T) rows appear only on
+    // explicit request; NULL-chamber rows (unresolved filers) stay visible.
+    where.push(`(${CHAMBER_EXPR} IS NULL OR ${CHAMBER_EXPR} <> 'executive')`);
   }
   if (p.party) {
     where.push(`${PARTY_BUCKET_SQL} = ?`);

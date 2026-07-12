@@ -222,6 +222,13 @@ export interface TxQueryParams {
   member?: string;
   memberName?: string;
   chamber?: Chamber;
+  /**
+   * Multi-chamber selection (takes precedence over `chamber`). ABSENT means
+   * the default congressional view: house + senate + unresolved-chamber rows,
+   * with executive (OGE 278-T) rows excluded — they appear only on explicit
+   * request so a single mega-filing can't swamp the feed.
+   */
+  chambers?: Chamber[];
   type?: TxType;
   /** Inclusive filter on the disclosed bracket floor (`amount_min`). */
   minAmount?: number;
@@ -347,9 +354,16 @@ function buildTxFilters(
     where.push('t.tx_type = ?');
     params.push(p.type);
   }
-  if (p.chamber) {
+  if (p.chambers && p.chambers.length) {
+    where.push(`${CHAMBER_EXPR} IN (${p.chambers.map(() => '?').join(', ')})`);
+    params.push(...p.chambers);
+  } else if (p.chamber) {
     where.push(`${CHAMBER_EXPR} = ?`);
     params.push(p.chamber);
+  } else {
+    // Default view = congressional. Executive rows appear only on explicit
+    // request; NULL-chamber rows (unresolved filers) stay visible.
+    where.push(`(${CHAMBER_EXPR} IS NULL OR ${CHAMBER_EXPR} <> 'executive')`);
   }
   if (Number.isFinite(p.minAmount)) {
     where.push('t.amount_min >= ?');
