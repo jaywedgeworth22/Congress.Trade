@@ -150,8 +150,7 @@ final class CongressTradeAPIClient {
             body: [
                 "type": "update_preferences",
                 "payload": [
-                    "watchlist": tickers,
-                    "defaultWindow": "all"
+                    "watchlist": tickers
                 ]
             ]
         )
@@ -207,13 +206,17 @@ final class CongressTradeAPIClient {
         try await request(endpointURL(path))
     }
 
-    private func postCommand<T: Decodable>(idempotencyKey: String, body: [String: Any]) async throws -> T {
+    private func postCommand<T: Decodable>(idempotencyKey: String, body: [String: Any]) async throws -> ClientCommandResponse<T> {
         var request = try makeRequest(endpointURL("commands"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "content-type")
         request.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
-        return try await send(request)
+        let response: ClientCommandResponse<T> = try await send(request)
+        if response.command.status == "failed" {
+            throw APIError.server(status: 400, message: response.command.error ?? "Command failed")
+        }
+        return response
     }
 
     private func request<T: Decodable>(_ url: URL) async throws -> T {
