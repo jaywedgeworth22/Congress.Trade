@@ -77,33 +77,7 @@ export function classifyTransientIngestError(
   return new IngestRetryError(message, delay);
 }
 
-/** Stream through a byte-counting guard so chunked responses cannot exhaust an isolate. */
-export function limitedFilingBody(
-  body: ReadableStream<Uint8Array>,
-  limit = MAX_RAW_FILING_BYTES,
-): ReadableStream<Uint8Array> {
-  const reader = body.getReader();
-  let bytes = 0;
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      const next = await reader.read();
-      if (next.done) {
-        controller.close();
-        return;
-      }
-      bytes += next.value.byteLength;
-      if (bytes > limit) {
-        await reader.cancel('filing exceeds size limit').catch(() => {});
-        controller.error(new FilingTooLargeError(`filing exceeds ${limit} byte limit`));
-        return;
-      }
-      controller.enqueue(next.value);
-    },
-    async cancel(reason) {
-      await reader.cancel(reason).catch(() => {});
-    },
-  });
-}
+
 
 /**
  * Buffer the size-guarded body into memory. R2 `put()` rejects a plain JS
@@ -116,7 +90,7 @@ export async function bufferFilingBody(
   body: ReadableStream<Uint8Array>,
   limit = MAX_RAW_FILING_BYTES,
 ): Promise<Uint8Array> {
-  const reader = limitedFilingBody(body, limit).getReader();
+  const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
   for (;;) {
@@ -124,6 +98,10 @@ export async function bufferFilingBody(
     if (next.done) break;
     chunks.push(next.value);
     total += next.value.byteLength;
+    if (total > limit) {
+      await reader.cancel('filing exceeds size limit').catch(() => {});
+      throw new FilingTooLargeError(`filing exceeds ${limit} byte limit`);
+    }
   }
   const out = new Uint8Array(total);
   let offset = 0;
@@ -205,13 +183,11 @@ export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Pr
     const key = rawKeyFor(docId);
 
     // Persist raw bytes verbatim; retain content-type so the classifier can use
-    // it as a cheap signal without re-fetching. Buffered because R2 needs a
-    // known length and chunked upstreams (e.g. OGE) omit Content-Length.
+    // it as a cheap signal without re-fetching.
     const rawBytes = await bufferFilingBody(res.body);
     await env.RAW_FILES.put(key, rawBytes, {
       httpMetadata: { contentType: contentType || 'application/octet-stream' },
     });
-
     await run(
       env.DB,
       `UPDATE filings
