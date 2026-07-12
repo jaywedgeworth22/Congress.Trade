@@ -104,6 +104,7 @@ export class VisionLlmExtractor implements Extractor {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(90_000),
       },
       this.name,
     );

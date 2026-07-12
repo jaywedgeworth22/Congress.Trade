@@ -870,7 +870,8 @@ export function priceRangeQuery(
   const clause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
   // price_eod carries a daily volume column; spx_eod does not.
   const cols = table === 'price_eod' ? 'date, close, volume' : 'date, close';
-  return { sql: `SELECT ${cols} FROM ${table}${clause} ORDER BY date ASC`, params };
+  const limitClause = (!from && !to) ? ' LIMIT 1000' : '';
+  return { sql: `SELECT ${cols} FROM ${table}${clause} ORDER BY date ASC${limitClause}`, params };
 }
 
 /** JSON.parse that returns null instead of throwing. */
