@@ -1792,6 +1792,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <span id="secretUpdateMsg" class="note"></span>
       </div>
       <div id="diagConnections" class="diag-grid" aria-live="polite"></div>
+      <h3 style="margin-top:14px">Settings / Runtime Secrets</h3>
+      <table>
+        <thead><tr><th>Category</th><th>Key</th><th>Source</th><th style="text-align:right">Action</th></tr></thead>
+        <tbody id="diagSettings"></tbody>
+      </table>
       <h3 style="margin-top:14px">Recent App Errors</h3>
       <table>
         <thead><tr><th>When</th><th>Area</th><th>Subject</th><th>Message</th></tr></thead>
@@ -1932,6 +1937,7 @@ function chamberLabel(c) {
   var s = String(c == null ? '' : c).trim().toLowerCase();
   if (s === 'house' || s === 'h') return 'House';
   if (s === 'senate' || s === 's') return 'Senate';
+  if (s === 'executive' || s === 'oge' || s === 'exec') return 'Exec';
   return c ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 }
 /* Spell out a US state/territory from its 2-letter code for the politician drawer. */
@@ -4361,10 +4367,12 @@ function loadDiagnostics() {
   var errors = el('diagErrors');
   var users = el('diagUsers');
   var logins = el('diagLogins');
+  var settingsTable = el('diagSettings');
   if (cards) cards.innerHTML = '<div class="state">Loading connection status…</div>';
   if (errors) errors.innerHTML = stateRow(4, 'Loading recent errors…');
   if (users) users.innerHTML = '<div class="state">Loading users…</div>';
   if (logins) logins.innerHTML = stateRow(4, 'Loading recent logins…');
+  if (settingsTable) settingsTable.innerHTML = stateRow(4, 'Loading settings…');
   return fetch('/api/admin/diagnostics', { headers: adminHeaders() })
     .then(okOrThrow)
     .then(function (data) {
@@ -4389,6 +4397,21 @@ function loadDiagnostics() {
               '</div>' +
               (c.note ? '<div class="diag-note">' + esc(c.note) + '</div>' : '') +
             '</div>';
+          }).join('');
+        }
+      }
+      var items = data.items || [];
+      if (settingsTable) {
+        if (items.length === 0) {
+          settingsTable.innerHTML = stateRow(4, 'No settings available.');
+        } else {
+          settingsTable.innerHTML = items.map(function(item) {
+            return '<tr class="row">' +
+              '<td class="muted">' + esc(item.category) + '</td>' +
+              '<td><code>' + esc(item.key) + '</code></td>' +
+              '<td class="muted">' + esc(item.source) + '</td>' +
+              '<td style="text-align:right"><button class="btn ghost sm" data-source="' + esc(item.source) + '" data-key="' + esc(item.key) + '" onclick="editInfisicalSecret(this)">Edit</button></td>' +
+            '</tr>';
           }).join('');
         }
       }
@@ -4466,6 +4489,15 @@ function refreshInfisicalSecrets() {
     .catch(function (e) {
       if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Refresh failed: ' + e.message);
     });
+}
+
+function editInfisicalSecret(btn) {
+  var source = btn.getAttribute('data-source');
+  var key = btn.getAttribute('data-key');
+  if (el('updateSecretSource')) el('updateSecretSource').value = source === 'shared' ? 'shared' : 'app';
+  if (el('updateSecretKey')) el('updateSecretKey').value = key || '';
+  if (el('updateSecretSource')) window.scrollTo({ top: el('updateSecretSource').offsetTop - 100, behavior: 'smooth' });
+  if (el('updateSecretValue')) el('updateSecretValue').focus();
 }
 
 function updateInfisicalSecret() {
@@ -6271,6 +6303,7 @@ el('subsBody').innerHTML = stateRow(5, 'Loading…');
 el('healthBody').innerHTML = stateRow(9, 'Loading…');
 el('marketCoverage').innerHTML = '<div class="state">Loading market-data coverage…</div>';
 el('diagConnections').innerHTML = '<div class="state">Loading connection status…</div>';
+el('diagSettings').innerHTML = stateRow(4, 'Loading…');
 el('diagErrors').innerHTML = stateRow(4, 'Loading…');
 el('diagUsers').innerHTML = '<div class="state">Loading users…</div>';
 el('diagLogins').innerHTML = stateRow(4, 'Loading…');
