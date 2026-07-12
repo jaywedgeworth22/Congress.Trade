@@ -12,7 +12,7 @@
  * parse, anti-bot) must NOT block the other, and the failure is logged.
  */
 
-import type { Env } from '../shared/types';
+import type { Chamber, Env } from '../shared/types';
 import { batch, run } from '../shared/db';
 import {
   getConfig,
@@ -25,6 +25,7 @@ import { fetchSenatePtrFilings } from './senateSource';
 import { recordDisclosureLatencyCandidate, storageMissing } from './fmpDisclosureLatency';
 import { enqueueIngestionOutboxNow, ingestionOutboxInsertForDoc } from './outbox';
 import { resolveSecret } from '../secrets/infisical';
+import { pollOgeExecutive } from './ogeSource';
 
 /** Env shape (read defensively — Env is the frozen foundation contract). */
 type EnvWithFlags = Env & { HOUSE_LIVE_SEARCH_ENABLED?: string };
@@ -43,7 +44,7 @@ async function houseLiveSearchEnabled(env: Env): Promise<boolean> {
 /** One row to (maybe) insert + enqueue. */
 export interface DiscoveredFiling {
   docId: string;
-  chamber: 'house' | 'senate';
+  chamber: Chamber;
   sourceUrl: string;
   /** Official filing/report date when the source index provides it. */
   filedDate?: string | null;
@@ -361,11 +362,30 @@ async function pollSenate(env: Env, now: Date): Promise<number> {
 export interface WatcherResult {
   house: SourceAttemptOutcome | 'skipped';
   senate: SourceAttemptOutcome | 'skipped';
+  executive: SourceAttemptOutcome | 'skipped';
+}
+
+/**
+ * Poll the OGE President/VP index for new executive 278-T filings. Self-gated
+ * to a slow cadence inside pollOgeExecutive (filings land every few weeks);
+ * returns the count of genuinely-new filings, or null when disabled/not due.
+ */
+export async function pollExecutive(
+  env: Env,
+  now: Date,
+  opts: { force?: boolean } = {},
+): Promise<number | null> {
+  const nowIso = now.toISOString();
+  const filings = await pollOgeExecutive(env, now, fetch, opts);
+  if (filings === null) return null;
+  const newCount = await persistAndEnqueue(env, filings, nowIso);
+  await logPoll(env, 'oge', nowIso, newCount, nowIso);
+  return newCount;
 }
 
 export async function runWatcher(env: Env, now: Date = new Date()): Promise<WatcherResult> {
   const cfg = await getConfig(env);
-  const result: WatcherResult = { house: 'skipped', senate: 'skipped' };
+  const result: WatcherResult = { house: 'skipped', senate: 'skipped', executive: 'skipped' };
 
   // HOUSE -----------------------------------------------------------------
   try {
@@ -389,6 +409,17 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
   } catch (err) {
     await recordSourceError(env, 'senate', now.toISOString(), err);
     result.senate = 'failure';
+  }
+
+  // EXECUTIVE (OGE 278-T) ---------------------------------------------------
+  // Entirely fail-soft and self-gated to a slow cadence; an OGE outage must
+  // never affect House/Senate polling above.
+  try {
+    const polled = await pollExecutive(env, now);
+    if (polled !== null) result.executive = 'success';
+  } catch (err) {
+    console.warn('watcher: executive (OGE) source failed:', (err as Error).message);
+    result.executive = 'failure';
   }
   return result;
 }

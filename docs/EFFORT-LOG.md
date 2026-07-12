@@ -80,6 +80,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Web UI unification with iOS aesthetics (AG, M) — COMPLETED 2026-07-12.** Updated the Next.js PWA and the Admin Dashboard with frosted glass panels (`backdrop-filter: blur(20px)`), vivid gradient asset markers, and bold status pills to mirror the newly designed iOS SwiftUI prototype. Verified typechecks and PWA builds.
 - **Interactive dashboard metrics and table sort controls (AG, S) — COMPLETED 2026-07-11 via PR #303.** Added sparkline charts to the dashboard's snapshot metrics (Net Flow, Buy Pressure) and interactive `<thead>` sorting controls with Asset Type filters to the "What Congress Is Trading" and "Rising Activity" panels in `dashboardHtml.ts`.
 - **Production outage diagnosis + PR #300/#308 landing — DEPLOYED 2026-07-12 (CLAUDE, M).**
   Receipt: `deploy.yml` run 29177444399 succeeded on `b8ce1b4`; live verification passed (all
@@ -259,6 +260,56 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 - **Implement `est_value` column in transactions table (AG, S) — COMPLETED 2026-07-11.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
 - **Refactor client API routes (AG, M) — COMPLETED 2026-07-11.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
 - **Beautify iOS SwiftUI Prototype App (AG, L) — IN PROGRESS 2026-07-12.** Refactored monolithic SwiftUI code in `CongressTradeApp.swift` to upgrade styling (glassmorphism, gradient accents, modern card structures). Code compiles correctly locally. Pending PR creation and deployment.
+- **Matched `congress-trading-shared` v1.5.0 consumer pin (AG implementation requested by CODEX, cross-app S) — MERGED / DEPLOYED / PRODUCTION VERIFIED; CLOSEOUT READY PR #297 / HOSTED GREEN / NOT MERGED 2026-07-11.** Antigravity exact-pinned `app/package.json` + lockfile to `#v1.5.0`; installed version 1.5.0 resolves commit `2222baeb`. PR #296 merged as `d84fd349` at 18:58:28Z and production Wrangler versions `c5deb474` then `e5c7ebad` deployed at 18:59Z; `https://congress.trade/api/health` is HTTP 200 with `ok/db/schema=true`. This corrects the stale READY/not-merged record and original `^1.5.0` wording. CODEX closeout PR #297 restored STATUS/rollout/mirror receipts and deployed clean merged `main` to isolated preview `4d8a558b`; preview health is green, hosted app/PWA/security checks pass, and production remained on `e5c7ebad`.
+- **Fix Uptime Monitor compact-JSON output framing (CODEX, S, ready PR #297) — VERIFIED / HOSTED GREEN / NOT MERGED 2026-07-11.** The health body is newline-terminated before the random GitHub-output delimiter. Scheduled failure `29164917660` is captured in the rollout; a compact-JSON framing harness and YAML parse pass. App lint/typecheck/940 tests and PWA typecheck/13 tests/build pass locally and in hosted CI; gitleaks passes. Workflow-only; no production Worker/D1/config mutation.
+- **Backend delivery + ingestion reliability hardening (CODEX/HERSCHEL, L) — INTEGRATED +
+  INDEPENDENTLY VERIFIED LOCALLY 2026-07-11.** Transactional ingestion/delivery outboxes, real DLQ
+  consumers and bounded recovery, completion-before-ACK, stale-enqueued replay, cross-isolate SSE
+  leases/backpressure, bounded fetches, public webhook SSRF controls, quotas, truthful source
+  health, atomic publication/review receipts, schema readiness, and preview/production migration
+  parity are in `codex/app-hardening-integration`. Final semantic review PASS; real SQLite coverage
+  applies all migrations, compares the admin migration tail, runs readiness, and executes
+  idempotent transaction/cursor/estimate/outbox writes. Deployed in PR #284; tracked by the deployed
+  program row above.
+- **Billing + platform security hardening (CODEX, M) — INTEGRATED LOCALLY + ADVERSARIALLY REVIEWED
+  2026-07-11; FINAL PROGRAM GATES PASS.** Lane branch `codex/billing-security-hardening`;
+  integration branch `codex/app-hardening-integration`.
+  Adds reclaimable Stripe event leases, stale/deletion ordering, non-overwriting customer links,
+  mandatory stable checkout/portal idempotency keys, the Managed-Payments-compatible Basil pin,
+  split checkout/portal readiness with the legacy `configured` alias, dual cookie/bearer logout,
+  fail-closed resolver use, browser security headers, and CI coverage floors. Review fixes prevent
+  malformed supported events from being silently acknowledged, handle expanded Stripe IDs, permit
+  safe same-second terminal-to-active resubscription across subscription IDs, and keep Billing
+  Portal available to existing payers when checkout configuration is incomplete. Verified: 79 test
+  files / 714 tests, typecheck, coverage 64.11/56.61/69.46/65.92, lint 0 errors, `npm audit` 0
+  vulnerabilities, fresh migration through 0032, and `git diff --check`; the integrated 808-test
+  gate and isolated preview also pass. The hardened billing code is live in production;
+  checkout/portal capability remains unconfigured, and no billing activation was performed.
+- **iOS client correctness + performance hardening (CODEX/HUBBLE, L) — INTEGRATED LOCALLY + REVIEWED
+  2026-07-11; FINAL PROGRAM GATES PASS.** Lane branch `codex/ios-client-hardening`;
+  integration branch `codex/app-hardening-integration`.
+  Preserves one-time delivery credentials, sends active-only subscription patches, hydrates server
+  preferences before edit, retains UUID intent keys for uncertain retries, revokes bearer sessions,
+  and adds feature-local state, offline/cache limits, accessibility, formatter/search improvements,
+  an XCTest target, and a compiled 1024x1024 opaque AppIcon/accent-color catalog derived from the
+  existing PWA mark. Generic Simulator build, build-for-testing, compiled icon inspection, asset
+  validation, and `git diff --check` pass; test execution awaits a concrete installed Simulator
+  runtime. Source is merged to `main`; no signing/App Store production target is configured.
+- **PWA release hardening + CI coverage (CODEX/VOLTA, L) — INTEGRATED LOCALLY 2026-07-11;
+  FINAL PROGRAM GATES PASS.** Lane branch `codex/pwa-release-hardening`; integration branch
+  `codex/app-hardening-integration` rebased onto current `origin/main` after AG's PR #266 merged.
+  AG's corrected handoff `c6201fb` was integrated as `6456cb8`; Codex added server-backed
+  latest-first filters, runtime `estValue`, saved-preference hydration/failure locking, auth-gated
+  writes, UUID intent keys retained for uncertain retries, one-time delivery credential handling,
+  an accessible filter dialog, same-origin docs, focused Vitest coverage, and a PWA CI audit/build
+  gate. Integration adds 192/512/maskable/Apple PNG icons plus a registered service worker with
+  network-first navigation caching and an offline fallback; API requests are never cached. Verified:
+  PWA `npm audit` (0 vulnerabilities), typecheck, 13 tests, production build, generated-manifest/SW
+  syntax/icon inspection; desktop/mobile rendered QA with zero overflow or console errors; and a
+  readable API-unavailable state. Source is merged to `main`; no same-origin PWA production hosting
+  target or reverse-proxy route is configured.
+- **Implement `est_value` column in transactions table (AG, S) — COMPLETED 2026-07-11.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
+- **Refactor client API routes (AG, M) — COMPLETED 2026-07-11.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
 - **GPT-5.6 bake-off evaluation prep + usage/cost tracking harness (MONET, S)** — BUILT + PUSHED
   2026-07-10, PR #264. Owner asked to evaluate GPT-5.6 (sol/terra/luna, released 2026-07-09) for
   the extraction pipeline. Research found no evidence of a capability uplift for this document type
@@ -430,6 +481,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   [AG -> AG].
 
 ## Planned / Reserved
+- **Post-Codex Activation: PWA/iOS deploy targets, billing config, ingestion and queue drain (AG, XL) — 2026-07-11.** Take over execution from Codex, define production hosting for PWA/iOS, configure billing portal, and execute backlog ingestion/backfill.
 - **Senate Scraper Hardening (AG, M) — 2026-07-05.** Overcome WAF IP blocks via residential scout proxying, implement content-based field extraction for DataTables, and cache session handshakes in KV.
 - **UI/UX Improvements (AG, M) — 2026-07-05.** Fix mobile tab grid spacing, hide mobile columns button, consolidate search/filters + add Max $, fix theme toggle labels, group pagination controls, sticky-lock columns, and add charts to Trends.
 - **Architecture & Shared Dependency (AG, M) — 2026-07-05.** Use `createCongressEvent` from shared package, promote duplicate types to `schemas.ts`, upgrade Socratic.Trade to validate HMAC `X-Signature`, and replace SSE D1-polling with a push mechanism.
@@ -540,4 +592,4 @@ Jul 8 18:10 CT)._
   patch.py (AG), rescue CURSOR's stash (CURSOR).
 - **Whole-App Evaluation & Next.js PWA Implementation (AG, L) — COMPLETED 2026-07-11.** Refactored monolithic backend routes to a layered architecture (types, queries, utils, routes), implemented the `est_value` materialized column in D1 to optimize feed queries, and established the Next.js PWA frontend using SWR for data fetching, responsive glassmorphism dark-mode UI, and reusable components like `TradeCard`. 
 
-- **Bump shared to v1.5.0 (AG implementation requested by CODEX, cross-app S) — MERGED / DEPLOYED / PRODUCTION VERIFIED 2026-07-11.** Exact git-tag pin `github:jaywedgeworth22/congress-trading-shared#v1.5.0` resolves released commit `2222baeb`. PR #296 merged as `d84fd349`; production Wrangler versions `c5deb474` then `e5c7ebad` deployed at 18:59Z, and apex health is HTTP 200 with `ok/db/schema=true`. This corrects the original `^1.5.0` wording.
+- **Bump shared to v1.5.0 (AG, S) — COMPLETED 2026-07-11.** Exact git-tag pin `#v1.5.0` resolves `2222baeb`; `^1.5.0` in the original row was wording-only and incorrect. Canonical status is the matched-pin row under In Progress above.

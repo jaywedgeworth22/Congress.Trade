@@ -60,6 +60,13 @@ shared type set but still return `501`.
 - `feed` currently accepts query params like `since`, `ticker`, `member`,
   `chamber`, `type`, `from`, `to`, `order`, and `limit`, and returns the
   cursor/count/total metadata used by polling clients.
+- Chamber filter: `chamber` accepts a CSV multi-selection over
+  `house`, `senate`, and `executive` (Presidential trades from OGE Form 278-T
+  filings; `member.chamber` can now be `executive`). ABSENT `chamber` means the
+  default congressional view — executive rows are EXCLUDED unless explicitly
+  requested, so a single multi-thousand-row presidential filing never swamps
+  default feeds, analytics, or alert deliveries. Clients that want executive
+  trades must opt in (e.g. `chamber=house,senate,executive`).
 - Anti-scrape guard (`SCRAPE_GUARD_ENABLED`, `src/security/botDefense.ts`):
   `feed` shares a per-IP daily served-row budget with `/api/transactions` and
   can return `429` with `Retry-After` when a caller bulk-walks the corpus.

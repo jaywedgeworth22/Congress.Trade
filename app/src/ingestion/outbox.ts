@@ -157,6 +157,35 @@ export async function flushIngestionOutbox(
   return result;
 }
 
+/**
+ * Reopen dead-lettered discovery handoffs after a deploy fixes a systemic
+ * fetch failure (e.g. the R2 known-length regression that killed every fetch).
+ * Resets `failed` rows — optionally narrowed by a doc-id prefix — back to
+ * `pending` with a fresh dead-letter budget; the scheduled outbox flush then
+ * re-enqueues them. `last_error` is left in place as the audit trail until a
+ * successful enqueue clears it.
+ */
+export async function requeueFailedIngestionOutbox(
+  env: Env,
+  opts: { docIdPrefix?: string; now?: Date } = {},
+): Promise<number> {
+  const now = opts.now ?? new Date();
+  const nowIso = now.toISOString();
+  const prefix = opts.docIdPrefix?.replace(/[%_]/g, '') ?? '';
+  const prefixClause = prefix ? ' AND doc_id LIKE ?' : '';
+  const params: SqlParam[] = [nowIso, nowIso];
+  if (prefix) params.push(`${prefix}%`);
+  const result = await run(
+    env.DB,
+    `UPDATE ingestion_outbox
+        SET status = 'pending', attempts = 0, dead_letter_cycles = 0,
+            available_at = ?, updated_at = ?
+      WHERE status = 'failed'${prefixClause}`,
+    params,
+  );
+  return result.meta?.changes ?? 0;
+}
+
 /** Complete the canonical filing.new handoff before ACKing that message. */
 export async function completeIngestionOutbox(
   env: Env,

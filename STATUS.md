@@ -5,6 +5,24 @@ Last updated: 2026-07-12
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
 
+## 2026-07-12 — Ingestion fetch outage: R2 known-length fix (CLAUDE)
+
+- **Outage**: every filing fetch failed from 2026-07-11T19:14Z with
+  `fetcher: Provided readable stream must have a known length`. PR #284's
+  `limitedFilingBody` size-guard wraps the body in a new JS ReadableStream,
+  which R2 `put()` rejects (no known length). Hit all 500 filings of the
+  H-2015 house backfill (outbox rows dead-lettered `failed`) and all 17
+  executive OGE 278-Ts from the first post-#315 watcher poll.
+- **Fix**: `bufferFilingBody()` buffers through the byte-count guard (25MB
+  cap intact) and hands R2 a known-length `Uint8Array`; regression test pins
+  a chunked no-Content-Length response. Recovery via new
+  `POST /api/admin/ingest-requeue-failed` (failed→pending, fresh dead-letter
+  budget; per-minute outbox flush drains the backlog at ~100/min).
+- **Also live from this branch**: PR #315 (executive/Trump OGE tracking)
+  deployed via run 29180389201 on `6e4bd52`; Executive chamber chip verified
+  on the live site, `chamber=executive` API clean, default feed unchanged,
+  all served script blocks parse.
+
 ## 2026-07-12 — Production outage fixed; PR #300 + #308 deployed (CLAUDE)
 
 - **Outage**: the live dashboard loaded no data (APIs healthy). Cause: the
