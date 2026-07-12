@@ -1639,6 +1639,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <span id="hiMsg" class="note"></span>
       </div>
       <p class="note">API HOOK: <code>POST /api/admin/house-backfill</code>. Pulls past-year House bulk ZIPs (official, always reachable) and runs each PTR through the live pipeline — high-fidelity, but heavier than the seed import. Dry Run only counts; Backfill is capped by Max filings.</p>
+      <div class="row-flex" style="margin-top:14px">
+        <label class="lbl">Executive Branch (OGE) Backfill</label>
+        <button class="btn" onclick="runOgeBackfill()">Run OGE Backfill</button>
+        <span id="ogeMsg" class="note"></span>
+      </div>
+      <p class="note">API HOOK: <code>POST /api/admin/oge-backfill</code>. Force-polls the OGE President and Vice President Index and enqueues any new or missing 278-T filings for previous and current executives.</p>
     </div>
     <div class="section">
       <h3>Review Queue Maintenance</h3>
