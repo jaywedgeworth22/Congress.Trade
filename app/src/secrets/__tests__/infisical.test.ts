@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../shared/types';
-import { refreshSecrets, resolveSecret } from '../infisical';
+import { refreshSecrets, resolveSecret, updateSecret } from '../infisical';
 
 function env(extra: Partial<Env> = {}): Env {
   return {
@@ -114,5 +114,34 @@ describe('Infisical runtime secret resolver', () => {
     expect(await resolveSecret(e, 'FMP_API_KEY')).toEqual({ value: 'infisical-fmp', source: 'infisical' });
     expect(kv.get).not.toHaveBeenCalled();
     expect(kv.put).not.toHaveBeenCalled();
+  });
+
+  it('updates a secret using PATCH, falling back to POST if not found', async () => {
+    let patchCalled = false;
+    let postCalled = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/api/v1/auth/universal-auth/login')) return Response.json({ accessToken: 'token' });
+        
+        if (url.includes('/api/v3/secrets/raw/TEST_KEY')) {
+          if (init?.method === 'PATCH') {
+            patchCalled = true;
+            return new Response('not found', { status: 404 });
+          }
+          if (init?.method === 'POST') {
+            postCalled = true;
+            return Response.json({ secret: { secretKey: 'TEST_KEY', secretValue: 'new-val' } });
+          }
+        }
+        return new Response('not found', { status: 404 });
+      }),
+    );
+
+    const e = env({ INFISICAL_APP_PROJECT_ID: 'app-project' });
+    await updateSecret(e, 'app', 'TEST_KEY', 'new-val');
+    
+    expect(patchCalled).toBe(true);
+    expect(postCalled).toBe(true);
   });
 });

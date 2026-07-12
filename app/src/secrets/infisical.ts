@@ -238,6 +238,53 @@ async function decryptData(encryptedStr: string, secretString: string): Promise<
   return dec.decode(decrypted);
 }
 
+export async function updateSecret(env: Env, sourceName: SourceName, secretKey: string, secretValue: string): Promise<void> {
+  const sources = sourceConfigs(env);
+  const source = sources.find(s => s.name === sourceName);
+  if (!source || !sourceConfigured(source)) {
+    throw new Error(`Source ${sourceName} not configured`);
+  }
+  
+  const baseUrl = cleanBaseUrl(env.INFISICAL_BASE_URL);
+  const infisicalEnv = envName(env);
+  const token = await login(baseUrl, source);
+  
+  const payload = {
+    workspaceId: source.projectId,
+    environment: infisicalEnv,
+    secretPath: source.secretPath || '/',
+    secretValue: secretValue,
+    type: 'shared'
+  };
+
+  let res = await fetch(`${baseUrl}/api/v3/secrets/raw/${secretKey}`, {
+    method: 'PATCH',
+    headers: {
+      'authorization': `Bearer ${token}`,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok) {
+    if (res.status === 404 || res.status === 400) {
+      res = await fetch(`${baseUrl}/api/v3/secrets/raw/${secretKey}`, {
+        method: 'POST',
+        headers: {
+          'authorization': `Bearer ${token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(payload)
+      });
+    }
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { message?: string };
+      throw new Error(`Failed to update secret ${secretKey}: ${res.status} ${body.message || ''}`);
+    }
+  }
+}
+
 export async function refreshSecrets(env: Env): Promise<SecretResolverStatus> {
   const key = cacheKey(env);
   const ttlMs = cacheTtlSeconds(env) * 1000;
