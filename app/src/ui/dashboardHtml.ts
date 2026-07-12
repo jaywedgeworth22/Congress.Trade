@@ -4494,30 +4494,6 @@ async function runBenchmark() {
     buildLineup("Custom Senate", 'benchSenateA', 'benchSenateB', 'benchSenateC'),
     buildLineup("Custom Exec", 'benchExecA', 'benchExecB', 'benchExecC'),
     {
-      name: "Mistral OCR Latest (Single)",
-      models: { a: { provider: 'mistral', model: 'mistral-ocr-latest' }, b: { provider: 'mistral', model: 'mistral-ocr-latest' } }
-    },
-    {
-      name: "Gemini 3.5 Flash (Single)",
-      models: { a: { provider: 'gemini', model: 'gemini-3.5-flash' }, b: { provider: 'gemini', model: 'gemini-3.5-flash' } }
-    },
-    {
-      name: "Claude 3.5 Haiku (Single)",
-      models: { a: { provider: 'anthropic', model: 'claude-haiku-4-5' }, b: { provider: 'anthropic', model: 'claude-haiku-4-5' } }
-    },
-    {
-      name: "GPT-4o (Single)",
-      models: { a: { provider: 'openai', model: 'gpt-4o' }, b: { provider: 'openai', model: 'gpt-4o' } }
-    },
-    {
-      name: "LlamaParse Cost-Effective (Single)",
-      models: { a: { provider: 'llamaparse', model: 'cost-effective' }, b: { provider: 'llamaparse', model: 'cost-effective' } }
-    },
-    {
-      name: "LlamaParse Fast (Single)",
-      models: { a: { provider: 'llamaparse', model: 'fast' }, b: { provider: 'llamaparse', model: 'fast' } }
-    },
-    {
       name: "Baseline (Mistral + Gemini -> Anthropic)",
       models: {
         a: { provider: 'mistral', model: 'mistral-ocr-latest' },
