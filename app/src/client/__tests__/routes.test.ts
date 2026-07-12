@@ -50,6 +50,8 @@ function userRow(id = 'user_1') {
     email_verified: 1,
     created_at: '2026-06-24T00:00:00.000Z',
     last_login_at: null,
+    subscription_status: 'active',
+    plan: 'monthly',
   };
 }
 

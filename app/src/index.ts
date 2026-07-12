@@ -186,7 +186,10 @@ async function handleDeadLetterMessage(
   if (queue.includes('delivery')) {
     if (msg.type !== 'delivery.dispatch') throw new Error('delivery DLQ message has no transaction identity');
     const recovered = await reconnectDeadLetteredOutbox(env, msg.txId, recoveryError.message);
-    if (recovered.status === 'missing') throw new Error(`delivery outbox missing for ${msg.txId}`);
+    if (recovered.status === 'missing') {
+      console.warn(`delivery outbox missing for ${msg.txId}`);
+      return;
+    }
     return;
   }
 
@@ -198,7 +201,10 @@ async function handleDeadLetterMessage(
     new Date(),
     { reopenCompleted: msg.type !== 'filing.new' },
   );
-  if (recovered.status === 'missing') throw new Error(`ingestion outbox missing for ${msg.docId}`);
+  if (recovered.status === 'missing') {
+    console.warn(`ingestion outbox missing for ${msg.docId}`);
+    return;
+  }
 }
 
 export default Sentry.withSentry(
