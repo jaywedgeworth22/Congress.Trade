@@ -35,13 +35,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <style>
   :root {
     /* ---- THEME ---- */
-    --bg:        #0b1120;
-    --bg-2:      #111a2e;
-    --panel:     #15203a;
-    --panel-2:   #1b2747;
-    --border:    #243154;
-    --text:      #e6edf6;
-    --text-dim:  #9db1cd;
+    --bg:        #080c17;
+    --bg-2:      #0e1626;
+    --panel:     #121b30;
+    --panel-2:   #172440;
+    --border:    #2e3e65;
+    --text:      #ffffff;
+    --text-dim:  #b8c7dd;
     --accent:    #4f8cff;
     --buy:       #22c55e;
     --sell:      #ef4444;
@@ -57,13 +57,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   /* ---- light theme (toggled via html[data-theme="light"]) ---- */
   html[data-theme="light"] {
-    --bg:        #f4f7fb;
-    --bg-2:      #e9eef6;
+    --bg:        #eff3f8;
+    --bg-2:      #e4ebf4;
     --panel:     #ffffff;
-    --panel-2:   #eef3fa;
-    --border:    #d3dced;
-    --text:      #142036;
-    --text-dim:  #4f607c;
+    --panel-2:   #e8eff8;
+    --border:    #c1cde2;
+    --text:      #09101c;
+    --text-dim:  #34435b;
     --accent:    #2563eb;
     --buy:       #15803d;
     --sell:      #dc2626;
