@@ -10,7 +10,7 @@ import { priceRangeQuery, mapSecurityRef } from '../rest';
 describe('priceRangeQuery', () => {
   it('price_eod selects volume, requires the ticker, orders ascending', () => {
     const q = priceRangeQuery('price_eod', 'AAPL');
-    expect(q.sql).toBe('SELECT date, close, volume FROM price_eod WHERE ticker = ? ORDER BY date ASC');
+    expect(q.sql).toBe('SELECT date, close, volume FROM price_eod WHERE ticker = ? ORDER BY date ASC LIMIT 1000');
     expect(q.params).toEqual(['AAPL']);
   });
 
