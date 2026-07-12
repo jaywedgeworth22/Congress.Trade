@@ -3425,7 +3425,12 @@ function renderReview() {
           ? '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'unpublish\\')">Unpublish</button> ' : '') + modelsBtn
       : '<button class="btn sm" onclick="openQueuedReviewEditor(\\'' + esc(r.docId) + '\\')">Review / Confirm</button> ' +
         '<button class="btn ghost sm" onclick="manualEntry(\\'' + esc(r.docId) + '\\')">Manual</button> ' +
-        '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'reject\\')">Reject</button> ' + retryAutoBtn + modelsBtn;
+        '<button class="btn ghost sm" onclick="resolveReview(\\'' + esc(r.docId) + '\\',\\'reject\\')">Reject</button> ' + retryAutoBtn + modelsBtn +
+        '<div style="margin-top: 8px; display: flex; align-items: center; gap: 4px;">' +
+          '<select id="quick-run-' + esc(r.docId) + '" style="max-width: 130px; font-size: 11px;">' + quickRunModelOptionsHtml() + '</select>' +
+          '<button class="btn ghost sm" id="quick-btn-' + esc(r.docId) + '" onclick="quickRunModel(\\'' + esc(r.docId) + '\\')">Run Model</button>' +
+        '</div>' +
+        '<div id="quick-msg-' + esc(r.docId) + '" class="note" style="margin-top: 2px;"></div>';
     return '<tr class="row" id="rv-' + esc(r.docId) + '">' +
       '<td class="muted">' + esc(dateTimeText(r.createdAt)) + '</td>' +
       '<td>' + reviewDocHtml(r) + '</td>' +
@@ -3511,6 +3516,44 @@ function modelsTableHtml(models) {
   }).join('');
   return '<table style="font-size:12px;width:100%"><thead><tr><th>Model</th><th>Kind</th><th>OK</th><th style="text-align:right">Rows</th><th style="text-align:right">Conf</th><th style="text-align:right">Latency</th><th>Error</th></tr></thead><tbody>' + rows + '</tbody></table>';
 }
+
+function quickRunModelOptionsHtml() {
+  return '<option value="">-- Choose Model --</option>' + REREAD_MODELS.map(function (m) {
+    return '<option value="' + esc(m.provider + '|' + m.model) + '">' + esc(m.model) + '</option>';
+  }).join('');
+}
+
+function quickRunModel(docId) {
+  var sel = el('quick-run-' + docId);
+  var msg = el('quick-msg-' + docId);
+  var btn = el('quick-btn-' + docId);
+  if (!sel || !btn) return;
+  var val = sel.value;
+  if (!val) { if (msg) msg.textContent = 'Select a model first.'; return; }
+  var parts = val.split('|');
+  var chosen = [{ provider: parts[0], model: parts[1] }];
+  
+  btn.disabled = true; sel.disabled = true;
+  if (msg) msg.textContent = 'Running ' + parts[1] + '...';
+  
+  fetch('/api/admin/bakeoff', {
+    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ docIds: [docId], models: chosen, persist: true })
+  })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) { var ae = new Error(ADMIN_MOVED_MSG); ae.isAuth = true; throw ae; }
+      return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
+    })
+    .then(function (data) {
+      if (msg) msg.textContent = 'Complete. Reloading queue...';
+      setTimeout(loadReview, 500); // Reload queue to show the new run
+    })
+    .catch(function (e) {
+      btn.disabled = false; sel.disabled = false;
+      if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Run failed: ' + e.message);
+    });
+}
+
 /* Field order + labels mirror ConsensusFieldName in extraction/consensus.ts.
    Structured filing details stay visible because ignoring them can make two
    materially different rows appear unanimous. */
