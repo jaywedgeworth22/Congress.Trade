@@ -140,7 +140,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   input::placeholder { color: var(--text-dim); }
   .grid-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; margin-bottom: 20px; }
-  .card { background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 14px 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); }
+  .card { text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 14px 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); }
   .card .k { color: var(--text-dim); font-size: 12px; }
   .card .v { font-size: 22px; font-weight: 700; margin-top: 4px; }
   .card .v small { font-size: 12px; font-weight: 500; color: var(--text-dim); }
