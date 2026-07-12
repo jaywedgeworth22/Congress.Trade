@@ -4596,7 +4596,7 @@ function renderSpeedProof() {
     }).sort(function (a, b) { return b.matched - a.matched; });
     if (!d.totals || !d.totals.racedDisclosures || !provs.length) { box.hidden = true; return; }
     var best = null;
-    speedEligible(d).forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
+    provs.forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
     var heroHtml = '';
     if (best && (best.medianLeadSec || 0) > 0) {
       heroHtml = '<div class="speed-hero-num">' + fmtLead(best.medianLeadSec) + '</div>' +
