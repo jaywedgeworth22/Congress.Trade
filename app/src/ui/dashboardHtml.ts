@@ -618,13 +618,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .speed-table table td, .speed-table table th { font-variant-numeric:tabular-nums; }
   .speed-mini { display:none; border:1px solid var(--border); border-radius:10px; padding:10px 12px; font-size:12.5px; margin:12px 0; gap:8px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
   .speed-mini.show { display:flex; }
-  .speed-mini .lead { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  .speed-mini .lead { font-weight:600; font-variant-numeric:tabular-nums; }
   /* ---- Alert delivery education cards ---- */
   .delivery-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:12px 0 4px; }
   .delivery-card { border:1px solid var(--border); border-radius:12px; padding:16px 14px; background:color-mix(in srgb, var(--panel-2) 55%, transparent); }
   .delivery-card h4 { margin:0 0 8px; font-size:14px; }
   .delivery-card p { margin:0 0 8px; font-size:12.5px; line-height:1.5; color:var(--text); }
   .delivery-card p.note { margin-bottom:0; }
+  .feed-stats { font-size: 11.5px; white-space: nowrap; margin-left: 2px; }
   @media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
     html, body { width:100%; max-width:100%; overflow-x:hidden; }
     body { background: var(--bg); font-size: 13px; }
@@ -666,12 +667,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .note, .disclaimer, code { overflow-wrap:anywhere; }
     .section p.sub { overflow-wrap:normal; }
     .section > table { display:block; max-width:100%; overflow-x:auto; }
-    .table-wrap { max-width:100%; overflow-x:auto; }
     .banner, .disclaimer { margin-bottom: 12px; }
     .disclaimer { font-size:11px; line-height:1.45; padding:10px 11px; }
     input, select, .btn { font-size:16px; }
-    #view-feed > .grid-cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; overflow:visible; margin:0 0 10px; padding:0; }
-    #view-feed > .grid-cards .card { min-width:0; padding:10px 11px; border-radius:8px; }
     .grid-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; overflow:visible; margin:0 0 14px; padding:0; }
     #trKpis { grid-template-columns:repeat(3,minmax(0,1fr)); }
     .grid-cards .card { min-width:0; padding:11px 12px; border-radius:10px; }
@@ -679,6 +677,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .card .v { font-size:18px; }
     .section { border-radius: 10px; padding: 14px; margin-bottom: 12px; }
     .toolbar { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; align-items: stretch; }
+    .feed-stats { display: none; }
     .toolbar input, .toolbar select, .toolbar .btn { width: 100%; min-width:0; min-height: 40px; padding:8px 9px; }
     .toolbar #qMember { grid-column: span 2; }
     .toolbar #qTicker { width:100% !important; }
@@ -727,7 +726,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .feed-card-meta { grid-template-columns: 1fr; }
   }
   @media (max-width: 420px) {
-    #view-feed > .grid-cards { grid-template-columns:repeat(2,minmax(0,1fr)); }
     .toolbar { grid-template-columns: repeat(2,minmax(0,1fr)); }
     .toolbar #qMember { grid-column:1 / -1; }
     nav.tabs button::after { font-size: 9px; }
@@ -738,8 +736,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     main { padding:8px 10px; padding-bottom:calc(72px + env(safe-area-inset-bottom)); }
     .disclaimer { font-size:10px; line-height:1.35; max-height:78px; overflow:auto; padding:8px 10px; }
     .section p.sub { font-size:11px; line-height:1.35; }
-    #view-feed > .grid-cards { grid-template-columns:repeat(5,minmax(0,1fr)); }
-    #view-feed > .grid-cards .card { padding:8px 9px; }
     .toolbar { grid-template-columns: 1.45fr .65fr 1fr 1fr; }
     .toolbar #qMember { grid-column:auto; }
     .feed-card-meta { grid-template-columns:repeat(3,minmax(0,1fr)); }
@@ -1207,11 +1203,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   <!-- ================= TRADES (LIVE FEED) ================= -->
   <section class="view" id="view-feed" role="tabpanel" aria-labelledby="tab-feed" aria-hidden="true">
-    <div class="grid-cards">
-      <div class="card"><div class="k">Filings Imported Today</div><div class="v" id="kpiToday">—</div></div>
-      <div class="card"><div class="k">Trades</div><div class="v" id="kpiTotal">—</div></div>
-      <div class="card"><div class="k">Auto-Parsed (No LLM)</div><div class="v" id="kpiAuto">—<small>%</small></div></div>
-    </div>
     <div class="toolbar">
       <input id="qMember" placeholder="Filter Politician…" oninput="handleFeedTextFilter()" />
       <input id="qTicker" placeholder="Asset…" oninput="handleFeedTextFilter()" style="width:120px" />
@@ -1224,7 +1215,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button type="button" class="chip on" data-ch="senate" aria-pressed="true">Senate</button>
         <button type="button" class="chip" data-ch="executive" aria-pressed="false" title="Executive branch — Presidential trades from OGE Form 278-T filings">Executive</button>
       </div>
-      <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
+<div id="feedStats" class="feed-stats muted">
+        <strong id="kpiToday">—</strong> today &middot; <strong id="kpiTotal">—</strong> total
+      </div>
+      <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()" style="margin-left:auto">🔍 Search</button>
       <button class="btn ghost sm" onclick="toggleColChooser()" title="Show / Hide Columns">⚙ Columns</button>
       <button class="btn ghost sm" id="exportCsvBtn" onclick="exportCsv()" title="Download the filtered feed as CSV">⤓ Export CSV <span class="premium-mark" data-premium-cue="exportCsv">Premium</span></button>
       <label class="lbl" for="pageSize">Rows</label>
@@ -1268,6 +1262,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <span class="gate-note">Premium adds full-history CSV export and enrichment columns.
         <button class="btn sm" onclick="openPricing()">Premium</button></span>
     </div>
+
+    <!-- Speed vs data providers (filter-independent live latency proof).
+         No tf-h class on the h3: stampWindowChips() must not stamp a time
+         window this section does not honor. Rendered by renderSpeedProof(). -->
+    <div class="section speed-proof" id="trLatencySection" style="margin-top:14px">
+      <div class="speed-head">
+        <h3>Speed vs. Data Providers <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
+        <span class="note" id="speedUpdated"></span>
+      </div>
+      <div class="speed-body">
+        <div class="speed-hero" id="speedHero"><div class="sk sk-line" style="width:70%;height:34px"></div><div class="sk sk-line" style="width:55%"></div></div>
+        <div id="speedRace"></div>
+      </div>
+      <p class="note">How this is measured: every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades and match them against filings we already ingested, comparing first-seen timestamps. Stats cover the most recent matched filings per provider and update continuously &mdash; wins, losses, and misses alike. &ldquo;Matched&rdquo; counts filings that had appeared in the provider&rsquo;s feed by probe time; a filing can appear there later. Nothing is hand-picked and nothing is frozen: these numbers move. A live measurement, not a promise.</p>
+      <details class="speed-table">
+        <summary>View as table</summary>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Provider</th><th>Matched</th><th>We were first</th><th>They were first</th><th>Ties</th><th>Typical lead</th><th>Average</th><th>p90</th></tr></thead>
+          <tbody id="speedTableBody"></tbody>
+        </table></div>
+      </details>
+      <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
+    </div>
   </section>
 
   <!-- ================= TRENDS / ANALYTICS ================= -->
@@ -1309,28 +1326,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
     </div>
 
-    <!-- Speed vs data providers (filter-independent live latency proof).
-         No tf-h class on the h3: stampWindowChips() must not stamp a time
-         window this section does not honor. Rendered by renderSpeedProof(). -->
-    <div class="section speed-proof" id="trLatencySection">
-      <div class="speed-head">
-        <h3>Speed vs. Data Providers <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
-        <span class="note" id="speedUpdated"></span>
-      </div>
-      <div class="speed-body">
-        <div class="speed-hero" id="speedHero"><div class="sk sk-line" style="width:70%;height:34px"></div><div class="sk sk-line" style="width:55%"></div></div>
-        <div id="speedRace"></div>
-      </div>
-      <p class="note">How this is measured: every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades and match them against filings we already ingested, comparing first-seen timestamps. Stats cover the most recent matched filings per provider and update continuously &mdash; wins, losses, and misses alike. &ldquo;Matched&rdquo; counts filings that had appeared in the provider&rsquo;s feed by probe time; a filing can appear there later. Nothing is hand-picked and nothing is frozen: these numbers move. A live measurement, not a promise.</p>
-      <details class="speed-table">
-        <summary>View as table</summary>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Provider</th><th>Matched</th><th>We were first</th><th>They were first</th><th>Ties</th><th>Typical lead</th><th>Average</th><th>p90</th></tr></thead>
-          <tbody id="speedTableBody"></tbody>
-        </table></div>
-      </details>
-      <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
-    </div>
 
     <!-- What Congress is trading + Heating up -->
     <div class="trend-grid2">
@@ -1396,7 +1391,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
     <div class="section">
       <h3>Top Performers <span class="info-tip" tabindex="0" aria-label="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out." title="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
-      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade became <em>public</em>, shown as an <strong>annualized</strong> relative return. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
+      <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade became <em>public</em>, shown as an <strong>annualized</strong> relative return <strong>(0% means equal to the S&amp;P)</strong>. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
       <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
     </div>
 
@@ -1433,10 +1428,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
         <div class="timeliness-panel">
           <h3 title="Filers with the highest average trade-to-filing delay in the selected time window.">Slowest Filers (Avg Lag)</h3>
-          <div class="late-filers-wrap"><table><tbody id="trLateFilers"></tbody></table></div>
+          <div class="table-wrap"><table><tbody id="trLateFilers"></tbody></table></div>
         </div>
       </div>
     </div>
+
+
   </section>
 
   <!-- ================= REVIEW QUEUE ================= -->
@@ -1485,18 +1482,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <p class="note">If webhooks are us calling you, the stream is you leaving the line open.</p>
         </div>
       </div>
-      <div class="row-flex" style="margin-top:14px;justify-content:center" data-premium-cue="alerts">
-        <span class="gate-note">Both included in Premium &middot; $15/mo or $140/yr &middot; 7-day free trial
-          <button class="btn sm" onclick="openPricing('alerts')">Start Free Trial</button></span>
-      </div>
       <p class="note" style="text-align:center">The live dashboard and analytics stay free for everyone; delivery is the Premium part. A live measurement, not a promise &mdash; past speed doesn&rsquo;t guarantee future speed.</p>
     </div>
-    <div class="section" id="subsManage" data-admin-only hidden>
+    <div class="section" id="subsManage">
       <h3>Developer Alert Delivery</h3>
       <p class="sub">Manage signed webhook or SSE alert deliveries for downstream apps. Secrets are shown once at creation; webhook consumers dedupe on <code>docId</code>.</p>
       <table>
         <thead><tr><th>Client</th><th>Channel</th><th>Target</th><th>Filters</th><th>Status</th></tr></thead>
-        <tbody id="subsBody"></tbody>
+        <tbody id="subsBody">
+          <tr class="row"><td colspan="5" class="state">Available with Premium. Subscribe below to create a target.</td></tr>
+        </tbody>
       </table>
       <div class="row-flex" style="margin-top:14px">
         <input id="newClientId" placeholder="clientId" style="width:160px" />
@@ -1508,6 +1503,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div id="subsMsg" class="note subs-msg" aria-live="polite"></div>
       </div>
       <p class="note">API HOOK: GET/POST <code>/api/admin/subscriptions</code></p>
+      <div class="row-flex" style="margin-top:20px;justify-content:center" data-premium-cue="alerts">
+        <span class="gate-note">Alert Delivery is included in Premium &middot; $15/mo or $140/yr &middot; 7-day free trial
+          <button class="btn sm" onclick="openPricing('alerts')">Start Free Trial</button></span>
+      </div>
     </div>
   </section>
 
@@ -1652,7 +1651,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
   </section>
 
-  <footer>Congress.Trade • an educational tool for exploring public STOCK Act (2012) disclosures • informational only • not financial advice • not trading signals • dollar figures are estimates from disclosed brackets</footer>
+  <footer>Congress.Trade • an educational tool for exploring public STOCK Act (2012) disclosures • informational only • not financial advice • not trading signals • $ estimated from disclosed brackets</footer>
 </main>
 
 <div class="drawer" id="detailDrawer">
@@ -2015,8 +2014,34 @@ function cleanAsset(s) {
   var t = String(s).replace(/<[^>]*>/g, ' ');
   t = t.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
        .replace(/&gt;/gi, '>').replace(/&#0*39;|&apos;/gi, "'").replace(/&quot;/gi, '"');
-  t = t.replace(/\\s+/g, ' ').trim();
-  return isScannedPdfPlaceholder(t) ? '' : t;
+  t = t.replace(/\s+/g, ' ').trim();
+  
+  if (isScannedPdfPlaceholder(t)) return '';
+
+  t = t.replace(/[\/\-\s]+$/, '');
+  t = t.replace(/\s*\(\s*(?:NASDAQ|NYSE|AMEX|OTC|BATS|ARCA|ASX|LSE|TSX)[^)]*\)\s*$/i, '');
+  
+  if (t === t.toUpperCase() && /[A-Z]{4,}/.test(t)) {
+    t = t.toLowerCase().replace(/\b\w/g, function(l) { return l.toUpperCase(); });
+  }
+
+  t = t.replace(/\b(Inc|Corp|Ltd|Co)\b\.?/gi, function(match) {
+    var c = match.toLowerCase();
+    if (c.startsWith('inc')) return 'Inc.';
+    if (c.startsWith('corp')) return 'Corp.';
+    if (c.startsWith('ltd')) return 'Ltd.';
+    if (c.startsWith('co')) return 'Co.';
+    return match;
+  });
+  t = t.replace(/\b(LLC|L\.L\.C\.|L\.P\.|LP)\b\.?/gi, function(match) {
+    var c = match.toLowerCase().replace(/\./g, '');
+    if (c === 'llc') return 'LLC';
+    if (c === 'lp') return 'LP';
+    return match;
+  });
+  t = t.replace(/\s*,\s*(Inc\.|LLC|Corp\.|Ltd\.|LP|Co\.)/g, ' $1');
+
+  return t;
 }
 
 /* Human duration: 45s, 3m 12s, 2h 5m, 1d 4h. */
@@ -2266,12 +2291,12 @@ function lagCellHtml(r) {
   return '<span' + over + ' title="Days from trade to official filing date (STOCK Act limit: 45)">' + d + '</span>';
 }
 var FEED_COLS = [
-  { id: 'published', label: 'Published', sort: 'published', def: true, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
+  { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
   { id: 'member', label: 'Politician', sort: 'member', def: true, tip: 'Politician who filed the disclosure.', cell: memberCellHtml },
   { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
   { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
   { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
-  { id: 'lag', label: 'Lag', sort: 'lag', def: true, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
+  { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
   { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
   { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: false, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
@@ -2772,8 +2797,6 @@ function feedQueryParams() {
 function setFeedKpis() {
   el('kpiTotal').textContent = totalRows || TRADES.length;
   el('kpiToday').textContent = filingsImportedToday;
-  var primary = TRADES.filter(function (r) { return r.source === 'primary'; }).length;
-  el('kpiAuto').innerHTML = (TRADES.length ? Math.round(100 * primary / TRADES.length) : 0) + '<small>%</small>';
 }
 /* Fetch one bounded newest-first feed page. */
 function fetchPage() {
@@ -3017,6 +3040,13 @@ function decisionReasonText(d) {
 function decisionDocHtml(d) {
   var docId = d.docId || '';
   var url = safeDocUrl(d.sourceUrl);
+  if (!url && docId) {
+    if (docId.slice(0, 2) === 'S-') url = 'https://efdsearch.senate.gov/search/view/ptr/' + encodeURIComponent(docId.slice(2)) + '/';
+    else if (docId.slice(0, 2) === 'H-') {
+      var parts = docId.split('-');
+      if (parts.length >= 3) url = 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/' + encodeURIComponent(parts[1]) + '/' + encodeURIComponent(parts[2]) + '.pdf';
+    }
+  }
   if (!url) return '<span class="tkr">' + esc(docId) + '</span>';
   return '<a class="tkr" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="Open source filing">' + esc(docId) + '</a>';
 }
@@ -3172,6 +3202,13 @@ function safeDocUrl(url) {
 function reviewDocHtml(r) {
   var docId = r.docId || '';
   var url = safeDocUrl(r.sourceUrl);
+  if (!url && docId) {
+    if (docId.slice(0, 2) === 'S-') url = 'https://efdsearch.senate.gov/search/view/ptr/' + encodeURIComponent(docId.slice(2)) + '/';
+    else if (docId.slice(0, 2) === 'H-') {
+      var parts = docId.split('-');
+      if (parts.length >= 3) url = 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/' + encodeURIComponent(parts[1]) + '/' + encodeURIComponent(parts[2]) + '.pdf';
+    }
+  }
   var idHtml = '<span class="tkr">' + esc(docId) + '</span>';
   if (!url) return idHtml;
   return '<a class="tkr" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="Open source filing">' + esc(docId) + '</a>' +
@@ -4192,7 +4229,7 @@ function loadDiagnostics() {
             return '<tr class="row">' +
               '<td class="muted">' + esc(dateTimeText(e.at)) + '</td>' +
               '<td class="' + sev + '">' + esc(e.area || 'App') + '</td>' +
-              '<td class="muted">' + esc(e.subject || '—') + '</td>' +
+              '<td class="muted">' + ((e.subject && e.subject.match(/^[HS]-/)) ? '<a href="' + esc(reconstructFilingUrl(e.subject)) + '" target="_blank" style="color:inherit;text-decoration:underline">' + esc(e.subject) + '</a>' : esc(e.subject || '—')) + '</td>' +
               '<td>' + esc(e.message || '—') + '</td>' +
             '</tr>';
           }).join('');
@@ -5333,7 +5370,11 @@ function openTrade(row) {
    source_url is missing — covers historic/seed House rows that predate URL capture.
    House PTRs live at disclosures-clerk.house.gov/public_disc/ptr-pdfs/YYYY/NNNN.pdf. */
 function reconstructFilingUrl(docId) {
-  var m = /^H-(\\d{4})-(\\d+)$/.exec(String(docId || ''));
+  var s = String(docId || '');
+  if (s.slice(0, 2) === 'S-') {
+    return 'https://efdsearch.senate.gov/search/view/ptr/' + encodeURIComponent(s.slice(2)) + '/';
+  }
+  var m = /^H-(\\d{4})-(\\d+)$/.exec(s);
   if (!m) return '';
   return 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/' + m[1] + '/' + m[2] + '.pdf';
 }
