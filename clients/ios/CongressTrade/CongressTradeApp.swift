@@ -71,8 +71,9 @@ final class CongressTradeStore: ObservableObject {
         feedNotice = nil
         do {
             let maxCursor = fetchMaxLocalCursor()
+            let order = maxCursor == nil ? "desc" : "asc"
             async let bootstrapTask = api.bootstrap()
-            async let feedTask = api.feed(query: FeedQuery(limit: 50, since: maxCursor, order: "desc"))
+            async let feedTask = api.feed(query: FeedQuery(limit: 50, since: maxCursor, order: order))
 
             bootstrap = try await bootstrapTask
             let response = try await feedTask
@@ -145,10 +146,7 @@ final class CongressTradeStore: ObservableObject {
 
     func saveWatchlist(_ text: String) async {
         let tickers = Self.parseTickers(text)
-        guard !tickers.isEmpty else {
-            watchlistNotice = "Enter at least one ticker."
-            return
-        }
+
         let mutation = pendingWatchlistMutation?.tickers == tickers
             ? pendingWatchlistMutation!
             : PendingWatchlistMutation(tickers: tickers, idempotencyKey: UUID().uuidString)
@@ -1206,6 +1204,7 @@ private enum DisplayFormatters {
     static let currency: NumberFormatter = {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
+        formatter.currencyCode = "USD"
         formatter.maximumFractionDigits = 0
         return formatter
     }()

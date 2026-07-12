@@ -61,7 +61,6 @@ export default function Dashboard() {
     mutate: refreshFeed,
     isLoading: isFeedLoading,
   } = useSWR<ClientFeedResponse>(feedPath, fetcher, {
-    refreshInterval: 30_000,
     keepPreviousData: true,
   });
   const user = bootstrap?.auth.user;
@@ -80,6 +79,70 @@ export default function Dashboard() {
     setRetryIntent(null);
     setOneTimeDelivery(null);
   }, [user?.id]);
+
+  const feedRef = useRef(feed);
+  const feedPathRef = useRef(feedPath);
+  useEffect(() => {
+    feedRef.current = feed;
+    feedPathRef.current = feedPath;
+  }, [feed, feedPath]);
+
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    let isCancelled = false;
+
+    async function poll() {
+      if (isCancelled) return;
+      
+      const currentFeed = feedRef.current;
+      const currentPath = feedPathRef.current;
+
+      let nextDelay = 30_000;
+
+      if (currentFeed && currentFeed.items.length > 0) {
+        try {
+          const params = new URLSearchParams(currentPath.split('?')[1] || '');
+          params.set('since', currentFeed.items[0].id);
+          params.set('order', 'asc');
+          
+          const delta = await apiGet<ClientFeedResponse>(`/feed?${params.toString()}`);
+          
+          if (!isCancelled && delta.items.length > 0) {
+            const reversedNewItems = [...delta.items].reverse();
+            void refreshFeed((prev) => {
+              if (!prev) return prev;
+              const existingIds = new Set(prev.items.map((i) => i.id));
+              const actuallyNew = reversedNewItems.filter((i) => !existingIds.has(i.id));
+              if (actuallyNew.length === 0) return prev;
+              
+              return {
+                ...prev,
+                total: delta.total,
+                count: prev.count + actuallyNew.length,
+                items: [...actuallyNew, ...prev.items],
+              };
+            }, { revalidate: false });
+          }
+        } catch (error) {
+          if (error instanceof ApiError && error.retryAfter) {
+            nextDelay = error.retryAfter * 1000;
+          } else {
+            nextDelay = 60_000;
+          }
+        }
+      }
+      
+      if (!isCancelled) {
+        timeoutId = setTimeout(poll, nextDelay);
+      }
+    }
+
+    timeoutId = setTimeout(poll, 30_000);
+    return () => {
+      isCancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [refreshFeed]);
 
   useEffect(() => {
     if (!isFilterOpen) return;
