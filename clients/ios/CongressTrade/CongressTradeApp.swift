@@ -529,49 +529,57 @@ struct TradeCard: View {
     let trade: ClientTrade
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                AssetMark(symbol: trade.asset.ticker ?? trade.asset.type ?? "A")
-                VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                AssetMark(symbol: assetTitle)
+                VStack(alignment: .leading, spacing: 2) {
                     Text(assetTitle)
                         .font(.headline)
                         .lineLimit(1)
                     Text(trade.asset.name)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(1)
                 }
                 Spacer(minLength: 8)
-                StatusPill(text: trade.transaction.type.label, color: trade.transaction.type.tint)
+                StatusPill(
+                    text: trade.transaction.type.label,
+                    color: trade.transaction.type.tint,
+                    icon: trade.transaction.type == "P" ? "arrow.down.right.circle.fill" : (trade.transaction.type == "S" ? "arrow.up.right.circle.fill" : "arrow.left.and.right.circle.fill")
+                )
             }
 
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
+            Divider()
+
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(trade.member.name ?? "Unknown Politician")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.body.weight(.semibold))
                     Text(memberMeta)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
+                VStack(alignment: .trailing, spacing: 4) {
                     Text(trade.amountLabel)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(trade.transaction.type == "P" ? .green : .primary)
                     Text(trade.source == .primary ? "Live Read" : "Historical")
-                        .font(.caption)
+                        .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             }
 
             HStack(spacing: 8) {
-                DateChip(title: "Traded", value: trade.transaction.date.shortDate)
-                DateChip(title: "Filed", value: trade.filing.filedDate.shortDate)
-                DateChip(title: "Seen", value: trade.filing.firstSeenAt.shortDate)
+                DateChip(title: "Traded", value: trade.transaction.date.shortDate, icon: "calendar")
+                DateChip(title: "Filed", value: trade.filing.filedDate.shortDate, icon: "doc.text")
             }
         }
-        .padding(14)
-        .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 8))
+        .padding(16)
+        .background(AppTheme.panel.opacity(0.8), in: RoundedRectangle(cornerRadius: 16))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .overlay(AppTheme.border)
+        .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
     }
 
     private var assetTitle: String {
@@ -596,59 +604,89 @@ struct TradeDetailView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Hero Header
+                    VStack(alignment: .center, spacing: 12) {
                         AssetMark(symbol: trade.asset.ticker ?? trade.asset.type ?? "A")
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(trade.asset.ticker ?? "Asset")
-                                .font(.title2.weight(.semibold))
-                            Text(trade.asset.name)
-                                .foregroundStyle(.secondary)
+                            .scaleEffect(1.5)
+                            .padding(.bottom, 8)
+                        
+                        Text(trade.asset.ticker ?? "Asset")
+                            .font(.largeTitle.weight(.bold))
+                        
+                        Text(trade.asset.name)
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        
+                        StatusPill(
+                            text: trade.transaction.type.label,
+                            color: trade.transaction.type.tint,
+                            icon: trade.transaction.type == "P" ? "arrow.down.right.circle.fill" : (trade.transaction.type == "S" ? "arrow.up.right.circle.fill" : "arrow.left.and.right.circle.fill")
+                        )
+                        .padding(.top, 4)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+                    .background(
+                        LinearGradient(colors: [AppTheme.panel, AppTheme.background], startPoint: .top, endPoint: .bottom)
+                    )
+
+                    VStack(spacing: 16) {
+                        DetailSection("Trade Summary") {
+                            DetailRow("Politician", trade.member.name ?? "Unknown")
+                            DetailRow("Amount", trade.amountLabel)
+                            DetailRow("Owner", trade.transaction.owner?.capitalized ?? "Unavailable")
+                            DetailRow("Confidence", "\(Int((trade.confidence * 100).rounded()))%")
+                        }
+
+                        DetailSection("Timeline") {
+                            DetailRow("Traded", trade.transaction.date.longDate)
+                            DetailRow("Filed", trade.filing.filedDate.longDate)
+                            DetailRow("Discovered", trade.filing.firstSeenAt.longDate)
+                        }
+
+                        DetailSection("Company Info") {
+                            DetailRow("Sector", trade.asset.sector ?? "Not Enriched Yet")
+                            DetailRow("Market Cap", trade.asset.marketCapBucket?.capitalized ?? "Not Enriched Yet")
+                        }
+
+                        if let sourceURL = trade.filing.sourceUrl,
+                           let url = URL(string: sourceURL),
+                           url.scheme == "https" || url.scheme == "http" {
+                            Button {
+                                openURL(url)
+                            } label: {
+                                Label("View Source Filing", systemImage: "doc.text.magnifyingglass")
+                                    .font(.headline)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.blue)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .padding(.top, 8)
                         }
                     }
-
-                    DetailSection("Trade") {
-                        DetailRow("Politician", trade.member.name ?? "Unknown")
-                        DetailRow("Action", trade.transaction.type.label)
-                        DetailRow("Amount", trade.amountLabel)
-                        DetailRow("Owner", trade.transaction.owner?.capitalized ?? "Unavailable")
-                        DetailRow("Confidence", "\(Int((trade.confidence * 100).rounded()))%")
-                    }
-
-                    DetailSection("Dates") {
-                        DetailRow("Traded", trade.transaction.date.longDate)
-                        DetailRow("Filed", trade.filing.filedDate.longDate)
-                        DetailRow("Seen", trade.filing.firstSeenAt.longDate)
-                    }
-
-                    DetailSection("Company") {
-                        DetailRow("Sector", trade.asset.sector ?? "Not Enriched Yet")
-                        DetailRow("Market Cap", trade.asset.marketCapBucket?.capitalized ?? "Not Enriched Yet")
-                    }
-
-                    if let sourceURL = trade.filing.sourceUrl,
-                       let url = URL(string: sourceURL),
-                       url.scheme == "https" || url.scheme == "http" {
-                        Button {
-                            openURL(url)
-                        } label: {
-                            Label("View Source Filing", systemImage: "doc.text.magnifyingglass")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
+                    .padding(.horizontal, 16)
                 }
-                .padding(16)
             }
             .background(AppTheme.background)
             .navigationTitle("Trade Detail")
-            .inlineNavigationTitle()
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {
-                    Button("Done") { dismiss() }
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 
@@ -912,14 +950,20 @@ struct MetricTile: View {
 struct StatusPill: View {
     let text: String
     let color: Color
+    var icon: String? = nil
 
     var body: some View {
-        Text(text)
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .foregroundStyle(color)
-            .background(color.opacity(0.14), in: Capsule())
+        HStack(spacing: 4) {
+            if let icon {
+                Image(systemName: icon)
+            }
+            Text(text)
+        }
+        .font(.caption.weight(.bold))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .foregroundStyle(color)
+        .background(color.opacity(0.15), in: Capsule())
     }
 }
 
@@ -929,32 +973,41 @@ struct AssetMark: View {
     var body: some View {
         Text(String(symbol.prefix(4)).uppercased())
             .font(.caption.weight(.bold).monospaced())
-            .frame(width: 44, height: 44)
+            .frame(width: 48, height: 48)
             .foregroundStyle(.white)
             .background(
-                LinearGradient(colors: [.blue, .teal], startPoint: .topLeading, endPoint: .bottomTrailing),
-                in: RoundedRectangle(cornerRadius: 8)
+                AppTheme.primaryGradient,
+                in: RoundedRectangle(cornerRadius: 12)
             )
+            .shadow(color: .blue.opacity(0.3), radius: 4, x: 0, y: 2)
     }
 }
 
 struct DateChip: View {
     let title: String
     let value: String
+    var icon: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                if let icon {
+                    Image(systemName: icon)
+                        .font(.caption2)
+                }
+                Text(title)
+            }
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+            
             Text(value)
-                .font(.caption)
+                .font(.caption.weight(.medium))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(8)
-        .background(AppTheme.panelElevated, in: RoundedRectangle(cornerRadius: 8))
+        .padding(10)
+        .background(Color(uiColor: .tertiarySystemGroupedBackground).opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 
@@ -1103,10 +1156,11 @@ enum AppTheme {
     static let panel = Color(uiColor: .secondarySystemGroupedBackground)
     static let panelElevated = Color(uiColor: .tertiarySystemGroupedBackground)
     static let borderColor = Color(uiColor: .separator)
+    static let primaryGradient = LinearGradient(colors: [.blue, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
 
     static var border: some View {
-        RoundedRectangle(cornerRadius: 8)
-            .stroke(borderColor, lineWidth: 1)
+        RoundedRectangle(cornerRadius: 16)
+            .stroke(borderColor.opacity(0.3), lineWidth: 1)
     }
 }
 
