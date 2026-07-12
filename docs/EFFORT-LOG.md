@@ -70,6 +70,22 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Ingestion fetch outage: R2 known-length regression fix + dead-letter recovery (CLAUDE, M) —
+  2026-07-12.** Every filing fetch in production failed from 2026-07-11T19:14Z onward with
+  `fetcher: Provided readable stream must have a known length` — PR #284's `limitedFilingBody`
+  size-guard wraps the response in a NEW JS ReadableStream, which R2 `put()` rejects (no known
+  length; upstream Content-Length doesn't carry over, and OGE's Domino server sends chunked with
+  no Content-Length at all). Casualties: all 500 filings of a just-started H-2015 house backfill
+  (ingestion_outbox rows dead-lettered to `failed` after the 5-cycle cap) + all 17 executive OGE
+  278-Ts discovered by the first post-#315 watcher poll (still cycling, self-recover on fix).
+  The fetcher unit tests mocked `RAW_FILES.put` as stream-draining, so CI could not catch it.
+  Fix: `bufferFilingBody()` buffers through the existing byte-count guard (25MB cap intact) and
+  hands R2 a known-length `Uint8Array`; regression test pins a no-Content-Length chunked response
+  (put receives buffered bytes, never a bare stream). Recovery: new
+  `POST /api/admin/ingest-requeue-failed` (`requeueFailedIngestionOutbox`: failed→pending with
+  fresh dead-letter budget, optional docIdPrefix, dryRun) + the per-minute outbox flush drains the
+  backlog. Gates: typecheck + 111 files / 977 tests green. Playbook: merge → `deploy.yml` →
+  requeue failed rows → verify fetches resume (receipts in #agent-sync closeout).
 - **Executive-branch (Trump) trade tracking — OGE Form 278-T ingestion (CLAUDE, L) — BUILT
   2026-07-12 (claim posted to #agent-sync before work).** Owner-approved. New
   `src/ingestion/ogeSource.ts` polls the OGE President/VP index (~6h, fail-soft; parser verified

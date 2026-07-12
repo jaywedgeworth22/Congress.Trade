@@ -94,6 +94,7 @@ import { runPriceRefresh } from '../prices/service';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets } from '../secrets/infisical';
 import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
 import { pollExecutive } from '../ingestion/watcher';
+import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox';
 import { estimateTransactionValue } from '../shared/transactionValue';
 import { isValidBracket } from '../shared/brackets';
 import { flushDeliveryOutbox } from '../delivery/outbox';
@@ -2755,6 +2756,40 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         dryRun: body.dryRun === true,
       });
       return c.json(result);
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /ingest-requeue-failed ------------------------------------------
+  // Reopen dead-lettered ingestion_outbox rows (status='failed') after a deploy
+  // fixes a systemic fetch failure, then flush a first batch immediately; the
+  // per-minute scheduled flush drains the rest. Idempotent: only rows still in
+  // 'failed' are touched, and re-fetching an errored filing is safe (same R2
+  // key, ingest_status transitions back through 'fetched').
+  // Body (all optional): { docIdPrefix?: string, dryRun?: boolean }
+  r.post('/ingest-requeue-failed', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const docIdPrefix = typeof body.docIdPrefix === 'string' ? body.docIdPrefix : undefined;
+    try {
+      if (body.dryRun === true) {
+        const prefix = docIdPrefix?.replace(/[%_]/g, '') ?? '';
+        const rows = await all<{ n: number }>(
+          c.env.DB,
+          `SELECT COUNT(*) AS n FROM ingestion_outbox WHERE status = 'failed'${prefix ? ' AND doc_id LIKE ?' : ''}`,
+          prefix ? [`${prefix}%`] : [],
+        );
+        return c.json({ ok: true, dryRun: true, failedRows: rows[0]?.n ?? 0 });
+      }
+      const requeued = await requeueFailedIngestionOutbox(c.env, { docIdPrefix });
+      const flushed = await flushIngestionOutbox(c.env, { limit: 100 });
+      return c.json({ ok: true, requeued, flushed });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }

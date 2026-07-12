@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../shared/types';
 import {
+  bufferFilingBody,
   classifyTransientIngestError,
   fetchFiling,
   IngestRetryError,
@@ -12,10 +13,7 @@ import {
 
 function envForFetch() {
   const updates: unknown[][] = [];
-  const put = vi.fn(async (_key: string, value: ReadableStream<Uint8Array>) => {
-    const reader = value.getReader();
-    while (!(await reader.read()).done) { /* drain */ }
-  });
+  const put = vi.fn(async (_key: string, _value: Uint8Array) => {});
   const send = vi.fn(async () => {});
   const env = {
     DB: {
@@ -52,15 +50,39 @@ describe('filing fetch retry status policy', () => {
       .toMatchObject({ delaySeconds: 45 });
   });
 
-  it('streams a normal response into R2 and advances the queue', async () => {
+  it('buffers a normal response into R2 and advances the queue', async () => {
     const { env, put, send } = envForFetch();
     vi.stubGlobal('fetch', vi.fn(async () => new Response('small filing', {
       status: 200, headers: { 'content-type': 'application/pdf', 'content-length': '12' },
     })));
     await fetchFiling(env, 'doc_1');
-    expect(put).toHaveBeenCalledWith('raw/doc_1', expect.any(ReadableStream), {
+    // R2 put() requires a known length: the body must arrive as buffered
+    // bytes, never as a plain JS ReadableStream (which has no known length).
+    expect(put).toHaveBeenCalledWith('raw/doc_1', expect.any(Uint8Array), {
       httpMetadata: { contentType: 'application/pdf' },
     });
+    expect(new TextDecoder().decode(put.mock.calls[0][1] as Uint8Array)).toBe('small filing');
+    expect(send).toHaveBeenCalledWith({ type: 'filing.fetched', docId: 'doc_1' });
+  });
+
+  it('buffers a chunked response with no Content-Length (OGE regression)', async () => {
+    const { env, put, send } = envForFetch();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('%PDF-1.4 chunk one '));
+        controller.enqueue(new TextEncoder().encode('chunk two'));
+        controller.close();
+      },
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(body, {
+      status: 200, headers: { 'content-type': 'application/pdf' },
+    })));
+    await fetchFiling(env, 'doc_1');
+    expect(put).toHaveBeenCalledWith('raw/doc_1', expect.any(Uint8Array), {
+      httpMetadata: { contentType: 'application/pdf' },
+    });
+    expect(new TextDecoder().decode(put.mock.calls[0][1] as Uint8Array))
+      .toBe('%PDF-1.4 chunk one chunk two');
     expect(send).toHaveBeenCalledWith({ type: 'filing.fetched', docId: 'doc_1' });
   });
 
@@ -99,9 +121,23 @@ describe('filing fetch retry status policy', () => {
     });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 200 })));
     await expect(fetchFiling(env, 'doc_1')).resolves.toBeUndefined();
-    expect(put).toHaveBeenCalledOnce();
+    // The limit trips while buffering, before R2 is ever touched.
+    expect(put).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
     expect(updates.some((params) => String(params[0]).includes('exceeds'))).toBe(true);
+  });
+
+  it('bufferFilingBody concatenates chunks and enforces the byte limit', async () => {
+    const stream = (chunks: Uint8Array[]) => new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        controller.close();
+      },
+    });
+    const ok = await bufferFilingBody(stream([new Uint8Array([1, 2]), new Uint8Array([3])]), 10);
+    expect(Array.from(ok)).toEqual([1, 2, 3]);
+    await expect(bufferFilingBody(stream([new Uint8Array(6), new Uint8Array(5)]), 10))
+      .rejects.toThrow('exceeds 10 byte limit');
   });
 
   it('throws a typed delayed retry for a retryable HTTP response', async () => {

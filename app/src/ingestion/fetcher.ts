@@ -105,6 +105,35 @@ export function limitedFilingBody(
   });
 }
 
+/**
+ * Buffer the size-guarded body into memory. R2 `put()` rejects a plain JS
+ * ReadableStream because it has no known length ("Provided readable stream
+ * must have a known length"), and sources like OGE's Domino server respond
+ * chunked with no Content-Length — so the raw bytes must be buffered (capped
+ * at MAX_RAW_FILING_BYTES) before the R2 write.
+ */
+export async function bufferFilingBody(
+  body: ReadableStream<Uint8Array>,
+  limit = MAX_RAW_FILING_BYTES,
+): Promise<Uint8Array> {
+  const reader = limitedFilingBody(body, limit).getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const next = await reader.read();
+    if (next.done) break;
+    chunks.push(next.value);
+    total += next.value.byteLength;
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
 /** R2 object key for a filing's raw original. Matches the spec: `raw/{docId}`. */
 export function rawKeyFor(docId: string): string {
   return `raw/${docId}`;
@@ -176,8 +205,10 @@ export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Pr
     const key = rawKeyFor(docId);
 
     // Persist raw bytes verbatim; retain content-type so the classifier can use
-    // it as a cheap signal without re-fetching.
-    await env.RAW_FILES.put(key, limitedFilingBody(res.body), {
+    // it as a cheap signal without re-fetching. Buffered because R2 needs a
+    // known length and chunked upstreams (e.g. OGE) omit Content-Length.
+    const rawBytes = await bufferFilingBody(res.body);
+    await env.RAW_FILES.put(key, rawBytes, {
       httpMetadata: { contentType: contentType || 'application/octet-stream' },
     });
 
