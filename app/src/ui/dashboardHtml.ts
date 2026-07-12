@@ -1597,6 +1597,84 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="section">
       <h3>Model Benchmarking</h3>
       <p class="sub">Run systematic tests of different model combinations against a sample of human-resolved filings (ground truth) to evaluate autonomy vs accuracy. Note: Benchmark evaluates up to 100 docs per run to control LLM costs. Requires ~90-95% certainty.</p>
+      <div class="row-flex" style="margin-bottom:4px; flex-wrap: wrap; gap: 8px; align-items: center;">
+        <strong style="width: 140px;">House Custom:</strong>
+        <select id="benchHouseA">
+          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
+          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
+          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          <option value="openai:gpt-4o">GPT-4o</option>
+          <option value="llamaparse:cost-effective">LlamaParse Cost-Effective</option>
+          <option value="llamaparse:fast">LlamaParse Fast</option>
+        </select>
+        <select id="benchHouseB">
+          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
+          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
+          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          <option value="openai:gpt-4o">GPT-4o</option>
+          <option value="llamaparse:cost-effective">LlamaParse Cost-Effective</option>
+          <option value="llamaparse:fast">LlamaParse Fast</option>
+        </select>
+        <select id="benchHouseC">
+          <option value="">(No C Model)</option>
+          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
+          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
+          <option value="openai:gpt-4o">GPT-4o</option>
+        </select>
+      </div>
+      <div class="row-flex" style="margin-bottom:4px; flex-wrap: wrap; gap: 8px; align-items: center;">
+        <strong style="width: 140px;">Senate Custom:</strong>
+        <select id="benchSenateA">
+          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
+          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
+          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          <option value="openai:gpt-4o">GPT-4o</option>
+          <option value="llamaparse:cost-effective">LlamaParse Cost-Effective</option>
+          <option value="llamaparse:fast">LlamaParse Fast</option>
+        </select>
+        <select id="benchSenateB">
+          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
+          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
+          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          <option value="openai:gpt-4o">GPT-4o</option>
+          <option value="llamaparse:cost-effective">LlamaParse Cost-Effective</option>
+          <option value="llamaparse:fast">LlamaParse Fast</option>
+        </select>
+        <select id="benchSenateC">
+          <option value="">(No C Model)</option>
+          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
+          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
+          <option value="openai:gpt-4o">GPT-4o</option>
+        </select>
+      </div>
+      <div class="row-flex" style="margin-bottom:10px; flex-wrap: wrap; gap: 8px; align-items: center;">
+        <strong style="width: 140px;">Executive Custom:</strong>
+        <select id="benchExecA">
+          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
+          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
+          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          <option value="openai:gpt-4o">GPT-4o</option>
+          <option value="llamaparse:cost-effective">LlamaParse Cost-Effective</option>
+          <option value="llamaparse:fast">LlamaParse Fast</option>
+        </select>
+        <select id="benchExecB">
+          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
+          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
+          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          <option value="openai:gpt-4o">GPT-4o</option>
+          <option value="llamaparse:cost-effective">LlamaParse Cost-Effective</option>
+          <option value="llamaparse:fast">LlamaParse Fast</option>
+        </select>
+        <select id="benchExecC">
+          <option value="">(No C Model)</option>
+          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
+          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
+          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
+          <option value="openai:gpt-4o">GPT-4o</option>
+        </select>
+      </div>
       <div class="row-flex" style="margin-bottom:10px">
         <button class="btn" id="btnRunBenchmark" onclick="runBenchmark()">Run Benchmark Evaluation</button>
         <span id="benchmarkMsg" class="note"></span>
@@ -4282,6 +4360,16 @@ function loadMarketCoverage() {
     });
 }
 
+async function apiCall(path, method, body) {
+  const res = await fetch(path, {
+    method,
+    headers: adminHeaders(),
+    body: body ? JSON.stringify(body) : undefined
+  });
+  if (!res.ok) throw new Error('API error: ' + res.status);
+  return res.json();
+}
+
 async function runBenchmark() {
   var msg = el('benchmarkMsg');
   var res = el('benchmarkResults');
@@ -4291,7 +4379,46 @@ async function runBenchmark() {
   res.innerHTML = '';
   btn.disabled = true;
 
+  function buildLineup(name, aId, bId, cId) {
+    const a = el(aId).value.split(':');
+    const b = el(bId).value.split(':');
+    const c = el(cId).value;
+    const lineup = { name, models: { a: { provider: a[0], model: a[1] }, b: { provider: b[0], model: b[1] } } };
+    if (c) {
+      const splitC = c.split(':');
+      lineup.models.c = { provider: splitC[0], model: splitC[1] };
+    }
+    return lineup;
+  }
+
   const lineups = [
+    buildLineup("Custom House", 'benchHouseA', 'benchHouseB', 'benchHouseC'),
+    buildLineup("Custom Senate", 'benchSenateA', 'benchSenateB', 'benchSenateC'),
+    buildLineup("Custom Exec", 'benchExecA', 'benchExecB', 'benchExecC'),
+    {
+      name: "Mistral OCR Latest (Single)",
+      models: { a: { provider: 'mistral', model: 'mistral-ocr-latest' }, b: { provider: 'mistral', model: 'mistral-ocr-latest' } }
+    },
+    {
+      name: "Gemini 3.5 Flash (Single)",
+      models: { a: { provider: 'gemini', model: 'gemini-3.5-flash' }, b: { provider: 'gemini', model: 'gemini-3.5-flash' } }
+    },
+    {
+      name: "Claude 3.5 Haiku (Single)",
+      models: { a: { provider: 'anthropic', model: 'claude-haiku-4-5' }, b: { provider: 'anthropic', model: 'claude-haiku-4-5' } }
+    },
+    {
+      name: "GPT-4o (Single)",
+      models: { a: { provider: 'openai', model: 'gpt-4o' }, b: { provider: 'openai', model: 'gpt-4o' } }
+    },
+    {
+      name: "LlamaParse Cost-Effective (Single)",
+      models: { a: { provider: 'llamaparse', model: 'cost-effective' }, b: { provider: 'llamaparse', model: 'cost-effective' } }
+    },
+    {
+      name: "LlamaParse Fast (Single)",
+      models: { a: { provider: 'llamaparse', model: 'fast' }, b: { provider: 'llamaparse', model: 'fast' } }
+    },
     {
       name: "Baseline (Mistral + Gemini -> Anthropic)",
       models: {
@@ -4299,64 +4426,69 @@ async function runBenchmark() {
         b: { provider: 'gemini', model: 'gemini-3.5-flash' },
         c: { provider: 'anthropic', model: 'claude-haiku-4-5' }
       }
-    },
-    {
-      name: "Tier 4 Vision (Mistral + Gemini -> Anthropic -> Gemini Pro)",
-      models: {
-        a: { provider: 'mistral', model: 'mistral-ocr-latest' },
-        b: { provider: 'gemini', model: 'gemini-3.5-flash' },
-        c: { provider: 'anthropic', model: 'claude-haiku-4-5' },
-        d: { provider: 'gemini', model: 'gemini-2.5-pro' }
-      }
     }
   ];
 
   try {
-    const docsData = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=50', 'GET');
-    const docs = docsData.docs || [];
-    if (!docs.length) {
+    const docsDataHouse = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=25&chamber=house', 'GET');
+    const docsDataSenate = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=25&chamber=senate', 'GET');
+    const docsDataExec = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=25&chamber=executive', 'GET');
+    const docs = {
+      house: docsDataHouse.docs || [],
+      senate: docsDataSenate.docs || [],
+      exec: docsDataExec.docs || []
+    };
+    if (!docs.house.length && !docs.senate.length && !docs.exec.length) {
       msg.innerText = 'No ground-truth docs found.';
       btn.disabled = false;
       return;
     }
 
-    var html = '<table><thead><tr><th>Lineup</th><th>Autonomy Rate (90-95% certainty)</th><th>Human Review Req.</th></tr></thead><tbody id="benchmarkTbody">';
+    var html = '<table><thead><tr><th>Lineup</th><th>House Autonomy</th><th>Senate Autonomy</th><th>Exec Autonomy</th></tr></thead><tbody id="benchmarkTbody">';
     for (var i = 0; i < lineups.length; i++) {
-      html += '<tr id="lineup-' + i + '"><td><strong>' + esc(lineups[i].name) + '</strong></td><td id="auto-' + i + '">Pending...</td><td id="human-' + i + '">Pending...</td></tr>';
+      html += '<tr id="lineup-' + i + '"><td><strong>' + esc(lineups[i].name) + '</strong></td>' +
+              '<td id="auto-house-' + i + '">Pending...</td>' +
+              '<td id="auto-senate-' + i + '">Pending...</td>' +
+              '<td id="auto-exec-' + i + '">Pending...</td></tr>';
     }
     html += '</tbody></table>';
     res.innerHTML = html;
 
-    for (let i = 0; i < lineups.length; i++) {
-      let published = 0;
-      let flagged = 0;
-      msg.innerText = 'Evaluating Lineup ' + (i + 1) + '/' + lineups.length + '... (0/' + docs.length + ')';
-      
-      for (let j = 0; j < docs.length; j++) {
-        msg.innerText = 'Evaluating Lineup ' + (i + 1) + '/' + lineups.length + '... (' + (j + 1) + '/' + docs.length + ')';
-        try {
-          const result = await apiCall('/api/admin/benchmark/dry-run/' + docs[j], 'POST', { models: lineups[i].models });
-          const autoPublished = result.outcome === 'published' || result.outcome === 'would_publish';
-          // Check if confidence is >= 0.90 for published
-          let confidence = 1;
-          if (result.rows && result.rows.length) {
-            confidence = result.rows.reduce((min, r) => Math.min(min, r.confidence || 0), 1);
-          }
-          if (autoPublished && confidence >= 0.90) {
-            published++;
-          } else {
+    async function evaluateChamber(chamberName, docList) {
+      for (let i = 0; i < lineups.length; i++) {
+        let published = 0;
+        let flagged = 0;
+        if (docList.length === 0) {
+          el('auto-' + chamberName + '-' + i).innerText = 'N/A';
+          continue;
+        }
+        for (let j = 0; j < docList.length; j++) {
+          msg.innerText = 'Evaluating ' + chamberName + ' Lineup ' + (i + 1) + '/' + lineups.length + '... (' + (j + 1) + '/' + docList.length + ')';
+          try {
+            const result = await apiCall('/api/admin/benchmark/dry-run/' + docList[j], 'POST', { models: lineups[i].models });
+            const autoPublished = result.outcome === 'published' || result.outcome === 'would_publish';
+            let confidence = 1;
+            if (result.rows && result.rows.length) {
+              confidence = result.rows.reduce((min, r) => Math.min(min, r.confidence || 0), 1);
+            }
+            if (autoPublished && confidence >= 0.90) {
+              published++;
+            } else {
+              flagged++;
+            }
+          } catch (e) {
             flagged++;
           }
-        } catch (e) {
-          flagged++; // treat error as flagged for review
+          
+          let autoRate = ((published / (j + 1)) * 100).toFixed(1) + '%';
+          el('auto-' + chamberName + '-' + i).innerText = autoRate + ' (' + published + '/' + (j + 1) + ')';
         }
-        
-        let autoRate = ((published / (j + 1)) * 100).toFixed(1) + '%';
-        let humanRate = ((flagged / (j + 1)) * 100).toFixed(1) + '%';
-        el('auto-' + i).innerText = autoRate + ' (' + published + '/' + (j + 1) + ')';
-        el('human-' + i).innerText = humanRate + ' (' + flagged + '/' + (j + 1) + ')';
       }
     }
+
+    await evaluateChamber('house', docs.house);
+    await evaluateChamber('senate', docs.senate);
+    await evaluateChamber('exec', docs.exec);
     msg.innerText = 'Benchmark completed!';
     msg.style.color = 'var(--accent)';
   } catch (err) {

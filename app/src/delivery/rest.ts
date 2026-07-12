@@ -661,6 +661,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     }
     const user = await getCurrentUserFromRequest(c);
     if (!user) return c.json({ error: 'authentication required for durable subscriptions' }, 401);
+    if (!isPremiumUser(user)) {
+      return c.json({ error: 'subscription management requires a Premium account', upgradeRequired: true, feature: 'alerts' }, 402);
+    }
     const clientId = `user:${user.id}`;
     const subRl = await rateLimit(c.env, 'sub-create-user', clientId, 10, 3600);
     if (!subRl.ok) return c.json({ error: 'too many subscription requests' }, 429, { 'Retry-After': String(subRl.retryAfterSec) });
@@ -723,6 +726,11 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     if (!existing) return c.json({ error: 'subscription not found' }, 404);
     if (!(await isAuthorizedForSubscription(c, existing))) {
       return c.json({ error: 'subscription secret required' }, 401);
+    }
+    const user = await getCurrentUserFromRequest(c);
+    // Since only premium users can create subscriptions, existing ones theoretically belong to premium users, but check on edit
+    if (user && !isPremiumUser(user)) {
+      return c.json({ error: 'subscription management requires a Premium account', upgradeRequired: true, feature: 'alerts' }, 402);
     }
 
     let body: Record<string, unknown>;

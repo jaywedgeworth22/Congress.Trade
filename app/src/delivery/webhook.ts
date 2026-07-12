@@ -19,7 +19,7 @@
  *   exactly-once if it crashes after POST but before recording success.
  */
 
-import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
+import { createCongressEvent, signCongressWebhook } from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, Subscription, Transaction } from '../shared/types';
 import { all, get, run } from '../shared/db';
 import { prefixedId } from '../shared/ids';
@@ -113,22 +113,7 @@ export async function visitActiveWebhookSubscriptionPage(
  */
 export async function signWebhookPayload(env: Env, body: string, secret?: string): Promise<string> {
   const keyMaterial = secret ?? (await resolveSecret(env, 'WEBHOOK_SIGNING_KEY')).value ?? '';
-  const enc = new TextEncoder();
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(keyMaterial),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sigBuf = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(body));
-  return toHex(new Uint8Array(sigBuf));
-}
-
-function toHex(bytes: Uint8Array): string {
-  let hex = '';
-  for (const b of bytes) hex += b.toString(16).padStart(2, '0');
-  return hex;
+  return signCongressWebhook(body, keyMaterial);
 }
 
 /** Exponential backoff with full jitter, capped. attempt is 1-based. */

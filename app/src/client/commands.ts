@@ -1,4 +1,5 @@
 import type { Env, User, ClientCommandType, Subscription } from '../shared/types';
+import { isPremiumUser } from '../billing/entitlement';
 import {
   assertSubscriptionQuota,
   createSubscription,
@@ -78,6 +79,9 @@ export async function executeCommand(env: Env, user: User, type: ClientCommandTy
     return { preferences: await upsertPreferences(env, user.id, normalizePreferencePatch(input)) };
   }
   if (type === 'create_subscription') {
+    if (!isPremiumUser(user)) {
+      throw new ClientInputError('Creating a subscription requires a Premium account', 402);
+    }
     const delivery = asDelivery(input.delivery);
     const targetUrl = typeof input.targetUrl === 'string' ? input.targetUrl.trim() : null;
     const targetLengthError = webhookTargetLengthError(targetUrl);
@@ -115,6 +119,9 @@ export async function executeCommand(env: Env, user: User, type: ClientCommandTy
     if (input.active !== undefined) {
       patch.active = input.active === true;
       if (patch.active && !existing.active) {
+        if (!isPremiumUser(user)) {
+          throw new ClientInputError('Activating a subscription requires a Premium account', 402);
+        }
         try {
           await assertSubscriptionQuota(env, existing.clientId, { activating: true });
         } catch (err) {
