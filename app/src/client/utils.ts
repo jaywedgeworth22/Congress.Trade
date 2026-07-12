@@ -53,7 +53,20 @@ export function parseIntOrUndef(v: string | undefined): number | undefined {
 }
 
 export function asChamber(v: string | undefined): Chamber | undefined {
-  return v === 'house' || v === 'senate' ? v : undefined;
+  return v === 'house' || v === 'senate' || v === 'executive' ? v : undefined;
+}
+
+/**
+ * Parse a CSV chamber selection (e.g. "house,executive"). Returns undefined
+ * for absent/empty/fully-invalid input — the DEFAULT, which the feed queries
+ * treat as house+senate (executive rows require explicit opt-in).
+ */
+export function asChambers(v: string | undefined): Chamber[] | undefined {
+  if (!v || !v.trim()) return undefined;
+  const parsed = Array.from(
+    new Set(v.split(',').map((part) => asChamber(part.trim())).filter((c): c is Chamber => !!c)),
+  ).sort();
+  return parsed.length ? parsed : undefined;
 }
 
 export function asTxType(v: string | undefined): TxType | undefined {
@@ -123,7 +136,7 @@ export function filtersFromQuery(q: Record<string, string>): TxQueryParams {
     ticker: q.ticker || undefined,
     member: q.member || undefined,
     memberName: q.memberName || undefined,
-    chamber: asChamber(q.chamber),
+    chambers: asChambers(q.chamber),
     type: asTxType(q.type),
     minAmount: asNonNegativeNumber(q.minAmount),
     maxAmount: asNonNegativeNumber(q.maxAmount),

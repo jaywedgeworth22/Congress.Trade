@@ -577,6 +577,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .toast.show { display:block; }
   .toast.err { border-color:color-mix(in srgb,var(--sell) 55%,transparent); color:var(--sell); }
   .gate-note { font-size:12px; color:var(--text-dim); display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
+  /* ---- Branch (House / Senate / Executive) chip multi-select ---- */
+  .chamber-chips { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+  .chamber-chips .chip { border:1px solid var(--border); background:transparent; color:var(--text-dim); border-radius:999px; padding:6px 12px; font-size:12px; line-height:1; cursor:pointer; min-height:32px; transition:border-color .15s, background .15s, color .15s; }
+  .chamber-chips .chip.on { color:var(--text); border-color:var(--accent); background:color-mix(in srgb, var(--accent) 14%, transparent); }
+  .chamber-chips .chip:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   /* ---- Speed vs data providers (public latency proof) ---- */
   .speed-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
   .speed-head h3 { margin:0; }
@@ -708,6 +713,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .drawer-kv { grid-template-columns: 1fr; gap: 3px; }
     .drawer-kv dd { text-align: left; }
     .plan-grid { grid-template-columns: 1fr; }
+    .toolbar .chamber-chips { grid-column: 1 / -1; }
     .speed-body { display:block; min-height:210px; }
     .speed-hero { margin-bottom:14px; }
     .speed-hero-num { font-size:34px; }
@@ -1210,9 +1216,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="">All Types</option><option value="P">Purchase</option>
         <option value="S">Sale</option><option value="E">Exchange</option>
       </select>
-      <select id="qChamber" onchange="resetFeedPage()">
-        <option value="">Both Chambers</option><option value="house">House</option><option value="senate">Senate</option>
-      </select>
+      <div class="chamber-chips" id="qChamber" role="group" aria-label="Filter by branch">
+        <button type="button" class="chip on" data-ch="house" aria-pressed="true">House</button>
+        <button type="button" class="chip on" data-ch="senate" aria-pressed="true">Senate</button>
+        <button type="button" class="chip" data-ch="executive" aria-pressed="false" title="Executive branch — Presidential trades from OGE Form 278-T filings">Executive</button>
+      </div>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()">🔍 Search</button>
       <button class="btn ghost sm" onclick="toggleColChooser()" title="Show / Hide Columns">⚙ Columns</button>
       <button class="btn ghost sm" id="exportCsvBtn" onclick="exportCsv()" title="Download the filtered feed as CSV">⤓ Export CSV <span class="premium-mark" data-premium-cue="exportCsv">Premium</span></button>
@@ -1272,7 +1280,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="1825d">Past 5 Years</option>
         <option value="all">All Time</option>
       </select>
-      <select id="trChamber"><option value="">Both Chambers</option><option value="house">House</option><option value="senate">Senate</option></select>
+      <div class="chamber-chips" id="trChamber" role="group" aria-label="Filter analytics by branch">
+        <button type="button" class="chip on" data-ch="house" aria-pressed="true">House</button>
+        <button type="button" class="chip on" data-ch="senate" aria-pressed="true">Senate</button>
+        <button type="button" class="chip" data-ch="executive" aria-pressed="false" title="Executive branch — Presidential trades from OGE Form 278-T filings">Executive</button>
+      </div>
       <select id="trParty"><option value="">All Parties</option><option value="D">Democrat</option><option value="R">Republican</option><option value="O">Other / Ind.</option></select>
       <select id="trSource" title="Provenance of the underlying rows">
         <option value="all" selected>All Data</option>
@@ -2413,7 +2425,14 @@ function resetCols() {
 
 function renderFeed() {
   var m = el('qMember').value.toLowerCase(), t = el('qTicker').value.toUpperCase(),
-      ty = el('qType').value, ch = el('qChamber').value;
+      ty = el('qType').value, chs = chipSel('qChamber');
+  // Mirror the server's semantics: default (House+Senate) keeps rows whose
+  // chamber is unresolved; an explicit selection matches exactly.
+  var chDefault = chamberParam('qChamber') === '';
+  function chamberMatch(r) {
+    if (chDefault) return r.chamber !== 'executive';
+    return chs.indexOf(r.chamber) >= 0;
+  }
   // Fold-out advanced search (panel may be collapsed; inputs still honored).
   var qa = (el('qAll').value || '').toLowerCase().trim();
   var minAmt = parseFloat(el('qMinAmt').value);
@@ -2442,7 +2461,7 @@ function renderFeed() {
     return (!m || (r.member || '').toLowerCase().indexOf(m) >= 0) &&
            (!t || (r.ticker || '').indexOf(t) >= 0) &&
            (!ty || r.type === ty) &&
-           (!ch || r.chamber === ch);
+           chamberMatch(r);
   });
   rows = sortRows(rows);
   if (rows.length === 0) {
@@ -2735,7 +2754,7 @@ function feedQueryParams() {
   var t = el('qTicker').value.trim(); if (t) p.set('ticker', t);
   var m = el('qMember').value.trim(); if (m) p.set('memberName', m);
   var ty = el('qType').value; if (ty) p.set('type', ty);
-  var ch = el('qChamber').value; if (ch) p.set('chamber', ch);
+  var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
   return p;
 }
 function setFeedKpis() {
@@ -4281,7 +4300,7 @@ function runMarketBackfill(dryRun) {
 	var NET_FLOW_TIP_ALLTIME = 'Buy dollars minus sell dollars across all disclosed trades for this asset, using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
 function trParams() {
   var p = 'window=' + encodeURIComponent(el('trWindow').value);
-  var ch = el('trChamber').value; if (ch) p += '&chamber=' + ch;
+  var ch = chamberParam('trChamber'); if (ch) p += '&chamber=' + encodeURIComponent(ch);
   var pa = el('trParty').value; if (pa) p += '&party=' + pa;
   var src = el('trSource').value; if (src && src !== 'all') p += '&source=' + src;
   return p;
@@ -5461,7 +5480,7 @@ function exportCsv() {
   var p = new URLSearchParams();
   var t = el('qTicker').value.trim(); if (t) p.set('ticker', t);
   var ty = el('qType').value; if (ty) p.set('type', ty);
-  var ch = el('qChamber').value; if (ch) p.set('chamber', ch);
+  var ch = chamberParam('qChamber'); if (ch) p.set('chamber', ch);
   var qs = p.toString();
   window.location.href = '/api/export/transactions.csv' + (qs ? ('?' + qs) : '');
 }
@@ -5604,10 +5623,52 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
 })();
 setInterval(refreshSpeedUpdated, 60000);
 
-/* Trends controls: re-run on change; ticker rows/cards open the asset drawer. */
-['trWindow', 'trChamber', 'trParty', 'trSource'].forEach(function (id) {
+/* Trends controls: re-run on change; ticker rows/cards open the asset drawer.
+   (trChamber is a chip group wired via initChamberChips below, not a select.) */
+['trWindow', 'trParty', 'trSource'].forEach(function (id) {
   var e = el(id); if (e) e.addEventListener('change', loadTrends);
 });
+
+/* ---- Branch chips: House / Senate / Executive multi-select ----
+   Default = House + Senate (the congressional view); Executive (Presidential
+   OGE 278-T trades) joins only when its chip is switched on. At least one
+   chip always stays selected. Selections persist per view. */
+var CHAMBER_DEFAULT = ['house', 'senate'];
+function chipSel(groupId) {
+  var g = el(groupId); if (!g) return CHAMBER_DEFAULT.slice();
+  var on = [];
+  g.querySelectorAll('.chip.on').forEach(function (b) { on.push(b.getAttribute('data-ch')); });
+  return on.length ? on : CHAMBER_DEFAULT.slice();
+}
+function chamberParam(groupId) {
+  var sel = chipSel(groupId).slice().sort();
+  return sel.join(',') === CHAMBER_DEFAULT.slice().sort().join(',') ? '' : sel.join(',');
+}
+function initChamberChips(groupId, storageKey, onChange) {
+  var g = el(groupId); if (!g) return;
+  try {
+    var saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
+    if (Array.isArray(saved) && saved.length) {
+      g.querySelectorAll('.chip').forEach(function (b) {
+        var on = saved.indexOf(b.getAttribute('data-ch')) >= 0;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+  } catch (e) {}
+  g.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.chip') : null;
+    if (!b) return;
+    var willBeOn = !b.classList.contains('on');
+    if (!willBeOn && chipSel(groupId).length <= 1) return; // keep >= 1 branch
+    b.classList.toggle('on', willBeOn);
+    b.setAttribute('aria-pressed', willBeOn ? 'true' : 'false');
+    try { localStorage.setItem(storageKey, JSON.stringify(chipSel(groupId))); } catch (err) {}
+    onChange();
+  });
+}
+initChamberChips('qChamber', 'feed-chambers-v1', function () { resetFeedPage(); });
+initChamberChips('trChamber', 'trends-chambers-v1', function () { loadTrends(); });
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
 (function () {
   var v = el('view-trends');

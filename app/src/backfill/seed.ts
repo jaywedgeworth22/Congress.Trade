@@ -72,7 +72,12 @@ export const SEED_BASE_CONFIDENCE = 0.95;
  */
 const SEED_BATCH_SIZE = 50;
 
-export const SEED_SOURCES: Record<Chamber, { url: string; certain: boolean }> = {
+/** Seed datasets cover the congressional chambers only. */
+type SeedChamber = 'house' | 'senate';
+
+// Seed datasets exist for the congressional chambers only (executive 278-T
+// filings flow through the live OGE watcher instead).
+export const SEED_SOURCES: Record<'house' | 'senate', { url: string; certain: boolean }> = {
   senate: {
     url: 'https://raw.githubusercontent.com/timothycarambat/senate-stock-watcher-data/master/aggregate/all_transactions.json',
     certain: true,
@@ -92,7 +97,7 @@ export const SEED_SOURCES: Record<Chamber, { url: string; certain: boolean }> = 
 
 export interface SeedBackfillOptions {
   /** Which chambers to seed. Defaults to both. */
-  chambers?: Chamber[];
+  chambers?: SeedChamber[];
   /** Only import transactions whose tx_date year is >= this. */
   sinceYear?: number;
   /** Hard cap on rows inserted across all sources (safety valve). */
@@ -108,7 +113,7 @@ export interface SeedBackfillOptions {
    * a working mirror without a code change — `runSeedBackfillFromEnv` reads
    * SEED_HOUSE_URL / SEED_SENATE_URL and forwards them here.
    */
-  sourceUrls?: Partial<Record<Chamber, string>>;
+  sourceUrls?: Partial<Record<SeedChamber, string>>;
 }
 
 export interface SeedBackfillResult {
@@ -442,7 +447,7 @@ function buildSeedTxStatement(tx: Transaction): SqlStatement {
 
 /** Fetch + parse one chamber's aggregate JSON. Throws on transport/parse error. */
 async function fetchChamberRecords(
-  chamber: Chamber,
+  chamber: 'house' | 'senate',
   fetchImpl: typeof fetch,
   urlOverride?: string,
 ): Promise<RawWatcherRecord[]> {
@@ -475,7 +480,7 @@ export async function runSeedBackfill(
   env: Env,
   opts: SeedBackfillOptions = {},
 ): Promise<SeedBackfillResult> {
-  const chambers = opts.chambers ?? (['house', 'senate'] as Chamber[]);
+  const chambers = opts.chambers ?? (['house', 'senate'] as SeedChamber[]);
   const fetchImpl = opts.fetchImpl ?? fetch;
   const limit = opts.limit ?? Number.POSITIVE_INFINITY;
   const nowIso = new Date().toISOString();
@@ -499,7 +504,7 @@ export async function runSeedBackfill(
   // cap) to a few hundred. `pending` records the chamber for each *tx* statement
   // (null for filer statements) so we can attribute changes after the batch runs.
   let queued: SqlStatement[] = [];
-  let pending: Array<Chamber | null> = [];
+  let pending: Array<SeedChamber | null> = [];
   let queuedTxCount = 0;
 
   const flush = async () => {
@@ -593,7 +598,7 @@ export async function runSeedBackfillFromEnv(
   // be repointed without touching wrangler config at all.
   const houseUrl = (await resolveSecret(env, 'SEED_HOUSE_URL')).value ?? e.SEED_HOUSE_URL;
   const senateUrl = (await resolveSecret(env, 'SEED_SENATE_URL')).value ?? e.SEED_SENATE_URL;
-  const sourceUrls: Partial<Record<Chamber, string>> = { ...opts.sourceUrls };
+  const sourceUrls: Partial<Record<SeedChamber, string>> = { ...opts.sourceUrls };
   if (houseUrl && sourceUrls.house === undefined) sourceUrls.house = houseUrl;
   if (senateUrl && sourceUrls.senate === undefined) sourceUrls.senate = senateUrl;
   return runSeedBackfill(env, { ...opts, sourceUrls });

@@ -121,9 +121,18 @@ function makeEnv(opts: { quotaRace?: boolean } = {}) {
       const txType = String(params[i++]);
       rows = rows.filter((row) => row.tx_type === txType);
     }
-    if (/COALESCE\(fl\.chamber, f\.chamber\) = \?/i.test(sql)) {
+    const chamberIn = sql.match(/COALESCE\(fl\.chamber, f\.chamber\) IN \(([?, ]+)\)/i);
+    if (chamberIn) {
+      const n = (chamberIn[1].match(/\?/g) ?? []).length;
+      const chambers = params.slice(i, i + n).map(String);
+      i += n;
+      rows = rows.filter((row) => chambers.includes(String((row as FeedTransactionRow & { __chamber?: string }).__chamber)));
+    } else if (/COALESCE\(fl\.chamber, f\.chamber\) = \?/i.test(sql)) {
       const chamber = String(params[i++]);
       rows = rows.filter((row) => (row as FeedTransactionRow & { __chamber?: string }).__chamber === chamber);
+    } else if (/COALESCE\(fl\.chamber, f\.chamber\) <> 'executive'/i.test(sql)) {
+      // Parameter-less default: the congressional view excludes executive rows.
+      rows = rows.filter((row) => (row as FeedTransactionRow & { __chamber?: string }).__chamber !== 'executive');
     }
     if (/t\.amount_min >= \?/i.test(sql)) {
       const minAmount = Number(params[i++]);

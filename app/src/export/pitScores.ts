@@ -425,6 +425,9 @@ async function loadTransactions(env: Env, q: PitScoreQuery): Promise<TxRow[]> {
     't.deprecated_at IS NULL',
     "t.ticker IS NOT NULL AND t.ticker <> ''",
     "t.tx_type IN ('P', 'S')",
+    // Congress PIT scores are a CONGRESSIONAL contract for App B: executive
+    // (OGE 278-T) rows stay out until the shared package carries the chamber.
+    "(COALESCE(fl.chamber, f.chamber) IS NULL OR COALESCE(fl.chamber, f.chamber) <> 'executive')",
   ];
   const params: SqlParam[] = [];
   const cursorDate = dateOnly(q.cursor?.asOf);
