@@ -258,11 +258,18 @@ async function enabled(env: EnvWithWatch): Promise<boolean> {
   // behavior identical while letting Infisical override it when set.
   const watchEnabled =
     (await resolveSecret(env, 'DISCLOSURE_LATENCY_WATCH_ENABLED')).value ?? env.DISCLOSURE_LATENCY_WATCH_ENABLED;
-  return truthy(watchEnabled) || truthy(env.FMP_DISCLOSURE_WATCH_ENABLED);
+  const legacyEnabled =
+    (await resolveSecret(env, 'FMP_DISCLOSURE_WATCH_ENABLED')).value ?? env.FMP_DISCLOSURE_WATCH_ENABLED;
+  return truthy(watchEnabled) || truthy(legacyEnabled);
 }
 
-function limit(env: EnvWithWatch): number {
-  const n = parseInt(env.DISCLOSURE_LATENCY_WATCH_LIMIT || env.FMP_DISCLOSURE_WATCH_LIMIT || '', 10);
+async function limit(env: EnvWithWatch): Promise<number> {
+  const raw =
+    (await resolveSecret(env, 'DISCLOSURE_LATENCY_WATCH_LIMIT')).value ??
+    (await resolveSecret(env, 'FMP_DISCLOSURE_WATCH_LIMIT')).value ??
+    env.DISCLOSURE_LATENCY_WATCH_LIMIT ??
+    env.FMP_DISCLOSURE_WATCH_LIMIT;
+  const n = parseInt(raw || '', 10);
   return Number.isFinite(n) && n > 0 ? Math.min(n, 500) : DEFAULT_LIMIT;
 }
 
@@ -275,8 +282,10 @@ function definition(id: ProviderId): ProviderDefinition {
   return PROVIDERS.find((p) => p.id === id) ?? PROVIDERS[0];
 }
 
-function requestedProviderIds(env: EnvWithWatch, opts: { providers?: string[] } = {}): ProviderId[] {
-  const raw = opts.providers?.length ? opts.providers.join(',') : env.DISCLOSURE_LATENCY_PROVIDERS || '';
+async function requestedProviderIds(env: EnvWithWatch, opts: { providers?: string[] } = {}): Promise<ProviderId[]> {
+  const configured =
+    (await resolveSecret(env, 'DISCLOSURE_LATENCY_PROVIDERS')).value ?? env.DISCLOSURE_LATENCY_PROVIDERS;
+  const raw = opts.providers?.length ? opts.providers.join(',') : configured || '';
   const parsed = raw
     .split(/[,\s]+/)
     .map((part) => part.trim().toLowerCase())
@@ -869,8 +878,11 @@ async function runProviderProbe(
 
   if (!capSkipped) {
     let fmpCallsMade = 0;
+    const fmpMaxPerMinute = isFmp
+      ? (await resolveSecret(env, 'FMP_MAX_PER_MINUTE')).value ?? envx.FMP_MAX_PER_MINUTE
+      : undefined;
     const shared = isFmp
-      ? getSharedFmpPacer(parseInt(envx.FMP_MAX_PER_MINUTE || '', 10) || undefined)
+      ? getSharedFmpPacer(parseInt(fmpMaxPerMinute || '', 10) || undefined)
       : null;
     // Count every FMP HTTP request actually fired (one pace() call precedes each
     // request in fetchFmpRows), so failed 4xx/5xx calls still consume quota just
@@ -955,8 +967,9 @@ export async function runDisclosureLatencyProbe(
   }
 
   const runs: DisclosureLatencyProviderRun[] = [];
-  for (const providerId of requestedProviderIds(envx, opts)) {
-    runs.push(await runProviderProbe(env, definition(providerId), now, fetchImpl, limit(envx)));
+  const max = await limit(envx);
+  for (const providerId of await requestedProviderIds(envx, opts)) {
+    runs.push(await runProviderProbe(env, definition(providerId), now, fetchImpl, max));
   }
   await setLastPollAt(env, PROBE_POLL_SOURCE, now);
   return {

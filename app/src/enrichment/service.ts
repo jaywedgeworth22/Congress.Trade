@@ -97,14 +97,20 @@ export function enrichmentNeededSql(alias = 'sr', retryIncompleteWithKeyedProvid
  * sector/country/market cap — preventing an endless loop of re-selecting the
  * newest tickers on every run.
  */
-export function hasConfiguredKeyedEnrichmentProvider(env: Env): boolean {
-  const envx = env as EnvX;
+export async function hasConfiguredKeyedEnrichmentProvider(env: Env): Promise<boolean> {
+  const keys = await resolveSecrets(env, [
+    'FMP_API_KEY',
+    'MASSIVE_API_KEY',
+    'INTRINIO_API_KEY',
+    'TWELVEDATA_API_KEY',
+    'FINNHUB_API_KEY',
+  ]);
   return Boolean(
-    envx.FMP_API_KEY ||
-      envx.MASSIVE_API_KEY ||
-      envx.INTRINIO_API_KEY ||
-      envx.TWELVEDATA_API_KEY ||
-      envx.FINNHUB_API_KEY,
+    keys.FMP_API_KEY ||
+      keys.MASSIVE_API_KEY ||
+      keys.INTRINIO_API_KEY ||
+      keys.TWELVEDATA_API_KEY ||
+      keys.FINNHUB_API_KEY,
   );
 }
 
@@ -225,6 +231,8 @@ export async function runEnrichment(
   const runtimeSecrets = await resolveSecrets(env, [
     'FMP_API_KEY',
     'FMP_DAILY_CALL_CAP',
+    'FMP_MAX_PER_MINUTE',
+    'EDGAR_MAX_PER_MINUTE',
     'MASSIVE_API_KEY',
     'INTRINIO_API_KEY',
     'TWELVEDATA_API_KEY',
@@ -271,13 +279,13 @@ export async function runEnrichment(
   // it) passes nothing, so the memoized singleton is never poisoned into a
   // permanent no-op just because an unconfigured caller happened to run first.
   const fmpMaxPerMinute =
-    opts.maxPerMinute ?? (parseInt((env as { FMP_MAX_PER_MINUTE?: string }).FMP_MAX_PER_MINUTE || '', 10) || undefined);
+    opts.maxPerMinute ?? (parseInt(envx.FMP_MAX_PER_MINUTE || '', 10) || undefined);
   const pace = getSharedFmpPacer(fmpMaxPerMinute);
   // SEC EDGAR's own dedicated pacer — a separate provider with a separate
   // fair-access limit, so it does NOT draw on the FMP budget/pacer above. Same
   // env fallback so admin-triggered runs don't poison it either.
   const edgarMaxPerMinute =
-    opts.edgarMaxPerMinute ?? (parseInt((env as { EDGAR_MAX_PER_MINUTE?: string }).EDGAR_MAX_PER_MINUTE || '', 10) || undefined);
+    opts.edgarMaxPerMinute ?? (parseInt(envx.EDGAR_MAX_PER_MINUTE || '', 10) || undefined);
   const edgarPace = getSharedEdgarPacer(edgarMaxPerMinute);
   let fmpCalls = 0;
 

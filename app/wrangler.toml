@@ -156,6 +156,16 @@ id = "b5554a8cd8b04347baeb80cd160bf1e0"
 #   STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / STRIPE_PRICE_*
 #   USAGE_MONITOR_INGEST_URL / USAGE_MONITOR_INGEST_TOKEN
 # ---------------------------------------------------------------------------
+# ── NOTE: Infisical is the single source of truth for config ────────────────
+# Every var below (and every Worker secret except the INFISICAL_* bootstrap
+# credentials and the Sentry init vars) is read through the Infisical runtime
+# resolver: a value set in Infisical ALWAYS overrides the value here, live,
+# within the resolver cache TTL (~10 min) and with zero redeploys. Treat this
+# block as FALLBACK DEFAULTS — edit knobs in Infisical, not here. Audit which
+# source is live per key via GET /api/admin/config-sources; registry in
+# app/docs/config-registry.md. Env-only exceptions: SENTRY_ENVIRONMENT (+ DSN /
+# traces rate, read synchronously at Worker init) and USAGE_MONITOR_ENVIRONMENT
+# as consumed by Sentry-adjacent init paths.
 [vars]
 APP_BASE_URL = "https://congress.trade"
 # Autonomous cross-vendor agreement -> auto-publish (per-minute cron). The
