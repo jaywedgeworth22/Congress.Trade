@@ -978,6 +978,15 @@ export interface AgreementEnv {
   AGREEMENT_AUTOPUBLISH_MODEL_B?: string;
   AGREEMENT_AUTOPUBLISH_LIMIT?: string;
   AGREEMENT_MODEL_C?: string;
+  AGREEMENT_SENATE_MODEL_A?: string;
+  AGREEMENT_SENATE_MODEL_B?: string;
+  AGREEMENT_SENATE_MODEL_C?: string;
+  AGREEMENT_HOUSE_MODEL_A?: string;
+  AGREEMENT_HOUSE_MODEL_B?: string;
+  AGREEMENT_HOUSE_MODEL_C?: string;
+  AGREEMENT_EXEC_MODEL_A?: string;
+  AGREEMENT_EXEC_MODEL_B?: string;
+  AGREEMENT_EXEC_MODEL_C?: string;
   AGREEMENT_MAX_ATTEMPTS?: string;
   AGREEMENT_BIG_DOC_START_TIER2?: string;
   AGREEMENT_BIG_DOC_PAGE_THRESHOLD?: string;
@@ -993,6 +1002,15 @@ export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
     'AGREEMENT_AUTOPUBLISH_MODEL_B',
     'AGREEMENT_AUTOPUBLISH_LIMIT',
     'AGREEMENT_MODEL_C',
+    'AGREEMENT_SENATE_MODEL_A',
+    'AGREEMENT_SENATE_MODEL_B',
+    'AGREEMENT_SENATE_MODEL_C',
+    'AGREEMENT_HOUSE_MODEL_A',
+    'AGREEMENT_HOUSE_MODEL_B',
+    'AGREEMENT_HOUSE_MODEL_C',
+    'AGREEMENT_EXEC_MODEL_A',
+    'AGREEMENT_EXEC_MODEL_B',
+    'AGREEMENT_EXEC_MODEL_C',
     'AGREEMENT_MAX_ATTEMPTS',
     'AGREEMENT_BIG_DOC_START_TIER2',
     'AGREEMENT_BIG_DOC_PAGE_THRESHOLD',
@@ -1002,17 +1020,34 @@ export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
 }
 
 /** Resolve the configured A/B agreement models (with sensible defaults). */
-function resolveModels(e: AgreementEnv): AgreementModels {
+function resolveModels(e: AgreementEnv, chamber: string): AgreementModels {
+  let modelA = e.AGREEMENT_AUTOPUBLISH_MODEL_A;
+  let modelB = e.AGREEMENT_AUTOPUBLISH_MODEL_B;
+  if (chamber === 'senate') {
+    modelA = e.AGREEMENT_SENATE_MODEL_A || modelA;
+    modelB = e.AGREEMENT_SENATE_MODEL_B || modelB;
+  } else if (chamber === 'house') {
+    modelA = e.AGREEMENT_HOUSE_MODEL_A || modelA;
+    modelB = e.AGREEMENT_HOUSE_MODEL_B || modelB;
+  } else if (chamber === 'executive') {
+    modelA = e.AGREEMENT_EXEC_MODEL_A || modelA;
+    modelB = e.AGREEMENT_EXEC_MODEL_B || modelB;
+  }
   return {
-    a: parseCandidate(e.AGREEMENT_AUTOPUBLISH_MODEL_A, { provider: 'mistral', model: 'mistral-ocr-latest' }),
-    b: parseCandidate(e.AGREEMENT_AUTOPUBLISH_MODEL_B, { provider: 'gemini', model: 'gemini-3.5-flash' }),
+    a: parseCandidate(modelA, { provider: 'mistral', model: 'mistral-ocr-latest' }),
+    b: parseCandidate(modelB, { provider: 'gemini', model: 'gemini-3.5-flash' }),
   };
 }
 
 /** Resolve the A/B/C lineup for a tier-2+ pass (C defaults to a third vendor). */
-function resolveModelsWithC(e: AgreementEnv): AgreementModelsC {
-  const ab = resolveModels(e);
-  const c = parseCandidate(e.AGREEMENT_MODEL_C, { provider: 'anthropic', model: 'claude-haiku-4-5' });
+function resolveModelsWithC(e: AgreementEnv, chamber: string): AgreementModelsC {
+  const ab = resolveModels(e, chamber);
+  let modelC = e.AGREEMENT_MODEL_C;
+  if (chamber === 'senate') modelC = e.AGREEMENT_SENATE_MODEL_C || modelC;
+  else if (chamber === 'house') modelC = e.AGREEMENT_HOUSE_MODEL_C || modelC;
+  else if (chamber === 'executive') modelC = e.AGREEMENT_EXEC_MODEL_C || modelC;
+  
+  const c = parseCandidate(modelC, { provider: 'anthropic', model: 'claude-haiku-4-5' });
   return { a: ab.a, b: ab.b, c };
 }
 
@@ -1375,7 +1410,10 @@ export async function handleAgreementCheck(
   const queuedToken = claimToken ?? await acquireAgreementLease(env, docId, max);
   if (!queuedToken) return;
 
-  const models = tier >= 2 ? resolveModelsWithC(e) : resolveModels(e);
+  const chamberRow = await get<{ chamber: string }>(env.DB, 'SELECT chamber FROM filings WHERE doc_id = ?', [docId]);
+  const chamber = chamberRow?.chamber || 'house';
+
+  const models = tier >= 2 ? resolveModelsWithC(e, chamber) : resolveModels(e, chamber);
   const lineupError = duplicateLineupReason(
     tier >= 2
       ? [(models as AgreementModelsC).a, (models as AgreementModelsC).b, (models as AgreementModelsC).c]

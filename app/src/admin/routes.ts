@@ -3374,10 +3374,20 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // --- GET /benchmark/ground-truth-docs ------------------------------------
   r.get('/benchmark/ground-truth-docs', async (c) => {
     const limit = Math.min(Number(c.req.query('limit')) || 50, 200);
+    const chamber = c.req.query('chamber');
+    let query = `SELECT doc_id FROM filings WHERE source = 'manual' AND raw_object_key IS NOT NULL`;
+    const params: (string | number)[] = [];
+    if (chamber) {
+      query += ` AND chamber = ?`;
+      params.push(chamber);
+    }
+    query += ` LIMIT ?`;
+    params.push(limit);
+
     const rows = await all<{ doc_id: string }>(
       c.env.DB,
-      `SELECT doc_id FROM filings WHERE source = 'manual' AND raw_object_key IS NOT NULL LIMIT ?`,
-      [limit]
+      query,
+      params
     );
     return c.json({ docs: rows.map(r => r.doc_id) });
   });
