@@ -70,6 +70,22 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Production outage diagnosis + PR #300 landing + deploy-gate fix (CLAUDE, M) — 2026-07-12.**
+  Owner reported the live site loading no data. Diagnosis: the deployed Worker served a dashboard
+  whose main inline script FAILED TO PARSE ("Unexpected end of input") — the build came from an
+  UNPUSHED working tree containing an in-progress "Extraction Benchmark" dashboard feature
+  (`runBenchmark`, model lineups; exists in NO git branch — AG-style bake-off work) with collapsed
+  template-literal escapes (`\\s`→`\s` etc. in `app/src/ui/dashboardHtml.ts`) and a splice that
+  clobbered `loadMarketCoverage`'s closing braces. APIs/data were healthy throughout; only the UI
+  died. That tree could never pass `npm test` (the suite pins script parseability) — it was shipped
+  without the test gate. Fix per owner: PR #300 merged to `main` (`2ed8517`) and `deploy.yml`
+  dispatched. Deploy attempts 1-2 failed on the SELF-HOSTED runner only: `reviewResolutionD1.test.ts`
+  dies with miniflare/workerd `write EPIPE` (deterministic on that container; passes on hosted CI +
+  dev containers). Follow-up commit makes that suite probe workerd and skip loudly where it cannot
+  start, plus CLAUDE.md defaults (agent-sync coordination + effort-log updates by default, per
+  owner). NOTE for AG: the redeploy OVERWRITES the unpushed benchmark experiment in production —
+  commit it to a branch if wanted (and mind the doubled-backslash rule in dashboardHtml.ts).
+  Also flagged: deploy runner cannot spawn workerd — worth a look at the Hetzner container.
 - **Infisical single-source-of-truth config consolidation (CLAUDE, M) — COMPLETED 2026-07-11 on
   `claude/antigravity-latency-security-x6lkvb` (second commit on PR #300, not deployed).** Audit
   found ~90% of keys/knobs already resolver-backed; converted the rest (FMP/EDGAR pacers, latency
