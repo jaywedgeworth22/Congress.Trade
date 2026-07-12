@@ -70,6 +70,10 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Production outage diagnosis + PR #300/#308 landing — DEPLOYED 2026-07-12 (CLAUDE, M).**
+  Receipt: `deploy.yml` run 29177444399 succeeded on `b8ce1b4`; live verification passed (all
+  served script blocks parse; health ok/db/schema true; scoreboard + Alerts tab live with real
+  probe data; scrape guard 403s bare curl on data APIs). Original entry follows.
 - **Production outage diagnosis + PR #300 landing + deploy-gate fix (CLAUDE, M) — 2026-07-12.**
   Owner reported the live site loading no data. Diagnosis: the deployed Worker served a dashboard
   whose main inline script FAILED TO PARSE ("Unexpected end of input") — the build came from an
