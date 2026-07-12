@@ -130,6 +130,7 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
             limit: fmpDailyCap ?? undefined,
             limitWindow: 'day',
             confidence: 'actual',
+            project: 'congress-trade',
             // Required for shared-client idempotency-key derivation (5-field contract).
             occurredAt: new Date().toISOString(),
             metadata: {
@@ -156,6 +157,7 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
             unit: 'call',
             limitWindow: 'day',
             confidence: 'actual',
+            project: 'congress-trade',
             occurredAt: new Date().toISOString(),
           });
         }

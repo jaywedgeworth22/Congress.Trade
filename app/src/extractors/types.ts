@@ -117,6 +117,8 @@ export interface ExtractorResult {
   extractor: string;
   /** Model/version identifier when an LLM was used (optional). */
   modelVersion?: string;
+  /** Token usage reported by the provider API, when available. */
+  usage?: { promptTokens?: number; completionTokens?: number; cachedTokens?: number };
 }
 
 /** Input handed to an extractor. One of bytes/html is typically present. */
