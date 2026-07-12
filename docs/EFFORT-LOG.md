@@ -70,6 +70,20 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Executive-branch (Trump) trade tracking — OGE Form 278-T ingestion (CLAUDE, L) — BUILT
+  2026-07-12 (claim posted to #agent-sync before work).** Owner-approved. New
+  `src/ingestion/ogeSource.ts` polls the OGE President/VP index (~6h, fail-soft; parser verified
+  against the LIVE index: all 17 Trump 278-Ts, Aug 2025–Jun 2026) and feeds the normal pipeline as
+  `chamber='executive'` (scanned PDFs → vision extractor → review queue; filings >
+  OGE_MAX_VISION_BYTES route straight to review — page-chunked extraction is the follow-up for the
+  113-page equity mega-filings). Chamber union widened APP-LOCALLY
+  (`SharedChamber | 'executive'`, upstreaming to congress-trading-shared v1.7 is the socialized
+  follow-up); SEPARATE-BY-DEFAULT everywhere: feed/analytics default to house+senate (executive
+  requires explicit `chamber=` CSV opt-in), subscriptions without an explicit chambers filter never
+  receive executive rows, and App-B PIT exports exclude them. UI: House/Senate/Executive chip
+  multi-select replaces both chamber dropdowns (persisted, ≥1 chip always on). Admin
+  `POST /api/admin/oge-backfill`. Knobs OGE_* (Infisical-tunable, in config-sources registry).
+  NOTE for AG: brushes `client/utils.ts`/`client/routes.test.ts` again (chamber parsing).
 - **Production outage diagnosis + PR #300/#308 landing — DEPLOYED 2026-07-12 (CLAUDE, M).**
   Receipt: `deploy.yml` run 29177444399 succeeded on `b8ce1b4`; live verification passed (all
   served script blocks parse; health ok/db/schema true; scoreboard + Alerts tab live with real

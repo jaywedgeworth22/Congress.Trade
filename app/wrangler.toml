@@ -230,6 +230,13 @@ PRICE_PROVIDER = "fmp"
 # scout via POST /api/ingest/detection) to measure who surfaced each filing
 # first. Enables the FMP-vs-us lead readout that answers the front-running thesis.
 DISCLOSURE_LATENCY_WATCH_ENABLED = "true"
+# Executive-branch (OGE Form 278-T) filings watcher: polls the OGE President/VP
+# index (~6h cadence, fail-soft) for new Presidential periodic transaction
+# reports and runs them through the normal ingestion pipeline as
+# chamber='executive'. Executive rows are EXCLUDED from feed/analytics/
+# subscriptions by default (explicit chamber opt-in only). All OGE_* knobs are
+# Infisical-tunable.
+OGE_WATCH_ENABLED = "true"
 # Public-API anti-scraping guard (src/security/botDefense.ts): blocks scraper/
 # AI-crawler user agents and applies per-IP request + daily row budgets on the
 # public data endpoints. Infisical can override SCRAPE_GUARD_ENABLED to "false"
