@@ -24,7 +24,6 @@ import {
   arrayBufferToBase64,
   VisionLlmExtractor,
 } from './visionLlm';
-import { reportAiUsage } from '../shared/telemetry';
 import { resolveSecret } from '../secrets/infisical';
 import { run } from '../shared/db';
 import { uuid } from '../shared/ids';
@@ -530,7 +529,7 @@ export async function runCandidateOnDoc(
     }
     
     if (usage) {
-      reportAiUsage(env, { provider, model, component: 'bakeoff', ...usage }).catch(() => {});
+      // Telemetry is pushed via pushExtractionTelemetry in persistExtractionRun.
     }
     return {
       ...base,
@@ -546,7 +545,7 @@ export async function runCandidateOnDoc(
     const cast = err as Error & { usage?: CandidateDocResult['usage'] };
     
     if (cast.usage) {
-      reportAiUsage(env, { provider, model, component: 'bakeoff', ...cast.usage }).catch(() => {});
+      // Telemetry is pushed via pushExtractionTelemetry in persistExtractionRun.
     }
     
     return {

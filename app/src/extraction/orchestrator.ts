@@ -19,7 +19,6 @@ import { buildExtractorPipeline, type ExtractorResult } from '../extractors/type
 import { normalize } from './normalizer';
 import { enqueueAgreementCheck } from './agreement';
 import { reportAiUsage } from '../shared/telemetry';
-import { resolveSecret } from '../secrets/infisical';
 
 interface FilingRow {
   doc_id: string;
@@ -156,27 +155,7 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
     console.warn('orchestrator: failed to record raw_bytes:', docId, (err as Error).message);
   }
 
-  // Executive 278-T mega-filings (100+ page scans with thousands of rows,
-  // e.g. the 113-page May 2026 equity report) exceed what one vision call can
-  // return. Route them straight to human review — normalize([]) below the
-  // publish threshold — instead of burning model budget on a doomed
-  // extraction. Page-chunked extraction is the documented follow-up.
-  if (filing.chamber === 'executive') {
-    let cap = 6_000_000;
-    try {
-      const raw = (await resolveSecret(env, 'OGE_MAX_VISION_BYTES')).value ?? env.OGE_MAX_VISION_BYTES;
-      const n = parseInt(raw || '', 10);
-      if (Number.isFinite(n) && n > 0) cap = n;
-    } catch {
-      /* keep default cap */
-    }
-    if (bytes.byteLength > cap) {
-      console.warn(
-        `orchestrator: executive filing ${docId} is ${bytes.byteLength} bytes (> ${cap}); routing to review without extraction`,
-      );
-      return { filing, transactions: [], extractor: 'oversized-executive', modelVersion: null };
-    }
-  }
+  
 
   const html =
     filing.docKind === 'senate_html'
