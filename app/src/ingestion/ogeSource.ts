@@ -43,6 +43,11 @@ interface ExecutiveFiler {
 }
 const EXECUTIVE_FILERS: ExecutiveFiler[] = [
   { pattern: /trump/i, filerId: 'EXEC-DJT', fullName: 'Donald J. Trump' },
+  { pattern: /vance/i, filerId: 'EXEC-JDV', fullName: 'J.D. Vance' },
+  { pattern: /biden/i, filerId: 'EXEC-JRB', fullName: 'Joseph R. Biden' },
+  { pattern: /harris/i, filerId: 'EXEC-KDH', fullName: 'Kamala D. Harris' },
+  { pattern: /pence/i, filerId: 'EXEC-MRP', fullName: 'Michael R. Pence' },
+  { pattern: /obama/i, filerId: 'EXEC-BHO', fullName: 'Barack H. Obama' },
 ];
 
 /** True for Periodic Transaction Reports; annual 278/278e forms are skipped
