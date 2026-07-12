@@ -24,13 +24,20 @@ import { fetchHouseIndex, pollHouseLiveSearch } from './houseSource';
 import { fetchSenatePtrFilings } from './senateSource';
 import { recordDisclosureLatencyCandidate, storageMissing } from './fmpDisclosureLatency';
 import { enqueueIngestionOutboxNow, ingestionOutboxInsertForDoc } from './outbox';
+import { resolveSecret } from '../secrets/infisical';
 
 /** Env shape (read defensively — Env is the frozen foundation contract). */
 type EnvWithFlags = Env & { HOUSE_LIVE_SEARCH_ENABLED?: string };
 
-/** Live House search is on unless explicitly disabled (it is fail-soft). */
-function houseLiveSearchEnabled(env: Env): boolean {
-  return (env as EnvWithFlags).HOUSE_LIVE_SEARCH_ENABLED !== 'false';
+/** Live House search is on unless explicitly disabled (fail-soft, and
+ *  Infisical-tunable so it can be toggled without a redeploy). */
+async function houseLiveSearchEnabled(env: Env): Promise<boolean> {
+  try {
+    const live = (await resolveSecret(env, 'HOUSE_LIVE_SEARCH_ENABLED')).value;
+    return (live ?? (env as EnvWithFlags).HOUSE_LIVE_SEARCH_ENABLED) !== 'false';
+  } catch {
+    return (env as EnvWithFlags).HOUSE_LIVE_SEARCH_ENABLED !== 'false';
+  }
 }
 
 /** One row to (maybe) insert + enqueue. */
@@ -300,7 +307,7 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
   for (const f of ptrs) {
     byDoc.set(f.pipelineDocId, houseDiscovery(f));
   }
-  if (houseLiveSearchEnabled(env)) {
+  if (await houseLiveSearchEnabled(env)) {
     try {
       const live = await pollHouseLiveSearch(year);
       for (const f of live) {

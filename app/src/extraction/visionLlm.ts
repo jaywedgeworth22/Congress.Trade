@@ -46,13 +46,20 @@ export interface VisionLlmOptions {
   apiKeyName?: keyof Env & string;
   /** Model id to use instead of the default (a different model = real cross-check). */
   model?: string;
+  /** Config name resolved at extraction time when `model` is not supplied
+   *  (Infisical first, env fallback) — so model choice is live-tunable. */
+  modelEnvName?: keyof Env & string;
+  /** Fallback model when neither `model` nor the resolved config name is set. */
+  defaultModel?: string;
   /** Override extractor name (so arbitration can tell the two apart). */
   name?: string;
 }
 
 export class VisionLlmExtractor implements Extractor {
   readonly name: string;
-  private readonly model: string;
+  private readonly modelOverride?: string;
+  private readonly modelEnvName: keyof Env & string;
+  private readonly defaultModel: string;
   private readonly apiKeyOverride?: string;
   private readonly apiKeyName: keyof Env & string;
 
@@ -61,7 +68,9 @@ export class VisionLlmExtractor implements Extractor {
     options: VisionLlmOptions = {},
   ) {
     this.name = options.name ?? 'visionLlm';
-    this.model = options.model ?? (env.VISION_PRIMARY_MODEL || DEFAULT_MODEL);
+    this.modelOverride = options.model;
+    this.modelEnvName = options.modelEnvName ?? 'VISION_PRIMARY_MODEL';
+    this.defaultModel = options.defaultModel ?? DEFAULT_MODEL;
     this.apiKeyOverride = options.apiKey;
     this.apiKeyName = options.apiKeyName ?? 'GEMINI_API_KEY';
   }
@@ -70,15 +79,27 @@ export class VisionLlmExtractor implements Extractor {
     return f.docKind === 'scanned_pdf';
   }
 
+  /** Explicit override > Infisical/env config name > default. Resolved per
+   *  extraction so a model swap in Infisical applies without a redeploy. */
+  private async resolveModel(): Promise<string> {
+    if (this.modelOverride) return this.modelOverride;
+    try {
+      return (await resolveSecret(this.env, this.modelEnvName)).value || this.defaultModel;
+    } catch {
+      return (this.env[this.modelEnvName] as string | undefined) || this.defaultModel;
+    }
+  }
+
   async extract(input: ExtractorInput): Promise<ExtractorResult> {
     const key = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
     if (!key) throw new Error(`${this.name}: API key is not configured`);
     if (!input.bytes) throw new Error(`${this.name}: no bytes provided on ExtractorInput`);
 
+    const model = await this.resolveModel();
     const body = buildRequestBody(input.bytes);
 
     const res = await fetchWithRetry(
-      ENDPOINT(this.model, key),
+      ENDPOINT(model, key),
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -128,7 +149,7 @@ export class VisionLlmExtractor implements Extractor {
       confidence: docConfidence,
       raw: jsonText,
       extractor: this.name,
-      modelVersion: this.model,
+      modelVersion: model,
       usage,
     };
   }

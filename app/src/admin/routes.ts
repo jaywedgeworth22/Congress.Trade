@@ -143,8 +143,11 @@ let warnedClosedAdmin = false;
 
 async function isExplicitOpenAdmin(env: EnvWithAdmin): Promise<boolean> {
   const sentryEnvironment = (await resolveSecret(env, 'SENTRY_ENVIRONMENT')).value;
-  const isProduction = sentryEnvironment === 'production' || env.USAGE_MONITOR_ENVIRONMENT === 'production';
-  return env.ADMIN_OPEN_IN_DEV === 'true' && !isProduction;
+  const usageEnvironment =
+    (await resolveSecret(env, 'USAGE_MONITOR_ENVIRONMENT')).value ?? env.USAGE_MONITOR_ENVIRONMENT;
+  const openInDev = (await resolveSecret(env, 'ADMIN_OPEN_IN_DEV')).value ?? env.ADMIN_OPEN_IN_DEV;
+  const isProduction = sentryEnvironment === 'production' || usageEnvironment === 'production';
+  return openInDev === 'true' && !isProduction;
 }
 
 function adminActor(c: { req: { header(name: string): string | undefined } }): string {
@@ -1812,6 +1815,73 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       .filter(Boolean);
     const result = await runDisclosureLatencyProbe(c.env, new Date(), fetch, { force: true, providers });
     return c.json({ ok: result.errors.length === 0, ...result });
+  });
+
+  // --- GET /config-sources --------------------------------------------------
+  // Single-source-of-truth audit for the Infisical consolidation: for every
+  // known config key/knob, report where its LIVE value currently comes from —
+  // 'infisical' (edit there; wins over env), 'env' (wrangler var / Worker
+  // secret fallback), or 'missing'. Names and sources ONLY, never values.
+  // Env-only bootstrap vars (sync-read or resolver-circular) are listed
+  // separately so the registry is complete.
+  r.get('/config-sources', async (c) => {
+    const REGISTRY: Record<string, string[]> = {
+      'provider-keys': [
+        'FMP_API_KEY', 'TIINGO_API_KEY', 'MASSIVE_API_KEY', 'INTRINIO_API_KEY', 'TWELVEDATA_API_KEY',
+        'FINNHUB_API_KEY', 'UNUSUAL_WHALES_API_KEY', 'QUIVER_API_KEY', 'QUIVER_API_TOKEN', 'AINVEST_API_KEY',
+        'LOGODEV_PUBLISHABLE_KEY',
+      ],
+      'model-keys': [
+        'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'MISTRAL_API_KEY', 'XAI_API_KEY',
+        'LLAMAINDEX_API_KEY', 'LLAMAPARSE_API_KEY', 'ARBITRATION_API_KEY',
+      ],
+      'auth-billing': [
+        'ADMIN_TOKEN', 'INGEST_TOKEN', 'ADMIN_EMAILS', 'ACCESS_AUD', 'ACCESS_TEAM_DOMAIN',
+        'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'WEBHOOK_SIGNING_KEY',
+        'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_MONTHLY', 'STRIPE_PRICE_ANNUAL',
+        'STRIPE_TRIAL_DAYS', 'STRIPE_MANAGED_PAYMENTS', 'RESEND_API_KEY', 'EMAIL_FROM', 'ALERT_EMAIL',
+      ],
+      integrations: [
+        'APP_B_IMPORT_URL', 'APP_B_INGEST_TOKEN', 'USAGE_MONITOR_ENABLED', 'USAGE_MONITOR_INGEST_URL',
+        'USAGE_MONITOR_INGEST_TOKEN', 'USAGE_MONITOR_ENVIRONMENT',
+      ],
+      tunables: [
+        'APP_BASE_URL', 'PRICE_PROVIDER', 'FMP_DAILY_CALL_CAP', 'FMP_MAX_PER_MINUTE', 'EDGAR_MAX_PER_MINUTE',
+        'SCRAPE_GUARD_ENABLED', 'DISCLOSURE_LATENCY_WATCH_ENABLED', 'DISCLOSURE_LATENCY_PROVIDERS',
+        'DISCLOSURE_LATENCY_WATCH_LIMIT', 'FMP_DISCLOSURE_WATCH_ENABLED', 'FMP_DISCLOSURE_WATCH_LIMIT',
+        'HOUSE_LIVE_SEARCH_ENABLED', 'SEED_HOUSE_URL', 'SEED_SENATE_URL',
+        'VISION_PRIMARY_MODEL', 'ARBITRATION_ENABLED', 'ARBITRATION_MODEL',
+        'AGREEMENT_AUTOPUBLISH_ENABLED', 'AGREEMENT_AUTOPUBLISH_MODEL_A', 'AGREEMENT_AUTOPUBLISH_MODEL_B',
+        'AGREEMENT_MODEL_C', 'AGREEMENT_AUTOPUBLISH_LIMIT', 'AGREEMENT_MAX_ATTEMPTS', 'AGREEMENT_DAILY_LLM_BUDGET',
+        'AGREEMENT_BIG_DOC_START_TIER2', 'AGREEMENT_BIG_DOC_PAGE_THRESHOLD', 'AGREEMENT_BIG_DOC_BYTES_THRESHOLD',
+        'ADMIN_OPEN_IN_DEV',
+        'IMPORT_MAX_BYTES', 'IMPORT_MAX_REFS', 'IMPORT_MAX_SPX', 'IMPORT_MAX_PRICES',
+        'IMPORT_MAX_CLOSES_PER_TICKER', 'IMPORT_MAX_INSIDER', 'IMPORT_MAX_SHORT_VOLUME',
+      ],
+    };
+    /** Env-only: sync-read at Worker init (Sentry) — the async resolver cannot serve these. */
+    const ENV_ONLY = ['SENTRY_DSN', 'SENTRY_ENVIRONMENT', 'SENTRY_TRACES_SAMPLE_RATE'];
+    /** Resolver bootstrap: cannot resolve themselves through Infisical. */
+    const BOOTSTRAP = [
+      'INFISICAL_BASE_URL', 'INFISICAL_ENV', 'INFISICAL_CACHE_TTL_SECONDS', 'INFISICAL_ALLOW_ENV_FALLBACK',
+      'INFISICAL_APP_PROJECT_ID', 'INFISICAL_APP_CLIENT_ID', 'INFISICAL_APP_CLIENT_SECRET', 'INFISICAL_APP_SECRET_PATH',
+      'INFISICAL_SHARED_PROJECT_ID', 'INFISICAL_SHARED_CLIENT_ID', 'INFISICAL_SHARED_CLIENT_SECRET', 'INFISICAL_SHARED_SECRET_PATH',
+    ];
+    const envx = c.env as unknown as Record<string, unknown>;
+    const items: Array<{ key: string; category: string; source: string }> = [];
+    for (const [category, keys] of Object.entries(REGISTRY)) {
+      for (const key of keys) {
+        const { source } = await resolveSecret(c.env, key as keyof Env & string);
+        items.push({ key, category, source });
+      }
+    }
+    return c.json({
+      resolver: getSecretResolverStatus(c.env),
+      items,
+      envOnly: ENV_ONLY.map((key) => ({ key, configured: Boolean(envx[key]) })),
+      bootstrap: BOOTSTRAP.map((key) => ({ key, configured: Boolean(envx[key]) })),
+      note: 'Sources only, never values. infisical = live-editable there (wins over env); env = wrangler var / Worker secret fallback.',
+    });
   });
 
   // --- GET /diagnostics ---------------------------------------------------
@@ -3558,7 +3628,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // Today's FMP call usage + how many tickers still need enrichment.
   r.get('/enrich-securities/status', async (c) => {
     const used = await getDailyUsed(c.env);
-    const retryIncomplete = hasConfiguredKeyedEnrichmentProvider(c.env);
+    const retryIncomplete = await hasConfiguredKeyedEnrichmentProvider(c.env);
     const row = await get<{ pending: number }>(
       c.env.DB,
       `SELECT COUNT(*) AS pending FROM (
@@ -3580,7 +3650,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       pricePendingTickers: pending.prices,
       enrichedTickers: enriched?.n ?? 0,
       coverage,
-      hasFmpKey: !!(c.env as Env & { FMP_API_KEY?: string }).FMP_API_KEY,
+      hasFmpKey: !!(await resolveSecret(c.env, 'FMP_API_KEY')).value,
       hasKeyedEnrichmentProvider: retryIncomplete,
     });
   });
@@ -4272,7 +4342,7 @@ async function marketCoverage(env: Env): Promise<MarketCoverage> {
  * price_eod. Drives the `done` flag for the backfill-market loop.
  */
 async function marketPending(env: Env): Promise<{ enrich: number; prices: number }> {
-  const retryIncomplete = hasConfiguredKeyedEnrichmentProvider(env);
+  const retryIncomplete = await hasConfiguredKeyedEnrichmentProvider(env);
   const e = await get<{ n: number }>(
     env.DB,
     `SELECT COUNT(*) AS n FROM (

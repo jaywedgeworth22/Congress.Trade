@@ -40,6 +40,7 @@ import { refreshSecrets } from './secrets/infisical';
 import { runDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency';
 import { buildDetectionRouter } from './ingestion/detectionRoutes';
 import { browserSecurityHeadersMiddleware } from './security/headers';
+import { publicApiGuard } from './security/botDefense';
 import {
   completeDeliveryOutbox,
   flushDeliveryOutbox,
@@ -56,6 +57,11 @@ const app = new Hono<{ Bindings: Env }>();
 // Attach defense-in-depth browser headers to every Worker-generated response,
 // including error and redirect responses. HSTS is added only for HTTPS.
 app.use('*', browserSecurityHeadersMiddleware);
+
+// Anti-scraping guard for the public data API (user-agent blocklist + per-IP
+// request budget + X-Robots-Tag). Runs before the feature routers; token-gated
+// surfaces (/api/admin, /api/ingest, /api/export) are exempt inside the guard.
+app.use('/api/*', publicApiGuard);
 
 // --- IMPLEMENTED health check -------------------------------------------------
 app.get('/health', (c) => c.json({ ok: true }));

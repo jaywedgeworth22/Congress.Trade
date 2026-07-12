@@ -123,6 +123,7 @@ export async function runPriceRefresh(
   const runtimeSecrets = await resolveSecrets(env, [
     'FMP_API_KEY',
     'FMP_DAILY_CALL_CAP',
+    'FMP_MAX_PER_MINUTE',
     'MASSIVE_API_KEY',
     'PRICE_PROVIDER',
     'TIINGO_API_KEY',
@@ -157,7 +158,7 @@ export async function runPriceRefresh(
   // Fall back to FMP_MAX_PER_MINUTE when the caller omits it (e.g. an admin
   // endpoint), so the shared singleton isn't memoized into a no-op.
   const fmpMaxPerMinute =
-    opts.maxPerMinute ?? (parseInt((envx as { FMP_MAX_PER_MINUTE?: string }).FMP_MAX_PER_MINUTE || '', 10) || undefined);
+    opts.maxPerMinute ?? (parseInt(envx.FMP_MAX_PER_MINUTE || '', 10) || undefined);
   const pace = getSharedFmpPacer(fmpMaxPerMinute);
   let calls = 0;
 
