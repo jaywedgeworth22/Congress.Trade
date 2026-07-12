@@ -1,9 +1,33 @@
 # Current Handoff
 
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
+
+## 2026-07-12 — Production outage fixed; PR #300 + #308 deployed (CLAUDE)
+
+- **Outage**: the live dashboard loaded no data (APIs healthy). Cause: the
+  deployed Worker was built from an UNPUSHED working tree — an in-progress
+  "Extraction Benchmark" dashboard feature (in no git branch; AG-style
+  bake-off work) with collapsed template-literal escapes in
+  `app/src/ui/dashboardHtml.ts` — so the main inline script failed to parse.
+  That tree could not pass `npm test`; it was shipped without the test gate.
+- **Fix + release**: PR #300 merged (`2ed8517`: public latency scoreboard +
+  `GET /api/analytics/latency-summary`, public Alerts tab, anti-scrape guard
+  on `/api/*`, Infisical single-source config + `GET /api/admin/config-sources`),
+  then PR #308 (`b8ce1b4`) made the workerd/Miniflare D1 suite probe-and-skip
+  on the deploy runner (its container cannot spawn workerd; failed the gate
+  2×) and set CLAUDE.md defaults (agent-sync coordination + effort-log updates
+  by default). `deploy.yml` run **29177444399 succeeded** on `b8ce1b4`.
+- **Verified live**: all served script blocks parse; `/api/health`
+  ok/db/schema true; scoreboard + Alerts tab render with real probe data
+  (FMP: first on 22 of 23 matched, median lead 1.5h, p90 13.6h); scrape guard
+  active (bare curl on data APIs → 403; browsers 200; kill switch
+  `SCRAPE_GUARD_ENABLED`, Infisical-overridable).
+- **Follow-ups**: fix workerd on the Hetzner runner container (suite then
+  auto-resumes there); AG to commit or drop the overwritten benchmark
+  experiment; consider folding a served-HTML script-parse smoke into ship.sh.
 
 ## 2026-07-11 — Shared v1.5.0 consumer closeout and uptime framing fix
 
