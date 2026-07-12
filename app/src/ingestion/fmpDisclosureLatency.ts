@@ -577,11 +577,12 @@ async function fetchFmpRows(
 
 async function fetchUnusualWhalesRows(apiKey: string, max: number, fetchImpl: typeof fetch): Promise<DisclosureProviderRow[]> {
   const url = `https://api.unusualwhales.com/api/congress/recent-trades?limit=${Math.min(max, 200)}`;
-  return parseUnusualWhalesDisclosureRows(await fetchJson(url, { authorization: `Bearer ${apiKey}` }, fetchImpl));
+  const headers = { authorization: `Bearer ${apiKey}`, 'UW-CLIENT-API-ID': '100001' };
+  return parseUnusualWhalesDisclosureRows(await fetchJson(url, headers, fetchImpl));
 }
 
 async function fetchQuiverRows(apiKey: string, _max: number, fetchImpl: typeof fetch): Promise<DisclosureProviderRow[]> {
-  const headers = { authorization: `Bearer ${apiKey}` };
+  const headers = { authorization: `Token ${apiKey}`, 'Accept': 'application/json' };
   const [house, senate] = await Promise.all([
     fetchJson('https://api.quiverquant.com/beta/live/housetrading?options=true', headers, fetchImpl),
     fetchJson('https://api.quiverquant.com/beta/live/senatetrading?options=true', headers, fetchImpl),

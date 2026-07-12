@@ -239,8 +239,8 @@ SCRAPE_GUARD_ENABLED = "true"
 USAGE_MONITOR_INGEST_URL = "https://usage.jays.services/api/ingest/usage"
 USAGE_MONITOR_ENVIRONMENT = "production"
 # Stripe premium price ids (not secret) — created 2026-06-22 on the live account.
-STRIPE_PRICE_MONTHLY = "price_1TlHYBEUQUPhZj0SEzG2Qx68"
-STRIPE_PRICE_ANNUAL = "price_1TlHYCEUQUPhZj0SpNVoPb3Z"
+STRIPE_PRICE_MONTHLY = "price_1TsCXWEUQUPhZj0Sk74aiFPu"
+STRIPE_PRICE_ANNUAL = "price_1TsCXWEUQUPhZj0ScFElWXUH"
 # Flip to "true" only after the account is approved for Managed Payments.
 STRIPE_MANAGED_PAYMENTS = "false"
 # Sentry — tags events with this environment; the Sentry Cloudflare SDK reads

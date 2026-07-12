@@ -3321,6 +3321,39 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
+  // --- GET /benchmark/ground-truth-docs ------------------------------------
+  r.get('/benchmark/ground-truth-docs', async (c) => {
+    const limit = Math.min(Number(c.req.query('limit')) || 50, 200);
+    const rows = await all<{ doc_id: string }>(
+      c.env.DB,
+      `SELECT doc_id FROM filings WHERE source = 'manual' AND raw_object_key IS NOT NULL LIMIT ?`,
+      [limit]
+    );
+    return c.json({ docs: rows.map(r => r.doc_id) });
+  });
+
+  // --- POST /benchmark/dry-run/:docId ---------------------------------------
+  r.post('/benchmark/dry-run/:docId', async (c) => {
+    const docId = c.req.param('docId');
+    const body = await c.req.json();
+    const row = await get<{ raw_object_key: string | null }>(
+      c.env.DB,
+      `SELECT raw_object_key FROM filings WHERE doc_id = ?`,
+      [docId]
+    );
+    if (!row || !row.raw_object_key) return c.json({ error: 'not found or no raw obj' }, 404);
+
+    const agModels: AgreementModels = {
+      a: body.models.a as BakeoffCandidate,
+      b: body.models.b as BakeoffCandidate,
+      c: body.models.c ? (body.models.c as BakeoffCandidate) : null,
+    };
+    
+    // Pass dryRun = true
+    const res = await processAgreementDoc(c.env, agModels, docId, row.raw_object_key, true);
+    return c.json(res);
+  });
+
   // --- POST /migrate ------------------------------------------------------
   // Apply schema changes via the Worker's D1 binding (sidesteps the wrangler
   // CLI's --remote D1 auth issues). Idempotent: "duplicate column" is treated
