@@ -1,6 +1,6 @@
 # Client Mobile API Coordination
 
-Last updated: 2026-06-30
+Last updated: 2026-07-11
 
 This is the working coordination note for the phone-first Next.js/PWA and the
 SwiftUI iPhone app. Keep it aligned with `app/docs/mobile-app-roadmap.md` and
@@ -60,6 +60,14 @@ shared type set but still return `501`.
 - `feed` currently accepts query params like `since`, `ticker`, `member`,
   `chamber`, `type`, `from`, `to`, `order`, and `limit`, and returns the
   cursor/count/total metadata used by polling clients.
+- Anti-scrape guard (`SCRAPE_GUARD_ENABLED`, `src/security/botDefense.ts`):
+  `feed` shares a per-IP daily served-row budget with `/api/transactions` and
+  can return `429` with `Retry-After` when a caller bulk-walks the corpus.
+  Normal client polling (`since`-cursor, mostly zero new rows) does not
+  meaningfully consume the budget; clients should honor `Retry-After` and back
+  off. Public data endpoints also reject known scraper/AI-crawler user agents
+  with `403` — real browser, `EventSource`, and iOS `CFNetwork`/`URLSession`
+  agents are unaffected.
 - Public detail reads use the same `ClientTrade` item DTO and feed-style
   envelope metadata:
   - `GET /api/client/v1/trade/:id`

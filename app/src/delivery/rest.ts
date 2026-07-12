@@ -53,6 +53,7 @@ import { resolveSecret } from '../secrets/infisical';
 import { constantTimeEqual } from '../auth/tokens';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget';
 import { rateLimit, clientIp } from '../shared/rateLimit';
+import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../security/botDefense';
 import { checkReadiness } from '../shared/readiness';
 
 function parseIntOrUndef(v: string | undefined): number | undefined {
@@ -218,6 +219,28 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       sort: asTxSort(q.sort),
       limit: parseIntOrUndef(q.limit),
     };
+    // Anti-scrape guards (src/security/botDefense.ts). The pager stays public
+    // for humans; depth + daily row budgets make walking the whole corpus via
+    // offset/since the job of the Premium CSV export / token-gated bulk
+    // snapshot instead. Both checks no-op unless SCRAPE_GUARD_ENABLED.
+    if ((params.offset ?? 0) > MAX_PUBLIC_TX_OFFSET) {
+      return c.json(
+        {
+          error: `offset beyond ${MAX_PUBLIC_TX_OFFSET} is not available on the public feed`,
+          hint: 'Use the Premium CSV export for full history.',
+        },
+        400,
+      );
+    }
+    const ip = clientIp(c.req.raw);
+    const budget = await checkRowBudget(c.env, ip);
+    if (!budget.ok) {
+      return c.json(
+        { error: 'daily feed row budget reached', hint: 'Use the Premium CSV export for bulk access.' },
+        429,
+        { 'Retry-After': String(budget.retryAfterSec) },
+      );
+    }
     const built = buildTransactionsQuery(params);
     // The query SELECTs the resolved chamber + politician name alongside the feed
     // columns via `__chamber` / `__member_name` (see buildTransactionsQuery).
@@ -244,6 +267,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const today = new Date().toISOString().slice(0, 10);
     const todayQuery = buildTransactionsTodayFilingsQuery(params, today);
     const todayRow = await get<{ total: number }>(c.env.DB, todayQuery.sql, todayQuery.params);
+    // Count served rows against the caller's daily budget. Incremental polls
+    // (the dashboard's steady state) return zero rows and skip the KV write.
+    await spendRowBudget(c.env, ip, transactions.length);
     return c.json({
       transactions,
       cursor: maxCursor,

@@ -46,6 +46,8 @@ import {
   tickerSummarySql,
 } from './queries';
 import { commandType, executeCommand, normalizePreferencePatch, persistedCommandResult } from './commands';
+import { checkRowBudget, spendRowBudget } from '../security/botDefense';
+import { clientIp } from '../shared/rateLimit';
 import { get } from '../shared/db';
 import type { TradeSummaryRow } from './types';
 import type { TxQueryParams } from '../delivery/rows';
@@ -89,7 +91,18 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
 
   r.get('/feed', async (c) => {
     const params = filtersFromQuery(c.req.query());
-    return c.json({ ...(await readClientTradeList(c.env, params)), nextPollAfterSec: 30 });
+    // Same anti-scrape daily row budget as /api/transactions — both pagers
+    // walk the identical corpus, so they draw on one shared per-IP budget.
+    const ip = clientIp(c.req.raw);
+    const budget = await checkRowBudget(c.env, ip);
+    if (!budget.ok) {
+      return c.json({ error: 'daily feed row budget reached' }, 429, {
+        'Retry-After': String(budget.retryAfterSec),
+      });
+    }
+    const list = await readClientTradeList(c.env, params);
+    await spendRowBudget(c.env, ip, list.count);
+    return c.json({ ...list, nextPollAfterSec: 30 });
   });
 
   r.get('/trade/:id', async (c) => {

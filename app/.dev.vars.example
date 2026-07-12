@@ -1,5 +1,15 @@
 # Copy to `.dev.vars` for local development (`wrangler dev`).
 # `.dev.vars` is gitignored — never commit real secrets.
+#
+# ── SINGLE SOURCE OF TRUTH: INFISICAL ───────────────────────────────────────
+# Every key/knob below (except the INFISICAL_* bootstrap credentials and the
+# SENTRY_* init vars) is resolved at runtime through the Infisical resolver:
+# the Infisical value ALWAYS wins; values in this file are only fallbacks for
+# keyless/offline local dev. The preferred local setup is MINIMAL: fill in just
+# the INFISICAL_* bootstrap block and leave everything else blank — wrangler
+# dev will then pull live config from Infisical exactly like production does.
+# Full key registry: app/docs/config-registry.md; live per-key source audit:
+# GET /api/admin/config-sources.
 
 # Infisical runtime secret resolver. In production, Cloudflare should only need
 # these bootstrap machine-identity credentials; provider/app secrets are fetched
@@ -191,3 +201,8 @@ STRIPE_WEBHOOK_SECRET=""
 STRIPE_PRICE_MONTHLY=""
 STRIPE_PRICE_ANNUAL=""
 STRIPE_TRIAL_DAYS="7"
+
+# Public-API anti-scraping guard. wrangler.toml [vars] turns it on for
+# production AND local `wrangler dev`; set "false" here if you need plain
+# curl/scripts against local /api/* data endpoints (or send a browser UA).
+SCRAPE_GUARD_ENABLED="true"
