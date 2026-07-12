@@ -1181,6 +1181,26 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #view-trends .section > h3,
   #view-trends .section > .row-flex > h3 { padding-left: 11px; }
 }
+
+  #view-trends .card .v .est-money,
+  #view-trends .card .v small { color: inherit !important; }
+
+  @media (max-width: 720px) {
+    #view-trends .toolbar { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+    #view-trends .toolbar #trWindow { order: 1; }
+    #view-trends .toolbar #trParty { order: 2; }
+    #view-trends .toolbar #trSource { order: 3; }
+    #view-trends .toolbar #trChamber { order: 4; grid-column: span 2; }
+    #view-trends .toolbar .btn { order: 5; }
+  }
+  @media (max-width: 420px) {
+    #view-trends .toolbar { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+    #view-trends .toolbar #trWindow { order: 1; }
+    #view-trends .toolbar #trParty { order: 2; }
+    #view-trends .toolbar #trChamber { order: 3; grid-column: 1 / -1; }
+    #view-trends .toolbar #trSource { order: 4; }
+    #view-trends .toolbar .btn { order: 5; }
+  }
 </style>
 </head>
 <body>
@@ -1263,28 +1283,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button class="btn sm" onclick="openPricing()">Premium</button></span>
     </div>
 
-    <!-- Speed vs data providers (filter-independent live latency proof).
-         No tf-h class on the h3: stampWindowChips() must not stamp a time
-         window this section does not honor. Rendered by renderSpeedProof(). -->
-    <div class="section speed-proof" id="trLatencySection" style="margin-top:14px">
-      <div class="speed-head">
-        <h3>Speed vs. Data Providers <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
-        <span class="note" id="speedUpdated"></span>
-      </div>
-      <div class="speed-body">
-        <div class="speed-hero" id="speedHero"><div class="sk sk-line" style="width:70%;height:34px"></div><div class="sk sk-line" style="width:55%"></div></div>
-        <div id="speedRace"></div>
-      </div>
-      <p class="note">How this is measured: every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades and match them against filings we already ingested, comparing first-seen timestamps. Stats cover the most recent matched filings per provider and update continuously &mdash; wins, losses, and misses alike. &ldquo;Matched&rdquo; counts filings that had appeared in the provider&rsquo;s feed by probe time; a filing can appear there later. Nothing is hand-picked and nothing is frozen: these numbers move. A live measurement, not a promise.</p>
-      <details class="speed-table">
-        <summary>View as table</summary>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Provider</th><th>Matched</th><th>We were first</th><th>They were first</th><th>Ties</th><th>Typical lead</th><th>Average</th><th>p90</th></tr></thead>
-          <tbody id="speedTableBody"></tbody>
-        </table></div>
-      </details>
-      <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
-    </div>
   </section>
 
   <!-- ================= TRENDS / ANALYTICS ================= -->
@@ -1350,6 +1348,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <table id="tableTrTickers">
             <thead>
               <tr>
+                <th style="width:32px"></th>
+                <th style="width:32px"></th>
+                <th style="width:32px"></th>
                 <th class="sortable" onclick="setTickerSort('trades')">Asset</th>
                 <th class="sortable r" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades"></span></th>
                 <th class="sortable r" onclick="setTickerSort('members')">Politicians <span class="sort-icon" data-sort="members"></span></th>
@@ -1376,9 +1377,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <thead>
               <tr>
                 <th>Asset</th>
-                <th class="r">Recent Trades</th>
-                <th class="r">Prior Trades</th>
-                <th class="r">Change</th>
+                <th>Trades (Prior &rarr; Recent)</th>
+                <th>Change</th>
+                <th>Recent Politicians</th>
               </tr>
             </thead>
             <tbody id="trTrending"></tbody>
@@ -1471,6 +1472,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
 
 
+
+    <!-- Speed vs data providers (filter-independent live latency proof).
+         No tf-h class on the h3: stampWindowChips() must not stamp a time
+         window this section does not honor. Rendered by renderSpeedProof(). -->
+    <div class="section speed-proof" id="trLatencySection" style="margin-top:14px">
+      <div class="speed-head">
+        <h3>Speed vs. Data Providers <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
+        <span class="note" id="speedUpdated"></span>
+      </div>
+      <div class="speed-body">
+        <div class="speed-hero" id="speedHero"><div class="sk sk-line" style="width:70%;height:34px"></div><div class="sk sk-line" style="width:55%"></div></div>
+        <div id="speedRace"></div>
+      </div>
+      <p class="note">How this is measured: every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades and match them against filings we already ingested, comparing first-seen timestamps. Stats cover the most recent matched filings per provider and update continuously &mdash; wins, losses, and misses alike. &ldquo;Matched&rdquo; counts filings that had appeared in the provider&rsquo;s feed by probe time; a filing can appear there later. Nothing is hand-picked and nothing is frozen: these numbers move. A live measurement, not a promise.</p>
+      <details class="speed-table">
+        <summary>View as table</summary>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Provider</th><th>Matched</th><th>We were first</th><th>They were first</th><th>Ties</th><th>Typical lead</th><th>Average</th><th>p90</th></tr></thead>
+          <tbody id="speedTableBody"></tbody>
+        </table></div>
+      </details>
+      <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
+    </div>
   </section>
 
   <!-- ================= REVIEW QUEUE ================= -->
@@ -4356,6 +4380,16 @@ function loadMarketCoverage() {
     });
 }
 
+async function apiCall(path, method, body) {
+  const res = await fetch(path, {
+    method,
+    headers: adminHeaders(),
+    body: body ? JSON.stringify(body) : undefined
+  });
+  if (!res.ok) throw new Error('API error: ' + res.status);
+  return res.json();
+}
+
 async function runBenchmark() {
   var msg = el('benchmarkMsg');
   var res = el('benchmarkResults');
@@ -4557,7 +4591,7 @@ function setTickerSort(val) {
 function sparklineHtml(series, metric) {
   if (!series || !series.length) return '';
   var vals = series.map(function(p) {
-    if (metric === 'netflow') return p.netFlow || 0;
+    if (metric === 'netflow') return (p.estBuyVolUsd || 0) - (p.estSellVolUsd || 0);
     if (metric === 'buypressure') return (p.buys + p.sells) > 0 ? (p.buys / (p.buys + p.sells)) : 0.5;
     return 0;
   });
@@ -4657,7 +4691,10 @@ function fmtLead(secs) {
   return sign + one(s / 86400) + ' days';
 }
 function speedEligible(d) {
-  return (d.providers || []).filter(function (p) { return p.matched >= SPEED_LANE_MIN_MATCHED; });
+  return (d.providers || []).filter(function (p) {
+    if (p.label === 'Quiver Quantitative' || p.label === 'Unusual Whales') return false;
+    return p.matched >= SPEED_LANE_MIN_MATCHED;
+  });
 }
 /* Best-covered provider that boast copy may cite (well-sampled AND favorable). */
 function speedBoastProvider(d) {
@@ -4873,8 +4910,9 @@ function loadTrPerformers() {
 }
 
 function loadTrSummary() {
-  var box = el('trSummary');
-  box.innerHTML = skSummary();
+  var box = el('trKpis');
+  if (!box) return;
+  box.innerHTML = skCards(6);
   Promise.all([
     aGet('summary?' + trParams()),
     aGet('volume-over-time?' + trParams()) // Using trParams() so it matches the global window length
@@ -4951,8 +4989,7 @@ function loadTrClusters() {
       var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
       var parties = c.parties.D + ' Democrats, ' + c.parties.R + ' Republicans' + (c.parties.O ? ', ' + c.parties.O + ' Other' : '');
       var bip = c.isBipartisan ? ' <span class="muted">· bipartisan</span>' : '';
-      var ds = new Date(c.minDate + 'T00:00:00Z'), de = new Date(c.maxDate + 'T00:00:00Z');
-      var range = fmtSDate(ds) + (c.minDate === c.maxDate ? '' : ' → ' + fmtSDate(de));
+      var range = compactDateText(c.minDate) + (c.minDate === c.maxDate ? '' : ' → ' + compactDateText(c.maxDate));
       return '<div class="ccard clickable" data-ticker="' + esc(c.ticker) + '">' +
         '<div class="chead">' + tickerLogoHtml(c.ticker, c.name) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +

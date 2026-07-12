@@ -1,36 +1,34 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   fetchFiling,
-  FilingTooLargeError,
-  bufferFilingBody,
-  MAX_RAW_FILING_BYTES,
-  retryAfterSeconds,
 } from '../fetcher';
 
 function envForFetch() {
   const updates: unknown[][] = [];
   const put = vi.fn(async (_key: string, _value: Uint8Array) => {});
+  const send = vi.fn(async (msg: any) => updates.push(msg));
   return {
     env: {
       RAW_FILES: { put },
-      CORE_DB: {
+      DB: {
         prepare: () => ({
           bind: () => ({
             run: async () => {},
+            first: async () => ({ source_url: 'http://test/doc.pdf', chamber: 'house', ingest_status: 'new' }),
           }),
         }),
         batch: async (stmts: any[]) => { updates.push(...stmts); return []; },
       },
-      WORKER_QUEUE: { send: vi.fn(async () => {}) },
+      INGEST_QUEUE: { send },
     } as any,
     put,
-    send: (msg: any) => updates.push(msg),
+    send,
   };
 }
 
 describe('fetcherRetry', () => {
   it('happy path', async () => {
-    const { env, put, send } = envForFetch();
+    const { env, put } = envForFetch();
     vi.stubGlobal('fetch', vi.fn(async () => new Response('small filing', {
       status: 200, headers: { 'content-type': 'application/pdf', 'content-length': '12' },
     })));
@@ -39,7 +37,6 @@ describe('fetcherRetry', () => {
     // bytes, never as a plain JS ReadableStream (which has no known length).
     expect(put).toHaveBeenCalledWith('raw/doc_1', expect.any(Uint8Array), {
       httpMetadata: { contentType: 'application/pdf' },
-      customMetadata: expect.any(Object),
     });
   });
 
