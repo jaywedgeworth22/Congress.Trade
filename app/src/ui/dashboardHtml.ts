@@ -4591,7 +4591,9 @@ function speedLaneHtml(p, domainMin, domainMax) {
 function renderSpeedProof() {
   var box = el('trLatencySection'); if (!box) return;
   fetchLatencySummary().then(function (d) {
-    var provs = (d.providers || []).slice().sort(function (a, b) { return b.matched - a.matched; });
+    var provs = (d.providers || []).filter(function (p) {
+      return p.label !== 'Quiver Quantitative' && p.label !== 'Unusual Whales';
+    }).sort(function (a, b) { return b.matched - a.matched; });
     if (!d.totals || !d.totals.racedDisclosures || !provs.length) { box.hidden = true; return; }
     var best = null;
     speedEligible(d).forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
