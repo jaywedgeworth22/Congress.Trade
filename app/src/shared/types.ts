@@ -7,9 +7,29 @@
  */
 
 import type { AssetTypeCategory } from './assetTypes';
-import type { Chamber, Owner, TxType, ClientTrade } from '@jaywedgeworth22/congress-trading-shared';
+import type {
+  Chamber as SharedChamber,
+  Owner,
+  TxType,
+  ClientTrade as SharedClientTrade,
+} from '@jaywedgeworth22/congress-trading-shared';
 
-export type { Chamber, Owner, TxType, ClientTrade };
+/**
+ * App-wide chamber union. `executive` covers OGE Form 278-T filers (President /
+ * Vice President) and is an APP-LOCAL widening of the shared package's
+ * `house | senate` pending an upstream `congress-trading-shared` release.
+ * Until the shared contract carries it, executive rows are EXCLUDED by default
+ * from the feed/analytics (opt in via an explicit `chamber=` filter), from
+ * webhook/SSE subscriptions without an explicit `chambers` filter, and from
+ * the App-B bulk export surfaces.
+ */
+export type Chamber = SharedChamber | 'executive';
+/** ClientTrade with the app-local chamber widening (see {@link Chamber})
+ *  applied to its member.chamber field. */
+export type ClientTrade = Omit<SharedClientTrade, 'member'> & {
+  member: Omit<SharedClientTrade['member'], 'chamber'> & { chamber: Chamber | null };
+};
+export type { Owner, TxType };
 
 // ---------------------------------------------------------------------------
 // Primitive unions / enums
@@ -462,6 +482,14 @@ export interface Env {
   SEED_SENATE_URL?: string;
   /** House live search polling flag; fail-soft (on unless explicitly "false"). */
   HOUSE_LIVE_SEARCH_ENABLED?: string;
+  /** Enables the OGE executive-branch (278-T) filings watcher. Infisical-tunable. */
+  OGE_WATCH_ENABLED?: string;
+  /** Override URL for the OGE President/VP filings index view. */
+  OGE_INDEX_URL?: string;
+  /** Minimum seconds between OGE index polls (default 21600 = 6h). */
+  OGE_POLL_INTERVAL_SEC?: string;
+  /** Max raw PDF bytes sent to vision extraction for executive filings (default 6MB). */
+  OGE_MAX_VISION_BYTES?: string;
   /** Model override for the secondary (arbitration) vision extractor. */
   ARBITRATION_MODEL?: string;
   /** Enables the Congress.Trade-vs-provider congressional disclosure latency monitor. */

@@ -103,11 +103,11 @@ export function validateSubscriptionFilters(value: unknown):
   };
   const members = strings('members', 50, 64); if (typeof members === 'string') return { ok: false, error: members };
   const tickersRaw = strings('tickers', 50, 20); if (typeof tickersRaw === 'string') return { ok: false, error: tickersRaw };
-  const chambers = strings('chambers', 2, 10); if (typeof chambers === 'string') return { ok: false, error: chambers };
+  const chambers = strings('chambers', 3, 10); if (typeof chambers === 'string') return { ok: false, error: chambers };
   const sides = strings('sides', 3, 1); if (typeof sides === 'string') return { ok: false, error: sides };
   const sectors = strings('sectors', 25, 100); if (typeof sectors === 'string') return { ok: false, error: sectors };
   const buckets = strings('marketCapBuckets', 6, 10); if (typeof buckets === 'string') return { ok: false, error: buckets };
-  if (chambers.some((v) => v !== 'house' && v !== 'senate')) return { ok: false, error: 'chambers contains an invalid value' };
+  if (chambers.some((v) => v !== 'house' && v !== 'senate' && v !== 'executive')) return { ok: false, error: 'chambers contains an invalid value' };
   if (sides.some((v) => v !== 'P' && v !== 'S' && v !== 'E')) return { ok: false, error: 'sides contains an invalid value' };
   if (buckets.some((v) => !['mega', 'large', 'mid', 'small', 'micro', 'nano'].includes(v))) return { ok: false, error: 'marketCapBuckets contains an invalid value' };
   const min = raw.minAmount; const max = raw.maxAmount;
@@ -326,6 +326,12 @@ export function matchesFiltersWithContext(
   if (!matchesFilters(tx, filters)) return false;
   if (filters.chambers && filters.chambers.length > 0) {
     if (!ctx.chamber || !filters.chambers.includes(ctx.chamber as never)) return false;
+  } else if (ctx.chamber === 'executive') {
+    // Default delivery = congressional. Executive (OGE 278-T) rows are pushed
+    // only to subscriptions that explicitly include 'executive' in their
+    // chambers filter — a subscriber set up before executive tracking existed
+    // must not suddenly receive a 3,000-row presidential filing.
+    return false;
   }
   if (filters.sectors && filters.sectors.length > 0) {
     if (!ctx.sector || !filters.sectors.includes(ctx.sector)) return false;
