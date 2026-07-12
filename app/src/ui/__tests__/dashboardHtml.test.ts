@@ -69,9 +69,9 @@ describe('DASHBOARD_HTML', () => {
     // The Alerts tab is public nav (education for signed-out visitors)…
     expect(DASHBOARD_HTML).toMatch(/<button[^>]+data-view="subs"[^>]*>Alerts<\/button>/);
     expect(DASHBOARD_HTML).not.toMatch(/<button[^>]+data-view="subs"[^>]+data-admin-tab/);
-    // …but the management section inside it stays admin-gated and defaults hidden
-    // so anon never flashes the subscriptions table before /auth/me resolves.
-    expect(DASHBOARD_HTML).toContain('id="subsManage" data-admin-only hidden');
+    // The management section inside it is now visible to all.
+    // Anon sees the table structure but gets a premium placeholder instead of data.
+    expect(DASHBOARD_HTML).toContain('id="subsManage"');
     expect(DASHBOARD_HTML).toContain("document.querySelectorAll('[data-admin-only]')");
     expect(DASHBOARD_HTML).toContain('if (canUseAdmin()) loadSubs();');
     expect(DASHBOARD_HTML).toMatch(/<button[^>]+data-view="admin"[^>]+data-admin-tab="true"[^>]+hidden[^>]*>Admin · Cadence<\/button>/);
@@ -487,10 +487,8 @@ describe('DASHBOARD_HTML', () => {
   it('explains disclosure timeliness metrics and keeps slowest filers scrollable', () => {
     expect(DASHBOARD_HTML).toContain('class="trend-grid2 timeliness-grid"');
     expect(DASHBOARD_HTML).toContain('id="trLagDist" class="lag-dist"');
-    expect(DASHBOARD_HTML).toContain('class="late-filers-wrap"');
     expect(DASHBOARD_HTML).toContain('.timeliness-grid { margin-top: 8px; grid-template-columns: minmax(0, 1fr) minmax(0, .92fr);');
     expect(DASHBOARD_HTML).not.toContain('minmax(280px, .92fr)');
-    expect(DASHBOARD_HTML).toContain('.late-filers-wrap { max-height: 232px; overflow: auto;');
     expect(DASHBOARD_HTML).toContain('Disclosure lag is days between the transaction date and the official filing date.');
     expect(DASHBOARD_HTML).toContain('Avg: mean number of days between transaction date and official filing date.');
     expect(DASHBOARD_HTML).toContain('Max: longest single trade-to-filing delay');

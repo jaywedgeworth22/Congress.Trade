@@ -5,16 +5,13 @@ import {
   fetchFiling,
   IngestRetryError,
   isRetryableFilingHttpStatus,
-  limitedFilingBody,
-  MAX_RAW_FILING_BYTES,
   retryAfterSeconds,
 } from '../fetcher';
 
 function envForFetch() {
   const updates: unknown[][] = [];
-  const put = vi.fn(async (_key: string, value: ReadableStream<Uint8Array>) => {
-    const reader = value.getReader();
-    while (!(await reader.read()).done) { /* drain */ }
+  const put = vi.fn(async (_key: string, _value: ArrayBuffer) => {
+    // accept buffer
   });
   const send = vi.fn(async () => {});
   const env = {
@@ -58,7 +55,7 @@ describe('filing fetch retry status policy', () => {
       status: 200, headers: { 'content-type': 'application/pdf', 'content-length': '12' },
     })));
     await fetchFiling(env, 'doc_1');
-    expect(put).toHaveBeenCalledWith('raw/doc_1', expect.any(ReadableStream), {
+    expect(put).toHaveBeenCalledWith('raw/doc_1', expect.any(ArrayBuffer), {
       httpMetadata: { contentType: 'application/pdf' },
     });
     expect(send).toHaveBeenCalledWith({ type: 'filing.fetched', docId: 'doc_1' });
@@ -66,8 +63,8 @@ describe('filing fetch retry status policy', () => {
 
   it('records an oversized Content-Length as terminal without queue retry', async () => {
     const { env, put, send, updates } = envForFetch();
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('ignored', {
-      status: 200, headers: { 'content-length': String(MAX_RAW_FILING_BYTES + 1) },
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('too large', {
+      status: 200, headers: { 'content-type': 'application/pdf', 'content-length': '99999999' },
     })));
     await expect(fetchFiling(env, 'doc_1')).resolves.toBeUndefined();
     expect(put).not.toHaveBeenCalled();
@@ -75,31 +72,18 @@ describe('filing fetch retry status policy', () => {
     expect(updates.some((params) => String(params[0]).includes('exceeds'))).toBe(true);
   });
 
-  it('terminates a chunked body as soon as the byte limit is exceeded', async () => {
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new Uint8Array(6));
-        controller.enqueue(new Uint8Array(5));
-        controller.close();
-      },
-    });
-    const reader = limitedFilingBody(body, 10).getReader();
-    expect((await reader.read()).value).toHaveLength(6);
-    await expect(reader.read()).rejects.toThrow('exceeds 10 byte limit');
-  });
-
   it('records a chunked oversized upstream body without retrying the queue', async () => {
     const { env, put, send, updates } = envForFetch();
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(new Uint8Array(13 * 1024 * 1024));
-        controller.enqueue(new Uint8Array(13 * 1024 * 1024));
+        controller.enqueue(new Uint8Array(25 * 1024 * 1024 + 1));
         controller.close();
       },
+      cancel() {},
     });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 200 })));
     await expect(fetchFiling(env, 'doc_1')).resolves.toBeUndefined();
-    expect(put).toHaveBeenCalledOnce();
+    expect(put).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
     expect(updates.some((params) => String(params[0]).includes('exceeds'))).toBe(true);
   });

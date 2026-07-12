@@ -77,33 +77,7 @@ export function classifyTransientIngestError(
   return new IngestRetryError(message, delay);
 }
 
-/** Stream through a byte-counting guard so chunked responses cannot exhaust an isolate. */
-export function limitedFilingBody(
-  body: ReadableStream<Uint8Array>,
-  limit = MAX_RAW_FILING_BYTES,
-): ReadableStream<Uint8Array> {
-  const reader = body.getReader();
-  let bytes = 0;
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      const next = await reader.read();
-      if (next.done) {
-        controller.close();
-        return;
-      }
-      bytes += next.value.byteLength;
-      if (bytes > limit) {
-        await reader.cancel('filing exceeds size limit').catch(() => {});
-        controller.error(new FilingTooLargeError(`filing exceeds ${limit} byte limit`));
-        return;
-      }
-      controller.enqueue(next.value);
-    },
-    async cancel(reason) {
-      await reader.cancel(reason).catch(() => {});
-    },
-  });
-}
+
 
 /** R2 object key for a filing's raw original. Matches the spec: `raw/{docId}`. */
 export function rawKeyFor(docId: string): string {
@@ -177,7 +151,35 @@ export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Pr
 
     // Persist raw bytes verbatim; retain content-type so the classifier can use
     // it as a cheap signal without re-fetching.
-    await env.RAW_FILES.put(key, limitedFilingBody(res.body), {
+    let buffer: ArrayBuffer;
+    if (res.body) {
+      const reader = res.body.getReader();
+      let bytes = 0;
+      const chunks: Uint8Array[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          bytes += value.byteLength;
+          if (bytes > MAX_RAW_FILING_BYTES) {
+            await reader.cancel('filing exceeds size limit').catch(() => {});
+            throw new FilingTooLargeError(`filing exceeds ${MAX_RAW_FILING_BYTES} byte limit`);
+          }
+          chunks.push(value);
+        }
+      }
+      const combined = new Uint8Array(bytes);
+      let offset = 0;
+      for (const chunk of chunks) {
+        combined.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      buffer = combined.buffer;
+    } else {
+      buffer = await res.arrayBuffer();
+    }
+    
+    await env.RAW_FILES.put(key, buffer, {
       httpMetadata: { contentType: contentType || 'application/octet-stream' },
     });
 
