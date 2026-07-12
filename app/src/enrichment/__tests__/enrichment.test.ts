@@ -67,14 +67,15 @@ describe('enrichmentNeededSql', () => {
 });
 
 describe('hasConfiguredKeyedEnrichmentProvider', () => {
-  it('detects any configured keyed market-data provider', () => {
-    expect(hasConfiguredKeyedEnrichmentProvider({} as never)).toBe(false);
-    expect(hasConfiguredKeyedEnrichmentProvider({ FMP_API_KEY: 'k' } as never)).toBe(true);
-    expect(hasConfiguredKeyedEnrichmentProvider({ MASSIVE_API_KEY: 'k' } as never)).toBe(true);
+  // Async since the keys resolve through Infisical (env fallback in tests).
+  it('detects any configured keyed market-data provider', async () => {
+    expect(await hasConfiguredKeyedEnrichmentProvider({} as never)).toBe(false);
+    expect(await hasConfiguredKeyedEnrichmentProvider({ FMP_API_KEY: 'k' } as never)).toBe(true);
+    expect(await hasConfiguredKeyedEnrichmentProvider({ MASSIVE_API_KEY: 'k' } as never)).toBe(true);
     // Tiingo is intentionally excluded — its free tier supplies only name+exchange,
     // so it should not enable retry-incomplete mode that would endlessly re-select
     // the same newest tickers (which already have enriched_at but not sector/market cap).
-    expect(hasConfiguredKeyedEnrichmentProvider({ TIINGO_API_KEY: 'k' } as never)).toBe(false);
+    expect(await hasConfiguredKeyedEnrichmentProvider({ TIINGO_API_KEY: 'k' } as never)).toBe(false);
   });
 });
 

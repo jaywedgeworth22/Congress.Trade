@@ -30,6 +30,7 @@ import { nearestBracket } from '../shared/brackets';
 import { sanitizeAssetName } from '../shared/text';
 import { estimateTransactionValue } from '../shared/transactionValue';
 import { scoreFields, loadResolver, type TickerResolver } from '../extraction/normalizer';
+import { resolveSecret } from '../secrets/infisical';
 
 // ---------------------------------------------------------------------------
 // Seed source URLs (centralized). Flag any uncertain ones here.
@@ -583,13 +584,17 @@ type EnvWithSeed = Env & { SEED_HOUSE_URL?: string; SEED_SENATE_URL?: string };
  * point the admin trigger route uses, so operators can repoint the (frequently
  * gated) community datasets at a working mirror without redeploying code.
  */
-export function runSeedBackfillFromEnv(
+export async function runSeedBackfillFromEnv(
   env: Env,
   opts: SeedBackfillOptions = {},
 ): Promise<SeedBackfillResult> {
   const e = env as EnvWithSeed;
+  // Infisical-tunable mirrors (env stays the fallback), so a gated upstream can
+  // be repointed without touching wrangler config at all.
+  const houseUrl = (await resolveSecret(env, 'SEED_HOUSE_URL')).value ?? e.SEED_HOUSE_URL;
+  const senateUrl = (await resolveSecret(env, 'SEED_SENATE_URL')).value ?? e.SEED_SENATE_URL;
   const sourceUrls: Partial<Record<Chamber, string>> = { ...opts.sourceUrls };
-  if (e.SEED_HOUSE_URL && sourceUrls.house === undefined) sourceUrls.house = e.SEED_HOUSE_URL;
-  if (e.SEED_SENATE_URL && sourceUrls.senate === undefined) sourceUrls.senate = e.SEED_SENATE_URL;
+  if (houseUrl && sourceUrls.house === undefined) sourceUrls.house = houseUrl;
+  if (senateUrl && sourceUrls.senate === undefined) sourceUrls.senate = senateUrl;
   return runSeedBackfill(env, { ...opts, sourceUrls });
 }

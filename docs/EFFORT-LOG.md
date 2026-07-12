@@ -70,6 +70,17 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Infisical single-source-of-truth config consolidation (CLAUDE, M) — COMPLETED 2026-07-11 on
+  `claude/antigravity-latency-security-x6lkvb` (second commit on PR #300, not deployed).** Audit
+  found ~90% of keys/knobs already resolver-backed; converted the rest (FMP/EDGAR pacers, latency
+  probe knobs, seed URLs, house live-search flag, admin-open flags, arbitration enable + vision/
+  arbitration model choices now resolved per-extraction). New admin audit endpoint
+  `GET /api/admin/config-sources` (per-key live source, names only) + `app/docs/config-registry.md`;
+  wrangler [vars] re-documented as fallback defaults; `.dev.vars.example` now recommends
+  Infisical-bootstrap-only local setup. Env fallbacks kept deliberately (outage resilience;
+  `INFISICAL_ALLOW_ENV_FALLBACK=false` for hard-require). Sentry init trio + INFISICAL_* bootstrap
+  are the documented env-only exceptions. Gates: typecheck; 109 files / 959 tests. Rollout note:
+  `docs/rollouts/2026-07-11-infisical-single-source.md`.
 - **Public latency showcase + public delivery education + anti-scrape hardening (CLAUDE, L) —
   COMPLETED 2026-07-11 on `claude/antigravity-latency-security-x6lkvb` (not deployed).** Owner
   request from the Antigravity disclosure-latency findings: (1) new public
