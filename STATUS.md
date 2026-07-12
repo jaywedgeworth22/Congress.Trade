@@ -5,6 +5,26 @@ Last updated: 2026-07-11
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
 
+## 2026-07-11 — Shared v1.5.0 consumer closeout and uptime framing fix
+
+- PR #296 exact-pinned `@jaywedgeworth22/congress-trading-shared` to
+  `github:jaywedgeworth22/congress-trading-shared#v1.5.0`; the lockfile resolves released commit
+  `2222baeb`. GitHub records the PR merged to `main` as `d84fd349` at 18:58:28Z.
+- Cloudflare Wrangler records production Worker versions `c5deb474` and `e5c7ebad` at 18:59Z.
+  Current `https://congress.trade/api/health` is HTTP 200 with `ok`, `db`, and `schema` true.
+- The required isolated preview had not been refreshed after the dependency merge; the previous
+  preview deployment was from 16:42Z. Branch `codex/shared-v150-closeout` deployed clean merged
+  `main` to isolated preview version `4d8a558b-1ebb-450d-a4b2-b48688995eb1` at 20:09Z. Preview
+  health reports `ok/db/schema=true`; production remained on `e5c7ebad` and was not redeployed.
+- Scheduled Uptime Monitor run `29164917660` exposed a second GitHub-output framing bug: the compact
+  health JSON has no trailing newline, so the random heredoc terminator was appended to the JSON and
+  rejected as `Matching delimiter not found`. The workflow now forces the terminator onto its own
+  line. The older dynamic-delimiter fix still prevents body content from colliding with the marker.
+- Verification passed: app lint (0 errors / 100 inherited warnings), typecheck, 106 files / 940
+  tests; PWA typecheck, 3 files / 13 tests, and production build; workflow YAML parse and
+  compact-JSON framing harness. Ready closeout PR #297 is recorded in
+  `docs/rollouts/2026-07-11-shared-v150-closeout.md`.
+
 ## 2026-07-11 — Whole-App Hardening Production Landing
 
 - PR #284 (`codex/app-hardening-integration`) merged to `main` as

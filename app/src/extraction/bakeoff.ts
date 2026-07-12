@@ -24,6 +24,7 @@ import {
   arrayBufferToBase64,
   VisionLlmExtractor,
 } from './visionLlm';
+import { reportAiUsage } from '../shared/telemetry';
 import { resolveSecret } from '../secrets/infisical';
 import { run } from '../shared/db';
 import { uuid } from '../shared/ids';
@@ -181,7 +182,7 @@ async function runOpenAi(
 }
 
 /** Anthropic messages call (base64 `document` block BEFORE the text block). */
-async function runAnthropic(model: string, key: string, bytes: ArrayBuffer): Promise<ParsedTx[]> {
+async function runAnthropic(model: string, key: string, bytes: ArrayBuffer): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -207,14 +208,27 @@ async function runAnthropic(model: string, key: string, bytes: ArrayBuffer): Pro
     }),
   });
   if (!res.ok) throw new Error(`anthropic ${res.status} ${await safeText(res)}`);
-  const payload = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
+  const payload = (await res.json()) as {
+    content?: Array<{ type: string; text?: string }>;
+    usage?: { input_tokens?: number; output_tokens?: number };
+  };
+  
+  const usageInfo = payload.usage
+    ? { promptTokens: payload.usage.input_tokens, completionTokens: payload.usage.output_tokens }
+    : undefined;
+
   const text = (payload.content ?? [])
     .filter((b) => b.type === 'text')
     .map((b) => b.text ?? '')
     .join('')
     .trim();
-  if (!text) throw new Error('anthropic: no text block');
-  return parseModelJson(text).map(toParsedTx);
+  if (!text) throw Object.assign(new Error('anthropic: no text block'), { usage: usageInfo });
+
+  try {
+    return { rows: parseModelJson(text).map(toParsedTx), usage: usageInfo };
+  } catch (err) {
+    throw Object.assign(err as Error, { usage: usageInfo });
+  }
 }
 
 /**
@@ -278,7 +292,7 @@ export function parseMistralOcrResponse(payload: unknown): ParsedTx[] {
  * a base64 PDF as a `document_url` and returns a doc-wide structured annotation
  * when `document_annotation_format` is supplied.
  */
-async function runMistral(model: string, key: string, bytes: ArrayBuffer): Promise<ParsedTx[]> {
+async function runMistral(model: string, key: string, bytes: ArrayBuffer): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
   const dataUrl = `data:application/pdf;base64,${arrayBufferToBase64(bytes)}`;
   const res = await fetch('https://api.mistral.ai/v1/ocr', {
     method: 'POST',
@@ -291,7 +305,16 @@ async function runMistral(model: string, key: string, bytes: ArrayBuffer): Promi
     }),
   });
   if (!res.ok) throw new Error(`mistral ${res.status} ${await safeText(res)}`);
-  return parseMistralOcrResponse(await res.json());
+  const payload = (await res.json()) as any;
+  const usageInfo = payload.usage
+    ? { promptTokens: payload.usage.prompt_tokens, completionTokens: payload.usage.completion_tokens }
+    : undefined;
+
+  try {
+    return { rows: parseMistralOcrResponse(payload), usage: usageInfo };
+  } catch (err) {
+    throw Object.assign(err as Error, { usage: usageInfo });
+  }
 }
 
 /**
@@ -322,7 +345,7 @@ export function extractXaiResponseText(payload: unknown): string {
  * an agentic `/v1/responses` call (grok-4.3), whose server-side OCR+vision reads
  * the scan. Two round-trips, so it's the slowest candidate.
  */
-async function runXai(model: string, key: string, bytes: ArrayBuffer): Promise<ParsedTx[]> {
+async function runXai(model: string, key: string, bytes: ArrayBuffer): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
   // 1) upload the PDF (multipart/form-data; let fetch set the boundary).
   const form = new FormData();
   form.append('purpose', 'assistants');
@@ -354,7 +377,16 @@ async function runXai(model: string, key: string, bytes: ArrayBuffer): Promise<P
     }),
   });
   if (!res.ok) throw new Error(`xai ${res.status} ${await safeText(res)}`);
-  return parseModelJson(extractXaiResponseText(await res.json())).map(toParsedTx);
+  const payload = (await res.json()) as any;
+  const usageInfo = payload.usage
+    ? { promptTokens: payload.usage.prompt_tokens, completionTokens: payload.usage.completion_tokens }
+    : undefined;
+
+  try {
+    return { rows: parseModelJson(extractXaiResponseText(payload)).map(toParsedTx), usage: usageInfo };
+  } catch (err) {
+    throw Object.assign(err as Error, { usage: usageInfo });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -401,7 +433,7 @@ export function parseLlamaParseMarkdown(markdown: string): ParsedTx[] {
  * format we need. Poll interval is 2 s; hard timeout is 90 s (well inside the
  * Worker's cpu_ms=300_000 ceiling since poll time is I/O, not CPU).
  */
-async function runLlamaParse(model: string, key: string, bytes: ArrayBuffer): Promise<ParsedTx[]> {
+async function runLlamaParse(model: string, key: string, bytes: ArrayBuffer): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'ptr.pdf');
   form.append('parsing_instruction', SYSTEM_PROMPT + LLAMAPARSE_JSON_SUFFIX);
@@ -444,7 +476,10 @@ async function runLlamaParse(model: string, key: string, bytes: ArrayBuffer): Pr
   if (!res.ok) throw new Error(`llamaparse result ${res.status} ${await safeText(res)}`);
   const { markdown } = (await res.json()) as { markdown?: string };
   if (!markdown) throw new Error('llamaparse: empty markdown result');
-  return parseLlamaParseMarkdown(markdown);
+  
+  // LlamaParse charges by page, which isn't exactly tokens but we can map it to promptTokens if we want.
+  // For now, we'll leave usage undefined for LlamaParse as it's not token-based.
+  return { rows: parseLlamaParseMarkdown(markdown), usage: undefined };
 }
 
 /** Run one candidate over one document's bytes, timing it and trapping errors. */
@@ -464,9 +499,6 @@ export async function runCandidateOnDoc(
   const started = Date.now();
   try {
     let rows: ParsedTx[];
-    // Per-provider return shape: only openai currently reports token usage
-    // alongside its rows, so its branch destructures {rows, usage} while every
-    // other provider keeps returning a bare ParsedTx[] unchanged.
     let usage: CandidateDocResult['usage'];
     if (provider === 'gemini') {
       const result = await new VisionLlmExtractor(env, { model, apiKey: key }).extract({
@@ -474,18 +506,31 @@ export async function runCandidateOnDoc(
         bytes,
       });
       rows = result.transactions;
+      usage = result.usage;
     } else if (provider === 'openai') {
       const openai = await runOpenAi(model, key, bytes);
       rows = openai.rows;
       usage = openai.usage;
     } else if (provider === 'mistral') {
-      rows = await runMistral(model, key, bytes);
+      const mistral = await runMistral(model, key, bytes);
+      rows = mistral.rows;
+      usage = mistral.usage;
     } else if (provider === 'xai') {
-      rows = await runXai(model, key, bytes);
+      const xai = await runXai(model, key, bytes);
+      rows = xai.rows;
+      usage = xai.usage;
     } else if (provider === 'llamaparse') {
-      rows = await runLlamaParse(model, key, bytes);
+      const lp = await runLlamaParse(model, key, bytes);
+      rows = lp.rows;
+      usage = lp.usage;
     } else {
-      rows = await runAnthropic(model, key, bytes);
+      const anthropic = await runAnthropic(model, key, bytes);
+      rows = anthropic.rows;
+      usage = anthropic.usage;
+    }
+    
+    if (usage) {
+      reportAiUsage(env, { provider, model, component: 'bakeoff', ...usage }).catch(() => {});
     }
     return {
       ...base,
@@ -499,6 +544,11 @@ export async function runCandidateOnDoc(
     };
   } catch (err) {
     const cast = err as Error & { usage?: CandidateDocResult['usage'] };
+    
+    if (cast.usage) {
+      reportAiUsage(env, { provider, model, component: 'bakeoff', ...cast.usage }).catch(() => {});
+    }
+    
     return {
       ...base,
       ok: false,
@@ -530,6 +580,11 @@ export async function persistExtractionRun(
   kind: ExtractionRunKind,
   batchId: string | null = null,
 ): Promise<void> {
+  // Push telemetry concurrently (fire-and-forget internal catch)
+  import('./telemetry').then(({ pushExtractionTelemetry }) => {
+    pushExtractionTelemetry(env, result, kind);
+  }).catch(() => {});
+
   try {
     await run(
       env.DB,
