@@ -81,6 +81,55 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 
 ## Completed
 - **Interactive dashboard metrics and table sort controls (AG, S) — COMPLETED 2026-07-11 via PR #303.** Added sparkline charts to the dashboard's snapshot metrics (Net Flow, Buy Pressure) and interactive `<thead>` sorting controls with Asset Type filters to the "What Congress Is Trading" and "Rising Activity" panels in `dashboardHtml.ts`.
+- **Production outage diagnosis + PR #300/#308 landing — DEPLOYED 2026-07-12 (CLAUDE, M).**
+  Receipt: `deploy.yml` run 29177444399 succeeded on `b8ce1b4`; live verification passed (all
+  served script blocks parse; health ok/db/schema true; scoreboard + Alerts tab live with real
+  probe data; scrape guard 403s bare curl on data APIs). Original entry follows.
+- **Production outage diagnosis + PR #300 landing + deploy-gate fix (CLAUDE, M) — 2026-07-12.**
+  Owner reported the live site loading no data. Diagnosis: the deployed Worker served a dashboard
+  whose main inline script FAILED TO PARSE ("Unexpected end of input") — the build came from an
+  UNPUSHED working tree containing an in-progress "Extraction Benchmark" dashboard feature
+  (`runBenchmark`, model lineups; exists in NO git branch — AG-style bake-off work) with collapsed
+  template-literal escapes (`\\s`→`\s` etc. in `app/src/ui/dashboardHtml.ts`) and a splice that
+  clobbered `loadMarketCoverage`'s closing braces. APIs/data were healthy throughout; only the UI
+  died. That tree could never pass `npm test` (the suite pins script parseability) — it was shipped
+  without the test gate. Fix per owner: PR #300 merged to `main` (`2ed8517`) and `deploy.yml`
+  dispatched. Deploy attempts 1-2 failed on the SELF-HOSTED runner only: `reviewResolutionD1.test.ts`
+  dies with miniflare/workerd `write EPIPE` (deterministic on that container; passes on hosted CI +
+  dev containers). Follow-up commit makes that suite probe workerd and skip loudly where it cannot
+  start, plus CLAUDE.md defaults (agent-sync coordination + effort-log updates by default, per
+  owner). NOTE for AG: the redeploy OVERWRITES the unpushed benchmark experiment in production —
+  commit it to a branch if wanted (and mind the doubled-backslash rule in dashboardHtml.ts).
+  Also flagged: deploy runner cannot spawn workerd — worth a look at the Hetzner container.
+- **Infisical single-source-of-truth config consolidation (CLAUDE, M) — COMPLETED 2026-07-11 on
+  `claude/antigravity-latency-security-x6lkvb` (second commit on PR #300, not deployed).** Audit
+  found ~90% of keys/knobs already resolver-backed; converted the rest (FMP/EDGAR pacers, latency
+  probe knobs, seed URLs, house live-search flag, admin-open flags, arbitration enable + vision/
+  arbitration model choices now resolved per-extraction). New admin audit endpoint
+  `GET /api/admin/config-sources` (per-key live source, names only) + `app/docs/config-registry.md`;
+  wrangler [vars] re-documented as fallback defaults; `.dev.vars.example` now recommends
+  Infisical-bootstrap-only local setup. Env fallbacks kept deliberately (outage resilience;
+  `INFISICAL_ALLOW_ENV_FALLBACK=false` for hard-require). Sentry init trio + INFISICAL_* bootstrap
+  are the documented env-only exceptions. Gates: typecheck; 109 files / 959 tests. Rollout note:
+  `docs/rollouts/2026-07-11-infisical-single-source.md`.
+- **Public latency showcase + public delivery education + anti-scrape hardening (CLAUDE, L) —
+  COMPLETED 2026-07-11 on `claude/antigravity-latency-security-x6lkvb` (not deployed).** Owner
+  request from the Antigravity disclosure-latency findings: (1) new public
+  `GET /api/analytics/latency-summary` (aggregate `publicSummary` only, KV-cached 5 min) plus a
+  "Speed vs. Data Providers" race-lane scoreboard on the Trends landing view, designed via a
+  three-expert UI panel with honesty guard rails (full lane ≥5 matches, boast copy ≥10 matches AND
+  positive median, neutral 0-match empty states, losses/sample sizes always shown); (2) the
+  admin-only Developer Delivery tab is now a public "Alerts" tab teaching the two paid delivery
+  methods (signed webhooks, SSE) to signed-out visitors, with management still admin-only and the
+  pricing modal reworked around delivery-first features + a guard-railed live proof line;
+  (3) `src/security/botDefense.ts` anti-scrape guard on `/api/*` (scraper/AI-crawler UA blocklist,
+  300 req/5 min per IP, shared 20k rows/day per-IP budget on `/api/transactions` +
+  `/api/client/v1/feed`, 10k offset cap, `X-Robots-Tag: noindex`; token-gated surfaces exempt;
+  fails open; `SCRAPE_GUARD_ENABLED` kill switch, Infisical-overridable). Site remains fully public
+  for humans. Gates: typecheck; 108 files / 957 tests. Rollout note:
+  `docs/rollouts/2026-07-11-latency-showcase-and-bot-hardening.md`. NOTE for AG: touches ~14 lines
+  in `app/src/client/routes.ts` (`/feed` row budget) — coordinate with the in-progress client
+  routes refactor before landing both.
 - **Push account status metrics to Usage Monitor (AG) — COMPLETED 2026-07-11.** Updated `jobs.ts` to emit a separate `metricType: 'limit'` telemetry event to the Usage Monitor for the FMP daily call cap, alongside the existing usage tracking.
 - **Whole-app evaluation and improvement audit (CODEX, read-only) — COMPLETED 2026-07-11
   (assessment only; no merge applicable).** Audited `origin/main` at `8b34bd5`, live desktop/mobile
@@ -209,6 +258,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   target or reverse-proxy route is configured.
 - **Implement `est_value` column in transactions table (AG, S) — COMPLETED 2026-07-11.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
 - **Refactor client API routes (AG, M) — COMPLETED 2026-07-11.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
+- **Beautify iOS SwiftUI Prototype App (AG, L) — IN PROGRESS 2026-07-12.** Refactored monolithic SwiftUI code in `CongressTradeApp.swift` to upgrade styling (glassmorphism, gradient accents, modern card structures). Code compiles correctly locally. Pending PR creation and deployment.
 - **GPT-5.6 bake-off evaluation prep + usage/cost tracking harness (MONET, S)** — BUILT + PUSHED
   2026-07-10, PR #264. Owner asked to evaluate GPT-5.6 (sol/terra/luna, released 2026-07-09) for
   the extraction pipeline. Research found no evidence of a capability uplift for this document type
@@ -490,4 +540,4 @@ Jul 8 18:10 CT)._
   patch.py (AG), rescue CURSOR's stash (CURSOR).
 - **Whole-App Evaluation & Next.js PWA Implementation (AG, L) — COMPLETED 2026-07-11.** Refactored monolithic backend routes to a layered architecture (types, queries, utils, routes), implemented the `est_value` materialized column in D1 to optimize feed queries, and established the Next.js PWA frontend using SWR for data fetching, responsive glassmorphism dark-mode UI, and reusable components like `TradeCard`. 
 
-- **Bump shared to v1.5.0 (AG, S) — COMPLETED 2026-07-11.** Exact git-tag pin `#v1.5.0` resolves `2222baeb`; `^1.5.0` in the original row was wording-only and incorrect. Canonical status is the matched-pin row under In Progress above.
+- **Bump shared to v1.5.0 (AG implementation requested by CODEX, cross-app S) — MERGED / DEPLOYED / PRODUCTION VERIFIED 2026-07-11.** Exact git-tag pin `github:jaywedgeworth22/congress-trading-shared#v1.5.0` resolves released commit `2222baeb`. PR #296 merged as `d84fd349`; production Wrangler versions `c5deb474` then `e5c7ebad` deployed at 18:59Z, and apex health is HTTP 200 with `ok/db/schema=true`. This corrects the original `^1.5.0` wording.

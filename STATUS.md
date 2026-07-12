@@ -1,9 +1,53 @@
 # Current Handoff
 
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
+
+## 2026-07-12 — Production outage fixed; PR #300 + #308 deployed (CLAUDE)
+
+- **Outage**: the live dashboard loaded no data (APIs healthy). Cause: the
+  deployed Worker was built from an UNPUSHED working tree — an in-progress
+  "Extraction Benchmark" dashboard feature (in no git branch; AG-style
+  bake-off work) with collapsed template-literal escapes in
+  `app/src/ui/dashboardHtml.ts` — so the main inline script failed to parse.
+  That tree could not pass `npm test`; it was shipped without the test gate.
+- **Fix + release**: PR #300 merged (`2ed8517`: public latency scoreboard +
+  `GET /api/analytics/latency-summary`, public Alerts tab, anti-scrape guard
+  on `/api/*`, Infisical single-source config + `GET /api/admin/config-sources`),
+  then PR #308 (`b8ce1b4`) made the workerd/Miniflare D1 suite probe-and-skip
+  on the deploy runner (its container cannot spawn workerd; failed the gate
+  2×) and set CLAUDE.md defaults (agent-sync coordination + effort-log updates
+  by default). `deploy.yml` run **29177444399 succeeded** on `b8ce1b4`.
+- **Verified live**: all served script blocks parse; `/api/health`
+  ok/db/schema true; scoreboard + Alerts tab render with real probe data
+  (FMP: first on 22 of 23 matched, median lead 1.5h, p90 13.6h); scrape guard
+  active (bare curl on data APIs → 403; browsers 200; kill switch
+  `SCRAPE_GUARD_ENABLED`, Infisical-overridable).
+- **Follow-ups**: fix workerd on the Hetzner runner container (suite then
+  auto-resumes there); AG to commit or drop the overwritten benchmark
+  experiment; consider folding a served-HTML script-parse smoke into ship.sh.
+
+## 2026-07-11 — Shared v1.5.0 consumer closeout and uptime framing fix
+
+- PR #296 exact-pinned `@jaywedgeworth22/congress-trading-shared` to
+  `github:jaywedgeworth22/congress-trading-shared#v1.5.0`; the lockfile resolves released commit
+  `2222baeb`. GitHub records the PR merged to `main` as `d84fd349` at 18:58:28Z.
+- Cloudflare Wrangler records production Worker versions `c5deb474` and `e5c7ebad` at 18:59Z.
+  Current `https://congress.trade/api/health` is HTTP 200 with `ok`, `db`, and `schema` true.
+- The required isolated preview had not been refreshed after the dependency merge; the previous
+  preview deployment was from 16:42Z. Branch `codex/shared-v150-closeout` deployed clean merged
+  `main` to isolated preview version `4d8a558b-1ebb-450d-a4b2-b48688995eb1` at 20:09Z. Preview
+  health reports `ok/db/schema=true`; production remained on `e5c7ebad` and was not redeployed.
+- Scheduled Uptime Monitor run `29164917660` exposed a second GitHub-output framing bug: the compact
+  health JSON has no trailing newline, so the random heredoc terminator was appended to the JSON and
+  rejected as `Matching delimiter not found`. The workflow now forces the terminator onto its own
+  line. The older dynamic-delimiter fix still prevents body content from colliding with the marker.
+- Verification passed: app lint (0 errors / 100 inherited warnings), typecheck, 106 files / 940
+  tests; PWA typecheck, 3 files / 13 tests, and production build; workflow YAML parse and
+  compact-JSON framing harness. Ready closeout PR #297 is recorded in
+  `docs/rollouts/2026-07-11-shared-v150-closeout.md`.
 
 ## 2026-07-11 — Whole-App Hardening Production Landing
 

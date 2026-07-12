@@ -138,11 +138,6 @@ export function parseReportLink(cellHtml: string): { reportPath: string; reportI
   return { reportPath, reportId };
 }
 
-/** Strip HTML tags to recover the visible text of a cell. */
-function stripTags(s: string): string {
-  return s.replace(/<[^>]*>/g, '').trim();
-}
-
 /**
  * Map a DataTables `data` array (rows of string columns) into SenateFiling[].
  *
@@ -164,9 +159,8 @@ export function parseSenateRows(rows: string[][]): SenateFiling[] {
     if (!parsed) continue;
     const first = (cells[0] ?? '').trim();
     const last = (cells[1] ?? '').trim();
-    const anchorName = stripTags(linkCell);
     const nameCell = cells.find((c) => /\(Senator\)/i.test(c) && !/</.test(c)) ?? '';
-    const fullName = (anchorName || nameCell || `${first} ${last}`).trim();
+    const fullName = (nameCell || `${first} ${last}`).trim();
     const filedDate = (cells.find((c) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.trim())) ?? '').trim();
     const filingTypeLabel = (cells.find((c) => /report/i.test(c) && !/</.test(c)) ?? '').trim();
     out.push({

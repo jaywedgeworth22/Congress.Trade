@@ -7,6 +7,7 @@
  */
 
 import type { Env, Filing, ParsedTx } from '../shared/types';
+import { resolveSecret } from '../secrets/infisical';
 
 // ---------------------------------------------------------------------------
 // Arbitration merge helpers (pure, unit-testable)
@@ -173,20 +174,25 @@ export class ArbitratingExtractor implements Extractor {
     return this.primary.canHandle(f);
   }
 
-  /** True iff secondary arbitration should run for the current env config. */
-  private arbitrationEnabled(): boolean {
-    return (
-      this.secondary !== undefined &&
-      this.env.ARBITRATION_ENABLED === 'true'
-    );
+  /** True iff secondary arbitration should run for the current config. The
+   *  flag resolves through Infisical (env fallback) at extraction time, so
+   *  arbitration can be toggled without a redeploy. */
+  private async arbitrationEnabled(): Promise<boolean> {
+    if (this.secondary === undefined) return false;
+    try {
+      const live = (await resolveSecret(this.env, 'ARBITRATION_ENABLED')).value;
+      return (live ?? this.env.ARBITRATION_ENABLED) === 'true';
+    } catch {
+      return this.env.ARBITRATION_ENABLED === 'true';
+    }
   }
 
   async extract(input: ExtractorInput): Promise<ExtractorResult> {
     // 1) Always run the primary extractor.
     const primaryResult = await this.primary.extract(input);
 
-    // 2) Env-driven switch: only arbitrate when fully configured.
-    if (!this.arbitrationEnabled() || !this.secondary) {
+    // 2) Config-driven switch: only arbitrate when fully configured.
+    if (!(await this.arbitrationEnabled()) || !this.secondary) {
       return primaryResult;
     }
 
@@ -261,15 +267,17 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
   const textPdf = new TextPdfExtractor();
   const visionLlm = new VisionLlmExtractor(env);
 
-  // Build a secondary when arbitration is enabled; the key is resolved lazily so
-  // it can come from Infisical at extraction time rather than env construction.
-  const secondary = env.ARBITRATION_ENABLED === 'true' || env.ARBITRATION_API_KEY
-    ? new VisionLlmExtractor(env, {
-        apiKeyName: 'ARBITRATION_API_KEY',
-        model: (env as { ARBITRATION_MODEL?: string }).ARBITRATION_MODEL || 'gemini-2.5-flash',
-        name: 'visionLlm-secondary',
-      })
-    : undefined;
+  // The secondary is ALWAYS constructed (construction does no I/O): its API
+  // key, model, and the ARBITRATION_ENABLED switch all resolve lazily at
+  // extraction time (Infisical first, env fallback), so arbitration can be
+  // turned on entirely from Infisical without a redeploy. When the flag stays
+  // off, ArbitratingExtractor never invokes this instance.
+  const secondary = new VisionLlmExtractor(env, {
+    apiKeyName: 'ARBITRATION_API_KEY',
+    modelEnvName: 'ARBITRATION_MODEL',
+    defaultModel: 'gemini-2.5-flash',
+    name: 'visionLlm-secondary',
+  });
 
   const visionArbitrated = new ArbitratingExtractor(visionLlm, env, secondary);
   const housePdf = new HousePdfExtractor(textPdf, visionArbitrated);

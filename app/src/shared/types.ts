@@ -451,8 +451,23 @@ export interface Env {
   FMP_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */
   FMP_DAILY_CALL_CAP?: string;
+  /** Shared FMP per-minute pacer ceiling (stringified int). Infisical-tunable. */
+  FMP_MAX_PER_MINUTE?: string;
+  /** SEC EDGAR per-minute pacer ceiling (stringified int). Infisical-tunable. */
+  EDGAR_MAX_PER_MINUTE?: string;
+  /** Local-dev-only escape hatch: opens admin when the environment is not production. */
+  ADMIN_OPEN_IN_DEV?: string;
+  /** Override URLs for the seed backfill datasets (House / Senate mirrors). */
+  SEED_HOUSE_URL?: string;
+  SEED_SENATE_URL?: string;
+  /** House live search polling flag; fail-soft (on unless explicitly "false"). */
+  HOUSE_LIVE_SEARCH_ENABLED?: string;
+  /** Model override for the secondary (arbitration) vision extractor. */
+  ARBITRATION_MODEL?: string;
   /** Enables the Congress.Trade-vs-provider congressional disclosure latency monitor. */
   DISCLOSURE_LATENCY_WATCH_ENABLED?: string;
+  /** Enables the public-API anti-scraping guard (UA blocklist + per-IP budgets). Unset = off. */
+  SCRAPE_GUARD_ENABLED?: string;
   /** Comma-separated provider ids to race: fmp, unusual_whales, quiver. Defaults to direct comparable providers. */
   DISCLOSURE_LATENCY_PROVIDERS?: string;
   /** Latest rows to fetch per provider/chamber endpoint when the latency monitor runs. */

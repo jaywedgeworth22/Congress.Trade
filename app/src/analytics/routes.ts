@@ -80,6 +80,7 @@ import {
 import { committeeConflict } from './conflicts';
 import { computePerformance } from '../prices/compute';
 import { latestSpxClose } from '../prices/service';
+import { getDisclosureLatencySummary } from '../ingestion/fmpDisclosureLatency';
 
 const TICKER_PARAM_RE = /^[A-Z0-9._^-]{1,20}$/;
 
@@ -754,6 +755,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           filerId: str(row.filer_id),
           fullName: str(row.full_name),
           party: str(row.party),
+          partyBucket: asPartyBucket(row.party) ?? null,
           photoUrl: str(row.photo_url),
           tradeCount: n,
           // Annualized excess return vs SPX since the filing date, equal-weighted across buys.
@@ -1177,6 +1179,43 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       return meta(f, { count: conflicts.length, conflicts });
     });
     return c.json(data);
+  });
+
+  // --- GET /latency-summary ------------------------------------------------
+  // Public speed-vs-providers scoreboard. Serves ONLY the aggregate
+  // publicSummary from the disclosure-latency race monitor (no doc ids, filer
+  // names, or provider payloads — pinned by the admin summary test), with
+  // fields renamed to a stable public contract. Positive lead seconds mean
+  // Congress.Trade surfaced the disclosure first. KV-cached: the underlying
+  // summary scans up to 5000 candidate rows per compute.
+  r.get('/latency-summary', async (c) => {
+    const data = await cached(c.env, 'analytics:latency-summary', 300, async () => {
+      const { publicSummary } = await getDisclosureLatencySummary(c.env);
+      return {
+        generatedAt: publicSummary.generatedAt,
+        totals: {
+          racedDisclosures: publicSummary.totals.candidates,
+          matched: publicSummary.totals.matched,
+          pending: publicSummary.totals.pending,
+          comparableProviders: publicSummary.totals.comparableProviders,
+        },
+        providers: publicSummary.providers.map((p) => ({
+          id: p.provider,
+          label: p.label,
+          candidates: p.candidates,
+          matched: p.matched,
+          coveragePct: p.coveragePct,
+          usFirstCount: p.ctAheadMonitorCount,
+          providerFirstCount: p.providerAheadMonitorCount,
+          tieCount: p.tieMonitorCount,
+          medianLeadSec: p.medianMonitorDeltaSec,
+          avgLeadSec: p.avgMonitorDeltaSec,
+          p90LeadSec: p.p90MonitorDeltaSec,
+        })),
+      };
+    });
+    // Edge/browser cache shield: the numbers only move every ~5 minutes.
+    return c.json(data, 200, { 'Cache-Control': 'public, max-age=300' });
   });
 
   return r;

@@ -156,6 +156,16 @@ id = "b5554a8cd8b04347baeb80cd160bf1e0"
 #   STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / STRIPE_PRICE_*
 #   USAGE_MONITOR_INGEST_URL / USAGE_MONITOR_INGEST_TOKEN
 # ---------------------------------------------------------------------------
+# ── NOTE: Infisical is the single source of truth for config ────────────────
+# Every var below (and every Worker secret except the INFISICAL_* bootstrap
+# credentials and the Sentry init vars) is read through the Infisical runtime
+# resolver: a value set in Infisical ALWAYS overrides the value here, live,
+# within the resolver cache TTL (~10 min) and with zero redeploys. Treat this
+# block as FALLBACK DEFAULTS — edit knobs in Infisical, not here. Audit which
+# source is live per key via GET /api/admin/config-sources; registry in
+# app/docs/config-registry.md. Env-only exceptions: SENTRY_ENVIRONMENT (+ DSN /
+# traces rate, read synchronously at Worker init) and USAGE_MONITOR_ENVIRONMENT
+# as consumed by Sentry-adjacent init paths.
 [vars]
 APP_BASE_URL = "https://congress.trade"
 # Autonomous cross-vendor agreement -> auto-publish (per-minute cron). The
@@ -220,12 +230,17 @@ PRICE_PROVIDER = "fmp"
 # scout via POST /api/ingest/detection) to measure who surfaced each filing
 # first. Enables the FMP-vs-us lead readout that answers the front-running thesis.
 DISCLOSURE_LATENCY_WATCH_ENABLED = "true"
+# Public-API anti-scraping guard (src/security/botDefense.ts): blocks scraper/
+# AI-crawler user agents and applies per-IP request + daily row budgets on the
+# public data endpoints. Infisical can override SCRAPE_GUARD_ENABLED to "false"
+# for a zero-redeploy kill switch if it ever throttles legitimate traffic.
+SCRAPE_GUARD_ENABLED = "true"
 # API Usage Monitor app telemetry. Token is secret/Infisical-only.
 USAGE_MONITOR_INGEST_URL = "https://usage.jays.services/api/ingest/usage"
 USAGE_MONITOR_ENVIRONMENT = "production"
 # Stripe premium price ids (not secret) — created 2026-06-22 on the live account.
-STRIPE_PRICE_MONTHLY = "price_1TlHYBEUQUPhZj0SEzG2Qx68"
-STRIPE_PRICE_ANNUAL = "price_1TlHYCEUQUPhZj0SpNVoPb3Z"
+STRIPE_PRICE_MONTHLY = "price_1TsCXWEUQUPhZj0Sk74aiFPu"
+STRIPE_PRICE_ANNUAL = "price_1TsCXWEUQUPhZj0ScFElWXUH"
 # Flip to "true" only after the account is approved for Managed Payments.
 STRIPE_MANAGED_PAYMENTS = "false"
 # Sentry — tags events with this environment; the Sentry Cloudflare SDK reads

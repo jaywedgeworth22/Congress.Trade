@@ -48,6 +48,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     --exch:      #eab308;
     --warn:      #f59e0b;
     --good:      #34d399;
+    /* "Rival" gray for the speed-vs-providers race lanes: providers are one
+       de-emphasized neutral (never buy/sell green/red — those mean trades). */
+    --rival:     #7b8dab;
     --radius:    12px;
     --mono:      ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     --sans:      system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
@@ -67,8 +70,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     --exch:      #b45309;
     --warn:      #b45309;
     --good:      #15803d;
+    --rival:     #64748b;
   }
   html[data-theme="light"] header.top { background: rgba(255,255,255,.72); }
+  /* The hidden attribute must always win, even over class display rules
+     (e.g. .row-flex/.plan-grid set display and would otherwise override the
+     UA's [hidden]{display:none} — the entitlement cues rely on it). */
+  [hidden] { display: none !important; }
   /* ---- theme toggle ---- */
   /* ---- resizable feed columns ---- */
   .table-wrap { overflow-x: auto; max-height: min(78vh, 920px); }
@@ -569,6 +577,46 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .toast.show { display:block; }
   .toast.err { border-color:color-mix(in srgb,var(--sell) 55%,transparent); color:var(--sell); }
   .gate-note { font-size:12px; color:var(--text-dim); display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
+  /* ---- Speed vs data providers (public latency proof) ---- */
+  .speed-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+  .speed-head h3 { margin:0; }
+  .speed-body { display:grid; grid-template-columns:230px 1fr; gap:20px; align-items:start; min-height:170px; margin-top:10px; }
+  .speed-hero-num { font-size:44px; font-weight:800; letter-spacing:-0.5px; line-height:1.05; }
+  .speed-hero-label { color:var(--text-dim); font-size:13px; margin-top:3px; }
+  .speed-record { margin-top:10px; font-size:13px; font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  .speed-n { margin-top:5px; font-size:11px; color:var(--text-dim); }
+  .race-annot { position:relative; height:14px; font-size:11px; color:var(--text-dim); }
+  .race-annot span { position:absolute; transform:translateX(-4px); white-space:nowrap; }
+  .race-lane { margin-bottom:12px; }
+  .race-top { display:flex; justify-content:space-between; gap:10px; font-size:12px; margin-bottom:4px; flex-wrap:wrap; }
+  .race-name { font-weight:600; }
+  .race-name .race-nn { color:var(--text-dim); font-weight:400; font-size:11px; margin-left:6px; }
+  .race-vals { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  .race-vals .p90 { color:var(--text-dim); }
+  .race-strip { position:relative; height:20px; }
+  .race-rail { position:absolute; left:0; right:0; top:9px; height:2px; background:color-mix(in srgb, var(--border) 80%, transparent); }
+  .race-span { position:absolute; top:9px; height:2px; background:var(--rival); }
+  .race-dot { position:absolute; top:4px; width:12px; height:12px; border-radius:50%; box-shadow:0 0 0 2px var(--panel); transform:translateX(-50%); }
+  .race-dot.us { background:var(--accent); }
+  .race-dot.them { background:var(--rival); }
+  .race-p90tick { position:absolute; top:5px; width:2px; height:10px; background:var(--rival); transform:translateX(-50%); }
+  .race-empty { font-size:12px; color:var(--text-dim); padding:2px 0 4px; }
+  .race-axis { position:relative; height:16px; font-size:10.5px; color:var(--text-dim); font-family:var(--mono); border-top:1px solid var(--border); margin-top:2px; }
+  .race-axis span { position:absolute; top:2px; transform:translateX(-50%); white-space:nowrap; }
+  .race-axis span:first-child { transform:none; }
+  .race-axis span:last-child { transform:translateX(-100%); }
+  .speed-fineprint { font-size:10.5px; }
+  .speed-table summary { cursor:pointer; font-size:12px; color:var(--text-dim); }
+  .speed-table table td, .speed-table table th { font-variant-numeric:tabular-nums; }
+  .speed-mini { display:none; border:1px solid var(--border); border-radius:10px; padding:10px 12px; font-size:12.5px; margin:12px 0; gap:8px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
+  .speed-mini.show { display:flex; }
+  .speed-mini .lead { font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  /* ---- Alert delivery education cards ---- */
+  .delivery-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin:12px 0 4px; }
+  .delivery-card { border:1px solid var(--border); border-radius:12px; padding:16px 14px; background:color-mix(in srgb, var(--panel-2) 55%, transparent); }
+  .delivery-card h4 { margin:0 0 8px; font-size:14px; }
+  .delivery-card p { margin:0 0 8px; font-size:12.5px; line-height:1.5; color:var(--text); }
+  .delivery-card p.note { margin-bottom:0; }
   @media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
     html, body { width:100%; max-width:100%; overflow-x:hidden; }
     body { background: var(--bg); font-size: 13px; }
@@ -582,7 +630,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     nav.tabs {
       position: fixed; left: 0; right: 0; bottom: 0; margin: 0;
       width: 100%; max-width: 100%;
-      display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+      /* Auto columns (not a fixed repeat(5)) so hidden admin tabs don't leave
+         empty cells — visible buttons always share the bar equally. */
+      display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
       gap: 4px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
       background: var(--panel);
       border-top: 1px solid var(--border); backdrop-filter: none; z-index: 45;
@@ -658,6 +708,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .drawer-kv { grid-template-columns: 1fr; gap: 3px; }
     .drawer-kv dd { text-align: left; }
     .plan-grid { grid-template-columns: 1fr; }
+    .speed-body { display:block; min-height:210px; }
+    .speed-hero { margin-bottom:14px; }
+    .speed-hero-num { font-size:34px; }
+    .delivery-grid { grid-template-columns: 1fr; }
     .toast { bottom: calc(78px + env(safe-area-inset-bottom)); width: calc(100vw - 24px); max-width: 420px; }
   }
   @media (max-width: 460px) {
@@ -1133,7 +1187,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
     <button data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span id="reviewCount"></span></button>
-    <button data-view="subs" data-mobile="Alerts" data-icon="↗" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs" data-admin-tab="true" hidden>Developer Delivery</button>
+    <button data-view="subs" data-mobile="Alerts" data-icon="↗" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Alerts</button>
     <button data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence</button>
   </nav>
   <div id="acct" class="acct"></div>
@@ -1238,6 +1292,29 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="tf-cap">Snapshot · <span id="trKpisCap">Past 3 Months</span></div>
     <div class="grid-cards" id="trKpis">
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
+    </div>
+
+    <!-- Speed vs data providers (filter-independent live latency proof).
+         No tf-h class on the h3: stampWindowChips() must not stamp a time
+         window this section does not honor. Rendered by renderSpeedProof(). -->
+    <div class="section speed-proof" id="trLatencySection">
+      <div class="speed-head">
+        <h3>Speed vs. Data Providers <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
+        <span class="note" id="speedUpdated"></span>
+      </div>
+      <div class="speed-body">
+        <div class="speed-hero" id="speedHero"><div class="sk sk-line" style="width:70%;height:34px"></div><div class="sk sk-line" style="width:55%"></div></div>
+        <div id="speedRace"></div>
+      </div>
+      <p class="note">How this is measured: every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades and match them against filings we already ingested, comparing first-seen timestamps. Stats cover the most recent matched filings per provider and update continuously &mdash; wins, losses, and misses alike. &ldquo;Matched&rdquo; counts filings that had appeared in the provider&rsquo;s feed by probe time; a filing can appear there later. Nothing is hand-picked and nothing is frozen: these numbers move. A live measurement, not a promise.</p>
+      <details class="speed-table">
+        <summary>View as table</summary>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Provider</th><th>Matched</th><th>We were first</th><th>They were first</th><th>Ties</th><th>Typical lead</th><th>Average</th><th>p90</th></tr></thead>
+          <tbody id="speedTableBody"></tbody>
+        </table></div>
+      </details>
+      <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
     </div>
 
     <!-- What Congress is trading + Heating up -->
@@ -1409,9 +1486,34 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
   </section>
 
-  <!-- ================= SUBSCRIPTIONS ================= -->
+  <!-- ================= ALERTS (public education + admin management) ================= -->
   <section class="view" id="view-subs" role="tabpanel" aria-labelledby="tab-subs" aria-hidden="true">
-    <div class="section">
+    <!-- Public marketing/education: how the two paid delivery methods work.
+         Visible to everyone, including signed-out visitors; the functionality
+         itself stays behind Premium. -->
+    <div class="section" id="subsMarketing">
+      <h3>Get the Filing First</h3>
+      <p class="sub">The dashboard is the same for everyone &mdash; and it&rsquo;s free. Premium decides who gets told first: the moment our scout ingests a new filing, Premium pushes it to you instead of waiting for you to check the site. Two delivery methods, both included:</p>
+      <div class="speed-mini" id="alertsSpeedMini"></div>
+      <div class="delivery-grid">
+        <div class="delivery-card">
+          <h4>&rarr; Signed Webhooks &mdash; we call you</h4>
+          <p>The instant a filing lands, we send an HTTP POST with the full filing JSON to any URL you choose. Every request is HMAC-SHA256 signed with your endpoint&rsquo;s secret, so you can verify it came from us &mdash; and failed deliveries retry automatically with backoff.</p>
+          <p class="note">Not running a server? Point it at Slack, Zapier, Make, or Pipedream &mdash; if it has a URL, it can react to a filing in seconds.</p>
+        </div>
+        <div class="delivery-card">
+          <h4>&#8674; Live Stream (SSE) &mdash; you stay on the line</h4>
+          <p>One long-lived HTTPS connection that pushes each new filing as an event. No polling, no rate-limit dance. In a browser it&rsquo;s a few lines of <code>EventSource</code>; on a server, one open socket. Drop the connection and reconnect &mdash; the stream resumes where you left off.</p>
+          <p class="note">If webhooks are us calling you, the stream is you leaving the line open.</p>
+        </div>
+      </div>
+      <div class="row-flex" style="margin-top:14px;justify-content:center" data-premium-cue="alerts">
+        <span class="gate-note">Both included in Premium &middot; $15/mo or $140/yr &middot; 7-day free trial
+          <button class="btn sm" onclick="openPricing('alerts')">Start Free Trial</button></span>
+      </div>
+      <p class="note" style="text-align:center">The live dashboard and analytics stay free for everyone; delivery is the Premium part. A live measurement, not a promise &mdash; past speed doesn&rsquo;t guarantee future speed.</p>
+    </div>
+    <div class="section" id="subsManage" data-admin-only hidden>
       <h3>Developer Alert Delivery</h3>
       <p class="sub">Manage signed webhook or SSE alert deliveries for downstream apps. Secrets are shown once at creation; webhook consumers dedupe on <code>docId</code>.</p>
       <table>
@@ -1515,6 +1617,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <p class="note">API HOOK: <code>POST /api/admin/reprocess</code>.</p>
     </div>
     <div class="section">
+      <h3>Model Benchmarking</h3>
+      <p class="sub">Run systematic tests of different model combinations against a sample of human-resolved filings (ground truth) to evaluate autonomy vs accuracy. Note: Benchmark evaluates up to 100 docs per run to control LLM costs. Requires ~90-95% certainty.</p>
+      <div class="row-flex" style="margin-bottom:10px">
+        <button class="btn" id="btnRunBenchmark" onclick="runBenchmark()">Run Benchmark Evaluation</button>
+        <span id="benchmarkMsg" class="note"></span>
+      </div>
+      <div id="benchmarkResults" class="diag-grid" aria-live="polite"></div>
+    </div>
+    <div class="section">
       <h3>Source Health</h3>
       <p class="sub">First-seen timestamps are logged per filing so real refresh cadence is measured, not assumed.</p>
       <div class="row-flex" style="margin-bottom:10px">
@@ -1530,10 +1641,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <h3>Market Data Coverage</h3>
       <p class="sub">Ticker enrichment coverage for company name, sector, country, and market-cap fields. This is the data behind company drawers, Sector, Country, and Market Cap columns.</p>
       <div class="row-flex">
-        <label class="lbl">Max</label>
-        <input id="mdMax" type="number" min="1" max="200" value="40" style="width:90px" />
-        <label class="lbl">Calls / Min</label>
-        <input id="mdPerMin" type="number" min="1" max="1000" value="250" style="width:100px" />
+        <label class="lbl">Max Rows</label>
+        <input id="mdMax" type="number" min="1" max="200" value="40" style="width:90px" title="Maximum ticker rows to process in this run" />
+        <label class="lbl">Max Calls / Min</label>
+        <input id="mdPerMin" type="number" min="1" max="1000" value="250" style="width:100px" title="API throttle limit" />
         <button class="btn ghost sm" onclick="runMarketBackfill(true)">Dry Run</button>
         <button class="btn" onclick="runMarketBackfill(false)">Run One Pass</button>
         <button class="btn ghost sm" onclick="loadMarketCoverage()">Reload</button>
@@ -1596,20 +1707,23 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <div class="modal" role="dialog" aria-modal="true" aria-label="Premium">
     <button class="close" onclick="closePricing()" aria-label="Close">×</button>
     <h2 id="pricingTitle">Premium</h2>
-    <p class="sub" id="pricingSub">Premium adds research workflow tools while the public dashboard stays browsable.</p>
+    <p class="sub" id="pricingSub">The public dashboard stays free. Premium gets you the filing the moment we see it.</p>
+    <p class="note" id="pricingProof" style="text-align:center"></p>
     <ul class="feature-list" id="pricingFeatures">
+      <li>Instant filing alerts — signed webhooks (HMAC-verified) to any URL</li>
+      <li>Live SSE stream of every new filing — no polling</li>
       <li>Full-history CSV exports</li>
       <li>Enrichment columns: sector, market cap, and country</li>
     </ul>
     <div class="plan-grid" id="pricingPlans">
       <div class="plan sel" id="planMonthly" onclick="selectPlan('monthly')">
         <div class="cad">Monthly</div>
-        <div class="price">$15<span class="per">/mo</span></div>
+        <div class="price">$9<span class="per">/mo</span></div>
       </div>
       <div class="plan" id="planAnnual" onclick="selectPlan('annual')">
-        <span class="save">SAVE ~22%</span>
+        <span class="save">SAVE ~17%</span>
         <div class="cad">Annual</div>
-        <div class="price">$140<span class="per">/yr</span></div>
+        <div class="price">$90<span class="per">/yr</span></div>
       </div>
     </div>
     <p class="trial-note" id="pricingTrialNote">7-day trial. No charge today.</p>
@@ -2416,7 +2530,7 @@ function updateFeedCountMsg(shown) {
   }
   if (pageMsg) pageMsg.textContent = 'Page ' + (feedPage + 1) + ' of ' + Math.max(1, Math.ceil(total / feedPageSize));
   if (prev) prev.disabled = feedPage <= 0 || loadingPage;
-  if (next) next.disabled = end >= total || loadingPage;
+  if (next) next.disabled = end >= total || loadingPage || (feedPage + 1) * feedPageSize > MAX_PUBLIC_FEED_OFFSET;
 }
 
 /* ---- resizable feed columns (drag the right edge of a header) ---- */
@@ -2737,8 +2851,15 @@ function handleFeedTextFilter() {
 
 function resetFeedPage() { feedPage = 0; return fetchPage(); }
 function prevFeedPage() { if (feedPage <= 0) return; feedPage -= 1; fetchPage(); }
+/* The server rejects public offsets beyond this depth (anti-scrape); deeper
+   history is the Premium CSV export. Mirror it so the pager never 400s. */
+var MAX_PUBLIC_FEED_OFFSET = 10000;
 function nextFeedPage() {
   if ((feedPage + 1) * feedPageSize >= totalRows) return;
+  if ((feedPage + 1) * feedPageSize > MAX_PUBLIC_FEED_OFFSET) {
+    showToast('Deeper history is available via CSV export (Premium).');
+    return;
+  }
   feedPage += 1;
   fetchPage();
 }
@@ -3975,6 +4096,7 @@ function loadHealth() {
         var rts = s.avgReleasedToSeenSec == null ? '—' : '~' + fmtDuration(s.avgReleasedToSeenSec);
         var sti = s.avgSeenToImportedSec == null ? '—' : fmtDuration(s.avgSeenToImportedSec);
         var status = s.status || 'unknown';
+        if (status === 'unknown') status = 'unknown (TBD)';
         if (s.stale && status === 'error') status += ' · stale';
         var statusTitle = s.lastError || (s.stale ? ('No successful check within ' + fmtDuration(s.staleAfterSec || 0)) : '');
         return '<tr class="row">' +
@@ -4033,10 +4155,11 @@ function loadDiagnostics() {
         } else {
           cards.innerHTML = connections.map(function (c) {
             var st = c.status || 'unknown';
+            if (st === 'unknown') st = 'unknown (TBD)';
             var configured = c.configured == null ? '—' : (c.configured ? 'Yes' : 'No');
             return '<div class="diag-card">' +
               '<div class="diag-head"><div class="diag-title">' + esc(c.label || c.id || 'Connection') + '</div>' +
-                '<span class="diag-status ' + esc(st) + '">' + esc(st) + '</span></div>' +
+                '<span class="diag-status ' + esc(st.split(' ')[0]) + '">' + esc(st) + '</span></div>' +
               '<div class="diag-meta">' +
                 '<span>Configured</span><strong>' + esc(configured) + '</strong>' +
                 '<span>Last Used</span><strong>' + esc(dateTimeText(c.lastUsedAt)) + '</strong>' +
@@ -4172,6 +4295,91 @@ function loadMarketCoverage() {
     .catch(function (e) {
       if (box) box.innerHTML = '<div class="state">' + esc(isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load market coverage: ' + e.message)) + '</div>';
     });
+}
+
+async function runBenchmark() {
+  var msg = el('benchmarkMsg');
+  var res = el('benchmarkResults');
+  var btn = el('btnRunBenchmark');
+  msg.innerText = 'Fetching ground-truth docs...';
+  msg.style.color = '';
+  res.innerHTML = '';
+  btn.disabled = true;
+
+  const lineups = [
+    {
+      name: "Baseline (Mistral + Gemini -> Anthropic)",
+      models: {
+        a: { provider: 'mistral', model: 'mistral-ocr-latest' },
+        b: { provider: 'gemini', model: 'gemini-3.5-flash' },
+        c: { provider: 'anthropic', model: 'claude-haiku-4-5' }
+      }
+    },
+    {
+      name: "Tier 4 Vision (Mistral + Gemini -> Anthropic -> Gemini Pro)",
+      models: {
+        a: { provider: 'mistral', model: 'mistral-ocr-latest' },
+        b: { provider: 'gemini', model: 'gemini-3.5-flash' },
+        c: { provider: 'anthropic', model: 'claude-haiku-4-5' },
+        d: { provider: 'gemini', model: 'gemini-2.5-pro' }
+      }
+    }
+  ];
+
+  try {
+    const docsData = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=50', 'GET');
+    const docs = docsData.docs || [];
+    if (!docs.length) {
+      msg.innerText = 'No ground-truth docs found.';
+      btn.disabled = false;
+      return;
+    }
+
+    var html = '<table><thead><tr><th>Lineup</th><th>Autonomy Rate (90-95% certainty)</th><th>Human Review Req.</th></tr></thead><tbody id="benchmarkTbody">';
+    for (var i = 0; i < lineups.length; i++) {
+      html += '<tr id="lineup-' + i + '"><td><strong>' + esc(lineups[i].name) + '</strong></td><td id="auto-' + i + '">Pending...</td><td id="human-' + i + '">Pending...</td></tr>';
+    }
+    html += '</tbody></table>';
+    res.innerHTML = html;
+
+    for (let i = 0; i < lineups.length; i++) {
+      let published = 0;
+      let flagged = 0;
+      msg.innerText = 'Evaluating Lineup ' + (i + 1) + '/' + lineups.length + '... (0/' + docs.length + ')';
+      
+      for (let j = 0; j < docs.length; j++) {
+        msg.innerText = 'Evaluating Lineup ' + (i + 1) + '/' + lineups.length + '... (' + (j + 1) + '/' + docs.length + ')';
+        try {
+          const result = await apiCall('/api/admin/benchmark/dry-run/' + docs[j], 'POST', { models: lineups[i].models });
+          const autoPublished = result.outcome === 'published' || result.outcome === 'would_publish';
+          // Check if confidence is >= 0.90 for published
+          let confidence = 1;
+          if (result.rows && result.rows.length) {
+            confidence = result.rows.reduce((min, r) => Math.min(min, r.confidence || 0), 1);
+          }
+          if (autoPublished && confidence >= 0.90) {
+            published++;
+          } else {
+            flagged++;
+          }
+        } catch (e) {
+          flagged++; // treat error as flagged for review
+        }
+        
+        let autoRate = ((published / (j + 1)) * 100).toFixed(1) + '%';
+        let humanRate = ((flagged / (j + 1)) * 100).toFixed(1) + '%';
+        el('auto-' + i).innerText = autoRate + ' (' + published + '/' + (j + 1) + ')';
+        el('human-' + i).innerText = humanRate + ' (' + flagged + '/' + (j + 1) + ')';
+      }
+    }
+    msg.innerText = 'Benchmark completed!';
+    msg.style.color = 'var(--accent)';
+  } catch (err) {
+    msg.innerText = 'Error: ' + err.message;
+    msg.style.color = 'var(--err)';
+  } finally {
+    btn.disabled = false;
+  }
 }
 function runMarketBackfill(dryRun) {
   var msg = el('mdMsg');
@@ -4358,6 +4566,189 @@ function loadTrends() {
   loadTrMembers(); loadTrParties(); loadTrSectors(); loadTrLag();
 }
 
+/* ================= SPEED VS DATA PROVIDERS (latency proof) ================= */
+/* Public aggregate scoreboard from GET /api/analytics/latency-summary.
+   Deliberately NOT part of loadTrends(): the data is filter-independent and
+   memoized to the server's ~5-minute cache. Honesty rules: every provider
+   lane always renders (full race lane at >= 5 matches, text-only below that,
+   neutral empty state at 0); the hero only boasts when favorable, and the
+   whole module hides rather than ever pairing a positive hero with a
+   suppressed negative lane. */
+var LATENCY = { data: null, at: 0, promise: null };
+var SPEED_LANE_MIN_MATCHED = 5;   /* full lane + lead stats */
+var SPEED_BOAST_MIN_MATCHED = 10; /* compact strip + pricing proof line */
+
+function fetchLatencySummary() {
+  var now = Date.now();
+  if (LATENCY.data && now - LATENCY.at < 5 * 60 * 1000) return Promise.resolve(LATENCY.data);
+  if (LATENCY.promise) return LATENCY.promise;
+  LATENCY.promise = fetch('/api/analytics/latency-summary')
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function (d) { LATENCY.data = d; LATENCY.at = Date.now(); LATENCY.promise = null; return d; })
+    .catch(function (e) { LATENCY.promise = null; throw e; });
+  return LATENCY.promise;
+}
+/* 5560 -> "1.5 hr", 82 -> "82 sec"; one unit, one decimal max, sign kept. */
+function fmtLead(secs) {
+  var s = Math.abs(Number(secs) || 0), sign = secs < 0 ? '-' : '';
+  function one(x) { var t = x.toFixed(1); return t.slice(-2) === '.0' ? t.slice(0, -2) : t; }
+  if (s < 90) return sign + Math.round(s) + ' sec';
+  if (s < 5400) return sign + Math.round(s / 60) + ' min';
+  if (s < 172800) return sign + one(s / 3600) + ' hr';
+  return sign + one(s / 86400) + ' days';
+}
+function speedEligible(d) {
+  return (d.providers || []).filter(function (p) { return p.matched >= SPEED_LANE_MIN_MATCHED; });
+}
+/* Best-covered provider that boast copy may cite (well-sampled AND favorable). */
+function speedBoastProvider(d) {
+  var best = null;
+  speedEligible(d).forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
+  return best && best.matched >= SPEED_BOAST_MIN_MATCHED && (best.medianLeadSec || 0) > 0 ? best : null;
+}
+function speedUpdatedText() {
+  var d = LATENCY.data; if (!d || !d.generatedAt) return '';
+  var t = Date.parse(d.generatedAt); if (!isFinite(t)) return '';
+  var mins = Math.max(0, Math.round((Date.now() - t) / 60000));
+  var txt = 'LIVE · updated ' + (mins < 1 ? 'just now' : mins + ' min ago');
+  if (mins > 30) txt += ' · data may be stale';
+  return txt;
+}
+function refreshSpeedUpdated() {
+  var n = el('speedUpdated'); if (n && LATENCY.data) n.textContent = speedUpdatedText();
+}
+/* Linear axis ceiling snapped to clean hour stops (log axes hide the story). */
+function speedAxisMax(lanes) {
+  var maxSec = 1;
+  lanes.forEach(function (p) {
+    maxSec = Math.max(maxSec, Math.abs(p.medianLeadSec || 0), Math.abs(p.p90LeadSec || 0));
+  });
+  var stopsHr = [1, 2, 4, 6, 8, 12, 16, 24, 36, 48];
+  var needed = maxSec * 1.08 / 3600;
+  for (var i = 0; i < stopsHr.length; i++) { if (stopsHr[i] >= needed) return stopsHr[i] * 3600; }
+  return 48 * 3600;
+}
+function speedLaneHtml(p, domainMin, domainMax) {
+  function x(s) { return Math.max(0, Math.min(100, 100 * (s - domainMin) / (domainMax - domainMin))); }
+  var n = '<span class="race-nn">n = ' + p.matched + ' of ' + p.candidates + ' matched</span>';
+  if (p.matched === 0) {
+    return '<div class="race-lane"><div class="race-top"><span class="race-name">' + esc(p.label) + n + '</span></div>' +
+      '<div class="race-empty">No overlapping disclosures yet &mdash; none of the ' + p.candidates +
+      ' filings we tracked had appeared in this provider&rsquo;s feed when probed. An empty sample isn&rsquo;t a lead we can measure.</div></div>';
+  }
+  if (p.matched < SPEED_LANE_MIN_MATCHED) {
+    return '<div class="race-lane"><div class="race-top"><span class="race-name">' + esc(p.label) + n + '</span></div>' +
+      '<div class="race-empty">We were first on ' + p.usFirstCount + ' of ' + p.matched +
+      ' so far &mdash; too few matches to estimate timing.</div></div>';
+  }
+  var med = p.medianLeadSec || 0, p90 = p.p90LeadSec;
+  var vals = '<span class="val-label">Typical:</span> ' + (med >= 0 ? '+' : '') + fmtLead(med) +
+    (p90 != null ? ' <span class="p90"><span class="val-label">| P90:</span> ' + fmtLead(p90) + '</span>' : '');
+  var aria = esc(p.label) + ': Congress.Trade was first on ' + p.usFirstCount + ' of ' + p.matched +
+    ' matched disclosures; typical lead ' + fmtLead(med) + (p90 != null ? '; 1 in 10 exceeded ' + fmtLead(p90) : '') + '.';
+  var hi = Math.max(med, p90 == null ? med : p90);
+  var spanLeft = Math.min(x(0), x(med));
+  var spanW = Math.max(x(hi), x(med), x(0)) - spanLeft;
+  return '<div class="race-lane" role="img" aria-label="' + aria + '">' +
+    '<div class="race-top"><span class="race-name">' + esc(p.label) + n + '</span>' +
+      '<span class="race-vals">' + vals + '</span></div>' +
+    '<div class="race-strip" aria-hidden="true">' +
+      '<div class="race-rail"></div>' +
+      '<div class="race-span" style="left:' + spanLeft + '%;width:' + spanW + '%"></div>' +
+      (p90 != null ? '<div class="race-p90tick" style="left:' + x(p90) + '%"></div>' : '') +
+      '<div class="race-dot them" style="left:' + x(med) + '%"></div>' +
+      '<div class="race-dot us" style="left:' + x(0) + '%"></div>' +
+    '</div></div>';
+}
+function renderSpeedProof() {
+  var box = el('trLatencySection'); if (!box) return;
+  fetchLatencySummary().then(function (d) {
+    var provs = (d.providers || []).slice().sort(function (a, b) { return b.matched - a.matched; });
+    if (!d.totals || !d.totals.racedDisclosures || !provs.length) { box.hidden = true; return; }
+    var best = null;
+    speedEligible(d).forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
+    var heroHtml = '';
+    if (best && (best.medianLeadSec || 0) > 0) {
+      heroHtml = '<div class="speed-hero-num">' + fmtLead(best.medianLeadSec) + '</div>' +
+        '<div class="speed-hero-label">typical head start vs ' + esc(best.label) + '</div>';
+    } else if (best && best.usFirstCount > (best.providerFirstCount || 0)) {
+      heroHtml = '<div class="speed-hero-num">' + best.usFirstCount + ' of ' + best.matched + '</div>' +
+        '<div class="speed-hero-label">matched filings where we were first vs ' + esc(best.label) + '</div>';
+    } else if (best) {
+      box.hidden = true; return; /* unfavorable window: hide, never spin */
+    } else {
+      var any = null; provs.forEach(function (p) { if (p.matched >= 1 && !any) any = p; });
+      if (!any) { box.hidden = true; return; }
+      heroHtml = '<div class="speed-hero-num">' + any.usFirstCount + ' of ' + any.matched + '</div>' +
+        '<div class="speed-hero-label">matched filings where we were first vs ' + esc(any.label) + '</div>';
+    }
+    if (best) {
+      heroHtml += '<div class="speed-record">Ahead ' + best.usFirstCount + ' · Behind ' + (best.providerFirstCount || 0) + ' · Ties ' + (best.tieCount || 0) + '</div>' +
+        '<div class="speed-n">n = ' + best.matched + ' matched filings<br/>positive means we published first</div>';
+    }
+    box.hidden = false;
+    el('speedHero').innerHTML = heroHtml;
+    var withLane = provs.filter(function (p) { return p.matched >= SPEED_LANE_MIN_MATCHED; });
+    var domainMin = 0;
+    withLane.forEach(function (p) { domainMin = Math.min(domainMin, p.medianLeadSec || 0); });
+    if (domainMin < 0) domainMin = -speedAxisMax([{ medianLeadSec: domainMin, p90LeadSec: 0 }]);
+    var domainMax = speedAxisMax(withLane);
+    var raceHtml = '';
+    if (withLane.length) {
+      var zeroX = 100 * (0 - domainMin) / (domainMax - domainMin);
+      raceHtml += '<div class="race-annot"><span style="left:' + zeroX + '%">▼ we alert here</span></div>';
+    }
+    raceHtml += provs.map(function (p) { return speedLaneHtml(p, domainMin, domainMax); }).join('');
+    if (withLane.length) {
+      var ticks = '';
+      for (var i = 0; i <= 4; i++) {
+        var t = domainMin + (domainMax - domainMin) * i / 4;
+        ticks += '<span style="left:' + (25 * i) + '%">' + (t === 0 ? '0' : fmtLead(t)) + '</span>';
+      }
+      raceHtml += '<div class="race-axis" aria-hidden="true">' + ticks + '</div>';
+    }
+    el('speedRace').innerHTML = raceHtml;
+    var tb = el('speedTableBody');
+    if (tb) tb.innerHTML = provs.map(function (p) {
+      function td(v) { return '<td>' + v + '</td>'; }
+      return '<tr>' + td(esc(p.label)) + td(p.matched + ' / ' + p.candidates) + td(p.usFirstCount) +
+        td(p.providerFirstCount || 0) + td(p.tieCount || 0) +
+        td(p.medianLeadSec != null ? fmtLead(p.medianLeadSec) : '—') +
+        td(p.avgLeadSec != null ? fmtLead(p.avgLeadSec) : '—') +
+        td(p.p90LeadSec != null ? fmtLead(p.p90LeadSec) : '—') + '</tr>';
+    }).join('');
+    refreshSpeedUpdated();
+    renderAlertsMini();
+  }).catch(function () {
+    box.hidden = true; /* endpoint unavailable: drop the marketing module quietly */
+  });
+}
+/* Compact strip on the Alerts tab; renders only when clearly favorable —
+   a one-liner has no room for honest hedging, so below threshold it stays silent. */
+function renderAlertsMini() {
+  var box = el('alertsSpeedMini'); if (!box) return;
+  var best = LATENCY.data ? speedBoastProvider(LATENCY.data) : null;
+  if (!best) { box.className = 'speed-mini'; box.innerHTML = ''; return; }
+  box.className = 'speed-mini show';
+  box.innerHTML = '<span>⚡ Ahead of ' + esc(best.label) + ' on <span class="lead">' + best.usFirstCount + ' of ' + best.matched +
+    '</span> matched filings · typical lead <span class="lead">' + fmtLead(best.medianLeadSec) + '</span></span>' +
+    '<button class="btn ghost sm" onclick="openSpeedProof()">See the scoreboard →</button>';
+}
+function openSpeedProof() {
+  var t = document.querySelector('nav.tabs button[data-view="trends"]');
+  if (t) t.click();
+  var s = el('trLatencySection');
+  if (s && !s.hidden) s.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function setPricingProof() {
+  var n = el('pricingProof'); if (!n) return;
+  var best = LATENCY.data ? speedBoastProvider(LATENCY.data) : null;
+  n.textContent = best
+    ? 'Right now: filings land here a median ' + fmtLead(best.medianLeadSec) + ' before ' + best.label +
+      ' — measured live over the last ' + best.matched + ' matched filings.'
+    : '';
+}
+
 /* Volume bar + buy/sell/breadth/net chip — shared by the sector & cap views. */
 function flowRowHtml(label, r, maxVol, title) {
   var w = Math.round(100 * Number(r.estVolumeUsd || 0) / (maxVol || 1));
@@ -4411,7 +4802,7 @@ function loadTrPerformers() {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.party) +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.partyBucket) +
           esc(name) + '</div></div></td>' +
         '<td class="muted">' + r.tradeCount + ' buys</td>' +
         '<td class="muted">' + Math.round(100 * (r.winRate || 0)) + '% win</td>' +
@@ -4498,14 +4889,15 @@ function loadTrClusters() {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) { return memberAvatarHtml(m.fullName, m.photoUrl); }).join('');
       var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
       var parties = c.parties.D + ' Democrats, ' + c.parties.R + ' Republicans' + (c.parties.O ? ', ' + c.parties.O + ' Other' : '');
-      var bip = (c.parties.D > 0 && c.parties.R > 0) ? ' <span class="chip" title="Both parties traded">· bipartisan</span>' : '';
-      var range = dateText(c.firstSeen) + (c.lastSeen && c.lastSeen !== c.firstSeen ? ' → ' + dateText(c.lastSeen) : '');
+      var bip = c.isBipartisan ? ' <span class="muted">· bipartisan</span>' : '';
+      var ds = new Date(c.minDate + 'T00:00:00Z'), de = new Date(c.maxDate + 'T00:00:00Z');
+      var range = fmtSDate(ds) + (c.minDate === c.maxDate ? '' : ' → ' + fmtSDate(de));
       return '<div class="ccard clickable" data-ticker="' + esc(c.ticker) + '">' +
         '<div class="chead">' + tickerLogoHtml(c.ticker, c.name) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
         '<div><strong>' + c.memberCount + '</strong> ' + (c.memberCount === 1 ? 'politician' : 'politicians') + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
-        '<div class="chip">' + esc(parties) + '</div>' +
-        '<div class="chip">' + esc(range) + ' · ' + estUsd(c.estVolumeUsd) + '</div>' +
+        '<div class="muted" style="margin-top:2px">' + esc(parties) + '</div>' +
+        '<div class="muted" style="margin-top:2px">' + esc(range) + ' · ' + estUsd(c.estVolumeUsd) + '</div>' +
         '<div class="faces">' + faces + '</div></div>';
     }).join('');
   }).catch(function (e) { box.innerHTML = '<div class="chip">Could not load: ' + esc(e.message) + '</div>'; });
@@ -5062,6 +5454,10 @@ function updatePremiumCues() {
 function applyAdminVisibility() {
   var allowed = canUseAdmin();
   document.querySelectorAll('[data-admin-tab="true"]').forEach(function (b) { b.hidden = !allowed; });
+  // Admin-only blocks inside public views (e.g. the delivery management
+  // section on the Alerts tab). Default hidden in markup so anon never
+  // flashes them before /auth/me resolves.
+  document.querySelectorAll('[data-admin-only]').forEach(function (n) { n.hidden = !allowed; });
   var active = document.querySelector('nav.tabs button.active');
   if (!allowed && active && active.getAttribute('data-admin-tab') === 'true') {
     var trends = document.querySelector('nav.tabs button[data-view="trends"]');
@@ -5178,10 +5574,25 @@ function pricingCopy(intent) {
     sub: 'The public dashboard stays browsable. Premium adds enriched finance fields for deeper screening.',
     features: ['Sector', 'Market cap', 'Country of issue'],
   };
+  if (intent === 'alerts') return {
+    title: 'Get the Filing First',
+    sub: 'Free users see filings when they check the site. Premium pushes them to you the moment our scout ingests — via signed webhooks or a live SSE stream.',
+    features: [
+      'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
+      'Live SSE stream of every new filing — no polling',
+      'Full-history CSV exports',
+      'Enrichment columns: sector, market cap, and country',
+    ],
+  };
   return {
     title: 'Premium',
-    sub: 'Premium adds research workflow tools while the public dashboard stays browsable.',
-    features: ['Full-history CSV exports', 'Enrichment columns: sector, market cap, and country'],
+    sub: 'The public dashboard stays free. Premium gets you the filing the moment we see it.',
+    features: [
+      'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
+      'Live SSE stream of every new filing — no polling',
+      'Full-history CSV exports',
+      'Enrichment columns: sector, market cap, and country',
+    ],
   };
 }
 function openPricing(intent) {
@@ -5191,6 +5602,12 @@ function openPricing(intent) {
   if (el('pricingTitle')) el('pricingTitle').textContent = copy.title;
   if (el('pricingSub')) el('pricingSub').textContent = copy.sub;
   if (el('pricingFeatures')) el('pricingFeatures').innerHTML = copy.features.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('');
+  // Live, guard-railed proof line (empty unless the measured lead is favorable
+  // and well-sampled — a marketed number must never be frozen or forced).
+  setPricingProof();
+  fetchLatencySummary().then(function () {
+    if (el('pricingOverlay').classList.contains('open')) setPricingProof();
+  }).catch(function () {});
   selectPlan(selectedPlan);
   var available = checkoutConfigured();
   if (el('pricingPlans')) el('pricingPlans').hidden = !available;
@@ -5375,10 +5792,28 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     if (b.dataset.view === 'feed') window.scrollTo({ top: 0, behavior: 'auto' });
     if (b.dataset.view === 'trends') loadTrends();
     if (b.dataset.view === 'review') loadReview();
-    if (b.dataset.view === 'subs') loadSubs();
+    if (b.dataset.view === 'subs') {
+      // Management data is admin-gated; anon/free visitors get the public
+      // education view plus the (favorable-only) speed strip.
+      if (canUseAdmin()) loadSubs();
+      fetchLatencySummary().then(renderAlertsMini).catch(function () {});
+    }
     if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); }
   };
 });
+
+/* Speed-proof section: fetch just before it scrolls into view. It sits high on
+   the default Trends view, so this fires ~immediately without blocking first
+   paint; browsers without IntersectionObserver render it right away. */
+(function () {
+  var s = el('trLatencySection'); if (!s) return;
+  if (!('IntersectionObserver' in window)) { renderSpeedProof(); return; }
+  var io = new IntersectionObserver(function (entries) {
+    if (entries[0] && entries[0].isIntersecting) { io.disconnect(); renderSpeedProof(); }
+  }, { rootMargin: '300px' });
+  io.observe(s);
+})();
+setInterval(refreshSpeedUpdated, 60000);
 
 /* Trends controls: re-run on change; ticker rows/cards open the asset drawer. */
 ['trWindow', 'trChamber', 'trParty', 'trSource'].forEach(function (id) {
