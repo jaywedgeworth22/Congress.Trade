@@ -5,6 +5,7 @@ import {
   flushIngestionOutbox,
   INGESTION_ENQUEUED_STALE_MS,
   reconnectDeadLetteredIngestionOutbox,
+  requeueFailedIngestionOutbox,
 } from '../outbox';
 
 function makeEnv(sendFails = false) {
@@ -114,5 +115,29 @@ describe('ingestion discovery outbox', () => {
     expect(await reconnectDeadLetteredIngestionOutbox(env, 'doc_1', 'poison'))
       .toEqual({ status: 'failed', deadLetterCycles: 5 });
     expect(row.status).toBe('failed');
+  });
+
+  it('requeues failed rows with a fresh dead-letter budget, scoped by doc-id prefix', async () => {
+    const calls: { sql: string; params: unknown[] }[] = [];
+    const env = {
+      DB: {
+        prepare: (sql: string) => ({
+          params: [] as unknown[],
+          bind(...params: unknown[]) { this.params = params; return this; },
+          async run() { calls.push({ sql, params: this.params }); return { success: true, meta: { changes: 500 } }; },
+        }),
+      } as unknown as D1Database,
+    } as unknown as Env;
+
+    expect(await requeueFailedIngestionOutbox(env, {
+      docIdPrefix: 'H-2015-%_', now: new Date('2026-07-12T05:00:00.000Z'),
+    })).toBe(500);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toMatch(/SET status = 'pending', attempts = 0, dead_letter_cycles = 0/);
+    expect(calls[0].sql).toMatch(/WHERE status = 'failed' AND doc_id LIKE \?/);
+    // LIKE wildcards in the caller-supplied prefix are stripped, not honored.
+    expect(calls[0].params).toEqual([
+      '2026-07-12T05:00:00.000Z', '2026-07-12T05:00:00.000Z', 'H-2015-%',
+    ]);
   });
 });
