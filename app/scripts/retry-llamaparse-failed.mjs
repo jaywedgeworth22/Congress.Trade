@@ -44,11 +44,11 @@ const docIds = [
 async function runLlamaParse(docId) {
   // We use the dry-run API which stores the extraction in extraction_runs as 'bakeoff'
   // but doesn't autonomously publish. This allows manual review in the dashboard.
-  const models = { a: { provider: 'llamaparse', model: 'llamaparse:fast' } };
-  const res = await fetch(`${BASE}/api/admin/benchmark/dry-run/${docId}`, {
+  const models = [{ provider: 'llamaparse', model: 'llamaparse:fast' }];
+  const res = await fetch(`${BASE}/api/admin/bakeoff`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({ models })
+    body: JSON.stringify({ models, docIds: [docId] })
   });
   if (!res.ok) throw new Error(`Failed on ${docId}: ${res.status} ${await res.text()}`);
   return await res.json();
