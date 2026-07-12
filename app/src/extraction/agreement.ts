@@ -181,7 +181,8 @@ export function sameRowSet(a: CandidateDocResult, b: CandidateDocResult): boolea
 }
 
 /** Reject a lineup that would let one provider corroborate itself. */
-function duplicateLineupReason(models: BakeoffCandidate[]): string | null {
+function duplicateLineupReason(models: BakeoffCandidate[], dryRun: boolean = false): string | null {
+  if (dryRun) return null;
   const ids = models.map((m) => label(m).trim().toLowerCase());
   if (new Set(ids).size !== ids.length) return 'duplicate_model_lineup';
   const providers = models.map((m) => m.provider.trim().toLowerCase());
@@ -599,7 +600,7 @@ export async function processAgreementDoc(
   // recognizable as one agreement pass in the extraction_runs dashboard.
   const runBatchId = uuid();
   const lineup = [models.a, models.b, ...(models.c ? [models.c] : [])];
-  const lineupError = duplicateLineupReason(lineup);
+  const lineupError = duplicateLineupReason(lineup, dryRun);
   if (lineupError) return { docId, outcome: 'skipped', reason: lineupError };
   let operatorReviewRevision: number | undefined;
   if (!dryRun && !audit?.claimToken) {
@@ -890,7 +891,7 @@ export async function processAgreementCascadeTier2(
   if ('skip' in loaded) return loaded.skip;
 
   const lineup = [models.a, models.b, models.c];
-  const lineupError = duplicateLineupReason(lineup);
+  const lineupError = duplicateLineupReason(lineup, dryRun);
   if (lineupError) return { docId, outcome: 'skipped', reason: lineupError };
   let operatorReviewRevision: number | undefined;
   if (!dryRun && !claimToken) {
@@ -1418,6 +1419,7 @@ export async function handleAgreementCheck(
     tier >= 2
       ? [(models as AgreementModelsC).a, (models as AgreementModelsC).b, (models as AgreementModelsC).c]
       : [(models as AgreementModels).a, (models as AgreementModels).b],
+    false
   );
   if (lineupError) {
     await leaveInReviewHighPriority(

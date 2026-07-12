@@ -36,6 +36,7 @@ import {
   type TxQueryParams,
 } from './rows';
 import { getCurrentUser, getCurrentUserFromRequest } from '../auth/session';
+import { getUserById } from '../auth/users';
 import { isPremiumUser } from '../billing/entitlement';
 import {
   createSubscription,
@@ -727,17 +728,20 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     if (!(await isAuthorizedForSubscription(c, existing))) {
       return c.json({ error: 'subscription secret required' }, 401);
     }
-    const user = await getCurrentUserFromRequest(c);
-    // Since only premium users can create subscriptions, existing ones theoretically belong to premium users, but check on edit
-    if (user && !isPremiumUser(user)) {
-      return c.json({ error: 'subscription management requires a Premium account', upgradeRequired: true, feature: 'alerts' }, 402);
-    }
-
     let body: Record<string, unknown>;
     try {
       body = (await c.req.json()) as Record<string, unknown>;
     } catch {
       return c.json({ error: 'invalid JSON body' }, 400);
+    }
+
+    const user = await getCurrentUserFromRequest(c);
+    const owner = user || (existing.clientId ? await getUserById(c.env, existing.clientId) : null);
+    
+    const isContinuingOrChangingDelivery = body.filters !== undefined || body.targetUrl !== undefined || body.active === true;
+    
+    if (isContinuingOrChangingDelivery && owner && !isPremiumUser(owner)) {
+      return c.json({ error: 'subscription management requires a Premium account', upgradeRequired: true, feature: 'alerts' }, 402);
     }
 
     const patch: Parameters<typeof updateSubscription>[2] = {};
