@@ -10,6 +10,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Deployed
+- **Manual Enrichment of Missing Tickers (AG, S) — DEPLOYED 2026-07-12.** Extracted 199 tickers missing sector and enrichment data from production D1 `securities_ref` (legacy stocks, options, funds). Wrote a local Node/Python classification script mapping these to appropriate asset classes and generating a SQL update script. Remotely executed the update via `wrangler d1 execute DB --remote`, successfully categorizing all 199 edge cases. Row count for missing sectors validated at exactly 0.
 - **Review Queue current drain + durable automation integration (CODEX, L) — DEPLOYED
   2026-07-11 via PR #292 (`f197e66`).** Exact-tree preview Worker
   `e1c8fb70-4291-4872-b1e2-f45f59367e6f` passed health/schema checks before the
@@ -80,6 +81,15 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **iOS improvement roadmap audit (CODEX, M) — COMPLETED 2026-07-12; READ-ONLY.** Audited fetched
+  `origin/main` at `5aca5f6` across SwiftUI architecture/UX/accessibility, backend client contracts,
+  tests, performance, privacy, signing, CI, and App Store readiness. Generic Simulator Debug,
+  build-for-testing, and unsigned generic-device Release builds pass on Xcode 27 beta; no Simulator
+  runtime is installed, so XCTest/UI/runtime profiling did not run. P0 plan starts with gap-free ASC
+  feed paging, failed-command replay handling, partial watchlist patches, and native auth/account
+  lifecycle before further polish; then modular state/data architecture, accessibility/discovery,
+  device profiling, stable-Xcode CI, signing/privacy, and TestFlight. No app code, deploy, migration,
+  ingestion, queue, or production state changed.
 - **Web UI unification with iOS aesthetics (AG, M) — COMPLETED 2026-07-12.** Updated the Next.js PWA and the Admin Dashboard with frosted glass panels (`backdrop-filter: blur(20px)`), vivid gradient asset markers, and bold status pills to mirror the newly designed iOS SwiftUI prototype. Verified typechecks and PWA builds.
 - **Interactive dashboard metrics and table sort controls (AG, S) — COMPLETED 2026-07-11 via PR #303.** Added sparkline charts to the dashboard's snapshot metrics (Net Flow, Buy Pressure) and interactive `<thead>` sorting controls with Asset Type filters to the "What Congress Is Trading" and "Rising Activity" panels in `dashboardHtml.ts`.
 - **Production outage diagnosis + PR #300/#308 landing — DEPLOYED 2026-07-12 (CLAUDE, M).**
@@ -209,6 +219,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   no preview or production deploy.
 
 ## In Progress
+- **Audit Tier 1 Fixes (surgical unblocks) (AG, L) — IN PROGRESS 2026-07-12.** Fixing webhook signature + shared sign/verify helper; premium entitlement gate + web alerts manager; iOS bearer-token issuance flow; idempotency-replay semantics; PWA since-cursor polling + Retry-After.
 - **Matched `congress-trading-shared` v1.5.0 consumer pin (AG implementation requested by CODEX, cross-app S) — MERGED / DEPLOYED / PRODUCTION VERIFIED; CLOSEOUT READY PR #297 / HOSTED GREEN / NOT MERGED 2026-07-11.** Antigravity exact-pinned `app/package.json` + lockfile to `#v1.5.0`; installed version 1.5.0 resolves commit `2222baeb`. PR #296 merged as `d84fd349` at 18:58:28Z and production Wrangler versions `c5deb474` then `e5c7ebad` deployed at 18:59Z; `https://congress.trade/api/health` is HTTP 200 with `ok/db/schema=true`. This corrects the stale READY/not-merged record and original `^1.5.0` wording. CODEX closeout PR #297 restored STATUS/rollout/mirror receipts and deployed clean merged `main` to isolated preview `4d8a558b`; preview health is green, hosted app/PWA/security checks pass, and production remained on `e5c7ebad`.
 - **Fix Uptime Monitor compact-JSON output framing (CODEX, S, ready PR #297) — VERIFIED / HOSTED GREEN / NOT MERGED 2026-07-11.** The health body is newline-terminated before the random GitHub-output delimiter. Scheduled failure `29164917660` is captured in the rollout; a compact-JSON framing harness and YAML parse pass. App lint/typecheck/940 tests and PWA typecheck/13 tests/build pass locally and in hosted CI; gitleaks passes. Workflow-only; no production Worker/D1/config mutation.
 - **Backend delivery + ingestion reliability hardening (CODEX/HERSCHEL, L) — INTEGRATED +
@@ -259,6 +270,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   target or reverse-proxy route is configured.
 - **Implement `est_value` column in transactions table (AG, S) — COMPLETED 2026-07-11.** Creating D1 migration and updating normalizer to persist `est_value` to simplify API client queries and improve Next.js/PWA performance.
 - **Refactor client API routes (AG, M) — COMPLETED 2026-07-11.** Splitting the 800-line `app/src/client/routes.ts` into a clean modular structure (helpers, queries, commands, auth).
+
 - **Beautify iOS SwiftUI Prototype App (AG, L) — IN PROGRESS 2026-07-12.** Refactored monolithic SwiftUI code in `CongressTradeApp.swift` to upgrade styling (glassmorphism, gradient accents, modern card structures). Code compiles correctly locally. Pending PR creation and deployment.
 - **Matched `congress-trading-shared` v1.5.0 consumer pin (AG implementation requested by CODEX, cross-app S) — MERGED / DEPLOYED / PRODUCTION VERIFIED; CLOSEOUT READY PR #297 / HOSTED GREEN / NOT MERGED 2026-07-11.** Antigravity exact-pinned `app/package.json` + lockfile to `#v1.5.0`; installed version 1.5.0 resolves commit `2222baeb`. PR #296 merged as `d84fd349` at 18:58:28Z and production Wrangler versions `c5deb474` then `e5c7ebad` deployed at 18:59Z; `https://congress.trade/api/health` is HTTP 200 with `ok/db/schema=true`. This corrects the stale READY/not-merged record and original `^1.5.0` wording. CODEX closeout PR #297 restored STATUS/rollout/mirror receipts and deployed clean merged `main` to isolated preview `4d8a558b`; preview health is green, hosted app/PWA/security checks pass, and production remained on `e5c7ebad`.
 - **Fix Uptime Monitor compact-JSON output framing (CODEX, S, ready PR #297) — VERIFIED / HOSTED GREEN / NOT MERGED 2026-07-11.** The health body is newline-terminated before the random GitHub-output delimiter. Scheduled failure `29164917660` is captured in the rollout; a compact-JSON framing harness and YAML parse pass. App lint/typecheck/940 tests and PWA typecheck/13 tests/build pass locally and in hosted CI; gitleaks passes. Workflow-only; no production Worker/D1/config mutation.

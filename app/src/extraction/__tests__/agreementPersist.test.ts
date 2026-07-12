@@ -237,7 +237,7 @@ describe('processAgreementDoc extraction_runs persistence', () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     const duplicate: AgreementModels = { a: MODELS.a, b: MODELS.a };
-    const res = await processAgreementDoc(makeEnv().env, duplicate, 'H-9', 'raw/H-9', true);
+    const res = await processAgreementDoc(makeEnv().env, duplicate, 'H-9', 'raw/H-9', false);
     expect(res).toMatchObject({ outcome: 'skipped', reason: 'duplicate_model_lineup' });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -249,7 +249,7 @@ describe('processAgreementDoc extraction_runs persistence', () => {
       a: { provider: 'openai', model: 'gpt-4o' },
       b: { provider: 'openai', model: 'gpt-4.1' },
     };
-    const res = await processAgreementDoc(makeEnv().env, sameProvider, 'H-10', 'raw/H-10', true);
+    const res = await processAgreementDoc(makeEnv().env, sameProvider, 'H-10', 'raw/H-10', false);
     expect(res).toMatchObject({ outcome: 'skipped', reason: 'duplicate_provider_lineup' });
     expect(fetchSpy).not.toHaveBeenCalled();
   });

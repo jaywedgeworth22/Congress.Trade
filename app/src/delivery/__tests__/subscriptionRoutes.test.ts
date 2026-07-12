@@ -21,7 +21,7 @@ function makeEnv(
         return ({
           id: 'user_1', email: 'user@example.com', name: 'User', picture: null,
           google_sub: null, email_verified: 1, created_at: '2026-01-01T00:00:00.000Z',
-          last_login_at: null,
+          last_login_at: null, subscription_status: 'active', plan: 'monthly',
         } as T);
       }
       if (/COUNT\(\*\) AS total/i.test(sql)) {

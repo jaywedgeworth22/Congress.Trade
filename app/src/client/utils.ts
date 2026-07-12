@@ -17,10 +17,10 @@ export class ClientInputError extends Error {
   }
 }
 
-export type ClientErrorStatus = 400 | 401 | 404 | 409 | 429 | 500 | 501;
+export type ClientErrorStatus = 400 | 401 | 402 | 404 | 409 | 429 | 500 | 501;
 
 export function errorStatus(err: ClientInputError): ClientErrorStatus {
-  if (err.status === 401 || err.status === 404 || err.status === 409 || err.status === 429 || err.status === 501) {
+  if (err.status === 401 || err.status === 402 || err.status === 404 || err.status === 409 || err.status === 429 || err.status === 501) {
     return err.status;
   }
   if (err.status === 400) return 400;
