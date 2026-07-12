@@ -1775,6 +1775,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button class="btn ghost sm" onclick="refreshInfisicalSecrets()">Refresh Runtime Secrets</button>
         <span id="secretRefreshMsg" class="note"></span>
       </div>
+      <div class="row-flex" style="margin-bottom:10px; align-items:center;">
+        <select id="updateSecretSource" class="input sm" style="max-width:100px;">
+          <option value="app">app</option>
+          <option value="shared">shared</option>
+        </select>
+        <input type="text" id="updateSecretKey" class="input sm" placeholder="Secret Key" style="max-width:180px;" />
+        <input type="password" id="updateSecretValue" class="input sm" placeholder="Secret Value" style="max-width:180px;" />
+        <button class="btn ghost sm" onclick="updateInfisicalSecret()">Update Secret</button>
+        <span id="secretUpdateMsg" class="note"></span>
+      </div>
       <div id="diagConnections" class="diag-grid" aria-live="polite"></div>
       <h3 style="margin-top:14px">Recent App Errors</h3>
       <table>
@@ -4449,6 +4459,36 @@ function refreshInfisicalSecrets() {
     })
     .catch(function (e) {
       if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Refresh failed: ' + e.message);
+    });
+}
+
+function updateInfisicalSecret() {
+  var msg = el('secretUpdateMsg');
+  var source = el('updateSecretSource').value;
+  var key = el('updateSecretKey').value.trim();
+  var value = el('updateSecretValue').value.trim();
+
+  if (!key || !value) {
+    if (msg) msg.textContent = 'Key and Value are required.';
+    return;
+  }
+
+  if (msg) msg.textContent = 'Updating…';
+  return fetch('/api/admin/diagnostics/secrets/update', {
+    method: 'POST',
+    headers: adminHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ source: source, key: key, value: value })
+  })
+    .then(okOrThrow)
+    .then(function () {
+      if (msg) msg.textContent = 'Secret updated successfully.';
+      el('updateSecretKey').value = '';
+      el('updateSecretValue').value = '';
+      setTimeout(function () { if (msg) msg.textContent = ''; }, 3000);
+      return loadDiagnostics();
+    })
+    .catch(function (e) {
+      if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Update failed: ' + e.message);
     });
 }
 

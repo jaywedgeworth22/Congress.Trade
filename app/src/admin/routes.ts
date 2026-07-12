@@ -91,7 +91,7 @@ import {
 import { mergeRefs } from '../enrichment/compute';
 import type { SecurityRef } from '../enrichment/types';
 import { runPriceRefresh } from '../prices/service';
-import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets } from '../secrets/infisical';
+import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets, updateSecret } from '../secrets/infisical';
 import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
 import { pollExecutive } from '../ingestion/watcher';
 import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox';
@@ -2638,6 +2638,21 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // secrets into KV/D1/Cloudflare vars; optional KV cache entries are encrypted.
   r.post('/diagnostics/secrets/refresh', async (c) => {
     return c.json({ secrets: await refreshSecrets(c.env) });
+  });
+
+  // --- POST /diagnostics/secrets/update -----------------------------------
+  // Update a secret in Infisical and then refresh the cache.
+  r.post('/diagnostics/secrets/update', async (c) => {
+    const { source, key, value } = await c.req.json();
+    if (!source || !key || value === undefined) {
+      return c.json({ ok: false, error: 'Missing source, key, or value' }, 400);
+    }
+    if (source !== 'app' && source !== 'shared') {
+      return c.json({ ok: false, error: 'Invalid source (must be app or shared)' }, 400);
+    }
+    await updateSecret(c.env, source, key, value);
+    // Refresh the local cache to pull down the newly updated secret
+    return c.json({ ok: true, secrets: await refreshSecrets(c.env) });
   });
 
   // --- GET /ui-settings ---------------------------------------------------
