@@ -4548,8 +4548,8 @@ function speedLaneHtml(p, domainMin, domainMax) {
       ' so far &mdash; too few matches to estimate timing.</div></div>';
   }
   var med = p.medianLeadSec || 0, p90 = p.p90LeadSec;
-  var vals = (med >= 0 ? '+' : '') + fmtLead(med) + ' typical' +
-    (p90 != null ? ' <span class="p90">· ' + fmtLead(p90) + ' p90</span>' : '');
+  var vals = '<span class="val-label">Typical:</span> ' + (med >= 0 ? '+' : '') + fmtLead(med) +
+    (p90 != null ? ' <span class="p90"><span class="val-label">| P90:</span> ' + fmtLead(p90) + '</span>' : '');
   var aria = esc(p.label) + ': Congress.Trade was first on ' + p.usFirstCount + ' of ' + p.matched +
     ' matched disclosures; typical lead ' + fmtLead(med) + (p90 != null ? '; 1 in 10 exceeded ' + fmtLead(p90) : '') + '.';
   var hi = Math.max(med, p90 == null ? med : p90);
@@ -4590,7 +4590,7 @@ function renderSpeedProof() {
     }
     if (best) {
       heroHtml += '<div class="speed-record">Ahead ' + best.usFirstCount + ' · Behind ' + (best.providerFirstCount || 0) + ' · Ties ' + (best.tieCount || 0) + '</div>' +
-        '<div class="speed-n">n = ' + best.matched + ' matched filings · + means we published first</div>';
+        '<div class="speed-n">n = ' + best.matched + ' matched filings<br/>positive means we published first</div>';
     }
     box.hidden = false;
     el('speedHero').innerHTML = heroHtml;
