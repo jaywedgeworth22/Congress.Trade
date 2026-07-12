@@ -283,6 +283,17 @@ export async function updateSecret(env: Env, sourceName: SourceName, secretKey: 
       throw new Error(`Failed to update secret ${secretKey}: ${res.status} ${body.message || ''}`);
     }
   }
+
+  const key = cacheKey(env);
+  cache.delete(key);
+  const kvSecret = kvCacheSecret(env);
+  if (env.CONFIG_KV && kvSecret) {
+    try {
+      await env.CONFIG_KV.delete(`infisical_secrets_cache:${key}`);
+    } catch (err) {
+      console.warn('infisical: failed to clear KV cache', (err as Error).message);
+    }
+  }
 }
 
 export async function refreshSecrets(env: Env): Promise<SecretResolverStatus> {
