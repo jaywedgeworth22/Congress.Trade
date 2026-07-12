@@ -2,9 +2,11 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
 const CLIENT_PREFIX = '/api/client/v1';
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  readonly retryAfter: number | null;
+  constructor(message: string, readonly status: number, retryAfter: number | null = null) {
     super(message);
     this.name = 'ApiError';
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -27,7 +29,14 @@ async function parse<T>(response: Response): Promise<T> {
     const message = data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
       ? data.error
       : `HTTP ${response.status}`;
-    throw new ApiError(message, response.status);
+    
+    let retryAfter = null;
+    const retryHeader = response.headers.get('Retry-After');
+    if (retryHeader) {
+      const parsed = parseInt(retryHeader, 10);
+      if (!Number.isNaN(parsed)) retryAfter = parsed;
+    }
+    throw new ApiError(message, response.status, retryAfter);
   }
   return data as T;
 }
