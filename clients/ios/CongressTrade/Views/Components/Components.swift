@@ -23,8 +23,8 @@ enum AppTheme {
 extension String {
     var partyEmoji: String {
         switch self.lowercased() {
-        case "democrat", "dem": return "🫏"
-        case "republican", "rep": return "🐘"
+        case "democrat", "dem", "d": return "🫏"
+        case "republican", "rep", "r": return "🐘"
         default: return "🦅" // Independent/Other
         }
     }
