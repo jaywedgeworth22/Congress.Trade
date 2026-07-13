@@ -93,45 +93,60 @@ export default function Dashboard() {
 
     async function poll() {
       if (isCancelled) return;
-      
+
       const currentFeed = feedRef.current;
       const currentPath = feedPathRef.current;
 
       let nextDelay = 30_000;
 
-      if (currentFeed && currentFeed.items.length > 0) {
-        try {
+      try {
+        // `since` is a NUMERIC cursor (the server applies `cursor_seq > since`);
+        // the trade id is a string and would be parsed as absent, returning the
+        // oldest ascending page. Use the envelope's max-cursor watermark, and
+        // only when we actually hold rows.
+        const watermark =
+          currentFeed && currentFeed.items.length > 0 ? currentFeed.cursor : null;
+
+        if (watermark != null) {
           const params = new URLSearchParams(currentPath.split('?')[1] || '');
-          params.set('since', currentFeed.items[0].id);
+          params.set('since', String(watermark));
           params.set('order', 'asc');
-          
+
           const delta = await apiGet<ClientFeedResponse>(`/feed?${params.toString()}`);
-          
+
           if (!isCancelled && delta.items.length > 0) {
             const reversedNewItems = [...delta.items].reverse();
             void refreshFeed((prev) => {
               if (!prev) return prev;
               const existingIds = new Set(prev.items.map((i) => i.id));
               const actuallyNew = reversedNewItems.filter((i) => !existingIds.has(i.id));
-              if (actuallyNew.length === 0) return prev;
-              
+              // Always advance the watermark so the same delta isn't refetched.
+              const nextCursor = Math.max(prev.cursor, delta.cursor);
+              if (actuallyNew.length === 0) return { ...prev, cursor: nextCursor };
+
               return {
                 ...prev,
+                cursor: nextCursor,
                 total: delta.total,
                 count: prev.count + actuallyNew.length,
                 items: [...actuallyNew, ...prev.items],
               };
             }, { revalidate: false });
           }
-        } catch (error) {
-          if (error instanceof ApiError && error.retryAfter) {
-            nextDelay = error.retryAfter * 1000;
-          } else {
-            nextDelay = 60_000;
-          }
+        } else if (!isCancelled) {
+          // No rows yet (e.g. an empty ticker/member/amount filter): there is no
+          // cursor to poll from, so revalidate the base snapshot instead — a
+          // user watching an empty filter still sees the first match arrive.
+          await refreshFeed();
+        }
+      } catch (error) {
+        if (error instanceof ApiError && error.retryAfter) {
+          nextDelay = error.retryAfter * 1000;
+        } else {
+          nextDelay = 60_000;
         }
       }
-      
+
       if (!isCancelled) {
         timeoutId = setTimeout(poll, nextDelay);
       }

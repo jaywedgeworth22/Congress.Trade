@@ -623,6 +623,9 @@ export async function recordDisclosureLatencyCandidate(
   filing: DiscoveredFiling,
   nowIso: string,
 ): Promise<void> {
+  // Latency providers only publish house/senate rows; executive (OGE)
+  // filings would sit permanently pending and skew coverage metrics.
+  if (filing.chamber !== 'house' && filing.chamber !== 'senate') return;
   for (const provider of DIRECT_PROVIDER_IDS) {
     try {
       await run(
