@@ -594,13 +594,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .gate-note { font-size:12px; color:var(--text-dim); display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
   
   .bare-select {
-    border: none;
-    background: transparent;
+    border: 1px solid transparent;
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
     color: var(--accent);
     font-family: inherit;
     font-size: inherit;
     font-weight: inherit;
-    padding: 2px 18px 2px 4px;
+    padding: 2px 20px 2px 6px;
     margin: 0 0 0 4px;
     cursor: pointer;
     outline: none;
@@ -608,24 +608,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     -webkit-appearance: none;
     background-image: url('data:image/svg+xml;utf8,<svg fill="%23005fb8" height="16" viewBox="0 0 24 24" width="16" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
     background-repeat: no-repeat;
-    background-position: right center;
-    border-radius: 4px;
+    background-position: right 2px center;
+    border-radius: 6px;
+    transition: all .15s;
   }
   [data-theme="dark"] .bare-select {
     color: var(--accent);
     background-image: url('data:image/svg+xml;utf8,<svg fill="%234da3ff" height="16" viewBox="0 0 24 24" width="16" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
   }
   .bare-select:hover {
-    background-color: var(--bg-hover);
+    background-color: color-mix(in srgb, var(--accent) 15%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
   }
 
   /* ---- Branch and Party chip multi-select ---- */
   /* Branch filter: one segmented H·S·P strip + a grouped info popover.
      P = President (Executive). Per-letter titles cover desktop hover; the
      popover is the tap-friendly explanation shared by mobile AND desktop. */
-  .branch-filters { position:relative; display:flex; align-items:flex-end; gap:10px; margin:0 4px; }
-  .branch-group { display:flex; flex-direction:column; align-items:center; gap:5px; }
-  .branch-group-icon { color:var(--text-dim); display:flex; align-items:center; justify-content:center; }
+  .branch-filters { position:relative; display:flex; align-items:center; gap:6px; margin:0 4px; }
   .branch-seg { display:inline-flex; border:1px solid var(--border); border-radius:9px; overflow:hidden; }
   .branch-toggle { min-width:34px; height:30px; border:none; background:transparent; color:var(--text-dim); font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background .15s, color .15s; line-height:1; padding:0 10px; }
   .branch-toggle + .branch-toggle { border-left:1px solid var(--border); }
@@ -1290,24 +1290,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="S">Sale</option><option value="E">Exchange</option>
       </select>
       <div class="branch-filters" id="qChamber" role="group" aria-label="Filter by branch">
-        <div class="branch-group">
-          <div class="branch-group-icon" title="Congress (Legislative)">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" x2="21" y1="22" y2="22"/><line x1="6" x2="6" y1="18" y2="11"/><line x1="10" x2="10" y1="18" y2="11"/><line x1="14" x2="14" y1="18" y2="11"/><line x1="18" x2="18" y1="18" y2="11"/><polygon points="12 2 20 7 4 7"/></svg>
-          </div>
-          <div class="branch-seg">
-            <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House trades — House Clerk PTR filings">H</button>
-            <button type="button" class="branch-toggle on" data-ch="senate" aria-pressed="true" title="Senate trades — Senate eFD PTR filings">S</button>
-          </div>
+        <div class="branch-seg">
+          <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House trades — House Clerk PTR filings">H</button>
+          <button type="button" class="branch-toggle on" data-ch="senate" aria-pressed="true" title="Senate trades — Senate eFD PTR filings">S</button>
+          <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
         </div>
-        <div class="branch-group">
-          <div class="branch-group-icon" title="Executive Branch">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>
-          </div>
-          <div class="branch-seg">
-            <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
-          </div>
-        </div>
-        <button type="button" class="branch-info" aria-expanded="false" aria-controls="qChamberInfo" aria-label="About the H, S and P branch filters" style="margin-bottom:3px;">&#9432;</button>
+        <button type="button" class="branch-info" aria-expanded="false" aria-controls="qChamberInfo" aria-label="About the H, S and P branch filters">&#9432;</button>
         <div class="branch-pop" id="qChamberInfo" role="note" hidden>
           <div class="branch-pop-row"><b>H</b><span>House trades — House Clerk PTR filings</span></div>
           <div class="branch-pop-row"><b>S</b><span>Senate trades — Senate eFD PTR filings</span></div>
@@ -1369,24 +1357,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section class="view active" id="view-trends" role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false">
     <div class="toolbar">
       <div class="branch-filters" id="trChamber" role="group" aria-label="Filter analytics by branch">
-        <div class="branch-group">
-          <div class="branch-group-icon" title="Congress (Legislative)">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" x2="21" y1="22" y2="22"/><line x1="6" x2="6" y1="18" y2="11"/><line x1="10" x2="10" y1="18" y2="11"/><line x1="14" x2="14" y1="18" y2="11"/><line x1="18" x2="18" y1="18" y2="11"/><polygon points="12 2 20 7 4 7"/></svg>
-          </div>
-          <div class="branch-seg">
-            <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House trades — House Clerk PTR filings">H</button>
-            <button type="button" class="branch-toggle on" data-ch="senate" aria-pressed="true" title="Senate trades — Senate eFD PTR filings">S</button>
-          </div>
+        <div class="branch-seg">
+          <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House trades — House Clerk PTR filings">H</button>
+          <button type="button" class="branch-toggle on" data-ch="senate" aria-pressed="true" title="Senate trades — Senate eFD PTR filings">S</button>
+          <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
         </div>
-        <div class="branch-group">
-          <div class="branch-group-icon" title="Executive Branch">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>
-          </div>
-          <div class="branch-seg">
-            <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
-          </div>
-        </div>
-        <button type="button" class="branch-info" aria-expanded="false" aria-controls="trChamberInfo" aria-label="About the H, S and P branch filters" style="margin-bottom:3px;">&#9432;</button>
+        <button type="button" class="branch-info" aria-expanded="false" aria-controls="trChamberInfo" aria-label="About the H, S and P branch filters">&#9432;</button>
         <div class="branch-pop" id="trChamberInfo" role="note" hidden>
           <div class="branch-pop-row"><b>H</b><span>House trades — House Clerk PTR filings</span></div>
           <div class="branch-pop-row"><b>S</b><span>Senate trades — Senate eFD PTR filings</span></div>
@@ -1409,7 +1385,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
 
     <!-- KPI strip -->
-    <div class="tf-cap">Snapshot · <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></div>
+    <div class="tf-cap">Snapshot</div>
     <div class="grid-cards" id="trKpis">
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
     </div>
@@ -4693,6 +4669,7 @@ async function runChamberBenchmark(chamberName) {
     for (let i = 0; i < REREAD_MODELS.length; i++) {
       let published = 0;
       let flagged = 0;
+      let breakdown = {};
       
       const singleModel = REREAD_MODELS[i];
       const testModels = { a: singleModel };
@@ -4710,13 +4687,25 @@ async function runChamberBenchmark(chamberName) {
             published++;
           } else {
             flagged++;
+            let reason = result.outcome || 'unknown_failure';
+            if (reason === 'agree_but_hardfail' && result.flags) {
+               reason += ' (' + result.flags.join(',') + ')';
+            }
+            if (result.reason) reason += ' (' + result.reason + ')';
+            if (result.error) reason += ' (' + result.error + ')';
+            if (autoPublished && confidence < 0.90) reason = 'low_confidence';
+            breakdown[reason] = (breakdown[reason] || 0) + 1;
           }
         } catch (e) {
           flagged++;
+          const eStr = String(e);
+          breakdown[eStr] = (breakdown[eStr] || 0) + 1;
         }
         
         let autoRate = ((published / (j + 1)) * 100).toFixed(1) + '%';
-        el('auto-' + i).innerText = autoRate + ' (' + published + '/' + (j + 1) + ')';
+        let breakdownHtml = Object.entries(breakdown).map(([k, v]) => esc(k) + ': ' + v).join('<br>');
+        el('auto-' + i).innerHTML = autoRate + ' (' + published + '/' + (j + 1) + ')' +
+          (breakdownHtml ? '<br><small class="note" style="display:block;margin-top:4px;font-size:0.8em;color:var(--text-dim);">' + breakdownHtml + '</small>' : '');
       }
     }
 
@@ -6197,7 +6186,21 @@ function chamberParam(groupId) {
   var sel = chipSel(groupId).slice().sort();
   return sel.join(',') === CHAMBER_DEFAULT.slice().sort().join(',') ? '' : sel.join(',');
 }
-function initChamberChips(groupId, storageKey, onChange) {
+function syncChamberChips(sourceId, targetId) {
+  var src = el(sourceId); var tgt = el(targetId);
+  if (!src || !tgt) return;
+  src.querySelectorAll('.branch-toggle').forEach(function(b) {
+    var val = b.getAttribute('data-ch');
+    var on = b.classList.contains('on');
+    var tgtBtn = tgt.querySelector('.branch-toggle[data-ch="' + val + '"]');
+    if (tgtBtn) {
+      tgtBtn.classList.toggle('on', on);
+      tgtBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+  });
+}
+
+function initChamberChips(groupId, storageKey, onChange, syncTarget) {
   var g = el(groupId); if (!g) return;
   try {
     var saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
@@ -6217,11 +6220,20 @@ function initChamberChips(groupId, storageKey, onChange) {
     b.classList.toggle('on', willBeOn);
     b.setAttribute('aria-pressed', willBeOn ? 'true' : 'false');
     try { localStorage.setItem(storageKey, JSON.stringify(chipSel(groupId))); } catch (err) {}
+    
+    // Sync other chamber filter group
+    if (syncTarget) {
+      syncChamberChips(groupId, syncTarget);
+      // Also update the sync target's localStorage so it stays in sync across reloads
+      var targetStorageKey = syncTarget === 'qChamber' ? 'feed-chambers-v1' : 'trends-chambers-v1';
+      try { localStorage.setItem(targetStorageKey, JSON.stringify(chipSel(syncTarget))); } catch (err) {}
+    }
+    
     onChange();
   });
 }
-initChamberChips('qChamber', 'feed-chambers-v1', function () { resetFeedPage(); });
-initChamberChips('trChamber', 'trends-chambers-v1', function () { loadTrends(); });
+initChamberChips('qChamber', 'feed-chambers-v1', function () { resetFeedPage(); }, 'trChamber');
+initChamberChips('trChamber', 'trends-chambers-v1', function () { loadTrends(); }, 'qChamber');
 
 /* One grouped explainer per branch strip: hover opens it on pointer devices,
    tap/click toggles it everywhere (title attrs never show on touch). */
