@@ -4304,6 +4304,22 @@ function runQueueReprocess() {
     .catch(function (e) { el('reprocMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
 }
 
+function runOgeBackfill() {
+  // API HOOK: POST /api/admin/oge-backfill
+  el('ogeMsg').textContent = 'Polling OGE index…';
+  fetch('/api/admin/oge-backfill', {
+    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' })
+  })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) { var ae = new Error(ADMIN_MOVED_MSG); ae.isAuth = true; throw ae; }
+      return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
+    })
+    .then(function (j) {
+      el('ogeMsg').textContent = 'Done. Found ' + (j.newFilings || 0) + ' new filing(s).';
+    })
+    .catch(function (e) { el('ogeMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
+}
+
 /* ============================ SOURCE HEALTH ============================ */
 function loadHealth() {
   // API HOOK: GET /api/admin/sources/health
