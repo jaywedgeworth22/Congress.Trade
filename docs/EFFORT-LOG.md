@@ -81,6 +81,17 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Scoped ADMIN_MAINTENANCE_TOKEN (CLAUDE, S) — 2026-07-13, owner-approved ("ok make one").**
+  Second instance of the INGEST_TOKEN pattern: a bearer token that authorizes ONLY the idempotent
+  maintenance endpoints (`ingest-requeue-failed`, `ingest-retry-errored`; allowlist =
+  `MAINTENANCE_PATH_SUFFIXES` in admin/routes.ts) — never migrations, review resolution, or config
+  writes. Purpose: agent/automation sessions can drain backlogs directly without holding
+  ADMIN_TOKEN; blast radius if leaked = re-running an idempotent requeue. Resolver-backed
+  (Infisical-rotatable), constant-time compare, in the config-sources auth-billing registry +
+  config-registry.md + .dev.vars.example. Tests pin: unlocks exactly the two endpoints, 401
+  everywhere else, wrong token 401. Gates: typecheck + 112 files / 986 tests. Owner setup after
+  deploy: mint a value, set `ADMIN_MAINTENANCE_TOKEN` in Infisical (app folder), add the same
+  value to the Claude cloud env.
 - **Backlog drain: /ingest-retry-errored + Admin Maintenance workflow (CLAUDE, S) — 2026-07-13,
   owner-directed ("drain the whole backlog for all 3 types of filings").** Backlog audit in prod
   D1: house 695 errored (500 fetch-stage from the R2 known-length outage, dead-lettered in

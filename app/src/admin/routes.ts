@@ -122,7 +122,20 @@ type EnvWithAdmin = Env & {
    * holding the full ADMIN_TOKEN. Optional; ignored if unset.
    */
   INGEST_TOKEN?: string;
+  /**
+   * Scoped bearer token that unlocks ONLY the low-risk, idempotent
+   * operational-maintenance endpoints (MAINTENANCE_PATH_SUFFIXES below).
+   * Lets agent/automation sessions run backlog drains without holding the
+   * full ADMIN_TOKEN — same pattern as INGEST_TOKEN. Optional; ignored if
+   * unset. Worst case if leaked: someone re-runs an idempotent requeue.
+   */
+  ADMIN_MAINTENANCE_TOKEN?: string;
 };
+
+/** The ONLY admin paths ADMIN_MAINTENANCE_TOKEN unlocks. Keep this list to
+ * idempotent, non-destructive recovery operations — never migrations, review
+ * resolution, config writes, or anything that changes published data. */
+const MAINTENANCE_PATH_SUFFIXES = ['/ingest-requeue-failed', '/ingest-retry-errored'];
 
 const LATENCY_RESET_KEY = 'admin:source_health:latency_reset_at';
 
@@ -136,6 +149,20 @@ async function isAuthorizedIngest(
   return (
     !!token &&
     path.endsWith('/securities/import') &&
+    (await constantTimeEqual(authorization ?? '', `Bearer ${token}`))
+  );
+}
+
+/** True when the request is a bearer-authenticated call to a maintenance endpoint. */
+async function isAuthorizedMaintenance(
+  env: EnvWithAdmin,
+  path: string,
+  authorization?: string,
+): Promise<boolean> {
+  const token = (await resolveSecret(env, 'ADMIN_MAINTENANCE_TOKEN')).value;
+  return (
+    !!token &&
+    MAINTENANCE_PATH_SUFFIXES.some((suffix) => path.endsWith(suffix)) &&
     (await constantTimeEqual(authorization ?? '', `Bearer ${token}`))
   );
 }
@@ -720,12 +747,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
   // Auth gate applied to every admin route: full admin (bearer token OR
-  // Cloudflare Access), or — for /securities/import only — the scoped
-  // INGEST_TOKEN so a sibling app can push shared data without admin rights.
+  // Cloudflare Access), or one of the SCOPED tokens — INGEST_TOKEN for
+  // /securities/import only (sibling app pushes shared data), and
+  // ADMIN_MAINTENANCE_TOKEN for the idempotent backlog-drain endpoints only
+  // (agent/automation sessions never hold the full ADMIN_TOKEN).
   r.use('*', async (c, next) => {
     const env = c.env as EnvWithAdmin;
     const authorization = c.req.header('Authorization');
     if (await isAuthorizedIngest(env, c.req.path, authorization)) return next();
+    if (await isAuthorizedMaintenance(env, c.req.path, authorization)) return next();
     let sessionEmail: string | undefined;
     if (!authorization) {
       try {
@@ -1838,7 +1868,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         'LLAMAPARSE_API_KEY', 'ARBITRATION_API_KEY',
       ],
       'auth-billing': [
-        'ADMIN_TOKEN', 'INGEST_TOKEN', 'ADMIN_EMAILS', 'ACCESS_AUD', 'ACCESS_TEAM_DOMAIN',
+        'ADMIN_TOKEN', 'INGEST_TOKEN', 'ADMIN_MAINTENANCE_TOKEN', 'ADMIN_EMAILS', 'ACCESS_AUD', 'ACCESS_TEAM_DOMAIN',
         'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'WEBHOOK_SIGNING_KEY',
         'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_PRICE_MONTHLY', 'STRIPE_PRICE_ANNUAL',
         'STRIPE_TRIAL_DAYS', 'STRIPE_MANAGED_PAYMENTS', 'RESEND_API_KEY', 'EMAIL_FROM', 'ALERT_EMAIL',

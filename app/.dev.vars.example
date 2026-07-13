@@ -95,6 +95,10 @@ ADMIN_OPEN_IN_DEV=""
 # Scoped token that authorizes only POST /api/admin/securities/import for
 # cross-app FMP data sharing. Prefer this over ADMIN_TOKEN in sibling apps.
 INGEST_TOKEN=""
+# Scoped token that authorizes ONLY the idempotent maintenance endpoints
+# (ingest-requeue-failed / ingest-retry-errored). Prefer this over ADMIN_TOKEN
+# for agent/automation sessions that run backlog drains.
+ADMIN_MAINTENANCE_TOKEN=""
 
 # Return half of the cross-app share (Congress.Trade -> sibling app). After the
 # daily refresh, the prices/refs WE fetched this run are POSTed to the sibling
