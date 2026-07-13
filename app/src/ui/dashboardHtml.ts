@@ -623,7 +623,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Branch filter: one segmented H·S·P strip + a grouped info popover.
      P = President (Executive). Per-letter titles cover desktop hover; the
      popover is the tap-friendly explanation shared by mobile AND desktop. */
-  .branch-filters { position:relative; display:flex; align-items:center; gap:6px; margin:0 4px; }
+  .branch-filters { position:relative; display:flex; align-items:flex-end; gap:10px; margin:0 4px; }
+  .branch-group { display:flex; flex-direction:column; align-items:center; gap:5px; }
+  .branch-group-icon { color:var(--text-dim); display:flex; align-items:center; justify-content:center; }
   .branch-seg { display:inline-flex; border:1px solid var(--border); border-radius:9px; overflow:hidden; }
   .branch-toggle { min-width:34px; height:30px; border:none; background:transparent; color:var(--text-dim); font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background .15s, color .15s; line-height:1; padding:0 10px; }
   .branch-toggle + .branch-toggle { border-left:1px solid var(--border); }
@@ -1288,12 +1290,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="S">Sale</option><option value="E">Exchange</option>
       </select>
       <div class="branch-filters" id="qChamber" role="group" aria-label="Filter by branch">
-        <div class="branch-seg">
-          <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House trades — House Clerk PTR filings">H</button>
-          <button type="button" class="branch-toggle on" data-ch="senate" aria-pressed="true" title="Senate trades — Senate eFD PTR filings">S</button>
-          <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
+        <div class="branch-group">
+          <div class="branch-group-icon" title="Congress (Legislative)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" x2="21" y1="22" y2="22"/><line x1="6" x2="6" y1="18" y2="11"/><line x1="10" x2="10" y1="18" y2="11"/><line x1="14" x2="14" y1="18" y2="11"/><line x1="18" x2="18" y1="18" y2="11"/><polygon points="12 2 20 7 4 7"/></svg>
+          </div>
+          <div class="branch-seg">
+            <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House trades — House Clerk PTR filings">H</button>
+            <button type="button" class="branch-toggle on" data-ch="senate" aria-pressed="true" title="Senate trades — Senate eFD PTR filings">S</button>
+          </div>
         </div>
-        <button type="button" class="branch-info" aria-expanded="false" aria-controls="qChamberInfo" aria-label="About the H, S and P branch filters">&#9432;</button>
+        <div class="branch-group">
+          <div class="branch-group-icon" title="Executive Branch">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>
+          </div>
+          <div class="branch-seg">
+            <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
+          </div>
+        </div>
+        <button type="button" class="branch-info" aria-expanded="false" aria-controls="qChamberInfo" aria-label="About the H, S and P branch filters" style="margin-bottom:3px;">&#9432;</button>
         <div class="branch-pop" id="qChamberInfo" role="note" hidden>
           <div class="branch-pop-row"><b>H</b><span>House trades — House Clerk PTR filings</span></div>
           <div class="branch-pop-row"><b>S</b><span>Senate trades — Senate eFD PTR filings</span></div>
@@ -1355,12 +1369,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <section class="view active" id="view-trends" role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false">
     <div class="toolbar">
       <div class="branch-filters" id="trChamber" role="group" aria-label="Filter analytics by branch">
-        <div class="branch-seg">
-          <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House trades — House Clerk PTR filings">H</button>
-          <button type="button" class="branch-toggle on" data-ch="senate" aria-pressed="true" title="Senate trades — Senate eFD PTR filings">S</button>
-          <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
+        <div class="branch-group">
+          <div class="branch-group-icon" title="Congress (Legislative)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" x2="21" y1="22" y2="22"/><line x1="6" x2="6" y1="18" y2="11"/><line x1="10" x2="10" y1="18" y2="11"/><line x1="14" x2="14" y1="18" y2="11"/><line x1="18" x2="18" y1="18" y2="11"/><polygon points="12 2 20 7 4 7"/></svg>
+          </div>
+          <div class="branch-seg">
+            <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House trades — House Clerk PTR filings">H</button>
+            <button type="button" class="branch-toggle on" data-ch="senate" aria-pressed="true" title="Senate trades — Senate eFD PTR filings">S</button>
+          </div>
         </div>
-        <button type="button" class="branch-info" aria-expanded="false" aria-controls="trChamberInfo" aria-label="About the H, S and P branch filters">&#9432;</button>
+        <div class="branch-group">
+          <div class="branch-group-icon" title="Executive Branch">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" x2="4" y1="22" y2="15"/></svg>
+          </div>
+          <div class="branch-seg">
+            <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
+          </div>
+        </div>
+        <button type="button" class="branch-info" aria-expanded="false" aria-controls="trChamberInfo" aria-label="About the H, S and P branch filters" style="margin-bottom:3px;">&#9432;</button>
         <div class="branch-pop" id="trChamberInfo" role="note" hidden>
           <div class="branch-pop-row"><b>H</b><span>House trades — House Clerk PTR filings</span></div>
           <div class="branch-pop-row"><b>S</b><span>Senate trades — Senate eFD PTR filings</span></div>
