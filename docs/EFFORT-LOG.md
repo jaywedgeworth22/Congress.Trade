@@ -92,6 +92,100 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   ingestion, queue, or production state changed.
 - **Web UI unification with iOS aesthetics (AG, M) — COMPLETED 2026-07-12.** Updated the Next.js PWA and the Admin Dashboard with frosted glass panels (`backdrop-filter: blur(20px)`), vivid gradient asset markers, and bold status pills to mirror the newly designed iOS SwiftUI prototype. Verified typechecks and PWA builds.
 - **Interactive dashboard metrics and table sort controls (AG, S) — COMPLETED 2026-07-11 via PR #303.** Added sparkline charts to the dashboard's snapshot metrics (Net Flow, Buy Pressure) and interactive `<thead>` sorting controls with Asset Type filters to the "What Congress Is Trading" and "Rising Activity" panels in `dashboardHtml.ts`.
+- **PR review-comment follow-ups across #312/#315/#337/#338/#339 (CLAUDE, M) — 2026-07-12.**
+  Owner-directed. Fixed the still-valid unresolved chatgpt-codex-connector P2 threads on merged
+  PRs: benchmark ground-truth-docs SQL (filings has no `source` column — now joins live manual
+  transactions rows); OGE `last_poll:oge` checkpoint moved after persistence (matches
+  House/Senate ordering); executive filings excluded from disclosure-latency candidates (were
+  permanently-pending skew); `priceRangeQuery` no-window cap now returns the LATEST 1000 rows
+  re-sorted ascending (was oldest-first truncation); PATCH /subscriptions premium gate anchored
+  to the subscription owner via `user:`-prefixed clientId (was any-session cookie + dead
+  `getUserById('user:<id>')` fallback that skipped the gate on secret-only requests); 13
+  single-backslash regexes in the DASHBOARD_HTML template double-escaped (emitted JS had
+  `/s+/g` etc. — cleanAsset was deleting letter runs, `looksLikeRawTransactionLine` never
+  matched); `#tableTrTickers` header realigned from 8 to 6 columns matching `loadTrTickers()`
+  cells with the Est. Volume header hidden by the existing phone rule. Also restored the two
+  EFFORT-LOG records below deleted by PR #319 (per its unresolved thread). The stale `apiCall`
+  thread on #312 was verified already-fixed by #338. Threads replied/resolved with fix refs.
+- **Ingestion fetch outage: R2 known-length regression fix + dead-letter recovery (CLAUDE, M) —
+  2026-07-12.** Every filing fetch in production failed from 2026-07-11T19:14Z onward with
+  `fetcher: Provided readable stream must have a known length` — PR #284's `limitedFilingBody`
+  size-guard wraps the response in a NEW JS ReadableStream, which R2 `put()` rejects (no known
+  length; upstream Content-Length doesn't carry over, and OGE's Domino server sends chunked with
+  no Content-Length at all). Casualties: all 500 filings of a just-started H-2015 house backfill
+  (ingestion_outbox rows dead-lettered to `failed` after the 5-cycle cap) + all 17 executive OGE
+  278-Ts discovered by the first post-#315 watcher poll (still cycling, self-recover on fix).
+  The fetcher unit tests mocked `RAW_FILES.put` as stream-draining, so CI could not catch it.
+  Fix: `bufferFilingBody()` buffers through the existing byte-count guard (25MB cap intact) and
+  hands R2 a known-length `Uint8Array`; regression test pins a no-Content-Length chunked response
+  (put receives buffered bytes, never a bare stream). Recovery: new
+  `POST /api/admin/ingest-requeue-failed` (`requeueFailedIngestionOutbox`: failed→pending with
+  fresh dead-letter budget, optional docIdPrefix, dryRun) + the per-minute outbox flush drains the
+  backlog. Gates: typecheck + 111 files / 977 tests green. Playbook: merge → `deploy.yml` →
+  requeue failed rows → verify fetches resume (receipts in #agent-sync closeout).
+- **Executive-branch (Trump) trade tracking — OGE Form 278-T ingestion (CLAUDE, L) — BUILT
+  2026-07-12 (claim posted to #agent-sync before work).** Owner-approved. New
+  `src/ingestion/ogeSource.ts` polls the OGE President/VP index (~6h, fail-soft; parser verified
+  against the LIVE index: all 17 Trump 278-Ts, Aug 2025–Jun 2026) and feeds the normal pipeline as
+  `chamber='executive'` (scanned PDFs → vision extractor → review queue; filings >
+  OGE_MAX_VISION_BYTES route straight to review — page-chunked extraction is the follow-up for the
+  113-page equity mega-filings). Chamber union widened APP-LOCALLY
+  (`SharedChamber | 'executive'`, upstreaming to congress-trading-shared v1.7 is the socialized
+  follow-up); SEPARATE-BY-DEFAULT everywhere: feed/analytics default to house+senate (executive
+  requires explicit `chamber=` CSV opt-in), subscriptions without an explicit chambers filter never
+  receive executive rows, and App-B PIT exports exclude them. UI: House/Senate/Executive chip
+  multi-select replaces both chamber dropdowns (persisted, ≥1 chip always on). Admin
+  `POST /api/admin/oge-backfill`. Knobs OGE_* (Infisical-tunable, in config-sources registry).
+  NOTE for AG: brushes `client/utils.ts`/`client/routes.test.ts` again (chamber parsing).
+- **Production outage diagnosis + PR #300/#308 landing — DEPLOYED 2026-07-12 (CLAUDE, M).**
+  Receipt: `deploy.yml` run 29177444399 succeeded on `b8ce1b4`; live verification passed (all
+  served script blocks parse; health ok/db/schema true; scoreboard + Alerts tab live with real
+  probe data; scrape guard 403s bare curl on data APIs). Original entry follows.
+- **Production outage diagnosis + PR #300 landing + deploy-gate fix (CLAUDE, M) — 2026-07-12.**
+  Owner reported the live site loading no data. Diagnosis: the deployed Worker served a dashboard
+  whose main inline script FAILED TO PARSE ("Unexpected end of input") — the build came from an
+  UNPUSHED working tree containing an in-progress "Extraction Benchmark" dashboard feature
+  (`runBenchmark`, model lineups; exists in NO git branch — AG-style bake-off work) with collapsed
+  template-literal escapes (`\\s`→`\s` etc. in `app/src/ui/dashboardHtml.ts`) and a splice that
+  clobbered `loadMarketCoverage`'s closing braces. APIs/data were healthy throughout; only the UI
+  died. That tree could never pass `npm test` (the suite pins script parseability) — it was shipped
+  without the test gate. Fix per owner: PR #300 merged to `main` (`2ed8517`) and `deploy.yml`
+  dispatched. Deploy attempts 1-2 failed on the SELF-HOSTED runner only: `reviewResolutionD1.test.ts`
+  dies with miniflare/workerd `write EPIPE` (deterministic on that container; passes on hosted CI +
+  dev containers). Follow-up commit makes that suite probe workerd and skip loudly where it cannot
+  start, plus CLAUDE.md defaults (agent-sync coordination + effort-log updates by default, per
+  owner). NOTE for AG: the redeploy OVERWRITES the unpushed benchmark experiment in production —
+  commit it to a branch if wanted (and mind the doubled-backslash rule in dashboardHtml.ts).
+  Also flagged: deploy runner cannot spawn workerd — worth a look at the Hetzner container.
+- **Infisical single-source-of-truth config consolidation (CLAUDE, M) — COMPLETED 2026-07-11 on
+  `claude/antigravity-latency-security-x6lkvb` (second commit on PR #300, not deployed).** Audit
+  found ~90% of keys/knobs already resolver-backed; converted the rest (FMP/EDGAR pacers, latency
+  probe knobs, seed URLs, house live-search flag, admin-open flags, arbitration enable + vision/
+  arbitration model choices now resolved per-extraction). New admin audit endpoint
+  `GET /api/admin/config-sources` (per-key live source, names only) + `app/docs/config-registry.md`;
+  wrangler [vars] re-documented as fallback defaults; `.dev.vars.example` now recommends
+  Infisical-bootstrap-only local setup. Env fallbacks kept deliberately (outage resilience;
+  `INFISICAL_ALLOW_ENV_FALLBACK=false` for hard-require). Sentry init trio + INFISICAL_* bootstrap
+  are the documented env-only exceptions. Gates: typecheck; 109 files / 959 tests. Rollout note:
+  `docs/rollouts/2026-07-11-infisical-single-source.md`.
+- **Public latency showcase + public delivery education + anti-scrape hardening (CLAUDE, L) —
+  COMPLETED 2026-07-11 on `claude/antigravity-latency-security-x6lkvb` (not deployed).** Owner
+  request from the Antigravity disclosure-latency findings: (1) new public
+  `GET /api/analytics/latency-summary` (aggregate `publicSummary` only, KV-cached 5 min) plus a
+  "Speed vs. Data Providers" race-lane scoreboard on the Trends landing view, designed via a
+  three-expert UI panel with honesty guard rails (full lane ≥5 matches, boast copy ≥10 matches AND
+  positive median, neutral 0-match empty states, losses/sample sizes always shown); (2) the
+  admin-only Developer Delivery tab is now a public "Alerts" tab teaching the two paid delivery
+  methods (signed webhooks, SSE) to signed-out visitors, with management still admin-only and the
+  pricing modal reworked around delivery-first features + a guard-railed live proof line;
+  (3) `src/security/botDefense.ts` anti-scrape guard on `/api/*` (scraper/AI-crawler UA blocklist,
+  300 req/5 min per IP, shared 20k rows/day per-IP budget on `/api/transactions` +
+  `/api/client/v1/feed`, 10k offset cap, `X-Robots-Tag: noindex`; token-gated surfaces exempt;
+  fails open; `SCRAPE_GUARD_ENABLED` kill switch, Infisical-overridable). Site remains fully public
+  for humans. Gates: typecheck; 108 files / 957 tests. Rollout note:
+  `docs/rollouts/2026-07-11-latency-showcase-and-bot-hardening.md`. NOTE for AG: touches ~14 lines
+  in `app/src/client/routes.ts` (`/feed` row budget) — coordinate with the in-progress client
+  routes refactor before landing both.
 - **Push account status metrics to Usage Monitor (AG) — COMPLETED 2026-07-11.** Updated `jobs.ts` to emit a separate `metricType: 'limit'` telemetry event to the Usage Monitor for the FMP daily call cap, alongside the existing usage tracking.
 - **Whole-app evaluation and improvement audit (CODEX, read-only) — COMPLETED 2026-07-11
   (assessment only; no merge applicable).** Audited `origin/main` at `8b34bd5`, live desktop/mobile

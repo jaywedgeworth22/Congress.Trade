@@ -32,6 +32,30 @@ describe('DASHBOARD_HTML', () => {
     }
   });
 
+  it('cleanAsset normalizes whitespace/suffixes without deleting letters (regex escaping)', () => {
+    // The regexes live inside the template literal, so a single "\s" would be
+    // cooked to "s" and cleanAsset would delete the letter s. Extract the real
+    // emitted function body and exercise it.
+    const m = DASHBOARD_HTML.match(/function cleanAsset\(s\) \{[\s\S]*?return t;\s*\}/);
+    expect(m).not.toBeNull();
+    // isScannedPdfPlaceholder is called by cleanAsset — stub it for isolation.
+    const cleanAsset = new Function(
+      'function isScannedPdfPlaceholder() { return false; }\n' +
+        m![0] +
+        '\nreturn cleanAsset;',
+    )() as (s: string) => string;
+    expect(cleanAsset('TESLA INC')).toBe('Tesla Inc.'); // 's' survives, suffix normalized
+    expect(cleanAsset('Microsoft   Corporation')).toBe('Microsoft Corporation'); // ws collapsed, not deleted
+    expect(cleanAsset('Apple Inc (NASDAQ: AAPL)')).toBe('Apple Inc.'); // exchange suffix stripped
+  });
+
+  it('keeps the What-Congress-Is-Trading header aligned to loadTrTickers row cells', () => {
+    const thead = DASHBOARD_HTML.match(/<table id="tableTrTickers">\s*<thead>\s*<tr>([\s\S]*?)<\/tr>/);
+    expect(thead).not.toBeNull();
+    const headerCells = (thead![1].match(/<th/g) || []).length;
+    expect(headerCells).toBe(6); // rank + Asset + Trades + Politicians + Est. Volume + Net $ Flow
+  });
+
   it('wires the Trends tab, its containers, and the analytics API', () => {
     expect(DASHBOARD_HTML).toContain('data-view="trends"');
     expect(DASHBOARD_HTML).toContain('id="view-trends"');
