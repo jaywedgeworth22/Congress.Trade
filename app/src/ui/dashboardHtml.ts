@@ -537,6 +537,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .diag-note { margin-top:8px; color:var(--text-dim); font-size:11px; line-height:1.35; overflow-wrap:anywhere; }
   .diag-error { color:var(--sell); font-weight:700; }
   .diag-warning { color:var(--warn); font-weight:700; }
+  @media (max-width: 560px) {
+    .diag-grid { grid-template-columns: 1fr; gap: 8px; margin: 8px 0; }
+    .diag-card { padding: 8px 10px; display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+    .diag-head { margin-bottom: 0; width: 100%; border-bottom: 1px solid var(--border-light); padding-bottom: 4px; margin-bottom: 4px; }
+    .diag-meta { grid-template-columns: repeat(2, auto 1fr); gap: 2px 8px; width: 100%; margin-bottom: 0; }
+    .diag-meta span { font-size: 10px; }
+    .diag-note { width: 100%; padding-top: 4px; margin-top: 4px; font-size: 10px; }
+    .drawer-panel { width:100%; max-width:100%; bottom:0; top:auto; height:90vh; border-radius:12px 12px 0 0; }
+  }
   @media (max-width:600px){ .drawer-panel { width:100%; max-width:100%; } }
   footer { text-align:center; color: var(--text-dim); font-size:11px; padding:26px; }
   /* ---- account control + auth/billing modals ---- */
@@ -580,11 +589,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .toast.show { display:block; }
   .toast.err { border-color:color-mix(in srgb,var(--sell) 55%,transparent); color:var(--sell); }
   .gate-note { font-size:12px; color:var(--text-dim); display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
-  /* ---- Branch (House / Senate / Executive) chip multi-select ---- */
-  .chamber-chips { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
-  .chamber-chips .chip { border:1px solid var(--border); background:transparent; color:var(--text-dim); border-radius:999px; padding:6px 12px; font-size:12px; line-height:1; cursor:pointer; min-height:32px; transition:border-color .15s, background .15s, color .15s; }
-  .chamber-chips .chip.on { color:var(--text); border-color:var(--accent); background:color-mix(in srgb, var(--accent) 14%, transparent); }
-  .chamber-chips .chip:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  /* ---- Branch and Party chip multi-select ---- */
+  .branch-filters { display:flex; align-items:flex-end; gap:16px; margin: 0 4px; }
+  .branch-group { display:flex; flex-direction:column; align-items:center; gap:2px; }
+  .branch-icon { width:26px; height:26px; fill:none; stroke:var(--text-dim); stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; transition:stroke .15s; }
+  .branch-group:has(.branch-toggle.on) .branch-icon { stroke:var(--text); }
+  .branch-toggles { display:flex; gap:3px; }
+  .branch-toggle { width:22px; height:22px; border-radius:4px; border:1px solid var(--border); background:transparent; color:var(--text-dim); font-weight:700; font-size:11px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all .15s; line-height:1; padding:0; }
+  .branch-toggle:hover { border-color:var(--text-dim); }
+  .branch-toggle.on { background:color-mix(in srgb, var(--accent) 14%, transparent); color:var(--text); border-color:var(--accent); }
+  .party-chips { display:flex; gap:4px; align-items:center; }
+  .party-chip { padding:3px 8px; border-radius:6px; border:1px solid var(--border); background:transparent; color:var(--text-dim); font-size:14px; cursor:pointer; transition:all .15s; display:flex; align-items:center; justify-content:center; }
+  .party-chip:hover { border-color:var(--text-dim); }
+  .party-chip.on { background:color-mix(in srgb, var(--accent) 14%, transparent); border-color:var(--accent); color:var(--text); }
+  .party-chip.on[data-party="D"] { border-color:var(--buy); background:color-mix(in srgb, var(--buy) 14%, transparent); }
+  .party-chip.on[data-party="R"] { border-color:var(--sell); background:color-mix(in srgb, var(--sell) 14%, transparent); }
   /* ---- Speed vs data providers (public latency proof) ---- */
   .speed-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
   .speed-head h3 { margin:0; }
@@ -1230,10 +1249,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="">All Types</option><option value="P">Purchase</option>
         <option value="S">Sale</option><option value="E">Exchange</option>
       </select>
-      <div class="chamber-chips" id="qChamber" role="group" aria-label="Filter by branch">
-        <button type="button" class="chip on" data-ch="house" aria-pressed="true">House</button>
-        <button type="button" class="chip on" data-ch="senate" aria-pressed="true">Senate</button>
-        <button type="button" class="chip" data-ch="executive" aria-pressed="false" title="Executive branch — Presidential trades from OGE Form 278-T filings">Executive</button>
+      <div class="branch-filters" id="qChamber" role="group" aria-label="Filter by branch">
+        <div class="branch-group" title="Congress (House & Senate)">
+          <svg class="branch-icon" viewBox="0 0 24 24"><path d="M12 3a4 4 0 0 0-4 4v3H6v2h12v-2h-2V7a4 4 0 0 0-4-4z"></path><path d="M6 12v6"></path><path d="M10 12v6"></path><path d="M14 12v6"></path><path d="M18 12v6"></path><path d="M4 18h16v2H4z"></path></svg>
+          <div class="branch-toggles">
+            <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House">H</button>
+            <button type="button" class="branch-toggle on" data-ch="senate" aria-pressed="true" title="Senate">S</button>
+          </div>
+        </div>
+        <div class="branch-group" title="Executive Branch (OGE 278-T)">
+          <svg class="branch-icon" viewBox="0 0 24 24"><path d="M12 2l-8 5h16l-8-5z"></path><path d="M6 7v11"></path><path d="M10 7v11"></path><path d="M14 7v11"></path><path d="M18 7v11"></path><path d="M4 18h16v2H4z"></path></svg>
+          <div class="branch-toggles">
+            <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive">E</button>
+          </div>
+        </div>
       </div>
 <div id="feedStats" class="feed-stats muted">
         <strong id="kpiToday">—</strong> today &middot; <strong id="kpiTotal">—</strong> total
@@ -1298,12 +1327,26 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <option value="1825d">Past 5 Years</option>
         <option value="all">All Time</option>
       </select>
-      <div class="chamber-chips" id="trChamber" role="group" aria-label="Filter analytics by branch">
-        <button type="button" class="chip on" data-ch="house" aria-pressed="true">House</button>
-        <button type="button" class="chip on" data-ch="senate" aria-pressed="true">Senate</button>
-        <button type="button" class="chip" data-ch="executive" aria-pressed="false" title="Executive branch — Presidential trades from OGE Form 278-T filings">Executive</button>
+      <div class="branch-filters" id="trChamber" role="group" aria-label="Filter analytics by branch">
+        <div class="branch-group" title="Congress (House & Senate)">
+          <svg class="branch-icon" viewBox="0 0 24 24"><path d="M12 3a4 4 0 0 0-4 4v3H6v2h12v-2h-2V7a4 4 0 0 0-4-4z"></path><path d="M6 12v6"></path><path d="M10 12v6"></path><path d="M14 12v6"></path><path d="M18 12v6"></path><path d="M4 18h16v2H4z"></path></svg>
+          <div class="branch-toggles">
+            <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House">H</button>
+            <button type="button" class="branch-toggle on" data-ch="senate" aria-pressed="true" title="Senate">S</button>
+          </div>
+        </div>
+        <div class="branch-group" title="Executive Branch (OGE 278-T)">
+          <svg class="branch-icon" viewBox="0 0 24 24"><path d="M12 2l-8 5h16l-8-5z"></path><path d="M6 7v11"></path><path d="M10 7v11"></path><path d="M14 7v11"></path><path d="M18 7v11"></path><path d="M4 18h16v2H4z"></path></svg>
+          <div class="branch-toggles">
+            <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive">E</button>
+          </div>
+        </div>
       </div>
-      <select id="trParty"><option value="">All Parties</option><option value="D">Democrat</option><option value="R">Republican</option><option value="O">Other / Ind.</option></select>
+      <div class="party-chips" id="trPartyGroup">
+        <button type="button" class="party-chip" data-party="D" title="Democrat">🫏</button>
+        <button type="button" class="party-chip" data-party="R" title="Republican">🐘</button>
+        <button type="button" class="party-chip" data-party="O" title="Other">🦅</button>
+      </div>
       <select id="trSource" title="Provenance of the underlying rows">
         <option value="all" selected>All Data</option>
         <option value="primary">Primary Only</option>
@@ -1473,28 +1516,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 
 
-    <!-- Speed vs data providers (filter-independent live latency proof).
-         No tf-h class on the h3: stampWindowChips() must not stamp a time
-         window this section does not honor. Rendered by renderSpeedProof(). -->
-    <div class="section speed-proof" id="trLatencySection" style="margin-top:14px">
-      <div class="speed-head">
-        <h3>Speed vs. Data Providers <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
-        <span class="note" id="speedUpdated"></span>
-      </div>
-      <div class="speed-body">
-        <div class="speed-hero" id="speedHero"><div class="sk sk-line" style="width:70%;height:34px"></div><div class="sk sk-line" style="width:55%"></div></div>
-        <div id="speedRace"></div>
-      </div>
-      <p class="note">How this is measured: every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades and match them against filings we already ingested, comparing first-seen timestamps. Stats cover the most recent matched filings per provider and update continuously &mdash; wins, losses, and misses alike. &ldquo;Matched&rdquo; counts filings that had appeared in the provider&rsquo;s feed by probe time; a filing can appear there later. Nothing is hand-picked and nothing is frozen: these numbers move. A live measurement, not a promise.</p>
-      <details class="speed-table">
-        <summary>View as table</summary>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Provider</th><th>Matched</th><th>We were first</th><th>They were first</th><th>Ties</th><th>Typical lead</th><th>Average</th><th>p90</th></tr></thead>
-          <tbody id="speedTableBody"></tbody>
-        </table></div>
-      </details>
-      <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
-    </div>
+
   </section>
 
   <!-- ================= REVIEW QUEUE ================= -->
@@ -1810,6 +1832,28 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </table>
     </div>
   </section>
+
+  <!-- Speed vs data providers (filter-independent live latency proof).
+       Moved to bottom of site per user request. -->
+  <div class="section speed-proof" id="trLatencySection" style="margin-top:24px; padding:0 16px;">
+    <div class="speed-head">
+      <h3>Speed vs. Data Providers <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
+      <span class="note" id="speedUpdated"></span>
+    </div>
+    <div class="speed-body">
+      <div class="speed-hero" id="speedHero"><div class="sk sk-line" style="width:70%;height:34px"></div><div class="sk sk-line" style="width:55%"></div></div>
+      <div id="speedRace"></div>
+    </div>
+    <p class="note">How this is measured: every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades and match them against filings we already ingested, comparing first-seen timestamps. Stats cover the most recent matched filings per provider and update continuously &mdash; wins, losses, and misses alike. &ldquo;Matched&rdquo; counts filings that had appeared in the provider&rsquo;s feed by probe time; a filing can appear there later. Nothing is hand-picked and nothing is frozen: these numbers move. A live measurement, not a promise.</p>
+    <details class="speed-table">
+      <summary>View as table</summary>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Provider</th><th>Matched</th><th>We were first</th><th>They were first</th><th>Ties</th><th>Typical lead</th><th>Average</th><th>p90</th></tr></thead>
+        <tbody id="speedTableBody"></tbody>
+      </table></div>
+    </details>
+    <p class="note speed-fineprint">Provider names are trademarks of their respective owners. Measurements are our own and are not endorsed by the providers named.</p>
+  </div>
 
   <footer>Congress.Trade • an educational tool for exploring public STOCK Act (2012) disclosures • informational only • not financial advice • not trading signals • $ estimated from disclosed brackets</footer>
 </main>
@@ -4727,8 +4771,13 @@ function runMarketBackfill(dryRun) {
 function trParams() {
   var p = 'window=' + encodeURIComponent(el('trWindow').value);
   var ch = chamberParam('trChamber'); if (ch) p += '&chamber=' + encodeURIComponent(ch);
-  var pa = el('trParty').value; if (pa) p += '&party=' + pa;
-  var src = el('trSource').value; if (src && src !== 'all') p += '&source=' + src;
+  var sc = el('trSource').value; if (sc !== 'all') p += '&source=' + sc;
+  var paGroup = el('trPartyGroup');
+  if (paGroup) {
+    var parties = [];
+    paGroup.querySelectorAll('.party-chip.on').forEach(function(b) { parties.push(b.getAttribute('data-party')); });
+    if (parties.length > 0) p += '&party=' + parties.join(',');
+  }
   return p;
 }
 var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'all': 'All Time' };
@@ -4742,7 +4791,7 @@ function stampWindowChips() {
   for (var i = 0; i < heads.length; i++) {
     var h = heads[i], chip = h.querySelector('.tf-chip');
     if (!chip) { chip = document.createElement('span'); chip.className = 'tf-chip'; h.appendChild(chip); }
-    chip.textContent = ' \\u00B7 ' + label;
+    chip.textContent = ' \u00B7 ' + label;
   }
   var cap = el('trKpisCap'); if (cap) cap.textContent = label;
 }
@@ -6136,9 +6185,8 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
 })();
 setInterval(refreshSpeedUpdated, 60000);
 
-/* Trends controls: re-run on change; ticker rows/cards open the asset drawer.
-   (trChamber is a chip group wired via initChamberChips below, not a select.) */
-['trWindow', 'trParty', 'trSource'].forEach(function (id) {
+/* Trends controls: re-run on change; ticker rows/cards open the asset drawer. */
+['trWindow', 'trSource'].forEach(function (id) {
   var e = el(id); if (e) e.addEventListener('change', loadTrends);
 });
 
@@ -6150,7 +6198,7 @@ var CHAMBER_DEFAULT = ['house', 'senate'];
 function chipSel(groupId) {
   var g = el(groupId); if (!g) return CHAMBER_DEFAULT.slice();
   var on = [];
-  g.querySelectorAll('.chip.on').forEach(function (b) { on.push(b.getAttribute('data-ch')); });
+  g.querySelectorAll('.branch-toggle.on').forEach(function (b) { on.push(b.getAttribute('data-ch')); });
   return on.length ? on : CHAMBER_DEFAULT.slice();
 }
 function chamberParam(groupId) {
@@ -6162,7 +6210,7 @@ function initChamberChips(groupId, storageKey, onChange) {
   try {
     var saved = JSON.parse(localStorage.getItem(storageKey) || 'null');
     if (Array.isArray(saved) && saved.length) {
-      g.querySelectorAll('.chip').forEach(function (b) {
+      g.querySelectorAll('.branch-toggle').forEach(function (b) {
         var on = saved.indexOf(b.getAttribute('data-ch')) >= 0;
         b.classList.toggle('on', on);
         b.setAttribute('aria-pressed', on ? 'true' : 'false');
@@ -6170,7 +6218,7 @@ function initChamberChips(groupId, storageKey, onChange) {
     }
   } catch (e) {}
   g.addEventListener('click', function (e) {
-    var b = e.target.closest ? e.target.closest('.chip') : null;
+    var b = e.target.closest ? e.target.closest('.branch-toggle') : null;
     if (!b) return;
     var willBeOn = !b.classList.contains('on');
     if (!willBeOn && chipSel(groupId).length <= 1) return; // keep >= 1 branch
@@ -6182,6 +6230,17 @@ function initChamberChips(groupId, storageKey, onChange) {
 }
 initChamberChips('qChamber', 'feed-chambers-v1', function () { resetFeedPage(); });
 initChamberChips('trChamber', 'trends-chambers-v1', function () { loadTrends(); });
+
+function initPartyChips() {
+  var g = el('trPartyGroup'); if (!g) return;
+  g.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.party-chip') : null;
+    if (!b) return;
+    b.classList.toggle('on');
+    loadTrends();
+  });
+}
+initPartyChips();
 (function () { var ts = el('trTickerSort'); if (ts) ts.addEventListener('change', loadTrTickers); })();
 (function () { var ta = el('trTickerAsset'); if (ta) ta.addEventListener('change', loadTrTickers); })();
 (function () { var tta = el('trTrendingAsset'); if (tta) tta.addEventListener('change', loadTrTrending); })();
