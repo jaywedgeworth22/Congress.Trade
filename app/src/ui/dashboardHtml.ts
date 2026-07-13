@@ -4559,26 +4559,33 @@ function editInfisicalSecret(btn) {
   var key = btn.getAttribute('data-key');
   var td = el('secret-action-' + key);
   if (!td) return;
+  // Normalize display source (infisical/env/missing) to writable scope (app/shared).
+  // When we cannot determine the project scope, default to 'app'.
+  var scope = (source === 'app' || source === 'shared') ? source : 'app';
   td.innerHTML = '<div class="row-flex" style="justify-content:flex-end; align-items:center; gap:8px;">' +
+    '<select id="secret-src-' + key + '" class="input sm" style="max-width:80px; margin:0;">' +
+    '<option value="app"' + (scope === 'app' ? ' selected' : '') + '>app</option>' +
+    '<option value="shared"' + (scope === 'shared' ? ' selected' : '') + '>shared</option>' +
+    '</select>' +
     '<input type="password" id="secret-val-' + key + '" class="input sm" placeholder="New Value" style="max-width:140px; margin:0;" />' +
-    '<button class="btn sm" onclick="updateInfisicalSecret(&quot;' + key + '&quot;, &quot;' + source + '&quot;)">Save</button>' +
+    '<button class="btn sm" onclick="updateInfisicalSecret(&quot;' + key + '&quot;)">Save</button>' +
     '<button class="btn ghost sm" onclick="loadDiagnostics()">Cancel</button>' +
   '</div>';
   var input = el('secret-val-' + key);
   if (input) input.focus();
 }
 
-function updateInfisicalSecret(key, source) {
+function updateInfisicalSecret(key) {
   var msg = el('secretRefreshMsg'); // Re-use the refresh msg span for status updates
+  var srcEl = el('secret-src-' + key);
+  var source = srcEl ? srcEl.value : 'app';
   var input = el('secret-val-' + key);
   // Do NOT trim the value: empty string is a documented "off" state for some
   // config flags, and trimming would strip significant whitespace from a secret.
   var value = input ? input.value : '';
 
-  if (source === 'missing') source = 'app';
-
   if (msg) msg.textContent = 'Updating ' + key + '…';
-  
+
   if (input) input.disabled = true;
   var btns = el('secret-action-' + key).querySelectorAll('button');
   btns.forEach(function(b) { b.disabled = true; });
@@ -6738,6 +6745,7 @@ function initBranchInfo(groupId) {
 }
 initBranchInfo('qChamber');
 initBranchInfo('trChamber');
+initBranchInfo('trPartyGroup');
 
 function initPartyChips() {
   var g = el('trPartyGroup'); if (!g) return;
