@@ -81,6 +81,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Dashboard Interactivity & Visual Toggles (AG, S) — COMPLETED 2026-07-13.** Added interactive SVG building icons and H/S/E badge toggles for the branch selection filter, and animal emojis (🫏, 🐘, 🦅) for the party filter to replace the old native dropdown boxes. Reorganized logic to make these filter toggles mutually exclusive where appropriate and globally linked in the dashboard.
 - **iOS improvement roadmap audit (CODEX, M) — COMPLETED 2026-07-12; READ-ONLY.** Audited fetched
   `origin/main` at `5aca5f6` across SwiftUI architecture/UX/accessibility, backend client contracts,
   tests, performance, privacy, signing, CI, and App Store readiness. Generic Simulator Debug,
@@ -137,6 +138,55 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   multi-select replaces both chamber dropdowns (persisted, ≥1 chip always on). Admin
   `POST /api/admin/oge-backfill`. Knobs OGE_* (Infisical-tunable, in config-sources registry).
   NOTE for AG: brushes `client/utils.ts`/`client/routes.test.ts` again (chamber parsing).
+- **Production outage diagnosis + PR #300/#308 landing — DEPLOYED 2026-07-12 (CLAUDE, M).**
+  Receipt: `deploy.yml` run 29177444399 succeeded on `b8ce1b4`; live verification passed (all
+  served script blocks parse; health ok/db/schema true; scoreboard + Alerts tab live with real
+  probe data; scrape guard 403s bare curl on data APIs). Original entry follows.
+- **Production outage diagnosis + PR #300 landing + deploy-gate fix (CLAUDE, M) — 2026-07-12.**
+  Owner reported the live site loading no data. Diagnosis: the deployed Worker served a dashboard
+  whose main inline script FAILED TO PARSE ("Unexpected end of input") — the build came from an
+  UNPUSHED working tree containing an in-progress "Extraction Benchmark" dashboard feature
+  (`runBenchmark`, model lineups; exists in NO git branch — AG-style bake-off work) with collapsed
+  template-literal escapes (`\\s`→`\s` etc. in `app/src/ui/dashboardHtml.ts`) and a splice that
+  clobbered `loadMarketCoverage`'s closing braces. APIs/data were healthy throughout; only the UI
+  died. That tree could never pass `npm test` (the suite pins script parseability) — it was shipped
+  without the test gate. Fix per owner: PR #300 merged to `main` (`2ed8517`) and `deploy.yml`
+  dispatched. Deploy attempts 1-2 failed on the SELF-HOSTED runner only: `reviewResolutionD1.test.ts`
+  dies with miniflare/workerd `write EPIPE` (deterministic on that container; passes on hosted CI +
+  dev containers). Follow-up commit makes that suite probe workerd and skip loudly where it cannot
+  start, plus CLAUDE.md defaults (agent-sync coordination + effort-log updates by default, per
+  owner). NOTE for AG: the redeploy OVERWRITES the unpushed benchmark experiment in production —
+  commit it to a branch if wanted (and mind the doubled-backslash rule in dashboardHtml.ts).
+  Also flagged: deploy runner cannot spawn workerd — worth a look at the Hetzner container.
+- **Infisical single-source-of-truth config consolidation (CLAUDE, M) — COMPLETED 2026-07-11 on
+  `claude/antigravity-latency-security-x6lkvb` (second commit on PR #300, not deployed).** Audit
+  found ~90% of keys/knobs already resolver-backed; converted the rest (FMP/EDGAR pacers, latency
+  probe knobs, seed URLs, house live-search flag, admin-open flags, arbitration enable + vision/
+  arbitration model choices now resolved per-extraction). New admin audit endpoint
+  `GET /api/admin/config-sources` (per-key live source, names only) + `app/docs/config-registry.md`;
+  wrangler [vars] re-documented as fallback defaults; `.dev.vars.example` now recommends
+  Infisical-bootstrap-only local setup. Env fallbacks kept deliberately (outage resilience;
+  `INFISICAL_ALLOW_ENV_FALLBACK=false` for hard-require). Sentry init trio + INFISICAL_* bootstrap
+  are the documented env-only exceptions. Gates: typecheck; 109 files / 959 tests. Rollout note:
+  `docs/rollouts/2026-07-11-infisical-single-source.md`.
+- **Public latency showcase + public delivery education + anti-scrape hardening (CLAUDE, L) —
+  COMPLETED 2026-07-11 on `claude/antigravity-latency-security-x6lkvb` (not deployed).** Owner
+  request from the Antigravity disclosure-latency findings: (1) new public
+  `GET /api/analytics/latency-summary` (aggregate `publicSummary` only, KV-cached 5 min) plus a
+  "Speed vs. Data Providers" race-lane scoreboard on the Trends landing view, designed via a
+  three-expert UI panel with honesty guard rails (full lane ≥5 matches, boast copy ≥10 matches AND
+  positive median, neutral 0-match empty states, losses/sample sizes always shown); (2) the
+  admin-only Developer Delivery tab is now a public "Alerts" tab teaching the two paid delivery
+  methods (signed webhooks, SSE) to signed-out visitors, with management still admin-only and the
+  pricing modal reworked around delivery-first features + a guard-railed live proof line;
+  (3) `src/security/botDefense.ts` anti-scrape guard on `/api/*` (scraper/AI-crawler UA blocklist,
+  300 req/5 min per IP, shared 20k rows/day per-IP budget on `/api/transactions` +
+  `/api/client/v1/feed`, 10k offset cap, `X-Robots-Tag: noindex`; token-gated surfaces exempt;
+  fails open; `SCRAPE_GUARD_ENABLED` kill switch, Infisical-overridable). Site remains fully public
+  for humans. Gates: typecheck; 108 files / 957 tests. Rollout note:
+  `docs/rollouts/2026-07-11-latency-showcase-and-bot-hardening.md`. NOTE for AG: touches ~14 lines
+  in `app/src/client/routes.ts` (`/feed` row budget) — coordinate with the in-progress client
+  routes refactor before landing both.
 - **Push account status metrics to Usage Monitor (AG) — COMPLETED 2026-07-11.** Updated `jobs.ts` to emit a separate `metricType: 'limit'` telemetry event to the Usage Monitor for the FMP daily call cap, alongside the existing usage tracking.
 - **Whole-app evaluation and improvement audit (CODEX, read-only) — COMPLETED 2026-07-11
   (assessment only; no merge applicable).** Audited `origin/main` at `8b34bd5`, live desktop/mobile

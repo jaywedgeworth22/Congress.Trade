@@ -38,6 +38,8 @@
  */
 
 import { readFileSync, writeFileSync, existsSync, appendFileSync } from 'node:fs';
+import dns from 'node:dns';
+dns.setDefaultResultOrder('ipv4first');
 
 // --- config -----------------------------------------------------------------
 const ARGV = new Set(process.argv.slice(2));
