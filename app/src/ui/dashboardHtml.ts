@@ -1386,10 +1386,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <div class="branch-pop-note">Tap a letter to include or exclude that branch.</div>
         </div>
       </div>
-      <div class="party-chips" id="trPartyGroup">
+      <div class="party-chips" id="trPartyGroup" style="position:relative;">
         <button type="button" class="party-chip" data-party="D" title="Democrat">🫏</button>
         <button type="button" class="party-chip" data-party="R" title="Republican">🐘</button>
         <button type="button" class="party-chip" data-party="O" title="Other">🦅</button>
+        <button type="button" class="branch-info" aria-expanded="false" aria-controls="trPartyInfo" aria-label="About the party filters">&#9432;</button>
+        <div class="branch-pop" id="trPartyInfo" role="note" hidden style="min-width:200px;">
+          <div class="branch-pop-row"><b>🫏</b><span>Democrat</span></div>
+          <div class="branch-pop-row"><b>🐘</b><span>Republican</span></div>
+          <div class="branch-pop-row"><b>🦅</b><span>Other (Independent, etc.)</span></div>
+          <div class="branch-pop-note">Tap an emoji to include or exclude that party.</div>
+        </div>
       </div>
       <button class="btn ghost sm" onclick="loadTrends()">↻ Refresh</button>
     </div>
@@ -1763,16 +1770,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <div class="row-flex" style="margin-bottom:10px">
         <button class="btn ghost sm" onclick="refreshInfisicalSecrets()">Refresh Runtime Secrets</button>
         <span id="secretRefreshMsg" class="note"></span>
-      </div>
-      <div class="row-flex" style="margin-bottom:10px; align-items:center;">
-        <select id="updateSecretSource" class="input sm" style="max-width:100px;">
-          <option value="app">app</option>
-          <option value="shared">shared</option>
-        </select>
-        <input type="text" id="updateSecretKey" class="input sm" placeholder="Secret Key" style="max-width:180px;" />
-        <input type="password" id="updateSecretValue" class="input sm" placeholder="Secret Value" style="max-width:180px;" />
-        <button class="btn ghost sm" onclick="updateInfisicalSecret()">Update Secret</button>
-        <span id="secretUpdateMsg" class="note"></span>
       </div>
       <div id="diagConnections" class="diag-grid" aria-live="polite"></div>
       <h3 style="margin-top:14px">Settings / Runtime Secrets</h3>
@@ -4467,7 +4464,7 @@ function loadDiagnostics() {
                   '<td class="muted">' + esc(item.category) + '</td>' +
                   '<td><code>' + esc(item.key) + '</code></td>' +
                   '<td class="muted">' + esc(item.source) + '</td>' +
-                  '<td style="text-align:right"><button class="btn ghost sm" data-source="' + esc(item.source) + '" data-key="' + esc(item.key) + '" onclick="editInfisicalSecret(this)">Edit</button></td>' +
+                  '<td style="text-align:right" id="secret-action-' + esc(item.key) + '"><button class="btn ghost sm" data-source="' + esc(item.source) + '" data-key="' + esc(item.key) + '" onclick="editInfisicalSecret(this)">Edit</button></td>' +
                 '</tr>';
               }).join('');
             }
@@ -4555,27 +4552,39 @@ function refreshInfisicalSecrets() {
 function editInfisicalSecret(btn) {
   var source = btn.getAttribute('data-source');
   var key = btn.getAttribute('data-key');
-  if (el('updateSecretSource')) el('updateSecretSource').value = source === 'shared' ? 'shared' : 'app';
-  if (el('updateSecretKey')) el('updateSecretKey').value = key || '';
-  if (el('updateSecretSource')) window.scrollTo({ top: el('updateSecretSource').offsetTop - 100, behavior: 'smooth' });
-  if (el('updateSecretValue')) el('updateSecretValue').focus();
+  var td = el('secret-action-' + key);
+  if (!td) return;
+  // Normalize display source (infisical/env/missing) to writable scope (app/shared).
+  // When we cannot determine the project scope, default to 'app'.
+  var scope = (source === 'app' || source === 'shared') ? source : 'app';
+  td.innerHTML = '<div class="row-flex" style="justify-content:flex-end; align-items:center; gap:8px;">' +
+    '<select id="secret-src-' + key + '" class="input sm" style="max-width:80px; margin:0;">' +
+    '<option value="app"' + (scope === 'app' ? ' selected' : '') + '>app</option>' +
+    '<option value="shared"' + (scope === 'shared' ? ' selected' : '') + '>shared</option>' +
+    '</select>' +
+    '<input type="password" id="secret-val-' + key + '" class="input sm" placeholder="New Value" style="max-width:140px; margin:0;" />' +
+    '<button class="btn sm" onclick="updateInfisicalSecret(&quot;' + key + '&quot;)">Save</button>' +
+    '<button class="btn ghost sm" onclick="loadDiagnostics()">Cancel</button>' +
+  '</div>';
+  var input = el('secret-val-' + key);
+  if (input) input.focus();
 }
 
-function updateInfisicalSecret() {
-  var msg = el('secretUpdateMsg');
-  var source = el('updateSecretSource').value;
-  var key = el('updateSecretKey').value.trim();
+function updateInfisicalSecret(key) {
+  var msg = el('secretRefreshMsg'); // Re-use the refresh msg span for status updates
+  var srcEl = el('secret-src-' + key);
+  var source = srcEl ? srcEl.value : 'app';
+  var input = el('secret-val-' + key);
   // Do NOT trim the value: empty string is a documented "off" state for some
-  // config flags (the API only rejects value === undefined), and trimming would
-  // silently strip significant leading/trailing whitespace from a secret.
-  var value = el('updateSecretValue').value;
+  // config flags, and trimming would strip significant whitespace from a secret.
+  var value = input ? input.value : '';
 
-  if (!key) {
-    if (msg) msg.textContent = 'Key is required.';
-    return;
-  }
+  if (msg) msg.textContent = 'Updating ' + key + '…';
 
-  if (msg) msg.textContent = 'Updating…';
+  if (input) input.disabled = true;
+  var btns = el('secret-action-' + key).querySelectorAll('button');
+  btns.forEach(function(b) { b.disabled = true; });
+
   return fetch('/api/admin/diagnostics/secrets/update', {
     method: 'POST',
     headers: adminHeaders({ 'content-type': 'application/json' }),
@@ -4583,14 +4592,16 @@ function updateInfisicalSecret() {
   })
     .then(okOrThrow)
     .then(function () {
-      if (msg) msg.textContent = 'Secret updated successfully.';
-      el('updateSecretKey').value = '';
-      el('updateSecretValue').value = '';
-      setTimeout(function () { if (msg) msg.textContent = ''; }, 3000);
+      if (msg) {
+        msg.textContent = 'Updated ' + key;
+        setTimeout(function () { if (msg.textContent.indexOf('Updated') === 0) msg.textContent = ''; }, 3000);
+      }
       return loadDiagnostics();
     })
     .catch(function (e) {
       if (msg) msg.textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Update failed: ' + e.message);
+      if (input) input.disabled = false;
+      btns.forEach(function(b) { b.disabled = false; });
     });
 }
 
@@ -6729,6 +6740,7 @@ function initBranchInfo(groupId) {
 }
 initBranchInfo('qChamber');
 initBranchInfo('trChamber');
+initBranchInfo('trPartyGroup');
 
 function initPartyChips() {
   var g = el('trPartyGroup'); if (!g) return;

@@ -81,44 +81,6 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
-- **Scoped ADMIN_MAINTENANCE_TOKEN (CLAUDE, S) — 2026-07-13, owner-approved ("ok make one").**
-  Second instance of the INGEST_TOKEN pattern: a bearer token that authorizes ONLY the idempotent
-  maintenance endpoints (`ingest-requeue-failed`, `ingest-retry-errored`; allowlist =
-  `MAINTENANCE_PATH_SUFFIXES` in admin/routes.ts) — never migrations, review resolution, or config
-  writes. Purpose: agent/automation sessions can drain backlogs directly without holding
-  ADMIN_TOKEN; blast radius if leaked = re-running an idempotent requeue. Resolver-backed
-  (Infisical-rotatable), constant-time compare, in the config-sources auth-billing registry +
-  config-registry.md + .dev.vars.example. Tests pin: unlocks exactly the two endpoints, 401
-  everywhere else, wrong token 401. Gates: typecheck + 112 files / 986 tests. Owner setup after
-  deploy: mint a value, set `ADMIN_MAINTENANCE_TOKEN` in Infisical (app folder), add the same
-  value to the Claude cloud env.
-- **Backlog drain: /ingest-retry-errored + Admin Maintenance workflow (CLAUDE, S) — 2026-07-13,
-  owner-directed ("drain the whole backlog for all 3 types of filings").** Backlog audit in prod
-  D1: house 695 errored (500 fetch-stage from the R2 known-length outage, dead-lettered in
-  ingestion_outbox; 192 extraction-stage from the 2026-06-21 vision-LLM failure day + 3 early-July
-  stragglers, all WITH raw bytes); senate 0 errored (3 in-flight); executive 0 errored (17 in
-  review by design — 4 oversized await page-chunked extraction). New
-  `POST /api/admin/ingest-retry-errored` re-enqueues `filing.fetched` for errored-with-raw docs
-  only (no re-fetch, no model spend on healthy filings — unlike /reprocess which rescans
-  everything recent), chamber/limit/dryRun options, bails after 5 queue failures. New
-  `.github/workflows/admin-maintenance.yml` (workflow_dispatch, confirm-gated, hosted runner)
-  runs drain tasks with the repo's ADMIN_TOKEN secret — same trust boundary as deploy.yml/ship.sh;
-  cloud agent sessions hold no admin credentials by design (direct D1 writes are
-  permission-blocked there, correctly). Gates: typecheck + 112 files / 984 tests.
-- **Branch filter → segmented H·S·P strip + grouped explainer; slab wordmark (CLAUDE, S) —
-  2026-07-13, owner-directed.** Jay picked the "ultra-compact segmented strip" from the toggle
-  design exploration and specified the copy: the two icon-groups from AG's #355 badge toggles
-  become ONE segmented strip whose executive letter is **P** (President, analogous to H/S).
-  Per-letter `title` hover text ("House trades — House Clerk PTR filings" / "Senate trades —
-  Senate eFD PTR filings" / "Executive Branch trades — OGE Form 278-T") plus ONE grouped ⓘ
-  popover beside each strip (feed + trends) that explains all three — hover-opens on pointer
-  devices, tap-toggles everywhere (mobile can't hover), Esc/outside-click closes.
-  `initChamberChips`/`data-ch`/persistence contract untouched. `.brand` wordmark now renders in
-  the owner-chosen typewriter-slab stack (American Typewriter/Rockwell/Courier New; self-hosted
-  Zilla Slab subset is the follow-up — the font download was permission-gated in the cloud
-  session). Verified with Playwright against wrangler dev: hover-popover, tap-popover, P-toggle,
-  desktop + mobile screenshots. Gates: typecheck + 111 files / 981 tests. NOTE for AG: replaces
-  the branch-filters markup/CSS from #355; party chips and all JS wiring left as-is.
 - **Dashboard Interactivity & Visual Toggles (AG, S) — COMPLETED 2026-07-13.** Added interactive SVG building icons and H/S/E badge toggles for the branch selection filter, and animal emojis (🫏, 🐘, 🦅) for the party filter to replace the old native dropdown boxes. Reorganized logic to make these filter toggles mutually exclusive where appropriate and globally linked in the dashboard.
 - **iOS improvement roadmap audit (CODEX, M) — COMPLETED 2026-07-12; READ-ONLY.** Audited fetched
   `origin/main` at `5aca5f6` across SwiftUI architecture/UX/accessibility, backend client contracts,
@@ -643,6 +605,8 @@ Jul 8 18:10 CT)._
 - **Review Queue Quick Run (AG, S) — COMPLETED 2026-07-12.** — PR 345 (merged with Interactivity). Added a "Run Model" dropdown to each row in the review queue to easily retry specific models without terminal scripts.
 - **Admin Infisical Secrets Update (AG, S) — COMPLETED 2026-07-12.** — Added capability to update Infisical secrets directly from the Admin page via `POST /api/v3/secrets/raw` (supporting both updates and creation) and integrated it into the UI under the Diagnostics tab.
 - **Historic Backfill for Executive Branches (AG, S) — COMPLETED 2026-07-12.** — PR 348. Added the Executive Branch backfill button to the admin dashboard, pointing to the existing POST /api/admin/oge-backfill endpoint to allow for historical ingestion of President and VP transaction reports.
-- **Trends UI Refactoring & Dropdown Sync (AG, S) — COMPLETED 2026-07-13.** Removed the global static "Past 3 Months" texts and "Source" / "Time window" dropdowns at the top of the Trends page. Placed individual time window select dropdowns inline next to each major heading in the Trends view. Synced them across the entire page when any single dropdown changes. Also refactored the KPI cards (Trades, Politicians, Assets) to use a flex column layout, keeping the labels pinned at the top and centering slightly larger numbers in the available space. Deployed to production.
+- **Split Prompts by Chamber & Fix Extraction compilation (AG, S) — COMPLETED 2026-07-12.** — Split SYSTEM_PROMPT into HOUSE, SENATE, and EXECUTIVE prompts in visionLlm.ts to prevent extraction hallucinations across form types. Updated batchExtract.ts and bakeoff.ts to dynamically select prompts. Fixed LlamaParse extraction errors for Executive branch forms.
+- **2026-07-12** - `[Congress.Trade]`: Admin Dashboard UI Fixes (AG) - Removed vague 'Source' column, updated default visible columns to include Sector and Market Cap, fixed default sorting to txdate, and disabled CSS proportionate column width squishing to enable horizontal scrolling.
 - **Benchmark Autonomy & Accuracy Breakdown (AG, M) — COMPLETED 2026-07-13.** Added ground-truth accuracy tracking, perfect-match rate check, and F1-score details to model benchmarks. Built an interactive Consensus Cascade simulation panel to test any Model A / Model B / Model C configurations and view live simulated autonomy rates, accuracies, human review rates, and relative cost per document. Deployed to production.
 
+- **2026-07-13** - `[Congress.Trade]`: Merged outstanding PRs (368, 365, 364, 363) and deployed to production (AG)
