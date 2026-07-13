@@ -123,14 +123,26 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('Live SSE stream of every new filing');
   });
 
-  it('filters by branch via House/Senate/Executive chips, congressional by default', () => {
-    // Chip groups replace the old two-option chamber selects in BOTH views
+  it('filters by branch via the segmented H·S·P strip, congressional by default', () => {
+    // The strip replaces the old two-option chamber selects in BOTH views
     // (the admin seed-backfill selector stays congressional by design).
     expect(DASHBOARD_HTML).not.toContain('>Both Chambers</option><option value="house">House</option>');
     expect(DASHBOARD_HTML).toContain('class="branch-filters" id="qChamber"');
     expect(DASHBOARD_HTML).toContain('class="branch-filters" id="trChamber"');
     expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*aria-pressed="false"/);
     expect(DASHBOARD_HTML).toMatch(/data-ch="house"[^>]*aria-pressed="true"/);
+    // The executive toggle reads P (President), analogous to H and S — and each
+    // letter carries the owner-specified hover text.
+    expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*title="Executive Branch trades — OGE Form 278-T">P</);
+    expect(DASHBOARD_HTML).toMatch(/data-ch="house"[^>]*title="House trades — House Clerk PTR filings">H</);
+    expect(DASHBOARD_HTML).toMatch(/data-ch="senate"[^>]*title="Senate trades — Senate eFD PTR filings">S</);
+    // One grouped tap-friendly explainer per strip (mobile can't hover),
+    // wired for hover-open on pointer devices and click-toggle everywhere.
+    expect(DASHBOARD_HTML).toContain('class="branch-info" aria-expanded="false" aria-controls="qChamberInfo"');
+    expect(DASHBOARD_HTML).toContain('class="branch-info" aria-expanded="false" aria-controls="trChamberInfo"');
+    expect(DASHBOARD_HTML).toContain("initBranchInfo('qChamber')");
+    expect(DASHBOARD_HTML).toContain("initBranchInfo('trChamber')");
+    expect(DASHBOARD_HTML).toContain("window.matchMedia('(hover: hover)').matches");
     // Default (House+Senate) sends NO chamber param; selections send a CSV.
     expect(DASHBOARD_HTML).toContain("var CHAMBER_DEFAULT = ['house', 'senate']");
     expect(DASHBOARD_HTML).toContain('function chamberParam(');
