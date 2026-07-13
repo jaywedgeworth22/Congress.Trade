@@ -92,6 +92,51 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   ingestion, queue, or production state changed.
 - **Web UI unification with iOS aesthetics (AG, M) — COMPLETED 2026-07-12.** Updated the Next.js PWA and the Admin Dashboard with frosted glass panels (`backdrop-filter: blur(20px)`), vivid gradient asset markers, and bold status pills to mirror the newly designed iOS SwiftUI prototype. Verified typechecks and PWA builds.
 - **Interactive dashboard metrics and table sort controls (AG, S) — COMPLETED 2026-07-11 via PR #303.** Added sparkline charts to the dashboard's snapshot metrics (Net Flow, Buy Pressure) and interactive `<thead>` sorting controls with Asset Type filters to the "What Congress Is Trading" and "Rising Activity" panels in `dashboardHtml.ts`.
+- **PR review-comment follow-ups across #312/#315/#337/#338/#339 (CLAUDE, M) — 2026-07-12.**
+  Owner-directed. Fixed the still-valid unresolved chatgpt-codex-connector P2 threads on merged
+  PRs: benchmark ground-truth-docs SQL (filings has no `source` column — now joins live manual
+  transactions rows); OGE `last_poll:oge` checkpoint moved after persistence (matches
+  House/Senate ordering); executive filings excluded from disclosure-latency candidates (were
+  permanently-pending skew); `priceRangeQuery` no-window cap now returns the LATEST 1000 rows
+  re-sorted ascending (was oldest-first truncation); PATCH /subscriptions premium gate anchored
+  to the subscription owner via `user:`-prefixed clientId (was any-session cookie + dead
+  `getUserById('user:<id>')` fallback that skipped the gate on secret-only requests); 13
+  single-backslash regexes in the DASHBOARD_HTML template double-escaped (emitted JS had
+  `/s+/g` etc. — cleanAsset was deleting letter runs, `looksLikeRawTransactionLine` never
+  matched); `#tableTrTickers` header realigned from 8 to 6 columns matching `loadTrTickers()`
+  cells with the Est. Volume header hidden by the existing phone rule. Also restored the two
+  EFFORT-LOG records below deleted by PR #319 (per its unresolved thread). The stale `apiCall`
+  thread on #312 was verified already-fixed by #338. Threads replied/resolved with fix refs.
+- **Ingestion fetch outage: R2 known-length regression fix + dead-letter recovery (CLAUDE, M) —
+  2026-07-12.** Every filing fetch in production failed from 2026-07-11T19:14Z onward with
+  `fetcher: Provided readable stream must have a known length` — PR #284's `limitedFilingBody`
+  size-guard wraps the response in a NEW JS ReadableStream, which R2 `put()` rejects (no known
+  length; upstream Content-Length doesn't carry over, and OGE's Domino server sends chunked with
+  no Content-Length at all). Casualties: all 500 filings of a just-started H-2015 house backfill
+  (ingestion_outbox rows dead-lettered to `failed` after the 5-cycle cap) + all 17 executive OGE
+  278-Ts discovered by the first post-#315 watcher poll (still cycling, self-recover on fix).
+  The fetcher unit tests mocked `RAW_FILES.put` as stream-draining, so CI could not catch it.
+  Fix: `bufferFilingBody()` buffers through the existing byte-count guard (25MB cap intact) and
+  hands R2 a known-length `Uint8Array`; regression test pins a no-Content-Length chunked response
+  (put receives buffered bytes, never a bare stream). Recovery: new
+  `POST /api/admin/ingest-requeue-failed` (`requeueFailedIngestionOutbox`: failed→pending with
+  fresh dead-letter budget, optional docIdPrefix, dryRun) + the per-minute outbox flush drains the
+  backlog. Gates: typecheck + 111 files / 977 tests green. Playbook: merge → `deploy.yml` →
+  requeue failed rows → verify fetches resume (receipts in #agent-sync closeout).
+- **Executive-branch (Trump) trade tracking — OGE Form 278-T ingestion (CLAUDE, L) — BUILT
+  2026-07-12 (claim posted to #agent-sync before work).** Owner-approved. New
+  `src/ingestion/ogeSource.ts` polls the OGE President/VP index (~6h, fail-soft; parser verified
+  against the LIVE index: all 17 Trump 278-Ts, Aug 2025–Jun 2026) and feeds the normal pipeline as
+  `chamber='executive'` (scanned PDFs → vision extractor → review queue; filings >
+  OGE_MAX_VISION_BYTES route straight to review — page-chunked extraction is the follow-up for the
+  113-page equity mega-filings). Chamber union widened APP-LOCALLY
+  (`SharedChamber | 'executive'`, upstreaming to congress-trading-shared v1.7 is the socialized
+  follow-up); SEPARATE-BY-DEFAULT everywhere: feed/analytics default to house+senate (executive
+  requires explicit `chamber=` CSV opt-in), subscriptions without an explicit chambers filter never
+  receive executive rows, and App-B PIT exports exclude them. UI: House/Senate/Executive chip
+  multi-select replaces both chamber dropdowns (persisted, ≥1 chip always on). Admin
+  `POST /api/admin/oge-backfill`. Knobs OGE_* (Infisical-tunable, in config-sources registry).
+  NOTE for AG: brushes `client/utils.ts`/`client/routes.test.ts` again (chamber parsing).
 - **Push account status metrics to Usage Monitor (AG) — COMPLETED 2026-07-11.** Updated `jobs.ts` to emit a separate `metricType: 'limit'` telemetry event to the Usage Monitor for the FMP daily call cap, alongside the existing usage tracking.
 - **Whole-app evaluation and improvement audit (CODEX, read-only) — COMPLETED 2026-07-11
   (assessment only; no merge applicable).** Audited `origin/main` at `8b34bd5`, live desktop/mobile

@@ -379,6 +379,7 @@ export async function pollExecutive(
   const filings = await pollOgeExecutive(env, now, fetch, opts);
   if (filings === null) return null;
   const newCount = await persistAndEnqueue(env, filings, nowIso);
+  await setLastPollAt(env, 'oge', now);
   await logPoll(env, 'oge', nowIso, newCount, nowIso);
   return newCount;
 }

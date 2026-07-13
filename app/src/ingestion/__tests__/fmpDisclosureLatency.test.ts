@@ -5,8 +5,11 @@ import {
   parseFmpDisclosureRows,
   parseQuiverDisclosureRows,
   parseUnusualWhalesDisclosureRows,
+  recordDisclosureLatencyCandidate,
   runDisclosureLatencyProbe,
 } from '../fmpDisclosureLatency';
+import type { DiscoveredFiling } from '../watcher';
+import type { Env } from '../../shared/types';
 import { getDailyUsed } from '../../enrichment/service';
 import { __resetSharedFmpPacerForTests } from '../../shared/pace';
 
@@ -204,6 +207,42 @@ function fakeDb() {
 }
 
 const dayCounterKey = () => 'fmp:calls:' + new Date().toISOString().slice(0, 10);
+
+describe('recordDisclosureLatencyCandidate chamber guard', () => {
+  function trackingEnv() {
+    const prepared: string[] = [];
+    const stmt = {
+      bind() { return stmt; },
+      async run() { return { success: true, meta: { changes: 1 } }; },
+      async all<T>() { return { results: [] as T[] }; },
+      async first<T>() { return null as T | null; },
+    };
+    const env = {
+      DB: { prepare(sql: string) { prepared.push(sql); return stmt; } },
+    } as unknown as Env;
+    return { env, prepared };
+  }
+
+  const filing = (chamber: DiscoveredFiling['chamber']): DiscoveredFiling => ({
+    docId: `${chamber}-1`,
+    chamber,
+    sourceUrl: 'https://example.test/x.pdf',
+    filedDate: '2026-06-01',
+    filerName: 'Someone',
+  });
+
+  it('writes candidate rows for house filings', async () => {
+    const { env, prepared } = trackingEnv();
+    await recordDisclosureLatencyCandidate(env, filing('house'), '2026-06-02T00:00:00Z');
+    expect(prepared.some((s) => /INSERT INTO disclosure_latency_candidates/i.test(s))).toBe(true);
+  });
+
+  it('skips executive filings entirely (would otherwise sit permanently pending)', async () => {
+    const { env, prepared } = trackingEnv();
+    await recordDisclosureLatencyCandidate(env, filing('executive'), '2026-06-02T00:00:00Z');
+    expect(prepared.some((s) => /disclosure_latency_candidates/i.test(s))).toBe(false);
+  });
+});
 
 describe('runDisclosureLatencyProbe FMP budget accounting', () => {
   beforeEach(() => __resetSharedFmpPacerForTests());
