@@ -31,7 +31,10 @@ on:
 jobs:
   maintain:
     if: inputs.confirm == 'run-production-maintenance'
-    runs-on: ubuntu-latest
+    # Self-hosted like deploy.yml: Cloudflare serves GitHub's hosted (Azure)
+    # runners a managed bot challenge before requests reach the Worker, so
+    # admin curls must come from the same runner ship.sh already uses.
+    runs-on: [self-hosted, congress-deploy]
     env:
       BASE_URL: https://congress.trade
       ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
