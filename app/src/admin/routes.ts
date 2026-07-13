@@ -64,7 +64,8 @@ import {
   CONFIDENCE_THRESHOLD,
   hasHardFailureFlags,
 } from '../extraction/normalizer';
-import { enqueueAgreementCheck, processAgreementDoc, type AgreementModels } from '../extraction/agreement';
+import { enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, type AgreementModels } from '../extraction/agreement';
+import { mapFiling } from '../delivery/rows';
 import { verifyAccessJwt, certsUrl } from './access';
 import { adminRuntimeConfig } from './identity';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
@@ -3476,15 +3477,44 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     );
     if (!row || !row.raw_object_key) return c.json({ error: 'not found or no raw obj' }, 404);
 
-    const agModels: AgreementModels = {
-      a: body.models.a as BakeoffCandidate,
-      b: body.models.b as BakeoffCandidate,
-      c: body.models.c ? (body.models.c as BakeoffCandidate) : null,
-    };
-    
-    // Pass dryRun = true
-    const res = await processAgreementDoc(c.env, agModels, docId, row.raw_object_key, true);
-    return c.json(res);
+    if (!body.models.b) {
+      // Single model benchmark mode
+      const candidate = body.models.a as BakeoffCandidate;
+      const loaded = await loadDocBytes(c.env, docId, row.raw_object_key);
+      if ('skip' in loaded) return c.json(loaded.skip);
+      
+      const read = await runCandidateOnDoc(c.env, candidate, docId, loaded.bytes);
+      if (!read.ok) return c.json({ outcome: 'skipped', reason: 'read_failed' });
+      
+      const frow = await loadFilingRow(c.env, docId);
+      if (!frow) return c.json({ outcome: 'skipped', reason: 'no_filing' });
+      
+      const flagged = await recomputeTransactions(c.env, mapFiling(frow), read.rows);
+      // find hard flags
+      const hardFlags = Array.from(new Set(flagged.flatMap((f) => f.flags).filter((fl) => [
+        'ticker_not_found', 'future_transaction_date', 'amount_min_max_inverted', 'missing_amount', 'no_amount_bucket', 'invalid_transaction_date'
+      ].includes(fl)))); // from HARD_FAILURE_FLAGS
+
+      if (hardFlags.length > 0) return c.json({ docId, outcome: 'agree_but_hardfail', flags: hardFlags });
+      if (flagged.length > 200) return c.json({ docId, outcome: 'agree_but_hardfail', flags: ['row_limit_exceeded'] }); // MAX_PUBLISH_TRANSACTIONS_PER_FILING
+      
+      return c.json({
+        docId,
+        outcome: 'would_publish',
+        rowCount: flagged.length,
+        rows: flagged.map((f) => ({ ...f.tx, confidence: Math.max(f.tx.confidence, 0.95) })),
+      });
+    } else {
+      const agModels: AgreementModels = {
+        a: body.models.a as BakeoffCandidate,
+        b: body.models.b as BakeoffCandidate,
+        c: body.models.c ? (body.models.c as BakeoffCandidate) : null,
+      };
+      
+      // Pass dryRun = true
+      const res = await processAgreementDoc(c.env, agModels, docId, row.raw_object_key, true);
+      return c.json(res);
+    }
   });
 
   // --- POST /migrate ------------------------------------------------------
