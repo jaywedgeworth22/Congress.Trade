@@ -10,6 +10,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Deployed
+- **2026-07-13** - `[Congress.Trade]`: Merged outstanding PRs (368, 365, 364, 363) and deployed to production (AG)
 - **Manual Enrichment of Missing Tickers (AG, S) — DEPLOYED 2026-07-12.** Extracted 199 tickers missing sector and enrichment data from production D1 `securities_ref` (legacy stocks, options, funds). Wrote a local Node/Python classification script mapping these to appropriate asset classes and generating a SQL update script. Remotely executed the update via `wrangler d1 execute DB --remote`, successfully categorizing all 199 edge cases. Row count for missing sectors validated at exactly 0.
 - **Review Queue current drain + durable automation integration (CODEX, L) — DEPLOYED
   2026-07-11 via PR #292 (`f197e66`).** Exact-tree preview Worker
@@ -92,6 +93,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   device profiling, stable-Xcode CI, signing/privacy, and TestFlight. No app code, deploy, migration,
   ingestion, queue, or production state changed.
 - **Web UI unification with iOS aesthetics (AG, M) — COMPLETED 2026-07-12.** Updated the Next.js PWA and the Admin Dashboard with frosted glass panels (`backdrop-filter: blur(20px)`), vivid gradient asset markers, and bold status pills to mirror the newly designed iOS SwiftUI prototype. Verified typechecks and PWA builds.
+- **Split Prompts by Chamber & Fix Extraction compilation (AG, S) — COMPLETED 2026-07-12.** — Split SYSTEM_PROMPT into HOUSE, SENATE, and EXECUTIVE prompts in visionLlm.ts to prevent extraction hallucinations across form types. Updated batchExtract.ts and bakeoff.ts to dynamically select prompts. Fixed LlamaParse extraction errors for Executive branch forms.
+- **2026-07-12** - `[Congress.Trade]`: Admin Dashboard UI Fixes (AG) - Removed vague 'Source' column, updated default visible columns to include Sector and Market Cap, fixed default sorting to txdate, and disabled CSS proportionate column width squishing to enable horizontal scrolling.
 - **Interactive dashboard metrics and table sort controls (AG, S) — COMPLETED 2026-07-11 via PR #303.** Added sparkline charts to the dashboard's snapshot metrics (Net Flow, Buy Pressure) and interactive `<thead>` sorting controls with Asset Type filters to the "What Congress Is Trading" and "Rising Activity" panels in `dashboardHtml.ts`.
 - **PR review-comment follow-ups across #312/#315/#337/#338/#339 (CLAUDE, M) — 2026-07-12.**
   Owner-directed. Fixed the still-valid unresolved chatgpt-codex-connector P2 threads on merged
@@ -577,6 +580,7 @@ Jul 8 18:10 CT)._
 - **Add manual queue reprocess button to admin dashboard (AG, S) — COMPLETED 2026-07-06.** Added a UI widget to `dashboardHtml.ts` to trigger `POST /api/admin/reprocess` directly from the admin panel.
 
 ## Changelog of this log
+- 2026-07-13 — Moved completed/deployed work records (Split Prompts by Chamber, Admin Dashboard UI Fixes, Merged PRs) from Changelog to their proper ## Completed and ## Deployed sections per effort-board sync requirements.
 - 2026-07-08 — CURSOR: PR #211 merged; PR #237 opened (rollouts convention + deploy health gate workers.dev fallback, previously stranded in stash@{1}).
 - 2026-07-06 — CURSOR: rescued stash@{1} → PR #211; fixed uptime-monitor.yml crash + CF challenge bypass; adopted rollouts convention; created Wave-4 smoke script; fixed deploy health gate (workers.dev fallback); noted patch.py on AG's PR #186.
 - 2026-07-05 — CLAUDE next-wave (cycle 2): stale-row corrections (tokenless-dep switch and
@@ -605,8 +609,4 @@ Jul 8 18:10 CT)._
 - **Review Queue Quick Run (AG, S) — COMPLETED 2026-07-12.** — PR 345 (merged with Interactivity). Added a "Run Model" dropdown to each row in the review queue to easily retry specific models without terminal scripts.
 - **Admin Infisical Secrets Update (AG, S) — COMPLETED 2026-07-12.** — Added capability to update Infisical secrets directly from the Admin page via `POST /api/v3/secrets/raw` (supporting both updates and creation) and integrated it into the UI under the Diagnostics tab.
 - **Historic Backfill for Executive Branches (AG, S) — COMPLETED 2026-07-12.** — PR 348. Added the Executive Branch backfill button to the admin dashboard, pointing to the existing POST /api/admin/oge-backfill endpoint to allow for historical ingestion of President and VP transaction reports.
-- **Split Prompts by Chamber & Fix Extraction compilation (AG, S) — COMPLETED 2026-07-12.** — Split SYSTEM_PROMPT into HOUSE, SENATE, and EXECUTIVE prompts in visionLlm.ts to prevent extraction hallucinations across form types. Updated batchExtract.ts and bakeoff.ts to dynamically select prompts. Fixed LlamaParse extraction errors for Executive branch forms.
-- **2026-07-12** - `[Congress.Trade]`: Admin Dashboard UI Fixes (AG) - Removed vague 'Source' column, updated default visible columns to include Sector and Market Cap, fixed default sorting to txdate, and disabled CSS proportionate column width squishing to enable horizontal scrolling.
 - **Benchmark Autonomy & Accuracy Breakdown (AG, M) — COMPLETED 2026-07-13.** Added ground-truth accuracy tracking, perfect-match rate check, and F1-score details to model benchmarks. Built an interactive Consensus Cascade simulation panel to test any Model A / Model B / Model C configurations and view live simulated autonomy rates, accuracies, human review rates, and relative cost per document. Deployed to production.
-
-- **2026-07-13** - `[Congress.Trade]`: Merged outstanding PRs (368, 365, 364, 363) and deployed to production (AG)
