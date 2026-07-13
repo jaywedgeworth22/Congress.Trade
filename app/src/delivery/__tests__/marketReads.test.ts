@@ -8,10 +8,20 @@ import { describe, it, expect } from 'vitest';
 import { priceRangeQuery, mapSecurityRef } from '../rest';
 
 describe('priceRangeQuery', () => {
-  it('price_eod selects volume, requires the ticker, orders ascending', () => {
+  it('price_eod without bounds caps at the LATEST 1000 rows, re-sorted ascending', () => {
     const q = priceRangeQuery('price_eod', 'AAPL');
-    expect(q.sql).toBe('SELECT date, close, volume FROM price_eod WHERE ticker = ? ORDER BY date ASC LIMIT 1000');
+    expect(q.sql).toBe(
+      'SELECT date, close, volume FROM (SELECT date, close, volume FROM price_eod WHERE ticker = ? ORDER BY date DESC LIMIT 1000) ORDER BY date ASC',
+    );
     expect(q.params).toEqual(['AAPL']);
+  });
+
+  it('spx_eod without bounds also caps at the latest 1000', () => {
+    const q = priceRangeQuery('spx_eod', null);
+    expect(q.sql).toBe(
+      'SELECT date, close FROM (SELECT date, close FROM spx_eod ORDER BY date DESC LIMIT 1000) ORDER BY date ASC',
+    );
+    expect(q.params).toEqual([]);
   });
 
   it('applies inclusive from/to bounds (date-only) for a ticker', () => {

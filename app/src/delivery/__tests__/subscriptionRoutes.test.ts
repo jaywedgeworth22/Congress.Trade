@@ -6,7 +6,7 @@ import type { SubscriptionRow } from '../rows';
 function makeEnv(
   seed: SubscriptionRow[] = [],
   overrides: Partial<Env> = {},
-  opts: { quotaRace?: boolean } = {},
+  opts: { quotaRace?: boolean; userPlans?: Record<string, 'premium' | 'free'> } = {},
 ) {
   const rows = new Map(seed.map((row) => [row.id, { ...row }]));
 
@@ -18,10 +18,16 @@ function makeEnv(
     },
     async first<T>() {
       if (/SELECT \* FROM users WHERE id = \?/i.test(sql)) {
+        // Default (no userPlans map) keeps every id premium so existing tests
+        // are unaffected; the owner-gate tests key plans by user id.
+        const id = String(this.params[0] ?? 'user_1');
+        const isFree = opts.userPlans?.[id] === 'free';
         return ({
-          id: 'user_1', email: 'user@example.com', name: 'User', picture: null,
+          id, email: `${id}@example.com`, name: 'User', picture: null,
           google_sub: null, email_verified: 1, created_at: '2026-01-01T00:00:00.000Z',
-          last_login_at: null, subscription_status: 'active', plan: 'monthly',
+          last_login_at: null,
+          subscription_status: isFree ? 'canceled' : 'active',
+          plan: isFree ? null : 'monthly',
         } as T);
       }
       if (/COUNT\(\*\) AS total/i.test(sql)) {
@@ -77,7 +83,11 @@ function makeEnv(
     env: {
       DB: { prepare } as unknown as D1Database,
       CONFIG_KV: {
-        get: async (key: string) => key === 'sess:user-token' ? JSON.stringify({ userId: 'user_1' }) : null,
+        get: async (key: string) => {
+          if (key === 'sess:user-token') return JSON.stringify({ userId: 'user_1' });
+          if (key === 'sess:premium-token') return JSON.stringify({ userId: 'user_9' });
+          return null;
+        },
         put: async () => {}, delete: async () => {},
       },
       ...overrides,
@@ -153,6 +163,71 @@ describe('subscription routes', () => {
     }, env);
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toContain('active subscription limit');
+  });
+
+  it('gates continuing delivery on the OWNER entitlement, not the request session (secret-only, free owner → 402)', async () => {
+    const seed: SubscriptionRow = {
+      id: 'sub_free_owner', client_id: 'user:user_1', delivery: 'sse', target_url: null,
+      secret: 'whsec_free_owner_secret', filters: '{}', cursor: 0, active: 0,
+      created_at: '2026-01-01T00:00:00.000Z',
+    };
+    const { env } = makeEnv([seed], {}, { userPlans: { user_1: 'free' } });
+    const res = await buildRestRouter().request('http://localhost/subscriptions/sub_free_owner', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-subscription-secret': seed.secret ?? '' },
+      body: JSON.stringify({ active: true }),
+    }, env);
+    expect(res.status).toBe(402);
+    expect(((await res.json()) as { feature?: string }).feature).toBe('alerts');
+  });
+
+  it('ignores a premium NON-owner session when gating a free owner subscription (→ 402)', async () => {
+    const seed: SubscriptionRow = {
+      id: 'sub_free_owner2', client_id: 'user:user_1', delivery: 'sse', target_url: null,
+      secret: 'whsec_free_owner_secret2', filters: '{}', cursor: 0, active: 0,
+      created_at: '2026-01-01T00:00:00.000Z',
+    };
+    const { env } = makeEnv([seed], {}, { userPlans: { user_1: 'free', user_9: 'premium' } });
+    const res = await buildRestRouter().request('http://localhost/subscriptions/sub_free_owner2', {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        'x-subscription-secret': seed.secret ?? '',
+        cookie: 'ct_session=premium-token',
+      },
+      body: JSON.stringify({ active: true }),
+    }, env);
+    expect(res.status).toBe(402);
+  });
+
+  it('allows a premium owner to continue delivery (secret-only, premium owner)', async () => {
+    const seed: SubscriptionRow = {
+      id: 'sub_prem_owner', client_id: 'user:user_1', delivery: 'sse', target_url: null,
+      secret: 'whsec_prem_owner_secret', filters: '{}', cursor: 0, active: 0,
+      created_at: '2026-01-01T00:00:00.000Z',
+    };
+    const { env } = makeEnv([seed]); // default: owner is premium
+    const res = await buildRestRouter().request('http://localhost/subscriptions/sub_prem_owner', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-subscription-secret': seed.secret ?? '' },
+      body: JSON.stringify({ active: true }),
+    }, env);
+    expect(res.status).toBe(200);
+  });
+
+  it('does not gate admin/integration-owned subscriptions (non-user clientId)', async () => {
+    const seed: SubscriptionRow = {
+      id: 'sub_integration', client_id: 'integration:socratic', delivery: 'webhook',
+      target_url: 'https://example.com/hook', secret: 'whsec_integration_secret', filters: '{}',
+      cursor: 0, active: 0, created_at: '2026-01-01T00:00:00.000Z',
+    };
+    const { env } = makeEnv([seed]);
+    const res = await buildRestRouter().request('http://localhost/subscriptions/sub_integration', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-subscription-secret': seed.secret ?? '' },
+      body: JSON.stringify({ active: true }),
+    }, env);
+    expect(res.status).toBe(200);
   });
 
   it('rejects an oversized target on update', async () => {
