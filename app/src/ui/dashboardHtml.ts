@@ -4282,6 +4282,23 @@ function runHouseIndex(dryRun) {
     .catch(function (e) { el('hiMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
 }
 
+function runOgeBackfill() {
+  // API HOOK: POST /api/admin/oge-backfill
+  el('ogeMsg').textContent = 'Running OGE backfill…';
+  fetch('/api/admin/oge-backfill', {
+    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
+    body: '{}'
+  })
+    .then(function (r) {
+      if (r.status === 401 || r.status === 403) { var ae = new Error(ADMIN_MOVED_MSG); ae.isAuth = true; throw ae; }
+      return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
+    })
+    .then(function (j) {
+      el('ogeMsg').textContent = 'Backfill complete. New filings: ' + (j.newFilings || 0) + '.';
+    })
+    .catch(function (e) { el('ogeMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
+}
+
 function runQueueReprocess() {
   // API HOOK: POST /api/admin/reprocess
   var chamber = el('reprocChamber').value;
@@ -4414,20 +4431,28 @@ function loadDiagnostics() {
           }).join('');
         }
       }
-      var items = data.items || [];
+      // Load config-sources (separate endpoint) for the Settings / Runtime Secrets table
       if (settingsTable) {
-        if (items.length === 0) {
-          settingsTable.innerHTML = stateRow(4, 'No settings available.');
-        } else {
-          settingsTable.innerHTML = items.map(function(item) {
-            return '<tr class="row">' +
-              '<td class="muted">' + esc(item.category) + '</td>' +
-              '<td><code>' + esc(item.key) + '</code></td>' +
-              '<td class="muted">' + esc(item.source) + '</td>' +
-              '<td style="text-align:right"><button class="btn ghost sm" data-source="' + esc(item.source) + '" data-key="' + esc(item.key) + '" onclick="editInfisicalSecret(this)">Edit</button></td>' +
-            '</tr>';
-          }).join('');
-        }
+        fetch('/api/admin/config-sources', { headers: adminHeaders() })
+          .then(okOrThrow)
+          .then(function (cs) {
+            var items = cs.items || [];
+            if (items.length === 0) {
+              settingsTable.innerHTML = stateRow(4, 'No settings available.');
+            } else {
+              settingsTable.innerHTML = items.map(function(item) {
+                return '<tr class="row">' +
+                  '<td class="muted">' + esc(item.category) + '</td>' +
+                  '<td><code>' + esc(item.key) + '</code></td>' +
+                  '<td class="muted">' + esc(item.source) + '</td>' +
+                  '<td style="text-align:right"><button class="btn ghost sm" data-source="' + esc(item.source) + '" data-key="' + esc(item.key) + '" onclick="editInfisicalSecret(this)">Edit</button></td>' +
+                '</tr>';
+              }).join('');
+            }
+          })
+          .catch(function () {
+            settingsTable.innerHTML = stateRow(4, 'Failed to load settings.');
+          });
       }
       var stats = data.userStats || {};
       if (users) {
