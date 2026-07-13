@@ -3393,10 +3393,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.get('/benchmark/ground-truth-docs', async (c) => {
     const limit = Math.min(Number(c.req.query('limit')) || 50, 200);
     const chamber = c.req.query('chamber');
-    let query = `SELECT doc_id FROM filings WHERE source = 'manual' AND raw_object_key IS NOT NULL`;
+    // Manual ground truth lives on transactions.source (filings has no source
+    // column); a doc qualifies when it still has live manual rows.
+    let query = `SELECT DISTINCT f.doc_id FROM filings f JOIN transactions t ON t.doc_id = f.doc_id WHERE t.source = 'manual' AND t.deprecated_at IS NULL AND f.raw_object_key IS NOT NULL`;
     const params: (string | number)[] = [];
     if (chamber) {
-      query += ` AND chamber = ?`;
+      query += ` AND f.chamber = ?`;
       params.push(chamber);
     }
     query += ` LIMIT ?`;
