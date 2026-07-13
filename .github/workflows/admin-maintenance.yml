@@ -39,22 +39,26 @@ jobs:
       BASE_URL: https://congress.trade
       ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
     steps:
+      # The self-hosted runner's curl predates --fail-with-body, so capture the
+      # body and status code separately and fail on non-200 by hand.
       - name: Requeue dead-lettered fetches (ingestion_outbox failed -> pending)
         if: inputs.task == 'drain-backlog' || inputs.task == 'ingest-requeue-failed'
         run: |
           set -euo pipefail
           echo "== POST /api/admin/ingest-requeue-failed"
-          curl -sS --fail-with-body -X POST "$BASE_URL/api/admin/ingest-requeue-failed" \
+          code=$(curl -sS -o /tmp/requeue.json -w '%{http_code}' -X POST "$BASE_URL/api/admin/ingest-requeue-failed" \
             -H "authorization: Bearer $ADMIN_TOKEN" \
-            -H 'content-type: application/json' -d '{}'
-          echo
+            -H 'content-type: application/json' -d '{}')
+          cat /tmp/requeue.json; echo
+          [ "$code" = "200" ] || { echo "HTTP $code"; exit 1; }
 
       - name: Re-enqueue errored filings that already have raw bytes
         if: inputs.task == 'drain-backlog' || inputs.task == 'ingest-retry-errored'
         run: |
           set -euo pipefail
           echo "== POST /api/admin/ingest-retry-errored"
-          curl -sS --fail-with-body -X POST "$BASE_URL/api/admin/ingest-retry-errored" \
+          code=$(curl -sS -o /tmp/retry.json -w '%{http_code}' -X POST "$BASE_URL/api/admin/ingest-retry-errored" \
             -H "authorization: Bearer $ADMIN_TOKEN" \
-            -H 'content-type: application/json' -d '{"limit": 2000}'
-          echo
+            -H 'content-type: application/json' -d '{"limit": 2000}')
+          cat /tmp/retry.json; echo
+          [ "$code" = "200" ] || { echo "HTTP $code"; exit 1; }
