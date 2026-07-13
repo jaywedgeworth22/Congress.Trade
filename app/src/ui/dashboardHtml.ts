@@ -4587,10 +4587,13 @@ function updateInfisicalSecret() {
   var msg = el('secretUpdateMsg');
   var source = el('updateSecretSource').value;
   var key = el('updateSecretKey').value.trim();
-  var value = el('updateSecretValue').value.trim();
+  // Do NOT trim the value: empty string is a documented "off" state for some
+  // config flags (the API only rejects value === undefined), and trimming would
+  // silently strip significant leading/trailing whitespace from a secret.
+  var value = el('updateSecretValue').value;
 
-  if (!key || !value) {
-    if (msg) msg.textContent = 'Key and Value are required.';
+  if (!key) {
+    if (msg) msg.textContent = 'Key is required.';
     return;
   }
 
