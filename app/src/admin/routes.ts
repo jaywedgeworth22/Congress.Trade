@@ -2813,6 +2813,59 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
   });
 
+  // --- POST /ingest-retry-errored -------------------------------------------
+  // Re-enqueue extraction-stage casualties: filings stuck in ingest_status=
+  // 'error' that ALREADY have raw bytes in R2 re-enter the pipeline at
+  // filing.fetched (classify -> extract -> review/publish) — no re-fetch and no
+  // model spend on healthy docs (unlike /reprocess, which re-extracts every
+  // recent filing). Fetch-stage errors (no raw bytes) are the outbox's job:
+  // POST /ingest-requeue-failed. Idempotent: re-running re-enqueues whatever
+  // is still errored, and the pipeline overwrites ingest_status on progress.
+  // Body (all optional):
+  //   { chamber?: 'house'|'senate'|'executive', limit?: number, dryRun?: boolean }
+  r.post('/ingest-retry-errored', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const chamber = typeof body.chamber === 'string' ? body.chamber : undefined;
+    if (chamber !== undefined && !['house', 'senate', 'executive'].includes(chamber)) {
+      return c.json({ error: "chamber must be 'house', 'senate' or 'executive'" }, 400);
+    }
+    let limit = typeof body.limit === 'number' && body.limit > 0 ? Math.floor(body.limit) : 500;
+    if (limit > 2000) limit = 2000;
+    const params: SqlParam[] = [];
+    let where = "ingest_status = 'error' AND raw_object_key IS NOT NULL";
+    if (chamber) {
+      where += ' AND chamber = ?';
+      params.push(chamber);
+    }
+    params.push(limit);
+    const rows = await all<{ doc_id: string }>(
+      c.env.DB,
+      `SELECT doc_id FROM filings WHERE ${where} ORDER BY first_seen_at ASC LIMIT ?`,
+      params,
+    );
+    if (body.dryRun === true) {
+      return c.json({ ok: true, dryRun: true, matched: rows.length });
+    }
+    let enqueued = 0;
+    const errors: string[] = [];
+    for (const { doc_id } of rows) {
+      try {
+        await c.env.INGEST_QUEUE.send({ type: 'filing.fetched', docId: doc_id });
+        enqueued += 1;
+      } catch (err) {
+        errors.push(`${doc_id}: ${(err as Error).message}`);
+        if (errors.length >= 5) break; // queue outage — bail early; re-run is safe
+      }
+    }
+    return c.json({ ok: true, matched: rows.length, enqueued, errors });
+  });
+
   // --- POST /reprocess ----------------------------------------------------
   // Re-evaluate already-ingested filings under the CURRENT normalizer rubric,
   // without re-fetching from the source (re-extracts from the stored R2 raw).
