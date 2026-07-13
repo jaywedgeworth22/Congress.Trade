@@ -192,7 +192,7 @@ function duplicateLineupReason(models: BakeoffCandidate[]): string | null {
  * Load the raw doc bytes for a review filing, or a skip result explaining why we
  * can't read it. Shared by the tier executors.
  */
-async function loadDocBytes(
+export async function loadDocBytes(
   env: Env,
   docId: string,
   rawObjectKey: string | null,
@@ -204,7 +204,8 @@ async function loadDocBytes(
 }
 
 /** Fetch the filing row backing a doc (needed by the normalizer + publish path). */
-async function loadFilingRow(env: Env, docId: string): Promise<FilingRow | null> {
+// Exported for admin/routes.ts benchmark dry-run
+export async function loadFilingRow(env: Env, docId: string): Promise<FilingRow | null> {
   return get<FilingRow>(
     env.DB,
     `SELECT doc_id, chamber, filer_id, filing_type, filed_date, source_url, raw_object_key,

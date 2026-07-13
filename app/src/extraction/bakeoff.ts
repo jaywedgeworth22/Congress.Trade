@@ -105,9 +105,7 @@ export async function keyFor(env: Env, provider: Provider): Promise<string | nul
   if (provider === 'mistral') return (await resolveSecret(env, 'MISTRAL_API_KEY')).value ?? null;
   if (provider === 'xai') return (await resolveSecret(env, 'XAI_API_KEY')).value ?? null;
   if (provider === 'llamaparse') {
-    return (await resolveSecret(env, 'LLAMAINDEX_API_KEY')).value
-      ?? (await resolveSecret(env, 'LLAMAPARSE_API_KEY')).value
-      ?? null;
+    return (await resolveSecret(env, 'LLAMAPARSE_API_KEY')).value ?? null;
   }
   return null;
 }
@@ -433,7 +431,24 @@ export function parseLlamaParseMarkdown(markdown: string): ParsedTx[] {
  * format we need. Poll interval is 2 s; hard timeout is 90 s (well inside the
  * Worker's cpu_ms=300_000 ceiling since poll time is I/O, not CPU).
  */
-async function runLlamaParse(model: string, key: string, bytes: ArrayBuffer, chamber: string): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
+async function runLlamaParse(model: string, keyString: string, bytes: ArrayBuffer, chamber: string): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
+  const keys = keyString.split(',').map(k => k.trim()).filter(Boolean);
+  if (!keys.length) throw new Error('llamaparse: no keys provided');
+  let lastError: Error | null = null;
+
+  for (const k of keys) {
+    try {
+      return await doRunLlamaParse(model, k, bytes, chamber);
+    } catch (e: any) {
+      lastError = e;
+      // Continue to the next key on any error (like 429 rate limit, 401 auth, etc).
+      continue;
+    }
+  }
+  throw lastError || new Error('llamaparse: all keys failed');
+}
+
+async function doRunLlamaParse(model: string, key: string, bytes: ArrayBuffer, chamber: string): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'ptr.pdf');
   const promptToUse = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
