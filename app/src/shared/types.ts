@@ -429,7 +429,6 @@ export interface Env {
   /** xAI API key — Grok (Files API → grok-4.3) candidate in the extractor bake-off. */
   XAI_API_KEY?: string;
   /** LlamaIndex Cloud API key — LlamaParse OCR + structured extraction candidate. */
-  LLAMAINDEX_API_KEY?: string;
   /** Additional market/enrichment provider keys. */
   MASSIVE_API_KEY?: string;
   INTRINIO_API_KEY?: string;
@@ -552,7 +551,6 @@ export interface Env {
   /** Cloudflare Access application AUD tag for admin API JWT verification. */
   ACCESS_AUD?: string;
   INGEST_TOKEN?: string;
-  /** LlamaParse legacy key name; LLAMAINDEX_API_KEY remains the runtime key used by extraction. */
   LLAMAPARSE_API_KEY?: string;
 
   // --- Billing (Stripe) ---

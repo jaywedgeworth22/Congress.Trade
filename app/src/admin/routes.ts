@@ -1834,7 +1834,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       ],
       'model-keys': [
         'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'MISTRAL_API_KEY', 'XAI_API_KEY',
-        'LLAMAINDEX_API_KEY', 'LLAMAPARSE_API_KEY', 'ARBITRATION_API_KEY',
+        'LLAMAPARSE_API_KEY', 'ARBITRATION_API_KEY',
       ],
       'auth-billing': [
         'ADMIN_TOKEN', 'INGEST_TOKEN', 'ADMIN_EMAILS', 'ACCESS_AUD', 'ACCESS_TEAM_DOMAIN',
@@ -1903,7 +1903,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'OPENAI_API_KEY',
       'MISTRAL_API_KEY',
       'XAI_API_KEY',
-      'LLAMAINDEX_API_KEY',
       'LLAMAPARSE_API_KEY',
       'ARBITRATION_API_KEY',
       'FMP_API_KEY',
@@ -2066,10 +2065,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         id: 'provider:llamaparse',
         provider: 'llamaparse',
         label: 'LlamaParse OCR',
-        configured: !!(runtimeSecrets.LLAMAINDEX_API_KEY || runtimeSecrets.LLAMAPARSE_API_KEY),
-        note: runtimeSecrets.LLAMAINDEX_API_KEY || runtimeSecrets.LLAMAPARSE_API_KEY
+        configured: !!runtimeSecrets.LLAMAPARSE_API_KEY,
+        note: runtimeSecrets.LLAMAPARSE_API_KEY
           ? 'LlamaIndex Cloud parser candidate'
-          : 'LLAMAINDEX_API_KEY/LLAMAPARSE_API_KEY is not available to this Worker runtime',
+          : 'LLAMAPARSE_API_KEY is not available to this Worker runtime',
       },
     ];
     for (const provider of modelProviders) {
