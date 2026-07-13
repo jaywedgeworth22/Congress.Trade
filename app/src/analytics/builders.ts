@@ -44,6 +44,8 @@ const MID = BRACKET_MIDPOINT_SQL;
 const SIGNED = SIGNED_MIDPOINT_SQL;
 const BUY = "SUM(CASE WHEN t.tx_type = 'P' THEN 1 ELSE 0 END)";
 const SELL = "SUM(CASE WHEN t.tx_type = 'S' THEN 1 ELSE 0 END)";
+const BUY_VOL = `SUM(CASE WHEN t.tx_type = 'P' THEN ${MID} ELSE 0 END)`;
+const SELL_VOL = `SUM(CASE WHEN t.tx_type = 'S' THEN ${MID} ELSE 0 END)`;
 
 // ---------------------------------------------------------------------------
 // 1. Summary — KPI strip
@@ -656,10 +658,11 @@ export function buildTickerTimeSeriesQuery(
   const allWhere = [...where, 't.tx_date IS NOT NULL'];
   const sql =
     'SELECT strftime(?, t.tx_date) AS period, ' +
-    `${BUY} AS buys, ${SELL} AS sells ` +
+    `${BUY} AS buys, ${SELL} AS sells, ` +
+    `${BUY_VOL} AS est_buy_vol, ${SELL_VOL} AS est_sell_vol ` +
     ANALYTICS_FROM_JOINS +
     whereSql(allWhere) +
-    'GROUP BY period ORDER BY period ASC';
+    ' GROUP BY period ORDER BY period ASC';
   return { sql, params: [granularityFormat(p.granularity), ...params] };
 }
 
