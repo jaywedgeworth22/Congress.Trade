@@ -24,14 +24,14 @@
     "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#c4fcfb4423a11318bda8486ecf3dd6ab1783e87a",
     "@sentry/cloudflare": "^10.65.0",
     "fflate": "^0.8.3",
-    "hono": "^4.12.29",
+    "hono": "^4.12.30",
     "node-html-parser": "^9.0.0",
     "pdf-lib": "^1.17.1",
     "unpdf": "^1.6.2"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.4",
-    "@cloudflare/workers-types": "^5.20260711.1",
+    "@cloudflare/workers-types": "^5.20260713.1",
     "@sentry/cli": "^3.6.0",
     "@typescript-eslint/eslint-plugin": "^8.62.1",
     "@typescript-eslint/parser": "^8.62.1",
