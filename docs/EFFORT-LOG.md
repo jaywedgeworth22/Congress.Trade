@@ -81,6 +81,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Dashboard Interactivity & Visual Toggles (AG, S) — COMPLETED 2026-07-13.** Added interactive SVG building icons and H/S/E badge toggles for the branch selection filter, and animal emojis (🫏, 🐘, 🦅) for the party filter to replace the old native dropdown boxes. Reorganized logic to make these filter toggles mutually exclusive where appropriate and globally linked in the dashboard.
 - **iOS improvement roadmap audit (CODEX, M) — COMPLETED 2026-07-12; READ-ONLY.** Audited fetched
   `origin/main` at `5aca5f6` across SwiftUI architecture/UX/accessibility, backend client contracts,
   tests, performance, privacy, signing, CI, and App Store readiness. Generic Simulator Debug,
