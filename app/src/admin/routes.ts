@@ -64,7 +64,8 @@ import {
   CONFIDENCE_THRESHOLD,
   hasHardFailureFlags,
 } from '../extraction/normalizer';
-import { enqueueAgreementCheck, processAgreementDoc, type AgreementModels } from '../extraction/agreement';
+import { enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, type AgreementModels } from '../extraction/agreement';
+import { mapFiling } from '../delivery/rows';
 import { verifyAccessJwt, certsUrl } from './access';
 import { adminRuntimeConfig } from './identity';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
@@ -1834,7 +1835,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       ],
       'model-keys': [
         'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'MISTRAL_API_KEY', 'XAI_API_KEY',
-        'LLAMAINDEX_API_KEY', 'LLAMAPARSE_API_KEY', 'ARBITRATION_API_KEY',
+        'LLAMAPARSE_API_KEY', 'ARBITRATION_API_KEY',
       ],
       'auth-billing': [
         'ADMIN_TOKEN', 'INGEST_TOKEN', 'ADMIN_EMAILS', 'ACCESS_AUD', 'ACCESS_TEAM_DOMAIN',
@@ -1903,7 +1904,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'OPENAI_API_KEY',
       'MISTRAL_API_KEY',
       'XAI_API_KEY',
-      'LLAMAINDEX_API_KEY',
       'LLAMAPARSE_API_KEY',
       'ARBITRATION_API_KEY',
       'FMP_API_KEY',
@@ -2066,10 +2066,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         id: 'provider:llamaparse',
         provider: 'llamaparse',
         label: 'LlamaParse OCR',
-        configured: !!(runtimeSecrets.LLAMAINDEX_API_KEY || runtimeSecrets.LLAMAPARSE_API_KEY),
-        note: runtimeSecrets.LLAMAINDEX_API_KEY || runtimeSecrets.LLAMAPARSE_API_KEY
+        configured: !!runtimeSecrets.LLAMAPARSE_API_KEY,
+        note: runtimeSecrets.LLAMAPARSE_API_KEY
           ? 'LlamaIndex Cloud parser candidate'
-          : 'LLAMAINDEX_API_KEY/LLAMAPARSE_API_KEY is not available to this Worker runtime',
+          : 'LLAMAPARSE_API_KEY is not available to this Worker runtime',
       },
     ];
     for (const provider of modelProviders) {
@@ -3446,15 +3446,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.get('/benchmark/ground-truth-docs', async (c) => {
     const limit = Math.min(Number(c.req.query('limit')) || 50, 200);
     const chamber = c.req.query('chamber');
-    // Manual ground truth lives on transactions.source (filings has no source
-    // column); a doc qualifies when it still has live manual rows.
-    let query = `SELECT DISTINCT f.doc_id FROM filings f JOIN transactions t ON t.doc_id = f.doc_id WHERE t.source = 'manual' AND t.deprecated_at IS NULL AND f.raw_object_key IS NOT NULL`;
+    // We use any document with a PDF for the autonomy benchmark, as we want to 
+    // test if the models can reach consensus, regardless of whether a human 
+    // has reviewed it yet.
+    let query = `SELECT doc_id FROM filings WHERE raw_object_key IS NOT NULL`;
     const params: (string | number)[] = [];
     if (chamber) {
-      query += ` AND f.chamber = ?`;
+      query += ` AND chamber = ?`;
       params.push(chamber);
     }
-    query += ` LIMIT ?`;
+    query += ` ORDER BY filed_date DESC LIMIT ?`;
     params.push(limit);
 
     const rows = await all<{ doc_id: string }>(
@@ -3476,15 +3477,44 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     );
     if (!row || !row.raw_object_key) return c.json({ error: 'not found or no raw obj' }, 404);
 
-    const agModels: AgreementModels = {
-      a: body.models.a as BakeoffCandidate,
-      b: body.models.b as BakeoffCandidate,
-      c: body.models.c ? (body.models.c as BakeoffCandidate) : null,
-    };
-    
-    // Pass dryRun = true
-    const res = await processAgreementDoc(c.env, agModels, docId, row.raw_object_key, true);
-    return c.json(res);
+    if (!body.models.b) {
+      // Single model benchmark mode
+      const candidate = body.models.a as BakeoffCandidate;
+      const loaded = await loadDocBytes(c.env, docId, row.raw_object_key);
+      if ('skip' in loaded) return c.json(loaded.skip);
+      
+      const read = await runCandidateOnDoc(c.env, candidate, docId, loaded.bytes);
+      if (!read.ok) return c.json({ outcome: 'skipped', reason: 'read_failed' });
+      
+      const frow = await loadFilingRow(c.env, docId);
+      if (!frow) return c.json({ outcome: 'skipped', reason: 'no_filing' });
+      
+      const flagged = await recomputeTransactions(c.env, mapFiling(frow), read.rows);
+      // find hard flags
+      const hardFlags = Array.from(new Set(flagged.flatMap((f) => f.flags).filter((fl) => [
+        'ticker_not_found', 'future_transaction_date', 'amount_min_max_inverted', 'missing_amount', 'no_amount_bucket', 'invalid_transaction_date'
+      ].includes(fl)))); // from HARD_FAILURE_FLAGS
+
+      if (hardFlags.length > 0) return c.json({ docId, outcome: 'agree_but_hardfail', flags: hardFlags });
+      if (flagged.length > 200) return c.json({ docId, outcome: 'agree_but_hardfail', flags: ['row_limit_exceeded'] }); // MAX_PUBLISH_TRANSACTIONS_PER_FILING
+      
+      return c.json({
+        docId,
+        outcome: 'would_publish',
+        rowCount: flagged.length,
+        rows: flagged.map((f) => ({ ...f.tx, confidence: Math.max(f.tx.confidence, 0.95) })),
+      });
+    } else {
+      const agModels: AgreementModels = {
+        a: body.models.a as BakeoffCandidate,
+        b: body.models.b as BakeoffCandidate,
+        c: body.models.c ? (body.models.c as BakeoffCandidate) : null,
+      };
+      
+      // Pass dryRun = true
+      const res = await processAgreementDoc(c.env, agModels, docId, row.raw_object_key, true);
+      return c.json(res);
+    }
   });
 
   // --- POST /migrate ------------------------------------------------------

@@ -41,7 +41,6 @@ MISTRAL_API_KEY=""
 # Get a key at https://cloud.llamaindex.ai. Free tier: 10,000 credits/month.
 # Use as agreement model: AGREEMENT_AUTOPUBLISH_MODEL_B="llamaparse:cost-effective"
 # Tiers (credits/page): fast=1, cost-effective=3, agentic=10, agentic-plus=45
-LLAMAINDEX_API_KEY=""
 
 # Autonomous review-resolution cascade. Keep A/B/C on distinct vendors; model
 # C is Anthropic because the production Worker has ANTHROPIC_API_KEY configured.

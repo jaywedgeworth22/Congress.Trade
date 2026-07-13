@@ -28,7 +28,7 @@ reports names + sources only, never values).
 
 ### Model/LLM keys
 `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `MISTRAL_API_KEY`,
-`XAI_API_KEY`, `LLAMAINDEX_API_KEY`, `LLAMAPARSE_API_KEY`,
+`XAI_API_KEY`, `LLAMAPARSE_API_KEY`,
 `ARBITRATION_API_KEY`
 
 ### Auth, billing, email

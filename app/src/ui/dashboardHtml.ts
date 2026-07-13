@@ -145,7 +145,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .grid-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; margin-bottom: 20px; }
   .card { text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 14px 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); }
   .card .k { color: var(--text-dim); font-size: 12px; }
-  .card .v { font-size: 22px; font-weight: 700; margin-top: 4px; }
+  .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; line-height: 1.2; }
   .card .v small { font-size: 12px; font-weight: 500; color: var(--text-dim); }
   .info-tip { color: var(--text-dim); cursor: help; border-bottom: 0; text-decoration: none; font-size: .82em; line-height: 1; vertical-align: .35em; margin-left: 1px; }
   .info-tip:hover, .info-tip:focus-visible { color: var(--accent); outline: none; }
@@ -592,6 +592,33 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .toast.show { display:block; }
   .toast.err { border-color:color-mix(in srgb,var(--sell) 55%,transparent); color:var(--sell); }
   .gate-note { font-size:12px; color:var(--text-dim); display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
+  
+  .bare-select {
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: inherit;
+    padding: 2px 18px 2px 4px;
+    margin: 0 0 0 4px;
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url('data:image/svg+xml;utf8,<svg fill="%23005fb8" height="16" viewBox="0 0 24 24" width="16" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+    background-repeat: no-repeat;
+    background-position: right center;
+    border-radius: 4px;
+  }
+  [data-theme="dark"] .bare-select {
+    color: var(--accent);
+    background-image: url('data:image/svg+xml;utf8,<svg fill="%234da3ff" height="16" viewBox="0 0 24 24" width="16" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>');
+  }
+  .bare-select:hover {
+    background-color: var(--bg-hover);
+  }
+
   /* ---- Branch and Party chip multi-select ---- */
   /* Branch filter: one segmented H·S·P strip + a grouped info popover.
      P = President (Executive). Per-letter titles cover desktop hover; the
@@ -702,9 +729,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     input, select, .btn { font-size:16px; }
     .grid-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; overflow:visible; margin:0 0 14px; padding:0; }
     #trKpis { grid-template-columns:repeat(3,minmax(0,1fr)); }
-    .grid-cards .card { min-width:0; padding:11px 12px; border-radius:10px; }
+    .grid-cards .card { min-width:0; padding:11px 12px; border-radius:10px; display: flex; flex-direction: column; min-height: 96px; }
     .card .k { font-size:11px; line-height:1.25; }
-    .card .v { font-size:18px; }
+    .card .v { font-size:24px; }
     .section { border-radius: 10px; padding: 14px; margin-bottom: 12px; }
     .toolbar { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; align-items: stretch; }
     .feed-stats { display: none; }
@@ -1217,18 +1244,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
   @media (max-width: 720px) {
     #view-trends .toolbar { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
-    #view-trends .toolbar #trWindow { order: 1; }
+    
     #view-trends .toolbar #trParty { order: 2; }
-    #view-trends .toolbar #trSource { order: 3; }
+    
     #view-trends .toolbar #trChamber { order: 4; grid-column: span 2; }
     #view-trends .toolbar .btn { order: 5; }
   }
   @media (max-width: 420px) {
     #view-trends .toolbar { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
-    #view-trends .toolbar #trWindow { order: 1; }
+    
     #view-trends .toolbar #trParty { order: 2; }
     #view-trends .toolbar #trChamber { order: 3; grid-column: 1 / -1; }
-    #view-trends .toolbar #trSource { order: 4; }
+    
     #view-trends .toolbar .btn { order: 5; }
   }
 </style>
@@ -1327,16 +1354,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <!-- ================= TRENDS / ANALYTICS ================= -->
   <section class="view active" id="view-trends" role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false">
     <div class="toolbar">
-      <select id="trWindow" title="Time window (by trade date)">
-        <option value="1d">Past Day</option>
-        <option value="7d">Past Week</option>
-        <option value="30d">Past Month</option>
-        <option value="90d" selected>Past 3 Months</option>
-        <option value="180d">Past 6 Months</option>
-        <option value="365d">Past Year</option>
-        <option value="1825d">Past 5 Years</option>
-        <option value="all">All Time</option>
-      </select>
       <div class="branch-filters" id="trChamber" role="group" aria-label="Filter analytics by branch">
         <div class="branch-seg">
           <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House trades — House Clerk PTR filings">H</button>
@@ -1356,11 +1373,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button type="button" class="party-chip" data-party="R" title="Republican">🐘</button>
         <button type="button" class="party-chip" data-party="O" title="Other">🦅</button>
       </div>
-      <select id="trSource" title="Provenance of the underlying rows">
-        <option value="all" selected>All Data</option>
-        <option value="primary">Primary Only</option>
-        <option value="seed_dataset">Historic (Seed) Only</option>
-      </select>
       <button class="btn ghost sm" onclick="loadTrends()">↻ Refresh</button>
     </div>
     <div class="disclaimer" id="trDisclaimer">
@@ -1371,7 +1383,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
 
     <!-- KPI strip -->
-    <div class="tf-cap">Snapshot · <span id="trKpisCap">Past 3 Months</span></div>
+    <div class="tf-cap">Snapshot · <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></div>
     <div class="grid-cards" id="trKpis">
       <div class="card"><div class="k">Loading…</div><div class="v">—</div></div>
     </div>
@@ -1380,7 +1392,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- What Congress is trading + Heating up -->
     <div class="trend-grid2">
       <div class="section">
-        <h3 class="tf-h">What Congress Is Trading</h3>
+        <h3 class="tf-h">What Congress Is Trading <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
         <p class="sub">Most-traded assets in the window. Click a row for a deep dive. Bar = buy / sell mix.</p>
         <div class="row-flex" style="margin:-6px 0 12px">
           <label class="lbl">Rank By</label>
@@ -1413,7 +1425,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </div>
       <div class="section">
-        <h3 class="tf-h">Rising Activity</h3>
+        <h3 class="tf-h">Rising Activity <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
         <p class="sub">Assets whose disclosed trade count rose most vs the prior equal period. A descriptive view of filing activity — not a forecast.</p>
         <div class="row-flex" style="margin:-6px 0 12px">
           <label class="lbl">Asset Type</label>
@@ -1440,7 +1452,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Consensus / cluster buys -->
     <div class="section">
-      <h3 class="tf-h">Consensus Moves <span class="chip" id="trClusterHint"></span></h3>
+      <h3 class="tf-h">Consensus Moves <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select> <span class="chip" id="trClusterHint"></span></h3>
       <p class="sub">Assets where several different politicians happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above). Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination. For an all-time view, switch the window selector to “All Time”.</p>
       <div class="cluster-grid" id="trClusters"></div>
     </div>
@@ -1465,12 +1477,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Real GICS sector flow + market-cap size tilt (securities_ref-backed) -->
     <div class="trend-grid2">
       <div class="section">
-        <h3 class="tf-h">Net Flow by Sector</h3>
+        <h3 class="tf-h">Net Flow by Sector <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
         <p class="sub">Real <strong>GICS sectors</strong> (from enriched security reference data), ranked by estimated volume. Bar = volume; chip shows buy/sell mix, breadth, and signed net $ flow.</p>
         <div id="trSectorFlow"></div>
       </div>
       <div class="section">
-        <h3 class="tf-h">By Market Cap</h3>
+        <h3 class="tf-h">By Market Cap <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
         <p class="sub">The size tilt — net flow and activity across market-cap buckets (mega → nano). Cap tracks the daily close, so it stays current as price moves.</p>
         <div id="trCapFlow"></div>
       </div>
@@ -1478,7 +1490,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
     <div class="section">
-      <h3>Top Performers <span class="info-tip" tabindex="0" aria-label="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out." title="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
+      <h3>Top Performers <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select> <span class="info-tip" tabindex="0" aria-label="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out." title="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
       <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade became <em>public</em>, shown as an <strong>annualized</strong> relative return <strong>(0% means equal to the S&amp;P)</strong>. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
       <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
     </div>
@@ -1486,18 +1498,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Politicians + Party -->
     <div class="trend-members-grid">
       <div class="section">
-        <h3 class="tf-h">Most Active Politicians</h3>
+        <h3 class="tf-h">Most Active Politicians <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
         <p class="sub">Who is trading the most in the window.</p>
         <div class="table-wrap"><table><tbody id="trMembers"></tbody></table></div>
       </div>
       <div class="trend-side-stack">
         <div class="section">
-          <h3 class="tf-h">By Party</h3>
+          <h3 class="tf-h">By Party <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
           <p class="sub">Buy / sell mix and estimated net flow per party (where party is known).</p>
           <div id="trParties"></div>
         </div>
         <div class="section">
-          <h3 class="tf-h">By Asset Type</h3>
+          <h3 class="tf-h">By Asset Type <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
           <p class="sub">Share of estimated volume by instrument type.</p>
           <div id="trSectors"></div>
         </div>
@@ -1506,7 +1518,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Disclosure timeliness -->
     <div class="section">
-      <h3>Disclosure Timeliness</h3>
+      <h3>Disclosure Timeliness <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
       <p class="sub">Days from trade to filing. The STOCK Act sets a 45-day deadline; this is a data-quality + accountability lens.</p>
       <div class="grid-cards" id="trLagKpis"></div>
       <div class="trend-grid2 timeliness-grid">
@@ -1691,89 +1703,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
     <div class="section">
       <h3>Model Benchmarking</h3>
-      <p class="sub">Run systematic tests of different model combinations against a sample of human-resolved filings (ground truth) to evaluate autonomy vs accuracy. Note: Benchmark evaluates up to 100 docs per run to control LLM costs. Requires ~90-95% certainty.</p>
-      <div class="row-flex" style="margin-bottom:4px; flex-wrap: wrap; gap: 8px; align-items: center;">
-        <strong style="width: 140px;">House Custom:</strong>
-        <select id="benchHouseA">
-          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
-          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
-          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
-          <option value="openai:gpt-4o">GPT-4o</option>
-          <option value="llamaparse:cost-effective">LlamaParse Cost-Effective</option>
-          <option value="llamaparse:fast">LlamaParse Fast</option>
-        </select>
-        <select id="benchHouseB">
-          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
-          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
-          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
-          <option value="openai:gpt-4o">GPT-4o</option>
-          <option value="llamaparse:cost-effective">LlamaParse Cost-Effective</option>
-          <option value="llamaparse:fast">LlamaParse Fast</option>
-        </select>
-        <select id="benchHouseC">
-          <option value="">(No C Model)</option>
-          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
-          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
-          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
-          <option value="openai:gpt-4o">GPT-4o</option>
-        </select>
+      <p class="sub">Run systematic tests of individual models against a sample of human-resolved filings (ground truth) to evaluate autonomy vs accuracy. Note: Evaluates up to 25 docs per run.</p>
+      <div class="row-flex" style="margin-bottom:8px; gap: 8px;">
+        <button class="btn primary" id="btnBenchHouse" onclick="runChamberBenchmark('house')">Benchmark House</button>
+        <button class="btn primary" id="btnBenchSenate" onclick="runChamberBenchmark('senate')">Benchmark Senate</button>
+        <button class="btn primary" id="btnBenchExec" onclick="runChamberBenchmark('executive')">Benchmark Exec</button>
       </div>
-      <div class="row-flex" style="margin-bottom:4px; flex-wrap: wrap; gap: 8px; align-items: center;">
-        <strong style="width: 140px;">Senate Custom:</strong>
-        <select id="benchSenateA">
-          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
-          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
-          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
-          <option value="openai:gpt-4o">GPT-4o</option>
-          <option value="llamaparse:cost-effective">LlamaParse Cost-Effective</option>
-          <option value="llamaparse:fast">LlamaParse Fast</option>
-        </select>
-        <select id="benchSenateB">
-          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
-          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
-          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
-          <option value="openai:gpt-4o">GPT-4o</option>
-          <option value="llamaparse:cost-effective">LlamaParse Cost-Effective</option>
-          <option value="llamaparse:fast">LlamaParse Fast</option>
-        </select>
-        <select id="benchSenateC">
-          <option value="">(No C Model)</option>
-          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
-          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
-          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
-          <option value="openai:gpt-4o">GPT-4o</option>
-        </select>
-      </div>
-      <div class="row-flex" style="margin-bottom:10px; flex-wrap: wrap; gap: 8px; align-items: center;">
-        <strong style="width: 140px;">Executive Custom:</strong>
-        <select id="benchExecA">
-          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
-          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
-          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
-          <option value="openai:gpt-4o">GPT-4o</option>
-          <option value="llamaparse:cost-effective">LlamaParse Cost-Effective</option>
-          <option value="llamaparse:fast">LlamaParse Fast</option>
-        </select>
-        <select id="benchExecB">
-          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
-          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
-          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
-          <option value="openai:gpt-4o">GPT-4o</option>
-          <option value="llamaparse:cost-effective">LlamaParse Cost-Effective</option>
-          <option value="llamaparse:fast">LlamaParse Fast</option>
-        </select>
-        <select id="benchExecC">
-          <option value="">(No C Model)</option>
-          <option value="anthropic:claude-haiku-4-5">Claude Haiku 4.5</option>
-          <option value="mistral:mistral-ocr-latest">Mistral OCR Latest</option>
-          <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash</option>
-          <option value="openai:gpt-4o">GPT-4o</option>
-        </select>
-      </div>
-      <div class="row-flex" style="margin-bottom:10px">
-        <button class="btn" id="btnRunBenchmark" onclick="runBenchmark()">Run Benchmark Evaluation</button>
-        <span id="benchmarkMsg" class="note"></span>
-      </div>
+      <span id="benchmarkMsg" class="note"></span>
       <div id="benchmarkResults" class="diag-grid" aria-live="polite"></div>
     </div>
     <div class="section">
@@ -3061,6 +2997,21 @@ function setPageSize(value) {
   feedPage = 0;
   return fetchPage();
 }
+
+
+function getTrWindow() {
+  var sel = document.querySelector('.tr-window-select');
+  return sel ? sel.value : '90d';
+}
+document.addEventListener('change', function(e) {
+  if (e.target && e.target.classList && e.target.classList.contains('tr-window-select')) {
+    var val = e.target.value;
+    document.querySelectorAll('.tr-window-select').forEach(function(s) {
+      if (s !== e.target) s.value = val;
+    });
+    loadTrends();
+  }
+});
 
 function handleFeedTextFilter() {
   feedPage = 0;
@@ -4684,108 +4635,71 @@ async function apiCall(path, method, body) {
   return res.json();
 }
 
-async function runBenchmark() {
+async function runChamberBenchmark(chamberName) {
   var msg = el('benchmarkMsg');
   var res = el('benchmarkResults');
-  var btn = el('btnRunBenchmark');
-  msg.innerText = 'Fetching ground-truth docs...';
+  var btns = [el('btnBenchHouse'), el('btnBenchSenate'), el('btnBenchExec')];
+  
+  var cLower = chamberName.toLowerCase();
+  var limit = cLower === 'executive' ? 5 : 25;
+  msg.innerText = 'Fetching ground-truth docs for ' + chamberName + ' filings...';
   msg.style.color = '';
   res.innerHTML = '';
-  btn.disabled = true;
-
-  function buildLineup(name, aId, bId, cId) {
-    const a = el(aId).value.split(':');
-    const b = el(bId).value.split(':');
-    const c = el(cId).value;
-    const lineup = { name, models: { a: { provider: a[0], model: a[1] }, b: { provider: b[0], model: b[1] } } };
-    if (c) {
-      const splitC = c.split(':');
-      lineup.models.c = { provider: splitC[0], model: splitC[1] };
-    }
-    return lineup;
-  }
-
-  const lineups = [
-    buildLineup("Custom House", 'benchHouseA', 'benchHouseB', 'benchHouseC'),
-    buildLineup("Custom Senate", 'benchSenateA', 'benchSenateB', 'benchSenateC'),
-    buildLineup("Custom Exec", 'benchExecA', 'benchExecB', 'benchExecC'),
-    {
-      name: "Baseline (Mistral + Gemini -> Anthropic)",
-      models: {
-        a: { provider: 'mistral', model: 'mistral-ocr-latest' },
-        b: { provider: 'gemini', model: 'gemini-3.5-flash' },
-        c: { provider: 'anthropic', model: 'claude-haiku-4-5' }
-      }
-    }
-  ];
+  btns.forEach(b => { if (b) b.disabled = true; });
 
   try {
-    const docsDataHouse = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=25&chamber=house', 'GET');
-    const docsDataSenate = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=25&chamber=senate', 'GET');
-    const docsDataExec = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=25&chamber=executive', 'GET');
-    const docs = {
-      house: docsDataHouse.docs || [],
-      senate: docsDataSenate.docs || [],
-      exec: docsDataExec.docs || []
-    };
-    if (!docs.house.length && !docs.senate.length && !docs.exec.length) {
-      msg.innerText = 'No ground-truth docs found.';
-      btn.disabled = false;
+    const docsData = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=' + limit + '&chamber=' + cLower, 'GET');
+    const docList = docsData.docs || [];
+    if (!docList.length) {
+      msg.innerText = 'No ground-truth docs found for ' + chamberName + ' filings.';
+      btns.forEach(b => { if (b) b.disabled = false; });
       return;
     }
 
-    var html = '<table><thead><tr><th>Lineup</th><th>House Autonomy</th><th>Senate Autonomy</th><th>Exec Autonomy</th></tr></thead><tbody id="benchmarkTbody">';
-    for (var i = 0; i < lineups.length; i++) {
-      html += '<tr id="lineup-' + i + '"><td><strong>' + esc(lineups[i].name) + '</strong></td>' +
-              '<td id="auto-house-' + i + '">Pending...</td>' +
-              '<td id="auto-senate-' + i + '">Pending...</td>' +
-              '<td id="auto-exec-' + i + '">Pending...</td></tr>';
+    var html = '<table><thead><tr><th>Model</th><th>Autonomy Rate</th></tr></thead><tbody id="benchmarkTbody">';
+    for (var i = 0; i < REREAD_MODELS.length; i++) {
+      html += '<tr id="lineup-' + i + '"><td><strong>' + esc(REREAD_MODELS[i].model) + ' <small class="note">(' + esc(REREAD_MODELS[i].provider) + ')</small></strong></td>' +
+              '<td id="auto-' + i + '">Pending...</td></tr>';
     }
     html += '</tbody></table>';
     res.innerHTML = html;
 
-    async function evaluateChamber(chamberName, docList) {
-      for (let i = 0; i < lineups.length; i++) {
-        let published = 0;
-        let flagged = 0;
-        if (docList.length === 0) {
-          el('auto-' + chamberName + '-' + i).innerText = 'N/A';
-          continue;
-        }
-        for (let j = 0; j < docList.length; j++) {
-          msg.innerText = 'Evaluating ' + chamberName + ' Lineup ' + (i + 1) + '/' + lineups.length + '... (' + (j + 1) + '/' + docList.length + ')';
-          try {
-            const result = await apiCall('/api/admin/benchmark/dry-run/' + docList[j], 'POST', { models: lineups[i].models });
-            const autoPublished = result.outcome === 'published' || result.outcome === 'would_publish';
-            let confidence = 1;
-            if (result.rows && result.rows.length) {
-              confidence = result.rows.reduce((min, r) => Math.min(min, r.confidence || 0), 1);
-            }
-            if (autoPublished && confidence >= 0.90) {
-              published++;
-            } else {
-              flagged++;
-            }
-          } catch (e) {
+    for (let i = 0; i < REREAD_MODELS.length; i++) {
+      let published = 0;
+      let flagged = 0;
+      
+      const singleModel = REREAD_MODELS[i];
+      const testModels = { a: singleModel };
+
+      for (let j = 0; j < docList.length; j++) {
+        msg.innerText = 'Evaluating ' + singleModel.model + ' (' + (i + 1) + '/' + REREAD_MODELS.length + ')... Doc ' + (j + 1) + '/' + docList.length;
+        try {
+          const result = await apiCall('/api/admin/benchmark/dry-run/' + docList[j], 'POST', { models: testModels });
+          const autoPublished = result.outcome === 'published' || result.outcome === 'would_publish';
+          let confidence = 1;
+          if (result.rows && result.rows.length) {
+            confidence = result.rows.reduce((min, r) => Math.min(min, r.confidence || 0), 1);
+          }
+          if (autoPublished && confidence >= 0.90) {
+            published++;
+          } else {
             flagged++;
           }
-          
-          let autoRate = ((published / (j + 1)) * 100).toFixed(1) + '%';
-          el('auto-' + chamberName + '-' + i).innerText = autoRate + ' (' + published + '/' + (j + 1) + ')';
+        } catch (e) {
+          flagged++;
         }
+        
+        let autoRate = ((published / (j + 1)) * 100).toFixed(1) + '%';
+        el('auto-' + i).innerText = autoRate + ' (' + published + '/' + (j + 1) + ')';
       }
     }
 
-    await evaluateChamber('house', docs.house);
-    await evaluateChamber('senate', docs.senate);
-    await evaluateChamber('exec', docs.exec);
-    msg.innerText = 'Benchmark completed!';
-    msg.style.color = 'var(--accent)';
+    msg.innerText = chamberName.toUpperCase() + ' benchmark completed!';
   } catch (err) {
-    msg.innerText = 'Error: ' + err.message;
-    msg.style.color = 'var(--err)';
+    msg.style.color = 'var(--neg)';
+    msg.innerText = 'Error: ' + err;
   } finally {
-    btn.disabled = false;
+    btns.forEach(b => { if (b) b.disabled = false; });
   }
 }
 function runMarketBackfill(dryRun) {
@@ -4820,9 +4734,9 @@ function runMarketBackfill(dryRun) {
 	var NET_FLOW_TIP = 'Buy dollars minus sell dollars in the selected window, using STOCK Act bracket midpoints ($50M+ uses its floor). A very rough estimate of net direction, not an exact figure.';
 	var NET_FLOW_TIP_ALLTIME = 'Buy dollars minus sell dollars across all disclosed trades for this asset, using STOCK Act bracket midpoints. A very rough estimate of net direction, not exact.';
 function trParams() {
-  var p = 'window=' + encodeURIComponent(el('trWindow').value);
+  var p = 'window=' + encodeURIComponent(getTrWindow());
   var ch = chamberParam('trChamber'); if (ch) p += '&chamber=' + encodeURIComponent(ch);
-  var sc = el('trSource').value; if (sc !== 'all') p += '&source=' + sc;
+  
   var paGroup = el('trPartyGroup');
   if (paGroup) {
     var parties = [];
@@ -4837,14 +4751,14 @@ function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
    central pass, so each panel clearly states which window it reflects. Runs at
    the top of loadTrends(), which fires on Refresh and on any window change. */
 function stampWindowChips() {
-  var label = windowLabel(el('trWindow').value);
+  var label = windowLabel(getTrWindow());
   var heads = document.querySelectorAll('#view-trends h3.tf-h');
   for (var i = 0; i < heads.length; i++) {
     var h = heads[i], chip = h.querySelector('.tf-chip');
     if (!chip) { chip = document.createElement('span'); chip.className = 'tf-chip'; h.appendChild(chip); }
     chip.textContent = ' \u00B7 ' + label;
   }
-  var cap = el('trKpisCap'); if (cap) cap.textContent = label;
+  
 }
 function aGet(path) {
   return fetch('/api/analytics/' + path).then(function (r) {
@@ -5654,7 +5568,7 @@ function openAsset(ticker) {
   openDrawer('<div class="note">Loading ' + esc(ticker) + '…</div>');
   // Follow the Trends window if it's on the page; fall back to all-time when the
   // drawer is opened from a context without the window selector (feed, search).
-  var tickerWindow = el('trWindow') ? el('trWindow').value : 'all';
+  var tickerWindow = document.querySelector('.tr-window-select') ? getTrWindow() : 'all';
   var tickerWindowLabel = tickerWindow === 'all' ? 'All Time' : windowLabel(tickerWindow);
   var netFlowTip = tickerWindow === 'all'
     ? NET_FLOW_TIP_ALLTIME
@@ -6208,6 +6122,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); v.setAttribute('aria-hidden', 'true'); });
     b.classList.add('active');
     b.setAttribute('aria-selected', 'true');
+    try { localStorage.setItem('ct-active-tab', b.dataset.view); } catch (e) {}
     var view = el('view-' + b.dataset.view);
     if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
     if (b.dataset.view === 'feed') window.scrollTo({ top: 0, behavior: 'auto' });
@@ -6237,7 +6152,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
 setInterval(refreshSpeedUpdated, 60000);
 
 /* Trends controls: re-run on change; ticker rows/cards open the asset drawer. */
-['trWindow', 'trSource'].forEach(function (id) {
+/* no longer binding trWindow/trSource here */ [].forEach(function (id) {
   var e = el(id); if (e) e.addEventListener('change', loadTrends);
 });
 
@@ -6443,9 +6358,37 @@ el('diagErrors').innerHTML = stateRow(4, 'Loading…');
 el('diagUsers').innerHTML = '<div class="state">Loading users…</div>';
 el('diagLogins').innerHTML = stateRow(4, 'Loading…');
 
-loadMe().then(function () { if (canUseAdmin()) loadReview(); }); // account state + admin tab visibility
+// Load user identity/permissions, then restore the saved tab so admin-gated tabs fallback properly if needed
+loadMe().then(function () {
+  if (canUseAdmin()) loadReview(); // account state + admin tab visibility
+  var initialView = 'trends';
+  try {
+    var saved = localStorage.getItem('ct-active-tab');
+    if (saved && document.querySelector('nav.tabs button[data-view="' + saved + '"]')) initialView = saved;
+  } catch (e) {}
+
+  var initialBtn = document.querySelector('nav.tabs button[data-view="' + initialView + '"]');
+  if (initialBtn && initialView !== 'trends') {
+    document.querySelectorAll('nav.tabs button').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
+    document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); v.setAttribute('aria-hidden', 'true'); });
+    initialBtn.classList.add('active');
+    initialBtn.setAttribute('aria-selected', 'true');
+    var view = el('view-' + initialView);
+    if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
+    
+    if (initialView === 'feed') window.scrollTo({ top: 0, behavior: 'auto' });
+    if (initialView === 'review' && canUseAdmin()) loadReview();
+    if (initialView === 'subs') {
+      if (canUseAdmin()) loadSubs();
+      fetchLatencySummary().then(renderAlertsMini).catch(function () {});
+    }
+    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); }
+  } else {
+    loadTrends(); // Trends is the default landing view
+  }
+});
+
 handleAuthQueryParams(); // toast + scrub ?login= / ?checkout= after redirects
-loadTrends();      // Trends is the default landing view
 loadFeed().then(function () { startStream(); }); // warm the Trades feed + live SSE pill
 loadPollConfig();  // for the poll-mode KPI
 </script>
