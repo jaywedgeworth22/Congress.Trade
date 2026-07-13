@@ -7,12 +7,19 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		5A1000010000000000000001 /* CongressTradeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000011 /* CongressTradeApp.swift */; };
+		09C506F6B1F6AF2D4B4CFEAC /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C19828CDAFE62F809DF6C27 /* App.swift */; };
+		46330F4471E179775BED47C5 /* CommandStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B88525FFED7FEDE1EF0D7D06 /* CommandStatusView.swift */; };
+		4B999D3615C4B0E768862CAE /* CongressTradeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA36506EE290ED63163C0CB4 /* CongressTradeStore.swift */; };
+		4E2DC30504B92FAA5811BAFB /* DeliveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8927A2808F29C1F169FB78CD /* DeliveryView.swift */; };
 		5A1000010000000000000002 /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000012 /* APIClient.swift */; };
 		5A1000010000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000013 /* Models.swift */; };
 		5A1000010000000000000004 /* KeychainTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000014 /* KeychainTokenStore.swift */; };
 		5A1000010000000000000005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000015 /* Assets.xcassets */; };
 		5A2000010000000000000001 /* CongressTradeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A2000010000000000000011 /* CongressTradeTests.swift */; };
+		7504B2B301167C79860AF4BD /* WatchlistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D43D58D40FE749FD335627E0 /* WatchlistView.swift */; };
+		82C7B94377C5B67C4AC86A35 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = A818AF84BA5C2B7444CA9B87 /* Components.swift */; };
+		D97BA8AD8D1DEC8739A64139 /* TradeDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAE8298BB5DA3E0CAA6DE8AF /* TradeDetailView.swift */; };
+		F1163B5C8A0355331FEBA19F /* FeedDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E27BB7081F81F5E987131893 /* FeedDashboardView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -26,14 +33,21 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		2C19828CDAFE62F809DF6C27 /* App.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
 		5A1000010000000000000010 /* CongressTrade.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CongressTrade.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		5A1000010000000000000011 /* CongressTradeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CongressTradeApp.swift; sourceTree = "<group>"; };
 		5A1000010000000000000012 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		5A1000010000000000000013 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		5A1000010000000000000014 /* KeychainTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainTokenStore.swift; sourceTree = "<group>"; };
 		5A1000010000000000000015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		5A2000010000000000000010 /* CongressTradeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CongressTradeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A2000010000000000000011 /* CongressTradeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CongressTradeTests.swift; sourceTree = "<group>"; };
+		8927A2808F29C1F169FB78CD /* DeliveryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DeliveryView.swift; path = Views/Delivery/DeliveryView.swift; sourceTree = "<group>"; };
+		A818AF84BA5C2B7444CA9B87 /* Components.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = Components.swift; path = Views/Components/Components.swift; sourceTree = "<group>"; };
+		B88525FFED7FEDE1EF0D7D06 /* CommandStatusView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CommandStatusView.swift; path = Views/Status/CommandStatusView.swift; sourceTree = "<group>"; };
+		BA36506EE290ED63163C0CB4 /* CongressTradeStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CongressTradeStore.swift; path = Store/CongressTradeStore.swift; sourceTree = "<group>"; };
+		D43D58D40FE749FD335627E0 /* WatchlistView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WatchlistView.swift; path = Views/Watchlist/WatchlistView.swift; sourceTree = "<group>"; };
+		E27BB7081F81F5E987131893 /* FeedDashboardView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FeedDashboardView.swift; path = Views/Feed/FeedDashboardView.swift; sourceTree = "<group>"; };
+		EAE8298BB5DA3E0CAA6DE8AF /* TradeDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = TradeDetailView.swift; path = Views/Feed/TradeDetailView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -54,6 +68,22 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		22EA0601D7D0B9B96A739A93 /* Store */ = {
+			isa = PBXGroup;
+			children = (
+				BA36506EE290ED63163C0CB4 /* CongressTradeStore.swift */,
+			);
+			name = Store;
+			sourceTree = "<group>";
+		};
+		264B10701F07AC76849185CF /* Status */ = {
+			isa = PBXGroup;
+			children = (
+				B88525FFED7FEDE1EF0D7D06 /* CommandStatusView.swift */,
+			);
+			name = Status;
+			sourceTree = "<group>";
+		};
 		5A1000010000000000000030 = {
 			isa = PBXGroup;
 			children = (
@@ -67,10 +97,12 @@
 			isa = PBXGroup;
 			children = (
 				5A1000010000000000000015 /* Assets.xcassets */,
-				5A1000010000000000000011 /* CongressTradeApp.swift */,
 				5A1000010000000000000012 /* APIClient.swift */,
 				5A1000010000000000000013 /* Models.swift */,
 				5A1000010000000000000014 /* KeychainTokenStore.swift */,
+				22EA0601D7D0B9B96A739A93 /* Store */,
+				2C19828CDAFE62F809DF6C27 /* App.swift */,
+				BA007774B8855D3EDA7286EE /* Views */,
 			);
 			path = CongressTrade;
 			sourceTree = "<group>";
@@ -90,6 +122,51 @@
 				5A2000010000000000000011 /* CongressTradeTests.swift */,
 			);
 			path = CongressTradeTests;
+			sourceTree = "<group>";
+		};
+		94260E5A51CC4CD31BE5908B /* Delivery */ = {
+			isa = PBXGroup;
+			children = (
+				8927A2808F29C1F169FB78CD /* DeliveryView.swift */,
+			);
+			name = Delivery;
+			sourceTree = "<group>";
+		};
+		BA007774B8855D3EDA7286EE /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				EC1DA6337E415CC2CD126502 /* Feed */,
+				F58497158839F1FAA94BDE48 /* Watchlist */,
+				94260E5A51CC4CD31BE5908B /* Delivery */,
+				264B10701F07AC76849185CF /* Status */,
+				C87C1781E2419D67C565E19B /* Components */,
+			);
+			name = Views;
+			sourceTree = "<group>";
+		};
+		C87C1781E2419D67C565E19B /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				A818AF84BA5C2B7444CA9B87 /* Components.swift */,
+			);
+			name = Components;
+			sourceTree = "<group>";
+		};
+		EC1DA6337E415CC2CD126502 /* Feed */ = {
+			isa = PBXGroup;
+			children = (
+				E27BB7081F81F5E987131893 /* FeedDashboardView.swift */,
+				EAE8298BB5DA3E0CAA6DE8AF /* TradeDetailView.swift */,
+			);
+			name = Feed;
+			sourceTree = "<group>";
+		};
+		F58497158839F1FAA94BDE48 /* Watchlist */ = {
+			isa = PBXGroup;
+			children = (
+				D43D58D40FE749FD335627E0 /* WatchlistView.swift */,
+			);
+			name = Watchlist;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -191,10 +268,17 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				5A1000010000000000000001 /* CongressTradeApp.swift in Sources */,
 				5A1000010000000000000002 /* APIClient.swift in Sources */,
 				5A1000010000000000000003 /* Models.swift in Sources */,
 				5A1000010000000000000004 /* KeychainTokenStore.swift in Sources */,
+				4B999D3615C4B0E768862CAE /* CongressTradeStore.swift in Sources */,
+				09C506F6B1F6AF2D4B4CFEAC /* App.swift in Sources */,
+				F1163B5C8A0355331FEBA19F /* FeedDashboardView.swift in Sources */,
+				D97BA8AD8D1DEC8739A64139 /* TradeDetailView.swift in Sources */,
+				7504B2B301167C79860AF4BD /* WatchlistView.swift in Sources */,
+				4E2DC30504B92FAA5811BAFB /* DeliveryView.swift in Sources */,
+				46330F4471E179775BED47C5 /* CommandStatusView.swift in Sources */,
+				82C7B94377C5B67C4AC86A35 /* Components.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -339,7 +423,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Congress.Trade";
+				INFOPLIST_KEY_CFBundleDisplayName = Congress.Trade;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -367,7 +451,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Congress.Trade";
+				INFOPLIST_KEY_CFBundleDisplayName = Congress.Trade;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
