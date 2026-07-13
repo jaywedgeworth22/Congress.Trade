@@ -349,7 +349,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .note { font-size:12px; color: var(--text-dim); margin-top:8px; line-height:1.5; }
   code { font-family: var(--mono); background: var(--bg); padding:1px 6px; border-radius:5px; font-size:12px; color: var(--accent); }
   /* ================= TRENDS / ANALYTICS ================= */
-  .trend-grid2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; }
+  .trend-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
   .trend-grid2 > *, .trend-members-grid > *, .trend-side-stack > *, .timeliness-grid > * { min-width: 0; }
   @media (max-width: 760px) { .trend-grid2 { grid-template-columns: 1fr; } }
   .trend-members-grid { display:grid; grid-template-columns:minmax(0, 1.6fr) minmax(0, .85fr); gap:18px; align-items:start; }
