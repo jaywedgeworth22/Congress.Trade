@@ -3502,7 +3502,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         docId,
         outcome: 'would_publish',
         rowCount: flagged.length,
-        rows: flagged.map((f) => ({ ...f.tx, confidence: Math.max(f.tx.confidence, 0.95) })),
+        rows: flagged.map((f) => ({ ...f.tx, confidence: Math.max(f.tx.confidence ?? 0, 0.95) })),
       });
     } else {
       const agModels: AgreementModels = {
