@@ -4744,51 +4744,55 @@ async function runChamberBenchmark(chamberName) {
       let totalFp = 0;
       let totalFn = 0;
 
-      for (let j = 0; j < docList.length; j++) {
-        const docObj = docList[j];
-        msg.innerText = 'Evaluating ' + singleModel.model + ' (' + (i + 1) + '/' + REREAD_MODELS.length + ')... Doc ' + (j + 1) + '/' + docList.length;
+      const CONCURRENCY = 5;
+      for (let chunkStart = 0; chunkStart < docList.length; chunkStart += CONCURRENCY) {
+        const chunk = docList.slice(chunkStart, chunkStart + CONCURRENCY);
+        const endDoc = Math.min(chunkStart + CONCURRENCY, docList.length);
+        msg.innerText = 'Evaluating ' + singleModel.model + ' (' + (i + 1) + '/' + REREAD_MODELS.length + ')... Docs ' + (chunkStart + 1) + '-' + endDoc + '/' + docList.length;
         
-        try {
-          const result = await apiCall('/api/admin/benchmark/dry-run/' + docObj.docId, 'POST', { models: testModels });
-          currentBenchmarkRuns[docObj.docId][modelLabel] = result;
-          
-          const autoPublished = result.outcome === 'published' || result.outcome === 'would_publish';
-          let confidence = 1;
-          if (result.rows && result.rows.length) {
-            confidence = result.rows.reduce((min, r) => Math.min(min, r.confidence || 0), 1);
-          }
-          totalConf += confidence;
-          totalDocsTested++;
-          
-          if (autoPublished && confidence >= 0.90) {
-            published++;
-          } else {
-            flagged++;
-            let reason = result.outcome || 'unknown_failure';
-            if (reason === 'agree_but_hardfail' && result.flags) {
-               reason += ' (' + result.flags.join(',') + ')';
+        await Promise.all(chunk.map(async (docObj, offset) => {
+          try {
+            const result = await apiCall('/api/admin/benchmark/dry-run/' + docObj.docId, 'POST', { models: testModels });
+            currentBenchmarkRuns[docObj.docId][modelLabel] = result;
+            
+            const autoPublished = result.outcome === 'published' || result.outcome === 'would_publish';
+            let confidence = 1;
+            if (result.rows && result.rows.length) {
+              confidence = result.rows.reduce((min, r) => Math.min(min, r.confidence || 0), 1);
             }
-            if (result.reason) reason += ' (' + result.reason + ')';
-            if (result.error) reason += ' (' + result.error + ')';
-            if (autoPublished && confidence < 0.90) reason = 'low_confidence';
-            breakdown[reason] = (breakdown[reason] || 0) + 1;
+            totalConf += confidence;
+            totalDocsTested++;
+            
+            if (autoPublished && confidence >= 0.90) {
+              published++;
+            } else {
+              flagged++;
+              let reason = result.outcome || 'unknown_failure';
+              if (reason === 'agree_but_hardfail' && result.flags) {
+                 reason += ' (' + result.flags.join(',') + ')';
+              }
+              if (result.reason) reason += ' (' + result.reason + ')';
+              if (result.error) reason += ' (' + result.error + ')';
+              if (autoPublished && confidence < 0.90) reason = 'low_confidence';
+              breakdown[reason] = (breakdown[reason] || 0) + 1;
+            }
+            
+            // Match stats
+            if (result.comparison) {
+              resolvedCount++;
+              if (result.comparison.perfectMatch) perfectMatches++;
+              totalTp += result.comparison.tp || 0;
+              totalFp += result.comparison.fp || 0;
+              totalFn += result.comparison.fn || 0;
+            }
+          } catch (e) {
+            flagged++;
+            const eStr = String(e);
+            breakdown[eStr] = (breakdown[eStr] || 0) + 1;
           }
-          
-          // Match stats
-          if (result.comparison) {
-            resolvedCount++;
-            if (result.comparison.perfectMatch) perfectMatches++;
-            totalTp += result.comparison.tp || 0;
-            totalFp += result.comparison.fp || 0;
-            totalFn += result.comparison.fn || 0;
-          }
-        } catch (e) {
-          flagged++;
-          const eStr = String(e);
-          breakdown[eStr] = (breakdown[eStr] || 0) + 1;
-        }
+        }));
         
-        // Update individual model row cells
+        // Update individual model row cells after each chunk finishes
         var rowEl = document.getElementById('lineup-' + i);
         if (rowEl) {
           var accCell = rowEl.querySelector('.accuracy-val');
@@ -4798,7 +4802,7 @@ async function runChamberBenchmark(chamberName) {
           var breakCell = rowEl.querySelector('.breakdown-val');
           
           var accRate = resolvedCount > 0 ? ((perfectMatches / resolvedCount) * 100).toFixed(1) + '%' : 'N/A';
-          var autoRate = ((published / (j + 1)) * 100).toFixed(1) + '%';
+          var autoRate = ((published / totalDocsTested) * 100).toFixed(1) + '%';
           var avgConfStr = totalDocsTested > 0 ? (totalConf / totalDocsTested).toFixed(2) : '0.00';
           
           var f1Str = 'N/A';
@@ -4815,7 +4819,7 @@ async function runChamberBenchmark(chamberName) {
           var breakdownHtml = Object.entries(breakdown).map(([k, v]) => esc(k) + ': ' + v).join(', ');
           
           if (accCell) accCell.innerHTML = accRate + ' <small class="note">(' + perfectMatches + '/' + resolvedCount + ')</small>';
-          if (autoCell) autoCell.innerText = autoRate + ' (' + published + '/' + (j + 1) + ')';
+          if (autoCell) autoCell.innerText = autoRate + ' (' + published + '/' + totalDocsTested + ')';
           if (statsCell) statsCell.innerHTML = f1Str;
           if (confCell) confCell.innerText = avgConfStr;
           if (breakCell) breakCell.innerHTML = breakdownHtml || '<span style="color:var(--pos)">None</span>';
