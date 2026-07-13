@@ -709,7 +709,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* "What Congress Is Trading" is the densest row; on phones drop the gross
        Approx-Volume column (it's in the KPI strip + the tap-through drawer) so the
        signed net-flow column isn't clipped. Other tables keep their volume. */
-    #trTickers td.est { display: none; }
+    #trTickers td.est, #tableTrTickers th.est { display: none; }
     .cluster-grid { grid-template-columns: 1fr; }
     .drawer-panel { top: auto; bottom: 0; height: 88vh; width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; padding: 0 16px calc(18px + env(safe-area-inset-bottom)); }
     .drawer-kv { grid-template-columns: 1fr; gap: 3px; }
@@ -1349,12 +1349,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <thead>
               <tr>
                 <th style="width:32px"></th>
-                <th style="width:32px"></th>
-                <th style="width:32px"></th>
                 <th class="sortable" onclick="setTickerSort('trades')">Asset</th>
-                <th class="sortable r" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades"></span></th>
+                <th class="sortable" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades"></span></th>
                 <th class="sortable r" onclick="setTickerSort('members')">Politicians <span class="sort-icon" data-sort="members"></span></th>
-                <th class="sortable r" onclick="setTickerSort('volume')">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
+                <th class="sortable r est" onclick="setTickerSort('volume')">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
                 <th class="sortable r" onclick="setTickerSort('netflow')">Net $ Flow <span class="sort-icon" data-sort="netflow"></span></th>
               </tr>
             </thead>
@@ -2143,7 +2141,7 @@ function clipTextHtml(value, fallback, title) {
 /* Strip stray HTML/entities some upstream datasets embed in asset descriptions
    (e.g. "<div class=text-muted><em>Rate/Coupon:</em> 3.875%<br>…</div>"). */
 function isScannedPdfPlaceholder(s) {
-  var text = String(s || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  var text = String(s || '').replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim().toLowerCase();
   return text.indexOf('this filing was disclosed via scanned pdf') >= 0 ||
     text.indexOf('use link in ptr_link column to view the pdf') >= 0 ||
     text.indexOf('pdf disclosed filing') >= 0;
@@ -2153,18 +2151,18 @@ function cleanAsset(s) {
   var t = String(s).replace(/<[^>]*>/g, ' ');
   t = t.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
        .replace(/&gt;/gi, '>').replace(/&#0*39;|&apos;/gi, "'").replace(/&quot;/gi, '"');
-  t = t.replace(/\s+/g, ' ').trim();
-  
+  t = t.replace(/\\s+/g, ' ').trim();
+
   if (isScannedPdfPlaceholder(t)) return '';
 
-  t = t.replace(/[\/\-\s]+$/, '');
-  t = t.replace(/\s*\(\s*(?:NASDAQ|NYSE|AMEX|OTC|BATS|ARCA|ASX|LSE|TSX)[^)]*\)\s*$/i, '');
-  
+  t = t.replace(/[\\/\\-\\s]+$/, '');
+  t = t.replace(/\\s*\\(\\s*(?:NASDAQ|NYSE|AMEX|OTC|BATS|ARCA|ASX|LSE|TSX)[^)]*\\)\\s*$/i, '');
+
   if (t === t.toUpperCase() && /[A-Z]{4,}/.test(t)) {
-    t = t.toLowerCase().replace(/\b\w/g, function(l) { return l.toUpperCase(); });
+    t = t.toLowerCase().replace(/\\b\\w/g, function(l) { return l.toUpperCase(); });
   }
 
-  t = t.replace(/\b(Inc|Corp|Ltd|Co)\b\.?/gi, function(match) {
+  t = t.replace(/\\b(Inc|Corp|Ltd|Co)\\b\\.?/gi, function(match) {
     var c = match.toLowerCase();
     if (c.startsWith('inc')) return 'Inc.';
     if (c.startsWith('corp')) return 'Corp.';
@@ -2172,13 +2170,13 @@ function cleanAsset(s) {
     if (c.startsWith('co')) return 'Co.';
     return match;
   });
-  t = t.replace(/\b(LLC|L\.L\.C\.|L\.P\.|LP)\b\.?/gi, function(match) {
-    var c = match.toLowerCase().replace(/\./g, '');
+  t = t.replace(/\\b(LLC|L\\.L\\.C\\.|L\\.P\\.|LP)\\b\\.?/gi, function(match) {
+    var c = match.toLowerCase().replace(/\\./g, '');
     if (c === 'llc') return 'LLC';
     if (c === 'lp') return 'LP';
     return match;
   });
-  t = t.replace(/\s*,\s*(Inc\.|LLC|Corp\.|Ltd\.|LP|Co\.)/g, ' $1');
+  t = t.replace(/\\s*,\\s*(Inc\\.|LLC|Corp\\.|Ltd\\.|LP|Co\\.)/g, ' $1');
 
   return t;
 }
@@ -5288,11 +5286,11 @@ function friendlyKey(k) {
   return String(k || '')
     .replace(/[_-]+/g, ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/\b\w/g, function (ch) { return ch.toUpperCase(); });
+    .replace(/\\b\\w/g, function (ch) { return ch.toUpperCase(); });
 }
 function cleanNoteValue(v) {
   if (v == null || v === '') return '';
-  return String(v).replace(/\s+/g, ' ').trim();
+  return String(v).replace(/\\s+/g, ' ').trim();
 }
 function isExtractionNoteKey(k) {
   var s = String(k || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -5315,8 +5313,8 @@ function looksLikeRawExtractionPayload(text) {
 function looksLikeRawTransactionLine(text) {
   var t = String(text || '');
   return /\\[[A-Z0-9]{2,3}\\]/.test(t) &&
-    /\b(P|S|E|purchase|sale|exchange)\b/i.test(t) &&
-    /\$[\d,]+/.test(t);
+    /\\b(P|S|E|purchase|sale|exchange)\\b/i.test(t) &&
+    /\\$[\\d,]+/.test(t);
 }
 function filingNotesHtml(raw) {
   if (!raw) return '';
