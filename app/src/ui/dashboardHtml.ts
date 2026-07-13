@@ -4640,16 +4640,18 @@ async function runChamberBenchmark(chamberName) {
   var res = el('benchmarkResults');
   var btns = [el('btnBenchHouse'), el('btnBenchSenate'), el('btnBenchExec')];
   
-  msg.innerText = 'Fetching ground-truth docs for ' + chamberName + '...';
+  var cLower = chamberName.toLowerCase();
+  var limit = cLower === 'executive' ? 5 : 25;
+  msg.innerText = 'Fetching ground-truth docs for ' + chamberName + ' filings...';
   msg.style.color = '';
   res.innerHTML = '';
   btns.forEach(b => { if (b) b.disabled = true; });
 
   try {
-    const docsData = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=25&chamber=' + chamberName, 'GET');
+    const docsData = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=' + limit + '&chamber=' + cLower, 'GET');
     const docList = docsData.docs || [];
     if (!docList.length) {
-      msg.innerText = 'No ground-truth docs found for ' + chamberName + '.';
+      msg.innerText = 'No ground-truth docs found for ' + chamberName + ' filings.';
       btns.forEach(b => { if (b) b.disabled = false; });
       return;
     }
