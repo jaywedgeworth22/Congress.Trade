@@ -1,0 +1,57 @@
+# Owner-triggered production maintenance against the live Worker's admin API.
+# Uses the same ADMIN_TOKEN repo secret as deploy.yml/ship.sh — this is the
+# sanctioned path for authorized admin calls from automation (cloud agent
+# sessions hold no admin credentials by design).
+#
+# Tasks:
+#   drain-backlog          -> both steps below, in order
+#   ingest-requeue-failed  -> reopen dead-lettered ingestion_outbox rows
+#                             (fetch-stage casualties, e.g. the R2 known-length
+#                             regression); the per-minute outbox flush re-fetches
+#   ingest-retry-errored   -> re-enqueue filing.fetched for errored filings that
+#                             already have raw bytes (extraction-stage casualties)
+name: Admin Maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Maintenance task
+        required: true
+        type: choice
+        default: drain-backlog
+        options:
+          - drain-backlog
+          - ingest-requeue-failed
+          - ingest-retry-errored
+      confirm:
+        description: Type run-production-maintenance to confirm
+        required: true
+
+jobs:
+  maintain:
+    if: inputs.confirm == 'run-production-maintenance'
+    runs-on: ubuntu-latest
+    env:
+      BASE_URL: https://congress.trade
+      ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+    steps:
+      - name: Requeue dead-lettered fetches (ingestion_outbox failed -> pending)
+        if: inputs.task == 'drain-backlog' || inputs.task == 'ingest-requeue-failed'
+        run: |
+          set -euo pipefail
+          echo "== POST /api/admin/ingest-requeue-failed"
+          curl -sS --fail-with-body -X POST "$BASE_URL/api/admin/ingest-requeue-failed" \
+            -H "authorization: Bearer $ADMIN_TOKEN" \
+            -H 'content-type: application/json' -d '{}'
+          echo
+
+      - name: Re-enqueue errored filings that already have raw bytes
+        if: inputs.task == 'drain-backlog' || inputs.task == 'ingest-retry-errored'
+        run: |
+          set -euo pipefail
+          echo "== POST /api/admin/ingest-retry-errored"
+          curl -sS --fail-with-body -X POST "$BASE_URL/api/admin/ingest-retry-errored" \
+            -H "authorization: Bearer $ADMIN_TOKEN" \
+            -H 'content-type: application/json' -d '{"limit": 2000}'
+          echo
