@@ -4787,6 +4787,7 @@ async function runChamberBenchmark(chamberName) {
             }
           } catch (e) {
             flagged++;
+            totalDocsTested++;
             const eStr = String(e);
             breakdown[eStr] = (breakdown[eStr] || 0) + 1;
           }
