@@ -195,7 +195,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('id="colChooser"');
     expect(DASHBOARD_HTML).toContain('id="colChooserBody"');
     expect(DASHBOARD_HTML).toContain('function resetCols(');
-    expect(DASHBOARD_HTML).toContain("var COL_ORDER_KEY = 'feed-cols-order-v1'");
+    expect(DASHBOARD_HTML).toContain("var COL_ORDER_KEY = 'feed-cols-order-v2'");
     expect(DASHBOARD_HTML).toContain('function moveColumn(');
     expect(DASHBOARD_HTML).toContain('Drag columns here to reorder the Trades table.');
     expect(DASHBOARD_HTML).toContain('draggable="true" data-colid');
@@ -335,11 +335,11 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('uses published timing, tighter asset defaults, and source links in drawers', () => {
-    expect(DASHBOARD_HTML).toContain("var sortKey = 'published'");
-    expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v2'");
+    expect(DASHBOARD_HTML).toContain("var sortKey = 'txdate'");
+    expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v3'");
     expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v8'");
     expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 48, 40, 54)");
-    expect(DASHBOARD_HTML).not.toContain('width: max-content');
+    expect(DASHBOARD_HTML).toContain('width: max-content');
     expect(DASHBOARD_HTML).not.toContain('feed-col-widths-v7');
     expect(DASHBOARD_HTML).toContain('function dateTimeCellHtml(');
     expect(DASHBOARD_HTML).toContain('date-time-cell');
