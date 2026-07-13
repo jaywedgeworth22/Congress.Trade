@@ -1856,6 +1856,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         'AGREEMENT_AUTOPUBLISH_ENABLED', 'AGREEMENT_AUTOPUBLISH_MODEL_A', 'AGREEMENT_AUTOPUBLISH_MODEL_B',
         'AGREEMENT_MODEL_C', 'AGREEMENT_AUTOPUBLISH_LIMIT', 'AGREEMENT_MAX_ATTEMPTS', 'AGREEMENT_DAILY_LLM_BUDGET',
         'AGREEMENT_BIG_DOC_START_TIER2', 'AGREEMENT_BIG_DOC_PAGE_THRESHOLD', 'AGREEMENT_BIG_DOC_BYTES_THRESHOLD',
+        'AGREEMENT_HOUSE_MODEL_A', 'AGREEMENT_HOUSE_MODEL_B', 'AGREEMENT_HOUSE_MODEL_C',
+        'AGREEMENT_SENATE_MODEL_A', 'AGREEMENT_SENATE_MODEL_B', 'AGREEMENT_SENATE_MODEL_C',
+        'AGREEMENT_EXEC_MODEL_A', 'AGREEMENT_EXEC_MODEL_B', 'AGREEMENT_EXEC_MODEL_C',
         'ADMIN_OPEN_IN_DEV',
         'IMPORT_MAX_BYTES', 'IMPORT_MAX_REFS', 'IMPORT_MAX_SPX', 'IMPORT_MAX_PRICES',
         'IMPORT_MAX_CLOSES_PER_TICKER', 'IMPORT_MAX_INSIDER', 'IMPORT_MAX_SHORT_VOLUME',
@@ -3390,10 +3393,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.get('/benchmark/ground-truth-docs', async (c) => {
     const limit = Math.min(Number(c.req.query('limit')) || 50, 200);
     const chamber = c.req.query('chamber');
-    let query = `SELECT doc_id FROM filings WHERE source = 'manual' AND raw_object_key IS NOT NULL`;
+    // Manual ground truth lives on transactions.source (filings has no source
+    // column); a doc qualifies when it still has live manual rows.
+    let query = `SELECT DISTINCT f.doc_id FROM filings f JOIN transactions t ON t.doc_id = f.doc_id WHERE t.source = 'manual' AND t.deprecated_at IS NULL AND f.raw_object_key IS NOT NULL`;
     const params: (string | number)[] = [];
     if (chamber) {
-      query += ` AND chamber = ?`;
+      query += ` AND f.chamber = ?`;
       params.push(chamber);
     }
     query += ` LIMIT ?`;

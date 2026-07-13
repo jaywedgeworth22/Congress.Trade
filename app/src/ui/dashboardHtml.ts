@@ -709,7 +709,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* "What Congress Is Trading" is the densest row; on phones drop the gross
        Approx-Volume column (it's in the KPI strip + the tap-through drawer) so the
        signed net-flow column isn't clipped. Other tables keep their volume. */
-    #trTickers td.est { display: none; }
+    #trTickers td.est, #tableTrTickers th.est { display: none; }
     .cluster-grid { grid-template-columns: 1fr; }
     .drawer-panel { top: auto; bottom: 0; height: 88vh; width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; padding: 0 16px calc(18px + env(safe-area-inset-bottom)); }
     .drawer-kv { grid-template-columns: 1fr; gap: 3px; }
@@ -1349,12 +1349,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <thead>
               <tr>
                 <th style="width:32px"></th>
-                <th style="width:32px"></th>
-                <th style="width:32px"></th>
                 <th class="sortable" onclick="setTickerSort('trades')">Asset</th>
-                <th class="sortable r" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades"></span></th>
+                <th class="sortable" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades"></span></th>
                 <th class="sortable r" onclick="setTickerSort('members')">Politicians <span class="sort-icon" data-sort="members"></span></th>
-                <th class="sortable r" onclick="setTickerSort('volume')">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
+                <th class="sortable r est" onclick="setTickerSort('volume')">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
                 <th class="sortable r" onclick="setTickerSort('netflow')">Net $ Flow <span class="sort-icon" data-sort="netflow"></span></th>
               </tr>
             </thead>
@@ -1792,6 +1790,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <span id="secretUpdateMsg" class="note"></span>
       </div>
       <div id="diagConnections" class="diag-grid" aria-live="polite"></div>
+      <h3 style="margin-top:14px">Settings / Runtime Secrets</h3>
+      <table>
+        <thead><tr><th>Category</th><th>Key</th><th>Source</th><th style="text-align:right">Action</th></tr></thead>
+        <tbody id="diagSettings"></tbody>
+      </table>
       <h3 style="margin-top:14px">Recent App Errors</h3>
       <table>
         <thead><tr><th>When</th><th>Area</th><th>Subject</th><th>Message</th></tr></thead>
@@ -1932,6 +1935,7 @@ function chamberLabel(c) {
   var s = String(c == null ? '' : c).trim().toLowerCase();
   if (s === 'house' || s === 'h') return 'House';
   if (s === 'senate' || s === 's') return 'Senate';
+  if (s === 'executive' || s === 'oge' || s === 'exec') return 'Exec';
   return c ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 }
 /* Spell out a US state/territory from its 2-letter code for the politician drawer. */
@@ -2159,7 +2163,7 @@ function clipTextHtml(value, fallback, title) {
 /* Strip stray HTML/entities some upstream datasets embed in asset descriptions
    (e.g. "<div class=text-muted><em>Rate/Coupon:</em> 3.875%<br>…</div>"). */
 function isScannedPdfPlaceholder(s) {
-  var text = String(s || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  var text = String(s || '').replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim().toLowerCase();
   return text.indexOf('this filing was disclosed via scanned pdf') >= 0 ||
     text.indexOf('use link in ptr_link column to view the pdf') >= 0 ||
     text.indexOf('pdf disclosed filing') >= 0;
@@ -2169,18 +2173,18 @@ function cleanAsset(s) {
   var t = String(s).replace(/<[^>]*>/g, ' ');
   t = t.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
        .replace(/&gt;/gi, '>').replace(/&#0*39;|&apos;/gi, "'").replace(/&quot;/gi, '"');
-  t = t.replace(/\s+/g, ' ').trim();
-  
+  t = t.replace(/\\s+/g, ' ').trim();
+
   if (isScannedPdfPlaceholder(t)) return '';
 
-  t = t.replace(/[\/\-\s]+$/, '');
-  t = t.replace(/\s*\(\s*(?:NASDAQ|NYSE|AMEX|OTC|BATS|ARCA|ASX|LSE|TSX)[^)]*\)\s*$/i, '');
-  
+  t = t.replace(/[\\/\\-\\s]+$/, '');
+  t = t.replace(/\\s*\\(\\s*(?:NASDAQ|NYSE|AMEX|OTC|BATS|ARCA|ASX|LSE|TSX)[^)]*\\)\\s*$/i, '');
+
   if (t === t.toUpperCase() && /[A-Z]{4,}/.test(t)) {
-    t = t.toLowerCase().replace(/\b\w/g, function(l) { return l.toUpperCase(); });
+    t = t.toLowerCase().replace(/\\b\\w/g, function(l) { return l.toUpperCase(); });
   }
 
-  t = t.replace(/\b(Inc|Corp|Ltd|Co)\b\.?/gi, function(match) {
+  t = t.replace(/\\b(Inc|Corp|Ltd|Co)\\b\\.?/gi, function(match) {
     var c = match.toLowerCase();
     if (c.startsWith('inc')) return 'Inc.';
     if (c.startsWith('corp')) return 'Corp.';
@@ -2188,13 +2192,13 @@ function cleanAsset(s) {
     if (c.startsWith('co')) return 'Co.';
     return match;
   });
-  t = t.replace(/\b(LLC|L\.L\.C\.|L\.P\.|LP)\b\.?/gi, function(match) {
-    var c = match.toLowerCase().replace(/\./g, '');
+  t = t.replace(/\\b(LLC|L\\.L\\.C\\.|L\\.P\\.|LP)\\b\\.?/gi, function(match) {
+    var c = match.toLowerCase().replace(/\\./g, '');
     if (c === 'llc') return 'LLC';
     if (c === 'lp') return 'LP';
     return match;
   });
-  t = t.replace(/\s*,\s*(Inc\.|LLC|Corp\.|Ltd\.|LP|Co\.)/g, ' $1');
+  t = t.replace(/\\s*,\\s*(Inc\\.|LLC|Corp\\.|Ltd\\.|LP|Co\\.)/g, ' $1');
 
   return t;
 }
@@ -4377,10 +4381,12 @@ function loadDiagnostics() {
   var errors = el('diagErrors');
   var users = el('diagUsers');
   var logins = el('diagLogins');
+  var settingsTable = el('diagSettings');
   if (cards) cards.innerHTML = '<div class="state">Loading connection status…</div>';
   if (errors) errors.innerHTML = stateRow(4, 'Loading recent errors…');
   if (users) users.innerHTML = '<div class="state">Loading users…</div>';
   if (logins) logins.innerHTML = stateRow(4, 'Loading recent logins…');
+  if (settingsTable) settingsTable.innerHTML = stateRow(4, 'Loading settings…');
   return fetch('/api/admin/diagnostics', { headers: adminHeaders() })
     .then(okOrThrow)
     .then(function (data) {
@@ -4405,6 +4411,21 @@ function loadDiagnostics() {
               '</div>' +
               (c.note ? '<div class="diag-note">' + esc(c.note) + '</div>' : '') +
             '</div>';
+          }).join('');
+        }
+      }
+      var items = data.items || [];
+      if (settingsTable) {
+        if (items.length === 0) {
+          settingsTable.innerHTML = stateRow(4, 'No settings available.');
+        } else {
+          settingsTable.innerHTML = items.map(function(item) {
+            return '<tr class="row">' +
+              '<td class="muted">' + esc(item.category) + '</td>' +
+              '<td><code>' + esc(item.key) + '</code></td>' +
+              '<td class="muted">' + esc(item.source) + '</td>' +
+              '<td style="text-align:right"><button class="btn ghost sm" data-source="' + esc(item.source) + '" data-key="' + esc(item.key) + '" onclick="editInfisicalSecret(this)">Edit</button></td>' +
+            '</tr>';
           }).join('');
         }
       }
@@ -4484,14 +4505,26 @@ function refreshInfisicalSecrets() {
     });
 }
 
+function editInfisicalSecret(btn) {
+  var source = btn.getAttribute('data-source');
+  var key = btn.getAttribute('data-key');
+  if (el('updateSecretSource')) el('updateSecretSource').value = source === 'shared' ? 'shared' : 'app';
+  if (el('updateSecretKey')) el('updateSecretKey').value = key || '';
+  if (el('updateSecretSource')) window.scrollTo({ top: el('updateSecretSource').offsetTop - 100, behavior: 'smooth' });
+  if (el('updateSecretValue')) el('updateSecretValue').focus();
+}
+
 function updateInfisicalSecret() {
   var msg = el('secretUpdateMsg');
   var source = el('updateSecretSource').value;
   var key = el('updateSecretKey').value.trim();
-  var value = el('updateSecretValue').value.trim();
+  // Do NOT trim the value: empty string is a documented "off" state for some
+  // config flags (the API only rejects value === undefined), and trimming would
+  // silently strip significant leading/trailing whitespace from a secret.
+  var value = el('updateSecretValue').value;
 
-  if (!key || !value) {
-    if (msg) msg.textContent = 'Key and Value are required.';
+  if (!key) {
+    if (msg) msg.textContent = 'Key is required.';
     return;
   }
 
@@ -5393,11 +5426,11 @@ function friendlyKey(k) {
   return String(k || '')
     .replace(/[_-]+/g, ' ')
     .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/\b\w/g, function (ch) { return ch.toUpperCase(); });
+    .replace(/\\b\\w/g, function (ch) { return ch.toUpperCase(); });
 }
 function cleanNoteValue(v) {
   if (v == null || v === '') return '';
-  return String(v).replace(/\s+/g, ' ').trim();
+  return String(v).replace(/\\s+/g, ' ').trim();
 }
 function isExtractionNoteKey(k) {
   var s = String(k || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -5420,8 +5453,8 @@ function looksLikeRawExtractionPayload(text) {
 function looksLikeRawTransactionLine(text) {
   var t = String(text || '');
   return /\\[[A-Z0-9]{2,3}\\]/.test(t) &&
-    /\b(P|S|E|purchase|sale|exchange)\b/i.test(t) &&
-    /\$[\d,]+/.test(t);
+    /\\b(P|S|E|purchase|sale|exchange)\\b/i.test(t) &&
+    /\\$[\\d,]+/.test(t);
 }
 function filingNotesHtml(raw) {
   if (!raw) return '';
@@ -6287,6 +6320,7 @@ el('subsBody').innerHTML = stateRow(5, 'Loading…');
 el('healthBody').innerHTML = stateRow(9, 'Loading…');
 el('marketCoverage').innerHTML = '<div class="state">Loading market-data coverage…</div>';
 el('diagConnections').innerHTML = '<div class="state">Loading connection status…</div>';
+el('diagSettings').innerHTML = stateRow(4, 'Loading…');
 el('diagErrors').innerHTML = stateRow(4, 'Loading…');
 el('diagUsers').innerHTML = '<div class="state">Loading users…</div>';
 el('diagLogins').innerHTML = stateRow(4, 'Loading…');
