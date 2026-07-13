@@ -81,6 +81,20 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Branch filter → segmented H·S·P strip + grouped explainer; slab wordmark (CLAUDE, S) —
+  2026-07-13, owner-directed.** Jay picked the "ultra-compact segmented strip" from the toggle
+  design exploration and specified the copy: the two icon-groups from AG's #355 badge toggles
+  become ONE segmented strip whose executive letter is **P** (President, analogous to H/S).
+  Per-letter `title` hover text ("House trades — House Clerk PTR filings" / "Senate trades —
+  Senate eFD PTR filings" / "Executive Branch trades — OGE Form 278-T") plus ONE grouped ⓘ
+  popover beside each strip (feed + trends) that explains all three — hover-opens on pointer
+  devices, tap-toggles everywhere (mobile can't hover), Esc/outside-click closes.
+  `initChamberChips`/`data-ch`/persistence contract untouched. `.brand` wordmark now renders in
+  the owner-chosen typewriter-slab stack (American Typewriter/Rockwell/Courier New; self-hosted
+  Zilla Slab subset is the follow-up — the font download was permission-gated in the cloud
+  session). Verified with Playwright against wrangler dev: hover-popover, tap-popover, P-toggle,
+  desktop + mobile screenshots. Gates: typecheck + 111 files / 981 tests. NOTE for AG: replaces
+  the branch-filters markup/CSS from #355; party chips and all JS wiring left as-is.
 - **Dashboard Interactivity & Visual Toggles (AG, S) — COMPLETED 2026-07-13.** Added interactive SVG building icons and H/S/E badge toggles for the branch selection filter, and animal emojis (🫏, 🐘, 🦅) for the party filter to replace the old native dropdown boxes. Reorganized logic to make these filter toggles mutually exclusive where appropriate and globally linked in the dashboard.
 - **iOS improvement roadmap audit (CODEX, M) — COMPLETED 2026-07-12; READ-ONLY.** Audited fetched
   `origin/main` at `5aca5f6` across SwiftUI architecture/UX/accessibility, backend client contracts,
