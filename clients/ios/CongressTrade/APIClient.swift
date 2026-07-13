@@ -213,7 +213,7 @@ final class CongressTradeAPIClient {
         request.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
         let response: ClientCommandResponse<T> = try await send(request)
-        if response.command.status == "failed" {
+        if response.command.status == .failed {
             throw APIError.server(status: 400, message: response.command.error ?? "Command failed")
         }
         return response
