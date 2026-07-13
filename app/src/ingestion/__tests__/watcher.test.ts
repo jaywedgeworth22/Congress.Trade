@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   fetchHouseIndex: vi.fn(),
   pollHouseLiveSearch: vi.fn(),
   fetchSenatePtrFilings: vi.fn(),
+  pollOgeExecutive: vi.fn(),
 }));
 
 vi.mock('../houseSource', () => ({
@@ -14,6 +15,10 @@ vi.mock('../houseSource', () => ({
 
 vi.mock('../senateSource', () => ({
   fetchSenatePtrFilings: mocks.fetchSenatePtrFilings,
+}));
+
+vi.mock('../ogeSource', () => ({
+  pollOgeExecutive: mocks.pollOgeExecutive,
 }));
 
 import { runWatcher } from '../watcher';
@@ -32,6 +37,7 @@ function housePtr(docId: string, overrides: Partial<Record<'filingDate' | 'first
 
 function fakeEnv(
   overrides: Partial<{ HOUSE_LIVE_SEARCH_ENABLED: string }> = {},
+  faults: { throwOnFilingsInsert?: boolean } = {},
 ): {
   env: Env;
   kvPuts: Array<[string, string]>;
@@ -79,6 +85,7 @@ function fakeEnv(
           async run() {
             dbRuns.push({ sql, params });
             if (/INSERT OR IGNORE INTO filings/i.test(sql)) {
+              if (faults.throwOnFilingsInsert) throw new Error('filings insert failed');
               const docId = String(params[0] ?? '');
               const isNew = !insertedDocIds.has(docId);
               insertedDocIds.add(docId);
@@ -117,6 +124,9 @@ function fakeEnv(
 describe('runWatcher', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // Default the OGE source to "nothing due" so tests that don't exercise the
+    // executive path leave it skipped instead of tripping the mock.
+    mocks.pollOgeExecutive.mockResolvedValue(null);
   });
 
   it('does not stamp last-poll state after source failures', async () => {
@@ -186,5 +196,52 @@ describe('runWatcher', () => {
     expect(mocks.pollHouseLiveSearch).toHaveBeenCalledWith(2026);
     expect(queueSends).toEqual([expect.objectContaining({ docId: 'H-2026-20026001', chamber: 'house' })]);
     expect(kvPuts.map(([key]) => key)).toContain('last_poll:house');
+  });
+
+  // --- Executive (OGE 278-T) path -----------------------------------------
+  const ogeFiling = {
+    docId: 'OGE-2026-0001',
+    chamber: 'executive' as const,
+    sourceUrl: 'https://extapps2.oge.gov/278/0001.pdf',
+    filedDate: '2026-06-01',
+    filerName: 'Donald J. Trump',
+  };
+
+  function quietExecutiveEnv() {
+    // House/Senate poll cleanly (no filings) so the executive path is isolated.
+    mocks.fetchHouseIndex.mockResolvedValue([]);
+    mocks.pollHouseLiveSearch.mockResolvedValue([]);
+    mocks.fetchSenatePtrFilings.mockResolvedValue([]);
+  }
+
+  it('checkpoints last_poll:oge only after executive filings persist', async () => {
+    const { env, kvPuts, dbRuns } = fakeEnv();
+    quietExecutiveEnv();
+    mocks.pollOgeExecutive.mockResolvedValueOnce([ogeFiling]);
+
+    const result = await runWatcher(env, new Date('2026-07-12T15:00:00.000Z'));
+
+    expect(result.executive).toBe('success');
+    expect(kvPuts.map(([key]) => key)).toContain('last_poll:oge');
+    // Executive filings must NOT create disclosure-latency candidates (those
+    // providers only publish house/senate rows and would sit permanently pending).
+    expect(dbRuns.filter((run) => /INSERT INTO disclosure_latency_candidates/i.test(run.sql))).toHaveLength(0);
+  });
+
+  it('does not checkpoint last_poll:oge when executive persistence fails', async () => {
+    const { env, kvPuts } = fakeEnv({}, { throwOnFilingsInsert: true });
+    quietExecutiveEnv();
+    mocks.pollOgeExecutive.mockResolvedValueOnce([ogeFiling]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    let result;
+    try {
+      result = await runWatcher(env, new Date('2026-07-12T15:00:00.000Z'));
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(result?.executive).toBe('failure');
+    expect(kvPuts.map(([key]) => key)).not.toContain('last_poll:oge');
   });
 });

@@ -735,13 +735,16 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'invalid JSON body' }, 400);
     }
 
-    const user = await getCurrentUserFromRequest(c);
-    const owner = user || (existing.clientId ? await getUserById(c.env, existing.clientId) : null);
-    
+    // The premium gate is anchored to the subscription OWNER, never the
+    // request's session (any premium cookie must not unlock someone else's
+    // subscription). User-owned rows store clientId as `user:<id>`; admin
+    // operator-provisioned integration ids are intentionally ungated.
     const isContinuingOrChangingDelivery = body.filters !== undefined || body.targetUrl !== undefined || body.active === true;
-    
-    if (isContinuingOrChangingDelivery && owner && !isPremiumUser(owner)) {
-      return c.json({ error: 'subscription management requires a Premium account', upgradeRequired: true, feature: 'alerts' }, 402);
+    if (isContinuingOrChangingDelivery && existing.clientId?.startsWith('user:')) {
+      const ownerUser = await getUserById(c.env, existing.clientId.slice('user:'.length));
+      if (!ownerUser || !isPremiumUser(ownerUser)) {
+        return c.json({ error: 'subscription management requires a Premium account', upgradeRequired: true, feature: 'alerts' }, 402);
+      }
     }
 
     const patch: Parameters<typeof updateSubscription>[2] = {};
@@ -882,8 +885,15 @@ export function priceRangeQuery(
   const clause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
   // price_eod carries a daily volume column; spx_eod does not.
   const cols = table === 'price_eod' ? 'date, close, volume' : 'date, close';
-  const limitClause = (!from && !to) ? ' LIMIT 1000' : '';
-  return { sql: `SELECT ${cols} FROM ${table}${clause} ORDER BY date ASC${limitClause}`, params };
+  if (!from && !to) {
+    // No window: cap at the LATEST 1000 rows (not the oldest), re-sorted
+    // ascending for charting.
+    return {
+      sql: `SELECT ${cols} FROM (SELECT ${cols} FROM ${table}${clause} ORDER BY date DESC LIMIT 1000) ORDER BY date ASC`,
+      params,
+    };
+  }
+  return { sql: `SELECT ${cols} FROM ${table}${clause} ORDER BY date ASC`, params };
 }
 
 /** JSON.parse that returns null instead of throwing. */

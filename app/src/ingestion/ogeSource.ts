@@ -25,7 +25,7 @@
 
 import type { Env } from '../shared/types';
 import { resolveSecret } from '../secrets/infisical';
-import { getLastPollAt, setLastPollAt } from '../shared/config';
+import { getLastPollAt } from '../shared/config';
 import type { DiscoveredFiling } from './watcher';
 
 export const OGE_DEFAULT_INDEX_URL =
@@ -187,7 +187,8 @@ export async function pollOgeExecutive(
     const last = await getLastPollAt(env, POLL_SOURCE);
     if (last && now.getTime() - last.getTime() < (await pollIntervalSec(env)) * 1000) return null;
   }
-  const filings = await fetchOgeExecutiveFilings(env, fetchImpl);
-  await setLastPollAt(env, POLL_SOURCE, now);
-  return filings;
+  // Checkpoint is written by the caller (pollExecutive) only after
+  // persistence succeeds, matching the House/Senate ordering — a failed
+  // persist must not advance last_poll:oge and skip the next cycles.
+  return fetchOgeExecutiveFilings(env, fetchImpl);
 }
