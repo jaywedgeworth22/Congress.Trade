@@ -63,6 +63,7 @@ import {
   loadResolver,
   CONFIDENCE_THRESHOLD,
   hasHardFailureFlags,
+  HARD_FAILURE_FLAGS,
 } from '../extraction/normalizer';
 import { enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, type AgreementModels } from '../extraction/agreement';
 import { mapFiling } from '../delivery/rows';
@@ -3490,12 +3491,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       if (!frow) return c.json({ outcome: 'skipped', reason: 'no_filing' });
       
       const flagged = await recomputeTransactions(c.env, mapFiling(frow), read.rows);
-      // find hard flags
-      const hardFlags = Array.from(new Set(flagged.flatMap((f) => f.flags).filter((fl) => [
-        'ticker_not_found', 'future_transaction_date', 'amount_min_max_inverted', 'missing_amount', 'no_amount_bucket', 'invalid_transaction_date'
-      ].includes(fl)))); // from HARD_FAILURE_FLAGS
+      // Use the normalizer's authoritative hard-failure flags
+      const hardFlags = Array.from(new Set(flagged.flatMap((f) => f.flags).filter((fl) => HARD_FAILURE_FLAGS.includes(fl))));
 
       if (hardFlags.length > 0) return c.json({ docId, outcome: 'agree_but_hardfail', flags: hardFlags });
+      if (flagged.length === 0) return c.json({ docId, outcome: 'agree_but_empty' });
       if (flagged.length > 200) return c.json({ docId, outcome: 'agree_but_hardfail', flags: ['row_limit_exceeded'] }); // MAX_PUBLISH_TRANSACTIONS_PER_FILING
       
       return c.json({
