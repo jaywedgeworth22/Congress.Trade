@@ -86,7 +86,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('data-view="feed" data-mobile="Trades" data-icon="▦"');
     expect(DASHBOARD_HTML).toContain('aria-controls="view-feed">Trades</button>');
     // Trends is warmed on boot since it is the landing view.
-    expect(DASHBOARD_HTML).toContain('loadTrends();      // Trends is the default landing view');
+    expect(DASHBOARD_HTML).toContain('loadTrends(); // Trends is the default landing view');
   });
 
   it('exposes a public Alerts tab while keeping delivery MANAGEMENT admin-only', () => {

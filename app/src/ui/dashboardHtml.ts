@@ -6122,6 +6122,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); v.setAttribute('aria-hidden', 'true'); });
     b.classList.add('active');
     b.setAttribute('aria-selected', 'true');
+    try { localStorage.setItem('ct-active-tab', b.dataset.view); } catch (e) {}
     var view = el('view-' + b.dataset.view);
     if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
     if (b.dataset.view === 'feed') window.scrollTo({ top: 0, behavior: 'auto' });
@@ -6357,9 +6358,37 @@ el('diagErrors').innerHTML = stateRow(4, 'Loading…');
 el('diagUsers').innerHTML = '<div class="state">Loading users…</div>';
 el('diagLogins').innerHTML = stateRow(4, 'Loading…');
 
-loadMe().then(function () { if (canUseAdmin()) loadReview(); }); // account state + admin tab visibility
+// Load user identity/permissions, then restore the saved tab so admin-gated tabs fallback properly if needed
+loadMe().then(function () {
+  if (canUseAdmin()) loadReview(); // account state + admin tab visibility
+  var initialView = 'trends';
+  try {
+    var saved = localStorage.getItem('ct-active-tab');
+    if (saved && document.querySelector('nav.tabs button[data-view="' + saved + '"]')) initialView = saved;
+  } catch (e) {}
+
+  var initialBtn = document.querySelector('nav.tabs button[data-view="' + initialView + '"]');
+  if (initialBtn && initialView !== 'trends') {
+    document.querySelectorAll('nav.tabs button').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); });
+    document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); v.setAttribute('aria-hidden', 'true'); });
+    initialBtn.classList.add('active');
+    initialBtn.setAttribute('aria-selected', 'true');
+    var view = el('view-' + initialView);
+    if (view) { view.classList.add('active'); view.setAttribute('aria-hidden', 'false'); }
+    
+    if (initialView === 'feed') window.scrollTo({ top: 0, behavior: 'auto' });
+    if (initialView === 'review' && canUseAdmin()) loadReview();
+    if (initialView === 'subs') {
+      if (canUseAdmin()) loadSubs();
+      fetchLatencySummary().then(renderAlertsMini).catch(function () {});
+    }
+    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); }
+  } else {
+    loadTrends(); // Trends is the default landing view
+  }
+});
+
 handleAuthQueryParams(); // toast + scrub ?login= / ?checkout= after redirects
-loadTrends();      // Trends is the default landing view
 loadFeed().then(function () { startStream(); }); // warm the Trades feed + live SSE pill
 loadPollConfig();  // for the poll-mode KPI
 </script>
