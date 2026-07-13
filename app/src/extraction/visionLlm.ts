@@ -263,6 +263,27 @@ Extract EVERY disclosed transaction row. For each transaction return:
 - confidence: YOUR confidence for this row in [0,1], lowering it when handwriting or scan quality is poor.
 Return ONLY the structured JSON array. Do not guess values you cannot read; use null instead.`;
 
+export const EXECUTIVE_SYSTEM_PROMPT = `You are a meticulous data-extraction engine for U.S. Executive Branch OGE Form 278-T Periodic Transaction Reports.
+The attached document is a scanned OGE Form 278-T.
+Extract EVERY disclosed transaction row. For each transaction return:
+- txDate: the transaction date in YYYY-MM-DD (use the "Transaction Date", NOT the "Notification Date"). null if illegible.
+- owner: one of "self","spouse","joint","dependent" (if unspecified or blank, use "self").
+- assetName: the security/asset name as written (often under "Description").
+- ticker: the stock ticker symbol in UPPERCASE if shown, else null.
+- assetType: short asset-type code/label if shown (e.g. "Stock", "Option"), else null.
+- assetTypeName: expanded asset-type name if the document or code is clear, else null.
+- txType: one of "P" (Purchase), "S" (Sale), "E" (Exchange). Map "Purchase" to "P", "Sale" to "S", "Exchange" to "E".
+- amountRange: the disclosed amount bracket exactly as printed, e.g. "$1,001 - $15,000" or "$15,001 - $50,000".
+- isOption: true if the holding is an option/call/put/warrant.
+- capGainsOver200: false (rarely applicable on OGE forms).
+- filingStatus: row-specific filing status such as "New", if shown.
+- subholding: row-specific account/subholding text, if shown.
+- location: row-specific location text, if shown.
+- description: row-specific description text, if shown.
+- supplementalText: capture the "Notification Date" or other notes here.
+- confidence: YOUR confidence for this row in [0,1], lowering it when handwriting or scan quality is poor.
+Return ONLY the structured JSON array. Do not guess values you cannot read; use null instead.`;
+
 /** Gemini responseSchema constraining output to our transaction array. */
 const RESPONSE_SCHEMA = {
   type: 'ARRAY',

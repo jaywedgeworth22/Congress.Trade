@@ -127,8 +127,8 @@ describe('DASHBOARD_HTML', () => {
     // Chip groups replace the old two-option chamber selects in BOTH views
     // (the admin seed-backfill selector stays congressional by design).
     expect(DASHBOARD_HTML).not.toContain('>Both Chambers</option><option value="house">House</option>');
-    expect(DASHBOARD_HTML).toContain('class="chamber-chips" id="qChamber"');
-    expect(DASHBOARD_HTML).toContain('class="chamber-chips" id="trChamber"');
+    expect(DASHBOARD_HTML).toContain('class="branch-filters" id="qChamber"');
+    expect(DASHBOARD_HTML).toContain('class="branch-filters" id="trChamber"');
     expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*aria-pressed="false"/);
     expect(DASHBOARD_HTML).toMatch(/data-ch="house"[^>]*aria-pressed="true"/);
     // Default (House+Senate) sends NO chamber param; selections send a CSV.

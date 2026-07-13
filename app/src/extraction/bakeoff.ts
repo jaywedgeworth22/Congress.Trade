@@ -19,6 +19,7 @@ import type { Env, ParsedTx } from '../shared/types';
 import { arbitrationRowKey } from '../extractors/types';
 import {
   SYSTEM_PROMPT,
+  EXECUTIVE_SYSTEM_PROMPT,
   parseModelJson,
   toParsedTx,
   arrayBufferToBase64,
@@ -432,10 +433,11 @@ export function parseLlamaParseMarkdown(markdown: string): ParsedTx[] {
  * format we need. Poll interval is 2 s; hard timeout is 90 s (well inside the
  * Worker's cpu_ms=300_000 ceiling since poll time is I/O, not CPU).
  */
-async function runLlamaParse(model: string, key: string, bytes: ArrayBuffer): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
+async function runLlamaParse(model: string, key: string, bytes: ArrayBuffer, chamber: string): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'ptr.pdf');
-  form.append('parsing_instruction', SYSTEM_PROMPT + LLAMAPARSE_JSON_SUFFIX);
+  const promptToUse = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
+  form.append('parsing_instruction', promptToUse + LLAMAPARSE_JSON_SUFFIX);
   // Tier selection via LlamaParse form parameters.
   if (model === 'cost-effective') {
     form.append('premium_mode', 'true');
@@ -499,9 +501,10 @@ export async function runCandidateOnDoc(
   try {
     let rows: ParsedTx[];
     let usage: CandidateDocResult['usage'];
+    const chamber = docId.startsWith('E-') ? 'executive' : (docId.startsWith('S-') ? 'senate' : 'house');
     if (provider === 'gemini') {
       const result = await new VisionLlmExtractor(env, { model, apiKey: key }).extract({
-        filing: { docKind: 'scanned_pdf' } as never,
+        filing: { docKind: 'scanned_pdf', chamber } as never,
         bytes,
       });
       rows = result.transactions;
@@ -519,7 +522,7 @@ export async function runCandidateOnDoc(
       rows = xai.rows;
       usage = xai.usage;
     } else if (provider === 'llamaparse') {
-      const lp = await runLlamaParse(model, key, bytes);
+      const lp = await runLlamaParse(model, key, bytes, chamber);
       rows = lp.rows;
       usage = lp.usage;
     } else {
