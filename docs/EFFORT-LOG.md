@@ -81,6 +81,19 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **Backlog drain: /ingest-retry-errored + Admin Maintenance workflow (CLAUDE, S) — 2026-07-13,
+  owner-directed ("drain the whole backlog for all 3 types of filings").** Backlog audit in prod
+  D1: house 695 errored (500 fetch-stage from the R2 known-length outage, dead-lettered in
+  ingestion_outbox; 192 extraction-stage from the 2026-06-21 vision-LLM failure day + 3 early-July
+  stragglers, all WITH raw bytes); senate 0 errored (3 in-flight); executive 0 errored (17 in
+  review by design — 4 oversized await page-chunked extraction). New
+  `POST /api/admin/ingest-retry-errored` re-enqueues `filing.fetched` for errored-with-raw docs
+  only (no re-fetch, no model spend on healthy filings — unlike /reprocess which rescans
+  everything recent), chamber/limit/dryRun options, bails after 5 queue failures. New
+  `.github/workflows/admin-maintenance.yml` (workflow_dispatch, confirm-gated, hosted runner)
+  runs drain tasks with the repo's ADMIN_TOKEN secret — same trust boundary as deploy.yml/ship.sh;
+  cloud agent sessions hold no admin credentials by design (direct D1 writes are
+  permission-blocked there, correctly). Gates: typecheck + 112 files / 984 tests.
 - **Branch filter → segmented H·S·P strip + grouped explainer; slab wordmark (CLAUDE, S) —
   2026-07-13, owner-directed.** Jay picked the "ultra-compact segmented strip" from the toggle
   design exploration and specified the copy: the two icon-groups from AG's #355 badge toggles
