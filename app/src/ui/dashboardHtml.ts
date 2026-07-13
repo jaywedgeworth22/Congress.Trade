@@ -160,6 +160,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   th.sortable .arr { opacity: .18; font-size: 10px; margin-left: 4px; color:var(--text-dim); }
   th.sortable.active { color: var(--text); }
   th.sortable.active .arr { opacity: 1; color: var(--accent); }
+  #benchmarkResults { display: block; }
   .bench-table { min-width: 800px; margin-top: 16px; table-layout: fixed; }
   .bench-table th { font-size: 10px; padding: 10px 8px; line-height: 1.3; white-space: normal; }
   .bench-table td { font-size: 13px; padding: 10px 8px; white-space: normal; word-break: break-word; }
