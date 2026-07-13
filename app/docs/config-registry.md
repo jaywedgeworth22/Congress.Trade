@@ -32,11 +32,18 @@ reports names + sources only, never values).
 `ARBITRATION_API_KEY`
 
 ### Auth, billing, email
-`ADMIN_TOKEN`¹, `INGEST_TOKEN`, `ADMIN_EMAILS`, `ACCESS_AUD`,
+`ADMIN_TOKEN`¹, `INGEST_TOKEN`, `ADMIN_MAINTENANCE_TOKEN`², `ADMIN_EMAILS`, `ACCESS_AUD`,
 `ACCESS_TEAM_DOMAIN`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`,
 `WEBHOOK_SIGNING_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
 `STRIPE_PRICE_MONTHLY`, `STRIPE_PRICE_ANNUAL`, `STRIPE_TRIAL_DAYS`,
 `STRIPE_MANAGED_PAYMENTS`, `RESEND_API_KEY`, `EMAIL_FROM`, `ALERT_EMAIL`
+
+² Scoped like `INGEST_TOKEN`: authorizes ONLY the idempotent maintenance
+endpoints (`POST /api/admin/ingest-requeue-failed`,
+`POST /api/admin/ingest-retry-errored`) — never migrations, review
+resolution, or config writes. Safe to hand to agent/automation sessions so
+they can drain backlogs without holding `ADMIN_TOKEN`. Worst case if leaked:
+someone re-runs an idempotent requeue.
 
 ¹ Admin AUTH accepts the Infisical value (rotation works live). Keep a strong
 `INFISICAL_APP_CLIENT_SECRET` set as a Worker secret regardless: the encrypted
