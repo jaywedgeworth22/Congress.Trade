@@ -1725,8 +1725,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
       const lastAttemptAt = latest?.attempted_at ?? row?.last_polled_at ?? null;
       const lastAttemptMs = lastAttemptAt ? Date.parse(lastAttemptAt) : Number.NaN;
+      // Executive (OGE 278-T) polls on a ~6h cadence, so it needs a much longer staleness window
+      const sourceStaleAfterSec = source === 'executive' ? 21600 * 3 : staleAfterSec;
       const stale = !Number.isFinite(lastAttemptMs)
-        || now.getTime() - lastAttemptMs > staleAfterSec * 1000;
+        || now.getTime() - lastAttemptMs > sourceStaleAfterSec * 1000;
       const status = latest?.outcome === 'failure'
         ? 'error'
         : stale
@@ -1738,7 +1740,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         source,
         status,
         stale,
-        staleAfterSec,
+        staleAfterSec: sourceStaleAfterSec,
         effectivePollIntervalSec,
         lastAttemptAt,
         lastSuccessAt: lastSuccess?.attempted_at ?? row?.last_polled_at ?? null,
