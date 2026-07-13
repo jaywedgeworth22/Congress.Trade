@@ -127,7 +127,7 @@ export class VisionLlmExtractor implements Extractor {
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkBytes = chunks[i];
-      const body = buildRequestBody(chunkBytes);
+      const body = buildRequestBody(chunkBytes, input.filing.chamber);
 
       const res = await fetchWithRetry(
         ENDPOINT(model, key),
@@ -242,8 +242,8 @@ export async function fetchWithRetry(
 // Request construction
 // ---------------------------------------------------------------------------
 
-export const SYSTEM_PROMPT = `You are a meticulous data-extraction engine for U.S. congressional STOCK Act
-Periodic Transaction Reports (PTRs). The attached document is a scanned PTR.
+export const HOUSE_SYSTEM_PROMPT = `You are a meticulous data-extraction engine for U.S. congressional STOCK Act
+Periodic Transaction Reports (PTRs). The attached document is a scanned House of Representatives PTR.
 Extract EVERY disclosed transaction row. For each transaction return:
 - txDate: the transaction date in YYYY-MM-DD (use the transaction/trade date, not the notification date). null if illegible.
 - owner: one of "self","spouse","joint","dependent" (map SP->spouse, DC->dependent, JT->joint, blank/self->self).
@@ -260,6 +260,48 @@ Extract EVERY disclosed transaction row. For each transaction return:
 - location: row-specific location text, if shown.
 - description: row-specific description text, if shown.
 - supplementalText: remaining row-specific notes/details that are not already captured; do not include page titles, headers, footers, or generic instructions.
+- confidence: YOUR confidence for this row in [0,1], lowering it when handwriting or scan quality is poor.
+Return ONLY the structured JSON array. Do not guess values you cannot read; use null instead.`;
+
+export const SENATE_SYSTEM_PROMPT = `You are a meticulous data-extraction engine for U.S. congressional STOCK Act
+Periodic Transaction Reports (PTRs). The attached document is a scanned Senate PTR.
+Extract EVERY disclosed transaction row. For each transaction return:
+- txDate: the transaction date in YYYY-MM-DD (use the transaction/trade date, not the notification date). null if illegible.
+- owner: one of "self","spouse","joint","dependent" (map SP->spouse, DC->dependent, JT->joint, blank/self->self).
+- assetName: the security/asset name as written.
+- ticker: the stock ticker symbol in UPPERCASE if shown, else null.
+- assetType: short asset-type code/label if shown (e.g. "ST","OP","Stock","Option"), else null.
+- assetTypeName: expanded asset-type name if the document or code is clear, else null.
+- txType: one of "P" (Purchase), "S" (Sale), "E" (Exchange).
+- amountRange: the disclosed amount bracket exactly as printed, e.g. "$1,001 - $15,000" or "$50,000,001 +".
+- isOption: true if the holding is an option/call/put/warrant.
+- capGainsOver200: false (the Senate does not have this field).
+- filingStatus: row-specific filing status such as "New", if shown.
+- subholding: row-specific account/subholding text, if shown.
+- location: row-specific location text, if shown.
+- description: row-specific description text, if shown.
+- supplementalText: remaining row-specific notes/details that are not already captured; do not include page titles, headers, footers, or generic instructions.
+- confidence: YOUR confidence for this row in [0,1], lowering it when handwriting or scan quality is poor.
+Return ONLY the structured JSON array. Do not guess values you cannot read; use null instead.`;
+
+export const EXECUTIVE_SYSTEM_PROMPT = `You are a meticulous data-extraction engine for Executive Branch Personnel Public Financial Disclosure Reports (OGE Form 278-T).
+The attached document is an OGE Form 278-T Periodic Transaction Report.
+Extract EVERY disclosed transaction row from the "Transactions" table. For each transaction return:
+- txDate: the transaction date in YYYY-MM-DD. null if illegible.
+- owner: one of "self","spouse","joint","dependent" (derive from context if indicated, else "self").
+- assetName: the "Description" of the transaction exactly as written.
+- ticker: the stock ticker symbol in UPPERCASE if explicitly shown or easily inferred, else null.
+- assetType: infer a short asset-type code/label if clear from the Description, else null.
+- assetTypeName: expanded asset-type name if clear, else null.
+- txType: map "purchase" to "P", "sale" to "S", "exchange" to "E". If unclear, infer from text.
+- amountRange: the disclosed "Amount" bracket exactly as printed (e.g. "$1,001 - $15,000").
+- isOption: true if the transaction is an option/call/put/warrant.
+- capGainsOver200: false (OGE 278-T does not have this field).
+- filingStatus: null.
+- subholding: null.
+- location: null.
+- description: any additional description text provided in the row.
+- supplementalText: any other notes in the row; do not include page titles or general instructions.
 - confidence: YOUR confidence for this row in [0,1], lowering it when handwriting or scan quality is poor.
 Return ONLY the structured JSON array. Do not guess values you cannot read; use null instead.`;
 
@@ -290,13 +332,17 @@ const RESPONSE_SCHEMA = {
   },
 } as const;
 
-function buildRequestBody(bytes: ArrayBuffer): GeminiRequest {
+function buildRequestBody(bytes: ArrayBuffer, chamber: string): GeminiRequest {
+  let prompt = HOUSE_SYSTEM_PROMPT;
+  if (chamber === 'senate') prompt = SENATE_SYSTEM_PROMPT;
+  if (chamber === 'executive') prompt = EXECUTIVE_SYSTEM_PROMPT;
+
   return {
     contents: [
       {
         role: 'user',
         parts: [
-          { text: SYSTEM_PROMPT },
+          { text: prompt },
           {
             inline_data: {
               mime_type: 'application/pdf',

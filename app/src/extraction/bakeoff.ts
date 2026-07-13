@@ -18,12 +18,20 @@
 import type { Env, ParsedTx } from '../shared/types';
 import { arbitrationRowKey } from '../extractors/types';
 import {
-  SYSTEM_PROMPT,
+  HOUSE_SYSTEM_PROMPT,
+  SENATE_SYSTEM_PROMPT,
+  EXECUTIVE_SYSTEM_PROMPT,
   parseModelJson,
   toParsedTx,
   arrayBufferToBase64,
   VisionLlmExtractor,
 } from './visionLlm';
+
+function getPrompt(chamber: string): string {
+  if (chamber === 'senate') return SENATE_SYSTEM_PROMPT;
+  if (chamber === 'executive') return EXECUTIVE_SYSTEM_PROMPT;
+  return HOUSE_SYSTEM_PROMPT;
+}
 import { resolveSecret } from '../secrets/infisical';
 import { run } from '../shared/db';
 import { uuid } from '../shared/ids';
@@ -127,6 +135,7 @@ async function runOpenAi(
   model: string,
   key: string,
   bytes: ArrayBuffer,
+  chamber: string,
 ): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
   const dataUrl = `data:application/pdf;base64,${arrayBufferToBase64(bytes)}`;
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -140,7 +149,7 @@ async function runOpenAi(
         {
           role: 'user',
           content: [
-            { type: 'text', text: `${SYSTEM_PROMPT}\nReturn a JSON object {"transactions": [...]} .` },
+            { type: 'text', text: `${getPrompt(chamber)}\nReturn a JSON object {"transactions": [...]} .` },
             { type: 'file', file: { filename: 'ptr.pdf', file_data: dataUrl } },
           ],
         },
@@ -181,7 +190,7 @@ async function runOpenAi(
 }
 
 /** Anthropic messages call (base64 `document` block BEFORE the text block). */
-async function runAnthropic(model: string, key: string, bytes: ArrayBuffer): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
+async function runAnthropic(model: string, key: string, bytes: ArrayBuffer, chamber: string): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -200,7 +209,7 @@ async function runAnthropic(model: string, key: string, bytes: ArrayBuffer): Pro
               type: 'document',
               source: { type: 'base64', media_type: 'application/pdf', data: arrayBufferToBase64(bytes) },
             },
-            { type: 'text', text: `${SYSTEM_PROMPT}\nReturn ONLY the JSON array.` },
+            { type: 'text', text: `${getPrompt(chamber)}\nReturn ONLY the JSON array.` },
           ],
         },
       ],
@@ -344,7 +353,7 @@ export function extractXaiResponseText(payload: unknown): string {
  * an agentic `/v1/responses` call (grok-4.3), whose server-side OCR+vision reads
  * the scan. Two round-trips, so it's the slowest candidate.
  */
-async function runXai(model: string, key: string, bytes: ArrayBuffer): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
+async function runXai(model: string, key: string, bytes: ArrayBuffer, chamber: string): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
   // 1) upload the PDF (multipart/form-data; let fetch set the boundary).
   const form = new FormData();
   form.append('purpose', 'assistants');
@@ -368,7 +377,7 @@ async function runXai(model: string, key: string, bytes: ArrayBuffer): Promise<{
         {
           role: 'user',
           content: [
-            { type: 'input_text', text: `${SYSTEM_PROMPT}\nReturn ONLY a JSON object {"transactions": [...]} .` },
+            { type: 'input_text', text: `${getPrompt(chamber)}\nReturn ONLY a JSON object {"transactions": [...]} .` },
             { type: 'input_file', file_id: uploaded.id },
           ],
         },
@@ -432,10 +441,10 @@ export function parseLlamaParseMarkdown(markdown: string): ParsedTx[] {
  * format we need. Poll interval is 2 s; hard timeout is 90 s (well inside the
  * Worker's cpu_ms=300_000 ceiling since poll time is I/O, not CPU).
  */
-async function runLlamaParse(model: string, key: string, bytes: ArrayBuffer): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
+async function runLlamaParse(model: string, key: string, bytes: ArrayBuffer, chamber: string): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'ptr.pdf');
-  form.append('parsing_instruction', SYSTEM_PROMPT + LLAMAPARSE_JSON_SUFFIX);
+  form.append('parsing_instruction', getPrompt(chamber) + LLAMAPARSE_JSON_SUFFIX);
   // Tier selection via LlamaParse form parameters.
   if (model === 'cost-effective') {
     form.append('premium_mode', 'true');
@@ -496,18 +505,22 @@ export async function runCandidateOnDoc(
   }
 
   const started = Date.now();
+  let chamber = 'house';
+  if (docId.startsWith('S-')) chamber = 'senate';
+  if (docId.startsWith('E-')) chamber = 'executive';
+
   try {
     let rows: ParsedTx[];
     let usage: CandidateDocResult['usage'];
     if (provider === 'gemini') {
       const result = await new VisionLlmExtractor(env, { model, apiKey: key }).extract({
-        filing: { docKind: 'scanned_pdf' } as never,
+        filing: { docKind: 'scanned_pdf', chamber: chamber as any } as never,
         bytes,
       });
       rows = result.transactions;
       usage = result.usage;
     } else if (provider === 'openai') {
-      const openai = await runOpenAi(model, key, bytes);
+      const openai = await runOpenAi(model, key, bytes, chamber);
       rows = openai.rows;
       usage = openai.usage;
     } else if (provider === 'mistral') {
@@ -515,15 +528,15 @@ export async function runCandidateOnDoc(
       rows = mistral.rows;
       usage = mistral.usage;
     } else if (provider === 'xai') {
-      const xai = await runXai(model, key, bytes);
+      const xai = await runXai(model, key, bytes, chamber);
       rows = xai.rows;
       usage = xai.usage;
     } else if (provider === 'llamaparse') {
-      const lp = await runLlamaParse(model, key, bytes);
+      const lp = await runLlamaParse(model, key, bytes, chamber);
       rows = lp.rows;
       usage = lp.usage;
     } else {
-      const anthropic = await runAnthropic(model, key, bytes);
+      const anthropic = await runAnthropic(model, key, bytes, chamber);
       rows = anthropic.rows;
       usage = anthropic.usage;
     }

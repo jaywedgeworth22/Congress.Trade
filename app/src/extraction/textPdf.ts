@@ -33,7 +33,7 @@ export class TextPdfExtractor implements Extractor {
   readonly name = 'textPdf';
 
   canHandle(f: Filing): boolean {
-    return f.docKind === 'text_pdf';
+    return f.docKind === 'text_pdf' && f.chamber === 'house';
   }
 
   async extract(input: ExtractorInput): Promise<ExtractorResult> {

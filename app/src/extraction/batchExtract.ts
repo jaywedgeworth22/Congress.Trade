@@ -21,7 +21,7 @@
  */
 
 import type { Env, ParsedTx } from '../shared/types';
-import { SYSTEM_PROMPT, parseModelJson, toParsedTx, arrayBufferToBase64 } from './visionLlm';
+import { HOUSE_SYSTEM_PROMPT, SENATE_SYSTEM_PROMPT, EXECUTIVE_SYSTEM_PROMPT, parseModelJson, toParsedTx, arrayBufferToBase64 } from './visionLlm';
 import { MISTRAL_ANNOTATION_SCHEMA, parseMistralOcrResponse, extractXaiResponseText } from './bakeoff';
 import { resolveSecret } from '../secrets/infisical';
 
@@ -49,8 +49,25 @@ export interface BatchPoll {
   results: BatchDocResult[];
 }
 
-const PROMPT_OBJECT = `${SYSTEM_PROMPT}\nReturn a JSON object {"transactions": [...]} .`;
-const PROMPT_ARRAY = `${SYSTEM_PROMPT}\nReturn ONLY the JSON array.`;
+function getPrompt(chamber: string): string {
+  if (chamber === 'senate') return SENATE_SYSTEM_PROMPT;
+  if (chamber === 'executive') return EXECUTIVE_SYSTEM_PROMPT;
+  return HOUSE_SYSTEM_PROMPT;
+}
+
+function getPromptObject(chamber: string): string {
+  return `${getPrompt(chamber)}\nReturn a JSON object {"transactions": [...]} .`;
+}
+
+function getPromptArray(chamber: string): string {
+  return `${getPrompt(chamber)}\nReturn ONLY the JSON array.`;
+}
+
+function getChamber(docId: string): string {
+  if (docId.startsWith('S-')) return 'senate';
+  if (docId.startsWith('E-')) return 'executive';
+  return 'house';
+}
 
 async function keyFor(env: Env, provider: BatchProvider): Promise<string> {
   const key =
@@ -97,7 +114,7 @@ function anthropicRequest(doc: BatchDoc, model: string): unknown {
           role: 'user',
           content: [
             { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: arrayBufferToBase64(doc.bytes) } },
-            { type: 'text', text: PROMPT_ARRAY },
+            { type: 'text', text: getPromptArray(getChamber(doc.docId)) },
           ],
         },
       ],
@@ -166,7 +183,7 @@ function openaiLine(docId: string, fileId: string, model: string): string {
       response_format: { type: 'json_object' },
       messages: [
         { role: 'user', content: [
-          { type: 'text', text: PROMPT_OBJECT },
+          { type: 'text', text: getPromptObject(getChamber(docId)) },
           { type: 'file', file: { file_id: fileId } },
         ] },
       ],
@@ -333,7 +350,7 @@ async function submitXai(env: Env, model: string, docs: BatchDoc[]): Promise<str
         model,
         input: [
           { role: 'user', content: [
-            { type: 'input_text', text: PROMPT_OBJECT },
+            { type: 'input_text', text: getPromptObject(getChamber(u.docId)) },
             { type: 'input_file', file_id: u.fileId },
           ] },
         ],
