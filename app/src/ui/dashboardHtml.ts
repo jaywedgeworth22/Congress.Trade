@@ -659,7 +659,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .branch-pop-row { display:grid; grid-template-columns:16px 1fr; gap:8px; align-items:baseline; }
   .branch-pop-row b { color:var(--accent); }
   .branch-pop-note { color:var(--text-dim); font-size:11px; margin-top:2px; }
-  .party-chips { display:flex; gap:4px; align-items:center; }
+  .party-chips { position:relative; display:flex; gap:4px; align-items:center; }
   .party-chip { padding:3px 8px; border-radius:6px; border:1px solid var(--border); background:transparent; color:var(--text-dim); font-size:14px; cursor:pointer; transition:all .15s; display:flex; align-items:center; justify-content:center; }
   .party-chip:hover { border-color:var(--text-dim); }
   .party-chip.on { background:color-mix(in srgb, var(--accent) 14%, transparent); border-color:var(--accent); color:var(--text); }
@@ -1395,6 +1395,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button type="button" class="party-chip" data-party="D" title="Democrat">🫏</button>
         <button type="button" class="party-chip" data-party="R" title="Republican">🐘</button>
         <button type="button" class="party-chip" data-party="O" title="Other">🦅</button>
+        <button type="button" class="branch-info" aria-expanded="false" aria-controls="trPartyInfo" aria-label="About the party filters">&#9432;</button>
+        <div class="branch-pop" id="trPartyInfo" role="note" hidden>
+          <div class="branch-pop-row"><span style="font-size:18px">🫏</span><span>Democrat</span></div>
+          <div class="branch-pop-row"><span style="font-size:18px">🐘</span><span>Republican</span></div>
+          <div class="branch-pop-row"><span style="font-size:18px">🦅</span><span>Other / Independent</span></div>
+          <div class="branch-pop-note">Tap a symbol to include or exclude that party.</div>
+        </div>
       </div>
       <button class="btn ghost sm" onclick="loadTrends()">↻ Refresh</button>
     </div>
@@ -4828,15 +4835,16 @@ async function runChamberBenchmark(chamberName) {
 }
 
 var MODEL_COSTS = {
-  'gemini-3.5-flash': 0.075,
-  'gpt-4o': 2.50,
-  'claude-sonnet-4-6': 3.00,
-  'claude-haiku-4-5': 0.25,
-  'mistral-ocr-latest': 0.25,
-  'grok-4.3': 2.00,
-  'fast': 1.00,
-  'cost-effective': 1.50,
-  'agentic': 5.00
+  // Rates per 1M tokens or per page
+  'gemini-3.5-flash': { input: 0.075, output: 0.30 },
+  'gpt-4o': { input: 2.50, output: 10.00 },
+  'claude-sonnet-4-6': { input: 3.00, output: 15.00 },
+  'claude-haiku-4-5': { input: 0.25, output: 1.25 },
+  'mistral-ocr-latest': { input: 0.25, output: 0.25 },
+  'grok-4.3': { input: 2.00, output: 10.00 },
+  'fast': { perPage: 0.001 },
+  'cost-effective': { perPage: 0.003 },
+  'agentic': { perPage: 0.010 }
 };
 
 function renderCascadeSimulation() {
@@ -4923,9 +4931,24 @@ function updateSimResults() {
     var nameB = modelB.split(':')[1];
     var nameC = modelC ? modelC.split(':')[1] : '';
     
-    var costA = MODEL_COSTS[nameA] || 0.25;
-    var costB = MODEL_COSTS[nameB] || 0.25;
-    var costC = MODEL_COSTS[nameC] || 0.25;
+    function calcCost(name, runObj, docObj) {
+      if (!runObj || runObj.outcome === 'skipped') return 0;
+      var rate = MODEL_COSTS[name];
+      if (!rate) return 0.25; // default fallback
+      if (rate.perPage) {
+        var pages = docObj.pageCount || Math.max(1, Math.round((docObj.rawBytes || 3000) / 3000));
+        return pages * rate.perPage;
+      }
+      if (rate.input && runObj.usage) {
+        return (runObj.usage.promptTokens || 0) / 1000000 * rate.input + 
+               (runObj.usage.completionTokens || 0) / 1000000 * rate.output;
+      }
+      return 0.25; // fallback if no usage data
+    }
+    
+    var costA = calcCost(nameA, rA, doc);
+    var costB = calcCost(nameB, rB, doc);
+    var costC = modelC ? calcCost(nameC, rC, doc) : 0;
     
     var cost = 0;
     var simOutcome = 'review';
@@ -5004,7 +5027,7 @@ function updateSimResults() {
       '<div class="card"><div class="v" style="color:var(--pos)">' + accuracyRate + '</div><div class="k">Cascade Accuracy</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Perfect match on resolved docs</div></div>' +
       '<div class="card"><div class="v">' + autoRate1 + '</div><div class="k">Tier 1 Autonomy Rate</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Autopublish on A+B agreement</div></div>' +
       '<div class="card"><div class="v" style="color:var(--neg)">' + reviewRate + '</div><div class="k">Human Review Rate</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Disagreed or flagged docs</div></div>' +
-      '<div class="card"><div class="v" style="color:' + costScoreColor + '">$' + avgCost + '</div><div class="k">Est. Cost / Doc</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Based on model list pricing</div></div>';
+      '<div class="card"><div class="v" style="color:' + costScoreColor + '">$' + avgCost + '</div><div class="k">Est. Cost / Doc</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Based on actual tokens & pages</div></div>';
   }
   
   var detail = el('simDetailPanel');
@@ -6738,6 +6761,7 @@ function initBranchInfo(groupId) {
 }
 initBranchInfo('qChamber');
 initBranchInfo('trChamber');
+initBranchInfo('trPartyGroup');
 
 function initPartyChips() {
   var g = el('trPartyGroup'); if (!g) return;

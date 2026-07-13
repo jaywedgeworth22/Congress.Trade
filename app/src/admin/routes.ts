@@ -3481,7 +3481,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     // Prioritize resolved documents so we have human-verified ground-truth transactions
     // to compare against. Fallback to unresolved documents if needed.
     let query = `
-      SELECT f.doc_id, COALESCE(rq.resolved, 0) AS resolved
+      SELECT f.doc_id, COALESCE(rq.resolved, 0) AS resolved, f.page_count, f.raw_bytes
       FROM filings f
       LEFT JOIN review_queue rq ON f.doc_id = rq.doc_id
       WHERE f.raw_object_key IS NOT NULL
@@ -3494,7 +3494,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     query += ` ORDER BY resolved DESC, f.filed_date DESC LIMIT ?`;
     params.push(limit);
 
-    const rows = await all<{ doc_id: string; resolved: number }>(
+    const rows = await all<{ doc_id: string; resolved: number; page_count: number | null; raw_bytes: number | null }>(
       c.env.DB,
       query,
       params
@@ -3502,7 +3502,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     return c.json({
       docs: rows.map(r => ({
         docId: r.doc_id,
-        resolved: r.resolved === 1
+        resolved: r.resolved === 1,
+        pageCount: r.page_count,
+        rawBytes: r.raw_bytes
       }))
     });
   });
@@ -3525,7 +3527,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       if ('skip' in loaded) return c.json(loaded.skip);
       
       const read = await runCandidateOnDoc(c.env, candidate, docId, loaded.bytes);
-      if (!read.ok) return c.json({ outcome: 'skipped', reason: 'read_failed' });
+      if (!read.ok) { console.error("Bench read failed for " + candidate.model + ": ", read.error); return c.json({ outcome: "skipped", reason: "read_failed", error: read.error }); }
       
       const frow = await loadFilingRow(c.env, docId);
       if (!frow) return c.json({ outcome: 'skipped', reason: 'no_filing' });
@@ -3631,6 +3633,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         flags: flags.length > 0 ? flags : undefined,
         rowCount: flagged.length,
         rows: flagged.map((f) => ({ ...f.tx, confidence: Math.max(f.tx.confidence ?? 0, 0.95) })),
+        usage: read.usage,
         comparison,
         groundTruth: groundTruth ? groundTruth.map(t => ({
           ticker: t.ticker,
