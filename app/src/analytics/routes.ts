@@ -931,6 +931,8 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           period: str(row.period),
           buys: num(row.buys),
           sells: num(row.sells),
+          estBuyVolUsd: usd(row.est_buy_vol),
+          estSellVolUsd: usd(row.est_sell_vol),
         })),
         topBuyers: buyerRows.map(mapTrader),
         topSellers: sellerRows.map(mapTrader),

@@ -3446,24 +3446,33 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.get('/benchmark/ground-truth-docs', async (c) => {
     const limit = Math.min(Number(c.req.query('limit')) || 50, 200);
     const chamber = c.req.query('chamber');
-    // We use any document with a PDF for the autonomy benchmark, as we want to 
-    // test if the models can reach consensus, regardless of whether a human 
-    // has reviewed it yet.
-    let query = `SELECT doc_id FROM filings WHERE raw_object_key IS NOT NULL`;
+    // Prioritize resolved documents so we have human-verified ground-truth transactions
+    // to compare against. Fallback to unresolved documents if needed.
+    let query = `
+      SELECT f.doc_id, COALESCE(rq.resolved, 0) AS resolved
+      FROM filings f
+      LEFT JOIN review_queue rq ON f.doc_id = rq.doc_id
+      WHERE f.raw_object_key IS NOT NULL
+    `;
     const params: (string | number)[] = [];
     if (chamber) {
-      query += ` AND chamber = ?`;
+      query += ` AND LOWER(f.chamber) = LOWER(?)`;
       params.push(chamber);
     }
-    query += ` ORDER BY filed_date DESC LIMIT ?`;
+    query += ` ORDER BY resolved DESC, f.filed_date DESC LIMIT ?`;
     params.push(limit);
 
-    const rows = await all<{ doc_id: string }>(
+    const rows = await all<{ doc_id: string; resolved: number }>(
       c.env.DB,
       query,
       params
     );
-    return c.json({ docs: rows.map(r => r.doc_id) });
+    return c.json({
+      docs: rows.map(r => ({
+        docId: r.doc_id,
+        resolved: r.resolved === 1
+      }))
+    });
   });
 
   // --- POST /benchmark/dry-run/:docId ---------------------------------------
@@ -3495,14 +3504,114 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         'ticker_not_found', 'future_transaction_date', 'amount_min_max_inverted', 'missing_amount', 'no_amount_bucket', 'invalid_transaction_date'
       ].includes(fl)))); // from HARD_FAILURE_FLAGS
 
-      if (hardFlags.length > 0) return c.json({ docId, outcome: 'agree_but_hardfail', flags: hardFlags });
-      if (flagged.length > 200) return c.json({ docId, outcome: 'agree_but_hardfail', flags: ['row_limit_exceeded'] }); // MAX_PUBLISH_TRANSACTIONS_PER_FILING
-      
+      let outcome: string = 'would_publish';
+      let flags: string[] = [];
+      if (hardFlags.length > 0) {
+        outcome = 'agree_but_hardfail';
+        flags = hardFlags;
+      } else if (flagged.length > 200) {
+        outcome = 'agree_but_hardfail';
+        flags = ['row_limit_exceeded'];
+      }
+
+      // Check if document is resolved and get ground truth transactions
+      const reviewRow = await get<{ resolved: number }>(
+        c.env.DB,
+        `SELECT resolved FROM review_queue WHERE doc_id = ?`,
+        [docId]
+      );
+      const isResolved = reviewRow?.resolved === 1;
+
+      const groundTruth = isResolved
+        ? await all<any>(
+            c.env.DB,
+            `SELECT * FROM transactions WHERE doc_id = ? AND source IN ('primary', 'manual') AND deprecated_at IS NULL`,
+            [docId]
+          )
+        : null;
+
+      let comparison = null;
+      if (groundTruth !== null) {
+        const getTxFingerprint = (tx: any) => {
+          const eqStr = (v: any) => (v ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
+          return JSON.stringify([
+            eqStr(tx.ticker),
+            eqStr(tx.assetName),
+            tx.txDate ?? '',
+            eqStr(tx.txType),
+            tx.amountMin ?? null,
+            tx.amountMax ?? null,
+            eqStr(tx.owner),
+            eqStr(tx.assetType),
+            tx.isOption === true || tx.isOption === 1 || tx.isOption === '1',
+            tx.capGainsOver200 === true || tx.capGainsOver200 === 1 || tx.capGainsOver200 === '1',
+          ]);
+        };
+
+        const candFingerprints = flagged.map(f => getTxFingerprint(f.tx));
+        const gtFingerprints = groundTruth.map(t => getTxFingerprint({
+          ticker: t.ticker,
+          assetName: t.asset_name,
+          txDate: t.tx_date,
+          txType: t.tx_type,
+          amountMin: t.amount_min,
+          amountMax: t.amount_max,
+          owner: t.owner,
+          assetType: t.asset_type,
+          isOption: t.is_option,
+          capGainsOver200: t.cap_gains_over_200,
+        }));
+
+        const gtCounts: Record<string, number> = {};
+        for (const f of gtFingerprints) gtCounts[f] = (gtCounts[f] || 0) + 1;
+
+        const candCounts: Record<string, number> = {};
+        for (const f of candFingerprints) candCounts[f] = (candCounts[f] || 0) + 1;
+
+        let tp = 0;
+        let fp = 0;
+        let fn = 0;
+
+        const allFingerprints = new Set([...Object.keys(gtCounts), ...Object.keys(candCounts)]);
+        for (const f of allFingerprints) {
+          const gtVal = gtCounts[f] || 0;
+          const candVal = candCounts[f] || 0;
+          const match = Math.min(gtVal, candVal);
+          tp += match;
+          fp += Math.max(0, candVal - match);
+          fn += Math.max(0, gtVal - match);
+        }
+
+        comparison = {
+          resolved: true,
+          perfectMatch: fp === 0 && fn === 0,
+          tp,
+          fp,
+          fn,
+          gtCount: groundTruth.length,
+          candCount: flagged.length,
+        };
+      }
+
       return c.json({
         docId,
-        outcome: 'would_publish',
+        outcome,
+        flags: flags.length > 0 ? flags : undefined,
         rowCount: flagged.length,
         rows: flagged.map((f) => ({ ...f.tx, confidence: Math.max(f.tx.confidence ?? 0, 0.95) })),
+        comparison,
+        groundTruth: groundTruth ? groundTruth.map(t => ({
+          ticker: t.ticker,
+          assetName: t.asset_name,
+          txDate: t.tx_date,
+          txType: t.tx_type,
+          amountMin: t.amount_min,
+          amountMax: t.amount_max,
+          owner: t.owner,
+          assetType: t.asset_type,
+          isOption: t.is_option === 1,
+          capGainsOver200: t.cap_gains_over_200 === 1,
+        })) : null,
       });
     } else {
       const agModels: AgreementModels = {

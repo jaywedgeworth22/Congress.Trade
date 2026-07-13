@@ -400,8 +400,24 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      there are too many buckets to fit, each keeps a min width and the chart
      scrolls instead of crushing the bars. */
   .tchart { display:flex; align-items:flex-end; gap:3px; height:180px; overflow-x:auto; padding-top:6px; }
-  .tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:1 1 0; min-width:20px; }
+  .tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:1 1 0; min-width:20px; transition: opacity 0.15s; outline: none; cursor: pointer; }
+  .tcol:hover, .tcol:focus-visible { opacity: 0.8; }
   .tbars { display:flex; align-items:flex-end; justify-content:center; gap:3px; height:150px; }
+  
+  .chart-tooltip {
+    position: absolute; pointer-events: none; z-index: 100;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; font-size: 13px; color: var(--text);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    display: flex; flex-direction: column; gap: 4px;
+    transform: translate(-50%, -100%); margin-top: -10px;
+    opacity: 0; transition: opacity 0.1s;
+  }
+  .chart-tooltip.visible { opacity: 1; }
+  .chart-tooltip-title { font-weight: 700; color: var(--accent); font-size: 12px; margin-bottom: 2px; }
+  .chart-tooltip-row { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
+  .chart-tooltip-lbl { color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+  .chart-tooltip-val { font-variant-numeric: tabular-nums; font-weight: 500; }
   .tbars i { display:block; width:9px; border-radius:2px 2px 0 0; min-height:0; }
   .tbars i.buy { background: var(--buy); } .tbars i.sell { background: var(--sell); }
   .tlbl { font-size:9px; color: var(--text-dim); font-family: var(--mono); white-space:nowrap; }
@@ -4637,6 +4653,9 @@ async function apiCall(path, method, body) {
   return res.json();
 }
 
+var currentBenchmarkDocs = [];
+var currentBenchmarkRuns = {};
+
 async function runChamberBenchmark(chamberName) {
   var msg = el('benchmarkMsg');
   var res = el('benchmarkResults');
@@ -4652,37 +4671,79 @@ async function runChamberBenchmark(chamberName) {
   try {
     const docsData = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=' + limit + '&chamber=' + cLower, 'GET');
     const docList = docsData.docs || [];
+    var cLabel = chamberName.charAt(0).toUpperCase() + chamberName.slice(1);
     if (!docList.length) {
-      msg.innerText = 'No ground-truth docs found for ' + chamberName + ' filings.';
+      msg.innerText = 'No ground-truth docs found for ' + cLabel + ' filings.';
       btns.forEach(b => { if (b) b.disabled = false; });
       return;
     }
 
-    var html = '<table><thead><tr><th>Model</th><th>Autonomy Rate</th></tr></thead><tbody id="benchmarkTbody">';
+    currentBenchmarkDocs = docList;
+    currentBenchmarkRuns = {};
+    docList.forEach(d => { currentBenchmarkRuns[d.docId] = {}; });
+
+    var html = '<div style="margin-bottom:20px; overflow-x:auto;">';
+    html += '<h4>1. Individual Model Performance</h4>';
+    html += '<table class="bench-table"><thead><tr>' +
+            '<th>Model</th>' +
+            '<th>Accuracy <span class="note" title="Perfect match rate: % of human-resolved filings where the model extracted the exact correct set of transactions.">(Perfect Match)</span></th>' +
+            '<th>Autonomy Rate <span class="note" title="Autonomy rate: % of filings that would autonomously publish (met confidence >= 90% and had no validation failures).">(Autobuild)</span></th>' +
+            '<th>F1-Score / Stats</th>' +
+            '<th>Avg Conf</th>' +
+            '<th>Validation Errors / Failure Reasons</th>' +
+            '</tr></thead><tbody id="benchmarkTbody">';
+            
     for (var i = 0; i < REREAD_MODELS.length; i++) {
-      html += '<tr id="lineup-' + i + '"><td><strong>' + esc(REREAD_MODELS[i].model) + ' <small class="note">(' + esc(REREAD_MODELS[i].provider) + ')</small></strong></td>' +
-              '<td id="auto-' + i + '">Pending...</td></tr>';
+      var mLabel = REREAD_MODELS[i].provider + ':' + REREAD_MODELS[i].model;
+      html += '<tr id="lineup-' + i + '" data-model="' + esc(mLabel) + '">' +
+              '<td><strong>' + esc(REREAD_MODELS[i].model) + '</strong> <small class="note">(' + esc(REREAD_MODELS[i].provider) + ')</small></td>' +
+              '<td class="accuracy-val">Pending...</td>' +
+              '<td class="autonomy-val">Pending...</td>' +
+              '<td class="stats-val">Pending...</td>' +
+              '<td class="conf-val">Pending...</td>' +
+              '<td class="breakdown-val">Pending...</td>' +
+              '</tr>';
     }
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
+    
+    // Add placeholder for Cascade Simulation Tool
+    html += '<div id="cascadeSimulationContainer"></div>';
     res.innerHTML = html;
 
+    // Run evaluations
     for (let i = 0; i < REREAD_MODELS.length; i++) {
+      const singleModel = REREAD_MODELS[i];
+      const modelLabel = singleModel.provider + ':' + singleModel.model;
+      const testModels = { a: singleModel };
+      
       let published = 0;
       let flagged = 0;
       let breakdown = {};
+      let totalConf = 0;
+      let totalDocsTested = 0;
       
-      const singleModel = REREAD_MODELS[i];
-      const testModels = { a: singleModel };
+      let resolvedCount = 0;
+      let perfectMatches = 0;
+      let totalTp = 0;
+      let totalFp = 0;
+      let totalFn = 0;
 
       for (let j = 0; j < docList.length; j++) {
+        const docObj = docList[j];
         msg.innerText = 'Evaluating ' + singleModel.model + ' (' + (i + 1) + '/' + REREAD_MODELS.length + ')... Doc ' + (j + 1) + '/' + docList.length;
+        
         try {
-          const result = await apiCall('/api/admin/benchmark/dry-run/' + docList[j], 'POST', { models: testModels });
+          const result = await apiCall('/api/admin/benchmark/dry-run/' + docObj.docId, 'POST', { models: testModels });
+          currentBenchmarkRuns[docObj.docId][modelLabel] = result;
+          
           const autoPublished = result.outcome === 'published' || result.outcome === 'would_publish';
           let confidence = 1;
           if (result.rows && result.rows.length) {
             confidence = result.rows.reduce((min, r) => Math.min(min, r.confidence || 0), 1);
           }
+          totalConf += confidence;
+          totalDocsTested++;
+          
           if (autoPublished && confidence >= 0.90) {
             published++;
           } else {
@@ -4696,19 +4757,58 @@ async function runChamberBenchmark(chamberName) {
             if (autoPublished && confidence < 0.90) reason = 'low_confidence';
             breakdown[reason] = (breakdown[reason] || 0) + 1;
           }
+          
+          // Match stats
+          if (result.comparison) {
+            resolvedCount++;
+            if (result.comparison.perfectMatch) perfectMatches++;
+            totalTp += result.comparison.tp || 0;
+            totalFp += result.comparison.fp || 0;
+            totalFn += result.comparison.fn || 0;
+          }
         } catch (e) {
           flagged++;
           const eStr = String(e);
           breakdown[eStr] = (breakdown[eStr] || 0) + 1;
         }
         
-        let autoRate = ((published / (j + 1)) * 100).toFixed(1) + '%';
-        let breakdownHtml = Object.entries(breakdown).map(([k, v]) => esc(k) + ': ' + v).join('<br>');
-        el('auto-' + i).innerHTML = autoRate + ' (' + published + '/' + (j + 1) + ')' +
-          (breakdownHtml ? '<br><small class="note" style="display:block;margin-top:4px;font-size:0.8em;color:var(--text-dim);">' + breakdownHtml + '</small>' : '');
+        // Update individual model row cells
+        var rowEl = document.getElementById('lineup-' + i);
+        if (rowEl) {
+          var accCell = rowEl.querySelector('.accuracy-val');
+          var autoCell = rowEl.querySelector('.autonomy-val');
+          var statsCell = rowEl.querySelector('.stats-val');
+          var confCell = rowEl.querySelector('.conf-val');
+          var breakCell = rowEl.querySelector('.breakdown-val');
+          
+          var accRate = resolvedCount > 0 ? ((perfectMatches / resolvedCount) * 100).toFixed(1) + '%' : 'N/A';
+          var autoRate = ((published / (j + 1)) * 100).toFixed(1) + '%';
+          var avgConfStr = totalDocsTested > 0 ? (totalConf / totalDocsTested).toFixed(2) : '0.00';
+          
+          var f1Str = 'N/A';
+          if (resolvedCount > 0) {
+            var avgTp = (totalTp / resolvedCount).toFixed(1);
+            var avgFp = (totalFp / resolvedCount).toFixed(1);
+            var avgFn = (totalFn / resolvedCount).toFixed(1);
+            var precision = totalTp + totalFp > 0 ? totalTp / (totalTp + totalFp) : 0;
+            var recall = totalTp + totalFn > 0 ? totalTp / (totalTp + totalFn) : 0;
+            var f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
+            f1Str = (f1 * 100).toFixed(0) + '% <small class="note">(TP:' + avgTp + ' FP:' + avgFp + ' FN:' + avgFn + ')</small>';
+          }
+          
+          var breakdownHtml = Object.entries(breakdown).map(([k, v]) => esc(k) + ': ' + v).join(', ');
+          
+          if (accCell) accCell.innerHTML = accRate + ' <small class="note">(' + perfectMatches + '/' + resolvedCount + ')</small>';
+          if (autoCell) autoCell.innerText = autoRate + ' (' + published + '/' + (j + 1) + ')';
+          if (statsCell) statsCell.innerHTML = f1Str;
+          if (confCell) confCell.innerText = avgConfStr;
+          if (breakCell) breakCell.innerHTML = breakdownHtml || '<span style="color:var(--pos)">None</span>';
+        }
       }
     }
 
+    // Render interactive simulation tool
+    renderCascadeSimulation();
     msg.innerText = chamberName.toUpperCase() + ' benchmark completed!';
   } catch (err) {
     msg.style.color = 'var(--neg)';
@@ -4716,6 +4816,366 @@ async function runChamberBenchmark(chamberName) {
   } finally {
     btns.forEach(b => { if (b) b.disabled = false; });
   }
+}
+
+var MODEL_COSTS = {
+  'gemini-3.5-flash': 0.075,
+  'gpt-4o': 2.50,
+  'claude-sonnet-4-6': 3.00,
+  'claude-haiku-4-5': 0.25,
+  'mistral-ocr-latest': 0.25,
+  'grok-4.3': 2.00,
+  'fast': 1.00,
+  'cost-effective': 1.50,
+  'agentic': 5.00
+};
+
+function renderCascadeSimulation() {
+  var container = el('cascadeSimulationContainer');
+  if (!container) return;
+  
+  var defaultA = 'mistral:mistral-ocr-latest';
+  var defaultB = 'gemini:gemini-3.5-flash';
+  var defaultC = 'anthropic:claude-sonnet-4-6';
+  
+  var modelSelectOpts = REREAD_MODELS.map(function(m) {
+    var val = m.provider + ':' + m.model;
+    return '<option value="' + esc(val) + '">' + esc(m.model) + ' (' + esc(m.provider) + ')</option>';
+  }).join('');
+  
+  var html = '<div class="diag-card" style="margin-top:20px;border:1px solid var(--border);border-radius:12px;padding:16px;background:var(--panel-dark)">' +
+             '<h4>2. Interactive Consensus Cascade Simulation</h4>' +
+             '<p class="sub">Select models to simulate the multi-vendor Consensus Cascade. Autonomy vs Accuracy is calculated dynamically using the benchmark results.</p>' +
+             '<div class="row-flex" style="gap:16px;margin-bottom:16px;align-items:flex-end;flex-wrap:wrap">' +
+             '  <div>' +
+             '    <label class="lbl" style="display:block;margin-bottom:4px">Model A (Primary)</label>' +
+             '    <select id="simModelA" onchange="updateSimResults()">' + modelSelectOpts + '</select>' +
+             '  </div>' +
+             '  <div>' +
+             '    <label class="lbl" style="display:block;margin-bottom:4px">Model B (Primary Crosscheck)</label>' +
+             '    <select id="simModelB" onchange="updateSimResults()">' + modelSelectOpts + '</select>' +
+             '  </div>' +
+             '  <div>' +
+             '    <label class="lbl" style="display:block;margin-bottom:4px">Model C (Tier 2/3 Resolver)</label>' +
+             '    <select id="simModelC" onchange="updateSimResults()">' +
+             '      <option value="">None (Disable Resolver)</option>' +
+                    modelSelectOpts +
+             '    </select>' +
+             '  </div>' +
+             '</div>' +
+             '<div id="simStatsGrid" class="grid-cards" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px;"></div>' +
+             '<div id="simDetailPanel" style="font-size:12px;color:var(--text-dim)"></div>' +
+             '</div>';
+  container.innerHTML = html;
+  
+  var selA = el('simModelA');
+  var selB = el('simModelB');
+  var selC = el('simModelC');
+  if (selA) selA.value = defaultA;
+  if (selB) selB.value = defaultB;
+  if (selC) selC.value = defaultC;
+  
+  updateSimResults();
+}
+
+function updateSimResults() {
+  var modelA = el('simModelA').value;
+  var modelB = el('simModelB').value;
+  var modelC = el('simModelC').value;
+  
+  var docs = currentBenchmarkDocs;
+  var runs = currentBenchmarkRuns;
+  
+  if (!docs || !docs.length || !runs) return;
+  
+  var total = docs.length;
+  var t1Autonomy = 0;
+  var cascadeAutonomy = 0;
+  var humanReview = 0;
+  
+  var resolvedCount = 0;
+  var cascadePerfect = 0;
+  var totalCost = 0;
+  
+  docs.forEach(function(doc) {
+    var docId = doc.docId;
+    var runsForDoc = runs[docId] || {};
+    var rA = runsForDoc[modelA];
+    var rB = runsForDoc[modelB];
+    var rC = modelC ? runsForDoc[modelC] : null;
+    
+    if (!rA || !rB) return;
+    
+    var gt = rA.groundTruth || (rB && rB.groundTruth) || (rC && rC.groundTruth);
+    var isResolved = !!gt;
+    
+    // Model costs
+    var nameA = modelA.split(':')[1];
+    var nameB = modelB.split(':')[1];
+    var nameC = modelC ? modelC.split(':')[1] : '';
+    
+    var costA = MODEL_COSTS[nameA] || 0.25;
+    var costB = MODEL_COSTS[nameB] || 0.25;
+    var costC = MODEL_COSTS[nameC] || 0.25;
+    
+    var cost = 0;
+    var simOutcome = 'review';
+    var simRows = null;
+    
+    var okA = rA.outcome !== 'skipped';
+    var okB = rB.outcome !== 'skipped';
+    var okC = rC ? rC.outcome !== 'skipped' : false;
+    
+    var validA = (rA.outcome === 'published' || rA.outcome === 'would_publish');
+    var validB = (rB.outcome === 'published' || rB.outcome === 'would_publish');
+    
+    if (okA && okB && sameRowSet(rA.rows, rB.rows) && validA && validB) {
+      t1Autonomy++;
+      cascadeAutonomy++;
+      simOutcome = 'published';
+      simRows = rA.rows || [];
+      cost = costA + costB;
+    } else if (modelC) {
+      cost = costA + costB + costC;
+      if (okA && okB && okC) {
+        var agreeABC = sameRowSet(rA.rows, rC.rows) && sameRowSet(rB.rows, rC.rows);
+        var validC = rC.outcome === 'published' || rC.outcome === 'would_publish';
+        if (agreeABC && validC && validA && validB) {
+          cascadeAutonomy++;
+          simOutcome = 'published';
+          simRows = rA.rows || [];
+        } else {
+          var majority = clientBuildMajorityRows([rA, rB, rC]);
+          if (majority.ok) {
+            cascadeAutonomy++;
+            simOutcome = 'published';
+            simRows = majority.rows;
+          } else {
+            humanReview++;
+            simOutcome = 'review';
+          }
+        }
+      } else {
+        humanReview++;
+        simOutcome = 'review';
+      }
+    } else {
+      cost = costA + costB;
+      humanReview++;
+      simOutcome = 'review';
+    }
+    
+    totalCost += cost;
+    
+    if (isResolved) {
+      resolvedCount++;
+      if (simOutcome === 'published') {
+        var match = computeMatchStats(simRows, gt);
+        if (match.perfectMatch) {
+          cascadePerfect++;
+        }
+      }
+    }
+  });
+  
+  var autoRate1 = ((t1Autonomy / total) * 100).toFixed(1) + '%';
+  var autoRateCascade = ((cascadeAutonomy / total) * 100).toFixed(1) + '%';
+  var reviewRate = ((humanReview / total) * 100).toFixed(1) + '%';
+  var accuracyRate = resolvedCount > 0 ? ((cascadePerfect / resolvedCount) * 100).toFixed(1) + '%' : 'N/A';
+  var avgCost = (totalCost / total).toFixed(3);
+  
+  var costScoreColor = 'var(--text-dim)';
+  if (Number(avgCost) < 0.5) costScoreColor = 'var(--pos)';
+  else if (Number(avgCost) > 2.0) costScoreColor = 'var(--neg)';
+  
+  var grid = el('simStatsGrid');
+  if (grid) {
+    grid.innerHTML = 
+      '<div class="card"><div class="v" style="color:var(--accent)">' + autoRateCascade + '</div><div class="k">Cascade Autonomy Rate</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Tier 1+2+3 autopublish</div></div>' +
+      '<div class="card"><div class="v" style="color:var(--pos)">' + accuracyRate + '</div><div class="k">Cascade Accuracy</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Perfect match on resolved docs</div></div>' +
+      '<div class="card"><div class="v">' + autoRate1 + '</div><div class="k">Tier 1 Autonomy Rate</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Autopublish on A+B agreement</div></div>' +
+      '<div class="card"><div class="v" style="color:var(--neg)">' + reviewRate + '</div><div class="k">Human Review Rate</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Disagreed or flagged docs</div></div>' +
+      '<div class="card"><div class="v" style="color:' + costScoreColor + '">$' + avgCost + '</div><div class="k">Est. Cost / Doc</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Based on model list pricing</div></div>';
+  }
+  
+  var detail = el('simDetailPanel');
+  if (detail) {
+    detail.innerHTML = '<strong>Cascade Configuration Details:</strong><br>' +
+      '- Model A and B are run in parallel for every document.<br>' +
+      (modelC 
+        ? '- Disagreements escalate to Model C. Consensus or majority resolve decides if the document publishes.<br>' 
+        : '- Disagreements are sent straight to Human Review (C is disabled).<br>') +
+      '- Stats based on ' + total + ' docs (resolved ground truth: ' + resolvedCount + ' docs).';
+  }
+}
+
+function clientArbitrationRowKey(tx) {
+  var sym = ((tx.ticker || tx.assetName || '') + '').trim().toUpperCase();
+  return sym + '|' + (tx.txDate || '') + '|' + tx.txType;
+}
+
+function clientBuildMajorityRows(reads) {
+  var fields = [
+    'ticker', 'assetName', 'txDate', 'txType', 'amountMin', 'amountMax', 'owner', 'assetType',
+    'assetTypeName', 'isOption', 'capGainsOver200', 'filingStatus', 'subholding',
+    'location', 'description', 'supplementalText'
+  ];
+  
+  var valueFor = function(tx, field) {
+    return tx[field];
+  };
+  
+  var voteKey = function(tx, field) {
+    if (field === 'isOption' || field === 'capGainsOver200') return tx[field] ? '1' : '0';
+    if (field === 'txDate') return tx.txDate || '';
+    var val = valueFor(tx, field);
+    return (val === null || val === undefined) ? '' : String(val).trim().replace(/\s+/g, ' ').toUpperCase();
+  };
+
+  var groups = reads.map(function(read) {
+    var grouped = {};
+    var rows = read.rows || [];
+    for (var i = 0; i < rows.length; i++) {
+      var tx = rows[i];
+      var key = clientArbitrationRowKey(tx);
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(tx);
+    }
+    var hasAmbiguous = false;
+    for (var key in grouped) {
+      if (grouped[key].length > 1) hasAmbiguous = true;
+    }
+    return { grouped: grouped, hasAmbiguous: hasAmbiguous };
+  });
+
+  for (var i = 0; i < groups.length; i++) {
+    if (groups[i].hasAmbiguous) return { ok: false, reason: 'ambiguous_multi_lot' };
+  }
+
+  var allKeys = {};
+  groups.forEach(function(g) {
+    Object.keys(g.grouped).forEach(function(k) { allKeys[k] = true; });
+  });
+
+  var keysSorted = Object.keys(allKeys).sort();
+  if (keysSorted.length === 0) return { ok: false, reason: 'no_majority_rows' };
+
+  var built = [];
+  for (var idx = 0; idx < keysSorted.length; idx++) {
+    var rowKey = keysSorted[idx];
+    var present = [];
+    groups.forEach(function(g) {
+      var tx = g.grouped[rowKey] ? g.grouped[rowKey][0] : null;
+      if (tx) present.push(tx);
+    });
+
+    if (present.length * 2 <= reads.length) {
+      return { ok: false, reason: 'minority_extra_row' };
+    }
+
+    var base = present[0];
+    var resolvedRow = {};
+    Object.keys(base).forEach(function(f) { resolvedRow[f] = base[f]; });
+
+    var failField = null;
+    for (var fi = 0; fi < fields.length; fi++) {
+      var field = fields[fi];
+      var blocs = {};
+      present.forEach(function(tx) {
+        var key = voteKey(tx, field);
+        if (!blocs[key]) blocs[key] = { count: 0, value: valueFor(tx, field) };
+        blocs[key].count++;
+      });
+
+      var blocsList = Object.keys(blocs).map(function(k) { return blocs[k]; });
+      var sortedBlocs = blocsList.sort(function(a, b) {
+        return b.count - a.count;
+      });
+
+      var winner = sortedBlocs[0];
+      if (!winner || winner.count * 2 <= reads.length) {
+        failField = field;
+      } else {
+        resolvedRow[field] = winner.value;
+      }
+    }
+
+    if (failField) return { ok: false, reason: 'field_disagreement' };
+    built.push(resolvedRow);
+  }
+
+  return { ok: true, rows: built };
+}
+
+function computeMatchStats(candRows, gtRows) {
+  var getFingerprint = function(tx) {
+    return JSON.stringify([
+      ((tx.ticker || tx.assetName || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      tx.txDate || '',
+      ((tx.txType || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      tx.amountMin ?? null,
+      tx.amountMax ?? null,
+      ((tx.owner || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      ((tx.assetType || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      tx.isOption === true || tx.isOption === 1 || tx.isOption === '1',
+      tx.capGainsOver200 === true || tx.capGainsOver200 === 1 || tx.capGainsOver200 === '1',
+    ]);
+  };
+
+  var candFingerprints = (candRows || []).map(getFingerprint);
+  var gtFingerprints = (gtRows || []).map(getFingerprint);
+
+  var gtCounts = {};
+  gtFingerprints.forEach(function(f) { gtCounts[f] = (gtCounts[f] || 0) + 1; });
+
+  var candCounts = {};
+  candFingerprints.forEach(function(f) { candCounts[f] = (candCounts[f] || 0) + 1; });
+
+  var tp = 0;
+  var fp = 0;
+  var fn = 0;
+
+  var allFingerprints = new Set(Object.keys(gtCounts).concat(Object.keys(candCounts)));
+  allFingerprints.forEach(function(f) {
+    var gtVal = gtCounts[f] || 0;
+    var candVal = candCounts[f] || 0;
+    var match = Math.min(gtVal, candVal);
+    tp += match;
+    fp += Math.max(0, candVal - match);
+    fn += Math.max(0, gtVal - match);
+  });
+
+  return {
+    perfectMatch: fp === 0 && fn === 0,
+    tp: tp,
+    fp: fp,
+    fn: fn,
+    gtCount: gtRows.length,
+    candCount: candRows.length
+  };
+}
+
+function sameRowSet(rowsA, rowsB) {
+  if (!rowsA || !rowsB) return false;
+  if (rowsA.length !== rowsB.length) return false;
+  
+  var getFingerprint = function(tx) {
+    return JSON.stringify([
+      ((tx.ticker || tx.assetName || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      tx.txDate || '',
+      ((tx.txType || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      tx.amountMin ?? null,
+      tx.amountMax ?? null,
+      ((tx.owner || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      ((tx.assetType || '') + '').trim().replace(/\s+/g, ' ').toUpperCase(),
+      tx.isOption === true || tx.isOption === 1 || tx.isOption === '1',
+      tx.capGainsOver200 === true || tx.capGainsOver200 === 1 || tx.capGainsOver200 === '1',
+    ]);
+  };
+  
+  var ka = rowsA.map(getFingerprint).sort();
+  var kb = rowsB.map(getFingerprint).sort();
+  return ka.every(function (val, idx) { return val === kb[idx]; });
 }
 function runMarketBackfill(dryRun) {
   var msg = el('mdMsg');
@@ -4887,14 +5347,24 @@ function scrollToChart(id) {
 }
 /* Mini CSS-column time chart of buys vs sells (no chart library). */
 function timeChartHtml(series, labelStep) {
-  var max = 1; series.forEach(function (p) { max = Math.max(max, p.buys, p.sells); });
+  var max = 1; 
+  series.forEach(function (p) { max = Math.max(max, p.estBuyVolUsd || 0, p.estSellVolUsd || 0); });
+  // If no volume data, fallback to transaction counts for height
+  var useVol = max > 1;
+  if (!useVol) { series.forEach(function (p) { max = Math.max(max, p.buys || 0, p.sells || 0); }); }
+  
   var step = labelStep || Math.max(1, Math.ceil(series.length / 14));
   return '<div class="tchart">' + series.map(function (p, i) {
-    var bh = p.buys > 0 ? Math.max(3, Math.round(100 * p.buys / max)) : 0;
-    var sh = p.sells > 0 ? Math.max(3, Math.round(100 * p.sells / max)) : 0;
+    var vB = useVol ? (p.estBuyVolUsd || 0) : (p.buys || 0);
+    var vS = useVol ? (p.estSellVolUsd || 0) : (p.sells || 0);
+    var bh = vB > 0 ? Math.max(3, Math.round(100 * vB / max)) : 0;
+    var sh = vS > 0 ? Math.max(3, Math.round(100 * vS / max)) : 0;
     var lbl = (i % step === 0) ? esc(p.period || '') : '';
-    var title = esc((p.period || '') + ': ' + p.buys + ' buys / ' + p.sells + ' sells');
-    return '<div class="tcol" title="' + title + '"><div class="tbars">' +
+    
+    return '<div class="tcol" tabindex="0" data-period="'+esc(p.period||'')+'" ' +
+      'data-b="'+(p.buys||0)+'" data-s="'+(p.sells||0)+'" ' +
+      'data-bv="'+(p.estBuyVolUsd||0)+'" data-sv="'+(p.estSellVolUsd||0)+'">' +
+      '<div class="tbars">' +
       '<i class="buy" style="height:' + bh + '%"></i><i class="sell" style="height:' + sh + '%"></i>' +
       '</div><span class="tlbl">' + lbl + '</span></div>';
   }).join('') + '</div>';
@@ -6429,6 +6899,30 @@ loadMe().then(function () {
 handleAuthQueryParams(); // toast + scrub ?login= / ?checkout= after redirects
 loadFeed().then(function () { startStream(); }); // warm the Trades feed + live SSE pill
 loadPollConfig();  // for the poll-mode KPI
+
+/* Global interactive chart tooltip */
+var chartTt = document.createElement('div');
+chartTt.className = 'chart-tooltip';
+document.body.appendChild(chartTt);
+document.addEventListener('mouseover', function(e) {
+  var tcol = e.target.closest && e.target.closest('.tcol');
+  if (!tcol) { chartTt.classList.remove('visible'); return; }
+  var r = tcol.getBoundingClientRect();
+  var p = tcol.getAttribute('data-period');
+  var b = Number(tcol.getAttribute('data-b') || 0);
+  var s = Number(tcol.getAttribute('data-s') || 0);
+  var bv = Number(tcol.getAttribute('data-bv') || 0);
+  var sv = Number(tcol.getAttribute('data-sv') || 0);
+  
+  chartTt.innerHTML = 
+    '<div class="chart-tooltip-title">' + esc(p || '') + '</div>' +
+    '<div class="chart-tooltip-row"><span class="chart-tooltip-lbl"><span class="sw buy"></span>Buys</span><span class="chart-tooltip-val">' + b + (bv ? ' <span class="muted" style="font-size:11px">(' + estUsd(bv) + ')</span>' : '') + '</span></div>' +
+    '<div class="chart-tooltip-row"><span class="chart-tooltip-lbl"><span class="sw sell"></span>Sells</span><span class="chart-tooltip-val">' + s + (sv ? ' <span class="muted" style="font-size:11px">(' + estUsd(sv) + ')</span>' : '') + '</span></div>';
+  
+  chartTt.style.left = (r.left + r.width / 2) + 'px';
+  chartTt.style.top = (window.scrollY + r.top) + 'px';
+  chartTt.classList.add('visible');
+});
 </script>
 </body>
 </html>`;
