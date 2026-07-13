@@ -25,7 +25,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Congress.Trade — Congress Trade Feed</title>
+<title>Congress.Trade</title>
 <script>
   // Admin-controlled, site-wide logo style (injected at serve time).
   window.__LOGO_DISPLAY__ = "%LOGO_DISPLAY%";
@@ -143,7 +143,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   input::placeholder { color: var(--text-dim); }
   .grid-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; margin-bottom: 20px; }
-  .card { text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 14px 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); }
+  .card { text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 14px 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); display: flex; flex-direction: column; }
   .card .k { color: var(--text-dim); font-size: 12px; }
   .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; line-height: 1.2; }
   .card .v small { font-size: 12px; font-weight: 500; color: var(--text-dim); }
@@ -160,6 +160,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   th.sortable .arr { opacity: .18; font-size: 10px; margin-left: 4px; color:var(--text-dim); }
   th.sortable.active { color: var(--text); }
   th.sortable.active .arr { opacity: 1; color: var(--accent); }
+  .bench-table { min-width: 800px; margin-top: 16px; table-layout: fixed; }
+  .bench-table th { font-size: 10px; padding: 10px 8px; line-height: 1.3; white-space: normal; }
+  .bench-table td { font-size: 13px; padding: 10px 8px; white-space: normal; word-break: break-word; }
+  .bench-table th:first-child, .bench-table td:first-child { width: 130px; }
+  .bench-table th:last-child, .bench-table td:last-child { width: 220px; }
   /* fold-out advanced search */
   .search-panel {
     display: none; gap: 10px; flex-wrap: wrap; align-items: center;
@@ -344,7 +349,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .note { font-size:12px; color: var(--text-dim); margin-top:8px; line-height:1.5; }
   code { font-family: var(--mono); background: var(--bg); padding:1px 6px; border-radius:5px; font-size:12px; color: var(--accent); }
   /* ================= TRENDS / ANALYTICS ================= */
-  .trend-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+  .trend-grid2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 18px; }
   .trend-grid2 > *, .trend-members-grid > *, .trend-side-stack > *, .timeliness-grid > * { min-width: 0; }
   @media (max-width: 760px) { .trend-grid2 { grid-template-columns: 1fr; } }
   .trend-members-grid { display:grid; grid-template-columns:minmax(0, 1.6fr) minmax(0, .85fr); gap:18px; align-items:start; }
@@ -966,6 +971,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   letter-spacing: .045em;
   text-transform: uppercase;
   line-height: 1.3;
+  color: var(--text);
 }
 #view-trends .grid-cards .card .k sup {
   font-size: .68em;
@@ -1282,7 +1288,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <header class="top">
   <div class="brand">Congress<span class="dot">.</span>Trade</div>
   <span class="pill off" id="livePill">Status</span>
-  <span class="pill" id="srcPill">House + Senate</span>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
@@ -1439,7 +1444,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
               <tr>
                 <th style="width:32px"></th>
                 <th class="sortable" onclick="setTickerSort('trades')">Asset</th>
-                <th class="sortable" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades"></span></th>
+                <th class="sortable" style="width:15%" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades"></span></th>
                 <th class="sortable r" onclick="setTickerSort('members')">Politicians <span class="sort-icon" data-sort="members"></span></th>
                 <th class="sortable r est" onclick="setTickerSort('volume')">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
                 <th class="sortable r" onclick="setTickerSort('netflow')">Net $ Flow <span class="sort-icon" data-sort="netflow"></span></th>
@@ -1463,7 +1468,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <table id="tableTrTrending">
             <thead>
               <tr>
-                <th>Asset</th>
+                <th style="width:25%">Asset</th>
                 <th>Trades (Prior &rarr; Recent)</th>
                 <th>Change</th>
                 <th>Recent Politicians</th>
