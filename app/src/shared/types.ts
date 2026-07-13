@@ -551,6 +551,8 @@ export interface Env {
   /** Cloudflare Access application AUD tag for admin API JWT verification. */
   ACCESS_AUD?: string;
   INGEST_TOKEN?: string;
+  /** Scoped token for the idempotent admin maintenance endpoints only (backlog requeue/retry). */
+  ADMIN_MAINTENANCE_TOKEN?: string;
   LLAMAPARSE_API_KEY?: string;
 
   // --- Billing (Stripe) ---

@@ -81,3 +81,44 @@ describe('POST /ingest-retry-errored (extraction-stage backlog drain)', () => {
     expect(unauth.status).toBe(401);
   });
 });
+
+describe('ADMIN_MAINTENANCE_TOKEN (scoped like INGEST_TOKEN)', () => {
+  function envWithMaintenanceToken(docIds: string[]) {
+    const base = makeEnv(docIds);
+    (base.env as { ADMIN_MAINTENANCE_TOKEN?: string }).ADMIN_MAINTENANCE_TOKEN = 'maint-secret';
+    return base;
+  }
+  const MAINT = { Authorization: 'Bearer maint-secret', 'content-type': 'application/json' };
+
+  it('unlocks ONLY the maintenance endpoints', async () => {
+    const a = envWithMaintenanceToken(['doc_a']);
+    const retry = await app.request(
+      '/ingest-retry-errored',
+      { method: 'POST', headers: MAINT, body: '{"dryRun":true}' },
+      a.env,
+    );
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toMatchObject({ ok: true, dryRun: true, matched: 1 });
+
+    const requeue = await app.request(
+      '/ingest-requeue-failed',
+      { method: 'POST', headers: MAINT, body: '{"dryRun":true}' },
+      a.env,
+    );
+    expect(requeue.status).toBe(200);
+  });
+
+  it('is rejected everywhere else and never escalates to full admin', async () => {
+    const a = envWithMaintenanceToken([]);
+    for (const path of ['/config-sources', '/poll-config']) {
+      const res = await app.request(path, { headers: MAINT }, a.env);
+      expect(res.status).toBe(401);
+    }
+    const wrong = await app.request(
+      '/ingest-retry-errored',
+      { method: 'POST', headers: { Authorization: 'Bearer not-the-token' }, body: '{}' },
+      a.env,
+    );
+    expect(wrong.status).toBe(401);
+  });
+});
