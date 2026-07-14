@@ -88,7 +88,9 @@ import {
   normalizeBatchChamber,
   submitBatch,
   pollBatch,
+  BatchTerminalPayloadError,
   type BatchDoc,
+  type BatchUsage,
 } from '../extraction/batchExtract';
 import { buildConsensusRows, type ConsensusRun } from '../extraction/consensus';
 import {
@@ -339,6 +341,208 @@ function canonicalBatchTimestamp(value: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+type BatchAccountingPlan =
+  | { version: 1; tokenMode: 'per-result' }
+  | {
+      version: 1;
+      tokenMode: 'aggregate';
+      aggregateUsage: Required<Pick<BatchUsage, 'promptTokens' | 'completionTokens'>>
+        & Pick<BatchUsage, 'cachedTokens'>;
+    };
+
+type SafeBatchProviderErrors = { count: number; summaries: string[] };
+
+type BatchTerminalDecision = {
+  version: 1;
+  fingerprint: string;
+  kind: 'valid' | 'invalid';
+  finalStatus: 'completed' | 'failed';
+  providerStatus: string;
+  submittedAt: string;
+  completedAt: string;
+  turnaroundMs: number;
+  returnedDocs: number;
+  recognizedDocs: number;
+  missingDocs: number;
+  providerErrors?: SafeBatchProviderErrors;
+  reason?: 'malformed_result_jsonl' | 'invalid_result_identity' | 'unknown_result_identity';
+  violationCount?: number;
+  identityObservationTruncated?: true;
+};
+
+const BATCH_ACCOUNTING_PROTOCOL_VERSION = 1;
+const LEGACY_BATCH_ACCOUNTING_MARKER = 'per_result_compat';
+
+function parseBatchResultSummary(value: unknown): Record<string, unknown> | null {
+  let parsed = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return parsed != null && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : null;
+}
+
+function hasCurrentBatchAccountingProtocol(value: unknown): boolean {
+  return parseBatchResultSummary(value)?.accountingProtocol === BATCH_ACCOUNTING_PROTOCOL_VERSION;
+}
+
+function hasLegacyBatchAccountingMarker(value: unknown): boolean {
+  return parseBatchResultSummary(value)?.legacyAccounting === LEGACY_BATCH_ACCOUNTING_MARKER;
+}
+
+function parseSafeBatchProviderErrors(value: unknown): SafeBatchProviderErrors | undefined {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const count = nonNegativeSafeInteger(raw.count);
+  if (count == null || count === 0 || !Array.isArray(raw.summaries)) return undefined;
+  const summaries = raw.summaries
+    .flatMap((summary) => (
+      typeof summary === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(summary) ? [summary] : []
+    ))
+    .slice(0, 20)
+    .sort();
+  return { count, summaries };
+}
+
+function parseBatchTerminalDecision(value: unknown): BatchTerminalDecision | null {
+  const summary = parseBatchResultSummary(value);
+  const rawDecision = summary?.terminalDecision;
+  if (rawDecision == null || typeof rawDecision !== 'object' || Array.isArray(rawDecision)) return null;
+  const raw = rawDecision as Record<string, unknown>;
+  if (raw.version !== 1
+    || (raw.kind !== 'valid' && raw.kind !== 'invalid')
+    || (raw.finalStatus !== 'completed' && raw.finalStatus !== 'failed')
+    || typeof raw.fingerprint !== 'string'
+    || !/^ct-measured-[0-9a-f]{64}$/.test(raw.fingerprint)) {
+    return null;
+  }
+  const submittedAt = canonicalBatchTimestamp(raw.submittedAt);
+  const completedAt = canonicalBatchTimestamp(raw.completedAt);
+  const turnaroundMs = nonNegativeSafeInteger(raw.turnaroundMs);
+  const returnedDocs = nonNegativeSafeInteger(raw.returnedDocs);
+  const recognizedDocs = nonNegativeSafeInteger(raw.recognizedDocs);
+  const missingDocs = nonNegativeSafeInteger(raw.missingDocs);
+  if (!submittedAt || !completedAt || turnaroundMs == null || returnedDocs == null
+    || recognizedDocs == null || missingDocs == null) return null;
+  const providerStatus = safeBatchProviderStatus(raw.providerStatus);
+  const providerErrors = parseSafeBatchProviderErrors(raw.providerErrors);
+  const base = {
+    version: 1 as const,
+    fingerprint: raw.fingerprint,
+    kind: raw.kind,
+    finalStatus: raw.finalStatus,
+    providerStatus,
+    submittedAt,
+    completedAt,
+    turnaroundMs,
+    returnedDocs,
+    recognizedDocs,
+    missingDocs,
+    ...(providerErrors ? { providerErrors } : {}),
+    ...(raw.identityObservationTruncated === true ? { identityObservationTruncated: true as const } : {}),
+  };
+  if (raw.kind === 'valid') return base as BatchTerminalDecision;
+  if (raw.reason !== 'malformed_result_jsonl'
+    && raw.reason !== 'invalid_result_identity'
+    && raw.reason !== 'unknown_result_identity') return null;
+  const violationCount = nonNegativeSafeInteger(raw.violationCount);
+  if (violationCount == null || violationCount === 0) return null;
+  return { ...base, reason: raw.reason, violationCount } as BatchTerminalDecision;
+}
+
+function canonicalBatchFingerprintValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalBatchFingerprintValue);
+  if (value != null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, child]) => child !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, canonicalBatchFingerprintValue(child)]),
+    );
+  }
+  if (typeof value === 'number' && !Number.isFinite(value)) return null;
+  return value;
+}
+
+async function batchTerminalFingerprint(jobId: string, payload: unknown): Promise<string> {
+  return stableMeasuredUsageIdempotencyKey(
+    'batch-terminal-decision',
+    'fingerprint',
+    jobId,
+    JSON.stringify(canonicalBatchFingerprintValue(payload)),
+  );
+}
+
+function safeBatchProviderStatus(value: unknown): string {
+  if (typeof value !== 'string') return 'unknown';
+  const status = value.trim().slice(0, 64);
+  return /^[A-Za-z0-9._-]+$/.test(status) ? status : 'unknown';
+}
+
+function nonNegativeSafeInteger(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+function parseBatchAccountingPlan(resultSummary: unknown): BatchAccountingPlan | null {
+  const parsed = parseBatchResultSummary(resultSummary);
+  if (!parsed) return null;
+  const rawPlan = parsed.accountingPlan;
+  if (rawPlan == null || typeof rawPlan !== 'object' || Array.isArray(rawPlan)) return null;
+  const plan = rawPlan as Record<string, unknown>;
+  if (plan.version !== 1) return null;
+  if (plan.tokenMode === 'per-result') return { version: 1, tokenMode: 'per-result' };
+  if (plan.tokenMode !== 'aggregate') return null;
+  const rawUsage = plan.aggregateUsage;
+  if (rawUsage == null || typeof rawUsage !== 'object' || Array.isArray(rawUsage)) return null;
+  const usage = rawUsage as Record<string, unknown>;
+  const promptTokens = nonNegativeSafeInteger(usage.promptTokens);
+  const completionTokens = nonNegativeSafeInteger(usage.completionTokens);
+  const cachedTokens = usage.cachedTokens == null ? null : nonNegativeSafeInteger(usage.cachedTokens);
+  if (promptTokens == null || completionTokens == null
+    || !Number.isSafeInteger(promptTokens + completionTokens)
+    || (usage.cachedTokens != null && (cachedTokens == null || cachedTokens > promptTokens))) {
+    return null;
+  }
+  return {
+    version: 1,
+    tokenMode: 'aggregate',
+    aggregateUsage: {
+      promptTokens,
+      completionTokens,
+      ...(cachedTokens == null ? {} : { cachedTokens }),
+    },
+  };
+}
+
+function proposedBatchAccountingPlan(usage: BatchUsage | undefined): BatchAccountingPlan {
+  const promptTokens = nonNegativeSafeInteger(usage?.promptTokens);
+  const completionTokens = nonNegativeSafeInteger(usage?.completionTokens);
+  if (promptTokens == null || completionTokens == null
+    || !Number.isSafeInteger(promptTokens + completionTokens)) {
+    return { version: 1, tokenMode: 'per-result' };
+  }
+  const cachedTokens = nonNegativeSafeInteger(usage?.cachedTokens);
+  return {
+    version: 1,
+    tokenMode: 'aggregate',
+    aggregateUsage: {
+      promptTokens,
+      completionTokens,
+      ...(cachedTokens == null || cachedTokens > promptTokens ? {} : { cachedTokens }),
+    },
+  };
+}
+
+async function stableBatchExtractionRunId(jobId: string, docId: string): Promise<string> {
+  const key = await stableMeasuredUsageIdempotencyKey('batch-extraction-run', 'row', jobId, docId);
+  return key.replace('ct-measured-', 'ct-batch-run-');
 }
 
 interface ReviewRow {
@@ -4018,11 +4222,24 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
 
     const jobId = uuid();
+    const accountingPendingSummary = JSON.stringify({
+      state: 'accounting_pending',
+      accountingProtocol: BATCH_ACCOUNTING_PROTOCOL_VERSION,
+    });
     await run(
       c.env.DB,
-      `INSERT INTO batch_jobs (id, provider, model, provider_batch_id, doc_ids, status, submitted_at)
-       VALUES (?, ?, ?, ?, ?, 'submitted', ?)`,
-      [jobId, provider, model, providerBatchId, JSON.stringify(docs.map((d) => d.docId)), new Date().toISOString()],
+      `INSERT INTO batch_jobs
+         (id, provider, model, provider_batch_id, doc_ids, status, submitted_at, result_summary)
+       VALUES (?, ?, ?, ?, ?, 'submitted', ?, ?)`,
+      [
+        jobId,
+        provider,
+        model,
+        providerBatchId,
+        JSON.stringify(docs.map((d) => d.docId)),
+        new Date().toISOString(),
+        accountingPendingSummary,
+      ],
     );
     return c.json({ jobId, provider, model, providerBatchId, docCount: docs.length, skipped, poll: `/api/admin/batch-status/${jobId}` });
   });
@@ -4055,9 +4272,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const job = await get<{
       id: string; provider: string; model: string; provider_batch_id: string | null;
       doc_ids: string; status: string; submitted_at: string | null; completed_at: string | null;
+      result_summary: string | null;
     }>(
       c.env.DB,
-      'SELECT id, provider, model, provider_batch_id, doc_ids, status, submitted_at, completed_at FROM batch_jobs WHERE id = ?',
+      `SELECT id, provider, model, provider_batch_id, doc_ids, status, submitted_at, completed_at, result_summary
+         FROM batch_jobs WHERE id = ?`,
       [jobId],
     );
     if (!job) return c.json({ error: 'batch job not found' }, 404);
@@ -4067,16 +4286,484 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     if (job.status === 'completed' || job.status === 'failed') {
       return c.json({ jobId, status: job.status, alreadyFinished: true });
     }
+    let storedDocIds: unknown;
+    try {
+      storedDocIds = JSON.parse(job.doc_ids);
+    } catch {
+      return c.json({ error: 'job has invalid document ids' }, 409);
+    }
+    if (!Array.isArray(storedDocIds)) {
+      return c.json({ error: 'job has invalid document ids' }, 409);
+    }
+    const expectedDocIdList = storedDocIds.map((value) => (
+      typeof value === 'string' ? value : ''
+    ));
+    const expectedDocIds = new Set(expectedDocIdList);
+    if (expectedDocIdList.length === 0
+      || expectedDocIdList.some((docId) => !docId)
+      || expectedDocIdList.some((docId) => docId !== docId.trim())
+      || expectedDocIds.size !== expectedDocIdList.length) {
+      return c.json({ error: 'job has invalid document ids' }, 409);
+    }
+
+    type PersistedBatchExtractionState = {
+      persistedDocIds: Set<string>;
+      legacyPersistedDocIds: Set<string>;
+      hasPersistedRows: boolean;
+      hasLegacyRandomIds: boolean;
+    };
+    let persistedExtractionState: PersistedBatchExtractionState | null = null;
+    const loadPersistedExtractionState = async (): Promise<PersistedBatchExtractionState> => {
+      if (persistedExtractionState) return persistedExtractionState;
+      const rows = await all<{ id: string; doc_id: string }>(
+        c.env.DB,
+        `SELECT id, doc_id
+           FROM extraction_runs
+          WHERE batch_id = ? AND kind = 'batch'`,
+        [jobId],
+      );
+      const persistedDocIds = new Set(rows.flatMap((row) => (
+        typeof row.doc_id === 'string' && row.doc_id.length > 0 ? [row.doc_id] : []
+      )));
+      const legacyPersistedDocIds = new Set(rows.flatMap((row) => (
+        (typeof row.id !== 'string' || !/^ct-batch-run-[0-9a-f]{64}$/.test(row.id))
+          && typeof row.doc_id === 'string' && row.doc_id.length > 0
+          ? [row.doc_id]
+          : []
+      )));
+      persistedExtractionState = {
+        persistedDocIds,
+        legacyPersistedDocIds,
+        hasPersistedRows: rows.length > 0,
+        hasLegacyRandomIds: legacyPersistedDocIds.size > 0,
+      };
+      return persistedExtractionState;
+    };
+
+    const claimAccountingPlan = async (aggregateUsage?: BatchUsage): Promise<{
+      accountingPlan: BatchAccountingPlan;
+      legacyAccounting: boolean;
+      resultSummary: string;
+    } | null> => {
+      const rewriteLegacyPlan = async (expectedResultSummary: string | null) => {
+        await run(
+          c.env.DB,
+          `UPDATE batch_jobs
+              SET result_summary = ?
+            WHERE id = ?
+              AND status IN ('submitted', 'running')
+              AND ((result_summary IS NULL AND ? IS NULL) OR result_summary = ?)`,
+          [
+            JSON.stringify({
+              state: 'accounting_planned',
+              accountingProtocol: BATCH_ACCOUNTING_PROTOCOL_VERSION,
+              accountingPlan: { version: 1, tokenMode: 'per-result' },
+              legacyAccounting: LEGACY_BATCH_ACCOUNTING_MARKER,
+            }),
+            jobId,
+            expectedResultSummary,
+            expectedResultSummary,
+          ],
+        );
+        const rewritten = await get<{ status: string; result_summary: string | null }>(
+          c.env.DB,
+          'SELECT status, result_summary FROM batch_jobs WHERE id = ?',
+          [jobId],
+        );
+        const rewrittenPlan = parseBatchAccountingPlan(rewritten?.result_summary);
+        if (!rewrittenPlan || !hasCurrentBatchAccountingProtocol(rewritten?.result_summary)) {
+          return null;
+        }
+        if (hasLegacyBatchAccountingMarker(rewritten?.result_summary)
+          && rewrittenPlan.tokenMode !== 'per-result') return null;
+        return {
+          accountingPlan: rewrittenPlan,
+          legacyAccounting: hasLegacyBatchAccountingMarker(rewritten?.result_summary),
+          resultSummary: rewritten?.result_summary ?? '',
+        };
+      };
+
+      const existingPlan = parseBatchAccountingPlan(job.result_summary);
+      if (existingPlan && hasCurrentBatchAccountingProtocol(job.result_summary)
+        && !(hasLegacyBatchAccountingMarker(job.result_summary)
+          && existingPlan.tokenMode !== 'per-result')) {
+        return {
+          accountingPlan: existingPlan,
+          legacyAccounting: hasLegacyBatchAccountingMarker(job.result_summary),
+          resultSummary: job.result_summary ?? '',
+        };
+      }
+      if (existingPlan) {
+        // Never rewrite an in-flight terminal claim: its exact summary is the
+        // final commit fence. Pre-protocol plans that have not begun settlement
+        // are atomically converted to conservative per-result suppression.
+        if (job.status === 'settling') return null;
+        return rewriteLegacyPlan(job.result_summary ?? null);
+      }
+
+      const extractionState = await loadPersistedExtractionState();
+      // Jobs submitted before accountingProtocol=1 may already have stable
+      // per-result events in the receiver even when a legacy extraction row is
+      // absent. Keep every unversioned job on per-result accounting. Any
+      // unplanned persisted result is the same compatibility signal.
+      const legacyAccounting = !hasCurrentBatchAccountingProtocol(job.result_summary)
+        || extractionState.hasPersistedRows
+        || extractionState.hasLegacyRandomIds;
+      const proposedPlan = legacyAccounting
+        ? { version: 1, tokenMode: 'per-result' } as const
+        : proposedBatchAccountingPlan(aggregateUsage);
+      const expectedResultSummary = job.result_summary ?? null;
+      await run(
+        c.env.DB,
+        `UPDATE batch_jobs
+            SET result_summary = ?
+          WHERE id = ?
+            AND status IN ('submitted', 'running')
+            AND ((result_summary IS NULL AND ? IS NULL) OR result_summary = ?)`,
+        [
+          JSON.stringify({
+            state: 'accounting_planned',
+            accountingProtocol: BATCH_ACCOUNTING_PROTOCOL_VERSION,
+            accountingPlan: proposedPlan,
+            ...(legacyAccounting ? { legacyAccounting: LEGACY_BATCH_ACCOUNTING_MARKER } : {}),
+          }),
+          jobId,
+          expectedResultSummary,
+          expectedResultSummary,
+        ],
+      );
+      const claimed = await get<{ status: string; result_summary: string | null }>(
+        c.env.DB,
+        'SELECT status, result_summary FROM batch_jobs WHERE id = ?',
+        [jobId],
+      );
+      const accountingPlan = parseBatchAccountingPlan(claimed?.result_summary);
+      if (!accountingPlan) return null;
+      if (!hasCurrentBatchAccountingProtocol(claimed?.result_summary)) {
+        if (claimed?.status === 'settling') return null;
+        return rewriteLegacyPlan(claimed?.result_summary ?? null);
+      }
+      if (hasLegacyBatchAccountingMarker(claimed?.result_summary)
+        && accountingPlan.tokenMode !== 'per-result') {
+        if (claimed?.status === 'settling') return null;
+        return rewriteLegacyPlan(claimed?.result_summary ?? null);
+      }
+      return {
+        accountingPlan,
+        legacyAccounting: hasLegacyBatchAccountingMarker(claimed?.result_summary)
+          || (legacyAccounting && accountingPlan.tokenMode === 'per-result'),
+        resultSummary: claimed?.result_summary ?? '',
+      };
+    };
+
+    const lifecycleForDecision = (input: {
+      submittedAt?: string;
+      terminalAt?: string;
+    }): Pick<BatchTerminalDecision, 'submittedAt' | 'completedAt' | 'turnaroundMs'> => {
+      const observedAt = new Date().toISOString();
+      const completedAt = canonicalBatchTimestamp(job.completed_at)
+        ?? canonicalBatchTimestamp(input.terminalAt)
+        ?? observedAt;
+      const completedTime = Date.parse(completedAt);
+      const providerSubmittedAt = canonicalBatchTimestamp(input.submittedAt);
+      const persistedSubmittedAt = canonicalBatchTimestamp(job.submitted_at);
+      const submittedAt = persistedSubmittedAt && Date.parse(persistedSubmittedAt) <= completedTime
+        ? persistedSubmittedAt
+        : providerSubmittedAt && Date.parse(providerSubmittedAt) <= completedTime
+          ? providerSubmittedAt
+          : completedAt;
+      return {
+        submittedAt,
+        completedAt,
+        turnaroundMs: Math.max(0, completedTime - Date.parse(submittedAt)),
+      };
+    };
+
+    const terminalWinnerResponse = async () => {
+      const winner = await get<{ status: string; result_summary: string | null }>(
+        c.env.DB,
+        'SELECT status, result_summary FROM batch_jobs WHERE id = ?',
+        [jobId],
+      );
+      const winnerDecision = parseBatchTerminalDecision(winner?.result_summary);
+      return c.json({
+        jobId,
+        status: winner?.status ?? 'settling',
+        ...(winner?.status === 'completed' || winner?.status === 'failed'
+          ? { alreadyFinished: true }
+          : { settlementInProgress: true }),
+        ...(winnerDecision ? { terminalDecision: winnerDecision.kind } : {}),
+      });
+    };
+
+    const claimTerminalDecision = async (
+      accounting: NonNullable<Awaited<ReturnType<typeof claimAccountingPlan>>>,
+      decisionWithoutFingerprint: Omit<BatchTerminalDecision, 'fingerprint'>,
+      canonicalOutcome: unknown,
+    ): Promise<{ decision: BatchTerminalDecision; claimSummary: string } | null> => {
+      const fingerprint = await batchTerminalFingerprint(jobId, {
+        decision: decisionWithoutFingerprint,
+        accountingPlan: accounting.accountingPlan,
+        outcome: canonicalOutcome,
+      });
+      const proposedDecision: BatchTerminalDecision = {
+        ...decisionWithoutFingerprint,
+        fingerprint,
+      };
+      const accountingSummary = parseBatchResultSummary(accounting.resultSummary) ?? {};
+      const proposedClaimSummary = JSON.stringify({
+        ...accountingSummary,
+        state: 'settling',
+        accountingProtocol: BATCH_ACCOUNTING_PROTOCOL_VERSION,
+        accountingPlan: accounting.accountingPlan,
+        ...(accounting.legacyAccounting
+          ? { legacyAccounting: LEGACY_BATCH_ACCOUNTING_MARKER }
+          : {}),
+        terminalDecision: proposedDecision,
+      });
+      await run(
+        c.env.DB,
+        `UPDATE batch_jobs
+            SET status = 'settling', result_summary = ?
+          WHERE id = ?
+            AND status IN ('submitted', 'running')
+            AND result_summary = ?`,
+        [proposedClaimSummary, jobId, accounting.resultSummary],
+      );
+      const claimed = await get<{ status: string; result_summary: string | null }>(
+        c.env.DB,
+        'SELECT status, result_summary FROM batch_jobs WHERE id = ?',
+        [jobId],
+      );
+      const claimedDecision = parseBatchTerminalDecision(claimed?.result_summary);
+      if (claimed?.status !== 'settling' || !claimedDecision
+        || claimedDecision.fingerprint !== fingerprint) return null;
+      return { decision: claimedDecision, claimSummary: claimed?.result_summary ?? '' };
+    };
+
+    const finalizeInvalidDecision = async (input: {
+      accounting: NonNullable<Awaited<ReturnType<typeof claimAccountingPlan>>>;
+      decision: BatchTerminalDecision & { kind: 'invalid'; reason: NonNullable<BatchTerminalDecision['reason']> };
+      claimSummary: string;
+    }) => {
+      const { accounting, decision } = input;
+      const aggregateUsage = accounting.accountingPlan.tokenMode === 'aggregate'
+        ? accounting.accountingPlan.aggregateUsage
+        : undefined;
+      if (aggregateUsage) {
+        const recorded = await recordMeasuredThirdPartyUsage(c.env, {
+          provider: job.provider,
+          service: 'llm-batch',
+          operation: 'batch-job-tokens',
+          idempotencyKey: await stableMeasuredUsageIdempotencyKey(
+            'batch-job', 'tokens', jobId,
+          ),
+          occurredAt: decision.completedAt,
+          model: job.model,
+          quantity: aggregateUsage.promptTokens + aggregateUsage.completionTokens,
+          unit: 'token',
+          billingMode: 'actual',
+          confidence: 'actual',
+          metadata: {
+            promptTokens: aggregateUsage.promptTokens,
+            completionTokens: aggregateUsage.completionTokens,
+            ...(aggregateUsage.cachedTokens == null
+              ? {}
+              : { cachedTokens: aggregateUsage.cachedTokens }),
+            success: false,
+          },
+        });
+        if (!recorded) {
+          return c.json({ error: 'batch measured usage could not be persisted' }, 503);
+        }
+      }
+      const safeReason = decision.reason === 'malformed_result_jsonl'
+        ? 'provider returned malformed terminal result data'
+        : decision.reason === 'invalid_result_identity'
+          ? 'provider returned invalid or duplicate result identities'
+          : 'provider returned results outside the submitted document set';
+      const providerErrors = decision.providerErrors?.summaries
+        .map((summary) => `provider batch error: ${summary}`) ?? [];
+      const summary = {
+        docs: 0,
+        expectedDocs: expectedDocIdList.length,
+        returnedDocs: decision.returnedDocs,
+        recognizedDocs: decision.recognizedDocs,
+        missingDocs: decision.missingDocs,
+        ...(decision.identityObservationTruncated ? { missingDocsExact: false } : {}),
+        providerStatus: decision.providerStatus,
+        ok: 0,
+        rows: 0,
+        errorCount: (decision.violationCount ?? 1)
+          + decision.missingDocs
+          + (decision.providerErrors?.count ?? 0),
+        errors: [...providerErrors, safeReason].slice(0, 20),
+        terminalPayloadError: decision.reason,
+        accountingProtocol: BATCH_ACCOUNTING_PROTOCOL_VERSION,
+        accountingPlan: accounting.accountingPlan,
+        terminalDecision: decision,
+        ...(accounting.legacyAccounting
+          ? {
+              legacyAccounting: LEGACY_BATCH_ACCOUNTING_MARKER,
+              legacyAccountingAmbiguous: true,
+              measuredUsageStatus: 'suppressed_unknown',
+            }
+          : {}),
+        ...(decision.providerErrors ? {
+          providerErrorCount: decision.providerErrors.count,
+          providerErrors: decision.providerErrors.summaries,
+        } : {}),
+        ...(aggregateUsage ? { aggregateUsage } : {}),
+      };
+      const settled = await run(
+        c.env.DB,
+        `UPDATE batch_jobs
+            SET status = 'failed', submitted_at = ?, completed_at = ?, turnaround_ms = ?,
+                result_summary = ?, error = ?
+          WHERE id = ? AND status = 'settling' AND result_summary = ?`,
+        [
+          decision.submittedAt,
+          decision.completedAt,
+          decision.turnaroundMs,
+          JSON.stringify(summary),
+          decision.reason,
+          jobId,
+          input.claimSummary,
+        ],
+      );
+      if ((settled.meta.changes ?? 0) === 0) return terminalWinnerResponse();
+      return c.json({
+        jobId,
+        status: 'failed',
+        turnaroundMs: decision.turnaroundMs,
+        turnaroundMin: Math.round((decision.turnaroundMs / 60000) * 10) / 10,
+        summary,
+      });
+    };
+
+    const settleInvalidTerminalPayload = async (input: {
+      reason: 'malformed_result_jsonl' | 'invalid_result_identity' | 'unknown_result_identity';
+      providerStatus: string;
+      returnedDocs: number;
+      violationCount: number;
+      observedDocIds?: Array<string | null>;
+      identityObservationTruncated?: boolean;
+      providerErrors?: SafeBatchProviderErrors;
+      aggregateUsage?: BatchUsage;
+      submittedAt?: string;
+      terminalAt?: string;
+    }) => {
+      let accounting;
+      try {
+        accounting = await claimAccountingPlan(input.aggregateUsage);
+      } catch {
+        return c.json({ error: 'batch accounting state could not be loaded' }, 503);
+      }
+      if (!accounting) {
+        return c.json({ error: 'batch accounting plan could not be persisted' }, 503);
+      }
+      const existingDecision = parseBatchTerminalDecision(job.result_summary);
+      if (job.status === 'settling' && existingDecision?.kind === 'invalid'
+        && existingDecision.reason) {
+        return finalizeInvalidDecision({
+          accounting,
+          decision: existingDecision as BatchTerminalDecision & {
+            kind: 'invalid'; reason: NonNullable<BatchTerminalDecision['reason']>;
+          },
+          claimSummary: job.result_summary ?? '',
+        });
+      }
+      const observedExpectedDocIds = new Set(
+        (input.observedDocIds ?? []).flatMap((docId) => (
+          typeof docId === 'string' && expectedDocIds.has(docId) ? [docId] : []
+        )),
+      );
+      const lifecycle = lifecycleForDecision(input);
+      const decisionWithoutFingerprint: Omit<BatchTerminalDecision, 'fingerprint'> = {
+        version: 1,
+        kind: 'invalid',
+        finalStatus: 'failed',
+        providerStatus: safeBatchProviderStatus(input.providerStatus),
+        ...lifecycle,
+        returnedDocs: Math.max(0, input.returnedDocs),
+        recognizedDocs: observedExpectedDocIds.size,
+        missingDocs: Math.max(0, expectedDocIdList.length - observedExpectedDocIds.size),
+        reason: input.reason,
+        violationCount: Math.max(1, input.violationCount),
+        ...(input.providerErrors ? { providerErrors: input.providerErrors } : {}),
+        ...(input.identityObservationTruncated ? { identityObservationTruncated: true } : {}),
+      };
+      const claim = await claimTerminalDecision(accounting, decisionWithoutFingerprint, {
+        kind: 'invalid',
+        reason: input.reason,
+        providerStatus: decisionWithoutFingerprint.providerStatus,
+        returnedDocs: decisionWithoutFingerprint.returnedDocs,
+        recognizedDocs: decisionWithoutFingerprint.recognizedDocs,
+        missingDocs: decisionWithoutFingerprint.missingDocs,
+        providerErrors: decisionWithoutFingerprint.providerErrors,
+        lifecycle,
+      });
+      if (!claim || claim.decision.kind !== 'invalid' || !claim.decision.reason) {
+        return terminalWinnerResponse();
+      }
+      return finalizeInvalidDecision({
+        accounting,
+        decision: claim.decision as BatchTerminalDecision & {
+          kind: 'invalid'; reason: NonNullable<BatchTerminalDecision['reason']>;
+        },
+        claimSummary: claim.claimSummary,
+      });
+    };
+
+    const persistedTerminalDecision = parseBatchTerminalDecision(job.result_summary);
+    if (job.status === 'settling' && persistedTerminalDecision?.kind === 'invalid'
+      && persistedTerminalDecision.reason) {
+      const accounting = await claimAccountingPlan();
+      if (!accounting) return c.json({ error: 'batch accounting plan could not be loaded' }, 503);
+      return finalizeInvalidDecision({
+        accounting,
+        decision: persistedTerminalDecision as BatchTerminalDecision & {
+          kind: 'invalid'; reason: NonNullable<BatchTerminalDecision['reason']>;
+        },
+        claimSummary: job.result_summary ?? '',
+      });
+    }
+    if (job.status === 'settling' && !persistedTerminalDecision) {
+      return c.json({ error: 'batch terminal settlement claim is invalid' }, 503);
+    }
 
     let poll;
     try {
       poll = await pollBatch(c.env, job.provider, job.provider_batch_id);
     } catch (err) {
+      if (err instanceof BatchTerminalPayloadError) {
+        return settleInvalidTerminalPayload({
+          reason: err.code,
+          providerStatus: err.providerStatus,
+          returnedDocs: err.context.returnedDocs ?? 0,
+          violationCount: 1,
+          observedDocIds: err.context.observedDocIds,
+          identityObservationTruncated: err.context.observedDocIdsTruncated,
+          providerErrors: err.context.providerErrors,
+          aggregateUsage: err.context.aggregateUsage,
+          submittedAt: err.context.submittedAt,
+          terminalAt: err.context.terminalAt,
+        });
+      }
       return c.json({ error: (err as Error).message }, 502);
     }
 
     if (!poll.done) {
-      await run(c.env.DB, 'UPDATE batch_jobs SET status = ? WHERE id = ?', ['running', jobId]);
+      if (job.status === 'settling') {
+        return c.json({ error: 'batch terminal settlement is in progress' }, 503);
+      }
+      const markedRunning = await run(
+        c.env.DB,
+        `UPDATE batch_jobs SET status = 'running'
+          WHERE id = ? AND status IN ('submitted', 'running')`,
+        [jobId],
+      );
+      if ((markedRunning.meta.changes ?? 0) === 0) return terminalWinnerResponse();
       return c.json({ jobId, status: 'running', providerStatus: poll.status });
     }
 
@@ -4085,11 +4772,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     let invalidResultDocIdCount = 0;
     let duplicateResultDocIdCount = 0;
     for (const result of poll.results) {
-      const docId = typeof result.docId === 'string' ? result.docId.trim() : '';
-      if (!docId) {
+      const rawDocId = result.docId;
+      if (typeof rawDocId !== 'string' || !rawDocId || rawDocId !== rawDocId.trim()) {
         invalidResultDocIdCount++;
         continue;
       }
+      const docId = rawDocId;
       if (resultDocIds.has(docId)) {
         duplicateResultDocIdCount++;
         continue;
@@ -4098,100 +4786,205 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       normalizedResults.push({ ...result, docId });
     }
     if (invalidResultDocIdCount > 0 || duplicateResultDocIdCount > 0) {
-      return c.json({
-        error: 'batch provider returned invalid result identities',
-        resultCount: poll.results.length,
-        invalidResultDocIdCount,
-        duplicateResultDocIdCount,
-      }, 502);
+      return settleInvalidTerminalPayload({
+        reason: 'invalid_result_identity',
+        providerStatus: poll.status,
+        returnedDocs: poll.results.length,
+        violationCount: invalidResultDocIdCount + duplicateResultDocIdCount,
+        observedDocIds: poll.results.map((result) => (
+          typeof result.docId === 'string' ? result.docId : null
+        )),
+        providerErrors: poll.providerErrors,
+        aggregateUsage: poll.aggregateUsage,
+        submittedAt: poll.submittedAt,
+        terminalAt: poll.terminalAt,
+      });
+    }
+    const unknownResultDocIdCount = normalizedResults.reduce(
+      (count, result) => count + (expectedDocIds.has(result.docId) ? 0 : 1),
+      0,
+    );
+    if (unknownResultDocIdCount > 0) {
+      return settleInvalidTerminalPayload({
+        reason: 'unknown_result_identity',
+        providerStatus: poll.status,
+        returnedDocs: normalizedResults.length,
+        violationCount: unknownResultDocIdCount,
+        observedDocIds: normalizedResults.map((result) => result.docId),
+        providerErrors: poll.providerErrors,
+        aggregateUsage: poll.aggregateUsage,
+        submittedAt: poll.submittedAt,
+        terminalAt: poll.terminalAt,
+      });
+    }
+    const missingDocIds = expectedDocIdList.filter((docId) => !resultDocIds.has(docId));
+
+    let accounting;
+    try {
+      accounting = await claimAccountingPlan(poll.aggregateUsage);
+    } catch {
+      return c.json({ error: 'batch accounting state could not be loaded' }, 503);
+    }
+    if (!accounting) {
+      return c.json({ error: 'batch accounting plan could not be persisted' }, 503);
+    }
+    const { accountingPlan } = accounting;
+    const existingValidDecision = job.status === 'settling'
+      && persistedTerminalDecision?.kind === 'valid'
+      ? persistedTerminalDecision
+      : null;
+    const lifecycle = existingValidDecision
+      ? {
+          submittedAt: existingValidDecision.submittedAt,
+          completedAt: existingValidDecision.completedAt,
+          turnaroundMs: existingValidDecision.turnaroundMs,
+        }
+      : lifecycleForDecision(poll);
+    const providerErrors = existingValidDecision?.providerErrors
+      ?? parseSafeBatchProviderErrors(poll.providerErrors);
+    const decisionWithoutFingerprint: Omit<BatchTerminalDecision, 'fingerprint'> = {
+      version: 1,
+      kind: 'valid',
+      finalStatus: existingValidDecision?.finalStatus ?? (poll.failed ? 'failed' : 'completed'),
+      providerStatus: existingValidDecision?.providerStatus ?? safeBatchProviderStatus(poll.status),
+      ...lifecycle,
+      returnedDocs: existingValidDecision?.returnedDocs ?? normalizedResults.length,
+      recognizedDocs: existingValidDecision?.recognizedDocs ?? normalizedResults.length,
+      missingDocs: existingValidDecision?.missingDocs ?? missingDocIds.length,
+      ...(providerErrors ? { providerErrors } : {}),
+    };
+    const canonicalResults = normalizedResults
+      .map((result) => ({
+        docId: result.docId,
+        ok: result.ok,
+        error: result.error,
+        rows: result.rows
+          .map((row) => canonicalBatchFingerprintValue(row))
+          .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))),
+        usage: result.usage,
+        resolvedModel: result.resolvedModel,
+      }))
+      .sort((left, right) => left.docId.localeCompare(right.docId));
+    const terminalClaim = await claimTerminalDecision(accounting, decisionWithoutFingerprint, {
+      kind: 'valid',
+      providerStatus: decisionWithoutFingerprint.providerStatus,
+      finalStatus: decisionWithoutFingerprint.finalStatus,
+      lifecycle,
+      providerErrors,
+      results: canonicalResults,
+    });
+    if (!terminalClaim || terminalClaim.decision.kind !== 'valid') {
+      return terminalWinnerResponse();
+    }
+    const terminalDecision = terminalClaim.decision;
+    const completedAt = terminalDecision.completedAt;
+    const submittedAt = terminalDecision.submittedAt;
+    const turnaroundMs = terminalDecision.turnaroundMs;
+    let extractionState: PersistedBatchExtractionState;
+    try {
+      extractionState = await loadPersistedExtractionState();
+    } catch {
+      return c.json({ error: 'batch extraction state could not be loaded' }, 503);
     }
 
-    // Prefer an already-valid persisted timestamp, then the provider-authored
-    // terminal transition, then this first observation. A compare-and-swap
-    // repairs NULL/malformed legacy values without overwriting a valid winner
-    // claimed by another poller.
-    const observedTerminalAt = new Date().toISOString();
-    const persistedCompletedAt = canonicalBatchTimestamp(job.completed_at);
-    const providerTerminalAt = canonicalBatchTimestamp(poll.terminalAt);
-    if (!persistedCompletedAt) {
-      await run(
-        c.env.DB,
-        `UPDATE batch_jobs
-            SET completed_at = ?
-          WHERE id = ? AND (completed_at IS NULL OR completed_at = ?)`,
-        [providerTerminalAt ?? observedTerminalAt, jobId, job.completed_at],
-      );
-    }
-    const terminal = await get<{ completed_at: string | null }>(
-      c.env.DB,
-      'SELECT completed_at FROM batch_jobs WHERE id = ?',
-      [jobId],
-    );
-    const claimedCompletedAt = canonicalBatchTimestamp(terminal?.completed_at);
-    if (!claimedCompletedAt) {
-      return c.json({ error: 'batch terminal timestamp could not be persisted' }, 503);
-    }
-    const persistedSubmittedAt = canonicalBatchTimestamp(job.submitted_at);
-    const providerSubmittedAt = canonicalBatchTimestamp(poll.submittedAt);
-    const completedTime = Date.parse(claimedCompletedAt);
-    if (!persistedSubmittedAt || Date.parse(persistedSubmittedAt) > completedTime) {
-      const repairSubmittedAt = providerSubmittedAt && Date.parse(providerSubmittedAt) <= completedTime
-        ? providerSubmittedAt
-        : claimedCompletedAt;
-      await run(
-        c.env.DB,
-        `UPDATE batch_jobs
-            SET submitted_at = ?
-          WHERE id = ? AND (submitted_at IS NULL OR submitted_at = ?)`,
-        [repairSubmittedAt, jobId, job.submitted_at],
-      );
-    }
-    const timing = await get<{ submitted_at: string | null; completed_at: string | null }>(
-      c.env.DB,
-      'SELECT submitted_at, completed_at FROM batch_jobs WHERE id = ?',
-      [jobId],
-    );
-    const completedAt = canonicalBatchTimestamp(timing?.completed_at);
-    const submittedAt = canonicalBatchTimestamp(timing?.submitted_at);
-    if (!completedAt || !submittedAt) {
-      return c.json({ error: 'batch lifecycle timestamps could not be persisted' }, 503);
-    }
-    const turnaroundMs = Date.parse(completedAt) - Date.parse(submittedAt);
-    if (!Number.isFinite(turnaroundMs) || turnaroundMs < 0) {
-      return c.json({ error: 'batch lifecycle timestamps are inconsistent' }, 503);
-    }
     let okCount = 0;
     let rowTotal = 0;
-    const errors: string[] = [];
+    let resultErrorCount = 0;
+    const providerErrorCount = terminalDecision.providerErrors?.count ?? 0;
+    const errors: string[] = (terminalDecision.providerErrors?.summaries ?? [])
+      .slice(0, 20)
+      .map((summary) => `provider batch error: ${summary.slice(0, 64)}`);
+    const aggregateUsage = accountingPlan.tokenMode === 'aggregate'
+      ? accountingPlan.aggregateUsage
+      : undefined;
+    const hasCompleteAggregateTokenUsage = aggregateUsage != null;
+
+    if (aggregateUsage) {
+      const { promptTokens: aggregatePromptTokens, completionTokens: aggregateCompletionTokens } = aggregateUsage;
+      const metadata: Record<string, string | number | boolean | null> = {
+        promptTokens: aggregatePromptTokens,
+        completionTokens: aggregateCompletionTokens,
+        success: terminalDecision.finalStatus === 'completed',
+      };
+      if (aggregateUsage?.cachedTokens != null) {
+        metadata.cachedTokens = aggregateUsage.cachedTokens;
+      }
+      const recorded = await recordMeasuredThirdPartyUsage(c.env, {
+        provider: job.provider,
+        service: 'llm-batch',
+        operation: 'batch-job-tokens',
+        idempotencyKey: await stableMeasuredUsageIdempotencyKey(
+          'batch-job', 'tokens', jobId,
+        ),
+        occurredAt: completedAt,
+        model: job.model,
+        quantity: aggregatePromptTokens + aggregateCompletionTokens,
+        unit: 'token',
+        billingMode: 'actual',
+        confidence: 'actual',
+        metadata,
+      });
+      if (!recorded) {
+        return c.json({ error: 'batch measured usage could not be persisted' }, 503);
+      }
+    }
 
     for (const res of normalizedResults) {
-        if (res.ok) { okCount++; rowTotal += res.rows.length; } else errors.push(`${res.docId}: ${res.error ?? 'failed'}`);
+        if (res.ok) {
+          okCount++;
+          rowTotal += res.rows.length;
+        } else {
+          resultErrorCount++;
+          if (errors.length < 20) errors.push(`${res.docId}: ${res.error ?? 'failed'}`.slice(0, 300));
+        }
         const avg = res.rows.length ? res.rows.reduce((s, x) => s + (x.confidence ?? 0), 0) / res.rows.length : 0;
-        try {
-          await run(
-            c.env.DB,
-            `INSERT INTO extraction_runs
-               (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, usage_json, created_at)
-             VALUES (?, ?, ?, ?, ?, 'batch', ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [uuid(), jobId, res.docId, job.provider, job.model, res.ok ? 1 : 0, res.error ?? null,
-             res.rows.length, turnaroundMs, Math.round(avg * 1000) / 1000, JSON.stringify(res.rows),
-             res.usage ? JSON.stringify(res.usage) : null, completedAt],
-          );
-        } catch { /* extraction_runs missing */ }
+        if (!extractionState.persistedDocIds.has(res.docId)) {
+          try {
+            const extractionRunId = await stableBatchExtractionRunId(jobId, res.docId);
+            await run(
+              c.env.DB,
+              `INSERT OR IGNORE INTO extraction_runs
+                 (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, usage_json, created_at)
+               VALUES (?, ?, ?, ?, ?, 'batch', ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [extractionRunId, jobId, res.docId, job.provider, job.model, res.ok ? 1 : 0, res.error ?? null,
+               res.rows.length, turnaroundMs, Math.round(avg * 1000) / 1000, JSON.stringify(res.rows),
+               res.usage ? JSON.stringify(res.usage) : null, completedAt],
+            );
+          } catch {
+            // Keep the job retryable. Deterministic ids plus INSERT OR IGNORE
+            // make concurrent/replayed inserts safe, while legacy random-id
+            // rows are preserved without creating a second result for the doc.
+            return c.json({ error: 'batch results could not be persisted' }, 503);
+          }
+        }
+
+        // Pre-protocol rows may already have emitted the historical index-keyed
+        // usage event. Do not emit a second doc-keyed family for those rows.
+        // Newly persisted deterministic rows still retry their stable events.
+        const legacyMeasuredUsageAmbiguous = accounting.legacyAccounting
+          || extractionState.legacyPersistedDocIds.has(res.docId);
 
         // The request/poll attempts are metered by trackedFetch. Add only the
         // provider-reported units here, with stable keys so a status retry
         // cannot double count them. Never infer a missing token component.
-        const promptTokens = res.usage?.promptTokens;
-        const completionTokens = res.usage?.completionTokens;
-        if (promptTokens != null && completionTokens != null) {
+        const promptTokens = nonNegativeSafeInteger(res.usage?.promptTokens);
+        const completionTokens = nonNegativeSafeInteger(res.usage?.completionTokens);
+        const tokenTotal = promptTokens == null || completionTokens == null
+          ? null
+          : promptTokens + completionTokens;
+        if (!legacyMeasuredUsageAmbiguous
+          && !hasCompleteAggregateTokenUsage
+          && promptTokens != null
+          && completionTokens != null
+          && tokenTotal != null
+          && Number.isSafeInteger(tokenTotal)) {
           const metadata: Record<string, string | number | boolean | null> = {
             promptTokens,
             completionTokens,
             success: res.ok,
           };
           if (res.usage?.cachedTokens != null) metadata.cachedTokens = res.usage.cachedTokens;
-          await recordMeasuredThirdPartyUsage(c.env, {
+          const recorded = await recordMeasuredThirdPartyUsage(c.env, {
             provider: job.provider,
             service: 'llm-batch',
             operation: 'batch-result-tokens',
@@ -4200,15 +4993,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             ),
             occurredAt: completedAt,
             model: job.model,
-            quantity: promptTokens + completionTokens,
+            quantity: tokenTotal,
             unit: 'token',
             billingMode: 'actual',
             confidence: 'actual',
             metadata,
           });
+          if (!recorded) return c.json({ error: 'batch measured usage could not be persisted' }, 503);
         }
-        if (res.usage?.pagesProcessed != null) {
-          await recordMeasuredThirdPartyUsage(c.env, {
+        if (!legacyMeasuredUsageAmbiguous && res.usage?.pagesProcessed != null) {
+          const recorded = await recordMeasuredThirdPartyUsage(c.env, {
             provider: job.provider,
             service: 'ocr-batch',
             operation: 'batch-result-pages',
@@ -4223,10 +5017,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             confidence: 'actual',
             metadata: { pagesProcessed: res.usage.pagesProcessed, success: res.ok },
           });
+          if (!recorded) return c.json({ error: 'batch measured usage could not be persisted' }, 503);
         }
-        if (res.usage?.costInUsdTicks != null) {
+        if (!legacyMeasuredUsageAmbiguous && res.usage?.costInUsdTicks != null) {
           const costUsd = res.usage.costInUsdTicks / 10_000_000_000;
-          await recordMeasuredThirdPartyUsage(c.env, {
+          const recorded = await recordMeasuredThirdPartyUsage(c.env, {
             provider: job.provider,
             service: 'llm-batch',
             operation: 'batch-result-provider-cost',
@@ -4249,9 +5044,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                 : { attachmentSearchCalls: res.usage.attachmentSearchCalls }),
             },
           });
+          if (!recorded) return c.json({ error: 'batch measured usage could not be persisted' }, 503);
         }
-        if (res.usage?.attachmentSearchCalls != null) {
-          await recordMeasuredThirdPartyUsage(c.env, {
+        if (!legacyMeasuredUsageAmbiguous && res.usage?.attachmentSearchCalls != null) {
+          const recorded = await recordMeasuredThirdPartyUsage(c.env, {
             provider: job.provider,
             service: 'llm-batch',
             operation: 'batch-result-attachment-search',
@@ -4270,20 +5066,69 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
               success: res.ok,
             },
           });
+          if (!recorded) return c.json({ error: 'batch measured usage could not be persisted' }, 503);
         }
       }
 
-    const summary = { docs: normalizedResults.length, ok: okCount, rows: rowTotal, errors: errors.slice(0, 20) };
-    await run(
+    const errorCount = providerErrorCount + resultErrorCount + missingDocIds.length;
+    const summaryErrors = errors.slice(0, 20);
+    for (const missingDocId of missingDocIds) {
+      if (summaryErrors.length >= 20) break;
+      summaryErrors.push(`${missingDocId}: missing provider result`);
+    }
+    const summary = {
+      docs: normalizedResults.length,
+      expectedDocs: expectedDocIdList.length,
+      returnedDocs: normalizedResults.length,
+      missingDocs: missingDocIds.length,
+      providerStatus: terminalDecision.providerStatus,
+      ok: okCount,
+      rows: rowTotal,
+      errorCount,
+      errors: summaryErrors,
+      accountingProtocol: BATCH_ACCOUNTING_PROTOCOL_VERSION,
+      accountingPlan,
+      terminalDecision,
+      ...(accounting.legacyAccounting
+        ? { legacyAccounting: LEGACY_BATCH_ACCOUNTING_MARKER }
+        : {}),
+      ...(accounting.legacyAccounting || extractionState.legacyPersistedDocIds.size > 0
+        ? {
+            legacyAccountingAmbiguous: true,
+            legacyAccountingAmbiguousDocs: accounting.legacyAccounting
+              ? expectedDocIdList.length
+              : extractionState.legacyPersistedDocIds.size,
+            measuredUsageStatus: 'suppressed_unknown',
+          }
+        : {}),
+      ...(missingDocIds.length === 0 ? {} : { missingDocIds: missingDocIds.slice(0, 20) }),
+      ...(providerErrorCount === 0 ? {} : {
+        providerErrorCount,
+        providerErrors: (terminalDecision.providerErrors?.summaries ?? []).slice(0, 20),
+      }),
+      ...(aggregateUsage ? { aggregateUsage } : {}),
+    };
+    const settled = await run(
       c.env.DB,
       `UPDATE batch_jobs
-          SET status = ?, completed_at = COALESCE(completed_at, ?), turnaround_ms = ?, result_summary = ?, error = ?
-        WHERE id = ?`,
-      [poll.failed ? 'failed' : 'completed', completedAt, turnaroundMs, JSON.stringify(summary), poll.failed ? poll.status : null, jobId],
+          SET status = ?, submitted_at = ?, completed_at = ?,
+              turnaround_ms = ?, result_summary = ?, error = ?
+        WHERE id = ? AND status = 'settling' AND result_summary = ?`,
+      [
+        terminalDecision.finalStatus,
+        submittedAt,
+        completedAt,
+        turnaroundMs,
+        JSON.stringify(summary),
+        terminalDecision.finalStatus === 'failed' ? terminalDecision.providerStatus : null,
+        jobId,
+        terminalClaim.claimSummary,
+      ],
     );
+    if ((settled.meta.changes ?? 0) === 0) return terminalWinnerResponse();
     return c.json({
       jobId,
-      status: poll.failed ? 'failed' : 'completed',
+      status: terminalDecision.finalStatus,
       turnaroundMs,
       turnaroundMin: Math.round((turnaroundMs / 60000) * 10) / 10,
       summary,

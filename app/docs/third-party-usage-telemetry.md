@@ -32,13 +32,42 @@ responses, and thrown network errors as actual request attempts.
   token quantity remains prompt plus completion exactly once, so cache subsets
   are not double counted.
 - Finished Anthropic, OpenAI, and xAI batch results retain reported input,
-  output, and cached tokens; Mistral results retain reported pages. Completed
-  result files exposed by failed, expired, cancelled, or timed-out OpenAI and
-  Mistral jobs are also decoded instead of discarded. xAI batch results retain
-  exact `cost_in_usd_ticks` and server-side attachment-search counts. These
-  units survive parse or overall-job failures, are stored in
-  `extraction_runs.usage_json`, and are emitted by `/batch-status` with stable
-  per-result idempotency keys so a status retry cannot double count them.
+  output, and cached tokens; Mistral results retain reported pages. OpenAI
+  terminal batches decode both successful-request output files and
+  errored-request files, including completed batches with only errors or no
+  files. When OpenAI reports complete batch-level input/output totals,
+  `/batch-status` stores them in `batch_jobs.result_summary` and emits one
+  stable job-level token event instead of duplicating per-result tokens; absent,
+  partial, or invalid aggregates fall back to the per-result accounting path.
+  OpenAI result JSONL is parsed strictly, and every returned identifier must
+  exactly match the submitted job document set before result persistence or
+  measured-unit emission. Malformed terminal JSONL and invalid, duplicate, or
+  unknown result identities durably fail the app job with a bounded safe
+  summary; transport and HTTP retrieval failures remain retryable. Missing
+  provider results still close the immutable terminal job and remain visible
+  as bounded summary errors and counts. Before measured units are emitted, the
+  job compare-and-swaps a durable aggregate-vs-per-result token accounting plan
+  into `result_summary`; retries reuse the winning mode and aggregate totals so
+  the two idempotency-key families cannot both be emitted. New submissions carry
+  an accounting-protocol marker. An unversioned job may already have emitted
+  either the older index-keyed events or the newer document-keyed events, and
+  the database cannot prove which family won. Its measured per-result units are
+  therefore not re-emitted; the safe result summary records them as
+  `suppressed_unknown` instead of risking duplicate billing. Pre-protocol
+  random-id rows are reused. Batch extraction-run rows otherwise use deterministic
+  job/document ids with `INSERT OR IGNORE`, making terminal status replay and
+  concurrent polling row-idempotent. A CAS-fenced terminal decision is stored
+  before outcome-specific side effects; only that exact winner can finalize,
+  and the same winner can resume after a transient failure. Trustworthy aggregate
+  usage and lifecycle timestamps survive malformed/invalid document payload
+  settlement, and a measured event that cannot reach either Queue or R2 leaves
+  the job retryable.
+  Completed result files exposed by failed, expired, cancelled, or timed-out
+  OpenAI and Mistral jobs are also decoded instead of discarded. xAI batch
+  results retain exact `cost_in_usd_ticks` and server-side attachment-search
+  counts. Per-result units survive parse or overall-job failures, are stored in
+  `extraction_runs.usage_json`, and use stable idempotency keys so a status retry
+  cannot double count them.
 
 ## Covered outbound surfaces
 

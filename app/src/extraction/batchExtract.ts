@@ -71,10 +71,54 @@ export interface BatchPoll {
   failed: boolean;
   status: string;
   results: BatchDocResult[];
+  /** Provider-reported usage for the whole batch, when complete and valid. */
+  aggregateUsage?: BatchUsage;
+  /** Safe, bounded provider-level terminal errors reported on the batch object. */
+  providerErrors?: { count: number; summaries: string[] };
   /** Provider-authored batch creation time, when the API exposes one. */
   submittedAt?: string;
   /** Provider-authored terminal transition time, when the API exposes one. */
   terminalAt?: string;
+}
+
+export interface BatchTerminalPayloadContext {
+  aggregateUsage?: BatchUsage;
+  /** Safe, bounded provider-level errors from the Batch object. */
+  providerErrors?: BatchPoll['providerErrors'];
+  /** Successfully decoded result records observed before the malformed record. */
+  returnedDocs?: number;
+  /**
+   * Bounded identities for settlement-time membership checks only. A null
+   * entry means the provider returned a non-string or excessively long id.
+   * These values must never be echoed in an operator-facing error summary.
+   */
+  observedDocIds?: Array<string | null>;
+  /** More decoded identities existed than can safely be retained in context. */
+  observedDocIdsTruncated?: true;
+  submittedAt?: string;
+  terminalAt?: string;
+}
+
+export class BatchTerminalPayloadError extends Error {
+  constructor(
+    readonly code: 'malformed_result_jsonl',
+    readonly providerStatus = 'unknown',
+    readonly context: BatchTerminalPayloadContext = {},
+  ) {
+    super('batch provider returned an invalid terminal payload');
+    this.name = 'BatchTerminalPayloadError';
+  }
+}
+
+// /batch-submit accepts at most 200 documents. Retain enough identities for
+// exact normal-route settlement while bounding corrupt or adversarial files.
+const MAX_TERMINAL_CONTEXT_DOC_IDS = 200;
+const MAX_TERMINAL_CONTEXT_DOC_ID_LENGTH = 1_024;
+
+function safeTerminalContextDocId(value: unknown): string | null {
+  return typeof value === 'string' && value.length <= MAX_TERMINAL_CONTEXT_DOC_ID_LENGTH
+    ? value
+    : null;
 }
 
 function unixSecondsToIso(value: unknown): string | undefined {
@@ -170,6 +214,71 @@ function normalizeBatchUsage(values: BatchUsage): BatchUsage | undefined {
     if (typeof value === 'number' && Number.isFinite(value) && value >= 0) usage[key] = value;
   }
   return Object.keys(usage).length ? usage : undefined;
+}
+
+function nonNegativeSafeInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+/** Parse OpenAI's optional batch-level token usage without inventing partial totals. */
+export function parseOpenAiBatchUsage(value: unknown): BatchUsage | undefined {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const promptTokens = nonNegativeSafeInteger(raw.input_tokens);
+  const completionTokens = nonNegativeSafeInteger(raw.output_tokens);
+  if (promptTokens == null || completionTokens == null
+    || !Number.isSafeInteger(promptTokens + completionTokens)) return undefined;
+
+  let cachedTokens: number | undefined;
+  if (raw.input_tokens_details != null) {
+    if (typeof raw.input_tokens_details !== 'object' || Array.isArray(raw.input_tokens_details)) {
+      return undefined;
+    }
+    const details = raw.input_tokens_details as Record<string, unknown>;
+    if (details.cached_tokens != null) {
+      cachedTokens = nonNegativeSafeInteger(details.cached_tokens);
+      if (cachedTokens == null || cachedTokens > promptTokens) return undefined;
+    }
+  }
+
+  return {
+    promptTokens,
+    completionTokens,
+    ...(cachedTokens == null ? {} : { cachedTokens }),
+  };
+}
+
+function boundedErrorText(value: unknown, maxLength = 240): string {
+  if (typeof value === 'string' && value.trim()) return value.trim().slice(0, maxLength);
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return 'provider error';
+  const raw = value as Record<string, unknown>;
+  const parts = [raw.code, raw.type, raw.message]
+    .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
+    .map((part) => part.trim());
+  return (parts.length ? parts.join(': ') : 'provider error').slice(0, maxLength);
+}
+
+function safeProviderErrorCode(value: unknown): string {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return 'provider_error';
+  const raw = value as Record<string, unknown>;
+  const candidate = [raw.code, raw.type]
+    .find((part): part is string => typeof part === 'string' && part.trim().length > 0);
+  if (!candidate) return 'provider_error';
+  const normalized = candidate.trim().slice(0, 64);
+  return /^[A-Za-z0-9._-]+$/.test(normalized) ? normalized : 'provider_error';
+}
+
+/** Count OpenAI Batch-object inline errors without retaining arbitrary messages. */
+export function parseOpenAiBatchErrors(value: unknown): BatchPoll['providerErrors'] {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const data = (value as Record<string, unknown>).data;
+  if (!Array.isArray(data) || data.length === 0) return undefined;
+  return {
+    count: data.length,
+    summaries: data.slice(0, 20).map(safeProviderErrorCode),
+  };
 }
 
 async function keyFor(env: Env, provider: BatchProvider): Promise<string> {
@@ -390,6 +499,7 @@ export function decodeOpenAiLine(line: unknown): BatchDocResult {
       status_code?: number;
       body?: {
         model?: string;
+        error?: unknown;
         choices?: Array<{ message?: { content?: string } }>;
         usage?: {
           prompt_tokens?: number;
@@ -403,13 +513,25 @@ export function decodeOpenAiLine(line: unknown): BatchDocResult {
   const docId = l.custom_id ?? '';
   const content = l.response?.body?.choices?.[0]?.message?.content;
   const resolvedModel = l.response?.body?.model;
+  const rawStatusCode = l.response?.status_code;
+  const statusCode = typeof rawStatusCode === 'number' && Number.isInteger(rawStatusCode)
+    && rawStatusCode >= 100 && rawStatusCode <= 599
+    ? rawStatusCode
+    : undefined;
+  const statusCodeInvalid = rawStatusCode != null && statusCode == null;
+  const responseError = l.response?.body?.error;
   const usage = normalizeBatchUsage({
     promptTokens: l.response?.body?.usage?.prompt_tokens,
     completionTokens: l.response?.body?.usage?.completion_tokens,
     cachedTokens: l.response?.body?.usage?.prompt_tokens_details?.cached_tokens,
   });
-  if (l.error || !content) {
-    return { docId, ok: false, error: JSON.stringify(l.error ?? 'no content').slice(0, 300), rows: [], usage, resolvedModel };
+  if (l.error || responseError || statusCodeInvalid || (statusCode != null && (statusCode < 200 || statusCode >= 300)) || !content) {
+    const statusPrefix = statusCodeInvalid
+      ? 'invalid response status'
+      : statusCode == null ? '' : `HTTP ${statusCode}`;
+    const detail = l.error ?? responseError ?? (!content ? 'no content' : 'provider error');
+    const error = [statusPrefix, boundedErrorText(detail)].filter(Boolean).join(': ').slice(0, 300);
+    return { docId, ok: false, error, rows: [], usage, resolvedModel };
   }
   try {
     return { docId, ok: true, rows: parseModelJson(content).map(toParsedTx), usage, resolvedModel };
@@ -425,7 +547,38 @@ async function fetchOpenAiBatchResults(key: string, outputFileId: string): Promi
     { service: 'llm-batch', operation: 'fetch-batch-results' },
   );
   if (!response.ok) throw new Error(`openai batch results ${response.status}`);
-  return parseJsonl(await response.text()).map(decodeOpenAiLine);
+  const lines = (await response.text()).split(/\r?\n/);
+  const decoded: BatchDocResult[] = [];
+  const observedDocIds: Array<string | null> = [];
+  let observedDocIdsTruncated = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      throw new BatchTerminalPayloadError('malformed_result_jsonl', 'unknown', {
+        returnedDocs: decoded.length,
+        observedDocIds,
+        ...(observedDocIdsTruncated ? { observedDocIdsTruncated: true } : {}),
+      });
+    }
+    if (parsed == null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new BatchTerminalPayloadError('malformed_result_jsonl', 'unknown', {
+        returnedDocs: decoded.length,
+        observedDocIds,
+        ...(observedDocIdsTruncated ? { observedDocIdsTruncated: true } : {}),
+      });
+    }
+    decoded.push(decodeOpenAiLine(parsed));
+    if (observedDocIds.length < MAX_TERMINAL_CONTEXT_DOC_IDS) {
+      observedDocIds.push(safeTerminalContextDocId((parsed as Record<string, unknown>).custom_id));
+    } else {
+      observedDocIdsTruncated = true;
+    }
+  }
+  return decoded;
 }
 
 async function pollOpenAi(env: Env, batchId: string): Promise<BatchPoll> {
@@ -445,20 +598,61 @@ async function pollOpenAi(env: Env, batchId: string): Promise<BatchPoll> {
     failed_at?: number | null;
     expired_at?: number | null;
     cancelled_at?: number | null;
+    usage?: unknown;
+    errors?: unknown;
   };
+  const status = typeof j.status === 'string' ? j.status.toLowerCase() : 'unknown';
   const timestamps = parseOpenAiBatchTimestamps(j);
-  if (j.status === 'failed' || j.status === 'expired' || j.status === 'cancelled') {
-    // Terminal batches may still expose an output file containing completed,
-    // billed requests. Decode them; /batch-status persists and meters every
-    // returned result regardless of the overall job status.
-    const results = j.output_file_id ? await fetchOpenAiBatchResults(key, j.output_file_id) : [];
-    return { done: true, failed: true, status: j.status, results, ...timestamps };
+  const aggregateUsage = parseOpenAiBatchUsage(j.usage);
+  const providerErrors = parseOpenAiBatchErrors(j.errors);
+  const terminal = ['completed', 'failed', 'expired', 'cancelled'].includes(status);
+  if (!terminal) {
+    return { done: false, failed: false, status, results: [], ...timestamps };
   }
-  if (j.status !== 'completed' || !j.output_file_id) {
-    return { done: false, failed: false, status: j.status ?? 'unknown', results: [], ...timestamps };
+
+  // A completed batch may legitimately contain only errored requests, or no
+  // result files at all. Fetch both files when present and keep output first so
+  // replay identity is independent of network completion order.
+  const outputFileId = typeof j.output_file_id === 'string' ? j.output_file_id.trim() : '';
+  const errorFileId = typeof j.error_file_id === 'string' ? j.error_file_id.trim() : '';
+  let outputResults: BatchDocResult[] = [];
+  let errorResults: BatchDocResult[] = [];
+  try {
+    outputResults = outputFileId ? await fetchOpenAiBatchResults(key, outputFileId) : [];
+    errorResults = errorFileId && errorFileId !== outputFileId
+      ? await fetchOpenAiBatchResults(key, errorFileId)
+      : [];
+  } catch (error) {
+    if (error instanceof BatchTerminalPayloadError) {
+      const priorResults = [...outputResults, ...errorResults];
+      const priorObservedDocIds = priorResults.map((result) => safeTerminalContextDocId(result.docId));
+      const partialObservedDocIds = error.context.observedDocIds ?? [];
+      const returnedDocs = priorResults.length + (error.context.returnedDocs ?? 0);
+      const observedDocIds = [...priorObservedDocIds, ...partialObservedDocIds]
+        .slice(0, MAX_TERMINAL_CONTEXT_DOC_IDS);
+      const observedDocIdsTruncated = error.context.observedDocIdsTruncated === true
+        || priorObservedDocIds.length + partialObservedDocIds.length > MAX_TERMINAL_CONTEXT_DOC_IDS
+        || observedDocIds.length < returnedDocs;
+      throw new BatchTerminalPayloadError(error.code, status, {
+        ...(aggregateUsage ? { aggregateUsage } : {}),
+        ...(providerErrors ? { providerErrors } : {}),
+        returnedDocs,
+        observedDocIds,
+        ...(observedDocIdsTruncated ? { observedDocIdsTruncated: true } : {}),
+        ...timestamps,
+      });
+    }
+    throw error;
   }
-  const results = await fetchOpenAiBatchResults(key, j.output_file_id);
-  return { done: true, failed: false, status: 'completed', results, ...timestamps };
+  return {
+    done: true,
+    failed: status !== 'completed',
+    status,
+    results: [...outputResults, ...errorResults],
+    ...(aggregateUsage ? { aggregateUsage } : {}),
+    ...(providerErrors ? { providerErrors } : {}),
+    ...timestamps,
+  };
 }
 
 // ---------------------------------------------------------------------------
