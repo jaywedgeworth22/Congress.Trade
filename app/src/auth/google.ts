@@ -8,6 +8,7 @@
 import type { Env } from '../shared/types';
 import type { GoogleProfile } from './users';
 import { resolveSecrets } from '../secrets/infisical';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -48,7 +49,7 @@ export async function exchangeGoogleCode(
     'GOOGLE_OAUTH_CLIENT_SECRET',
   ]);
   if (!clientId || !clientSecret) throw new Error('Google OAuth not configured');
-  const res = await fetchImpl(TOKEN_ENDPOINT, {
+  const res = await trackedFetch(TOKEN_ENDPOINT, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -58,7 +59,7 @@ export async function exchangeGoogleCode(
       redirect_uri: redirectUri,
       grant_type: 'authorization_code',
     }).toString(),
-  });
+  }, { service: 'oauth', operation: 'exchange-code' }, fetchImpl);
   const body = (await res.json().catch(() => ({}))) as TokenResponse;
   if (!res.ok || !body.access_token) {
     throw new Error(`google token exchange failed: ${body.error || `HTTP ${res.status}`}`);
@@ -79,9 +80,9 @@ export async function fetchGoogleProfile(
   accessToken: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<GoogleProfile> {
-  const res = await fetchImpl(USERINFO_ENDPOINT, {
+  const res = await trackedFetch(USERINFO_ENDPOINT, {
     headers: { authorization: `Bearer ${accessToken}` },
-  });
+  }, { service: 'oauth', operation: 'fetch-user-profile' }, fetchImpl);
   if (!res.ok) throw new Error(`google userinfo failed: HTTP ${res.status}`);
   const u = (await res.json()) as UserInfo;
   if (!u.sub || !u.email) throw new Error('google userinfo missing sub/email');

@@ -6,6 +6,7 @@
 
 import type { Env } from '../shared/types';
 import { resolveSecrets } from '../secrets/infisical';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 export interface EmailMessage {
   to: string;
@@ -30,7 +31,7 @@ export async function sendEmail(env: Env, msg: EmailMessage): Promise<void> {
   if (!s.RESEND_API_KEY || !s.EMAIL_FROM) {
     throw new Error('email not configured (set RESEND_API_KEY + EMAIL_FROM)');
   }
-  const res = await fetch('https://api.resend.com/emails', {
+  const res = await trackedFetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       authorization: `Bearer ${s.RESEND_API_KEY}`,
@@ -43,7 +44,7 @@ export async function sendEmail(env: Env, msg: EmailMessage): Promise<void> {
       html: msg.html,
       text: msg.text,
     }),
-  });
+  }, { service: 'email', operation: 'send-transactional-email' });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     throw new Error(`email send failed: HTTP ${res.status} ${body.slice(0, 200)}`);

@@ -2,7 +2,12 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { Env } from '../../shared/types';
 import {
   computeConsensusAgreement,
+  DEFAULT_CANDIDATES,
+  EXTRACTION_SCHEMA_VERSION,
+  extractProviderReportedPageCount,
   extractXaiResponseText,
+  MISTRAL_ANNOTATION_SCHEMA,
+  llamaParseModeParameters,
   parseLlamaParseMarkdown,
   parseMistralOcrResponse,
   runCandidateOnDoc,
@@ -10,6 +15,7 @@ import {
   type BakeoffCandidate,
   type CandidateDocResult,
 } from '../bakeoff';
+import { EXECUTIVE_SYSTEM_PROMPT } from '../visionLlm';
 
 function r(
   provider: CandidateDocResult['provider'],
@@ -177,6 +183,30 @@ describe('parseLlamaParseMarkdown', () => {
   });
 });
 
+describe('llamaParseModeParameters', () => {
+  it('maps display tiers to explicit v1 parse modes used by the public rate card', () => {
+    expect(llamaParseModeParameters('fast')).toEqual({ parse_mode: 'parse_page_without_llm' });
+    expect(llamaParseModeParameters('cost-effective')).toEqual({
+      parse_mode: 'parse_page_with_llm',
+      high_res_ocr: 'true',
+    });
+    expect(llamaParseModeParameters('agentic')).toEqual({
+      parse_mode: 'parse_page_with_agent',
+      model: 'gemini-2.5-flash',
+      high_res_ocr: 'true',
+    });
+    expect(() => llamaParseModeParameters('agentic-plus')).toThrow(/unsupported benchmark mode/);
+  });
+});
+
+describe('extractProviderReportedPageCount', () => {
+  it('accepts explicit provider page meters but never derives pages from unrelated data', () => {
+    expect(extractProviderReportedPageCount({ usage: { pages_processed: 7 } })).toBe(7);
+    expect(extractProviderReportedPageCount({ pages: [{}, {}, {}] })).toBe(3);
+    expect(extractProviderReportedPageCount({ bytes: 9_000_000 })).toBeUndefined();
+  });
+});
+
 describe('runCandidateOnDoc (openai): token usage capture', () => {
   const env = { OPENAI_API_KEY: 'sk-openai-test' } as unknown as Env;
   const candidate: BakeoffCandidate = { provider: 'openai', model: 'gpt-4o' };
@@ -231,6 +261,425 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     const result = await runCandidateOnDoc(env, candidate, 'doc1', bytes);
     expect(result.ok).toBe(false);
     expect(result.usage).toBeUndefined();
+  });
+
+  it('uses high-detail Responses PDF input and captures GPT-5.6 usage metadata', async () => {
+    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      ({
+        ok: true,
+        json: async () => ({
+          id: 'resp_56',
+          model: 'gpt-5.6-terra',
+          service_tier: 'default',
+          status: 'completed',
+          output_text: okContent,
+          usage: {
+            input_tokens: 1_200,
+            output_tokens: 75,
+            input_tokens_details: { cached_tokens: 200, cache_write_tokens: 50 },
+          },
+        }),
+      }) as unknown as Response,
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const result = await runCandidateOnDoc(
+      env,
+      { provider: 'openai', model: 'gpt-5.6-terra' },
+      'E-doc1',
+      bytes,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      resolvedModel: 'gpt-5.6-terra',
+      providerRequestId: 'resp_56',
+      serviceTier: 'default',
+      usage: {
+        promptTokens: 1_200,
+        completionTokens: 75,
+        cachedTokens: 200,
+        cacheWriteTokens: 50,
+        serviceTier: 'default',
+      },
+    });
+    expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://api.openai.com/v1/responses');
+    const request = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
+    expect(request).toMatchObject({
+      model: 'gpt-5.6-terra',
+      service_tier: 'default',
+      reasoning: { effort: 'none' },
+      text: { format: { type: 'json_schema', strict: true } },
+    });
+    expect(request.input[0].content[0]).toMatchObject({
+      type: 'input_file',
+      filename: 'ptr.pdf',
+      detail: 'high',
+    });
+  });
+
+  it('rejects incomplete Responses results while preserving billable usage and request metadata', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ({
+          ok: true,
+          json: async () => ({
+            id: 'resp_incomplete',
+            model: 'gpt-5.6-luna',
+            service_tier: 'default',
+            status: 'incomplete',
+            incomplete_details: { reason: 'max_output_tokens' },
+            usage: {
+              input_tokens: 900,
+              output_tokens: 8_000,
+              input_tokens_details: { cached_tokens: 100, cache_write_tokens: 25 },
+            },
+          }),
+        }) as unknown as Response,
+      ),
+    );
+
+    const result = await runCandidateOnDoc(
+      env,
+      { provider: 'openai', model: 'gpt-5.6-luna' },
+      'H-incomplete',
+      bytes,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'openai: response incomplete: max_output_tokens',
+      resolvedModel: 'gpt-5.6-luna',
+      providerRequestId: 'resp_incomplete',
+      serviceTier: 'default',
+      usage: {
+        promptTokens: 900,
+        completionTokens: 8_000,
+        cachedTokens: 100,
+        cacheWriteTokens: 25,
+        serviceTier: 'default',
+      },
+    });
+  });
+
+  it('rejects Responses refusals while preserving usage', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ({
+          ok: true,
+          json: async () => ({
+            id: 'resp_refusal',
+            model: 'gpt-5.6-sol',
+            service_tier: 'default',
+            status: 'completed',
+            output: [{ content: [{ type: 'refusal', refusal: 'Unable to process this document.' }] }],
+            usage: { input_tokens: 700, output_tokens: 12 },
+          }),
+        }) as unknown as Response,
+      ),
+    );
+
+    const result = await runCandidateOnDoc(
+      env,
+      { provider: 'openai', model: 'gpt-5.6-sol' },
+      'S-refusal',
+      bytes,
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'openai: refusal: Unable to process this document.',
+      usage: { promptTokens: 700, completionTokens: 12, serviceTier: 'default' },
+    });
+  });
+
+  it('keeps unreadable asset name and transaction type nullable in the strict schema', () => {
+    const properties = MISTRAL_ANNOTATION_SCHEMA.schema.properties.transactions.items.properties;
+    expect(EXTRACTION_SCHEMA_VERSION).toBe('stock-act-transactions-v2');
+    expect(properties.assetName.type).toEqual(['string', 'null']);
+    expect(properties.txType.type).toEqual(['string', 'null']);
+  });
+
+  it('keeps the three GPT-5.6 tiers plus GPT-4o as a legacy benchmark baseline', () => {
+    const openAiModels = DEFAULT_CANDIDATES
+      .filter((entry) => entry.provider === 'openai')
+      .map((entry) => entry.model);
+    expect(openAiModels).toEqual([
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.6-sol',
+      'gpt-4o',
+    ]);
+  });
+});
+
+describe('runCandidateOnDoc: provider billing metadata', () => {
+  const bytes = new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
+  const annotation = {
+    transactions: [
+      {
+        ticker: 'AAPL',
+        assetName: 'Apple Inc.',
+        txType: 'P',
+        amountRange: '$1,001 - $15,000',
+      },
+    ],
+  };
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('captures Mistral OCR usage_info pages instead of a nonexistent token-usage field', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ({
+          ok: true,
+          json: async () => ({
+            id: 'ocr-request-1',
+            model: 'mistral-ocr-4-0',
+            document_annotation: annotation,
+            usage_info: { pages_processed: 7 },
+          }),
+        }) as unknown as Response,
+      ),
+    );
+
+    const result = await runCandidateOnDoc(
+      { MISTRAL_API_KEY: 'mistral-test' } as unknown as Env,
+      { provider: 'mistral', model: 'mistral-ocr-latest' },
+      'H-doc',
+      bytes,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      resolvedModel: 'mistral-ocr-4-0',
+      providerRequestId: 'ocr-request-1',
+      usage: { pagesProcessed: 7 },
+    });
+  });
+
+  it('captures xAI Responses input/output/cached tokens and request metadata', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: 'file-1' }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 'response-1',
+          model: 'grok-4.3-20260701',
+          output_text: JSON.stringify(annotation),
+          usage: {
+            input_tokens: 900,
+            output_tokens: 50,
+            input_tokens_details: { cached_tokens: 125 },
+            cost_in_usd_ticks: 321_000_000,
+            num_server_side_tools_used: 2,
+          },
+        }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'file-1', deleted: true }),
+      } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await runCandidateOnDoc(
+      { XAI_API_KEY: 'xai-test' } as unknown as Env,
+      { provider: 'xai', model: 'grok-4.3' },
+      'E-doc',
+      bytes,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      resolvedModel: 'grok-4.3-20260701',
+      providerRequestId: 'response-1',
+      usage: {
+        promptTokens: 900,
+        completionTokens: 50,
+        cachedTokens: 125,
+        costInUsdTicks: 321_000_000,
+        attachmentSearchCalls: 2,
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const uploadBody = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(uploadBody.get('expires_after')).toBe('3600');
+    const responseBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(responseBody.input[0].content[0].text).toContain(EXECUTIVE_SYSTEM_PROMPT);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('https://api.x.ai/v1/files/file-1');
+    expect(fetchMock.mock.calls[2]?.[1]?.method).toBe('DELETE');
+  });
+
+  it('deletes an uploaded xAI file when the extraction request fails', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: 'file-failed-response' }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        text: async () => 'temporarily unavailable',
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 'file-failed-response', deleted: true }),
+      } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await runCandidateOnDoc(
+      { XAI_API_KEY: 'xai-test' } as unknown as Env,
+      { provider: 'xai', model: 'grok-4.3' },
+      'H-doc',
+      bytes,
+    );
+
+    expect(result).toMatchObject({ ok: false, error: 'xai 503 temporarily unavailable' });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('https://api.x.ai/v1/files/file-failed-response');
+    expect(fetchMock.mock.calls[2]?.[1]?.method).toBe('DELETE');
+  });
+
+  it('includes Gemini thinking/cache tokens and provider model version', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ({
+          ok: true,
+          json: async () => ({
+            responseId: 'gemini-response-1',
+            modelVersion: 'gemini-3.5-flash-2026-06',
+            candidates: [{ content: { parts: [{ text: JSON.stringify(annotation.transactions) }] } }],
+            usageMetadata: {
+              promptTokenCount: 1_000,
+              cachedContentTokenCount: 200,
+              candidatesTokenCount: 75,
+              thoughtsTokenCount: 25,
+            },
+          }),
+        }) as unknown as Response,
+      ),
+    );
+
+    const result = await runCandidateOnDoc(
+      { GEMINI_API_KEY: 'gemini-test' } as unknown as Env,
+      { provider: 'gemini', model: 'gemini-3.5-flash' },
+      'H-doc',
+      bytes,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      resolvedModel: 'gemini-3.5-flash-2026-06',
+      providerRequestId: 'gemini-response-1',
+      usage: { promptTokens: 1_000, completionTokens: 100, cachedTokens: 200 },
+    });
+  });
+});
+
+describe('runCandidateOnDoc (anthropic): complete billed input usage', () => {
+  const bytes = new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('sums base/read/write tokens and preserves the cache TTL breakdown', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({
+        id: 'msg_1',
+        model: 'claude-sonnet-4-6',
+        content: [{
+          type: 'text',
+          text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]',
+        }],
+        usage: {
+          input_tokens: 500,
+          output_tokens: 100,
+          cache_read_input_tokens: 200,
+          cache_creation_input_tokens: 300,
+          cache_creation: {
+            ephemeral_5m_input_tokens: 200,
+            ephemeral_1h_input_tokens: 100,
+          },
+        },
+      }),
+    }) as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await runCandidateOnDoc(
+      { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
+      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      'E-doc',
+      bytes,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      usage: {
+        promptTokens: 1_000,
+        completionTokens: 100,
+        cachedTokens: 200,
+        cacheWriteTokens: 200,
+        cacheWriteOneHourTokens: 100,
+      },
+    });
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(request.messages[0].content[1].text).toContain(EXECUTIVE_SYSTEM_PROMPT);
+  });
+});
+
+describe('runCandidateOnDoc frozen invocation authorization', () => {
+  const bytes = new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('does not re-resolve a key that appears after the caller froze an unconfigured plan', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await runCandidateOnDoc(
+      { OPENAI_API_KEY: 'appeared-after-reservation-check' } as unknown as Env,
+      { provider: 'openai', model: 'gpt-4o' },
+      'H-1',
+      bytes,
+      { apiKey: null },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'openai API key not configured',
+      latencyMs: 0,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the exact frozen key even when runtime secret resolution is now empty', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response('denied', { status: 401 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await runCandidateOnDoc(
+      {} as Env,
+      { provider: 'openai', model: 'gpt-4o' },
+      'H-1',
+      bytes,
+      { apiKey: 'reserved-key' },
+    );
+
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('openai 401') });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers.authorization).toBe('Bearer reserved-key');
   });
 });
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ArbitratingExtractor,
   arbitrationRowKey,
   fieldAgreement,
   HousePdfExtractor,
@@ -7,7 +8,7 @@ import {
   type Extractor,
   type ExtractorResult,
 } from '../types';
-import type { Filing, ParsedTx } from '../../shared/types';
+import type { Env, Filing, ParsedTx } from '../../shared/types';
 
 function tx(over: Partial<ParsedTx> = {}): ParsedTx {
   return {
@@ -120,6 +121,82 @@ describe('mergeResults', () => {
     // ...but the secondary-only row drags doc confidence below the row confidence.
     expect(merged.confidence).toBeLessThan(merged.transactions[0].confidence);
     expect(merged.raw).toContain('secondaryOnly=1');
+  });
+
+  it('retains usage and provider request identity for every arbitrated model call', () => {
+    const primary = result([tx()], {
+      extractor: 'vision-primary',
+      modelVersion: 'gemini-3.5-flash',
+      providerRequestId: 'primary-request',
+      usage: { promptTokens: 100, completionTokens: 20 },
+    });
+    const secondary = result([tx()], {
+      extractor: 'vision-secondary',
+      modelVersion: 'gemini-2.5-pro',
+      providerRequestId: 'secondary-request',
+      usage: { promptTokens: 120, completionTokens: 30 },
+    });
+
+    const merged = mergeResults(primary, secondary);
+
+    expect(merged.providerRequestId).toBe('primary-request');
+    expect(merged.usage).toEqual({ promptTokens: 100, completionTokens: 20 });
+    expect(merged.modelRuns).toEqual([
+      {
+        extractor: 'vision-primary',
+        modelVersion: 'gemini-3.5-flash',
+        providerRequestId: 'primary-request',
+        usage: { promptTokens: 100, completionTokens: 20 },
+      },
+      {
+        extractor: 'vision-secondary',
+        modelVersion: 'gemini-2.5-pro',
+        providerRequestId: 'secondary-request',
+        usage: { promptTokens: 120, completionTokens: 30 },
+      },
+    ]);
+  });
+});
+
+describe('ArbitratingExtractor usage preservation', () => {
+  it('attaches the billed primary run when the secondary fails after consuming usage', async () => {
+    const primary = result([tx()], {
+      extractor: 'vision-primary',
+      modelVersion: 'gemini-3.5-flash',
+      providerRequestId: 'primary-request',
+      usage: { promptTokens: 100, completionTokens: 20 },
+    });
+    const secondaryError = Object.assign(new Error('secondary parse failed'), {
+      resolvedModel: 'gemini-2.5-pro',
+      providerRequestId: 'secondary-request',
+      usage: { promptTokens: 120, completionTokens: 30 },
+    });
+    const secondary: Extractor = {
+      name: 'vision-secondary',
+      canHandle: () => true,
+      extract: async () => { throw secondaryError; },
+    };
+    const arbitrating = new ArbitratingExtractor(
+      extractor('vision-primary', primary),
+      { ARBITRATION_ENABLED: 'true' } as unknown as Env,
+      secondary,
+    );
+
+    await expect(arbitrating.extract({ filing: filing() })).rejects.toBe(secondaryError);
+    expect((secondaryError as Error & { modelRuns?: unknown[] }).modelRuns).toEqual([
+      {
+        extractor: 'vision-primary',
+        modelVersion: 'gemini-3.5-flash',
+        providerRequestId: 'primary-request',
+        usage: { promptTokens: 100, completionTokens: 20 },
+      },
+      {
+        extractor: 'vision-secondary',
+        modelVersion: 'gemini-2.5-pro',
+        providerRequestId: 'secondary-request',
+        usage: { promptTokens: 120, completionTokens: 30 },
+      },
+    ]);
   });
 });
 

@@ -10,6 +10,7 @@
 import { marketCapBucket } from './compute';
 import { assertFmpTierOk } from '../shared/fmpStatus';
 import type { EnrichmentProvider, SecurityRef } from './types';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 function str(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
@@ -77,9 +78,9 @@ export function buildFmpProvider(
         encodeURIComponent(ticker) +
         '&apikey=' +
         encodeURIComponent(apiKey);
-      const res = await fetchImpl(url, {
+      const res = await trackedFetch(url, {
         headers: { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json' },
-      });
+      }, { service: 'security-enrichment', operation: 'fetch-company-profile' }, fetchImpl);
       if (!res.ok) {
         assertFmpTierOk(res.status); // throws on 401/402/403/429 (key/plan broken)
         return null; // other non-OK (404, …) => treat as "no data"

@@ -2,6 +2,7 @@
 /**
  * seed_securities.mjs — build securities_master seed SQL from the SEC's
  * authoritative ticker list (https://www.sec.gov/files/company_tickers.json).
+ * Standalone operator-side maintenance; this file is not bundled into the Worker.
  *
  * Runs on your machine (Node 18+, global fetch). Writes scripts/securities_master.sql,
  * then load it:
@@ -14,6 +15,7 @@
 import { writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { trackedOperatorFetch } from './usage-telemetry.mjs';
 
 const OUT = join(dirname(fileURLToPath(import.meta.url)), 'securities_master.sql');
 const SRC = 'https://www.sec.gov/files/company_tickers.json';
@@ -22,7 +24,11 @@ const UA = 'congress-feed seed (admin contact: you@example.com)';
 
 const esc = (s) => String(s ?? '').replace(/'/g, "''");
 
-const res = await fetch(SRC, { headers: { 'User-Agent': UA, Accept: 'application/json' } });
+const res = await trackedOperatorFetch(
+  SRC,
+  { headers: { 'User-Agent': UA, Accept: 'application/json' } },
+  { provider: 'sec-edgar', service: 'seed-maintenance', operation: 'fetch-company-tickers' },
+);
 if (!res.ok) {
   console.error(`SEC fetch failed: ${res.status} ${res.statusText}`);
   process.exit(1);

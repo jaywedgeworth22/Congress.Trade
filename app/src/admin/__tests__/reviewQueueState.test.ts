@@ -22,6 +22,7 @@ describe('review queue durable state migration', () => {
     const migration35 = new URL('../../../migrations/0035_llm_budget.sql', testModuleUrl);
     const migration36 = new URL('../../../migrations/0036_review_resolution_safety.sql', testModuleUrl);
     const migration37 = new URL('../../../migrations/0037_review_revision.sql', testModuleUrl);
+    const migration38 = new URL('../../../migrations/0038_benchmark_runs.sql', testModuleUrl);
 
     expect(existsSync(deliveryMigration)).toBe(true);
     expect(existsSync(migration33)).toBe(true);
@@ -29,6 +30,7 @@ describe('review queue durable state migration', () => {
     expect(existsSync(migration35)).toBe(true);
     expect(existsSync(migration36)).toBe(true);
     expect(existsSync(migration37)).toBe(true);
+    expect(existsSync(migration38)).toBe(true);
     expect(existsSync(new URL('../../../migrations/0025_doc_complexity_signals.sql', testModuleUrl))).toBe(false);
     expect(existsSync(new URL('../../../migrations/0026_agreement_cascade.sql', testModuleUrl))).toBe(false);
     expect(existsSync(new URL('../../../migrations/0027_llm_budget.sql', testModuleUrl))).toBe(false);
@@ -61,6 +63,9 @@ describe('review queue durable state migration', () => {
     expect(safetySql).not.toMatch(/review_delivery_outbox/i);
     expect(readFileSync(migration37, 'utf8') as string).toMatch(
       /ADD COLUMN review_revision INTEGER NOT NULL DEFAULT 1/i,
+    );
+    expect(readFileSync(migration38, 'utf8') as string).toMatch(
+      /CREATE TABLE IF NOT EXISTS benchmark_model_results/i,
     );
   });
 
@@ -95,6 +100,7 @@ describe('review queue durable state migration', () => {
     const dropOldIndex = statements.findIndex((sql) => /DROP INDEX IF EXISTS idx_transactions_doc_source_rowkey/i.test(sql));
     const outbox = statements.findIndex((sql) => /CREATE TABLE IF NOT EXISTS delivery_outbox/i.test(sql));
     const addReviewRevision = statements.findIndex((sql) => /ADD COLUMN review_revision/i.test(sql));
+    const benchmarkRuns = statements.findIndex((sql) => /CREATE TABLE IF NOT EXISTS benchmark_runs/i.test(sql));
     expect(outbox).toBeGreaterThan(-1);
     expect(addLegacy).toBeGreaterThan(-1);
     expect(addLegacy).toBeGreaterThan(outbox);
@@ -105,6 +111,7 @@ describe('review queue durable state migration', () => {
     expect(createLiveIndex).toBeGreaterThan(addSuppression);
     expect(dropOldIndex).toBeGreaterThan(createLiveIndex);
     expect(addReviewRevision).toBeGreaterThan(dropOldIndex);
+    expect(benchmarkRuns).toBeGreaterThan(addReviewRevision);
     expect(statements.some((sql) => /review_delivery_outbox/i.test(sql))).toBe(false);
   });
 });

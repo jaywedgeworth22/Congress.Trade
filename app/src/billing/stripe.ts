@@ -12,6 +12,7 @@
 
 import type { Env } from '../shared/types';
 import { resolveSecret, resolveSecrets } from '../secrets/infisical';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
 // Pin an API version so server-side behaviour/field shapes are stable.
@@ -99,7 +100,7 @@ async function stripePost<T>(
 ): Promise<T> {
   const secretKey = (await resolveSecret(env, 'STRIPE_SECRET_KEY')).value;
   if (!secretKey) throw new Error('STRIPE_SECRET_KEY not configured');
-  const res = await fetch(`${STRIPE_API}${path}`, {
+  const res = await trackedFetch(`${STRIPE_API}${path}`, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${secretKey}`,
@@ -108,7 +109,7 @@ async function stripePost<T>(
       'Idempotency-Key': idempotencyKey,
     },
     body: encodeForm(params),
-  });
+  }, { service: 'billing', operation: 'stripe-api-post' });
   const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
   if (!res.ok) {
     throw new Error(`stripe ${path} failed: ${body?.error?.message || `HTTP ${res.status}`}`);

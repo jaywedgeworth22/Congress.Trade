@@ -50,7 +50,13 @@
 
 import type { Env, ParsedTx, Transaction } from '../shared/types';
 import { all, batch, fromBool, get, run } from '../shared/db';
-import { runCandidateOnDoc, persistExtractionRun, type BakeoffCandidate, type CandidateDocResult } from './bakeoff';
+import {
+  runCandidateOnDoc,
+  persistExtractionRun,
+  type BakeoffCandidate,
+  type CandidateDocResult,
+  type CandidateInvocation,
+} from './bakeoff';
 import { arbitrationRowKey } from '../extractors/types';
 import {
   recomputeTransactions,
@@ -496,10 +502,11 @@ async function readAndPersist(
   docId: string,
   bytes: ArrayBuffer,
   runBatchId: string,
+  invocations?: CandidateInvocation[],
 ): Promise<CandidateDocResult[]> {
   const reads: CandidateDocResult[] = [];
-  for (const m of models) {
-    const r = await runCandidateOnDoc(env, m, docId, bytes);
+  for (const [index, m] of models.entries()) {
+    const r = await runCandidateOnDoc(env, m, docId, bytes, invocations?.[index]);
     await persistExtractionRun(env, r, 'agreement', runBatchId);
     reads.push(r);
   }
@@ -592,6 +599,7 @@ export async function processAgreementDoc(
   rawObjectKey: string | null,
   dryRun: boolean,
   audit?: Partial<CascadeAudit>,
+  options: { invocations?: CandidateInvocation[] } = {},
 ): Promise<AgreementDocResult> {
   const loaded = await loadDocBytes(env, docId, rawObjectKey);
   if ('skip' in loaded) return loaded.skip;
@@ -613,7 +621,14 @@ export async function processAgreementDoc(
   if (audit?.claimToken && !(await ownsUnresolvedReview(env, docId, audit.claimToken))) {
     return { docId, outcome: 'skipped', tier: audit.tier, reason: 'review_resolved_or_claim_lost' };
   }
-  const reads = await readAndPersist(env, lineup, docId, loaded.bytes, runBatchId);
+  const reads = await readAndPersist(
+    env,
+    lineup,
+    docId,
+    loaded.bytes,
+    runBatchId,
+    options.invocations,
+  );
   const [rA, rB, rC] = [reads[0], reads[1], reads[2] ?? null];
 
   if (!rA.ok || !rB.ok || (rC !== null && !rC.ok)) {

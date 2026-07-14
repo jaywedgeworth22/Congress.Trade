@@ -37,7 +37,7 @@ import {
   SecurityRefInputSchema,
   ShortVolumeRowSchema,
 } from '@jaywedgeworth22/congress-trading-shared';
-import type { Env, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
+import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
 import { all, batch, get, run, type SqlParam } from '../shared/db';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
 import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
@@ -62,9 +62,11 @@ import {
   transactionRowKey,
   loadResolver,
   CONFIDENCE_THRESHOLD,
+  HARD_FAILURE_FLAGS,
   hasHardFailureFlags,
 } from '../extraction/normalizer';
-import { enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, type AgreementModels } from '../extraction/agreement';
+import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionLlm';
+import { enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement';
 import { mapFiling } from '../delivery/rows';
 import { verifyAccessJwt, certsUrl } from './access';
 import { adminRuntimeConfig } from './identity';
@@ -73,6 +75,7 @@ import { constantTimeEqual } from '../auth/tokens';
 import { getCurrentUser } from '../auth/session';
 import {
   DEFAULT_CANDIDATES,
+  EXTRACTION_SCHEMA_VERSION,
   keyFor,
   runCandidateOnDoc,
   summarizeModels,
@@ -80,7 +83,13 @@ import {
   type CandidateDocResult,
   type Provider,
 } from '../extraction/bakeoff';
-import { isBatchProvider, submitBatch, pollBatch, type BatchDoc } from '../extraction/batchExtract';
+import {
+  isBatchProvider,
+  normalizeBatchChamber,
+  submitBatch,
+  pollBatch,
+  type BatchDoc,
+} from '../extraction/batchExtract';
 import { buildConsensusRows, type ConsensusRun } from '../extraction/consensus';
 import {
   runEnrichment,
@@ -99,6 +108,40 @@ import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion
 import { estimateTransactionValue } from '../shared/transactionValue';
 import { isValidBracket } from '../shared/brackets';
 import { flushDeliveryOutbox } from '../delivery/outbox';
+import {
+  beginBenchmarkRun,
+  claimBenchmarkMeasurement,
+  completeBenchmarkRun,
+  getBenchmarkRun,
+  listBenchmarkRuns,
+  recordBenchmarkSelection,
+  saveBenchmarkMeasurement,
+  BENCHMARK_CHAMBERS,
+  type BenchmarkChamber,
+  type BenchmarkModelRef,
+  type BenchmarkRunDetail,
+  type BenchmarkSelectedLineup,
+} from '../benchmark/persistence';
+import {
+  BenchmarkSettingsConflictError,
+  BenchmarkSettingsValidationError,
+  BenchmarkSettingsWriteError,
+  readBenchmarkLineupSettings,
+  saveBenchmarkLineupSettings,
+  validateBenchmarkLineup,
+  validateBenchmarkModel,
+} from '../benchmark/settings';
+import {
+  priceBenchmarkUsage,
+  simulateCascadeDocumentMetrics,
+  summarizeBenchmarkLatency,
+} from '../extraction/benchmarkMetrics';
+import { pushExtractionTelemetry } from '../extraction/telemetry';
+import {
+  inspectUsageTelemetryFallback,
+  recordMeasuredThirdPartyUsage,
+  trackedFetch,
+} from '../shared/thirdPartyTelemetry';
 import {
   BASE_SCHEMA_STATEMENTS,
   POST_0024_SCHEMA_STATEMENTS,
@@ -563,12 +606,12 @@ function latestLegislatorTerm(terms: LegislatorTerm[] | undefined): LegislatorTe
 async function buildLegislatorMap(): Promise<Map<string, LegislatorMatch>> {
   const map = new Map<string, LegislatorMatch>();
   for (const url of LEGISLATOR_SOURCES) {
-    const res = await fetch(url, {
+    const res = await trackedFetch(url, {
       headers: {
         'user-agent': 'congress-feed/0.1 (+https://congress.trade)',
         accept: 'application/json',
       },
-    });
+    }, { service: 'member-enrichment', operation: 'fetch-legislator-roster' });
     if (!res.ok) continue;
     const list = (await res.json()) as Legislator[];
     for (const leg of list) {
@@ -741,6 +784,570 @@ export async function runPhotoEnrichment(
     await env.DB.batch(updates.slice(i, i + 50));
   }
   return { filers: filers.length, matched, unmatched: filers.length - matched };
+}
+
+interface BenchmarkGroundTruthTx {
+  ticker: string | null;
+  assetName: string;
+  txDate: string;
+  txType: string;
+  amountMin: number | null;
+  amountMax: number | null;
+  owner: string | null;
+  assetType: string | null;
+  assetTypeName: string | null;
+  isOption: boolean;
+  capGainsOver200: boolean;
+  filingStatus: string | null;
+  subholding: string | null;
+  location: string | null;
+  description: string | null;
+  supplementalText: string | null;
+}
+
+interface BenchmarkDocumentSnapshot {
+  docId: string;
+  resolved: boolean;
+  groundTruth: BenchmarkGroundTruthTx[] | null;
+}
+
+/**
+ * A benchmark accuracy label is human ground truth only when the current
+ * resolved review's latest decision receipt is an admin confirm/manual action.
+ * Pipeline/autopublish/agreement receipts therefore cannot score themselves.
+ */
+function benchmarkHumanResolvedSql(docIdSql: string): string {
+  return `COALESCE(rq.resolved, 0) = 1
+    AND COALESCE((
+      SELECT CASE
+        WHEN d.source = 'admin' AND d.action IN ('confirmed', 'manual') THEN 1
+        ELSE 0
+      END
+        FROM ingestion_decisions d
+       WHERE d.doc_id = ${docIdSql}
+       ORDER BY d.created_at DESC, d.id DESC
+       LIMIT 1
+    ), 0) = 1`;
+}
+
+async function benchmarkDocumentIsHumanResolved(env: Env, docId: string): Promise<boolean> {
+  const row = await get<{ resolved: number }>(
+    env.DB,
+    `SELECT CASE WHEN ${benchmarkHumanResolvedSql('f.doc_id')} THEN 1 ELSE 0 END AS resolved
+       FROM filings f
+       LEFT JOIN review_queue rq ON rq.doc_id = f.doc_id
+      WHERE f.doc_id = ?`,
+    [docId],
+  );
+  return row?.resolved === 1;
+}
+
+function benchmarkChamber(value: unknown): BenchmarkChamber | null {
+  const chamber = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return BENCHMARK_CHAMBERS.includes(chamber as BenchmarkChamber)
+    ? chamber as BenchmarkChamber
+    : null;
+}
+
+function isPreviewDeployment(env: Env): boolean {
+  return env.PREVIEW_DEPLOYMENT?.trim().toLowerCase() === 'true';
+}
+
+function benchmarkTxFingerprint(tx: Record<string, unknown>): string {
+  const normalized = (value: unknown) => String(value ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
+  return JSON.stringify([
+    normalized(tx.ticker),
+    normalized(tx.assetName ?? tx.asset_name),
+    tx.txDate ?? tx.tx_date ?? '',
+    normalized(tx.txType ?? tx.tx_type),
+    tx.amountMin ?? tx.amount_min ?? null,
+    tx.amountMax ?? tx.amount_max ?? null,
+    normalized(tx.owner),
+    normalized(tx.assetType ?? tx.asset_type),
+    normalized(tx.assetTypeName ?? tx.asset_type_name),
+    tx.isOption === true || tx.is_option === 1 || tx.is_option === '1',
+    tx.capGainsOver200 === true || tx.cap_gains_over_200 === 1 || tx.cap_gains_over_200 === '1',
+    normalized(tx.filingStatus ?? tx.filing_status),
+    normalized(tx.subholding),
+    normalized(tx.location),
+    normalized(tx.description),
+    normalized(tx.supplementalText ?? tx.supplemental_text),
+  ]);
+}
+
+function compareBenchmarkRows(
+  candidateRows: Array<Record<string, unknown>>,
+  groundTruth: Array<Record<string, unknown>>,
+): {
+  resolved: true;
+  perfectMatch: boolean;
+  tp: number;
+  fp: number;
+  fn: number;
+  gtCount: number;
+  candCount: number;
+} {
+  const counts = (rows: Array<Record<string, unknown>>) => {
+    const result = new Map<string, number>();
+    for (const row of rows) {
+      const fingerprint = benchmarkTxFingerprint(row);
+      result.set(fingerprint, (result.get(fingerprint) ?? 0) + 1);
+    }
+    return result;
+  };
+  const candidateCounts = counts(candidateRows);
+  const truthCounts = counts(groundTruth);
+  let tp = 0;
+  let fp = 0;
+  let fn = 0;
+  for (const fingerprint of new Set([...candidateCounts.keys(), ...truthCounts.keys()])) {
+    const candidate = candidateCounts.get(fingerprint) ?? 0;
+    const truth = truthCounts.get(fingerprint) ?? 0;
+    const matches = Math.min(candidate, truth);
+    tp += matches;
+    fp += Math.max(0, candidate - matches);
+    fn += Math.max(0, truth - matches);
+  }
+  return {
+    resolved: true,
+    perfectMatch: fp === 0 && fn === 0,
+    tp,
+    fp,
+    fn,
+    gtCount: groundTruth.length,
+    candCount: candidateRows.length,
+  };
+}
+
+async function loadBenchmarkGroundTruth(
+  env: Env,
+  docId: string,
+): Promise<BenchmarkGroundTruthTx[]> {
+  const rows = await all<Record<string, unknown>>(
+    env.DB,
+    `SELECT ticker, asset_name, tx_date, tx_type, amount_min, amount_max,
+            owner, asset_type, asset_type_name, is_option, cap_gains_over_200,
+            filing_status, subholding, location, description, supplemental_text
+       FROM transactions t
+      WHERE t.doc_id = ? AND t.source IN ('primary', 'manual')
+        AND t.deprecated_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM review_queue rq
+           WHERE rq.doc_id = t.doc_id
+             AND ${benchmarkHumanResolvedSql('t.doc_id')}
+        )
+      ORDER BY t.cursor_seq, t.id`,
+    [docId],
+  );
+  return rows.map((row) => ({
+    ticker: typeof row.ticker === 'string' ? row.ticker : null,
+    assetName: String(row.asset_name ?? ''),
+    txDate: String(row.tx_date ?? ''),
+    txType: String(row.tx_type ?? ''),
+    amountMin: typeof row.amount_min === 'number' ? row.amount_min : null,
+    amountMax: typeof row.amount_max === 'number' ? row.amount_max : null,
+    owner: typeof row.owner === 'string' ? row.owner : null,
+    assetType: typeof row.asset_type === 'string' ? row.asset_type : null,
+    assetTypeName: typeof row.asset_type_name === 'string' ? row.asset_type_name : null,
+    isOption: row.is_option === 1,
+    capGainsOver200: row.cap_gains_over_200 === 1,
+    filingStatus: typeof row.filing_status === 'string' ? row.filing_status : null,
+    subholding: typeof row.subholding === 'string' ? row.subholding : null,
+    location: typeof row.location === 'string' ? row.location : null,
+    description: typeof row.description === 'string' ? row.description : null,
+    supplementalText: typeof row.supplemental_text === 'string' ? row.supplemental_text : null,
+  }));
+}
+
+async function loadBenchmarkDocuments(
+  env: Env,
+  input: {
+    chamber: BenchmarkChamber;
+    limit: number;
+    docIds?: string[];
+    resolvedOnly?: boolean;
+  },
+): Promise<BenchmarkDocumentSnapshot[]> {
+  type FilingRow = { doc_id: string; resolved: number };
+  let rows: FilingRow[] = [];
+  if (input.docIds?.length) {
+    for (const docId of input.docIds.slice(0, input.limit)) {
+      const row = await get<FilingRow>(
+        env.DB,
+        `SELECT f.doc_id,
+                CASE WHEN ${benchmarkHumanResolvedSql('f.doc_id')} THEN 1 ELSE 0 END AS resolved
+           FROM filings f
+           LEFT JOIN review_queue rq ON rq.doc_id = f.doc_id
+          WHERE f.doc_id = ? AND LOWER(f.chamber) = ?
+            AND f.raw_object_key IS NOT NULL`,
+        [docId, input.chamber],
+      );
+      if (row && (!input.resolvedOnly || row.resolved === 1)) rows.push(row);
+    }
+  } else {
+    rows = await all<FilingRow>(
+      env.DB,
+      `SELECT f.doc_id,
+              CASE WHEN ${benchmarkHumanResolvedSql('f.doc_id')} THEN 1 ELSE 0 END AS resolved
+         FROM filings f
+         LEFT JOIN review_queue rq ON rq.doc_id = f.doc_id
+        WHERE LOWER(f.chamber) = ? AND f.raw_object_key IS NOT NULL
+          ${input.resolvedOnly ? `AND ${benchmarkHumanResolvedSql('f.doc_id')}` : ''}
+        ORDER BY resolved DESC, f.filed_date DESC, f.doc_id DESC
+        LIMIT ?`,
+      [input.chamber, input.limit],
+    );
+  }
+  return Promise.all(rows.map(async (row) => ({
+    docId: row.doc_id,
+    resolved: row.resolved === 1,
+    groundTruth: row.resolved === 1 ? await loadBenchmarkGroundTruth(env, row.doc_id) : null,
+  })));
+}
+
+export class BenchmarkCallReservationError extends Error {
+  constructor(
+    readonly reason: 'cap_reached' | 'ledger_unavailable',
+    readonly usedToday: number,
+    readonly dailyCap: number,
+    readonly reservationCause?: unknown,
+  ) {
+    super(reason === 'cap_reached'
+      ? 'benchmark daily call cap reached'
+      : 'benchmark daily call reservation ledger unavailable');
+  }
+}
+
+export async function reserveBenchmarkCalls(env: Env, plannedCalls: number): Promise<{
+  usedToday: number;
+  dailyCap: number;
+}> {
+  const envWithCap = env as Env & { BENCHMARK_DAILY_CALL_CAP?: string; BAKEOFF_DAILY_CALL_CAP?: string };
+  const configuredCap = Number(
+    envWithCap.BENCHMARK_DAILY_CALL_CAP ?? envWithCap.BAKEOFF_DAILY_CALL_CAP ?? '500',
+  );
+  const dailyCap = Number.isSafeInteger(configuredCap) && configuredCap > 0 ? configuredCap : 500;
+  if (!Number.isSafeInteger(plannedCalls) || plannedCalls <= 0) {
+    throw new BenchmarkCallReservationError(
+      'ledger_unavailable',
+      0,
+      dailyCap,
+      new Error('plannedCalls must be a positive safe integer'),
+    );
+  }
+  const now = new Date().toISOString();
+  const day = now.slice(0, 10);
+  let results: D1Result[];
+  try {
+    results = await env.DB.batch([
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO benchmark_daily_call_usage
+           (day, reserved_calls, updated_at)
+         VALUES (?, 0, ?)`,
+      ).bind(day, now),
+      env.DB.prepare(
+        `UPDATE benchmark_daily_call_usage
+            SET reserved_calls = reserved_calls + ?, updated_at = ?
+          WHERE day = ? AND reserved_calls + ? <= ?`,
+      ).bind(plannedCalls, now, day, plannedCalls, dailyCap),
+      env.DB.prepare(
+        `SELECT reserved_calls
+           FROM benchmark_daily_call_usage
+          WHERE day = ?`,
+      ).bind(day),
+    ]);
+  } catch (error) {
+    throw new BenchmarkCallReservationError('ledger_unavailable', 0, dailyCap, error);
+  }
+
+  const changed = Number(results[1]?.meta?.changes ?? 0);
+  const usageRow = (results[2]?.results?.[0] ?? null) as { reserved_calls?: unknown } | null;
+  const usedToday = Number(usageRow?.reserved_calls);
+  if (!Number.isSafeInteger(usedToday) || usedToday < 0) {
+    throw new BenchmarkCallReservationError(
+      'ledger_unavailable',
+      0,
+      dailyCap,
+      new Error('benchmark reservation ledger returned an invalid count'),
+    );
+  }
+  if (changed !== 1) {
+    throw new BenchmarkCallReservationError('cap_reached', usedToday, dailyCap);
+  }
+  return { usedToday, dailyCap };
+}
+
+function benchmarkReservationFailure(
+  error: unknown,
+  plannedCalls: number,
+): {
+  status: 429 | 503;
+  body: Record<string, unknown>;
+} {
+  if (!(error instanceof BenchmarkCallReservationError)) throw error;
+  return error.reason === 'ledger_unavailable'
+    ? {
+        status: 503,
+        body: {
+          error: 'benchmark daily call reservation is temporarily unavailable',
+          code: 'benchmark_call_reservation_unavailable',
+          plannedCalls,
+          dailyCap: error.dailyCap,
+          retryable: true,
+        },
+      }
+    : {
+        status: 429,
+        body: {
+          error: 'benchmark daily call cap reached',
+          plannedCalls,
+          usedToday: error.usedToday,
+          dailyCap: error.dailyCap,
+        },
+      };
+}
+
+export interface BenchmarkSettingsLease {
+  chamber: BenchmarkChamber;
+  ownerToken: string;
+  leaseUntil: string;
+}
+
+export class BenchmarkSettingsLeaseBusyError extends Error {
+  constructor(readonly leaseUntil: string | null) {
+    super('benchmark lineup settings are already being updated');
+  }
+}
+
+export class BenchmarkSettingsLeaseLostError extends Error {
+  constructor(readonly leaseUntil: string | null) {
+    super('benchmark lineup settings lease was lost or expired');
+  }
+}
+
+/**
+ * Own one chamber's multi-key Infisical mutation. D1 serializes the conditional
+ * UPSERT; owner-token release cannot unlock a newer lease after expiry/takeover.
+ */
+export async function acquireBenchmarkSettingsLease(
+  db: D1Database,
+  chamber: BenchmarkChamber,
+  options: { now?: string; leaseMs?: number; ownerToken?: string } = {},
+): Promise<BenchmarkSettingsLease> {
+  const now = options.now ?? new Date().toISOString();
+  if (!Number.isFinite(Date.parse(now))) throw new Error('now must be an ISO timestamp');
+  const leaseMs = options.leaseMs ?? 10 * 60_000;
+  if (!Number.isFinite(leaseMs) || leaseMs < 30_000 || leaseMs > 10 * 60_000) {
+    throw new Error('leaseMs must be between 30000 and 600000');
+  }
+  const ownerToken = options.ownerToken?.trim() || uuid();
+  const leaseUntil = new Date(Date.parse(now) + leaseMs).toISOString();
+  const result = await run(
+    db,
+    `INSERT INTO benchmark_settings_leases
+       (chamber, owner_token, lease_until, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(chamber) DO UPDATE SET
+       owner_token = excluded.owner_token,
+       lease_until = excluded.lease_until,
+       updated_at = excluded.updated_at
+     WHERE benchmark_settings_leases.lease_until <= excluded.created_at`,
+    [chamber, ownerToken, leaseUntil, now, now],
+  );
+  if (Number(result.meta?.changes ?? 0) !== 1) {
+    const current = await get<{ lease_until: string | null }>(
+      db,
+      'SELECT lease_until FROM benchmark_settings_leases WHERE chamber = ?',
+      [chamber],
+    );
+    throw new BenchmarkSettingsLeaseBusyError(current?.lease_until ?? null);
+  }
+  return { chamber, ownerToken, leaseUntil };
+}
+
+export async function releaseBenchmarkSettingsLease(
+  db: D1Database,
+  lease: BenchmarkSettingsLease,
+): Promise<boolean> {
+  const result = await run(
+    db,
+    'DELETE FROM benchmark_settings_leases WHERE chamber = ? AND owner_token = ?',
+    [lease.chamber, lease.ownerToken],
+  );
+  return Number(result.meta?.changes ?? 0) === 1;
+}
+
+/** Fence every external mutation against the exact D1 lease owner. */
+export async function assertBenchmarkSettingsLease(
+  db: D1Database,
+  lease: BenchmarkSettingsLease,
+  now = new Date().toISOString(),
+): Promise<void> {
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(nowMs)) throw new Error('now must be an ISO timestamp');
+  const current = await get<{ owner_token: string; lease_until: string | null }>(
+    db,
+    `SELECT owner_token, lease_until
+       FROM benchmark_settings_leases
+      WHERE chamber = ?`,
+    [lease.chamber],
+  );
+  const leaseUntilMs = Date.parse(current?.lease_until ?? '');
+  if (
+    !current
+    || current.owner_token !== lease.ownerToken
+    || !Number.isFinite(leaseUntilMs)
+    || leaseUntilMs <= nowMs
+  ) {
+    throw new BenchmarkSettingsLeaseLostError(current?.lease_until ?? null);
+  }
+}
+
+function rowsFromBenchmarkResult(result: unknown): ParsedTx[] {
+  if (Array.isArray(result)) return result as ParsedTx[];
+  if (result && typeof result === 'object' && Array.isArray((result as { rows?: unknown }).rows)) {
+    return (result as { rows: ParsedTx[] }).rows;
+  }
+  return [];
+}
+
+function persistedCandidate(
+  result: BenchmarkRunDetail['results'][number],
+): CandidateDocResult {
+  const rows = rowsFromBenchmarkResult(result.result);
+  return {
+    provider: result.provider as Provider,
+    model: result.model,
+    docId: result.docId,
+    ok: result.ok,
+    ...(result.error ? { error: result.error } : {}),
+    latencyMs: result.latencyMs ?? 0,
+    rowCount: rows.length,
+    rowKeys: [],
+    avgConfidence: result.avgConfidence ?? 0,
+    rows,
+    ...(result.usage && typeof result.usage === 'object' ? { usage: result.usage as CandidateDocResult['usage'] } : {}),
+  };
+}
+
+function consensusBenchmarkRows(reads: CandidateDocResult[]): ParsedTx[] | null {
+  if (reads.length !== 3 || reads.some((read) => !read.ok)) return null;
+  const consensus = buildConsensusRows(reads.map((read) => ({
+    model: `${read.provider}:${read.model}`,
+    rows: read.rows,
+  })));
+  if (!consensus.rows.length) return null;
+  if (consensus.rows.some((row) => row.rowConsensus === 'contested' || row.occurrence > 1)) return null;
+  return consensus.rows.map((row) => {
+    const amount = row.fields.amount.value as { amountMin: number | null; amountMax: number | null };
+    return {
+      ticker: row.fields.ticker.value as string | null,
+      assetName: String(row.fields.assetName.value ?? ''),
+      txDate: String(row.fields.transactionDate.value ?? ''),
+      txType: row.fields.txType.value as ParsedTx['txType'],
+      amountMin: amount?.amountMin ?? null,
+      amountMax: amount?.amountMax ?? null,
+      owner: row.fields.owner.value as ParsedTx['owner'],
+      assetType: row.fields.assetType.value as ParsedTx['assetType'],
+      assetTypeName: row.fields.assetTypeName.value as ParsedTx['assetTypeName'],
+      isOption: row.fields.isOption.value === true,
+      capGainsOver200: row.fields.capGainsOver200.value === true,
+      filingStatus: row.fields.filingStatus.value as ParsedTx['filingStatus'],
+      subholding: row.fields.subholding.value as ParsedTx['subholding'],
+      location: row.fields.location.value as ParsedTx['location'],
+      description: row.fields.description.value as ParsedTx['description'],
+      supplementalText: row.fields.supplementalText.value as ParsedTx['supplementalText'],
+      rawText: 'benchmark consensus simulation',
+      confidence: Math.max(...reads.map((read) => read.avgConfidence)),
+    };
+  });
+}
+
+const BENCHMARK_SELECTION_AUDIT_WARNING =
+  'Settings were saved and verified, but the benchmark selection receipt could not be persisted.';
+
+export async function persistBenchmarkSelectionAudit(
+  persist: () => Promise<void>,
+): Promise<{ auditPersisted: boolean; warning?: string }> {
+  try {
+    await persist();
+    return { auditPersisted: true };
+  } catch (error) {
+    console.error(
+      'benchmark settings saved but selection audit persistence failed',
+      error instanceof Error ? error.name : 'unknown',
+    );
+    return { auditPersisted: false, warning: BENCHMARK_SELECTION_AUDIT_WARNING };
+  }
+}
+
+export function benchmarkReadIsAutonomous(outcome: string, rowCount: number): boolean {
+  return outcome === 'would_publish' && rowCount > 0;
+}
+
+export function benchmarkUsageHasProviderReportedCost(
+  usage: CandidateDocResult['usage'],
+): boolean {
+  const costInUsdTicks = usage?.costInUsdTicks;
+  return typeof costInUsdTicks === 'number'
+    && Number.isFinite(costInUsdTicks)
+    && costInUsdTicks >= 0;
+}
+
+const BENCHMARK_REQUEST_PROFILE = Object.freeze({
+  version: 'ct-benchmark-profile-v1',
+  promptVersion: EXTRACTION_PROMPT_VERSION,
+  schemaVersion: EXTRACTION_SCHEMA_VERSION,
+  extractionAdapter: 'runCandidateOnDoc',
+  openai: {
+    pdfDetail: 'high',
+    reasoningEffort: 'none',
+    serviceTier: 'default',
+    maxOutputTokens: 8_000,
+    structuredOutputSchema: 'transaction_annotation_v1',
+  },
+  execution: { oneProviderModelPerCell: true },
+});
+
+interface BenchmarkPaidCallAuthorization {
+  version: 1;
+  scope: 'initial_model_document_cells';
+  reservedCalls: number;
+  documentCount: number;
+  models: BenchmarkModelRef[];
+}
+
+function benchmarkPaidCallAuthorization(
+  documentCount: number,
+  configuredModels: Array<BenchmarkModelRef & { configured?: boolean }>,
+): BenchmarkPaidCallAuthorization {
+  return {
+    version: 1,
+    scope: 'initial_model_document_cells',
+    reservedCalls: documentCount * configuredModels.length,
+    documentCount,
+    models: configuredModels.map(({ provider, model }) => ({ provider, model })),
+  };
+}
+
+function benchmarkRunAuthorizesInitialCell(
+  runRecord: BenchmarkRunDetail,
+  candidate: BenchmarkModelRef,
+): boolean {
+  if (!runRecord.requestProfile || typeof runRecord.requestProfile !== 'object') return false;
+  const authorization = (runRecord.requestProfile as {
+    paidCallAuthorization?: Partial<BenchmarkPaidCallAuthorization>;
+  }).paidCallAuthorization;
+  if (
+    authorization?.version !== 1
+    || authorization.scope !== 'initial_model_document_cells'
+    || authorization.documentCount !== runRecord.documents.length
+    || !Array.isArray(authorization.models)
+    || authorization.reservedCalls !== runRecord.documents.length * authorization.models.length
+  ) return false;
+  return authorization.models.some(
+    (model) => model?.provider === candidate.provider && model?.model === candidate.model,
+  );
 }
 
 export function buildAdminRouter(): Hono<{ Bindings: Env }> {
@@ -1062,7 +1669,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         const failedModels: Array<{ model: string; error: string | null }> = [];
         const coherentRuns: ConsensusRun[] = [];
         for (const model of attemptedModels) {
-          const er = latestComparable.byModel.get(model)!;
+          const er = latestComparable.byModel.get(model);
+          if (!er) continue;
           if (er.ok !== 1) {
             failedModels.push({ model, error: er.error });
             coherentRuns.push({ model, rows: [] });
@@ -1954,6 +2562,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'STRIPE_SECRET_KEY',
       'PRICE_PROVIDER',
       'TIINGO_API_KEY',
+      'USAGE_MONITOR_ENABLED',
+      'USAGE_MONITOR_INGEST_URL',
+      'USAGE_MONITOR_INGEST_TOKEN',
+      'USAGE_MONITOR_ENVIRONMENT',
     ]);
     const secretStatus = getSecretResolverStatus(c.env);
     const adminConfig = await adminRuntimeConfig(c.env);
@@ -1973,6 +2585,63 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       note: secretStatus.enabled
         ? `Cache ${secretStatus.cacheReady ? 'ready' : 'empty'}; expires in ${secretStatus.cacheExpiresInSeconds ?? 0}s; env fallback ${secretStatus.envFallbackAllowed ? 'allowed' : 'disabled'}`
         : 'Infisical machine identity bootstrap secrets are not available to this Worker runtime',
+    });
+
+    const usageMonitorExplicitlyDisabled = /^(0|false|no|off)$/i.test(
+      (runtimeSecrets.USAGE_MONITOR_ENABLED ?? '').trim(),
+    );
+    const usageMonitorUrlConfigured = Boolean(runtimeSecrets.USAGE_MONITOR_INGEST_URL?.trim());
+    const usageMonitorTokenConfigured = Boolean(runtimeSecrets.USAGE_MONITOR_INGEST_TOKEN?.trim());
+    const usageMonitorEnvironmentConfigured = Boolean(runtimeSecrets.USAGE_MONITOR_ENVIRONMENT?.trim());
+    const usageMonitorQueueConfigured = typeof (c.env as Partial<Env>).INGEST_QUEUE?.send === 'function';
+    const usageMonitorFallback = await inspectUsageTelemetryFallback(c.env);
+    const usageMonitorMissing = [
+      ...(!usageMonitorUrlConfigured ? ['ingest URL'] : []),
+      ...(!usageMonitorTokenConfigured ? ['ingest token'] : []),
+    ];
+    const usageMonitorConfigured = !usageMonitorExplicitlyDisabled && usageMonitorMissing.length === 0;
+    const usageMonitorState = usageMonitorExplicitlyDisabled
+      ? 'disabled' as const
+      : usageMonitorMissing.length > 0
+        ? 'missing' as const
+        : 'configured' as const;
+    const usageMonitorFallbackPending = usageMonitorFallback.pending ?? 0;
+    const usageMonitorStatus: DiagnosticConnection['status'] =
+      usageMonitorExplicitlyDisabled ? 'warn'
+      : usageMonitorMissing.length > 0 ? 'error'
+      : !usageMonitorQueueConfigured && !usageMonitorFallback.available ? 'error'
+      : usageMonitorFallback.pending == null
+        || usageMonitorFallbackPending > 0
+        || usageMonitorFallback.truncated
+        || !usageMonitorEnvironmentConfigured
+        || !usageMonitorQueueConfigured
+        ? 'warn'
+        : 'ok';
+    const fallbackNote = usageMonitorFallback.pending == null
+      ? 'R2 fallback health unavailable'
+      : `R2 fallback ${usageMonitorFallbackPending}${usageMonitorFallback.truncated ? '+' : ''} pending`;
+    const usageMonitorNote = usageMonitorExplicitlyDisabled
+      ? 'Explicitly disabled by USAGE_MONITOR_ENABLED'
+      : usageMonitorMissing.length > 0
+        ? `Missing ${usageMonitorMissing.join(' and ')}`
+        : [
+            'Ingest URL/token configured',
+            usageMonitorEnvironmentConfigured ? 'environment configured' : 'environment defaults at runtime',
+            usageMonitorQueueConfigured ? 'Queue bound' : 'Queue binding unavailable',
+            fallbackNote,
+            'receiver delivery receipts are not persisted locally',
+          ].join('; ');
+    connections.push({
+      id: 'telemetry:usage-monitor',
+      label: 'API Usage Monitor Telemetry',
+      status: usageMonitorStatus,
+      configured: usageMonitorConfigured,
+      lastUsedAt: null,
+      callsTotal: 0,
+      callsLast24h: 0,
+      callsToday: 0,
+      errorsLast24h: 0,
+      note: usageMonitorNote,
     });
 
     const sourceRows = await optionalAll<{
@@ -2661,6 +3330,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     return c.json({
       generatedAt: now.toISOString(),
       connections,
+      usageTelemetry: {
+        state: usageMonitorState,
+        enabled: !usageMonitorExplicitlyDisabled,
+        ingestUrlConfigured: usageMonitorUrlConfigured,
+        ingestTokenConfigured: usageMonitorTokenConfigured,
+        environmentConfigured: usageMonitorEnvironmentConfigured,
+        queueConfigured: usageMonitorQueueConfigured,
+        fallback: usageMonitorFallback,
+        receiverDeliveryObservability: 'not_persisted_locally',
+      },
       secrets: secretStatus,
       userStats,
       errors: errors.slice(0, 75),
@@ -2678,6 +3357,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // --- POST /diagnostics/secrets/update -----------------------------------
   // Update a secret in Infisical and then refresh the cache.
   r.post('/diagnostics/secrets/update', async (c) => {
+    if (isPreviewDeployment(c.env)) {
+      return c.json({
+        ok: false,
+        error: 'Infisical secret updates are disabled in preview deployments',
+        code: 'preview_write_protected',
+      }, 403);
+    }
     const { source, key, value } = await c.req.json();
     if (!source || !key || value === undefined) {
       return c.json({ ok: false, error: 'Missing source, key, or value' }, 400);
@@ -3114,9 +3800,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     // result otherwise) — charge the cap for those only, so an environment
     // with just one or two providers configured doesn't exhaust the daily
     // budget on calls that were never going to happen.
-    const configuredCount = (
-      await Promise.all(candidates.map((cand) => keyFor(c.env, cand.provider)))
-    ).filter(Boolean).length;
+    const candidateInvocationKeys = await Promise.all(
+      candidates.map((candidate) => keyFor(c.env, candidate.provider)),
+    );
+    const configuredCount = candidateInvocationKeys.filter(Boolean).length;
     const plannedCalls = docs.length * configuredCount;
     const dailyCap =
       Number((c.env as { BAKEOFF_DAILY_CALL_CAP?: string }).BAKEOFF_DAILY_CALL_CAP ?? '200') || 200;
@@ -3167,9 +3854,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
       const bytes = await obj.arrayBuffer();
       // Sequential per doc keeps memory + provider rate-limits sane.
-      for (const candidate of candidates) {
-        const res = await runCandidateOnDoc(c.env, candidate, doc_id, bytes);
+      for (const [candidateIndex, candidate] of candidates.entries()) {
+        const res = await runCandidateOnDoc(c.env, candidate, doc_id, bytes, {
+          apiKey: candidateInvocationKeys[candidateIndex] ?? null,
+        });
         results.push(res);
+        await pushExtractionTelemetry(c.env, res, 'bakeoff');
         if (persist) {
           try {
             await run(
@@ -3246,23 +3936,23 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     let n = typeof body.n === 'number' && body.n > 0 ? Math.floor(body.n) : 50;
     if (n > 200) n = 200;
 
-    let docRows: Array<{ doc_id: string; raw_object_key: string | null }>;
+    let docRows: Array<{ doc_id: string; raw_object_key: string | null; chamber: string | null }>;
     if (Array.isArray(body.docIds) && body.docIds.length > 0) {
       const ids = body.docIds.filter((x): x is string => typeof x === 'string').slice(0, n);
       docRows = [];
       for (const id of ids) {
-        const row = await get<{ doc_id: string; raw_object_key: string | null }>(
+        const row = await get<{ doc_id: string; raw_object_key: string | null; chamber: string | null }>(
           c.env.DB,
-          'SELECT doc_id, raw_object_key FROM filings WHERE doc_id = ?',
+          'SELECT doc_id, raw_object_key, chamber FROM filings WHERE doc_id = ?',
           [id],
         );
         if (row) docRows.push(row);
       }
     } else {
       // Default target: the unresolved review backlog (what batch is cheapest for).
-      docRows = await all<{ doc_id: string; raw_object_key: string | null }>(
+      docRows = await all<{ doc_id: string; raw_object_key: string | null; chamber: string | null }>(
         c.env.DB,
-        `SELECT f.doc_id, f.raw_object_key
+        `SELECT f.doc_id, f.raw_object_key, f.chamber
            FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
           WHERE rq.resolved = 0 AND f.raw_object_key IS NOT NULL
           ORDER BY rq.created_at DESC LIMIT ?`,
@@ -3272,11 +3962,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
     const docs: BatchDoc[] = [];
     const skipped: string[] = [];
-    for (const { doc_id, raw_object_key } of docRows) {
+    for (const { doc_id, raw_object_key, chamber } of docRows) {
       if (!raw_object_key) { skipped.push(`${doc_id}: no raw_object_key`); continue; }
       const obj = await c.env.RAW_FILES.get(raw_object_key);
       if (!obj) { skipped.push(`${doc_id}: R2 object missing`); continue; }
-      docs.push({ docId: doc_id, bytes: await obj.arrayBuffer() });
+      docs.push({
+        docId: doc_id,
+        chamber: normalizeBatchChamber(chamber, doc_id),
+        bytes: await obj.arrayBuffer(),
+      });
     }
     if (docs.length === 0) return c.json({ error: 'no documents with a stored PDF to batch', skipped }, 404);
 
@@ -3356,22 +4050,102 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     let rowTotal = 0;
     const errors: string[] = [];
 
-    if (!poll.failed) {
-      for (const res of poll.results) {
+    for (const [resultIndex, res] of poll.results.entries()) {
         if (res.ok) { okCount++; rowTotal += res.rows.length; } else errors.push(`${res.docId}: ${res.error ?? 'failed'}`);
         const avg = res.rows.length ? res.rows.reduce((s, x) => s + (x.confidence ?? 0), 0) / res.rows.length : 0;
         try {
           await run(
             c.env.DB,
             `INSERT INTO extraction_runs
-               (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, created_at)
-             VALUES (?, ?, ?, ?, ?, 'batch', ?, ?, ?, ?, ?, ?, ?)`,
+               (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, usage_json, created_at)
+             VALUES (?, ?, ?, ?, ?, 'batch', ?, ?, ?, ?, ?, ?, ?, ?)`,
             [uuid(), jobId, res.docId, job.provider, job.model, res.ok ? 1 : 0, res.error ?? null,
-             res.rows.length, turnaroundMs, Math.round(avg * 1000) / 1000, JSON.stringify(res.rows), completedAt],
+             res.rows.length, turnaroundMs, Math.round(avg * 1000) / 1000, JSON.stringify(res.rows),
+             res.usage ? JSON.stringify(res.usage) : null, completedAt],
           );
         } catch { /* extraction_runs missing */ }
+
+        // The request/poll attempts are metered by trackedFetch. Add only the
+        // provider-reported units here, with stable keys so a status retry
+        // cannot double count them. Never infer a missing token component.
+        const promptTokens = res.usage?.promptTokens;
+        const completionTokens = res.usage?.completionTokens;
+        if (promptTokens != null && completionTokens != null) {
+          const metadata: Record<string, string | number | boolean | null> = {
+            promptTokens,
+            completionTokens,
+            success: res.ok,
+          };
+          if (res.usage?.cachedTokens != null) metadata.cachedTokens = res.usage.cachedTokens;
+          await recordMeasuredThirdPartyUsage(c.env, {
+            provider: job.provider,
+            service: 'llm-batch',
+            operation: 'batch-result-tokens',
+            idempotencyKey: `ct-batch-${jobId}-${resultIndex}-tokens`,
+            model: job.model,
+            quantity: promptTokens + completionTokens,
+            unit: 'token',
+            billingMode: 'actual',
+            confidence: 'actual',
+            metadata,
+          });
+        }
+        if (res.usage?.pagesProcessed != null) {
+          await recordMeasuredThirdPartyUsage(c.env, {
+            provider: job.provider,
+            service: 'ocr-batch',
+            operation: 'batch-result-pages',
+            idempotencyKey: `ct-batch-${jobId}-${resultIndex}-pages`,
+            model: job.model,
+            quantity: res.usage.pagesProcessed,
+            unit: 'page',
+            billingMode: 'actual',
+            confidence: 'actual',
+            metadata: { pagesProcessed: res.usage.pagesProcessed, success: res.ok },
+          });
+        }
+        if (res.usage?.costInUsdTicks != null) {
+          const costUsd = res.usage.costInUsdTicks / 10_000_000_000;
+          await recordMeasuredThirdPartyUsage(c.env, {
+            provider: job.provider,
+            service: 'llm-batch',
+            operation: 'batch-result-provider-cost',
+            idempotencyKey: `ct-batch-${jobId}-${resultIndex}-cost`,
+            model: res.resolvedModel ?? job.model,
+            metricType: 'cost',
+            quantity: costUsd,
+            unit: 'usd',
+            costUsd,
+            billingMode: 'actual',
+            confidence: 'actual',
+            metadata: {
+              costInUsdTicks: res.usage.costInUsdTicks,
+              success: res.ok,
+              ...(res.usage.attachmentSearchCalls == null
+                ? {}
+                : { attachmentSearchCalls: res.usage.attachmentSearchCalls }),
+            },
+          });
+        }
+        if (res.usage?.attachmentSearchCalls != null) {
+          await recordMeasuredThirdPartyUsage(c.env, {
+            provider: job.provider,
+            service: 'llm-batch',
+            operation: 'batch-result-attachment-search',
+            idempotencyKey: `ct-batch-${jobId}-${resultIndex}-attachment-search`,
+            model: res.resolvedModel ?? job.model,
+            quantity: res.usage.attachmentSearchCalls,
+            unit: 'call',
+            billingMode: 'actual',
+            confidence: 'actual',
+            metadata: {
+              toolName: 'attachment_search',
+              attachmentSearchCalls: res.usage.attachmentSearchCalls,
+              success: res.ok,
+            },
+          });
+        }
       }
-    }
 
     const summary = { docs: poll.results.length, ok: okCount, rows: rowTotal, errors: errors.slice(0, 20) };
     await run(
@@ -3474,188 +4248,1057 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
-  // --- GET /benchmark/ground-truth-docs ------------------------------------
-  r.get('/benchmark/ground-truth-docs', async (c) => {
-    const limit = Math.min(Number(c.req.query('limit')) || 50, 200);
-    const chamber = c.req.query('chamber');
-    // Prioritize resolved documents so we have human-verified ground-truth transactions
-    // to compare against. Fallback to unresolved documents if needed.
-    let query = `
-      SELECT f.doc_id, COALESCE(rq.resolved, 0) AS resolved
-      FROM filings f
-      LEFT JOIN review_queue rq ON f.doc_id = rq.doc_id
-      WHERE f.raw_object_key IS NOT NULL
-    `;
-    const params: (string | number)[] = [];
-    if (chamber) {
-      query += ` AND LOWER(f.chamber) = LOWER(?)`;
-      params.push(chamber);
+  // --- Durable benchmark runs ----------------------------------------------
+  r.post('/benchmark/runs', async (c) => {
+    let body: Record<string, unknown>;
+    try {
+      body = await c.req.json<Record<string, unknown>>();
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
     }
-    query += ` ORDER BY resolved DESC, f.filed_date DESC LIMIT ?`;
-    params.push(limit);
-
-    const rows = await all<{ doc_id: string; resolved: number }>(
-      c.env.DB,
-      query,
-      params
-    );
+    const chamber = benchmarkChamber(body.chamber);
+    if (!chamber) return c.json({ error: "chamber must be 'house', 'senate', or 'executive'" }, 400);
+    if (!Array.isArray(body.models) || body.models.length === 0 || body.models.length > 20) {
+      return c.json({ error: 'models must be a non-empty array with at most 20 entries' }, 400);
+    }
+    let models: BakeoffCandidate[];
+    try {
+      models = body.models.map((model, index) => validateBenchmarkModel(
+        model as BenchmarkModelRef,
+        `models[${index}]`,
+      ));
+    } catch (error) {
+      return c.json({ error: (error as Error).message }, 400);
+    }
+    if (new Set(models.map((model) => `${model.provider}:${model.model}`)).size !== models.length) {
+      return c.json({ error: 'models must be unique' }, 400);
+    }
+    const defaultLimit = chamber === 'executive' ? 5 : 25;
+    const limit = Math.min(Math.max(Math.floor(Number(body.limit) || defaultLimit), 1), 25);
+    let docIds: string[] | undefined;
+    if (body.docIds !== undefined) {
+      if (!Array.isArray(body.docIds) || !body.docIds.every((value) => typeof value === 'string')) {
+        return c.json({ error: 'docIds must be an array of strings' }, 400);
+      }
+      docIds = [...new Set(body.docIds.map((value) => String(value).trim()).filter(Boolean))].slice(0, 25);
+      if (!docIds.length) return c.json({ error: 'docIds must not be empty' }, 400);
+    }
+    if (body.resolvedOnly !== undefined && typeof body.resolvedOnly !== 'boolean') {
+      return c.json({ error: 'resolvedOnly must be a boolean' }, 400);
+    }
+    const documents = await loadBenchmarkDocuments(c.env, {
+      chamber,
+      limit,
+      docIds,
+      resolvedOnly: body.resolvedOnly === true,
+    });
+    if (!documents.length) {
+      return c.json({
+        error: body.resolvedOnly
+          ? `no resolved ${chamber} filings with stored documents were found`
+          : `no ${chamber} filings with stored documents were found`,
+      }, 404);
+    }
+    const configured = await Promise.all(models.map(async (model) => ({
+      ...model,
+      configured: Boolean(await keyFor(c.env, model.provider)),
+    })));
+    const configuredModels = configured.filter((model) => model.configured);
+    const plannedCalls = documents.length * configuredModels.length;
+    if (plannedCalls > 0 && body.confirmPaidRun !== true) {
+      return c.json({
+        error: 'confirmPaidRun=true is required before reserving paid provider calls',
+        requiresConfirmation: true,
+        plannedCalls,
+        documentCount: documents.length,
+        configuredModels,
+      }, 409);
+    }
+    let cap: { usedToday: number; dailyCap: number } | null = null;
+    if (plannedCalls > 0) {
+      try {
+        cap = await reserveBenchmarkCalls(c.env, plannedCalls);
+      } catch (error) {
+        if (!(error instanceof BenchmarkCallReservationError)) throw error;
+        if (error.reason === 'ledger_unavailable') {
+          return c.json({
+            error: 'benchmark daily call reservation is temporarily unavailable',
+            code: 'benchmark_call_reservation_unavailable',
+            plannedCalls,
+            dailyCap: error.dailyCap,
+            retryable: true,
+          }, 503);
+        }
+        return c.json({
+          error: 'benchmark daily call cap reached',
+          plannedCalls,
+          usedToday: error.usedToday,
+          dailyCap: error.dailyCap,
+        }, 429);
+      }
+    }
+    const runRecord = await beginBenchmarkRun(c.env.DB, {
+      chamber,
+      models,
+      requestProfile: {
+        ...BENCHMARK_REQUEST_PROFILE,
+        paidCallAuthorization: benchmarkPaidCallAuthorization(
+          documents.length,
+          configuredModels,
+        ),
+      },
+      documents: documents.map((document) => ({
+        docId: document.docId,
+        resolved: document.resolved,
+        groundTruth: document.groundTruth,
+      })),
+    });
     return c.json({
-      docs: rows.map(r => ({
-        docId: r.doc_id,
-        resolved: r.resolved === 1
-      }))
+      run: runRecord,
+      docs: documents.map(({ docId, resolved }) => ({ docId, resolved })),
+      resolvedDocumentCount: documents.filter((document) => document.resolved).length,
+      plannedCalls,
+      configuredModels,
+      cap,
+    }, 201);
+  });
+
+  r.get('/benchmark/runs', async (c) => {
+    const rawChamber = c.req.query('chamber');
+    const chamber = rawChamber ? benchmarkChamber(rawChamber) : undefined;
+    if (rawChamber && !chamber) return c.json({ error: 'invalid chamber' }, 400);
+    const limit = Math.min(Math.max(Math.floor(Number(c.req.query('limit')) || 20), 1), 100);
+    return c.json({ runs: await listBenchmarkRuns(c.env.DB, chamber ?? undefined, limit) });
+  });
+
+  r.get('/benchmark/runs/:runId', async (c) => {
+    const runRecord = await getBenchmarkRun(c.env.DB, c.req.param('runId'));
+    return runRecord ? c.json({ run: runRecord }) : c.json({ error: 'benchmark run not found' }, 404);
+  });
+
+  r.post('/benchmark/runs/:runId/complete', async (c) => {
+    const runRecord = await getBenchmarkRun(c.env.DB, c.req.param('runId'));
+    if (!runRecord) return c.json({ error: 'benchmark run not found' }, 404);
+    if (runRecord.status === 'completed') return c.json({ run: runRecord });
+    if (runRecord.status !== 'running') return c.json({ error: `benchmark run is ${runRecord.status}` }, 409);
+    const expectedMeasurements = runRecord.documents.length * runRecord.models.length;
+    const completedMeasurements = runRecord.results.filter((result) => result.outcome !== 'running').length;
+    if (completedMeasurements !== expectedMeasurements) {
+      return c.json({
+        error: 'benchmark run still has unmeasured document/model cells',
+        expectedMeasurements,
+        completedMeasurements,
+        missingMeasurements: expectedMeasurements - completedMeasurements,
+      }, 409);
+    }
+    return c.json({ run: await completeBenchmarkRun(c.env.DB, runRecord.id) });
+  });
+
+  r.post('/benchmark/runs/:runId/simulate', async (c) => {
+    let body: Record<string, unknown>;
+    try {
+      body = await c.req.json<Record<string, unknown>>();
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    let lineup: BenchmarkSelectedLineup;
+    try {
+      lineup = validateBenchmarkLineup(body as unknown as {
+        a: BenchmarkModelRef;
+        b: BenchmarkModelRef;
+        c: BenchmarkModelRef;
+      });
+    } catch (error) {
+      return c.json({ error: (error as Error).message }, 400);
+    }
+    const runRecord = await getBenchmarkRun(c.env.DB, c.req.param('runId'));
+    if (!runRecord) return c.json({ error: 'benchmark run not found' }, 404);
+    const selected = [lineup.a, lineup.b, lineup.c as BenchmarkModelRef];
+    const runModels = new Set(runRecord.models.map((model) => `${model.provider}:${model.model}`));
+    const absent = selected.filter((model) => !runModels.has(`${model.provider}:${model.model}`));
+    if (absent.length) {
+      return c.json({ error: 'every simulated model must have measurements in this run', absent }, 400);
+    }
+
+    let documentsSimulated = 0;
+    let incompleteDocuments = 0;
+    let tier1Published = 0;
+    let cascadePublished = 0;
+    let resolvedDocuments = 0;
+    let autopublishedResolvedDocuments = 0;
+    let perfectMatches = 0;
+    let requiredCalls = 0;
+    let invokedCalls = 0;
+    let costCoveredCalls = 0;
+    let knownCostUsd = 0;
+    const wallClockSamples: number[] = [];
+    const key = (model: BenchmarkModelRef) => `${model.provider}:${model.model}`;
+
+    for (const document of runRecord.documents) {
+      const results = new Map(
+        runRecord.results
+          .filter((result) => result.docId === document.docId)
+          .map((result) => [`${result.provider}:${result.model}`, result]),
+      );
+      const resultA = results.get(key(lineup.a));
+      const resultB = results.get(key(lineup.b));
+      if (!resultA || !resultB) {
+        requiredCalls += 2;
+        for (const result of [resultA, resultB]) {
+          if (!result?.invoked) continue;
+          invokedCalls += 1;
+          if (result.costUsd != null) {
+            costCoveredCalls += 1;
+            knownCostUsd += result.costUsd;
+          }
+        }
+        incompleteDocuments += 1;
+        continue;
+      }
+      const readA = persistedCandidate(resultA);
+      const readB = persistedCandidate(resultB);
+      const agreesAtTier1 = sameRowSet(readA, readB);
+      const escalated = readA.ok && readB.ok && !agreesAtTier1;
+      const resultC = escalated ? results.get(key(lineup.c as BenchmarkModelRef)) : undefined;
+      const documentMetrics = simulateCascadeDocumentMetrics({
+        a: resultA,
+        b: resultB,
+        c: resultC,
+        escalated,
+      });
+      requiredCalls += documentMetrics.requiredCalls;
+      invokedCalls += documentMetrics.invokedCalls;
+      costCoveredCalls += documentMetrics.costCoveredCalls;
+      knownCostUsd += documentMetrics.knownCostUsd;
+      if ((escalated && !resultC) || documentMetrics.invokedCalls !== documentMetrics.requiredCalls) {
+        incompleteDocuments += 1;
+        continue;
+      }
+      if (documentMetrics.wallClockMs != null) wallClockSamples.push(documentMetrics.wallClockMs);
+
+      documentsSimulated += 1;
+      let publishedRows: ParsedTx[] | null = null;
+      if (agreesAtTier1 && resultA.autonomous && resultB.autonomous) {
+        tier1Published += 1;
+        publishedRows = readA.rows;
+      } else if (escalated && resultC) {
+        const readC = persistedCandidate(resultC);
+        const allAgree = sameRowSet(readA, readC) && sameRowSet(readB, readC);
+        if (allAgree && [resultA, resultB, resultC].filter((result) => result.autonomous).length >= 2) {
+          publishedRows = readA.rows;
+        } else if ([resultA, resultB, resultC].filter((result) => result.autonomous).length >= 2) {
+          publishedRows = consensusBenchmarkRows([readA, readB, readC]);
+        }
+      }
+      if (publishedRows) cascadePublished += 1;
+      if (document.resolved) {
+        resolvedDocuments += 1;
+        if (publishedRows) {
+          autopublishedResolvedDocuments += 1;
+          const comparison = compareBenchmarkRows(
+            publishedRows as unknown as Array<Record<string, unknown>>,
+            Array.isArray(document.groundTruth)
+              ? document.groundTruth as Array<Record<string, unknown>>
+              : [],
+          );
+          if (comparison.perfectMatch) perfectMatches += 1;
+        }
+      }
+    }
+    const latency = summarizeBenchmarkLatency(wallClockSamples.map((latencyMs) => ({
+      invoked: true,
+      latencyMs,
+    })));
+    const fullCostCoverage = requiredCalls > 0 && costCoveredCalls === requiredCalls;
+    return c.json({
+      runId: runRecord.id,
+      chamber: runRecord.chamber,
+      lineup,
+      documentsTotal: runRecord.documents.length,
+      documentsSimulated,
+      incompleteDocuments,
+      tier1AutonomyRate: documentsSimulated ? tier1Published / documentsSimulated : null,
+      cascadeAutonomyRate: documentsSimulated ? cascadePublished / documentsSimulated : null,
+      humanReviewRate: documentsSimulated ? (documentsSimulated - cascadePublished) / documentsSimulated : null,
+      resolvedDocuments,
+      autopublishedResolvedDocuments,
+      perfectMatches,
+      accuracyRate: autopublishedResolvedDocuments
+        ? perfectMatches / autopublishedResolvedDocuments
+        : null,
+      endToEndPerfectRate: resolvedDocuments ? perfectMatches / resolvedDocuments : null,
+      requiredCalls,
+      invokedCalls,
+      costCoveredCalls,
+      costCoverageRate: requiredCalls ? costCoveredCalls / requiredCalls : null,
+      knownCostUsd,
+      actualCostPerDocumentUsd: fullCostCoverage && documentsSimulated
+        ? knownCostUsd / documentsSimulated
+        : null,
+      avgWallClockMs: latency.averageMs,
+      p50WallClockMs: latency.p50Ms,
+      p95WallClockMs: latency.p95Ms,
     });
   });
 
-  // --- POST /benchmark/dry-run/:docId ---------------------------------------
+  // --- Chamber-specific A/B/C agreement settings --------------------------
+  r.get('/benchmark/settings/:chamber', async (c) => {
+    const chamber = benchmarkChamber(c.req.param('chamber'));
+    if (!chamber) return c.json({ error: 'invalid chamber' }, 400);
+    return c.json({
+      ...await readBenchmarkLineupSettings(c.env, chamber),
+      writeProtected: isPreviewDeployment(c.env),
+    });
+  });
+
+  r.put('/benchmark/settings/:chamber', async (c) => {
+    const chamber = benchmarkChamber(c.req.param('chamber'));
+    if (!chamber) return c.json({ error: 'invalid chamber' }, 400);
+    if (isPreviewDeployment(c.env)) {
+      return c.json({
+        error: 'benchmark lineup settings are read-only in preview deployments',
+        code: 'preview_write_protected',
+      }, 403);
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = await c.req.json<Record<string, unknown>>();
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const sourceRunId = typeof body.sourceRunId === 'string' ? body.sourceRunId.trim() : '';
+    if (!sourceRunId) return c.json({ error: 'sourceRunId is required' }, 400);
+    const sourceRun = await getBenchmarkRun(c.env.DB, sourceRunId);
+    if (!sourceRun) return c.json({ error: 'source benchmark run not found' }, 404);
+    if (sourceRun.chamber !== chamber) {
+      return c.json({ error: 'source benchmark run belongs to a different chamber' }, 409);
+    }
+    if (sourceRun.status !== 'completed') {
+      return c.json({ error: 'source benchmark run must be completed before saving its lineup' }, 409);
+    }
+    let lineup: BenchmarkSelectedLineup;
+    try {
+      lineup = validateBenchmarkLineup(body as unknown as {
+        a: BenchmarkModelRef;
+        b: BenchmarkModelRef;
+        c: BenchmarkModelRef;
+      });
+    } catch (error) {
+      return c.json({ error: (error as Error).message }, 400);
+    }
+    const measured = new Set(sourceRun.models.map((model) => `${model.provider}:${model.model}`));
+    const unmeasured = [lineup.a, lineup.b, lineup.c as BenchmarkModelRef]
+      .filter((model) => !measured.has(`${model.provider}:${model.model}`));
+    if (unmeasured.length) {
+      return c.json({ error: 'selected models must be part of the source run', unmeasured }, 400);
+    }
+    const selectedModels = [lineup.a, lineup.b, lineup.c as BenchmarkModelRef];
+    const invalidModelCoverage = selectedModels.flatMap((model) => {
+      const readings = sourceRun.results.filter(
+        (result) => result.provider === model.provider && result.model === model.model,
+      );
+      const invoked = readings.filter((result) => result.invoked);
+      const successful = invoked.filter((result) => result.ok);
+      const autonomous = successful.filter((result) => result.autonomous);
+      return invoked.length === sourceRun.documents.length && successful.length > 0 && autonomous.length > 0
+        ? []
+        : [{
+            model,
+            requiredReadings: sourceRun.documents.length,
+            invokedReadings: invoked.length,
+            successfulReadings: successful.length,
+            autonomousReadings: autonomous.length,
+          }];
+    });
+    if (invalidModelCoverage.length) {
+      return c.json({
+        error: 'selected models require full invoked coverage plus at least one successful autonomous reading',
+        invalidModelCoverage,
+      }, 409);
+    }
+    let settingsLease: BenchmarkSettingsLease | null = null;
+    try {
+      settingsLease = await acquireBenchmarkSettingsLease(c.env.DB, chamber);
+      const saved = await saveBenchmarkLineupSettings(c.env, {
+        chamber,
+        a: lineup.a,
+        b: lineup.b,
+        c: lineup.c as BenchmarkModelRef,
+        expectedVersion: typeof body.expectedVersion === 'string' ? body.expectedVersion : '',
+      }, {}, {
+        operationTimeoutMs: 15_000,
+        assertLease: () => assertBenchmarkSettingsLease(c.env.DB, settingsLease!),
+      });
+      const selectionAudit = {
+        ...saved.audit,
+        sourceRunId,
+        actor: adminActor(c),
+      };
+      const auditPersistence = await persistBenchmarkSelectionAudit(() =>
+        recordBenchmarkSelection(c.env.DB, sourceRunId, {
+          lineup,
+          audit: selectionAudit,
+        }));
+      return c.json({
+        ok: true,
+        settings: saved.settings,
+        sourceRunId,
+        audit: selectionAudit,
+        ...auditPersistence,
+      });
+    } catch (error) {
+      if (error instanceof BenchmarkSettingsLeaseBusyError) {
+        return c.json({
+          error: error.message,
+          code: 'benchmark_settings_update_in_progress',
+          leaseUntil: error.leaseUntil,
+          retryable: true,
+        }, 409);
+      }
+      if (error instanceof BenchmarkSettingsConflictError) {
+        return c.json({ error: error.message, current: error.current }, 409);
+      }
+      if (error instanceof BenchmarkSettingsValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      if (error instanceof BenchmarkSettingsWriteError) {
+        const selectionAudit = {
+          ...error.audit,
+          sourceRunId,
+          actor: adminActor(c),
+        };
+        await recordBenchmarkSelection(c.env.DB, sourceRunId, {
+          lineup,
+          error: error.message,
+          audit: selectionAudit,
+        });
+        return c.json({ error: error.message, audit: selectionAudit }, 502);
+      }
+      throw error;
+    } finally {
+      if (settingsLease) {
+        await releaseBenchmarkSettingsLease(c.env.DB, settingsLease).catch((error) => {
+          console.error(
+            'benchmark settings lease release failed',
+            chamber,
+            (error as Error).message,
+          );
+        });
+      }
+    }
+  });
+
+  // --- GET /benchmark/ground-truth-docs (legacy compatibility) -------------
+  r.get('/benchmark/ground-truth-docs', async (c) => {
+    const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 200);
+    const rawChamber = c.req.query('chamber');
+    const chamber = rawChamber ? benchmarkChamber(rawChamber) : null;
+    if (rawChamber && !chamber) return c.json({ error: 'invalid chamber' }, 400);
+    let query = `SELECT f.doc_id,
+                        CASE WHEN ${benchmarkHumanResolvedSql('f.doc_id')} THEN 1 ELSE 0 END AS resolved
+                   FROM filings f
+                   LEFT JOIN review_queue rq ON f.doc_id = rq.doc_id
+                  WHERE f.raw_object_key IS NOT NULL`;
+    const params: Array<string | number> = [];
+    if (chamber) {
+      query += ' AND LOWER(f.chamber) = ?';
+      params.push(chamber);
+    }
+    query += ' ORDER BY resolved DESC, f.filed_date DESC, f.doc_id DESC LIMIT ?';
+    params.push(limit);
+    const rows = await all<{ doc_id: string; resolved: number }>(c.env.DB, query, params);
+    return c.json({
+      docs: rows.map((row) => ({ docId: row.doc_id, resolved: row.resolved === 1 })),
+      resolvedDocumentCount: rows.filter((row) => row.resolved === 1).length,
+      documentCount: rows.length,
+    });
+  });
+
+  // --- POST /benchmark/dry-run/:docId --------------------------------------
+  // Legacy callers may omit runId. Durable benchmark clients pass runId; a
+  // repeated run/doc/model cell returns its persisted result without another
+  // paid provider request.
   r.post('/benchmark/dry-run/:docId', async (c) => {
     const docId = c.req.param('docId');
-    const body = await c.req.json();
-    const row = await get<{ raw_object_key: string | null }>(
-      c.env.DB,
-      `SELECT raw_object_key FROM filings WHERE doc_id = ?`,
-      [docId]
-    );
-    if (!row || !row.raw_object_key) return c.json({ error: 'not found or no raw obj' }, 404);
-
-    if (!body.models.b) {
-      // Single model benchmark mode
-      const candidate = body.models.a as BakeoffCandidate;
-      const loaded = await loadDocBytes(c.env, docId, row.raw_object_key);
-      if ('skip' in loaded) return c.json(loaded.skip);
-      
-      const read = await runCandidateOnDoc(c.env, candidate, docId, loaded.bytes);
-      if (!read.ok) return c.json({ outcome: 'skipped', reason: 'read_failed' });
-      
-      const frow = await loadFilingRow(c.env, docId);
-      if (!frow) return c.json({ outcome: 'skipped', reason: 'no_filing' });
-      
-      const flagged = await recomputeTransactions(c.env, mapFiling(frow), read.rows);
-      // find hard flags
-      const hardFlags = Array.from(new Set(flagged.flatMap((f) => f.flags).filter((fl) => [
-        'ticker_not_found', 'future_transaction_date', 'amount_min_max_inverted', 'missing_amount', 'no_amount_bucket', 'invalid_transaction_date'
-      ].includes(fl)))); // from HARD_FAILURE_FLAGS
-
-      let outcome: string = 'would_publish';
-      let flags: string[] = [];
-      if (hardFlags.length > 0) {
-        outcome = 'agree_but_hardfail';
-        flags = hardFlags;
-      } else if (flagged.length > 200) {
-        outcome = 'agree_but_hardfail';
-        flags = ['row_limit_exceeded'];
-      }
-
-      // Check if document is resolved and get ground truth transactions
-      const reviewRow = await get<{ resolved: number }>(
-        c.env.DB,
-        `SELECT resolved FROM review_queue WHERE doc_id = ?`,
-        [docId]
-      );
-      const isResolved = reviewRow?.resolved === 1;
-
-      const groundTruth = isResolved
-        ? await all<any>(
-            c.env.DB,
-            `SELECT * FROM transactions WHERE doc_id = ? AND source IN ('primary', 'manual') AND deprecated_at IS NULL`,
-            [docId]
-          )
-        : null;
-
-      let comparison = null;
-      if (groundTruth !== null) {
-        const getTxFingerprint = (tx: any) => {
-          const eqStr = (v: any) => (v ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
-          return JSON.stringify([
-            eqStr(tx.ticker),
-            eqStr(tx.assetName),
-            tx.txDate ?? '',
-            eqStr(tx.txType),
-            tx.amountMin ?? null,
-            tx.amountMax ?? null,
-            eqStr(tx.owner),
-            eqStr(tx.assetType),
-            tx.isOption === true || tx.isOption === 1 || tx.isOption === '1',
-            tx.capGainsOver200 === true || tx.capGainsOver200 === 1 || tx.capGainsOver200 === '1',
-          ]);
-        };
-
-        const candFingerprints = flagged.map(f => getTxFingerprint(f.tx));
-        const gtFingerprints = groundTruth.map(t => getTxFingerprint({
-          ticker: t.ticker,
-          assetName: t.asset_name,
-          txDate: t.tx_date,
-          txType: t.tx_type,
-          amountMin: t.amount_min,
-          amountMax: t.amount_max,
-          owner: t.owner,
-          assetType: t.asset_type,
-          isOption: t.is_option,
-          capGainsOver200: t.cap_gains_over_200,
-        }));
-
-        const gtCounts: Record<string, number> = {};
-        for (const f of gtFingerprints) gtCounts[f] = (gtCounts[f] || 0) + 1;
-
-        const candCounts: Record<string, number> = {};
-        for (const f of candFingerprints) candCounts[f] = (candCounts[f] || 0) + 1;
-
-        let tp = 0;
-        let fp = 0;
-        let fn = 0;
-
-        const allFingerprints = new Set([...Object.keys(gtCounts), ...Object.keys(candCounts)]);
-        for (const f of allFingerprints) {
-          const gtVal = gtCounts[f] || 0;
-          const candVal = candCounts[f] || 0;
-          const match = Math.min(gtVal, candVal);
-          tp += match;
-          fp += Math.max(0, candVal - match);
-          fn += Math.max(0, gtVal - match);
-        }
-
-        comparison = {
-          resolved: true,
-          perfectMatch: fp === 0 && fn === 0,
-          tp,
-          fp,
-          fn,
-          gtCount: groundTruth.length,
-          candCount: flagged.length,
-        };
-      }
-
-      return c.json({
-        docId,
-        outcome,
-        flags: flags.length > 0 ? flags : undefined,
-        rowCount: flagged.length,
-        rows: flagged.map((f) => ({ ...f.tx, confidence: Math.max(f.tx.confidence ?? 0, 0.95) })),
-        comparison,
-        groundTruth: groundTruth ? groundTruth.map(t => ({
-          ticker: t.ticker,
-          assetName: t.asset_name,
-          txDate: t.tx_date,
-          txType: t.tx_type,
-          amountMin: t.amount_min,
-          amountMax: t.amount_max,
-          owner: t.owner,
-          assetType: t.asset_type,
-          isOption: t.is_option === 1,
-          capGainsOver200: t.cap_gains_over_200 === 1,
-        })) : null,
-      });
-    } else {
-      const agModels: AgreementModels = {
-        a: body.models.a as BakeoffCandidate,
-        b: body.models.b as BakeoffCandidate,
-        c: body.models.c ? (body.models.c as BakeoffCandidate) : null,
-      };
-      
-      // Pass dryRun = true
-      const res = await processAgreementDoc(c.env, agModels, docId, row.raw_object_key, true);
-      return c.json(res);
+    let body: Record<string, unknown>;
+    try {
+      body = await c.req.json<Record<string, unknown>>();
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
     }
+    if (
+      body.confirmRetryAfterUnknownOutcome !== undefined
+      && typeof body.confirmRetryAfterUnknownOutcome !== 'boolean'
+    ) {
+      return c.json({ error: 'confirmRetryAfterUnknownOutcome must be a boolean' }, 400);
+    }
+    if (body.confirmPaidRun !== undefined && typeof body.confirmPaidRun !== 'boolean') {
+      return c.json({ error: 'confirmPaidRun must be a boolean' }, 400);
+    }
+    const models = body.models as { a?: BenchmarkModelRef; b?: BenchmarkModelRef; c?: BenchmarkModelRef } | undefined;
+    if (!models?.a) return c.json({ error: 'models.a is required' }, 400);
+    if (models.b) {
+      // Preserve the pre-existing agreement dry-run contract. Durable benchmark
+      // runs execute every model independently, then use /simulate.
+      let agModels: AgreementModels;
+      try {
+        agModels = {
+          a: validateBenchmarkModel(models.a, 'models.a'),
+          b: validateBenchmarkModel(models.b, 'models.b'),
+          c: models.c ? validateBenchmarkModel(models.c, 'models.c') : null,
+        };
+      } catch (error) {
+        return c.json({ error: (error as Error).message }, 400);
+      }
+      const lineup = [agModels.a, agModels.b, ...(agModels.c ? [agModels.c] : [])];
+      if (new Set(lineup.map((model) => `${model.provider}:${model.model}`)).size !== lineup.length) {
+        return c.json({ error: 'agreement benchmark models must be distinct' }, 400);
+      }
+      if (new Set(lineup.map((model) => model.provider)).size !== lineup.length) {
+        return c.json({ error: 'agreement benchmark models must use distinct providers' }, 400);
+      }
+      const filing = await get<{ raw_object_key: string | null }>(
+        c.env.DB,
+        'SELECT raw_object_key FROM filings WHERE doc_id = ?',
+        [docId],
+      );
+      if (!filing?.raw_object_key) return c.json({ error: 'not found or no raw obj' }, 404);
+      const invocationPlans = await Promise.all(lineup.map(async (model) => ({
+        model,
+        apiKey: await keyFor(c.env, model.provider),
+      })));
+      const configuredModels = invocationPlans.filter((entry) => Boolean(entry.apiKey));
+      const plannedCalls = configuredModels.length;
+      if (plannedCalls > 0 && body.confirmPaidRun !== true) {
+        return c.json({
+          error: 'confirmPaidRun=true is required before reserving paid provider calls',
+          requiresConfirmation: true,
+          plannedCalls,
+          configuredModels: configuredModels.map((entry) => entry.model),
+        }, 409);
+      }
+      if (plannedCalls > 0) {
+        try {
+          await reserveBenchmarkCalls(c.env, plannedCalls);
+        } catch (error) {
+          const failure = benchmarkReservationFailure(error, plannedCalls);
+          return c.json(failure.body, failure.status);
+        }
+      }
+      return c.json(await processAgreementDoc(
+        c.env,
+        agModels,
+        docId,
+        filing.raw_object_key,
+        true,
+        undefined,
+        { invocations: invocationPlans.map(({ apiKey }) => ({ apiKey })) },
+      ));
+    }
+    let candidate: BakeoffCandidate;
+    try {
+      candidate = validateBenchmarkModel(models.a, 'models.a');
+    } catch (error) {
+      return c.json({ error: (error as Error).message }, 400);
+    }
+
+    const runId = typeof body.runId === 'string' ? body.runId.trim() : '';
+    let claimToken: string | undefined;
+    let unknownPriorAttempt = false;
+    let configured = false;
+    let invocationKey: string | null = null;
+    let runRecord: BenchmarkRunDetail | null = null;
+    let snapshot: BenchmarkRunDetail['documents'][number] | null = null;
+    if (runId) {
+      runRecord = await getBenchmarkRun(c.env.DB, runId);
+      if (!runRecord) return c.json({ error: 'benchmark run not found' }, 404);
+      snapshot = runRecord.documents.find((document) => document.docId === docId) ?? null;
+      if (!snapshot) return c.json({ error: 'document is not part of this benchmark run' }, 409);
+      if (!runRecord.models.some((model) => model.provider === candidate.provider && model.model === candidate.model)) {
+        return c.json({ error: 'model is not part of this benchmark run' }, 409);
+      }
+      const existing = runRecord.results.find((result) =>
+        result.docId === docId
+          && result.provider === candidate.provider
+          && result.model === candidate.model,
+      );
+      if (existing && existing.outcome !== 'running') {
+        const savedResult = existing.result && typeof existing.result === 'object'
+          ? existing.result as { rows?: ParsedTx[]; flags?: string[] }
+          : {};
+        return c.json({
+          runId,
+          docId,
+          outcome: existing.outcome,
+          flags: savedResult.flags,
+          rowCount: existing.rowCount,
+          rows: savedResult.rows ?? [],
+          comparison: existing.perfectMatch == null ? null : {
+            resolved: true,
+            perfectMatch: existing.perfectMatch,
+            tp: existing.truePositive ?? 0,
+            fp: existing.falsePositive ?? 0,
+            fn: existing.falseNegative ?? 0,
+            gtCount: Array.isArray(snapshot.groundTruth) ? snapshot.groundTruth.length : 0,
+            candCount: existing.rowCount,
+          },
+          groundTruth: snapshot.groundTruth,
+          ok: existing.ok,
+          invoked: existing.invoked,
+          error: existing.error,
+          latencyMs: existing.latencyMs,
+          usage: existing.usage,
+          costUsd: existing.costUsd,
+          costSource: existing.costSource,
+          costDetail: existing.costDetail,
+          resolvedModel: existing.resolvedModel,
+          providerRequestId: existing.providerRequestId,
+          cached: true,
+        });
+      }
+      if (runRecord.status !== 'running') {
+        return c.json({ error: `benchmark run is ${runRecord.status}` }, 409);
+      }
+      invocationKey = await keyFor(c.env, candidate.provider);
+      configured = Boolean(invocationKey);
+      const initiallyAuthorized = benchmarkRunAuthorizesInitialCell(runRecord, candidate);
+      if (!existing && configured && !initiallyAuthorized) {
+        if (body.confirmPaidRun !== true) {
+          return c.json({
+            error: 'this run cell has no paid-call reservation; confirmPaidRun=true is required',
+            code: 'benchmark_cell_reservation_required',
+            requiresConfirmation: true,
+            plannedCalls: 1,
+          }, 409);
+        }
+        try {
+          await reserveBenchmarkCalls(c.env, 1);
+        } catch (error) {
+          const failure = benchmarkReservationFailure(error, 1);
+          return c.json(failure.body, failure.status);
+        }
+      }
+
+      let claim = await claimBenchmarkMeasurement(c.env.DB, {
+        runId,
+        docId,
+        provider: candidate.provider,
+        model: candidate.model,
+        allowRetryAfterUnknownOutcome: false,
+      });
+      if (!claim.claimed && claim.state === 'orphaned') {
+        if (body.confirmRetryAfterUnknownOutcome !== true) {
+          return c.json({
+            error: 'the prior paid attempt expired with an unknown provider outcome',
+            code: 'benchmark_attempt_outcome_unknown',
+            runId,
+            docId,
+            state: claim.state,
+            leaseUntil: claim.leaseUntil,
+            requiresRetryConfirmation: true,
+          }, 409);
+        }
+        // The run's original reservation authorizes only its first attempt.
+        // A confirmed retry is a new possible provider charge and gets its own
+        // atomic daily-cap reservation before the lease may be reclaimed.
+        if (configured) {
+          try {
+            await reserveBenchmarkCalls(c.env, 1);
+          } catch (error) {
+            const failure = benchmarkReservationFailure(error, 1);
+            return c.json(failure.body, failure.status);
+          }
+        }
+        claim = await claimBenchmarkMeasurement(c.env.DB, {
+          runId,
+          docId,
+          provider: candidate.provider,
+          model: candidate.model,
+          allowRetryAfterUnknownOutcome: true,
+        });
+      }
+      if (!claim.claimed || !claim.claimToken) {
+        return c.json({
+          runId,
+          docId,
+          pending: true,
+          state: claim.state,
+          leaseUntil: claim.leaseUntil,
+          retryAfterMs: 2_000,
+        }, 202);
+      }
+      claimToken = claim.claimToken;
+      unknownPriorAttempt = claim.reclaimedUnknownOutcome;
+    } else {
+      invocationKey = await keyFor(c.env, candidate.provider);
+      configured = Boolean(invocationKey);
+      if (configured && body.confirmPaidRun !== true) {
+        return c.json({
+          error: 'confirmPaidRun=true is required before reserving paid provider calls',
+          requiresConfirmation: true,
+          plannedCalls: 1,
+          configuredModels: [candidate],
+        }, 409);
+      }
+      if (configured) {
+        try {
+          await reserveBenchmarkCalls(c.env, 1);
+        } catch (error) {
+          const failure = benchmarkReservationFailure(error, 1);
+          return c.json(failure.body, failure.status);
+        }
+      }
+    }
+
+    const costForPersistence = (measured: ReturnType<typeof priceBenchmarkUsage>) =>
+      unknownPriorAttempt
+        ? {
+            costUsd: null,
+            costSource: 'unknown' as const,
+            costDetail: {
+              ...measured.costDetail,
+              pricingBasis: null,
+              unknownReason: 'prior_attempt_outcome_unknown',
+              knownRetryAttemptCostUsd: measured.costUsd,
+            },
+          }
+        : measured;
+
+    const filing = await get<{ raw_object_key: string | null }>(
+      c.env.DB,
+      'SELECT raw_object_key FROM filings WHERE doc_id = ?',
+      [docId],
+    );
+    if (!filing?.raw_object_key) {
+      if (runId) {
+        const cost = priceBenchmarkUsage({
+          provider: candidate.provider,
+          model: candidate.model,
+          invoked: false,
+        });
+        const persistedCost = costForPersistence(cost);
+        await saveBenchmarkMeasurement(c.env.DB, {
+          runId,
+          docId,
+          provider: candidate.provider,
+          model: candidate.model,
+          invoked: unknownPriorAttempt,
+          ok: false,
+          outcome: 'skipped',
+          autonomous: false,
+          error: 'filing_or_raw_object_missing',
+          rowCount: 0,
+          latencyMs: null,
+          costUsd: persistedCost.costUsd,
+          costSource: persistedCost.costSource,
+          costDetail: persistedCost.costDetail,
+          result: { rows: [], flags: [] },
+          perfectMatch: null,
+          claimToken,
+        });
+        return c.json({
+          runId,
+          docId,
+          outcome: 'skipped',
+          reason: 'filing_or_raw_object_missing',
+          ok: false,
+          invoked: unknownPriorAttempt,
+          rowCount: 0,
+          rows: [],
+          latencyMs: null,
+          costUsd: persistedCost.costUsd,
+          costSource: persistedCost.costSource,
+          costDetail: persistedCost.costDetail,
+        });
+      }
+      return c.json({ error: 'not found or no raw obj' }, 404);
+    }
+    const loaded = await loadDocBytes(c.env, docId, filing.raw_object_key);
+    if ('skip' in loaded) {
+      const reason = 'reason' in loaded.skip ? String(loaded.skip.reason) : 'document_load_failed';
+      const cost = priceBenchmarkUsage({
+        provider: candidate.provider,
+        model: candidate.model,
+        invoked: false,
+      });
+      const persistedCost = costForPersistence(cost);
+      if (runId) {
+        await saveBenchmarkMeasurement(c.env.DB, {
+          runId,
+          docId,
+          provider: candidate.provider,
+          model: candidate.model,
+          invoked: unknownPriorAttempt,
+          ok: false,
+          outcome: 'skipped',
+          autonomous: false,
+          error: reason,
+          rowCount: 0,
+          latencyMs: null,
+          costUsd: persistedCost.costUsd,
+          costSource: persistedCost.costSource,
+          costDetail: persistedCost.costDetail,
+          result: { rows: [], flags: [] },
+          perfectMatch: null,
+          claimToken,
+        });
+      }
+      return c.json({
+        ...loaded.skip,
+        runId: runId || null,
+        ok: false,
+        invoked: unknownPriorAttempt,
+        rowCount: 0,
+        rows: [],
+        latencyMs: null,
+        costUsd: persistedCost.costUsd,
+        costSource: persistedCost.costSource,
+        costDetail: persistedCost.costDetail,
+      });
+    }
+
+    const startedAt = new Date().toISOString();
+    const read = await runCandidateOnDoc(c.env, candidate, docId, loaded.bytes, {
+      apiKey: invocationKey,
+    });
+    const completedAt = new Date().toISOString();
+    const cost = priceBenchmarkUsage({
+      provider: candidate.provider,
+      model: candidate.model,
+      resolvedModel: read.resolvedModel ?? null,
+      invoked: configured,
+      usage: read.usage,
+    });
+    const persistedCost = costForPersistence(cost);
+    const invocationPossible = configured || unknownPriorAttempt;
+    // Request-attempt telemetry is emitted by trackedFetch inside the adapter;
+    // these awaited events add the provider-reported billed units and the
+    // measured, rate-card-priced dollars for this exact benchmark read.
+    await pushExtractionTelemetry(c.env, read, 'benchmark');
+    if (cost.costUsd != null && !benchmarkUsageHasProviderReportedCost(read.usage)) {
+      await recordMeasuredThirdPartyUsage(c.env, {
+        provider: candidate.provider,
+        service: 'benchmark',
+        operation: 'benchmark-cost',
+        model: read.resolvedModel ?? candidate.model,
+        metricType: 'cost',
+        quantity: cost.costUsd,
+        unit: 'usd',
+        costUsd: cost.costUsd,
+        billingMode: 'actual',
+        confidence: 'actual',
+        metadata: {
+          costSource: cost.costSource,
+          benchmarkRunId: runId || null,
+        },
+      });
+    }
+    const groundTruth = snapshot?.resolved
+      ? Array.isArray(snapshot.groundTruth) ? snapshot.groundTruth as BenchmarkGroundTruthTx[] : []
+      : runRecord
+        ? null
+        : await benchmarkDocumentIsHumanResolved(c.env, docId)
+          ? await loadBenchmarkGroundTruth(c.env, docId)
+          : null;
+
+    if (!read.ok) {
+      const comparison = groundTruth !== null && invocationPossible
+        ? {
+            resolved: true as const,
+            perfectMatch: false,
+            tp: 0,
+            fp: 0,
+            fn: groundTruth.length,
+            gtCount: groundTruth.length,
+            candCount: 0,
+          }
+        : null;
+      if (runId) {
+        await saveBenchmarkMeasurement(c.env.DB, {
+          runId,
+          docId,
+          provider: candidate.provider,
+          model: candidate.model,
+          resolvedModel: read.resolvedModel ?? null,
+          invoked: invocationPossible,
+          ok: false,
+          outcome: 'skipped',
+          autonomous: false,
+          error: read.error ?? 'read_failed',
+          rowCount: 0,
+          avgConfidence: read.avgConfidence,
+          latencyMs: configured ? read.latencyMs : null,
+          costUsd: persistedCost.costUsd,
+          costSource: persistedCost.costSource,
+          costDetail: persistedCost.costDetail,
+          providerRequestId: read.providerRequestId ?? null,
+          usage: read.usage,
+          result: { rows: [], flags: [] },
+          perfectMatch: comparison?.perfectMatch ?? null,
+          truePositive: comparison?.tp ?? null,
+          falsePositive: comparison?.fp ?? null,
+          falseNegative: comparison?.fn ?? null,
+          startedAt,
+          completedAt,
+          claimToken,
+        });
+      }
+      return c.json({
+        runId: runId || null,
+        docId,
+        outcome: 'skipped',
+        reason: 'read_failed',
+        error: read.error,
+        rowCount: 0,
+        rows: [],
+        comparison,
+        groundTruth,
+        ok: false,
+        invoked: invocationPossible,
+        latencyMs: configured ? read.latencyMs : null,
+        usage: read.usage,
+        costUsd: persistedCost.costUsd,
+        costSource: persistedCost.costSource,
+        costDetail: persistedCost.costDetail,
+        resolvedModel: read.resolvedModel ?? null,
+        providerRequestId: read.providerRequestId ?? null,
+      });
+    }
+
+    const filingRow = await loadFilingRow(c.env, docId);
+    if (!filingRow) {
+      const comparison = groundTruth !== null && invocationPossible
+        ? {
+            resolved: true as const,
+            perfectMatch: false,
+            tp: 0,
+            fp: 0,
+            fn: groundTruth.length,
+            gtCount: groundTruth.length,
+            candCount: 0,
+          }
+        : null;
+      if (runId) {
+        await saveBenchmarkMeasurement(c.env.DB, {
+          runId,
+          docId,
+          provider: candidate.provider,
+          model: candidate.model,
+          resolvedModel: read.resolvedModel ?? null,
+          invoked: invocationPossible,
+          ok: false,
+          outcome: 'skipped',
+          autonomous: false,
+          error: 'filing_disappeared',
+          rowCount: 0,
+          avgConfidence: read.avgConfidence,
+          latencyMs: configured ? read.latencyMs : null,
+          costUsd: persistedCost.costUsd,
+          costSource: persistedCost.costSource,
+          costDetail: persistedCost.costDetail,
+          providerRequestId: read.providerRequestId ?? null,
+          usage: read.usage,
+          result: { rows: read.rows, flags: [] },
+          perfectMatch: comparison?.perfectMatch ?? null,
+          truePositive: comparison?.tp ?? null,
+          falsePositive: comparison?.fp ?? null,
+          falseNegative: comparison?.fn ?? null,
+          startedAt,
+          completedAt,
+          claimToken,
+        });
+      }
+      return c.json({
+        runId: runId || null,
+        docId,
+        outcome: 'skipped',
+        reason: 'filing_disappeared',
+        ok: false,
+        invoked: invocationPossible,
+        rowCount: 0,
+        rows: [],
+        comparison,
+        groundTruth,
+        latencyMs: configured ? read.latencyMs : null,
+        usage: read.usage,
+        costUsd: persistedCost.costUsd,
+        costSource: persistedCost.costSource,
+        costDetail: persistedCost.costDetail,
+        resolvedModel: read.resolvedModel ?? null,
+        providerRequestId: read.providerRequestId ?? null,
+      });
+    }
+    const flagged = await recomputeTransactions(c.env, mapFiling(filingRow), read.rows);
+    const blockingFlagSet = new Set<string>([...HARD_FAILURE_FLAGS, 'future_tx_date']);
+    const hardFlags = Array.from(new Set(
+      flagged.flatMap((result) => result.flags).filter((flag) => blockingFlagSet.has(flag)),
+    ));
+    const flags = hardFlags.length
+      ? hardFlags
+      : flagged.length > 200
+        ? ['row_limit_exceeded']
+        : [];
+    const outcome = flags.length ? 'agree_but_hardfail' : 'would_publish';
+    const rows = flagged.map((result) => result.tx);
+    // Agreement/autobuild autonomy means this read can clear structural
+    // validation without a human. Vision confidence is deliberately capped at
+    // 0.60 elsewhere, because cross-vendor agreement (not a single model's
+    // self-reported confidence) is what authorizes production auto-publish.
+    const autonomous = benchmarkReadIsAutonomous(outcome, rows.length);
+    const comparison = groundTruth === null
+      ? null
+      : compareBenchmarkRows(
+          rows as unknown as Array<Record<string, unknown>>,
+          groundTruth as unknown as Array<Record<string, unknown>>,
+        );
+    if (runId) {
+      await saveBenchmarkMeasurement(c.env.DB, {
+        runId,
+        docId,
+        provider: candidate.provider,
+        model: candidate.model,
+        resolvedModel: read.resolvedModel ?? null,
+        invoked: invocationPossible,
+        ok: true,
+        outcome,
+        autonomous,
+        rowCount: rows.length,
+        avgConfidence: read.avgConfidence,
+        latencyMs: configured ? read.latencyMs : null,
+        costUsd: persistedCost.costUsd,
+        costSource: persistedCost.costSource,
+        costDetail: persistedCost.costDetail,
+        providerRequestId: read.providerRequestId ?? null,
+        usage: read.usage,
+        result: { rows, flags },
+        perfectMatch: comparison?.perfectMatch ?? null,
+        truePositive: comparison?.tp ?? null,
+        falsePositive: comparison?.fp ?? null,
+        falseNegative: comparison?.fn ?? null,
+        startedAt,
+        completedAt,
+        claimToken,
+      });
+    }
+    return c.json({
+      runId: runId || null,
+      docId,
+      outcome,
+      ...(flags.length ? { flags } : {}),
+      rowCount: rows.length,
+      rows,
+      comparison,
+      groundTruth,
+      ok: true,
+      invoked: invocationPossible,
+      latencyMs: configured ? read.latencyMs : null,
+      usage: read.usage,
+      costUsd: persistedCost.costUsd,
+      costSource: persistedCost.costSource,
+      costDetail: persistedCost.costDetail,
+      resolvedModel: read.resolvedModel ?? null,
+      providerRequestId: read.providerRequestId ?? null,
+    });
   });
 
   // --- POST /migrate ------------------------------------------------------
@@ -3914,7 +5557,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          created_at TEXT NOT NULL
        )`,
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
-      // 0029-0037 — canonical value, reliability, Stripe, and review-autonomy tail.
+      // 0029-0039 — canonical value, reliability, Stripe, review, and benchmark tail.
       ...POST_0024_SCHEMA_STATEMENTS,
     ];
     const applied: string[] = [];

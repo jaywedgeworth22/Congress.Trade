@@ -24,6 +24,7 @@
 
 import { unzipSync } from 'fflate';
 import { CookieJar, delay } from './senateSource';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 /** A single filing row parsed out of the House yearly index XML. */
 export interface HouseFiling {
@@ -142,13 +143,13 @@ export function parseHouseIndexXml(xml: string, defaultYear: string): HouseFilin
  */
 export async function fetchHouseIndex(year: number | string): Promise<HouseFiling[]> {
   const url = houseBulkZipUrl(year);
-  const res = await fetch(url, {
+  const res = await trackedFetch(url, {
     headers: {
       // A plain UA avoids occasional WAF challenges on the Clerk host.
       'user-agent': 'congress-feed/0.1 (+https://congress.trade)',
       accept: 'application/zip,application/octet-stream,*/*',
     },
-  });
+  }, { service: 'filing-discovery', operation: 'fetch-house-bulk-index' });
   if (!res.ok) {
     throw new Error(`house bulk zip ${url} -> HTTP ${res.status}`);
   }
@@ -324,15 +325,15 @@ export async function pollHouseLiveSearch(
   const jar = new CookieJar();
 
   // 1) GET the search page to pick up any session cookie the result POST needs.
-  const landing = await fetchImpl(`${HOUSE_FD_BASE}/ViewSearch`, {
+  const landing = await trackedFetch(`${HOUSE_FD_BASE}/ViewSearch`, {
     headers: { 'user-agent': HOUSE_UA, accept: 'text/html,*/*' },
-  });
+  }, { service: 'filing-discovery', operation: 'open-house-search-session' }, fetchImpl);
   if (landing.ok) jar.absorb(landing);
 
   await delay(HOUSE_POLITE_DELAY_MS);
 
   // 2) POST the member search; the response is an HTML results table.
-  const res = await fetchImpl(HOUSE_SEARCH_RESULT, {
+  const res = await trackedFetch(HOUSE_SEARCH_RESULT, {
     method: 'POST',
     headers: {
       'user-agent': HOUSE_UA,
@@ -344,7 +345,7 @@ export async function pollHouseLiveSearch(
       ...(jar.header() ? { cookie: jar.header() } : {}),
     },
     body: buildHouseSearchBody(year).toString(),
-  });
+  }, { service: 'filing-discovery', operation: 'search-house-filings' }, fetchImpl);
   if (!res.ok) throw new Error(`house live search -> HTTP ${res.status}`);
   const html = await res.text();
   return parseHouseSearchHtml(html, String(year));

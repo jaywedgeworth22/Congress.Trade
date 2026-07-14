@@ -24,6 +24,7 @@ import {
 import type { SecurityRef } from '../enrichment/types';
 import { resolveSecrets } from '../secrets/infisical';
 import type { Env } from '../shared/types';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 type PeerEnv = Env & { APP_B_IMPORT_URL?: string; APP_B_INGEST_TOKEN?: string };
 
@@ -98,11 +99,11 @@ export async function shareWithPeer(
   const body = JSON.stringify(parsed.data);
 
   try {
-    const res = await fetchImpl(url, {
+    const res = await trackedFetch(url, {
       method: 'POST',
       headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
       body,
-    });
+    }, { service: 'peer-data-share', operation: 'push-market-data', dynamicTarget: 'peer-app' }, fetchImpl);
     const counts = { refs: refs.length, prices: prices.length, spx: spx.length };
     if (!res.ok) return { sent: false, reason: 'peer import failed: HTTP ' + res.status, status: res.status, counts };
     return { sent: true, status: res.status, counts };

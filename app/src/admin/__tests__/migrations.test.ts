@@ -14,6 +14,7 @@ import {
   REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
   STRIPE_EVENT_SCHEMA_STATEMENTS,
 } from '../migrations';
+import { BENCHMARK_SCHEMA_STATEMENTS } from '../../benchmark/schema';
 
 interface SqliteRunResult {
   changes: number | bigint;
@@ -161,6 +162,7 @@ describe('admin migration bootstrap', () => {
       ...RELIABILITY_SCHEMA_STATEMENTS,
       ...STRIPE_EVENT_SCHEMA_STATEMENTS,
       ...REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
+      ...BENCHMARK_SCHEMA_STATEMENTS,
     ]);
   });
 
@@ -176,7 +178,7 @@ describe('admin migration bootstrap', () => {
     expect(sql).not.toContain('review_delivery_outbox');
   });
 
-  it('matches the real 0029-0037 file schema and passes readiness on SQLite', async () => {
+  it('matches the real 0029-0040 file schema and passes readiness on SQLite', async () => {
     const files = migrationFiles();
     const priorFiles = files.filter((name) => Number(name.slice(0, 4)) <= 24);
     const fileDb = await sqliteDatabase();

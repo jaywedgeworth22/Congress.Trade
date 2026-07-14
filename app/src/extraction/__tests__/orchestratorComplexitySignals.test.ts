@@ -6,6 +6,7 @@ import type { Env } from '../../shared/types';
 // scoped narrowly to the raw_bytes/page_count persistence added to extractParsed().
 const mocks = vi.hoisted(() => ({
   buildExtractorPipeline: vi.fn(),
+  reportAiUsage: vi.fn(async () => {}),
 }));
 
 vi.mock('../../extractors/types', async () => {
@@ -17,6 +18,10 @@ vi.mock('../../extractors/types', async () => {
     buildExtractorPipeline: mocks.buildExtractorPipeline,
   };
 });
+
+vi.mock('../../shared/telemetry', () => ({
+  reportAiUsage: mocks.reportAiUsage,
+}));
 
 import { extractParsed } from '../orchestrator';
 
@@ -81,6 +86,7 @@ function fakeRawFiles(bytes: ArrayBuffer) {
 describe('orchestrator complexity signals (raw_bytes / page_count)', () => {
   beforeEach(() => {
     mocks.buildExtractorPipeline.mockReset();
+    mocks.reportAiUsage.mockReset();
   });
 
   it('records raw_bytes and page_count after a successful extraction', async () => {
@@ -138,5 +144,79 @@ describe('orchestrator complexity signals (raw_bytes / page_count)', () => {
 
     const pageCountRun = runs.find((r) => /SET page_count = \? WHERE doc_id/i.test(r.sql));
     expect(pageCountRun).toBeUndefined();
+  });
+
+  it('reports every arbitrated model run and returns their provider request identities', async () => {
+    const modelRuns = [
+      {
+        extractor: 'vision-primary',
+        modelVersion: 'gemini-3.5-flash',
+        providerRequestId: 'primary-request',
+        usage: { promptTokens: 100, completionTokens: 20 },
+      },
+      {
+        extractor: 'vision-secondary',
+        modelVersion: 'gemini-2.5-pro',
+        providerRequestId: 'secondary-request',
+        usage: { promptTokens: 120, completionTokens: 30 },
+      },
+    ];
+    mocks.buildExtractorPipeline.mockReturnValue([{
+      name: 'arbitrating(vision-primary,vision-secondary)',
+      canHandle: () => true,
+      extract: async () => ({
+        transactions: [],
+        confidence: 0.8,
+        raw: 'text',
+        extractor: 'arbitrating(vision-primary,vision-secondary)',
+        modelVersion: 'gemini-3.5-flash',
+        modelRuns,
+      }),
+    }]);
+    const bytes = new ArrayBuffer(42);
+    const { db } = fakeDb();
+    const env = { DB: db, RAW_FILES: fakeRawFiles(bytes) } as unknown as Env;
+
+    const extracted = await extractParsed(env, 'H-1');
+
+    expect(extracted?.modelRuns).toEqual(modelRuns);
+    expect(mocks.reportAiUsage).toHaveBeenNthCalledWith(1, env, expect.objectContaining({
+      provider: 'gemini',
+      model: 'gemini-3.5-flash',
+      promptTokens: 100,
+      completionTokens: 20,
+    }));
+    expect(mocks.reportAiUsage).toHaveBeenNthCalledWith(2, env, expect.objectContaining({
+      provider: 'gemini',
+      model: 'gemini-2.5-pro',
+      promptTokens: 120,
+      completionTokens: 30,
+    }));
+  });
+
+  it('uses the provider-resolved model attached to a failed parse', async () => {
+    const providerError = Object.assign(new Error('parse failed'), {
+      resolvedModel: 'gemini-2.5-pro-20260701',
+      providerRequestId: 'failed-request',
+      usage: { promptTokens: 0, completionTokens: 17, cachedTokens: 3 },
+    });
+    mocks.buildExtractorPipeline.mockReturnValue([{
+      name: 'vision-secondary',
+      canHandle: () => true,
+      extract: async () => { throw providerError; },
+    }]);
+    const bytes = new ArrayBuffer(42);
+    const { db } = fakeDb();
+    const env = { DB: db, RAW_FILES: fakeRawFiles(bytes) } as unknown as Env;
+
+    await expect(extractParsed(env, 'H-1')).rejects.toBe(providerError);
+
+    expect(mocks.reportAiUsage).toHaveBeenCalledWith(env, expect.objectContaining({
+      provider: 'gemini',
+      model: 'gemini-2.5-pro-20260701',
+      promptTokens: 0,
+      completionTokens: 17,
+      cachedTokens: 3,
+    }));
   });
 });

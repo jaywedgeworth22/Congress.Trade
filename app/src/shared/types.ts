@@ -186,6 +186,8 @@ export interface ParsedTx {
   amountMax: number | null;
   isOption: boolean;
   capGainsOver200: boolean;
+  /** Source fields that were explicitly unreadable and were defaulted locally. */
+  extractionWarnings?: Array<'unreadable_is_option' | 'unreadable_cap_gains'>;
   /** Verbatim source text for this row, for audit/review. */
   rawText: string;
   /** Structured/detail text that belongs to this filing row, not page chrome. */
@@ -399,7 +401,37 @@ export type QueueMessage =
       subscriptionId?: string;
       /** Keyset cursor for one-page-per-message webhook fanout. */
       afterSubscriptionId?: string;
+    }
+  | {
+      /** Durable hand-off for one secret-safe external API usage event. */
+      type: 'usage.telemetry';
+      event: ThirdPartyUsageTelemetryEvent;
     };
+
+/**
+ * Wire shape accepted by usage.jays.services. Keep this deliberately free of
+ * request URLs, headers, query strings, bodies, and response payloads.
+ */
+export interface ThirdPartyUsageTelemetryEvent {
+  idempotencyKey: string;
+  sourceApp: 'congress-trade';
+  environment: string;
+  provider: string;
+  service: string;
+  project: 'congress-trade';
+  label: string;
+  keyRef: string;
+  billingMode: 'actual' | 'estimated' | 'manual';
+  metricType: 'usage' | 'cost' | 'limit';
+  quantity?: number;
+  unit?: 'request' | 'call' | 'token' | 'credit' | 'usd' | 'page' | 'job' | 'document' | 'row' | 'byte';
+  costUsd?: number;
+  requests?: number;
+  credits?: number;
+  confidence: 'actual' | 'estimated' | 'manual';
+  occurredAt: string;
+  metadata?: Record<string, string | number | boolean | null>;
+}
 
 // ---------------------------------------------------------------------------
 // Worker environment bindings + secrets
@@ -518,6 +550,8 @@ export interface Env {
   SENTRY_DSN?: string;
   /** Sentry event/log environment tag, e.g. "production" | "preview". */
   SENTRY_ENVIRONMENT?: string;
+  /** Read-only safety switch for isolated branch-review deployments. */
+  PREVIEW_DEPLOYMENT?: string;
   /** Uniform trace sampling rate (0-1) for the Sentry Cloudflare SDK; overrides the code default. */
   SENTRY_TRACES_SAMPLE_RATE?: string;
   /** Cloudflare Workers version metadata binding; used by Sentry to auto-tag the release. */

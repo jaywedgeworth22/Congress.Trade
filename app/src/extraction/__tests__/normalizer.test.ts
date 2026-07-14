@@ -428,4 +428,25 @@ describe('normalize', () => {
     expect(cap.reviewRows).toHaveLength(1);
     expect(String(cap.reviewRows[0][1])).toContain('bad_asset_name');
   });
+
+  it('routes unreadable or missing asset names to review instead of publishing a guessed row', async () => {
+    for (const assetName of ['', '(unknown)', 'unreadable']) {
+      const { env, cap } = makeEnv([]);
+      const result = await normalize(env, filing(), [tx({ ticker: null, assetName })]);
+      expect(result.needsReview).toBe(true);
+      expect(cap.insertedTx).toHaveLength(0);
+      expect(String(cap.reviewRows[0][1])).toContain('bad_asset_name');
+    }
+  });
+
+  it('routes rows with unreadable option or capital-gains checkboxes to review', async () => {
+    const { env, cap } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    const result = await normalize(env, filing(), [tx({
+      extractionWarnings: ['unreadable_is_option', 'unreadable_cap_gains'],
+    })]);
+    expect(result.needsReview).toBe(true);
+    expect(cap.insertedTx).toHaveLength(0);
+    expect(String(cap.reviewRows[0][1])).toContain('unreadable_is_option');
+    expect(String(cap.reviewRows[0][1])).toContain('unreadable_cap_gains');
+  });
 });

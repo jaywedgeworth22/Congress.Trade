@@ -165,6 +165,26 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .bench-table td { font-size: 13px; padding: 10px 8px; white-space: normal; word-break: break-word; }
   .bench-table th:first-child, .bench-table td:first-child { width: 130px; }
   .bench-table th:last-child, .bench-table td:last-child { width: 220px; }
+  #benchmarkResults { display:block; min-width:0; width:100%; margin:10px 0 14px; }
+  .benchmark-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:10px 0; }
+  .benchmark-toolbar select { min-width:min(100%, 280px); }
+  .benchmark-meta { display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }
+  .benchmark-chip { display:inline-flex; align-items:center; gap:4px; padding:4px 8px; border:1px solid var(--border); border-radius:999px; color:var(--text-dim); font-size:11px; }
+  .benchmark-panel { border:1px solid var(--border); border-radius:12px; padding:14px; margin-top:14px; min-width:0; background:color-mix(in srgb,var(--panel-2) 44%,transparent); }
+  .benchmark-panel h4 { margin:0 0 8px; }
+  .benchmark-table-wrap { overflow-x:auto; width:100%; border-radius:10px; }
+  .benchmark-table-wrap .bench-table { min-width:1040px; table-layout:auto; margin-top:0; }
+  .benchmark-table-wrap .bench-table th:first-child,
+  .benchmark-table-wrap .bench-table td:first-child { width:auto; min-width:180px; }
+  .benchmark-table-wrap .bench-table th:last-child,
+  .benchmark-table-wrap .bench-table td:last-child { width:auto; }
+  .benchmark-lineup { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; align-items:end; }
+  .benchmark-lineup label { display:block; min-width:0; }
+  .benchmark-lineup select { display:block; width:100%; margin-top:4px; }
+  @media (max-width:720px) {
+    .benchmark-lineup { grid-template-columns:1fr; }
+    .benchmark-toolbar > * { flex:1 1 150px; }
+  }
   /* fold-out advanced search */
   .search-panel {
     display: none; gap: 10px; flex-wrap: wrap; align-items: center;
@@ -1733,14 +1753,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
     <div class="section">
       <h3>Model Benchmarking</h3>
-      <p class="sub">Run systematic tests of individual models against a sample of human-resolved filings (ground truth) to evaluate autonomy vs accuracy. Note: Evaluates up to 25 docs per run.</p>
-      <div class="row-flex" style="margin-bottom:8px; gap: 8px;">
-        <button class="btn primary" id="btnBenchHouse" onclick="runChamberBenchmark('house')">Benchmark House</button>
-        <button class="btn primary" id="btnBenchSenate" onclick="runChamberBenchmark('senate')">Benchmark Senate</button>
-        <button class="btn primary" id="btnBenchExec" onclick="runChamberBenchmark('executive')">Benchmark Exec</button>
+      <p class="sub">Run measured tests against saved filings. Every run is saved by branch with resolved ground-truth coverage, measured list-price cost coverage, and latency.</p>
+      <div class="benchmark-toolbar" role="tablist" aria-label="Benchmark branch">
+        <button class="btn sm" id="btnBenchHouse" role="tab" aria-selected="true" onclick="selectBenchmarkChamber('house')">House</button>
+        <button class="btn ghost sm" id="btnBenchSenate" role="tab" aria-selected="false" onclick="selectBenchmarkChamber('senate')">Senate</button>
+        <button class="btn ghost sm" id="btnBenchExec" role="tab" aria-selected="false" onclick="selectBenchmarkChamber('executive')">Executive</button>
+        <label class="lbl" for="benchmarkHistory">Saved run</label>
+        <select id="benchmarkHistory" onchange="loadBenchmarkRun(this.value)" aria-label="Saved benchmark run"><option value="">No saved runs</option></select>
+        <button class="btn ghost sm" onclick="loadBenchmarkHistory()">Reload</button>
+        <button class="btn sm" id="btnRunBenchmark" onclick="runChamberBenchmark()">Run House benchmark</button>
       </div>
-      <span id="benchmarkMsg" class="note"></span>
-      <div id="benchmarkResults" class="diag-grid" aria-live="polite"></div>
+      <div id="benchmarkSettingsSummary" class="note">Loading saved House lineup…</div>
+      <div id="benchmarkMsg" class="note" role="status" aria-live="polite"></div>
+      <div id="benchmarkResults" aria-live="polite"><div class="state">Loading saved House benchmarks…</div></div>
     </div>
     <div class="section">
       <h3>Source Health</h3>
@@ -3410,6 +3435,9 @@ function statusBadge(status) {
    list rather than fetched, same as REVIEW_AMOUNT_BRACKETS above. */
 var REREAD_MODELS = [
   { provider: 'gemini', model: 'gemini-3.5-flash' },
+  { provider: 'openai', model: 'gpt-5.6-terra' },
+  { provider: 'openai', model: 'gpt-5.6-luna' },
+  { provider: 'openai', model: 'gpt-5.6-sol' },
   { provider: 'openai', model: 'gpt-4o' },
   { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   { provider: 'anthropic', model: 'claude-haiku-4-5' },
@@ -4662,370 +4690,534 @@ function loadMarketCoverage() {
 async function apiCall(path, method, body) {
   const res = await fetch(path, {
     method,
-    headers: adminHeaders(),
+    headers: adminHeaders(body === undefined ? {} : { 'content-type': 'application/json' }),
     body: body ? JSON.stringify(body) : undefined
   });
-  if (!res.ok) throw new Error('API error: ' + res.status);
-  return res.json();
+  var text = await res.text();
+  var data = {};
+  if (text) {
+    try { data = JSON.parse(text); }
+    catch (e) { data = { error: text.slice(0, 240) }; }
+  }
+  if (!res.ok) {
+    var error = new Error((data && data.error) || ('API error: ' + res.status));
+    error.status = res.status;
+    error.details = data;
+    throw error;
+  }
+  return data;
 }
 
-var currentBenchmarkDocs = [];
-var currentBenchmarkRuns = {};
+var benchmarkState = {
+  chamber: 'house',
+  runs: [],
+  current: null,
+  settings: null,
+  running: false,
+  simulationRequest: 0,
+  unknownOutcomeRetryDecision: null
+};
 
-async function runChamberBenchmark(chamberName) {
-  var msg = el('benchmarkMsg');
-  var res = el('benchmarkResults');
-  var btns = [el('btnBenchHouse'), el('btnBenchSenate'), el('btnBenchExec')];
-  
-  var cLower = chamberName.toLowerCase();
-  var limit = cLower === 'executive' ? 5 : 25;
-  msg.innerText = 'Fetching ground-truth docs for ' + chamberName + ' filings...';
-  msg.style.color = '';
-  res.innerHTML = '';
-  btns.forEach(b => { if (b) b.disabled = true; });
+function benchmarkChamberLabel(chamber) {
+  if (chamber === 'senate') return 'Senate';
+  if (chamber === 'executive') return 'Executive';
+  return 'House';
+}
 
-  try {
-    const docsData = await apiCall('/api/admin/benchmark/ground-truth-docs?limit=' + limit + '&chamber=' + cLower, 'GET');
-    const docList = docsData.docs || [];
-    var cLabel = chamberName.charAt(0).toUpperCase() + chamberName.slice(1);
-    if (!docList.length) {
-      msg.innerText = 'No ground-truth docs found for ' + cLabel + ' filings.';
-      btns.forEach(b => { if (b) b.disabled = false; });
-      return;
-    }
+function benchmarkModelKey(model) {
+  return model && model.provider && model.model ? model.provider + ':' + model.model : '';
+}
 
-    currentBenchmarkDocs = docList;
-    currentBenchmarkRuns = {};
-    docList.forEach(d => { currentBenchmarkRuns[d.docId] = {}; });
+function benchmarkModelRef(value) {
+  var index = String(value || '').indexOf(':');
+  if (index < 1) return null;
+  return { provider: value.slice(0, index), model: value.slice(index + 1) };
+}
 
-    var html = '<div style="margin-bottom:20px; overflow-x:auto;">';
-    html += '<h4>1. Individual Model Performance</h4>';
-    html += '<table class="bench-table"><thead><tr>' +
-            '<th>Model</th>' +
-            '<th>Accuracy <span class="note" title="Perfect match rate: % of human-resolved filings where the model extracted the exact correct set of transactions.">(Perfect Match)</span></th>' +
-            '<th>Autonomy Rate <span class="note" title="Autonomy rate: % of filings that would autonomously publish (met confidence >= 90% and had no validation failures).">(Autobuild)</span></th>' +
-            '<th>F1-Score / Stats</th>' +
-            '<th>Avg Conf</th>' +
-            '<th>Validation Errors / Failure Reasons</th>' +
-            '</tr></thead><tbody id="benchmarkTbody">';
-            
-    for (var i = 0; i < REREAD_MODELS.length; i++) {
-      var mLabel = REREAD_MODELS[i].provider + ':' + REREAD_MODELS[i].model;
-      html += '<tr id="lineup-' + i + '" data-model="' + esc(mLabel) + '">' +
-              '<td><strong>' + esc(REREAD_MODELS[i].model) + '</strong> <small class="note">(' + esc(REREAD_MODELS[i].provider) + ')</small></td>' +
-              '<td class="accuracy-val">Pending...</td>' +
-              '<td class="autonomy-val">Pending...</td>' +
-              '<td class="stats-val">Pending...</td>' +
-              '<td class="conf-val">Pending...</td>' +
-              '<td class="breakdown-val">Pending...</td>' +
-              '</tr>';
-    }
-    html += '</tbody></table></div>';
-    
-    // Add placeholder for Cascade Simulation Tool
-    html += '<div id="cascadeSimulationContainer"></div>';
-    res.innerHTML = html;
+function benchmarkPct(value) {
+  return typeof value === 'number' && isFinite(value) ? (value * 100).toFixed(1) + '%' : 'N/A';
+}
 
-    // Run evaluations
-    for (let i = 0; i < REREAD_MODELS.length; i++) {
-      const singleModel = REREAD_MODELS[i];
-      const modelLabel = singleModel.provider + ':' + singleModel.model;
-      const testModels = { a: singleModel };
-      
-      let published = 0;
-      let flagged = 0;
-      let breakdown = {};
-      let totalConf = 0;
-      let totalDocsTested = 0;
-      
-      let resolvedCount = 0;
-      let perfectMatches = 0;
-      let totalTp = 0;
-      let totalFp = 0;
-      let totalFn = 0;
+function benchmarkUsd(value) {
+  if (typeof value !== 'number' || !isFinite(value)) return 'Unknown';
+  return '$' + value.toFixed(value < 0.01 ? 5 : 3);
+}
 
-      const CONCURRENCY = 5;
-      for (let chunkStart = 0; chunkStart < docList.length; chunkStart += CONCURRENCY) {
-        const chunk = docList.slice(chunkStart, chunkStart + CONCURRENCY);
-        const endDoc = Math.min(chunkStart + CONCURRENCY, docList.length);
-        msg.innerText = 'Evaluating ' + singleModel.model + ' (' + (i + 1) + '/' + REREAD_MODELS.length + ')... Docs ' + (chunkStart + 1) + '-' + endDoc + '/' + docList.length;
-        
-        await Promise.all(chunk.map(async (docObj, offset) => {
-          try {
-            const result = await apiCall('/api/admin/benchmark/dry-run/' + docObj.docId, 'POST', { models: testModels });
-            currentBenchmarkRuns[docObj.docId][modelLabel] = result;
-            
-            const autoPublished = result.outcome === 'published' || result.outcome === 'would_publish';
-            let confidence = 1;
-            if (result.rows && result.rows.length) {
-              confidence = result.rows.reduce((min, r) => Math.min(min, r.confidence || 0), 1);
-            }
-            totalConf += confidence;
-            totalDocsTested++;
-            
-            if (autoPublished && confidence >= 0.90) {
-              published++;
-            } else {
-              flagged++;
-              let reason = result.outcome || 'unknown_failure';
-              if (reason === 'agree_but_hardfail' && result.flags) {
-                 reason += ' (' + result.flags.join(',') + ')';
-              }
-              if (result.reason) reason += ' (' + result.reason + ')';
-              if (result.error) reason += ' (' + result.error + ')';
-              if (autoPublished && confidence < 0.90) reason = 'low_confidence';
-              breakdown[reason] = (breakdown[reason] || 0) + 1;
-            }
-            
-            // Match stats
-            if (result.comparison) {
-              resolvedCount++;
-              if (result.comparison.perfectMatch) perfectMatches++;
-              totalTp += result.comparison.tp || 0;
-              totalFp += result.comparison.fp || 0;
-              totalFn += result.comparison.fn || 0;
-            }
-          } catch (e) {
-            flagged++;
-            const eStr = String(e);
-            breakdown[eStr] = (breakdown[eStr] || 0) + 1;
-          }
-        }));
-        
-        // Update individual model row cells after each chunk finishes
-        var rowEl = document.getElementById('lineup-' + i);
-        if (rowEl) {
-          var accCell = rowEl.querySelector('.accuracy-val');
-          var autoCell = rowEl.querySelector('.autonomy-val');
-          var statsCell = rowEl.querySelector('.stats-val');
-          var confCell = rowEl.querySelector('.conf-val');
-          var breakCell = rowEl.querySelector('.breakdown-val');
-          
-          var accRate = resolvedCount > 0 ? ((perfectMatches / resolvedCount) * 100).toFixed(1) + '%' : 'N/A';
-          var autoRate = ((published / totalDocsTested) * 100).toFixed(1) + '%';
-          var avgConfStr = totalDocsTested > 0 ? (totalConf / totalDocsTested).toFixed(2) : '0.00';
-          
-          var f1Str = 'N/A';
-          if (resolvedCount > 0) {
-            var avgTp = (totalTp / resolvedCount).toFixed(1);
-            var avgFp = (totalFp / resolvedCount).toFixed(1);
-            var avgFn = (totalFn / resolvedCount).toFixed(1);
-            var precision = totalTp + totalFp > 0 ? totalTp / (totalTp + totalFp) : 0;
-            var recall = totalTp + totalFn > 0 ? totalTp / (totalTp + totalFn) : 0;
-            var f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
-            f1Str = (f1 * 100).toFixed(0) + '% <small class="note">(TP:' + avgTp + ' FP:' + avgFp + ' FN:' + avgFn + ')</small>';
-          }
-          
-          var breakdownHtml = Object.entries(breakdown).map(([k, v]) => esc(k) + ': ' + v).join(', ');
-          
-          if (accCell) accCell.innerHTML = accRate + ' <small class="note">(' + perfectMatches + '/' + resolvedCount + ')</small>';
-          if (autoCell) autoCell.innerText = autoRate + ' (' + published + '/' + totalDocsTested + ')';
-          if (statsCell) statsCell.innerHTML = f1Str;
-          if (confCell) confCell.innerText = avgConfStr;
-          if (breakCell) breakCell.innerHTML = breakdownHtml || '<span style="color:var(--pos)">None</span>';
-        }
-      }
-    }
+function benchmarkCostText(perDocument, covered, calls) {
+  if (typeof perDocument === 'number') return benchmarkUsd(perDocument);
+  if (!(calls > 0)) return 'N/A';
+  if (covered > 0) return 'Unknown (partial)';
+  return 'Unknown';
+}
 
-    // Render interactive simulation tool
-    renderCascadeSimulation();
-    msg.innerText = chamberName.toUpperCase() + ' benchmark completed!';
-  } catch (err) {
-    msg.style.color = 'var(--neg)';
-    msg.innerText = 'Error: ' + err;
-  } finally {
-    btns.forEach(b => { if (b) b.disabled = false; });
+function benchmarkDate(value) {
+  if (!value) return 'Unknown time';
+  var parsed = new Date(value);
+  return isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
+}
+
+function normalizedBenchmarkLineup(settings) {
+  var source = settings && settings.lineup ? settings.lineup : {};
+  function normalize(value) {
+    if (!value) return null;
+    if (value.provider && value.model) return { provider: value.provider, model: value.model };
+    if (value.id) return benchmarkModelRef(value.id);
+    if (typeof value === 'string') return benchmarkModelRef(value);
+    return null;
+  }
+  return { a: normalize(source.a), b: normalize(source.b), c: normalize(source.c) };
+}
+
+function renderBenchmarkSettingsSummary() {
+  var box = el('benchmarkSettingsSummary');
+  if (!box) return;
+  var lineup = normalizedBenchmarkLineup(benchmarkState.settings);
+  var values = ['A ' + (benchmarkModelKey(lineup.a) || 'not set'), 'B ' + (benchmarkModelKey(lineup.b) || 'not set'), 'C ' + (benchmarkModelKey(lineup.c) || 'not set')];
+  var previewNote = benchmarkState.settings && benchmarkState.settings.writeProtected
+    ? ' <span class="note">Preview is read-only; save in production after approval.</span>'
+    : '';
+  box.innerHTML = '<strong>Saved ' + esc(benchmarkChamberLabel(benchmarkState.chamber)) + ' autopublish lineup:</strong> ' + esc(values.join(' · ')) + previewNote;
+}
+
+function setBenchmarkButtons() {
+  var map = { house: 'btnBenchHouse', senate: 'btnBenchSenate', executive: 'btnBenchExec' };
+  Object.keys(map).forEach(function(chamber) {
+    var button = el(map[chamber]);
+    if (!button) return;
+    var active = chamber === benchmarkState.chamber;
+    button.className = 'btn sm' + (active ? '' : ' ghost');
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+    button.disabled = benchmarkState.running;
+  });
+  var runButton = el('btnRunBenchmark');
+  if (runButton) {
+    var resumable = benchmarkState.current && benchmarkState.current.status === 'running' && benchmarkState.current.chamber === benchmarkState.chamber;
+    runButton.disabled = benchmarkState.running;
+    runButton.textContent = benchmarkState.running
+      ? 'Benchmark running…'
+      : (resumable ? 'Resume ' : 'Run ') + benchmarkChamberLabel(benchmarkState.chamber) + ' benchmark';
   }
 }
 
-var MODEL_COSTS = {
-  'gemini-3.5-flash': 0.075,
-  'gpt-4o': 2.50,
-  'claude-sonnet-4-6': 3.00,
-  'claude-haiku-4-5': 0.25,
-  'mistral-ocr-latest': 0.25,
-  'grok-4.3': 2.00,
-  'fast': 1.00,
-  'cost-effective': 1.50,
-  'agentic': 5.00
-};
+function selectBenchmarkChamber(chamber) {
+  if (benchmarkState.running) return;
+  if (chamber !== 'house' && chamber !== 'senate' && chamber !== 'executive') return;
+  benchmarkState.chamber = chamber;
+  benchmarkState.current = null;
+  benchmarkState.settings = null;
+  setBenchmarkButtons();
+  if (el('benchmarkResults')) el('benchmarkResults').innerHTML = '<div class="state">Loading saved ' + esc(benchmarkChamberLabel(chamber)) + ' benchmarks…</div>';
+  loadBenchmarkHistory();
+}
+
+function renderBenchmarkHistoryOptions(selectedId) {
+  var select = el('benchmarkHistory');
+  if (!select) return;
+  if (!benchmarkState.runs.length) {
+    select.innerHTML = '<option value="">No saved runs</option>';
+    return;
+  }
+  select.innerHTML = benchmarkState.runs.map(function(run) {
+    var label = benchmarkDate(run.startedAt) + ' · ' + run.status + ' · ' + run.requestedDocCount + ' docs';
+    return '<option value="' + esc(run.id) + '"' + (run.id === selectedId ? ' selected' : '') + '>' + esc(label) + '</option>';
+  }).join('');
+}
+
+async function loadBenchmarkHistory(chamber, selectedId) {
+  if (chamber) benchmarkState.chamber = chamber;
+  var requestedChamber = benchmarkState.chamber;
+  var msg = el('benchmarkMsg');
+  if (msg) { msg.style.color = ''; msg.textContent = 'Loading saved ' + benchmarkChamberLabel(requestedChamber) + ' runs…'; }
+  setBenchmarkButtons();
+  try {
+    var runsData = await apiCall('/api/admin/benchmark/runs?chamber=' + encodeURIComponent(requestedChamber) + '&limit=50', 'GET');
+    if (requestedChamber !== benchmarkState.chamber) return;
+    benchmarkState.runs = runsData.runs || [];
+    try {
+      benchmarkState.settings = await apiCall('/api/admin/benchmark/settings/' + encodeURIComponent(requestedChamber), 'GET');
+    } catch (settingsError) {
+      benchmarkState.settings = null;
+      if (msg) msg.textContent = 'Runs loaded; saved lineup unavailable: ' + settingsError.message;
+    }
+    renderBenchmarkSettingsSummary();
+    var id = selectedId || (benchmarkState.runs[0] && benchmarkState.runs[0].id) || '';
+    renderBenchmarkHistoryOptions(id);
+    if (id) await loadBenchmarkRun(id);
+    else {
+      benchmarkState.current = null;
+      if (el('benchmarkResults')) el('benchmarkResults').innerHTML = '<div class="state">No saved ' + esc(benchmarkChamberLabel(requestedChamber)) + ' benchmark runs yet.</div>';
+      if (msg && benchmarkState.settings) msg.textContent = 'No saved runs. Starting a benchmark will preserve its results here.';
+    }
+  } catch (error) {
+    if (msg) { msg.style.color = 'var(--neg)'; msg.textContent = 'Could not load benchmark history: ' + error.message; }
+    if (el('benchmarkResults')) el('benchmarkResults').innerHTML = '<div class="state">Saved benchmark history is unavailable.</div>';
+  }
+}
+
+async function loadBenchmarkRun(runId) {
+  if (!runId) return;
+  var expectedChamber = benchmarkState.chamber;
+  try {
+    var data = await apiCall('/api/admin/benchmark/runs/' + encodeURIComponent(runId), 'GET');
+    if (expectedChamber !== benchmarkState.chamber) return;
+    benchmarkState.current = data.run;
+    setBenchmarkButtons();
+    renderBenchmarkHistoryOptions(runId);
+    renderBenchmarkRun(data.run);
+    var msg = el('benchmarkMsg');
+    if (msg && !benchmarkState.running) msg.textContent = 'Viewing saved ' + benchmarkChamberLabel(expectedChamber) + ' run ' + runId + '.';
+  } catch (error) {
+    if (el('benchmarkMsg')) el('benchmarkMsg').textContent = 'Could not load saved run: ' + error.message;
+  }
+}
+
+function fallbackBenchmarkSummaries(run) {
+  var results = run.results || [];
+  return (run.models || []).map(function(model) {
+    var mine = results.filter(function(result) { return result.provider === model.provider && result.model === model.model; });
+    var invoked = mine.filter(function(result) { return result.invoked; });
+    var covered = invoked.filter(function(result) { return typeof result.costUsd === 'number'; });
+    var resolved = mine.filter(function(result) { return result.perfectMatch !== null && result.perfectMatch !== undefined; });
+    var latencies = invoked.map(function(result) { return result.latencyMs; }).filter(function(value) { return typeof value === 'number'; }).sort(function(a, b) { return a - b; });
+    var known = covered.reduce(function(sum, result) { return sum + result.costUsd; }, 0);
+    function percentile(q) { return latencies.length ? latencies[Math.max(0, Math.ceil(q * latencies.length) - 1)] : null; }
+    return {
+      provider: model.provider,
+      model: model.model,
+      docsMeasured: mine.length,
+      providerCalls: invoked.length,
+      unavailableDocs: mine.filter(function(result) { return !result.invoked; }).length,
+      docsOk: invoked.filter(function(result) { return result.ok; }).length,
+      failures: invoked.filter(function(result) { return !result.ok; }).length,
+      autonomyRate: invoked.length ? invoked.filter(function(result) { return result.autonomous; }).length / invoked.length : null,
+      resolvedDocs: resolved.length,
+      perfectMatches: resolved.filter(function(result) { return result.perfectMatch; }).length,
+      perfectMatchRate: resolved.length ? resolved.filter(function(result) { return result.perfectMatch; }).length / resolved.length : null,
+      f1: null,
+      avgLatencyMs: latencies.length ? latencies.reduce(function(sum, value) { return sum + value; }, 0) / latencies.length : null,
+      p50LatencyMs: percentile(0.5),
+      p95LatencyMs: percentile(0.95),
+      knownCostUsd: known,
+      coveredInvocations: covered.length,
+      costCoverageRate: invoked.length ? covered.length / invoked.length : null,
+      actualCostPerDocumentUsd: invoked.length && invoked.length === covered.length && mine.length ? known / mine.length : null
+    };
+  });
+}
+
+function renderBenchmarkRun(run) {
+  var container = el('benchmarkResults');
+  if (!container || !run) return;
+  var summary = run.summary || {};
+  var documents = run.documents || [];
+  var resolvedDocs = documents.length
+    ? documents.filter(function(document) { return document.resolved; }).length
+    : (summary.models && summary.models[0] ? summary.models[0].resolvedDocs : 0);
+  var modelSummaries = summary.models || fallbackBenchmarkSummaries(run);
+  var totalCalls = typeof summary.invokedCalls === 'number' ? summary.invokedCalls : (run.invokedCalls || 0);
+  var coveredCalls = typeof summary.coveredInvocations === 'number' ? summary.coveredInvocations : (run.costCoveredCalls || 0);
+  var knownCost = typeof summary.knownCostUsd === 'number' ? summary.knownCostUsd : run.knownCostUsd;
+  var knownSpend = typeof knownCost === 'number'
+    ? benchmarkUsd(knownCost) + (coveredCalls < totalCalls ? ' (partial)' : '')
+    : 'Unknown';
+  var duration = typeof run.durationMs === 'number' ? fmtMs(run.durationMs) : 'In progress';
+  var meta = '<div class="benchmark-meta">' +
+    '<span class="benchmark-chip">Status <strong>' + esc(run.status) + '</strong></span>' +
+    '<span class="benchmark-chip">Run <strong>' + esc(run.id) + '</strong></span>' +
+    '<span class="benchmark-chip">Documents <strong>' + esc(run.requestedDocCount) + '</strong></span>' +
+    '<span class="benchmark-chip">Resolved ground truth <strong>' + esc(resolvedDocs + '/' + run.requestedDocCount) + '</strong></span>' +
+    '<span class="benchmark-chip">Provider calls <strong>' + esc(totalCalls) + '</strong></span>' +
+    '<span class="benchmark-chip">Cost coverage <strong>' + esc(coveredCalls + '/' + totalCalls) + '</strong></span>' +
+    '<span class="benchmark-chip">Measured list-price spend <strong>' + esc(knownSpend) + '</strong></span>' +
+    '<span class="benchmark-chip">Duration <strong>' + esc(duration) + '</strong></span>' +
+    '</div>';
+  var rows = modelSummaries.map(function(model) {
+    var speed = [model.avgLatencyMs, model.p50LatencyMs, model.p95LatencyMs].map(function(value) {
+      return typeof value === 'number' ? fmtMs(value) : 'N/A';
+    }).join(' / ');
+    var cost = benchmarkCostText(model.actualCostPerDocumentUsd, model.coveredInvocations, model.providerCalls);
+    return '<tr>' +
+      '<td><strong>' + esc(model.provider + ':' + model.model) + '</strong></td>' +
+      '<td>' + esc(benchmarkPct(model.perfectMatchRate)) + '<div class="note">' + esc((model.perfectMatches || 0) + '/' + (model.resolvedDocs || 0) + ' resolved') + '</div></td>' +
+      '<td>' + esc(benchmarkPct(model.autonomyRate)) + '</td>' +
+      '<td>' + esc(benchmarkPct(model.f1)) + '</td>' +
+      '<td>' + esc((model.docsOk || 0) + '/' + (model.providerCalls || 0)) + '<div class="note">' + esc((model.failures || 0) + ' failures · ' + (model.unavailableDocs || 0) + ' unavailable') + '</div></td>' +
+      '<td>' + esc(speed) + '<div class="note">avg / p50 / p95</div></td>' +
+      '<td>' + esc(cost) + '<div class="note">' + esc((model.coveredInvocations || 0) + '/' + (model.providerCalls || 0) + ' calls priced') + '</div></td>' +
+      '</tr>';
+  }).join('');
+  if (!rows) rows = '<tr><td colspan="7" class="state">This run has no model measurements yet.</td></tr>';
+  container.innerHTML = meta +
+    '<div class="benchmark-panel"><h4>Individual model performance</h4>' +
+    '<div class="benchmark-table-wrap" tabindex="0" aria-label="Scrollable benchmark results"><table class="bench-table">' +
+    '<caption class="sr-only">Saved model benchmark performance</caption><thead><tr>' +
+    '<th scope="col">Model</th><th scope="col">Accuracy</th><th scope="col">Autonomy</th><th scope="col">F1</th><th scope="col">Successful calls</th><th scope="col">Speed</th><th scope="col">Measured list-price cost / doc</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
+    '<div id="cascadeSimulationContainer"></div>';
+  renderCascadeSimulation();
+}
+
+function benchmarkOptionHtml(models, selected) {
+  return models.map(function(model) {
+    var value = benchmarkModelKey(model);
+    return '<option value="' + esc(value) + '"' + (value === selected ? ' selected' : '') + '>' + esc(value) + '</option>';
+  }).join('');
+}
+
+function benchmarkDefaultLineup(models) {
+  var available = {};
+  models.forEach(function(model) { available[benchmarkModelKey(model)] = true; });
+  var saved = normalizedBenchmarkLineup(benchmarkState.settings);
+  var chosen = [];
+  ['a', 'b', 'c'].forEach(function(slot) {
+    var key = benchmarkModelKey(saved[slot]);
+    if (key && available[key] && chosen.indexOf(key) < 0) chosen.push(key);
+  });
+  models.forEach(function(model) {
+    var key = benchmarkModelKey(model);
+    var provider = model.provider;
+    var usedProvider = chosen.some(function(current) { var ref = benchmarkModelRef(current); return ref && ref.provider === provider; });
+    if (chosen.length < 3 && chosen.indexOf(key) < 0 && !usedProvider) chosen.push(key);
+  });
+  return { a: chosen[0] || '', b: chosen[1] || '', c: chosen[2] || '' };
+}
 
 function renderCascadeSimulation() {
   var container = el('cascadeSimulationContainer');
-  if (!container) return;
-  
-  var defaultA = 'mistral:mistral-ocr-latest';
-  var defaultB = 'gemini:gemini-3.5-flash';
-  var defaultC = 'anthropic:claude-sonnet-4-6';
-  
-  var modelSelectOpts = REREAD_MODELS.map(function(m) {
-    var val = m.provider + ':' + m.model;
-    return '<option value="' + esc(val) + '">' + esc(m.model) + ' (' + esc(m.provider) + ')</option>';
-  }).join('');
-  
-  var html = '<div class="diag-card" style="margin-top:20px;border:1px solid var(--border);border-radius:12px;padding:16px;background:var(--panel-dark)">' +
-             '<h4>2. Interactive Consensus Cascade Simulation</h4>' +
-             '<p class="sub">Select models to simulate the multi-vendor Consensus Cascade. Autonomy vs Accuracy is calculated dynamically using the benchmark results.</p>' +
-             '<div class="row-flex" style="gap:16px;margin-bottom:16px;align-items:flex-end;flex-wrap:wrap">' +
-             '  <div>' +
-             '    <label class="lbl" style="display:block;margin-bottom:4px">Model A (Primary)</label>' +
-             '    <select id="simModelA" onchange="updateSimResults()">' + modelSelectOpts + '</select>' +
-             '  </div>' +
-             '  <div>' +
-             '    <label class="lbl" style="display:block;margin-bottom:4px">Model B (Primary Crosscheck)</label>' +
-             '    <select id="simModelB" onchange="updateSimResults()">' + modelSelectOpts + '</select>' +
-             '  </div>' +
-             '  <div>' +
-             '    <label class="lbl" style="display:block;margin-bottom:4px">Model C (Tier 2/3 Resolver)</label>' +
-             '    <select id="simModelC" onchange="updateSimResults()">' +
-             '      <option value="">None (Disable Resolver)</option>' +
-                    modelSelectOpts +
-             '    </select>' +
-             '  </div>' +
-             '</div>' +
-             '<div id="simStatsGrid" class="grid-cards" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 16px;"></div>' +
-             '<div id="simDetailPanel" style="font-size:12px;color:var(--text-dim)"></div>' +
-             '</div>';
-  container.innerHTML = html;
-  
-  var selA = el('simModelA');
-  var selB = el('simModelB');
-  var selC = el('simModelC');
-  if (selA) selA.value = defaultA;
-  if (selB) selB.value = defaultB;
-  if (selC) selC.value = defaultC;
-  
+  var run = benchmarkState.current;
+  if (!container || !run) return;
+  var models = run.models || [];
+  if (models.length < 3) {
+    container.innerHTML = '<div class="benchmark-panel"><h4>Consensus cascade simulation</h4><div class="state">At least three benchmarked models are required.</div></div>';
+    return;
+  }
+  var defaults = benchmarkDefaultLineup(models);
+  container.innerHTML = '<div class="benchmark-panel"><h4>Consensus cascade simulation</h4>' +
+    '<p class="sub">Uses only this saved run. Simulation makes no provider calls.</p>' +
+    '<div class="benchmark-lineup">' +
+    '<label class="lbl">Model A (Primary)<select id="simModelA" onchange="updateSimResults()">' + benchmarkOptionHtml(models, defaults.a) + '</select></label>' +
+    '<label class="lbl">Model B (Crosscheck)<select id="simModelB" onchange="updateSimResults()">' + benchmarkOptionHtml(models, defaults.b) + '</select></label>' +
+    '<label class="lbl">Model C (Resolver)<select id="simModelC" onchange="updateSimResults()">' + benchmarkOptionHtml(models, defaults.c) + '</select></label>' +
+    '</div>' +
+    '<div id="simValidation" class="note" role="status"></div>' +
+    '<div id="simStatsGrid" class="grid-cards" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:14px 0"></div>' +
+    '<div class="row-flex"><button class="btn sm" id="saveBenchmarkLineup" onclick="saveBenchmarkLineup()"' + (run.status === 'completed' && !(benchmarkState.settings && benchmarkState.settings.writeProtected) ? '' : ' disabled') + '>Save as ' + esc(benchmarkChamberLabel(run.chamber)) + ' autopublish lineup</button></div>' +
+    '<div id="simDetailPanel" class="note"></div></div>';
   updateSimResults();
 }
 
-function updateSimResults() {
-  var modelA = el('simModelA').value;
-  var modelB = el('simModelB').value;
-  var modelC = el('simModelC').value;
-  
-  var docs = currentBenchmarkDocs;
-  var runs = currentBenchmarkRuns;
-  
-  if (!docs || !docs.length || !runs) return;
-  
-  var total = docs.length;
-  var t1Autonomy = 0;
-  var cascadeAutonomy = 0;
-  var humanReview = 0;
-  
-  var resolvedCount = 0;
-  var cascadePerfect = 0;
-  var totalCost = 0;
-  
-  docs.forEach(function(doc) {
-    var docId = doc.docId;
-    var runsForDoc = runs[docId] || {};
-    var rA = runsForDoc[modelA];
-    var rB = runsForDoc[modelB];
-    var rC = modelC ? runsForDoc[modelC] : null;
-    
-    if (!rA || !rB) return;
-    
-    var gt = rA.groundTruth || (rB && rB.groundTruth) || (rC && rC.groundTruth);
-    var isResolved = !!gt;
-    
-    // Model costs
-    var nameA = modelA.split(':')[1];
-    var nameB = modelB.split(':')[1];
-    var nameC = modelC ? modelC.split(':')[1] : '';
-    
-    var costA = MODEL_COSTS[nameA] || 0.25;
-    var costB = MODEL_COSTS[nameB] || 0.25;
-    var costC = MODEL_COSTS[nameC] || 0.25;
-    
-    var cost = 0;
-    var simOutcome = 'review';
-    var simRows = null;
-    
-    var okA = rA.outcome !== 'skipped';
-    var okB = rB.outcome !== 'skipped';
-    var okC = rC ? rC.outcome !== 'skipped' : false;
-    
-    var validA = (rA.outcome === 'published' || rA.outcome === 'would_publish');
-    var validB = (rB.outcome === 'published' || rB.outcome === 'would_publish');
-    
-    if (okA && okB && sameRowSet(rA.rows, rB.rows) && validA && validB) {
-      t1Autonomy++;
-      cascadeAutonomy++;
-      simOutcome = 'published';
-      simRows = rA.rows || [];
-      cost = costA + costB;
-    } else if (modelC) {
-      cost = costA + costB + costC;
-      if (okA && okB && okC) {
-        var agreeABC = sameRowSet(rA.rows, rC.rows) && sameRowSet(rB.rows, rC.rows);
-        var validC = rC.outcome === 'published' || rC.outcome === 'would_publish';
-        if (agreeABC && validC && validA && validB) {
-          cascadeAutonomy++;
-          simOutcome = 'published';
-          simRows = rA.rows || [];
-        } else {
-          var majority = clientBuildMajorityRows([rA, rB, rC]);
-          if (majority.ok) {
-            cascadeAutonomy++;
-            simOutcome = 'published';
-            simRows = majority.rows;
-          } else {
-            humanReview++;
-            simOutcome = 'review';
-          }
-        }
-      } else {
-        humanReview++;
-        simOutcome = 'review';
-      }
-    } else {
-      cost = costA + costB;
-      humanReview++;
-      simOutcome = 'review';
-    }
-    
-    totalCost += cost;
-    
-    if (isResolved) {
-      resolvedCount++;
-      if (simOutcome === 'published') {
-        var match = computeMatchStats(simRows, gt);
-        if (match.perfectMatch) {
-          cascadePerfect++;
-        }
-      }
-    }
-  });
-  
-  var autoRate1 = ((t1Autonomy / total) * 100).toFixed(1) + '%';
-  var autoRateCascade = ((cascadeAutonomy / total) * 100).toFixed(1) + '%';
-  var reviewRate = ((humanReview / total) * 100).toFixed(1) + '%';
-  var accuracyRate = resolvedCount > 0 ? ((cascadePerfect / resolvedCount) * 100).toFixed(1) + '%' : 'N/A';
-  var avgCost = (totalCost / total).toFixed(3);
-  
-  var costScoreColor = 'var(--text-dim)';
-  if (Number(avgCost) < 0.5) costScoreColor = 'var(--pos)';
-  else if (Number(avgCost) > 2.0) costScoreColor = 'var(--neg)';
-  
-  var grid = el('simStatsGrid');
-  if (grid) {
-    grid.innerHTML = 
-      '<div class="card"><div class="v" style="color:var(--accent)">' + autoRateCascade + '</div><div class="k">Cascade Autonomy Rate</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Tier 1+2+3 autopublish</div></div>' +
-      '<div class="card"><div class="v" style="color:var(--pos)">' + accuracyRate + '</div><div class="k">Cascade Accuracy</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Perfect match on resolved docs</div></div>' +
-      '<div class="card"><div class="v">' + autoRate1 + '</div><div class="k">Tier 1 Autonomy Rate</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Autopublish on A+B agreement</div></div>' +
-      '<div class="card"><div class="v" style="color:var(--neg)">' + reviewRate + '</div><div class="k">Human Review Rate</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Disagreed or flagged docs</div></div>' +
-      '<div class="card"><div class="v" style="color:' + costScoreColor + '">$' + avgCost + '</div><div class="k">Est. Cost / Doc</div><div style="font-size:10px; color:var(--text-dim); margin-top:4px;">Based on model list pricing</div></div>';
+function selectedBenchmarkLineup() {
+  return {
+    a: benchmarkModelRef(el('simModelA') && el('simModelA').value),
+    b: benchmarkModelRef(el('simModelB') && el('simModelB').value),
+    c: benchmarkModelRef(el('simModelC') && el('simModelC').value)
+  };
+}
+
+function validateBenchmarkLineup(lineup) {
+  if (!lineup.a || !lineup.b || !lineup.c) return 'Choose all three models.';
+  var keys = [benchmarkModelKey(lineup.a), benchmarkModelKey(lineup.b), benchmarkModelKey(lineup.c)];
+  if (new Set(keys).size !== 3) return 'A, B, and C must be different models.';
+  var providers = [lineup.a.provider, lineup.b.provider, lineup.c.provider];
+  if (new Set(providers).size !== 3) return 'A, B, and C must use three different providers.';
+  return '';
+}
+
+async function updateSimResults() {
+  var run = benchmarkState.current;
+  var validation = el('simValidation');
+  if (!run || !el('simModelA')) return;
+  var lineup = selectedBenchmarkLineup();
+  var invalid = validateBenchmarkLineup(lineup);
+  var saveButton = el('saveBenchmarkLineup');
+  if (invalid) {
+    if (validation) { validation.style.color = 'var(--neg)'; validation.textContent = invalid; }
+    if (saveButton) saveButton.disabled = true;
+    if (el('simStatsGrid')) el('simStatsGrid').innerHTML = '';
+    return;
   }
-  
+  if (saveButton) saveButton.disabled = run.status !== 'completed' || Boolean(benchmarkState.settings && benchmarkState.settings.writeProtected);
+  if (validation) { validation.style.color = ''; validation.textContent = 'Calculating from persisted readings…'; }
+  var requestNumber = ++benchmarkState.simulationRequest;
+  try {
+    var data = await apiCall('/api/admin/benchmark/runs/' + encodeURIComponent(run.id) + '/simulate', 'POST', lineup);
+    if (requestNumber !== benchmarkState.simulationRequest) return;
+    renderBenchmarkSimulation(data);
+    if (validation) validation.textContent = data.incompleteDocuments
+      ? data.incompleteDocuments + ' documents lacked the required readings and were excluded.'
+      : 'All saved documents had the required readings.';
+  } catch (error) {
+    if (requestNumber !== benchmarkState.simulationRequest) return;
+    if (validation) { validation.style.color = 'var(--neg)'; validation.textContent = 'Simulation unavailable: ' + error.message; }
+  }
+}
+
+function renderBenchmarkSimulation(data) {
+  var grid = el('simStatsGrid');
+  if (!grid) return;
+  var cost = benchmarkCostText(data.actualCostPerDocumentUsd, data.costCoveredCalls, data.requiredCalls);
+  grid.innerHTML =
+    '<div class="card"><div class="v" style="color:var(--accent)">' + esc(benchmarkPct(data.cascadeAutonomyRate)) + '</div><div class="k">Cascade autonomy</div></div>' +
+    '<div class="card"><div class="v" style="color:var(--pos)">' + esc(benchmarkPct(data.accuracyRate)) + '</div><div class="k">Autopublished accuracy</div></div>' +
+    '<div class="card"><div class="v">' + esc(benchmarkPct(data.tier1AutonomyRate)) + '</div><div class="k">Tier 1 autonomy</div></div>' +
+    '<div class="card"><div class="v" style="color:var(--neg)">' + esc(benchmarkPct(data.humanReviewRate)) + '</div><div class="k">Human review</div></div>' +
+    '<div class="card"><div class="v">' + esc(cost) + '</div><div class="k">Measured list-price cost / doc</div><div class="note">' + esc(data.costCoveredCalls + '/' + data.requiredCalls + ' required calls priced · ' + data.invokedCalls + ' invoked') + '</div></div>' +
+    '<div class="card"><div class="v">' + esc(typeof data.p50WallClockMs === 'number' ? fmtMs(data.p50WallClockMs) : 'N/A') + '</div><div class="k">Simulated p50 speed</div><div class="note">p95 ' + esc(typeof data.p95WallClockMs === 'number' ? fmtMs(data.p95WallClockMs) : 'N/A') + '</div></div>';
   var detail = el('simDetailPanel');
-  if (detail) {
-    detail.innerHTML = '<strong>Cascade Configuration Details:</strong><br>' +
-      '- Model A and B are run in parallel for every document.<br>' +
-      (modelC 
-        ? '- Disagreements escalate to Model C. Consensus or majority resolve decides if the document publishes.<br>' 
-        : '- Disagreements are sent straight to Human Review (C is disabled).<br>') +
-      '- Stats based on ' + total + ' docs (resolved ground truth: ' + resolvedCount + ' docs).';
+  if (detail) detail.textContent = 'Based on ' + data.documentsSimulated + '/' + data.documentsTotal + ' documents; ' + data.resolvedDocuments + ' resolved ground-truth documents. Tier 1 executes A then B; disagreement adds a fresh A then B then C tier. Cost uses measured provider units and the saved rate card; unpriced meters remain partial.';
+}
+
+async function saveBenchmarkLineup() {
+  var run = benchmarkState.current;
+  if (!run || run.status !== 'completed') return;
+  if (benchmarkState.settings && benchmarkState.settings.writeProtected) return;
+  var lineup = selectedBenchmarkLineup();
+  var invalid = validateBenchmarkLineup(lineup);
+  var status = el('simValidation');
+  if (invalid) { if (status) status.textContent = invalid; return; }
+  var previous = normalizedBenchmarkLineup(benchmarkState.settings);
+  var currentText = 'A ' + (benchmarkModelKey(previous.a) || 'not set') + '\\nB ' + (benchmarkModelKey(previous.b) || 'not set') + '\\nC ' + (benchmarkModelKey(previous.c) || 'not set');
+  var nextText = 'A ' + benchmarkModelKey(lineup.a) + '\\nB ' + benchmarkModelKey(lineup.b) + '\\nC ' + benchmarkModelKey(lineup.c);
+  if (!window.confirm('Save this as the live ' + benchmarkChamberLabel(run.chamber) + ' autopublish lineup?\\n\\nCurrent:\\n' + currentText + '\\n\\nNew:\\n' + nextText)) return;
+  var button = el('saveBenchmarkLineup');
+  if (button) button.disabled = true;
+  if (status) status.textContent = 'Saving and reading back the live settings…';
+  try {
+    var result = await apiCall('/api/admin/benchmark/settings/' + encodeURIComponent(run.chamber), 'PUT', {
+      a: lineup.a,
+      b: lineup.b,
+      c: lineup.c,
+      expectedVersion: benchmarkState.settings && benchmarkState.settings.version,
+      sourceRunId: run.id
+    });
+    benchmarkState.settings = result.settings;
+    renderBenchmarkSettingsSummary();
+    if (status) {
+      status.style.color = result.auditPersisted === false ? 'var(--warn)' : 'var(--pos)';
+      status.textContent = result.auditPersisted === false
+        ? (result.warning || 'Settings were saved and verified, but the benchmark receipt was not persisted.')
+        : 'Saved and verified from the effective runtime settings.';
+    }
+  } catch (error) {
+    if (status) { status.style.color = 'var(--neg)'; status.textContent = 'Settings were not saved: ' + error.message; }
+    if (button) button.disabled = false;
+  }
+}
+
+function confirmBenchmarkUnknownOutcomeRetry(docId, model) {
+  if (benchmarkState.unknownOutcomeRetryDecision !== null) {
+    return benchmarkState.unknownOutcomeRetryDecision;
+  }
+  var approved = window.confirm(
+    'A prior paid benchmark attempt ended without a recorded provider outcome. It may already have been billed.\\n\\n' +
+    'First affected cell: ' + benchmarkModelKey(model) + ' / ' + docId + '.\\n\\n' +
+    'Retry affected cells? Retrying can create additional paid calls. Because prior charges cannot be reconciled, saved cost will remain Unknown (partial).'
+  );
+  benchmarkState.unknownOutcomeRetryDecision = approved;
+  return approved;
+}
+
+async function runBenchmarkCell(runId, docId, model) {
+  var body = { runId: runId, models: { a: model } };
+  var lastError = null;
+  for (var attempt = 0; attempt < 300; attempt++) {
+    try {
+      var result = await apiCall('/api/admin/benchmark/dry-run/' + encodeURIComponent(docId), 'POST', body);
+      if (!result.pending) return result;
+      lastError = null;
+      await new Promise(function(resolve) { setTimeout(resolve, Math.max(500, Math.min(result.retryAfterMs || 2000, 5000))); });
+    } catch (error) {
+      if (error.status === 409 && error.details && error.details.code === 'benchmark_attempt_outcome_unknown') {
+        if (body.confirmRetryAfterUnknownOutcome === true) {
+          throw new Error('The paid-attempt outcome remained unknown after a confirmed retry; no automatic retry was made.');
+        }
+        if (!confirmBenchmarkUnknownOutcomeRetry(docId, model)) {
+          var declined = new Error('Retry was not confirmed after an unknown paid-attempt outcome; this saved run remains resumable and may include prior billing.');
+          declined.code = 'benchmark_unknown_outcome_retry_declined';
+          throw declined;
+        }
+        body.confirmRetryAfterUnknownOutcome = true;
+        lastError = null;
+        continue;
+      }
+      if (error.status && error.status < 500) throw error;
+      lastError = error;
+      await new Promise(function(resolve) { setTimeout(resolve, 2000); });
+    }
+  }
+  throw lastError || new Error('Benchmark cell is still running; resume the saved run later.');
+}
+
+async function runChamberBenchmark(chamber) {
+  if (benchmarkState.running) return;
+  if (chamber) benchmarkState.chamber = chamber;
+  var selectedChamber = benchmarkState.chamber;
+  var label = benchmarkChamberLabel(selectedChamber);
+  var limit = 25;
+  var resumable = benchmarkState.current && benchmarkState.current.status === 'running' && benchmarkState.current.chamber === selectedChamber
+    ? benchmarkState.current
+    : null;
+  var models = resumable
+    ? (resumable.models || [])
+    : REREAD_MODELS.map(function(model) { return { provider: model.provider, model: model.model }; });
+  var maxCalls = limit * models.length;
+  var confirmText = resumable
+    ? 'Resume the saved ' + label + ' benchmark?\\n\\nCompleted cells will be reused. An expired cell may already have been billed even though no provider outcome was saved. If one is found, you will be asked once before any retry; unreconciled prior billing keeps measured cost partial.'
+    : 'Run the ' + label + ' benchmark now?\\n\\nThis will use up to ' + limit + ' filings and make up to ' + maxCalls + ' paid provider calls. Resolved ground-truth coverage is shown separately. Each completed call, latency, usage, and measurable cost will be saved.';
+  if (!window.confirm(confirmText)) return;
+  benchmarkState.unknownOutcomeRetryDecision = null;
+  benchmarkState.running = true;
+  setBenchmarkButtons();
+  var msg = el('benchmarkMsg');
+  if (msg) { msg.style.color = ''; msg.textContent = (resumable ? 'Resuming' : 'Creating') + ' the saved ' + label + ' run…'; }
+  try {
+    var started = resumable
+      ? { run: resumable, docs: resumable.documents || [] }
+      : await apiCall('/api/admin/benchmark/runs', 'POST', {
+          chamber: selectedChamber,
+          limit: limit,
+          models: models,
+          resolvedOnly: false,
+          confirmPaidRun: true
+        });
+    var run = started.run;
+    var docs = started.docs || [];
+    var planned = docs.length * models.length;
+    if (!docs.length) throw new Error('No ' + label + ' filings with stored documents are available for benchmarking.');
+    benchmarkState.current = run;
+    var completed = 0;
+    var browserFailures = [];
+    var concurrency = 5;
+    for (var modelIndex = 0; modelIndex < models.length; modelIndex++) {
+      var model = models[modelIndex];
+      for (var start = 0; start < docs.length; start += concurrency) {
+        var chunk = docs.slice(start, start + concurrency);
+        if (msg) msg.textContent = 'Running ' + benchmarkModelKey(model) + ' · ' + completed + '/' + planned + ' saved calls…';
+        await Promise.all(chunk.map(async function(document) {
+          try {
+            await runBenchmarkCell(run.id, document.docId, model);
+          } catch (error) {
+            browserFailures.push(benchmarkModelKey(model) + ' / ' + document.docId + ': ' + error.message);
+            if (error.code === 'benchmark_unknown_outcome_retry_declined') throw error;
+          } finally {
+            completed++;
+          }
+        }));
+      }
+    }
+    var completedRun = await apiCall('/api/admin/benchmark/runs/' + encodeURIComponent(run.id) + '/complete', 'POST', {});
+    benchmarkState.current = completedRun.run;
+    if (msg) {
+      msg.style.color = browserFailures.length ? 'var(--warn)' : 'var(--pos)';
+      msg.textContent = label + ' benchmark saved' + (browserFailures.length ? ' with ' + browserFailures.length + ' browser delivery errors.' : '.');
+    }
+    await loadBenchmarkHistory(selectedChamber, run.id);
+  } catch (error) {
+    if (msg) { msg.style.color = 'var(--neg)'; msg.textContent = label + ' benchmark stopped: ' + error.message + '. Any completed readings remain saved in history.'; }
+    await loadBenchmarkHistory(selectedChamber).catch(function() {});
+  } finally {
+    benchmarkState.running = false;
+    setBenchmarkButtons();
   }
 }
 
@@ -6639,7 +6831,7 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
       if (canUseAdmin()) loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
-    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); }
+    if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); }
   };
 });
 
@@ -6911,7 +7103,7 @@ loadMe().then(function () {
       if (canUseAdmin()) loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
-    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); }
+    if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); }
   } else {
     loadTrends(); // Trends is the default landing view
   }

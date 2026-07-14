@@ -39,6 +39,50 @@ describe('checkReadiness', () => {
     ]);
   });
 
+  it('requires durable benchmark history tables and indexes', async () => {
+    expect((await checkReadiness(dbMissing('FROM benchmark_model_results'))).missing).toEqual([
+      'benchmark_model_results',
+    ]);
+
+    const db = { prepare(sql: string) { return {
+      bind() { return this; },
+      async first<T>() {
+        if (sql.includes("name = 'idx_benchmark_results_run_model'")) return null as T | null;
+        return ({ name: 'present' } as T);
+      },
+    }; } } as unknown as D1Database;
+    expect((await checkReadiness(db)).missing).toEqual(['idx_benchmark_results_run_model']);
+  });
+
+  it('probes benchmark request profiles and paid-cell lease columns used at runtime', async () => {
+    const queries: string[] = [];
+    const db = { prepare(sql: string) {
+      queries.push(sql);
+      return {
+        bind() { return this; },
+        async first<T>() { return ({ ok: 1 } as T); },
+      };
+    } } as unknown as D1Database;
+
+    expect((await checkReadiness(db)).ok).toBe(true);
+    expect(queries.find((sql) => sql.includes('FROM benchmark_runs'))).toContain('request_profile_json');
+    const resultProbe = queries.find((sql) => sql.includes('FROM benchmark_model_results'));
+    expect(resultProbe).toContain('claim_token');
+    expect(resultProbe).toContain('lease_until');
+  });
+
+  it('requires the atomic benchmark daily call reservation ledger', async () => {
+    expect((await checkReadiness(dbMissing('FROM benchmark_daily_call_usage'))).missing).toEqual([
+      'benchmark_daily_call_usage',
+    ]);
+  });
+
+  it('requires the chamber-scoped benchmark settings mutation lease', async () => {
+    expect((await checkReadiness(dbMissing('FROM benchmark_settings_leases'))).missing).toEqual([
+      'benchmark_settings_leases',
+    ]);
+  });
+
   it('reports a missing quota trigger even when all columns exist', async () => {
     const db = { prepare(sql: string) { return {
       bind() { return this; },

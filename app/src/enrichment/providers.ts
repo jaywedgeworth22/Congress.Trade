@@ -18,6 +18,7 @@
 
 import { marketCapBucket, sicToSector } from './compute';
 import type { EnrichmentProvider, SecurityRef } from './types';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 const UA = { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json' };
 const str = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v : null);
@@ -26,7 +27,12 @@ const num = (v: unknown): number | null =>
 
 async function getJson(url: string, fetchImpl: typeof fetch): Promise<unknown | null> {
   try {
-    const res = await fetchImpl(url, { headers: UA });
+    const res = await trackedFetch(
+      url,
+      { headers: UA },
+      { service: 'security-enrichment', operation: 'fetch-company-profile' },
+      fetchImpl,
+    );
     if (!res.ok) return null; // 401/403/404/429/… => "no data" (chain moves on)
     return await res.json();
   } catch {

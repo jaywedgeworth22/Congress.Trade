@@ -1,3 +1,5 @@
+import { BENCHMARK_SCHEMA_STATEMENTS } from '../benchmark/schema';
+
 /** Base schema needed before the incremental, idempotent admin migration list. */
 export const BASE_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS filers (bioguide_id TEXT PRIMARY KEY, chamber TEXT, full_name TEXT, party TEXT, state TEXT, district TEXT, committees TEXT)`,
@@ -154,7 +156,7 @@ export const REVIEW_AUTONOMY_SCHEMA_STATEMENTS = [
 
 /**
  * Ordered schema tail shared by POST /api/admin/migrate and migration parity
- * tests. Keep this in the same order as file migrations 0029 through 0037.
+ * tests. Keep this in the same order as file migrations 0029 through 0039.
  */
 export const POST_0024_SCHEMA_STATEMENTS = [
   // 0025_extraction_runs_usage.sql
@@ -163,4 +165,5 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...RELIABILITY_SCHEMA_STATEMENTS,
   ...STRIPE_EVENT_SCHEMA_STATEMENTS,
   ...REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
+  ...BENCHMARK_SCHEMA_STATEMENTS,
 ] as const;
