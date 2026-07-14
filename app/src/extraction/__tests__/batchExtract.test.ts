@@ -10,6 +10,8 @@ import {
   parseJsonl,
   isBatchProvider,
   normalizeBatchChamber,
+  BatchTerminalPayloadError,
+  parseOpenAiBatchUsage,
   parseOpenAiBatchTimestamps,
   pollBatch,
   submitBatch,
@@ -230,6 +232,30 @@ describe('decodeOpenAiLine', () => {
     });
     expect(r).toMatchObject({ ok: false, usage: { promptTokens: 41, completionTokens: 7 } });
   });
+
+  it('decodes bounded HTTP and response-body errors while retaining billed usage', () => {
+    const r = decodeOpenAiLine({
+      custom_id: 'H-http-error',
+      response: {
+        status_code: 429,
+        body: {
+          error: {
+            code: 'rate_limit_exceeded',
+            message: 'x'.repeat(1_000),
+          },
+          usage: { prompt_tokens: 9, completion_tokens: 0 },
+        },
+      },
+    });
+    expect(r).toMatchObject({
+      docId: 'H-http-error',
+      ok: false,
+      usage: { promptTokens: 9, completionTokens: 0 },
+    });
+    expect(r.error).toContain('HTTP 429');
+    expect(r.error).toContain('rate_limit_exceeded');
+    expect(r.error?.length).toBeLessThanOrEqual(300);
+  });
 });
 
 describe('OpenAI batch lifecycle timestamps', () => {
@@ -266,7 +292,302 @@ describe('OpenAI batch lifecycle timestamps', () => {
   });
 });
 
+describe('OpenAI batch aggregate usage', () => {
+  it('accepts complete non-negative integer token totals and optional cached tokens', () => {
+    expect(parseOpenAiBatchUsage({
+      input_tokens: 300,
+      output_tokens: 40,
+      input_tokens_details: { cached_tokens: 120 },
+    })).toEqual({ promptTokens: 300, completionTokens: 40, cachedTokens: 120 });
+    expect(parseOpenAiBatchUsage({ input_tokens: 0, output_tokens: 0 })).toEqual({
+      promptTokens: 0,
+      completionTokens: 0,
+    });
+  });
+
+  it.each([
+    null,
+    { input_tokens: 10 },
+    { input_tokens: 10, output_tokens: -1 },
+    { input_tokens: 10.5, output_tokens: 1 },
+    { input_tokens: Number.MAX_SAFE_INTEGER, output_tokens: 1 },
+    { input_tokens: 10, output_tokens: 1, input_tokens_details: 'invalid' },
+    { input_tokens: 10, output_tokens: 1, input_tokens_details: { cached_tokens: 11 } },
+  ])('fails soft for an incomplete or invalid aggregate: %j', (value) => {
+    expect(parseOpenAiBatchUsage(value)).toBeUndefined();
+  });
+});
+
 describe('pollBatch OpenAI terminal results', () => {
+  it('closes a completed error-file-only batch and decodes failed documents', async () => {
+    const env = { OPENAI_API_KEY: 'test-key' } as unknown as Env;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/v1/batches/batch-errors-only')) {
+        return Response.json({ status: 'completed', error_file_id: 'file-errors' });
+      }
+      if (url.endsWith('/v1/files/file-errors/content')) {
+        return new Response(`${JSON.stringify({
+          custom_id: 'H-error',
+          error: { message: 'request rejected' },
+        })}\n`);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+
+    await expect(pollBatch(env, 'openai', 'batch-errors-only')).resolves.toMatchObject({
+      done: true,
+      failed: false,
+      status: 'completed',
+      results: [{ docId: 'H-error', ok: false, rows: [] }],
+    });
+  });
+
+  it('closes a completed batch with neither result file', async () => {
+    const env = { OPENAI_API_KEY: 'test-key' } as unknown as Env;
+    const fetchMock = vi.fn(async () => Response.json({ status: 'completed' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(pollBatch(env, 'openai', 'batch-empty')).resolves.toEqual({
+      done: true,
+      failed: false,
+      status: 'completed',
+      results: [],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('merges output and error files in stable output-first order', async () => {
+    const env = { OPENAI_API_KEY: 'test-key' } as unknown as Env;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/v1/batches/batch-mixed')) {
+        return Response.json({
+          status: 'completed',
+          output_file_id: 'file-output',
+          error_file_id: 'file-errors',
+        });
+      }
+      if (url.endsWith('/v1/files/file-output/content')) {
+        return new Response(`${JSON.stringify({
+          custom_id: 'H-output',
+          response: {
+            status_code: 200,
+            body: { choices: [{ message: { content: '{"transactions":[]}' } }] },
+          },
+        })}\n`);
+      }
+      if (url.endsWith('/v1/files/file-errors/content')) {
+        return new Response(`${JSON.stringify({
+          custom_id: 'H-error',
+          error: { message: 'request rejected' },
+        })}\n`);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const poll = await pollBatch(env, 'openai', 'batch-mixed');
+    expect(poll).toMatchObject({ done: true, failed: false, status: 'completed' });
+    expect(poll.results.map((result) => [result.docId, result.ok])).toEqual([
+      ['H-output', true],
+      ['H-error', false],
+    ]);
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+      'https://api.openai.com/v1/batches/batch-mixed',
+      'https://api.openai.com/v1/files/file-output/content',
+      'https://api.openai.com/v1/files/file-errors/content',
+    ]);
+  });
+
+  it('fetches an identical nonempty output/error file id only once', async () => {
+    const env = { OPENAI_API_KEY: 'test-key' } as unknown as Env;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/v1/batches/batch-same-file')) {
+        return Response.json({
+          status: 'completed',
+          output_file_id: 'file-shared',
+          error_file_id: 'file-shared',
+        });
+      }
+      if (url.endsWith('/v1/files/file-shared/content')) {
+        return new Response(`${JSON.stringify({
+          custom_id: 'H-once',
+          error: { message: 'request rejected' },
+        })}\n`);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const poll = await pollBatch(env, 'openai', 'batch-same-file');
+    expect(poll.results).toHaveLength(1);
+    expect(poll.results[0]).toMatchObject({ docId: 'H-once', ok: false });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects any malformed nonblank result JSONL line instead of dropping it', async () => {
+    const env = { OPENAI_API_KEY: 'test-key' } as unknown as Env;
+    const submittedAt = '2026-07-13T12:00:00.000Z';
+    const terminalAt = '2026-07-13T12:01:00.000Z';
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/v1/batches/batch-malformed')) {
+        return Response.json({
+          status: 'completed',
+          output_file_id: 'file-malformed',
+          created_at: Date.parse(submittedAt) / 1_000,
+          completed_at: Date.parse(terminalAt) / 1_000,
+          usage: { input_tokens: 12, output_tokens: 3 },
+          errors: {
+            data: [
+              { code: 'batch_expired', message: 'must not enter terminal context' },
+              { code: 'unsafe / code', message: 'must not enter terminal context either' },
+            ],
+          },
+        });
+      }
+      if (url.endsWith('/v1/files/file-malformed/content')) {
+        return new Response(`${JSON.stringify({
+          custom_id: 'H-valid',
+          error: { message: 'request rejected' },
+        })}\nnot-json\n`);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+
+    const poll = pollBatch(env, 'openai', 'batch-malformed');
+    await expect(poll).rejects.toBeInstanceOf(BatchTerminalPayloadError);
+    await expect(poll).rejects.toMatchObject({
+      code: 'malformed_result_jsonl',
+      providerStatus: 'completed',
+      context: {
+        aggregateUsage: { promptTokens: 12, completionTokens: 3 },
+        providerErrors: {
+          count: 2,
+          summaries: ['batch_expired', 'provider_error'],
+        },
+        returnedDocs: 1,
+        observedDocIds: ['H-valid'],
+        submittedAt,
+        terminalAt,
+      },
+    });
+  });
+
+  it('preserves prior-file and pre-malformed identities when the later result file is invalid', async () => {
+    const env = { OPENAI_API_KEY: 'test-key' } as unknown as Env;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/v1/batches/batch-late-malformed')) {
+        return Response.json({
+          status: 'failed',
+          output_file_id: 'file-valid-output',
+          error_file_id: 'file-partial-error',
+          errors: {
+            data: [{ code: 'batch_failed', message: 'arbitrary provider detail' }],
+          },
+        });
+      }
+      if (url.endsWith('/v1/files/file-valid-output/content')) {
+        return new Response(`${JSON.stringify({
+          custom_id: 'H-output',
+          response: {
+            status_code: 200,
+            body: { choices: [{ message: { content: '{"transactions":[]}' } }] },
+          },
+        })}\n`);
+      }
+      if (url.endsWith('/v1/files/file-partial-error/content')) {
+        return new Response(`${JSON.stringify({
+          custom_id: 'H-error',
+          error: { message: 'request rejected' },
+        })}\nnot-json\n`);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+
+    const poll = pollBatch(env, 'openai', 'batch-late-malformed');
+    await expect(poll).rejects.toMatchObject({
+      code: 'malformed_result_jsonl',
+      providerStatus: 'failed',
+      context: {
+        providerErrors: { count: 1, summaries: ['batch_failed'] },
+        returnedDocs: 2,
+        observedDocIds: ['H-output', 'H-error'],
+      },
+    });
+    await expect(poll).rejects.not.toMatchObject({
+      context: { providerErrors: { summaries: ['arbitrary provider detail'] } },
+    });
+  });
+
+  it('bounds observed identity context while retaining the exact decoded result count', async () => {
+    const env = { OPENAI_API_KEY: 'test-key' } as unknown as Env;
+    const decodedLines = Array.from({ length: 201 }, (_, index) => JSON.stringify({
+      custom_id: `H-${index + 1}`,
+      error: { code: 'request_failed' },
+    })).join('\n');
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/v1/batches/batch-context-bound')) {
+        return Response.json({ status: 'completed', output_file_id: 'file-context-bound' });
+      }
+      if (url.endsWith('/v1/files/file-context-bound/content')) {
+        return new Response(`${decodedLines}\nnot-json\n`);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+
+    const poll = pollBatch(env, 'openai', 'batch-context-bound');
+    await expect(poll).rejects.toMatchObject({
+      context: {
+        returnedDocs: 201,
+        observedDocIdsTruncated: true,
+      },
+    });
+    try {
+      await poll;
+      throw new Error('expected malformed terminal payload');
+    } catch (error) {
+      expect(error).toBeInstanceOf(BatchTerminalPayloadError);
+      const typed = error as BatchTerminalPayloadError;
+      expect(typed.context.observedDocIds).toHaveLength(200);
+      expect(typed.context.observedDocIds?.[0]).toBe('H-1');
+      expect(typed.context.observedDocIds?.[199]).toBe('H-200');
+    }
+  });
+
+  it('counts Batch-object inline errors and retains only safe bounded codes', async () => {
+    const env = { OPENAI_API_KEY: 'test-key' } as unknown as Env;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/v1/batches/batch-inline-errors')) {
+        return Response.json({
+          status: 'failed',
+          errors: {
+            data: [
+              { code: 'batch_expired', message: 'sensitive arbitrary message' },
+              { code: 'not safe / code', message: 'another message' },
+            ],
+          },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+
+    await expect(pollBatch(env, 'openai', 'batch-inline-errors')).resolves.toMatchObject({
+      done: true,
+      failed: true,
+      status: 'failed',
+      providerErrors: {
+        count: 2,
+        summaries: ['batch_expired', 'provider_error'],
+      },
+    });
+  });
+
   it('returns completed requests from a failed batch output file for persistence and metering', async () => {
     const messages: QueueMessage[] = [];
     const env = {
