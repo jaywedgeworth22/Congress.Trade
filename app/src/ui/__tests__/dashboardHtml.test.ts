@@ -21,6 +21,11 @@ function scriptBlocks(html: string): string[] {
 }
 
 describe('DASHBOARD_HTML', () => {
+  it('uses the concise product name as the document title', () => {
+    expect(DASHBOARD_HTML).toContain('<title>Congress.Trade</title>');
+    expect(DASHBOARD_HTML).not.toContain('<title>Congress.Trade — Congress Trade Feed</title>');
+  });
+
   it('contains at least the boot + main script blocks', () => {
     expect(scriptBlocks(DASHBOARD_HTML).length).toBeGreaterThanOrEqual(2);
   });

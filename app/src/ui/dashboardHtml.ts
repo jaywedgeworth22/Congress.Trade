@@ -25,7 +25,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Congress.Trade — Congress Trade Feed</title>
+<title>Congress.Trade</title>
 <script>
   // Admin-controlled, site-wide logo style (injected at serve time).
   window.__LOGO_DISPLAY__ = "%LOGO_DISPLAY%";
