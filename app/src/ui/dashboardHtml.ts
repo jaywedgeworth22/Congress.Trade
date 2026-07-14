@@ -5118,7 +5118,10 @@ function confirmBenchmarkUnknownOutcomeRetry(docId, model) {
 }
 
 async function runBenchmarkCell(runId, docId, model) {
-  var body = { runId: runId, models: { a: model } };
+  // runChamberBenchmark has already obtained the user's paid-run confirmation.
+  // Carry it on every cell so a long or resumed run can reserve a new UTC day
+  // without becoming stranded at the day boundary.
+  var body = { runId: runId, models: { a: model }, confirmPaidRun: true };
   var lastError = null;
   for (var attempt = 0; attempt < 300; attempt++) {
     try {
@@ -5162,7 +5165,7 @@ async function runChamberBenchmark(chamber) {
     : REREAD_MODELS.map(function(model) { return { provider: model.provider, model: model.model }; });
   var maxCalls = limit * models.length;
   var confirmText = resumable
-    ? 'Resume the saved ' + label + ' benchmark?\\n\\nCompleted cells will be reused. An expired cell may already have been billed even though no provider outcome was saved. If one is found, you will be asked once before any retry; unreconciled prior billing keeps measured cost partial.'
+    ? 'Resume the saved ' + label + ' benchmark?\\n\\nCompleted cells will be reused. Remaining untouched cells may make paid provider calls; if the original reservation was on a prior UTC day, this confirmation authorizes a new-day reservation for each remaining cell. An expired cell may already have been billed even though no provider outcome was saved. If one is found, you will be asked once before any retry; unreconciled prior billing keeps measured cost partial.'
     : 'Run the ' + label + ' benchmark now?\\n\\nThis will use up to ' + limit + ' filings and make up to ' + maxCalls + ' paid provider calls. Resolved ground-truth coverage is shown separately. Each completed call, latency, usage, and measurable cost will be saved.';
   if (!window.confirm(confirmText)) return;
   benchmarkState.unknownOutcomeRetryDecision = null;

@@ -86,6 +86,15 @@ export interface BenchmarkMeasurementClaim {
   reclaimedUnknownOutcome: boolean;
 }
 
+export interface ReleaseBenchmarkMeasurementClaimInput extends BenchmarkModelRef {
+  runId: string;
+  docId: string;
+  claimToken: string;
+  /** Keep an expired marker when this claim replaced a possibly billed attempt. */
+  preserveUnknownOutcome: boolean;
+  now?: string;
+}
+
 export interface BenchmarkModelSummary extends BenchmarkModelRef {
   docsMeasured: number;
   providerCalls: number;
@@ -505,6 +514,43 @@ export async function claimBenchmarkMeasurement(
         : 'completed',
     reclaimedUnknownOutcome,
   };
+}
+
+/**
+ * Release an uninvoked claim when the paid-call reservation cannot be acquired.
+ * Fresh cells are removed; reclaimed unknown-outcome cells remain immediately
+ * orphaned so their possible prior provider charge is never forgotten.
+ */
+export async function releaseBenchmarkMeasurementClaim(
+  db: D1Database,
+  input: ReleaseBenchmarkMeasurementClaimInput,
+): Promise<boolean> {
+  const runId = cleanPart(input.runId, 'runId');
+  const docId = cleanPart(input.docId, 'docId');
+  const provider = cleanPart(input.provider, 'provider');
+  const model = cleanPart(input.model, 'model');
+  const claimToken = cleanPart(input.claimToken, 'claimToken');
+  if (input.preserveUnknownOutcome) {
+    const now = input.now ?? new Date().toISOString();
+    if (!Number.isFinite(Date.parse(now))) throw new Error('now must be an ISO timestamp');
+    const result = await run(
+      db,
+      `UPDATE benchmark_model_results
+          SET claim_token = NULL, lease_until = ?
+        WHERE run_id = ? AND doc_id = ? AND provider = ? AND model = ?
+          AND outcome = 'running' AND invoked = 0 AND claim_token = ?`,
+      [now, runId, docId, provider, model, claimToken],
+    );
+    return Number(result.meta?.changes ?? 0) === 1;
+  }
+  const result = await run(
+    db,
+    `DELETE FROM benchmark_model_results
+      WHERE run_id = ? AND doc_id = ? AND provider = ? AND model = ?
+        AND outcome = 'running' AND invoked = 0 AND claim_token = ?`,
+    [runId, docId, provider, model, claimToken],
+  );
+  return Number(result.meta?.changes ?? 0) === 1;
 }
 
 /** Idempotently insert or replace one model/document measurement. */

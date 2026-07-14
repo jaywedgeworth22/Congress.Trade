@@ -85,9 +85,11 @@ interface ReservationStatement {
 function atomicReservationDb(
   delegate: D1Database,
   initialReservedCalls = 0,
-  options: { fail?: boolean } = {},
-): { db: D1Database; reservedCalls: () => number } {
-  let reservedCalls = initialReservedCalls;
+  options: { fail?: boolean; initialDay?: string } = {},
+): { db: D1Database; reservedCalls: (day?: string) => number } {
+  const initialDay = options.initialDay ?? new Date().toISOString().slice(0, 10);
+  const reservedCallsByDay = new Map<string, number>();
+  if (initialReservedCalls > 0) reservedCallsByDay.set(initialDay, initialReservedCalls);
   const db = {
     prepare(sql: string) {
       if (!sql.includes('benchmark_daily_call_usage')) return delegate.prepare(sql);
@@ -108,19 +110,26 @@ function atomicReservationDb(
       }
       if (options.fail) throw new Error('D1 reservation unavailable');
       const plannedCalls = Number(reservation[1]?.params[0]);
+      const day = String(reservation[1]?.params[2]);
       const dailyCap = Number(reservation[1]?.params[4]);
+      const usedBefore = reservedCallsByDay.get(day) ?? 0;
       const accepted = Number.isSafeInteger(plannedCalls)
         && plannedCalls > 0
-        && reservedCalls + plannedCalls <= dailyCap;
-      if (accepted) reservedCalls += plannedCalls;
+        && usedBefore + plannedCalls <= dailyCap;
+      if (!reservedCallsByDay.has(day)) reservedCallsByDay.set(day, 0);
+      if (accepted) reservedCallsByDay.set(day, usedBefore + plannedCalls);
+      const usedAfter = reservedCallsByDay.get(day) ?? 0;
       return [
-        { success: true, meta: { changes: initialReservedCalls > 0 ? 0 : 1 } },
+        { success: true, meta: { changes: usedBefore > 0 ? 0 : 1 } },
         { success: true, meta: { changes: accepted ? 1 : 0 } },
-        { success: true, meta: { changes: 0 }, results: [{ reserved_calls: reservedCalls }] },
+        { success: true, meta: { changes: 0 }, results: [{ reserved_calls: usedAfter }] },
       ] as unknown as D1Result[];
     },
   } as unknown as D1Database;
-  return { db, reservedCalls: () => reservedCalls };
+  return {
+    db,
+    reservedCalls: (day = new Date().toISOString().slice(0, 10)) => reservedCallsByDay.get(day) ?? 0,
+  };
 }
 
 function settingsLeaseDb(): D1Database {
@@ -169,7 +178,11 @@ function settingsLeaseDb(): D1Database {
   } as unknown as D1Database;
 }
 
-function claimableBenchmarkDb(requestProfile: Record<string, unknown>): D1Database {
+function claimableBenchmarkDb(
+  requestProfile: Record<string, unknown>,
+  initialClaim: { outcome: string; claim_token: string | null; lease_until: string } | null = null,
+  options: { blockFirstClaimUntilSecond?: boolean } = {},
+): D1Database {
   const run = {
     id: 'run-1', chamber: 'house', status: 'running',
     requested_doc_count: 1, completed_doc_count: 0, model_count: 1,
@@ -185,7 +198,9 @@ function claimableBenchmarkDb(requestProfile: Record<string, unknown>): D1Databa
   const document = {
     run_id: 'run-1', doc_id: 'H-1', ordinal: 0, resolved: 0, ground_truth_json: null,
   };
-  let claim: { outcome: string; claim_token: string; lease_until: string } | null = null;
+  let claim: { outcome: string; claim_token: string | null; lease_until: string } | null = initialClaim;
+  let completed: Record<string, unknown> | null = null;
+  let releaseFirstClaim: (() => void) | null = null;
   return {
     prepare(sql: string) {
       const statement = {
@@ -200,19 +215,74 @@ function claimableBenchmarkDb(requestProfile: Record<string, unknown>): D1Databa
         },
         async all<T>() {
           if (/FROM benchmark_run_documents/i.test(sql)) return { results: [document] as T[] };
-          if (/FROM benchmark_model_results/i.test(sql)) return { results: [] as T[] };
+          if (/FROM benchmark_model_results/i.test(sql)) {
+            const result = completed ?? (claim ? benchmarkMeasurement('openai', 'gpt-4o', {
+              invoked: 0,
+              ok: 0,
+              autonomous: 0,
+              outcome: claim.outcome,
+              cost_usd: null,
+              cost_source: 'unknown',
+              claim_token: claim.claim_token,
+              lease_until: claim.lease_until,
+            }) : null);
+            return { results: result ? [result] as T[] : [] as T[] };
+          }
           return { results: [] as T[] };
         },
         async run() {
           if (/INSERT INTO benchmark_model_results/i.test(sql)) {
-            claim = {
-              outcome: 'running',
-              claim_token: String(statement.params[5]),
-              lease_until: String(statement.params[6]),
-            };
-            return { success: true, meta: { changes: 1 } } as D1Result;
+            const startedAt = String(statement.params[4]);
+            const allowRetry = Number(statement.params[8]) === 1;
+            const accepted = claim === null
+              || (allowRetry && claim.outcome === 'running' && claim.lease_until <= startedAt);
+            if (accepted) {
+              claim = {
+                outcome: 'running',
+                claim_token: String(statement.params[5]),
+                lease_until: String(statement.params[6]),
+              };
+            }
+            if (options.blockFirstClaimUntilSecond) {
+              if (accepted && releaseFirstClaim === null) {
+                await new Promise<void>((resolve) => { releaseFirstClaim = resolve; });
+              } else if (!accepted && releaseFirstClaim !== null) {
+                const release = releaseFirstClaim;
+                releaseFirstClaim = null;
+                release();
+              }
+            }
+            return { success: true, meta: { changes: accepted ? 1 : 0 } } as D1Result;
+          }
+          if (/DELETE FROM benchmark_model_results/i.test(sql)) {
+            const claimToken = String(statement.params[4]);
+            const accepted = claim?.claim_token === claimToken;
+            if (accepted) claim = null;
+            return { success: true, meta: { changes: accepted ? 1 : 0 } } as D1Result;
+          }
+          if (/UPDATE benchmark_model_results[\s\S]*SET claim_token = NULL, lease_until = \?/i.test(sql)) {
+            const claimToken = String(statement.params[5]);
+            const accepted = claim?.claim_token === claimToken;
+            if (accepted && claim) {
+              claim = { ...claim, claim_token: null, lease_until: String(statement.params[0]) };
+            }
+            return { success: true, meta: { changes: accepted ? 1 : 0 } } as D1Result;
           }
           if (/UPDATE benchmark_model_results SET/i.test(sql) && claim) {
+            completed = benchmarkMeasurement(String(statement.params[24]), String(statement.params[25]), {
+              invoked: Number(statement.params[1]),
+              ok: Number(statement.params[2]),
+              outcome: String(statement.params[3]),
+              autonomous: Number(statement.params[4]),
+              error: statement.params[5],
+              row_count: Number(statement.params[6]),
+              latency_ms: statement.params[8],
+              cost_usd: statement.params[9],
+              cost_source: statement.params[10],
+              result_json: statement.params[14],
+              claim_token: null,
+              lease_until: null,
+            });
             claim = null;
             return { success: true, meta: { changes: 1 } } as D1Result;
           }
@@ -404,14 +474,22 @@ describe('durable benchmark admin routes', () => {
     ]);
 
     const fulfilled = outcomes.filter(
-      (outcome): outcome is PromiseFulfilledResult<{ usedToday: number; dailyCap: number }> =>
+      (outcome): outcome is PromiseFulfilledResult<{
+        usedToday: number;
+        dailyCap: number;
+        reservedDay: string;
+      }> =>
         outcome.status === 'fulfilled',
     );
     const rejected = outcomes.filter(
       (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected',
     );
     expect(fulfilled).toHaveLength(1);
-    expect(fulfilled[0]?.value).toEqual({ usedToday: 4, dailyCap: 5 });
+    expect(fulfilled[0]?.value).toEqual({
+      usedToday: 4,
+      dailyCap: 5,
+      reservedDay: new Date().toISOString().slice(0, 10),
+    });
     expect(rejected).toHaveLength(1);
     expect(rejected[0]?.reason).toMatchObject({
       reason: 'cap_reached',
@@ -547,12 +625,17 @@ describe('durable benchmark admin routes', () => {
     }, env({ DB: ledger.db, BENCHMARK_DAILY_CALL_CAP: '5' }));
 
     expect(response.status).toBe(201);
-    expect(await response.json()).toMatchObject({
+    const responseBody = await response.json() as {
+      run: { requestProfile: { paidCallAuthorization: { reservedDay: string } } };
+      cap: { reservedDay: string };
+    };
+    expect(responseBody).toMatchObject({
       run: {
         requestProfile: {
           paidCallAuthorization: {
             version: 1,
             scope: 'initial_model_document_cells',
+            reservedDay: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
             reservedCalls: 1,
             documentCount: 1,
             models: [{ provider: 'openai', model: 'gpt-4o' }],
@@ -560,6 +643,8 @@ describe('durable benchmark admin routes', () => {
         },
       },
     });
+    expect(responseBody.run.requestProfile.paidCallAuthorization.reservedDay)
+      .toBe(responseBody.cap.reservedDay);
     expect(ledger.reservedCalls()).toBe(1);
   });
 
@@ -568,6 +653,7 @@ describe('durable benchmark admin routes', () => {
       paidCallAuthorization: {
         version: 1,
         scope: 'initial_model_document_cells',
+        reservedDay: new Date().toISOString().slice(0, 10),
         reservedCalls: 1,
         documentCount: 1,
         models: [{ provider: 'openai', model: 'gpt-4o' }],
@@ -583,6 +669,123 @@ describe('durable benchmark admin routes', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
       runId: 'run-1', outcome: 'skipped', reason: 'filing_or_raw_object_missing', invoked: false,
+    });
+    expect(ledger.reservedCalls()).toBe(1);
+  });
+
+  it('expires an initial-cell authorization at the UTC day boundary', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-07-13T23:59:59.900Z'));
+      const requestProfile = {
+        paidCallAuthorization: {
+          version: 1,
+          scope: 'initial_model_document_cells',
+          reservedDay: new Date().toISOString().slice(0, 10),
+          reservedCalls: 1,
+          documentCount: 1,
+          models: [{ provider: 'openai', model: 'gpt-4o' }],
+        },
+      };
+      const ledger = atomicReservationDb(claimableBenchmarkDb(requestProfile), 1);
+      vi.setSystemTime(new Date('2026-07-14T00:00:00.100Z'));
+
+      const unconfirmed = await buildAdminRouter().request('/benchmark/dry-run/H-1', {
+        method: 'POST',
+        headers: AUTH,
+        body: JSON.stringify({ runId: 'run-1', models: { a: BENCHMARK_MODELS[0] } }),
+      }, env({ DB: ledger.db, BENCHMARK_DAILY_CALL_CAP: '5' }));
+
+      expect(unconfirmed.status).toBe(409);
+      expect(await unconfirmed.json()).toMatchObject({
+        code: 'benchmark_cell_reservation_required',
+        requiresConfirmation: true,
+        plannedCalls: 1,
+      });
+      expect(ledger.reservedCalls('2026-07-13')).toBe(1);
+      expect(ledger.reservedCalls('2026-07-14')).toBe(0);
+
+      const confirmed = await buildAdminRouter().request('/benchmark/dry-run/H-1', {
+        method: 'POST',
+        headers: AUTH,
+        body: JSON.stringify({
+          runId: 'run-1',
+          models: { a: BENCHMARK_MODELS[0] },
+          confirmPaidRun: true,
+        }),
+      }, env({ DB: ledger.db, BENCHMARK_DAILY_CALL_CAP: '5' }));
+
+      expect(confirmed.status).toBe(200);
+      expect(await confirmed.json()).toMatchObject({
+        runId: 'run-1', outcome: 'skipped', reason: 'filing_or_raw_object_missing', invoked: false,
+      });
+      expect(ledger.reservedCalls('2026-07-13')).toBe(1);
+      expect(ledger.reservedCalls('2026-07-14')).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reserves a cross-day cell only once under concurrent confirmed delivery', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-07-14T00:00:00.100Z'));
+      const requestProfile = {
+        paidCallAuthorization: {
+          version: 1,
+          scope: 'initial_model_document_cells',
+          reservedDay: '2026-07-13',
+          reservedCalls: 1,
+          documentCount: 1,
+          models: [{ provider: 'openai', model: 'gpt-4o' }],
+        },
+      };
+      const ledger = atomicReservationDb(claimableBenchmarkDb(requestProfile, null, {
+        blockFirstClaimUntilSecond: true,
+      }), 1, {
+        initialDay: '2026-07-13',
+      });
+      const request = () => buildAdminRouter().request('/benchmark/dry-run/H-1', {
+        method: 'POST',
+        headers: AUTH,
+        body: JSON.stringify({
+          runId: 'run-1',
+          models: { a: BENCHMARK_MODELS[0] },
+          confirmPaidRun: true,
+        }),
+      }, env({ DB: ledger.db, BENCHMARK_DAILY_CALL_CAP: '5' }));
+
+      const responses = await Promise.all([request(), request()]);
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 202]);
+      expect(ledger.reservedCalls('2026-07-13')).toBe(1);
+      expect(ledger.reservedCalls('2026-07-14')).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails closed for legacy initial-cell authorizations without a reservation day', async () => {
+    const legacyDb = claimableBenchmarkDb({
+      paidCallAuthorization: {
+        version: 1,
+        scope: 'initial_model_document_cells',
+        reservedCalls: 1,
+        documentCount: 1,
+        models: [{ provider: 'openai', model: 'gpt-4o' }],
+      },
+    });
+    const ledger = atomicReservationDb(legacyDb, 1);
+    const response = await buildAdminRouter().request('/benchmark/dry-run/H-1', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ runId: 'run-1', models: { a: BENCHMARK_MODELS[0] } }),
+    }, env({ DB: ledger.db, BENCHMARK_DAILY_CALL_CAP: '5' }));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: 'benchmark_cell_reservation_required',
+      requiresConfirmation: true,
+      plannedCalls: 1,
     });
     expect(ledger.reservedCalls()).toBe(1);
   });
@@ -667,20 +870,11 @@ describe('durable benchmark admin routes', () => {
   });
 
   it('atomically reserves another paid call before an explicitly confirmed unknown-outcome retry', async () => {
-    const orphaned = benchmarkMeasurement('openai', 'gpt-4o', {
-      invoked: 0,
-      ok: 0,
-      autonomous: 0,
+    const ledger = atomicReservationDb(claimableBenchmarkDb({}, {
       outcome: 'running',
-      cost_usd: null,
-      cost_source: 'unknown',
       claim_token: 'expired-worker',
       lease_until: '2026-01-01T00:00:00.000Z',
-    });
-    const ledger = atomicReservationDb(
-      persistedBenchmarkDb([orphaned], [], 'running'),
-      5,
-    );
+    }), 5);
     const response = await buildAdminRouter().request('/benchmark/dry-run/H-1', {
       method: 'POST',
       headers: AUTH,
