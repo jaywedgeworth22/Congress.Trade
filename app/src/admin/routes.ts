@@ -141,6 +141,7 @@ import { pushExtractionTelemetry } from '../extraction/telemetry';
 import {
   inspectUsageTelemetryFallback,
   recordMeasuredThirdPartyUsage,
+  stableMeasuredUsageIdempotencyKey,
   trackedFetch,
 } from '../shared/thirdPartyTelemetry';
 import {
@@ -327,6 +328,17 @@ function validateSchedule(schedule: unknown): string | null {
     }
   }
   return null;
+}
+
+function canonicalBatchTimestamp(value: unknown): string | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return null;
+  try {
+    return new Date(timestamp).toISOString();
+  } catch {
+    return null;
+  }
 }
 
 interface ReviewRow {
@@ -3948,8 +3960,21 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     if (n > 200) n = 200;
 
     let docRows: Array<{ doc_id: string; raw_object_key: string | null; chamber: string | null }>;
-    if (Array.isArray(body.docIds) && body.docIds.length > 0) {
-      const ids = body.docIds.filter((x): x is string => typeof x === 'string').slice(0, n);
+    if (Object.prototype.hasOwnProperty.call(body, 'docIds')) {
+      if (!Array.isArray(body.docIds)) {
+        return c.json({ error: 'docIds must be an array of non-empty strings' }, 400);
+      }
+      const invalidDocIdCount = body.docIds.filter(
+        (value) => typeof value !== 'string' || value.trim().length === 0,
+      ).length;
+      if (invalidDocIdCount > 0 || body.docIds.length === 0) {
+        return c.json({
+          error: 'docIds must contain only non-empty strings',
+          requestedDocCount: body.docIds.length,
+          invalidDocIdCount,
+        }, 400);
+      }
+      const ids = [...new Set(body.docIds.map((value) => (value as string).trim()))].slice(0, n);
       docRows = [];
       for (const id of ids) {
         const row = await get<{ doc_id: string; raw_object_key: string | null; chamber: string | null }>(
@@ -4029,10 +4054,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const jobId = c.req.param('jobId');
     const job = await get<{
       id: string; provider: string; model: string; provider_batch_id: string | null;
-      doc_ids: string; status: string; submitted_at: string;
+      doc_ids: string; status: string; submitted_at: string | null; completed_at: string | null;
     }>(
       c.env.DB,
-      'SELECT id, provider, model, provider_batch_id, doc_ids, status, submitted_at FROM batch_jobs WHERE id = ?',
+      'SELECT id, provider, model, provider_batch_id, doc_ids, status, submitted_at, completed_at FROM batch_jobs WHERE id = ?',
       [jobId],
     );
     if (!job) return c.json({ error: 'batch job not found' }, 404);
@@ -4055,13 +4080,91 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ jobId, status: 'running', providerStatus: poll.status });
     }
 
-    const completedAt = new Date().toISOString();
-    const turnaroundMs = Date.parse(completedAt) - Date.parse(job.submitted_at);
+    const normalizedResults = [] as typeof poll.results;
+    const resultDocIds = new Set<string>();
+    let invalidResultDocIdCount = 0;
+    let duplicateResultDocIdCount = 0;
+    for (const result of poll.results) {
+      const docId = typeof result.docId === 'string' ? result.docId.trim() : '';
+      if (!docId) {
+        invalidResultDocIdCount++;
+        continue;
+      }
+      if (resultDocIds.has(docId)) {
+        duplicateResultDocIdCount++;
+        continue;
+      }
+      resultDocIds.add(docId);
+      normalizedResults.push({ ...result, docId });
+    }
+    if (invalidResultDocIdCount > 0 || duplicateResultDocIdCount > 0) {
+      return c.json({
+        error: 'batch provider returned invalid result identities',
+        resultCount: poll.results.length,
+        invalidResultDocIdCount,
+        duplicateResultDocIdCount,
+      }, 502);
+    }
+
+    // Prefer an already-valid persisted timestamp, then the provider-authored
+    // terminal transition, then this first observation. A compare-and-swap
+    // repairs NULL/malformed legacy values without overwriting a valid winner
+    // claimed by another poller.
+    const observedTerminalAt = new Date().toISOString();
+    const persistedCompletedAt = canonicalBatchTimestamp(job.completed_at);
+    const providerTerminalAt = canonicalBatchTimestamp(poll.terminalAt);
+    if (!persistedCompletedAt) {
+      await run(
+        c.env.DB,
+        `UPDATE batch_jobs
+            SET completed_at = ?
+          WHERE id = ? AND (completed_at IS NULL OR completed_at = ?)`,
+        [providerTerminalAt ?? observedTerminalAt, jobId, job.completed_at],
+      );
+    }
+    const terminal = await get<{ completed_at: string | null }>(
+      c.env.DB,
+      'SELECT completed_at FROM batch_jobs WHERE id = ?',
+      [jobId],
+    );
+    const claimedCompletedAt = canonicalBatchTimestamp(terminal?.completed_at);
+    if (!claimedCompletedAt) {
+      return c.json({ error: 'batch terminal timestamp could not be persisted' }, 503);
+    }
+    const persistedSubmittedAt = canonicalBatchTimestamp(job.submitted_at);
+    const providerSubmittedAt = canonicalBatchTimestamp(poll.submittedAt);
+    const completedTime = Date.parse(claimedCompletedAt);
+    if (!persistedSubmittedAt || Date.parse(persistedSubmittedAt) > completedTime) {
+      const repairSubmittedAt = providerSubmittedAt && Date.parse(providerSubmittedAt) <= completedTime
+        ? providerSubmittedAt
+        : claimedCompletedAt;
+      await run(
+        c.env.DB,
+        `UPDATE batch_jobs
+            SET submitted_at = ?
+          WHERE id = ? AND (submitted_at IS NULL OR submitted_at = ?)`,
+        [repairSubmittedAt, jobId, job.submitted_at],
+      );
+    }
+    const timing = await get<{ submitted_at: string | null; completed_at: string | null }>(
+      c.env.DB,
+      'SELECT submitted_at, completed_at FROM batch_jobs WHERE id = ?',
+      [jobId],
+    );
+    const completedAt = canonicalBatchTimestamp(timing?.completed_at);
+    const submittedAt = canonicalBatchTimestamp(timing?.submitted_at);
+    if (!completedAt || !submittedAt) {
+      return c.json({ error: 'batch lifecycle timestamps could not be persisted' }, 503);
+    }
+    const turnaroundMs = Date.parse(completedAt) - Date.parse(submittedAt);
+    if (!Number.isFinite(turnaroundMs) || turnaroundMs < 0) {
+      return c.json({ error: 'batch lifecycle timestamps are inconsistent' }, 503);
+    }
     let okCount = 0;
     let rowTotal = 0;
     const errors: string[] = [];
 
-    for (const [resultIndex, res] of poll.results.entries()) {
+    for (const res of normalizedResults) {
         if (res.ok) { okCount++; rowTotal += res.rows.length; } else errors.push(`${res.docId}: ${res.error ?? 'failed'}`);
         const avg = res.rows.length ? res.rows.reduce((s, x) => s + (x.confidence ?? 0), 0) / res.rows.length : 0;
         try {
@@ -4092,7 +4195,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             provider: job.provider,
             service: 'llm-batch',
             operation: 'batch-result-tokens',
-            idempotencyKey: `ct-batch-${jobId}-${resultIndex}-tokens`,
+            idempotencyKey: await stableMeasuredUsageIdempotencyKey(
+              'batch-result', 'tokens', jobId, res.docId,
+            ),
+            occurredAt: completedAt,
             model: job.model,
             quantity: promptTokens + completionTokens,
             unit: 'token',
@@ -4106,7 +4212,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             provider: job.provider,
             service: 'ocr-batch',
             operation: 'batch-result-pages',
-            idempotencyKey: `ct-batch-${jobId}-${resultIndex}-pages`,
+            idempotencyKey: await stableMeasuredUsageIdempotencyKey(
+              'batch-result', 'pages', jobId, res.docId,
+            ),
+            occurredAt: completedAt,
             model: job.model,
             quantity: res.usage.pagesProcessed,
             unit: 'page',
@@ -4121,7 +4230,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             provider: job.provider,
             service: 'llm-batch',
             operation: 'batch-result-provider-cost',
-            idempotencyKey: `ct-batch-${jobId}-${resultIndex}-cost`,
+            idempotencyKey: await stableMeasuredUsageIdempotencyKey(
+              'batch-result', 'cost', jobId, res.docId,
+            ),
+            occurredAt: completedAt,
             model: res.resolvedModel ?? job.model,
             metricType: 'cost',
             quantity: costUsd,
@@ -4143,7 +4255,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             provider: job.provider,
             service: 'llm-batch',
             operation: 'batch-result-attachment-search',
-            idempotencyKey: `ct-batch-${jobId}-${resultIndex}-attachment-search`,
+            idempotencyKey: await stableMeasuredUsageIdempotencyKey(
+              'batch-result', 'attachment-search', jobId, res.docId,
+            ),
+            occurredAt: completedAt,
             model: res.resolvedModel ?? job.model,
             quantity: res.usage.attachmentSearchCalls,
             unit: 'call',
@@ -4158,10 +4273,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         }
       }
 
-    const summary = { docs: poll.results.length, ok: okCount, rows: rowTotal, errors: errors.slice(0, 20) };
+    const summary = { docs: normalizedResults.length, ok: okCount, rows: rowTotal, errors: errors.slice(0, 20) };
     await run(
       c.env.DB,
-      'UPDATE batch_jobs SET status = ?, completed_at = ?, turnaround_ms = ?, result_summary = ?, error = ? WHERE id = ?',
+      `UPDATE batch_jobs
+          SET status = ?, completed_at = COALESCE(completed_at, ?), turnaround_ms = ?, result_summary = ?, error = ?
+        WHERE id = ?`,
       [poll.failed ? 'failed' : 'completed', completedAt, turnaroundMs, JSON.stringify(summary), poll.failed ? poll.status : null, jobId],
     );
     return c.json({

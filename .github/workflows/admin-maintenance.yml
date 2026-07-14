@@ -10,6 +10,7 @@
 #                             regression); the per-minute outbox flush re-fetches
 #   ingest-retry-errored   -> re-enqueue filing.fetched for errored filings that
 #                             already have raw bytes (extraction-stage casualties)
+#   batch-status           -> poll and resolve one explicitly identified batch job
 name: Admin Maintenance
 
 on:
@@ -24,9 +25,20 @@ on:
           - drain-backlog
           - ingest-requeue-failed
           - ingest-retry-errored
+          - batch-status
+      job_id:
+        description: Required UUID-like batch job id when task is batch-status
+        required: false
+        type: string
       confirm:
         description: Type run-production-maintenance to confirm
         required: true
+
+# Serialize production maintenance with deploys and let the in-flight operation
+# finish instead of cancelling it mid-mutation.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
 
 jobs:
   maintain:
@@ -62,3 +74,50 @@ jobs:
             -H 'content-type: application/json' -d '{"limit": 2000}')
           cat /tmp/retry.json; echo
           [ "$code" = "200" ] || { echo "HTTP $code"; exit 1; }
+
+      - name: Poll and resolve one batch job
+        if: inputs.task == 'batch-status'
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$JOB_ID" =~ ^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$ ]]; then
+            echo "::error::job_id must be a UUID-like value"
+            exit 2
+          fi
+          echo "== POST /api/admin/batch-status/<validated-job-id>"
+          code=$(curl -sS -o /tmp/batch-status.json -w '%{http_code}' -X POST \
+            "$BASE_URL/api/admin/batch-status/$JOB_ID" \
+            -H "authorization: Bearer $ADMIN_TOKEN" \
+            -H 'content-type: application/json' -d '{}')
+          python3 - /tmp/batch-status.json <<'PY'
+          import json
+          import sys
+
+          try:
+              with open(sys.argv[1], encoding="utf-8") as handle:
+                  payload = json.load(handle)
+          except Exception:
+              print(json.dumps({"response": "unparseable"}, sort_keys=True))
+              raise SystemExit(0)
+
+          safe = {
+              key: payload[key]
+              for key in ("jobId", "status", "alreadyFinished", "turnaroundMs", "turnaroundMin")
+              if key in payload
+          }
+          summary = payload.get("summary")
+          if isinstance(summary, dict):
+              errors = summary.get("errors")
+              safe["summary"] = {
+                  key: summary[key]
+                  for key in ("docs", "ok", "rows")
+                  if key in summary
+              }
+              safe["summary"]["errorCount"] = len(errors) if isinstance(errors, list) else 0
+          if "error" in payload:
+              safe["error"] = "request failed"
+          print(json.dumps(safe, sort_keys=True))
+          PY
+          echo "HTTP $code"
+          [ "$code" = "200" ] || exit 1

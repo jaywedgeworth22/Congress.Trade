@@ -71,6 +71,66 @@ export interface BatchPoll {
   failed: boolean;
   status: string;
   results: BatchDocResult[];
+  /** Provider-authored batch creation time, when the API exposes one. */
+  submittedAt?: string;
+  /** Provider-authored terminal transition time, when the API exposes one. */
+  terminalAt?: string;
+}
+
+function unixSecondsToIso(value: unknown): string | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return undefined;
+  try {
+    const iso = new Date(value * 1_000).toISOString();
+    return Number.isFinite(Date.parse(iso)) ? iso : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function rfc3339ToIso(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const match = /^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])[Tt](?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:[Zz]|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(value);
+  if (!match) return undefined;
+  const calendarDay = `${match[1]}-${match[2]}-${match[3]}`;
+  const calendarTimestamp = Date.parse(`${calendarDay}T00:00:00.000Z`);
+  if (!Number.isFinite(calendarTimestamp)
+    || new Date(calendarTimestamp).toISOString().slice(0, 10) !== calendarDay) return undefined;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return undefined;
+  try {
+    return new Date(timestamp).toISOString();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Parse OpenAI's documented Unix-second batch lifecycle fields. */
+export function parseOpenAiBatchTimestamps(value: unknown): Pick<BatchPoll, 'submittedAt' | 'terminalAt'> {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return {};
+  const batch = value as Record<string, unknown>;
+  const status = typeof batch.status === 'string' ? batch.status.toLowerCase() : '';
+  const terminalFieldByStatus: Record<string, string> = {
+    completed: 'completed_at',
+    failed: 'failed_at',
+    expired: 'expired_at',
+    cancelled: 'cancelled_at',
+  };
+  const preferredTerminalField = terminalFieldByStatus[status];
+  const terminalFields = preferredTerminalField
+    ? [
+        preferredTerminalField,
+        ...['completed_at', 'failed_at', 'expired_at', 'cancelled_at']
+          .filter((field) => field !== preferredTerminalField),
+      ]
+    : [];
+  const submittedAt = unixSecondsToIso(batch.created_at);
+  const terminalAt = terminalFields
+    .map((field) => unixSecondsToIso(batch[field]))
+    .find((timestamp) => timestamp != null);
+  return {
+    ...(submittedAt ? { submittedAt } : {}),
+    ...(terminalAt ? { terminalAt } : {}),
+  };
 }
 
 export function normalizeBatchChamber(
@@ -234,9 +294,21 @@ async function pollAnthropic(env: Env, batchId: string): Promise<BatchPoll> {
     { service: 'llm-batch', operation: 'poll-batch' },
   );
   if (!res.ok) throw new Error(`anthropic batch get ${res.status} ${await safeText(res)}`);
-  const j = (await res.json()) as { processing_status?: string; results_url?: string | null };
-  if (j.processing_status !== 'ended' || !j.results_url) {
-    return { done: false, failed: false, status: j.processing_status ?? 'unknown', results: [] };
+  const j = (await res.json()) as {
+    processing_status?: string;
+    results_url?: string | null;
+    created_at?: string | null;
+    ended_at?: string | null;
+  };
+  const status = j.processing_status ?? 'unknown';
+  const submittedAt = rfc3339ToIso(j.created_at);
+  const terminalAt = status === 'ended' ? rfc3339ToIso(j.ended_at) : undefined;
+  const timestamps = {
+    ...(submittedAt ? { submittedAt } : {}),
+    ...(terminalAt ? { terminalAt } : {}),
+  };
+  if (status !== 'ended' || !j.results_url) {
+    return { done: false, failed: false, status, results: [], ...timestamps };
   }
   const rj = await trackedFetch(
     j.results_url,
@@ -245,7 +317,7 @@ async function pollAnthropic(env: Env, batchId: string): Promise<BatchPoll> {
   );
   if (!rj.ok) throw new Error(`anthropic batch results ${rj.status}`);
   const results = parseJsonl(await rj.text()).map(decodeAnthropicLine);
-  return { done: true, failed: false, status: 'ended', results };
+  return { done: true, failed: false, status: 'ended', results, ...timestamps };
 }
 
 // ---------------------------------------------------------------------------
@@ -364,19 +436,29 @@ async function pollOpenAi(env: Env, batchId: string): Promise<BatchPoll> {
     { service: 'llm-batch', operation: 'poll-batch' },
   );
   if (!res.ok) throw new Error(`openai batch get ${res.status} ${await safeText(res)}`);
-  const j = (await res.json()) as { status?: string; output_file_id?: string | null; error_file_id?: string | null };
+  const j = (await res.json()) as {
+    status?: string;
+    output_file_id?: string | null;
+    error_file_id?: string | null;
+    created_at?: number | null;
+    completed_at?: number | null;
+    failed_at?: number | null;
+    expired_at?: number | null;
+    cancelled_at?: number | null;
+  };
+  const timestamps = parseOpenAiBatchTimestamps(j);
   if (j.status === 'failed' || j.status === 'expired' || j.status === 'cancelled') {
     // Terminal batches may still expose an output file containing completed,
     // billed requests. Decode them; /batch-status persists and meters every
     // returned result regardless of the overall job status.
     const results = j.output_file_id ? await fetchOpenAiBatchResults(key, j.output_file_id) : [];
-    return { done: true, failed: true, status: j.status, results };
+    return { done: true, failed: true, status: j.status, results, ...timestamps };
   }
   if (j.status !== 'completed' || !j.output_file_id) {
-    return { done: false, failed: false, status: j.status ?? 'unknown', results: [] };
+    return { done: false, failed: false, status: j.status ?? 'unknown', results: [], ...timestamps };
   }
   const results = await fetchOpenAiBatchResults(key, j.output_file_id);
-  return { done: true, failed: false, status: 'completed', results };
+  return { done: true, failed: false, status: 'completed', results, ...timestamps };
 }
 
 // ---------------------------------------------------------------------------
@@ -444,14 +526,26 @@ async function pollMistral(env: Env, jobId: string): Promise<BatchPoll> {
     { service: 'llm-batch', operation: 'poll-batch' },
   );
   if (!res.ok) throw new Error(`mistral batch get ${res.status} ${await safeText(res)}`);
-  const j = (await res.json()) as { status?: string; output_file?: string | null };
+  const j = (await res.json()) as {
+    status?: string;
+    output_file?: string | null;
+    created_at?: number | null;
+    completed_at?: number | null;
+  };
   const status = (j.status ?? 'UNKNOWN').toUpperCase();
   const failed = ['FAILED', 'CANCELLED', 'TIMEOUT_EXCEEDED'].includes(status);
+  const terminal = failed || status === 'SUCCESS';
+  const submittedAt = unixSecondsToIso(j.created_at);
+  const terminalAt = terminal ? unixSecondsToIso(j.completed_at) : undefined;
+  const timestamps = {
+    ...(submittedAt ? { submittedAt } : {}),
+    ...(terminalAt ? { terminalAt } : {}),
+  };
   if (failed && !j.output_file) {
-    return { done: true, failed: true, status, results: [] };
+    return { done: true, failed: true, status, results: [], ...timestamps };
   }
   if ((!failed && status !== 'SUCCESS') || !j.output_file) {
-    return { done: false, failed: false, status, results: [] };
+    return { done: false, failed: false, status, results: [], ...timestamps };
   }
   const rj = await trackedFetch(
     `https://api.mistral.ai/v1/files/${j.output_file}/content`,
@@ -460,7 +554,7 @@ async function pollMistral(env: Env, jobId: string): Promise<BatchPoll> {
   );
   if (!rj.ok) throw new Error(`mistral batch results ${rj.status}`);
   const results = parseJsonl(await rj.text()).map(decodeMistralLine);
-  return { done: true, failed, status, results };
+  return { done: true, failed, status, results, ...timestamps };
 }
 
 // ---------------------------------------------------------------------------
