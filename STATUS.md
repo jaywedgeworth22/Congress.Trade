@@ -23,8 +23,11 @@ truth; this file is the short operational snapshot for the current integration.
 - Local typecheck and lint pass (0 errors; inherited warnings only). Focused benchmark/settings,
   migration/readiness, extraction, script-telemetry, and final audit suites pass. A bounded
   single-worker full suite passes all 122 files / 1,124 tests; parallel-only wall-clock failures
-  also pass in isolation. No paid benchmark, production settings write, migration, or production
-  deploy has run from this branch yet.
+  also pass in isolation. The branch is rebased on current `main`; preview Worker version
+  `f54ea612-04cc-4795-b45b-12b176ce2627` is healthy with synthetic histories for all three
+  chambers, partial-cost and latency fixtures, protected admin access, and clean browser runtime.
+  No paid benchmark, production settings write, production migration, or production deploy has
+  run from this branch yet.
 
 ## 2026-07-12 — Ingestion fetch outage: R2 known-length fix (CLAUDE)
 

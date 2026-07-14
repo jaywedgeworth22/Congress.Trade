@@ -29,7 +29,12 @@ Safety controls include explicit paid-run confirmation, an atomic daily call cap
 - `npm run typecheck`: passed.
 - `npm run lint`: passed with 0 errors (109 inherited warnings).
 - Two parallel full-suite attempts reached 1,121/1,124 and 1,122/1,124 tests; every failed wall-clock-sensitive file passed immediately in isolation. The bounded single-worker confirmation passed all 122 files / 1,124 tests.
-- Isolated preview deployment, browser QA, hosted CI, and production rollout receipts will be recorded here after landing.
+- Post-rebase verification: typecheck and 192 focused tests passed; `git diff origin/main --check` passed.
+- The standard preview wrapper's parallel full-suite gate reproduced only the known wall-clock-sensitive tests. With the bounded 1,124-test receipt already green, its remaining isolated steps were run manually: preview migrations `0039` and `0040`, deterministic seed, deploy, and health check all passed.
+- Isolated preview Worker version `f54ea612-04cc-4795-b45b-12b176ce2627` is live at `https://congress-trade-preview.jaywedgeworth22.workers.dev`; `/api/health` reports `ok/db/schema=true` and `missing=[]`.
+- Preview D1 contains one completed synthetic run and three model results for House, Senate, and Executive. House records 2/3 known-cost calls to exercise partial coverage; all chambers contain distinct model latency ranges.
+- Unauthenticated preview admin history returns HTTP 401. Browser QA found the three exact branch controls and saved-run selector with no console warnings/errors. The same exact build against a fresh open-admin local D1 returned all three histories and branch-specific A/B/C settings; no provider call or settings write was invoked.
+- Hosted CI, protected merge, and production rollout receipts remain pending.
 
 ## Follow-ups
 
