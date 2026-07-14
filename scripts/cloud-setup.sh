@@ -9,17 +9,29 @@
 # The runnable app lives in app/ (a Cloudflare Worker), NOT the repo root — so a
 # plain `npm ci` from the root fails. This script cd's into app/ for you.
 #
-# Local dev is keyless: `wrangler dev` simulates D1/R2/KV/Queues locally, so no
-# Cloudflare login or API keys are required to boot, typecheck, or test. Inject
-# keys (FMP_API_KEY, GEMINI_API_KEY, ADMIN_OPEN_IN_DEV=true, …) only to exercise
-# those features. NEVER put production secrets (sk_live_*, the prod ADMIN_TOKEN /
-# INGEST_TOKEN, the real WEBHOOK_SIGNING_KEY) in a throwaway environment.
+# Local runtime configuration comes from Infisical. This setup maps the
+# app/shared machine-identity bootstrap credentials plus a narrow documented set
+# of env-only/local selectors into app/.dev.vars. Provider and app secrets remain
+# in Infisical and are resolved by the Worker at runtime.
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 # The buildable app lives in app/, not the repo root.
-cd "$(dirname "$0")/../app"
+cd "$SCRIPT_DIR/../app"
 
 echo "==> Node: $(node --version 2>/dev/null || echo 'not found')  npm: $(npm --version 2>/dev/null || echo 'not found')"
+
+# Parse the optional machine-level key file as inert data (never source it),
+# validate complete identity pairs, map canonical CT names to the runtime names,
+# preserve non-empty managed app/.dev.vars values, and retain only the documented
+# early-init/local selectors from the explicit environment. This runs before the
+# expensive install so malformed bootstrap state fails closed immediately.
+unset CT_LOCAL_BOOTSTRAP_TEST_MODE
+unset CT_LOCAL_BOOTSTRAP_TEST_APP_DIR
+unset CT_LOCAL_BOOTSTRAP_TEST_DEV_VARS_FILE
+unset CT_LOCAL_BOOTSTRAP_TEST_GLOBAL_KEYS_FILE
+node "$SCRIPT_DIR/merge-local-dev-vars.mjs"
 
 # ---------------------------------------------------------------------------
 # @jaywedgeworth22/congress-trading-shared is published to GitHub Packages
@@ -46,51 +58,6 @@ fi
 # very dev / typecheck / test commands this bootstrap is meant to prepare.
 echo "==> Installing dependencies (npm ci --include=dev)"
 npm ci --include=dev
-
-# ---------------------------------------------------------------------------
-# Merge env-provided values into app/.dev.vars.
-#
-# `wrangler dev` reads secrets from .dev.vars (and [vars] in wrangler.toml) — NOT
-# from the OS environment. So a value set in the cloud "environment variables"
-# field does not reach the Worker as env.X unless it is written here.
-#
-# Non-destructive MERGE (not a one-shot create): existing keys — hand-edited or
-# from a prior run — are never overwritten, and vars you add to the cloud
-# environment LATER are appended on the next run. No file is created when nothing
-# is set, so an empty .dev.vars can never lock out a later top-up.
-#
-# Keep KNOWN_VARS synced from app/.dev.vars.example. A few runtime selectors and
-# provider keys are also included so a sandbox can override wrangler.toml [vars]
-# defaults or test optional providers before those names appear in the template.
-# ---------------------------------------------------------------------------
-KNOWN_VARS=(
-  PRICE_PROVIDER FMP_MAX_PER_MINUTE
-  MISTRAL_API_KEY XAI_API_KEY
-  FINNHUB_API_KEY INTRINIO_API_KEY TWELVEDATA_API_KEY MASSIVE_API_KEY
-)
-if [ -f .dev.vars.example ]; then
-  while IFS= read -r name; do
-    case " ${KNOWN_VARS[*]} " in
-      *" $name "*) ;;
-      *) KNOWN_VARS+=("$name") ;;
-    esac
-  done < <(sed -nE 's/^([A-Z0-9_]+)=.*/\1/p' .dev.vars.example)
-fi
-merged=0
-for name in "${KNOWN_VARS[@]}"; do
-  value="${!name:-}"
-  [ -n "$value" ] || continue                                   # skip unset / empty
-  [ -f .dev.vars ] && grep -q "^${name}=" .dev.vars && continue # already present — never overwrite
-  value="${value//\\/\\\\}"                                     # escape backslashes
-  value="${value//\"/\\\"}"                                     # escape double quotes
-  printf '%s="%s"\n' "$name" "$value" >> .dev.vars              # creates the file only when we write
-  merged=$((merged + 1))
-done
-if [ "$merged" -gt 0 ]; then
-  echo "==> app/.dev.vars: merged $merged var(s) from the environment"
-else
-  echo "==> app/.dev.vars: nothing to merge (keyless run)"
-fi
 
 # Build the local D1 dev database so `wrangler dev` has a working schema.
 # `--local` operates on a local SQLite file (no Cloudflare login). CI=true keeps

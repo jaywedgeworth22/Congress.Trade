@@ -173,12 +173,24 @@ duplicate delivery fan-out.
 | `DELIVERY_QUEUE` | Queue | Delivery fan-out |
 | `CONFIG_KV` | KV | Hot config cache (poll schedule, last-poll timestamps) |
 
-Local development variables are documented in `.dev.vars.example`; copy it to
-`.dev.vars` and keep the real file untracked. Production provider/app secrets
-should live in Infisical and be read at runtime through the machine-identity
-resolver. Cloudflare Worker secrets should only need the Infisical bootstrap
-identity credentials after cutover; provider-key Worker secrets are migration
-fallback only. Important groups:
+Local development variables are documented in `.dev.vars.example`, but that
+template is reference-only. From the repository root run
+`bash scripts/cloud-setup.sh`; it safely maps the Congress.Trade and shared
+Infisical machine identities from explicit environment variables or the
+optional owner-only `$HOME/.secrets/global-api-keys` file (no group/other
+permission bits) into the gitignored `.dev.vars`. The global file is parsed as
+inert assignments and never sourced.
+The setup also carries forward only the five documented early-init/local
+selectors (`SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`,
+`ADMIN_OPEN_IN_DEV`, and `USAGE_MONITOR_ENVIRONMENT`) from the explicit process
+environment. Unrelated existing `.dev.vars` content is preserved verbatim.
+Only missing or empty managed entries are populated; existing non-empty managed
+values are not overwritten. To rotate one locally, deliberately remove or empty
+its managed line before re-running setup.
+Production provider/app secrets live in Infisical and are read at runtime
+through the machine-identity resolver. Cloudflare Worker secrets should only
+need the Infisical bootstrap identity credentials after cutover; provider-key
+Worker secrets are migration fallback only. Important groups:
 
 | Group | Variables |
 |-------|-----------|

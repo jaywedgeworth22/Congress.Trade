@@ -92,6 +92,32 @@ path, never active in production).
 | `INFISICAL_BASE_URL`, `INFISICAL_ENV`, `INFISICAL_CACHE_TTL_SECONDS`, `INFISICAL_ALLOW_ENV_FALLBACK`, `INFISICAL_APP_*`, `INFISICAL_SHARED_*` | Resolver bootstrap — cannot resolve themselves |
 | `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE` | Read synchronously in the `Sentry.withSentry` init factory before any `await` is possible |
 
+For local development, `scripts/cloud-setup.sh` maps the canonical
+`INFISICAL_CT_CLIENT_ID` / `INFISICAL_CT_CLIENT_SECRET` inputs to the runtime
+`INFISICAL_APP_*` names. It accepts both `INFISICAL_CT_SHARED_*` and the existing
+`INFISICAL_SHARED_*` shared-identity names. Existing complete, non-empty
+`.dev.vars` pairs have preservation priority. For a missing or empty managed
+target, explicit runtime-name environment pairs precede canonical CT environment
+aliases and then the corresponding machine-file aliases. Existing non-empty
+managed values are never rotated implicitly; deliberately remove or empty a
+managed line before re-running setup. An incomplete client-id/client-secret pair
+aborts before install. Known nonsecret project IDs are supplied only when the
+corresponding complete identity exists. The optional machine-level file must be
+a regular owner-only file with no group/other permission bits; exact mode `0600`
+is recommended but not required. It is parsed without shell evaluation;
+provider keys are never copied from it or the process environment. The only
+non-Infisical values imported explicitly for local setup are `SENTRY_DSN`,
+`SENTRY_ENVIRONMENT`,
+`SENTRY_TRACES_SAMPLE_RATE`, `ADMIN_OPEN_IN_DEV`, and
+`USAGE_MONITOR_ENVIRONMENT`. Existing `.dev.vars` parsing is limited to managed
+keys using the dotenv 16.3.1 grammar bundled by Wrangler, so colon assignments,
+comments, quotes, backslashes, backticks, and multiline values cannot expose a
+managed-looking line nested in unrelated content. Unrelated records remain
+byte-for-byte unchanged. Imported managed values are emitted only when that
+same parser proves an exact single-line round trip; otherwise setup fails
+closed. Missing files are allowed; symlinks, including broken symlinks, are
+rejected.
+
 ## Not env at all (already hot-configurable elsewhere)
 
 - **Poll cadence / Aggressive Mode** — stored in D1 `poll_config` + KV, edited
