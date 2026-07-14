@@ -90,6 +90,8 @@ export interface CandidateDocResult {
   /** Concrete model/version and request id returned by the provider, when available. */
   resolvedModel?: string;
   providerRequestId?: string;
+  /** Stable start time for measured usage emitted from this provider attempt. */
+  occurredAt?: string;
   /** Effective request tier returned by the provider (for example OpenAI `default`). */
   serviceTier?: string;
   /** Billed usage reported by the provider API. */
@@ -875,6 +877,7 @@ export async function runCandidateOnDoc(
   }
 
   const started = Date.now();
+  const occurredAt = new Date(started).toISOString();
   try {
     let rows: ParsedTx[];
     let usage: CandidateDocResult['usage'];
@@ -938,6 +941,7 @@ export async function runCandidateOnDoc(
       usage,
       resolvedModel,
       providerRequestId,
+      occurredAt,
       serviceTier,
     };
   } catch (err) {
@@ -961,6 +965,7 @@ export async function runCandidateOnDoc(
       usage: cast.usage,
       resolvedModel: cast.resolvedModel,
       providerRequestId: cast.providerRequestId,
+      occurredAt,
       serviceTier: cast.serviceTier,
     };
   }

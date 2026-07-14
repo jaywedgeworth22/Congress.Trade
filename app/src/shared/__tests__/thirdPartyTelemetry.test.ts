@@ -10,7 +10,9 @@ import {
   flushUsageTelemetryFallback,
   providerForThirdPartyRequest,
   recordMeasuredThirdPartyUsage,
+  stableMeasuredUsageIdempotencyKey,
   trackedFetch,
+  type MeasuredThirdPartyUsage,
   withThirdPartyTelemetry,
   withoutThirdPartyTelemetry,
 } from '../thirdPartyTelemetry';
@@ -18,6 +20,7 @@ import {
 const testModuleUrl = (import.meta as ImportMeta & { readonly url: string }).url;
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -272,6 +275,7 @@ describe('third-party usage telemetry', () => {
       service: 'llm',
       operation: 'benchmark-cost',
       idempotencyKey: 'CT Batch Run 123 Cost',
+      occurredAt: '2026-07-13T12:00:00.000Z',
       model: 'gpt-4o',
       metricType: 'cost',
       costUsd: 0.0123,
@@ -305,6 +309,103 @@ describe('third-party usage telemetry', () => {
       costInUsdTicks: 321_000_000,
     });
     expect(JSON.stringify(message)).not.toContain('never.example');
+  });
+
+  it('requires a valid occurrence timestamp at runtime for every explicit stable key', async () => {
+    const messages: QueueMessage[] = [];
+    const env = fakeEnv(messages);
+    const diagnostic = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const base = {
+      provider: 'xai',
+      service: 'llm',
+      operation: 'benchmark-provider-cost',
+      idempotencyKey: 'ct-sync-xai-response-123-cost',
+      metricType: 'cost',
+      quantity: 0,
+      unit: 'usd',
+      costUsd: 0,
+    };
+
+    await expect(recordMeasuredThirdPartyUsage(
+      env,
+      base as unknown as MeasuredThirdPartyUsage,
+    )).resolves.toBe(false);
+    await expect(recordMeasuredThirdPartyUsage(
+      env,
+      { ...base, occurredAt: 'not-a-timestamp' } as unknown as MeasuredThirdPartyUsage,
+    )).resolves.toBe(false);
+    expect(messages).toEqual([]);
+    expect(diagnostic).toHaveBeenNthCalledWith(1, 'usage telemetry event rejected', {
+      errorType: 'missingOccurredAt',
+    });
+    expect(diagnostic).toHaveBeenNthCalledWith(2, 'usage telemetry event rejected', {
+      errorType: 'invalidOccurredAt',
+    });
+    const serializedDiagnostic = JSON.stringify(diagnostic.mock.calls);
+    expect(serializedDiagnostic).not.toContain('ct-sync-xai-response-123-cost');
+    expect(serializedDiagnostic).not.toContain('not-a-timestamp');
+    diagnostic.mockRestore();
+  });
+
+  it('reconstructs byte-identical stable-key events for every measured dimension across time', async () => {
+    const messages: QueueMessage[] = [];
+    const env = fakeEnv(messages);
+    const occurrence = '2026-07-13T12:00:00.123Z';
+    const dimensions: Array<{
+      suffix: string;
+      service: string;
+      metricType: 'usage' | 'cost';
+      quantity: number;
+      unit: 'token' | 'page' | 'call' | 'usd';
+      costUsd?: number;
+    }> = [
+      { suffix: 'cost', service: 'llm', metricType: 'cost', quantity: 0, unit: 'usd', costUsd: 0 },
+      { suffix: 'tokens', service: 'llm', metricType: 'usage', quantity: 950, unit: 'token' },
+      { suffix: 'pages', service: 'ocr', metricType: 'usage', quantity: 3, unit: 'page' },
+      { suffix: 'attachment-search', service: 'llm', metricType: 'usage', quantity: 2, unit: 'call' },
+    ];
+    const emit = async () => {
+      for (const dimension of dimensions) {
+        await recordMeasuredThirdPartyUsage(env, {
+          provider: 'xai',
+          service: dimension.service,
+          operation: `benchmark-${dimension.suffix}`,
+          idempotencyKey: await stableMeasuredUsageIdempotencyKey(
+            'provider-result', dimension.suffix, 'xai', 'response-123',
+          ),
+          occurredAt: occurrence,
+          model: 'grok-4.3',
+          metricType: dimension.metricType,
+          quantity: dimension.quantity,
+          unit: dimension.unit,
+          ...(dimension.costUsd == null ? {} : { costUsd: dimension.costUsd }),
+          billingMode: 'actual',
+          confidence: 'actual',
+        });
+      }
+    };
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-13T13:00:00.000Z'));
+    await emit();
+    vi.setSystemTime(new Date('2026-07-14T01:00:00.000Z'));
+    await emit();
+
+    expect(messages).toHaveLength(dimensions.length * 2);
+    for (const [index, dimension] of dimensions.entries()) {
+      expect(JSON.stringify(messages[index])).toBe(JSON.stringify(messages[index + dimensions.length]));
+      const message = messages[index];
+      if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
+      const expectedKey = await stableMeasuredUsageIdempotencyKey(
+        'provider-result', dimension.suffix, 'xai', 'response-123',
+      );
+      expect(message.event).toMatchObject({
+        idempotencyKey: expectedKey,
+        occurredAt: occurrence,
+        quantity: dimension.quantity,
+        ...(dimension.costUsd == null ? {} : { costUsd: dimension.costUsd }),
+      });
+    }
   });
 });
 
