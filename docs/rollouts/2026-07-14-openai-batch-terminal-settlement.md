@@ -25,7 +25,7 @@ New submissions carry an accounting-protocol marker. Because an unversioned job 
 - Workflow YAML, preview/provision/ship shell parsing, and `git diff --check`: passed.
 - Two final independent reviews: each passed after 74/74 focused tests, typecheck, lint, and diff check; neither found a remaining P0/P1/P2.
 - Isolated preview version `359b12be-4a00-4923-97c0-b1f85400498a`: deployed; health reports `ok/db/schema=true`, `missing=[]`, and unauthenticated batch GET/POST admin routes return 401.
-- Hosted CI, merge, production deploy, stale-job reconciliation, D1 receipt, and `usage.jays.services` receipt: pending.
+- Ready PR #394 is open; hosted CI/review, merge, production deploy, stale-job reconciliation, D1 receipt, and `usage.jays.services` receipt: pending.
 
 ## Follow-ups
 
