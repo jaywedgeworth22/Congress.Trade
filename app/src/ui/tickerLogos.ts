@@ -19,6 +19,8 @@
  * only the *framing* client-side (glass "tile" vs bare "transparent" vs "off").
  */
 
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
+
 const TICKER_LOGO_BASE_URL =
   'https://raw.githubusercontent.com/davidepalazzo/ticker-logos/main/ticker_icons';
 const SYMBOL_PATTERN = /^[A-Z0-9._^-]{1,20}$/;
@@ -93,10 +95,10 @@ export async function handleTickerLogoRequest(url: URL, logoDevToken?: string): 
   // 1) logo.dev (primary) — referrer-restricted key, so spoof the allowed origin.
   if (logoDevToken) {
     try {
-      const res = await fetch(logoDevUrl(symbol, logoDevToken, theme), {
+      const res = await trackedFetch(logoDevUrl(symbol, logoDevToken, theme), {
         headers: { referer: LOGO_REFERER },
         cf: { cacheTtl: ONE_WEEK_SECONDS, cacheEverything: true },
-      });
+      }, { service: 'asset-logo', operation: 'fetch-logo-primary' });
       if (res.ok && (res.headers.get('content-type') ?? '').startsWith('image/')) {
         return passThroughPng(res, 'logo.dev');
       }
@@ -109,9 +111,9 @@ export async function handleTickerLogoRequest(url: URL, logoDevToken?: string): 
   for (const candidate of tickerLogoCandidates(symbol)) {
     let upstream: Response;
     try {
-      upstream = await fetch(tickerLogoRawUrl(candidate), {
+      upstream = await trackedFetch(tickerLogoRawUrl(candidate), {
         cf: { cacheTtl: ONE_WEEK_SECONDS, cacheEverything: true },
-      });
+      }, { service: 'asset-logo', operation: 'fetch-logo-fallback' });
     } catch {
       continue;
     }

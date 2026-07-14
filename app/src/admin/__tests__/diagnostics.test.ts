@@ -149,6 +149,7 @@ describe('admin diagnostics API', () => {
     const body = (await res.json()) as {
       connections: Array<{ id: string; status: string; configured: boolean; callsToday: number }>;
       errors: Array<{ area: string; subject: string; message: string }>;
+      usageTelemetry: { state: string; ingestUrlConfigured: boolean; ingestTokenConfigured: boolean };
     };
 
     expect(body.connections).toEqual(
@@ -164,8 +165,14 @@ describe('admin diagnostics API', () => {
         expect.objectContaining({ id: 'cache:prices', status: 'ok', configured: true, callsToday: 0 }),
         expect.objectContaining({ id: 'cache:spx', status: 'ok', configured: true, callsToday: 0 }),
         expect.objectContaining({ id: 'cache:performance', status: 'ok', configured: true, callsToday: 0 }),
+        expect.objectContaining({ id: 'telemetry:usage-monitor', status: 'error', configured: false }),
       ]),
     );
+    expect(body.usageTelemetry).toMatchObject({
+      state: 'missing',
+      ingestUrlConfigured: false,
+      ingestTokenConfigured: false,
+    });
     expect(JSON.stringify(body)).not.toContain('gemini-secret');
     expect(JSON.stringify(body)).not.toContain('fmp-secret');
     expect(JSON.stringify(body)).not.toContain('massive-secret');
@@ -178,5 +185,103 @@ describe('admin diagnostics API', () => {
         }),
       ]),
     );
+  });
+
+  it('blocks Infisical secret mutation in preview before resolving credentials', async () => {
+    const res = await app.request(
+      '/diagnostics/secrets/update',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer admin-secret',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ source: 'app', key: 'FMP_API_KEY', value: 'must-not-write' }),
+      },
+      {
+        ADMIN_TOKEN: 'admin-secret',
+        PREVIEW_DEPLOYMENT: 'true',
+        DB: fakeDb(),
+      } as never,
+    );
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      ok: false,
+      code: 'preview_write_protected',
+    });
+  });
+
+  it('reports configured Usage Monitor durability without exposing config values or inventing delivery receipts', async () => {
+    const res = await app.request(
+      '/diagnostics',
+      { headers: { Authorization: 'Bearer admin-secret' } },
+      {
+        ADMIN_TOKEN: 'admin-secret',
+        USAGE_MONITOR_ENABLED: 'true',
+        USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/private-ingest',
+        USAGE_MONITOR_INGEST_TOKEN: 'usage-monitor-secret-token',
+        USAGE_MONITOR_ENVIRONMENT: 'production',
+        INGEST_QUEUE: { send: async () => undefined },
+        RAW_FILES: {
+          list: async () => ({
+            objects: [{ key: '_ops/usage-telemetry/a.json' }, { key: '_ops/usage-telemetry/b.json' }],
+            truncated: false,
+          }),
+        },
+        DB: fakeDb(),
+      } as never,
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      connections: Array<{ id: string; status: string; configured: boolean; note: string }>;
+      usageTelemetry: Record<string, unknown>;
+    };
+    expect(body.connections).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'telemetry:usage-monitor',
+        status: 'warn',
+        configured: true,
+        note: expect.stringContaining('R2 fallback 2 pending'),
+      }),
+    ]));
+    expect(body.usageTelemetry).toMatchObject({
+      state: 'configured',
+      enabled: true,
+      ingestUrlConfigured: true,
+      ingestTokenConfigured: true,
+      environmentConfigured: true,
+      queueConfigured: true,
+      fallback: { available: true, pending: 2, truncated: false },
+      receiverDeliveryObservability: 'not_persisted_locally',
+    });
+    expect(JSON.stringify(body)).not.toContain('usage-monitor-secret-token');
+    expect(JSON.stringify(body)).not.toContain('private-ingest');
+  });
+
+  it('distinguishes an explicitly disabled Usage Monitor from missing configuration', async () => {
+    const res = await app.request(
+      '/diagnostics',
+      { headers: { Authorization: 'Bearer admin-secret' } },
+      {
+        ADMIN_TOKEN: 'admin-secret',
+        USAGE_MONITOR_ENABLED: 'false',
+        DB: fakeDb(),
+      } as never,
+    );
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      usageTelemetry: { state: 'disabled', enabled: false },
+      connections: expect.arrayContaining([
+        expect.objectContaining({
+          id: 'telemetry:usage-monitor',
+          status: 'warn',
+          configured: false,
+          note: 'Explicitly disabled by USAGE_MONITOR_ENABLED',
+        }),
+      ]),
+    });
   });
 });

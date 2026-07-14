@@ -12,6 +12,7 @@
 
 import type { Close } from './compute';
 import type { PriceClient } from './fmp';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 /**
  * Parse a Tiingo `/prices` response into descending [{date, close}]. Shape:
@@ -43,9 +44,9 @@ export function buildTiingoPriceClient(apiKey: string, fetchImpl: typeof fetch =
       to +
       '&token=' +
       encodeURIComponent(apiKey);
-    const res = await fetchImpl(url, {
+    const res = await trackedFetch(url, {
       headers: { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json' },
-    });
+    }, { service: 'market-prices', operation: 'fetch-price-history' }, fetchImpl);
     if (!res.ok) return []; // 401/403/404/429 → "no data" so a chain falls through
     return parseTiingoPrices(await res.json());
   }

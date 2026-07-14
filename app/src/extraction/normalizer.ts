@@ -75,7 +75,14 @@ export interface FlaggedTx {
 }
 
 /** Flags that force a filing to human review regardless of soft confidence. */
-export const HARD_FAILURE_FLAGS = ['no_amount', 'invalid_amount', 'bad_tx_type', 'bad_asset_name'];
+export const HARD_FAILURE_FLAGS = [
+  'no_amount',
+  'invalid_amount',
+  'bad_tx_type',
+  'bad_asset_name',
+  'unreadable_is_option',
+  'unreadable_cap_gains',
+];
 const HARD_FAILURE_FLAG_SET = new Set<string>(HARD_FAILURE_FLAGS);
 
 export function hasHardFailureFlags(flagged: Iterable<{ flags: readonly string[] }>): boolean {
@@ -341,7 +348,14 @@ function buildTransaction(
     cursorSeq: 0,
   };
 
-  return { tx, flags: s.flags };
+  return {
+    tx,
+    flags: [
+      ...s.flags,
+      ...(p.extractionWarnings ?? []).filter((flag) =>
+        flag === 'unreadable_is_option' || flag === 'unreadable_cap_gains'),
+    ],
+  };
 }
 
 /** Result of applying the shared validation rubric to one row's fields. */
@@ -382,7 +396,12 @@ export function scoreFields(
   const flags: string[] = [];
   let confidence = clamp01(base);
 
-  if (looksLikeHeaderContaminatedAsset(fields.assetName)) {
+  const assetName = fields.assetName?.trim() ?? '';
+  if (
+    !assetName ||
+    /^(?:\(?unknown\)?|n\/?a|none|null|-|unreadable)$/i.test(assetName) ||
+    looksLikeHeaderContaminatedAsset(assetName)
+  ) {
     flags.push('bad_asset_name');
     confidence *= PENALTY_BAD_ASSET_NAME;
   }

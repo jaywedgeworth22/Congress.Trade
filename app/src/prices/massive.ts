@@ -12,6 +12,7 @@
 
 import type { Close } from './compute';
 import type { PriceClient } from './fmp';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 /**
  * Parse a Massive/Polygon daily-aggs response into descending [{date, close}].
@@ -47,9 +48,9 @@ export function buildMassivePriceClient(apiKey: string, fetchImpl: typeof fetch 
       to +
       '?adjusted=true&sort=desc&limit=50000&apiKey=' +
       encodeURIComponent(apiKey);
-    const res = await fetchImpl(url, {
+    const res = await trackedFetch(url, {
       headers: { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json' },
-    });
+    }, { service: 'market-prices', operation: 'fetch-price-history' }, fetchImpl);
     if (!res.ok) return []; // 401/403/404/429 → "no data" so a chain falls through
     return parseMassiveAggs(await res.json());
   }

@@ -15,6 +15,8 @@
  * email allowlist trustworthy.
  */
 
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
+
 export interface AccessJwtHeader {
   alg?: string;
   kid?: string;
@@ -145,7 +147,12 @@ async function getSigningKey(
   const stale = !entry || nowMs - entry.fetchedAtMs > JWKS_TTL_MS;
   const missingKid = !!entry && kid != null && !entry.keys.has(kid);
   if (stale || missingKid) {
-    const res = await fetchImpl(jwksUrl);
+    const res = await trackedFetch(
+      jwksUrl,
+      undefined,
+      { service: 'admin-auth', operation: 'fetch-access-signing-keys' },
+      fetchImpl,
+    );
     if (res.ok) {
       const body = (await res.json()) as Jwks;
       const keys = new Map<string, CryptoKey>();

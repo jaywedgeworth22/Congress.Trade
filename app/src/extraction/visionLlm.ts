@@ -21,6 +21,7 @@ import type { Env, Filing, Owner, ParsedTx, TxType } from '../shared/types';
 import { parseAmountRange } from './amounts';
 import { PDFDocument } from 'pdf-lib';
 import { resolveSecret } from '../secrets/infisical';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 /**
  * Gemini model id. Centralized + documented so it is trivial to bump.
@@ -124,49 +125,78 @@ export class VisionLlmExtractor implements Extractor {
     let combinedRaw = '';
     let totalPromptTokens = 0;
     let totalCompletionTokens = 0;
+    let totalCachedTokens = 0;
+    let resolvedModel = model;
+    let providerRequestId: string | undefined;
 
     for (let i = 0; i < chunks.length; i++) {
-      const chunkBytes = chunks[i];
-      const body = buildRequestBody(chunkBytes);
-
-      const res = await fetchWithRetry(
-        ENDPOINT(model, key),
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(120_000), // Slightly longer timeout for large chunks
-        },
-        this.name,
-      );
-
-      if (!res.ok) {
-        const detail = await safeText(res);
-        throw new Error(`${this.name}: Gemini API ${res.status} ${res.statusText} ${detail}`);
-      }
-
-      const payload = (await res.json()) as GeminiResponse;
-      const jsonText = extractCandidateText(payload);
-
-      if (payload.usageMetadata) {
-        totalPromptTokens += payload.usageMetadata.promptTokenCount ?? 0;
-        totalCompletionTokens += payload.usageMetadata.candidatesTokenCount ?? 0;
-      }
-
-      if (!jsonText) {
-        throw new Error(`${this.name}: Gemini returned no candidate text for chunk ${i + 1}/${chunks.length}`);
-      }
-
-      combinedRaw += (i > 0 ? '\n\n--- CHUNK ---\n\n' : '') + jsonText;
-
-      let parsed;
       try {
-        parsed = parseModelJson(jsonText);
-      } catch (err) {
-        throw new Error(`${this.name}: could not parse model JSON in chunk ${i + 1}/${chunks.length}: ${(err as Error).message}`);
+        const chunkBytes = chunks[i];
+        const body = buildRequestBody(chunkBytes, input.filing.chamber);
+
+        const res = await fetchWithRetry(
+          ENDPOINT(model, key),
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(120_000), // Slightly longer timeout for large chunks
+          },
+          this.name,
+          { model },
+        );
+
+        if (!res.ok) {
+          const detail = await safeText(res);
+          throw new Error(`${this.name}: Gemini API ${res.status} ${res.statusText} ${detail}`);
+        }
+
+        const payload = (await res.json()) as GeminiResponse;
+        const jsonText = extractCandidateText(payload);
+        resolvedModel = payload.modelVersion ?? resolvedModel;
+        providerRequestId = payload.responseId ?? providerRequestId;
+
+        if (payload.usageMetadata) {
+          totalPromptTokens += payload.usageMetadata.promptTokenCount ?? 0;
+          totalCompletionTokens +=
+            (payload.usageMetadata.candidatesTokenCount ?? 0) +
+            (payload.usageMetadata.thoughtsTokenCount ?? 0);
+          totalCachedTokens += payload.usageMetadata.cachedContentTokenCount ?? 0;
+        }
+
+        if (!jsonText) {
+          throw new Error(`${this.name}: Gemini returned no candidate text for chunk ${i + 1}/${chunks.length}`);
+        }
+
+        combinedRaw += (i > 0 ? '\n\n--- CHUNK ---\n\n' : '') + jsonText;
+
+        let parsed;
+        try {
+          parsed = parseModelJson(jsonText);
+        } catch (err) {
+          throw new Error(`${this.name}: could not parse model JSON in chunk ${i + 1}/${chunks.length}: ${(err as Error).message}`);
+        }
+
+        allRows.push(...parsed.map(toParsedTx));
+      } catch (error) {
+        // Any prior successful chunk was already billed. Attach the aggregate
+        // provider usage to every later failure path (HTTP, JSON decode,
+        // response validation, or row mapping), not only model-JSON failures.
+        const failure = error instanceof Error ? error : new Error(String(error));
+        throw Object.assign(failure, {
+          ...(totalPromptTokens + totalCompletionTokens + totalCachedTokens > 0
+            ? {
+                usage: {
+                  promptTokens: totalPromptTokens,
+                  completionTokens: totalCompletionTokens,
+                  cachedTokens: totalCachedTokens,
+                },
+              }
+            : {}),
+          resolvedModel,
+          providerRequestId,
+        });
       }
-      
-      allRows.push(...parsed.map(toParsedTx));
     }
 
     const docConfidence =
@@ -175,7 +205,11 @@ export class VisionLlmExtractor implements Extractor {
         : DEFAULT_CONFIDENCE;
 
     const usage = totalPromptTokens > 0 || totalCompletionTokens > 0
-      ? { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens }
+      ? {
+          promptTokens: totalPromptTokens,
+          completionTokens: totalCompletionTokens,
+          cachedTokens: totalCachedTokens,
+        }
       : undefined;
 
     return {
@@ -183,7 +217,8 @@ export class VisionLlmExtractor implements Extractor {
       confidence: docConfidence,
       raw: combinedRaw,
       extractor: this.name,
-      modelVersion: model,
+      modelVersion: resolvedModel,
+      providerRequestId,
       usage,
     };
   }
@@ -213,12 +248,16 @@ export async function fetchWithRetry(
   url: string,
   init: RequestInit,
   name = 'fetch',
-  opts: { maxAttempts?: number; sleep?: (ms: number) => Promise<void>; jitter?: () => number } = {},
+  opts: { maxAttempts?: number; sleep?: (ms: number) => Promise<void>; jitter?: () => number; model?: string } = {},
 ): Promise<Response> {
   const maxAttempts = opts.maxAttempts ?? 4;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const jitter = opts.jitter ?? (() => Math.floor(Math.random() * 250));
-  let res = await fetch(url, init);
+  let res = await trackedFetch(
+    url,
+    init,
+    { service: 'llm', operation: 'extract-document', model: opts.model },
+  );
   for (let attempt = 1; attempt < maxAttempts && isRetryable(res.status); attempt++) {
     const retryAfterSec = Number(res.headers.get('retry-after'));
     const backoffMs =
@@ -233,7 +272,11 @@ export async function fetchWithRetry(
     }
     console.warn(`${name}: ${res.status} — retry ${attempt}/${maxAttempts - 1} in ${backoffMs}ms`);
     await sleep(backoffMs);
-    res = await fetch(url, init);
+    res = await trackedFetch(
+      url,
+      init,
+      { service: 'llm', operation: 'extract-document-retry', model: opts.model },
+    );
   }
   return res;
 }
@@ -242,16 +285,19 @@ export async function fetchWithRetry(
 // Request construction
 // ---------------------------------------------------------------------------
 
+/** Stable identifier for the extraction instructions sent to vision models. */
+export const EXTRACTION_PROMPT_VERSION = 'stock-act-ptr-v2';
+
 export const SYSTEM_PROMPT = `You are a meticulous data-extraction engine for U.S. congressional STOCK Act
 Periodic Transaction Reports (PTRs). The attached document is a scanned PTR.
 Extract EVERY disclosed transaction row. For each transaction return:
 - txDate: the transaction date in YYYY-MM-DD (use the transaction/trade date, not the notification date). null if illegible.
 - owner: one of "self","spouse","joint","dependent" (map SP->spouse, DC->dependent, JT->joint, blank/self->self).
-- assetName: the security/asset name as written.
+- assetName: the security/asset name as written. null if illegible.
 - ticker: the stock ticker symbol in UPPERCASE if shown, else null.
 - assetType: short asset-type code/label if shown (e.g. "ST","OP","Stock","Option"), else null.
 - assetTypeName: expanded asset-type name if the document or code is clear, else null.
-- txType: one of "P" (Purchase), "S" (Sale), "E" (Exchange).
+- txType: one of "P" (Purchase), "S" (Sale), "E" (Exchange). null if illegible.
 - amountRange: the disclosed amount bracket exactly as printed, e.g. "$1,001 - $15,000" or "$50,000,001 +".
 - isOption: true if the holding is an option/call/put/warrant.
 - capGainsOver200: true only if a ">$200" capital-gains box/flag is checked.
@@ -268,11 +314,11 @@ The attached document is a scanned OGE Form 278-T.
 Extract EVERY disclosed transaction row. For each transaction return:
 - txDate: the transaction date in YYYY-MM-DD (use the "Transaction Date", NOT the "Notification Date"). null if illegible.
 - owner: one of "self","spouse","joint","dependent" (if unspecified or blank, use "self").
-- assetName: the security/asset name as written (often under "Description").
+- assetName: the security/asset name as written (often under "Description"). null if illegible.
 - ticker: the stock ticker symbol in UPPERCASE if shown, else null.
 - assetType: short asset-type code/label if shown (e.g. "Stock", "Option"), else null.
 - assetTypeName: expanded asset-type name if the document or code is clear, else null.
-- txType: one of "P" (Purchase), "S" (Sale), "E" (Exchange). Map "Purchase" to "P", "Sale" to "S", "Exchange" to "E".
+- txType: one of "P" (Purchase), "S" (Sale), "E" (Exchange). Map "Purchase" to "P", "Sale" to "S", "Exchange" to "E". null if illegible.
 - amountRange: the disclosed amount bracket exactly as printed, e.g. "$1,001 - $15,000" or "$15,001 - $50,000".
 - isOption: true if the holding is an option/call/put/warrant.
 - capGainsOver200: false (rarely applicable on OGE forms).
@@ -292,14 +338,14 @@ const RESPONSE_SCHEMA = {
     properties: {
       txDate: { type: 'STRING', nullable: true },
       owner: { type: 'STRING', enum: ['self', 'spouse', 'joint', 'dependent'], nullable: true },
-      assetName: { type: 'STRING' },
+      assetName: { type: 'STRING', nullable: true },
       ticker: { type: 'STRING', nullable: true },
       assetType: { type: 'STRING', nullable: true },
       assetTypeName: { type: 'STRING', nullable: true },
-      txType: { type: 'STRING', enum: ['P', 'S', 'E'] },
+      txType: { type: 'STRING', enum: ['P', 'S', 'E'], nullable: true },
       amountRange: { type: 'STRING', nullable: true },
-      isOption: { type: 'BOOLEAN' },
-      capGainsOver200: { type: 'BOOLEAN' },
+      isOption: { type: 'BOOLEAN', nullable: true },
+      capGainsOver200: { type: 'BOOLEAN', nullable: true },
       filingStatus: { type: 'STRING', nullable: true },
       subholding: { type: 'STRING', nullable: true },
       location: { type: 'STRING', nullable: true },
@@ -311,13 +357,14 @@ const RESPONSE_SCHEMA = {
   },
 } as const;
 
-function buildRequestBody(bytes: ArrayBuffer): GeminiRequest {
+function buildRequestBody(bytes: ArrayBuffer, chamber: Filing['chamber']): GeminiRequest {
+  const prompt = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
   return {
     contents: [
       {
         role: 'user',
         parts: [
-          { text: SYSTEM_PROMPT },
+          { text: prompt },
           {
             inline_data: {
               mime_type: 'application/pdf',
@@ -342,14 +389,14 @@ function buildRequestBody(bytes: ArrayBuffer): GeminiRequest {
 interface ModelTx {
   txDate?: string | null;
   owner?: string | null;
-  assetName?: string;
+  assetName?: string | null;
   ticker?: string | null;
   assetType?: string | null;
   assetTypeName?: string | null;
-  txType?: string;
+  txType?: string | null;
   amountRange?: string | null;
-  isOption?: boolean;
-  capGainsOver200?: boolean;
+  isOption?: boolean | null;
+  capGainsOver200?: boolean | null;
   filingStatus?: string | null;
   subholding?: string | null;
   location?: string | null;
@@ -385,10 +432,14 @@ export function toParsedTx(m: ModelTx): ParsedTx {
   // Cap vision confidence at the conservative default so scanned docs lean to review.
   const confidence = Math.min(modelConf, DEFAULT_CONFIDENCE);
 
+  const extractionWarnings: ParsedTx['extractionWarnings'] = [];
+  if (typeof m.isOption !== 'boolean') extractionWarnings.push('unreadable_is_option');
+  if (typeof m.capGainsOver200 !== 'boolean') extractionWarnings.push('unreadable_cap_gains');
+
   return {
     txDate: m.txDate ?? null,
     owner: normalizeOwner(m.owner),
-    assetName: (m.assetName ?? '').trim() || (m.ticker ?? '(unknown)'),
+    assetName: (m.assetName ?? '').trim(),
     ticker: m.ticker ? m.ticker.trim().toUpperCase() : null,
     assetType: m.assetType ?? null,
     assetTypeName: cleanNullable(m.assetTypeName),
@@ -397,6 +448,7 @@ export function toParsedTx(m: ModelTx): ParsedTx {
     amountMax: max,
     isOption: Boolean(m.isOption),
     capGainsOver200: Boolean(m.capGainsOver200),
+    ...(extractionWarnings.length ? { extractionWarnings } : {}),
     rawText: JSON.stringify(m),
     filingStatus: cleanNullable(m.filingStatus),
     subholding: cleanNullable(m.subholding),
@@ -421,11 +473,14 @@ function normalizeOwner(raw: string | null | undefined): Owner | null {
   return null;
 }
 
-function normalizeTxType(raw: string | undefined): TxType {
+function normalizeTxType(raw: string | null | undefined): TxType {
   const s = (raw ?? '').toUpperCase();
+  if (s === 'P') return 'P';
   if (s === 'S') return 'S';
   if (s === 'E') return 'E';
-  return 'P';
+  // ParsedTx historically narrows this field to TxType, but the shared
+  // normalizer must see an invalid value so it can hard-flag unreadable rows.
+  return '' as TxType;
 }
 
 // ---------------------------------------------------------------------------
@@ -451,8 +506,12 @@ interface GeminiResponse {
   usageMetadata?: {
     promptTokenCount?: number;
     candidatesTokenCount?: number;
+    thoughtsTokenCount?: number;
+    cachedContentTokenCount?: number;
     totalTokenCount?: number;
   };
+  modelVersion?: string;
+  responseId?: string;
 }
 
 function extractCandidateText(payload: GeminiResponse): string | null {

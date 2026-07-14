@@ -27,6 +27,7 @@ import type { Env } from '../shared/types';
 import { resolveSecret } from '../secrets/infisical';
 import { getLastPollAt } from '../shared/config';
 import type { DiscoveredFiling } from './watcher';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 export const OGE_DEFAULT_INDEX_URL =
   'https://extapps2.oge.gov/201/Presiden.nsf/President%20and%20Vice%20President%20Index?OpenView&ExpandView&Count=500';
@@ -162,12 +163,12 @@ export async function fetchOgeExecutiveFilings(
   env: Env,
   fetchImpl: typeof fetch = fetch,
 ): Promise<DiscoveredFiling[]> {
-  const res = await fetchImpl(await indexUrl(env), {
+  const res = await trackedFetch(await indexUrl(env), {
     headers: {
       'user-agent': 'congress.trade/0.1 (+https://congress.trade)',
       accept: 'text/html',
     },
-  });
+  }, { service: 'filing-discovery', operation: 'fetch-executive-index', dynamicTarget: 'filing-source' }, fetchImpl);
   if (!res.ok) throw new Error(`OGE index HTTP ${res.status}`);
   return parseOgeIndex(await res.text());
 }

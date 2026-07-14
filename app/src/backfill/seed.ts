@@ -31,6 +31,7 @@ import { sanitizeAssetName } from '../shared/text';
 import { estimateTransactionValue } from '../shared/transactionValue';
 import { scoreFields, loadResolver, type TickerResolver } from '../extraction/normalizer';
 import { resolveSecret } from '../secrets/infisical';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 // ---------------------------------------------------------------------------
 // Seed source URLs (centralized). Flag any uncertain ones here.
@@ -452,12 +453,12 @@ async function fetchChamberRecords(
   urlOverride?: string,
 ): Promise<RawWatcherRecord[]> {
   const url = urlOverride || SEED_SOURCES[chamber].url;
-  const res = await fetchImpl(url, {
+  const res = await trackedFetch(url, {
     headers: {
       'user-agent': 'congress-feed/0.1 (+https://congress.trade)',
       accept: 'application/json,*/*',
     },
-  });
+  }, { service: 'backfill', operation: 'fetch-seed-dataset', dynamicTarget: 'seed-source' }, fetchImpl);
   if (!res.ok) throw new Error(`${chamber} seed GET ${url} -> HTTP ${res.status}`);
   const json = (await res.json()) as unknown;
   if (!Array.isArray(json)) {

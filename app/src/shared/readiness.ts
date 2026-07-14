@@ -69,6 +69,36 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
   ['client_commands', 'SELECT id, user_id, status, idempotency_key FROM client_commands LIMIT 0'],
   ['securities_ref', 'SELECT ticker, sector, market_cap_bucket FROM securities_ref LIMIT 0'],
   ['extraction_runs', 'SELECT id, doc_id, provider, model FROM extraction_runs LIMIT 0'],
+  [
+    'benchmark_runs',
+    `SELECT id, chamber, status, requested_doc_count, completed_doc_count,
+            models_json, request_profile_json, known_cost_usd, cost_covered_calls, invoked_calls,
+            summary_json, selected_lineup_json, selection_audit_json
+       FROM benchmark_runs LIMIT 0`,
+  ],
+  [
+    'benchmark_run_documents',
+    `SELECT run_id, doc_id, ordinal, resolved, ground_truth_json
+       FROM benchmark_run_documents LIMIT 0`,
+  ],
+  [
+    'benchmark_model_results',
+    `SELECT run_id, doc_id, provider, model, invoked, ok, autonomous,
+            latency_ms, cost_usd, cost_source, usage_json, result_json,
+            perfect_match, true_positive, false_positive, false_negative,
+            claim_token, lease_until
+       FROM benchmark_model_results LIMIT 0`,
+  ],
+  [
+    'benchmark_daily_call_usage',
+    `SELECT day, reserved_calls, updated_at
+       FROM benchmark_daily_call_usage LIMIT 0`,
+  ],
+  [
+    'benchmark_settings_leases',
+    `SELECT chamber, owner_token, lease_until, created_at, updated_at
+       FROM benchmark_settings_leases LIMIT 0`,
+  ],
   ['dead_letter_events', 'SELECT queue, msg_type, tx_id, attempts FROM dead_letter_events LIMIT 0'],
   [
     'idx_deliveries_subscription_tx',
@@ -106,6 +136,11 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
     'idx_review_queue_agreement_eligible',
     'idx_review_queue_agreement_claim',
     'idx_review_queue_agreement_suppressed',
+    'idx_benchmark_runs_chamber_started',
+    'idx_benchmark_runs_status_started',
+    'idx_benchmark_documents_doc',
+    'idx_benchmark_results_run_model',
+    'idx_benchmark_results_model_run',
   ].map((name): [string, string, boolean] => [
     name,
     `SELECT name FROM sqlite_master WHERE type = 'index' AND name = '${name}'`,

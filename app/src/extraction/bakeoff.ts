@@ -28,12 +28,23 @@ import {
 import { resolveSecret } from '../secrets/infisical';
 import { run } from '../shared/db';
 import { uuid } from '../shared/ids';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import { pushExtractionTelemetry } from './telemetry';
 
 export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral' | 'xai' | 'llamaparse';
 
 export interface BakeoffCandidate {
   provider: Provider;
   model: string;
+}
+
+/**
+ * Frozen provider credential decision for one candidate invocation. Passing a
+ * plan prevents a later secret-cache refresh from changing whether the paid
+ * call happens after the caller has confirmed/reserved it.
+ */
+export interface CandidateInvocation {
+  apiKey: string | null;
 }
 
 /**
@@ -50,6 +61,10 @@ export interface BakeoffCandidate {
  */
 export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'gemini', model: 'gemini-3.5-flash' },
+  { provider: 'openai', model: 'gpt-5.6-terra' },
+  { provider: 'openai', model: 'gpt-5.6-luna' },
+  { provider: 'openai', model: 'gpt-5.6-sol' },
+  // Retained as a legacy benchmark baseline while GPT-5.6 earns production use.
   { provider: 'openai', model: 'gpt-4o' },
   { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   { provider: 'anthropic', model: 'claude-haiku-4-5' },
@@ -72,8 +87,26 @@ export interface CandidateDocResult {
   avgConfidence: number;
   /** The model's extracted rows, retained so the bake-off can persist each reading. */
   rows: ParsedTx[];
-  /** Token usage reported by the provider API, when available (currently openai only). */
-  usage?: { promptTokens?: number; completionTokens?: number; cachedTokens?: number };
+  /** Concrete model/version and request id returned by the provider, when available. */
+  resolvedModel?: string;
+  providerRequestId?: string;
+  /** Effective request tier returned by the provider (for example OpenAI `default`). */
+  serviceTier?: string;
+  /** Billed usage reported by the provider API. */
+  usage?: {
+    promptTokens?: number;
+    completionTokens?: number;
+    cachedTokens?: number;
+    cacheWriteTokens?: number;
+    cacheWriteOneHourTokens?: number;
+    pagesProcessed?: number;
+    /** Exact xAI request charge; 1 USD = 10^10 ticks. Includes server-side tools. */
+    costInUsdTicks?: number;
+    /** Successful billable attachment_search calls reported for an xAI file request. */
+    attachmentSearchCalls?: number;
+    /** Effective provider tier, included with the usage snapshot for cost provenance. */
+    serviceTier?: string;
+  };
 }
 
 /** Per-model rollup across all documents. */
@@ -119,69 +152,207 @@ async function safeText(res: Response): Promise<string> {
 }
 
 /** Token usage extracted from a provider response, shared shape across providers. */
-type UsageInfo = { promptTokens?: number; completionTokens?: number; cachedTokens?: number };
+type UsageInfo = CandidateDocResult['usage'];
 
-/** OpenAI chat-completions vision call (PDF as a base64 data URL `file` part). */
+interface ProviderResult {
+  rows: ParsedTx[];
+  usage?: UsageInfo;
+  resolvedModel?: string;
+  providerRequestId?: string;
+  serviceTier?: string;
+}
+
+type ProviderError = Error & {
+  usage?: UsageInfo;
+  resolvedModel?: string;
+  providerRequestId?: string;
+  serviceTier?: string;
+  /** True once an asynchronous provider accepted a potentially billable job. */
+  acceptedJob?: boolean;
+};
+
+function providerError(error: Error, metadata: Omit<ProviderResult, 'rows'>): ProviderError {
+  return Object.assign(error, metadata);
+}
+
+/** Pull text from the Responses API's convenience or content-block shape. */
+export function extractResponsesText(payload: unknown, provider = 'responses'): string {
+  const p = (payload ?? {}) as {
+    output_text?: unknown;
+    output?: Array<{ content?: Array<{ text?: string }> }>;
+  };
+  if (typeof p.output_text === 'string' && p.output_text.trim()) return p.output_text.trim();
+  const text = (p.output ?? [])
+    .flatMap((item) => item.content ?? [])
+    .map((content) => content.text ?? '')
+    .join('')
+    .trim();
+  if (!text) throw new Error(`${provider}: no text in /v1/responses output`);
+  return text;
+}
+
+/**
+ * OpenAI PDF vision call. GPT-5.6 uses Responses with explicit high-detail page
+ * images (important for handwriting and small print); GPT-4o remains on the
+ * legacy Chat Completions path so historical comparisons stay reproducible.
+ */
 async function runOpenAi(
   model: string,
   key: string,
   bytes: ArrayBuffer,
-): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
+  chamber: string,
+): Promise<ProviderResult> {
   const dataUrl = `data:application/pdf;base64,${arrayBufferToBase64(bytes)}`;
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const prompt = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
+  const useResponses = model.startsWith('gpt-5.6');
+  const endpoint = useResponses
+    ? 'https://api.openai.com/v1/responses'
+    : 'https://api.openai.com/v1/chat/completions';
+  const body = useResponses
+    ? {
+        model,
+        service_tier: 'default',
+        reasoning: { effort: 'none' },
+        max_output_tokens: 8_000,
+        input: [
+          {
+            role: 'user',
+            content: [
+              { type: 'input_file', filename: 'ptr.pdf', file_data: dataUrl, detail: 'high' },
+              { type: 'input_text', text: `${prompt}\nReturn ONLY a JSON object {"transactions": [...]} .` },
+            ],
+          },
+        ],
+        text: {
+          format: {
+            type: 'json_schema',
+            name: MISTRAL_ANNOTATION_SCHEMA.name,
+            strict: true,
+            schema: MISTRAL_ANNOTATION_SCHEMA.schema,
+          },
+        },
+      }
+    : {
+        model,
+        temperature: 0,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: `${prompt}\nReturn a JSON object {"transactions": [...]} .` },
+              { type: 'file', file: { filename: 'ptr.pdf', file_data: dataUrl } },
+            ],
+          },
+        ],
+      };
+  const res = await trackedFetch(endpoint, {
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: `${SYSTEM_PROMPT}\nReturn a JSON object {"transactions": [...]} .` },
-            { type: 'file', file: { filename: 'ptr.pdf', file_data: dataUrl } },
-          ],
-        },
-      ],
-    }),
-  });
+    body: JSON.stringify(body),
+  }, { service: 'llm', operation: 'extract-document', model });
   if (!res.ok) throw new Error(`openai ${res.status} ${await safeText(res)}`);
   const payload = (await res.json()) as {
+    id?: string;
+    model?: string;
+    service_tier?: string;
+    status?: string;
+    incomplete_details?: { reason?: string } | null;
+    error?: { code?: string; message?: string } | null;
     choices?: Array<{ message?: { content?: string } }>;
     usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
       prompt_tokens?: number;
       completion_tokens?: number;
-      prompt_tokens_details?: { cached_tokens?: number };
+      prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
     };
+    output_text?: unknown;
+    output?: Array<{
+      content?: Array<{ type?: string; text?: string; refusal?: string }>;
+    }>;
   };
   // Extract usage *before* parsing so it survives parse failures.
-  const usageInfo = payload.usage
+  const usageInfo = payload.usage || payload.service_tier
     ? {
-        promptTokens: payload.usage.prompt_tokens,
-        completionTokens: payload.usage.completion_tokens,
-        cachedTokens: payload.usage.prompt_tokens_details?.cached_tokens,
+        promptTokens: useResponses ? payload.usage?.input_tokens : payload.usage?.prompt_tokens,
+        completionTokens: useResponses ? payload.usage?.output_tokens : payload.usage?.completion_tokens,
+        cachedTokens: useResponses
+          ? payload.usage?.input_tokens_details?.cached_tokens
+          : payload.usage?.prompt_tokens_details?.cached_tokens,
+        cacheWriteTokens: useResponses
+          ? payload.usage?.input_tokens_details?.cache_write_tokens
+          : payload.usage?.prompt_tokens_details?.cache_write_tokens,
+        serviceTier: payload.service_tier,
       }
     : undefined;
 
-  const text = payload.choices?.[0]?.message?.content;
-  if (!text) throw new Error('openai: empty completion');
+  const metadata = {
+    usage: usageInfo,
+    resolvedModel: payload.model,
+    providerRequestId: payload.id,
+    serviceTier: payload.service_tier,
+  };
+
+  if (useResponses && payload.status && payload.status !== 'completed') {
+    const detail = payload.incomplete_details?.reason ?? payload.error?.message ?? payload.error?.code;
+    throw providerError(
+      new Error(`openai: response ${payload.status}${detail ? `: ${detail}` : ''}`),
+      metadata,
+    );
+  }
+
+  const refusal = useResponses
+    ? (payload.output ?? [])
+        .flatMap((item) => item.content ?? [])
+        .map((content) => content.refusal?.trim())
+        .find((value): value is string => Boolean(value))
+    : undefined;
+  if (refusal) {
+    throw providerError(new Error(`openai: refusal: ${refusal}`), metadata);
+  }
+
+  const text = useResponses
+    ? (() => {
+        try {
+          return extractResponsesText(payload, 'openai');
+        } catch {
+          return undefined;
+        }
+      })()
+    : payload.choices?.[0]?.message?.content;
+  if (!text) {
+    throw providerError(new Error('openai: empty completion'), metadata);
+  }
 
   try {
-    return { rows: parseModelJson(text).map(toParsedTx), usage: usageInfo };
+    return {
+      rows: parseModelJson(text).map(toParsedTx),
+      usage: usageInfo,
+      resolvedModel: payload.model,
+      providerRequestId: payload.id,
+      serviceTier: payload.service_tier,
+    };
   } catch (parseErr) {
     // Parse failed but tokens were still consumed — attach usage to the error
     // so runCandidateOnDoc can persist it alongside the failure.
-    throw Object.assign(
+    throw providerError(
       new Error(`openai: parse error: ${(parseErr as Error).message}`),
-      { usage: usageInfo },
+      metadata,
     );
   }
 }
 
 /** Anthropic messages call (base64 `document` block BEFORE the text block). */
-async function runAnthropic(model: string, key: string, bytes: ArrayBuffer): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+async function runAnthropic(
+  model: string,
+  key: string,
+  bytes: ArrayBuffer,
+  chamber: string,
+): Promise<ProviderResult> {
+  const prompt = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
+  const res = await trackedFetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
       'x-api-key': key,
@@ -199,20 +370,42 @@ async function runAnthropic(model: string, key: string, bytes: ArrayBuffer): Pro
               type: 'document',
               source: { type: 'base64', media_type: 'application/pdf', data: arrayBufferToBase64(bytes) },
             },
-            { type: 'text', text: `${SYSTEM_PROMPT}\nReturn ONLY the JSON array.` },
+            { type: 'text', text: `${prompt}\nReturn ONLY the JSON array.` },
           ],
         },
       ],
     }),
-  });
+  }, { service: 'llm', operation: 'extract-document', model });
   if (!res.ok) throw new Error(`anthropic ${res.status} ${await safeText(res)}`);
   const payload = (await res.json()) as {
+    id?: string;
+    model?: string;
     content?: Array<{ type: string; text?: string }>;
-    usage?: { input_tokens?: number; output_tokens?: number };
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_creation_input_tokens?: number | null;
+      cache_read_input_tokens?: number | null;
+      cache_creation?: {
+        ephemeral_5m_input_tokens?: number;
+        ephemeral_1h_input_tokens?: number;
+      } | null;
+    };
   };
-  
+
+  const cacheReadTokens = payload.usage?.cache_read_input_tokens ?? 0;
+  const cacheCreationTokens = payload.usage?.cache_creation_input_tokens ?? 0;
+  const cacheWriteOneHourTokens = payload.usage?.cache_creation?.ephemeral_1h_input_tokens ?? 0;
+  const cacheWriteTokens = payload.usage?.cache_creation?.ephemeral_5m_input_tokens
+    ?? Math.max(0, cacheCreationTokens - cacheWriteOneHourTokens);
   const usageInfo = payload.usage
-    ? { promptTokens: payload.usage.input_tokens, completionTokens: payload.usage.output_tokens }
+    ? {
+        promptTokens: (payload.usage.input_tokens ?? 0) + cacheReadTokens + cacheCreationTokens,
+        completionTokens: payload.usage.output_tokens,
+        cachedTokens: cacheReadTokens,
+        cacheWriteTokens,
+        cacheWriteOneHourTokens,
+      }
     : undefined;
 
   const text = (payload.content ?? [])
@@ -220,14 +413,32 @@ async function runAnthropic(model: string, key: string, bytes: ArrayBuffer): Pro
     .map((b) => b.text ?? '')
     .join('')
     .trim();
-  if (!text) throw Object.assign(new Error('anthropic: no text block'), { usage: usageInfo });
+  if (!text) {
+    throw providerError(new Error('anthropic: no text block'), {
+      usage: usageInfo,
+      resolvedModel: payload.model,
+      providerRequestId: payload.id,
+    });
+  }
 
   try {
-    return { rows: parseModelJson(text).map(toParsedTx), usage: usageInfo };
+    return {
+      rows: parseModelJson(text).map(toParsedTx),
+      usage: usageInfo,
+      resolvedModel: payload.model,
+      providerRequestId: payload.id,
+    };
   } catch (err) {
-    throw Object.assign(err as Error, { usage: usageInfo });
+    throw providerError(err as Error, {
+      usage: usageInfo,
+      resolvedModel: payload.model,
+      providerRequestId: payload.id,
+    });
   }
 }
+
+/** Stable identifier for the structured transaction schema sent to OCR/LLM providers. */
+export const EXTRACTION_SCHEMA_VERSION = 'stock-act-transactions-v2';
 
 /**
  * JSON-schema for Mistral's `document_annotation` — a doc-wide structured
@@ -249,14 +460,39 @@ export const MISTRAL_ANNOTATION_SCHEMA = {
           properties: {
             txDate: { type: ['string', 'null'] },
             owner: { type: ['string', 'null'] },
-            assetName: { type: 'string' },
+            assetName: { type: ['string', 'null'] },
             ticker: { type: ['string', 'null'] },
             assetType: { type: ['string', 'null'] },
-            txType: { type: 'string' },
+            assetTypeName: { type: ['string', 'null'] },
+            txType: { type: ['string', 'null'] },
             amountRange: { type: ['string', 'null'] },
-            isOption: { type: 'boolean' },
+            isOption: { type: ['boolean', 'null'] },
+            capGainsOver200: { type: ['boolean', 'null'] },
+            filingStatus: { type: ['string', 'null'] },
+            subholding: { type: ['string', 'null'] },
+            location: { type: ['string', 'null'] },
+            description: { type: ['string', 'null'] },
+            supplementalText: { type: ['string', 'null'] },
+            confidence: { type: 'number', minimum: 0, maximum: 1 },
           },
-          required: ['assetName', 'ticker', 'assetType', 'txType', 'amountRange', 'txDate', 'owner', 'isOption'],
+          required: [
+            'assetName',
+            'ticker',
+            'assetType',
+            'assetTypeName',
+            'txType',
+            'amountRange',
+            'txDate',
+            'owner',
+            'isOption',
+            'capGainsOver200',
+            'filingStatus',
+            'subholding',
+            'location',
+            'description',
+            'supplementalText',
+            'confidence',
+          ],
         },
       },
     },
@@ -290,9 +526,9 @@ export function parseMistralOcrResponse(payload: unknown): ParsedTx[] {
  * a base64 PDF as a `document_url` and returns a doc-wide structured annotation
  * when `document_annotation_format` is supplied.
  */
-async function runMistral(model: string, key: string, bytes: ArrayBuffer): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
+async function runMistral(model: string, key: string, bytes: ArrayBuffer): Promise<ProviderResult> {
   const dataUrl = `data:application/pdf;base64,${arrayBufferToBase64(bytes)}`;
-  const res = await fetch('https://api.mistral.ai/v1/ocr', {
+  const res = await trackedFetch('https://api.mistral.ai/v1/ocr', {
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -301,17 +537,30 @@ async function runMistral(model: string, key: string, bytes: ArrayBuffer): Promi
       document_annotation_format: { type: 'json_schema', json_schema: MISTRAL_ANNOTATION_SCHEMA },
       include_image_base64: false,
     }),
-  });
+  }, { service: 'ocr', operation: 'extract-document', model });
   if (!res.ok) throw new Error(`mistral ${res.status} ${await safeText(res)}`);
-  const payload = (await res.json()) as any;
-  const usageInfo = payload.usage
-    ? { promptTokens: payload.usage.prompt_tokens, completionTokens: payload.usage.completion_tokens }
+  const payload = (await res.json()) as {
+    id?: string;
+    model?: string;
+    usage_info?: { pages_processed?: number };
+  };
+  const usageInfo = payload.usage_info?.pages_processed != null
+    ? { pagesProcessed: payload.usage_info.pages_processed }
     : undefined;
 
   try {
-    return { rows: parseMistralOcrResponse(payload), usage: usageInfo };
+    return {
+      rows: parseMistralOcrResponse(payload),
+      usage: usageInfo,
+      resolvedModel: payload.model,
+      providerRequestId: payload.id,
+    };
   } catch (err) {
-    throw Object.assign(err as Error, { usage: usageInfo });
+    throw providerError(err as Error, {
+      usage: usageInfo,
+      resolvedModel: payload.model,
+      providerRequestId: payload.id,
+    });
   }
 }
 
@@ -321,20 +570,7 @@ async function runMistral(model: string, key: string, bytes: ArrayBuffer): Promi
  * parts (the Responses-API message shape). Separated for unit testing.
  */
 export function extractXaiResponseText(payload: unknown): string {
-  const p = (payload ?? {}) as {
-    output_text?: unknown;
-    output?: Array<{ content?: Array<{ text?: string }> }>;
-  };
-  if (typeof p.output_text === 'string' && p.output_text.trim()) return p.output_text.trim();
-  const parts: string[] = [];
-  for (const item of p.output ?? []) {
-    for (const c of item.content ?? []) {
-      if (typeof c.text === 'string') parts.push(c.text);
-    }
-  }
-  const text = parts.join('').trim();
-  if (!text) throw new Error('xai: no text in /v1/responses output');
-  return text;
+  return extractResponsesText(payload, 'xai');
 }
 
 /**
@@ -343,47 +579,113 @@ export function extractXaiResponseText(payload: unknown): string {
  * an agentic `/v1/responses` call (grok-4.3), whose server-side OCR+vision reads
  * the scan. Two round-trips, so it's the slowest candidate.
  */
-async function runXai(model: string, key: string, bytes: ArrayBuffer): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
-  // 1) upload the PDF (multipart/form-data; let fetch set the boundary).
-  const form = new FormData();
-  form.append('purpose', 'assistants');
-  form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'ptr.pdf');
-  const up = await fetch('https://api.x.ai/v1/files', {
-    method: 'POST',
-    headers: { authorization: `Bearer ${key}` },
-    body: form,
-  });
-  if (!up.ok) throw new Error(`xai upload ${up.status} ${await safeText(up)}`);
-  const uploaded = (await up.json()) as { id?: string };
-  if (!uploaded.id) throw new Error('xai: upload returned no file id');
-
-  // 2) ask Grok to extract, attaching the uploaded file.
-  const res = await fetch('https://api.x.ai/v1/responses', {
-    method: 'POST',
-    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      input: [
-        {
-          role: 'user',
-          content: [
-            { type: 'input_text', text: `${SYSTEM_PROMPT}\nReturn ONLY a JSON object {"transactions": [...]} .` },
-            { type: 'input_file', file_id: uploaded.id },
-          ],
-        },
-      ],
-    }),
-  });
-  if (!res.ok) throw new Error(`xai ${res.status} ${await safeText(res)}`);
-  const payload = (await res.json()) as any;
-  const usageInfo = payload.usage
-    ? { promptTokens: payload.usage.prompt_tokens, completionTokens: payload.usage.completion_tokens }
-    : undefined;
-
+async function runXai(
+  model: string,
+  key: string,
+  bytes: ArrayBuffer,
+  chamber: string,
+): Promise<ProviderResult> {
+  const prompt = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
+  let uploadedId: string | null = null;
   try {
-    return { rows: parseModelJson(extractXaiResponseText(payload)).map(toParsedTx), usage: usageInfo };
-  } catch (err) {
-    throw Object.assign(err as Error, { usage: usageInfo });
+    // 1) upload the PDF (multipart/form-data; let fetch set the boundary). The
+    // one-hour TTL is a backstop; the finally block below deletes immediately.
+    const form = new FormData();
+    form.append('purpose', 'assistants');
+    form.append('expires_after', '3600');
+    form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'ptr.pdf');
+    const up = await trackedFetch('https://api.x.ai/v1/files', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${key}` },
+      body: form,
+    }, { service: 'llm', operation: 'upload-document', model });
+    if (!up.ok) throw new Error(`xai upload ${up.status} ${await safeText(up)}`);
+    const uploaded = (await up.json()) as { id?: string };
+    if (!uploaded.id) throw new Error('xai: upload returned no file id');
+    uploadedId = uploaded.id;
+
+    // 2) ask Grok to extract, attaching the uploaded file.
+    const res = await trackedFetch('https://api.x.ai/v1/responses', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        input: [
+          {
+            role: 'user',
+            content: [
+              { type: 'input_text', text: `${prompt}\nReturn ONLY a JSON object {"transactions": [...]} .` },
+              { type: 'input_file', file_id: uploadedId },
+            ],
+          },
+        ],
+      }),
+    }, { service: 'llm', operation: 'extract-document', model });
+    if (!res.ok) throw new Error(`xai ${res.status} ${await safeText(res)}`);
+    const payload = (await res.json()) as {
+      id?: string;
+      model?: string;
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        input_tokens_details?: { cached_tokens?: number };
+        cost_in_usd_ticks?: number;
+        num_server_side_tools_used?: number;
+      };
+      output_text?: unknown;
+      output?: Array<{ content?: Array<{ text?: string }> }>;
+    };
+    // This adapter enables no explicit tools. xAI automatically enables only
+    // attachment_search when input_file is attached, so its reported total is
+    // a measured attachment-search count rather than an inferred one.
+    const reportedToolCalls = payload.usage?.num_server_side_tools_used;
+    const attachmentSearchCalls =
+      typeof reportedToolCalls === 'number' && Number.isInteger(reportedToolCalls) && reportedToolCalls >= 0
+        ? reportedToolCalls
+        : undefined;
+    const usageInfo = payload.usage
+      ? {
+          promptTokens: payload.usage.input_tokens,
+          completionTokens: payload.usage.output_tokens,
+          cachedTokens: payload.usage.input_tokens_details?.cached_tokens,
+          costInUsdTicks: payload.usage.cost_in_usd_ticks,
+          attachmentSearchCalls,
+        }
+      : undefined;
+
+    try {
+      return {
+        rows: parseModelJson(extractXaiResponseText(payload)).map(toParsedTx),
+        usage: usageInfo,
+        resolvedModel: payload.model,
+        providerRequestId: payload.id,
+      };
+    } catch (err) {
+      throw providerError(err as Error, {
+        usage: usageInfo,
+        resolvedModel: payload.model,
+        providerRequestId: payload.id,
+      });
+    }
+  } finally {
+    if (uploadedId) {
+      try {
+        const cleanup = await trackedFetch(
+          `https://api.x.ai/v1/files/${encodeURIComponent(uploadedId)}`,
+          { method: 'DELETE', headers: { authorization: `Bearer ${key}` } },
+          { service: 'llm', operation: 'delete-document', model },
+        );
+        if (!cleanup.ok) {
+          console.error('xai uploaded-file cleanup failed', { status: cleanup.status });
+        }
+      } catch (error) {
+        // Cleanup telemetry is emitted by trackedFetch. Preserve the extraction
+        // result while the one-hour upload TTL bounds any residual storage.
+        console.error('xai uploaded-file cleanup failed', {
+          error: error instanceof Error ? error.message.slice(0, 200) : String(error).slice(0, 200),
+        });
+      }
+    }
   }
 }
 
@@ -420,18 +722,43 @@ export function parseLlamaParseMarkdown(markdown: string): ParsedTx[] {
   throw new Error('llamaparse: no JSON array found in markdown output');
 }
 
+/** Read only an explicit provider-returned page count; never infer from bytes. */
+export function extractProviderReportedPageCount(payload: unknown): number | undefined {
+  const value = (payload ?? {}) as Record<string, unknown>;
+  const nested = [value.usage_info, value.usage, value.job_metadata, value.metadata]
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object');
+  const candidates = [
+    value.pages_processed,
+    value.pagesProcessed,
+    value.page_count,
+    value.num_pages,
+    value.total_pages,
+    ...nested.flatMap((entry) => [
+      entry.pages_processed,
+      entry.pagesProcessed,
+      entry.page_count,
+      entry.num_pages,
+      entry.total_pages,
+    ]),
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'number' && Number.isInteger(candidate) && candidate >= 0) return candidate;
+  }
+  if (Array.isArray(value.pages)) return value.pages.length;
+  return undefined;
+}
+
 /**
  * LlamaParse extraction call. The `model` string controls the parse tier:
  *   "fast"           — 1 credit/page  (basic OCR, good for clean text PDFs)
- *   "cost-effective" — 3 credits/page (premium_mode, better table handling)
- *   "agentic"        — 10 credits/page (internal LLM pass; best for handwriting)
- *   "agentic-plus"   — 45 credits/page (highest accuracy, most expensive)
+ *   "cost-effective" — 3 credits/page (page LLM, better table handling)
+ *   "agentic"        — 10 credits/page (Gemini 2.5 Flash agent; handwriting candidate)
  *
  * The parsing_instruction guides the internal model to emit the JSON output
  * format we need. Poll interval is 2 s; hard timeout is 90 s (well inside the
  * Worker's cpu_ms=300_000 ceiling since poll time is I/O, not CPU).
  */
-async function runLlamaParse(model: string, keyString: string, bytes: ArrayBuffer, chamber: string): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
+async function runLlamaParse(model: string, keyString: string, bytes: ArrayBuffer, chamber: string): Promise<ProviderResult> {
   const keys = keyString.split(',').map(k => k.trim()).filter(Boolean);
   if (!keys.length) throw new Error('llamaparse: no keys provided');
   let lastError: Error | null = null;
@@ -439,63 +766,97 @@ async function runLlamaParse(model: string, keyString: string, bytes: ArrayBuffe
   for (const k of keys) {
     try {
       return await doRunLlamaParse(model, k, bytes, chamber);
-    } catch (e: any) {
-      lastError = e;
-      // Continue to the next key on any error (like 429 rate limit, 401 auth, etc).
+    } catch (e) {
+      const error = e as ProviderError;
+      lastError = error;
+      // A returned job id may already be billable. Never submit the same PDF
+      // through another key after acceptance merely because polling or parsing
+      // failed; doing so would hide duplicate spend.
+      if (error.acceptedJob) throw error;
+      // Pre-acceptance auth, quota, or upload failures may fail over.
       continue;
     }
   }
   throw lastError || new Error('llamaparse: all keys failed');
 }
 
-async function doRunLlamaParse(model: string, key: string, bytes: ArrayBuffer, chamber: string): Promise<{ rows: ParsedTx[]; usage?: UsageInfo }> {
+/** Canonical v1 form parameters for the three benchmarked public tiers. */
+export function llamaParseModeParameters(model: string): Record<string, string> {
+  if (model === 'fast') return { parse_mode: 'parse_page_without_llm' };
+  if (model === 'cost-effective') {
+    return { parse_mode: 'parse_page_with_llm', high_res_ocr: 'true' };
+  }
+  if (model === 'agentic') {
+    return {
+      parse_mode: 'parse_page_with_agent',
+      model: 'gemini-2.5-flash',
+      high_res_ocr: 'true',
+    };
+  }
+  throw new Error(`llamaparse: unsupported benchmark mode ${model}`);
+}
+
+async function doRunLlamaParse(model: string, key: string, bytes: ArrayBuffer, chamber: string): Promise<ProviderResult> {
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'ptr.pdf');
   const promptToUse = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
   form.append('parsing_instruction', promptToUse + LLAMAPARSE_JSON_SUFFIX);
-  // Tier selection via LlamaParse form parameters.
-  if (model === 'cost-effective') {
-    form.append('premium_mode', 'true');
-  } else if (model === 'agentic' || model === 'agentic-plus') {
-    form.append('agentic_parsing', 'true');
-    if (model === 'agentic-plus') form.append('fast_mode', 'false');
+  for (const [name, value] of Object.entries(llamaParseModeParameters(model))) {
+    form.append(name, value);
   }
 
   // 1) Upload
-  const up = await fetch(`${LLAMAPARSE_BASE}/upload`, {
+  const up = await trackedFetch(`${LLAMAPARSE_BASE}/upload`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}` },
     body: form,
-  });
+  }, { service: 'ocr', operation: 'upload-document', model });
   if (!up.ok) throw new Error(`llamaparse upload ${up.status} ${await safeText(up)}`);
   const uploaded = (await up.json()) as { id?: string };
   if (!uploaded.id) throw new Error('llamaparse: upload returned no job id');
 
-  // 2) Poll for completion (up to 90 s; each sleep is pure I/O wait).
-  let succeeded = false;
-  for (let i = 0; i < 45; i++) {
-    await new Promise<void>((resolve) => setTimeout(resolve, 2000));
-    const st = await fetch(`${LLAMAPARSE_BASE}/job/${uploaded.id}`, {
-      headers: { Authorization: `Bearer ${key}` },
-    });
-    if (!st.ok) continue; // transient; keep polling
-    const { status } = (await st.json()) as { status?: string };
-    if (status === 'SUCCESS') { succeeded = true; break; }
-    if (status === 'ERROR' || status === 'CANCELLED') throw new Error(`llamaparse: job ${status ?? 'unknown'}`);
-  }
-  if (!succeeded) throw new Error('llamaparse: job timed out after 90s');
+  let statusPageCount: number | undefined;
+  try {
+    // 2) Poll for completion (up to 90 s; each sleep is pure I/O wait).
+    let succeeded = false;
+    for (let i = 0; i < 45; i++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+      const st = await trackedFetch(`${LLAMAPARSE_BASE}/job/${uploaded.id}`, {
+        headers: { Authorization: `Bearer ${key}` },
+      }, { service: 'ocr', operation: 'poll-document-job', model });
+      if (!st.ok) continue; // transient; keep polling
+      const statusPayload = (await st.json()) as { status?: string };
+      const { status } = statusPayload;
+      statusPageCount = extractProviderReportedPageCount(statusPayload) ?? statusPageCount;
+      if (status === 'SUCCESS') { succeeded = true; break; }
+      if (status === 'ERROR' || status === 'CANCELLED') throw new Error(`llamaparse: job ${status ?? 'unknown'}`);
+    }
+    if (!succeeded) throw new Error('llamaparse: job timed out after 90s');
 
-  // 3) Fetch markdown result
-  const res = await fetch(`${LLAMAPARSE_BASE}/job/${uploaded.id}/result/markdown`, {
-    headers: { Authorization: `Bearer ${key}` },
-  });
-  if (!res.ok) throw new Error(`llamaparse result ${res.status} ${await safeText(res)}`);
-  const { markdown } = (await res.json()) as { markdown?: string };
-  if (!markdown) throw new Error('llamaparse: empty markdown result');
-  
-  // LlamaParse charges by page, which isn't exactly tokens but we can map it to promptTokens if we want.
-  // For now, we'll leave usage undefined for LlamaParse as it's not token-based.
-  return { rows: parseLlamaParseMarkdown(markdown), usage: undefined };
+    // 3) Fetch markdown result
+    const res = await trackedFetch(`${LLAMAPARSE_BASE}/job/${uploaded.id}/result/markdown`, {
+      headers: { Authorization: `Bearer ${key}` },
+    }, { service: 'ocr', operation: 'fetch-document-result', model });
+    if (!res.ok) throw new Error(`llamaparse result ${res.status} ${await safeText(res)}`);
+    const resultPayload = (await res.json()) as { markdown?: string };
+    const { markdown } = resultPayload;
+    if (!markdown) throw new Error('llamaparse: empty markdown result');
+
+    const pagesProcessed = extractProviderReportedPageCount(resultPayload) ?? statusPageCount;
+    return {
+      rows: parseLlamaParseMarkdown(markdown),
+      usage: pagesProcessed == null ? undefined : { pagesProcessed },
+      resolvedModel: model,
+      providerRequestId: uploaded.id,
+    };
+  } catch (error) {
+    throw Object.assign(error as Error, {
+      acceptedJob: true,
+      providerRequestId: uploaded.id,
+      resolvedModel: model,
+      ...(statusPageCount == null ? {} : { usage: { pagesProcessed: statusPageCount } }),
+    } satisfies Partial<ProviderError>);
+  }
 }
 
 /** Run one candidate over one document's bytes, timing it and trapping errors. */
@@ -504,10 +865,11 @@ export async function runCandidateOnDoc(
   candidate: BakeoffCandidate,
   docId: string,
   bytes: ArrayBuffer,
+  invocation?: CandidateInvocation,
 ): Promise<CandidateDocResult> {
   const { provider, model } = candidate;
   const base = { provider, model, docId };
-  const key = await keyFor(env, provider);
+  const key = invocation ? invocation.apiKey : await keyFor(env, provider);
   if (!key) {
     return { ...base, ok: false, error: `${provider} API key not configured`, latencyMs: 0, rowCount: 0, rowKeys: [], avgConfidence: 0, rows: [] };
   }
@@ -516,6 +878,9 @@ export async function runCandidateOnDoc(
   try {
     let rows: ParsedTx[];
     let usage: CandidateDocResult['usage'];
+    let resolvedModel: string | undefined;
+    let providerRequestId: string | undefined;
+    let serviceTier: string | undefined;
     const chamber = docId.startsWith('E-') ? 'executive' : (docId.startsWith('S-') ? 'senate' : 'house');
     if (provider === 'gemini') {
       const result = await new VisionLlmExtractor(env, { model, apiKey: key }).extract({
@@ -524,26 +889,39 @@ export async function runCandidateOnDoc(
       });
       rows = result.transactions;
       usage = result.usage;
+      resolvedModel = result.modelVersion;
+      providerRequestId = result.providerRequestId;
     } else if (provider === 'openai') {
-      const openai = await runOpenAi(model, key, bytes);
+      const openai = await runOpenAi(model, key, bytes, chamber);
       rows = openai.rows;
       usage = openai.usage;
+      resolvedModel = openai.resolvedModel;
+      providerRequestId = openai.providerRequestId;
+      serviceTier = openai.serviceTier;
     } else if (provider === 'mistral') {
       const mistral = await runMistral(model, key, bytes);
       rows = mistral.rows;
       usage = mistral.usage;
+      resolvedModel = mistral.resolvedModel;
+      providerRequestId = mistral.providerRequestId;
     } else if (provider === 'xai') {
-      const xai = await runXai(model, key, bytes);
+      const xai = await runXai(model, key, bytes, chamber);
       rows = xai.rows;
       usage = xai.usage;
+      resolvedModel = xai.resolvedModel;
+      providerRequestId = xai.providerRequestId;
     } else if (provider === 'llamaparse') {
       const lp = await runLlamaParse(model, key, bytes, chamber);
       rows = lp.rows;
       usage = lp.usage;
+      resolvedModel = lp.resolvedModel;
+      providerRequestId = lp.providerRequestId;
     } else {
-      const anthropic = await runAnthropic(model, key, bytes);
+      const anthropic = await runAnthropic(model, key, bytes, chamber);
       rows = anthropic.rows;
       usage = anthropic.usage;
+      resolvedModel = anthropic.resolvedModel;
+      providerRequestId = anthropic.providerRequestId;
     }
     
     if (usage) {
@@ -558,9 +936,12 @@ export async function runCandidateOnDoc(
       avgConfidence: meanConfidence(rows),
       rows,
       usage,
+      resolvedModel,
+      providerRequestId,
+      serviceTier,
     };
   } catch (err) {
-    const cast = err as Error & { usage?: CandidateDocResult['usage'] };
+    const cast = err as ProviderError;
     
     if (cast.usage) {
       // Telemetry is pushed via pushExtractionTelemetry in persistExtractionRun.
@@ -578,12 +959,15 @@ export async function runCandidateOnDoc(
       // Preserve token usage when the provider attached it to the error
       // (e.g. OpenAI parse failures — tokens were consumed but parsing failed).
       usage: cast.usage,
+      resolvedModel: cast.resolvedModel,
+      providerRequestId: cast.providerRequestId,
+      serviceTier: cast.serviceTier,
     };
   }
 }
 
 /** Discriminates which caller produced an extraction_runs row. */
-export type ExtractionRunKind = 'bakeoff' | 'batch' | 'production' | 'agreement';
+export type ExtractionRunKind = 'bakeoff' | 'batch' | 'production' | 'agreement' | 'benchmark';
 
 /**
  * Persist one candidate's per-doc reading to `extraction_runs` (shape shared
@@ -597,17 +981,15 @@ export async function persistExtractionRun(
   kind: ExtractionRunKind,
   batchId: string | null = null,
 ): Promise<void> {
-  // Push telemetry concurrently (fire-and-forget internal catch)
-  import('./telemetry').then(({ pushExtractionTelemetry }) => {
-    pushExtractionTelemetry(env, result, kind);
-  }).catch(() => {});
+  // Durable Queue hand-off; failures are fail-soft inside the telemetry module.
+  await pushExtractionTelemetry(env, result, kind);
 
   try {
     await run(
       env.DB,
       `INSERT INTO extraction_runs
-         (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, batch_id, doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, result_json, usage_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         uuid(),
         batchId,
@@ -621,6 +1003,7 @@ export async function persistExtractionRun(
         result.latencyMs,
         result.avgConfidence,
         JSON.stringify(result.rows ?? []),
+        JSON.stringify(result.usage ?? null),
         new Date().toISOString(),
       ],
     );
@@ -649,8 +1032,9 @@ export function meanConfidence(rows: ParsedTx[]): number {
 export function computeConsensusAgreement(results: CandidateDocResult[]): Map<string, number> {
   const byDoc = new Map<string, CandidateDocResult[]>();
   for (const r of results) {
-    if (!byDoc.has(r.docId)) byDoc.set(r.docId, []);
-    byDoc.get(r.docId)!.push(r);
+    const documentResults = byDoc.get(r.docId) ?? [];
+    documentResults.push(r);
+    byDoc.set(r.docId, documentResults);
   }
 
   // Per model: accumulate recovered-fraction across docs that had a consensus.

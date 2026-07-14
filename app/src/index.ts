@@ -51,6 +51,13 @@ import {
   flushIngestionOutbox,
   reconnectDeadLetteredIngestionOutbox,
 } from './ingestion/outbox';
+import {
+  deliverUsageTelemetryEvent,
+  flushUsageTelemetryFallback,
+  persistUsageTelemetryFallback,
+  trackedFetch,
+  withThirdPartyTelemetry,
+} from './shared/thirdPartyTelemetry';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -155,6 +162,9 @@ async function handleIngestMessage(env: Env, msg: QueueMessage, queueAttempt = 1
       // scheduled-handler waitUntil cancels long model work.
       await handleAgreementCheck(env, msg.docId, msg.rawObjectKey, msg.escalationTier, msg.claimToken);
       return;
+    case 'usage.telemetry':
+      await deliverUsageTelemetryEvent(env, msg.event);
+      return;
     default:
       console.warn('INGEST_QUEUE: unexpected message type', (msg as { type?: string }).type);
   }
@@ -181,6 +191,12 @@ async function handleDeadLetterMessage(
   attempts: number,
 ): Promise<void> {
   const recoveryError = new Error(`consumer retry budget exhausted; received by ${queue}`);
+  if (msg.type === 'usage.telemetry') {
+    // The ingest DLQ has a much larger retry budget. Keep attempting the exact
+    // same idempotent event instead of trying to attach it to a filing outbox.
+    await deliverUsageTelemetryEvent(env, msg.event);
+    return;
+  }
   await recordDeadLetterDurable(env, queue, msg, attempts, recoveryError);
 
   if (queue.includes('delivery')) {
@@ -207,33 +223,179 @@ async function handleDeadLetterMessage(
   }
 }
 
-export default Sentry.withSentry(
-  (env: Env) => ({
+const SENTRY_FILTERED_VALUE = '[Filtered]';
+const SENTRY_CREDENTIAL_KEYS = new Set([
+  'apikey',
+  'xapikey',
+  'key',
+  'token',
+  'accesstoken',
+  'authtoken',
+  'authorization',
+  'proxyauthorization',
+  'clientsecret',
+  'secret',
+  'signature',
+  'sig',
+  'code',
+  'password',
+  'passwd',
+  'session',
+  'sessionid',
+  'cookie',
+  'setcookie',
+]);
+
+function normalizedSentryField(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function isSentryCredentialField(value: string): boolean {
+  return SENTRY_CREDENTIAL_KEYS.has(normalizedSentryField(value));
+}
+
+function redactSentryQuery(query: string): string {
+  const prefix = query.startsWith('?') ? '?' : '';
+  const raw = prefix ? query.slice(1) : query;
+  if (!raw.includes('=')) return query;
+  const params = new URLSearchParams(raw);
+  let changed = false;
+  for (const key of [...params.keys()]) {
+    if (!isSentryCredentialField(key)) continue;
+    params.set(key, SENTRY_FILTERED_VALUE);
+    changed = true;
+  }
+  return changed ? `${prefix}${params.toString()}` : query;
+}
+
+function redactSentryUrl(urlString: string): string {
+  try {
+    const url = new URL(urlString);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return urlString;
+    let changed = false;
+    if (url.username || url.password) {
+      url.username = SENTRY_FILTERED_VALUE;
+      url.password = SENTRY_FILTERED_VALUE;
+      changed = true;
+    }
+    for (const key of [...url.searchParams.keys()]) {
+      if (!isSentryCredentialField(key)) continue;
+      url.searchParams.set(key, SENTRY_FILTERED_VALUE);
+      changed = true;
+    }
+    return changed ? url.toString() : urlString;
+  } catch {
+    return urlString;
+  }
+}
+
+function isSentryKeyValueCollection(field: string): boolean {
+  const normalized = normalizedSentryField(field);
+  return normalized.includes('query') || normalized.includes('header');
+}
+
+function scrubSentryKeyValueTuple(tuple: unknown[], field: string): unknown[] {
+  if (tuple.length < 2 || typeof tuple[0] !== 'string') {
+    return tuple.map((item) => scrubSentryValue(item, field));
+  }
+  const [key, child, ...rest] = tuple;
+  return [
+    key,
+    isSentryCredentialField(key)
+      ? SENTRY_FILTERED_VALUE
+      : scrubSentryValue(child, key),
+    ...rest.map((item) => scrubSentryValue(item, field)),
+  ];
+}
+
+function scrubSentryValue(value: unknown, field = ''): unknown {
+  if (typeof value === 'string') {
+    if (isSentryCredentialField(field)) return SENTRY_FILTERED_VALUE;
+    if (normalizedSentryField(field).includes('query')) return redactSentryQuery(value);
+    return value.replace(/https?:\/\/[^\s<>"']+/gi, (url) => redactSentryUrl(url));
+  }
+  if (Array.isArray(value)) {
+    if (!isSentryKeyValueCollection(field)) {
+      return value.map((item) => scrubSentryValue(item, field));
+    }
+    if (value.length >= 2 && typeof value[0] === 'string') {
+      return scrubSentryKeyValueTuple(value, field);
+    }
+    return value.map((item) => (
+      Array.isArray(item)
+        ? scrubSentryKeyValueTuple(item, field)
+        : scrubSentryValue(item, field)
+    ));
+  }
+  if (value && typeof value === 'object') {
+    const scrubbed: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      scrubbed[key] = isSentryCredentialField(key)
+        ? SENTRY_FILTERED_VALUE
+        : scrubSentryValue(child, key);
+    }
+    return scrubbed;
+  }
+  return value;
+}
+
+function scrubSentryEvent<T>(event: T): T {
+  return scrubSentryValue(event) as T;
+}
+
+function sentryOptions(env: Env, tracesSampleRate: number) {
+  return {
     dsn: env.SENTRY_DSN,
     environment: env.SENTRY_ENVIRONMENT,
-    // Send traces for a sample of requests (0 = off, 1.0 = all). Override via
-    // the SENTRY_TRACES_SAMPLE_RATE var without a redeploy; defaults to a cheap
-    // 10% so HTTP/D1/outbound-fetch spans show up without full tracing cost.
-    tracesSampleRate: env.SENTRY_TRACES_SAMPLE_RATE ? Number(env.SENTRY_TRACES_SAMPLE_RATE) : 0.1,
+    tracesSampleRate,
+    // Fetch instrumentation records complete provider URLs (including query
+    // credentials). Scrub at the final event hooks so errors, breadcrumbs, and
+    // transaction span attributes are clean before envelope serialization.
+    beforeSend: <T>(event: T) => scrubSentryEvent(event),
+    beforeSendTransaction: <T>(event: T) => scrubSentryEvent(event),
+    beforeSendLog: <T>(log: T) => scrubSentryEvent(log),
     // Structured logs (Sentry Logs product), plus forward console.warn/error as
     // logs too — the many existing console.error(...) call sites across the
     // codebase become searchable in Sentry for free, without touching each one.
     enableLogs: true,
     integrations: [Sentry.consoleLoggingIntegration({ levels: ['warn', 'error'] })],
+    // Meter the SDK-owned Sentry envelope transport too. The explicit Env is
+    // required because the SDK can flush after the request callback unwinds.
+    transportOptions: {
+      fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+        trackedFetch(
+          input,
+          init,
+          { service: 'observability', operation: 'send-envelope' },
+          fetch,
+          { envOverride: env, silentQueueFailure: true },
+        ),
+    },
     // Outbound fetch also hits third-party providers (FMP, Stripe, Resend,
     // Infisical) and arbitrary subscriber webhook URLs (delivery/webhook.ts).
     // Only attach Sentry trace headers to our own domain.
     tracePropagationTargets: [/^https:\/\/([\w-]+\.)?congress\.trade/],
-  }),
+  };
+}
+
+const requestAndScheduledWorker = Sentry.withSentry(
+  (env: Env) => sentryOptions(
+    env,
+    // Send traces for a sample of requests (0 = off, 1.0 = all). Override via
+    // the SENTRY_TRACES_SAMPLE_RATE var without a redeploy; defaults to a cheap
+    // 10% so HTTP/D1/outbound-fetch spans show up without full tracing cost.
+    env.SENTRY_TRACES_SAMPLE_RATE ? Number(env.SENTRY_TRACES_SAMPLE_RATE) : 0.1,
+  ),
   {
     /** HTTP entrypoint. */
     fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> | Response {
-      return app.fetch(request, env, ctx);
+      return withThirdPartyTelemetry(env, () => app.fetch(request, env, ctx));
     },
 
     /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow.
      *  Daily enrichment + price refresh self-gate via a KV date stamp. */
     async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+      return withThirdPartyTelemetry(env, async () => {
       // Register independent maintenance first. A watcher/config failure must
       // never prevent durable outboxes, secrets, or daily jobs from running.
       ctx.waitUntil(
@@ -249,6 +411,21 @@ export default Sentry.withSentry(
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'ingestion-outbox' } }),
         ),
+      );
+      ctx.waitUntil(
+        flushUsageTelemetryFallback(env, { limit: 25 })
+          .then((result) => {
+            if (result.failed > 0) {
+              // console.log is intentionally outside the Sentry warn/error log
+              // integration: receiver outages must not create new envelopes.
+              console.log('usage telemetry fallback remains pending', result);
+            }
+          })
+          .catch((err) => {
+            console.log('usage telemetry fallback drain unavailable', {
+              errorType: err instanceof Error ? err.name : 'unknown',
+            });
+          }),
       );
       ctx.waitUntil(
         Sentry.withMonitor('secrets-refresh-cron', () =>
@@ -301,13 +478,23 @@ export default Sentry.withSentry(
           Sentry.captureException(err, { tags: { cron: 'watcher' } }),
         ),
       );
+      });
     },
+  },
+);
 
+const queueWorker = Sentry.withSentry(
+  // Queue transaction envelopes are themselves metered through INGEST_QUEUE.
+  // Never sample queue traces, or each envelope would enqueue another traced
+  // queue invocation. Explicit captureException events remain enabled.
+  (env: Env) => sentryOptions(env, 0),
+  {
     /**
      * Queue consumer. Routes by the bound queue name to the ingest/delivery
      * handlers. Messages are ack'd individually; failures retry per wrangler.toml.
      */
     async queue(batch, env: Env, _ctx: ExecutionContext): Promise<void> {
+      return withThirdPartyTelemetry(env, async () => {
       const isDeadLetterQueue = batch.queue.endsWith('-dlq');
       if (isDeadLetterQueue) {
         for (const message of batch.messages) {
@@ -320,9 +507,16 @@ export default Sentry.withSentry(
             );
             message.ack();
           } catch (err) {
-            Sentry.captureException(err as Error, {
-              tags: { queue: batch.queue, recovery: 'dead-letter' },
-            });
+            const messageType = (message.body as QueueMessage).type;
+            // Usage Monitor outage retries must not create a Sentry envelope,
+            // which would create another Usage Monitor event and amplify.
+            if (messageType === 'usage.telemetry') {
+              await persistUsageTelemetryFallback(env, (message.body as QueueMessage & { type: 'usage.telemetry' }).event);
+            } else {
+              Sentry.captureException(err as Error, {
+                tags: { queue: batch.queue, recovery: 'dead-letter' },
+              });
+            }
             message.retry({ delaySeconds: 60 });
           }
         }
@@ -358,13 +552,18 @@ export default Sentry.withSentry(
           }
           message.ack();
         } catch (err) {
+          const messageType = (message.body as QueueMessage).type;
           const ingestRetry = isDelivery
             ? null
             : classifyTransientIngestError(err, message.attempts);
-          console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
-          // console.error above is only a breadcrumb/log; the retry swallows the
-          // throw, so without this the failure would never create a Sentry Issue.
-          Sentry.captureException(err as Error, { tags: { queue: batch.queue, messageType: (message.body as QueueMessage).type ?? 'unknown' } });
+          if (messageType === 'usage.telemetry') {
+            await persistUsageTelemetryFallback(env, (message.body as QueueMessage & { type: 'usage.telemetry' }).event);
+          } else {
+            console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
+            // console.error above is only a breadcrumb/log; the retry swallows the
+            // throw, so without this the failure would never create a Sentry Issue.
+            Sentry.captureException(err as Error, { tags: { queue: batch.queue, messageType } });
+          }
           if (err instanceof DeliveryRetryError || err instanceof IngestRetryError) {
             message.retry({ delaySeconds: err.delaySeconds });
           } else if (ingestRetry) {
@@ -374,6 +573,13 @@ export default Sentry.withSentry(
           }
         }
       }
+      });
     },
   },
 );
+
+export default {
+  fetch: requestAndScheduledWorker.fetch,
+  scheduled: requestAndScheduledWorker.scheduled,
+  queue: queueWorker.queue,
+};

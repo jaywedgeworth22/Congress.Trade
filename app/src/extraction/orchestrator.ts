@@ -15,7 +15,12 @@
 
 import type { Env, Filing, DocKind, Chamber, ParsedTx } from '../shared/types';
 import { get, run } from '../shared/db';
-import { buildExtractorPipeline, type ExtractorResult } from '../extractors/types';
+import {
+  buildExtractorPipeline,
+  type ExtractorModelRun,
+  type ExtractorResult,
+  type ExtractorUsage,
+} from '../extractors/types';
 import { normalize } from './normalizer';
 import { enqueueAgreementCheck } from './agreement';
 import { reportAiUsage } from '../shared/telemetry';
@@ -72,6 +77,49 @@ function isProviderRateLimit(err: unknown): boolean {
   return /\b(429|too many requests|quota exceeded|rate[- ]?limit)\b/i.test(message);
 }
 
+function providerForModel(model: string | undefined): string {
+  const normalized = model?.trim().toLowerCase() ?? '';
+  if (normalized.startsWith('gemini')) return 'gemini';
+  if (/^(gpt-|chatgpt-|o\d)/.test(normalized)) return 'openai';
+  if (normalized.startsWith('claude')) return 'anthropic';
+  if (normalized.startsWith('grok')) return 'xai';
+  if (normalized.includes('mistral')) return 'mistral';
+  return 'unknown';
+}
+
+function telemetryModelRuns(
+  value: {
+    extractor?: string;
+    modelVersion?: string;
+    resolvedModel?: string;
+    providerRequestId?: string;
+    usage?: ExtractorUsage;
+    modelRuns?: ExtractorModelRun[];
+  },
+  fallbackExtractor: string,
+): ExtractorModelRun[] {
+  if (value.modelRuns?.length) return value.modelRuns;
+  if (!value.modelVersion && !value.resolvedModel && !value.providerRequestId && !value.usage) return [];
+  return [{
+    extractor: value.extractor ?? fallbackExtractor,
+    modelVersion: value.modelVersion ?? value.resolvedModel,
+    providerRequestId: value.providerRequestId,
+    usage: value.usage,
+  }];
+}
+
+async function reportExtractorUsage(env: Env, runs: ExtractorModelRun[]): Promise<void> {
+  for (const modelRun of runs) {
+    if (!modelRun.usage) continue;
+    await reportAiUsage(env, {
+      provider: providerForModel(modelRun.modelVersion),
+      model: modelRun.modelVersion ?? 'unknown',
+      component: 'orchestrator',
+      ...modelRun.usage,
+    });
+  }
+}
+
 /**
  * Extract + normalize a classified filing.
  *
@@ -107,6 +155,7 @@ export interface ExtractedFiling {
   transactions: ParsedTx[];
   extractor: string;
   modelVersion: string | null;
+  modelRuns?: ExtractorModelRun[];
 }
 
 /**
@@ -176,16 +225,15 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
   try {
     result = await extractor.extract({ filing, bytes, html });
   } catch (err) {
-    const cast = err as Error & { usage?: { promptTokens?: number; completionTokens?: number; cachedTokens?: number } };
-    if (cast.usage) {
-      // Fire-and-forget telemetry even on failed parses (tokens were consumed)
-      reportAiUsage(env, {
-        provider: 'gemini', // extractParsed primarily uses VisionLlmExtractor
-        model: cast.usage.promptTokens ? 'gemini-3.5-flash' : 'unknown', // fallback, actual model isn't on the error
-        component: 'orchestrator',
-        ...cast.usage,
-      }).catch(() => {});
-    }
+    const cast = err as Error & {
+      usage?: ExtractorUsage;
+      resolvedModel?: string;
+      providerRequestId?: string;
+      modelRuns?: ExtractorModelRun[];
+    };
+    // Await every durable Queue hand-off even on failed arbitration/parses;
+    // those provider calls were already billed before the error was thrown.
+    await reportExtractorUsage(env, telemetryModelRuns(cast, extractor.name));
 
     const detail = (err as Error).message;
     const message = isProviderRateLimit(err)
@@ -200,16 +248,7 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
     throw err;
   }
 
-  if (result.usage && result.modelVersion) {
-    reportAiUsage(env, {
-      // orchestrator mainly runs Gemini (visionLlm), but we can infer provider
-      // broadly if we assume Gemini based on the pipeline.
-      provider: 'gemini',
-      model: result.modelVersion,
-      component: 'orchestrator',
-      ...result.usage,
-    }).catch(() => {});
-  }
+  await reportExtractorUsage(env, telemetryModelRuns(result, result.extractor));
 
   // Complexity signal for cascade tiering: page count, when the extractor
   // cheaply exposed it (e.g. TextPdfExtractor reads pdf.numPages off the
@@ -231,5 +270,6 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
     transactions: result.transactions,
     extractor: result.extractor,
     modelVersion: result.modelVersion ?? null,
+    modelRuns: result.modelRuns,
   };
 }

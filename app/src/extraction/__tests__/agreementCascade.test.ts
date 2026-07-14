@@ -26,7 +26,17 @@ const row = (
   txType: string,
   amountRange: string | null,
   extra: Record<string, unknown> = {},
-) => ({ ticker, assetName: `${ticker} Inc.`, txDate: '2026-06-19', txType, amountRange, confidence: 0.9, ...extra });
+) => ({
+  ticker,
+  assetName: `${ticker} Inc.`,
+  txDate: '2026-06-19',
+  txType,
+  amountRange,
+  isOption: false,
+  capGainsOver200: false,
+  confidence: 0.9,
+  ...extra,
+});
 const asJson = (rows: unknown[]) => JSON.stringify(rows);
 
 const AB = '$1,001 - $15,000';

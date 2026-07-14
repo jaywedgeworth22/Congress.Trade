@@ -16,6 +16,7 @@
 
 import type { Env } from '../shared/types';
 import { get, run } from '../shared/db';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 const UA = 'congress-feed/0.1 (+https://congress.trade)';
 
@@ -150,7 +151,7 @@ export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Pr
   }
 
   try {
-    const res = await fetch(sourceUrl, {
+    const res = await trackedFetch(sourceUrl, {
       headers: {
         'user-agent': UA,
         accept:
@@ -159,7 +160,7 @@ export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Pr
             : 'application/pdf,*/*',
       },
       redirect: 'follow',
-    });
+    }, { service: 'filing-ingestion', operation: 'fetch-filing-document', dynamicTarget: 'filing-source' });
     if (!res.ok) {
       const message = `fetcher: source ${sourceUrl} -> HTTP ${res.status}`;
       await res.body?.cancel().catch(() => {});
