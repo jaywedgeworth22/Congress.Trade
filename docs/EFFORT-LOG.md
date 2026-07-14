@@ -267,6 +267,9 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   tests); PR CI `typecheck + test` and `gitleaks` passed. Workflow-only change:
   no preview or production deploy.
 
+## Completed
+- **Current-main iOS improvement roadmap (CODEX + expert reviewer, S) — COMPLETED / READY TO PUBLISH 2026-07-13.** Branch `codex/ios-improvement-plan-20260713`; docs-only plan from fetched `origin/main`. The roadmap now covers truthful Executive filtering, lossless forward/older sync and tombstones, recoverable command retries, production auth, App Review commerce/privacy, push alerts, scoped state, trace-backed performance budgets, accessibility, observability, CI/TestFlight, and AG overlap sequencing. Generic simulator build, build-for-testing, and Release generic-device build passed; runtime tests/Instruments are explicitly pending because no iOS Simulator runtime is installed on this Mac. No SwiftUI implementation or production mutation.
+
 ## In Progress
 - **Audit Tier 1 Fixes (surgical unblocks) (AG, L) — IN PROGRESS 2026-07-12.** Fixing webhook signature + shared sign/verify helper; premium entitlement gate + web alerts manager; iOS bearer-token issuance flow; idempotency-replay semantics; PWA since-cursor polling + Retry-After.
 - **Beautify iOS SwiftUI Prototype App (AG, L) — IN PROGRESS 2026-07-12.** Refactored monolithic SwiftUI code in `CongressTradeApp.swift` to upgrade styling (glassmorphism, gradient accents, modern card structures). Code compiles correctly locally. Pending PR creation and deployment.

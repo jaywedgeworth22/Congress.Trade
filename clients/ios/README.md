@@ -3,6 +3,9 @@
 Native iPhone prototype for the same backend-owned `/api/client/v1` API used by
 the PWA. The backend remains the source of truth; the phone is a control surface.
 
+See [IMPROVEMENT-PLAN.md](IMPROVEMENT-PLAN.md) for the current release, product,
+performance, accessibility, and verification roadmap.
+
 ![iOS dashboard sample](Design/ios-dashboard-sample.svg)
 
 ## Current Surface
