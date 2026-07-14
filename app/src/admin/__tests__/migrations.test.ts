@@ -15,6 +15,11 @@ import {
   STRIPE_EVENT_SCHEMA_STATEMENTS,
 } from '../migrations';
 import { BENCHMARK_SCHEMA_STATEMENTS } from '../../benchmark/schema';
+import {
+  beginBenchmarkRun,
+  claimBenchmarkMeasurement,
+  failBenchmarkRun,
+} from '../../benchmark/persistence';
 
 interface SqliteRunResult {
   changes: number | bigint;
@@ -178,7 +183,7 @@ describe('admin migration bootstrap', () => {
     expect(sql).not.toContain('review_delivery_outbox');
   });
 
-  it('matches the real 0029-0040 file schema and passes readiness on SQLite', async () => {
+  it('matches the real 0029-0041 file schema and passes readiness on SQLite', async () => {
     const files = migrationFiles();
     const priorFiles = files.filter((name) => Number(name.slice(0, 4)) <= 24);
     const fileDb = await sqliteDatabase();
@@ -242,6 +247,58 @@ describe('admin migration bootstrap', () => {
       });
       expect(Number(db.prepare('SELECT cursor_seq FROM transactions WHERE id = ?').get('tx-1')?.cursor_seq)).toBeGreaterThan(0);
       expect(db.prepare('SELECT COUNT(*) AS count FROM delivery_outbox').get()).toEqual({ count: 1 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it('prevents a new benchmark cell claim after the run becomes terminal', async () => {
+    const db = await sqliteDatabase();
+    try {
+      applyMigrationFiles(db, migrationFiles());
+      const d1 = d1Database(db);
+      await beginBenchmarkRun(d1, {
+        id: 'run-cancel-race',
+        chamber: 'house',
+        models: [{ provider: 'openai', model: 'gpt-test' }],
+        documents: [
+          { docId: 'H-1', resolved: false },
+          { docId: 'H-2', resolved: false },
+        ],
+        startedAt: '2026-07-14T12:00:00.000Z',
+      });
+
+      await expect(claimBenchmarkMeasurement(d1, {
+        runId: 'run-cancel-race',
+        docId: 'H-1',
+        provider: 'openai',
+        model: 'gpt-test',
+        now: '2026-07-14T12:00:01.000Z',
+      })).resolves.toMatchObject({ claimed: true, state: 'claimed' });
+      await expect(failBenchmarkRun(
+        d1,
+        'run-cancel-race',
+        'Stopped by operator',
+        '2026-07-14T12:00:02.000Z',
+      )).resolves.toBe(true);
+      await expect(claimBenchmarkMeasurement(d1, {
+        runId: 'run-cancel-race',
+        docId: 'H-2',
+        provider: 'openai',
+        model: 'gpt-test',
+        now: '2026-07-14T12:00:03.000Z',
+      })).resolves.toEqual({
+        claimed: false,
+        claimToken: null,
+        leaseUntil: null,
+        state: 'inactive',
+        reclaimedUnknownOutcome: false,
+      });
+      expect(db.prepare(
+        `SELECT COUNT(*) AS count
+           FROM benchmark_model_results
+          WHERE run_id = ? AND doc_id = ?`,
+      ).get('run-cancel-race', 'H-2')).toEqual({ count: 0 });
     } finally {
       db.close();
     }
