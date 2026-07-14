@@ -1,5 +1,8 @@
-# Copy to `.dev.vars` for local development (`wrangler dev`).
-# `.dev.vars` is gitignored — never commit real secrets.
+# Reference only; do not copy this file to `.dev.vars`.
+# From the repository root, run `bash scripts/cloud-setup.sh`. It creates the
+# gitignored `.dev.vars` with the Infisical app/shared machine-identity bootstrap
+# plus the narrow documented Sentry/local-admin selectors needed before async
+# Infisical resolution. Provider keys remain in Infisical.
 #
 # ── SINGLE SOURCE OF TRUTH: INFISICAL ───────────────────────────────────────
 # Every key/knob below (except the INFISICAL_* bootstrap credentials and the

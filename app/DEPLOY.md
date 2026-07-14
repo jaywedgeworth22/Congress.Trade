@@ -85,8 +85,9 @@ secret copies.
 
 Arbitration is **off** until `ARBITRATION_ENABLED = "true"` is present (set it in
 `wrangler.toml` `[vars]`, Infisical, or `.dev.vars`). Flipping it on makes the
-vision extractor run primary + secondary and reconcile. For local dev, copy
-`.dev.vars.example` → `.dev.vars`.
+vision extractor run primary + secondary and reconcile. For local dev, run
+`bash scripts/cloud-setup.sh` from the repository root; do not copy the reference
+`.dev.vars.example` template.
 
 Admin auth fails closed by default. Set `ADMIN_TOKEN` or configure Cloudflare
 Access (`ADMIN_EMAILS`, `ACCESS_AUD`, `ACCESS_TEAM_DOMAIN`). Only local
