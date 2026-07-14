@@ -178,6 +178,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .benchmark-table-wrap .bench-table td:first-child { width:auto; min-width:180px; }
   .benchmark-table-wrap .bench-table th:last-child,
   .benchmark-table-wrap .bench-table td:last-child { width:auto; }
+  .benchmark-model-state { margin-top:4px; font-size:11px; color:var(--text-dim); }
+  .benchmark-model-state.partial { color:var(--warn); font-weight:700; }
+  .benchmark-outcome-counts { margin-top:4px; font-size:11px; color:var(--text-dim); line-height:1.45; }
+  .benchmark-latency-line { display:block; white-space:nowrap; }
+  .benchmark-latency-line.failed { margin-top:4px; color:var(--warn); }
+  .benchmark-diag-row td { padding-top:0; background:color-mix(in srgb,var(--panel-2) 34%,transparent); }
+  .benchmark-diagnostics { margin:0; font-size:11px; color:var(--text-dim); }
+  .benchmark-diagnostics summary { cursor:pointer; color:var(--warn); font-weight:700; }
+  .benchmark-diagnostics-body { display:grid; gap:5px; margin-top:7px; line-height:1.45; overflow-wrap:anywhere; }
+  .benchmark-diagnostics code { white-space:normal; word-break:break-word; }
   .benchmark-lineup { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; align-items:end; }
   .benchmark-lineup label { display:block; min-width:0; }
   .benchmark-lineup select { display:block; width:100%; margin-top:4px; }
@@ -1753,7 +1763,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
     <div class="section">
       <h3>Model Benchmarking</h3>
-      <p class="sub">Run measured tests against saved filings. Every run is saved by branch with resolved ground-truth coverage, measured list-price cost coverage, and latency.</p>
+      <p class="sub">Run measured tests against saved filings. Every run is saved by branch with resolved ground-truth coverage, measured usage-based cost coverage, and latency.</p>
       <div class="benchmark-toolbar" role="tablist" aria-label="Benchmark branch">
         <button class="btn sm" id="btnBenchHouse" role="tab" aria-selected="true" onclick="selectBenchmarkChamber('house')">House</button>
         <button class="btn ghost sm" id="btnBenchSenate" role="tab" aria-selected="false" onclick="selectBenchmarkChamber('senate')">Senate</button>
@@ -1762,6 +1772,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <select id="benchmarkHistory" onchange="loadBenchmarkRun(this.value)" aria-label="Saved benchmark run"><option value="">No saved runs</option></select>
         <button class="btn ghost sm" onclick="loadBenchmarkHistory()">Reload</button>
         <button class="btn sm" id="btnRunBenchmark" onclick="runChamberBenchmark()">Run House benchmark</button>
+        <button class="btn ghost sm" id="btnCancelBenchmark" onclick="cancelBenchmarkRun()" hidden>Stop and keep partial results</button>
       </div>
       <div id="benchmarkSettingsSummary" class="note">Loading saved House lineup…</div>
       <div id="benchmarkMsg" class="note" role="status" aria-live="polite"></div>
@@ -4756,6 +4767,261 @@ function benchmarkDate(value) {
   return isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
 }
 
+function benchmarkResultIsComplete(result) {
+  return Boolean(result) && result.outcome !== 'running';
+}
+
+function benchmarkLatencySummary(results) {
+  var values = (results || []).map(function(result) { return result.latencyMs; })
+    .filter(function(value) { return typeof value === 'number' && isFinite(value) && value >= 0; })
+    .sort(function(a, b) { return a - b; });
+  function percentile(q) {
+    return values.length ? values[Math.max(0, Math.ceil(q * values.length) - 1)] : null;
+  }
+  return {
+    count: values.length,
+    avgLatencyMs: values.length ? values.reduce(function(sum, value) { return sum + value; }, 0) / values.length : null,
+    p50LatencyMs: percentile(0.5),
+    p95LatencyMs: percentile(0.95)
+  };
+}
+
+function benchmarkSanitizeDiagnosticMessage(value) {
+  return String(value || 'Provider call failed')
+    .replace(/https?:[/][/][^ )},;]+/gi, '[redacted-url]')
+    .replace(/(proj|org|acct|req)_[A-Za-z0-9_-]+/gi, '[redacted-id]')
+    .replace(/(sk|rk|pk)-[A-Za-z0-9_-]{8,}/gi, '[redacted-key]')
+    .replace(/Authorization[ ]*:[ ]*Bearer[ ]+[^ ,;]+/gi, 'Authorization: Bearer [redacted]')
+    .replace(/Bearer[ ]+[^ ,;]+/gi, 'Bearer [redacted]')
+    .replace(/((api[ _-]?key|token|account[ _-]?id|project[ _-]?id|request[ _-]?id)["' ]*[:=]?["' ]+)[^ ,;]+/gi, '$1[redacted]')
+    .slice(0, 300);
+}
+
+function benchmarkFailureDetail(result) {
+  var nested = result && result.result && typeof result.result === 'object' ? result.result : {};
+  var failure = result && result.failure && typeof result.failure === 'object'
+    ? result.failure
+    : (nested.failure && typeof nested.failure === 'object' ? nested.failure : null);
+  var blockedBy = result && result.blockedBy && typeof result.blockedBy === 'object'
+    ? result.blockedBy
+    : (nested.blockedBy && typeof nested.blockedBy === 'object' ? nested.blockedBy : null);
+  if (failure) {
+    return {
+      code: String(failure.code || 'provider_failure').slice(0, 80),
+      message: benchmarkSanitizeDiagnosticMessage(failure.message || result.error),
+      scope: failure.scope ? String(failure.scope).slice(0, 40) : null,
+      retryable: typeof failure.retryable === 'boolean' ? failure.retryable : null,
+      blockedBy: blockedBy
+    };
+  }
+  var error = String((result && result.error) || '').trim();
+  var lower = error.toLowerCase();
+  var code = result && (result.errorClass || result.failureClass || result.errorCode);
+  if (!code) {
+    if (!result) code = 'not_invoked';
+    else if (/not configured|missing.*key|no keys provided/.test(lower)) code = 'configuration_missing';
+    else if (/404|model[_ -]?not[_ -]?found|model.*not found|unknown model|unsupported.*model|does not exist|does not have access to.*model|access denied.*model/.test(lower)) code = 'model_unavailable';
+    else if (/401|403|unauthorized|forbidden|invalid api key|authentication/.test(lower)) code = 'authentication_failed';
+    else if (/429|rate.?limit|quota|capacity/.test(lower)) code = 'rate_or_quota';
+    else if (/timeout|timed out/.test(lower)) code = 'timeout';
+    else if (/parse|json|schema|markdown|empty.*result/.test(lower)) code = 'parse_or_schema';
+    else if (/filing|document|raw.object|load.failed/.test(lower)) code = 'document_unavailable';
+    else if (!result.invoked) code = 'not_invoked';
+    else code = 'provider_failure';
+  }
+  return {
+    code: String(code).slice(0, 80),
+    message: benchmarkSanitizeDiagnosticMessage(error || String((result && result.outcome) || 'Provider call failed')),
+    scope: null,
+    retryable: null,
+    blockedBy: blockedBy
+  };
+}
+
+function benchmarkGroupedCounts(values) {
+  var counts = {};
+  (values || []).filter(Boolean).forEach(function(value) {
+    var key = String(value);
+    counts[key] = (counts[key] || 0) + 1;
+  });
+  return Object.keys(counts).sort(function(a, b) {
+    return counts[b] - counts[a] || a.localeCompare(b);
+  }).map(function(key) { return { key: key, count: counts[key] }; });
+}
+
+function benchmarkRunCellProgress(run) {
+  run = run || {};
+  var models = run.models || [];
+  var documentCount = Number(run.requestedDocCount || ((run.documents || []).length) || 0);
+  var planned = documentCount * models.length;
+  var hasDetails = Array.isArray(run.results);
+  var completedResults = hasDetails ? run.results.filter(benchmarkResultIsComplete) : [];
+  var claimed = hasDetails ? run.results.filter(function(result) { return result && result.outcome === 'running'; }).length : 0;
+  var invoked = completedResults.filter(function(result) { return result.invoked; });
+  var failures = invoked.filter(function(result) { return !result.ok; });
+  var unavailable = completedResults.filter(function(result) { return !result.invoked; });
+  var covered = invoked.filter(function(result) { return typeof result.costUsd === 'number' && isFinite(result.costUsd); });
+  var knownCostUsd = covered.reduce(function(sum, result) { return sum + result.costUsd; }, 0);
+  var completed = completedResults.length;
+  var success = invoked.length - failures.length;
+  if (!hasDetails && run.status === 'completed') {
+    completed = planned;
+    invoked = new Array(Number((run.summary && run.summary.invokedCalls) || run.invokedCalls || 0));
+    failures = new Array((run.summary && run.summary.models || []).reduce(function(sum, model) { return sum + Number(model.failures || 0); }, 0));
+    unavailable = new Array((run.summary && run.summary.models || []).reduce(function(sum, model) { return sum + Number(model.unavailableDocs || 0); }, 0));
+    covered = new Array(Number((run.summary && run.summary.coveredInvocations) || run.costCoveredCalls || 0));
+    knownCostUsd = Number((run.summary && run.summary.knownCostUsd) || run.knownCostUsd || 0);
+    success = Math.max(0, invoked.length - failures.length);
+  }
+  return {
+    planned: planned,
+    completed: completed,
+    measured: completed,
+    invoked: invoked.length,
+    success: success,
+    failures: failures.length,
+    unavailable: unavailable.length,
+    claimed: claimed,
+    pending: hasDetails || run.status === 'completed' ? Math.max(0, planned - completed) : null,
+    costCovered: covered.length,
+    knownCostUsd: knownCostUsd,
+    hasDetails: hasDetails
+  };
+}
+
+function benchmarkModelPresentation(run, model, persisted) {
+  run = run || {};
+  persisted = persisted || {};
+  var plannedDocs = Number(run.requestedDocCount || ((run.documents || []).length) || persisted.docsMeasured || 0);
+  var all = (run.results || []).filter(function(result) {
+    return result.provider === model.provider && result.model === model.model;
+  });
+  var completed = all.filter(benchmarkResultIsComplete);
+  var claimed = all.filter(function(result) { return result.outcome === 'running'; });
+  var invoked = completed.filter(function(result) { return result.invoked; });
+  var successful = invoked.filter(function(result) { return result.ok; });
+  var failed = invoked.filter(function(result) { return !result.ok; });
+  var unavailable = completed.filter(function(result) { return !result.invoked; });
+  var resolved = completed.filter(function(result) { return result.perfectMatch !== null && result.perfectMatch !== undefined; });
+  var covered = invoked.filter(function(result) { return typeof result.costUsd === 'number' && isFinite(result.costUsd); });
+  var knownCostUsd = covered.reduce(function(sum, result) { return sum + result.costUsd; }, 0);
+  var pendingDocs = Math.max(0, plannedDocs - completed.length);
+  var tp = resolved.reduce(function(sum, result) { return sum + Number(result.truePositive || 0); }, 0);
+  var fp = resolved.reduce(function(sum, result) { return sum + Number(result.falsePositive || 0); }, 0);
+  var fn = resolved.reduce(function(sum, result) { return sum + Number(result.falseNegative || 0); }, 0);
+  var precision = tp + fp > 0 ? tp / (tp + fp) : 0;
+  var recall = tp + fn > 0 ? tp / (tp + fn) : 0;
+  var derivedF1 = resolved.length ? (precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0) : null;
+  var failureDetails = failed.concat(unavailable).map(benchmarkFailureDetail);
+  var unknownCostReasons = invoked.filter(function(result) { return typeof result.costUsd !== 'number'; }).map(function(result) {
+    var detail = result.costDetail && typeof result.costDetail === 'object' ? result.costDetail : {};
+    return detail.unknownReason || 'unpriced_without_reason';
+  });
+  var samples = failed.concat(unavailable).map(function(result) {
+    var detail = benchmarkFailureDetail(result);
+    return {
+      docId: result.docId || 'unknown document',
+      code: detail.code,
+      message: detail.message,
+      scope: detail.scope,
+      retryable: detail.retryable,
+      blockedBy: detail.blockedBy
+    };
+  }).slice(0, 5);
+  var hasDetailedResults = Array.isArray(run.results);
+  if (!hasDetailedResults) {
+    return {
+      provider: model.provider,
+      model: model.model,
+      plannedDocs: plannedDocs,
+      docsMeasured: Number(persisted.docsMeasured || 0),
+      pendingDocs: run.status === 'completed' ? 0 : null,
+      claimedDocs: 0,
+      providerCalls: Number(persisted.providerCalls || 0),
+      docsOk: Number(persisted.docsOk || 0),
+      failures: Number(persisted.failures || 0),
+      unavailableDocs: Number(persisted.unavailableDocs || 0),
+      autonomousDocs: Number(persisted.autonomousDocs || 0),
+      autonomyRate: persisted.autonomyRate == null ? null : persisted.autonomyRate,
+      successfulScoredDocs: Number(persisted.successfulScoredDocs || Math.min(Number(persisted.docsOk || 0), Number(persisted.resolvedDocs || 0))),
+      resolvedDocs: Number(persisted.resolvedDocs || 0),
+      perfectMatches: Number(persisted.perfectMatches || 0),
+      perfectMatchRate: persisted.perfectMatchRate == null ? null : persisted.perfectMatchRate,
+      f1: persisted.f1 == null ? null : persisted.f1,
+      successLatency: { count: 0, avgLatencyMs: persisted.avgLatencyMs, p50LatencyMs: persisted.p50LatencyMs, p95LatencyMs: persisted.p95LatencyMs },
+      failureLatency: { count: 0, avgLatencyMs: null, p50LatencyMs: null, p95LatencyMs: null },
+      knownCostUsd: Number(persisted.knownCostUsd || 0),
+      coveredInvocations: Number(persisted.coveredInvocations || 0),
+      actualCostPerDocumentUsd: persisted.actualCostPerDocumentUsd == null ? null : persisted.actualCostPerDocumentUsd,
+      errorGroups: [],
+      unknownCostGroups: [],
+      errorSamples: []
+    };
+  }
+  return {
+    provider: model.provider,
+    model: model.model,
+    plannedDocs: plannedDocs,
+    docsMeasured: completed.length,
+    pendingDocs: pendingDocs,
+    claimedDocs: claimed.length,
+    providerCalls: invoked.length,
+    docsOk: successful.length,
+    failures: failed.length,
+    unavailableDocs: unavailable.length,
+    autonomousDocs: successful.filter(function(result) { return result.autonomous; }).length,
+    autonomyRate: successful.length
+      ? successful.filter(function(result) { return result.autonomous; }).length / successful.length
+      : null,
+    successfulScoredDocs: successful.filter(function(result) { return result.perfectMatch !== null && result.perfectMatch !== undefined; }).length,
+    resolvedDocs: resolved.length,
+    perfectMatches: resolved.filter(function(result) { return result.perfectMatch; }).length,
+    perfectMatchRate: resolved.length ? resolved.filter(function(result) { return result.perfectMatch; }).length / resolved.length : null,
+    f1: derivedF1,
+    successLatency: benchmarkLatencySummary(successful),
+    failureLatency: benchmarkLatencySummary(failed),
+    knownCostUsd: knownCostUsd,
+    coveredInvocations: covered.length,
+    actualCostPerDocumentUsd: invoked.length && invoked.length === covered.length && completed.length
+      ? knownCostUsd / completed.length
+      : null,
+    errorGroups: benchmarkGroupedCounts(failureDetails.map(function(detail) { return detail.code; })),
+    unknownCostGroups: benchmarkGroupedCounts(unknownCostReasons),
+    errorSamples: samples
+  };
+}
+
+function benchmarkModelEligibleForSimulation(model) {
+  return Boolean(model)
+    && model.pendingDocs === 0
+    && model.providerCalls === model.plannedDocs
+    && model.docsOk === model.plannedDocs
+    && model.failures === 0
+    && model.unavailableDocs === 0
+    && model.successfulScoredDocs > 0;
+}
+
+function benchmarkRunDisplayStatus(run) {
+  if (run && run.status === 'failed' && run.error === 'cancelled_by_operator') return 'stopped (partial results kept)';
+  if (!run || run.status !== 'running') return (run && run.status) || 'unknown';
+  var active = benchmarkState.running && benchmarkState.current && benchmarkState.current.id === run.id;
+  return active ? 'running in this browser' : 'paused / resumable';
+}
+
+function benchmarkCompletionFeedback(label, run, browserFailureCount, skippedModelCount) {
+  var progress = benchmarkRunCellProgress(run);
+  var issues = [];
+  if (skippedModelCount) issues.push(skippedModelCount + ' known-unavailable model' + (skippedModelCount === 1 ? '' : 's') + ' excluded before paid calls');
+  if (progress.failures) issues.push(progress.failures + ' provider failure' + (progress.failures === 1 ? '' : 's'));
+  if (progress.unavailable) issues.push(progress.unavailable + ' unavailable reading' + (progress.unavailable === 1 ? '' : 's'));
+  if (progress.pending) issues.push(progress.pending + ' pending reading' + (progress.pending === 1 ? '' : 's'));
+  if (browserFailureCount) issues.push(browserFailureCount + ' browser delivery error' + (browserFailureCount === 1 ? '' : 's'));
+  return {
+    warning: issues.length > 0,
+    message: label + ' benchmark saved' + (issues.length ? ' with ' + issues.join(', ') + '. Review diagnostics before comparing models.' : '.')
+  };
+}
+
 function normalizedBenchmarkLineup(settings) {
   var source = settings && settings.lineup ? settings.lineup : {};
   function normalize(value) {
@@ -4791,11 +5057,22 @@ function setBenchmarkButtons() {
   });
   var runButton = el('btnRunBenchmark');
   if (runButton) {
+    var chamberPausedRun = (benchmarkState.runs || []).find(function(run) {
+      return run.chamber === benchmarkState.chamber && run.status === 'running';
+    });
     var resumable = benchmarkState.current && benchmarkState.current.status === 'running' && benchmarkState.current.chamber === benchmarkState.chamber;
-    runButton.disabled = benchmarkState.running;
-    runButton.textContent = benchmarkState.running
-      ? 'Benchmark running…'
-      : (resumable ? 'Resume ' : 'Run ') + benchmarkChamberLabel(benchmarkState.chamber) + ' benchmark';
+    var blockedByOtherPausedRun = chamberPausedRun && !resumable;
+    runButton.disabled = benchmarkState.running || Boolean(blockedByOtherPausedRun);
+    var startLabel = benchmarkState.current && benchmarkState.current.status !== 'running' ? 'Start new ' : 'Run ';
+    if (benchmarkState.running) runButton.textContent = 'Benchmark running…';
+    else if (blockedByOtherPausedRun) runButton.textContent = 'Select paused ' + benchmarkChamberLabel(benchmarkState.chamber) + ' run';
+    else runButton.textContent = (resumable ? 'Resume ' : startLabel) + benchmarkChamberLabel(benchmarkState.chamber) + ' benchmark';
+  }
+  var cancelButton = el('btnCancelBenchmark');
+  if (cancelButton) {
+    var pausedRun = benchmarkState.current && benchmarkState.current.status === 'running' && !benchmarkState.running;
+    cancelButton.hidden = !pausedRun;
+    cancelButton.disabled = !pausedRun;
   }
 }
 
@@ -4818,7 +5095,12 @@ function renderBenchmarkHistoryOptions(selectedId) {
     return;
   }
   select.innerHTML = benchmarkState.runs.map(function(run) {
-    var label = benchmarkDate(run.startedAt) + ' · ' + run.status + ' · ' + run.requestedDocCount + ' docs';
+    var progress = benchmarkRunCellProgress(run);
+    var status = benchmarkRunDisplayStatus(run);
+    var cells = progress.hasDetails || run.status === 'completed'
+      ? progress.completed + '/' + progress.planned + ' cells'
+      : 'progress loads on selection';
+    var label = benchmarkDate(run.startedAt) + ' · ' + status + ' · ' + cells + ' · ' + run.requestedDocCount + ' docs';
     return '<option value="' + esc(run.id) + '"' + (run.id === selectedId ? ' selected' : '') + '>' + esc(label) + '</option>';
   }).join('');
 }
@@ -4861,6 +5143,7 @@ async function loadBenchmarkRun(runId) {
     var data = await apiCall('/api/admin/benchmark/runs/' + encodeURIComponent(runId), 'GET');
     if (expectedChamber !== benchmarkState.chamber) return;
     benchmarkState.current = data.run;
+    benchmarkState.runs = benchmarkState.runs.map(function(run) { return run.id === runId ? data.run : run; });
     setBenchmarkButtons();
     renderBenchmarkHistoryOptions(runId);
     renderBenchmarkRun(data.run);
@@ -4871,38 +5154,104 @@ async function loadBenchmarkRun(runId) {
   }
 }
 
+async function cancelBenchmarkRun() {
+  var run = benchmarkState.current;
+  if (!run || run.status !== 'running' || benchmarkState.running) return;
+  var label = benchmarkChamberLabel(run.chamber);
+  if (!window.confirm(
+    'Stop this saved ' + label + ' benchmark?\\n\\nNo additional cells can be claimed after the stop. A cell already claimed or in flight may still finish and incur a provider charge. Completed readings and their measured costs remain in history. This cannot be resumed; use Start New for a clean run.'
+  )) return;
+  var button = el('btnCancelBenchmark');
+  var msg = el('benchmarkMsg');
+  if (button) button.disabled = true;
+  if (msg) { msg.style.color = ''; msg.textContent = 'Stopping the saved run and keeping partial results…'; }
+  try {
+    var data = await apiCall('/api/admin/benchmark/runs/' + encodeURIComponent(run.id) + '/cancel', 'POST', {});
+    benchmarkState.current = data.run;
+    await loadBenchmarkHistory(run.chamber, run.id);
+    if (msg) {
+      msg.style.color = 'var(--warn)';
+      msg.textContent = label + ' benchmark stopped. Partial results remain saved; Start New is now enabled.';
+    }
+  } catch (error) {
+    if (msg) { msg.style.color = 'var(--neg)'; msg.textContent = 'Could not stop the saved benchmark: ' + error.message; }
+    if (button) button.disabled = false;
+  } finally {
+    setBenchmarkButtons();
+  }
+}
+
 function fallbackBenchmarkSummaries(run) {
-  var results = run.results || [];
-  return (run.models || []).map(function(model) {
-    var mine = results.filter(function(result) { return result.provider === model.provider && result.model === model.model; });
-    var invoked = mine.filter(function(result) { return result.invoked; });
-    var covered = invoked.filter(function(result) { return typeof result.costUsd === 'number'; });
-    var resolved = mine.filter(function(result) { return result.perfectMatch !== null && result.perfectMatch !== undefined; });
-    var latencies = invoked.map(function(result) { return result.latencyMs; }).filter(function(value) { return typeof value === 'number'; }).sort(function(a, b) { return a - b; });
-    var known = covered.reduce(function(sum, result) { return sum + result.costUsd; }, 0);
-    function percentile(q) { return latencies.length ? latencies[Math.max(0, Math.ceil(q * latencies.length) - 1)] : null; }
-    return {
-      provider: model.provider,
-      model: model.model,
-      docsMeasured: mine.length,
-      providerCalls: invoked.length,
-      unavailableDocs: mine.filter(function(result) { return !result.invoked; }).length,
-      docsOk: invoked.filter(function(result) { return result.ok; }).length,
-      failures: invoked.filter(function(result) { return !result.ok; }).length,
-      autonomyRate: invoked.length ? invoked.filter(function(result) { return result.autonomous; }).length / invoked.length : null,
-      resolvedDocs: resolved.length,
-      perfectMatches: resolved.filter(function(result) { return result.perfectMatch; }).length,
-      perfectMatchRate: resolved.length ? resolved.filter(function(result) { return result.perfectMatch; }).length / resolved.length : null,
-      f1: null,
-      avgLatencyMs: latencies.length ? latencies.reduce(function(sum, value) { return sum + value; }, 0) / latencies.length : null,
-      p50LatencyMs: percentile(0.5),
-      p95LatencyMs: percentile(0.95),
-      knownCostUsd: known,
-      coveredInvocations: covered.length,
-      costCoverageRate: invoked.length ? covered.length / invoked.length : null,
-      actualCostPerDocumentUsd: invoked.length && invoked.length === covered.length && mine.length ? known / mine.length : null
-    };
+  var persisted = run && run.summary && run.summary.models || [];
+  return (run.models || persisted).map(function(model) {
+    var saved = persisted.find(function(summary) {
+      return summary.provider === model.provider && summary.model === model.model;
+    });
+    return benchmarkModelPresentation(run, model, saved);
   });
+}
+
+function benchmarkLatencyText(summary) {
+  return [summary.avgLatencyMs, summary.p50LatencyMs, summary.p95LatencyMs].map(function(value) {
+    return typeof value === 'number' ? fmtMs(value) : 'N/A';
+  }).join(' / ');
+}
+
+function benchmarkGroupText(groups) {
+  return (groups || []).map(function(group) {
+    return String(group.key).replace(/_/g, ' ') + ' ×' + group.count;
+  }).join(' · ');
+}
+
+function benchmarkDiagnosticRowHtml(model) {
+  var hasDiagnostics = model.errorGroups.length || model.unknownCostGroups.length || model.errorSamples.length || model.claimedDocs;
+  if (!hasDiagnostics) return '';
+  var headline = [];
+  if (model.errorGroups.length) headline.push(model.failures + model.unavailableDocs + ' failed/unavailable');
+  if (model.unknownCostGroups.length) headline.push(model.unknownCostGroups.reduce(function(sum, group) { return sum + group.count; }, 0) + ' unpriced');
+  if (model.claimedDocs) headline.push(model.claimedDocs + ' claimed/pending');
+  var body = '';
+  if (model.errorGroups.length) {
+    body += '<div><strong>Failure classes:</strong> ' + esc(benchmarkGroupText(model.errorGroups)) + '</div>';
+  }
+  if (model.unknownCostGroups.length) {
+    body += '<div><strong>Unknown-cost reasons:</strong> ' + esc(benchmarkGroupText(model.unknownCostGroups)) + '</div>';
+  }
+  if (model.claimedDocs) {
+    body += '<div><strong>Claimed cells:</strong> ' + esc(model.claimedDocs) + ' remain pending; they are not counted as unavailable.</div>';
+  }
+  if (model.errorSamples.length) {
+    body += '<div><strong>Saved examples:</strong></div>' + model.errorSamples.map(function(sample) {
+      var qualifiers = [];
+      if (sample.scope) qualifiers.push(sample.scope);
+      if (sample.retryable !== null) qualifiers.push(sample.retryable ? 'retryable' : 'not retryable');
+      if (sample.blockedBy) {
+        qualifiers.push('blocked by ' + [sample.blockedBy.provider, sample.blockedBy.model, sample.blockedBy.docId].filter(Boolean).join(':'));
+      }
+      return '<div><code>' + esc(sample.docId) + '</code> · ' + esc(String(sample.code).replace(/_/g, ' ')) +
+        (qualifiers.length ? ' [' + esc(qualifiers.join(', ')) + ']' : '') + ': ' + esc(sample.message) + '</div>';
+    }).join('');
+  }
+  return '<tr class="benchmark-diag-row"><td colspan="7"><details class="benchmark-diagnostics"><summary>Diagnostics · ' +
+    esc(headline.join(' · ')) + '</summary><div class="benchmark-diagnostics-body">' + body + '</div></details></td></tr>';
+}
+
+function benchmarkModelAccessPreflightHtml(run) {
+  var profile = run && run.requestProfile && typeof run.requestProfile === 'object' ? run.requestProfile : {};
+  var access = profile.modelAccess && typeof profile.modelAccess === 'object' ? profile.modelAccess : null;
+  var entries = access && Array.isArray(access.models) ? access.models : [];
+  var excluded = entries.filter(function(entry) { return entry && entry.availability === 'unavailable'; });
+  if (!excluded.length) return '';
+  var rows = excluded.map(function(entry) {
+    var failure = entry.failure && typeof entry.failure === 'object' ? entry.failure : {};
+    var code = String(failure.code || 'known_unavailable').replace(/_/g, ' ');
+    var message = benchmarkSanitizeDiagnosticMessage(failure.message || 'Unavailable to the configured project.');
+    return '<li><strong>' + esc(entry.provider + ':' + entry.model) + '</strong> · ' + esc(code) + ': ' + esc(message) + '</li>';
+  }).join('');
+  return '<div class="benchmark-panel benchmark-access-preflight"><h4>Model access preflight</h4>' +
+    '<p class="sub">These models were excluded before paid-call reservation and remain saved with this run for audit history.</p>' +
+    '<ul>' + rows + '</ul><div class="note">Checked ' + esc(benchmarkDate(access.checkedAt)) +
+    (access.cached ? ' · cached project catalog' : ' · project catalog') + '</div></div>';
 }
 
 function renderBenchmarkRun(run) {
@@ -4913,45 +5262,59 @@ function renderBenchmarkRun(run) {
   var resolvedDocs = documents.length
     ? documents.filter(function(document) { return document.resolved; }).length
     : (summary.models && summary.models[0] ? summary.models[0].resolvedDocs : 0);
-  var modelSummaries = summary.models || fallbackBenchmarkSummaries(run);
-  var totalCalls = typeof summary.invokedCalls === 'number' ? summary.invokedCalls : (run.invokedCalls || 0);
-  var coveredCalls = typeof summary.coveredInvocations === 'number' ? summary.coveredInvocations : (run.costCoveredCalls || 0);
-  var knownCost = typeof summary.knownCostUsd === 'number' ? summary.knownCostUsd : run.knownCostUsd;
-  var knownSpend = typeof knownCost === 'number'
-    ? benchmarkUsd(knownCost) + (coveredCalls < totalCalls ? ' (partial)' : '')
-    : 'Unknown';
-  var duration = typeof run.durationMs === 'number' ? fmtMs(run.durationMs) : 'In progress';
+  var modelSummaries = fallbackBenchmarkSummaries(run);
+  var progress = benchmarkRunCellProgress(run);
+  var totalCalls = progress.invoked;
+  var coveredCalls = progress.costCovered;
+  var knownSpend = totalCalls === 0
+    ? 'N/A'
+    : coveredCalls === 0
+      ? 'Unknown'
+      : benchmarkUsd(progress.knownCostUsd) + (coveredCalls < totalCalls ? ' (partial)' : '');
+  var status = benchmarkRunDisplayStatus(run);
+  var duration = typeof run.durationMs === 'number' ? fmtMs(run.durationMs) : (status === 'paused / resumable' ? 'Paused' : 'In progress');
   var meta = '<div class="benchmark-meta">' +
-    '<span class="benchmark-chip">Status <strong>' + esc(run.status) + '</strong></span>' +
+    '<span class="benchmark-chip">Status <strong>' + esc(status) + '</strong></span>' +
     '<span class="benchmark-chip">Run <strong>' + esc(run.id) + '</strong></span>' +
     '<span class="benchmark-chip">Documents <strong>' + esc(run.requestedDocCount) + '</strong></span>' +
+    '<span class="benchmark-chip">Cells <strong>' + esc(progress.completed + '/' + progress.planned) + '</strong>' + (progress.pending ? ' · ' + esc(progress.pending) + ' pending' : '') + '</span>' +
+    (progress.claimed ? '<span class="benchmark-chip">Claimed / pending <strong>' + esc(progress.claimed) + '</strong></span>' : '') +
     '<span class="benchmark-chip">Resolved ground truth <strong>' + esc(resolvedDocs + '/' + run.requestedDocCount) + '</strong></span>' +
+    '<span class="benchmark-chip">Outcomes <strong>' + esc(progress.success + ' success · ' + progress.failures + ' failed · ' + progress.unavailable + ' unavailable') + '</strong></span>' +
     '<span class="benchmark-chip">Provider calls <strong>' + esc(totalCalls) + '</strong></span>' +
     '<span class="benchmark-chip">Cost coverage <strong>' + esc(coveredCalls + '/' + totalCalls) + '</strong></span>' +
-    '<span class="benchmark-chip">Measured list-price spend <strong>' + esc(knownSpend) + '</strong></span>' +
+    '<span class="benchmark-chip">Measured usage-based spend <strong>' + esc(knownSpend) + '</strong></span>' +
     '<span class="benchmark-chip">Duration <strong>' + esc(duration) + '</strong></span>' +
     '</div>';
   var rows = modelSummaries.map(function(model) {
-    var speed = [model.avgLatencyMs, model.p50LatencyMs, model.p95LatencyMs].map(function(value) {
-      return typeof value === 'number' ? fmtMs(value) : 'N/A';
-    }).join(' / ');
+    var partial = typeof model.pendingDocs === 'number' && model.pendingDocs > 0;
+    var rowState = partial
+      ? (status === 'paused / resumable' ? 'Paused' : 'Partial') + ' · ' + model.docsMeasured + '/' + model.plannedDocs + ' measured · ' + model.pendingDocs + ' pending'
+      : 'Complete · ' + model.docsMeasured + '/' + model.plannedDocs + ' measured';
     var cost = benchmarkCostText(model.actualCostPerDocumentUsd, model.coveredInvocations, model.providerCalls);
+    if (partial && typeof model.actualCostPerDocumentUsd === 'number') cost += ' (partial)';
+    var failedLatency = model.failureLatency.count
+      ? '<span class="benchmark-latency-line failed">Failed attempts: ' + esc(benchmarkLatencyText(model.failureLatency)) + ' · ' + esc(model.failureLatency.count) + '</span>'
+      : '';
     return '<tr>' +
-      '<td><strong>' + esc(model.provider + ':' + model.model) + '</strong></td>' +
-      '<td>' + esc(benchmarkPct(model.perfectMatchRate)) + '<div class="note">' + esc((model.perfectMatches || 0) + '/' + (model.resolvedDocs || 0) + ' resolved') + '</div></td>' +
-      '<td>' + esc(benchmarkPct(model.autonomyRate)) + '</td>' +
+      '<td><strong>' + esc(model.provider + ':' + model.model) + '</strong><div class="benchmark-model-state' + (partial ? ' partial' : '') + '">' + esc(rowState) + (model.claimedDocs ? ' · ' + esc(model.claimedDocs) + ' claimed' : '') + '</div></td>' +
+      '<td>' + esc(benchmarkPct(model.perfectMatchRate)) + '<div class="note">' + esc((model.perfectMatches || 0) + '/' + (model.resolvedDocs || 0) + ' exact matches on scored truth') + '</div></td>' +
+      '<td>' + esc(benchmarkPct(model.autonomyRate)) + '<div class="note">' + esc((model.autonomousDocs || 0) + '/' + (model.docsOk || 0) + ' successful reads structurally publishable') + '</div></td>' +
       '<td>' + esc(benchmarkPct(model.f1)) + '</td>' +
-      '<td>' + esc((model.docsOk || 0) + '/' + (model.providerCalls || 0)) + '<div class="note">' + esc((model.failures || 0) + ' failures · ' + (model.unavailableDocs || 0) + ' unavailable') + '</div></td>' +
-      '<td>' + esc(speed) + '<div class="note">avg / p50 / p95</div></td>' +
-      '<td>' + esc(cost) + '<div class="note">' + esc((model.coveredInvocations || 0) + '/' + (model.providerCalls || 0) + ' calls priced') + '</div></td>' +
-      '</tr>';
+      '<td><strong>' + esc((model.docsOk || 0) + ' success / ' + model.plannedDocs + ' planned') + '</strong><div class="benchmark-outcome-counts">' +
+        esc(model.docsMeasured + ' measured · ' + model.providerCalls + ' invoked · ' + model.failures + ' failed · ' + model.unavailableDocs + ' unavailable · ' + model.pendingDocs + ' pending') + '</div></td>' +
+      '<td><span class="benchmark-latency-line">Successful calls: ' + esc(benchmarkLatencyText(model.successLatency)) + ' · ' + esc(model.successLatency.count) + '</span>' +
+        '<div class="note">avg / p50 / p95</div>' + failedLatency + '</td>' +
+      '<td>' + esc(cost) + '<div class="note">' + esc((model.coveredInvocations || 0) + '/' + (model.providerCalls || 0) + ' invoked calls priced') + (partial ? ' · partial ' + esc(model.docsMeasured + '/' + model.plannedDocs) : '') + '</div></td>' +
+      '</tr>' + benchmarkDiagnosticRowHtml(model);
   }).join('');
   if (!rows) rows = '<tr><td colspan="7" class="state">This run has no model measurements yet.</td></tr>';
-  container.innerHTML = meta +
+  container.innerHTML = meta + benchmarkModelAccessPreflightHtml(run) +
     '<div class="benchmark-panel"><h4>Individual model performance</h4>' +
+    '<p class="sub">Exact document match compares the full normalized output. Row-detection F1 compares trade rows; optional metadata is excluded from row identity. Cost uses provider-reported charges where available, otherwise actual metered units × pinned list price. This is not invoice reconciliation.</p>' +
     '<div class="benchmark-table-wrap" tabindex="0" aria-label="Scrollable benchmark results"><table class="bench-table">' +
     '<caption class="sr-only">Saved model benchmark performance</caption><thead><tr>' +
-    '<th scope="col">Model</th><th scope="col">Accuracy</th><th scope="col">Autonomy</th><th scope="col">F1</th><th scope="col">Successful calls</th><th scope="col">Speed</th><th scope="col">Measured list-price cost / doc</th>' +
+    '<th scope="col">Model</th><th scope="col">Exact document match</th><th scope="col">Autonomy</th><th scope="col">Row-detection F1</th><th scope="col">Provider outcomes</th><th scope="col">Latency</th><th scope="col">Measured usage-based cost / doc</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
     '<div id="cascadeSimulationContainer"></div>';
   renderCascadeSimulation();
@@ -4986,14 +5349,30 @@ function renderCascadeSimulation() {
   var container = el('cascadeSimulationContainer');
   var run = benchmarkState.current;
   if (!container || !run) return;
-  var models = run.models || [];
+  var progress = benchmarkRunCellProgress(run);
+  if (run.status !== 'completed' || progress.pending) {
+    var status = benchmarkRunDisplayStatus(run);
+    var nextStep = status === 'stopped (partial results kept)'
+      ? 'The partial results are retained for diagnostics; use Start New for a clean run.'
+      : 'Resume it or stop and keep the partial results before starting a clean run.';
+    container.innerHTML = '<div class="benchmark-panel"><h4>Consensus cascade simulation</h4><div class="state">Simulation is disabled for this ' +
+      esc(status) + ' run. ' + esc(progress.completed + '/' + progress.planned) +
+      ' cells are measured' + (progress.pending ? '; ' + esc(progress.pending) + ' remain pending' : '') +
+      '. ' + esc(nextStep) + '</div></div>';
+    return;
+  }
+  var allModels = fallbackBenchmarkSummaries(run);
+  var models = allModels.filter(benchmarkModelEligibleForSimulation);
+  var excludedCount = allModels.length - models.length;
   if (models.length < 3) {
-    container.innerHTML = '<div class="benchmark-panel"><h4>Consensus cascade simulation</h4><div class="state">At least three benchmarked models are required.</div></div>';
+    container.innerHTML = '<div class="benchmark-panel"><h4>Consensus cascade simulation</h4><div class="state">At least three completed models with successful scored readings are required. ' +
+      esc(models.length) + ' eligible; ' + esc(excludedCount) + ' unavailable, failed-only, unscored, or incomplete.</div></div>';
     return;
   }
   var defaults = benchmarkDefaultLineup(models);
   container.innerHTML = '<div class="benchmark-panel"><h4>Consensus cascade simulation</h4>' +
-    '<p class="sub">Uses only this saved run. Simulation makes no provider calls.</p>' +
+    '<p class="sub">Uses only completed models with successful scored readings from this saved run. Simulation makes no provider calls.' +
+      (excludedCount ? ' ' + esc(excludedCount) + ' ineligible model' + (excludedCount === 1 ? ' is' : 's are') + ' excluded.' : '') + '</p>' +
     '<div class="benchmark-lineup">' +
     '<label class="lbl">Model A (Primary)<select id="simModelA" onchange="updateSimResults()">' + benchmarkOptionHtml(models, defaults.a) + '</select></label>' +
     '<label class="lbl">Model B (Crosscheck)<select id="simModelB" onchange="updateSimResults()">' + benchmarkOptionHtml(models, defaults.b) + '</select></label>' +
@@ -5061,10 +5440,10 @@ function renderBenchmarkSimulation(data) {
     '<div class="card"><div class="v" style="color:var(--pos)">' + esc(benchmarkPct(data.accuracyRate)) + '</div><div class="k">Autopublished accuracy</div></div>' +
     '<div class="card"><div class="v">' + esc(benchmarkPct(data.tier1AutonomyRate)) + '</div><div class="k">Tier 1 autonomy</div></div>' +
     '<div class="card"><div class="v" style="color:var(--neg)">' + esc(benchmarkPct(data.humanReviewRate)) + '</div><div class="k">Human review</div></div>' +
-    '<div class="card"><div class="v">' + esc(cost) + '</div><div class="k">Measured list-price cost / doc</div><div class="note">' + esc(data.costCoveredCalls + '/' + data.requiredCalls + ' required calls priced · ' + data.invokedCalls + ' invoked') + '</div></div>' +
+    '<div class="card"><div class="v">' + esc(cost) + '</div><div class="k">Measured usage-based cost / doc</div><div class="note">' + esc(data.costCoveredCalls + '/' + data.requiredCalls + ' required calls priced · ' + data.invokedCalls + ' invoked') + '</div></div>' +
     '<div class="card"><div class="v">' + esc(typeof data.p50WallClockMs === 'number' ? fmtMs(data.p50WallClockMs) : 'N/A') + '</div><div class="k">Simulated p50 speed</div><div class="note">p95 ' + esc(typeof data.p95WallClockMs === 'number' ? fmtMs(data.p95WallClockMs) : 'N/A') + '</div></div>';
   var detail = el('simDetailPanel');
-  if (detail) detail.textContent = 'Based on ' + data.documentsSimulated + '/' + data.documentsTotal + ' documents; ' + data.resolvedDocuments + ' resolved ground-truth documents. Tier 1 executes A then B; disagreement adds a fresh A then B then C tier. Cost uses measured provider units and the saved rate card; unpriced meters remain partial.';
+  if (detail) detail.textContent = 'Based on ' + data.documentsSimulated + '/' + data.documentsTotal + ' documents; ' + data.resolvedDocuments + ' resolved ground-truth documents. Tier 1 executes A then B; disagreement adds a fresh A then B then C tier. Cost uses provider-reported charges where available, otherwise actual metered units × pinned list price; unpriced meters remain partial. This is not invoice reconciliation.';
 }
 
 async function saveBenchmarkLineup() {
@@ -5157,16 +5536,27 @@ async function runChamberBenchmark(chamber) {
   var selectedChamber = benchmarkState.chamber;
   var label = benchmarkChamberLabel(selectedChamber);
   var limit = 25;
+  var otherPausedRun = (benchmarkState.runs || []).find(function(run) {
+    return run.chamber === selectedChamber && run.status === 'running';
+  });
   var resumable = benchmarkState.current && benchmarkState.current.status === 'running' && benchmarkState.current.chamber === selectedChamber
     ? benchmarkState.current
     : null;
+  if (!resumable && otherPausedRun) {
+    var blockedMsg = el('benchmarkMsg');
+    if (blockedMsg) {
+      blockedMsg.style.color = 'var(--warn)';
+      blockedMsg.textContent = 'Select the paused ' + label + ' run and either Resume it or stop it before starting a clean run.';
+    }
+    return;
+  }
   var models = resumable
     ? (resumable.models || [])
     : REREAD_MODELS.map(function(model) { return { provider: model.provider, model: model.model }; });
   var maxCalls = limit * models.length;
   var confirmText = resumable
     ? 'Resume the saved ' + label + ' benchmark?\\n\\nCompleted cells will be reused. Remaining untouched cells may make paid provider calls; if the original reservation was on a prior UTC day, this confirmation authorizes a new-day reservation for each remaining cell. An expired cell may already have been billed even though no provider outcome was saved. If one is found, you will be asked once before any retry; unreconciled prior billing keeps measured cost partial.'
-    : 'Run the ' + label + ' benchmark now?\\n\\nThis will use up to ' + limit + ' filings and make up to ' + maxCalls + ' paid provider calls. Resolved ground-truth coverage is shown separately. Each completed call, latency, usage, and measurable cost will be saved.';
+    : 'Run the ' + label + ' benchmark now?\\n\\nThis will use up to ' + limit + ' filings and make up to ' + maxCalls + ' paid provider calls. Known-unavailable GPT-5.6 models will be excluded by a project-access readiness check before call reservation. Resolved ground-truth coverage is shown separately. Each completed call, latency, usage, and measurable cost will be saved.';
   if (!window.confirm(confirmText)) return;
   benchmarkState.unknownOutcomeRetryDecision = null;
   benchmarkState.running = true;
@@ -5185,16 +5575,24 @@ async function runChamberBenchmark(chamber) {
         });
     var run = started.run;
     var docs = started.docs || [];
+    var skippedModels = started.skippedModels || [];
+    // The server may remove models that its access diagnostic proves this
+    // project cannot invoke. Drive cells from the persisted run, never the
+    // preflight request, so excluded models cannot leak into paid execution.
+    models = run.models || models;
     var planned = docs.length * models.length;
     if (!docs.length) throw new Error('No ' + label + ' filings with stored documents are available for benchmarking.');
     benchmarkState.current = run;
     var completed = 0;
     var browserFailures = [];
     var concurrency = 5;
-    for (var modelIndex = 0; modelIndex < models.length; modelIndex++) {
-      var model = models[modelIndex];
-      for (var start = 0; start < docs.length; start += concurrency) {
-        var chunk = docs.slice(start, start + concurrency);
+    // Breadth-first rounds keep every provider represented when a long browser
+    // session is interrupted: five documents across all models, then the next
+    // five. Completed cells remain cached and are reused on Resume.
+    for (var start = 0; start < docs.length; start += concurrency) {
+      var chunk = docs.slice(start, start + concurrency);
+      for (var modelIndex = 0; modelIndex < models.length; modelIndex++) {
+        var model = models[modelIndex];
         if (msg) msg.textContent = 'Running ' + benchmarkModelKey(model) + ' · ' + completed + '/' + planned + ' saved calls…';
         await Promise.all(chunk.map(async function(document) {
           try {
@@ -5210,14 +5608,16 @@ async function runChamberBenchmark(chamber) {
     }
     var completedRun = await apiCall('/api/admin/benchmark/runs/' + encodeURIComponent(run.id) + '/complete', 'POST', {});
     benchmarkState.current = completedRun.run;
-    if (msg) {
-      msg.style.color = browserFailures.length ? 'var(--warn)' : 'var(--pos)';
-      msg.textContent = label + ' benchmark saved' + (browserFailures.length ? ' with ' + browserFailures.length + ' browser delivery errors.' : '.');
-    }
+    var feedback = benchmarkCompletionFeedback(label, completedRun.run, browserFailures.length, skippedModels.length);
     await loadBenchmarkHistory(selectedChamber, run.id);
+    if (msg) {
+      msg.style.color = feedback.warning ? 'var(--warn)' : 'var(--pos)';
+      msg.textContent = feedback.message;
+    }
   } catch (error) {
-    if (msg) { msg.style.color = 'var(--neg)'; msg.textContent = label + ' benchmark stopped: ' + error.message + '. Any completed readings remain saved in history.'; }
+    var stoppedMessage = label + ' benchmark paused: ' + error.message + '. Completed readings remain saved; select this run and Resume to continue.';
     await loadBenchmarkHistory(selectedChamber).catch(function() {});
+    if (msg) { msg.style.color = 'var(--neg)'; msg.textContent = stoppedMessage; }
   } finally {
     benchmarkState.running = false;
     setBenchmarkButtons();

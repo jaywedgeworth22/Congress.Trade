@@ -30,6 +30,10 @@ import { run } from '../shared/db';
 import { uuid } from '../shared/ids';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
 import { pushExtractionTelemetry } from './telemetry';
+import {
+  classifyProviderFailure,
+  type ProviderFailureStatus,
+} from './providerFailure';
 
 export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral' | 'xai' | 'llamaparse';
 
@@ -79,6 +83,8 @@ export interface CandidateDocResult {
   docId: string;
   ok: boolean;
   error?: string;
+  /** Stable, secret-safe reason when another request would deterministically fail. */
+  failure?: ProviderFailureStatus;
   latencyMs: number;
   rowCount: number;
   /** Stable row keys (ticker/name|date|type) for agreement scoring. */
@@ -873,7 +879,18 @@ export async function runCandidateOnDoc(
   const base = { provider, model, docId };
   const key = invocation ? invocation.apiKey : await keyFor(env, provider);
   if (!key) {
-    return { ...base, ok: false, error: `${provider} API key not configured`, latencyMs: 0, rowCount: 0, rowKeys: [], avgConfidence: 0, rows: [] };
+    const error = `${provider} API key not configured`;
+    return {
+      ...base,
+      ok: false,
+      error,
+      failure: classifyProviderFailure(provider, model, error) ?? undefined,
+      latencyMs: 0,
+      rowCount: 0,
+      rowKeys: [],
+      avgConfidence: 0,
+      rows: [],
+    };
   }
 
   const started = Date.now();
@@ -946,6 +963,7 @@ export async function runCandidateOnDoc(
     };
   } catch (err) {
     const cast = err as ProviderError;
+    const error = cast.message.slice(0, 300);
     
     if (cast.usage) {
       // Telemetry is pushed via pushExtractionTelemetry in persistExtractionRun.
@@ -954,7 +972,8 @@ export async function runCandidateOnDoc(
     return {
       ...base,
       ok: false,
-      error: cast.message.slice(0, 300),
+      error,
+      failure: classifyProviderFailure(provider, model, error) ?? undefined,
       latencyMs: Date.now() - started,
       rowCount: 0,
       rowKeys: [],

@@ -20,6 +20,31 @@ function scriptBlocks(html: string): string[] {
   return blocks;
 }
 
+function loadBenchmarkPresentationHelpers() {
+  const match = DASHBOARD_HTML.match(
+    /function benchmarkResultIsComplete\(result\) \{[\s\S]*?\n\}\n\nfunction normalizedBenchmarkLineup/,
+  );
+  if (!match) throw new Error('Benchmark presentation helpers were not found');
+  const source = match[0].replace(/\n\nfunction normalizedBenchmarkLineup$/, '');
+  return new Function(
+    source + '\nreturn { benchmarkRunCellProgress, benchmarkModelPresentation, benchmarkModelEligibleForSimulation, benchmarkCompletionFeedback };',
+  )() as {
+    benchmarkRunCellProgress: (run: Record<string, unknown>) => Record<string, number | boolean | null>;
+    benchmarkModelPresentation: (
+      run: Record<string, unknown>,
+      model: { provider: string; model: string },
+      persisted?: Record<string, unknown>,
+    ) => Record<string, unknown>;
+    benchmarkModelEligibleForSimulation: (model: Record<string, unknown>) => boolean;
+    benchmarkCompletionFeedback: (
+      label: string,
+      run: Record<string, unknown>,
+      browserFailureCount: number,
+      skippedModelCount?: number,
+    ) => { warning: boolean; message: string };
+  };
+}
+
 describe('DASHBOARD_HTML', () => {
   it('uses the concise product name as the document title', () => {
     expect(DASHBOARD_HTML).toContain('<title>Congress.Trade</title>');
@@ -490,8 +515,10 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("'/api/admin/benchmark/settings/'");
     expect(DASHBOARD_HTML).toContain('confirmPaidRun: true');
     expect(DASHBOARD_HTML).toContain('resolvedOnly: false');
-    expect(DASHBOARD_HTML).toContain('Measured list-price cost / doc');
-    expect(DASHBOARD_HTML).toContain('Measured list-price spend');
+    expect(DASHBOARD_HTML).toContain('Measured usage-based cost / doc');
+    expect(DASHBOARD_HTML).toContain('Measured usage-based spend');
+    expect(DASHBOARD_HTML).toContain('provider-reported charges where available, otherwise actual metered units × pinned list price');
+    expect(DASHBOARD_HTML).toContain('This is not invoice reconciliation.');
     expect(DASHBOARD_HTML).toContain('Tier 1 executes A then B; disagreement adds a fresh A then B then C tier.');
     expect(DASHBOARD_HTML).toContain('An expired cell may already have been billed');
     expect(DASHBOARD_HTML).toContain('this confirmation authorizes a new-day reservation for each remaining cell');
@@ -505,6 +532,300 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('three different providers');
     expect(DASHBOARD_HTML).not.toContain('var MODEL_COSTS');
     expect(DASHBOARD_HTML).not.toContain('Based on model list pricing');
+  });
+
+  it('labels interrupted benchmark cells as pending instead of unavailable', () => {
+    const { benchmarkRunCellProgress, benchmarkModelPresentation } = loadBenchmarkPresentationHelpers();
+    const models = [
+      ['gemini', 'gemini-3.5-flash'],
+      ['openai', 'gpt-5.6-terra'],
+      ['openai', 'gpt-5.6-luna'],
+      ['openai', 'gpt-5.6-sol'],
+      ['openai', 'gpt-4o'],
+      ['anthropic', 'claude-sonnet-4-6'],
+      ['anthropic', 'claude-haiku-4-5'],
+      ['mistral', 'mistral-ocr-latest'],
+      ['xai', 'grok-4.3'],
+      ['llamaparse', 'fast'],
+      ['llamaparse', 'cost-effective'],
+      ['llamaparse', 'agentic'],
+    ].map(([provider, model]) => ({ provider, model }));
+    const results: Array<Record<string, unknown>> = [];
+    for (const ref of models.slice(0, 8)) {
+      for (let index = 0; index < 25; index++) {
+        const ok = ref.model === 'gpt-4o' || ref.provider === 'mistral';
+        results.push({
+          ...ref,
+          docId: 'D-' + index,
+          outcome: ok ? 'would_publish' : 'skipped',
+          invoked: true,
+          ok,
+          autonomous: ok,
+          latencyMs: 100,
+          costUsd: ok ? 0.001 : null,
+          perfectMatch: index < 23 ? false : null,
+        });
+      }
+    }
+    for (let index = 0; index < 15; index++) {
+      results.push({
+        provider: 'xai', model: 'grok-4.3', docId: 'D-' + index, outcome: 'would_publish',
+        invoked: index < 13, ok: index < 13, autonomous: index < 13,
+        latencyMs: index < 13 ? 200 : null, costUsd: index < 13 ? 0.001 : null,
+        perfectMatch: index < 13 ? false : null,
+        error: index < 13 ? null : 'document_load_failed',
+      });
+    }
+    // A claimed-but-unfinished cell stays pending and must not become unavailable.
+    results.push({
+      provider: 'llamaparse', model: 'fast', docId: 'D-0', outcome: 'running',
+      invoked: false, ok: false, autonomous: false, latencyMs: null, costUsd: null,
+    });
+    const run = { status: 'running', requestedDocCount: 25, models, results };
+
+    expect(benchmarkRunCellProgress(run)).toMatchObject({
+      planned: 300,
+      completed: 215,
+      invoked: 213,
+      success: 63,
+      failures: 150,
+      unavailable: 2,
+      claimed: 1,
+      pending: 85,
+    });
+    expect(benchmarkModelPresentation(run, { provider: 'xai', model: 'grok-4.3' })).toMatchObject({
+      plannedDocs: 25,
+      docsMeasured: 15,
+      providerCalls: 13,
+      docsOk: 13,
+      unavailableDocs: 2,
+      pendingDocs: 10,
+    });
+    expect(benchmarkModelPresentation(run, { provider: 'llamaparse', model: 'fast' })).toMatchObject({
+      plannedDocs: 25,
+      docsMeasured: 0,
+      providerCalls: 0,
+      unavailableDocs: 0,
+      claimedDocs: 1,
+      pendingDocs: 25,
+    });
+    expect(benchmarkModelPresentation(run, { provider: 'llamaparse', model: 'agentic' })).toMatchObject({
+      docsMeasured: 0,
+      unavailableDocs: 0,
+      claimedDocs: 0,
+      pendingDocs: 25,
+    });
+  });
+
+  it('separates success latency from failed-attempt latency and exposes saved diagnostics', () => {
+    const { benchmarkModelPresentation } = loadBenchmarkPresentationHelpers();
+    const model = { provider: 'openai', model: 'gpt-test' };
+    const run = {
+      status: 'running',
+      requestedDocCount: 4,
+      models: [model],
+      results: [
+        {
+          ...model, docId: 'H-1', outcome: 'would_publish', invoked: true, ok: true,
+          autonomous: true, latencyMs: 500, costUsd: 0.01, perfectMatch: true,
+          truePositive: 1, falsePositive: 0, falseNegative: 0,
+        },
+        {
+          ...model, docId: 'H-2', outcome: 'skipped', invoked: true, ok: false,
+          autonomous: false, latencyMs: 20, costUsd: null, perfectMatch: false,
+          truePositive: 0, falsePositive: 0, falseNegative: 1,
+          costDetail: { unknownReason: 'usage_not_reported' },
+          result: { failure: { code: 'model_not_found', scope: 'model', retryable: false, message: 'Model is unavailable' } },
+        },
+        {
+          ...model, docId: 'H-3', outcome: 'skipped', invoked: false, ok: false,
+          autonomous: false, latencyMs: null, costUsd: null, perfectMatch: null,
+          error: 'document_load_failed',
+        },
+        {
+          ...model, docId: 'H-4', outcome: 'running', invoked: false, ok: false,
+          autonomous: false, latencyMs: null, costUsd: null,
+        },
+      ],
+    };
+    const presentation = benchmarkModelPresentation(run, model) as {
+      f1: number;
+      autonomyRate: number;
+      unavailableDocs: number;
+      pendingDocs: number;
+      claimedDocs: number;
+      successLatency: { count: number; avgLatencyMs: number };
+      failureLatency: { count: number; avgLatencyMs: number };
+      errorGroups: Array<{ key: string; count: number }>;
+      unknownCostGroups: Array<{ key: string; count: number }>;
+      errorSamples: Array<{ code: string; scope: string; retryable: boolean }>;
+    };
+
+    expect(presentation).toMatchObject({
+      f1: 2 / 3,
+      autonomyRate: 1,
+      unavailableDocs: 1,
+      pendingDocs: 1,
+      claimedDocs: 1,
+      successLatency: { count: 1, avgLatencyMs: 500 },
+      failureLatency: { count: 1, avgLatencyMs: 20 },
+    });
+    expect(presentation.errorGroups).toEqual([
+      { key: 'document_unavailable', count: 1 },
+      { key: 'model_not_found', count: 1 },
+    ]);
+    expect(presentation.unknownCostGroups).toEqual([{ key: 'usage_not_reported', count: 1 }]);
+    expect(presentation.errorSamples[0]).toMatchObject({
+      code: 'model_not_found', scope: 'model', retryable: false,
+    });
+  });
+
+  it('redacts legacy provider, project, request, account, key, token, and URL identifiers', () => {
+    const { benchmarkModelPresentation } = loadBenchmarkPresentationHelpers();
+    const model = { provider: 'openai', model: 'gpt-test' };
+    const presentation = benchmarkModelPresentation({
+      status: 'completed',
+      requestedDocCount: 1,
+      models: [model],
+      results: [{
+        ...model,
+        docId: 'H-1',
+        outcome: 'skipped',
+        invoked: true,
+        ok: false,
+        autonomous: false,
+        costUsd: null,
+        error: 'project proj_secret request req_secret account acct_secret key sk-secret123456 token: token-secret Authorization: Bearer bearer-secret https://api.example.test/private',
+      }],
+    }, model) as { errorSamples: Array<{ message: string }> };
+    const message = presentation.errorSamples[0].message;
+
+    expect(message).toContain('[redacted-id]');
+    expect(message).toContain('[redacted-key]');
+    expect(message).toContain('Bearer [redacted]');
+    expect(message).toContain('[redacted-url]');
+    expect(message).not.toMatch(/proj_secret|req_secret|acct_secret|sk-secret|token-secret|bearer-secret|api\.example/);
+  });
+
+  it('classifies legacy model access errors before generic 403 authentication failures', () => {
+    const { benchmarkModelPresentation } = loadBenchmarkPresentationHelpers();
+    const model = { provider: 'openai', model: 'gpt-restricted' };
+    const presentation = benchmarkModelPresentation({
+      status: 'completed',
+      requestedDocCount: 2,
+      models: [model],
+      results: [
+        {
+          ...model, docId: 'H-1', outcome: 'skipped', invoked: true, ok: false,
+          error: '403 model_not_found: this project does not have access to the requested model',
+        },
+        {
+          ...model, docId: 'H-2', outcome: 'skipped', invoked: true, ok: false,
+          error: '403 Forbidden: invalid API key',
+        },
+      ],
+    }, model) as { errorGroups: Array<{ key: string; count: number }> };
+
+    expect(presentation.errorGroups).toEqual([
+      { key: 'authentication_failed', count: 1 },
+      { key: 'model_unavailable', count: 1 },
+    ]);
+  });
+
+  it('only admits completed models with successful scored readings to simulation', () => {
+    const { benchmarkModelEligibleForSimulation } = loadBenchmarkPresentationHelpers();
+    expect(benchmarkModelEligibleForSimulation({
+      pendingDocs: 0, plannedDocs: 25, providerCalls: 25, docsOk: 25,
+      failures: 0, unavailableDocs: 0, successfulScoredDocs: 23,
+    })).toBe(true);
+    expect(benchmarkModelEligibleForSimulation({
+      pendingDocs: 25, plannedDocs: 25, providerCalls: 0, docsOk: 0,
+      failures: 0, unavailableDocs: 0, successfulScoredDocs: 0,
+    })).toBe(false);
+    expect(benchmarkModelEligibleForSimulation({
+      pendingDocs: 0, plannedDocs: 25, providerCalls: 25, docsOk: 0,
+      failures: 25, unavailableDocs: 0, successfulScoredDocs: 0,
+    })).toBe(false);
+    expect(benchmarkModelEligibleForSimulation({
+      pendingDocs: 0, plannedDocs: 25, providerCalls: 25, docsOk: 25,
+      failures: 0, unavailableDocs: 0, successfulScoredDocs: 0,
+    })).toBe(false);
+    expect(benchmarkModelEligibleForSimulation({
+      pendingDocs: 0, plannedDocs: 25, providerCalls: 25, docsOk: 24,
+      failures: 1, unavailableDocs: 0, successfulScoredDocs: 23,
+    })).toBe(false);
+    expect(DASHBOARD_HTML).toContain('Simulation is disabled for this ');
+    expect(DASHBOARD_HTML).toContain('completed models with successful scored readings');
+    expect(DASHBOARD_HTML).toContain('unavailable, failed-only, unscored, or incomplete');
+  });
+
+  it('runs benchmark document chunks breadth-first across all models', () => {
+    const source = DASHBOARD_HTML.match(/async function runChamberBenchmark\(chamber\) \{[\s\S]*?\n\}/);
+    if (!source) throw new Error('Benchmark runner was not found');
+    const chunkLoop = source[0].indexOf('for (var start = 0; start < docs.length; start += concurrency)');
+    const modelLoop = source[0].indexOf('for (var modelIndex = 0; modelIndex < models.length; modelIndex++)');
+    expect(chunkLoop).toBeGreaterThan(0);
+    expect(modelLoop).toBeGreaterThan(chunkLoop);
+    expect(source[0]).toContain('var concurrency = 5');
+    expect(source[0]).toContain('Completed cells remain cached and are reused on Resume.');
+    expect(source[0]).toContain('models = run.models || models');
+    expect(source[0]).toContain('Known-unavailable GPT-5.6 models');
+  });
+
+  it('lets an operator terminalize a paused run while keeping partial results', () => {
+    expect(DASHBOARD_HTML).toContain('id="btnCancelBenchmark"');
+    expect(DASHBOARD_HTML).toContain('Stop and keep partial results');
+    expect(DASHBOARD_HTML).toContain("'/api/admin/benchmark/runs/' + encodeURIComponent(run.id) + '/cancel'");
+    expect(DASHBOARD_HTML).toContain("run.error === 'cancelled_by_operator'");
+    expect(DASHBOARD_HTML).toContain('stopped (partial results kept)');
+    expect(DASHBOARD_HTML).toContain("? 'Start new ' : 'Run '");
+    expect(DASHBOARD_HTML).toContain('This cannot be resumed; use Start New for a clean run.');
+    expect(DASHBOARD_HTML).toContain('A cell already claimed or in flight may still finish and incur a provider charge.');
+    expect(DASHBOARD_HTML).toContain("run.chamber === benchmarkState.chamber && run.status === 'running'");
+    expect(DASHBOARD_HTML).toContain('Select the paused ');
+    expect(DASHBOARD_HTML).toContain('before starting a clean run.');
+  });
+
+  it('warns after a saved run with provider failures instead of claiming an unqualified success', () => {
+    const { benchmarkCompletionFeedback } = loadBenchmarkPresentationHelpers();
+    const model = { provider: 'openai', model: 'gpt-test' };
+    const failed = benchmarkCompletionFeedback('House', {
+      status: 'completed', requestedDocCount: 1, models: [model],
+      results: [{ ...model, outcome: 'skipped', invoked: true, ok: false, costUsd: null }],
+    }, 0);
+    expect(failed.warning).toBe(true);
+    expect(failed.message).toContain('1 provider failure');
+    expect(failed.message).toContain('Review diagnostics');
+
+    const accessFiltered = benchmarkCompletionFeedback('House', {
+      status: 'completed', requestedDocCount: 1, models: [model],
+      results: [{ ...model, outcome: 'would_publish', invoked: true, ok: true, costUsd: 0.01 }],
+    }, 0, 3);
+    expect(accessFiltered.message).toContain('3 known-unavailable models excluded before paid calls');
+
+    const successful = benchmarkCompletionFeedback('Senate', {
+      status: 'completed', requestedDocCount: 1, models: [model],
+      results: [{ ...model, outcome: 'would_publish', invoked: true, ok: true, costUsd: 0.01 }],
+    }, 0);
+    expect(successful).toEqual({ warning: false, message: 'Senate benchmark saved.' });
+  });
+
+  it('renders explicit progress, paused state, diagnostics, and split latency labels', () => {
+    expect(DASHBOARD_HTML).toContain("return active ? 'running in this browser' : 'paused / resumable'");
+    expect(DASHBOARD_HTML).toContain("(model.docsOk || 0) + ' success / ' + model.plannedDocs + ' planned'");
+    expect(DASHBOARD_HTML).toContain("model.docsMeasured + ' measured · ' + model.providerCalls + ' invoked · '");
+    expect(DASHBOARD_HTML).toContain("' unavailable · ' + model.pendingDocs + ' pending'");
+    expect(DASHBOARD_HTML).toContain('Successful calls: ');
+    expect(DASHBOARD_HTML).toContain('Failed attempts: ');
+    expect(DASHBOARD_HTML).toContain('Failure classes:');
+    expect(DASHBOARD_HTML).toContain('Unknown-cost reasons:');
+    expect(DASHBOARD_HTML).toContain('they are not counted as unavailable');
+    expect(DASHBOARD_HTML).toContain('progress loads on selection');
+    expect(DASHBOARD_HTML).toContain('<th scope="col">Exact document match</th>');
+    expect(DASHBOARD_HTML).toContain('<th scope="col">Row-detection F1</th>');
+    expect(DASHBOARD_HTML).toContain('optional metadata is excluded from row identity');
+    expect(DASHBOARD_HTML).toContain('function benchmarkModelAccessPreflightHtml(run)');
+    expect(DASHBOARD_HTML).toContain('excluded before paid-call reservation and remain saved with this run');
   });
 
   it('never labels aggregate partial spend as per-document benchmark cost', () => {
