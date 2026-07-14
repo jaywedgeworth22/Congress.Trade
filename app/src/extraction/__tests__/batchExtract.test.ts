@@ -10,12 +10,14 @@ import {
   parseJsonl,
   isBatchProvider,
   normalizeBatchChamber,
+  parseOpenAiBatchTimestamps,
   pollBatch,
   submitBatch,
 } from '../batchExtract';
 import { EXECUTIVE_SYSTEM_PROMPT, SYSTEM_PROMPT } from '../visionLlm';
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -130,6 +132,70 @@ describe('decodeAnthropicLine', () => {
   });
 });
 
+describe('pollBatch Anthropic lifecycle timestamps', () => {
+  it('propagates provider RFC3339 times even when the terminal batch is polled late', async () => {
+    const env = {
+      ANTHROPIC_API_KEY: 'test-key',
+      USAGE_MONITOR_ENVIRONMENT: 'test',
+      INGEST_QUEUE: { send: vi.fn(async () => undefined) },
+    } as unknown as Env;
+    const resultsUrl = 'https://api.anthropic.com/v1/messages/batches/batch-late/results';
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/v1/messages/batches/batch-late')) {
+        return Response.json({
+          processing_status: 'ended',
+          results_url: resultsUrl,
+          created_at: '2026-06-01T10:00:00+00:00',
+          ended_at: '2026-06-02T10:00:00Z',
+        });
+      }
+      if (url === resultsUrl) return new Response('');
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-01T00:00:00.000Z'));
+
+    await expect(withThirdPartyTelemetry(
+      env,
+      () => pollBatch(env, 'anthropic', 'batch-late'),
+    )).resolves.toMatchObject({
+      done: true,
+      status: 'ended',
+      submittedAt: '2026-06-01T10:00:00.000Z',
+      terminalAt: '2026-06-02T10:00:00.000Z',
+    });
+  });
+
+  it('fails soft on invalid RFC3339 values and never trusts a nonterminal ended_at', async () => {
+    const env = { ANTHROPIC_API_KEY: 'test-key' } as unknown as Env;
+    const resultsUrl = 'https://api.anthropic.com/v1/messages/batches/batch-invalid/results';
+    let statusPoll = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === resultsUrl) return new Response('');
+      statusPoll++;
+      return Response.json(statusPoll === 1 ? {
+        processing_status: 'in_progress',
+        created_at: '2026-06-01T10:00:00Z',
+        ended_at: '2026-06-02T10:00:00Z',
+      } : {
+        processing_status: 'ended',
+        results_url: resultsUrl,
+        created_at: '2026-02-30T10:00:00Z',
+        ended_at: 'not-a-date',
+      });
+    }));
+
+    const nonterminal = await pollBatch(env, 'anthropic', 'batch-running');
+    expect(nonterminal.submittedAt).toBe('2026-06-01T10:00:00.000Z');
+    expect(nonterminal).not.toHaveProperty('terminalAt');
+    const invalid = await pollBatch(env, 'anthropic', 'batch-invalid');
+    expect(invalid).not.toHaveProperty('submittedAt');
+    expect(invalid).not.toHaveProperty('terminalAt');
+  });
+});
+
 describe('decodeOpenAiLine', () => {
   it('decodes a chat-completions batch output line into rows', () => {
     const line = {
@@ -166,6 +232,40 @@ describe('decodeOpenAiLine', () => {
   });
 });
 
+describe('OpenAI batch lifecycle timestamps', () => {
+  it('uses the status-specific terminal field and parses documented Unix seconds', () => {
+    const createdAt = Date.parse('2026-07-01T10:00:00.000Z') / 1_000;
+    const completedAt = Date.parse('2026-07-01T11:00:00.000Z') / 1_000;
+    const failedAt = Date.parse('2026-07-01T12:00:00.000Z') / 1_000;
+
+    expect(parseOpenAiBatchTimestamps({
+      status: 'completed',
+      created_at: createdAt,
+      completed_at: completedAt,
+      failed_at: failedAt,
+    })).toEqual({
+      submittedAt: '2026-07-01T10:00:00.000Z',
+      terminalAt: '2026-07-01T11:00:00.000Z',
+    });
+  });
+
+  it('falls back only to another valid terminal field and ignores nonterminal stale fields', () => {
+    const expiredAt = Date.parse('2026-07-02T11:00:00.000Z') / 1_000;
+    expect(parseOpenAiBatchTimestamps({
+      status: 'failed',
+      created_at: 'not-a-number',
+      failed_at: -1,
+      expired_at: expiredAt,
+    })).toEqual({ terminalAt: '2026-07-02T11:00:00.000Z' });
+    expect(parseOpenAiBatchTimestamps({
+      status: 'in_progress',
+      completed_at: expiredAt,
+    })).toEqual({});
+    expect(parseOpenAiBatchTimestamps(null)).toEqual({});
+    expect(parseOpenAiBatchTimestamps([])).toEqual({});
+  });
+});
+
 describe('pollBatch OpenAI terminal results', () => {
   it('returns completed requests from a failed batch output file for persistence and metering', async () => {
     const messages: QueueMessage[] = [];
@@ -181,7 +281,12 @@ describe('pollBatch OpenAI terminal results', () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/v1/batches/batch-partial')) {
-        return Response.json({ status: 'expired', output_file_id: 'file-output' });
+        return Response.json({
+          status: 'expired',
+          output_file_id: 'file-output',
+          created_at: Date.parse('2026-06-01T10:00:00.000Z') / 1_000,
+          expired_at: Date.parse('2026-06-02T10:00:00.000Z') / 1_000,
+        });
       }
       if (url.endsWith('/v1/files/file-output/content')) {
         return new Response(`${JSON.stringify({
@@ -207,6 +312,8 @@ describe('pollBatch OpenAI terminal results', () => {
       throw new Error(`unexpected fetch: ${url}`);
     });
     vi.stubGlobal('fetch', fetchMock);
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-01T00:00:00.000Z'));
 
     const result = await withThirdPartyTelemetry(
       env,
@@ -217,6 +324,8 @@ describe('pollBatch OpenAI terminal results', () => {
       done: true,
       failed: true,
       status: 'expired',
+      submittedAt: '2026-06-01T10:00:00.000Z',
+      terminalAt: '2026-06-02T10:00:00.000Z',
       results: [{
         docId: 'H-partial',
         ok: true,
@@ -278,5 +387,69 @@ describe('decodeMistralLine', () => {
       status: 'FAILED',
       results: [{ docId: 'H-partial', ok: true, usage: { pagesProcessed: 4 } }],
     });
+  });
+
+  it('propagates provider Unix-second times even when the terminal job is polled late', async () => {
+    const env = {
+      MISTRAL_API_KEY: 'test-key',
+      USAGE_MONITOR_ENVIRONMENT: 'test',
+      INGEST_QUEUE: { send: vi.fn(async () => undefined) },
+    } as unknown as Env;
+    const createdAt = Date.parse('2026-06-01T10:00:00.000Z') / 1_000;
+    const completedAt = Date.parse('2026-06-02T10:00:00.000Z') / 1_000;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/v1/batch/jobs/job-late')) {
+        return Response.json({
+          status: 'SUCCESS',
+          output_file: 'output-late',
+          created_at: createdAt,
+          completed_at: completedAt,
+        });
+      }
+      if (url.endsWith('/v1/files/output-late/content')) return new Response('');
+      throw new Error(`unexpected fetch: ${url}`);
+    }));
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-01T00:00:00.000Z'));
+
+    await expect(withThirdPartyTelemetry(
+      env,
+      () => pollBatch(env, 'mistral', 'job-late'),
+    )).resolves.toMatchObject({
+      done: true,
+      status: 'SUCCESS',
+      submittedAt: '2026-06-01T10:00:00.000Z',
+      terminalAt: '2026-06-02T10:00:00.000Z',
+    });
+  });
+
+  it('fails soft on invalid Unix seconds and never trusts nonterminal completed_at', async () => {
+    const env = { MISTRAL_API_KEY: 'test-key' } as unknown as Env;
+    const createdAt = Date.parse('2026-06-01T10:00:00.000Z') / 1_000;
+    const completedAt = Date.parse('2026-06-02T10:00:00.000Z') / 1_000;
+    let statusPoll = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/v1/files/output-invalid/content')) return new Response('');
+      statusPoll++;
+      return Response.json(statusPoll === 1 ? {
+        status: 'RUNNING',
+        created_at: createdAt,
+        completed_at: completedAt,
+      } : {
+        status: 'SUCCESS',
+        output_file: 'output-invalid',
+        created_at: 1.5,
+        completed_at: 'not-an-integer',
+      });
+    }));
+
+    const nonterminal = await pollBatch(env, 'mistral', 'job-running');
+    expect(nonterminal.submittedAt).toBe('2026-06-01T10:00:00.000Z');
+    expect(nonterminal).not.toHaveProperty('terminalAt');
+    const invalid = await pollBatch(env, 'mistral', 'job-invalid');
+    expect(invalid).not.toHaveProperty('submittedAt');
+    expect(invalid).not.toHaveProperty('terminalAt');
   });
 });

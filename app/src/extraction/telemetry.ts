@@ -1,6 +1,40 @@
 import type { Env } from '../shared/types';
-import { recordMeasuredThirdPartyUsage } from '../shared/thirdPartyTelemetry';
+import {
+  recordMeasuredThirdPartyUsage,
+  stableMeasuredUsageIdempotencyKey,
+  type MeasuredThirdPartyUsage,
+} from '../shared/thirdPartyTelemetry';
 import type { CandidateDocResult, ExtractionRunKind } from './bakeoff';
+
+type ResultMeasurement = Omit<
+  Extract<MeasuredThirdPartyUsage, { idempotencyKey?: undefined }>,
+  'idempotencyKey' | 'occurredAt'
+>;
+
+async function recordResultMeasurement(
+  env: Env,
+  result: CandidateDocResult,
+  suffix: string,
+  measurement: ResultMeasurement,
+): Promise<void> {
+  if (result.providerRequestId && result.occurredAt) {
+    await recordMeasuredThirdPartyUsage(env, {
+      ...measurement,
+      idempotencyKey: await stableMeasuredUsageIdempotencyKey(
+        'provider-result',
+        suffix,
+        result.provider,
+        result.providerRequestId,
+      ),
+      occurredAt: result.occurredAt,
+    });
+    return;
+  }
+  await recordMeasuredThirdPartyUsage(
+    env,
+    result.occurredAt ? { ...measurement, occurredAt: result.occurredAt } : measurement,
+  );
+}
 
 /**
  * Add provider-reported billable units to the request-attempt event emitted by
@@ -21,20 +55,17 @@ export async function pushExtractionTelemetry(
     && costInUsdTicks >= 0
   ) {
     const costUsd = costInUsdTicks / 10_000_000_000;
-    await recordMeasuredThirdPartyUsage(env, {
+    const measuredCost = {
       provider: result.provider,
       service: 'llm',
       operation: `${kind}-provider-cost`,
-      ...(result.providerRequestId
-        ? { idempotencyKey: `ct-sync-${result.provider}-${result.providerRequestId}-cost` }
-        : {}),
       model: result.resolvedModel ?? result.model,
-      metricType: 'cost',
+      metricType: 'cost' as const,
       quantity: costUsd,
-      unit: 'usd',
+      unit: 'usd' as const,
       costUsd,
-      billingMode: 'actual',
-      confidence: 'actual',
+      billingMode: 'actual' as const,
+      confidence: 'actual' as const,
       metadata: {
         costInUsdTicks,
         success: result.ok,
@@ -43,7 +74,13 @@ export async function pushExtractionTelemetry(
           ? {}
           : { attachmentSearchCalls: usage.attachmentSearchCalls }),
       },
-    });
+    };
+    await recordResultMeasurement(
+      env,
+      result,
+      'cost',
+      measuredCost,
+    );
   }
   const promptTokens = usage.promptTokens;
   const completionTokens = usage.completionTokens;
@@ -52,7 +89,7 @@ export async function pushExtractionTelemetry(
     && typeof completionTokens === 'number' && Number.isFinite(completionTokens) && completionTokens >= 0
     && promptTokens + completionTokens > 0
   ) {
-    await recordMeasuredThirdPartyUsage(env, {
+    await recordResultMeasurement(env, result, 'tokens', {
       provider: result.provider,
       service: 'llm',
       operation: `${kind}-tokens`,
@@ -82,7 +119,7 @@ export async function pushExtractionTelemetry(
     });
   }
   if ((usage.pagesProcessed ?? 0) > 0) {
-    await recordMeasuredThirdPartyUsage(env, {
+    await recordResultMeasurement(env, result, 'pages', {
       provider: result.provider,
       service: 'ocr',
       operation: `${kind}-pages`,
@@ -99,7 +136,7 @@ export async function pushExtractionTelemetry(
     && Number.isInteger(usage.attachmentSearchCalls)
     && usage.attachmentSearchCalls > 0
   ) {
-    await recordMeasuredThirdPartyUsage(env, {
+    await recordResultMeasurement(env, result, 'attachment-search', {
       provider: result.provider,
       service: 'llm',
       operation: `${kind}-attachment-search`,

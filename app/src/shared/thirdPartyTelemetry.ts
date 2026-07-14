@@ -76,12 +76,10 @@ export interface TrackedFetchDescriptor {
   dynamicTarget?: DynamicThirdPartyTarget;
 }
 
-export interface MeasuredThirdPartyUsage {
+interface MeasuredThirdPartyUsageFields {
   provider: string;
   service: string;
   operation: string;
-  /** Stable key for retry-safe measured events. Omit for one-shot measurements. */
-  idempotencyKey?: string;
   model?: string;
   metricType?: 'usage' | 'cost' | 'limit';
   quantity?: number;
@@ -93,6 +91,22 @@ export interface MeasuredThirdPartyUsage {
   confidence?: ThirdPartyUsageTelemetryEvent['confidence'];
   metadata?: Record<string, string | number | boolean | null>;
 }
+
+/**
+ * Stable measured events must carry the stable time of the source occurrence.
+ * Reconstructing the same key with a fresh timestamp changes the receiver's
+ * collision-checked payload and is therefore not a valid idempotent replay.
+ */
+export type MeasuredThirdPartyUsage = MeasuredThirdPartyUsageFields & (
+  | {
+      idempotencyKey: string;
+      occurredAt: string;
+    }
+  | {
+      idempotencyKey?: undefined;
+      occurredAt?: string;
+    }
+);
 
 const HOST_PROVIDERS = new Map<string, string>([
   ['api.openai.com', 'openai'],
@@ -217,8 +231,46 @@ function eventId(prefix: string): string {
   return `${prefix}:${crypto.randomUUID()}`;
 }
 
+function encodeStableKeyField(value: string): string {
+  return `${new TextEncoder().encode(value).byteLength}:${value}`;
+}
+
+/**
+ * Fixed-length key for independently reconstructed measured events. Dimension
+ * is part of the length-prefixed preimage before hashing, so long or similarly
+ * normalized provider identifiers cannot collapse distinct usage dimensions.
+ */
+export async function stableMeasuredUsageIdempotencyKey(
+  namespace: string,
+  dimension: string,
+  ...identity: string[]
+): Promise<string> {
+  const preimage = ['congress-trade', namespace, dimension, ...identity]
+    .map(encodeStableKeyField)
+    .join('');
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(preimage));
+  const hex = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+  return `ct-measured-${hex}`;
+}
+
 function nonNegativeFinite(value: number | undefined): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function canonicalOccurredAt(value: string | undefined): string {
+  if (value == null) return new Date().toISOString();
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) throw new TypeError('telemetry occurredAt must be a valid timestamp');
+  return new Date(timestamp).toISOString();
+}
+
+function rejectMeasuredUsage(errorType: 'missingOccurredAt' | 'invalidOccurredAt'): false {
+  // Never include the key, timestamp, provider payload, or arbitrary caller
+  // values in this diagnostic; measured telemetry must remain product-safe.
+  console.error('usage telemetry event rejected', { errorType });
+  return false;
 }
 
 function baseEvent(
@@ -228,6 +280,7 @@ function baseEvent(
     service: string;
     operation: string;
     idempotencyKey?: string;
+    occurredAt?: string;
     model?: string;
     metricType: 'usage' | 'cost' | 'limit';
     billingMode: ThirdPartyUsageTelemetryEvent['billingMode'];
@@ -251,7 +304,7 @@ function baseEvent(
     billingMode: input.billingMode,
     metricType: input.metricType,
     confidence: input.confidence,
-    occurredAt: new Date().toISOString(),
+    occurredAt: canonicalOccurredAt(input.occurredAt),
     metadata: input.model ? { model: stableTag(input.model, 'unknown-model') } : undefined,
   };
 }
@@ -335,11 +388,21 @@ export async function recordMeasuredThirdPartyUsage(
   env: Env,
   usage: MeasuredThirdPartyUsage,
 ): Promise<boolean> {
+  if (usage.idempotencyKey !== undefined && !usage.occurredAt) {
+    return rejectMeasuredUsage('missingOccurredAt');
+  }
+  let occurredAt: string | undefined;
+  try {
+    occurredAt = usage.occurredAt == null ? undefined : canonicalOccurredAt(usage.occurredAt);
+  } catch {
+    return rejectMeasuredUsage('invalidOccurredAt');
+  }
   const event = baseEvent(env, {
     provider: usage.provider,
     service: usage.service,
     operation: usage.operation,
     idempotencyKey: usage.idempotencyKey,
+    occurredAt,
     model: usage.model,
     metricType: usage.metricType ?? (usage.costUsd != null ? 'cost' : 'usage'),
     billingMode: usage.billingMode ?? 'actual',
