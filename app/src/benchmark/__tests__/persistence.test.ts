@@ -3,6 +3,7 @@ import {
   beginBenchmarkRun,
   claimBenchmarkMeasurement,
   recordBenchmarkSelection,
+  releaseBenchmarkMeasurementClaim,
   saveBenchmarkMeasurement,
   summarizeBenchmarkMeasurements,
   type BenchmarkRunDetail,
@@ -75,13 +76,18 @@ function result(over: Partial<Result> = {}): Result {
 
 describe('benchmark persistence', () => {
   it('requires explicit confirmation before retrying an expired paid cell', async () => {
-    let row: { outcome: string; claim_token: string; lease_until: string } | null = null;
+    let row: { outcome: string; claim_token: string | null; lease_until: string } | null = null;
     const db = {
       prepare(sql: string) {
         let params: unknown[] = [];
         const statement = {
           bind(...values: unknown[]) { params = values; return statement; },
           async run() {
+            if (/UPDATE benchmark_model_results[\s\S]*SET claim_token = NULL/.test(sql)) {
+              const accepted = row?.claim_token === String(params[5]);
+              if (accepted && row) row = { ...row, claim_token: null, lease_until: String(params[0]) };
+              return { success: true, meta: { changes: accepted ? 1 : 0 } } as unknown as D1Result;
+            }
             if (/INSERT INTO benchmark_model_results/.test(sql)) {
               const now = String(params[4]);
               if (!row || (params[8] === 1 && row.outcome === 'running' && row.lease_until <= now)) {
@@ -142,6 +148,36 @@ describe('benchmark persistence', () => {
       reclaimedUnknownOutcome: true,
     });
     expect(reclaimed.claimToken).not.toBe(first.claimToken);
+    if (!reclaimed.claimToken) throw new Error('expected reclaimed benchmark claim token');
+
+    await expect(releaseBenchmarkMeasurementClaim(db, {
+      runId: 'run-1', docId: 'doc-1', provider: 'openai', model: 'gpt-test',
+      claimToken: reclaimed.claimToken, preserveUnknownOutcome: true,
+      now: '2026-07-13T12:01:00.000Z',
+    })).resolves.toBe(true);
+    await expect(claimBenchmarkMeasurement(db, {
+      runId: 'run-1', docId: 'doc-1', provider: 'openai', model: 'gpt-test',
+      now: '2026-07-13T12:01:00.001Z', leaseMs: 60_000,
+    })).resolves.toMatchObject({ claimed: false, state: 'orphaned' });
+  });
+
+  it('deletes only the matching fresh uninvoked claim when reservation fails', async () => {
+    const { db, statements } = captureDb();
+    await expect(releaseBenchmarkMeasurementClaim(db, {
+      runId: 'run-1',
+      docId: 'doc-1',
+      provider: 'openai',
+      model: 'gpt-test',
+      claimToken: 'claim-1',
+      preserveUnknownOutcome: false,
+    })).resolves.toBe(true);
+
+    expect(statements).toHaveLength(1);
+    expect(statements[0]?.sql).toMatch(/DELETE FROM benchmark_model_results/);
+    expect(statements[0]?.sql).toMatch(/outcome = 'running' AND invoked = 0 AND claim_token = \?/);
+    expect(statements[0]?.params).toEqual([
+      'run-1', 'doc-1', 'openai', 'gpt-test', 'claim-1',
+    ]);
   });
 
   it('starts a chamber-scoped run and snapshots its ordered documents', async () => {
