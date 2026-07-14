@@ -1,7 +1,7 @@
 /**
  * Durable benchmark history schema.
  *
- * Keep the CREATE statements equivalent to file migrations 0038-0040 when
+ * Keep the CREATE statements equivalent to file migrations 0038-0041 when
  * wiring them into POST /api/admin/migrate. The trailing ALTER statements
  * are upgrade guards for earlier previews of this unreleased schema. The Worker
  * migration endpoint is the production source of truth; the SQL file remains
@@ -36,6 +36,9 @@ export const BENCHMARK_SCHEMA_STATEMENTS = [
      ON benchmark_runs (chamber, started_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_benchmark_runs_status_started
      ON benchmark_runs (status, started_at DESC)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_benchmark_runs_one_running_chamber
+     ON benchmark_runs (chamber)
+     WHERE status = 'running'`,
   `CREATE TABLE IF NOT EXISTS benchmark_run_documents (
      run_id TEXT NOT NULL,
      doc_id TEXT NOT NULL,

@@ -1,10 +1,31 @@
 import { all, batch, get, parseJson, run } from '../shared/db';
 import { uuid } from '../shared/ids';
+import {
+  BENCHMARK_SCORING_PROFILE,
+  scorePersistedBenchmarkResult,
+} from './scoring';
 
 export const BENCHMARK_CHAMBERS = ['house', 'senate', 'executive'] as const;
 export type BenchmarkChamber = (typeof BENCHMARK_CHAMBERS)[number];
 export type BenchmarkRunStatus = 'running' | 'completed' | 'failed';
 export type BenchmarkCostSource = 'provider_reported' | 'usage_priced' | 'unknown';
+
+export class BenchmarkRunStateConflictError extends Error {
+  constructor(readonly status: BenchmarkRunStatus) {
+    super(`benchmark run is ${status}`);
+    this.name = 'BenchmarkRunStateConflictError';
+  }
+}
+
+export class BenchmarkActiveRunConflictError extends Error {
+  constructor(
+    readonly chamber: BenchmarkChamber,
+    readonly existingRunId: string,
+  ) {
+    super(`${chamber} already has a running benchmark`);
+    this.name = 'BenchmarkActiveRunConflictError';
+  }
+}
 
 export interface BenchmarkModelRef {
   provider: string;
@@ -68,6 +89,16 @@ export interface BenchmarkMeasurementInput {
   claimToken?: string;
 }
 
+/** A deterministic circuit-breaker result that made no provider request. */
+export interface BenchmarkUnavailableMeasurementInput extends BenchmarkModelRef {
+  runId: string;
+  docId: string;
+  error: string;
+  costDetail?: unknown;
+  result?: unknown;
+  createdAt?: string;
+}
+
 export interface BenchmarkMeasurementClaimInput extends BenchmarkModelRef {
   runId: string;
   docId: string;
@@ -81,7 +112,7 @@ export interface BenchmarkMeasurementClaim {
   claimed: boolean;
   claimToken: string | null;
   leaseUntil: string | null;
-  state: 'claimed' | 'running' | 'orphaned' | 'completed';
+  state: 'claimed' | 'running' | 'orphaned' | 'completed' | 'inactive';
   /** True when this claim replaced an expired attempt that may already have been billed. */
   reclaimedUnknownOutcome: boolean;
 }
@@ -115,6 +146,10 @@ export interface BenchmarkModelSummary extends BenchmarkModelRef {
   avgLatencyMs: number | null;
   p50LatencyMs: number | null;
   p95LatencyMs: number | null;
+  /** Provider error-response latency, kept separate from successful extraction speed. */
+  avgFailureLatencyMs: number | null;
+  p50FailureLatencyMs: number | null;
+  p95FailureLatencyMs: number | null;
   knownCostUsd: number;
   coveredInvocations: number;
   costCoverageRate: number | null;
@@ -133,6 +168,9 @@ export interface BenchmarkRunSummary {
   avgLatencyMs: number | null;
   p50LatencyMs: number | null;
   p95LatencyMs: number | null;
+  avgFailureLatencyMs: number | null;
+  p50FailureLatencyMs: number | null;
+  p95FailureLatencyMs: number | null;
   models: BenchmarkModelSummary[];
 }
 
@@ -398,7 +436,21 @@ export async function beginBenchmarkRun(
       [id, docIds[ordinal], ordinal, document.resolved ? 1 : 0, jsonOrNull(document.groundTruth)],
     ]);
   });
-  await batch(db, statements);
+  try {
+    await batch(db, statements);
+  } catch (error) {
+    const active = await get<{ id: string }>(
+      db,
+      `SELECT id FROM benchmark_runs
+        WHERE chamber = ? AND status = 'running'
+        ORDER BY started_at DESC LIMIT 1`,
+      [input.chamber],
+    );
+    if (active && active.id !== id) {
+      throw new BenchmarkActiveRunConflictError(input.chamber, active.id);
+    }
+    throw error;
+  }
 
   return {
     id,
@@ -423,6 +475,37 @@ export async function beginBenchmarkRun(
     createdAt: startedAt,
     updatedAt: startedAt,
   };
+}
+
+export async function getRunningBenchmarkRun(
+  db: D1Database,
+  chamber: BenchmarkChamber,
+): Promise<BenchmarkRunDetail | null> {
+  const active = await get<{ id: string }>(
+    db,
+    `SELECT id FROM benchmark_runs
+      WHERE chamber = ? AND status = 'running'
+      ORDER BY started_at DESC LIMIT 1`,
+    [chamber],
+  );
+  return active ? getBenchmarkRun(db, active.id) : null;
+}
+
+export async function updateBenchmarkRunRequestProfile(
+  db: D1Database,
+  runId: string,
+  requestProfile: unknown,
+  updatedAt = new Date().toISOString(),
+): Promise<boolean> {
+  if (!Number.isFinite(Date.parse(updatedAt))) throw new Error('updatedAt must be an ISO timestamp');
+  const result = await run(
+    db,
+    `UPDATE benchmark_runs
+        SET request_profile_json = ?, updated_at = ?
+      WHERE id = ? AND status = 'running'`,
+    [JSON.stringify(requestProfile ?? {}), updatedAt, cleanPart(runId, 'runId')],
+  );
+  return Number(result.meta?.changes ?? 0) === 1;
 }
 
 /**
@@ -459,13 +542,16 @@ export async function claimBenchmarkMeasurement(
     [runId, docId, provider, model],
   );
 
-  await run(
+  const claimWrite = await run(
     db,
     `INSERT INTO benchmark_model_results
        (run_id, doc_id, provider, model, invoked, ok, outcome, autonomous,
         row_count, cost_source, started_at, completed_at, claim_token,
         lease_until, created_at)
-     VALUES (?, ?, ?, ?, 0, 0, 'running', 0, 0, 'unknown', ?, NULL, ?, ?, ?)
+     SELECT ?, ?, ?, ?, 0, 0, 'running', 0, 0, 'unknown', ?, NULL, ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1 FROM benchmark_runs WHERE id = ? AND status = 'running'
+      )
      ON CONFLICT (run_id, doc_id, provider, model) DO UPDATE SET
        outcome = 'running', error = NULL, started_at = excluded.started_at,
        completed_at = NULL, claim_token = excluded.claim_token,
@@ -473,7 +559,11 @@ export async function claimBenchmarkMeasurement(
      WHERE benchmark_model_results.outcome = 'running'
        AND ? = 1
        AND (benchmark_model_results.lease_until IS NULL
-            OR benchmark_model_results.lease_until <= excluded.started_at)`,
+            OR benchmark_model_results.lease_until <= excluded.started_at)
+       AND EXISTS (
+         SELECT 1 FROM benchmark_runs
+          WHERE id = excluded.run_id AND status = 'running'
+       )`,
     [
       runId,
       docId,
@@ -483,9 +573,27 @@ export async function claimBenchmarkMeasurement(
       claimToken,
       leaseUntil,
       now,
+      runId,
       input.allowRetryAfterUnknownOutcome ? 1 : 0,
     ],
   );
+
+  if (Number(claimWrite.meta?.changes ?? 0) === 0) {
+    const parent = await get<{ status: BenchmarkRunStatus }>(
+      db,
+      'SELECT status FROM benchmark_runs WHERE id = ?',
+      [runId],
+    );
+    if (!parent || parent.status !== 'running') {
+      return {
+        claimed: false,
+        claimToken: null,
+        leaseUntil: null,
+        state: 'inactive',
+        reclaimedUnknownOutcome: false,
+      };
+    }
+  }
 
   const row = await get<{
     outcome: string | null;
@@ -551,6 +659,51 @@ export async function releaseBenchmarkMeasurementClaim(
     [runId, docId, provider, model, claimToken],
   );
   return Number(result.meta?.changes ?? 0) === 1;
+}
+
+/**
+ * Atomically fill circuit-broken cells without overwriting a completed or
+ * in-flight reading. This race fence matters when two browsers resume the same
+ * run: a late blocker must never erase a request already owned by another
+ * claim token.
+ */
+export async function saveUnavailableBenchmarkMeasurementsIfAbsent(
+  db: D1Database,
+  inputs: readonly BenchmarkUnavailableMeasurementInput[],
+): Promise<{ attempted: number; inserted: number }> {
+  if (!inputs.length) return { attempted: 0, inserted: 0 };
+  const statements: Array<[string, Array<string | number | null>]> = inputs.map((input) => {
+    const createdAt = input.createdAt ?? new Date().toISOString();
+    const error = cleanPart(input.error, 'error');
+    return [
+      `INSERT INTO benchmark_model_results
+         (run_id, doc_id, provider, model, resolved_model, invoked, ok, outcome,
+          autonomous, error, row_count, avg_confidence, latency_ms, cost_usd,
+          cost_source, cost_detail_json, provider_request_id, usage_json, result_json,
+          perfect_match, true_positive, false_positive, false_negative, started_at,
+          completed_at, created_at)
+       VALUES (?, ?, ?, ?, NULL, 0, 0, 'skipped', 0, ?, 0, NULL, NULL, NULL,
+               'unknown', ?, NULL, NULL, ?, NULL, NULL, NULL, NULL, ?, ?, ?)
+       ON CONFLICT (run_id, doc_id, provider, model) DO NOTHING`,
+      [
+        cleanPart(input.runId, 'runId'),
+        cleanPart(input.docId, 'docId'),
+        cleanPart(input.provider, 'provider'),
+        cleanPart(input.model, 'model'),
+        error,
+        jsonOrNull(input.costDetail),
+        jsonOrNull(input.result),
+        createdAt,
+        createdAt,
+        createdAt,
+      ],
+    ];
+  });
+  const results = await batch(db, statements);
+  return {
+    attempted: inputs.length,
+    inserted: results.reduce((sum, result) => sum + Number(result.meta?.changes ?? 0), 0),
+  };
 }
 
 /** Idempotently insert or replace one model/document measurement. */
@@ -673,6 +826,11 @@ export function summarizeBenchmarkMeasurements(
   const covered = invoked.filter((result) => result.costUsd != null);
   const knownCostUsd = round(covered.reduce((sum, result) => sum + (result.costUsd ?? 0), 0));
   const latencies = invoked
+    .filter((result) => result.ok)
+    .map((result) => result.latencyMs)
+    .filter((value): value is number => value != null);
+  const failureLatencies = invoked
+    .filter((result) => !result.ok)
     .map((result) => result.latencyMs)
     .filter((value): value is number => value != null);
 
@@ -681,19 +839,24 @@ export function summarizeBenchmarkMeasurements(
       (result) => result.provider === ref.provider && result.model === ref.model,
     );
     const modelInvoked = measured.filter((result) => result.invoked);
+    const modelOk = modelInvoked.filter((result) => result.ok);
     const modelCovered = modelInvoked.filter((result) => result.costUsd != null);
     const resolved = measured.filter((result) => result.perfectMatch != null);
     const modelLatencies = modelInvoked
+      .filter((result) => result.ok)
       .map((result) => result.latencyMs)
       .filter((value): value is number => value != null);
-    const confidences = modelInvoked
+    const modelFailureLatencies = modelInvoked
+      .filter((result) => !result.ok)
+      .map((result) => result.latencyMs)
+      .filter((value): value is number => value != null);
+    const confidences = modelOk
       .map((result) => result.avgConfidence)
       .filter((value): value is number => value != null);
     const tp = resolved.reduce((sum, result) => sum + (result.truePositive ?? 0), 0);
     const fp = resolved.reduce((sum, result) => sum + (result.falsePositive ?? 0), 0);
     const fn = resolved.reduce((sum, result) => sum + (result.falseNegative ?? 0), 0);
-    const precision = tp + fp > 0 ? tp / (tp + fp) : null;
-    const recall = tp + fn > 0 ? tp / (tp + fn) : null;
+    const f1Denominator = 2 * tp + fp + fn;
     const modelKnownCost = round(modelCovered.reduce((sum, result) => sum + (result.costUsd ?? 0), 0));
     const fullCostCoverage = modelInvoked.length > 0 && modelCovered.length === modelInvoked.length;
 
@@ -702,11 +865,11 @@ export function summarizeBenchmarkMeasurements(
       docsMeasured: measured.length,
       providerCalls: modelInvoked.length,
       unavailableDocs: measured.filter((result) => !result.invoked).length,
-      docsOk: modelInvoked.filter((result) => result.ok).length,
+      docsOk: modelOk.length,
       failures: modelInvoked.filter((result) => !result.ok).length,
-      autonomousDocs: modelInvoked.filter((result) => result.autonomous).length,
-      autonomyRate: modelInvoked.length
-        ? modelInvoked.filter((result) => result.autonomous).length / modelInvoked.length
+      autonomousDocs: modelOk.filter((result) => result.autonomous).length,
+      autonomyRate: modelOk.length
+        ? modelOk.filter((result) => result.autonomous).length / modelOk.length
         : null,
       resolvedDocs: resolved.length,
       perfectMatches: resolved.filter((result) => result.perfectMatch).length,
@@ -716,13 +879,18 @@ export function summarizeBenchmarkMeasurements(
       truePositive: tp,
       falsePositive: fp,
       falseNegative: fn,
-      f1: precision != null && recall != null && precision + recall > 0
-        ? (2 * precision * recall) / (precision + recall)
-        : null,
+      f1: !resolved.length
+        ? null
+        : f1Denominator > 0
+          ? (2 * tp) / f1Denominator
+          : resolved.every((result) => result.perfectMatch) ? 1 : 0,
       avgConfidence: mean(confidences),
       avgLatencyMs: mean(modelLatencies),
       p50LatencyMs: percentile(modelLatencies, 0.5),
       p95LatencyMs: percentile(modelLatencies, 0.95),
+      avgFailureLatencyMs: mean(modelFailureLatencies),
+      p50FailureLatencyMs: percentile(modelFailureLatencies, 0.5),
+      p95FailureLatencyMs: percentile(modelFailureLatencies, 0.95),
       knownCostUsd: modelKnownCost,
       coveredInvocations: modelCovered.length,
       costCoverageRate: modelInvoked.length ? modelCovered.length / modelInvoked.length : null,
@@ -746,6 +914,9 @@ export function summarizeBenchmarkMeasurements(
     avgLatencyMs: mean(latencies),
     p50LatencyMs: percentile(latencies, 0.5),
     p95LatencyMs: percentile(latencies, 0.95),
+    avgFailureLatencyMs: mean(failureLatencies),
+    p50FailureLatencyMs: percentile(failureLatencies, 0.5),
+    p95FailureLatencyMs: percentile(failureLatencies, 0.95),
     models: summaries,
   };
 }
@@ -779,13 +950,126 @@ export async function getBenchmarkRun(
   };
 }
 
+export interface BenchmarkRescoreResult {
+  run: BenchmarkRunDetail;
+  rescoredMeasurements: number;
+  scoringProfile: typeof BENCHMARK_SCORING_PROFILE;
+}
+
+function requestProfileRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? { ...value as Record<string, unknown> }
+    : {};
+}
+
+function runUsesCurrentScoringProfile(runRecord: BenchmarkRunDetail): boolean {
+  return requestProfileRecord(runRecord.requestProfile).scoringProfile === BENCHMARK_SCORING_PROFILE;
+}
+
+/**
+ * Recompute saved comparison columns from persisted model rows + the immutable
+ * ground-truth snapshot. This path performs D1 reads/writes only; it cannot reach
+ * a provider adapter or create a paid request.
+ */
+export async function rescoreBenchmarkRun(
+  db: D1Database,
+  runId: string,
+  rescoredAt = new Date().toISOString(),
+): Promise<BenchmarkRescoreResult | null> {
+  const detail = await getBenchmarkRun(db, runId);
+  if (!detail) return null;
+  if (!Number.isFinite(Date.parse(rescoredAt))) throw new Error('rescoredAt must be an ISO timestamp');
+  const documents = new Map(detail.documents.map((document) => [document.docId, document]));
+  const updates: Array<[string, Array<string | number | null>]> = [];
+
+  for (const result of detail.results) {
+    if (result.outcome === 'running') continue;
+    const document = documents.get(result.docId);
+    if (!document) continue;
+    const comparison = scorePersistedBenchmarkResult(document, result);
+    updates.push([
+      `UPDATE benchmark_model_results
+          SET perfect_match = ?, true_positive = ?, false_positive = ?, false_negative = ?
+        WHERE run_id = ? AND doc_id = ? AND provider = ? AND model = ?
+          AND outcome <> 'running' AND claim_token IS NULL`,
+      [
+        comparison == null ? null : comparison.perfectMatch ? 1 : 0,
+        comparison?.tp ?? null,
+        comparison?.fp ?? null,
+        comparison?.fn ?? null,
+        detail.id,
+        result.docId,
+        result.provider,
+        result.model,
+      ],
+    ]);
+  }
+
+  let rescoredMeasurements = 0;
+  for (let offset = 0; offset < updates.length; offset += 50) {
+    const results = await batch(db, updates.slice(offset, offset + 50));
+    rescoredMeasurements += results.reduce((sum, result) => sum + (result.meta?.changes ?? 0), 0);
+  }
+  if (rescoredMeasurements !== updates.length) {
+    throw new Error(
+      `benchmark rescore lost a terminal cell: updated ${rescoredMeasurements}/${updates.length}`,
+    );
+  }
+
+  const requestProfile = {
+    ...requestProfileRecord(detail.requestProfile),
+    scoringProfile: BENCHMARK_SCORING_PROFILE,
+  };
+  await run(
+    db,
+    `UPDATE benchmark_runs SET request_profile_json = ?, updated_at = ? WHERE id = ?`,
+    [JSON.stringify(requestProfile), rescoredAt, detail.id],
+  );
+
+  let rescored = await getBenchmarkRun(db, detail.id);
+  if (!rescored) throw new Error(`benchmark run ${detail.id} disappeared during rescore`);
+  if (rescored.status === 'completed') {
+    const summary = summarizeBenchmarkMeasurements(rescored.models, rescored.documents.length, rescored.results);
+    await run(
+      db,
+      `UPDATE benchmark_runs
+          SET known_cost_usd = ?, cost_covered_calls = ?, invoked_calls = ?,
+              summary_json = ?, updated_at = ?
+        WHERE id = ? AND status = 'completed'`,
+      [
+        summary.knownCostUsd,
+        summary.coveredInvocations,
+        summary.invokedCalls,
+        JSON.stringify(summary),
+        rescoredAt,
+        rescored.id,
+      ],
+    );
+    rescored = {
+      ...rescored,
+      knownCostUsd: summary.knownCostUsd,
+      costCoveredCalls: summary.coveredInvocations,
+      invokedCalls: summary.invokedCalls,
+      summary,
+      updatedAt: rescoredAt,
+    };
+  }
+
+  return { run: rescored, rescoredMeasurements, scoringProfile: BENCHMARK_SCORING_PROFILE };
+}
+
 export async function completeBenchmarkRun(
   db: D1Database,
   runId: string,
   completedAt = new Date().toISOString(),
 ): Promise<BenchmarkRunDetail> {
-  const detail = await getBenchmarkRun(db, runId);
+  let detail = await getBenchmarkRun(db, runId);
   if (!detail) throw new Error(`benchmark run ${runId} not found`);
+  if (!runUsesCurrentScoringProfile(detail)) {
+    const rescored = await rescoreBenchmarkRun(db, detail.id, completedAt);
+    if (!rescored) throw new Error(`benchmark run ${runId} disappeared during rescore`);
+    detail = rescored.run;
+  }
   const expected = new Set(
     detail.documents.flatMap((document) => detail.models.map(
       (model) => `${document.docId}\u0000${model.provider}\u0000${model.model}`,
@@ -803,13 +1087,13 @@ export async function completeBenchmarkRun(
   const summary = summarizeBenchmarkMeasurements(detail.models, detail.documents.length, detail.results);
   const completedDocCount = detail.documents.length;
   const durationMs = Math.max(0, Date.parse(completedAt) - Date.parse(detail.startedAt));
-  await run(
+  const completion = await run(
     db,
     `UPDATE benchmark_runs
         SET status = 'completed', completed_doc_count = ?, completed_at = ?,
             duration_ms = ?, known_cost_usd = ?, cost_covered_calls = ?,
             invoked_calls = ?, summary_json = ?, error = NULL, updated_at = ?
-      WHERE id = ?`,
+      WHERE id = ? AND status = 'running'`,
     [
       completedDocCount,
       completedAt,
@@ -822,6 +1106,12 @@ export async function completeBenchmarkRun(
       runId,
     ],
   );
+  if (Number(completion.meta?.changes ?? 0) !== 1) {
+    const current = await getBenchmarkRun(db, runId);
+    if (!current) throw new Error(`benchmark run ${runId} disappeared during completion`);
+    if (current.status === 'completed') return current;
+    throw new BenchmarkRunStateConflictError(current.status);
+  }
   return {
     ...detail,
     status: 'completed',
@@ -842,16 +1132,17 @@ export async function failBenchmarkRun(
   runId: string,
   error: string,
   completedAt = new Date().toISOString(),
-): Promise<void> {
-  await run(
+): Promise<boolean> {
+  const result = await run(
     db,
     `UPDATE benchmark_runs
         SET status = 'failed', completed_at = ?,
             duration_ms = MAX(0, CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER)),
             error = ?, updated_at = ?
-      WHERE id = ?`,
+      WHERE id = ? AND status = 'running'`,
     [completedAt, completedAt, error.slice(0, 2000), completedAt, runId],
   );
+  return Number(result.meta?.changes ?? 0) === 1;
 }
 
 /**
