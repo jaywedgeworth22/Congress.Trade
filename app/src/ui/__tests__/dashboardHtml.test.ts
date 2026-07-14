@@ -489,6 +489,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('Measured list-price spend');
     expect(DASHBOARD_HTML).toContain('Tier 1 executes A then B; disagreement adds a fresh A then B then C tier.');
     expect(DASHBOARD_HTML).toContain('An expired cell may already have been billed');
+    expect(DASHBOARD_HTML).toContain('this confirmation authorizes a new-day reservation for each remaining cell');
     expect(DASHBOARD_HTML).toContain("error.details.code === 'benchmark_attempt_outcome_unknown'");
     expect(DASHBOARD_HTML).toContain('body.confirmRetryAfterUnknownOutcome = true');
     expect(DASHBOARD_HTML).toContain('result.auditPersisted === false');
@@ -554,6 +555,7 @@ describe('DASHBOARD_HTML', () => {
 
     await expect(runCell('run-1', 'H-1', model)).resolves.toMatchObject({ ok: true });
     expect(confirm).toHaveBeenCalledTimes(1);
+    expect(bodies[0]).toMatchObject({ confirmPaidRun: true });
     expect(bodies[0]).not.toHaveProperty('confirmRetryAfterUnknownOutcome');
     expect(bodies[1]).toMatchObject({ confirmRetryAfterUnknownOutcome: true });
 

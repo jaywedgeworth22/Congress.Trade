@@ -38,6 +38,9 @@ Safety controls include explicit paid-run confirmation, an atomic daily call cap
 
 ## Follow-ups
 
+- A late post-merge review found that an unused initial-cell reservation could outlive its UTC ledger day. Paid production benchmarks remain paused while `codex/benchmark-cap-midnight-fix` binds authorization to the exact reserved UTC day, fails legacy profiles closed, and repeats preview/production gates.
+- The cap uses reservation-day accounting: an untouched cell resumed on a later UTC day needs a new confirmed reservation, while a request admitted before midnight remains attributed to that original day if its provider work completes after midnight.
+- Hotfix preview Worker `33923b98-14d5-4f30-a289-cc2054fc6b7b` passed typecheck, all 122 files / 1,128 tests, preview migrations/fixtures, and health (`ok/db/schema=true`, `missing=[]`). No paid benchmark was run.
 - Do not run paid production benchmarks until the owner deliberately confirms the chamber and expected call count in the admin UI.
 - Preview must remain credential-free and settings/secret mutation must remain read-only.
 - Provider-reported exact cost is authoritative when present; rate-card reconstruction is labeled as derived and missing usage remains unknown rather than zero.

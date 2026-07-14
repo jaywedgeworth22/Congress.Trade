@@ -115,6 +115,7 @@ import {
   getBenchmarkRun,
   listBenchmarkRuns,
   recordBenchmarkSelection,
+  releaseBenchmarkMeasurementClaim,
   saveBenchmarkMeasurement,
   BENCHMARK_CHAMBERS,
   type BenchmarkChamber,
@@ -1018,9 +1019,15 @@ export class BenchmarkCallReservationError extends Error {
   }
 }
 
+/**
+ * Atomically reserve calls against the UTC day when authorization is granted.
+ * An already-admitted in-flight request remains charged to that reservation
+ * day even if the provider response completes after midnight.
+ */
 export async function reserveBenchmarkCalls(env: Env, plannedCalls: number): Promise<{
   usedToday: number;
   dailyCap: number;
+  reservedDay: string;
 }> {
   const envWithCap = env as Env & { BENCHMARK_DAILY_CALL_CAP?: string; BAKEOFF_DAILY_CALL_CAP?: string };
   const configuredCap = Number(
@@ -1074,7 +1081,7 @@ export async function reserveBenchmarkCalls(env: Env, plannedCalls: number): Pro
   if (changed !== 1) {
     throw new BenchmarkCallReservationError('cap_reached', usedToday, dailyCap);
   }
-  return { usedToday, dailyCap };
+  return { usedToday, dailyCap, reservedDay: day };
 }
 
 function benchmarkReservationFailure(
@@ -1312,6 +1319,7 @@ const BENCHMARK_REQUEST_PROFILE = Object.freeze({
 interface BenchmarkPaidCallAuthorization {
   version: 1;
   scope: 'initial_model_document_cells';
+  reservedDay: string | null;
   reservedCalls: number;
   documentCount: number;
   models: BenchmarkModelRef[];
@@ -1320,10 +1328,12 @@ interface BenchmarkPaidCallAuthorization {
 function benchmarkPaidCallAuthorization(
   documentCount: number,
   configuredModels: Array<BenchmarkModelRef & { configured?: boolean }>,
+  reservedDay: string | null,
 ): BenchmarkPaidCallAuthorization {
   return {
     version: 1,
     scope: 'initial_model_document_cells',
+    reservedDay,
     reservedCalls: documentCount * configuredModels.length,
     documentCount,
     models: configuredModels.map(({ provider, model }) => ({ provider, model })),
@@ -1341,6 +1351,7 @@ function benchmarkRunAuthorizesInitialCell(
   if (
     authorization?.version !== 1
     || authorization.scope !== 'initial_model_document_cells'
+    || authorization.reservedDay !== new Date().toISOString().slice(0, 10)
     || authorization.documentCount !== runRecord.documents.length
     || !Array.isArray(authorization.models)
     || authorization.reservedCalls !== runRecord.documents.length * authorization.models.length
@@ -4314,7 +4325,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         configuredModels,
       }, 409);
     }
-    let cap: { usedToday: number; dailyCap: number } | null = null;
+    let cap: { usedToday: number; dailyCap: number; reservedDay: string } | null = null;
     if (plannedCalls > 0) {
       try {
         cap = await reserveBenchmarkCalls(c.env, plannedCalls);
@@ -4345,6 +4356,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         paidCallAuthorization: benchmarkPaidCallAuthorization(
           documents.length,
           configuredModels,
+          cap?.reservedDay ?? null,
         ),
       },
       documents: documents.map((document) => ({
@@ -4862,7 +4874,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       invocationKey = await keyFor(c.env, candidate.provider);
       configured = Boolean(invocationKey);
       const initiallyAuthorized = benchmarkRunAuthorizesInitialCell(runRecord, candidate);
-      if (!existing && configured && !initiallyAuthorized) {
+      const needsFreshReservationConfirmation = !existing && configured && !initiallyAuthorized;
+      if (needsFreshReservationConfirmation) {
         if (body.confirmPaidRun !== true) {
           return c.json({
             error: 'this run cell has no paid-call reservation; confirmPaidRun=true is required',
@@ -4870,12 +4883,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             requiresConfirmation: true,
             plannedCalls: 1,
           }, 409);
-        }
-        try {
-          await reserveBenchmarkCalls(c.env, 1);
-        } catch (error) {
-          const failure = benchmarkReservationFailure(error, 1);
-          return c.json(failure.body, failure.status);
         }
       }
 
@@ -4899,16 +4906,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           }, 409);
         }
         // The run's original reservation authorizes only its first attempt.
-        // A confirmed retry is a new possible provider charge and gets its own
-        // atomic daily-cap reservation before the lease may be reclaimed.
-        if (configured) {
-          try {
-            await reserveBenchmarkCalls(c.env, 1);
-          } catch (error) {
-            const failure = benchmarkReservationFailure(error, 1);
-            return c.json(failure.body, failure.status);
-          }
-        }
+        // A confirmed retry is a new possible provider charge. Claim first so
+        // concurrent delivery cannot reserve the same retry more than once.
         claim = await claimBenchmarkMeasurement(c.env.DB, {
           runId,
           docId,
@@ -4929,6 +4928,46 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       }
       claimToken = claim.claimToken;
       unknownPriorAttempt = claim.reclaimedUnknownOutcome;
+      // A stale concurrent read may have observed another worker's running row
+      // just before that worker released an unreserved claim. Re-check the
+      // confirmation after owning the cell so that race cannot bypass consent.
+      if (
+        configured
+        && !initiallyAuthorized
+        && !unknownPriorAttempt
+        && body.confirmPaidRun !== true
+      ) {
+        await releaseBenchmarkMeasurementClaim(c.env.DB, {
+          runId,
+          docId,
+          provider: candidate.provider,
+          model: candidate.model,
+          claimToken,
+          preserveUnknownOutcome: false,
+        });
+        return c.json({
+          error: 'this run cell has no paid-call reservation; confirmPaidRun=true is required',
+          code: 'benchmark_cell_reservation_required',
+          requiresConfirmation: true,
+          plannedCalls: 1,
+        }, 409);
+      }
+      if (configured && (!initiallyAuthorized || unknownPriorAttempt)) {
+        try {
+          await reserveBenchmarkCalls(c.env, 1);
+        } catch (error) {
+          await releaseBenchmarkMeasurementClaim(c.env.DB, {
+            runId,
+            docId,
+            provider: candidate.provider,
+            model: candidate.model,
+            claimToken,
+            preserveUnknownOutcome: unknownPriorAttempt,
+          });
+          const failure = benchmarkReservationFailure(error, 1);
+          return c.json(failure.body, failure.status);
+        }
+      }
     } else {
       invocationKey = await keyFor(c.env, candidate.provider);
       configured = Boolean(invocationKey);
