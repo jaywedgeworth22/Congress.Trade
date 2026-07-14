@@ -133,9 +133,12 @@ production ingestion jobs unless the user explicitly asks.
 
 ## Environment Rules
 
-- Local secrets go in `app/.dev.vars`, copied from `app/.dev.vars.example`.
+- Local bootstrap values go in the gitignored `app/.dev.vars`; create or update
+  it with `bash scripts/cloud-setup.sh`. `.dev.vars.example` is reference-only.
 - Never commit `.dev.vars`, real API keys, tokens, or generated local state.
-- Production secrets are set with `wrangler secret put`.
+- Production provider/app secrets live in Infisical. Use `wrangler secret put`
+  only for the Infisical bootstrap identities (or a documented migration
+  fallback), never to create a second provider-secret source of truth.
 - The admin API fails closed unless `ADMIN_TOKEN` or Cloudflare Access is
   configured. `ADMIN_OPEN_IN_DEV=true` is only for local development.
 
@@ -221,14 +224,22 @@ environment is ready; do not re-install deps to start services.
 
 Durable, non-obvious notes for running/testing locally (all from `app/`):
 
-- Local dev is keyless. `wrangler dev` (`npm run dev`, serves on
-  `http://localhost:8787`) emulates D1/R2/KV/Queues/cron in-process — no
-  Cloudflare login or API keys are needed to boot, typecheck, or test. Run it
-  under tmux for long-lived sessions.
-- `wrangler dev` reads vars from `app/.dev.vars` (gitignored) and `[vars]` in
-  `wrangler.toml`, NOT from the OS environment. The update script merges
-  known env vars into `.dev.vars`; if you add a var later, re-run
-  `bash scripts/cloud-setup.sh` to merge it.
+- Local infrastructure emulation is keyless. `wrangler dev` (`npm run dev`,
+  serves on `http://localhost:8787`) emulates D1/R2/KV/Queues/cron in-process —
+  no Cloudflare login is needed to boot, typecheck, or test. Provider-backed
+  behavior resolves configuration and API keys from Infisical. Do not copy
+  `app/.dev.vars.example` or hardcode provider keys into `.dev.vars`; run
+  `bash scripts/cloud-setup.sh` from the repository root.
+- `wrangler dev` reads `app/.dev.vars` (gitignored) and `[vars]` in
+  `wrangler.toml`, not the OS environment. `cloud-setup.sh` safely maps the
+  Infisical app/shared machine identities from explicit environment variables
+  or the owner-only `$HOME/.secrets/global-api-keys` file. It also retains only
+  the documented early-init/local overrides (`SENTRY_DSN`,
+  `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE`, `ADMIN_OPEN_IN_DEV`, and
+  `USAGE_MONITOR_ENVIRONMENT`). All other runtime config remains in Infisical;
+  setup fills only missing or empty managed entries. To change an existing
+  managed value, deliberately remove or empty that line, then re-run setup;
+  unrelated `.dev.vars` bytes remain untouched.
 - Admin/ingest routes (`/api/admin/*`) fail closed. For local testing,
   `ADMIN_OPEN_IN_DEV="true"` alone is NOT enough: `wrangler.toml` `[vars]` set
   `SENTRY_ENVIRONMENT="production"` and `USAGE_MONITOR_ENVIRONMENT="production"`,
@@ -277,4 +288,3 @@ Client apps (peer clients of the backend, not separate products):
 - **Same bar at every tier:** full gates, receipts, and board discipline apply no matter
   which model did the work.
 - Canonical reference: `/Users/jay/apps/AGENT-SYNC.md` — "Delegation & model economics".
-
