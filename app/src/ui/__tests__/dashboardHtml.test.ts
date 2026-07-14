@@ -9,7 +9,7 @@
  * They also assert the Trends tab + its API wiring are present.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { DASHBOARD_HTML } from '../dashboardHtml';
 
 function scriptBlocks(html: string): string[] {
@@ -472,6 +472,114 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("isAuthError(e) ? ADMIN_MOVED_MSG : ('Re-read failed: ' + e.message)");
     // refreshes this doc's runs display after a successful re-read
     expect(DASHBOARD_HTML).toContain('viewReadings(docId); // refresh this doc\'s runs display with the new reading(s)');
+  });
+
+  it('persists branch benchmarks and exposes measured cost, speed, history, simulation, and lineup save controls', () => {
+    expect(DASHBOARD_HTML).toContain('id="benchmarkHistory"');
+    expect(DASHBOARD_HTML).toContain("selectBenchmarkChamber('house')");
+    expect(DASHBOARD_HTML).toContain("selectBenchmarkChamber('senate')");
+    expect(DASHBOARD_HTML).toContain("selectBenchmarkChamber('executive')");
+    expect(DASHBOARD_HTML).toContain("'/api/admin/benchmark/runs?chamber='");
+    expect(DASHBOARD_HTML).toContain("'/api/admin/benchmark/runs/' + encodeURIComponent(run.id) + '/complete'");
+    expect(DASHBOARD_HTML).toContain("'/simulate'");
+    expect(DASHBOARD_HTML).toContain("'/api/admin/benchmark/settings/'");
+    expect(DASHBOARD_HTML).toContain('confirmPaidRun: true');
+    expect(DASHBOARD_HTML).toContain('resolvedOnly: false');
+    expect(DASHBOARD_HTML).toContain('Measured list-price cost / doc');
+    expect(DASHBOARD_HTML).toContain('Measured list-price spend');
+    expect(DASHBOARD_HTML).toContain('Tier 1 executes A then B; disagreement adds a fresh A then B then C tier.');
+    expect(DASHBOARD_HTML).toContain('An expired cell may already have been billed');
+    expect(DASHBOARD_HTML).toContain("error.details.code === 'benchmark_attempt_outcome_unknown'");
+    expect(DASHBOARD_HTML).toContain('body.confirmRetryAfterUnknownOutcome = true');
+    expect(DASHBOARD_HTML).toContain('result.auditPersisted === false');
+    expect(DASHBOARD_HTML).toContain('Settings were saved and verified, but the benchmark receipt was not persisted.');
+    expect(DASHBOARD_HTML).toContain('avg / p50 / p95');
+    expect(DASHBOARD_HTML).toContain('Cost coverage');
+    expect(DASHBOARD_HTML).toContain('Save as ');
+    expect(DASHBOARD_HTML).toContain('three different providers');
+    expect(DASHBOARD_HTML).not.toContain('var MODEL_COSTS');
+    expect(DASHBOARD_HTML).not.toContain('Based on model list pricing');
+  });
+
+  it('never labels aggregate partial spend as per-document benchmark cost', () => {
+    const usdSource = DASHBOARD_HTML.match(/function benchmarkUsd\(value\) \{[\s\S]*?\n\}/);
+    const costSource = DASHBOARD_HTML.match(/function benchmarkCostText\(perDocument, covered, calls\) \{[\s\S]*?\n\}/);
+    expect(usdSource).not.toBeNull();
+    expect(costSource).not.toBeNull();
+    const costText = new Function(
+      usdSource![0] + '\n' + costSource![0] + '\nreturn benchmarkCostText;',
+    )() as (perDocument: number | null, covered: number, calls: number) => string;
+
+    expect(costText(0.012, 2, 2)).toBe('$0.012');
+    expect(costText(null, 1, 2)).toBe('Unknown (partial)');
+    expect(costText(null, 0, 2)).toBe('Unknown');
+    expect(costText(null, 0, 0)).toBe('N/A');
+    expect(DASHBOARD_HTML).not.toContain("benchmarkUsd(known) + '+ partial'");
+  });
+
+  it('requires one explicit confirmation before retrying an unknown paid benchmark outcome', async () => {
+    const combined = DASHBOARD_HTML.match(
+      /function confirmBenchmarkUnknownOutcomeRetry\(docId, model\) \{[\s\S]*?\n\}\n\nasync function runBenchmarkCell\(runId, docId, model\) \{[\s\S]*?\n\}\n\nasync function runChamberBenchmark/,
+    );
+    expect(combined).not.toBeNull();
+    const source = combined![0].replace(/\n\nasync function runChamberBenchmark[\s\S]*$/, '');
+    const model = { provider: 'openai', model: 'gpt-4o' };
+    const state = { unknownOutcomeRetryDecision: null as boolean | null };
+    const confirm = vi.fn(() => true);
+    const bodies: Array<Record<string, unknown>> = [];
+    let calls = 0;
+    const apiCall = vi.fn(async (_path: string, _method: string, body: Record<string, unknown>) => {
+      bodies.push({ ...body });
+      calls++;
+      if (calls === 1) {
+        throw Object.assign(new Error('unknown provider outcome'), {
+          status: 409,
+          details: { code: 'benchmark_attempt_outcome_unknown' },
+        });
+      }
+      return { pending: false, ok: true };
+    });
+    const runCell = new Function(
+      'apiCall',
+      'benchmarkState',
+      'window',
+      'benchmarkModelKey',
+      source + '\nreturn runBenchmarkCell;',
+    )(
+      apiCall,
+      state,
+      { confirm },
+      (value: { provider: string; model: string }) => value.provider + ':' + value.model,
+    ) as (runId: string, docId: string, model: { provider: string; model: string }) => Promise<unknown>;
+
+    await expect(runCell('run-1', 'H-1', model)).resolves.toMatchObject({ ok: true });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(bodies[0]).not.toHaveProperty('confirmRetryAfterUnknownOutcome');
+    expect(bodies[1]).toMatchObject({ confirmRetryAfterUnknownOutcome: true });
+
+    const declinedApi = vi.fn(async () => {
+      throw Object.assign(new Error('unknown provider outcome'), {
+        status: 409,
+        details: { code: 'benchmark_attempt_outcome_unknown' },
+      });
+    });
+    const declinedConfirm = vi.fn(() => false);
+    const declinedRunCell = new Function(
+      'apiCall',
+      'benchmarkState',
+      'window',
+      'benchmarkModelKey',
+      source + '\nreturn runBenchmarkCell;',
+    )(
+      declinedApi,
+      { unknownOutcomeRetryDecision: null },
+      { confirm: declinedConfirm },
+      (value: { provider: string; model: string }) => value.provider + ':' + value.model,
+    ) as (runId: string, docId: string, model: { provider: string; model: string }) => Promise<unknown>;
+
+    await expect(declinedRunCell('run-1', 'H-1', model)).rejects.toThrow(/Retry was not confirmed/);
+    expect(declinedConfirm).toHaveBeenCalledTimes(1);
+    expect(declinedApi).toHaveBeenCalledTimes(1);
   });
 
   it('keeps House history backfill bounded from the admin UI', () => {

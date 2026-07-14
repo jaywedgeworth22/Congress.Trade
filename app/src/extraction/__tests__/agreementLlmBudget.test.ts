@@ -19,7 +19,16 @@ import { handleAgreementCheck } from '../agreement';
  */
 
 const row = (ticker: string, txType: string, amountRange: string | null) =>
-  JSON.stringify([{ ticker, assetName: `${ticker} Inc.`, txDate: '2026-06-19', txType, amountRange, confidence: 0.9 }]);
+  JSON.stringify([{
+    ticker,
+    assetName: `${ticker} Inc.`,
+    txDate: '2026-06-19',
+    txType,
+    amountRange,
+    isOption: false,
+    capGainsOver200: false,
+    confidence: 0.9,
+  }]);
 
 function todayKey(): string {
   return new Date().toISOString().slice(0, 10);

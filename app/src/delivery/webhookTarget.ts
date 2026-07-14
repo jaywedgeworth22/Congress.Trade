@@ -1,3 +1,5 @@
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
+
 interface LocalEnv {
   ADMIN_OPEN_IN_DEV?: string;
   APP_BASE_URL?: string;
@@ -91,7 +93,12 @@ export async function validatePublicWebhookTarget(
     const answers: string[] = [];
     for (const type of ['A', 'AAAA']) {
       const endpoint = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(url.hostname)}&type=${type}`;
-      const response = await fetchImpl(endpoint, { headers: { accept: 'application/dns-json' } });
+      const response = await trackedFetch(
+        endpoint,
+        { headers: { accept: 'application/dns-json' } },
+        { service: 'webhook-security', operation: 'resolve-target-dns' },
+        fetchImpl,
+      );
       if (!response.ok) return 'webhook target DNS validation failed';
       const body = await response.json() as DnsJsonResponse;
       if (body.Status !== undefined && body.Status !== 0) continue;

@@ -11,6 +11,7 @@
 
 import { sicToSector } from './compute';
 import type { EnrichmentProvider, SecurityRef } from './types';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 const UA = 'congress.trade admin@congress.trade';
 
@@ -72,10 +73,10 @@ export function buildSecProvider(fetchImpl: typeof fetch = fetch): EnrichmentPro
   let cikMap: Map<string, string> | null = null;
   async function ensureMap(): Promise<Map<string, string>> {
     if (cikMap) return cikMap;
-    const res = await fetchImpl('https://www.sec.gov/files/company_tickers.json', {
+    const res = await trackedFetch('https://www.sec.gov/files/company_tickers.json', {
       headers: { 'user-agent': UA, accept: 'application/json' },
       cf: { cacheTtl: 86400, cacheEverything: true },
-    } as RequestInit);
+    } as RequestInit, { service: 'security-enrichment', operation: 'fetch-sec-ticker-map' }, fetchImpl);
     cikMap = res.ok ? parseCompanyTickers(await res.json()) : new Map();
     return cikMap;
   }
@@ -84,9 +85,9 @@ export function buildSecProvider(fetchImpl: typeof fetch = fetch): EnrichmentPro
     async fetchRef(ticker: string): Promise<Partial<SecurityRef> | null> {
       const cik = (await ensureMap()).get(ticker.toUpperCase());
       if (!cik) return null;
-      const res = await fetchImpl('https://data.sec.gov/submissions/CIK' + cik + '.json', {
+      const res = await trackedFetch('https://data.sec.gov/submissions/CIK' + cik + '.json', {
         headers: { 'user-agent': UA, accept: 'application/json' },
-      });
+      }, { service: 'security-enrichment', operation: 'fetch-sec-submissions' }, fetchImpl);
       if (!res.ok) return null;
       return parseSecSubmissions(await res.json());
     },

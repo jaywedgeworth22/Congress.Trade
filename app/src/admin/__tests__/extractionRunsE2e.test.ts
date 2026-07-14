@@ -33,6 +33,7 @@ interface ExtractionRunRow {
 
 function makeEnv() {
   const extractionRuns: ExtractionRunRow[] = [];
+  const usageEvents: unknown[] = [];
 
   const prepare = (sql: string) => ({
     params: [] as unknown[],
@@ -109,9 +110,12 @@ function makeEnv() {
     RAW_FILES: {
       get: async () => ({ arrayBuffer: async () => new TextEncoder().encode('%PDF-1.4 fake').buffer }),
     },
+    INGEST_QUEUE: {
+      send: async (message: unknown) => { usageEvents.push(message); },
+    },
   } as never;
 
-  return { env, extractionRuns };
+  return { env, extractionRuns, usageEvents };
 }
 
 describe('extraction_runs E2E: bake-off → store → dashboard', () => {
@@ -209,7 +213,7 @@ describe('extraction_runs E2E: openai token usage capture', () => {
       }),
     );
 
-    const { env, extractionRuns } = makeEnv();
+    const { env, extractionRuns, usageEvents } = makeEnv();
     const bake = await app.request(
       '/bakeoff',
       {
@@ -231,6 +235,15 @@ describe('extraction_runs E2E: openai token usage capture', () => {
       completionTokens: 80,
       cachedTokens: 300,
     });
+    expect(usageEvents).toContainEqual(expect.objectContaining({
+      type: 'usage.telemetry',
+      event: expect.objectContaining({
+        provider: 'openai',
+        label: 'bakeoff-tokens',
+        quantity: 1280,
+        unit: 'token',
+      }),
+    }));
   });
 
   it('persists usage_json as null when the openai response omits usage', async () => {

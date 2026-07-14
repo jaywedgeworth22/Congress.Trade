@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   watcher: vi.fn(async () => { throw new Error('poll config unavailable'); }),
   deliveryOutbox: vi.fn(async () => ({ claimed: 0, enqueued: 0, failed: 0 })),
   ingestionOutbox: vi.fn(async () => ({ claimed: 0, enqueued: 0, failed: 0 })),
+  telemetryFallback: vi.fn(async () => ({ listed: 0, delivered: 0, failed: 0 })),
 }));
 
 vi.mock('@sentry/cloudflare', () => ({
@@ -24,11 +25,18 @@ vi.mock('../../ingestion/outbox', () => ({
   reconnectDeadLetteredIngestionOutbox: vi.fn(),
 }));
 vi.mock('../../jobs', () => ({ maybeRunDailyJobs: vi.fn(async () => {}) }));
-vi.mock('../../secrets/infisical', () => ({ refreshSecrets: vi.fn(async () => {}) }));
+vi.mock('../../secrets/infisical', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../secrets/infisical')>()),
+  refreshSecrets: vi.fn(async () => {}),
+}));
 vi.mock('../../ingestion/fmpDisclosureLatency', () => ({ runDisclosureLatencyProbe: vi.fn(async () => {}) }));
 vi.mock('../../extraction/agreement', () => ({
   maybeRunAgreementAutopublish: vi.fn(async () => {}),
   handleAgreementCheck: vi.fn(async () => {}),
+}));
+vi.mock('../thirdPartyTelemetry', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../thirdPartyTelemetry')>()),
+  flushUsageTelemetryFallback: mocks.telemetryFallback,
 }));
 
 import worker from '../../index';
@@ -46,6 +54,7 @@ describe('scheduled maintenance isolation', () => {
     expect(mocks.watcher).toHaveBeenCalledOnce();
     expect(mocks.deliveryOutbox).toHaveBeenCalledOnce();
     expect(mocks.ingestionOutbox).toHaveBeenCalledOnce();
-    expect(pending.length).toBeGreaterThanOrEqual(7);
+    expect(mocks.telemetryFallback).toHaveBeenCalledWith(expect.anything(), { limit: 25 });
+    expect(pending.length).toBeGreaterThanOrEqual(8);
   });
 });

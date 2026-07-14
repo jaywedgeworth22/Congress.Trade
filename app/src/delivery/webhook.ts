@@ -28,6 +28,7 @@ import { matchesFiltersWithContext, webhookTargetLengthError } from './subscript
 import { resolveSecret } from '../secrets/infisical';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget';
 import { notifyAdmin } from '../alerts/notify';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 /** Max delivery attempts before we give up (initial try + retries). */
 const MAX_ATTEMPTS = 5;
@@ -308,7 +309,7 @@ async function deliverToSubscription(
     }, WEBHOOK_FETCH_TIMEOUT_MS);
     let res: Response | undefined;
     try {
-      res = await fetch(sub.targetUrl as string, {
+      res = await trackedFetch(sub.targetUrl as string, {
         method: 'POST',
         redirect: 'manual',
         signal: controller.signal,
@@ -320,6 +321,10 @@ async function deliverToSubscription(
           'X-Delivery-Attempt': String(attempt),
         },
         body,
+      }, {
+        service: 'webhook-delivery',
+        operation: 'deliver-subscriber-event',
+        dynamicTarget: 'subscriber-webhook',
       });
     } catch (err) {
       throw new Error(timedOut ? `timeout after ${WEBHOOK_FETCH_TIMEOUT_MS}ms` : ((err as Error).message ?? 'fetch failed'));

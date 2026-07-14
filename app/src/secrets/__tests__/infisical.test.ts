@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../shared/types';
-import { refreshSecrets, resolveSecret, updateSecret } from '../infisical';
+import {
+  deleteSecret,
+  readSourceSecrets,
+  refreshSecrets,
+  resolveSecret,
+  updateSecret,
+} from '../infisical';
 
 function env(extra: Partial<Env> = {}): Env {
   return {
@@ -143,5 +149,72 @@ describe('Infisical runtime secret resolver', () => {
     
     expect(patchCalled).toBe(true);
     expect(postCalled).toBe(true);
+  });
+
+  it('threads one abort signal through Infisical authentication and mutation', async () => {
+    const signals: Array<AbortSignal | null | undefined> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        signals.push(init?.signal);
+        if (url.endsWith('/api/v1/auth/universal-auth/login')) {
+          return Response.json({ accessToken: 'token' });
+        }
+        if (url.includes('/api/v3/secrets/raw/TEST_KEY')) {
+          return Response.json({ secret: { secretKey: 'TEST_KEY' } });
+        }
+        return new Response('not found', { status: 404 });
+      }),
+    );
+    const controller = new AbortController();
+
+    await updateSecret(
+      env({ INFISICAL_APP_PROJECT_ID: 'app-project-signal' }),
+      'app',
+      'TEST_KEY',
+      'new-val',
+      { signal: controller.signal },
+    );
+
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => signal === controller.signal)).toBe(true);
+  });
+
+  it('reads source-owned values without imports and can delete an override', async () => {
+    let listUrl = '';
+    let deleteBody: Record<string, unknown> | null = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.endsWith('/api/v1/auth/universal-auth/login')) {
+          return Response.json({ accessToken: 'token' });
+        }
+        if (url.includes('/api/v3/secrets/raw?')) {
+          listUrl = url;
+          return Response.json({
+            secrets: [{ secretKey: 'AGREEMENT_HOUSE_MODEL_A', secretValue: 'openai:gpt-4o' }],
+          });
+        }
+        if (url.endsWith('/api/v3/secrets/raw/AGREEMENT_HOUSE_MODEL_A') && init?.method === 'DELETE') {
+          deleteBody = JSON.parse(String(init.body || '{}')) as Record<string, unknown>;
+          return Response.json({ secret: { secretKey: 'AGREEMENT_HOUSE_MODEL_A' } });
+        }
+        return new Response('not found', { status: 404 });
+      }),
+    );
+
+    const e = env({ INFISICAL_APP_PROJECT_ID: 'app-project-raw-state' });
+    expect(await readSourceSecrets(e, 'app')).toEqual({
+      AGREEMENT_HOUSE_MODEL_A: 'openai:gpt-4o',
+    });
+    expect(new URL(listUrl).searchParams.get('include_imports')).toBe('false');
+
+    await deleteSecret(e, 'app', 'AGREEMENT_HOUSE_MODEL_A');
+    expect(deleteBody).toMatchObject({
+      workspaceId: 'app-project-raw-state',
+      environment: 'prod',
+      secretPath: '/',
+      type: 'shared',
+    });
   });
 });

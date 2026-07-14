@@ -10,6 +10,7 @@
 
 import { assertFmpTierOk } from '../shared/fmpStatus';
 import type { Close } from './compute';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 /**
  * Parse an FMP historical-price response into descending [{date, close}].
@@ -51,9 +52,9 @@ export function buildFmpPriceClient(apiKey: string, fetchImpl: typeof fetch = fe
   async function hist(symbolEncoded: string, from: string, to: string): Promise<Close[]> {
     const url =
       BASE + '?symbol=' + symbolEncoded + '&from=' + from + '&to=' + to + '&apikey=' + encodeURIComponent(apiKey);
-    const res = await fetchImpl(url, {
+    const res = await trackedFetch(url, {
       headers: { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json' },
-    });
+    }, { service: 'market-prices', operation: 'fetch-price-history' }, fetchImpl);
     if (!res.ok) {
       assertFmpTierOk(res.status); // throws on 401/402/403/429 (key/plan broken)
       return []; // other non-OK (404, …) => treat as "no data"

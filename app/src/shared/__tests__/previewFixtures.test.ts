@@ -61,4 +61,13 @@ describe('preview transaction fixtures', () => {
       expect(Number(values.est_value), values.id).toBe((amountMin + amountMax) / 2);
     }
   });
+
+  it('seeds persisted benchmark history for all three branches without provider calls', () => {
+    expect(fixtureSql).toContain("'PREVIEW-BENCH-HOUSE', 'house', 'completed'");
+    expect(fixtureSql).toContain("'PREVIEW-BENCH-SENATE', 'senate', 'completed'");
+    expect(fixtureSql).toContain("'PREVIEW-BENCH-EXEC', 'executive', 'completed'");
+    expect(fixtureSql).toContain('"billing":"synthetic-preview-only"');
+    expect(fixtureSql).toContain("NULL, 'unknown', '{\"reason\":\"synthetic_unknown_cost\"}'");
+    expect((fixtureSql.match(/PREVIEW-BENCH-DOC-/g) ?? []).length).toBeGreaterThanOrEqual(12);
+  });
 });

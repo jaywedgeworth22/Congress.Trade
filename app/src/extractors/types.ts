@@ -42,6 +42,44 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
+function modelRunsForResult(result: ExtractorResult): ExtractorModelRun[] {
+  if (result.modelRuns?.length) {
+    return result.modelRuns.map((run) => ({
+      ...run,
+      usage: run.usage ? { ...run.usage } : undefined,
+    }));
+  }
+  if (!result.modelVersion && !result.providerRequestId && !result.usage) return [];
+  return [{
+    extractor: result.extractor,
+    modelVersion: result.modelVersion,
+    providerRequestId: result.providerRequestId,
+    usage: result.usage ? { ...result.usage } : undefined,
+  }];
+}
+
+function modelRunsForError(error: object, extractor: string): ExtractorModelRun[] {
+  const cast = error as {
+    modelRuns?: ExtractorModelRun[];
+    resolvedModel?: string;
+    providerRequestId?: string;
+    usage?: ExtractorUsage;
+  };
+  if (cast.modelRuns?.length) {
+    return cast.modelRuns.map((run) => ({
+      ...run,
+      usage: run.usage ? { ...run.usage } : undefined,
+    }));
+  }
+  if (!cast.resolvedModel && !cast.providerRequestId && !cast.usage) return [];
+  return [{
+    extractor,
+    modelVersion: cast.resolvedModel,
+    providerRequestId: cast.providerRequestId,
+    usage: cast.usage ? { ...cast.usage } : undefined,
+  }];
+}
+
 /**
  * Reconcile two extractor results into one. The PRIMARY row set stays
  * authoritative (deterministic output), but per-row and document confidence are
@@ -91,6 +129,7 @@ export function mergeResults(primary: ExtractorResult, secondary: ExtractorResul
   const denom = Math.max(primary.transactions.length, secondary.transactions.length, 1);
   const agreementFactor = matchedKeys.size / denom;
   const docConfidence = clamp01(meanRowConf * (0.5 + 0.5 * agreementFactor));
+  const modelRuns = [...modelRunsForResult(primary), ...modelRunsForResult(secondary)];
 
   return {
     transactions,
@@ -98,12 +137,33 @@ export function mergeResults(primary: ExtractorResult, secondary: ExtractorResul
     raw: `primary(${primary.extractor}):\n${primary.raw}\n\n---\nsecondary(${secondary.extractor}) [primaryOnly=${primaryOnly}, secondaryOnly=${secondaryOnly}]:\n${secondary.raw}`,
     extractor: `arbitrating(${primary.extractor},${secondary.extractor})`,
     modelVersion: primary.modelVersion,
+    providerRequestId: primary.providerRequestId,
+    usage: primary.usage ? { ...primary.usage } : undefined,
+    modelRuns: modelRuns.length ? modelRuns : undefined,
   };
 }
 
 // ---------------------------------------------------------------------------
 // Core contracts
 // ---------------------------------------------------------------------------
+
+export interface ExtractorUsage {
+  promptTokens?: number;
+  completionTokens?: number;
+  cachedTokens?: number;
+  cacheWriteTokens?: number;
+  cacheWriteOneHourTokens?: number;
+  pagesProcessed?: number;
+  serviceTier?: string;
+}
+
+/** One provider/model invocation retained across arbitration. */
+export interface ExtractorModelRun {
+  extractor: string;
+  modelVersion?: string;
+  providerRequestId?: string;
+  usage?: ExtractorUsage;
+}
 
 /** Result of running an extractor over one filing. */
 export interface ExtractorResult {
@@ -117,8 +177,12 @@ export interface ExtractorResult {
   extractor: string;
   /** Model/version identifier when an LLM was used (optional). */
   modelVersion?: string;
-  /** Token usage reported by the provider API, when available. */
-  usage?: { promptTokens?: number; completionTokens?: number; cachedTokens?: number };
+  /** Provider request identifier retained for audit/support, when returned. */
+  providerRequestId?: string;
+  /** Billed usage reported by the provider API, when available. */
+  usage?: ExtractorUsage;
+  /** Every underlying model call when arbitration combines multiple results. */
+  modelRuns?: ExtractorModelRun[];
 }
 
 /** Input handed to an extractor. One of bytes/html is typically present. */
@@ -197,8 +261,27 @@ export class ArbitratingExtractor implements Extractor {
     }
 
     // 3) Run the secondary and arbitrate.
-    const secondaryResult = await this.secondary.extract(input);
-    return this.arbitrate(primaryResult, secondaryResult);
+    try {
+      const secondaryResult = await this.secondary.extract(input);
+      return this.arbitrate(primaryResult, secondaryResult);
+    } catch (error) {
+      // The primary request was already billed. Preserve it alongside any usage
+      // attached to the secondary error so the orchestrator can report both.
+      if (error && typeof error === 'object') {
+        const modelRuns = [
+          ...modelRunsForResult(primaryResult),
+          ...modelRunsForError(error, this.secondary.name),
+        ];
+        if (modelRuns.length) {
+          try {
+            Object.assign(error, { modelRuns });
+          } catch {
+            // Preserve the provider's original error if it is non-extensible.
+          }
+        }
+      }
+      throw error;
+    }
   }
 
   /**

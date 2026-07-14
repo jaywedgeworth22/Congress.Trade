@@ -18,6 +18,7 @@ import { getLastPollAt, setLastPollAt } from '../shared/config';
 import { getSharedFmpPacer } from '../shared/pace';
 import { getDailyUsed, addDailyUsed } from '../enrichment/service';
 import type { DiscoveredFiling } from './watcher';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 type Chamber = 'house' | 'senate';
 type ProviderId = 'fmp' | 'unusual_whales' | 'quiver' | 'finnhub' | 'ainvest' | 'capitol_trades';
@@ -541,9 +542,9 @@ export function matchFmpDisclosureCandidate(
 }
 
 async function fetchJson(url: string, headers: Record<string, string>, fetchImpl: typeof fetch): Promise<unknown> {
-  const res = await fetchImpl(url, {
+  const res = await trackedFetch(url, {
     headers: { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json', ...headers },
-  });
+  }, { service: 'disclosure-latency', operation: 'fetch-provider-latest' }, fetchImpl);
   if (!res.ok) throw new Error(`HTTP_${res.status}:${url.replace(/[?&](apikey|token)=[^&]+/gi, '$1=[redacted]')}`);
   return res.json();
 }

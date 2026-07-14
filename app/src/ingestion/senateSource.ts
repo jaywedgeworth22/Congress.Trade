@@ -33,6 +33,8 @@
  * report id, build sourceUrl, and compute pipeline docId `S-{reportId}`.
  */
 
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
+
 const SENATE_BASE = 'https://efdsearch.senate.gov';
 const SENATE_SEARCH = `${SENATE_BASE}/search/`;
 const SENATE_HOME = `${SENATE_BASE}/search/home/`;
@@ -278,7 +280,7 @@ export async function fetchSenatePtrFilings(
   const performHandshake = async () => {
     const jar = new CookieJar();
     // 1) GET landing page -> csrftoken cookie + hidden middleware token.
-    const landing = await fetchImpl(SENATE_SEARCH, {
+    const landing = await trackedFetch(SENATE_SEARCH, {
       headers: {
         ...BROWSER_HEADERS,
         accept:
@@ -289,7 +291,7 @@ export async function fetchSenatePtrFilings(
         'sec-fetch-user': '?1',
         'upgrade-insecure-requests': '1',
       },
-    });
+    }, { service: 'filing-discovery', operation: 'open-senate-search-session' }, fetchImpl);
     if (!landing.ok) throw new Error(`senate GET /search/ -> HTTP ${landing.status}`);
     jar.absorb(landing);
     const landingHtml = await landing.text();
@@ -303,7 +305,7 @@ export async function fetchSenatePtrFilings(
       prohibition_agreement: '1',
       csrfmiddlewaretoken: middlewareToken,
     });
-    const agree = await fetchImpl(SENATE_HOME, {
+    const agree = await trackedFetch(SENATE_HOME, {
       method: 'POST',
       headers: {
         ...BROWSER_HEADERS,
@@ -317,7 +319,7 @@ export async function fetchSenatePtrFilings(
       },
       body: agreeBody.toString(),
       redirect: 'manual',
-    });
+    }, { service: 'filing-discovery', operation: 'accept-senate-search-terms' }, fetchImpl);
     // 200 or 302 are both fine; we only care that cookies are refreshed.
     jar.absorb(agree);
     await delay(politeDelayMs);
@@ -361,7 +363,7 @@ export async function fetchSenatePtrFilings(
       dataBody.set('first_name', '');
       dataBody.set('last_name', '');
 
-      const data = await fetchImpl(SENATE_DATA, {
+      const data = await trackedFetch(SENATE_DATA, {
         method: 'POST',
         headers: {
           ...BROWSER_HEADERS,
@@ -377,7 +379,7 @@ export async function fetchSenatePtrFilings(
           'sec-fetch-site': 'same-origin',
         },
         body: dataBody.toString(),
-      });
+      }, { service: 'filing-discovery', operation: 'search-senate-filings' }, fetchImpl);
 
       const contentType = data.headers.get('content-type') || '';
       if (!data.ok || !contentType.includes('application/json')) {

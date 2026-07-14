@@ -9,8 +9,14 @@
  */
 
 import type { Env } from '../shared/types';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
-type SourceName = 'app' | 'shared';
+export type SourceName = 'app' | 'shared';
+
+export interface SecretMutationOptions {
+  /** Abort authentication and mutation HTTP requests as one bounded operation. */
+  signal?: AbortSignal;
+}
 
 interface SourceConfig {
   name: SourceName;
@@ -131,12 +137,17 @@ function redactedError(err: unknown): string {
   return message.replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]').slice(0, 300);
 }
 
-async function login(baseUrl: string, source: SourceConfig): Promise<string> {
-  const res = await fetch(`${baseUrl}/api/v1/auth/universal-auth/login`, {
+async function login(
+  baseUrl: string,
+  source: SourceConfig,
+  signal?: AbortSignal,
+): Promise<string> {
+  const res = await trackedFetch(`${baseUrl}/api/v1/auth/universal-auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ clientId: source.clientId, clientSecret: source.clientSecret }),
-  });
+    signal,
+  }, { service: 'secret-management', operation: 'authenticate', dynamicTarget: 'infisical' });
   const body = (await res.json().catch(() => ({}))) as { accessToken?: string; token?: string; message?: string };
   if (!res.ok) throw new Error(`Infisical ${source.name} auth failed: HTTP ${res.status} ${body.message || ''}`.trim());
   const token = body.accessToken || body.token;
@@ -173,21 +184,43 @@ function secretEntries(payload: unknown): Array<{ key: string; value: string }> 
   return entries;
 }
 
-async function fetchSourceSecrets(baseUrl: string, infisicalEnv: string, source: SourceConfig): Promise<Record<string, string>> {
+async function fetchSourceSecrets(
+  baseUrl: string,
+  infisicalEnv: string,
+  source: SourceConfig,
+  includeImports = true,
+): Promise<Record<string, string>> {
   const token = await login(baseUrl, source);
   const params = new URLSearchParams({
     workspaceId: source.projectId || '',
     environment: infisicalEnv,
     secretPath: source.secretPath || '/',
-    include_imports: 'true',
+    include_imports: includeImports ? 'true' : 'false',
     recursive: 'true',
   });
-  const res = await fetch(`${baseUrl}/api/v3/secrets/raw?${params.toString()}`, {
+  const res = await trackedFetch(`${baseUrl}/api/v3/secrets/raw?${params.toString()}`, {
     headers: { authorization: `Bearer ${token}` },
-  });
+  }, { service: 'secret-management', operation: 'read-secrets', dynamicTarget: 'infisical' });
   const body = (await res.json().catch(() => ({}))) as { message?: string };
   if (!res.ok) throw new Error(`Infisical ${source.name} secrets failed: HTTP ${res.status} ${body.message || ''}`.trim());
   return Object.fromEntries(secretEntries(body).map((entry) => [entry.key, entry.value]));
+}
+
+function configuredSource(env: Env, sourceName: SourceName): SourceConfig {
+  const source = sourceConfigs(env).find((candidate) => candidate.name === sourceName);
+  if (!source || !sourceConfigured(source)) {
+    throw new Error(`Source ${sourceName} not configured`);
+  }
+  return source;
+}
+
+/** Read only values owned by one Infisical project/path, excluding imports. */
+export async function readSourceSecrets(
+  env: Env,
+  sourceName: SourceName,
+): Promise<Record<string, string>> {
+  const source = configuredSource(env, sourceName);
+  return fetchSourceSecrets(cleanBaseUrl(env.INFISICAL_BASE_URL), envName(env), source, false);
 }
 
 
@@ -223,10 +256,14 @@ async function encryptData(text: string, secretString: string): Promise<string> 
 async function decryptData(encryptedStr: string, secretString: string): Promise<string> {
   const [ivHex, ciphertextHex] = encryptedStr.split(':');
   if (!ivHex || !ciphertextHex) throw new Error('Invalid encrypted format');
+
+  const ivPairs = ivHex.match(/.{1,2}/g);
+  const ciphertextPairs = ciphertextHex.match(/.{1,2}/g);
+  if (!ivPairs || !ciphertextPairs) throw new Error('Invalid encrypted format');
   
   const key = await getCryptoKey(secretString);
-  const iv = new Uint8Array(ivHex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
-  const ciphertext = new Uint8Array(ciphertextHex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
+  const iv = new Uint8Array(ivPairs.map(byte => parseInt(byte, 16)));
+  const ciphertext = new Uint8Array(ciphertextPairs.map(byte => parseInt(byte, 16)));
   
   const decrypted = await crypto.subtle.decrypt(
     { name: 'AES-GCM', iv },
@@ -238,52 +275,7 @@ async function decryptData(encryptedStr: string, secretString: string): Promise<
   return dec.decode(decrypted);
 }
 
-export async function updateSecret(env: Env, sourceName: SourceName, secretKey: string, secretValue: string): Promise<void> {
-  const sources = sourceConfigs(env);
-  const source = sources.find(s => s.name === sourceName);
-  if (!source || !sourceConfigured(source)) {
-    throw new Error(`Source ${sourceName} not configured`);
-  }
-  
-  const baseUrl = cleanBaseUrl(env.INFISICAL_BASE_URL);
-  const infisicalEnv = envName(env);
-  const token = await login(baseUrl, source);
-  
-  const payload = {
-    workspaceId: source.projectId,
-    environment: infisicalEnv,
-    secretPath: source.secretPath || '/',
-    secretValue: secretValue,
-    type: 'shared'
-  };
-
-  let res = await fetch(`${baseUrl}/api/v3/secrets/raw/${secretKey}`, {
-    method: 'PATCH',
-    headers: {
-      'authorization': `Bearer ${token}`,
-      'content-type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
-
-  if (!res.ok) {
-    if (res.status === 404 || res.status === 400) {
-      res = await fetch(`${baseUrl}/api/v3/secrets/raw/${secretKey}`, {
-        method: 'POST',
-        headers: {
-          'authorization': `Bearer ${token}`,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify(payload)
-      });
-    }
-
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({})) as { message?: string };
-      throw new Error(`Failed to update secret ${secretKey}: ${res.status} ${body.message || ''}`);
-    }
-  }
-
+async function invalidateSecretCache(env: Env): Promise<void> {
   const key = cacheKey(env);
   cache.delete(key);
   const kvSecret = kvCacheSecret(env);
@@ -294,6 +286,90 @@ export async function updateSecret(env: Env, sourceName: SourceName, secretKey: 
       console.warn('infisical: failed to clear KV cache', (err as Error).message);
     }
   }
+}
+
+export async function updateSecret(
+  env: Env,
+  sourceName: SourceName,
+  secretKey: string,
+  secretValue: string,
+  options: SecretMutationOptions = {},
+): Promise<void> {
+  const source = configuredSource(env, sourceName);
+  
+  const baseUrl = cleanBaseUrl(env.INFISICAL_BASE_URL);
+  const infisicalEnv = envName(env);
+  const token = await login(baseUrl, source, options.signal);
+  
+  const payload = {
+    workspaceId: source.projectId,
+    environment: infisicalEnv,
+    secretPath: source.secretPath || '/',
+    secretValue: secretValue,
+    type: 'shared'
+  };
+
+  let res = await trackedFetch(`${baseUrl}/api/v3/secrets/raw/${secretKey}`, {
+    method: 'PATCH',
+    headers: {
+      'authorization': `Bearer ${token}`,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify(payload),
+    signal: options.signal,
+  }, { service: 'secret-management', operation: 'update-secret', dynamicTarget: 'infisical' });
+
+  if (!res.ok) {
+    if (res.status === 404 || res.status === 400) {
+      res = await trackedFetch(`${baseUrl}/api/v3/secrets/raw/${secretKey}`, {
+        method: 'POST',
+        headers: {
+          'authorization': `Bearer ${token}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(payload),
+        signal: options.signal,
+      }, { service: 'secret-management', operation: 'create-secret', dynamicTarget: 'infisical' });
+    }
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { message?: string };
+      throw new Error(`Failed to update secret ${secretKey}: ${res.status} ${body.message || ''}`);
+    }
+  }
+
+  await invalidateSecretCache(env);
+}
+
+/** Delete one source-owned override so rollback can restore inherited values. */
+export async function deleteSecret(
+  env: Env,
+  sourceName: SourceName,
+  secretKey: string,
+  options: SecretMutationOptions = {},
+): Promise<void> {
+  const source = configuredSource(env, sourceName);
+  const baseUrl = cleanBaseUrl(env.INFISICAL_BASE_URL);
+  const token = await login(baseUrl, source, options.signal);
+  const res = await trackedFetch(`${baseUrl}/api/v3/secrets/raw/${secretKey}`, {
+    method: 'DELETE',
+    headers: {
+      authorization: `Bearer ${token}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      workspaceId: source.projectId,
+      environment: envName(env),
+      secretPath: source.secretPath || '/',
+      type: 'shared',
+    }),
+    signal: options.signal,
+  }, { service: 'secret-management', operation: 'delete-secret', dynamicTarget: 'infisical' });
+  if (!res.ok && res.status !== 404) {
+    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    throw new Error(`Failed to delete secret ${secretKey}: ${res.status} ${body.message || ''}`.trim());
+  }
+  await invalidateSecretCache(env);
 }
 
 export async function refreshSecrets(env: Env): Promise<SecretResolverStatus> {

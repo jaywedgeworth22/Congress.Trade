@@ -12,7 +12,7 @@
  */
 
 import type { Env } from './shared/types';
-import { getDailyUsed, runEnrichment } from './enrichment/service';
+import { runEnrichment } from './enrichment/service';
 import { runPriceRefresh } from './prices/service';
 import { hasFmpTierFailure } from './shared/fmpStatus';
 import { notifyAdmin } from './alerts/notify';
@@ -20,8 +20,8 @@ import { shareWithPeer, type PeerShareInput } from './share/outbound';
 import { runFreshnessCheck } from './share/freshness';
 import { runPhotoEnrichment, runTickerBackfill } from './admin/routes';
 import { runBulkSnapshot } from './export/snapshot';
-import { createUsageTelemetryClient } from '@jaywedgeworth22/congress-trading-shared';
 import { resolveSecrets } from './secrets/infisical';
+import { recordMeasuredThirdPartyUsage } from './shared/thirdPartyTelemetry';
 // NOTE: runHouseReconciler (./ingestion/houseReconciler) is intentionally not
 // imported here yet -- it is reserved for future scheduled-job wiring. Importing
 // it unused would trip noUnusedLocals (enabled in this PR).
@@ -44,7 +44,6 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   let fmpDailyCap: number | null = null;
   let enrichmentFmpCalls = 0;
   let priceProviderCalls = 0;
-  const fmpUsedBeforeJobs = await getDailyUsed(env);
   const share: PeerShareInput = {};
   // Resolve provider-pacing + usage-monitor telemetry vars together (Infisical-backed,
   // falling back to the wrangler.toml env var whenever a name isn't set in Infisical)
@@ -103,70 +102,26 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     console.warn('peer share error:', (err as Error).message);
   }
 
-  try {
-    const fmpUsedToday = await getDailyUsed(env);
-    if (hadFmpKey || fmpUsedToday > 0) {
-      // Reuses the `secrets` resolved near the top of this function (same
-      // resolveSecrets call as FMP_MAX_PER_MINUTE / EDGAR_MAX_PER_MINUTE) rather
-      // than resolving USAGE_MONITOR_*/PRICE_PROVIDER a second time here.
-      const isEnabled = /^(1|true|yes|on)$/i.test((secrets.USAGE_MONITOR_ENABLED ?? '').trim());
-      if (isEnabled && secrets.USAGE_MONITOR_INGEST_URL && secrets.USAGE_MONITOR_INGEST_TOKEN) {
-        const client = createUsageTelemetryClient({
-          baseUrl: secrets.USAGE_MONITOR_INGEST_URL.trim(),
-          token: secrets.USAGE_MONITOR_INGEST_TOKEN.trim(),
-        });
-        const events: any[] = [
-          {
-            sourceApp: 'congress-trade',
-            environment: secrets.USAGE_MONITOR_ENVIRONMENT || env.INFISICAL_ENV,
-            provider: 'fmp',
-            service: 'market-data',
-            label: 'FMP daily call budget',
-            billingMode: 'actual',
-            metricType: 'usage',
-            quantity: fmpUsedToday,
-            unit: 'call',
-            requests: fmpUsedToday,
-            limit: fmpDailyCap ?? undefined,
-            limitWindow: 'day',
-            confidence: 'actual',
-            project: 'congress-trade',
-            // Required for shared-client idempotency-key derivation (5-field contract).
-            occurredAt: new Date().toISOString(),
-            metadata: {
-              job: 'daily-refresh',
-              fmpCallsThisRun: Math.max(0, fmpUsedToday - fmpUsedBeforeJobs),
-              enrichmentFmpCalls,
-              priceProviderCalls,
-              priceProvider: (secrets.PRICE_PROVIDER || 'fmp').toLowerCase(),
-              errors: errors.length,
-            },
-          },
-        ];
-
-        if (fmpDailyCap != null) {
-          events.push({
-            sourceApp: 'congress-trade',
-            environment: secrets.USAGE_MONITOR_ENVIRONMENT || env.INFISICAL_ENV,
-            provider: 'fmp',
-            service: 'market-data',
-            label: 'FMP daily call budget',
-            billingMode: 'actual',
-            metricType: 'limit',
-            quantity: fmpDailyCap,
-            unit: 'call',
-            limitWindow: 'day',
-            confidence: 'actual',
-            project: 'congress-trade',
-            occurredAt: new Date().toISOString(),
-          });
-        }
-
-        await client.send(events);
-      }
-    }
-  } catch (err) {
-    console.warn('usage telemetry report failed:', (err as Error).message);
+  // Individual FMP attempts are emitted by trackedFetch. Only report the plan
+  // ceiling here; emitting the cumulative daily counter again would double-count
+  // calls in Usage Monitor.
+  if (fmpDailyCap != null) {
+    await recordMeasuredThirdPartyUsage(env, {
+      provider: 'fmp',
+      service: 'market-data',
+      operation: 'daily-call-limit',
+      metricType: 'limit',
+      quantity: fmpDailyCap,
+      unit: 'call',
+      billingMode: 'actual',
+      confidence: 'actual',
+      metadata: {
+        job: 'daily-refresh',
+        fmpCallsThisRun: enrichmentFmpCalls + priceProviderCalls,
+        priceProvider: (secrets.PRICE_PROVIDER || 'fmp').toLowerCase(),
+        errors: errors.length,
+      },
+    });
   }
 
   // Only alert when a key is configured (so we don't email about an intentional
