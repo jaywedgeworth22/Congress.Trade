@@ -208,48 +208,30 @@ async function runOpenAi(
 ): Promise<ProviderResult> {
   const dataUrl = `data:application/pdf;base64,${arrayBufferToBase64(bytes)}`;
   const prompt = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
-  const useResponses = model.startsWith('gpt-5.6');
-  const endpoint = useResponses
-    ? 'https://api.openai.com/v1/responses'
-    : 'https://api.openai.com/v1/chat/completions';
-  const body = useResponses
-    ? {
-        model,
-        service_tier: 'default',
-        reasoning: { effort: 'none' },
-        max_output_tokens: 8_000,
-        input: [
-          {
-            role: 'user',
-            content: [
-              { type: 'input_file', filename: 'ptr.pdf', file_data: dataUrl, detail: 'high' },
-              { type: 'input_text', text: `${prompt}\nReturn ONLY a JSON object {"transactions": [...]} .` },
-            ],
-          },
+  const endpoint = 'https://api.openai.com/v1/responses';
+  const body = {
+    model,
+    service_tier: 'default',
+    reasoning: { effort: 'none' },
+    max_output_tokens: 8_000,
+    input: [
+      {
+        role: 'user',
+        content: [
+          { type: 'input_file', filename: 'ptr.pdf', file_data: dataUrl, detail: 'high' },
+          { type: 'input_text', text: `${prompt}\nReturn ONLY a JSON object {"transactions": [...]} .` },
         ],
-        text: {
-          format: {
-            type: 'json_schema',
-            name: MISTRAL_ANNOTATION_SCHEMA.name,
-            strict: true,
-            schema: MISTRAL_ANNOTATION_SCHEMA.schema,
-          },
-        },
-      }
-    : {
-        model,
-        temperature: 0,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: `${prompt}\nReturn a JSON object {"transactions": [...]} .` },
-              { type: 'file', file: { filename: 'ptr.pdf', file_data: dataUrl } },
-            ],
-          },
-        ],
-      };
+      },
+    ],
+    text: {
+      format: {
+        type: 'json_schema',
+        name: MISTRAL_ANNOTATION_SCHEMA.name,
+        strict: true,
+        schema: MISTRAL_ANNOTATION_SCHEMA.schema,
+      },
+    },
+  };
   const res = await trackedFetch(endpoint, {
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
@@ -280,14 +262,10 @@ async function runOpenAi(
   // Extract usage *before* parsing so it survives parse failures.
   const usageInfo = payload.usage || payload.service_tier
     ? {
-        promptTokens: useResponses ? payload.usage?.input_tokens : payload.usage?.prompt_tokens,
-        completionTokens: useResponses ? payload.usage?.output_tokens : payload.usage?.completion_tokens,
-        cachedTokens: useResponses
-          ? payload.usage?.input_tokens_details?.cached_tokens
-          : payload.usage?.prompt_tokens_details?.cached_tokens,
-        cacheWriteTokens: useResponses
-          ? payload.usage?.input_tokens_details?.cache_write_tokens
-          : payload.usage?.prompt_tokens_details?.cache_write_tokens,
+        promptTokens: payload.usage?.input_tokens,
+        completionTokens: payload.usage?.output_tokens,
+        cachedTokens: payload.usage?.input_tokens_details?.cached_tokens,
+        cacheWriteTokens: payload.usage?.input_tokens_details?.cache_write_tokens,
         serviceTier: payload.service_tier,
       }
     : undefined;
@@ -299,7 +277,7 @@ async function runOpenAi(
     serviceTier: payload.service_tier,
   };
 
-  if (useResponses && payload.status && payload.status !== 'completed') {
+  if (payload.status && payload.status !== 'completed') {
     const detail = payload.incomplete_details?.reason ?? payload.error?.message ?? payload.error?.code;
     throw providerError(
       new Error(`openai: response ${payload.status}${detail ? `: ${detail}` : ''}`),
@@ -307,25 +285,21 @@ async function runOpenAi(
     );
   }
 
-  const refusal = useResponses
-    ? (payload.output ?? [])
-        .flatMap((item) => item.content ?? [])
-        .map((content) => content.refusal?.trim())
-        .find((value): value is string => Boolean(value))
-    : undefined;
+  const refusal = (payload.output ?? [])
+    .flatMap((item) => item.content ?? [])
+    .map((content) => content.refusal?.trim())
+    .find((value): value is string => Boolean(value));
   if (refusal) {
     throw providerError(new Error(`openai: refusal: ${refusal}`), metadata);
   }
 
-  const text = useResponses
-    ? (() => {
-        try {
-          return extractResponsesText(payload, 'openai');
-        } catch {
-          return undefined;
-        }
-      })()
-    : payload.choices?.[0]?.message?.content;
+  const text = (() => {
+    try {
+      return extractResponsesText(payload, 'openai');
+    } catch {
+      return undefined;
+    }
+  })();
   if (!text) {
     throw providerError(new Error('openai: empty completion'), metadata);
   }
@@ -729,11 +703,22 @@ export function parseLlamaParseMarkdown(markdown: string): ParsedTx[] {
     }
   }
 
-  // Fall back to the first valid bare JSON array in the text.
-  const bareMatches = markdown.matchAll(/(\[[\s\S]*?\])/g);
-  for (const match of bareMatches) {
+  // Fall back to the first valid bare JSON array or object in the text.
+  const firstBracket = markdown.indexOf('[');
+  const lastBracket = markdown.lastIndexOf(']');
+  if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
     try {
-      return parseModelJson(match[1]).map(toParsedTx);
+      return parseModelJson(markdown.substring(firstBracket, lastBracket + 1)).map(toParsedTx);
+    } catch (e) {
+      lastErr = e as Error;
+    }
+  }
+
+  const firstBrace = markdown.indexOf('{');
+  const lastBrace = markdown.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      return parseModelJson(markdown.substring(firstBrace, lastBrace + 1)).map(toParsedTx);
     } catch (e) {
       lastErr = e as Error;
     }
@@ -908,7 +893,7 @@ export async function runCandidateOnDoc(
           cached: true,
         };
       }
-    } catch (err) {
+    } catch (_err) {
       // Ignore cache parse error and run the model normally
       console.warn('Failed to parse cached extraction run JSON for', provider, model, docId);
     }

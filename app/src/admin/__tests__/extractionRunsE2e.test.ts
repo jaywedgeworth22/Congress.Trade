@@ -200,11 +200,11 @@ describe('extraction_runs E2E: openai token usage capture', () => {
           return {
             ok: true,
             json: async () => ({
-              choices: [{ message: { content: '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}' } }],
+              output_text: '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}',
               usage: {
-                prompt_tokens: 1200,
-                completion_tokens: 80,
-                prompt_tokens_details: { cached_tokens: 300 },
+                input_tokens: 1200,
+                output_tokens: 80,
+                input_tokens_details: { cached_tokens: 300 },
               },
             }),
           } as unknown as Response;
@@ -254,7 +254,7 @@ describe('extraction_runs E2E: openai token usage capture', () => {
           return {
             ok: true,
             json: async () => ({
-              choices: [{ message: { content: '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}' } }],
+              output_text: '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}',
               // no `usage` field — older models / some error paths omit it.
             }),
           } as unknown as Response;

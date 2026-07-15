@@ -34,12 +34,11 @@ function todayKey(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-/** Stub openai (A) / anthropic (B) so a tier-1 pair reads unanimously. */
 function stubUnanimous(payload: string) {
   const calls: string[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     const u = String(url);
-    if (u.includes('api.openai.com')) { calls.push('openai'); return { ok: true, json: async () => ({ choices: [{ message: { content: payload } }] }) } as unknown as Response; }
+    if (u.includes('api.openai.com')) { calls.push('openai'); return { ok: true, json: async () => ({ output_text: payload }) } as unknown as Response; }
     if (u.includes('api.anthropic.com')) { calls.push('anthropic'); return { ok: true, json: async () => ({ content: [{ type: 'text', text: payload }] }) } as unknown as Response; }
     return { ok: false, status: 404, text: async () => 'nope' } as unknown as Response;
   }));

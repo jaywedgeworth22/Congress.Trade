@@ -72,7 +72,7 @@ function makeEnv() {
 function stubBoth(openaiText: string, anthropicText: string) {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (String(url).includes('api.openai.com')) {
-      return { ok: true, json: async () => ({ choices: [{ message: { content: openaiText } }] }) } as unknown as Response;
+      return { ok: true, json: async () => ({ output_text: openaiText }) } as unknown as Response;
     }
     if (String(url).includes('api.anthropic.com')) {
       return { ok: true, json: async () => ({ content: [{ type: 'text', text: anthropicText }] }) } as unknown as Response;

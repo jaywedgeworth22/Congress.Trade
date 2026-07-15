@@ -231,8 +231,8 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
         ({
           ok: true,
           json: async () => ({
-            choices: [{ message: { content: okContent } }],
-            usage: { prompt_tokens: 500, completion_tokens: 40, prompt_tokens_details: { cached_tokens: 100 } },
+            output_text: okContent,
+            usage: { input_tokens: 500, output_tokens: 40, input_tokens_details: { cached_tokens: 100 } },
           }),
         }) as unknown as Response,
       ),
@@ -249,7 +249,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       vi.fn(async () =>
         ({
           ok: true,
-          json: async () => ({ choices: [{ message: { content: okContent } }] }),
+          json: async () => ({ output_text: okContent }),
         }) as unknown as Response,
       ),
     );

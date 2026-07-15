@@ -23,6 +23,30 @@ import { PDFDocument } from 'pdf-lib';
 import { resolveSecret } from '../secrets/infisical';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
+class RateLimiter {
+  private queue: number[] = [];
+  
+  async wait(rpmLimitStr: string | undefined) {
+    if (!rpmLimitStr) return;
+    const rpm = parseInt(rpmLimitStr, 10);
+    if (isNaN(rpm) || rpm <= 0) return;
+    
+    const now = Date.now();
+    this.queue = this.queue.filter(t => now - t < 60000);
+    
+    if (this.queue.length >= rpm) {
+      const oldest = this.queue[0];
+      const waitTime = 60000 - (now - oldest);
+      if (waitTime > 0) {
+        await new Promise(r => setTimeout(r, waitTime));
+      }
+    }
+    this.queue.push(Date.now());
+  }
+}
+
+const geminiRateLimiter = new RateLimiter();
+
 /**
  * Gemini model id. Centralized + documented so it is trivial to bump.
  * NOTE: Flash model ids rotate; if calls start 404-ing, update this to the
@@ -93,8 +117,10 @@ export class VisionLlmExtractor implements Extractor {
   }
 
     async extract(input: ExtractorInput): Promise<ExtractorResult> {
-    const key = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
-    if (!key) throw new Error(`${this.name}: API key is not configured`);
+    const keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
+    if (!keyString) throw new Error(`${this.name}: API key is not configured`);
+    const keys = keyString.split(',').map(k => k.trim()).filter(Boolean);
+    if (!keys.length) throw new Error(`${this.name}: API key is empty or invalid`);
     if (!input.bytes) throw new Error(`${this.name}: no bytes provided on ExtractorInput`);
 
     const model = await this.resolveModel();
@@ -134,21 +160,40 @@ export class VisionLlmExtractor implements Extractor {
         const chunkBytes = chunks[i];
         const body = buildRequestBody(chunkBytes, input.filing.chamber);
 
-        const res = await fetchWithRetry(
-          ENDPOINT(model, key),
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body),
-            signal: AbortSignal.timeout(120_000), // Slightly longer timeout for large chunks
-          },
-          this.name,
-          { model },
-        );
+        let res: Response | null = null;
+        let lastError: Error | null = null;
 
-        if (!res.ok) {
-          const detail = await safeText(res);
-          throw new Error(`${this.name}: Gemini API ${res.status} ${res.statusText} ${detail}`);
+        for (const k of keys) {
+          try {
+            await geminiRateLimiter.wait(this.env.GEMINI_RPM_LIMIT);
+            res = await fetchWithRetry(
+              ENDPOINT(model, k),
+              {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(body),
+                signal: AbortSignal.timeout(120_000), // Slightly longer timeout for large chunks
+              },
+              this.name,
+              { model, maxAttempts: 2 }, // Reduce internal retries so it falls back to next key sooner
+            );
+
+            if (!res.ok) {
+              const detail = await safeText(res);
+              throw new Error(`${this.name}: Gemini API ${res.status} ${res.statusText} ${detail}`);
+            }
+            // Success, break out of key loop
+            lastError = null;
+            break;
+          } catch (e) {
+            lastError = e as Error;
+            // Retry next key on error
+            continue;
+          }
+        }
+
+        if (!res || !res.ok) {
+          throw lastError || new Error(`${this.name}: all keys failed`);
         }
 
         const payload = (await res.json()) as GeminiResponse;
@@ -423,12 +468,12 @@ export function parseModelJson(text: string): ModelTx[] {
     let fallbackSuccess = false;
     
     // Look for JSON array
-    const arrayMatches = cleaned.matchAll(/(\[[\s\S]*?\])/g);
-    for (const match of arrayMatches) {
+    const firstBracket = cleaned.indexOf('[');
+    const lastBracket = cleaned.lastIndexOf(']');
+    if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
       try {
-        value = JSON.parse(match[1]);
+        value = JSON.parse(cleaned.substring(firstBracket, lastBracket + 1));
         fallbackSuccess = true;
-        break; // Stop at first successful parse
       } catch {
         // continue
       }
@@ -436,12 +481,12 @@ export function parseModelJson(text: string): ModelTx[] {
     
     // Look for JSON object (if array not found)
     if (!fallbackSuccess) {
-      const objMatches = cleaned.matchAll(/(\{[\s\S]*?\})/g);
-      for (const match of objMatches) {
+      const firstBrace = cleaned.indexOf('{');
+      const lastBrace = cleaned.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
         try {
-          value = JSON.parse(match[1]);
+          value = JSON.parse(cleaned.substring(firstBrace, lastBrace + 1));
           fallbackSuccess = true;
-          break; // Stop at first successful parse
         } catch {
           // continue
         }

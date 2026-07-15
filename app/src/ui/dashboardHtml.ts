@@ -1401,7 +1401,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="branch-seg">
           <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House trades — House Clerk PTR filings">H</button>
           <button type="button" class="branch-toggle on" data-ch="senate" aria-pressed="true" title="Senate trades — Senate eFD PTR filings">S</button>
-          <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
+          <button type="button" class="branch-toggle on" data-ch="executive" aria-pressed="true" title="Executive Branch trades — OGE Form 278-T">P</button>
         </div>
         <button type="button" class="branch-info" aria-expanded="false" aria-controls="trChamberInfo" aria-label="About the H, S and P branch filters">&#9432;</button>
         <div class="branch-pop" id="trChamberInfo" role="note" hidden>
@@ -1412,9 +1412,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </div>
       <div class="party-chips" id="trPartyGroup" style="position:relative;">
-        <button type="button" class="party-chip" data-party="D" title="Democrat">🫏</button>
-        <button type="button" class="party-chip" data-party="R" title="Republican">🐘</button>
-        <button type="button" class="party-chip" data-party="O" title="Other">🦅</button>
+        <button type="button" class="party-chip on" data-party="D" title="Democrat">🫏</button>
+        <button type="button" class="party-chip on" data-party="R" title="Republican">🐘</button>
+        <button type="button" class="party-chip on" data-party="O" title="Other">🦅</button>
         <button type="button" class="branch-info" aria-expanded="false" aria-controls="trPartyInfo" aria-label="About the party filters">&#9432;</button>
         <div class="branch-pop" id="trPartyInfo" role="note" hidden style="min-width:200px;">
           <div class="branch-pop-row"><b>🫏</b><span>Democrat</span></div>
