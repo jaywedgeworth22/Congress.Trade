@@ -208,7 +208,16 @@ describe('extractProviderReportedPageCount', () => {
 });
 
 describe('runCandidateOnDoc (openai): token usage capture', () => {
-  const env = { OPENAI_API_KEY: 'sk-openai-test' } as unknown as Env;
+  const env = { 
+    OPENAI_API_KEY: 'sk-openai-test',
+    DB: {
+      prepare: vi.fn(() => ({
+        bind: vi.fn(() => ({
+          first: vi.fn(async () => undefined),
+        })),
+      })),
+    } 
+  } as unknown as Env;
   const candidate: BakeoffCandidate = { provider: 'openai', model: 'gpt-4o' };
   const bytes = new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
   const okContent = '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}';

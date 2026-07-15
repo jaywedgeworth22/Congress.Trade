@@ -507,7 +507,9 @@ async function readAndPersist(
   const reads: CandidateDocResult[] = [];
   for (const [index, m] of models.entries()) {
     const r = await runCandidateOnDoc(env, m, docId, bytes, invocations?.[index]);
-    await persistExtractionRun(env, r, 'agreement', runBatchId);
+    if (!r.cached) {
+      await persistExtractionRun(env, r, 'agreement', runBatchId);
+    }
     reads.push(r);
   }
   return reads;
