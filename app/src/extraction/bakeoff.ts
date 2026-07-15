@@ -895,23 +895,30 @@ export async function runCandidateOnDoc(
   }
 
   // Check cache for a prior successful run to avoid re-billing determininstic models.
-  const cachedRunResult = await env.DB?.prepare(
-    `SELECT result_json FROM extraction_runs WHERE doc_id = ? AND provider = ? AND model = ? AND ok = 1 ORDER BY created_at DESC LIMIT 1`
-  ).bind(docId, provider, model).first<{ result_json: string }>();
+  // Fail-soft: extraction_runs may not exist before /api/admin/migrate.
+  try {
+    const cachedRunResult = await env.DB?.prepare(
+      `SELECT result_json FROM extraction_runs WHERE doc_id = ? AND provider = ? AND model = ? AND ok = 1 ORDER BY created_at DESC LIMIT 1`
+    ).bind(docId, provider, model).first<{ result_json: string }>();
 
-  if (cachedRunResult && cachedRunResult.result_json) {
-    try {
-      const parsed = JSON.parse(cachedRunResult.result_json) as CandidateDocResult;
-      if (parsed && Array.isArray(parsed.rows)) {
+    if (cachedRunResult && cachedRunResult.result_json) {
+      const parsed = JSON.parse(cachedRunResult.result_json);
+      // result_json stores JSON.stringify(result.rows) — a flat array of ParsedTx.
+      if (Array.isArray(parsed)) {
         return {
-          ...parsed,
+          provider, model, docId,
+          ok: true,
+          latencyMs: 0,
+          rowCount: parsed.length,
+          rowKeys: parsed.map((r: ParsedTx) => arbitrationRowKey(r)).filter(Boolean),
+          avgConfidence: meanConfidence(parsed),
+          rows: parsed,
           cached: true,
         };
       }
-    } catch (err) {
-      // Ignore cache parse error and run the model normally
-      console.warn('Failed to parse cached extraction run JSON for', provider, model, docId);
     }
+  } catch {
+    // Table may not exist yet (pre-migration) — fall through to run the model.
   }
 
   const started = Date.now();
