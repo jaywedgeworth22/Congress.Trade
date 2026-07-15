@@ -76,6 +76,7 @@ import { getCurrentUser } from '../auth/session';
 import {
   DEFAULT_CANDIDATES,
   EXTRACTION_SCHEMA_VERSION,
+  isRetiredDisclosureCandidate,
   keyFor,
   runCandidateOnDoc,
   summarizeModels,
@@ -4024,7 +4025,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         if (!valid.includes(o.provider as Provider) || typeof o.model !== 'string') {
           return c.json({ error: 'each model must be {provider:gemini|openai|anthropic|mistral|xai|llamaparse, model:string}' }, 400);
         }
-        parsed.push({ provider: o.provider as Provider, model: o.model });
+        const candidate = { provider: o.provider as Provider, model: o.model };
+        if (isRetiredDisclosureCandidate(candidate)) {
+          return c.json({ error: 'GPT-4o is retired for new disclosure extraction; use gpt-5.6-terra, gpt-5.6-luna, or gpt-5.6-sol' }, 400);
+        }
+        parsed.push(candidate);
       }
       if (parsed.length === 0) return c.json({ error: 'models must be a non-empty array' }, 400);
       candidates = parsed;
@@ -4134,6 +4139,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       for (const [candidateIndex, candidate] of candidates.entries()) {
         const res = await runCandidateOnDoc(c.env, candidate, doc_id, bytes, {
           apiKey: candidateInvocationKeys[candidateIndex] ?? null,
+          skipCache: true,
         });
         results.push(res);
         await pushExtractionTelemetry(c.env, res, 'bakeoff');
@@ -4206,9 +4212,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       typeof body.model === 'string' && body.model
         ? body.model
         : provider === 'anthropic' ? 'claude-haiku-4-5'
-        : provider === 'openai' ? 'gpt-4o'
+        : provider === 'openai' ? 'gpt-5.6-terra'
         : provider === 'xai' ? 'grok-4.3'
         : 'mistral-ocr-latest';
+    if (isRetiredDisclosureCandidate({ provider, model })) {
+      return c.json({ error: 'GPT-4o is retired for new disclosure extraction; use gpt-5.6-terra, gpt-5.6-luna, or gpt-5.6-sol' }, 400);
+    }
 
     let n = typeof body.n === 'number' && body.n > 0 ? Math.floor(body.n) : 50;
     if (n > 200) n = 200;
@@ -5219,6 +5228,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const [mA, mB] = models as BakeoffCandidate[];
     const mC = body.requireThird ? parseModel(body.requireThird) : null;
     if (body.requireThird && !mC) return c.json({ error: 'requireThird must be {provider,model}' }, 400);
+    if ([mA, mB, mC].some((model) => model && isRetiredDisclosureCandidate(model))) {
+      return c.json({ error: 'GPT-4o is retired for new disclosure extraction; use gpt-5.6-terra, gpt-5.6-luna, or gpt-5.6-sol' }, 400);
+    }
     const dryRun = body.dryRun !== false; // default true — preview unless explicitly false
 
     let n = typeof body.n === 'number' && body.n > 0 ? Math.floor(body.n) : 25;
@@ -6343,6 +6355,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const startedAt = new Date().toISOString();
     const read = await runCandidateOnDoc(c.env, candidate, docId, loaded.bytes, {
       apiKey: invocationKey,
+      skipCache: true,
     });
     const completedAt = new Date().toISOString();
     const cost = priceBenchmarkUsage({

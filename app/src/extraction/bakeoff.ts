@@ -49,13 +49,16 @@ export interface BakeoffCandidate {
  */
 export interface CandidateInvocation {
   apiKey: string | null;
+  /** Skip prior successful extraction rows when current latency/usage/cost
+   *  measurements require a real provider invocation. */
+  skipCache?: boolean;
 }
 
 /**
  * Provider-neutral default lineup (overridable per request). Five companies:
- * Google, OpenAI, Anthropic, Mistral, xAI. `gpt-4o-mini` is intentionally
- * absent — a live bake-off showed it rejects PDF document input outright
- * (instant 4xx).
+ * Google, OpenAI, Anthropic, Mistral, xAI. The GPT-4o family is intentionally
+ * absent from new disclosure extraction: GPT-5.6 Terra is the routine default,
+ * Luna is the lower-cost first pass, and Sol is the difficult-scan adjudicator.
  *
  * Each provider takes a PDF via its own native path: Gemini/OpenAI/Anthropic as
  * an inline base64 part, Mistral via `/v1/ocr`, and xAI via the Files API
@@ -68,13 +71,30 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'openai', model: 'gpt-5.6-terra' },
   { provider: 'openai', model: 'gpt-5.6-luna' },
   { provider: 'openai', model: 'gpt-5.6-sol' },
-  // Retained as a legacy benchmark baseline while GPT-5.6 earns production use.
-  { provider: 'openai', model: 'gpt-4o' },
   { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   { provider: 'anthropic', model: 'claude-haiku-4-5' },
   { provider: 'mistral', model: 'mistral-ocr-latest' },
   { provider: 'xai', model: 'grok-4.3' },
 ];
+
+/** GPT-4o is retained only for decoding/replaying historical extraction runs. */
+export function isRetiredDisclosureCandidate(candidate: Pick<BakeoffCandidate, 'provider' | 'model'>): boolean {
+  return candidate.provider === 'openai' && /^(?:gpt|chatgpt)-4o(?:-|$)/i.test(candidate.model.trim());
+}
+
+/** Upgrade stale agreement configuration without rewriting historical run records. */
+export function upgradeRetiredDisclosureCandidate(candidate: BakeoffCandidate): BakeoffCandidate {
+  return isRetiredDisclosureCandidate(candidate)
+    ? { provider: 'openai', model: 'gpt-5.6-terra' }
+    : candidate;
+}
+
+/** Production reasoning profile for the three GPT-5.6 scanned-document roles. */
+export function openAiDisclosureReasoningEffort(model: string): 'low' | 'medium' | 'high' {
+  if (model.startsWith('gpt-5.6-sol')) return 'high';
+  if (model.startsWith('gpt-5.6-luna')) return 'low';
+  return 'medium';
+}
 
 /** One model's run over one document. */
 export interface CandidateDocResult {
@@ -202,9 +222,10 @@ export function extractResponsesText(payload: unknown, provider = 'responses'): 
 }
 
 /**
- * OpenAI PDF vision call. GPT-5.6 uses Responses with explicit high-detail page
- * images (important for handwriting and small print); GPT-4o remains on the
- * legacy Chat Completions path so historical comparisons stay reproducible.
+ * OpenAI PDF vision call. GPT-5.6 uses Responses with original-detail page
+ * images (important for handwriting and small print). A legacy Chat Completions
+ * shape remains for non-retired compatibility models; GPT-4o is rejected before
+ * this adapter can make a provider request.
  */
 async function runOpenAi(
   model: string,
@@ -222,13 +243,13 @@ async function runOpenAi(
     ? {
         model,
         service_tier: 'default',
-        reasoning: { effort: 'none' },
+        reasoning: { effort: openAiDisclosureReasoningEffort(model) },
         max_output_tokens: 8_000,
         input: [
           {
             role: 'user',
             content: [
-              { type: 'input_file', filename: 'ptr.pdf', file_data: dataUrl, detail: 'high' },
+              { type: 'input_file', filename: 'ptr.pdf', file_data: dataUrl, detail: 'original' },
               { type: 'input_text', text: `${prompt}\nReturn ONLY a JSON object {"transactions": [...]} .` },
             ],
           },
@@ -241,6 +262,7 @@ async function runOpenAi(
             schema: MISTRAL_ANNOTATION_SCHEMA.schema,
           },
         },
+        store: false,
       }
     : {
         model,
@@ -895,6 +917,18 @@ export async function runCandidateOnDoc(
 ): Promise<CandidateDocResult> {
   const { provider, model } = candidate;
   const base = { provider, model, docId };
+  if (isRetiredDisclosureCandidate(candidate)) {
+    return {
+      ...base,
+      ok: false,
+      error: 'GPT-4o is retired for new disclosure extraction',
+      latencyMs: 0,
+      rowCount: 0,
+      rowKeys: [],
+      avgConfidence: 0,
+      rows: [],
+    };
+  }
   const key = invocation ? invocation.apiKey : await keyFor(env, provider);
   if (!key) {
     const error = `${provider} API key not configured`;
@@ -911,23 +945,33 @@ export async function runCandidateOnDoc(
     };
   }
 
-  // Check cache for a prior successful run to avoid re-billing determininstic models.
-  const cachedRunResult = await env.DB?.prepare(
-    `SELECT result_json FROM extraction_runs WHERE doc_id = ? AND provider = ? AND model = ? AND ok = 1 ORDER BY created_at DESC LIMIT 1`
-  ).bind(docId, provider, model).first<{ result_json: string }>();
-
-  if (cachedRunResult && cachedRunResult.result_json) {
+  // Reuse prior rows for ordinary repeat reads, but never for benchmark paths
+  // that need fresh provider latency/usage/cost measurements.
+  if (!invocation?.skipCache) {
     try {
-      const parsed = JSON.parse(cachedRunResult.result_json) as CandidateDocResult;
-      if (parsed && Array.isArray(parsed.rows)) {
-        return {
-          ...parsed,
-          cached: true,
-        };
+      const cachedRunResult = await env.DB?.prepare(
+        `SELECT result_json FROM extraction_runs WHERE doc_id = ? AND provider = ? AND model = ? AND ok = 1 ORDER BY created_at DESC LIMIT 1`
+      ).bind(docId, provider, model).first<{ result_json: string }>();
+
+      if (cachedRunResult?.result_json) {
+        const parsed = JSON.parse(cachedRunResult.result_json) as ParsedTx[];
+        // result_json stores JSON.stringify(result.rows), not CandidateDocResult.
+        if (Array.isArray(parsed)) {
+          return {
+            ...base,
+            ok: true,
+            latencyMs: 0,
+            rowCount: parsed.length,
+            rowKeys: parsed.map(arbitrationRowKey),
+            avgConfidence: meanConfidence(parsed),
+            rows: parsed,
+            cached: true,
+          };
+        }
       }
     } catch {
-      // Ignore cache parse error and run the model normally
-      console.warn('Failed to parse cached extraction run JSON for', provider, model, docId);
+      // extraction_runs may not exist before migration, or an old row may be
+      // malformed. Either case falls through to the provider call.
     }
   }
 

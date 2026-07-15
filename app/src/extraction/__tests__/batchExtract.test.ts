@@ -213,6 +213,62 @@ describe('decodeOpenAiLine', () => {
     expect(r.usage).toEqual({ promptTokens: 400, completionTokens: 80, cachedTokens: 110 });
   });
 
+  it('decodes a Responses batch output line into rows and usage', () => {
+    const line = {
+      custom_id: 'H-responses',
+      response: { status_code: 200, body: {
+        model: 'gpt-5.6-terra',
+        output_text: '{"transactions":[{"ticker":"MSFT","assetName":"Microsoft","txType":"S","amountRange":"$1,001 - $15,000"}]}',
+        usage: { input_tokens: 500, output_tokens: 90, input_tokens_details: { cached_tokens: 120 } },
+      } },
+    };
+    const r = decodeOpenAiLine(line);
+    expect(r).toMatchObject({
+      docId: 'H-responses',
+      ok: true,
+      resolvedModel: 'gpt-5.6-terra',
+      usage: { promptTokens: 500, completionTokens: 90, cachedTokens: 120 },
+    });
+    expect(r.rows[0]).toMatchObject({ ticker: 'MSFT', txType: 'S' });
+  });
+
+  it('rejects incomplete Responses output even when it contains parseable text', () => {
+    const r = decodeOpenAiLine({
+      custom_id: 'H-incomplete',
+      response: { status_code: 200, body: {
+        model: 'gpt-5.6-terra',
+        status: 'incomplete',
+        incomplete_details: { reason: 'max_output_tokens' },
+        output_text: '{"transactions":[]}',
+        usage: { input_tokens: 500, output_tokens: 8_000 },
+      } },
+    });
+    expect(r).toMatchObject({
+      docId: 'H-incomplete',
+      ok: false,
+      error: 'response incomplete: max_output_tokens',
+      usage: { promptTokens: 500, completionTokens: 8_000 },
+    });
+  });
+
+  it('rejects a Responses refusal while retaining usage', () => {
+    const r = decodeOpenAiLine({
+      custom_id: 'H-refusal',
+      response: { status_code: 200, body: {
+        model: 'gpt-5.6-sol',
+        status: 'completed',
+        output: [{ content: [{ refusal: 'Unable to process this document.' }] }],
+        usage: { input_tokens: 700, output_tokens: 12 },
+      } },
+    });
+    expect(r).toMatchObject({
+      docId: 'H-refusal',
+      ok: false,
+      error: 'refusal: Unable to process this document.',
+      usage: { promptTokens: 700, completionTokens: 12 },
+    });
+  });
+
   it('marks a line with an error object as not ok', () => {
     const r = decodeOpenAiLine({ custom_id: 'H-4', error: { message: 'bad request' } });
     expect(r.ok).toBe(false);
@@ -255,6 +311,59 @@ describe('decodeOpenAiLine', () => {
     expect(r.error).toContain('HTTP 429');
     expect(r.error).toContain('rate_limit_exceeded');
     expect(r.error?.length).toBeLessThanOrEqual(300);
+  });
+});
+
+describe('submitBatch OpenAI GPT-5.6', () => {
+  it('blocks low-level GPT-4o batch submission before calling a provider', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const bytes = new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
+    await expect(submitBatch(
+      { OPENAI_API_KEY: 'must-not-use' } as unknown as Env,
+      'openai',
+      'gpt-4o-2024-11-20',
+      [{ docId: 'H-retired', chamber: 'house', bytes }],
+    )).rejects.toThrow('GPT-4o is retired');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('submits uploaded PDFs through Responses with Terra production settings', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({
+      id: fetchMock.mock.calls.length === 3 ? 'batch-terra' : `file-${fetchMock.mock.calls.length}`,
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const bytes = new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
+
+    await expect(submitBatch(
+      { OPENAI_API_KEY: 'test-key' } as unknown as Env,
+      'openai',
+      'gpt-5.6-terra',
+      [{ docId: 'H-terra', chamber: 'house', bytes }],
+    )).resolves.toBe('batch-terra');
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const jsonlForm = fetchMock.mock.calls[1]?.[1]?.body as FormData;
+    const jsonlFile = jsonlForm.get('file') as Blob;
+    const request = JSON.parse(await jsonlFile.text());
+    expect(request).toMatchObject({
+      custom_id: 'H-terra',
+      url: '/v1/responses',
+      body: {
+        model: 'gpt-5.6-terra',
+        reasoning: { effort: 'medium' },
+        store: false,
+        text: { format: { type: 'json_schema', strict: true } },
+      },
+    });
+    expect(request.body.input[0].content[0]).toEqual({
+      type: 'input_file',
+      file_id: 'file-1',
+      detail: 'original',
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
+      endpoint: '/v1/responses',
+    });
   });
 });
 

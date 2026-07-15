@@ -98,7 +98,7 @@ function stubProviders(openaiText: string, anthropicText: string, mistralText?: 
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     const u = String(url);
     if (u.includes('api.openai.com')) {
-      return { ok: true, json: async () => ({ choices: [{ message: { content: openaiText } }] }) } as unknown as Response;
+      return { ok: true, json: async () => ({ output_text: openaiText, choices: [{ message: { content: openaiText } }] }) } as unknown as Response;
     }
     if (u.includes('api.anthropic.com')) {
       return { ok: true, json: async () => ({ content: [{ type: 'text', text: anthropicText }] }) } as unknown as Response;
@@ -111,7 +111,7 @@ function stubProviders(openaiText: string, anthropicText: string, mistralText?: 
 }
 
 const MODELS: AgreementModels = {
-  a: { provider: 'openai', model: 'gpt-4o' },
+  a: { provider: 'openai', model: 'gpt-5.6-terra' },
   b: { provider: 'anthropic', model: 'claude-haiku-4-5' },
 };
 
@@ -128,7 +128,7 @@ describe('processAgreementDoc extraction_runs persistence', () => {
     expect(extractionRuns.every((r) => r.kind === 'agreement')).toBe(true);
     expect(extractionRuns.every((r) => r.doc_id === 'H-1')).toBe(true);
     const byProvider = Object.fromEntries(extractionRuns.map((r) => [r.provider, r]));
-    expect(byProvider.openai).toMatchObject({ model: 'gpt-4o', ok: 1, row_count: 1 });
+    expect(byProvider.openai).toMatchObject({ model: 'gpt-5.6-terra', ok: 1, row_count: 1 });
     expect(byProvider.anthropic).toMatchObject({ model: 'claude-haiku-4-5', ok: 1, row_count: 1 });
     // Same batch id groups the two reads from one processAgreementDoc call.
     expect(extractionRuns[0].batch_id).toBe(extractionRuns[1].batch_id);
@@ -246,7 +246,7 @@ describe('processAgreementDoc extraction_runs persistence', () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     const sameProvider: AgreementModels = {
-      a: { provider: 'openai', model: 'gpt-4o' },
+      a: { provider: 'openai', model: 'gpt-5.6-terra' },
       b: { provider: 'openai', model: 'gpt-4.1' },
     };
     const res = await processAgreementDoc(makeEnv().env, sameProvider, 'H-10', 'raw/H-10', false);

@@ -53,6 +53,7 @@ import { all, batch, fromBool, get, run } from '../shared/db';
 import {
   runCandidateOnDoc,
   persistExtractionRun,
+  upgradeRetiredDisclosureCandidate,
   type BakeoffCandidate,
   type CandidateDocResult,
   type CandidateInvocation,
@@ -987,7 +988,9 @@ function parseCandidate(s: string | undefined, fallback: BakeoffCandidate): Bake
   const [provider, ...rest] = s.split(':');
   const model = rest.join(':');
   const valid = ['gemini', 'openai', 'anthropic', 'mistral', 'xai', 'llamaparse'];
-  return valid.includes(provider) && model ? ({ provider, model } as BakeoffCandidate) : fallback;
+  return valid.includes(provider) && model
+    ? upgradeRetiredDisclosureCandidate({ provider, model } as BakeoffCandidate)
+    : fallback;
 }
 
 export interface AgreementEnv {
@@ -1053,7 +1056,7 @@ function resolveModels(e: AgreementEnv, chamber: string): AgreementModels {
   }
   return {
     a: parseCandidate(modelA, { provider: 'mistral', model: 'mistral-ocr-latest' }),
-    b: parseCandidate(modelB, { provider: 'gemini', model: 'gemini-3.5-flash' }),
+    b: parseCandidate(modelB, { provider: 'openai', model: 'gpt-5.6-terra' }),
   };
 }
 

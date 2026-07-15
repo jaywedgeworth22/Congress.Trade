@@ -9,8 +9,9 @@
  * Four providers, chosen for Worker-friendliness + PDF support in batch:
  *   - anthropic: Message Batches — inline request array, native base64 `document`
  *     block, no file pre-upload. The cleanest fit; typically <1h.
- *   - openai:    /v1/batches — requires a JSONL file upload first; each line is a
- *     /v1/chat/completions body with a base64 `file` part.
+ *   - openai:    /v1/batches — requires a JSONL file upload first; GPT-5.6 lines
+ *     use `/v1/responses` with uploaded PDF ids and structured output. The old
+ *     Chat Completions shape remains readable for historical GPT-4o jobs.
  *   - mistral:   /v1/batch/jobs over /v1/ocr — JSONL upload; cheapest per page.
  *   - xAI:       /v1/batches — uploaded PDF file ids referenced by Responses
  *     requests, with exact provider spend and attachment-search usage retained.
@@ -28,7 +29,14 @@ import {
   toParsedTx,
   arrayBufferToBase64,
 } from './visionLlm';
-import { MISTRAL_ANNOTATION_SCHEMA, parseMistralOcrResponse, extractXaiResponseText } from './bakeoff';
+import {
+  MISTRAL_ANNOTATION_SCHEMA,
+  extractResponsesText,
+  extractXaiResponseText,
+  isRetiredDisclosureCandidate,
+  openAiDisclosureReasoningEffort,
+  parseMistralOcrResponse,
+} from './bakeoff';
 import { resolveSecret } from '../secrets/infisical';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
@@ -430,28 +438,53 @@ async function pollAnthropic(env: Env, batchId: string): Promise<BatchPoll> {
 }
 
 // ---------------------------------------------------------------------------
-// OpenAI /v1/batches — upload a JSONL of /v1/chat/completions requests first.
+// OpenAI /v1/batches — upload one PDF per request, then a JSONL request file.
 // ---------------------------------------------------------------------------
 
 // OpenAI Batch does NOT accept inline base64 in a JSONL line — each PDF must be
 // uploaded to the Files API first and referenced by file_id (inline base64 is
-// sync-only). So a line carries a `{type:'file', file:{file_id}}` content part.
+// sync-only). Responses lines use `input_file.file_id`; the legacy Chat
+// Completions shape uses `{type:'file', file:{file_id}}`.
 function openaiLine(doc: BatchDoc, fileId: string, model: string): string {
+  const useResponses = model.startsWith('gpt-5.6');
   return JSON.stringify({
     custom_id: doc.docId,
     method: 'POST',
-    url: '/v1/chat/completions',
-    body: {
-      model,
-      temperature: 0,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'user', content: [
-          { type: 'text', text: batchPrompt(doc.chamber, 'object') },
-          { type: 'file', file: { file_id: fileId } },
-        ] },
-      ],
-    },
+    url: useResponses ? '/v1/responses' : '/v1/chat/completions',
+    body: useResponses
+      ? {
+          model,
+          service_tier: 'default',
+          reasoning: { effort: openAiDisclosureReasoningEffort(model) },
+          max_output_tokens: 8_000,
+          input: [{
+            role: 'user',
+            content: [
+              { type: 'input_file', file_id: fileId, detail: 'original' },
+              { type: 'input_text', text: batchPrompt(doc.chamber, 'object') },
+            ],
+          }],
+          text: {
+            format: {
+              type: 'json_schema',
+              name: MISTRAL_ANNOTATION_SCHEMA.name,
+              strict: true,
+              schema: MISTRAL_ANNOTATION_SCHEMA.schema,
+            },
+          },
+          store: false,
+        }
+      : {
+          model,
+          temperature: 0,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'user', content: [
+              { type: 'text', text: batchPrompt(doc.chamber, 'object') },
+              { type: 'file', file: { file_id: fileId } },
+            ] },
+          ],
+        },
   });
 }
 
@@ -472,6 +505,7 @@ async function uploadJsonl(url: string, key: string, jsonl: string, extra: Recor
 
 async function submitOpenAi(env: Env, model: string, docs: BatchDoc[]): Promise<string> {
   const key = await keyFor(env, 'openai');
+  const endpoint = model.startsWith('gpt-5.6') ? '/v1/responses' : '/v1/chat/completions';
   // 1) upload each PDF to the Files API (purpose=user_data) → file_id.
   const lines: string[] = [];
   for (const d of docs) {
@@ -483,7 +517,7 @@ async function submitOpenAi(env: Env, model: string, docs: BatchDoc[]): Promise<
   const res = await trackedFetch('https://api.openai.com/v1/batches', {
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ input_file_id: fileId, endpoint: '/v1/chat/completions', completion_window: '24h' }),
+    body: JSON.stringify({ input_file_id: fileId, endpoint, completion_window: '24h' }),
   }, { service: 'llm-batch', operation: 'create-batch', model });
   if (!res.ok) throw new Error(`openai batch create ${res.status} ${await safeText(res)}`);
   const j = (await res.json()) as { id?: string };
@@ -499,9 +533,16 @@ export function decodeOpenAiLine(line: unknown): BatchDocResult {
       status_code?: number;
       body?: {
         model?: string;
+        status?: unknown;
+        incomplete_details?: { reason?: unknown } | null;
         error?: unknown;
         choices?: Array<{ message?: { content?: string } }>;
+        output_text?: unknown;
+        output?: Array<{ content?: Array<{ text?: string; refusal?: string }> }>;
         usage?: {
+          input_tokens?: number;
+          output_tokens?: number;
+          input_tokens_details?: { cached_tokens?: number };
           prompt_tokens?: number;
           completion_tokens?: number;
           prompt_tokens_details?: { cached_tokens?: number };
@@ -511,7 +552,29 @@ export function decodeOpenAiLine(line: unknown): BatchDocResult {
     error?: unknown;
   };
   const docId = l.custom_id ?? '';
-  const content = l.response?.body?.choices?.[0]?.message?.content;
+  const body = l.response?.body;
+  const rawResponseStatus = body?.status;
+  const responseStatus = typeof rawResponseStatus === 'string' ? rawResponseStatus : undefined;
+  const responseStatusInvalid = rawResponseStatus != null && responseStatus == null;
+  const responseLifecycleError = responseStatusInvalid
+    ? 'invalid response lifecycle status'
+    : responseStatus && responseStatus !== 'completed'
+      ? `response ${responseStatus}${typeof body?.incomplete_details?.reason === 'string'
+        ? `: ${body.incomplete_details.reason}`
+        : ''}`
+      : undefined;
+  const refusal = (body?.output ?? [])
+    .flatMap((item) => item.content ?? [])
+    .map((item) => item.refusal?.trim())
+    .find((value): value is string => Boolean(value));
+  let content = body?.choices?.[0]?.message?.content;
+  if (!content && body) {
+    try {
+      content = extractResponsesText(body, 'openai');
+    } catch {
+      content = undefined;
+    }
+  }
   const resolvedModel = l.response?.body?.model;
   const rawStatusCode = l.response?.status_code;
   const statusCode = typeof rawStatusCode === 'number' && Number.isInteger(rawStatusCode)
@@ -521,15 +584,19 @@ export function decodeOpenAiLine(line: unknown): BatchDocResult {
   const statusCodeInvalid = rawStatusCode != null && statusCode == null;
   const responseError = l.response?.body?.error;
   const usage = normalizeBatchUsage({
-    promptTokens: l.response?.body?.usage?.prompt_tokens,
-    completionTokens: l.response?.body?.usage?.completion_tokens,
-    cachedTokens: l.response?.body?.usage?.prompt_tokens_details?.cached_tokens,
+    promptTokens: body?.usage?.input_tokens ?? body?.usage?.prompt_tokens,
+    completionTokens: body?.usage?.output_tokens ?? body?.usage?.completion_tokens,
+    cachedTokens: body?.usage?.input_tokens_details?.cached_tokens
+      ?? body?.usage?.prompt_tokens_details?.cached_tokens,
   });
-  if (l.error || responseError || statusCodeInvalid || (statusCode != null && (statusCode < 200 || statusCode >= 300)) || !content) {
+  if (l.error || responseError || responseLifecycleError || refusal || statusCodeInvalid
+    || (statusCode != null && (statusCode < 200 || statusCode >= 300)) || !content) {
     const statusPrefix = statusCodeInvalid
       ? 'invalid response status'
-      : statusCode == null ? '' : `HTTP ${statusCode}`;
-    const detail = l.error ?? responseError ?? (!content ? 'no content' : 'provider error');
+      : statusCode == null || (statusCode >= 200 && statusCode < 300) ? '' : `HTTP ${statusCode}`;
+    const detail = l.error ?? responseError ?? responseLifecycleError
+      ?? (refusal ? `refusal: ${refusal}` : undefined)
+      ?? (!content ? 'no content' : 'provider error');
     const error = [statusPrefix, boundedErrorText(detail)].filter(Boolean).join(': ').slice(0, 300);
     return { docId, ok: false, error, rows: [], usage, resolvedModel };
   }
@@ -915,6 +982,9 @@ export function isBatchProvider(v: unknown): v is BatchProvider {
 
 /** Submit a batch; returns the provider's batch/job id to poll later. */
 export function submitBatch(env: Env, provider: BatchProvider, model: string, docs: BatchDoc[]): Promise<string> {
+  if (isRetiredDisclosureCandidate({ provider, model })) {
+    return Promise.reject(new Error('GPT-4o is retired for new disclosure extraction'));
+  }
   if (provider === 'anthropic') return submitAnthropic(env, model, docs);
   if (provider === 'openai') return submitOpenAi(env, model, docs);
   if (provider === 'xai') return submitXai(env, model, docs);

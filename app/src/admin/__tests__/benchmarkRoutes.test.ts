@@ -23,7 +23,7 @@ function env(overrides: Record<string, unknown> = {}): Env {
   return {
     ADMIN_TOKEN: 'admin-secret',
     AGREEMENT_AUTOPUBLISH_MODEL_A: 'mistral:mistral-ocr-latest',
-    AGREEMENT_AUTOPUBLISH_MODEL_B: 'openai:gpt-4o',
+    AGREEMENT_AUTOPUBLISH_MODEL_B: 'openai:gpt-5.6-terra',
     AGREEMENT_MODEL_C: 'anthropic:claude-haiku-4-5',
     OPENAI_API_KEY: 'openai-key',
     ANTHROPIC_API_KEY: 'anthropic-key',
@@ -216,7 +216,7 @@ function claimableBenchmarkDb(
         async all<T>() {
           if (/FROM benchmark_run_documents/i.test(sql)) return { results: [document] as T[] };
           if (/FROM benchmark_model_results/i.test(sql)) {
-            const result = completed ?? (claim ? benchmarkMeasurement('openai', 'gpt-4o', {
+            const result = completed ?? (claim ? benchmarkMeasurement('openai', 'gpt-5.6-terra', {
               invoked: 0,
               ok: 0,
               autonomous: 0,
@@ -295,7 +295,7 @@ function claimableBenchmarkDb(
 }
 
 const BENCHMARK_MODELS = [
-  { provider: 'openai', model: 'gpt-4o' },
+  { provider: 'openai', model: 'gpt-5.6-terra' },
   { provider: 'gemini', model: 'gemini-3.5-flash' },
   { provider: 'anthropic', model: 'claude-haiku-4-5' },
 ];
@@ -671,7 +671,7 @@ describe('durable benchmark admin routes', () => {
       body: JSON.stringify({
         chamber: 'house',
         limit: 1,
-        models: [{ provider: 'openai', model: 'gpt-4o' }],
+        models: [{ provider: 'mistral', model: 'mistral-ocr-latest' }],
       }),
     }, env());
 
@@ -680,7 +680,7 @@ describe('durable benchmark admin routes', () => {
       requiresConfirmation: true,
       plannedCalls: 1,
       documentCount: 1,
-      configuredModels: [{ provider: 'openai', model: 'gpt-4o', configured: true }],
+      configuredModels: [{ provider: 'mistral', model: 'mistral-ocr-latest', configured: true }],
     });
   });
 
@@ -689,7 +689,7 @@ describe('durable benchmark admin routes', () => {
     const ledger = atomicReservationDb(base.DB);
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       object: 'list',
-      data: [{ id: 'gpt-4o' }],
+      data: [{ id: 'gpt-5.6-terra' }],
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
     try {
       const response = await buildAdminRouter().request('/benchmark/runs', {
@@ -699,8 +699,8 @@ describe('durable benchmark admin routes', () => {
           chamber: 'house',
           limit: 1,
           models: [
+            { provider: 'openai', model: 'gpt-5.6-luna' },
             { provider: 'openai', model: 'gpt-5.6-terra' },
-            { provider: 'openai', model: 'gpt-4o' },
           ],
           confirmPaidRun: true,
         }),
@@ -710,19 +710,19 @@ describe('durable benchmark admin routes', () => {
       expect(await response.json()).toMatchObject({
         plannedCalls: 1,
         run: {
-          models: [{ provider: 'openai', model: 'gpt-4o' }],
+          models: [{ provider: 'openai', model: 'gpt-5.6-terra' }],
           requestProfile: {
             modelAccess: {
               status: 'ready',
               models: [
-                { model: 'gpt-5.6-terra', availability: 'unavailable' },
-                { model: 'gpt-4o', availability: 'available' },
+                { model: 'gpt-5.6-luna', availability: 'unavailable' },
+                { model: 'gpt-5.6-terra', availability: 'available' },
               ],
             },
           },
         },
         skippedModels: [{
-          provider: 'openai', model: 'gpt-5.6-terra', reason: 'known_unavailable',
+          provider: 'openai', model: 'gpt-5.6-luna', reason: 'known_unavailable',
           failure: { code: 'model_access_denied', scope: 'model', retryable: false },
         }],
       });
@@ -762,7 +762,7 @@ describe('durable benchmark admin routes', () => {
         chamber: 'house',
         limit: 1,
         models: [
-          { provider: 'openai', model: 'gpt-4o' },
+          { provider: 'mistral', model: 'mistral-ocr-latest' },
           { provider: 'anthropic', model: 'claude-haiku-4-5' },
         ],
         confirmPaidRun: true,
@@ -782,7 +782,7 @@ describe('durable benchmark admin routes', () => {
             reservedCalls: 1,
             documentCount: 1,
             models: [
-              { provider: 'openai', model: 'gpt-4o' },
+              { provider: 'mistral', model: 'mistral-ocr-latest' },
               { provider: 'anthropic', model: 'claude-haiku-4-5' },
             ],
           },
@@ -800,7 +800,7 @@ describe('durable benchmark admin routes', () => {
       body: JSON.stringify({
         chamber: 'house',
         limit: 1,
-        models: [{ provider: 'openai', model: 'gpt-4o' }],
+        models: [{ provider: 'mistral', model: 'mistral-ocr-latest' }],
         confirmPaidRun: true,
       }),
     }, env({ DB: fixture.db, BENCHMARK_DAILY_CALL_CAP: '5' }));
@@ -907,7 +907,7 @@ describe('durable benchmark admin routes', () => {
     const runRow: Record<string, unknown> = {
       id: 'run-1', chamber: 'house', status: 'running', requested_doc_count: 1,
       completed_doc_count: 0, model_count: 1,
-      models_json: JSON.stringify([{ provider: 'openai', model: 'gpt-4o' }]),
+      models_json: JSON.stringify([{ provider: 'openai', model: 'gpt-5.6-terra' }]),
       request_profile_json: JSON.stringify({ version: 'ct-benchmark-profile-v1' }),
       started_at: '2026-07-14T12:00:00.000Z', completed_at: null, duration_ms: null,
       known_cost_usd: null, cost_covered_calls: 0, invoked_calls: 0, summary_json: null,
@@ -920,7 +920,7 @@ describe('durable benchmark admin routes', () => {
       ground_truth_json: JSON.stringify([truth]),
     };
     const measurement: Record<string, unknown> = {
-      ...benchmarkMeasurement('openai', 'gpt-4o', {
+      ...benchmarkMeasurement('openai', 'gpt-5.6-terra', {
         result_json: JSON.stringify({ rows: [{ ...truth, filingStatus: 'New' }], flags: [] }),
         perfect_match: 0, true_positive: 0, false_positive: 1, false_negative: 1,
       }),
@@ -1126,7 +1126,7 @@ describe('durable benchmark admin routes', () => {
       body: JSON.stringify({
         chamber: 'house',
         limit: 1,
-        models: [{ provider: 'openai', model: 'gpt-4o' }],
+        models: [{ provider: 'mistral', model: 'mistral-ocr-latest' }],
         confirmPaidRun: true,
       }),
     }, env({ DB: ledger.db, BENCHMARK_DAILY_CALL_CAP: '5' }));
@@ -1152,7 +1152,7 @@ describe('durable benchmark admin routes', () => {
       body: JSON.stringify({
         chamber: 'house',
         limit: 1,
-        models: [{ provider: 'openai', model: 'gpt-4o' }],
+        models: [{ provider: 'mistral', model: 'mistral-ocr-latest' }],
         confirmPaidRun: true,
       }),
     }, env({ DB: ledger.db, BENCHMARK_DAILY_CALL_CAP: '5' }));
@@ -1177,7 +1177,7 @@ describe('durable benchmark admin routes', () => {
       body: JSON.stringify({
         chamber: 'house',
         limit: 1,
-        models: [{ provider: 'openai', model: 'gpt-4o' }],
+        models: [{ provider: 'mistral', model: 'mistral-ocr-latest' }],
         confirmPaidRun: true,
       }),
     }, env({ DB: ledger.db, BENCHMARK_DAILY_CALL_CAP: '5' }));
@@ -1196,7 +1196,7 @@ describe('durable benchmark admin routes', () => {
             reservedDay: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
             reservedCalls: 1,
             documentCount: 1,
-            models: [{ provider: 'openai', model: 'gpt-4o' }],
+            models: [{ provider: 'mistral', model: 'mistral-ocr-latest' }],
           },
         },
       },
@@ -1214,7 +1214,7 @@ describe('durable benchmark admin routes', () => {
         reservedDay: new Date().toISOString().slice(0, 10),
         reservedCalls: 1,
         documentCount: 1,
-        models: [{ provider: 'openai', model: 'gpt-4o' }],
+        models: [{ provider: 'openai', model: 'gpt-5.6-terra' }],
       },
     });
     const ledger = atomicReservationDb(authorizedDb, 1);
@@ -1242,7 +1242,7 @@ describe('durable benchmark admin routes', () => {
           reservedDay: new Date().toISOString().slice(0, 10),
           reservedCalls: 1,
           documentCount: 1,
-          models: [{ provider: 'openai', model: 'gpt-4o' }],
+          models: [{ provider: 'openai', model: 'gpt-5.6-terra' }],
         },
       };
       const ledger = atomicReservationDb(claimableBenchmarkDb(requestProfile), 1);
@@ -1295,7 +1295,7 @@ describe('durable benchmark admin routes', () => {
           reservedDay: '2026-07-13',
           reservedCalls: 1,
           documentCount: 1,
-          models: [{ provider: 'openai', model: 'gpt-4o' }],
+          models: [{ provider: 'openai', model: 'gpt-5.6-terra' }],
         },
       };
       const ledger = atomicReservationDb(claimableBenchmarkDb(requestProfile, null, {
@@ -1329,7 +1329,7 @@ describe('durable benchmark admin routes', () => {
         scope: 'initial_model_document_cells',
         reservedCalls: 1,
         documentCount: 1,
-        models: [{ provider: 'openai', model: 'gpt-4o' }],
+        models: [{ provider: 'openai', model: 'gpt-5.6-terra' }],
       },
     });
     const ledger = atomicReservationDb(legacyDb, 1);
@@ -1350,7 +1350,7 @@ describe('durable benchmark admin routes', () => {
 
   it('requires and reserves the full legacy A+B agreement lineup before any provider call', async () => {
     const lineup = {
-      a: { provider: 'openai', model: 'gpt-4o' },
+      a: { provider: 'openai', model: 'gpt-5.6-terra' },
       b: { provider: 'anthropic', model: 'claude-haiku-4-5' },
     };
     const unconfirmed = await buildAdminRouter().request('/benchmark/dry-run/H-1', {
@@ -1376,7 +1376,7 @@ describe('durable benchmark admin routes', () => {
   });
 
   it('returns pending instead of duplicating a paid cell held by another lease', async () => {
-    const running = benchmarkMeasurement('openai', 'gpt-4o', {
+    const running = benchmarkMeasurement('openai', 'gpt-5.6-terra', {
       invoked: 0,
       ok: 0,
       autonomous: 0,
@@ -1567,7 +1567,7 @@ describe('durable benchmark admin routes', () => {
   });
 
   it('does not silently retry an expired paid cell with an unknown outcome', async () => {
-    const orphaned = benchmarkMeasurement('openai', 'gpt-4o', {
+    const orphaned = benchmarkMeasurement('openai', 'gpt-5.6-terra', {
       invoked: 0,
       ok: 0,
       autonomous: 0,
@@ -1648,7 +1648,7 @@ describe('durable benchmark admin routes', () => {
       writeProtected: false,
       lineup: {
         a: { provider: 'mistral', model: 'mistral-ocr-latest' },
-        b: { provider: 'openai', model: 'gpt-4o' },
+        b: { provider: 'openai', model: 'gpt-5.6-terra' },
         c: { provider: 'anthropic', model: 'claude-haiku-4-5' },
       },
     });
@@ -1708,7 +1708,7 @@ describe('durable benchmark admin routes', () => {
       id: 'run-1', chamber: 'house', status: 'completed',
       requested_doc_count: 1, completed_doc_count: 1, model_count: 3,
       models_json: JSON.stringify([
-        { provider: 'openai', model: 'gpt-4o' },
+        { provider: 'openai', model: 'gpt-5.6-terra' },
         { provider: 'gemini', model: 'gemini-3.5-flash' },
         { provider: 'anthropic', model: 'claude-haiku-4-5' },
       ]),
@@ -1733,7 +1733,7 @@ describe('durable benchmark admin routes', () => {
       started_at: null, completed_at: null, created_at: '2026-07-13T12:00:01.000Z',
     });
     const results = [
-      measurement('openai', 'gpt-4o', 100, 0.001),
+      measurement('openai', 'gpt-5.6-terra', 100, 0.001),
       measurement('gemini', 'gemini-3.5-flash', 200, 0.002),
       measurement('anthropic', 'claude-haiku-4-5', 300, 0.004),
     ];
@@ -1758,7 +1758,7 @@ describe('durable benchmark admin routes', () => {
       method: 'POST',
       headers: AUTH,
       body: JSON.stringify({
-        a: { provider: 'openai', model: 'gpt-4o' },
+        a: { provider: 'openai', model: 'gpt-5.6-terra' },
         b: { provider: 'gemini', model: 'gemini-3.5-flash' },
         c: { provider: 'anthropic', model: 'claude-haiku-4-5' },
       }),
@@ -1791,7 +1791,7 @@ describe('durable benchmark admin routes', () => {
     };
     const rowB = { ...rowA, ticker: 'MSFT', assetName: 'Microsoft Corp.' };
     const results = [
-      benchmarkMeasurement('openai', 'gpt-4o', {
+      benchmarkMeasurement('openai', 'gpt-5.6-terra', {
         latency_ms: 100, cost_usd: 0.001,
         result_json: JSON.stringify({ rows: [rowA], flags: [] }),
       }),
@@ -1827,7 +1827,7 @@ describe('durable benchmark admin routes', () => {
 
   it('excludes unavailable required readings and blocks saving their model', async () => {
     const results = [
-      benchmarkMeasurement('openai', 'gpt-4o', {
+      benchmarkMeasurement('openai', 'gpt-5.6-terra', {
         invoked: 0, ok: 0, autonomous: 0, cost_usd: null, cost_source: 'unknown',
       }),
       benchmarkMeasurement('gemini', 'gemini-3.5-flash', { cost_usd: 0.002 }),
@@ -1875,7 +1875,7 @@ describe('durable benchmark admin routes', () => {
 
   it('blocks promotion of a model that was invoked but failed every reading', async () => {
     const results = [
-      benchmarkMeasurement('openai', 'gpt-4o', {
+      benchmarkMeasurement('openai', 'gpt-5.6-terra', {
         ok: 0, autonomous: 0, outcome: 'skipped', error: 'model_not_found',
       }),
       benchmarkMeasurement('gemini', 'gemini-3.5-flash'),

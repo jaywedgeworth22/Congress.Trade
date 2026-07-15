@@ -31,9 +31,14 @@ truth; this file is the short operational snapshot for the current integration.
 - Admins can save a validated A/B/C lineup to the selected branch's Infisical-backed agreement
   settings. Paid runs require explicit confirmation, use an atomic daily call cap, accept only
   human-confirmed ground truth, and serialize settings writes with fenced leases and rollback.
-- OpenAI vision options are `gpt-5.6-terra`, `gpt-5.6-luna`, and `gpt-5.6-sol`; `gpt-4o` remains
-  as a legacy benchmark control. PDF inputs use the Responses API with high-detail vision and
-  strict structured output, including explicit unreadable/review-required results.
+- OpenAI vision options are `gpt-5.6-terra`, `gpt-5.6-luna`, and `gpt-5.6-sol`; GPT-4o is retired
+  from new disclosure reads but historical results remain readable. PDF inputs use the Responses
+  API with original-detail vision and strict structured output. Terra is the medium-reasoning routine
+  default, Luna the low-reasoning first pass, and Sol the high-reasoning adjudicator.
+- No representative corpus benchmark currently proves a primary-reader winner. The live Gemini
+  primary is unchanged; the provider-neutral provisional recommendation is deterministic text first,
+  then Mistral OCR 4 annotations, with cross-vendor semantic escalation and human review for
+  unresolved crossed-out or otherwise ambiguous entries.
 - Worker and operator-script outbound third-party HTTP calls now go through measured telemetry
   for `usage.jays.services`, including attempts, failures, latency, units, and exact provider
   spend where available. Queue delivery falls back to R2; simultaneous Queue and R2 failure is

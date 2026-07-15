@@ -486,7 +486,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('id="reread-msg-\' + esc(docId) + \'"');
     // curated provider/model pairs mirror DEFAULT_CANDIDATES in src/extraction/bakeoff.ts
     expect(DASHBOARD_HTML).toContain("{ provider: 'gemini', model: 'gemini-3.5-flash' }");
-    expect(DASHBOARD_HTML).toContain("{ provider: 'openai', model: 'gpt-4o' }");
+    expect(DASHBOARD_HTML).not.toContain("{ provider: 'openai', model: 'gpt-4o' }");
+    expect(DASHBOARD_HTML).toContain("{ provider: 'openai', model: 'gpt-5.6-terra' }");
     expect(DASHBOARD_HTML).toContain("{ provider: 'anthropic', model: 'claude-sonnet-4-6' }");
     expect(DASHBOARD_HTML).toContain("{ provider: 'anthropic', model: 'claude-haiku-4-5' }");
     expect(DASHBOARD_HTML).toContain("{ provider: 'mistral', model: 'mistral-ocr-latest' }");
