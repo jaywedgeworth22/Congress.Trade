@@ -11,7 +11,9 @@ import { resolveSecret } from '../secrets/infisical';
 import {
   SYSTEM_PROMPT,
   EXECUTIVE_SYSTEM_PROMPT,
-  parseModelJson,
+  parseAnthropicModelJson,
+  markSalvaged,
+  normalizePdfForAnthropic,
   toParsedTx,
   fetchWithRetry,
   arrayBufferToBase64,
@@ -19,6 +21,17 @@ import {
 
 const DEFAULT_MODEL = 'claude-3-5-sonnet-20241022';
 const DEFAULT_CONFIDENCE = 0.6;
+/** First-call token budget. Kept modest to protect cost on the common case. */
+const MAX_TOKENS = 8000;
+/** Retry budget when the first call was cut off (`stop_reason: 'max_tokens'`). */
+const MAX_TOKENS_RETRY = 16000;
+
+interface AnthropicMessagesPayload {
+  content?: Array<{ type: string; text?: string }>;
+  /** 'max_tokens' means the response was cut off before completion. */
+  stop_reason?: string | null;
+  usage?: { input_tokens?: number; output_tokens?: number };
+}
 
 export interface AnthropicVisionOptions {
   apiKey?: string;
@@ -76,61 +89,77 @@ export class AnthropicVisionExtractor implements Extractor {
     let allRows: ParsedTx[] = [];
 
     try {
-      const res = await fetchWithRetry(
-        'https://api.anthropic.com/v1/messages',
-        {
-          method: 'POST',
-          headers: {
-            'x-api-key': key,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json',
-            'anthropic-beta': 'pdfs-2024-09-25'
-          },
-          body: JSON.stringify({
-            model,
-            max_tokens: 8000,
-            messages: [
-              {
-                role: 'user',
-                content: [
-                  {
-                    type: 'document',
-                    source: {
-                      type: 'base64',
-                      media_type: 'application/pdf',
-                      data: arrayBufferToBase64(input.bytes),
+      // Pre-validate/normalize the PDF via pdf-lib before any provider call —
+      // Anthropic's API 400s outright on some malformed PDFs; an unparseable
+      // PDF fails fast here instead of spending a request.
+      const normalizedBytes = await normalizePdfForAnthropic(input.bytes);
+      const documentBase64 = arrayBufferToBase64(normalizedBytes);
+
+      const callAnthropic = async (maxTokens: number): Promise<AnthropicMessagesPayload> => {
+        const res = await fetchWithRetry(
+          'https://api.anthropic.com/v1/messages',
+          {
+            method: 'POST',
+            headers: {
+              'x-api-key': key,
+              'anthropic-version': '2023-06-01',
+              'content-type': 'application/json',
+              'anthropic-beta': 'pdfs-2024-09-25'
+            },
+            body: JSON.stringify({
+              model,
+              max_tokens: maxTokens,
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    {
+                      type: 'document',
+                      source: {
+                        type: 'base64',
+                        media_type: 'application/pdf',
+                        data: documentBase64,
+                      },
                     },
-                  },
-                  { type: 'text', text: `${promptToUse}\nReturn ONLY the JSON array.` },
-                ],
-              },
-            ],
-          }),
-          signal: AbortSignal.timeout(120_000),
-        },
-        this.name,
-      );
+                    { type: 'text', text: `${promptToUse}\nReturn ONLY the JSON array.` },
+                  ],
+                },
+              ],
+            }),
+            signal: AbortSignal.timeout(120_000),
+          },
+          this.name,
+        );
 
-      if (!res.ok) {
-        let detail = '';
-        try {
-          detail = (await res.text()).slice(0, 500);
-        } catch {
-          /* ignore */
+        if (!res.ok) {
+          let detail = '';
+          try {
+            detail = (await res.text()).slice(0, 500);
+          } catch {
+            /* ignore */
+          }
+          throw new Error(`${this.name}: Anthropic API ${res.status} ${res.statusText} ${detail}`);
         }
-        throw new Error(`${this.name}: Anthropic API ${res.status} ${res.statusText} ${detail}`);
-      }
 
-      const payload = (await res.json()) as any;
+        return (await res.json()) as AnthropicMessagesPayload;
+      };
 
-      if (payload.usage) {
-        totalPromptTokens = payload.usage.input_tokens ?? 0;
-        totalCompletionTokens = payload.usage.output_tokens ?? 0;
+      // First call uses a modest token budget to protect cost. If the model
+      // was cut off mid-output, retry once with a doubled budget.
+      let payload = await callAnthropic(MAX_TOKENS);
+      totalPromptTokens = payload.usage?.input_tokens ?? 0;
+      totalCompletionTokens = payload.usage?.output_tokens ?? 0;
+
+      if (payload.stop_reason === 'max_tokens') {
+        const retryPayload = await callAnthropic(MAX_TOKENS_RETRY);
+        totalPromptTokens += retryPayload.usage?.input_tokens ?? 0;
+        totalCompletionTokens += retryPayload.usage?.output_tokens ?? 0;
+        payload = retryPayload;
       }
 
       const text = (payload.content ?? [])
-        .filter((b: any) => b.type === 'text')
-        .map((b: any) => b.text ?? '')
+        .filter((b) => b.type === 'text')
+        .map((b) => b.text ?? '')
         .join('')
         .trim();
 
@@ -140,14 +169,19 @@ export class AnthropicVisionExtractor implements Extractor {
 
       combinedRaw = text;
 
-      let parsed;
+      // If the (possibly retried) call is still truncated, salvage the
+      // complete leading rows instead of failing the whole read.
+      let parsedRows;
+      let salvaged: boolean;
       try {
-        parsed = parseModelJson(text);
+        const parsed = parseAnthropicModelJson(text, payload.stop_reason);
+        parsedRows = parsed.rows;
+        salvaged = parsed.salvaged;
       } catch (err) {
         throw new Error(`${this.name}: could not parse model JSON: ${(err as Error).message}`);
       }
 
-      allRows = parsed.map(toParsedTx);
+      allRows = parsedRows.map(toParsedTx).map((tx) => (salvaged ? markSalvaged(tx) : tx));
     } catch (err) {
       const usage =
         totalPromptTokens > 0 || totalCompletionTokens > 0

@@ -1,5 +1,15 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { PDFDocument } from 'pdf-lib';
 import { handleAgreementCheck } from '../agreement';
+
+/** A genuinely-parseable PDF: the Anthropic candidate pre-validates bytes
+ *  with pdf-lib (normalizePdfForAnthropic) before any provider call. */
+async function validPdfArrayBuffer(): Promise<ArrayBuffer> {
+  const pdf = await PDFDocument.create();
+  pdf.addPage([200, 200]);
+  const bytes = await pdf.save();
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
 
 /**
  * Daily LLM budget guardrail (AGREEMENT_DAILY_LLM_BUDGET) for the AUTONOMOUS
@@ -182,11 +192,11 @@ function makeEnv(opts: {
 
   const env = {
     AGREEMENT_AUTOPUBLISH_ENABLED: 'true',
-    AGREEMENT_AUTOPUBLISH_MODEL_A: 'openai:gpt-4o',
-    AGREEMENT_AUTOPUBLISH_MODEL_B: 'anthropic:claude-haiku-4-5',
+    AGREEMENT_HOUSE_MODEL_C: 'openai:gpt-4o',
+    AGREEMENT_HOUSE_MODEL_D: 'anthropic:claude-haiku-4-5',
     OPENAI_API_KEY: 'k', ANTHROPIC_API_KEY: 'k',
     DB: db,
-    RAW_FILES: { get: async () => ({ arrayBuffer: async () => new TextEncoder().encode('%PDF').buffer }) },
+    RAW_FILES: { get: async () => ({ arrayBuffer: validPdfArrayBuffer }) },
     INGEST_QUEUE: { send: async (m: unknown) => { cap.sent.push(m); } },
     DELIVERY_QUEUE: { send: async () => {}, sendBatch: async () => {} },
     ...(opts.envVars ?? {}),

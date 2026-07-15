@@ -21,6 +21,9 @@ import {
   SYSTEM_PROMPT,
   EXECUTIVE_SYSTEM_PROMPT,
   parseModelJson,
+  parseAnthropicModelJson,
+  markSalvaged,
+  normalizePdfForAnthropic,
   toParsedTx,
   arrayBufferToBase64,
   VisionLlmExtractor,
@@ -222,7 +225,7 @@ export function extractResponsesText(payload: unknown, provider = 'responses'): 
 }
 
 /**
- * OpenAI PDF vision call. GPT-5.6 uses Responses with original-detail page
+ * OpenAI PDF vision call. GPT-5.6 uses Responses with high-detail page
  * images (important for handwriting and small print). A legacy Chat Completions
  * shape remains for non-retired compatibility models; GPT-4o is rejected before
  * this adapter can make a provider request.
@@ -249,7 +252,7 @@ async function runOpenAi(
           {
             role: 'user',
             content: [
-              { type: 'input_file', filename: 'ptr.pdf', file_data: dataUrl, detail: 'original' },
+              { type: 'input_file', filename: 'ptr.pdf', file_data: dataUrl, detail: 'high' },
               { type: 'input_text', text: `${prompt}\nReturn ONLY a JSON object {"transactions": [...]} .` },
             ],
           },
@@ -282,6 +285,7 @@ async function runOpenAi(
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120_000),
   }, { service: 'llm', operation: 'extract-document', model });
   if (!res.ok) throw new Error(`openai ${res.status} ${await safeText(res)}`);
   const payload = (await res.json()) as {
@@ -376,7 +380,70 @@ async function runOpenAi(
   }
 }
 
-/** Anthropic messages call (base64 `document` block BEFORE the text block). */
+interface AnthropicMessagesPayload {
+  id?: string;
+  model?: string;
+  content?: Array<{ type: string; text?: string }>;
+  /** 'max_tokens' means the response was cut off before completion. */
+  stop_reason?: string | null;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_creation_input_tokens?: number | null;
+    cache_read_input_tokens?: number | null;
+    cache_creation?: {
+      ephemeral_5m_input_tokens?: number;
+      ephemeral_1h_input_tokens?: number;
+    } | null;
+  };
+}
+
+/** Map an Anthropic Messages `usage` block to the shared UsageInfo shape. */
+function anthropicUsageFromPayload(usage: AnthropicMessagesPayload['usage']): UsageInfo {
+  if (!usage) return undefined;
+  const cacheReadTokens = usage.cache_read_input_tokens ?? 0;
+  const cacheCreationTokens = usage.cache_creation_input_tokens ?? 0;
+  const cacheWriteOneHourTokens = usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
+  const cacheWriteTokens = usage.cache_creation?.ephemeral_5m_input_tokens
+    ?? Math.max(0, cacheCreationTokens - cacheWriteOneHourTokens);
+  return {
+    promptTokens: (usage.input_tokens ?? 0) + cacheReadTokens + cacheCreationTokens,
+    completionTokens: usage.output_tokens,
+    cachedTokens: cacheReadTokens,
+    cacheWriteTokens,
+    cacheWriteOneHourTokens,
+  };
+}
+
+/** Sum two Anthropic usage snapshots (first-call + retry-call both billed). */
+function sumUsageInfo(a: UsageInfo, b: UsageInfo): UsageInfo {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    promptTokens: (a.promptTokens ?? 0) + (b.promptTokens ?? 0),
+    completionTokens: (a.completionTokens ?? 0) + (b.completionTokens ?? 0),
+    cachedTokens: (a.cachedTokens ?? 0) + (b.cachedTokens ?? 0),
+    cacheWriteTokens: (a.cacheWriteTokens ?? 0) + (b.cacheWriteTokens ?? 0),
+    cacheWriteOneHourTokens: (a.cacheWriteOneHourTokens ?? 0) + (b.cacheWriteOneHourTokens ?? 0),
+  };
+}
+
+/** First-call token budget. Kept modest to protect cost on the common case. */
+const ANTHROPIC_MAX_TOKENS = 8000;
+/** Retry budget when the first call was cut off (`stop_reason: 'max_tokens'`). */
+const ANTHROPIC_MAX_TOKENS_RETRY = 16000;
+
+/**
+ * Anthropic messages call (base64 `document` block BEFORE the text block).
+ *
+ * PDF bytes are pre-validated/normalized via pdf-lib before any request is
+ * sent (see {@link normalizePdfForAnthropic}); an unparseable PDF fails fast
+ * without spending a provider call. When the model's first reply is cut off
+ * (`stop_reason: 'max_tokens'`), one retry is made with a doubled token
+ * budget; if the retry is STILL truncated (or the JSON is truncated and
+ * unparseable), a bounded salvage recovers the complete leading transaction
+ * rows instead of failing the whole read (see {@link parseAnthropicModelJson}).
+ */
 async function runAnthropic(
   model: string,
   key: string,
@@ -384,61 +451,47 @@ async function runAnthropic(
   chamber: string,
 ): Promise<ProviderResult> {
   const prompt = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
-  const res = await trackedFetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': key,
-      'anthropic-version': '2023-06-01',
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 8000,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'document',
-              source: { type: 'base64', media_type: 'application/pdf', data: arrayBufferToBase64(bytes) },
-            },
-            { type: 'text', text: `${prompt}\nReturn ONLY the JSON array.` },
-          ],
-        },
-      ],
-    }),
-  }, { service: 'llm', operation: 'extract-document', model });
-  if (!res.ok) throw new Error(`anthropic ${res.status} ${await safeText(res)}`);
-  const payload = (await res.json()) as {
-    id?: string;
-    model?: string;
-    content?: Array<{ type: string; text?: string }>;
-    usage?: {
-      input_tokens?: number;
-      output_tokens?: number;
-      cache_creation_input_tokens?: number | null;
-      cache_read_input_tokens?: number | null;
-      cache_creation?: {
-        ephemeral_5m_input_tokens?: number;
-        ephemeral_1h_input_tokens?: number;
-      } | null;
-    };
+  const normalizedBytes = await normalizePdfForAnthropic(bytes);
+  const documentBase64 = arrayBufferToBase64(normalizedBytes);
+
+  const callAnthropic = async (maxTokens: number): Promise<AnthropicMessagesPayload> => {
+    const res = await trackedFetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'document',
+                source: { type: 'base64', media_type: 'application/pdf', data: documentBase64 },
+              },
+              { type: 'text', text: `${prompt}\nReturn ONLY the JSON array.` },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(120_000),
+    }, { service: 'llm', operation: 'extract-document', model });
+    if (!res.ok) throw new Error(`anthropic ${res.status} ${await safeText(res)}`);
+    return (await res.json()) as AnthropicMessagesPayload;
   };
 
-  const cacheReadTokens = payload.usage?.cache_read_input_tokens ?? 0;
-  const cacheCreationTokens = payload.usage?.cache_creation_input_tokens ?? 0;
-  const cacheWriteOneHourTokens = payload.usage?.cache_creation?.ephemeral_1h_input_tokens ?? 0;
-  const cacheWriteTokens = payload.usage?.cache_creation?.ephemeral_5m_input_tokens
-    ?? Math.max(0, cacheCreationTokens - cacheWriteOneHourTokens);
-  const usageInfo = payload.usage
-    ? {
-        promptTokens: (payload.usage.input_tokens ?? 0) + cacheReadTokens + cacheCreationTokens,
-        completionTokens: payload.usage.output_tokens,
-        cachedTokens: cacheReadTokens,
-        cacheWriteTokens,
-        cacheWriteOneHourTokens,
-      }
-    : undefined;
+  let payload = await callAnthropic(ANTHROPIC_MAX_TOKENS);
+  let usageInfo = anthropicUsageFromPayload(payload.usage);
+
+  if (payload.stop_reason === 'max_tokens') {
+    const retryPayload = await callAnthropic(ANTHROPIC_MAX_TOKENS_RETRY);
+    usageInfo = sumUsageInfo(usageInfo, anthropicUsageFromPayload(retryPayload.usage));
+    payload = retryPayload;
+  }
 
   const text = (payload.content ?? [])
     .filter((b) => b.type === 'text')
@@ -454,8 +507,10 @@ async function runAnthropic(
   }
 
   try {
+    const { rows: modelRows, salvaged } = parseAnthropicModelJson(text, payload.stop_reason);
+    const rows = modelRows.map(toParsedTx).map((tx) => (salvaged ? markSalvaged(tx) : tx));
     return {
-      rows: parseModelJson(text).map(toParsedTx),
+      rows,
       usage: usageInfo,
       resolvedModel: payload.model,
       providerRequestId: payload.id,
@@ -569,6 +624,7 @@ async function runMistral(model: string, key: string, bytes: ArrayBuffer): Promi
       document_annotation_format: { type: 'json_schema', json_schema: MISTRAL_ANNOTATION_SCHEMA },
       include_image_base64: false,
     }),
+    signal: AbortSignal.timeout(120_000),
   }, { service: 'ocr', operation: 'extract-document', model });
   if (!res.ok) throw new Error(`mistral ${res.status} ${await safeText(res)}`);
   const payload = (await res.json()) as {
@@ -630,6 +686,7 @@ async function runXai(
       method: 'POST',
       headers: { authorization: `Bearer ${key}` },
       body: form,
+      signal: AbortSignal.timeout(120_000),
     }, { service: 'llm', operation: 'upload-document', model });
     if (!up.ok) throw new Error(`xai upload ${up.status} ${await safeText(up)}`);
     const uploaded = (await up.json()) as { id?: string };
@@ -652,6 +709,7 @@ async function runXai(
           },
         ],
       }),
+      signal: AbortSignal.timeout(120_000),
     }, { service: 'llm', operation: 'extract-document', model });
     if (!res.ok) throw new Error(`xai ${res.status} ${await safeText(res)}`);
     const payload = (await res.json()) as {
@@ -704,7 +762,11 @@ async function runXai(
       try {
         const cleanup = await trackedFetch(
           `https://api.x.ai/v1/files/${encodeURIComponent(uploadedId)}`,
-          { method: 'DELETE', headers: { authorization: `Bearer ${key}` } },
+          {
+            method: 'DELETE',
+            headers: { authorization: `Bearer ${key}` },
+            signal: AbortSignal.timeout(120_000),
+          },
           { service: 'llm', operation: 'delete-document', model },
         );
         if (!cleanup.ok) {
@@ -762,6 +824,18 @@ export function parseLlamaParseMarkdown(markdown: string): ParsedTx[] {
   for (const match of bareMatches) {
     try {
       return parseModelJson(match[1]).map(toParsedTx);
+    } catch (e) {
+      lastErr = e as Error;
+    }
+  }
+
+  // Then the outermost bare JSON object — some parse tiers wrap rows in
+  // { transactions: [...] } without a fenced block.
+  const firstBrace = markdown.indexOf('{');
+  const lastBrace = markdown.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      return parseModelJson(markdown.substring(firstBrace, lastBrace + 1)).map(toParsedTx);
     } catch (e) {
       lastErr = e as Error;
     }
@@ -844,6 +918,44 @@ export function llamaParseModeParameters(model: string): Record<string, string> 
   throw new Error(`llamaparse: unsupported benchmark mode ${model}`);
 }
 
+/**
+ * Fetch the LlamaParse markdown result, retrying a couple of times on 404.
+ * The job's SUCCESS status can be visible before the result object itself is
+ * readable (eventual consistency); a couple of short backoff retries absorb
+ * that window instead of failing an otherwise-successful parse. Injectable
+ * `sleep`/`attempts` for tests. Exported for unit testing without a live key.
+ */
+export async function fetchLlamaParseResult(
+  jobId: string,
+  key: string,
+  model: string,
+  opts: { attempts?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<Response> {
+  const attempts = opts.attempts ?? 3;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const url = `${LLAMAPARSE_BASE}/job/${jobId}/result/markdown`;
+  const headers = { Authorization: `Bearer ${key}` };
+  let res = await trackedFetch(
+    url,
+    { headers, signal: AbortSignal.timeout(120_000) },
+    { service: 'ocr', operation: 'fetch-document-result', model },
+  );
+  for (let attempt = 1; attempt < attempts && res.status === 404; attempt++) {
+    try {
+      await res.body?.cancel();
+    } catch {
+      /* ignore */
+    }
+    await sleep(500 * attempt);
+    res = await trackedFetch(
+      url,
+      { headers, signal: AbortSignal.timeout(120_000) },
+      { service: 'ocr', operation: 'fetch-document-result-retry', model },
+    );
+  }
+  return res;
+}
+
 async function doRunLlamaParse(model: string, key: string, bytes: ArrayBuffer, chamber: string): Promise<ProviderResult> {
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'ptr.pdf');
@@ -858,6 +970,7 @@ async function doRunLlamaParse(model: string, key: string, bytes: ArrayBuffer, c
     method: 'POST',
     headers: { Authorization: `Bearer ${key}` },
     body: form,
+    signal: AbortSignal.timeout(120_000),
   }, { service: 'ocr', operation: 'upload-document', model });
   if (!up.ok) throw new Error(`llamaparse upload ${up.status} ${await safeText(up)}`);
   const uploaded = (await up.json()) as { id?: string };
@@ -871,6 +984,7 @@ async function doRunLlamaParse(model: string, key: string, bytes: ArrayBuffer, c
       await new Promise<void>((resolve) => setTimeout(resolve, 2000));
       const st = await trackedFetch(`${LLAMAPARSE_BASE}/job/${uploaded.id}`, {
         headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(120_000),
       }, { service: 'ocr', operation: 'poll-document-job', model });
       if (!st.ok) continue; // transient; keep polling
       const statusPayload = (await st.json()) as { status?: string };
@@ -881,10 +995,10 @@ async function doRunLlamaParse(model: string, key: string, bytes: ArrayBuffer, c
     }
     if (!succeeded) throw new Error('llamaparse: job timed out after 90s');
 
-    // 3) Fetch markdown result
-    const res = await trackedFetch(`${LLAMAPARSE_BASE}/job/${uploaded.id}/result/markdown`, {
-      headers: { Authorization: `Bearer ${key}` },
-    }, { service: 'ocr', operation: 'fetch-document-result', model });
+    // 3) Fetch markdown result. The job's SUCCESS status can be visible
+    // before the result object is readable (eventual consistency); retry a
+    // couple of times on 404 before failing an otherwise-successful parse.
+    const res = await fetchLlamaParseResult(uploaded.id, key, model);
     if (!res.ok) throw new Error(`llamaparse result ${res.status} ${await safeText(res)}`);
     const resultPayload = (await res.json()) as { markdown?: string };
     const { markdown } = resultPayload;
