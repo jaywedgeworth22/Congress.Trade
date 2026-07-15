@@ -49,7 +49,7 @@ describe('batchCron', () => {
       expect(batchExtract.submitBatch).toHaveBeenCalledWith(
         env,
         'openai',
-        'gpt-4o',
+        'gpt-5.6-terra',
         expect.arrayContaining([
           expect.objectContaining({ docId: 'doc1', chamber: 'house' }),
         ])
