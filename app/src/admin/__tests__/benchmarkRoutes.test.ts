@@ -734,6 +734,64 @@ describe('durable benchmark admin routes', () => {
     }
   });
 
+  it('reuses successful prior cells before reserving only the remaining paid calls', async () => {
+    const base = env();
+    const reuseDb = {
+      prepare(sql: string) {
+        const statement = base.DB.prepare(sql) as D1PreparedStatement & { sql?: string };
+        statement.sql = sql;
+        return statement;
+      },
+      async batch(statements: D1PreparedStatement[]) {
+        const firstSql = String((statements[0] as unknown as { sql?: string }).sql ?? '');
+        if (/INSERT INTO benchmark_model_results/i.test(firstSql) && /SELECT bmr\.\*/i.test(firstSql)) {
+          return [
+            { success: true, meta: { changes: 1 } },
+            { success: true, meta: { changes: 0 } },
+          ] as unknown as D1Result[];
+        }
+        return base.DB.batch(statements);
+      },
+    } as unknown as D1Database;
+    const ledger = atomicReservationDb(reuseDb);
+
+    const response = await buildAdminRouter().request('/benchmark/runs', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({
+        chamber: 'house',
+        limit: 1,
+        models: [
+          { provider: 'openai', model: 'gpt-4o' },
+          { provider: 'anthropic', model: 'claude-haiku-4-5' },
+        ],
+        confirmPaidRun: true,
+      }),
+    }, env({ DB: ledger.db, BENCHMARK_DAILY_CALL_CAP: '5' }));
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      plannedCalls: 2,
+      callsNeedingReservation: 1,
+      reusedCells: 1,
+      reusedBillableCells: 1,
+      reuseEligibleCells: 2,
+      run: {
+        requestProfile: {
+          paidCallAuthorization: {
+            reservedCalls: 1,
+            documentCount: 1,
+            models: [
+              { provider: 'openai', model: 'gpt-4o' },
+              { provider: 'anthropic', model: 'claude-haiku-4-5' },
+            ],
+          },
+        },
+      },
+    });
+    expect(ledger.reservedCalls()).toBe(1);
+  });
+
   it('atomically rejects a same-chamber creation race before reserving paid calls', async () => {
     const fixture = activeRunCreationRaceDb();
     const response = await buildAdminRouter().request('/benchmark/runs', {
@@ -1078,6 +1136,7 @@ describe('durable benchmark admin routes', () => {
       error: 'benchmark daily call reservation is temporarily unavailable',
       code: 'benchmark_call_reservation_unavailable',
       plannedCalls: 1,
+      reusedCalls: 0,
       dailyCap: 5,
       retryable: true,
     });
@@ -1102,6 +1161,7 @@ describe('durable benchmark admin routes', () => {
     expect(await response.json()).toEqual({
       error: 'benchmark daily call cap reached',
       plannedCalls: 1,
+      reusedCalls: 0,
       usedToday: 5,
       dailyCap: 5,
     });
