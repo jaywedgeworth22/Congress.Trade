@@ -258,7 +258,7 @@ export interface TxQueryParams {
    * consumers keep the forward-cursor contract; the public UI can request
    * `published` to sort by filing/import time instead of insertion order.
    */
-  sort?: 'cursor' | 'published';
+  sort?: 'cursor' | 'published' | 'tx_date';
   /**
    * Sort direction. Defaults to `'asc'` (oldest-first), which
    * preserves the forward-cursor reconciliation contract: callers page by
@@ -421,7 +421,9 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
   const orderExpr =
     p.sort === 'published'
       ? 'COALESCE(f.first_seen_at, f.filed_date, t.created_at, t.cursor_seq)'
-      : 't.cursor_seq';
+      : p.sort === 'tx_date'
+        ? 't.tx_date'
+        : 't.cursor_seq';
   const orderClause =
     orderExpr === 't.cursor_seq'
       ? `t.cursor_seq ${direction}`

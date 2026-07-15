@@ -24,6 +24,35 @@ import { resolveSecret } from '../secrets/infisical';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 /**
+ * Per-isolate sliding-window request throttle for the Gemini free/low tiers.
+ * Only engages when GEMINI_RPM_LIMIT is set; isolates do not coordinate, so
+ * treat the limit as per-isolate (set it below the account cap when scaling).
+ */
+class RateLimiter {
+  private queue: number[] = [];
+
+  async wait(rpmLimitStr: string | undefined) {
+    if (!rpmLimitStr) return;
+    const rpm = parseInt(rpmLimitStr, 10);
+    if (isNaN(rpm) || rpm <= 0) return;
+
+    const now = Date.now();
+    this.queue = this.queue.filter(t => now - t < 60000);
+
+    if (this.queue.length >= rpm) {
+      const oldest = this.queue[0];
+      const waitTime = 60000 - (now - oldest);
+      if (waitTime > 0) {
+        await new Promise(r => setTimeout(r, waitTime));
+      }
+    }
+    this.queue.push(Date.now());
+  }
+}
+
+const geminiRateLimiter = new RateLimiter();
+
+/**
  * Gemini model id. Centralized + documented so it is trivial to bump.
  * NOTE: Flash model ids rotate; if calls start 404-ing, update this to the
  * current Flash generation — the request/response contract below is unchanged
@@ -93,8 +122,12 @@ export class VisionLlmExtractor implements Extractor {
   }
 
     async extract(input: ExtractorInput): Promise<ExtractorResult> {
-    const key = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
-    if (!key) throw new Error(`${this.name}: API key is not configured`);
+    const keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
+    if (!keyString) throw new Error(`${this.name}: API key is not configured`);
+    // The key secret may hold several comma-separated keys; rotate to the next
+    // one when a request fails (rate limit / quota) instead of giving up.
+    const keys = keyString.split(',').map(k => k.trim()).filter(Boolean);
+    if (!keys.length) throw new Error(`${this.name}: API key is empty or invalid`);
     if (!input.bytes) throw new Error(`${this.name}: no bytes provided on ExtractorInput`);
 
     const model = await this.resolveModel();
@@ -138,21 +171,40 @@ export class VisionLlmExtractor implements Extractor {
         const chunkBytes = chunks[i];
         const body = buildRequestBody(chunkBytes, input.filing.chamber);
 
-        const res = await fetchWithRetry(
-          ENDPOINT(model, key),
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body),
-            signal: AbortSignal.timeout(120_000), // Slightly longer timeout for large chunks
-          },
-          this.name,
-          { model },
-        );
+        let res: Response | null = null;
+        let lastError: Error | null = null;
 
-        if (!res.ok) {
-          const detail = await safeText(res);
-          throw new Error(`${this.name}: Gemini API ${res.status} ${res.statusText} ${detail}`);
+        for (const k of keys) {
+          try {
+            await geminiRateLimiter.wait(this.env.GEMINI_RPM_LIMIT);
+            res = await fetchWithRetry(
+              ENDPOINT(model, k),
+              {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify(body),
+                signal: AbortSignal.timeout(120_000), // Slightly longer timeout for large chunks
+              },
+              this.name,
+              // Fewer in-request retries per key so an exhausted key hands off
+              // to the next one sooner; the key loop is the outer retry.
+              { model, maxAttempts: keys.length > 1 ? 2 : 4 },
+            );
+
+            if (!res.ok) {
+              const detail = await safeText(res);
+              throw new Error(`${this.name}: Gemini API ${res.status} ${res.statusText} ${detail}`);
+            }
+            lastError = null;
+            break;
+          } catch (e) {
+            lastError = e as Error;
+            continue;
+          }
+        }
+
+        if (!res || !res.ok || lastError) {
+          throw lastError ?? new Error(`${this.name}: all API keys failed`);
         }
 
         const payload = (await res.json()) as GeminiResponse;

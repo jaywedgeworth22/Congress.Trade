@@ -377,7 +377,7 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('uses published timing, tighter asset defaults, and source links in drawers', () => {
-    expect(DASHBOARD_HTML).toContain("var sortKey = 'published'");
+    expect(DASHBOARD_HTML).toContain("var sortKey = 'txdate'");
     expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v2'");
     expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v8'");
     expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 48, 40, 54)");
@@ -387,7 +387,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('date-time-cell');
     expect(DASHBOARD_HTML).toContain('#feedTable.resizable th { text-align: center;');
     expect(DASHBOARD_HTML).toContain('minColWidth(key)');
-    expect(DASHBOARD_HTML).toContain("p.set('sort', 'published')");
+    expect(DASHBOARD_HTML).toContain("p.set('sort', apiSort)");
     expect(DASHBOARD_HTML).toContain("p.set('memberName', m)");
     expect(DASHBOARD_HTML).toContain('function handleFeedTextFilter(');
     expect(DASHBOARD_HTML).toContain('feedRequestSeq');
@@ -523,7 +523,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('callsNeedingReservation');
     expect(DASHBOARD_HTML).toContain('confirmPaidRun: true');
     expect(DASHBOARD_HTML).toContain('resolvedOnly: false');
-    expect(DASHBOARD_HTML).toContain('Measured usage-based cost / doc');
+    expect(DASHBOARD_HTML).toContain('Measured usage-based cost');
     expect(DASHBOARD_HTML).toContain('Measured usage-based spend');
     expect(DASHBOARD_HTML).toContain('provider-reported charges where available, otherwise actual metered units × pinned list price');
     expect(DASHBOARD_HTML).toContain('This is not invoice reconciliation.');
@@ -838,14 +838,15 @@ describe('DASHBOARD_HTML', () => {
 
   it('never labels aggregate partial spend as per-document benchmark cost', () => {
     const usdSource = DASHBOARD_HTML.match(/function benchmarkUsd\(value\) \{[\s\S]*?\n\}/);
-    const costSource = DASHBOARD_HTML.match(/function benchmarkCostText\(perDocument, covered, calls\) \{[\s\S]*?\n\}/);
+    const costSource = DASHBOARD_HTML.match(/function benchmarkCostText\(perDocument, covered, calls, knownCostUsd\) \{[\s\S]*?\n\}/);
     expect(usdSource).not.toBeNull();
     expect(costSource).not.toBeNull();
     const costText = new Function(
       usdSource![0] + '\n' + costSource![0] + '\nreturn benchmarkCostText;',
-    )() as (perDocument: number | null, covered: number, calls: number) => string;
+    )() as (perDocument: number | null, covered: number, calls: number, knownCostUsd?: number | null) => string;
 
     expect(costText(0.012, 2, 2)).toBe('$0.012');
+    expect(costText(null, 1, 2, 0.1160589)).toBe('$0.116 known (partial)');
     expect(costText(null, 1, 2)).toBe('Unknown (partial)');
     expect(costText(null, 0, 2)).toBe('Unknown');
     expect(costText(null, 0, 0)).toBe('N/A');
