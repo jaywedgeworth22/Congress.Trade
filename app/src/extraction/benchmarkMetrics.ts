@@ -48,6 +48,8 @@ export interface TokenRate extends RateMetadata {
   cacheWriteOneHourInputMultiplier?: number;
   outputUsdPerMillion: number;
   supportedServiceTiers?: readonly string[];
+  /** Multipliers applied to the final token cost based on the service tier (e.g. batch = 0.5) */
+  serviceTierMultipliers?: Record<string, number>;
   /** Full-request multiplier once billed input crosses the provider threshold. */
   longContextThresholdTokens?: number;
   longContextInputMultiplier?: number;
@@ -92,7 +94,8 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
     cachedInputUsdPerMillion: 0.5,
     cacheWriteInputMultiplier: 1.25,
     outputUsdPerMillion: 30,
-    supportedServiceTiers: ['default'],
+    supportedServiceTiers: ['default', 'batch'],
+    serviceTierMultipliers: { batch: 0.5 },
     longContextThresholdTokens: 272_000,
     longContextInputMultiplier: 2,
     longContextOutputMultiplier: 1.5,
@@ -109,7 +112,8 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
     cachedInputUsdPerMillion: 0.25,
     cacheWriteInputMultiplier: 1.25,
     outputUsdPerMillion: 15,
-    supportedServiceTiers: ['default'],
+    supportedServiceTiers: ['default', 'batch'],
+    serviceTierMultipliers: { batch: 0.5 },
     longContextThresholdTokens: 272_000,
     longContextInputMultiplier: 2,
     longContextOutputMultiplier: 1.5,
@@ -126,7 +130,8 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
     cachedInputUsdPerMillion: 0.1,
     cacheWriteInputMultiplier: 1.25,
     outputUsdPerMillion: 6,
-    supportedServiceTiers: ['default'],
+    supportedServiceTiers: ['default', 'batch'],
+    serviceTierMultipliers: { batch: 0.5 },
     longContextThresholdTokens: 272_000,
     longContextInputMultiplier: 2,
     longContextOutputMultiplier: 1.5,
@@ -142,6 +147,8 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
     inputUsdPerMillion: 2.5,
     cachedInputUsdPerMillion: 1.25,
     outputUsdPerMillion: 10,
+    supportedServiceTiers: ['default', 'batch'],
+    serviceTierMultipliers: { batch: 0.5 },
     version: 'openai-standard-2026-07-13',
     effectiveDate: '2026-07-13',
     sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-4o',
@@ -276,6 +283,7 @@ export interface BenchmarkCostDetail {
     longContextApplied?: boolean;
     inputMultiplier?: number;
     outputMultiplier?: number;
+    tierMultiplier?: number;
   } | null;
   unknownReason: CostUnknownReason | null;
 }
@@ -419,12 +427,13 @@ export function priceBenchmarkUsage(input: PriceBenchmarkUsageInput): BenchmarkC
       rate.longContextThresholdTokens != null && promptTokens > rate.longContextThresholdTokens;
     const inputMultiplier = longContextApplied ? (rate.longContextInputMultiplier ?? 1) : 1;
     const outputMultiplier = longContextApplied ? (rate.longContextOutputMultiplier ?? 1) : 1;
+    const tierMultiplier = input.usage.serviceTier ? (rate.serviceTierMultipliers?.[input.usage.serviceTier] ?? 1) : 1;
     const costUsd =
-      ((uncachedPromptTokens * rate.inputUsdPerMillion +
+      (((uncachedPromptTokens * rate.inputUsdPerMillion +
         cachedTokens * rate.cachedInputUsdPerMillion +
         cacheWriteTokens * rate.inputUsdPerMillion * (rate.cacheWriteInputMultiplier ?? 1) +
         cacheWriteOneHourTokens * rate.inputUsdPerMillion * (rate.cacheWriteOneHourInputMultiplier ?? 1)) * inputMultiplier +
-        completionTokens * rate.outputUsdPerMillion * outputMultiplier) /
+        completionTokens * rate.outputUsdPerMillion * outputMultiplier) * tierMultiplier) /
       1_000_000;
     return {
       costUsd,
@@ -450,6 +459,7 @@ export function priceBenchmarkUsage(input: PriceBenchmarkUsageInput): BenchmarkC
           longContextApplied,
           inputMultiplier,
           outputMultiplier,
+          tierMultiplier,
         },
       },
     };
