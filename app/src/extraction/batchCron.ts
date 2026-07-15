@@ -84,7 +84,7 @@ export async function generateBatchJobs(env: Env): Promise<void> {
   }
 
   const provider = 'openai';
-  const model = 'gpt-4o'; // the default live model
+  const model = 'gpt-5.6-terra'; // the default live model
 
   try {
     const batchId = await submitBatch(env, provider, model, docs);

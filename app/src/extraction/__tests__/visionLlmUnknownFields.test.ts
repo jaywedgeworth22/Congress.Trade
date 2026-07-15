@@ -123,8 +123,9 @@ describe('vision LLM unreadable fields', () => {
 
   it('attaches billed usage from successful chunks when a later chunk fails', async () => {
     const pdf = await PDFDocument.create();
-    for (let page = 0; page < 16; page++) pdf.addPage();
+    for (let page = 0; page < 16; page++) pdf.addPage([500, 500]);
     const bytes = await pdf.save();
+    
     const fetchSpy = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -143,7 +144,7 @@ describe('vision LLM unreadable fields', () => {
 
     const extraction = new VisionLlmExtractor(
       {} as Env,
-      { apiKey: 'gemini-test', model: 'gemini-3.5-flash' },
+      { apiKey: 'gemini-test', model: 'gemini-1.5-pro' },
     ).extract({
       filing: { docKind: 'scanned_pdf', chamber: 'house' } as never,
       bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,

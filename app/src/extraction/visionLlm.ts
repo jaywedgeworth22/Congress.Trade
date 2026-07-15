@@ -102,11 +102,15 @@ export class VisionLlmExtractor implements Extractor {
     // Check if we need to chunk (only for scanned_pdf which is all this extractor handles)
     let chunks: ArrayBuffer[] = [input.bytes];
     let pageCount = 0;
+    
+    // Dynamically skip chunking for models with massive context windows
+    const isMassiveContextModel = model.includes('gemini-3.5-flash') || model.includes('claude-3.5-sonnet');
+
     try {
       const pdfDoc = await PDFDocument.load(input.bytes, { ignoreEncryption: true });
       pageCount = pdfDoc.getPageCount();
       const MAX_PAGES = 15;
-      if (pageCount > MAX_PAGES) {
+      if (pageCount > MAX_PAGES && !isMassiveContextModel) {
         chunks = [];
         for (let i = 0; i < pageCount; i += MAX_PAGES) {
           const end = Math.min(i + MAX_PAGES, pageCount);
@@ -405,6 +409,49 @@ interface ModelTx {
   confidence?: number;
 }
 
+function extractJsonFallback(text: string): unknown {
+  const startIdx = text.search(/[[{]/);
+  if (startIdx === -1) return undefined;
+  
+  const openChar = text[startIdx];
+  const closeChar = openChar === '[' ? ']' : '}';
+  
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  
+  for (let i = startIdx; i < text.length; i++) {
+    const char = text[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (char === '\\') {
+      escape = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    
+    if (!inString) {
+      if (char === openChar) depth++;
+      else if (char === closeChar) {
+        depth--;
+        if (depth === 0) {
+          try {
+            return JSON.parse(text.substring(startIdx, i + 1));
+          } catch {
+            return undefined;
+          }
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
 export function parseModelJson(text: string): ModelTx[] {
   let cleaned = text.trim();
   // Strip ```json ... ``` fences if the model wrapped them despite the schema.
@@ -418,37 +465,11 @@ export function parseModelJson(text: string): ModelTx[] {
     parseError = err as Error;
   }
 
-  // If initial JSON.parse failed, try to find a valid JSON array or object using regex
+  // If initial JSON.parse failed, try to find a valid JSON array or object
   if (value === undefined) {
-    let fallbackSuccess = false;
-    
-    // Look for JSON array
-    const arrayMatches = cleaned.matchAll(/(\[[\s\S]*?\])/g);
-    for (const match of arrayMatches) {
-      try {
-        value = JSON.parse(match[1]);
-        fallbackSuccess = true;
-        break; // Stop at first successful parse
-      } catch {
-        // continue
-      }
-    }
-    
-    // Look for JSON object (if array not found)
-    if (!fallbackSuccess) {
-      const objMatches = cleaned.matchAll(/(\{[\s\S]*?\})/g);
-      for (const match of objMatches) {
-        try {
-          value = JSON.parse(match[1]);
-          fallbackSuccess = true;
-          break; // Stop at first successful parse
-        } catch {
-          // continue
-        }
-      }
-    }
+    value = extractJsonFallback(cleaned);
 
-    if (!fallbackSuccess) {
+    if (value === undefined) {
       throw new Error(`visionLlm: could not parse model JSON: ${parseError?.message}`);
     }
   }

@@ -86,7 +86,7 @@ async function extractPdfText(bytes: ArrayBuffer): Promise<PdfTextExtraction> {
   // the caller's buffer detached and break the HousePdfExtractor vision fallback,
   // which reuses the same ArrayBuffer after text extraction. Do not remove the copy
   // (regression guard for Sentry CONGRESS-TRADE-2).
-  const pdf = await getDocumentProxy(new Uint8Array(bytes.slice(0)));
+  const pdf = await getDocumentProxy(new Uint8Array(bytes));
   const { text } = await extractText(pdf, { mergePages: true });
   const pageCount = typeof pdf.numPages === 'number' && Number.isFinite(pdf.numPages) ? pdf.numPages : null;
   return {

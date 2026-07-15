@@ -45,9 +45,9 @@ export default function Dashboard() {
   const [retryIntent, setRetryIntent] = useState<RetryIntent | null>(null);
   const [oneTimeDelivery, setOneTimeDelivery] = useState<OneTimeDelivery | null>(null);
 
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
   const firstFilterRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   const feedPath = useMemo(() => buildFeedPath(appliedFilters), [appliedFilters]);
   const {
@@ -160,43 +160,16 @@ export default function Dashboard() {
   }, [refreshFeed]);
 
   useEffect(() => {
-    if (!isFilterOpen) return;
-    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const focusFrame = requestAnimationFrame(() => firstFilterRef.current?.focus());
-
-    function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setIsFilterOpen(false);
-        return;
-      }
-      if (event.key !== 'Tab' || !dialogRef.current) return;
-      const focusable = Array.from(
-        dialogRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
-        ),
-      );
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
+    if (!dialogRef.current) return;
+    if (isFilterOpen) {
+      dialogRef.current.showModal();
+      // Use a small delay for focusing the first input to ensure dialog is rendered
+      const focusFrame = requestAnimationFrame(() => firstFilterRef.current?.focus());
+      return () => cancelAnimationFrame(focusFrame);
+    } else {
+      dialogRef.current.close();
+      triggerRef.current?.focus();
     }
-
-    document.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.removeEventListener('keydown', onKeyDown);
-      cancelAnimationFrame(focusFrame);
-      document.body.style.overflow = previousOverflow;
-      (previouslyFocused ?? triggerRef.current)?.focus();
-    };
   }, [isFilterOpen]);
 
   function openFilters() {
@@ -327,20 +300,18 @@ export default function Dashboard() {
         </span>
       </button>
 
-      {isFilterOpen ? (
+      <dialog
+        ref={dialogRef}
+        className="filter-sheet-dialog"
+        onClose={() => setIsFilterOpen(false)}
+        onClick={(event) => {
+          if (event.target === dialogRef.current) setIsFilterOpen(false);
+        }}
+        aria-labelledby="filter-dialog-title"
+      >
         <div
-          className="filter-sheet-overlay"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setIsFilterOpen(false);
-          }}
+          className="filter-sheet-container"
         >
-          <div
-            ref={dialogRef}
-            className="filter-sheet-container"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="filter-dialog-title"
-          >
             <div className="filter-sheet-drag-handle" aria-hidden="true" />
             <div className="filter-sheet-header">
               <h2 id="filter-dialog-title">Filter Trades</h2>
@@ -428,9 +399,8 @@ export default function Dashboard() {
                 <button className="filter-apply-btn" type="submit">Apply filters</button>
               </div>
             </form>
-          </div>
         </div>
-      ) : null}
+      </dialog>
 
       {loadError ? <p className="notice error" role="alert">{loadError instanceof Error ? loadError.message : 'Error loading feed.'}</p> : null}
       {commandMessage ? (
