@@ -5,7 +5,7 @@ export type ClientTrade = {
   member: {
     id: string | null;
     name: string | null;
-    chamber: 'house' | 'senate' | null;
+    chamber: 'house' | 'senate' | 'executive' | null;
     party: string | null;
     state: string | null;
     photoUrl: string | null;

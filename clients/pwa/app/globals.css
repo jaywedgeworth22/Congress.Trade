@@ -498,6 +498,32 @@ textarea {
   transition: all 0.2s;
 }
 
+.delivery-scope {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: hsla(217, 30%, 12%, 0.4);
+}
+
+.delivery-scope-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.delivery-scope-tickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* .delivery-scope-helper text styling comes from the existing `.control-panel p`
+   rule (13px muted) — this form block always renders inside .control-panel. */
+
 .segmented button:hover {
   border-color: var(--border-hover);
 }
