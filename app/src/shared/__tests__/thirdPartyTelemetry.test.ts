@@ -582,10 +582,18 @@ describe('outbound-call inventory enforcement', () => {
     }
     for (const file of operatorJavaScriptFiles(scriptsRoot)) {
       const scriptRelative = decodeURIComponent(file.pathname.slice(scriptsRoot.pathname.length));
-      // This operator script calls Congress.Trade's own admin route. The model
-      // provider request it triggers happens inside the instrumented Worker.
+      // CLI operator scripts that call external APIs directly are not
+      // instrumented — they run outside the Worker runtime.  Exclude each
+      // known script explicitly so new scripts must be reviewed before they
+      // can bypass the inventory.
       if (scriptRelative === 'retry-llamaparse-failed.mjs') continue;
-      if (scriptRelative.endsWith('.mjs')) continue;
+      if (scriptRelative === 'check-bynd.mjs') continue;
+      if (scriptRelative === 'do-backfill.mjs') continue;
+      if (scriptRelative === 'test-bynd.mjs') continue;
+      if (scriptRelative === 'test-fmp-status.mjs') continue;
+      if (scriptRelative === 'test-fmp.mjs') continue;
+      if (scriptRelative === 'test-msft.mjs') continue;
+      if (scriptRelative === 'test-workspace.mjs') continue;
       const source = readFileSync(file, 'utf8') as string;
       violations.push(...rawFetchViolations(`scripts/${scriptRelative}`, source));
     }
