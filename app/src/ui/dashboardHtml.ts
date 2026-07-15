@@ -4796,10 +4796,15 @@ function benchmarkUsd(value) {
   return '$' + value.toFixed(value < 0.01 ? 5 : 3);
 }
 
-function benchmarkCostText(perDocument, covered, calls) {
+function benchmarkCostText(perDocument, covered, calls, knownCostUsd) {
   if (typeof perDocument === 'number') return benchmarkUsd(perDocument);
   if (!(calls > 0)) return 'N/A';
-  if (covered > 0) return 'Unknown (partial)';
+  if (covered > 0) {
+    if (typeof knownCostUsd === 'number' && isFinite(knownCostUsd) && knownCostUsd >= 0) {
+      return benchmarkUsd(knownCostUsd) + ' known (partial)';
+    }
+    return 'Unknown (partial)';
+  }
   return 'Unknown';
 }
 
@@ -5397,7 +5402,12 @@ function renderBenchmarkRun(run) {
     var rowState = partial
       ? (status === 'paused / resumable' ? 'Paused' : 'Partial') + ' · ' + model.docsMeasured + '/' + model.plannedDocs + ' measured · ' + model.pendingDocs + ' pending'
       : 'Complete · ' + model.docsMeasured + '/' + model.plannedDocs + ' measured';
-    var cost = benchmarkCostText(model.actualCostPerDocumentUsd, model.coveredInvocations, model.providerCalls);
+    var cost = benchmarkCostText(
+      model.actualCostPerDocumentUsd,
+      model.coveredInvocations,
+      model.providerCalls,
+      model.knownCostUsd
+    );
     if (partial && typeof model.actualCostPerDocumentUsd === 'number') cost += ' (partial)';
     var failedLatency = model.failureLatency.count
       ? '<span class="benchmark-latency-line failed">Failed attempts: ' + esc(benchmarkLatencyText(model.failureLatency)) + ' · ' + esc(model.failureLatency.count) + '</span>'
@@ -5420,7 +5430,7 @@ function renderBenchmarkRun(run) {
     '<p class="sub">Exact document match compares the full normalized output. Row-detection F1 compares trade rows; optional metadata is excluded from row identity. Cost uses provider-reported charges where available, otherwise actual metered units × pinned list price. This is not invoice reconciliation.</p>' +
     '<div class="benchmark-table-wrap" tabindex="0" aria-label="Scrollable benchmark results"><table class="bench-table">' +
     '<caption class="sr-only">Saved model benchmark performance</caption><thead><tr>' +
-    '<th scope="col">Model</th><th scope="col">Exact document match</th><th scope="col">Autonomy</th><th scope="col">Row-detection F1</th><th scope="col">Provider outcomes</th><th scope="col">Latency</th><th scope="col">Measured usage-based cost / doc</th>' +
+    '<th scope="col">Model</th><th scope="col">Exact document match</th><th scope="col">Autonomy</th><th scope="col">Row-detection F1</th><th scope="col">Provider outcomes</th><th scope="col">Latency</th><th scope="col">Measured usage-based cost</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
     '<div id="cascadeSimulationContainer"></div>';
   renderCascadeSimulation();
@@ -5540,13 +5550,18 @@ async function updateSimResults() {
 function renderBenchmarkSimulation(data) {
   var grid = el('simStatsGrid');
   if (!grid) return;
-  var cost = benchmarkCostText(data.actualCostPerDocumentUsd, data.costCoveredCalls, data.requiredCalls);
+  var cost = benchmarkCostText(
+    data.actualCostPerDocumentUsd,
+    data.costCoveredCalls,
+    data.requiredCalls,
+    data.knownCostUsd
+  );
   grid.innerHTML =
     '<div class="card"><div class="v" style="color:var(--accent)">' + esc(benchmarkPct(data.cascadeAutonomyRate)) + '</div><div class="k">Cascade autonomy</div></div>' +
     '<div class="card"><div class="v" style="color:var(--pos)">' + esc(benchmarkPct(data.accuracyRate)) + '</div><div class="k">Autopublished accuracy</div></div>' +
     '<div class="card"><div class="v">' + esc(benchmarkPct(data.tier1AutonomyRate)) + '</div><div class="k">Tier 1 autonomy</div></div>' +
     '<div class="card"><div class="v" style="color:var(--neg)">' + esc(benchmarkPct(data.humanReviewRate)) + '</div><div class="k">Human review</div></div>' +
-    '<div class="card"><div class="v">' + esc(cost) + '</div><div class="k">Measured usage-based cost / doc</div><div class="note">' + esc(data.costCoveredCalls + '/' + data.requiredCalls + ' required calls priced · ' + data.invokedCalls + ' invoked') + '</div></div>' +
+    '<div class="card"><div class="v">' + esc(cost) + '</div><div class="k">Measured usage-based cost</div><div class="note">' + esc(data.costCoveredCalls + '/' + data.requiredCalls + ' required calls priced · ' + data.invokedCalls + ' invoked') + '</div></div>' +
     '<div class="card"><div class="v">' + esc(typeof data.p50WallClockMs === 'number' ? fmtMs(data.p50WallClockMs) : 'N/A') + '</div><div class="k">Simulated p50 speed</div><div class="note">p95 ' + esc(typeof data.p95WallClockMs === 'number' ? fmtMs(data.p95WallClockMs) : 'N/A') + '</div></div>';
   var detail = el('simDetailPanel');
   if (detail) detail.textContent = 'Based on ' + data.documentsSimulated + '/' + data.documentsTotal + ' documents; ' + data.resolvedDocuments + ' resolved ground-truth documents. Tier 1 executes A then B; disagreement adds a fresh A then B then C tier. Cost uses provider-reported charges where available, otherwise actual metered units × pinned list price; unpriced meters remain partial. This is not invoice reconciliation.';
