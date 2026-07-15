@@ -1,5 +1,15 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { PDFDocument } from 'pdf-lib';
 import { buildAdminRouter } from '../routes';
+
+/** A genuinely-parseable PDF: the Anthropic candidate pre-validates bytes
+ *  with pdf-lib (normalizePdfForAnthropic) before any provider call. */
+async function validPdfArrayBuffer(): Promise<ArrayBuffer> {
+  const pdf = await PDFDocument.create();
+  pdf.addPage([200, 200]);
+  const bytes = await pdf.save();
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
 
 /**
  * Agreement-based auto-publish: two cross-vendor models are run per doc; when
@@ -63,7 +73,7 @@ function makeEnv() {
     ADMIN_TOKEN: 'test-admin',
     ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k',
     DB: db,
-    RAW_FILES: { get: async () => ({ arrayBuffer: async () => new TextEncoder().encode('%PDF').buffer }) },
+    RAW_FILES: { get: async () => ({ arrayBuffer: validPdfArrayBuffer }) },
     DELIVERY_QUEUE: { send: async () => {}, sendBatch: async () => {} },
   } as never;
   return { env, insertedTx, reviewResolved };

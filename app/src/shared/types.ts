@@ -186,8 +186,12 @@ export interface ParsedTx {
   amountMax: number | null;
   isOption: boolean;
   capGainsOver200: boolean;
-  /** Source fields that were explicitly unreadable and were defaulted locally. */
-  extractionWarnings?: Array<'unreadable_is_option' | 'unreadable_cap_gains'>;
+  /**
+   * Source fields that were explicitly unreadable and were defaulted locally,
+   * or provenance markers for the row itself (e.g. recovered from a truncated
+   * provider response — see `salvageTruncatedTransactions` in visionLlm.ts).
+   */
+  extractionWarnings?: Array<'unreadable_is_option' | 'unreadable_cap_gains' | 'salvaged_truncated_output'>;
   /** Verbatim source text for this row, for audit/review. */
   rawText: string;
   /** Structured/detail text that belongs to this filing row, not page chrome. */
