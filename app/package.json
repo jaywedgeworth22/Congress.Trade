@@ -21,7 +21,7 @@
     "postdeploy": "if [ -n \"$SENTRY_AUTH_TOKEN\" ]; then npm run sentry:sourcemaps || echo '::warning::sentry sourcemaps upload failed (non-fatal); the Worker deploy already succeeded'; else echo '::warning::SENTRY_AUTH_TOKEN not set; skipping sentry sourcemaps upload'; fi"
   },
   "dependencies": {
-    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#0bc26ab9311a396f3f6b5cba0fb54fa7558a42b4",
+    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#2b13da00b73561738cb56a0107d38d093c48ba6f",
     "@sentry/cloudflare": "^10.65.0",
     "fflate": "^0.8.3",
     "hono": "^4.12.30",
@@ -48,6 +48,6 @@
     }
   },
   "allowScripts": {
-    "github:jaywedgeworth22/congress-trading-shared#0bc26ab9311a396f3f6b5cba0fb54fa7558a42b4": true
+    "github:jaywedgeworth22/congress-trading-shared#2b13da00b73561738cb56a0107d38d093c48ba6f": true
   }
 }
