@@ -8,28 +8,25 @@
 
 import type { AssetTypeCategory } from './assetTypes';
 import type {
-  Chamber as SharedChamber,
+  Chamber,
   Owner,
   TxType,
-  ClientTrade as SharedClientTrade,
+  ClientTrade,
 } from '@jaywedgeworth22/congress-trading-shared';
 
 /**
- * App-wide chamber union. `executive` covers OGE Form 278-T filers (President /
- * Vice President) and is an APP-LOCAL widening of the shared package's
- * `house | senate` pending an upstream `congress-trading-shared` release.
- * Until the shared contract carries it, executive rows are EXCLUDED by default
+ * App-wide chamber union: `house | senate | executive`. As of shared package
+ * v1.8.0, `executive` (OGE Form 278-T filers: President / Vice President) is
+ * part of the upstream `congress-trading-shared` contract itself, so this is
+ * now a plain re-export — no more app-local widening (see
+ * docs/handoffs/2026-07-15-claude-to-monet.md for the migration). The
+ * business rule is unchanged: executive rows are still EXCLUDED by default
  * from the feed/analytics (opt in via an explicit `chamber=` filter), from
  * webhook/SSE subscriptions without an explicit `chambers` filter, and from
- * the App-B bulk export surfaces.
+ * the App-B bulk export surfaces — that filtering lives in application code,
+ * not the type.
  */
-export type Chamber = SharedChamber | 'executive';
-/** ClientTrade with the app-local chamber widening (see {@link Chamber})
- *  applied to its member.chamber field. */
-export type ClientTrade = Omit<SharedClientTrade, 'member'> & {
-  member: Omit<SharedClientTrade['member'], 'chamber'> & { chamber: Chamber | null };
-};
-export type { Owner, TxType };
+export type { Chamber, Owner, TxType, ClientTrade };
 
 // ---------------------------------------------------------------------------
 // Primitive unions / enums
