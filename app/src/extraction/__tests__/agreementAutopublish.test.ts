@@ -128,7 +128,7 @@ function makeEnv(flag: string | undefined) {
 
 function stubAgree(text: string) {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-    if (String(url).includes('api.openai.com')) return { ok: true, json: async () => ({ choices: [{ message: { content: text } }] }) } as unknown as Response;
+    if (String(url).includes('api.openai.com')) return { ok: true, json: async () => ({ output_text: text, choices: [{ message: { content: text } }] }) } as unknown as Response;
     if (String(url).includes('api.anthropic.com')) return { ok: true, json: async () => ({ content: [{ type: 'text', text }] }) } as unknown as Response;
     return { ok: false, status: 404, text: async () => 'x' } as unknown as Response;
   }));
@@ -226,7 +226,7 @@ describe('handleAgreementCheck (queue consumer)', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       calls += 1;
       if (calls === 2) review.resolved = 1;
-      if (String(url).includes('api.openai.com')) return { ok: true, json: async () => ({ choices: [{ message: { content: ROW_AAPL } }] }) } as unknown as Response;
+      if (String(url).includes('api.openai.com')) return { ok: true, json: async () => ({ output_text: ROW_AAPL, choices: [{ message: { content: ROW_AAPL } }] }) } as unknown as Response;
       return { ok: true, json: async () => ({ content: [{ type: 'text', text: ROW_AAPL }] }) } as unknown as Response;
     }));
     await handleAgreementCheck(env, 'H-AP-1', 'raw/H-AP-1');

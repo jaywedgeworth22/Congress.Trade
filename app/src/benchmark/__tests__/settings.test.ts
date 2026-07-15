@@ -11,12 +11,12 @@ import {
 
 const OLD = {
   a: 'mistral:mistral-ocr-latest',
-  b: 'openai:gpt-4o',
+  b: 'openai:gpt-5.6-terra',
   c: 'anthropic:claude-haiku-4-5',
 };
 
 const NEW = {
-  a: { provider: 'openai', model: 'gpt-4o' },
+  a: { provider: 'openai', model: 'gpt-5.6-terra' },
   b: { provider: 'gemini', model: 'gemini-3.5-flash' },
   c: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
 };
@@ -66,7 +66,7 @@ describe('benchmark lineup settings', () => {
     const settings = await readBenchmarkLineupSettings(env, 'house');
     expect(settings.lineup).toEqual({
       a: { provider: 'mistral', model: 'mistral-ocr-latest' },
-      b: { provider: 'openai', model: 'gpt-4o' },
+      b: { provider: 'openai', model: 'gpt-5.6-terra' },
       c: { provider: 'anthropic', model: 'claude-haiku-4-5' },
     });
     expect(settings.valid).toBe(true);
@@ -81,7 +81,7 @@ describe('benchmark lineup settings', () => {
     expect(() => validateBenchmarkLineup({
       a: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
       b: { provider: 'anthropic', model: 'claude-haiku-4-5' },
-      c: { provider: 'openai', model: 'gpt-4o' },
+      c: { provider: 'openai', model: 'gpt-5.6-terra' },
     })).toThrow(BenchmarkSettingsValidationError);
   });
 
@@ -105,7 +105,7 @@ describe('benchmark lineup settings', () => {
         'AGREEMENT_SENATE_MODEL_C',
       ],
     });
-    expect(state.AGREEMENT_SENATE_MODEL_A).toBe('openai:gpt-4o');
+    expect(state.AGREEMENT_SENATE_MODEL_A).toBe('openai:gpt-5.6-terra');
     expect(state.AGREEMENT_SENATE_MODEL_B).toBe('gemini:gemini-3.5-flash');
     expect(state.AGREEMENT_SENATE_MODEL_C).toBe('anthropic:claude-sonnet-4-6');
   });
@@ -124,7 +124,7 @@ describe('benchmark lineup settings', () => {
 
     expect(saved.settings).toMatchObject({ lineup: NEW, valid: true });
     expect(saved.audit).toMatchObject({ readbackVerified: true, rollbackAttempted: false });
-    expect(state.AGREEMENT_HOUSE_MODEL_A).toBe('openai:gpt-4o');
+    expect(state.AGREEMENT_HOUSE_MODEL_A).toBe('openai:gpt-5.6-terra');
     expect(state.AGREEMENT_HOUSE_MODEL_B).toBe('gemini:gemini-3.5-flash');
     expect(state.AGREEMENT_HOUSE_MODEL_C).toBe('anthropic:claude-sonnet-4-6');
   });
@@ -223,7 +223,7 @@ describe('benchmark lineup settings', () => {
     expect(fenceChecks).toBe(3);
     // The stale writer leaves its partial value for the live owner to reconcile;
     // critically, it does not delete or overwrite the successor's keyspace.
-    expect(state.AGREEMENT_HOUSE_MODEL_A).toBe('openai:gpt-4o');
+    expect(state.AGREEMENT_HOUSE_MODEL_A).toBe('openai:gpt-5.6-terra');
   });
 
   it('aborts a timed-out Infisical mutation before the lease can expire', async () => {

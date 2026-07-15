@@ -3452,7 +3452,6 @@ var REREAD_MODELS = [
   { provider: 'openai', model: 'gpt-5.6-terra' },
   { provider: 'openai', model: 'gpt-5.6-luna' },
   { provider: 'openai', model: 'gpt-5.6-sol' },
-  { provider: 'openai', model: 'gpt-4o' },
   { provider: 'anthropic', model: 'claude-sonnet-4-6' },
   { provider: 'anthropic', model: 'claude-haiku-4-5' },
   { provider: 'mistral', model: 'mistral-ocr-latest' },

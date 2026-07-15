@@ -172,14 +172,12 @@ APP_BASE_URL = "https://congress.trade"
 # durable cascade leases due review rows, retries transient failures with
 # backoff, and publishes only after the configured cross-vendor checks pass.
 # Set ENABLED to "" to turn off.
-# MODEL_B was "openai:gpt-4o-mini" from 2026-06-26 to 2026-07-10 -- confirmed
-# via prod review_queue data to have been effectively non-functional that
-# whole window (bakeoff.ts:38 already documented gpt-4o-mini rejecting this
-# PDF-as-file-part payload shape outright; only successes were rollout-window
-# artifacts). Switched to the bake-off-proven-working full gpt-4o.
+# GPT-4o is retired for new disclosure reads. Terra is the routine production
+# tier; the OpenAI adapter sends GPT-5.6 PDFs through Responses with high-detail
+# page images, strict structured output, and medium reasoning for Terra.
 AGREEMENT_AUTOPUBLISH_ENABLED = "true"
 AGREEMENT_AUTOPUBLISH_MODEL_A = "mistral:mistral-ocr-latest"
-AGREEMENT_AUTOPUBLISH_MODEL_B = "openai:gpt-4o"
+AGREEMENT_AUTOPUBLISH_MODEL_B = "openai:gpt-5.6-terra"
 # ANTHROPIC_API_KEY is configured for this Worker. Keep C on Anthropic so all
 # three slots are distinct vendors (Mistral/OpenAI/Anthropic).
 AGREEMENT_MODEL_C = "anthropic:claude-sonnet-4-6"

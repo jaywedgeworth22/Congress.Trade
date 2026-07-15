@@ -476,7 +476,7 @@ export interface Env {
   AGREEMENT_AUTOPUBLISH_ENABLED?: string;
   /** Agreement model A as "provider:model" (default mistral:mistral-ocr-latest). */
   AGREEMENT_AUTOPUBLISH_MODEL_A?: string;
-  /** Agreement model B as "provider:model" (production: openai:gpt-4o). */
+  /** Agreement model B as "provider:model" (production: openai:gpt-5.6-terra). */
   AGREEMENT_AUTOPUBLISH_MODEL_B?: string;
   /** Max review docs the autonomous pass attempts per cron tick (default 3). */
   AGREEMENT_AUTOPUBLISH_LIMIT?: string;

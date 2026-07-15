@@ -72,7 +72,11 @@ function makeEnv() {
 function stubBoth(openaiText: string, anthropicText: string) {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (String(url).includes('api.openai.com')) {
-      return { ok: true, json: async () => ({ choices: [{ message: { content: openaiText } }] }) } as unknown as Response;
+      return { ok: true, json: async () => ({
+        model: 'gpt-5.6-terra',
+        status: 'completed',
+        output_text: openaiText,
+      }) } as unknown as Response;
     }
     if (String(url).includes('api.anthropic.com')) {
       return { ok: true, json: async () => ({ content: [{ type: 'text', text: anthropicText }] }) } as unknown as Response;
@@ -81,7 +85,7 @@ function stubBoth(openaiText: string, anthropicText: string) {
   }));
 }
 
-const MODELS = JSON.stringify([{ provider: 'openai', model: 'gpt-4o' }, { provider: 'anthropic', model: 'claude-haiku-4-5' }]);
+const MODELS = JSON.stringify([{ provider: 'openai', model: 'gpt-5.6-terra' }, { provider: 'anthropic', model: 'claude-haiku-4-5' }]);
 
 describe('agreement-reprocess', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -125,5 +129,21 @@ describe('agreement-reprocess', () => {
     const { env } = makeEnv();
     const res = await app.request('/agreement-reprocess', { method: 'POST', headers: AUTH, body: JSON.stringify({ docIds: ['H-1'], models: [{ provider: 'openai', model: 'gpt-4o' }] }) }, env);
     expect(res.status).toBe(400);
+  });
+
+  it('rejects GPT-4o for a new agreement re-read', async () => {
+    const { env } = makeEnv();
+    const res = await app.request('/agreement-reprocess', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({
+        models: [
+          { provider: 'openai', model: 'gpt-4o' },
+          { provider: 'anthropic', model: 'claude-haiku-4-5' },
+        ],
+      }),
+    }, env);
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: expect.stringContaining('retired') });
   });
 });

@@ -3,6 +3,9 @@ import type { Env } from '../../shared/types';
 import {
   computeConsensusAgreement,
   DEFAULT_CANDIDATES,
+  isRetiredDisclosureCandidate,
+  openAiDisclosureReasoningEffort,
+  upgradeRetiredDisclosureCandidate,
   EXTRACTION_SCHEMA_VERSION,
   extractProviderReportedPageCount,
   extractXaiResponseText,
@@ -208,17 +211,8 @@ describe('extractProviderReportedPageCount', () => {
 });
 
 describe('runCandidateOnDoc (openai): token usage capture', () => {
-  const env = { 
-    OPENAI_API_KEY: 'sk-openai-test',
-    DB: {
-      prepare: vi.fn(() => ({
-        bind: vi.fn(() => ({
-          first: vi.fn(async () => undefined),
-        })),
-      })),
-    } 
-  } as unknown as Env;
-  const candidate: BakeoffCandidate = { provider: 'openai', model: 'gpt-4o' };
+  const env = { OPENAI_API_KEY: 'sk-openai-test' } as unknown as Env;
+  const candidate: BakeoffCandidate = { provider: 'openai', model: 'gpt-5.6-terra' };
   const bytes = new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
   const okContent = '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}';
 
@@ -231,8 +225,9 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
         ({
           ok: true,
           json: async () => ({
-            choices: [{ message: { content: okContent } }],
-            usage: { prompt_tokens: 500, completion_tokens: 40, prompt_tokens_details: { cached_tokens: 100 } },
+            status: 'completed',
+            output_text: okContent,
+            usage: { input_tokens: 500, output_tokens: 40, input_tokens_details: { cached_tokens: 100 } },
           }),
         }) as unknown as Response,
       ),
@@ -249,7 +244,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       vi.fn(async () =>
         ({
           ok: true,
-          json: async () => ({ choices: [{ message: { content: okContent } }] }),
+          json: async () => ({ status: 'completed', output_text: okContent }),
         }) as unknown as Response,
       ),
     );
@@ -272,7 +267,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     expect(result.usage).toBeUndefined();
   });
 
-  it('uses high-detail Responses PDF input and captures GPT-5.6 usage metadata', async () => {
+  it('uses original-detail Responses PDF input and captures GPT-5.6 usage metadata', async () => {
     const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       ({
         ok: true,
@@ -317,13 +312,14 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     expect(request).toMatchObject({
       model: 'gpt-5.6-terra',
       service_tier: 'default',
-      reasoning: { effort: 'none' },
+      reasoning: { effort: 'medium' },
+      store: false,
       text: { format: { type: 'json_schema', strict: true } },
     });
     expect(request.input[0].content[0]).toMatchObject({
       type: 'input_file',
       filename: 'ptr.pdf',
-      detail: 'high',
+      detail: 'original',
     });
   });
 
@@ -411,7 +407,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     expect(properties.txType.type).toEqual(['string', 'null']);
   });
 
-  it('keeps the three GPT-5.6 tiers plus GPT-4o as a legacy benchmark baseline', () => {
+  it('offers only the three GPT-5.6 tiers for new OpenAI disclosure reads', () => {
     const openAiModels = DEFAULT_CANDIDATES
       .filter((entry) => entry.provider === 'openai')
       .map((entry) => entry.model);
@@ -419,8 +415,39 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       'gpt-5.6-terra',
       'gpt-5.6-luna',
       'gpt-5.6-sol',
-      'gpt-4o',
     ]);
+  });
+
+  it('maps the GPT-5.6 roles to low, medium, and high reasoning', () => {
+    expect(openAiDisclosureReasoningEffort('gpt-5.6-luna')).toBe('low');
+    expect(openAiDisclosureReasoningEffort('gpt-5.6-terra')).toBe('medium');
+    expect(openAiDisclosureReasoningEffort('gpt-5.6-sol')).toBe('high');
+  });
+
+  it('retires the GPT-4o family from active reads while upgrading stale agreement config', () => {
+    expect(isRetiredDisclosureCandidate({ provider: 'openai', model: 'gpt-4o' })).toBe(true);
+    expect(isRetiredDisclosureCandidate({ provider: 'openai', model: 'gpt-4o-mini' })).toBe(true);
+    expect(isRetiredDisclosureCandidate({ provider: 'openai', model: 'chatgpt-4o-latest' })).toBe(true);
+    expect(isRetiredDisclosureCandidate({ provider: 'openai', model: 'gpt-5.6-terra' })).toBe(false);
+    expect(upgradeRetiredDisclosureCandidate({ provider: 'openai', model: 'gpt-4o' }))
+      .toEqual({ provider: 'openai', model: 'gpt-5.6-terra' });
+  });
+
+  it('blocks a low-level GPT-4o invocation before resolving a key or calling a provider', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await runCandidateOnDoc(
+      { OPENAI_API_KEY: 'must-not-use' } as unknown as Env,
+      { provider: 'openai', model: 'chatgpt-4o-latest' },
+      'H-retired',
+      new TextEncoder().encode('%PDF').buffer as ArrayBuffer,
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: 'GPT-4o is retired for new disclosure extraction',
+      latencyMs: 0,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -647,6 +674,100 @@ describe('runCandidateOnDoc (anthropic): complete billed input usage', () => {
   });
 });
 
+describe('runCandidateOnDoc extraction cache', () => {
+  const bytes = new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
+  const candidate: BakeoffCandidate = { provider: 'openai', model: 'gpt-5.6-terra' };
+  const cachedRow = {
+    txDate: '2026-07-14',
+    owner: 'self',
+    assetName: 'Apple Inc.',
+    ticker: 'AAPL',
+    assetType: 'stock',
+    txType: 'P',
+    amountMin: 1_001,
+    amountMax: 15_000,
+    isOption: false,
+    capGainsOver200: false,
+    rawText: 'Apple Inc. purchase',
+    confidence: 0.9,
+  };
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('reconstructs a cached result from the stored flat row array', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const first = vi.fn(async () => ({ result_json: JSON.stringify([cachedRow]) }));
+    const env = {
+      OPENAI_API_KEY: 'openai-test',
+      DB: { prepare: vi.fn(() => ({ bind: vi.fn(() => ({ first })) })) },
+    } as unknown as Env;
+
+    const result = await runCandidateOnDoc(env, candidate, 'H-cache', bytes);
+
+    expect(result).toMatchObject({
+      ok: true,
+      cached: true,
+      latencyMs: 0,
+      rowCount: 1,
+      rowKeys: ['AAPL|2026-07-14|P'],
+      avgConfidence: 0.9,
+      rows: [cachedRow],
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('falls through when the cache table is unavailable before migration', async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      status: 'completed',
+      output_text: '{"transactions":[]}',
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const env = {
+      OPENAI_API_KEY: 'openai-test',
+      DB: {
+        prepare: vi.fn(() => ({
+          bind: vi.fn(() => ({ first: vi.fn(async () => { throw new Error('no such table: extraction_runs'); }) })),
+        })),
+      },
+    } as unknown as Env;
+
+    const result = await runCandidateOnDoc(env, candidate, 'H-unmigrated', bytes);
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('bypasses a prior row when a benchmark requires fresh provider measurements', async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      status: 'completed',
+      output_text: '{"transactions":[]}',
+      usage: { input_tokens: 12, output_tokens: 3 },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const first = vi.fn(async () => ({ result_json: JSON.stringify([cachedRow]) }));
+    const env = {
+      DB: { prepare: vi.fn(() => ({ bind: vi.fn(() => ({ first })) })) },
+    } as unknown as Env;
+
+    const result = await runCandidateOnDoc(
+      env,
+      candidate,
+      'H-benchmark',
+      bytes,
+      { apiKey: 'reserved-key', skipCache: true },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      usage: { promptTokens: 12, completionTokens: 3 },
+    });
+    expect(result.cached).toBeUndefined();
+    expect(first).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('runCandidateOnDoc frozen invocation authorization', () => {
   const bytes = new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
 
@@ -658,7 +779,7 @@ describe('runCandidateOnDoc frozen invocation authorization', () => {
 
     const result = await runCandidateOnDoc(
       { OPENAI_API_KEY: 'appeared-after-reservation-check' } as unknown as Env,
-      { provider: 'openai', model: 'gpt-4o' },
+      { provider: 'openai', model: 'gpt-5.6-terra' },
       'H-1',
       bytes,
       { apiKey: null },
@@ -684,7 +805,7 @@ describe('runCandidateOnDoc frozen invocation authorization', () => {
 
     const result = await runCandidateOnDoc(
       {} as Env,
-      { provider: 'openai', model: 'gpt-4o' },
+      { provider: 'openai', model: 'gpt-5.6-terra' },
       'H-1',
       bytes,
       { apiKey: 'reserved-key' },
