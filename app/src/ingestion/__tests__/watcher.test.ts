@@ -204,7 +204,10 @@ describe('runWatcher', () => {
     chamber: 'executive' as const,
     sourceUrl: 'https://extapps2.oge.gov/278/0001.pdf',
     filedDate: '2026-06-01',
+    filerId: 'EXEC-DJT',
     filerName: 'Donald J. Trump',
+    party: 'R',
+    photoUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/1/16/x.jpg/500px-x.jpg',
   };
 
   function quietExecutiveEnv() {
@@ -226,6 +229,30 @@ describe('runWatcher', () => {
     // Executive filings must NOT create disclosure-latency candidates (those
     // providers only publish house/senate rows and would sit permanently pending).
     expect(dbRuns.filter((run) => /INSERT INTO disclosure_latency_candidates/i.test(run.sql))).toHaveLength(0);
+  });
+
+  it('upserts executive filer party + portrait so existing rows refresh on every poll', async () => {
+    const { env, dbRuns } = fakeEnv();
+    quietExecutiveEnv();
+    mocks.pollOgeExecutive.mockResolvedValueOnce([ogeFiling]);
+
+    await runWatcher(env, new Date('2026-07-12T15:00:00.000Z'));
+
+    const filerWrites = dbRuns.filter((run) => /INTO filers/i.test(run.sql));
+    expect(filerWrites).toHaveLength(1);
+    // ON CONFLICT upsert (NOT INSERT OR IGNORE): pre-existing EXEC-* rows
+    // created before party/photo were curated must pick the fields up too.
+    expect(filerWrites[0].sql).toMatch(/ON CONFLICT\(bioguide_id\) DO UPDATE SET/i);
+    expect(filerWrites[0].sql).toMatch(/photo_url = COALESCE\(excluded\.photo_url, photo_url\)/i);
+    expect(filerWrites[0].params).toEqual([
+      'EXEC-DJT',
+      'executive',
+      'Donald J. Trump',
+      'R',
+      null,
+      null,
+      'https://upload.wikimedia.org/wikipedia/commons/thumb/1/16/x.jpg/500px-x.jpg',
+    ]);
   });
 
   it('does not checkpoint last_poll:oge when executive persistence fails', async () => {

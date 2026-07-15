@@ -103,6 +103,58 @@ check_liveness() {
   curl -fsS -A "$UA" "$base/health" | grep -q '"ok":true'
 }
 
+# Post-deploy smoke: fetch the served dashboard HTML (with a browser UA, same
+# Cloudflare-challenge reason as above) and run `node --check` on every inline
+# <script> block. Guards against shipping a dashboard whose embedded JS fails
+# to parse in the browser (2026-07-12 outage: /health was green while the
+# served page's inline script was syntactically broken).
+check_dashboard_scripts() {
+  local page_url="$1"
+  local html_file
+  html_file="$(mktemp)"
+  trap 'rm -f "$html_file"' RETURN
+  if ! curl -fsS -A "$UA" "$page_url" -o "$html_file"; then
+    echo "!! Failed to fetch dashboard HTML from $page_url." >&2
+    return 1
+  fi
+  node - "$html_file" <<'NODE_SMOKE'
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const html = fs.readFileSync(process.argv[2], 'utf8');
+const scriptRe = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi;
+let index = 0;
+let checked = 0;
+let match;
+while ((match = scriptRe.exec(html)) !== null) {
+  index++;
+  const attrs = match[1];
+  const body = match[2];
+  if (/\bsrc\s*=/i.test(attrs)) continue; // external script — nothing inline to parse
+  if (!body.trim()) continue; // empty block
+  const tmp = path.join(os.tmpdir(), `ship-inline-script-${process.pid}-${index}.js`);
+  fs.writeFileSync(tmp, body);
+  const result = spawnSync(process.execPath, ['--check', tmp], { encoding: 'utf8' });
+  fs.unlinkSync(tmp);
+  if (result.status !== 0) {
+    console.error(`!! Inline <script> #${index} in served HTML failed to parse.`);
+    console.error('   First lines of the failing block:');
+    for (const line of body.split('\n').slice(0, 5)) console.error(`   | ${line}`);
+    console.error((result.stderr || result.stdout || '').trim());
+    process.exit(1);
+  }
+  checked++;
+}
+if (checked === 0) {
+  console.error('!! No inline <script> blocks found in served HTML — dashboard markup looks wrong.');
+  process.exit(1);
+}
+console.log(`   OK: ${checked} inline <script> block(s) parsed cleanly.`);
+NODE_SMOKE
+}
+
 echo "==> Deploying"
 npm run deploy
 
@@ -135,6 +187,8 @@ post() { # $1 = admin path, $2 = json body (optional)
 if [ "$DEPLOY_ONLY" = true ]; then
   echo "==> Deploy-only mode: skipped /api/admin/migrate; verifying existing schema readiness."
   check_api_health "$ADMIN_BASE/api/health" "$ADMIN_BASE"
+  echo "==> Served-HTML inline script parse smoke"
+  check_dashboard_scripts "$ADMIN_BASE/"
   echo "==> Done."
   exit 0
 fi
@@ -144,6 +198,9 @@ post migrate
 
 echo "==> Live API readiness check"
 check_api_health "$ADMIN_BASE/api/health" "$ADMIN_BASE"
+
+echo "==> Served-HTML inline script parse smoke"
+check_dashboard_scripts "$ADMIN_BASE/"
 
 for arg in "${ADMIN_STEPS[@]}"; do
   case "$arg" in

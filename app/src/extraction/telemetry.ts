@@ -5,6 +5,7 @@ import {
   type MeasuredThirdPartyUsage,
 } from '../shared/thirdPartyTelemetry';
 import type { CandidateDocResult, ExtractionRunKind } from './bakeoff';
+import { priceBenchmarkUsage } from './benchmarkMetrics';
 
 type ResultMeasurement = Omit<
   Extract<MeasuredThirdPartyUsage, { idempotencyKey?: undefined }>,
@@ -81,6 +82,46 @@ export async function pushExtractionTelemetry(
       'cost',
       measuredCost,
     );
+  } else {
+    // No provider-native charge (every provider besides xAI). Estimate the
+    // dollar cost from measured token/page usage against the shared
+    // benchmark rate card, and mark it clearly as an estimate — never
+    // 'actual' — so downstream consumers cannot mistake it for a billed
+    // amount.
+    const estimatedCost = priceBenchmarkUsage({
+      provider: result.provider,
+      model: result.model,
+      resolvedModel: result.resolvedModel ?? null,
+      invoked: true,
+      usage: {
+        promptTokens: usage.promptTokens,
+        completionTokens: usage.completionTokens,
+        cachedTokens: usage.cachedTokens,
+        cacheWriteTokens: usage.cacheWriteTokens,
+        cacheWriteOneHourTokens: usage.cacheWriteOneHourTokens,
+        serviceTier: usage.serviceTier ?? result.serviceTier,
+        pagesProcessed: usage.pagesProcessed,
+      },
+    });
+    if (estimatedCost.costUsd != null) {
+      await recordResultMeasurement(env, result, 'cost', {
+        provider: result.provider,
+        service: 'llm',
+        operation: `${kind}-provider-cost`,
+        model: result.resolvedModel ?? result.model,
+        metricType: 'cost' as const,
+        quantity: estimatedCost.costUsd,
+        unit: 'usd' as const,
+        costUsd: estimatedCost.costUsd,
+        billingMode: 'estimated' as const,
+        confidence: 'estimated' as const,
+        metadata: {
+          success: result.ok,
+          latencyMs: result.latencyMs,
+          costSource: estimatedCost.costSource,
+        },
+      });
+    }
   }
   const promptTokens = usage.promptTokens;
   const completionTokens = usage.completionTokens;

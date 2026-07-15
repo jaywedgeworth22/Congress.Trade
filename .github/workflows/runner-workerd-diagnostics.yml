@@ -1,0 +1,123 @@
+name: Runner workerd diagnostics
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnostics:
+    name: Diagnose workerd EPIPE on self-hosted runner
+    runs-on: [self-hosted, congress-deploy]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Without this the self-hosted runner's job shell resolves node to the
+      # stock Ubuntu 20.04 /usr/bin/node (v10, no npm on PATH), so npm ci and
+      # every downstream workerd/miniflare step no-ops. Mirrors ci.yml/deploy.yml.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Ensure strace available (best effort)
+        continue-on-error: true
+        run: |
+          command -v strace >/dev/null 2>&1 || sudo apt-get update -qq && sudo apt-get install -y -qq strace || echo "strace unavailable; strace step will be skipped"
+
+      - name: System info
+        continue-on-error: true
+        run: |
+          echo '===== [1] SYSTEM INFO ====='
+          uname -a || true
+          cat /etc/os-release || true
+          ldd --version | head -1 || true
+          nproc || true
+          free -h || true
+          ulimit -a || true
+          mount | grep -Ei 'tmp|noexec' || true
+          echo 'unprivileged_userns_clone:'
+          cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null || true
+
+      - name: Node and npm versions
+        continue-on-error: true
+        run: |
+          echo '===== [2] NODE / NPM VERSIONS ====='
+          node --version || true
+          npm --version || true
+
+      - name: Install app dependencies
+        continue-on-error: true
+        working-directory: app
+        run: |
+          echo '===== [3] NPM CI ====='
+          npm ci --no-audit --no-fund || true
+
+      - name: Locate and run workerd binary
+        continue-on-error: true
+        working-directory: app
+        run: |
+          echo '===== [4] WORKERD BINARY --version ====='
+          WORKERD_BIN="$(node -p "require.resolve('@cloudflare/workerd-linux-64/bin/workerd')" 2>/dev/null || true)"
+          if [ -z "$WORKERD_BIN" ] || [ ! -f "$WORKERD_BIN" ]; then
+            WORKERD_BIN="$(find node_modules -path '*workerd*bin/workerd' -type f 2>/dev/null | head -1 || true)"
+          fi
+          echo "workerd binary: ${WORKERD_BIN:-NOT FOUND}"
+          echo "$WORKERD_BIN" > /tmp/workerd-bin-path.txt
+          if [ -n "$WORKERD_BIN" ] && [ -f "$WORKERD_BIN" ]; then
+            "$WORKERD_BIN" --version > /tmp/workerd-version.txt 2>&1
+            echo "exit code: $?"
+            cat /tmp/workerd-version.txt || true
+          else
+            echo 'workerd binary not found; skipping'
+          fi
+
+      - name: ldd on workerd binary
+        continue-on-error: true
+        run: |
+          echo '===== [5] LDD WORKERD ====='
+          WORKERD_BIN="$(cat /tmp/workerd-bin-path.txt 2>/dev/null || true)"
+          if [ -n "$WORKERD_BIN" ] && [ -f "$WORKERD_BIN" ]; then
+            ldd "$WORKERD_BIN" || true
+          else
+            echo 'workerd binary not found; skipping'
+          fi
+
+      - name: strace workerd startup
+        continue-on-error: true
+        run: |
+          echo '===== [6] STRACE WORKERD ====='
+          WORKERD_BIN="$(cat /tmp/workerd-bin-path.txt 2>/dev/null || true)"
+          if ! command -v strace >/dev/null 2>&1; then
+            echo 'strace not installed; skipping'
+          elif [ -z "$WORKERD_BIN" ] || [ ! -f "$WORKERD_BIN" ]; then
+            echo 'workerd binary not found; skipping'
+          else
+            strace -f -e trace=execve,openat,socketpair -o /tmp/workerd-strace.txt timeout 30 "$WORKERD_BIN" --version || true
+            echo "strace exit code: $?"
+            tail -40 /tmp/workerd-strace.txt || true
+          fi
+
+      - name: Miniflare smoke probe
+        continue-on-error: true
+        working-directory: app
+        run: |
+          echo '===== [7] MINIFLARE PROBE ====='
+          cat > /tmp/mf-probe.mjs <<'EOF'
+          import { Miniflare } from 'miniflare';
+          try {
+            const mf = new Miniflare({
+              modules: true,
+              script: 'export default {fetch(){return new Response("ok")}}',
+            });
+            console.log(await (await mf.dispatchFetch('http://x/')).text());
+            await mf.dispose();
+            console.log('MINIFLARE OK');
+          } catch (e) {
+            console.error('MINIFLARE FAIL', e);
+          }
+          EOF
+          node /tmp/mf-probe.mjs || true
+
+      - name: Done
+        run: |
+          echo '===== [8] DIAGNOSTICS COMPLETE ====='

@@ -178,6 +178,162 @@ describe('extraction measured telemetry', () => {
     expect(new Set([...leftKeys, ...rightKeys]).size).toBe(8);
   });
 
+  it('estimates gemini cost from token usage against the shared rate card, marked as estimated', async () => {
+    const result: CandidateDocResult = {
+      provider: 'gemini',
+      model: 'gemini-3.5-flash',
+      docId: 'H-gemini',
+      ok: true,
+      latencyMs: 10,
+      rowCount: 0,
+      rowKeys: [],
+      avgConfidence: 0,
+      rows: [],
+      usage: { promptTokens: 1_000, completionTokens: 200, cachedTokens: 100 },
+    };
+
+    await pushExtractionTelemetry({} as Env, result, 'benchmark');
+
+    expect(mocks.recordMeasuredThirdPartyUsage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      provider: 'gemini',
+      operation: 'benchmark-provider-cost',
+      metricType: 'cost',
+      quantity: expect.closeTo(0.003165, 6),
+      costUsd: expect.closeTo(0.003165, 6),
+      unit: 'usd',
+      billingMode: 'estimated',
+      confidence: 'estimated',
+      metadata: expect.objectContaining({ costSource: 'usage_priced' }),
+    }));
+  });
+
+  it('estimates OpenAI GPT-5.6 Terra cost from token usage, marked as estimated', async () => {
+    const result: CandidateDocResult = {
+      provider: 'openai',
+      model: 'gpt-5.6-terra',
+      docId: 'H-openai',
+      ok: true,
+      latencyMs: 10,
+      rowCount: 0,
+      rowKeys: [],
+      avgConfidence: 0,
+      rows: [],
+      usage: { promptTokens: 1_000, completionTokens: 100 },
+    };
+
+    await pushExtractionTelemetry({} as Env, result, 'benchmark');
+
+    expect(mocks.recordMeasuredThirdPartyUsage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      provider: 'openai',
+      operation: 'benchmark-provider-cost',
+      costUsd: expect.closeTo(0.004, 6),
+      billingMode: 'estimated',
+      confidence: 'estimated',
+    }));
+  });
+
+  it('estimates Anthropic Haiku cost including cache read/write tiers, marked as estimated', async () => {
+    const result: CandidateDocResult = {
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      docId: 'H-anthropic',
+      ok: true,
+      latencyMs: 10,
+      rowCount: 0,
+      rowKeys: [],
+      avgConfidence: 0,
+      rows: [],
+      usage: {
+        promptTokens: 500,
+        completionTokens: 80,
+        cachedTokens: 100,
+        cacheWriteTokens: 50,
+      },
+    };
+
+    await pushExtractionTelemetry({} as Env, result, 'benchmark');
+
+    expect(mocks.recordMeasuredThirdPartyUsage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      provider: 'anthropic',
+      operation: 'benchmark-provider-cost',
+      costUsd: expect.closeTo(0.0008225, 7),
+      billingMode: 'estimated',
+      confidence: 'estimated',
+    }));
+  });
+
+  it('estimates Mistral OCR cost from pages processed, marked as estimated', async () => {
+    const result: CandidateDocResult = {
+      provider: 'mistral',
+      model: 'mistral-ocr-latest',
+      docId: 'H-mistral',
+      ok: true,
+      latencyMs: 10,
+      rowCount: 0,
+      rowKeys: [],
+      avgConfidence: 0,
+      rows: [],
+      usage: { pagesProcessed: 4 },
+    };
+
+    await pushExtractionTelemetry({} as Env, result, 'benchmark');
+
+    expect(mocks.recordMeasuredThirdPartyUsage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      provider: 'mistral',
+      operation: 'benchmark-provider-cost',
+      costUsd: expect.closeTo(0.02, 6),
+      billingMode: 'estimated',
+      confidence: 'estimated',
+    }));
+  });
+
+  it('does not emit a cost event when the model has no rate-card entry', async () => {
+    const result: CandidateDocResult = {
+      provider: 'openai',
+      model: 'gpt-3.5-unlisted',
+      docId: 'H-unlisted',
+      ok: true,
+      latencyMs: 10,
+      rowCount: 0,
+      rowKeys: [],
+      avgConfidence: 0,
+      rows: [],
+      usage: { promptTokens: 1_000, completionTokens: 100 },
+    };
+
+    await pushExtractionTelemetry({} as Env, result, 'benchmark');
+
+    const costCalls = mocks.recordMeasuredThirdPartyUsage.mock.calls
+      .filter(([, usage]) => usage.operation === 'benchmark-provider-cost');
+    expect(costCalls).toHaveLength(0);
+    // The tokens event still fires — cost estimation is best-effort, not a gate.
+    expect(mocks.recordMeasuredThirdPartyUsage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      operation: 'benchmark-tokens',
+    }));
+  });
+
+  it('keeps xAI provider-reported cost as actual, never estimated, even though it is also priceable by tokens', async () => {
+    const result: CandidateDocResult = {
+      provider: 'xai',
+      model: 'grok-4.3',
+      docId: 'H-xai',
+      ok: true,
+      latencyMs: 10,
+      rowCount: 0,
+      rowKeys: [],
+      avgConfidence: 0,
+      rows: [],
+      usage: { promptTokens: 900, completionTokens: 50, costInUsdTicks: 321_000_000 },
+    };
+
+    await pushExtractionTelemetry({} as Env, result, 'benchmark');
+
+    const costCalls = mocks.recordMeasuredThirdPartyUsage.mock.calls
+      .filter(([, usage]) => usage.operation === 'benchmark-provider-cost');
+    expect(costCalls).toHaveLength(1);
+    expect(costCalls[0]?.[1]).toMatchObject({ billingMode: 'actual', confidence: 'actual' });
+  });
+
   it('preserves an exact zero-cost provider result', async () => {
     const result: CandidateDocResult = {
       provider: 'xai',

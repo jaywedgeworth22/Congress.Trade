@@ -3,6 +3,7 @@ import {
   activeFilterCount,
   buildFeedPath,
   commandBody,
+  deliveryScopeHelperText,
   EMPTY_FILTERS,
   filterSummary,
   parseWatchlist,
@@ -48,6 +49,18 @@ describe('dashboard feed model', () => {
 
   it('normalizes and deduplicates a watchlist', () => {
     expect(parseWatchlist(' aapl, MSFT, aapl, , nvda ')).toEqual(['AAPL', 'MSFT', 'NVDA']);
+  });
+
+  it('accepts an executive chamber filter and labels it distinctly from senate', () => {
+    const url = new URL(buildFeedPath({ ...EMPTY_FILTERS, chamber: 'executive' }), 'https://example.test');
+    expect(url.searchParams.get('chamber')).toBe('executive');
+    expect(filterSummary({ ...EMPTY_FILTERS, chamber: 'executive' })).toBe('Executive');
+  });
+
+  it('summarizes delivery scope from the live watchlist, matching backend empty-tickers semantics', () => {
+    expect(deliveryScopeHelperText([])).toBe('Scoped to all tickers — your watchlist above is empty.');
+    expect(deliveryScopeHelperText(['AAPL'])).toBe('Scoped to your watchlist above (1 ticker).');
+    expect(deliveryScopeHelperText(['AAPL', 'MSFT'])).toBe('Scoped to your watchlist above (2 tickers).');
   });
 
   it('keeps an explicit idempotency key attached to the intent body', () => {

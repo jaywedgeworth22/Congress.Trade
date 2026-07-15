@@ -1,0 +1,425 @@
+<title>Congress.Trade — logo concepts</title>
+<style>
+  :root {
+    --bg:#f4f7fb; --panel:#ffffff; --border:#d3dced; --text:#142036;
+    --dim:#4f607c; --accent:#2563eb; --accent-soft:rgba(37,99,235,.13);
+    --site-bg:#0b1120; --site-panel:#15203a; --site-border:#243154;
+    --site-text:#e6edf6; --site-dim:#9db1cd; --site-accent:#4f8cff;
+    --buy:#22c55e; --sell:#ef4444;
+    --mono:ui-monospace,'SF Mono','Cascadia Mono',Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0b1120; --panel:#15203a; --border:#243154; --text:#e6edf6;
+      --dim:#9db1cd; --accent:#4f8cff; --accent-soft:rgba(79,140,255,.16); }
+  }
+  :root[data-theme="dark"] { --bg:#0b1120; --panel:#15203a; --border:#243154;
+    --text:#e6edf6; --dim:#9db1cd; --accent:#4f8cff; --accent-soft:rgba(79,140,255,.16); }
+  :root[data-theme="light"] { --bg:#f4f7fb; --panel:#ffffff; --border:#d3dced;
+    --text:#142036; --dim:#4f607c; --accent:#2563eb; --accent-soft:rgba(37,99,235,.13); }
+
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.55 var(--sans); }
+  .wrap { max-width:880px; margin:0 auto; padding:40px 20px 80px; }
+  .eyebrow { font:600 11px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--accent); }
+  h1 { font-size:26px; line-height:1.2; margin:10px 0 8px; letter-spacing:-.01em; text-wrap:balance; }
+  .lead p { color:var(--dim); max-width:62ch; margin:0 0 6px; }
+
+  section.concept { margin-top:44px; border-top:1px solid var(--border); padding-top:26px; }
+  .c-head { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .c-num { font:600 12px/1 var(--mono); color:var(--dim); }
+  h2 { font-size:19px; margin:0; letter-spacing:-.01em; }
+  .rec { font:600 10px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
+    color:var(--accent); border:1px solid var(--accent); border-radius:999px; padding:4px 8px; }
+  .c-sub { color:var(--dim); max-width:64ch; margin:8px 0 18px; }
+
+  .stage { display:flex; gap:16px; flex-wrap:wrap; }
+  .board { border-radius:14px; border:1px solid var(--border); padding:26px; display:flex; align-items:center; justify-content:center; gap:26px; flex:1 1 260px; min-height:150px; }
+  .board.dark  { background:var(--site-bg); }
+  .board.light { background:#ffffff; border-color:#d3dced; }
+  .board .cap { position:absolute; } /* unused; captions below */
+  .caption { font:11px/1.5 var(--mono); color:var(--dim); margin-top:8px; }
+
+  .lockbar { margin-top:16px; width:min(430px,100%); background:var(--site-panel); border:1px solid var(--site-border);
+    border-radius:14px; padding:12px 16px; display:flex; align-items:center; gap:10px; }
+  /* Chosen wordmark face: F3 Typewriter Slab (production: Zilla Slab, self-hosted) */
+  .lockbar .wm { color:var(--site-text); font-weight:700; font-size:16px; letter-spacing:0;
+    font-family:'American Typewriter',Rockwell,'Courier New',serif; }
+  .lockbar .wm em { color:var(--site-accent); font-style:normal; }
+
+  .favrow { display:flex; align-items:flex-end; gap:18px; margin-top:16px; flex-wrap:wrap; }
+  .fav { display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .fav .box { background:var(--site-bg); border:1px solid var(--border); border-radius:6px; display:flex; align-items:center; justify-content:center; }
+  .fav .box.b16 { width:28px; height:28px; }
+  .fav .box.b32 { width:44px; height:44px; }
+  .fav .box.b48 { width:64px; height:64px; border-radius:14px; }
+  .fav span { font:10px/1 var(--mono); color:var(--dim); }
+
+  ul.pc { margin:16px 0 0; padding:0; list-style:none; display:grid; gap:6px; max-width:66ch; }
+  ul.pc li { padding-left:20px; position:relative; color:var(--dim); }
+  ul.pc li::before { position:absolute; left:0; font:700 12px/1.6 var(--mono); }
+  ul.pc li.plus::before { content:'+'; color:var(--accent); }
+  ul.pc li.minus::before { content:'–'; color:var(--dim); }
+  ul.pc li strong { color:var(--text); font-weight:600; }
+
+  .wordmark { font-weight:700; letter-spacing:0; display:inline-flex; align-items:baseline;
+    font-family:'American Typewriter',Rockwell,'Courier New',serif; }
+  .wordmark .t2 { color:var(--site-accent); }
+  .wm-dark { color:var(--site-text); }
+  .wm-light { color:#142036; }
+  .wm-light .t2 { color:#2563eb; }
+
+  .qs { margin-top:48px; border-top:1px solid var(--border); padding-top:26px; }
+  .qs h2 { margin-bottom:10px; }
+  .qs p { color:var(--dim); max-width:66ch; }
+  .qs p strong { color:var(--text); }
+  .hint { margin-top:22px; font:12px/1.5 var(--mono); color:var(--dim); }
+</style>
+
+<div class="wrap">
+  <header class="lead">
+    <div class="eyebrow">Congress.Trade · identity exploration</div>
+    <h1>Logo concepts</h1>
+    <p>Five directions, each shown on the site's dark ground and on white, with the header lockup and favicon sizes that will do most of the real work. The brand facts they draw from: the Capitol dome (the subject), candlesticks (the data), and the disclosure clock (the speed story your latency scoreboard already tells).</p>
+  </header>
+
+  <!-- ================================================== C1 -->
+  <section class="concept">
+    <div class="c-head"><span class="c-num">01</span><h2>Candlestick Colonnade</h2><span class="rec">Recommended</span></div>
+    <p class="c-sub">The Capitol's dome and entablature carried by columns that are literally candlesticks — the building is made of the market data inside it. Rev&nbsp;2: the red/green candles are now permanent brand equipment — they persist through the chrome variant, the lockup, and every favicon size; only the structure changes color with context.</p>
+
+    <div class="stage">
+      <div class="board dark">
+        <svg width="120" height="120" viewBox="0 0 64 64" aria-label="Candlestick Colonnade mark, semantic colors">
+          <circle cx="32" cy="5" r="1.4" fill="#e6edf6"/>
+          <path d="M32 7 v4" stroke="#e6edf6" stroke-width="2" stroke-linecap="round" fill="none"/>
+          <path d="M16 30 C16 14.5 48 14.5 48 30" stroke="#e6edf6" stroke-width="3" fill="none" stroke-linecap="round"/>
+          <rect x="12" y="30" width="40" height="3.6" rx="1.8" fill="#e6edf6"/>
+          <g stroke-linecap="round">
+            <path d="M15 34.5 V57" stroke="#9db1cd" stroke-width="1.4"/>
+            <path d="M23 34.5 V57" stroke="#9db1cd" stroke-width="1.4"/>
+            <path d="M31.5 34.5 V57" stroke="#9db1cd" stroke-width="1.4"/>
+            <path d="M40 34.5 V57" stroke="#9db1cd" stroke-width="1.4"/>
+            <path d="M48 34.5 V57" stroke="#9db1cd" stroke-width="1.4"/>
+          </g>
+          <rect x="12.4" y="38" width="5.2" height="12" rx="1.2" fill="#22c55e"/>
+          <rect x="20.4" y="42" width="5.2" height="11" rx="1.2" fill="#ef4444"/>
+          <rect x="28.9" y="37" width="5.2" height="13" rx="1.2" fill="#22c55e"/>
+          <rect x="37.4" y="43" width="5.2" height="10" rx="1.2" fill="#22c55e"/>
+          <rect x="45.4" y="39" width="5.2" height="12" rx="1.2" fill="#ef4444"/>
+          <path d="M10 59.5 H54" stroke="#e6edf6" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+        <svg width="120" height="120" viewBox="0 0 64 64" aria-label="Candlestick Colonnade mark, accent structure with semantic candles">
+          <circle cx="32" cy="5" r="1.4" fill="#4f8cff"/>
+          <path d="M32 7 v4" stroke="#4f8cff" stroke-width="2" stroke-linecap="round" fill="none"/>
+          <path d="M16 30 C16 14.5 48 14.5 48 30" stroke="#4f8cff" stroke-width="3" fill="none" stroke-linecap="round"/>
+          <rect x="12" y="30" width="40" height="3.6" rx="1.8" fill="#4f8cff"/>
+          <g stroke-linecap="round">
+            <path d="M15 34.5 V57" stroke="#9db1cd" stroke-width="1.4" opacity=".6"/>
+            <path d="M23 34.5 V57" stroke="#9db1cd" stroke-width="1.4" opacity=".6"/>
+            <path d="M31.5 34.5 V57" stroke="#9db1cd" stroke-width="1.4" opacity=".6"/>
+            <path d="M40 34.5 V57" stroke="#9db1cd" stroke-width="1.4" opacity=".6"/>
+            <path d="M48 34.5 V57" stroke="#9db1cd" stroke-width="1.4" opacity=".6"/>
+          </g>
+          <rect x="12.4" y="38" width="5.2" height="12" rx="1.2" fill="#22c55e"/>
+          <rect x="20.4" y="42" width="5.2" height="11" rx="1.2" fill="#ef4444"/>
+          <rect x="28.9" y="37" width="5.2" height="13" rx="1.2" fill="#22c55e"/>
+          <rect x="37.4" y="43" width="5.2" height="10" rx="1.2" fill="#22c55e"/>
+          <rect x="45.4" y="39" width="5.2" height="12" rx="1.2" fill="#ef4444"/>
+          <path d="M10 59.5 H54" stroke="#4f8cff" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <div class="board light">
+        <svg width="120" height="120" viewBox="0 0 64 64" aria-label="Candlestick Colonnade mark on white">
+          <circle cx="32" cy="5" r="1.4" fill="#142036"/>
+          <path d="M32 7 v4" stroke="#142036" stroke-width="2" stroke-linecap="round" fill="none"/>
+          <path d="M16 30 C16 14.5 48 14.5 48 30" stroke="#142036" stroke-width="3" fill="none" stroke-linecap="round"/>
+          <rect x="12" y="30" width="40" height="3.6" rx="1.8" fill="#142036"/>
+          <g stroke-linecap="round">
+            <path d="M15 34.5 V57" stroke="#4f607c" stroke-width="1.4"/>
+            <path d="M23 34.5 V57" stroke="#4f607c" stroke-width="1.4"/>
+            <path d="M31.5 34.5 V57" stroke="#4f607c" stroke-width="1.4"/>
+            <path d="M40 34.5 V57" stroke="#4f607c" stroke-width="1.4"/>
+            <path d="M48 34.5 V57" stroke="#4f607c" stroke-width="1.4"/>
+          </g>
+          <rect x="12.4" y="38" width="5.2" height="12" rx="1.2" fill="#22c55e"/>
+          <rect x="20.4" y="42" width="5.2" height="11" rx="1.2" fill="#ef4444"/>
+          <rect x="28.9" y="37" width="5.2" height="13" rx="1.2" fill="#22c55e"/>
+          <rect x="37.4" y="43" width="5.2" height="10" rx="1.2" fill="#22c55e"/>
+          <rect x="45.4" y="39" width="5.2" height="12" rx="1.2" fill="#ef4444"/>
+          <path d="M10 59.5 H54" stroke="#142036" stroke-width="3" stroke-linecap="round"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="lockbar">
+      <svg width="26" height="26" viewBox="0 0 64 64">
+        <circle cx="32" cy="5" r="1.6" fill="#4f8cff"/>
+        <path d="M32 7 v4" stroke="#4f8cff" stroke-width="2.4" stroke-linecap="round"/>
+        <path d="M16 30 C16 14.5 48 14.5 48 30" stroke="#4f8cff" stroke-width="4" fill="none" stroke-linecap="round"/>
+        <rect x="12" y="30" width="40" height="4.4" rx="2.2" fill="#4f8cff"/>
+        <rect x="12.4" y="38" width="5.6" height="12" rx="1.4" fill="#22c55e"/>
+        <rect x="20.4" y="42" width="5.6" height="11" rx="1.4" fill="#ef4444"/>
+        <rect x="28.9" y="37" width="5.6" height="13" rx="1.4" fill="#22c55e"/>
+        <rect x="37.4" y="43" width="5.6" height="10" rx="1.4" fill="#22c55e"/>
+        <rect x="45.4" y="39" width="5.6" height="12" rx="1.4" fill="#ef4444"/>
+        <path d="M10 59 H54" stroke="#4f8cff" stroke-width="4" stroke-linecap="round"/>
+      </svg>
+      <span class="wm">Congress<em>.Trade</em></span>
+    </div>
+
+    <div class="favrow">
+      <div class="fav"><div class="box b16"><svg width="16" height="16" viewBox="0 0 64 64"><path d="M16 30 C16 14.5 48 14.5 48 30" stroke="#4f8cff" stroke-width="6" fill="none" stroke-linecap="round"/><rect x="11" y="30" width="42" height="6" rx="3" fill="#4f8cff"/><rect x="12" y="40" width="8" height="14" rx="2" fill="#22c55e"/><rect x="28" y="38" width="8" height="16" rx="2" fill="#ef4444"/><rect x="44" y="41" width="8" height="13" rx="2" fill="#22c55e"/></svg></div><span>16</span></div>
+      <div class="fav"><div class="box b32"><svg width="32" height="32" viewBox="0 0 64 64"><circle cx="32" cy="6" r="2" fill="#4f8cff"/><path d="M16 30 C16 14.5 48 14.5 48 30" stroke="#4f8cff" stroke-width="4.6" fill="none" stroke-linecap="round"/><rect x="11" y="30" width="42" height="5" rx="2.5" fill="#4f8cff"/><rect x="12" y="39" width="7" height="14" rx="1.8" fill="#22c55e"/><rect x="28.5" y="37" width="7" height="16" rx="1.8" fill="#ef4444"/><rect x="45" y="40" width="7" height="13" rx="1.8" fill="#22c55e"/><path d="M9 58 H55" stroke="#4f8cff" stroke-width="4.5" stroke-linecap="round"/></svg></div><span>32</span></div>
+      <div class="fav"><div class="box b48"><svg width="46" height="46" viewBox="0 0 64 64"><circle cx="32" cy="5" r="1.6" fill="#4f8cff"/><path d="M32 7 v4" stroke="#4f8cff" stroke-width="2.4" stroke-linecap="round"/><path d="M16 30 C16 14.5 48 14.5 48 30" stroke="#4f8cff" stroke-width="3.6" fill="none" stroke-linecap="round"/><rect x="12" y="30" width="40" height="4" rx="2" fill="#4f8cff"/><rect x="12.4" y="38" width="5.6" height="12" rx="1.4" fill="#22c55e"/><rect x="20.4" y="42" width="5.6" height="11" rx="1.4" fill="#ef4444"/><rect x="28.9" y="37" width="5.6" height="13" rx="1.4" fill="#22c55e"/><rect x="37.4" y="43" width="5.6" height="10" rx="1.4" fill="#22c55e"/><rect x="45.4" y="39" width="5.6" height="12" rx="1.4" fill="#ef4444"/><path d="M10 59 H54" stroke="#4f8cff" stroke-width="3.6" stroke-linecap="round"/></svg></div><span>48 · app icon</span></div>
+    </div>
+
+    <ul class="pc">
+      <li class="plus"><strong>Says the whole product in one object</strong> — government architecture built out of trade data. Nobody else in the space can claim it.</li>
+      <li class="plus">Degrades gracefully: at 16 px it simplifies to dome + three candles — and the red/green stays, so the favicon is recognizably "market data" even at tab size.</li>
+      <li class="minus">Red/green must clear contrast on both grounds and for color-blind users — the candles differ by position and height too, so hue is reinforcement, not the only signal.</li>
+    </ul>
+  </section>
+
+  <!-- ================================================== C2 -->
+  <section class="concept">
+    <div class="c-head"><span class="c-num">02</span><h2>Capitol Skyline sparkline</h2></div>
+    <p class="c-sub">One continuous price line that rises from the left, traces the <strong>whole Capitol elevation</strong> — wing wall, wing roof, center block, dome with lantern tick, back down the far wing — and exits still trading. The mark is a chart; the chart is the building. Naturally horizontal — strongest as a header/social lockup.</p>
+
+    <div class="stage">
+      <div class="board dark">
+        <svg width="240" height="120" viewBox="0 0 96 48" aria-label="Capitol Skyline sparkline mark">
+          <path d="M4 41 L12 35 L20 38 V31 H30 V27 H36 C36 13 60 13 60 27 H66 V31 H76 V38 L84 33 L92 24"
+                fill="none" stroke="#4f8cff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 41 L12 35 L20 38 V31 H30 V27 H36 C36 13 60 13 60 27 H66 V31 H76 V38 L84 33 L92 24 V46 H4 Z"
+                fill="#4f8cff" opacity=".09" stroke="none"/>
+          <g stroke="#4f8cff" stroke-width="1.3" opacity=".6" stroke-linecap="round">
+            <path d="M42 20.5 V26"/><path d="M48 19.5 V26"/><path d="M54 20.5 V26"/>
+          </g>
+          <path d="M48 12.5 V8" stroke="#4f8cff" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="48" cy="6.4" r="1.5" fill="#4f8cff"/>
+          <circle cx="92" cy="24" r="2" fill="#e6edf6"/>
+        </svg>
+      </div>
+      <div class="board light">
+        <svg width="240" height="120" viewBox="0 0 96 48" aria-label="Capitol Skyline sparkline mark on white">
+          <path d="M4 41 L12 35 L20 38 V31 H30 V27 H36 C36 13 60 13 60 27 H66 V31 H76 V38 L84 33 L92 24"
+                fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 41 L12 35 L20 38 V31 H30 V27 H36 C36 13 60 13 60 27 H66 V31 H76 V38 L84 33 L92 24 V46 H4 Z"
+                fill="#2563eb" opacity=".08" stroke="none"/>
+          <g stroke="#2563eb" stroke-width="1.3" opacity=".6" stroke-linecap="round">
+            <path d="M42 20.5 V26"/><path d="M48 19.5 V26"/><path d="M54 20.5 V26"/>
+          </g>
+          <path d="M48 12.5 V8" stroke="#2563eb" stroke-width="2" stroke-linecap="round"/>
+          <circle cx="48" cy="6.4" r="1.5" fill="#2563eb"/>
+          <circle cx="92" cy="24" r="2" fill="#142036"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="lockbar">
+      <svg width="42" height="21" viewBox="0 0 96 48">
+        <path d="M4 41 L12 35 L20 38 V31 H30 V27 H36 C36 13 60 13 60 27 H66 V31 H76 V38 L84 33 L92 24"
+              fill="none" stroke="#4f8cff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M48 11.5 V5" stroke="#4f8cff" stroke-width="3.5" stroke-linecap="round"/>
+      </svg>
+      <span class="wm">Congress<em>.Trade</em></span>
+    </div>
+
+    <ul class="pc">
+      <li class="plus"><strong>Motion built in</strong> — draws itself beautifully as a loading animation or hero reveal (the line literally "discloses" the dome).</li>
+      <li class="plus">Ties directly to the latency-race story: a price line arriving somewhere first.</li>
+      <li class="minus">Wide aspect ratio squares badly — the favicon crop loses the entry/exit tails that make it a chart.</li>
+    </ul>
+  </section>
+
+  <!-- ================================================== C3 -->
+  <section class="concept">
+    <div class="c-head"><span class="c-num">03</span><h2>C·T Ticker Monogram</h2></div>
+    <p class="c-sub">The domain's own punctuation as the mark: C and T set like a ticker symbol, the period drawn as a single green candle. Reads "CT" at any size and puts the .Trade TLD — the most distinctive part of the name — at the center of the identity.</p>
+
+    <div class="stage">
+      <div class="board dark">
+        <svg width="120" height="120" viewBox="0 0 64 64" aria-label="C dot T monogram">
+          <rect x="2" y="2" width="60" height="60" rx="15" fill="#15203a" stroke="#243154" stroke-width="1.5"/>
+          <text x="20" y="43" text-anchor="middle" font-size="30" font-weight="800" fill="#e6edf6" font-family="inherit" letter-spacing="-1">C</text>
+          <text x="45" y="43" text-anchor="middle" font-size="30" font-weight="800" fill="#e6edf6" font-family="inherit" letter-spacing="-1">T</text>
+          <path d="M34 31 V47.5" stroke="#22c55e" stroke-width="1.6" stroke-linecap="round"/>
+          <rect x="31.2" y="35.5" width="5.6" height="8" rx="1.4" fill="#22c55e"/>
+        </svg>
+      </div>
+      <div class="board light">
+        <svg width="120" height="120" viewBox="0 0 64 64" aria-label="C dot T monogram on white">
+          <rect x="2" y="2" width="60" height="60" rx="15" fill="#ffffff" stroke="#d3dced" stroke-width="1.5"/>
+          <text x="20" y="43" text-anchor="middle" font-size="30" font-weight="800" fill="#142036" font-family="inherit" letter-spacing="-1">C</text>
+          <text x="45" y="43" text-anchor="middle" font-size="30" font-weight="800" fill="#142036" font-family="inherit" letter-spacing="-1">T</text>
+          <path d="M34 31 V47.5" stroke="#16a34a" stroke-width="1.6" stroke-linecap="round"/>
+          <rect x="31.2" y="35.5" width="5.6" height="8" rx="1.4" fill="#16a34a"/>
+        </svg>
+      </div>
+    </div>
+
+    <div class="favrow">
+      <div class="fav"><div class="box b16"><svg width="16" height="16" viewBox="0 0 64 64"><text x="19" y="46" text-anchor="middle" font-size="38" font-weight="800" fill="#e6edf6" font-family="inherit">C</text><text x="46" y="46" text-anchor="middle" font-size="38" font-weight="800" fill="#e6edf6" font-family="inherit">T</text><rect x="30" y="32" width="7" height="16" rx="2" fill="#22c55e"/></svg></div><span>16</span></div>
+      <div class="fav"><div class="box b32"><svg width="32" height="32" viewBox="0 0 64 64"><text x="19.5" y="44.5" text-anchor="middle" font-size="34" font-weight="800" fill="#e6edf6" font-family="inherit">C</text><text x="45.5" y="44.5" text-anchor="middle" font-size="34" font-weight="800" fill="#e6edf6" font-family="inherit">T</text><path d="M34 28 V49" stroke="#22c55e" stroke-width="2" stroke-linecap="round"/><rect x="30.9" y="33.5" width="6.2" height="10" rx="1.6" fill="#22c55e"/></svg></div><span>32</span></div>
+    </div>
+
+    <ul class="pc">
+      <li class="plus"><strong>Bulletproof at small sizes</strong> — two letters and a candle survive any favicon, watch face, or notification icon.</li>
+      <li class="plus">The candle-as-period gag transfers: every sibling vertical gets its own (F·4, L·T…) if the portfolio grows.</li>
+      <li class="minus">Least "Congress" of the five — the civic half of the story rides entirely on the letter C.</li>
+      <li class="minus">Final art must convert the letterforms to outlines (these render in the viewer's system font).</li>
+    </ul>
+  </section>
+
+  <!-- ================================================== C4 -->
+  <section class="concept">
+    <div class="c-head"><span class="c-num">04</span><h2>Disclosure Stopwatch</h2></div>
+    <p class="c-sub">A stopwatch whose face holds the Capitol — dome, entablature, colonnade, and base, not just the dome — with a rising hand: the 45-day disclosure clock, and the fact that you beat FMP on 22 of 23 matched filings. Rev&nbsp;2 adds the fuller building and two red/white/blue studies — the patriotic palette suits this badge (it's a civic *event* mark, and R/W/B here can't be mistaken for buy/sell the way it could on the colonnade's candles).</p>
+
+    <div class="stage">
+      <div class="board dark">
+        <svg width="120" height="120" viewBox="0 0 64 64" aria-label="Stopwatch Capitol mark, accent">
+          <rect x="27" y="4" width="10" height="4.5" rx="1.5" fill="#4f8cff"/>
+          <path d="M32 8.5 V13" stroke="#4f8cff" stroke-width="2.6"/>
+          <path d="M47.5 15.5 L51 12" stroke="#4f8cff" stroke-width="2.6" stroke-linecap="round"/>
+          <circle cx="32" cy="37" r="22" fill="none" stroke="#4f8cff" stroke-width="3"/>
+          <g stroke="#9db1cd" stroke-width="1.6" stroke-linecap="round">
+            <path d="M32 18.5 V22"/><path d="M50.5 37 H47"/><path d="M13.5 37 H17"/>
+          </g>
+          <g stroke="#e6edf6" fill="none" stroke-linecap="round">
+            <path d="M24 44 C24 36.5 40 36.5 40 44" stroke-width="2"/>
+            <path d="M22 44 H42" stroke-width="2"/>
+            <path d="M26.5 46.5 V51.5 M32 46.5 V51.5 M37.5 46.5 V51.5" stroke-width="1.6"/>
+            <path d="M23.5 53.5 H40.5" stroke-width="2"/>
+          </g>
+          <path d="M32 33 L41.5 23" stroke="#22c55e" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="32" cy="33" r="2.2" fill="#e6edf6"/>
+        </svg>
+      </div>
+      <div class="board dark">
+        <svg width="120" height="120" viewBox="0 0 64 64" aria-label="Stopwatch Capitol mark, red white and blue on dark">
+          <rect x="27" y="4" width="10" height="4.5" rx="1.5" fill="#e6edf6"/>
+          <path d="M32 8.5 V13" stroke="#e6edf6" stroke-width="2.6"/>
+          <path d="M47.5 15.5 L51 12" stroke="#e6edf6" stroke-width="2.6" stroke-linecap="round"/>
+          <circle cx="32" cy="37" r="22" fill="none" stroke="#e6edf6" stroke-width="3"/>
+          <g stroke="#9db1cd" stroke-width="1.6" stroke-linecap="round">
+            <path d="M32 18.5 V22"/><path d="M50.5 37 H47"/><path d="M13.5 37 H17"/>
+          </g>
+          <g stroke="#4f8cff" fill="none" stroke-linecap="round">
+            <path d="M24 44 C24 36.5 40 36.5 40 44" stroke-width="2"/>
+            <path d="M22 44 H42" stroke-width="2"/>
+            <path d="M26.5 46.5 V51.5 M32 46.5 V51.5 M37.5 46.5 V51.5" stroke-width="1.6"/>
+            <path d="M23.5 53.5 H40.5" stroke-width="2"/>
+          </g>
+          <path d="M32 33 L41.5 23" stroke="#ef4444" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="32" cy="33" r="2.2" fill="#e6edf6"/>
+        </svg>
+      </div>
+      <div class="board light">
+        <svg width="120" height="120" viewBox="0 0 64 64" aria-label="Stopwatch Capitol mark, red white and blue on white">
+          <rect x="27" y="4" width="10" height="4.5" rx="1.5" fill="#1e3a8a"/>
+          <path d="M32 8.5 V13" stroke="#1e3a8a" stroke-width="2.6"/>
+          <path d="M47.5 15.5 L51 12" stroke="#1e3a8a" stroke-width="2.6" stroke-linecap="round"/>
+          <circle cx="32" cy="37" r="22" fill="none" stroke="#1e3a8a" stroke-width="3"/>
+          <g stroke="#4f607c" stroke-width="1.6" stroke-linecap="round">
+            <path d="M32 18.5 V22"/><path d="M50.5 37 H47"/><path d="M13.5 37 H17"/>
+          </g>
+          <g stroke="#1e3a8a" fill="none" stroke-linecap="round">
+            <path d="M24 44 C24 36.5 40 36.5 40 44" stroke-width="2"/>
+            <path d="M22 44 H42" stroke-width="2"/>
+            <path d="M26.5 46.5 V51.5 M32 46.5 V51.5 M37.5 46.5 V51.5" stroke-width="1.6"/>
+            <path d="M23.5 53.5 H40.5" stroke-width="2"/>
+          </g>
+          <path d="M32 33 L41.5 23" stroke="#dc2626" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="32" cy="33" r="2.2" fill="#142036"/>
+        </svg>
+      </div>
+    </div>
+    <div class="caption">left: site accent · middle: R/W/B on dark (white case, blue Capitol, red hand) · right: R/W/B on white (navy + red)</div>
+
+    <ul class="pc">
+      <li class="plus"><strong>Owns the speed claim</strong> — no competitor leads with "we're first," and this badge says only that.</li>
+      <li class="plus">Perfect stamp for the scoreboard, alert emails, and the pricing page's proof strip.</li>
+      <li class="minus">As the everything-logo it under-tells the data story; better as the latency sub-mark next to concept 01.</li>
+    </ul>
+  </section>
+
+  <!-- ================================================== C5 -->
+  <section class="concept">
+    <div class="c-head"><span class="c-num">05</span><h2>Wordmark with candle period</h2></div>
+    <p class="c-sub">No symbol at all: the name set tight and heavy, with the domain's period drawn as a small green candle. The candle-dot then becomes the favicon by itself. Cheapest to adopt — it's one glyph swap away from the header you already ship.</p>
+
+    <div class="stage">
+      <div class="board dark" style="flex-direction:column; gap:18px;">
+        <span class="wordmark wm-dark" style="font-size:30px;">Congress<svg width="13" height="30" viewBox="0 0 13 30" style="margin:0 2px 0 2.5px;"><path d="M6.5 14.5 V29.5" stroke="#22c55e" stroke-width="1.8" stroke-linecap="round"/><rect x="3.2" y="19.5" width="6.6" height="9" rx="1.6" fill="#22c55e"/></svg><span class="t2">Trade</span></span>
+        <span class="wordmark wm-dark" style="font-size:15px; letter-spacing:.22em; font-weight:700;">CONGRESS<svg width="8" height="15" viewBox="0 0 13 30" style="margin:0 3px 0 0;"><path d="M6.5 12.5 V29.5" stroke="#22c55e" stroke-width="2.4" stroke-linecap="round"/><rect x="2.6" y="18.5" width="7.8" height="10" rx="2" fill="#22c55e"/></svg>TRADE</span>
+      </div>
+      <div class="board light" style="flex-direction:column; gap:18px;">
+        <span class="wordmark wm-light" style="font-size:30px;">Congress<svg width="13" height="30" viewBox="0 0 13 30" style="margin:0 2px 0 2.5px;"><path d="M6.5 14.5 V29.5" stroke="#16a34a" stroke-width="1.8" stroke-linecap="round"/><rect x="3.2" y="19.5" width="6.6" height="9" rx="1.6" fill="#16a34a"/></svg><span class="t2">Trade</span></span>
+        <span class="wordmark wm-light" style="font-size:15px; letter-spacing:.22em; font-weight:700;">CONGRESS<svg width="8" height="15" viewBox="0 0 13 30" style="margin:0 3px 0 0;"><path d="M6.5 12.5 V29.5" stroke="#16a34a" stroke-width="2.4" stroke-linecap="round"/><rect x="2.6" y="18.5" width="7.8" height="10" rx="2" fill="#16a34a"/></svg>TRADE</span>
+      </div>
+    </div>
+
+    <div class="favrow">
+      <div class="fav"><div class="box b16"><svg width="16" height="16" viewBox="0 0 13 30"><path d="M6.5 6 V28" stroke="#22c55e" stroke-width="2.6" stroke-linecap="round"/><rect x="1.8" y="12" width="9.4" height="12" rx="2.2" fill="#22c55e"/></svg></div><span>16 · just the dot</span></div>
+    </div>
+
+    <ul class="pc">
+      <li class="plus"><strong>Ships this week</strong> — a pure typographic system with one proprietary glyph; every surface you have already fits it.</li>
+      <li class="plus">The lone candle-favicon is quietly clever once you've seen the wordmark.</li>
+      <li class="minus">No architecture, no civic imagery — the name does all of that work alone.</li>
+    </ul>
+  </section>
+
+  <!-- ================================================== C6 -->
+  <section class="concept">
+    <div class="c-head"><span class="c-num">06</span><h2>Five font directions for the wordmark</h2></div>
+    <p class="c-sub">This page can't load webfonts (the artifact sandbox blocks font CDNs), so each sample renders in the closest face installed on your device — pick the <em>genre</em> here, and the named production font gets self-hosted on the site. All five keep the ".Trade" accent split and work with the candle period.</p>
+
+    <div style="display:grid; gap:14px;">
+      <div>
+        <div class="board dark" style="justify-content:flex-start; padding:22px 26px; min-height:0;">
+          <span style="font:800 28px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; letter-spacing:-.025em; color:#e6edf6;">Congress<span style="color:#4f8cff;">.Trade</span></span>
+        </div>
+        <div class="caption">F1 · System Grotesk — what ships today · production: <strong>Inter</strong> or Söhne · neutral, product-grade, disappears into the UI</div>
+      </div>
+      <div>
+        <div class="board dark" style="justify-content:flex-start; padding:22px 26px; min-height:0;">
+          <span style="font:700 28px/1 Georgia,'Iowan Old Style','Times New Roman',serif; letter-spacing:-.01em; color:#e6edf6;">Congress<span style="color:#4f8cff;">.Trade</span></span>
+        </div>
+        <div class="caption">F2 · Civic Serif · production: <strong>Source Serif 4</strong> or Tiempos · institutional gravitas — reads like the paper of record covering the market</div>
+      </div>
+      <div>
+        <div class="board dark" style="justify-content:flex-start; padding:22px 26px; min-height:0;">
+          <span style="font:700 27px/1 'American Typewriter',Rockwell,'Courier New',serif; color:#e6edf6;">Congress<span style="color:#4f8cff;">.Trade</span></span>
+        </div>
+        <div class="caption"><strong>F3 · Typewriter Slab — CHOSEN</strong> · production: <strong>Zilla Slab</strong> or Roboto Slab · filed-paperwork energy — the PTR forms themselves. Every wordmark on this page now renders in it.</div>
+      </div>
+      <div>
+        <div class="board dark" style="justify-content:flex-start; padding:22px 26px; min-height:0;">
+          <span style="font:700 25px/1 ui-monospace,'SF Mono','Cascadia Mono',Menlo,Consolas,monospace; letter-spacing:-.04em; color:#e6edf6;">Congress<span style="color:#4f8cff;">.Trade</span></span>
+        </div>
+        <div class="caption">F4 · Data Mono · production: <strong>IBM Plex Mono</strong> or Berkeley Mono · the feed itself — ticker/terminal voice, pairs naturally with tabular numbers</div>
+      </div>
+      <div>
+        <div class="board dark" style="justify-content:flex-start; padding:22px 26px; min-height:0;">
+          <span style="font:800 30px/1 'Arial Narrow','Helvetica Neue',Arial,sans-serif; font-stretch:condensed; letter-spacing:.01em; text-transform:uppercase; color:#e6edf6;">Congress<span style="color:#4f8cff;">.Trade</span></span>
+        </div>
+        <div class="caption">F5 · Masthead Condensed · production: <strong>Archivo Condensed</strong> or Oswald · newspaper-masthead compression — buys back header width on mobile for free</div>
+      </div>
+    </div>
+
+    <ul class="pc">
+      <li class="plus"><strong>Decision: F3 is the wordmark face.</strong> Production plan: self-host <strong>Zilla Slab</strong> (600/700) for the wordmark and marketing headlines only; UI chrome and body stay on the system grotesk so the product keeps its current voice and zero font-payload cost outside the header.</li>
+      <li class="minus">The samples here render in your device's closest typewriter face (American Typewriter on Apple, Rockwell or Courier New elsewhere) — Zilla Slab is crisper and less "novelty typewriter" than the Courier fallback some devices will show.</li>
+    </ul>
+  </section>
+
+  <!-- ================================================== -->
+  <section class="qs">
+    <h2>Pairing recommendation</h2>
+    <p><strong>01 Candlestick Colonnade as the primary mark</strong> (mono-accent in chrome and favicons, semantic-color for marketing), <strong>05's candle-period folded into the wordmark</strong> so the type and the symbol share DNA, and <strong>04 Disclosure Stopwatch reserved as the latency sub-brand</strong> stamped on the scoreboard and alert receipts. Concept 02 becomes the animated hero/OG-image treatment rather than a logo. This also rhymes with the filter icons you picked: the colonnade is the same visual language as the split-Capitol toggle, so header, favicon, and filter read as one system.</p>
+    <p class="hint">All marks are original stroke-SVG drawings on the site's tokens — final art needs letterform outlining (03) and a real vector pass, but each is already honest to what survives at 16 px.</p>
+  </section>
+</div>

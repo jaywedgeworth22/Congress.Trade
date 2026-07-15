@@ -132,6 +132,66 @@ describe('decodeAnthropicLine', () => {
     expect(r).toMatchObject({ docId: 'H-2', ok: false });
     expect(r.rows).toHaveLength(0);
   });
+
+  it('salvages complete leading rows (and marks them) when the batch result was truncated', () => {
+    const line = {
+      custom_id: 'H-truncated',
+      result: {
+        type: 'succeeded',
+        message: {
+          stop_reason: 'max_tokens',
+          content: [{
+            type: 'text',
+            // Cut off mid-second-row: no retry is possible for an already-submitted batch.
+            text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Micro',
+          }],
+          usage: { input_tokens: 300, output_tokens: 8000 },
+        },
+      },
+    };
+    const r = decodeAnthropicLine(line);
+    expect(r).toMatchObject({ docId: 'H-truncated', ok: true });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0]).toMatchObject({ ticker: 'AAPL' });
+    expect(r.rows[0].extractionWarnings).toContain('salvaged_truncated_output');
+  });
+
+  it('still fails when stop_reason is max_tokens but nothing can be salvaged', () => {
+    const line = {
+      custom_id: 'H-empty-truncated',
+      result: {
+        type: 'succeeded',
+        message: {
+          stop_reason: 'max_tokens',
+          content: [{ type: 'text', text: '[{"ticker":"AAPL","assetName":"Apple Inc.' }],
+          usage: { input_tokens: 300, output_tokens: 8000 },
+        },
+      },
+    };
+    const r = decodeAnthropicLine(line);
+    expect(r).toMatchObject({ docId: 'H-empty-truncated', ok: false });
+    expect(r.rows).toHaveLength(0);
+  });
+
+  it('does not attempt salvage (and fails normally) for truncated JSON without stop_reason max_tokens', () => {
+    const line = {
+      custom_id: 'H-not-truncated-reason',
+      result: {
+        type: 'succeeded',
+        message: {
+          stop_reason: 'end_turn',
+          content: [{
+            type: 'text',
+            text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Micro',
+          }],
+          usage: { input_tokens: 300, output_tokens: 60 },
+        },
+      },
+    };
+    const r = decodeAnthropicLine(line);
+    expect(r).toMatchObject({ docId: 'H-not-truncated-reason', ok: false });
+    expect(r.rows).toHaveLength(0);
+  });
 });
 
 describe('pollBatch Anthropic lifecycle timestamps', () => {
@@ -359,7 +419,7 @@ describe('submitBatch OpenAI GPT-5.6', () => {
     expect(request.body.input[0].content[0]).toEqual({
       type: 'input_file',
       file_id: 'file-1',
-      detail: 'original',
+      detail: 'high',
     });
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
       endpoint: '/v1/responses',
