@@ -87,7 +87,24 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
-- 2026-07-15 — CODEX — Completed — prod one-doc all-model benchmark validation saved runs: House 6260461d-3810-4bc5-bd7f-331a8d2adbb1; Senate fe05ad8f-c8b6-44f2-9acb-775d4259df00; Exec ab2c7d43-ce88-4546-975b-2340671e5bc3. Findings: Gemini credits depleted; OpenAI detail=original bug; Senate selected raw object invalid PDF; Exec large-doc JSON/timeout issues.
+- **Follow-ups batch: brand archive + Zilla wordmark + exec filer enrichment + workerd diagnostics
+  + ship.sh parse smoke; shared v1.8.0 executive chamber (CLAUDE, M) — 2026-07-15,
+  owner-directed, built via five parallel isolated subagents.** PR #446:
+  (a) `docs/brand/` archives the logo/wordmark/domain exploration (decision record + both
+  interactive design sheets); (b) Zilla Slab 700 latin subset (26.1KB woff2, OFL 1.1, via
+  @fontsource devDep) embedded as a data-URI @font-face in `dashboardHtml.ts` — the wordmark is
+  now deterministic on every device, +~35KB HTML; (c) all six EXECUTIVE_FILERS get party +
+  Wikimedia official portraits (each URL verified HTTP 200), threaded through an
+  ON CONFLICT DO UPDATE COALESCE upsert in `watcher.ts` so the existing prod EXEC-DJT/EXEC-JDV
+  rows refresh on the next OGE poll (House/Senate filer writes untouched); (d) new dispatchable
+  `runner-workerd-diagnostics.yml` (8 non-fatal probes: ldd, strace, miniflare smoke) to
+  root-cause the self-hosted runner's workerd EPIPE; (e) `ship.sh` now parse-checks every inline
+  script of the served dashboard post-deploy (node --check; proven against live prod = 3 scripts
+  OK, and against a crafted broken page = exit 1) — the 2026-07-12 outage class is now caught at
+  deploy time. SHARED PACKAGE: branch `claude/chamber-executive` adds "executive" to
+  ChamberSchema (z.enum single source of truth; all chamber-typed fields inherit), tests 393
+  green, v1.8.0 + CHANGELOG; app pin bump + dropping the app-local Chamber widening ships as the
+  follow-on PR after the shared merge. Gates: typecheck + 128 files / 1287 tests green. House 6260461d-3810-4bc5-bd7f-331a8d2adbb1; Senate fe05ad8f-c8b6-44f2-9acb-775d4259df00; Exec ab2c7d43-ce88-4546-975b-2340671e5bc3. Findings: Gemini credits depleted; OpenAI detail=original bug; Senate selected raw object invalid PDF; Exec large-doc JSON/timeout issues.
 - **Remove agreement model globals / require explicit chamber lineups (CODEX, S) — MERGED PR #433 + docs closeout PR #435 / PRODUCTION DEPLOYED 2026-07-15.** Global agreement model values were removed from runtime/config/docs; House, Senate, and Executive A/B/C selections are explicit Infisical keys and incomplete lineups fail closed into human review. Production Worker `5738252f-baf6-4fc5-ac5d-80b7fc79cc72` is healthy; live config-sources shows no globals and all nine chamber keys from Infisical.
 - **Audit and land all verified local-only improvements; evaluate Batch savings and primary reader (CODEX + audit team, L) — COMPLETED / MERGED PR #414 / PRODUCTION DEPLOYED 2026-07-15 / KEEP OUT.** Owner-requested fleet audit and consolidation landed as `d0d4d67493d779c2dbb43c986311d1dc1631f55a` from `origin/main@7a6679f`; preview `f153d5f5-28de-4702-ae3b-208a946cb456` passed; production Worker `62af245e-7f18-4048-88c4-d819831abdef` is healthy with schema ready. House/Senate/Executive lineups are valid; House A is `mistral:mistral-ocr-latest`; OpenAI Terra/Luna/Sol catalog access is available; no paid model call ran. No uncommitted/secret-bearing files from dirty worktrees were staged.
 - **Remove GPT-4o from scanned-disclosure extraction (CODEX + verifier, S) — COMPLETED / MERGED IN PR #414 / PRODUCTION VERIFIED 2026-07-15.** GPT-4o is blocked from new disclosure reads; stale agreement config upgrades to Terra; Terra/Luna/Sol use Responses reasoning tiers and original-detail inputs; historical GPT-4o results remain readable. All 127 files / 1,280 tests pass. Production Worker `62af245e-7f18-4048-88c4-d819831abdef` is healthy; UI has no active GPT-4o choice; House/Senate/Executive settings are valid with House A `mistral:mistral-ocr-latest`. No paid/provider inference ran.
