@@ -592,6 +592,19 @@ describe('runCandidateOnDoc: provider billing metadata', () => {
       vi.fn(async () =>
         ({
           ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          text: async () => JSON.stringify({
+            responseId: 'gemini-response-1',
+            modelVersion: 'gemini-3.5-flash-2026-06',
+            candidates: [{ content: { parts: [{ text: JSON.stringify(annotation.transactions) }] } }],
+            usageMetadata: {
+              promptTokenCount: 1_000,
+              cachedContentTokenCount: 200,
+              candidatesTokenCount: 75,
+              thoughtsTokenCount: 25,
+            },
+          }),
           json: async () => ({
             responseId: 'gemini-response-1',
             modelVersion: 'gemini-3.5-flash-2026-06',
