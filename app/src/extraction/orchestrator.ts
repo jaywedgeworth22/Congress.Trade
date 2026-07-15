@@ -74,7 +74,7 @@ async function markError(env: Env, docId: string, message: string): Promise<void
 
 function isProviderRateLimit(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
-  return /\b(429|too many requests|quota exceeded|rate[- ]?limit)\b/i.test(message);
+  return /\b(429|402|too many requests|quota exceeded|rate[- ]?limit|payment required)\b/i.test(message);
 }
 
 function providerForModel(model: string | undefined): string {
@@ -221,6 +221,20 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
     return { filing, transactions: [], extractor: 'none', modelVersion: null };
   }
 
+  const breakerKey = `provider_ban:${extractor.name}`;
+  if (env.CONFIG_KV) {
+    try {
+      const isBanned = await env.CONFIG_KV.get(breakerKey);
+      if (isBanned) {
+        const message = `orchestrator: ${extractor.name} circuit breaker is open (banned due to recent 429/402). Reprocess this filing later.`;
+        await markError(env, docId, message);
+        throw new Error(message);
+      }
+    } catch (kvErr) {
+      console.warn('orchestrator: failed to read circuit breaker from KV:', (kvErr as Error).message);
+    }
+  }
+
   let result;
   try {
     result = await extractor.extract({ filing, bytes, html });
@@ -240,6 +254,15 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
       ? `orchestrator: ${extractor.name} temporarily unavailable: provider quota/rate limit. Reprocess this filing later.`
       : `orchestrator: ${extractor.name} failed: ${detail}`;
     await markError(env, docId, message);
+
+    if (isProviderRateLimit(err) && env.CONFIG_KV) {
+      try {
+        await env.CONFIG_KV.put(breakerKey, '1', { expirationTtl: 3600 });
+      } catch (kvErr) {
+        console.warn('orchestrator: failed to set circuit breaker in KV:', (kvErr as Error).message);
+      }
+    }
+
     // Re-throw so the queue retries transient failures, including a rate limit
     // that's still exhausted after visionLlm's in-request fetchWithRetry backoff
     // (a few seconds) — the queue's own retry cadence (max_retries in
