@@ -767,6 +767,18 @@ export function parseLlamaParseMarkdown(markdown: string): ParsedTx[] {
     }
   }
 
+  // Then the outermost bare JSON object — some parse tiers wrap rows in
+  // { transactions: [...] } without a fenced block.
+  const firstBrace = markdown.indexOf('{');
+  const lastBrace = markdown.lastIndexOf('}');
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    try {
+      return parseModelJson(markdown.substring(firstBrace, lastBrace + 1)).map(toParsedTx);
+    } catch (e) {
+      lastErr = e as Error;
+    }
+  }
+
   throw new Error(`llamaparse: no JSON array found in markdown output. Last error: ${lastErr?.message ?? 'none'}`);
 }
 
