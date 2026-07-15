@@ -26,6 +26,8 @@ import {
   SYSTEM_PROMPT,
   EXECUTIVE_SYSTEM_PROMPT,
   parseModelJson,
+  parseAnthropicModelJson,
+  markSalvaged,
   toParsedTx,
   arrayBufferToBase64,
 } from './visionLlm';
@@ -381,7 +383,14 @@ async function submitAnthropic(env: Env, model: string, docs: BatchDoc[]): Promi
   return j.id;
 }
 
-/** Decode one Anthropic batch result line to rows. Exported for tests. */
+/**
+ * Decode one Anthropic batch result line to rows. Exported for tests. Unlike
+ * the sync path, a batch request can't be retried mid-flight — when the
+ * provider reports `stop_reason: 'max_tokens'` (output truncated) and the
+ * text fails to parse whole, bounded salvage recovers the complete leading
+ * transaction rows instead of failing the whole read (see
+ * `parseAnthropicModelJson` in visionLlm.ts).
+ */
 export function decodeAnthropicLine(line: unknown): BatchDocResult {
   const l = line as {
     custom_id?: string;
@@ -389,6 +398,7 @@ export function decodeAnthropicLine(line: unknown): BatchDocResult {
       type?: string;
       message?: {
         content?: Array<{ type: string; text?: string }>;
+        stop_reason?: string | null;
         usage?: {
           input_tokens?: number;
           output_tokens?: number;
@@ -409,7 +419,9 @@ export function decodeAnthropicLine(line: unknown): BatchDocResult {
   }
   try {
     const text = (l.result.message.content ?? []).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('').trim();
-    return { docId, ok: true, rows: parseModelJson(text).map(toParsedTx), usage };
+    const { rows: modelRows, salvaged } = parseAnthropicModelJson(text, l.result.message.stop_reason);
+    const rows = modelRows.map(toParsedTx).map((tx) => (salvaged ? markSalvaged(tx) : tx));
+    return { docId, ok: true, rows, usage };
   } catch (err) {
     return { docId, ok: false, error: (err as Error).message.slice(0, 300), rows: [], usage };
   }

@@ -537,6 +537,169 @@ export function parseModelJson(text: string): ModelTx[] {
   throw new Error('visionLlm: model JSON was not a transaction array');
 }
 
+/**
+ * Locate the first `[` or `{` character in `text` that is not inside a JSON
+ * string literal. Returns -1 when the bracket never appears. Shared by
+ * {@link salvageTruncatedTransactions} to find the transaction array even
+ * when it is nested inside a wrapper object (e.g. `{"transactions": [...]}`).
+ */
+function firstUnquotedBracket(text: string, bracket: '[' | '{'): number {
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (char === '\\') {
+      escape = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (!inString && char === bracket) return i;
+  }
+  return -1;
+}
+
+/**
+ * Bounded salvage for a provider response that was cut off mid-output (e.g.
+ * Anthropic `stop_reason: 'max_tokens'`). Recovers every COMPLETE leading
+ * transaction object from the (possibly truncated) JSON array and drops the
+ * trailing partial row, instead of failing the whole read. Reuses the
+ * balanced-bracket scanning approach of {@link extractJsonFallback}, but scans
+ * per-array-element rather than for one top-level structure so a truncated
+ * final element does not poison the rows found before it.
+ *
+ * Handles both a bare `[...]` array and a wrapper object
+ * `{"transactions": [...]}` (the shape returned when the JSON schema wraps
+ * the array) — it locates the first unquoted `[` in the text and salvages
+ * elements from there. Returns `[]` when no array start is found or no
+ * element ever completes (e.g. the output was cut off before the first row).
+ */
+export function salvageTruncatedTransactions(text: string): ModelTx[] {
+  let cleaned = text.trim();
+  cleaned = cleaned.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+
+  const arrayStart = firstUnquotedBracket(cleaned, '[');
+  if (arrayStart === -1) return [];
+
+  const rows: ModelTx[] = [];
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let elemStart = -1;
+
+  for (let i = arrayStart + 1; i < cleaned.length; i++) {
+    const char = cleaned[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (char === '\\') {
+      escape = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (char === '{' || char === '[') {
+      if (depth === 0) elemStart = i;
+      depth++;
+      continue;
+    }
+    if (char === '}' || char === ']') {
+      if (depth === 0) {
+        // The array's own closing bracket (or a stray one) — nothing more to
+        // salvage either way.
+        break;
+      }
+      depth--;
+      if (depth === 0 && elemStart !== -1) {
+        const candidate = cleaned.slice(elemStart, i + 1);
+        try {
+          const parsed = JSON.parse(candidate);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            rows.push(parsed as ModelTx);
+          }
+        } catch {
+          // A malformed "complete" element means the scan lost sync with the
+          // real structure (extremely unlikely given balanced-bracket
+          // tracking); stop rather than risk salvaging out-of-order rows.
+          break;
+        }
+        elemStart = -1;
+      }
+    }
+  }
+  return rows;
+}
+
+/** Result of a truncation-aware parse: rows plus whether salvage kicked in. */
+export interface AnthropicParseResult {
+  rows: ModelTx[];
+  /** True when the full JSON failed to parse and rows were recovered via salvage. */
+  salvaged: boolean;
+}
+
+/**
+ * Parse an Anthropic response, falling back to bounded salvage when the
+ * provider reports `stop_reason: 'max_tokens'` (output truncated) AND the
+ * full text fails to parse as JSON. A non-truncation parse failure still
+ * throws — salvage only fires when we know why the JSON is incomplete, and
+ * only when it can recover at least one complete row.
+ */
+export function parseAnthropicModelJson(
+  text: string,
+  stopReason: string | null | undefined,
+): AnthropicParseResult {
+  try {
+    return { rows: parseModelJson(text), salvaged: false };
+  } catch (err) {
+    if (stopReason === 'max_tokens') {
+      const salvaged = salvageTruncatedTransactions(text);
+      if (salvaged.length > 0) return { rows: salvaged, salvaged: true };
+    }
+    throw err;
+  }
+}
+
+/** Append the salvaged-output provenance marker without duplicating it. */
+export function markSalvaged(tx: ParsedTx): ParsedTx {
+  const warnings = tx.extractionWarnings ?? [];
+  if (warnings.includes('salvaged_truncated_output')) return tx;
+  return { ...tx, extractionWarnings: [...warnings, 'salvaged_truncated_output'] };
+}
+
+/**
+ * Normalize PDF bytes before they are base64-encoded into an Anthropic
+ * `document` block. Anthropic's API 400s outright on some malformed PDFs (a
+ * production Senate-corpus drain hit 8 hard failures from invalid PDF objects
+ * in one run); round-tripping the bytes through pdf-lib's loader + serializer
+ * repairs recoverable structural issues before the request is sent.
+ * `ignoreEncryption` keeps encrypted-but-otherwise-valid PDFs from being
+ * rejected as corrupt.
+ *
+ * Throws a stable, secret-safe error (no raw pdf-lib parser detail) when the
+ * PDF is unparseable outright, so the caller can short-circuit BEFORE making
+ * any provider call.
+ */
+export async function normalizePdfForAnthropic(bytes: ArrayBuffer): Promise<ArrayBuffer> {
+  try {
+    const pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    const saved = await pdfDoc.save();
+    return (saved.buffer as ArrayBuffer).slice(saved.byteOffset, saved.byteOffset + saved.byteLength);
+  } catch {
+    throw new Error('anthropic: invalid PDF (unparseable by pdf-lib)');
+  }
+}
+
 export function toParsedTx(m: ModelTx): ParsedTx {
   const { min, max } = parseAmountRange(m.amountRange ?? '');
   const modelConf = typeof m.confidence === 'number' ? clamp01(m.confidence) : DEFAULT_CONFIDENCE;

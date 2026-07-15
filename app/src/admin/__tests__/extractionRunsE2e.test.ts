@@ -1,5 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { PDFDocument } from 'pdf-lib';
 import { buildAdminRouter } from '../routes';
+
+/** A genuinely-parseable PDF: the Anthropic candidate pre-validates bytes
+ *  with pdf-lib (normalizePdfForAnthropic) before any provider call. */
+async function validPdfArrayBuffer(): Promise<ArrayBuffer> {
+  const pdf = await PDFDocument.create();
+  pdf.addPage([200, 200]);
+  const bytes = await pdf.save();
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
 
 /**
  * End-to-end pipeline test (providers mocked): a document is run through the
@@ -108,7 +118,7 @@ function makeEnv() {
     OPENAI_API_KEY: 'sk-openai-test',
     DB: { prepare } as unknown as D1Database,
     RAW_FILES: {
-      get: async () => ({ arrayBuffer: async () => new TextEncoder().encode('%PDF-1.4 fake').buffer }),
+      get: async () => ({ arrayBuffer: validPdfArrayBuffer }),
     },
     INGEST_QUEUE: {
       send: async (message: unknown) => { usageEvents.push(message); },

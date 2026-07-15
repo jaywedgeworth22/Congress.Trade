@@ -1,5 +1,15 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { PDFDocument } from 'pdf-lib';
 import { processAgreementDoc, type AgreementModels } from '../agreement';
+
+/** A genuinely-parseable PDF: the Anthropic candidate pre-validates bytes
+ *  with pdf-lib (normalizePdfForAnthropic) before any provider call. */
+async function validPdfArrayBuffer(): Promise<ArrayBuffer> {
+  const pdf = await PDFDocument.create();
+  pdf.addPage([200, 200]);
+  const bytes = await pdf.save();
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
 
 /**
  * processAgreementDoc must persist EVERY candidate's per-doc reading to
@@ -87,7 +97,7 @@ function makeEnv() {
   const env = {
     ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k', MISTRAL_API_KEY: 'k',
     DB: db,
-    RAW_FILES: { get: async () => ({ arrayBuffer: async () => new TextEncoder().encode('%PDF').buffer }) },
+    RAW_FILES: { get: async () => ({ arrayBuffer: validPdfArrayBuffer }) },
     DELIVERY_QUEUE: { send: async () => {}, sendBatch: async () => {} },
   } as never;
   return { env, extractionRuns, insertedTx, transactionSql };
