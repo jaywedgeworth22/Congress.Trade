@@ -1,5 +1,15 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { PDFDocument } from 'pdf-lib';
 import { maybeRunAgreementAutopublish, handleAgreementCheck } from '../agreement';
+
+/** A genuinely-parseable PDF: the Anthropic candidate pre-validates bytes
+ *  with pdf-lib (normalizePdfForAnthropic) before any provider call. */
+async function validPdfArrayBuffer(): Promise<ArrayBuffer> {
+  const pdf = await PDFDocument.create();
+  pdf.addPage([200, 200]);
+  const bytes = await pdf.save();
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
 
 /**
  * The autonomous agreement → auto-publish flow is split in two:
@@ -116,10 +126,10 @@ function makeEnv(flag: string | undefined) {
   const env = {
     AGREEMENT_AUTOPUBLISH_ENABLED: flag,
     ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k', GEMINI_API_KEY: 'k', MISTRAL_API_KEY: 'k',
-    AGREEMENT_AUTOPUBLISH_MODEL_A: 'openai:gpt-4o',
-    AGREEMENT_AUTOPUBLISH_MODEL_B: 'anthropic:claude-haiku-4-5',
+    AGREEMENT_HOUSE_MODEL_C: 'openai:gpt-4o',
+    AGREEMENT_HOUSE_MODEL_D: 'anthropic:claude-haiku-4-5',
     DB: db,
-    RAW_FILES: { get: async () => ({ arrayBuffer: async () => new TextEncoder().encode('%PDF').buffer }) },
+    RAW_FILES: { get: async () => ({ arrayBuffer: validPdfArrayBuffer }) },
     INGEST_QUEUE: { send: async (m: unknown) => { sent.push(m); } },
     DELIVERY_QUEUE: { send: async () => {}, sendBatch: async () => {} },
   } as never;

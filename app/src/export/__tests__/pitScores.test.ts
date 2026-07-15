@@ -234,6 +234,57 @@ describe('buildPitScoreExport pagination', () => {
   });
 });
 
+describe('buildPitScoreExport delisting metadata', () => {
+  const asOf = new Date('2026-03-01T00:00:00.000Z');
+  const runFor = async (ticker: string) => {
+    const env = {
+      DB: fakeDb({
+        transactions: [tx('t1', ticker, '2026-01-01T00:00:00.000Z')],
+        price_eod: [],
+        spx_eod: [],
+      }),
+    };
+    const out = await buildPitScoreExport(env as never, { limit: 1, format: 'json', placebo: 'none', source: 'all' }, asOf);
+    return out.rows[0].delistingTickerChangeMetadata;
+  };
+
+  it('records acquisition delisting metadata for an acquired source ticker (ATVI)', async () => {
+    // ATVI is an acquisition source (Microsoft acquired Activision, delisted). It is deliberately
+    // NOT folded to MSFT at ingest, so it reaches scoring as ATVI and must be flagged delisted.
+    expect(await runFor('ATVI')).toMatchObject({
+      aliasClass: 'acquisition',
+      delisted: true,
+      acquiredBy: 'MSFT',
+      mappedToCurrentTicker: null,
+      reason: 'curated_alias_map',
+    });
+  });
+
+  it('leaves a rename-target ticker unflagged and unchanged (META)', async () => {
+    // Renames are folded to the current ticker (FB→META) upstream; META must keep its existing
+    // prior-ticker metadata and never be marked delisted.
+    expect(await runFor('META')).toMatchObject({
+      knownPriorTickers: ['FB'],
+      mappedToCurrentTicker: null,
+      aliasClass: null,
+      delisted: false,
+      acquiredBy: null,
+      reason: 'curated_alias_map',
+    });
+  });
+
+  it('records no delisting metadata for a plain ticker with no alias relationship (AAPL)', async () => {
+    expect(await runFor('AAPL')).toMatchObject({
+      knownPriorTickers: [],
+      mappedToCurrentTicker: null,
+      aliasClass: null,
+      delisted: false,
+      acquiredBy: null,
+      reason: null,
+    });
+  });
+});
+
 describe('pitScoreRowsToNdjson', () => {
   it('emits one JSON line per row and an empty string for no rows', () => {
     expect(pitScoreRowsToNdjson([])).toBe('');

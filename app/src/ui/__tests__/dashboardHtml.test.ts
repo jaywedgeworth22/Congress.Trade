@@ -51,6 +51,11 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('<title>Congress.Trade — Congress Trade Feed</title>');
   });
 
+  it('self-hosts the Zilla Slab wordmark face as an inline data-URI subset', () => {
+    expect(DASHBOARD_HTML).toContain('data:font/woff2;base64,');
+    expect(DASHBOARD_HTML).toContain("'Zilla Slab'");
+  });
+
   it('contains at least the boot + main script blocks', () => {
     expect(scriptBlocks(DASHBOARD_HTML).length).toBeGreaterThanOrEqual(2);
   });
@@ -247,6 +252,31 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("id: 'published'");
     expect(DASHBOARD_HTML).toContain("id: 'filed'");
     expect(DASHBOARD_HTML).toContain("id: 'imported'");
+  });
+
+  it('gives mobile a compact sort control and hides the dead Columns chooser', () => {
+    // The mobile-only sort select/direction toggle sits near the other feed filter
+    // controls and shares sortKey/sortDir + the setSort() refetch path.
+    expect(DASHBOARD_HTML).toContain('id="feedSortMobile"');
+    expect(DASHBOARD_HTML).toContain('id="mobileSortKey"');
+    expect(DASHBOARD_HTML).toContain('onchange="handleMobileSortKeyChange()"');
+    expect(DASHBOARD_HTML).toContain('id="mobileSortDirBtn"');
+    expect(DASHBOARD_HTML).toContain('onclick="toggleMobileSortDir()"');
+    expect(DASHBOARD_HTML).toContain('function mobileSortableCols(');
+    expect(DASHBOARD_HTML).toContain('function syncMobileSortControl(');
+    expect(DASHBOARD_HTML).toContain('function handleMobileSortKeyChange(');
+    expect(DASHBOARD_HTML).toContain('function toggleMobileSortDir(');
+    expect(DASHBOARD_HTML).toContain('setSort(sel.value)');
+    expect(DASHBOARD_HTML).toContain('setSort(sortKey); // same key -> setSort() flips sortDir');
+    // updateSortIndicators() is the single hook both setSort() and renderFeedHeader()
+    // already call, so the mobile control resyncs from state restored/changed elsewhere.
+    expect(DASHBOARD_HTML).toContain('syncMobileSortControl();\n}');
+    expect(DASHBOARD_HTML).toContain('.feed-sort-mobile { display: none;');
+    expect(DASHBOARD_HTML).toContain('#view-feed .feed-sort-mobile { display: flex; }');
+    // Columns chooser stays wired for desktop but is CSS-hidden on mobile — feedCardHtml()
+    // renders a fixed field set, so the chooser has no visible effect on phones.
+    expect(DASHBOARD_HTML).toContain('id="colsBtn"');
+    expect(DASHBOARD_HTML).toContain('#colsBtn { display: none; }');
   });
 
   it('uses subtle Premium cues without implying the public feed is paywalled', () => {
@@ -523,7 +553,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('callsNeedingReservation');
     expect(DASHBOARD_HTML).toContain('confirmPaidRun: true');
     expect(DASHBOARD_HTML).toContain('resolvedOnly: false');
-    expect(DASHBOARD_HTML).toContain('Measured usage-based cost / doc');
+    expect(DASHBOARD_HTML).toContain('Measured usage-based cost');
     expect(DASHBOARD_HTML).toContain('Measured usage-based spend');
     expect(DASHBOARD_HTML).toContain('provider-reported charges where available, otherwise actual metered units × pinned list price');
     expect(DASHBOARD_HTML).toContain('This is not invoice reconciliation.');
@@ -838,14 +868,15 @@ describe('DASHBOARD_HTML', () => {
 
   it('never labels aggregate partial spend as per-document benchmark cost', () => {
     const usdSource = DASHBOARD_HTML.match(/function benchmarkUsd\(value\) \{[\s\S]*?\n\}/);
-    const costSource = DASHBOARD_HTML.match(/function benchmarkCostText\(perDocument, covered, calls\) \{[\s\S]*?\n\}/);
+    const costSource = DASHBOARD_HTML.match(/function benchmarkCostText\(perDocument, covered, calls, knownCostUsd\) \{[\s\S]*?\n\}/);
     expect(usdSource).not.toBeNull();
     expect(costSource).not.toBeNull();
     const costText = new Function(
       usdSource![0] + '\n' + costSource![0] + '\nreturn benchmarkCostText;',
-    )() as (perDocument: number | null, covered: number, calls: number) => string;
+    )() as (perDocument: number | null, covered: number, calls: number, knownCostUsd?: number | null) => string;
 
     expect(costText(0.012, 2, 2)).toBe('$0.012');
+    expect(costText(null, 1, 2, 0.1160589)).toBe('$0.116 known (partial)');
     expect(costText(null, 1, 2)).toBe('Unknown (partial)');
     expect(costText(null, 0, 2)).toBe('Unknown');
     expect(costText(null, 0, 0)).toBe('N/A');

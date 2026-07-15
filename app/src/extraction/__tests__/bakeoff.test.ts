@@ -1,8 +1,10 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { PDFDocument } from 'pdf-lib';
 import type { Env } from '../../shared/types';
 import {
   computeConsensusAgreement,
   DEFAULT_CANDIDATES,
+  fetchLlamaParseResult,
   isRetiredDisclosureCandidate,
   openAiDisclosureReasoningEffort,
   upgradeRetiredDisclosureCandidate,
@@ -19,6 +21,15 @@ import {
   type CandidateDocResult,
 } from '../bakeoff';
 import { EXECUTIVE_SYSTEM_PROMPT } from '../visionLlm';
+
+/** A minimal, genuinely-parseable PDF for tests that reach Anthropic's
+ *  pre-validation (normalizePdfForAnthropic loads it with pdf-lib). */
+async function validPdfBytes(): Promise<ArrayBuffer> {
+  const pdf = await PDFDocument.create();
+  pdf.addPage([200, 200]);
+  const saved = await pdf.save();
+  return saved.buffer.slice(saved.byteOffset, saved.byteOffset + saved.byteLength) as ArrayBuffer;
+}
 
 function r(
   provider: CandidateDocResult['provider'],
@@ -267,7 +278,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     expect(result.usage).toBeUndefined();
   });
 
-  it('uses original-detail Responses PDF input and captures GPT-5.6 usage metadata', async () => {
+  it('uses high-detail Responses PDF input and captures GPT-5.6 usage metadata', async () => {
     const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       ({
         ok: true,
@@ -319,7 +330,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     expect(request.input[0].content[0]).toMatchObject({
       type: 'input_file',
       filename: 'ptr.pdf',
-      detail: 'original',
+      detail: 'high',
     });
   });
 
@@ -637,16 +648,16 @@ describe('runCandidateOnDoc: provider billing metadata', () => {
 });
 
 describe('runCandidateOnDoc (anthropic): complete billed input usage', () => {
-  const bytes = new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
-
   afterEach(() => vi.unstubAllGlobals());
 
   it('sums base/read/write tokens and preserves the cache TTL breakdown', async () => {
+    const bytes = await validPdfBytes();
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
       ok: true,
       json: async () => ({
         id: 'msg_1',
         model: 'claude-sonnet-4-6',
+        stop_reason: 'end_turn',
         content: [{
           type: 'text',
           text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]',
@@ -855,5 +866,267 @@ describe('extractXaiResponseText', () => {
 
   it('throws when there is no text in the output', () => {
     expect(() => extractXaiResponseText({ output: [{ content: [] }] })).toThrow(/no text/);
+  });
+});
+
+describe('runCandidateOnDoc (anthropic): output-truncation handling', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const truncatedFirstReply = (extra: Record<string, unknown> = {}) => ({
+    ok: true,
+    json: async () => ({
+      id: 'msg_truncated',
+      model: 'claude-sonnet-4-6',
+      stop_reason: 'max_tokens',
+      content: [{
+        type: 'text',
+        // Cut off mid-second-row.
+        text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Micro',
+      }],
+      usage: { input_tokens: 400, output_tokens: 8000 },
+      ...extra,
+    }),
+  } as unknown as Response);
+
+  it('retries once with a doubled token budget when the first reply is cut off, and succeeds cleanly if the retry completes', async () => {
+    const bytes = await validPdfBytes();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(truncatedFirstReply())
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 'msg_retry',
+          model: 'claude-sonnet-4-6',
+          stop_reason: 'end_turn',
+          content: [{
+            type: 'text',
+            text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Microsoft","txType":"S","amountRange":"$15,001 - $50,000"}]',
+          }],
+          usage: { input_tokens: 400, output_tokens: 150 },
+        }),
+      } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await runCandidateOnDoc(
+      { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
+      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      'H-doc',
+      bytes,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(firstBody.max_tokens).toBe(8000);
+    expect(secondBody.max_tokens).toBe(16000);
+
+    expect(result.ok).toBe(true);
+    expect(result.rowCount).toBe(2);
+    expect(result.rows.every((r) => !r.extractionWarnings?.includes('salvaged_truncated_output'))).toBe(true);
+    // Usage from both billed calls is summed, not just the retry's.
+    expect(result.usage).toMatchObject({ promptTokens: 800, completionTokens: 8150 });
+  });
+
+  it('salvages the complete leading rows and marks them when the retry is STILL truncated', async () => {
+    const bytes = await validPdfBytes();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(truncatedFirstReply())
+      .mockResolvedValueOnce(truncatedFirstReply({ id: 'msg_retry_still_truncated' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await runCandidateOnDoc(
+      { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
+      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      'H-doc',
+      bytes,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.ok).toBe(true);
+    expect(result.rowCount).toBe(1);
+    expect(result.rows[0].ticker).toBe('AAPL');
+    expect(result.rows[0].extractionWarnings).toContain('salvaged_truncated_output');
+  });
+
+  it('does not retry when the first reply completes normally', async () => {
+    const bytes = await validPdfBytes();
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 'msg_ok',
+        model: 'claude-sonnet-4-6',
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]' }],
+        usage: { input_tokens: 400, output_tokens: 50 },
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await runCandidateOnDoc(
+      { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
+      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      'H-doc',
+      bytes,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(true);
+    expect(result.rowCount).toBe(1);
+  });
+});
+
+describe('runCandidateOnDoc (anthropic): invalid-PDF pre-validation', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('short-circuits BEFORE any provider call when the PDF is unparseable by pdf-lib', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await runCandidateOnDoc(
+      { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
+      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      'S-invalid',
+      new TextEncoder().encode('this is not a pdf').buffer as ArrayBuffer,
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('anthropic: invalid PDF (unparseable by pdf-lib)');
+  });
+});
+
+describe('runCandidateOnDoc: sync provider fetches carry a bounded timeout', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('openai: sets an AbortSignal on the extraction request', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({
+        id: 'resp_1',
+        model: 'gpt-5.6-terra',
+        status: 'completed',
+        output_text: '{"transactions":[]}',
+      }),
+    }) as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runCandidateOnDoc(
+      { OPENAI_API_KEY: 'openai-test' } as unknown as Env,
+      { provider: 'openai', model: 'gpt-5.6-terra' },
+      'H-doc',
+      new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer,
+    );
+
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('anthropic: sets an AbortSignal on the extraction request', async () => {
+    const bytes = await validPdfBytes();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({
+        id: 'msg_1',
+        model: 'claude-sonnet-4-6',
+        stop_reason: 'end_turn',
+        content: [{ type: 'text', text: '[]' }],
+      }),
+    }) as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runCandidateOnDoc(
+      { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
+      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      'H-doc',
+      bytes,
+    );
+
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('mistral: sets an AbortSignal on the OCR request', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
+      ok: true,
+      json: async () => ({ id: 'ocr_1', model: 'mistral-ocr-4-0', document_annotation: { transactions: [] } }),
+    }) as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runCandidateOnDoc(
+      { MISTRAL_API_KEY: 'mistral-test' } as unknown as Env,
+      { provider: 'mistral', model: 'mistral-ocr-latest' },
+      'H-doc',
+      new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer,
+    );
+
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('xai: sets an AbortSignal on every request (upload, generate, cleanup delete)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'file-1' }) } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: 'response-1', model: 'grok-4.3', output_text: '{"transactions":[]}' }),
+      } as unknown as Response)
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: 'file-1', deleted: true }) } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runCandidateOnDoc(
+      { XAI_API_KEY: 'xai-test' } as unknown as Env,
+      { provider: 'xai', model: 'grok-4.3' },
+      'H-doc',
+      new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    for (const call of fetchMock.mock.calls) {
+      expect(call[1]?.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+});
+
+describe('fetchLlamaParseResult', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('retries a couple of times on 404 (result-404 eventual consistency) before succeeding', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('not found', { status: 404 }))
+      .mockResolvedValueOnce(new Response('not found', { status: 404 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ markdown: '```json\n[]\n```' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const sleeps: number[] = [];
+    const res = await fetchLlamaParseResult('job-1', 'lp-key', 'fast', {
+      sleep: async (ms) => { sleeps.push(ms); },
+    });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(sleeps).toHaveLength(2);
+    for (const call of fetchMock.mock.calls) {
+      expect(call[1]?.signal).toBeInstanceOf(AbortSignal);
+    }
+  });
+
+  it('gives up after the attempt budget and returns the last 404', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('not found', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await fetchLlamaParseResult('job-1', 'lp-key', 'fast', {
+      attempts: 3,
+      sleep: async () => {},
+    });
+
+    expect(res.status).toBe(404);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not retry a non-404 status', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('server error', { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await fetchLlamaParseResult('job-1', 'lp-key', 'fast', { sleep: async () => {} });
+
+    expect(res.status).toBe(500);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

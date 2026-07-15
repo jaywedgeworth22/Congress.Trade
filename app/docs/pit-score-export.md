@@ -30,7 +30,12 @@ Rows are keyed by ticker and market-available disclosure timestamp:
 - raw/security asset context: `assetType`, `assetTypeName`
 - cross-chamber canonical asset context: `assetTypeCategory`,
   `assetTypeCategoryLabel`, `assetTypeCategorySource`
-- `tickerMapVersion`, `delistingTickerChangeMetadata`
+- `tickerMapVersion`, `delistingTickerChangeMetadata` — the latter is an open object; besides
+  `knownPriorTickers` / `mappedToCurrentTicker` (continuous renames) it now also carries
+  `aliasClass` (`"rename" | "acquisition" | null`), `delisted` (`true` when the ticker itself is a
+  delisted acquisition source, e.g. `ATVI`), and `acquiredBy` (the successor ticker for
+  acquisitions). Fields are additive; a plain ticker has `aliasClass: null, delisted: false,
+  acquiredBy: null`.
 - `asOf`, `disclosureAvailableAt`, `computedAt`, `dataCutoffAt`
 - `scoreVersion`, `parameterManifest`
 - `direction`, `congressScore`, `signedScore`

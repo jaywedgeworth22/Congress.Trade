@@ -418,7 +418,7 @@ describe('benchmark persistence', () => {
         c: null,
       },
       selectedAt: '2026-07-13T12:05:00.000Z',
-      audit: { chamber: 'house', keys: ['AGREEMENT_HOUSE_MODEL_A', 'AGREEMENT_HOUSE_MODEL_B'] },
+      audit: { chamber: 'house', keys: ['AGREEMENT_HOUSE_MODEL_C', 'AGREEMENT_HOUSE_MODEL_D'] },
     });
 
     expect(statements).toHaveLength(1);
@@ -426,7 +426,7 @@ describe('benchmark persistence', () => {
     expect(statements[0].params[0]).toBe(
       '{"a":{"provider":"openai","model":"gpt-test"},"b":{"provider":"anthropic","model":"claude-test"},"c":null}',
     );
-    expect(String(statements[0].params[3])).toContain('AGREEMENT_HOUSE_MODEL_A');
+    expect(String(statements[0].params[3])).toContain('AGREEMENT_HOUSE_MODEL_C');
   });
 
   it('clears one chamber benchmark history only after active runs are stopped', async () => {

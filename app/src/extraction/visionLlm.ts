@@ -25,6 +25,35 @@ import { trackedFetch } from '../shared/thirdPartyTelemetry';
 import { GoogleGenAI } from '@google/genai';
 
 /**
+ * Per-isolate sliding-window request throttle for the Gemini free/low tiers.
+ * Only engages when GEMINI_RPM_LIMIT is set; isolates do not coordinate, so
+ * treat the limit as per-isolate (set it below the account cap when scaling).
+ */
+class RateLimiter {
+  private queue: number[] = [];
+
+  async wait(rpmLimitStr: string | undefined) {
+    if (!rpmLimitStr) return;
+    const rpm = parseInt(rpmLimitStr, 10);
+    if (isNaN(rpm) || rpm <= 0) return;
+
+    const now = Date.now();
+    this.queue = this.queue.filter(t => now - t < 60000);
+
+    if (this.queue.length >= rpm) {
+      const oldest = this.queue[0];
+      const waitTime = 60000 - (now - oldest);
+      if (waitTime > 0) {
+        await new Promise(r => setTimeout(r, waitTime));
+      }
+    }
+    this.queue.push(Date.now());
+  }
+}
+
+const geminiRateLimiter = new RateLimiter();
+
+/**
  * Gemini model id. Centralized + documented so it is trivial to bump.
  * NOTE: Flash model ids rotate; if calls start 404-ing, update this to the
  * current Flash generation — the request/response contract below is unchanged
@@ -91,11 +120,14 @@ export class VisionLlmExtractor implements Extractor {
   }
 
     async extract(input: ExtractorInput): Promise<ExtractorResult> {
-    let key = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
-    if (!key && this.apiKeyName === 'GEMINI_API_KEY') {
-      key = (await resolveSecret(this.env, 'CT_GEMINI_API_KEY')).value;
+let keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
+    if (!keyString && this.apiKeyName === 'GEMINI_API_KEY') {
+      keyString = (await resolveSecret(this.env, 'CT_GEMINI_API_KEY' as any)).value;
     }
-    if (!key) throw new Error(`${this.name}: API key is not configured`);
+    if (!keyString) throw new Error(`${this.name}: API key is not configured`);
+    // The key secret may hold several comma-separated keys; rotate to the next
+    // one when a request fails (rate limit / quota) instead of giving up.
+    const keys = keyString.split(',').map(k => k.trim()).filter(Boolean);
     if (!input.bytes) throw new Error(`${this.name}: no bytes provided on ExtractorInput`);
 
     const model = await this.resolveModel();
@@ -137,58 +169,71 @@ export class VisionLlmExtractor implements Extractor {
     for (let i = 0; i < chunks.length; i++) {
       try {
         const chunkBytes = chunks[i];
-        const prompt = input.filing.chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
-        const ai = new GoogleGenAI({
-          apiKey: key,
-        });
+const prompt = input.filing.chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
 
         let res;
-        try {
-          res = await ai.models.generateContent({
-            model: model,
-            contents: [
-              {
-                role: 'user',
-                parts: [
-                  { text: prompt },
-                  {
-                    inlineData: {
-                      mimeType: 'application/pdf',
-                      data: arrayBufferToBase64(chunkBytes),
+        let lastError: Error | null = null;
+        let jsonText = '';
+
+        for (const k of keys) {
+          try {
+            await geminiRateLimiter.wait(this.env.GEMINI_RPM_LIMIT);
+            const ai = new GoogleGenAI({ apiKey: k });
+            
+            res = await ai.models.generateContent({
+              model: model,
+              contents: [
+                {
+                  role: 'user',
+                  parts: [
+                    { text: prompt },
+                    {
+                      inlineData: {
+                        mimeType: 'application/pdf',
+                        data: arrayBufferToBase64(chunkBytes),
+                      },
                     },
-                  },
-                ],
-              },
-            ],
-            config: {
-              temperature: 0,
-              responseMimeType: 'application/json',
-              responseSchema: RESPONSE_SCHEMA as any,
+                  ],
+                },
+              ],
+              config: {
+                temperature: 0,
+                responseMimeType: 'application/json',
+                responseSchema: RESPONSE_SCHEMA as any,
+              }
+            });
+
+            if (res.modelVersion) {
+              resolvedModel = res.modelVersion;
             }
-          });
-        } catch (e: any) {
-          throw e;
+            if ((res as any).responseId) {
+              providerRequestId = (res as any).responseId;
+            }
+
+            jsonText = res.text || '';
+
+            if (res.usageMetadata) {
+              totalPromptTokens += res.usageMetadata.promptTokenCount ?? 0;
+              totalCompletionTokens +=
+                (res.usageMetadata.candidatesTokenCount ?? 0) +
+                (res.usageMetadata.thoughtsTokenCount ?? 0);
+              totalCachedTokens += res.usageMetadata.cachedContentTokenCount ?? 0;
+            }
+            
+            if (!jsonText) {
+              throw new Error(`${this.name}: Gemini returned no candidate text for chunk ${i + 1}/${chunks.length}`);
+            }
+
+            lastError = null;
+            break;
+          } catch (e: any) {
+            lastError = e as Error;
+            continue;
+          }
         }
 
-        if (res.modelVersion) {
-          resolvedModel = res.modelVersion;
-        }
-        if ((res as any).responseId) {
-          providerRequestId = (res as any).responseId;
-        }
-
-        const jsonText = res.text;
-
-        if (res.usageMetadata) {
-          totalPromptTokens += res.usageMetadata.promptTokenCount ?? 0;
-          totalCompletionTokens +=
-            (res.usageMetadata.candidatesTokenCount ?? 0) +
-            (res.usageMetadata.thoughtsTokenCount ?? 0);
-          totalCachedTokens += res.usageMetadata.cachedContentTokenCount ?? 0;
-        }
-
-        if (!jsonText) {
-          throw new Error(`${this.name}: Gemini returned no candidate text for chunk ${i + 1}/${chunks.length}`);
+        if (!res || lastError) {
+          throw lastError ?? new Error(`${this.name}: all API keys failed`);
         }
 
         combinedRaw += (i > 0 ? '\n\n--- CHUNK ---\n\n' : '') + jsonText;
@@ -424,6 +469,169 @@ export function parseModelJson(text: string): ModelTx[] {
   throw new Error('visionLlm: model JSON was not a transaction array');
 }
 
+/**
+ * Locate the first `[` or `{` character in `text` that is not inside a JSON
+ * string literal. Returns -1 when the bracket never appears. Shared by
+ * {@link salvageTruncatedTransactions} to find the transaction array even
+ * when it is nested inside a wrapper object (e.g. `{"transactions": [...]}`).
+ */
+function firstUnquotedBracket(text: string, bracket: '[' | '{'): number {
+  let inString = false;
+  let escape = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (char === '\\') {
+      escape = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (!inString && char === bracket) return i;
+  }
+  return -1;
+}
+
+/**
+ * Bounded salvage for a provider response that was cut off mid-output (e.g.
+ * Anthropic `stop_reason: 'max_tokens'`). Recovers every COMPLETE leading
+ * transaction object from the (possibly truncated) JSON array and drops the
+ * trailing partial row, instead of failing the whole read. Reuses the
+ * balanced-bracket scanning approach of {@link extractJsonFallback}, but scans
+ * per-array-element rather than for one top-level structure so a truncated
+ * final element does not poison the rows found before it.
+ *
+ * Handles both a bare `[...]` array and a wrapper object
+ * `{"transactions": [...]}` (the shape returned when the JSON schema wraps
+ * the array) — it locates the first unquoted `[` in the text and salvages
+ * elements from there. Returns `[]` when no array start is found or no
+ * element ever completes (e.g. the output was cut off before the first row).
+ */
+export function salvageTruncatedTransactions(text: string): ModelTx[] {
+  let cleaned = text.trim();
+  cleaned = cleaned.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+
+  const arrayStart = firstUnquotedBracket(cleaned, '[');
+  if (arrayStart === -1) return [];
+
+  const rows: ModelTx[] = [];
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let elemStart = -1;
+
+  for (let i = arrayStart + 1; i < cleaned.length; i++) {
+    const char = cleaned[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (char === '\\') {
+      escape = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (char === '{' || char === '[') {
+      if (depth === 0) elemStart = i;
+      depth++;
+      continue;
+    }
+    if (char === '}' || char === ']') {
+      if (depth === 0) {
+        // The array's own closing bracket (or a stray one) — nothing more to
+        // salvage either way.
+        break;
+      }
+      depth--;
+      if (depth === 0 && elemStart !== -1) {
+        const candidate = cleaned.slice(elemStart, i + 1);
+        try {
+          const parsed = JSON.parse(candidate);
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            rows.push(parsed as ModelTx);
+          }
+        } catch {
+          // A malformed "complete" element means the scan lost sync with the
+          // real structure (extremely unlikely given balanced-bracket
+          // tracking); stop rather than risk salvaging out-of-order rows.
+          break;
+        }
+        elemStart = -1;
+      }
+    }
+  }
+  return rows;
+}
+
+/** Result of a truncation-aware parse: rows plus whether salvage kicked in. */
+export interface AnthropicParseResult {
+  rows: ModelTx[];
+  /** True when the full JSON failed to parse and rows were recovered via salvage. */
+  salvaged: boolean;
+}
+
+/**
+ * Parse an Anthropic response, falling back to bounded salvage when the
+ * provider reports `stop_reason: 'max_tokens'` (output truncated) AND the
+ * full text fails to parse as JSON. A non-truncation parse failure still
+ * throws — salvage only fires when we know why the JSON is incomplete, and
+ * only when it can recover at least one complete row.
+ */
+export function parseAnthropicModelJson(
+  text: string,
+  stopReason: string | null | undefined,
+): AnthropicParseResult {
+  try {
+    return { rows: parseModelJson(text), salvaged: false };
+  } catch (err) {
+    if (stopReason === 'max_tokens') {
+      const salvaged = salvageTruncatedTransactions(text);
+      if (salvaged.length > 0) return { rows: salvaged, salvaged: true };
+    }
+    throw err;
+  }
+}
+
+/** Append the salvaged-output provenance marker without duplicating it. */
+export function markSalvaged(tx: ParsedTx): ParsedTx {
+  const warnings = tx.extractionWarnings ?? [];
+  if (warnings.includes('salvaged_truncated_output')) return tx;
+  return { ...tx, extractionWarnings: [...warnings, 'salvaged_truncated_output'] };
+}
+
+/**
+ * Normalize PDF bytes before they are base64-encoded into an Anthropic
+ * `document` block. Anthropic's API 400s outright on some malformed PDFs (a
+ * production Senate-corpus drain hit 8 hard failures from invalid PDF objects
+ * in one run); round-tripping the bytes through pdf-lib's loader + serializer
+ * repairs recoverable structural issues before the request is sent.
+ * `ignoreEncryption` keeps encrypted-but-otherwise-valid PDFs from being
+ * rejected as corrupt.
+ *
+ * Throws a stable, secret-safe error (no raw pdf-lib parser detail) when the
+ * PDF is unparseable outright, so the caller can short-circuit BEFORE making
+ * any provider call.
+ */
+export async function normalizePdfForAnthropic(bytes: ArrayBuffer): Promise<ArrayBuffer> {
+  try {
+    const pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    const saved = await pdfDoc.save();
+    return (saved.buffer as ArrayBuffer).slice(saved.byteOffset, saved.byteOffset + saved.byteLength);
+  } catch {
+    throw new Error('anthropic: invalid PDF (unparseable by pdf-lib)');
+  }
+}
+
 export function toParsedTx(m: ModelTx): ParsedTx {
   const { min, max } = parseAmountRange(m.amountRange ?? '');
   const modelConf = typeof m.confidence === 'number' ? clamp01(m.confidence) : DEFAULT_CONFIDENCE;
@@ -503,4 +711,45 @@ export function arrayBufferToBase64(buffer: ArrayBuffer): string {
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(1, n));
+}
+
+function isRetryable(status: number): boolean {
+  return status === 429;
+}
+
+export async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  name = 'fetch',
+  opts: { maxAttempts?: number; sleep?: (ms: number) => Promise<void>; jitter?: () => number; model?: string } = {},
+): Promise<Response> {
+  const maxAttempts = opts.maxAttempts ?? 4;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const jitter = opts.jitter ?? (() => Math.floor(Math.random() * 250));
+  let res = await trackedFetch(
+    url,
+    init,
+    { service: 'llm', operation: 'extract-document', model: opts.model },
+  );
+  for (let attempt = 1; attempt < maxAttempts && isRetryable(res.status); attempt++) {
+    const retryAfterSec = Number(res.headers.get('retry-after'));
+    const backoffMs =
+      Number.isFinite(retryAfterSec) && retryAfterSec > 0
+        ? Math.min(retryAfterSec * 1000, 30_000)
+        : Math.min(500 * 2 ** (attempt - 1), 8_000) + jitter();
+    // Release the errored response body so the connection can be reused.
+    try {
+      await res.body?.cancel();
+    } catch {
+      /* ignore */
+    }
+    console.warn(`${name}: ${res.status} — retry ${attempt}/${maxAttempts - 1} in ${backoffMs}ms`);
+    await sleep(backoffMs);
+    res = await trackedFetch(
+      url,
+      init,
+      { service: 'llm', operation: 'extract-document-retry', model: opts.model },
+    );
+  }
+  return res;
 }
