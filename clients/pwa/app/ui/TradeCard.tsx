@@ -21,9 +21,9 @@ export function TradeCard({ item }: { item: ClientTrade }) {
           <strong style={{ fontSize: '18px', color: 'var(--text)' }}>{item.asset.name}</strong>
           <span style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>{item.member.name ?? 'Unknown Politician'}</span>
         </div>
-        <b className={item.transaction.type === 'S' ? 'sell' : 'buy'} style={{ borderRadius: '999px', padding: '6px 14px' }}>
+        <span className={`${item.transaction.type === 'S' ? 'sell' : 'buy'} trade-badge`} style={{ borderRadius: '999px', padding: '6px 14px' }}>
           {item.transaction.type === 'S' ? 'Sale ↘' : item.transaction.type === 'P' ? 'Purchase ↗' : 'Exchange ↔'}
-        </b>
+        </span>
       </div>
       <div className="trade-member">
         <small>{[item.member.chamber, item.member.state].filter(Boolean).join(' · ') || 'Congress'}</small>

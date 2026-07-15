@@ -137,9 +137,17 @@ const FIELD_NAMES: ConsensusFieldName[] = [
   'amount',
 ];
 
+const NORM_CACHE = new Map<string, string>();
+
 /** Collapse a string to its comparison form: trimmed, upper-cased, whitespace-collapsed. */
 function normStr(s: string | null | undefined): string {
-  return (s ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
+  if (!s) return '';
+  const cached = NORM_CACHE.get(s);
+  if (cached !== undefined) return cached;
+  const res = s.trim().toUpperCase().replace(/\s+/g, ' ');
+  if (NORM_CACHE.size > 10000) NORM_CACHE.clear(); // simple bound
+  NORM_CACHE.set(s, res);
+  return res;
 }
 
 /** Raw display value for a field on a row (what the model actually produced). */

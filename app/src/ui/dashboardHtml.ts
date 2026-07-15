@@ -23,6 +23,9 @@
 export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Congress.Trade</title>
@@ -53,7 +56,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     --rival:     #7b8dab;
     --radius:    12px;
     --mono:      ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    --sans:      system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    --sans:      "Inter", system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
   }
   /* ---- light theme (toggled via html[data-theme="light"]) ---- */
   html[data-theme="light"] {
@@ -143,14 +146,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   input::placeholder { color: var(--text-dim); }
   .grid-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; margin-bottom: 20px; }
-  .card { text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 14px 16px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); }
+  .card { text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 14px 16px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
   .card .k { color: var(--text-dim); font-size: 12px; }
   .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; line-height: 1.2; }
   .card .v small { font-size: 12px; font-weight: 500; color: var(--text-dim); }
   .info-tip { color: var(--text-dim); cursor: help; border-bottom: 0; text-decoration: none; font-size: .82em; line-height: 1; vertical-align: .35em; margin-left: 1px; }
   .info-tip:hover, .info-tip:focus-visible { color: var(--accent); outline: none; }
-  table { width: 100%; border-collapse: collapse; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--radius); overflow: hidden; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); }
+  table { width: 100%; border-collapse: collapse; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--radius); overflow: hidden; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
   th, td { text-align: center; padding: 11px 13px; border-bottom: 1px solid var(--border); border-right: 1px solid color-mix(in srgb, var(--border) 42%, transparent); font-size: 13px; vertical-align: middle; }
+  th, td, .v, .fval, .hval, .latency, .est-money, .amount-range, .amount-tier-line, .fc-amt-val, .def-v { font-variant-numeric: tabular-nums; }
   th:last-child, td:last-child { border-right: none; }
   th { color: var(--text-dim); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
   tr:last-child td { border-bottom: none; }
@@ -361,7 +365,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
   .btn.sm { padding: 5px 10px; font-size: 12px; }
   .btn:disabled { opacity: .5; cursor: default; }
-  .section { background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 18px; margin-bottom: 18px; box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); }
+  .section { background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 18px; margin-bottom: 18px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
   .section h3 { margin: 0 0 4px; font-size: 15px; }
   .section p.sub { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; }
   .row-flex { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
@@ -680,21 +684,38 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .branch-seg { display:inline-flex; border:1px solid var(--border); border-radius:9px; overflow:hidden; }
   .branch-toggle { min-width:34px; height:30px; border:none; background:transparent; color:var(--text-dim); font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:background .15s, color .15s; line-height:1; padding:0 10px; }
   .branch-toggle + .branch-toggle { border-left:1px solid var(--border); }
-  .branch-toggle:hover { color:var(--text); }
+  .branch-toggle:hover { background:var(--panel-2); color:var(--text); }
   .branch-toggle.on { background:color-mix(in srgb, var(--accent) 16%, transparent); color:var(--text); box-shadow:inset 0 0 0 1px var(--accent); }
   .branch-toggle:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
   .branch-info { width:24px; height:24px; border-radius:999px; border:none; background:transparent; color:var(--text-dim); font-size:15px; line-height:1; cursor:pointer; padding:0; display:flex; align-items:center; justify-content:center; }
   .branch-info:hover, .branch-info:focus-visible, .branch-info[aria-expanded="true"] { color:var(--accent); outline:none; }
   .branch-pop { position:absolute; top:calc(100% + 8px); left:0; z-index:60; min-width:270px; max-width:min(340px, 92vw); background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px; display:grid; gap:6px; font-size:12px; color:var(--text); box-shadow:0 10px 30px rgba(0,0,0,.35); }
   .branch-pop-row { display:grid; grid-template-columns:16px 1fr; gap:8px; align-items:baseline; }
-  .branch-pop-row b { color:var(--accent); }
+  .branch-pop-row .branch-icon { color:var(--accent); font-weight:700; }
   .branch-pop-note { color:var(--text-dim); font-size:11px; margin-top:2px; }
   .party-chips { display:flex; gap:4px; align-items:center; }
   .party-chip { padding:3px 8px; border-radius:6px; border:1px solid var(--border); background:transparent; color:var(--text-dim); font-size:14px; cursor:pointer; transition:all .15s; display:flex; align-items:center; justify-content:center; }
-  .party-chip:hover { border-color:var(--text-dim); }
+  .party-chip:hover { border-color:color-mix(in srgb,var(--accent) 50%,var(--border)); color:var(--text); }
   .party-chip.on { background:color-mix(in srgb, var(--accent) 14%, transparent); border-color:var(--accent); color:var(--text); }
   .party-chip.on[data-party="D"] { border-color:var(--buy); background:color-mix(in srgb, var(--buy) 14%, transparent); }
   .party-chip.on[data-party="R"] { border-color:var(--sell); background:color-mix(in srgb, var(--sell) 14%, transparent); }
+  
+  @keyframes slideUpFade {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  tr.row, .feed-card { animation: slideUpFade 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) backwards; }
+  tr.row:nth-child(1), .feed-card:nth-child(1) { animation-delay: 0.05s; }
+  tr.row:nth-child(2), .feed-card:nth-child(2) { animation-delay: 0.10s; }
+  tr.row:nth-child(3), .feed-card:nth-child(3) { animation-delay: 0.15s; }
+  tr.row:nth-child(4), .feed-card:nth-child(4) { animation-delay: 0.20s; }
+  tr.row:nth-child(5), .feed-card:nth-child(5) { animation-delay: 0.25s; }
+  tr.row:nth-child(6), .feed-card:nth-child(6) { animation-delay: 0.30s; }
+  tr.row:nth-child(7), .feed-card:nth-child(7) { animation-delay: 0.35s; }
+  tr.row:nth-child(8), .feed-card:nth-child(8) { animation-delay: 0.40s; }
+  tr.row:nth-child(9), .feed-card:nth-child(9) { animation-delay: 0.45s; }
+  tr.row:nth-child(10), .feed-card:nth-child(10) { animation-delay: 0.50s; }
+  
   /* ---- Speed vs data providers (public latency proof) ---- */
   .speed-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
   .speed-head h3 { margin:0; }
@@ -962,6 +983,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       transparent 44%),
     var(--panel);
   border-color: var(--surf-edge);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 5%, transparent);
 }
 #view-trends .section::before,
 #view-trends .grid-cards .card::before {
@@ -1348,9 +1370,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
         <button type="button" class="branch-info" aria-expanded="false" aria-controls="qChamberInfo" aria-label="About the H, S and P branch filters">&#9432;</button>
         <div class="branch-pop" id="qChamberInfo" role="note" hidden>
-          <div class="branch-pop-row"><b>H</b><span>House trades — House Clerk PTR filings</span></div>
-          <div class="branch-pop-row"><b>S</b><span>Senate trades — Senate eFD PTR filings</span></div>
-          <div class="branch-pop-row"><b>P</b><span>Executive Branch trades — OGE Form 278-T (the President's filings)</span></div>
+          <div class="branch-pop-row"><span class="branch-icon">H</span><span>House trades — House Clerk PTR filings</span></div>
+          <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate trades — Senate eFD PTR filings</span></div>
+          <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive Branch trades — OGE Form 278-T (the President's filings)</span></div>
           <div class="branch-pop-note">Tap a letter to include or exclude that branch.</div>
         </div>
       </div>
@@ -1415,9 +1437,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
         <button type="button" class="branch-info" aria-expanded="false" aria-controls="trChamberInfo" aria-label="About the H, S and P branch filters">&#9432;</button>
         <div class="branch-pop" id="trChamberInfo" role="note" hidden>
-          <div class="branch-pop-row"><b>H</b><span>House trades — House Clerk PTR filings</span></div>
-          <div class="branch-pop-row"><b>S</b><span>Senate trades — Senate eFD PTR filings</span></div>
-          <div class="branch-pop-row"><b>P</b><span>Executive Branch trades — OGE Form 278-T (the President's filings)</span></div>
+          <div class="branch-pop-row"><span class="branch-icon">H</span><span>House trades — House Clerk PTR filings</span></div>
+          <div class="branch-pop-row"><span class="branch-icon">S</span><span>Senate trades — Senate eFD PTR filings</span></div>
+          <div class="branch-pop-row"><span class="branch-icon">P</span><span>Executive Branch trades — OGE Form 278-T (the President's filings)</span></div>
           <div class="branch-pop-note">Tap a letter to include or exclude that branch.</div>
         </div>
       </div>
@@ -1427,9 +1449,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button type="button" class="party-chip" data-party="O" title="Other">🦅</button>
         <button type="button" class="branch-info" aria-expanded="false" aria-controls="trPartyInfo" aria-label="About the party filters">&#9432;</button>
         <div class="branch-pop" id="trPartyInfo" role="note" hidden style="min-width:200px;">
-          <div class="branch-pop-row"><b>🫏</b><span>Democrat</span></div>
-          <div class="branch-pop-row"><b>🐘</b><span>Republican</span></div>
-          <div class="branch-pop-row"><b>🦅</b><span>Other (Independent, etc.)</span></div>
+          <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
+          <div class="branch-pop-row"><span class="branch-icon">🐘</span><span>Republican</span></div>
+          <div class="branch-pop-row"><span class="branch-icon">🦅</span><span>Other (Independent, etc.)</span></div>
           <div class="branch-pop-note">Tap an emoji to include or exclude that party.</div>
         </div>
       </div>
