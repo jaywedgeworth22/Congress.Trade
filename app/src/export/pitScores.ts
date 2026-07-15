@@ -12,7 +12,7 @@ import type { Env, TxType } from '../shared/types';
 import { all, type SqlParam, parseJson } from '../shared/db';
 import { bracketMidpoint, netSentiment, round } from '../analytics/compute';
 import { committeeConflict } from '../analytics/conflicts';
-import { TICKER_RENAMES } from '@jaywedgeworth22/congress-trading-shared';
+import { TICKER_RENAMES, classifyTickerAlias } from '@jaywedgeworth22/congress-trading-shared';
 import { pctChange } from '../prices/compute';
 import { canonicalizeAssetType } from '../shared/assetTypes';
 
@@ -1244,6 +1244,12 @@ async function buildRow(
     };
   });
   const aliasesFrom = Object.entries(TICKER_RENAMES).filter(([, to]) => to === ticker).map(([from]) => from);
+  // If THIS ticker is itself a curated alias source, classify it. Rename sources are normally
+  // folded to their current ticker upstream (resolveContinuousTicker at ingest), so the case that
+  // actually reaches here is an ACQUISITION source (e.g. ATVI) — deliberately NOT folded, so its
+  // delisted series stays distinct. Record that delisting explicitly instead of dropping it.
+  const aliasClassification = classifyTickerAlias(ticker);
+  const isAcquisitionSource = aliasClassification?.class === 'acquisition';
   const clusterConsensus = buildClusterConsensus(ticker, asOf, txs, allTxRows, memberSkill);
   const pitValidity = buildPitValidity(txs);
   return {
@@ -1261,7 +1267,13 @@ async function buildRow(
     delistingTickerChangeMetadata: {
       knownPriorTickers: aliasesFrom,
       mappedToCurrentTicker: TICKER_RENAMES[ticker] ?? null,
-      reason: aliasesFrom.length || TICKER_RENAMES[ticker] ? 'curated_alias_map' : null,
+      aliasClass: aliasClassification?.class ?? null,
+      delisted: isAcquisitionSource,
+      acquiredBy: isAcquisitionSource ? aliasClassification!.to : null,
+      reason:
+        aliasesFrom.length || TICKER_RENAMES[ticker] || isAcquisitionSource
+          ? 'curated_alias_map'
+          : null,
     },
     asOf,
     disclosureAvailableAt: asOf,
