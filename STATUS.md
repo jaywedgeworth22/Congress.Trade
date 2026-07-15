@@ -1,9 +1,27 @@
 # Current Handoff
 
-Last updated: 2026-07-13
+Last updated: 2026-07-14
 
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
+
+## 2026-07-14 — Immutable shared-package v1.7.1 consumer adoption (CODEX)
+
+- Branch `codex/shared-v171-consumer` updates the Congress.Trade root and Worker consumers from
+  shared-package v1.6.0 commit `c4fcfb4...` to the immutable v1.7.1 release commit
+  `0bc26ab9311a396f3f6b5cba0fb54fa7558a42b4`; manifests, lock resolutions, and every
+  `allowScripts` approval use that exact commit rather than a tag or semver range.
+- Separate empty npm caches installed both consumers. Each installed package reports version
+  1.7.1, contains `dist/index.js`, `dist/index.mjs`, `dist/index.d.ts`, and
+  `dist/index.d.mts`, and passes CommonJS plus ESM import smokes.
+- App typecheck and the serialized full suite pass (127 files / 1,259 tests). Fresh Wrangler
+  dry-runs from fetched `origin/main` and this branch produce the same 6,187,729-byte runtime
+  bundle with SHA-256 `d3c0be60...`, so the new unused shared exports are tree-shaken. The
+  parent-directed isolated preview wrapper reran typecheck and all 127 files / 1,259 tests green,
+  then deployed Worker version `ed4189b2-4115-4779-ae4f-7781f3398b7d`. Preview UI is HTTP 200,
+  health reports `ok/db/schema=true` with `missing=[]`, and unauthenticated benchmark admin access
+  fails closed with HTTP 401. No production runtime deploy is needed. No push, PR, merge,
+  production deploy, provider call, or production data mutation has run from this branch.
 
 ## 2026-07-13 — Chamber benchmark history and outbound usage accounting (CODEX)
 

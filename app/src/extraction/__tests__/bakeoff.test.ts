@@ -667,6 +667,11 @@ describe('runCandidateOnDoc frozen invocation authorization', () => {
     expect(result).toMatchObject({
       ok: false,
       error: 'openai API key not configured',
+      failure: {
+        code: 'provider_not_configured',
+        scope: 'provider',
+        retryable: false,
+      },
       latencyMs: 0,
     });
     expect(fetchMock).not.toHaveBeenCalled();
@@ -685,7 +690,15 @@ describe('runCandidateOnDoc frozen invocation authorization', () => {
       { apiKey: 'reserved-key' },
     );
 
-    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('openai 401') });
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('openai 401'),
+      failure: {
+        code: 'provider_authentication_failed',
+        scope: 'provider',
+        retryable: false,
+      },
+    });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
     expect(headers.authorization).toBe('Bearer reserved-key');

@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   beginBenchmarkRun,
+  BenchmarkRunStateConflictError,
   claimBenchmarkMeasurement,
+  completeBenchmarkRun,
+  failBenchmarkRun,
   recordBenchmarkSelection,
   releaseBenchmarkMeasurementClaim,
+  rescoreBenchmarkRun,
   saveBenchmarkMeasurement,
+  saveUnavailableBenchmarkMeasurementsIfAbsent,
   summarizeBenchmarkMeasurements,
   type BenchmarkRunDetail,
 } from '../persistence';
@@ -90,7 +95,7 @@ describe('benchmark persistence', () => {
             }
             if (/INSERT INTO benchmark_model_results/.test(sql)) {
               const now = String(params[4]);
-              if (!row || (params[8] === 1 && row.outcome === 'running' && row.lease_until <= now)) {
+              if (!row || (params[9] === 1 && row.outcome === 'running' && row.lease_until <= now)) {
                 row = {
                   outcome: 'running',
                   claim_token: String(params[5]),
@@ -101,7 +106,12 @@ describe('benchmark persistence', () => {
             }
             return { success: true, meta: { changes: 0 } } as unknown as D1Result;
           },
-          async first<T>() { return row as T | null; },
+          async first<T>() {
+            if (/SELECT status FROM benchmark_runs/i.test(sql)) {
+              return { status: 'running' } as T;
+            }
+            return row as T | null;
+          },
         };
         return statement;
       },
@@ -177,6 +187,65 @@ describe('benchmark persistence', () => {
     expect(statements[0]?.sql).toMatch(/outcome = 'running' AND invoked = 0 AND claim_token = \?/);
     expect(statements[0]?.params).toEqual([
       'run-1', 'doc-1', 'openai', 'gpt-test', 'claim-1',
+    ]);
+  });
+
+  it('fills deterministic unavailable cells without overwriting an existing claim', async () => {
+    const statements: CapturedStatement[] = [];
+    let call = 0;
+    const db = {
+      prepare(sql: string) {
+        const statement = {
+          params: [] as unknown[],
+          bind(...params: unknown[]) { statement.params = params; return statement; },
+          async run() {
+            statements.push({ sql, params: statement.params });
+            call++;
+            return {
+              success: true,
+              meta: { changes: call === 1 ? 1 : 0 },
+            } as unknown as D1Result;
+          },
+        };
+        return statement;
+      },
+      async batch(prepared: D1PreparedStatement[]) {
+        return Promise.all(prepared.map((statement) => statement.run()));
+      },
+    } as unknown as D1Database;
+
+    const saved = await saveUnavailableBenchmarkMeasurementsIfAbsent(db, [
+      {
+        runId: 'run-1', docId: 'H-2', provider: 'openai', model: 'gpt-5.6-terra',
+        error: 'blocked_by_model_failure:model_access_denied',
+        costDetail: { unknownReason: 'not_invoked' },
+        result: { failure: { code: 'model_access_denied', scope: 'model', retryable: false } },
+        createdAt: '2026-07-14T12:00:00.000Z',
+      },
+      {
+        runId: 'run-1', docId: 'H-3', provider: 'openai', model: 'gpt-5.6-terra',
+        error: 'blocked_by_model_failure:model_access_denied',
+        createdAt: '2026-07-14T12:00:00.000Z',
+      },
+    ]);
+
+    expect(saved).toEqual({ attempted: 2, inserted: 1 });
+    expect(statements).toHaveLength(2);
+    expect(statements[0]?.sql).toMatch(/ON CONFLICT \(run_id, doc_id, provider, model\) DO NOTHING/);
+    expect(statements[0]?.sql).toContain("VALUES (?, ?, ?, ?, NULL, 0, 0, 'skipped'");
+    expect(statements[0]?.sql).toMatch(/'skipped', 0, \?, 0, NULL, NULL, NULL/);
+    expect(statements[0]?.sql).not.toContain('DO UPDATE');
+    expect(statements[0]?.params).toEqual([
+      'run-1',
+      'H-2',
+      'openai',
+      'gpt-5.6-terra',
+      'blocked_by_model_failure:model_access_denied',
+      '{"unknownReason":"not_invoked"}',
+      '{"failure":{"code":"model_access_denied","scope":"model","retryable":false}}',
+      '2026-07-14T12:00:00.000Z',
+      '2026-07-14T12:00:00.000Z',
+      '2026-07-14T12:00:00.000Z',
     ]);
   });
 
@@ -306,6 +375,90 @@ describe('benchmark persistence', () => {
     );
     expect(String(statements[0].params[3])).toContain('AGREEMENT_HOUSE_MODEL_A');
   });
+
+  it('atomically stops only a running benchmark', async () => {
+    const { db, statements } = captureDb();
+    await expect(failBenchmarkRun(
+      db,
+      'run-1',
+      'cancelled_by_operator',
+      '2026-07-14T14:00:00.000Z',
+    )).resolves.toBe(true);
+
+    expect(statements).toHaveLength(1);
+    expect(statements[0]?.sql).toContain("WHERE id = ? AND status = 'running'");
+    expect(statements[0]?.params).toEqual([
+      '2026-07-14T14:00:00.000Z',
+      '2026-07-14T14:00:00.000Z',
+      'cancelled_by_operator',
+      '2026-07-14T14:00:00.000Z',
+      'run-1',
+    ]);
+  });
+
+  it('cannot complete over a concurrent cancellation', async () => {
+    const runRow = {
+      id: 'run-1', chamber: 'house', status: 'running' as 'running' | 'completed' | 'failed',
+      requested_doc_count: 1, completed_doc_count: 0, model_count: 1,
+      models_json: JSON.stringify([{ provider: 'openai', model: 'gpt-test' }]),
+      request_profile_json: JSON.stringify({
+        scoringProfile: 'ct-benchmark-scoring-v2-row-identity-strict-document',
+      }),
+      started_at: '2026-07-14T12:00:00.000Z', completed_at: null, duration_ms: null,
+      known_cost_usd: null, cost_covered_calls: 0, invoked_calls: 0, summary_json: null,
+      selected_lineup_json: null, selected_at: null, selection_error: null,
+      selection_audit_json: null, error: null as string | null,
+      created_at: '2026-07-14T12:00:00.000Z', updated_at: '2026-07-14T12:00:00.000Z',
+    };
+    const document = {
+      run_id: 'run-1', doc_id: 'doc-1', ordinal: 0, resolved: 1,
+      ground_truth_json: '[]',
+    };
+    const measurement = {
+      run_id: 'run-1', doc_id: 'doc-1', provider: 'openai', model: 'gpt-test',
+      resolved_model: 'gpt-test', invoked: 1, ok: 1, outcome: 'would_publish',
+      autonomous: 1, error: null, row_count: 0, avg_confidence: 0.9,
+      latency_ms: 100, cost_usd: 0.01, cost_source: 'usage_priced',
+      cost_detail_json: null, provider_request_id: null, usage_json: null,
+      result_json: '{"rows":[],"flags":[]}', perfect_match: 1,
+      true_positive: 0, false_positive: 0, false_negative: 0,
+      started_at: '2026-07-14T12:00:00.000Z', completed_at: '2026-07-14T12:00:01.000Z',
+      claim_token: null, lease_until: null, created_at: '2026-07-14T12:00:01.000Z',
+    };
+    const db = {
+      prepare(sql: string) {
+        const statement = {
+          bind() { return statement; },
+          async first<T>() { return (/FROM benchmark_runs/i.test(sql) ? runRow : null) as T | null; },
+          async all<T>() {
+            if (/FROM benchmark_run_documents/i.test(sql)) return { results: [document] as T[] };
+            if (/FROM benchmark_model_results/i.test(sql)) return { results: [measurement] as T[] };
+            return { results: [] as T[] };
+          },
+          async run() {
+            if (/SET status = 'completed'/i.test(sql)) {
+              // The cancel UPDATE wins after completion's initial read.
+              runRow.status = 'failed';
+              runRow.error = 'cancelled_by_operator';
+              return { success: true, meta: { changes: 0 } } as D1Result;
+            }
+            return { success: true, meta: { changes: 0 } } as D1Result;
+          },
+        };
+        return statement;
+      },
+    } as unknown as D1Database;
+
+    await expect(completeBenchmarkRun(
+      db,
+      'run-1',
+      '2026-07-14T12:01:00.000Z',
+    )).rejects.toEqual(expect.objectContaining({
+      name: 'BenchmarkRunStateConflictError',
+      status: 'failed',
+    } satisfies Partial<BenchmarkRunStateConflictError>));
+    expect(runRow).toMatchObject({ status: 'failed', error: 'cancelled_by_operator' });
+  });
 });
 
 describe('summarizeBenchmarkMeasurements', () => {
@@ -385,6 +538,156 @@ describe('summarizeBenchmarkMeasurements', () => {
       costCoverageRate: 0,
       knownCostUsd: 0,
       actualCostPerDocumentUsd: null,
+    });
+  });
+
+  it('reports successful extraction speed separately from provider-failure latency', () => {
+    const summary = summarizeBenchmarkMeasurements(models, 2, [
+      result({ docId: 'doc-1', latencyMs: 100 }),
+      result({
+        docId: 'doc-2',
+        latencyMs: 5,
+        ok: false,
+        autonomous: false,
+        outcome: 'skipped',
+        perfectMatch: null,
+        truePositive: null,
+        falsePositive: null,
+        falseNegative: null,
+      }),
+    ]);
+
+    expect(summary).toMatchObject({
+      avgLatencyMs: 100,
+      p50LatencyMs: 100,
+      p95LatencyMs: 100,
+      avgFailureLatencyMs: 5,
+      p50FailureLatencyMs: 5,
+      p95FailureLatencyMs: 5,
+    });
+    expect(summary.models[0]).toMatchObject({
+      providerCalls: 2,
+      docsOk: 1,
+      failures: 1,
+      autonomyRate: 1,
+      resolvedDocs: 1,
+      avgLatencyMs: 100,
+      avgFailureLatencyMs: 5,
+    });
+  });
+
+  it('reports autonomy and confidence as unavailable when every provider call fails', () => {
+    const summary = summarizeBenchmarkMeasurements(models.slice(0, 1), 1, [
+      result({
+        ok: false,
+        outcome: 'skipped',
+        autonomous: false,
+        avgConfidence: 0,
+        perfectMatch: null,
+        truePositive: null,
+        falsePositive: null,
+        falseNegative: null,
+      }),
+    ]);
+
+    expect(summary.models[0]).toMatchObject({
+      providerCalls: 1,
+      docsOk: 0,
+      failures: 1,
+      autonomousDocs: 0,
+      autonomyRate: null,
+      avgConfidence: null,
+      resolvedDocs: 0,
+      f1: null,
+    });
+  });
+
+  it('reports F1 as zero when scored rows have no true positives', () => {
+    const summary = summarizeBenchmarkMeasurements(models.slice(0, 1), 1, [
+      result({ perfectMatch: false, truePositive: 0, falsePositive: 2, falseNegative: 3 }),
+    ]);
+    expect(summary.models[0].f1).toBe(0);
+  });
+});
+
+describe('rescoreBenchmarkRun', () => {
+  it('repairs saved score columns and stamps the current profile without provider calls', async () => {
+    const truth = {
+      ticker: 'AAPL', assetName: 'Apple Inc.', txDate: '2026-07-01', txType: 'P',
+      amountMin: 1_001, amountMax: 15_000, owner: 'self', assetType: 'ST',
+      assetTypeName: 'Stocks (including ADRs)', isOption: false, capGainsOver200: false,
+      filingStatus: null, subholding: null, location: null, description: null, supplementalText: null,
+    };
+    const candidate = { ...truth, assetTypeName: null, filingStatus: 'New' };
+    const runRow: Record<string, unknown> = {
+      id: 'run-1', chamber: 'house', status: 'running', requested_doc_count: 1,
+      completed_doc_count: 0, model_count: 1,
+      models_json: JSON.stringify([{ provider: 'openai', model: 'gpt-test' }]),
+      request_profile_json: JSON.stringify({ version: 'ct-benchmark-profile-v1' }),
+      started_at: '2026-07-14T12:00:00.000Z', completed_at: null, duration_ms: null,
+      known_cost_usd: null, cost_covered_calls: 0, invoked_calls: 0, summary_json: null,
+      selected_lineup_json: null, selected_at: null, selection_error: null,
+      selection_audit_json: null, error: null, created_at: '2026-07-14T12:00:00.000Z',
+      updated_at: '2026-07-14T12:00:00.000Z',
+    };
+    const documentRow = {
+      run_id: 'run-1', doc_id: 'H-1', ordinal: 0, resolved: 1,
+      ground_truth_json: JSON.stringify([truth]),
+    };
+    const measurementRow: Record<string, unknown> = {
+      run_id: 'run-1', doc_id: 'H-1', provider: 'openai', model: 'gpt-test',
+      resolved_model: 'gpt-test', invoked: 1, ok: 1, outcome: 'would_publish',
+      autonomous: 1, error: null, row_count: 1, avg_confidence: 0.95, latency_ms: 100,
+      cost_usd: 0.001, cost_source: 'usage_priced', cost_detail_json: '{}',
+      provider_request_id: null, usage_json: '{}',
+      result_json: JSON.stringify({ rows: [candidate], flags: [] }),
+      perfect_match: 0, true_positive: 0, false_positive: 1, false_negative: 1,
+      started_at: null, completed_at: null, claim_token: null, lease_until: null,
+      created_at: '2026-07-14T12:00:01.000Z',
+    };
+    const db = {
+      prepare(sql: string) {
+        const statement = {
+          params: [] as unknown[],
+          bind(...params: unknown[]) { statement.params = params; return statement; },
+          async first<T>() { return (/FROM benchmark_runs/i.test(sql) ? runRow : null) as T | null; },
+          async all<T>() {
+            if (/FROM benchmark_run_documents/i.test(sql)) return { results: [documentRow] as T[] };
+            if (/FROM benchmark_model_results/i.test(sql)) return { results: [measurementRow] as T[] };
+            return { results: [] as T[] };
+          },
+          async run() {
+            if (/UPDATE benchmark_model_results/i.test(sql)) {
+              measurementRow.perfect_match = statement.params[0];
+              measurementRow.true_positive = statement.params[1];
+              measurementRow.false_positive = statement.params[2];
+              measurementRow.false_negative = statement.params[3];
+              return { success: true, meta: { changes: 1 } } as unknown as D1Result;
+            }
+            if (/UPDATE benchmark_runs SET request_profile_json/i.test(sql)) {
+              runRow.request_profile_json = statement.params[0];
+              runRow.updated_at = statement.params[1];
+              return { success: true, meta: { changes: 1 } } as unknown as D1Result;
+            }
+            return { success: true, meta: { changes: 0 } } as unknown as D1Result;
+          },
+        };
+        return statement;
+      },
+      async batch(prepared: D1PreparedStatement[]) {
+        return Promise.all(prepared.map((statement) => statement.run()));
+      },
+    } as unknown as D1Database;
+
+    const rescored = await rescoreBenchmarkRun(db, 'run-1', '2026-07-14T12:05:00.000Z');
+
+    expect(rescored).toMatchObject({
+      rescoredMeasurements: 1,
+      scoringProfile: 'ct-benchmark-scoring-v2-row-identity-strict-document',
+      run: {
+        requestProfile: { scoringProfile: 'ct-benchmark-scoring-v2-row-identity-strict-document' },
+        results: [{ perfectMatch: false, truePositive: 1, falsePositive: 0, falseNegative: 0 }],
+      },
     });
   });
 });

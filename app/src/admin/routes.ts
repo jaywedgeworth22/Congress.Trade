@@ -114,17 +114,28 @@ import {
   beginBenchmarkRun,
   claimBenchmarkMeasurement,
   completeBenchmarkRun,
+  failBenchmarkRun,
   getBenchmarkRun,
+  getRunningBenchmarkRun,
   listBenchmarkRuns,
   recordBenchmarkSelection,
   releaseBenchmarkMeasurementClaim,
+  rescoreBenchmarkRun,
   saveBenchmarkMeasurement,
+  saveUnavailableBenchmarkMeasurementsIfAbsent,
+  updateBenchmarkRunRequestProfile,
+  BenchmarkActiveRunConflictError,
+  BenchmarkRunStateConflictError,
   BENCHMARK_CHAMBERS,
   type BenchmarkChamber,
   type BenchmarkModelRef,
   type BenchmarkRunDetail,
   type BenchmarkSelectedLineup,
 } from '../benchmark/persistence';
+import {
+  checkOpenAiModelAccess,
+  openAiModelAccessDecision,
+} from '../benchmark/providerAccess';
 import {
   BenchmarkSettingsConflictError,
   BenchmarkSettingsValidationError,
@@ -139,6 +150,15 @@ import {
   simulateCascadeDocumentMetrics,
   summarizeBenchmarkLatency,
 } from '../extraction/benchmarkMetrics';
+import { BENCHMARK_SCORING_PROFILE, compareBenchmarkRows } from '../benchmark/scoring';
+import {
+  benchmarkCanaryTarget,
+  findProviderFailureBlock,
+  modelsAffectedByProviderFailure,
+  type ProviderFailureBlock,
+  type ProviderFailureSource,
+  type ProviderFailureStatus,
+} from '../extraction/providerFailure';
 import { pushExtractionTelemetry } from '../extraction/telemetry';
 import {
   inspectUsageTelemetryFallback,
@@ -1070,72 +1090,6 @@ function isPreviewDeployment(env: Env): boolean {
   return env.PREVIEW_DEPLOYMENT?.trim().toLowerCase() === 'true';
 }
 
-function benchmarkTxFingerprint(tx: Record<string, unknown>): string {
-  const normalized = (value: unknown) => String(value ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
-  return JSON.stringify([
-    normalized(tx.ticker),
-    normalized(tx.assetName ?? tx.asset_name),
-    tx.txDate ?? tx.tx_date ?? '',
-    normalized(tx.txType ?? tx.tx_type),
-    tx.amountMin ?? tx.amount_min ?? null,
-    tx.amountMax ?? tx.amount_max ?? null,
-    normalized(tx.owner),
-    normalized(tx.assetType ?? tx.asset_type),
-    normalized(tx.assetTypeName ?? tx.asset_type_name),
-    tx.isOption === true || tx.is_option === 1 || tx.is_option === '1',
-    tx.capGainsOver200 === true || tx.cap_gains_over_200 === 1 || tx.cap_gains_over_200 === '1',
-    normalized(tx.filingStatus ?? tx.filing_status),
-    normalized(tx.subholding),
-    normalized(tx.location),
-    normalized(tx.description),
-    normalized(tx.supplementalText ?? tx.supplemental_text),
-  ]);
-}
-
-function compareBenchmarkRows(
-  candidateRows: Array<Record<string, unknown>>,
-  groundTruth: Array<Record<string, unknown>>,
-): {
-  resolved: true;
-  perfectMatch: boolean;
-  tp: number;
-  fp: number;
-  fn: number;
-  gtCount: number;
-  candCount: number;
-} {
-  const counts = (rows: Array<Record<string, unknown>>) => {
-    const result = new Map<string, number>();
-    for (const row of rows) {
-      const fingerprint = benchmarkTxFingerprint(row);
-      result.set(fingerprint, (result.get(fingerprint) ?? 0) + 1);
-    }
-    return result;
-  };
-  const candidateCounts = counts(candidateRows);
-  const truthCounts = counts(groundTruth);
-  let tp = 0;
-  let fp = 0;
-  let fn = 0;
-  for (const fingerprint of new Set([...candidateCounts.keys(), ...truthCounts.keys()])) {
-    const candidate = candidateCounts.get(fingerprint) ?? 0;
-    const truth = truthCounts.get(fingerprint) ?? 0;
-    const matches = Math.min(candidate, truth);
-    tp += matches;
-    fp += Math.max(0, candidate - matches);
-    fn += Math.max(0, truth - matches);
-  }
-  return {
-    resolved: true,
-    perfectMatch: fp === 0 && fn === 0,
-    tp,
-    fp,
-    fn,
-    gtCount: groundTruth.length,
-    candCount: candidateRows.length,
-  };
-}
-
 async function loadBenchmarkGroundTruth(
   env: Env,
   docId: string,
@@ -1519,6 +1473,7 @@ export function benchmarkUsageHasProviderReportedCost(
 
 const BENCHMARK_REQUEST_PROFILE = Object.freeze({
   version: 'ct-benchmark-profile-v1',
+  scoringProfile: BENCHMARK_SCORING_PROFILE,
   promptVersion: EXTRACTION_PROMPT_VERSION,
   schemaVersion: EXTRACTION_SCHEMA_VERSION,
   extractionAdapter: 'runCandidateOnDoc',
@@ -1574,6 +1529,96 @@ function benchmarkRunAuthorizesInitialCell(
   ) return false;
   return authorization.models.some(
     (model) => model?.provider === candidate.provider && model?.model === candidate.model,
+  );
+}
+
+type BenchmarkSavedMeasurement = BenchmarkRunDetail['results'][number];
+type PersistedBenchmarkDocument = BenchmarkRunDetail['documents'][number];
+
+interface BenchmarkStoredResult {
+  rows?: ParsedTx[];
+  flags?: string[];
+  failure?: ProviderFailureStatus;
+  blockedBy?: ProviderFailureSource;
+}
+
+function benchmarkStoredResult(value: unknown): BenchmarkStoredResult {
+  return value && typeof value === 'object' ? value as BenchmarkStoredResult : {};
+}
+
+function cachedBenchmarkCellPayload(
+  runId: string,
+  snapshot: PersistedBenchmarkDocument,
+  existing: BenchmarkSavedMeasurement,
+): Record<string, unknown> {
+  const savedResult = benchmarkStoredResult(existing.result);
+  return {
+    runId,
+    docId: existing.docId,
+    outcome: existing.outcome,
+    flags: savedResult.flags,
+    rowCount: existing.rowCount,
+    rows: savedResult.rows ?? [],
+    comparison: existing.perfectMatch == null ? null : {
+      resolved: true,
+      perfectMatch: existing.perfectMatch,
+      tp: existing.truePositive ?? 0,
+      fp: existing.falsePositive ?? 0,
+      fn: existing.falseNegative ?? 0,
+      gtCount: Array.isArray(snapshot.groundTruth) ? snapshot.groundTruth.length : 0,
+      candCount: existing.rowCount,
+    },
+    groundTruth: snapshot.groundTruth,
+    ok: existing.ok,
+    invoked: existing.invoked,
+    error: existing.error,
+    latencyMs: existing.latencyMs,
+    usage: existing.usage,
+    costUsd: existing.costUsd,
+    costSource: existing.costSource,
+    costDetail: existing.costDetail,
+    resolvedModel: existing.resolvedModel,
+    providerRequestId: existing.providerRequestId,
+    ...(savedResult.failure ? { failure: savedResult.failure } : {}),
+    ...(savedResult.blockedBy ? { blockedBy: savedResult.blockedBy } : {}),
+    cached: true,
+  };
+}
+
+async function fillBenchmarkProviderFailure(
+  db: D1Database,
+  runRecord: BenchmarkRunDetail,
+  candidate: BenchmarkModelRef,
+  block: ProviderFailureBlock,
+): Promise<void> {
+  const affectedModels = modelsAffectedByProviderFailure(
+    runRecord.models,
+    candidate,
+    block.failure,
+  );
+  await saveUnavailableBenchmarkMeasurementsIfAbsent(
+    db,
+    affectedModels.flatMap((model) => runRecord.documents.map((document) => {
+      const cost = priceBenchmarkUsage({
+        provider: model.provider,
+        model: model.model,
+        invoked: false,
+      });
+      return {
+        runId: runRecord.id,
+        docId: document.docId,
+        provider: model.provider,
+        model: model.model,
+        error: block.failure.code,
+        costDetail: cost.costDetail,
+        result: {
+          rows: [],
+          flags: [],
+          failure: block.failure,
+          blockedBy: block.source,
+        },
+      };
+    })),
   );
 }
 
@@ -5222,6 +5267,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- Durable benchmark runs ----------------------------------------------
+  r.get('/benchmark/model-access/openai', async (c) => {
+    const refresh = c.req.query('refresh') === '1' || c.req.query('refresh') === 'true';
+    const models = DEFAULT_CANDIDATES
+      .filter((candidate) => candidate.provider === 'openai')
+      .map((candidate) => candidate.model);
+    return c.json({ access: await checkOpenAiModelAccess(c.env, { models, refresh }) });
+  });
+
   r.post('/benchmark/runs', async (c) => {
     let body: Record<string, unknown>;
     try {
@@ -5245,6 +5298,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
     if (new Set(models.map((model) => `${model.provider}:${model.model}`)).size !== models.length) {
       return c.json({ error: 'models must be unique' }, 400);
+    }
+    const alreadyRunning = await getRunningBenchmarkRun(c.env.DB, chamber);
+    if (alreadyRunning) {
+      return c.json({
+        error: `${chamber} already has a running benchmark`,
+        code: 'benchmark_run_already_active',
+        existingRunId: alreadyRunning.id,
+        run: alreadyRunning,
+      }, 409);
     }
     const defaultLimit = chamber === 'executive' ? 5 : 25;
     const limit = Math.min(Math.max(Math.floor(Number(body.limit) || defaultLimit), 1), 25);
@@ -5272,12 +5334,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           : `no ${chamber} filings with stored documents were found`,
       }, 404);
     }
-    const configured = await Promise.all(models.map(async (model) => ({
+    let configured = await Promise.all(models.map(async (model) => ({
       ...model,
       configured: Boolean(await keyFor(c.env, model.provider)),
     })));
-    const configuredModels = configured.filter((model) => model.configured);
-    const plannedCalls = documents.length * configuredModels.length;
+    let configuredModels = configured.filter((model) => model.configured);
+    let plannedCalls = documents.length * configuredModels.length;
     if (plannedCalls > 0 && body.confirmPaidRun !== true) {
       return c.json({
         error: 'confirmPaidRun=true is required before reserving paid provider calls',
@@ -5287,11 +5349,102 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         configuredModels,
       }, 409);
     }
+    let modelAccess: Awaited<ReturnType<typeof checkOpenAiModelAccess>> | null = null;
+    let skippedModels: Array<BenchmarkModelRef & {
+      reason: 'known_unavailable';
+      failure: Awaited<ReturnType<typeof checkOpenAiModelAccess>>['models'][number]['failure'];
+    }> = [];
+    const selectedOpenAi = models.filter((model) => model.provider === 'openai');
+    const needsOpenAiAccessCheck = selectedOpenAi.some((model) => model.model.startsWith('gpt-5.6'));
+    if (body.confirmPaidRun === true && needsOpenAiAccessCheck) {
+      modelAccess = await checkOpenAiModelAccess(c.env, {
+        models: selectedOpenAi.map((model) => model.model),
+      });
+      const inconclusive = selectedOpenAi.filter(
+        (model) => openAiModelAccessDecision(modelAccess as NonNullable<typeof modelAccess>, model.model) === 'unknown',
+      );
+      if (inconclusive.length) {
+        return c.json({
+          error: 'OpenAI model access could not be verified; no benchmark run or paid-call reservation was created',
+          code: 'benchmark_model_access_unknown',
+          retryable: true,
+          models: inconclusive,
+          access: modelAccess,
+        }, 503);
+      }
+      skippedModels = modelAccess.models
+        .filter((entry) => entry.availability === 'unavailable')
+        .map((entry) => ({
+          provider: entry.provider,
+          model: entry.model,
+          reason: 'known_unavailable' as const,
+          failure: entry.failure,
+        }));
+      const skippedKeys = new Set(skippedModels.map((model) => `${model.provider}:${model.model}`));
+      models = models.filter((model) => !skippedKeys.has(`${model.provider}:${model.model}`));
+      if (!models.length) {
+        return c.json({
+          error: 'none of the requested benchmark models are currently available',
+          code: 'benchmark_models_unavailable',
+          skippedModels,
+          access: modelAccess,
+        }, 409);
+      }
+      configured = await Promise.all(models.map(async (model) => ({
+        ...model,
+        configured: Boolean(await keyFor(c.env, model.provider)),
+      })));
+      configuredModels = configured.filter((model) => model.configured);
+      plannedCalls = documents.length * configuredModels.length;
+    }
+    const provisionalProfile = {
+      ...BENCHMARK_REQUEST_PROFILE,
+      // No model/document cell is authorized until the durable daily ledger
+      // reservation below succeeds.
+      paidCallAuthorization: benchmarkPaidCallAuthorization(documents.length, [], null),
+      ...(modelAccess ? { modelAccess } : {}),
+    };
+    let runRecord: BenchmarkRunDetail | Awaited<ReturnType<typeof beginBenchmarkRun>>;
+    try {
+      // The partial unique index on running chamber rows makes this insert the
+      // atomic admission point. It happens before call reservation so a losing
+      // browser cannot consume daily paid-call capacity.
+      runRecord = await beginBenchmarkRun(c.env.DB, {
+        chamber,
+        models,
+        requestProfile: provisionalProfile,
+        documents: documents.map((document) => ({
+          docId: document.docId,
+          resolved: document.resolved,
+          groundTruth: document.groundTruth,
+        })),
+      });
+    } catch (error) {
+      if (error instanceof BenchmarkActiveRunConflictError) {
+        const existing = await getBenchmarkRun(c.env.DB, error.existingRunId);
+        return c.json({
+          error: error.message,
+          code: 'benchmark_run_already_active',
+          existingRunId: error.existingRunId,
+          ...(existing ? { run: existing } : {}),
+        }, 409);
+      }
+      throw error;
+    }
+
     let cap: { usedToday: number; dailyCap: number; reservedDay: string } | null = null;
     if (plannedCalls > 0) {
       try {
         cap = await reserveBenchmarkCalls(c.env, plannedCalls);
       } catch (error) {
+        try {
+          await failBenchmarkRun(c.env.DB, runRecord.id, 'paid_call_reservation_failed');
+        } catch (terminalizeError) {
+          console.error(
+            'benchmark reservation failed and provisional run could not be terminalized',
+            terminalizeError instanceof Error ? terminalizeError.name : 'unknown',
+          );
+        }
         if (!(error instanceof BenchmarkCallReservationError)) throw error;
         if (error.reason === 'ledger_unavailable') {
           return c.json({
@@ -5310,29 +5463,38 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         }, 429);
       }
     }
-    const runRecord = await beginBenchmarkRun(c.env.DB, {
-      chamber,
-      models,
-      requestProfile: {
-        ...BENCHMARK_REQUEST_PROFILE,
-        paidCallAuthorization: benchmarkPaidCallAuthorization(
-          documents.length,
-          configuredModels,
-          cap?.reservedDay ?? null,
-        ),
-      },
-      documents: documents.map((document) => ({
-        docId: document.docId,
-        resolved: document.resolved,
-        groundTruth: document.groundTruth,
-      })),
-    });
+    const authorizedProfile = {
+      ...provisionalProfile,
+      paidCallAuthorization: benchmarkPaidCallAuthorization(
+        documents.length,
+        configuredModels,
+        cap?.reservedDay ?? null,
+      ),
+    };
+    if (plannedCalls > 0) {
+      const authorized = await updateBenchmarkRunRequestProfile(
+        c.env.DB,
+        runRecord.id,
+        authorizedProfile,
+      );
+      if (!authorized) {
+        await failBenchmarkRun(c.env.DB, runRecord.id, 'paid_call_authorization_persistence_failed');
+        return c.json({
+          error: 'benchmark paid-call authorization could not be persisted; no provider calls were started',
+          code: 'benchmark_call_authorization_unavailable',
+          retryable: true,
+        }, 503);
+      }
+      runRecord = { ...runRecord, requestProfile: authorizedProfile };
+    }
     return c.json({
       run: runRecord,
       docs: documents.map(({ docId, resolved }) => ({ docId, resolved })),
       resolvedDocumentCount: documents.filter((document) => document.resolved).length,
       plannedCalls,
       configuredModels,
+      skippedModels,
+      modelAccess,
       cap,
     }, 201);
   });
@@ -5350,6 +5512,37 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     return runRecord ? c.json({ run: runRecord }) : c.json({ error: 'benchmark run not found' }, 404);
   });
 
+  // Recompute accuracy/F1 from saved model rows and the run's ground-truth
+  // snapshot. This route performs no provider calls and consumes no paid-call
+  // reservation; it repairs historical scoring semantics in place.
+  r.post('/benchmark/runs/:runId/rescore', async (c) => {
+    const result = await rescoreBenchmarkRun(c.env.DB, c.req.param('runId'));
+    return result ? c.json(result) : c.json({ error: 'benchmark run not found' }, 404);
+  });
+
+  // Stop browser-orchestrated work without deleting its partial measurements.
+  // The status-fenced UPDATE prevents a concurrent completion from being
+  // overwritten, while repeating an already-successful cancel is idempotent.
+  r.post('/benchmark/runs/:runId/cancel', async (c) => {
+    const runId = c.req.param('runId');
+    const before = await getBenchmarkRun(c.env.DB, runId);
+    if (!before) return c.json({ error: 'benchmark run not found' }, 404);
+    if (before.status === 'failed' && before.error === 'cancelled_by_operator') {
+      return c.json({ run: before });
+    }
+    if (before.status !== 'running') {
+      return c.json({ error: `benchmark run is ${before.status}` }, 409);
+    }
+
+    const cancelled = await failBenchmarkRun(c.env.DB, runId, 'cancelled_by_operator');
+    const after = await getBenchmarkRun(c.env.DB, runId);
+    if (!after) return c.json({ error: 'benchmark run not found' }, 404);
+    if (!cancelled && !(after.status === 'failed' && after.error === 'cancelled_by_operator')) {
+      return c.json({ error: `benchmark run is ${after.status}` }, 409);
+    }
+    return c.json({ run: after });
+  });
+
   r.post('/benchmark/runs/:runId/complete', async (c) => {
     const runRecord = await getBenchmarkRun(c.env.DB, c.req.param('runId'));
     if (!runRecord) return c.json({ error: 'benchmark run not found' }, 404);
@@ -5365,7 +5558,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         missingMeasurements: expectedMeasurements - completedMeasurements,
       }, 409);
     }
-    return c.json({ run: await completeBenchmarkRun(c.env.DB, runRecord.id) });
+    try {
+      return c.json({ run: await completeBenchmarkRun(c.env.DB, runRecord.id) });
+    } catch (error) {
+      if (error instanceof BenchmarkRunStateConflictError) {
+        return c.json({ error: error.message }, 409);
+      }
+      throw error;
+    }
   });
 
   r.post('/benchmark/runs/:runId/simulate', async (c) => {
@@ -5574,19 +5774,27 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       const invoked = readings.filter((result) => result.invoked);
       const successful = invoked.filter((result) => result.ok);
       const autonomous = successful.filter((result) => result.autonomous);
-      return invoked.length === sourceRun.documents.length && successful.length > 0 && autonomous.length > 0
+      const scored = successful.filter((result) => result.perfectMatch != null);
+      return readings.length === sourceRun.documents.length
+        && invoked.length === sourceRun.documents.length
+        && successful.length === sourceRun.documents.length
+        && autonomous.length > 0
+        && scored.length > 0
         ? []
         : [{
             model,
             requiredReadings: sourceRun.documents.length,
+            measuredReadings: readings.length,
             invokedReadings: invoked.length,
             successfulReadings: successful.length,
+            failedReadings: invoked.length - successful.length,
             autonomousReadings: autonomous.length,
+            scoredReadings: scored.length,
           }];
     });
     if (invalidModelCoverage.length) {
       return c.json({
-        error: 'selected models require full invoked coverage plus at least one successful autonomous reading',
+        error: 'selected models require full successful coverage plus autonomous and scored evidence',
         invalidModelCoverage,
       }, 409);
     }
@@ -5797,41 +6005,58 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           && result.model === candidate.model,
       );
       if (existing && existing.outcome !== 'running') {
-        const savedResult = existing.result && typeof existing.result === 'object'
-          ? existing.result as { rows?: ParsedTx[]; flags?: string[] }
-          : {};
-        return c.json({
-          runId,
-          docId,
-          outcome: existing.outcome,
-          flags: savedResult.flags,
-          rowCount: existing.rowCount,
-          rows: savedResult.rows ?? [],
-          comparison: existing.perfectMatch == null ? null : {
-            resolved: true,
-            perfectMatch: existing.perfectMatch,
-            tp: existing.truePositive ?? 0,
-            fp: existing.falsePositive ?? 0,
-            fn: existing.falseNegative ?? 0,
-            gtCount: Array.isArray(snapshot.groundTruth) ? snapshot.groundTruth.length : 0,
-            candCount: existing.rowCount,
-          },
-          groundTruth: snapshot.groundTruth,
-          ok: existing.ok,
-          invoked: existing.invoked,
-          error: existing.error,
-          latencyMs: existing.latencyMs,
-          usage: existing.usage,
-          costUsd: existing.costUsd,
-          costSource: existing.costSource,
-          costDetail: existing.costDetail,
-          resolvedModel: existing.resolvedModel,
-          providerRequestId: existing.providerRequestId,
-          cached: true,
-        });
+        return c.json(cachedBenchmarkCellPayload(runId, snapshot, existing));
       }
       if (runRecord.status !== 'running') {
         return c.json({ error: `benchmark run is ${runRecord.status}` }, 409);
+      }
+
+      const providerFailureBlock = findProviderFailureBlock(runRecord.results, candidate);
+      if (providerFailureBlock) {
+        await fillBenchmarkProviderFailure(c.env.DB, runRecord, candidate, providerFailureBlock);
+        const refreshed = await getBenchmarkRun(c.env.DB, runId);
+        const blockedCell = refreshed?.results.find((result) =>
+          result.docId === docId
+            && result.provider === candidate.provider
+            && result.model === candidate.model
+            && result.outcome !== 'running',
+        );
+        if (blockedCell) {
+          return c.json(cachedBenchmarkCellPayload(runId, snapshot, blockedCell));
+        }
+        // An in-flight claim wins the INSERT ... DO NOTHING race. Never start
+        // another provider request; let the client poll until that owner saves.
+        return c.json({
+          runId,
+          docId,
+          pending: true,
+          state: 'provider_failure_blocked',
+          failure: providerFailureBlock.failure,
+          blockedBy: providerFailureBlock.source,
+          retryAfterMs: 2_000,
+        }, 202);
+      }
+
+      const canary = benchmarkCanaryTarget(
+        runRecord.documents,
+        runRecord.results,
+        runRecord.models,
+        candidate,
+      );
+      if (canary && (
+        canary.docId !== docId
+        || canary.provider !== candidate.provider
+        || canary.model !== candidate.model
+      )) {
+        return c.json({
+          runId,
+          docId,
+          pending: true,
+          state: canary.scope === 'provider' ? 'provider_canary' : 'model_canary',
+          canaryDocId: canary.docId,
+          canaryModel: { provider: canary.provider, model: canary.model },
+          retryAfterMs: 1_000,
+        }, 202);
       }
       invocationKey = await keyFor(c.env, candidate.provider);
       configured = Boolean(invocationKey);
@@ -5855,6 +6080,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         model: candidate.model,
         allowRetryAfterUnknownOutcome: false,
       });
+      if (claim.state === 'inactive') {
+        return c.json({ error: 'benchmark run is no longer running' }, 409);
+      }
       if (!claim.claimed && claim.state === 'orphaned') {
         if (body.confirmRetryAfterUnknownOutcome !== true) {
           return c.json({
@@ -5877,6 +6105,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           model: candidate.model,
           allowRetryAfterUnknownOutcome: true,
         });
+        if (claim.state === 'inactive') {
+          return c.json({ error: 'benchmark run is no longer running' }, 409);
+        }
       }
       if (!claim.claimed || !claim.claimToken) {
         return c.json({
@@ -6103,17 +6334,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           : null;
 
     if (!read.ok) {
-      const comparison = groundTruth !== null && invocationPossible
-        ? {
-            resolved: true as const,
-            perfectMatch: false,
-            tp: 0,
-            fp: 0,
-            fn: groundTruth.length,
-            gtCount: groundTruth.length,
-            candCount: 0,
-          }
-        : null;
+      // Provider/account failures are reliability failures, not OCR readings.
+      // Keep them out of the accuracy/F1 denominator; docsOk/failures reports
+      // end-to-end availability separately.
+      const comparison = null;
+      const providerFailure = read.failure;
+      const storedError = providerFailure?.code ?? read.error ?? 'read_failed';
       if (runId) {
         await saveBenchmarkMeasurement(c.env.DB, {
           runId,
@@ -6125,7 +6351,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           ok: false,
           outcome: 'skipped',
           autonomous: false,
-          error: read.error ?? 'read_failed',
+          error: storedError,
           rowCount: 0,
           avgConfidence: read.avgConfidence,
           latencyMs: configured ? read.latencyMs : null,
@@ -6134,22 +6360,33 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           costDetail: persistedCost.costDetail,
           providerRequestId: read.providerRequestId ?? null,
           usage: read.usage,
-          result: { rows: [], flags: [] },
-          perfectMatch: comparison?.perfectMatch ?? null,
-          truePositive: comparison?.tp ?? null,
-          falsePositive: comparison?.fp ?? null,
-          falseNegative: comparison?.fn ?? null,
+          result: {
+            rows: [],
+            flags: [],
+            ...(providerFailure ? { failure: providerFailure } : {}),
+          },
+          perfectMatch: null,
+          truePositive: null,
+          falsePositive: null,
+          falseNegative: null,
           startedAt,
           completedAt,
           claimToken,
         });
+        if (providerFailure && runRecord) {
+          await fillBenchmarkProviderFailure(c.env.DB, runRecord, candidate, {
+            failure: providerFailure,
+            source: { provider: candidate.provider, model: candidate.model, docId },
+          });
+        }
       }
       return c.json({
         runId: runId || null,
         docId,
         outcome: 'skipped',
         reason: 'read_failed',
-        error: read.error,
+        error: providerFailure?.message ?? read.error,
+        ...(providerFailure ? { failure: providerFailure } : {}),
         rowCount: 0,
         rows: [],
         comparison,
@@ -6168,17 +6405,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
     const filingRow = await loadFilingRow(c.env, docId);
     if (!filingRow) {
-      const comparison = groundTruth !== null && invocationPossible
-        ? {
-            resolved: true as const,
-            perfectMatch: false,
-            tp: 0,
-            fp: 0,
-            fn: groundTruth.length,
-            gtCount: groundTruth.length,
-            candCount: 0,
-          }
-        : null;
+      const comparison = null;
       if (runId) {
         await saveBenchmarkMeasurement(c.env.DB, {
           runId,
@@ -6200,10 +6427,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           providerRequestId: read.providerRequestId ?? null,
           usage: read.usage,
           result: { rows: read.rows, flags: [] },
-          perfectMatch: comparison?.perfectMatch ?? null,
-          truePositive: comparison?.tp ?? null,
-          falsePositive: comparison?.fp ?? null,
-          falseNegative: comparison?.fn ?? null,
+          perfectMatch: null,
+          truePositive: null,
+          falsePositive: null,
+          falseNegative: null,
           startedAt,
           completedAt,
           claimToken,
