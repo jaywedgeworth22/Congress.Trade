@@ -473,7 +473,7 @@ function openaiLine(doc: BatchDoc, fileId: string, model: string): string {
           input: [{
             role: 'user',
             content: [
-              { type: 'input_file', file_id: fileId, detail: 'original' },
+              { type: 'input_file', file_id: fileId, detail: 'high' },
               { type: 'input_text', text: batchPrompt(doc.chamber, 'object') },
             ],
           }],
