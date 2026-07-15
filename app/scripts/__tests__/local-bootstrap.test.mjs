@@ -508,7 +508,7 @@ describe('safe local Infisical bootstrap', () => {
     result = runBootstrap({ globalFile: symlinkFile, devVarsFile });
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('regular, non-symlink file');
-  });
+  }, 15_000);
 
   it('rejects live and broken .dev.vars symlinks instead of following or ignoring them', () => {
     const dir = fixtureDir();

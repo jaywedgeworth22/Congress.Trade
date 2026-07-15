@@ -168,6 +168,16 @@ describe('admin migration bootstrap', () => {
       ...STRIPE_EVENT_SCHEMA_STATEMENTS,
       ...REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
       ...BENCHMARK_SCHEMA_STATEMENTS,
+      `CREATE TABLE IF NOT EXISTS usage_telemetry_fallback_events (
+     idempotency_key TEXT PRIMARY KEY,
+     event_json TEXT NOT NULL,
+     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+     last_error TEXT,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   )`,
+      `CREATE INDEX IF NOT EXISTS idx_usage_telemetry_fallback_events_updated
+     ON usage_telemetry_fallback_events (updated_at)`,
     ]);
   });
 

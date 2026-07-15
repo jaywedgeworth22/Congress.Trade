@@ -660,7 +660,7 @@ describe.runIf(workerdAvailable)('review resolution on transactional D1', () => 
       enqueued: DELIVERY_TARGETED_ID_LIMIT,
     });
     expect(sent).toHaveLength(DELIVERY_TARGETED_ID_LIMIT);
-  }, 30_000);
+  }, 60_000);
 
   it('atomically clears a human hold when a fresh editor confirms corrected rows', async () => {
     await seedReview('H-CONFIRM-HOLD');

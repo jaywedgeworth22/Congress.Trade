@@ -99,6 +99,11 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
     `SELECT chamber, owner_token, lease_until, created_at, updated_at
        FROM benchmark_settings_leases LIMIT 0`,
   ],
+  [
+    'usage_telemetry_fallback_events',
+    `SELECT idempotency_key, event_json, attempts, last_error, created_at, updated_at
+       FROM usage_telemetry_fallback_events LIMIT 0`,
+  ],
   ['dead_letter_events', 'SELECT queue, msg_type, tx_id, attempts FROM dead_letter_events LIMIT 0'],
   [
     'idx_deliveries_subscription_tx',
@@ -141,6 +146,7 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
     'idx_benchmark_documents_doc',
     'idx_benchmark_results_run_model',
     'idx_benchmark_results_model_run',
+    'idx_usage_telemetry_fallback_events_updated',
   ].map((name): [string, string, boolean] => [
     name,
     `SELECT name FROM sqlite_master WHERE type = 'index' AND name = '${name}'`,

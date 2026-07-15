@@ -79,6 +79,59 @@ function fallbackBucket(initial: Record<string, string> = {}) {
   return { bucket, objects, put, remove };
 }
 
+function fallbackD1(initial: Record<string, string> = {}) {
+  const rows = new Map<string, { event_json: string; attempts: number; last_error: string | null }>(
+    Object.entries(initial).map(([key, eventJson]) => [key, { event_json: eventJson, attempts: 0, last_error: null }]),
+  );
+  const prepare = vi.fn((sql: string) => {
+    let params: unknown[] = [];
+    const statement = {
+      bind(...values: unknown[]) {
+        params = values;
+        return statement;
+      },
+      async first<T>() {
+        if (/COUNT\(\*\) AS pending/i.test(sql)) return { pending: rows.size } as T;
+        return null as T | null;
+      },
+      async all<T>() {
+        if (/FROM usage_telemetry_fallback_events/i.test(sql)) {
+          const limit = Math.max(0, Number(params[0] ?? rows.size));
+          return {
+            results: [...rows.entries()].slice(0, limit).map(([idempotency_key, row]) => ({
+              idempotency_key,
+              event_json: row.event_json,
+            })) as T[],
+          };
+        }
+        return { results: [] as T[] };
+      },
+      async run() {
+        if (/INSERT INTO usage_telemetry_fallback_events/i.test(sql)) {
+          const [key, eventJson, lastError] = params;
+          rows.set(String(key), {
+            event_json: String(eventJson),
+            attempts: rows.get(String(key))?.attempts ?? 0,
+            last_error: lastError == null ? null : String(lastError),
+          });
+        } else if (/DELETE FROM usage_telemetry_fallback_events/i.test(sql)) {
+          rows.delete(String(params[0]));
+        } else if (/UPDATE usage_telemetry_fallback_events/i.test(sql)) {
+          const [lastError, _updatedAt, key] = params;
+          const row = rows.get(String(key));
+          if (row) {
+            row.attempts += 1;
+            row.last_error = lastError == null ? null : String(lastError);
+          }
+        }
+        return { success: true, meta: { changes: 1 } };
+      },
+    };
+    return statement;
+  });
+  return { db: { prepare } as unknown as D1Database, rows, prepare };
+}
+
 describe('third-party usage telemetry', () => {
   it('classifies providers from an exact host allowlist and never emits an arbitrary host', () => {
     expect(providerForThirdPartyRequest('https://api.openai.com/v1/responses')).toBe('openai');
@@ -220,11 +273,64 @@ describe('third-party usage telemetry', () => {
     expect(JSON.parse(String(value))).toEqual(deliveryEvent);
   });
 
-  it('reports a secret-safe terminal loss when Queue and fallback persistence both fail', async () => {
+  it('last-chance delivers directly when Queue and fallback persistence both fail', async () => {
+    const requestedUrls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      requestedUrls.push(typeof input === 'string' ? input : input.toString());
+      return new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }));
+    const env = {
+      INGEST_QUEUE: { send: vi.fn(async () => { throw new Error('queue unavailable'); }) },
+      RAW_FILES: { put: vi.fn(async () => { throw new TypeError('r2 unavailable'); }) },
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+    } as unknown as Env;
+
+    const accepted = await enqueueUsageTelemetryEvent(env, deliveryEvent);
+
+    expect(accepted).toBe(true);
+    expect(requestedUrls).toEqual(['https://usage.jays.services/api/ingest/usage']);
+  });
+
+  it('persists to D1 when Queue, R2 fallback, and direct delivery all fail', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'receiver unavailable' }), {
+      status: 503,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const fallback = fallbackD1();
+    const env = {
+      INGEST_QUEUE: { send: vi.fn(async () => { throw new Error('queue unavailable'); }) },
+      RAW_FILES: { put: vi.fn(async () => { throw new TypeError('r2 unavailable'); }) },
+      DB: fallback.db,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+    } as unknown as Env;
+
+    const accepted = await enqueueUsageTelemetryEvent(env, deliveryEvent);
+
+    expect(accepted).toBe(true);
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.event_json).toBe(JSON.stringify(deliveryEvent));
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.last_error).toBe('error');
+  });
+
+  it('reports a secret-safe terminal loss only when Queue, R2, direct delivery, and D1 all fail', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'receiver unavailable' }), {
+      status: 503,
+      headers: { 'content-type': 'application/json' },
+    })));
     const env = {
       INGEST_QUEUE: { send: vi.fn(async () => { throw new Error('queue-secret-value'); }) },
       RAW_FILES: { put: vi.fn(async () => { throw new TypeError('r2-secret-value'); }) },
+      DB: { prepare: vi.fn(() => { throw new RangeError('d1-secret-value'); }) },
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
     } as unknown as Env;
 
     const accepted = await enqueueUsageTelemetryEvent(env, deliveryEvent);
@@ -233,8 +339,12 @@ describe('third-party usage telemetry', () => {
     const serializedLog = JSON.stringify(error.mock.calls);
     expect(serializedLog).toContain('usage telemetry durability exhausted');
     expect(serializedLog).toContain('TypeError');
+    expect(serializedLog).toContain('Error');
+    expect(serializedLog).toContain('RangeError');
     expect(serializedLog).not.toContain('queue-secret-value');
     expect(serializedLog).not.toContain('r2-secret-value');
+    expect(serializedLog).not.toContain('d1-secret-value');
+    expect(serializedLog).not.toContain('receiver unavailable');
     error.mockRestore();
   });
 
@@ -266,6 +376,34 @@ describe('third-party usage telemetry', () => {
     expect(await flushUsageTelemetryFallback(env)).toEqual({ listed: 1, delivered: 1, failed: 0 });
     expect(fallback.objects.has(key)).toBe(false);
     expect(fallback.remove).toHaveBeenCalledWith(key);
+  });
+
+  it('drains D1 fallback events and deletes them after receiver acceptance', async () => {
+    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
+    let receiverAvailable = false;
+    vi.stubGlobal('fetch', vi.fn(async () => receiverAvailable
+      ? new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      : new Response(JSON.stringify({ error: 'receiver unavailable' }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        })));
+    const env = {
+      RAW_FILES: fallbackBucket().bucket,
+      DB: fallback.db,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+    } as unknown as Env;
+
+    expect(await flushUsageTelemetryFallback(env)).toEqual({ listed: 1, delivered: 0, failed: 1 });
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(1);
+
+    receiverAvailable = true;
+    expect(await flushUsageTelemetryFallback(env)).toEqual({ listed: 1, delivered: 1, failed: 0 });
+    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(false);
   });
 
   it('accepts actual measured cost while dropping unapproved metadata fields', async () => {

@@ -113,6 +113,7 @@ import { flushDeliveryOutbox } from '../delivery/outbox';
 import {
   beginBenchmarkRun,
   claimBenchmarkMeasurement,
+  clearBenchmarkRuns,
   completeBenchmarkRun,
   failBenchmarkRun,
   getBenchmarkRun,
@@ -121,6 +122,7 @@ import {
   recordBenchmarkSelection,
   releaseBenchmarkMeasurementClaim,
   rescoreBenchmarkRun,
+  reuseSuccessfulBenchmarkMeasurements,
   saveBenchmarkMeasurement,
   saveUnavailableBenchmarkMeasurementsIfAbsent,
   updateBenchmarkRunRequestProfile,
@@ -1500,12 +1502,13 @@ function benchmarkPaidCallAuthorization(
   documentCount: number,
   configuredModels: Array<BenchmarkModelRef & { configured?: boolean }>,
   reservedDay: string | null,
+  reservedCalls = documentCount * configuredModels.length,
 ): BenchmarkPaidCallAuthorization {
   return {
     version: 1,
     scope: 'initial_model_document_cells',
     reservedDay,
-    reservedCalls: documentCount * configuredModels.length,
+    reservedCalls,
     documentCount,
     models: configuredModels.map(({ provider, model }) => ({ provider, model })),
   };
@@ -1525,7 +1528,9 @@ function benchmarkRunAuthorizesInitialCell(
     || authorization.reservedDay !== new Date().toISOString().slice(0, 10)
     || authorization.documentCount !== runRecord.documents.length
     || !Array.isArray(authorization.models)
-    || authorization.reservedCalls !== runRecord.documents.length * authorization.models.length
+    || typeof authorization.reservedCalls !== 'number'
+    || authorization.reservedCalls < 0
+    || authorization.reservedCalls > runRecord.documents.length * authorization.models.length
   ) return false;
   return authorization.models.some(
     (model) => model?.provider === candidate.provider && model?.model === candidate.model,
@@ -5432,10 +5437,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       throw error;
     }
 
+    const reused = await reuseSuccessfulBenchmarkMeasurements(c.env.DB, {
+      runId: runRecord.id,
+      chamber,
+      models,
+      billableModels: configuredModels,
+      documents: documents.map((document) => ({
+        docId: document.docId,
+        resolved: document.resolved,
+        groundTruth: document.groundTruth,
+      })),
+    });
+    const callsNeedingReservation = Math.max(0, plannedCalls - reused.reusedBillable);
     let cap: { usedToday: number; dailyCap: number; reservedDay: string } | null = null;
-    if (plannedCalls > 0) {
+    if (callsNeedingReservation > 0) {
       try {
-        cap = await reserveBenchmarkCalls(c.env, plannedCalls);
+        cap = await reserveBenchmarkCalls(c.env, callsNeedingReservation);
       } catch (error) {
         try {
           await failBenchmarkRun(c.env.DB, runRecord.id, 'paid_call_reservation_failed');
@@ -5450,14 +5467,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           return c.json({
             error: 'benchmark daily call reservation is temporarily unavailable',
             code: 'benchmark_call_reservation_unavailable',
-            plannedCalls,
+            plannedCalls: callsNeedingReservation,
+            reusedCalls: reused.reusedBillable,
             dailyCap: error.dailyCap,
             retryable: true,
           }, 503);
         }
         return c.json({
           error: 'benchmark daily call cap reached',
-          plannedCalls,
+          plannedCalls: callsNeedingReservation,
+          reusedCalls: reused.reusedBillable,
           usedToday: error.usedToday,
           dailyCap: error.dailyCap,
         }, 429);
@@ -5469,9 +5488,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         documents.length,
         configuredModels,
         cap?.reservedDay ?? null,
+        callsNeedingReservation,
       ),
     };
-    if (plannedCalls > 0) {
+    if (callsNeedingReservation > 0) {
       const authorized = await updateBenchmarkRunRequestProfile(
         c.env.DB,
         runRecord.id,
@@ -5492,6 +5512,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       docs: documents.map(({ docId, resolved }) => ({ docId, resolved })),
       resolvedDocumentCount: documents.filter((document) => document.resolved).length,
       plannedCalls,
+      callsNeedingReservation,
+      reusedCells: reused.reused,
+      reusedBillableCells: reused.reusedBillable,
+      reuseEligibleCells: reused.attempted,
       configuredModels,
       skippedModels,
       modelAccess,
@@ -5505,6 +5529,24 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     if (rawChamber && !chamber) return c.json({ error: 'invalid chamber' }, 400);
     const limit = Math.min(Math.max(Math.floor(Number(c.req.query('limit')) || 20), 1), 100);
     return c.json({ runs: await listBenchmarkRuns(c.env.DB, chamber ?? undefined, limit) });
+  });
+
+  r.delete('/benchmark/runs', async (c) => {
+    const rawChamber = c.req.query('chamber');
+    const chamber = rawChamber ? benchmarkChamber(rawChamber) : null;
+    if (!chamber) return c.json({ error: "chamber query must be 'house', 'senate', or 'executive'" }, 400);
+    try {
+      return c.json({ ok: true, chamber, ...await clearBenchmarkRuns(c.env.DB, chamber) });
+    } catch (error) {
+      if (error instanceof BenchmarkActiveRunConflictError) {
+        return c.json({
+          error: 'stop the running benchmark before clearing this chamber history',
+          code: 'benchmark_run_already_active',
+          existingRunId: error.existingRunId,
+        }, 409);
+      }
+      throw error;
+    }
   });
 
   r.get('/benchmark/runs/:runId', async (c) => {
@@ -5741,13 +5783,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'invalid JSON body' }, 400);
     }
     const sourceRunId = typeof body.sourceRunId === 'string' ? body.sourceRunId.trim() : '';
-    if (!sourceRunId) return c.json({ error: 'sourceRunId is required' }, 400);
-    const sourceRun = await getBenchmarkRun(c.env.DB, sourceRunId);
-    if (!sourceRun) return c.json({ error: 'source benchmark run not found' }, 404);
-    if (sourceRun.chamber !== chamber) {
+    const allowIncompleteBenchmarkEvidence = body.allowIncompleteBenchmarkEvidence === true;
+    const sourceRun = sourceRunId ? await getBenchmarkRun(c.env.DB, sourceRunId) : null;
+    if (sourceRunId && !sourceRun) return c.json({ error: 'source benchmark run not found' }, 404);
+    if (sourceRun && sourceRun.chamber !== chamber) {
       return c.json({ error: 'source benchmark run belongs to a different chamber' }, 409);
     }
-    if (sourceRun.status !== 'completed') {
+    if (sourceRun && sourceRun.status !== 'completed' && !allowIncompleteBenchmarkEvidence) {
       return c.json({ error: 'source benchmark run must be completed before saving its lineup' }, 409);
     }
     let lineup: BenchmarkSelectedLineup;
@@ -5760,14 +5802,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     } catch (error) {
       return c.json({ error: (error as Error).message }, 400);
     }
-    const measured = new Set(sourceRun.models.map((model) => `${model.provider}:${model.model}`));
-    const unmeasured = [lineup.a, lineup.b, lineup.c as BenchmarkModelRef]
-      .filter((model) => !measured.has(`${model.provider}:${model.model}`));
-    if (unmeasured.length) {
-      return c.json({ error: 'selected models must be part of the source run', unmeasured }, 400);
+    let invalidModelCoverage: Array<Record<string, unknown>> = [];
+    let unmeasured: BenchmarkModelRef[] = [];
+    if (sourceRun) {
+      const measured = new Set(sourceRun.models.map((model) => `${model.provider}:${model.model}`));
+      unmeasured = [lineup.a, lineup.b, lineup.c as BenchmarkModelRef]
+        .filter((model) => !measured.has(`${model.provider}:${model.model}`));
+      if (unmeasured.length && !allowIncompleteBenchmarkEvidence) {
+        return c.json({ error: 'selected models must be part of the source run', unmeasured }, 400);
+      }
     }
     const selectedModels = [lineup.a, lineup.b, lineup.c as BenchmarkModelRef];
-    const invalidModelCoverage = selectedModels.flatMap((model) => {
+    invalidModelCoverage = sourceRun ? selectedModels.flatMap((model) => {
       const readings = sourceRun.results.filter(
         (result) => result.provider === model.provider && result.model === model.model,
       );
@@ -5791,8 +5837,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             autonomousReadings: autonomous.length,
             scoredReadings: scored.length,
           }];
-    });
-    if (invalidModelCoverage.length) {
+    }) : [];
+    if (invalidModelCoverage.length && !allowIncompleteBenchmarkEvidence) {
       return c.json({
         error: 'selected models require full successful coverage plus autonomous and scored evidence',
         invalidModelCoverage,
@@ -5813,18 +5859,21 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       });
       const selectionAudit = {
         ...saved.audit,
-        sourceRunId,
+        sourceRunId: sourceRunId || null,
+        mode: sourceRunId ? (allowIncompleteBenchmarkEvidence ? 'benchmark_incomplete_override' : 'benchmark_supported') : 'manual',
+        unmeasured,
+        invalidModelCoverage,
         actor: adminActor(c),
       };
-      const auditPersistence = await persistBenchmarkSelectionAudit(() =>
+      const auditPersistence = sourceRunId ? await persistBenchmarkSelectionAudit(() =>
         recordBenchmarkSelection(c.env.DB, sourceRunId, {
           lineup,
           audit: selectionAudit,
-        }));
+        })) : { auditPersisted: false };
       return c.json({
         ok: true,
         settings: saved.settings,
-        sourceRunId,
+        sourceRunId: sourceRunId || null,
         audit: selectionAudit,
         ...auditPersistence,
       });
@@ -5846,14 +5895,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       if (error instanceof BenchmarkSettingsWriteError) {
         const selectionAudit = {
           ...error.audit,
-          sourceRunId,
+          sourceRunId: sourceRunId || null,
           actor: adminActor(c),
         };
-        await recordBenchmarkSelection(c.env.DB, sourceRunId, {
-          lineup,
-          error: error.message,
-          audit: selectionAudit,
-        });
+        if (sourceRunId) {
+          await recordBenchmarkSelection(c.env.DB, sourceRunId, {
+            lineup,
+            error: error.message,
+            audit: selectionAudit,
+          });
+        }
         return c.json({ error: error.message, audit: selectionAudit }, 502);
       }
       throw error;

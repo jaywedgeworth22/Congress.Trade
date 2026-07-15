@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   beginBenchmarkRun,
+  clearBenchmarkRuns,
   BenchmarkRunStateConflictError,
   claimBenchmarkMeasurement,
   completeBenchmarkRun,
@@ -8,6 +9,7 @@ import {
   recordBenchmarkSelection,
   releaseBenchmarkMeasurementClaim,
   rescoreBenchmarkRun,
+  reuseSuccessfulBenchmarkMeasurements,
   saveBenchmarkMeasurement,
   saveUnavailableBenchmarkMeasurementsIfAbsent,
   summarizeBenchmarkMeasurements,
@@ -283,6 +285,57 @@ describe('benchmark persistence', () => {
     expect(statements[2]).toMatchObject({ params: ['run-1', 'doc-2', 1, 0, null] });
   });
 
+  it('copies prior successful same-chamber doc/model measurements without provider calls', async () => {
+    const statements: CapturedStatement[] = [];
+    let call = 0;
+    const db = {
+      prepare(sql: string) {
+        const statement = {
+          params: [] as unknown[],
+          bind(...params: unknown[]) { statement.params = params; return statement; },
+          async run() {
+            statements.push({ sql, params: statement.params });
+            call++;
+            return { success: true, meta: { changes: call === 1 ? 1 : 0 } } as unknown as D1Result;
+          },
+        };
+        return statement;
+      },
+      async batch(prepared: D1PreparedStatement[]) {
+        return Promise.all(prepared.map((statement) => statement.run()));
+      },
+    } as unknown as D1Database;
+
+    const reused = await reuseSuccessfulBenchmarkMeasurements(db, {
+      runId: 'run-new',
+      chamber: 'house',
+      models: [
+        { provider: 'openai', model: 'gpt-5.6-terra' },
+        { provider: 'anthropic', model: 'claude-haiku-4-5' },
+      ],
+      billableModels: [{ provider: 'openai', model: 'gpt-5.6-terra' }],
+      documents: [{ docId: 'H-1', resolved: true }],
+      reusedAt: '2026-07-15T12:00:00.000Z',
+    });
+
+    expect(reused).toEqual({ attempted: 2, reused: 1, reusedBillable: 1 });
+    expect(statements).toHaveLength(2);
+    expect(statements[0]?.sql).toMatch(/JOIN benchmark_runs br ON br.id = bmr.run_id/);
+    expect(statements[0]?.sql).toMatch(/br.chamber = \?/);
+    expect(statements[0]?.sql).toMatch(/bmr.ok = 1/);
+    expect(statements[0]?.sql).toMatch(/ON CONFLICT \(run_id, doc_id, provider, model\) DO NOTHING/);
+    expect(statements[0]?.params).toEqual([
+      'run-new',
+      'H-1',
+      '2026-07-15T12:00:00.000Z',
+      'house',
+      'run-new',
+      'H-1',
+      'openai',
+      'gpt-5.6-terra',
+    ]);
+  });
+
   it('persists auditable usage-priced cost without treating missing cost as zero', async () => {
     const { db, statements } = captureDb();
     await saveBenchmarkMeasurement(db, {
@@ -374,6 +427,44 @@ describe('benchmark persistence', () => {
       '{"a":{"provider":"openai","model":"gpt-test"},"b":{"provider":"anthropic","model":"claude-test"},"c":null}',
     );
     expect(String(statements[0].params[3])).toContain('AGREEMENT_HOUSE_MODEL_A');
+  });
+
+  it('clears one chamber benchmark history only after active runs are stopped', async () => {
+    const statements: CapturedStatement[] = [];
+    const db = {
+      prepare(sql: string) {
+        let params: unknown[] = [];
+        const statement = {
+          bind(...values: unknown[]) { params = values; return statement; },
+          async first<T>() {
+            return null as T | null;
+          },
+          async all<T>() {
+            if (/FROM benchmark_runs WHERE chamber/i.test(sql)) {
+              return { results: [{ id: 'run-a' }, { id: 'run-b' }] as T[] };
+            }
+            return { results: [] as T[] };
+          },
+          async run() {
+            statements.push({ sql, params });
+            return { success: true, meta: { changes: sql.includes('benchmark_runs') ? 2 : 4 } } as unknown as D1Result;
+          },
+        };
+        return statement;
+      },
+    } as unknown as D1Database;
+
+    await expect(clearBenchmarkRuns(db, 'senate')).resolves.toEqual({
+      runsDeleted: 2,
+      documentsDeleted: 4,
+      resultsDeleted: 4,
+    });
+    expect(statements.map((statement) => statement.sql)).toEqual([
+      expect.stringContaining('DELETE FROM benchmark_model_results'),
+      expect.stringContaining('DELETE FROM benchmark_run_documents'),
+      expect.stringContaining('DELETE FROM benchmark_runs'),
+    ]);
+    expect(statements[2].params).toEqual(['run-a', 'run-b', 'senate']);
   });
 
   it('atomically stops only a running benchmark', async () => {

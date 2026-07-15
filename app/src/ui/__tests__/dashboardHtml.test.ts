@@ -513,6 +513,13 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("'/api/admin/benchmark/runs/' + encodeURIComponent(run.id) + '/complete'");
     expect(DASHBOARD_HTML).toContain("'/simulate'");
     expect(DASHBOARD_HTML).toContain("'/api/admin/benchmark/settings/'");
+    expect(DASHBOARD_HTML).toContain("'/api/admin/benchmark/runs?chamber=' + encodeURIComponent(chamber)");
+    expect(DASHBOARD_HTML).toContain("onclick=\"clearBenchmarkHistory()\"");
+    expect(DASHBOARD_HTML).toContain('Manual autopublish lineup');
+    expect(DASHBOARD_HTML).toContain('saveManualBenchmarkLineup');
+    expect(DASHBOARD_HTML).toContain('runAllBenchmarks()');
+    expect(DASHBOARD_HTML).toContain('result.reusedCells');
+    expect(DASHBOARD_HTML).toContain('callsNeedingReservation');
     expect(DASHBOARD_HTML).toContain('confirmPaidRun: true');
     expect(DASHBOARD_HTML).toContain('resolvedOnly: false');
     expect(DASHBOARD_HTML).toContain('Measured usage-based cost / doc');
@@ -760,7 +767,7 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('runs benchmark document chunks breadth-first across all models', () => {
-    const source = DASHBOARD_HTML.match(/async function runChamberBenchmark\(chamber\) \{[\s\S]*?\n\}/);
+    const source = DASHBOARD_HTML.match(/async function runChamberBenchmark\(chamber, options\) \{[\s\S]*?\n\}/);
     if (!source) throw new Error('Benchmark runner was not found');
     const chunkLoop = source[0].indexOf('for (var start = 0; start < docs.length; start += concurrency)');
     const modelLoop = source[0].indexOf('for (var modelIndex = 0; modelIndex < models.length; modelIndex++)');

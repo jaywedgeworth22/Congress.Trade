@@ -925,7 +925,7 @@ export async function runCandidateOnDoc(
           cached: true,
         };
       }
-    } catch (err) {
+    } catch {
       // Ignore cache parse error and run the model normally
       console.warn('Failed to parse cached extraction run JSON for', provider, model, docId);
     }

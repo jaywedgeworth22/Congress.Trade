@@ -511,7 +511,7 @@ describe('POST /batch-status/:jobId usage accounting', () => {
     });
   });
 
-  it('keeps aggregate accounting retryable when Queue and R2 durability are exhausted', async () => {
+  it('continues aggregate accounting when Queue/R2/direct delivery fail but D1 retains telemetry', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/v1/batches/batch-123')) {
@@ -540,37 +540,24 @@ describe('POST /batch-status/:jobId usage accounting', () => {
       usageEvents,
       getStatus,
       getExtractionRunIds,
-      getResultSummaryJson,
     } = makeEnv({ measuredUsageDeliveryFailures: 1 });
     const router = buildAdminRouter();
 
     const first = await router.request('/batch-status/job-123', {
       method: 'POST', headers: AUTH,
     }, env);
-    expect(first.status).toBe(503);
-    await expect(first.json()).resolves.toEqual({ error: 'batch measured usage could not be persisted' });
-    expect(getStatus()).toBe('settling');
-    expect(getExtractionRunIds()).toHaveLength(0);
-    expect(JSON.parse(getResultSummaryJson() ?? 'null')).toMatchObject({
-      state: 'settling',
-      accountingPlan: { version: 1, tokenMode: 'aggregate' },
-      terminalDecision: { kind: 'valid' },
-    });
-
-    const retry = await router.request('/batch-status/job-123', {
-      method: 'POST', headers: AUTH,
-    }, env);
-    expect(retry.status).toBe(200);
+    expect(first.status).toBe(200);
+    await expect(first.json()).resolves.toMatchObject({ status: 'completed' });
+    expect(getStatus()).toBe('completed');
     expect(getExtractionRunIds()).toHaveLength(1);
     const attempts = usageEvents.flatMap((message) => {
       const event = (message as { event?: Record<string, unknown> }).event;
       return event?.label === 'batch-job-tokens' ? [event] : [];
     });
-    expect(attempts).toHaveLength(2);
-    expect(JSON.stringify(attempts[0])).toBe(JSON.stringify(attempts[1]));
+    expect(attempts).toHaveLength(1);
   });
 
-  it('reuses one deterministic row while retrying an identical per-result event after durability exhaustion', async () => {
+  it('reuses one deterministic row when D1 fallback retains a failed per-result telemetry delivery', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/v1/batches/batch-123')) {
@@ -609,14 +596,8 @@ describe('POST /batch-status/:jobId usage accounting', () => {
     const first = await router.request('/batch-status/job-123', {
       method: 'POST', headers: AUTH,
     }, env);
-    expect(first.status).toBe(503);
-    expect(getStatus()).toBe('settling');
-    expect(getExtractionRunIds()).toHaveLength(1);
-
-    const retry = await router.request('/batch-status/job-123', {
-      method: 'POST', headers: AUTH,
-    }, env);
-    await expect(retry.json()).resolves.toMatchObject({ status: 'completed' });
+    expect(first.status).toBe(200);
+    await expect(first.json()).resolves.toMatchObject({ status: 'completed' });
     expect(getStatus()).toBe('completed');
     expect(getExtractionRunIds()).toHaveLength(1);
     expect(getExtractionInsertSql()).toHaveLength(1);
@@ -624,13 +605,12 @@ describe('POST /batch-status/:jobId usage accounting', () => {
       const event = (message as { event?: Record<string, unknown> }).event;
       return event?.label === 'batch-result-tokens' ? [event] : [];
     });
-    expect(attempts).toHaveLength(2);
-    expect(JSON.stringify(attempts[0])).toBe(JSON.stringify(attempts[1]));
+    expect(attempts).toHaveLength(1);
     expect(attempts[0]?.idempotencyKey).toMatch(/^ct-measured-[0-9a-f]{64}$/);
     expect(attempts[0]).toMatchObject({ quantity: 15, unit: 'token' });
   });
 
-  it('pins a valid outcome before side effects and rejects a malformed loser until canonical retry resumes', async () => {
+  it('pins a valid outcome before side effects and proceeds when measured usage is retained in D1', async () => {
     const resultLine = (docId: string, promptTokens: number) => ({
       custom_id: docId,
       response: {
@@ -675,41 +655,24 @@ describe('POST /batch-status/:jobId usage accounting', () => {
     const router = buildAdminRouter();
 
     const first = await router.request('/batch-status/job-123', { method: 'POST', headers: AUTH }, env);
-    expect(first.status).toBe(503);
-    expect(getStatus()).toBe('settling');
+    expect(first.status).toBe(200);
+    await expect(first.json()).resolves.toMatchObject({ status: 'completed' });
+    expect(getStatus()).toBe('completed');
     expect(JSON.parse(getResultSummaryJson() ?? 'null')).toMatchObject({
-      state: 'settling',
       terminalDecision: { kind: 'valid', finalStatus: 'completed' },
     });
-    expect(getExtractionRunIds()).toHaveLength(0);
-
-    const malformedLoser = await router.request('/batch-status/job-123', {
-      method: 'POST', headers: AUTH,
-    }, env);
-    await expect(malformedLoser.json()).resolves.toMatchObject({
-      status: 'settling',
-      settlementInProgress: true,
-      terminalDecision: 'valid',
-    });
-    expect(getStatus()).toBe('settling');
-    expect(getExtractionRunIds()).toHaveLength(0);
-
-    const resumed = await router.request('/batch-status/job-123', { method: 'POST', headers: AUTH }, env);
-    await expect(resumed.json()).resolves.toMatchObject({ status: 'completed' });
-    expect(getStatus()).toBe('completed');
     expect(getExtractionRunIds()).toHaveLength(2);
     const aggregateAttempts = usageEvents.flatMap((message) => {
       const event = (message as { event?: Record<string, unknown> }).event;
       return event?.label === 'batch-job-tokens' ? [event] : [];
     });
-    expect(aggregateAttempts).toHaveLength(2);
-    expect(JSON.stringify(aggregateAttempts[0])).toBe(JSON.stringify(aggregateAttempts[1]));
+    expect(aggregateAttempts).toHaveLength(1);
     expect(aggregateAttempts.every((event) => (
       (event.metadata as { success?: unknown } | undefined)?.success === true
     ))).toBe(true);
   });
 
-  it('resumes a persisted invalid winner without fetching or writing a now-valid loser', async () => {
+  it('fails a persisted invalid winner without requiring a telemetry retry when D1 fallback retains usage', async () => {
     let providerPolls = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -743,26 +706,22 @@ describe('POST /batch-status/:jobId usage accounting', () => {
     const router = buildAdminRouter();
 
     const first = await router.request('/batch-status/job-123', { method: 'POST', headers: AUTH }, env);
-    expect(first.status).toBe(503);
-    expect(getStatus()).toBe('settling');
-    expect(JSON.parse(getResultSummaryJson() ?? 'null')).toMatchObject({
-      terminalDecision: { kind: 'invalid', reason: 'invalid_result_identity' },
-    });
-
-    const resumed = await router.request('/batch-status/job-123', { method: 'POST', headers: AUTH }, env);
-    await expect(resumed.json()).resolves.toMatchObject({
+    expect(first.status).toBe(200);
+    await expect(first.json()).resolves.toMatchObject({
       status: 'failed',
       summary: { terminalPayloadError: 'invalid_result_identity' },
     });
-    expect(providerPolls).toBe(1);
     expect(getStatus()).toBe('failed');
+    expect(JSON.parse(getResultSummaryJson() ?? 'null')).toMatchObject({
+      terminalPayloadError: 'invalid_result_identity',
+    });
+    expect(providerPolls).toBe(1);
     expect(getExtractionRunIds()).toHaveLength(0);
     const aggregateAttempts = usageEvents.flatMap((message) => {
       const event = (message as { event?: Record<string, unknown> }).event;
       return event?.label === 'batch-job-tokens' ? [event] : [];
     });
-    expect(aggregateAttempts).toHaveLength(2);
-    expect(JSON.stringify(aggregateAttempts[0])).toBe(JSON.stringify(aggregateAttempts[1]));
+    expect(aggregateAttempts).toHaveLength(1);
     expect(aggregateAttempts.every((event) => (
       (event.metadata as { success?: unknown } | undefined)?.success === false
     ))).toBe(true);
