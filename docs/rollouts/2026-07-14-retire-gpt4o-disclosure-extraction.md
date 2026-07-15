@@ -56,9 +56,8 @@ Terra, Luna, and Sol in the OpenAI disclosure choices.
 - A no-generation `/v1/models` catalog check on 2026-07-15 confirmed that the
   production OpenAI project can access Terra, Luna, and Sol. No paid inference
   was used for the access check.
-- The malformed source-owned `AGREEMENT_HOUSE_MODEL_A=mistral-ocr-latest`
-  override was deleted from Infisical so House inherits the valid global
-  `mistral:mistral-ocr-latest` setting. After this release, the Wrangler fallback
-  changes the global OpenAI agreement leg from GPT-4o to Terra.
+- The agreement lineup is now explicit per chamber (`AGREEMENT_*_MODEL_A/B/C`)
+  in Infisical. The later global-fallback retirement removed the Wrangler
+  model values, so no chamber inherits a global agreement model.
 - Do not remove GPT-4o historical rate-card or result-decoding support while
   saved GPT-4o runs or already-submitted batch jobs remain in storage.

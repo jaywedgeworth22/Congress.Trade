@@ -42,15 +42,13 @@ OPENAI_API_KEY=""
 MISTRAL_API_KEY=""
 # LlamaIndex Cloud (LlamaParse) — OCR + handwriting-aware structured extraction.
 # Get a key at https://cloud.llamaindex.ai. Free tier: 10,000 credits/month.
-# Use as agreement model: AGREEMENT_AUTOPUBLISH_MODEL_B="llamaparse:cost-effective"
 # Tiers (credits/page): fast=1, cost-effective=3, agentic=10, agentic-plus=45
 
-# Autonomous review-resolution cascade. Keep A/B/C on distinct vendors; model
-# C is Anthropic because the production Worker has ANTHROPIC_API_KEY configured.
+# Autonomous review-resolution cascade. Keep A/B/C on distinct vendors. These
+# selections are explicit per-chamber Infisical keys; there are no global model
+# fallbacks. Configure AGREEMENT_HOUSE_MODEL_{A,B,C},
+# AGREEMENT_SENATE_MODEL_{A,B,C}, and AGREEMENT_EXEC_MODEL_{A,B,C} in Infisical.
 AGREEMENT_AUTOPUBLISH_ENABLED="true"
-AGREEMENT_AUTOPUBLISH_MODEL_A="mistral:mistral-ocr-latest"
-AGREEMENT_AUTOPUBLISH_MODEL_B="openai:gpt-5.6-terra"
-AGREEMENT_MODEL_C="anthropic:claude-sonnet-4-6"
 AGREEMENT_AUTOPUBLISH_LIMIT="3"
 AGREEMENT_MAX_ATTEMPTS="3"
 # One model reading one doc = one read. This caps autonomous work only; the
