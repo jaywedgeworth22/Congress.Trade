@@ -33,12 +33,13 @@ import { run } from '../shared/db';
 import { uuid } from '../shared/ids';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
 import { pushExtractionTelemetry } from './telemetry';
+import { OpenRouterVisionExtractor } from './openRouterVision';
 import {
   classifyProviderFailure,
   type ProviderFailureStatus,
 } from './providerFailure';
 
-export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral' | 'xai' | 'llamaparse';
+export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral' | 'xai' | 'llamaparse' | 'openrouter';
 
 export interface BakeoffCandidate {
   provider: Provider;
@@ -78,6 +79,7 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'anthropic', model: 'claude-haiku-4-5' },
   { provider: 'mistral', model: 'mistral-ocr-latest' },
   { provider: 'xai', model: 'grok-4.3' },
+  { provider: 'openrouter', model: 'qwen/qwen-2.5-vl-72b-instruct:free' },
 ];
 
 /** GPT-4o is retained only for decoding/replaying historical extraction runs. */
@@ -170,6 +172,7 @@ export async function keyFor(env: Env, provider: Provider): Promise<string | nul
   if (provider === 'anthropic') return (await resolveSecret(env, 'ANTHROPIC_API_KEY')).value ?? null;
   if (provider === 'mistral') return (await resolveSecret(env, 'MISTRAL_API_KEY')).value ?? null;
   if (provider === 'xai') return (await resolveSecret(env, 'XAI_API_KEY')).value ?? null;
+  if (provider === 'openrouter') return (await resolveSecret(env, 'OPENROUTER_API_KEY')).value ?? null;
   if (provider === 'llamaparse') {
     return (await resolveSecret(env, 'LLAMAPARSE_API_KEY')).value ?? null;
   }
@@ -1132,6 +1135,15 @@ export async function runCandidateOnDoc(
       usage = lp.usage;
       resolvedModel = lp.resolvedModel;
       providerRequestId = lp.providerRequestId;
+    } else if (provider === 'openrouter') {
+      const result = await new OpenRouterVisionExtractor(env, { model, apiKey: key }).extract({
+        filing: { docKind: 'scanned_pdf', chamber } as never,
+        bytes,
+      });
+      rows = result.transactions;
+      usage = result.usage;
+      resolvedModel = result.modelVersion;
+      providerRequestId = result.providerRequestId;
     } else {
       const anthropic = await runAnthropic(model, key, bytes, chamber);
       rows = anthropic.rows;
