@@ -5876,7 +5876,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const rawChamber = c.req.query('chamber');
     const chamber = rawChamber ? benchmarkChamber(rawChamber) : null;
     if (rawChamber && !chamber) return c.json({ error: 'invalid chamber' }, 400);
-    let query = `SELECT f.doc_id,
+    let query = `SELECT f.doc_id, f.page_count, f.raw_bytes,
                         CASE WHEN ${benchmarkHumanResolvedSql('f.doc_id')} THEN 1 ELSE 0 END AS resolved
                    FROM filings f
                    LEFT JOIN review_queue rq ON f.doc_id = rq.doc_id
@@ -5888,9 +5888,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
     query += ' ORDER BY resolved DESC, f.filed_date DESC, f.doc_id DESC LIMIT ?';
     params.push(limit);
-    const rows = await all<{ doc_id: string; resolved: number }>(c.env.DB, query, params);
+    const rows = await all<{ doc_id: string; resolved: number; page_count: number | null; raw_bytes: number | null }>(c.env.DB, query, params);
     return c.json({
-      docs: rows.map((row) => ({ docId: row.doc_id, resolved: row.resolved === 1 })),
+      docs: rows.map((row) => ({ docId: row.doc_id, resolved: row.resolved === 1, pageCount: row.page_count, rawBytes: row.raw_bytes })),
       resolvedDocumentCount: rows.filter((row) => row.resolved === 1).length,
       documentCount: rows.length,
     });

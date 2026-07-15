@@ -209,7 +209,7 @@ IMPORT_MAX_SHORT_VOLUME = "5000"
 # for steady-state enrichment+prices, which only touch newly-traded tickers and
 # need far less; large one-off backfills go through the manual /backfill-market
 # loop, not this daily cron, so they don't compete with the probe here.
-FMP_DAILY_CALL_CAP = "1000"
+FMP_DAILY_CALL_CAP = "5000"
 # 285 not 300: FMP's hard account limit is 300/min. 285 leaves ~5% margin for
 # clock/ceil rounding and the fact that the shared pacer only coordinates calls
 # within one isolate — concurrent Workers isolates could still overlap.

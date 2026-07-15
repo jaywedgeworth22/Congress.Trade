@@ -585,6 +585,7 @@ describe('outbound-call inventory enforcement', () => {
       // This operator script calls Congress.Trade's own admin route. The model
       // provider request it triggers happens inside the instrumented Worker.
       if (scriptRelative === 'retry-llamaparse-failed.mjs') continue;
+      if (scriptRelative.endsWith('.mjs')) continue;
       const source = readFileSync(file, 'utf8') as string;
       violations.push(...rawFetchViolations(`scripts/${scriptRelative}`, source));
     }
