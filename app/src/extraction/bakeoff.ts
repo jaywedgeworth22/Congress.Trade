@@ -886,10 +886,18 @@ export async function runCandidateOnDoc(
 
   if (cachedRunResult && cachedRunResult.result_json) {
     try {
-      const parsed = JSON.parse(cachedRunResult.result_json) as CandidateDocResult;
-      if (parsed && Array.isArray(parsed.rows)) {
+      const parsed = JSON.parse(cachedRunResult.result_json);
+      // result_json is stored as JSON.stringify(result.rows ?? []) — an array,
+      // not a full CandidateDocResult object. Reconstruct from base + cached rows.
+      if (Array.isArray(parsed)) {
         return {
-          ...parsed,
+          ...base,
+          ok: true,
+          latencyMs: 0,
+          rowCount: parsed.length,
+          rowKeys: parsed.map(arbitrationRowKey),
+          avgConfidence: meanConfidence(parsed),
+          rows: parsed,
           cached: true,
         };
       }

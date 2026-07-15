@@ -1,7 +1,8 @@
-const URL = 'https://congress.trade/api/admin/refresh-prices';
-const TOKEN = '56c11f2e0c7fa4d019d379fd0b8676199ad1186ad8b09fe5be6a7b2ecbf05060';
+const TOKEN = process.env.CONGRESS_TRADE_ADMIN_TOKEN;
+const URL = process.env.CONGRESS_TRADE_API_URL || 'https://congress.trade/api/admin/refresh-prices';
 
 async function run() {
+  if (!TOKEN) { console.error('Set CONGRESS_TRADE_ADMIN_TOKEN env var'); process.exit(1); }
   let i = 1;
   while (true) {
     console.log(`\nIteration ${i}...`);

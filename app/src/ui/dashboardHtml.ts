@@ -1412,9 +1412,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </div>
       <div class="party-chips" id="trPartyGroup" style="position:relative;">
-        <button type="button" class="party-chip on" data-party="D" title="Democrat">🫏</button>
-        <button type="button" class="party-chip on" data-party="R" title="Republican">🐘</button>
-        <button type="button" class="party-chip on" data-party="O" title="Other">🦅</button>
+        <button type="button" class="party-chip" data-party="D" title="Democrat">🫏</button>
+        <button type="button" class="party-chip" data-party="R" title="Republican">🐘</button>
+        <button type="button" class="party-chip" data-party="O" title="Other">🦅</button>
         <button type="button" class="branch-info" aria-expanded="false" aria-controls="trPartyInfo" aria-label="About the party filters">&#9432;</button>
         <div class="branch-pop" id="trPartyInfo" role="note" hidden style="min-width:200px;">
           <div class="branch-pop-row"><b>🫏</b><span>Democrat</span></div>
