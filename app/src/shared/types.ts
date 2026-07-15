@@ -464,6 +464,10 @@ export interface Env {
   MISTRAL_API_KEY?: string;
   /** xAI API key — Grok (Files API → grok-4.3) candidate in the extractor bake-off. */
   XAI_API_KEY?: string;
+  /** OpenRouter API key — for arbitrary open-weights vision model candidates. */
+  OPENROUTER_API_KEY?: string;
+  /** OpenRouter model override (defaults to 'qwen/qwen-2.5-vl-72b-instruct:free'). */
+  OPENROUTER_MODEL?: string;
   /** LlamaIndex Cloud API key — LlamaParse OCR + structured extraction candidate. */
   /** Additional market/enrichment provider keys. */
   MASSIVE_API_KEY?: string;

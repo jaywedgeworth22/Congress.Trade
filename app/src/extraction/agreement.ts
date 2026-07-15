@@ -987,7 +987,7 @@ export function parseCandidate(s: string | undefined): BakeoffCandidate | null {
   if (!s) return null;
   const [provider, ...rest] = s.split(':');
   const model = rest.join(':');
-  const valid = ['gemini', 'openai', 'anthropic', 'mistral', 'xai', 'llamaparse'];
+  const valid = ['gemini', 'openai', 'anthropic', 'mistral', 'xai', 'llamaparse', 'openrouter'];
   return valid.includes(provider) && model
     ? upgradeRetiredDisclosureCandidate({ provider, model } as BakeoffCandidate)
     : null;
