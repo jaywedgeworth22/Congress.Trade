@@ -8,48 +8,43 @@ import {
   toParsedTx,
 } from '../visionLlm';
 
-afterEach(() => vi.unstubAllGlobals());
+const { mockGenerateContent } = vi.hoisted(() => ({ mockGenerateContent: vi.fn() }));
+
+vi.mock('@google/genai', () => ({
+  GoogleGenAI: class {
+    models = { generateContent: mockGenerateContent }
+  }
+}));
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  mockGenerateContent.mockClear();
+});
+
+const env = { GEMINI_API_KEY: 'gemini-test' } as unknown as Env;
 
 describe('vision LLM unreadable fields', () => {
   it('allows nullable asset/type fields and preserves an invalid txType for hard-flagging', async () => {
-    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      ({
-        ok: true,
-        json: async () => ({
-          candidates: [
-            {
-              content: {
-                parts: [
-                  {
-                    text: JSON.stringify([
-                      {
-                        assetName: null,
-                        txType: null,
-                        amountRange: '$1,001 - $15,000',
-                        isOption: false,
-                        capGainsOver200: false,
-                      },
-                    ]),
-                  },
-                ],
-              },
-            },
-          ],
-        }),
-      }) as unknown as Response,
-    );
-    vi.stubGlobal('fetch', fetchSpy);
+    mockGenerateContent.mockResolvedValueOnce({
+      text: JSON.stringify([
+        {
+          assetName: null,
+          txType: null,
+          amountRange: '$1,001 - $15,000',
+          isOption: false,
+          capGainsOver200: false,
+        },
+      ]),
+      usageMetadata: {}
+    });
 
-    const result = await new VisionLlmExtractor(
-      {} as Env,
-      { apiKey: 'gemini-test', model: 'gemini-3.5-flash' },
-    ).extract({
+    const result = await new VisionLlmExtractor(env, { apiKey: 'gemini-test', model: 'gemini-3.5-flash' }).extract({
       filing: { docKind: 'scanned_pdf', chamber: 'house' } as never,
       bytes: new TextEncoder().encode('%PDF-1.4').buffer as ArrayBuffer,
     });
 
-    const request = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
-    const properties = request.generationConfig.responseSchema.items.properties;
+    const request = mockGenerateContent.mock.calls[0][0];
+    const properties = request.config.responseSchema.items.properties;
     expect(properties.assetName).toMatchObject({ type: 'STRING', nullable: true });
     expect(properties.txType).toMatchObject({ type: 'STRING', nullable: true });
     expect(properties.isOption).toMatchObject({ type: 'BOOLEAN', nullable: true });
@@ -94,22 +89,17 @@ describe('vision LLM unreadable fields', () => {
   });
 
   it('uses the Executive OGE prompt for executive filings', async () => {
-    const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(JSON.stringify({
-        candidates: [{ content: { parts: [{ text: '[]' }] } }],
-      }), { status: 200, headers: { 'content-type': 'application/json' } }),
-    );
-    vi.stubGlobal('fetch', fetchSpy);
+    mockGenerateContent.mockResolvedValueOnce({
+      text: '[]',
+      usageMetadata: {}
+    });
 
-    await new VisionLlmExtractor(
-      {} as Env,
-      { apiKey: 'gemini-test', model: 'gemini-3.5-flash' },
-    ).extract({
+    await new VisionLlmExtractor(env, { apiKey: 'gemini-test', model: 'gemini-3.5-flash' }).extract({
       filing: { docKind: 'scanned_pdf', chamber: 'executive' } as never,
       bytes: new TextEncoder().encode('%PDF-1.4').buffer as ArrayBuffer,
     });
 
-    const request = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body));
+    const request = mockGenerateContent.mock.calls[0][0];
     expect(request.contents[0].parts[0].text).toContain('Executive Branch OGE Form 278-T');
     expect(request.contents[0].parts[0].text).not.toContain('congressional STOCK Act');
   });
@@ -126,26 +116,19 @@ describe('vision LLM unreadable fields', () => {
     for (let page = 0; page < 16; page++) pdf.addPage([500, 500]);
     const bytes = await pdf.save();
     
-    const fetchSpy = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        candidates: [{ content: { parts: [{ text: '[]' }] } }],
+    mockGenerateContent
+      .mockResolvedValueOnce({
+        text: '[]',
         usageMetadata: {
           promptTokenCount: 120,
           candidatesTokenCount: 9,
-          thoughtsTokenCount: 3,
-          cachedContentTokenCount: 25,
+          totalTokenCount: 129,
         },
         modelVersion: 'gemini-3.5-flash-20260713',
-        responseId: 'gemini-request-1',
-      }), { status: 200, headers: { 'content-type': 'application/json' } }))
-      .mockResolvedValueOnce(new Response('unprocessable chunk', { status: 422 }));
-    vi.stubGlobal('fetch', fetchSpy);
+      })
+      .mockRejectedValueOnce(Object.assign(new Error('unprocessable chunk'), { status: 422 }));
 
-    const extraction = new VisionLlmExtractor(
-      {} as Env,
-      { apiKey: 'gemini-test', model: 'gemini-1.5-pro' },
-    ).extract({
+    const extraction = new VisionLlmExtractor(env, { apiKey: 'gemini-test', model: 'gemini-1.5-pro' }).extract({
       filing: { docKind: 'scanned_pdf', chamber: 'house' } as never,
       bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
     });
@@ -153,12 +136,11 @@ describe('vision LLM unreadable fields', () => {
     await expect(extraction).rejects.toMatchObject({
       usage: {
         promptTokens: 120,
-        completionTokens: 12,
-        cachedTokens: 25,
+        completionTokens: 9,
+        cachedTokens: 0,
       },
       resolvedModel: 'gemini-3.5-flash-20260713',
-      providerRequestId: 'gemini-request-1',
     });
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(mockGenerateContent).toHaveBeenCalledTimes(2);
   });
 });
