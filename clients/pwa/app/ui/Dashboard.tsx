@@ -14,6 +14,7 @@ import {
   AMOUNT_BRACKETS,
   buildFeedPath,
   commandBody,
+  deliveryScopeHelperText,
   EMPTY_FILTERS,
   filterSummary,
   parseWatchlist,
@@ -73,6 +74,9 @@ export default function Dashboard() {
     mutate: refreshPreferences,
   } = useSWR<ClientPreferencesResponse>(user ? '/preferences' : null, fetcher);
   const watchlist = watchlistDraft ?? preferencesEnvelope?.preferences.watchlist.join(', ') ?? '';
+  // Same source submitSubscription() reads from, kept in one place so the
+  // Delivery form's scope summary can never drift from what actually gets sent.
+  const watchlistTickers = useMemo(() => parseWatchlist(watchlist), [watchlist]);
 
   useEffect(() => {
     setWatchlistDraft(null);
@@ -240,7 +244,7 @@ export default function Dashboard() {
     const body = commandBody('create_subscription', {
       delivery,
       targetUrl: delivery === 'webhook' ? targetUrl.trim() : null,
-      filters: { tickers: parseWatchlist(watchlist) },
+      filters: { tickers: watchlistTickers },
     });
     void runIntent({ kind: 'subscription', body });
   }
@@ -350,6 +354,7 @@ export default function Dashboard() {
                       ['', 'All'],
                       ['house', 'House'],
                       ['senate', 'Senate'],
+                      ['executive', 'Executive'],
                     ] as const).map(([value, label]) => (
                       <label key={value || 'all'} className="checkbox-chip">
                         <input
@@ -506,6 +511,17 @@ export default function Dashboard() {
                   disabled={isSubmitting}
                 />
               ) : null}
+              <div className="delivery-scope" aria-live="polite">
+                <span className="delivery-scope-label">Scope</span>
+                {watchlistTickers.length > 0 ? (
+                  <div className="delivery-scope-tickers">
+                    {watchlistTickers.map((ticker) => (
+                      <span key={ticker} className="filter-badge">{ticker}</span>
+                    ))}
+                  </div>
+                ) : null}
+                <p className="delivery-scope-helper">{deliveryScopeHelperText(watchlistTickers)}</p>
+              </div>
               <button type="submit" disabled={isSubmitting}>Create Delivery</button>
             </form>
           </>
