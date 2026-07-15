@@ -4129,6 +4129,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       for (const [candidateIndex, candidate] of candidates.entries()) {
         const res = await runCandidateOnDoc(c.env, candidate, doc_id, bytes, {
           apiKey: candidateInvocationKeys[candidateIndex] ?? null,
+          skipCache: true,
         });
         results.push(res);
         await pushExtractionTelemetry(c.env, res, 'bakeoff');
@@ -6292,6 +6293,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const startedAt = new Date().toISOString();
     const read = await runCandidateOnDoc(c.env, candidate, docId, loaded.bytes, {
       apiKey: invocationKey,
+      skipCache: true,
     });
     const completedAt = new Date().toISOString();
     const cost = priceBenchmarkUsage({
