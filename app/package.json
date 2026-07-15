@@ -32,6 +32,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.5",
     "@cloudflare/workers-types": "^5.20260715.1",
+    "@fontsource/zilla-slab": "^5.2.8",
     "@sentry/cli": "^3.6.0",
     "@typescript-eslint/eslint-plugin": "^8.64.0",
     "@typescript-eslint/parser": "^8.62.1",

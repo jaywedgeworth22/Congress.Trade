@@ -27,6 +27,13 @@ describe('parseOgeIndex', () => {
     expect(raw).not.toContain('Annual');
   });
 
+  it('carries curated party + official-portrait metadata for executive filers', () => {
+    expect(filings.every((f) => f.party === 'R')).toBe(true);
+    expect(filings.every((f) => f.photoUrl ===
+      'https://upload.wikimedia.org/wikipedia/commons/thumb/1/16/Official_Presidential_Portrait_of_President_Donald_J._Trump_%282025%29.jpg/500px-Official_Presidential_Portrait_of_President_Donald_J._Trump_%282025%29.jpg',
+    )).toBe(true);
+  });
+
   it('builds direct, space-encoded download URLs on the OGE origin', () => {
     expect(filings[0].sourceUrl).toBe(
       'https://extapps2.oge.gov/201/Presiden.nsf/PAS+Index/AA799A2729B4D1BE85258D430031A320/$FILE/Donald%20J.%20Trump%2010.17.2025%20278-T.pdf',

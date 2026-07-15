@@ -52,6 +52,10 @@ export interface DiscoveredFiling {
   filerName?: string | null;
   state?: string | null;
   district?: string | null;
+  /** Curated party/portrait metadata (executive filers only — the House/Senate
+   *  indexes carry neither; those columns are enriched out-of-band). */
+  party?: string | null;
+  photoUrl?: string | null;
 }
 
 function normalizeFilingDate(raw: string | null | undefined): string | null {
@@ -131,12 +135,27 @@ export async function insertFilingIfNew(
   nowIso: string,
 ): Promise<boolean> {
   if (f.filerId && f.filerName) {
-    await run(
-      env.DB,
-      `INSERT OR IGNORE INTO filers (bioguide_id, chamber, full_name, party, state, district, committees)
-       VALUES (?, ?, ?, NULL, ?, ?, NULL)`,
-      [f.filerId, f.chamber, f.filerName, f.state ?? null, f.district ?? null],
-    );
+    if (f.party || f.photoUrl) {
+      // Sources that curate party/portrait metadata (the OGE executive index)
+      // upsert it so pre-existing filer rows — created before the metadata was
+      // curated — pick the fields up on the next poll, not just new rows.
+      await run(
+        env.DB,
+        `INSERT INTO filers (bioguide_id, chamber, full_name, party, state, district, committees, photo_url)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
+         ON CONFLICT(bioguide_id) DO UPDATE SET
+           party = COALESCE(excluded.party, party),
+           photo_url = COALESCE(excluded.photo_url, photo_url)`,
+        [f.filerId, f.chamber, f.filerName, f.party ?? null, f.state ?? null, f.district ?? null, f.photoUrl ?? null],
+      );
+    } else {
+      await run(
+        env.DB,
+        `INSERT OR IGNORE INTO filers (bioguide_id, chamber, full_name, party, state, district, committees)
+         VALUES (?, ?, ?, NULL, ?, ?, NULL)`,
+        [f.filerId, f.chamber, f.filerName, f.state ?? null, f.district ?? null],
+      );
+    }
   }
   const filedDate = normalizeFilingDate(f.filedDate);
   const [res] = await batch(env.DB, [

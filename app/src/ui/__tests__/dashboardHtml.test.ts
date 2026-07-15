@@ -51,6 +51,11 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('<title>Congress.Trade — Congress Trade Feed</title>');
   });
 
+  it('self-hosts the Zilla Slab wordmark face as an inline data-URI subset', () => {
+    expect(DASHBOARD_HTML).toContain('data:font/woff2;base64,');
+    expect(DASHBOARD_HTML).toContain("'Zilla Slab'");
+  });
+
   it('contains at least the boot + main script blocks', () => {
     expect(scriptBlocks(DASHBOARD_HTML).length).toBeGreaterThanOrEqual(2);
   });
