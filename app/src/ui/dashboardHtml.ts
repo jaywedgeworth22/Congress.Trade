@@ -1444,9 +1444,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </div>
       <div class="party-chips" id="trPartyGroup" style="position:relative;">
-        <button type="button" class="party-chip" data-party="D" title="Democrat">🫏</button>
-        <button type="button" class="party-chip" data-party="R" title="Republican">🐘</button>
-        <button type="button" class="party-chip" data-party="O" title="Other">🦅</button>
+        <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat">🫏</button>
+        <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican">🐘</button>
+        <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other">🦅</button>
         <button type="button" class="branch-info" aria-expanded="false" aria-controls="trPartyInfo" aria-label="About the party filters">&#9432;</button>
         <div class="branch-pop" id="trPartyInfo" role="note" hidden style="min-width:200px;">
           <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
@@ -7552,10 +7552,27 @@ initBranchInfo('trPartyGroup');
 
 function initPartyChips() {
   var g = el('trPartyGroup'); if (!g) return;
+  var KEY = 'trends-parties-v1';
+  try {
+    var saved = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (Array.isArray(saved)) {
+      g.querySelectorAll('.party-chip').forEach(function (b) {
+        var on = saved.indexOf(b.getAttribute('data-party')) !== -1;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+  } catch (_e) { /* ignore bad storage */ }
   g.addEventListener('click', function (e) {
     var b = e.target.closest ? e.target.closest('.party-chip') : null;
     if (!b) return;
     b.classList.toggle('on');
+    b.setAttribute('aria-pressed', b.classList.contains('on') ? 'true' : 'false');
+    try {
+      var on = [];
+      g.querySelectorAll('.party-chip.on').forEach(function (c) { on.push(c.getAttribute('data-party')); });
+      localStorage.setItem(KEY, JSON.stringify(on));
+    } catch (_e) { /* storage may be unavailable */ }
     loadTrends();
   });
 }
