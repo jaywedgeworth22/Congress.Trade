@@ -144,9 +144,13 @@ import {
   BenchmarkSettingsValidationError,
   BenchmarkSettingsWriteError,
   readBenchmarkLineupSettings,
+  readBenchmarkRoleSettings,
   saveBenchmarkLineupSettings,
+  saveBenchmarkRoleSettings,
+  type BenchmarkSelectedRoles,
   validateBenchmarkLineup,
   validateBenchmarkModel,
+  validateBenchmarkRoles,
 } from '../benchmark/settings';
 import {
   priceBenchmarkUsage,
@@ -2775,8 +2779,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         'AGREEMENT_AUTOPUBLISH_ENABLED', 'AGREEMENT_AUTOPUBLISH_LIMIT', 'AGREEMENT_MAX_ATTEMPTS', 'AGREEMENT_DAILY_LLM_BUDGET',
         'AGREEMENT_BIG_DOC_START_TIER2', 'AGREEMENT_BIG_DOC_PAGE_THRESHOLD', 'AGREEMENT_BIG_DOC_BYTES_THRESHOLD',
         'AGREEMENT_HOUSE_MODEL_A', 'AGREEMENT_HOUSE_MODEL_B', 'AGREEMENT_HOUSE_MODEL_C',
+        'AGREEMENT_HOUSE_MODEL_D', 'AGREEMENT_HOUSE_MODEL_E',
         'AGREEMENT_SENATE_MODEL_A', 'AGREEMENT_SENATE_MODEL_B', 'AGREEMENT_SENATE_MODEL_C',
+        'AGREEMENT_SENATE_MODEL_D', 'AGREEMENT_SENATE_MODEL_E',
         'AGREEMENT_EXEC_MODEL_A', 'AGREEMENT_EXEC_MODEL_B', 'AGREEMENT_EXEC_MODEL_C',
+        'AGREEMENT_EXEC_MODEL_D', 'AGREEMENT_EXEC_MODEL_E',
         'ADMIN_OPEN_IN_DEV',
         'IMPORT_MAX_BYTES', 'IMPORT_MAX_REFS', 'IMPORT_MAX_SPX', 'IMPORT_MAX_PRICES',
         'IMPORT_MAX_CLOSES_PER_TICKER', 'IMPORT_MAX_INSIDER', 'IMPORT_MAX_SHORT_VOLUME',
@@ -5924,6 +5931,92 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         await releaseBenchmarkSettingsLease(c.env.DB, settingsLease).catch((error) => {
           console.error(
             'benchmark settings lease release failed',
+            chamber,
+            (error as Error).message,
+          );
+        });
+      }
+    }
+  });
+
+  // --- Chamber-specific PRIMARY/FAILOVER live-ingestion roles --------------
+  r.get('/benchmark/roles/:chamber', async (c) => {
+    const chamber = benchmarkChamber(c.req.param('chamber'));
+    if (!chamber) return c.json({ error: 'invalid chamber' }, 400);
+    return c.json({
+      ...await readBenchmarkRoleSettings(c.env, chamber),
+      writeProtected: isPreviewDeployment(c.env),
+    });
+  });
+
+  r.put('/benchmark/roles/:chamber', async (c) => {
+    const chamber = benchmarkChamber(c.req.param('chamber'));
+    if (!chamber) return c.json({ error: 'invalid chamber' }, 400);
+    if (isPreviewDeployment(c.env)) {
+      return c.json({
+        error: 'benchmark role settings are read-only in preview deployments',
+        code: 'preview_write_protected',
+      }, 403);
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = await c.req.json<Record<string, unknown>>();
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    let roles: BenchmarkSelectedRoles;
+    try {
+      roles = validateBenchmarkRoles(body as unknown as {
+        primary: BenchmarkModelRef;
+        failover: BenchmarkModelRef;
+      });
+    } catch (error) {
+      return c.json({ error: (error as Error).message }, 400);
+    }
+    let settingsLease: BenchmarkSettingsLease | null = null;
+    try {
+      settingsLease = await acquireBenchmarkSettingsLease(c.env.DB, chamber);
+      const saved = await saveBenchmarkRoleSettings(c.env, {
+        chamber,
+        primary: roles.primary,
+        failover: roles.failover,
+        expectedVersion: typeof body.expectedVersion === 'string' ? body.expectedVersion : '',
+      }, {}, {
+        operationTimeoutMs: 15_000,
+        assertLease: () => assertBenchmarkSettingsLease(c.env.DB, settingsLease!),
+      });
+      return c.json({
+        ok: true,
+        settings: saved.settings,
+        audit: { ...saved.audit, actor: adminActor(c) },
+      });
+    } catch (error) {
+      if (error instanceof BenchmarkSettingsLeaseBusyError) {
+        return c.json({
+          error: error.message,
+          code: 'benchmark_settings_update_in_progress',
+          leaseUntil: error.leaseUntil,
+          retryable: true,
+        }, 409);
+      }
+      if (error instanceof BenchmarkSettingsConflictError) {
+        return c.json({ error: error.message, current: error.current }, 409);
+      }
+      if (error instanceof BenchmarkSettingsValidationError) {
+        return c.json({ error: error.message }, 400);
+      }
+      if (error instanceof BenchmarkSettingsWriteError) {
+        return c.json({
+          error: error.message,
+          audit: { ...error.audit, actor: adminActor(c) },
+        }, 502);
+      }
+      throw error;
+    } finally {
+      if (settingsLease) {
+        await releaseBenchmarkSettingsLease(c.env.DB, settingsLease).catch((error) => {
+          console.error(
+            'benchmark role settings lease release failed',
             chamber,
             (error as Error).message,
           );

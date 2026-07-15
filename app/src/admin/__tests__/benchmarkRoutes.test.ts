@@ -22,9 +22,11 @@ const AUTH = {
 function env(overrides: Record<string, unknown> = {}): Env {
   return {
     ADMIN_TOKEN: 'admin-secret',
-    AGREEMENT_HOUSE_MODEL_A: 'mistral:mistral-ocr-latest',
-    AGREEMENT_HOUSE_MODEL_B: 'openai:gpt-5.6-terra',
-    AGREEMENT_HOUSE_MODEL_C: 'anthropic:claude-haiku-4-5',
+    AGREEMENT_HOUSE_MODEL_A: 'openai:gpt-5.6-terra',
+    AGREEMENT_HOUSE_MODEL_B: 'anthropic:claude-haiku-4-5',
+    AGREEMENT_HOUSE_MODEL_C: 'mistral:mistral-ocr-latest',
+    AGREEMENT_HOUSE_MODEL_D: 'openai:gpt-5.6-terra',
+    AGREEMENT_HOUSE_MODEL_E: 'anthropic:claude-haiku-4-5',
     OPENAI_API_KEY: 'openai-key',
     ANTHROPIC_API_KEY: 'anthropic-key',
     MISTRAL_API_KEY: 'mistral-key',
@@ -1654,6 +1656,87 @@ describe('durable benchmark admin routes', () => {
     });
     expect(body.version).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(body)).not.toContain('openai-key');
+  });
+
+  it('returns an effective chamber primary/failover, opaque version, and credential booleans', async () => {
+    const response = await buildAdminRouter().request(
+      '/benchmark/roles/house',
+      { headers: AUTH },
+      env(),
+    );
+    expect(response.status).toBe(200);
+    const body = await response.json() as Record<string, unknown>;
+    expect(body).toMatchObject({
+      chamber: 'house',
+      valid: true,
+      writeProtected: false,
+      roles: {
+        primary: { provider: 'openai', model: 'gpt-5.6-terra' },
+        failover: { provider: 'anthropic', model: 'claude-haiku-4-5' },
+      },
+    });
+    expect(body.version).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(body)).not.toContain('openai-key');
+  });
+
+  it('rejects a same-provider primary/failover pair before any write', async () => {
+    const initial = await buildAdminRouter().request(
+      '/benchmark/roles/house',
+      { headers: AUTH },
+      env(),
+    );
+    const initialBody = await initial.json() as Record<string, unknown>;
+
+    const rejected = await buildAdminRouter().request('/benchmark/roles/house', {
+      method: 'PUT',
+      headers: AUTH,
+      body: JSON.stringify({
+        primary: { provider: 'openai', model: 'gpt-5.6-terra' },
+        failover: { provider: 'openai', model: 'gpt-5.6-luna' },
+        expectedVersion: initialBody.version,
+      }),
+    }, env());
+    expect(rejected.status).toBe(400);
+    expect(await rejected.json()).toMatchObject({
+      error: 'primary and failover must use different providers',
+    });
+  });
+
+  it('rejects a stale expectedVersion when saving primary/failover', async () => {
+    const response = await buildAdminRouter().request('/benchmark/roles/house', {
+      method: 'PUT',
+      headers: AUTH,
+      body: JSON.stringify({
+        primary: { provider: 'mistral', model: 'mistral-ocr-latest' },
+        failover: { provider: 'openai', model: 'gpt-5.6-terra' },
+        expectedVersion: 'stale-version',
+      }),
+    }, env());
+    expect(response.status).toBe(409);
+    const body = await response.json() as Record<string, unknown>;
+    expect(body.error).toMatch(/reload and retry/);
+  });
+
+  it('keeps primary/failover settings read-only in preview deployments', async () => {
+    const response = await buildAdminRouter().request('/benchmark/roles/house', {
+      method: 'PUT',
+      headers: AUTH,
+      body: JSON.stringify({
+        primary: { provider: 'mistral', model: 'mistral-ocr-latest' },
+        failover: { provider: 'openai', model: 'gpt-5.6-terra' },
+        expectedVersion: 'never-read',
+      }),
+    }, env({
+      PREVIEW_DEPLOYMENT: 'true',
+      DB: {
+        prepare() { throw new Error('preview guard must run before D1 or Infisical writes'); },
+      } as unknown as D1Database,
+    }));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'benchmark role settings are read-only in preview deployments',
+      code: 'preview_write_protected',
+    });
   });
 
   it('keeps chamber lineup settings read-only in preview deployments', async () => {

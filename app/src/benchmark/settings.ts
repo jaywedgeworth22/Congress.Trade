@@ -20,25 +20,50 @@ import type {
 } from './persistence';
 
 type LineupSlot = 'a' | 'b' | 'c';
+type RoleSlot = 'primary' | 'failover';
 
+/**
+ * The agreement trio (tier-1 unanimous pair = slots a/b; tier-2/3 adds c) now
+ * lives at the C/D/E Infisical keys — A/B are the separate PRIMARY/FAILOVER
+ * live-ingestion roles below (see BENCHMARK_ROLE_KEYS).
+ */
 export const BENCHMARK_LINEUP_KEYS: Record<
   BenchmarkChamber,
   Record<LineupSlot, string>
 > = {
   house: {
-    a: 'AGREEMENT_HOUSE_MODEL_A',
-    b: 'AGREEMENT_HOUSE_MODEL_B',
-    c: 'AGREEMENT_HOUSE_MODEL_C',
+    a: 'AGREEMENT_HOUSE_MODEL_C',
+    b: 'AGREEMENT_HOUSE_MODEL_D',
+    c: 'AGREEMENT_HOUSE_MODEL_E',
   },
   senate: {
-    a: 'AGREEMENT_SENATE_MODEL_A',
-    b: 'AGREEMENT_SENATE_MODEL_B',
-    c: 'AGREEMENT_SENATE_MODEL_C',
+    a: 'AGREEMENT_SENATE_MODEL_C',
+    b: 'AGREEMENT_SENATE_MODEL_D',
+    c: 'AGREEMENT_SENATE_MODEL_E',
   },
   executive: {
-    a: 'AGREEMENT_EXEC_MODEL_A',
-    b: 'AGREEMENT_EXEC_MODEL_B',
-    c: 'AGREEMENT_EXEC_MODEL_C',
+    a: 'AGREEMENT_EXEC_MODEL_C',
+    b: 'AGREEMENT_EXEC_MODEL_D',
+    c: 'AGREEMENT_EXEC_MODEL_E',
+  },
+};
+
+/** PRIMARY/FAILOVER live-ingestion extraction model, per chamber. */
+export const BENCHMARK_ROLE_KEYS: Record<
+  BenchmarkChamber,
+  Record<RoleSlot, string>
+> = {
+  house: {
+    primary: 'AGREEMENT_HOUSE_MODEL_A',
+    failover: 'AGREEMENT_HOUSE_MODEL_B',
+  },
+  senate: {
+    primary: 'AGREEMENT_SENATE_MODEL_A',
+    failover: 'AGREEMENT_SENATE_MODEL_B',
+  },
+  executive: {
+    primary: 'AGREEMENT_EXEC_MODEL_A',
+    failover: 'AGREEMENT_EXEC_MODEL_B',
   },
 };
 
@@ -91,7 +116,7 @@ export class BenchmarkSettingsValidationError extends Error {}
 export class BenchmarkSettingsConflictError extends Error {
   constructor(
     message: string,
-    readonly current: BenchmarkLineupSettings,
+    readonly current: BenchmarkLineupSettings | BenchmarkRoleSettings,
   ) {
     super(message);
   }
@@ -231,9 +256,48 @@ export function validateBenchmarkLineup(input: {
   return lineup;
 }
 
+export interface BenchmarkSelectedRoles {
+  primary: BenchmarkModelRef;
+  failover: BenchmarkModelRef;
+}
+
+export interface BenchmarkRoleSettings {
+  chamber: BenchmarkChamber;
+  roles: BenchmarkSelectedRoles | null;
+  /** SHA-256 over the explicit chamber values. */
+  version: string;
+  valid: boolean;
+  keys: Record<RoleSlot, string>;
+  catalog: BenchmarkCatalogEntry[];
+}
+
+export function validateBenchmarkRoles(input: {
+  primary: BenchmarkModelRef;
+  failover: BenchmarkModelRef;
+}): BenchmarkSelectedRoles {
+  const roles: BenchmarkSelectedRoles = {
+    primary: validateBenchmarkModel(input.primary, 'primary'),
+    failover: validateBenchmarkModel(input.failover, 'failover'),
+  };
+  if (roles.primary.provider === roles.failover.provider) {
+    throw new BenchmarkSettingsValidationError('primary and failover must use different providers');
+  }
+  return roles;
+}
+
 async function sha256(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return [...new Uint8Array(digest)].map((part) => part.toString(16).padStart(2, '0')).join('');
+}
+
+function sameRoles(
+  actual: BenchmarkSelectedRoles | null,
+  expected: BenchmarkSelectedRoles,
+): boolean {
+  if (!actual) return false;
+  return (['primary', 'failover'] as const).every(
+    (slot) => serializeBenchmarkModelRef(actual[slot]) === serializeBenchmarkModelRef(expected[slot]),
+  );
 }
 
 function sameLineup(
@@ -451,6 +515,217 @@ export async function saveBenchmarkLineupSettings(
     }
     throw new BenchmarkSettingsWriteError(
       `failed to save benchmark lineup: ${(error as Error).message}`,
+      audit,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PRIMARY/FAILOVER roles (AGREEMENT_*_MODEL_A/_B) — mirrors the trio lineup
+// read/save above exactly (version-hash/expectedVersion conflict check,
+// provider-credential validation, fenced sequential writes, refresh, readback
+// verification, rollback with source-owned snapshot), scoped to two slots.
+// ---------------------------------------------------------------------------
+
+async function readRoleSettingsWithDependencies(
+  env: Env,
+  chamber: BenchmarkChamber,
+  dependencies: SettingsDependencies,
+): Promise<BenchmarkRoleSettings> {
+  const keys = BENCHMARK_ROLE_KEYS[chamber];
+  const requestedKeys = [keys.primary, keys.failover] as const;
+  const values = await dependencies.resolve(env, [...requestedKeys]);
+  const branchValues = {
+    primary: values[keys.primary],
+    failover: values[keys.failover],
+  };
+  const primary = parseBenchmarkModelRef(branchValues.primary);
+  const failover = parseBenchmarkModelRef(branchValues.failover);
+  const roles = primary && failover ? { primary, failover } : null;
+  let valid = false;
+  if (roles) {
+    try {
+      validateBenchmarkRoles(roles);
+      valid = true;
+    } catch {
+      valid = false;
+    }
+  }
+  const version = await sha256(JSON.stringify({ chamber, branchValues }));
+  const catalog = benchmarkModelCatalog();
+  const configuredByProvider = new Map<Provider, boolean>();
+  await Promise.all([...new Set(catalog.map((candidate) => candidate.provider))].map(async (provider) => {
+    configuredByProvider.set(provider, Boolean(await dependencies.configuredKey(env, provider)));
+  }));
+  return {
+    chamber,
+    roles,
+    version,
+    valid,
+    keys,
+    catalog: catalog.map((candidate) => ({
+      ...candidate,
+      configured: configuredByProvider.get(candidate.provider) ?? false,
+    })),
+  };
+}
+
+export async function readBenchmarkRoleSettings(
+  env: Env,
+  chamber: BenchmarkChamber,
+  dependencies: Partial<SettingsDependencies> = {},
+): Promise<BenchmarkRoleSettings> {
+  return readRoleSettingsWithDependencies(env, chamber, { ...DEFAULT_DEPENDENCIES, ...dependencies });
+}
+
+export async function saveBenchmarkRoleSettings(
+  env: Env,
+  input: {
+    chamber: BenchmarkChamber;
+    primary: BenchmarkModelRef;
+    failover: BenchmarkModelRef;
+    expectedVersion: string;
+  },
+  dependencies: Partial<SettingsDependencies> = {},
+  control: BenchmarkSettingsMutationControl = {},
+): Promise<{ settings: BenchmarkRoleSettings; audit: BenchmarkSettingsAudit }> {
+  const deps = { ...DEFAULT_DEPENDENCIES, ...dependencies };
+  const timeoutMs = settingsOperationTimeout(control);
+  const assertLease = control.assertLease ?? (async () => undefined);
+  const roles = validateBenchmarkRoles(input);
+  if (!input.expectedVersion || typeof input.expectedVersion !== 'string') {
+    throw new BenchmarkSettingsValidationError('expectedVersion is required');
+  }
+  const current = await boundedSettingsOperation(
+    'read current benchmark role settings',
+    timeoutMs,
+    () => readRoleSettingsWithDependencies(env, input.chamber, deps),
+  );
+  if (current.version !== input.expectedVersion) {
+    throw new BenchmarkSettingsConflictError('benchmark role settings changed; reload and retry', current);
+  }
+
+  const requested = [roles.primary, roles.failover];
+  const configured = await boundedSettingsOperation(
+    'validate benchmark role provider credentials',
+    timeoutMs,
+    () => Promise.all(
+      requested.map((model) => deps.configuredKey(env, model.provider as Provider)),
+    ),
+  );
+  const missingProviders = requested
+    .filter((_model, index) => !configured[index])
+    .map((model) => model.provider);
+  if (missingProviders.length) {
+    throw new BenchmarkSettingsValidationError(
+      `provider credentials are not configured: ${missingProviders.join(', ')}`,
+    );
+  }
+
+  const keys = BENCHMARK_ROLE_KEYS[input.chamber];
+  const writes: Array<{ slot: RoleSlot; key: string; value: string }> = [
+    { slot: 'primary', key: keys.primary, value: serializeBenchmarkModelRef(roles.primary) },
+    { slot: 'failover', key: keys.failover, value: serializeBenchmarkModelRef(roles.failover) },
+  ];
+  // Snapshot only source-owned branch overrides. Inherited global/shared/env
+  // values are intentionally absent so rollback deletes a newly-created app
+  // override instead of pinning today's fallback forever.
+  const sourceValues = await boundedSettingsOperation(
+    'read current benchmark role source overrides',
+    timeoutMs,
+    () => deps.readSource(env, 'app'),
+  );
+  const priorValues: Record<RoleSlot, string | undefined> = {
+    primary: sourceValues[keys.primary],
+    failover: sourceValues[keys.failover],
+  };
+  const audit: BenchmarkSettingsAudit = {
+    chamber: input.chamber,
+    keys: writes.map((write) => write.key),
+    previousVersion: current.version,
+    resultingVersion: null,
+    writtenKeys: [],
+    readbackVerified: false,
+    rollbackAttempted: false,
+    rollbackVerified: null,
+  };
+
+  try {
+    for (const write of writes) {
+      await assertLease();
+      await boundedSettingsOperation(
+        `write ${write.key}`,
+        timeoutMs,
+        (signal) => deps.write(env, 'app', write.key, write.value, { signal }),
+      );
+      audit.writtenKeys.push(write.key);
+    }
+    await boundedSettingsOperation(
+      'refresh benchmark role settings',
+      timeoutMs,
+      () => deps.refresh(env),
+    );
+    const settings = await boundedSettingsOperation(
+      'verify benchmark role settings',
+      timeoutMs,
+      () => readRoleSettingsWithDependencies(env, input.chamber, deps),
+    );
+    if (!sameRoles(settings.roles, roles)) {
+      throw new Error('Infisical readback did not match the requested roles');
+    }
+    // Do not report success after this writer's lease expired or was replaced
+    // while readback was in flight.
+    await assertLease();
+    audit.readbackVerified = true;
+    audit.resultingVersion = settings.version;
+    return { settings, audit };
+  } catch (error) {
+    audit.rollbackAttempted = true;
+    try {
+      for (const write of writes) {
+        // A stale writer must never undo a successor's values. Losing the
+        // owner-token fence aborts rollback immediately.
+        await assertLease();
+        const priorValue = priorValues[write.slot];
+        if (priorValue === undefined) {
+          await boundedSettingsOperation(
+            `rollback delete ${write.key}`,
+            timeoutMs,
+            (signal) => deps.remove(env, 'app', write.key, { signal }),
+          );
+        } else {
+          await boundedSettingsOperation(
+            `rollback write ${write.key}`,
+            timeoutMs,
+            (signal) => deps.write(env, 'app', write.key, priorValue, { signal }),
+          );
+        }
+      }
+      await boundedSettingsOperation(
+        'refresh rolled-back benchmark role settings',
+        timeoutMs,
+        () => deps.refresh(env),
+      );
+      const rolledBack = await boundedSettingsOperation(
+        'verify rolled-back benchmark role settings',
+        timeoutMs,
+        () => readRoleSettingsWithDependencies(env, input.chamber, deps),
+      );
+      const restoredSource = await boundedSettingsOperation(
+        'verify rolled-back benchmark role source overrides',
+        timeoutMs,
+        () => deps.readSource(env, 'app'),
+      );
+      await assertLease();
+      const exactSourceRollback = writes.every(
+        (write) => restoredSource[write.key] === priorValues[write.slot],
+      );
+      audit.rollbackVerified = exactSourceRollback && rolledBack.version === current.version;
+    } catch {
+      audit.rollbackVerified = false;
+    }
+    throw new BenchmarkSettingsWriteError(
+      `failed to save benchmark roles: ${(error as Error).message}`,
       audit,
     );
   }
