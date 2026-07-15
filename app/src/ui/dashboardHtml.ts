@@ -1817,6 +1817,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
       <div id="benchmarkSettingsSummary" class="note">Loading saved House lineup…</div>
       <div id="benchmarkManualLineup"></div>
+      <div id="benchmarkRoles"></div>
       <div id="benchmarkMsg" class="note" role="status" aria-live="polite"></div>
       <div id="benchmarkResults" aria-live="polite"><div class="state">Loading saved House benchmarks…</div></div>
     </div>
@@ -4814,6 +4815,7 @@ var benchmarkState = {
   runs: [],
   current: null,
   settings: null,
+  roles: null,
   running: false,
   simulationRequest: 0,
   unknownOutcomeRetryDecision: null
@@ -5133,12 +5135,13 @@ function renderBenchmarkSettingsSummary() {
   var box = el('benchmarkSettingsSummary');
   if (!box) return;
   var lineup = normalizedBenchmarkLineup(benchmarkState.settings);
-  var values = ['A ' + (benchmarkModelKey(lineup.a) || 'not set'), 'B ' + (benchmarkModelKey(lineup.b) || 'not set'), 'C ' + (benchmarkModelKey(lineup.c) || 'not set')];
+  var values = ['C ' + (benchmarkModelKey(lineup.a) || 'not set'), 'D ' + (benchmarkModelKey(lineup.b) || 'not set'), 'E ' + (benchmarkModelKey(lineup.c) || 'not set')];
   var previewNote = benchmarkState.settings && benchmarkState.settings.writeProtected
     ? ' <span class="note">Preview is read-only; save in production after approval.</span>'
     : '';
-  box.innerHTML = '<strong>Saved ' + esc(benchmarkChamberLabel(benchmarkState.chamber)) + ' autopublish lineup:</strong> ' + esc(values.join(' · ')) + previewNote;
+  box.innerHTML = '<strong>Saved ' + esc(benchmarkChamberLabel(benchmarkState.chamber)) + ' agreement trio:</strong> ' + esc(values.join(' · ')) + previewNote;
   renderManualBenchmarkLineup();
+  renderBenchmarkRolesPanel();
 }
 
 function benchmarkCatalogModels() {
@@ -5168,14 +5171,84 @@ function renderManualBenchmarkLineup() {
   }
   var saved = normalizedBenchmarkLineup(settings);
   container.innerHTML = '<div class="benchmark-panel"><h4>Manual autopublish lineup</h4>' +
-    '<p class="sub">Choose A/B/C directly from the configured provider catalog. This does not require a completed benchmark run; benchmark-backed saves remain available below when a run has enough evidence.</p>' +
+    '<p class="sub">Choose the agreement trio (C/D/E) directly from the configured provider catalog. This does not require a completed benchmark run; benchmark-backed saves remain available below when a run has enough evidence.</p>' +
     '<div class="benchmark-lineup">' +
-    '<label class="lbl">Model A (Primary)<select id="manualModelA">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.a)) + '</select></label>' +
-    '<label class="lbl">Model B (Crosscheck)<select id="manualModelB">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.b)) + '</select></label>' +
-    '<label class="lbl">Model C (Resolver)<select id="manualModelC">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.c)) + '</select></label>' +
+    '<label class="lbl">Trio C<select id="manualModelA">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.a)) + '</select></label>' +
+    '<label class="lbl">Trio D<select id="manualModelB">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.b)) + '</select></label>' +
+    '<label class="lbl">Trio E<select id="manualModelC">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.c)) + '</select></label>' +
     '</div>' +
     '<div class="row-flex"><button class="btn sm" id="saveManualBenchmarkLineup" onclick="saveManualBenchmarkLineup()">Save manual ' + esc(benchmarkChamberLabel(benchmarkState.chamber)) + ' lineup</button>' +
     '<span id="manualBenchmarkLineupStatus" class="note" role="status"></span></div></div>';
+}
+
+function normalizedBenchmarkRoles(roles) {
+  var source = roles && roles.roles ? roles.roles : {};
+  function normalize(value) {
+    if (!value) return null;
+    if (value.provider && value.model) return { provider: value.provider, model: value.model };
+    return null;
+  }
+  return { primary: normalize(source.primary), failover: normalize(source.failover) };
+}
+
+function renderBenchmarkRolesPanel() {
+  var container = el('benchmarkRoles');
+  if (!container) return;
+  var settings = benchmarkState.settings;
+  if (!settings || settings.writeProtected) {
+    container.innerHTML = settings && settings.writeProtected
+      ? '<div class="benchmark-panel"><h4>Primary / Failover extraction</h4><div class="state">Preview is read-only; save the live roles in production after approval.</div></div>'
+      : '';
+    return;
+  }
+  var saved = normalizedBenchmarkRoles(benchmarkState.roles);
+  container.innerHTML = '<div class="benchmark-panel"><h4>Primary / Failover extraction</h4>' +
+    '<p class="sub">Live-ingestion extraction model and its failover, tried before the agreement trio ever runs.</p>' +
+    '<div class="benchmark-lineup">' +
+    '<label class="lbl">Primary<select id="roleModelPrimary">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.primary)) + '</select></label>' +
+    '<label class="lbl">Failover<select id="roleModelFailover">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.failover)) + '</select></label>' +
+    '</div>' +
+    '<div class="row-flex"><button class="btn sm" id="saveBenchmarkRoles" onclick="saveBenchmarkRoles()">Save ' + esc(benchmarkChamberLabel(benchmarkState.chamber)) + ' primary/failover</button>' +
+    '<span id="benchmarkRolesStatus" class="note" role="status"></span></div></div>';
+}
+
+function validateBenchmarkRolesForm(roles) {
+  if (!roles.primary || !roles.failover) return 'Choose both primary and failover models.';
+  if (benchmarkModelKey(roles.primary) === benchmarkModelKey(roles.failover)) return 'Primary and failover must be different models.';
+  if (roles.primary.provider === roles.failover.provider) return 'Primary and failover must use different providers.';
+  return '';
+}
+
+async function saveBenchmarkRoles() {
+  if (benchmarkState.settings && benchmarkState.settings.writeProtected) return;
+  var roles = {
+    primary: benchmarkModelRef(el('roleModelPrimary') && el('roleModelPrimary').value),
+    failover: benchmarkModelRef(el('roleModelFailover') && el('roleModelFailover').value)
+  };
+  var invalid = validateBenchmarkRolesForm(roles);
+  var status = el('benchmarkRolesStatus');
+  if (invalid) { if (status) { status.style.color = 'var(--neg)'; status.textContent = invalid; } return; }
+  var previous = normalizedBenchmarkRoles(benchmarkState.roles);
+  var currentText = 'Primary ' + (benchmarkModelKey(previous.primary) || 'not set') + '\\nFailover ' + (benchmarkModelKey(previous.failover) || 'not set');
+  var nextText = 'Primary ' + benchmarkModelKey(roles.primary) + '\\nFailover ' + benchmarkModelKey(roles.failover);
+  if (!window.confirm('Save this live ' + benchmarkChamberLabel(benchmarkState.chamber) + ' primary/failover?\\n\\nCurrent:\\n' + currentText + '\\n\\nNew:\\n' + nextText)) return;
+  var button = el('saveBenchmarkRoles');
+  if (button) button.disabled = true;
+  if (status) { status.style.color = ''; status.textContent = 'Saving and reading back the live settings…'; }
+  try {
+    var result = await apiCall('/api/admin/benchmark/roles/' + encodeURIComponent(benchmarkState.chamber), 'PUT', {
+      primary: roles.primary,
+      failover: roles.failover,
+      expectedVersion: benchmarkState.roles && benchmarkState.roles.version
+    });
+    benchmarkState.roles = result.settings;
+    renderBenchmarkRolesPanel();
+    if (status) { status.style.color = 'var(--pos)'; status.textContent = 'Primary/failover saved and verified.'; }
+  } catch (error) {
+    if (status) { status.style.color = 'var(--neg)'; status.textContent = 'Save failed: ' + error.message; }
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 function setBenchmarkButtons() {
@@ -5220,6 +5293,7 @@ function selectBenchmarkChamber(chamber) {
   benchmarkState.chamber = chamber;
   benchmarkState.current = null;
   benchmarkState.settings = null;
+  benchmarkState.roles = null;
   setBenchmarkButtons();
   if (el('benchmarkResults')) el('benchmarkResults').innerHTML = '<div class="state">Loading saved ' + esc(benchmarkChamberLabel(chamber)) + ' benchmarks…</div>';
   loadBenchmarkHistory();
@@ -5258,6 +5332,11 @@ async function loadBenchmarkHistory(chamber, selectedId) {
     } catch (settingsError) {
       benchmarkState.settings = null;
       if (msg) msg.textContent = 'Runs loaded; saved lineup unavailable: ' + settingsError.message;
+    }
+    try {
+      benchmarkState.roles = await apiCall('/api/admin/benchmark/roles/' + encodeURIComponent(requestedChamber), 'GET');
+    } catch (rolesError) {
+      benchmarkState.roles = null;
     }
     renderBenchmarkSettingsSummary();
     var id = selectedId || (benchmarkState.runs[0] && benchmarkState.runs[0].id) || '';
@@ -5538,9 +5617,9 @@ function renderCascadeSimulation() {
     '<p class="sub">Uses only completed models with successful scored readings from this saved run. Simulation makes no provider calls.' +
       (excludedCount ? ' ' + esc(excludedCount) + ' ineligible model' + (excludedCount === 1 ? ' is' : 's are') + ' excluded.' : '') + '</p>' +
     '<div class="benchmark-lineup">' +
-    '<label class="lbl">Model A (Primary)<select id="simModelA" onchange="updateSimResults()">' + benchmarkOptionHtml(models, defaults.a) + '</select></label>' +
-    '<label class="lbl">Model B (Crosscheck)<select id="simModelB" onchange="updateSimResults()">' + benchmarkOptionHtml(models, defaults.b) + '</select></label>' +
-    '<label class="lbl">Model C (Resolver)<select id="simModelC" onchange="updateSimResults()">' + benchmarkOptionHtml(models, defaults.c) + '</select></label>' +
+    '<label class="lbl">Trio C<select id="simModelA" onchange="updateSimResults()">' + benchmarkOptionHtml(models, defaults.a) + '</select></label>' +
+    '<label class="lbl">Trio D<select id="simModelB" onchange="updateSimResults()">' + benchmarkOptionHtml(models, defaults.b) + '</select></label>' +
+    '<label class="lbl">Trio E<select id="simModelC" onchange="updateSimResults()">' + benchmarkOptionHtml(models, defaults.c) + '</select></label>' +
     '</div>' +
     '<div id="simValidation" class="note" role="status"></div>' +
     '<div id="simStatsGrid" class="grid-cards" style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:14px 0"></div>' +
@@ -5624,8 +5703,8 @@ async function saveBenchmarkLineup() {
   var status = el('simValidation');
   if (invalid) { if (status) status.textContent = invalid; return; }
   var previous = normalizedBenchmarkLineup(benchmarkState.settings);
-  var currentText = 'A ' + (benchmarkModelKey(previous.a) || 'not set') + '\\nB ' + (benchmarkModelKey(previous.b) || 'not set') + '\\nC ' + (benchmarkModelKey(previous.c) || 'not set');
-  var nextText = 'A ' + benchmarkModelKey(lineup.a) + '\\nB ' + benchmarkModelKey(lineup.b) + '\\nC ' + benchmarkModelKey(lineup.c);
+  var currentText = 'C ' + (benchmarkModelKey(previous.a) || 'not set') + '\\nD ' + (benchmarkModelKey(previous.b) || 'not set') + '\\nE ' + (benchmarkModelKey(previous.c) || 'not set');
+  var nextText = 'C ' + benchmarkModelKey(lineup.a) + '\\nD ' + benchmarkModelKey(lineup.b) + '\\nE ' + benchmarkModelKey(lineup.c);
   if (!window.confirm('Save this as the live ' + benchmarkChamberLabel(run.chamber) + ' autopublish lineup?\\n\\nCurrent:\\n' + currentText + '\\n\\nNew:\\n' + nextText)) return;
   var button = el('saveBenchmarkLineup');
   if (button) button.disabled = true;
@@ -5663,8 +5742,8 @@ async function saveManualBenchmarkLineup() {
   var status = el('manualBenchmarkLineupStatus');
   if (invalid) { if (status) { status.style.color = 'var(--neg)'; status.textContent = invalid; } return; }
   var previous = normalizedBenchmarkLineup(benchmarkState.settings);
-  var currentText = 'A ' + (benchmarkModelKey(previous.a) || 'not set') + '\\nB ' + (benchmarkModelKey(previous.b) || 'not set') + '\\nC ' + (benchmarkModelKey(previous.c) || 'not set');
-  var nextText = 'A ' + benchmarkModelKey(lineup.a) + '\\nB ' + benchmarkModelKey(lineup.b) + '\\nC ' + benchmarkModelKey(lineup.c);
+  var currentText = 'C ' + (benchmarkModelKey(previous.a) || 'not set') + '\\nD ' + (benchmarkModelKey(previous.b) || 'not set') + '\\nE ' + (benchmarkModelKey(previous.c) || 'not set');
+  var nextText = 'C ' + benchmarkModelKey(lineup.a) + '\\nD ' + benchmarkModelKey(lineup.b) + '\\nE ' + benchmarkModelKey(lineup.c);
   if (!window.confirm('Save this manual live ' + benchmarkChamberLabel(benchmarkState.chamber) + ' autopublish lineup?\\n\\nCurrent:\\n' + currentText + '\\n\\nNew:\\n' + nextText)) return;
   var button = el('saveManualBenchmarkLineup');
   if (button) button.disabled = true;

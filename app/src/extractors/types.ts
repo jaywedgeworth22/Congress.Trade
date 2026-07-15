@@ -390,6 +390,13 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
   const anthropicVision = new AnthropicVisionExtractor(env);
   const visionLlmWithFallback = new FallbackExtractor(geminiVision, anthropicVision);
 
+  // Per-chamber PRIMARY/FAILOVER extraction model (AGREEMENT_*_MODEL_A/_B),
+  // provider-generic via the bake-off harness. Unmigrated/dev chambers (no
+  // explicit primary configured) delegate straight through to the legacy
+  // vision-LLM fallback chain above, so behavior is unchanged until an
+  // operator opts a chamber in.
+  const configuredVision = new ConfiguredVisionExtractor(env, visionLlmWithFallback);
+
   // The secondary is ALWAYS constructed (construction does no I/O): its API
   // key, model, and the ARBITRATION_ENABLED switch all resolve lazily at
   // extraction time (Infisical first, env fallback), so arbitration can be
@@ -402,7 +409,7 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
     name: 'visionLlm-secondary',
   });
 
-  const visionArbitrated = new ArbitratingExtractor(visionLlmWithFallback, env, secondary);
+  const visionArbitrated = new ArbitratingExtractor(configuredVision, env, secondary);
   const housePdf = new HousePdfExtractor(textPdf, visionArbitrated);
 
   return [senateHtml, housePdf, textPdf, visionArbitrated];
@@ -416,5 +423,9 @@ import { SenateHtmlExtractor } from '../extraction/senateHtml';
 import { TextPdfExtractor } from '../extraction/textPdf';
 import { VisionLlmExtractor } from '../extraction/visionLlm';
 import { AnthropicVisionExtractor } from '../extraction/anthropicVision';
+import { ConfiguredVisionExtractor } from '../extraction/configuredVision';
 
-export { SenateHtmlExtractor, TextPdfExtractor, VisionLlmExtractor, AnthropicVisionExtractor };
+export {
+  SenateHtmlExtractor, TextPdfExtractor, VisionLlmExtractor, AnthropicVisionExtractor,
+  ConfiguredVisionExtractor,
+};
