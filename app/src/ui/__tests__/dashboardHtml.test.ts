@@ -377,7 +377,7 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('uses published timing, tighter asset defaults, and source links in drawers', () => {
-    expect(DASHBOARD_HTML).toContain("var sortKey = 'published'");
+    expect(DASHBOARD_HTML).toContain("var sortKey = 'txdate'");
     expect(DASHBOARD_HTML).toContain("var COL_HIDDEN_KEY = 'feed-cols-hidden-v2'");
     expect(DASHBOARD_HTML).toContain("var COL_WIDTH_KEY = 'feed-col-widths-v8'");
     expect(DASHBOARD_HTML).toContain("asset: estimatedColWidth('asset', 48, 40, 54)");
@@ -387,7 +387,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('date-time-cell');
     expect(DASHBOARD_HTML).toContain('#feedTable.resizable th { text-align: center;');
     expect(DASHBOARD_HTML).toContain('minColWidth(key)');
-    expect(DASHBOARD_HTML).toContain("p.set('sort', 'published')");
+    expect(DASHBOARD_HTML).toContain("p.set('sort', apiSort)");
     expect(DASHBOARD_HTML).toContain("p.set('memberName', m)");
     expect(DASHBOARD_HTML).toContain('function handleFeedTextFilter(');
     expect(DASHBOARD_HTML).toContain('feedRequestSeq');

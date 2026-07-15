@@ -161,7 +161,7 @@ function asOrder(v: string | undefined): 'asc' | 'desc' | undefined {
 }
 
 function asTxSort(v: string | undefined): TxQueryParams['sort'] {
-  return v === 'published' ? 'published' : v === 'cursor' ? 'cursor' : undefined;
+  return v === 'published' ? 'published' : v === 'cursor' ? 'cursor' : v === 'tx_date' ? 'tx_date' : undefined;
 }
 
 /** Parse the shared ticker/member/type/chamber filters from the query string. */
