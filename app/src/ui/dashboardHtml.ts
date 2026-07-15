@@ -131,7 +131,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   nav.tabs button:hover { color: var(--text); background: var(--panel); }
   nav.tabs button.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
-  main { padding: 22px; max-width: 1180px; margin: 0 auto; }
+  main { padding: 22px; max-width: 1480px; margin: 0 auto; }
   .banner {
     font-size: 12px; color: var(--warn); border: 1px dashed color-mix(in srgb, var(--warn) 45%, transparent);
     background: color-mix(in srgb, var(--warn) 8%, transparent); padding: 8px 12px; border-radius: 8px; margin-bottom: 18px;
@@ -1433,7 +1433,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="branch-seg">
           <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House trades — House Clerk PTR filings">H</button>
           <button type="button" class="branch-toggle on" data-ch="senate" aria-pressed="true" title="Senate trades — Senate eFD PTR filings">S</button>
-          <button type="button" class="branch-toggle" data-ch="executive" aria-pressed="false" title="Executive Branch trades — OGE Form 278-T">P</button>
+          <button type="button" class="branch-toggle on" data-ch="executive" aria-pressed="true" title="Executive Branch trades — OGE Form 278-T">P</button>
         </div>
         <button type="button" class="branch-info" aria-expanded="false" aria-controls="trChamberInfo" aria-label="About the H, S and P branch filters">&#9432;</button>
         <div class="branch-pop" id="trChamberInfo" role="note" hidden>
@@ -1444,9 +1444,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </div>
       <div class="party-chips" id="trPartyGroup" style="position:relative;">
-        <button type="button" class="party-chip" data-party="D" title="Democrat">🫏</button>
-        <button type="button" class="party-chip" data-party="R" title="Republican">🐘</button>
-        <button type="button" class="party-chip" data-party="O" title="Other">🦅</button>
+        <button type="button" class="party-chip" data-party="D" aria-pressed="false" aria-label="Democrat" title="Democrat">🫏</button>
+        <button type="button" class="party-chip" data-party="R" aria-pressed="false" aria-label="Republican" title="Republican">🐘</button>
+        <button type="button" class="party-chip" data-party="O" aria-pressed="false" aria-label="Other party" title="Other">🦅</button>
         <button type="button" class="branch-info" aria-expanded="false" aria-controls="trPartyInfo" aria-label="About the party filters">&#9432;</button>
         <div class="branch-pop" id="trPartyInfo" role="note" hidden style="min-width:200px;">
           <div class="branch-pop-row"><span class="branch-icon">🫏</span><span>Democrat</span></div>
@@ -1964,7 +1964,7 @@ var feedGated = false;     // server says this visitor sees the limited free win
 var es = null;            // EventSource handle
 var pollTimer = null;     // setInterval handle for the polling fallback
 var POLL_INTERVAL_MS = 30000;  // graceful polling cadence when SSE is unavailable
-var sortKey = 'published'; // active feed sort column
+var sortKey = 'txdate'; // active feed sort column
 var sortDir = -1;         // 1 = ascending, -1 = descending (default: newest first)
 var NUMERIC_SORT = { min: 1, conf: 1, refMarketCap: 1 };   // columns compared numerically
 
@@ -2520,23 +2520,23 @@ function lagCellHtml(r) {
   return '<span' + over + ' title="Days from trade to official filing date (STOCK Act limit: 45)">' + d + '</span>';
 }
 var FEED_COLS = [
-  { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
+  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
   { id: 'member', label: 'Politician', sort: 'member', def: true, tip: 'Politician who filed the disclosure.', cell: memberCellHtml },
   { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
   { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
-  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
-  { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
-  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
-  { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: false, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
+  { id: 'sector', label: 'Sector', sort: 'refSector', def: true, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
+  { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: true, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
+  { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
+  { id: 'conf', label: 'Confidence', sort: 'conf', def: true, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
+  { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'Released to seen, then seen to imported for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
+  { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
+  { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
   { id: 'country', label: 'Country', sort: 'refCountry', def: false, cls: 'muted', tier: 'premium', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
   { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
-  { id: 'imported', label: 'Imported', sort: 'imported', def: false, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
   { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return clipTextHtml(ownerLabel(r.chamber)); } },
-  { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
-  { id: 'source', label: 'Source', sort: 'source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } },
-  { id: 'latency', label: 'Latency', sort: null, def: false, cls: 'latency', tier: 'admin', tip: 'Released to seen, then seen to imported for primary rows.', cell: function (r) { return rowLatencyHtml(r); } }
+  { id: 'source', label: 'Source', sort: 'source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
 ];
 var COL_HIDDEN_KEY = 'feed-cols-hidden-v2';
 var COL_ORDER_KEY = 'feed-cols-order-v1';
@@ -2839,7 +2839,8 @@ function initColumnResize() {
   // show in full, long ones clip to an ellipsis, and any column stays draggable.
   var DEFAULT_CAP = {
     asset: estimatedColWidth('asset', 48, 40, 54),
-    member: estimatedColWidth('member', 220, 160, 286)
+    member: estimatedColWidth('member', 220, 160, 286),
+    latency: 280
   };
   for (var i = 0; i < ths.length; i++) {
     var k = ths[i].dataset.col;
@@ -2902,7 +2903,15 @@ function setSort(key) {
   if (sortKey === key) { sortDir = -sortDir; }   // same column -> flip direction
   else { sortKey = key; sortDir = (key === 'published' || key === 'filed' || key === 'txdate' || key === 'imported' || key === 'lag' || NUMERIC_SORT[key]) ? -1 : 1; }
   updateSortIndicators();
-  renderFeed();
+  
+  var isBackendSort = (key === 'published' || key === 'imported' || key === 'txdate' || key === 'traded');
+  if (isBackendSort) {
+    feedPage = 0;
+    cursor = 0;
+    fetchPage();
+  } else {
+    renderFeed();
+  }
 }
 function updateSortIndicators() {
   var ths = document.querySelectorAll('#feedHead th.sortable');
@@ -2999,7 +3008,7 @@ function rowLatencyHtml(r) {
   if (rts != null) parts.push('seen ≈' + fmtDuration(rts) + ' after release');
   if (sti != null) parts.push('imported ' + fmtDuration(sti) + ' after seen');
   if (!parts.length) return '<span class="muted" title="Latency unavailable for this primary row">Unavailable</span>';
-  return '<span class="muted" title="Released to seen is approximate; seen to imported is measured by Congress.Trade.">' + esc(parts.join(' • ')) + '</span>';
+  return '<span class="muted" style="display:block; line-height:1.4;" title="Released to seen is approximate; seen to imported is measured by Congress.Trade.">' + parts.map(function(p) { return esc(p); }).join('<br>') + '</span>';
 }
 
 function currentPageSize() {
@@ -3013,8 +3022,17 @@ function syncPageSizeControl() {
 function feedQueryParams() {
   var p = new URLSearchParams();
   p.set('since', '0');
-  p.set('sort', 'published');
-  p.set('order', 'desc');
+  var apiSort = 'tx_date';
+  var apiOrder = 'desc';
+  if (sortKey === 'published' || sortKey === 'imported') {
+    apiSort = 'published';
+    apiOrder = sortDir === -1 ? 'desc' : 'asc';
+  } else if (sortKey === 'txdate' || sortKey === 'traded') {
+    apiSort = 'tx_date';
+    apiOrder = sortDir === -1 ? 'desc' : 'asc';
+  }
+  p.set('sort', apiSort);
+  p.set('order', apiOrder);
   p.set('limit', String(feedPageSize));
   p.set('offset', String(feedPage * feedPageSize));
   var t = el('qTicker').value.trim(); if (t) p.set('ticker', t);
@@ -4778,10 +4796,15 @@ function benchmarkUsd(value) {
   return '$' + value.toFixed(value < 0.01 ? 5 : 3);
 }
 
-function benchmarkCostText(perDocument, covered, calls) {
+function benchmarkCostText(perDocument, covered, calls, knownCostUsd) {
   if (typeof perDocument === 'number') return benchmarkUsd(perDocument);
   if (!(calls > 0)) return 'N/A';
-  if (covered > 0) return 'Unknown (partial)';
+  if (covered > 0) {
+    if (typeof knownCostUsd === 'number' && isFinite(knownCostUsd) && knownCostUsd >= 0) {
+      return benchmarkUsd(knownCostUsd) + ' known (partial)';
+    }
+    return 'Unknown (partial)';
+  }
   return 'Unknown';
 }
 
@@ -5379,7 +5402,12 @@ function renderBenchmarkRun(run) {
     var rowState = partial
       ? (status === 'paused / resumable' ? 'Paused' : 'Partial') + ' · ' + model.docsMeasured + '/' + model.plannedDocs + ' measured · ' + model.pendingDocs + ' pending'
       : 'Complete · ' + model.docsMeasured + '/' + model.plannedDocs + ' measured';
-    var cost = benchmarkCostText(model.actualCostPerDocumentUsd, model.coveredInvocations, model.providerCalls);
+    var cost = benchmarkCostText(
+      model.actualCostPerDocumentUsd,
+      model.coveredInvocations,
+      model.providerCalls,
+      model.knownCostUsd
+    );
     if (partial && typeof model.actualCostPerDocumentUsd === 'number') cost += ' (partial)';
     var failedLatency = model.failureLatency.count
       ? '<span class="benchmark-latency-line failed">Failed attempts: ' + esc(benchmarkLatencyText(model.failureLatency)) + ' · ' + esc(model.failureLatency.count) + '</span>'
@@ -5402,7 +5430,7 @@ function renderBenchmarkRun(run) {
     '<p class="sub">Exact document match compares the full normalized output. Row-detection F1 compares trade rows; optional metadata is excluded from row identity. Cost uses provider-reported charges where available, otherwise actual metered units × pinned list price. This is not invoice reconciliation.</p>' +
     '<div class="benchmark-table-wrap" tabindex="0" aria-label="Scrollable benchmark results"><table class="bench-table">' +
     '<caption class="sr-only">Saved model benchmark performance</caption><thead><tr>' +
-    '<th scope="col">Model</th><th scope="col">Exact document match</th><th scope="col">Autonomy</th><th scope="col">Row-detection F1</th><th scope="col">Provider outcomes</th><th scope="col">Latency</th><th scope="col">Measured usage-based cost / doc</th>' +
+    '<th scope="col">Model</th><th scope="col">Exact document match</th><th scope="col">Autonomy</th><th scope="col">Row-detection F1</th><th scope="col">Provider outcomes</th><th scope="col">Latency</th><th scope="col">Measured usage-based cost</th>' +
     '</tr></thead><tbody>' + rows + '</tbody></table></div></div>' +
     '<div id="cascadeSimulationContainer"></div>';
   renderCascadeSimulation();
@@ -5522,13 +5550,18 @@ async function updateSimResults() {
 function renderBenchmarkSimulation(data) {
   var grid = el('simStatsGrid');
   if (!grid) return;
-  var cost = benchmarkCostText(data.actualCostPerDocumentUsd, data.costCoveredCalls, data.requiredCalls);
+  var cost = benchmarkCostText(
+    data.actualCostPerDocumentUsd,
+    data.costCoveredCalls,
+    data.requiredCalls,
+    data.knownCostUsd
+  );
   grid.innerHTML =
     '<div class="card"><div class="v" style="color:var(--accent)">' + esc(benchmarkPct(data.cascadeAutonomyRate)) + '</div><div class="k">Cascade autonomy</div></div>' +
     '<div class="card"><div class="v" style="color:var(--pos)">' + esc(benchmarkPct(data.accuracyRate)) + '</div><div class="k">Autopublished accuracy</div></div>' +
     '<div class="card"><div class="v">' + esc(benchmarkPct(data.tier1AutonomyRate)) + '</div><div class="k">Tier 1 autonomy</div></div>' +
     '<div class="card"><div class="v" style="color:var(--neg)">' + esc(benchmarkPct(data.humanReviewRate)) + '</div><div class="k">Human review</div></div>' +
-    '<div class="card"><div class="v">' + esc(cost) + '</div><div class="k">Measured usage-based cost / doc</div><div class="note">' + esc(data.costCoveredCalls + '/' + data.requiredCalls + ' required calls priced · ' + data.invokedCalls + ' invoked') + '</div></div>' +
+    '<div class="card"><div class="v">' + esc(cost) + '</div><div class="k">Measured usage-based cost</div><div class="note">' + esc(data.costCoveredCalls + '/' + data.requiredCalls + ' required calls priced · ' + data.invokedCalls + ' invoked') + '</div></div>' +
     '<div class="card"><div class="v">' + esc(typeof data.p50WallClockMs === 'number' ? fmtMs(data.p50WallClockMs) : 'N/A') + '</div><div class="k">Simulated p50 speed</div><div class="note">p95 ' + esc(typeof data.p95WallClockMs === 'number' ? fmtMs(data.p95WallClockMs) : 'N/A') + '</div></div>';
   var detail = el('simDetailPanel');
   if (detail) detail.textContent = 'Based on ' + data.documentsSimulated + '/' + data.documentsTotal + ' documents; ' + data.resolvedDocuments + ' resolved ground-truth documents. Tier 1 executes A then B; disagreement adds a fresh A then B then C tier. Cost uses provider-reported charges where available, otherwise actual metered units × pinned list price; unpriced meters remain partial. This is not invoice reconciliation.';
@@ -7519,10 +7552,27 @@ initBranchInfo('trPartyGroup');
 
 function initPartyChips() {
   var g = el('trPartyGroup'); if (!g) return;
+  var KEY = 'trends-parties-v1';
+  try {
+    var saved = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (Array.isArray(saved)) {
+      g.querySelectorAll('.party-chip').forEach(function (b) {
+        var on = saved.indexOf(b.getAttribute('data-party')) !== -1;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+  } catch (_e) { /* ignore bad storage */ }
   g.addEventListener('click', function (e) {
     var b = e.target.closest ? e.target.closest('.party-chip') : null;
     if (!b) return;
     b.classList.toggle('on');
+    b.setAttribute('aria-pressed', b.classList.contains('on') ? 'true' : 'false');
+    try {
+      var on = [];
+      g.querySelectorAll('.party-chip.on').forEach(function (c) { on.push(c.getAttribute('data-party')); });
+      localStorage.setItem(KEY, JSON.stringify(on));
+    } catch (_e) { /* storage may be unavailable */ }
     loadTrends();
   });
 }
