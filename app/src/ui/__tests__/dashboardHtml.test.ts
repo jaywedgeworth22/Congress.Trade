@@ -249,6 +249,31 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("id: 'imported'");
   });
 
+  it('gives mobile a compact sort control and hides the dead Columns chooser', () => {
+    // The mobile-only sort select/direction toggle sits near the other feed filter
+    // controls and shares sortKey/sortDir + the setSort() refetch path.
+    expect(DASHBOARD_HTML).toContain('id="feedSortMobile"');
+    expect(DASHBOARD_HTML).toContain('id="mobileSortKey"');
+    expect(DASHBOARD_HTML).toContain('onchange="handleMobileSortKeyChange()"');
+    expect(DASHBOARD_HTML).toContain('id="mobileSortDirBtn"');
+    expect(DASHBOARD_HTML).toContain('onclick="toggleMobileSortDir()"');
+    expect(DASHBOARD_HTML).toContain('function mobileSortableCols(');
+    expect(DASHBOARD_HTML).toContain('function syncMobileSortControl(');
+    expect(DASHBOARD_HTML).toContain('function handleMobileSortKeyChange(');
+    expect(DASHBOARD_HTML).toContain('function toggleMobileSortDir(');
+    expect(DASHBOARD_HTML).toContain('setSort(sel.value)');
+    expect(DASHBOARD_HTML).toContain('setSort(sortKey); // same key -> setSort() flips sortDir');
+    // updateSortIndicators() is the single hook both setSort() and renderFeedHeader()
+    // already call, so the mobile control resyncs from state restored/changed elsewhere.
+    expect(DASHBOARD_HTML).toContain('syncMobileSortControl();\n}');
+    expect(DASHBOARD_HTML).toContain('.feed-sort-mobile { display: none;');
+    expect(DASHBOARD_HTML).toContain('#view-feed .feed-sort-mobile { display: flex; }');
+    // Columns chooser stays wired for desktop but is CSS-hidden on mobile — feedCardHtml()
+    // renders a fixed field set, so the chooser has no visible effect on phones.
+    expect(DASHBOARD_HTML).toContain('id="colsBtn"');
+    expect(DASHBOARD_HTML).toContain('#colsBtn { display: none; }');
+  });
+
   it('uses subtle Premium cues without implying the public feed is paywalled', () => {
     expect(DASHBOARD_HTML).toContain('Premium enrichment');
     expect(DASHBOARD_HTML).toContain('data-premium-col');
