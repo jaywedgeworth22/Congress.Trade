@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-// @ts-expect-error node:fs is available in the Vitest runtime.
 import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
 import { UsageTelemetryEventSchema } from '@jaywedgeworth22/congress-trading-shared';
@@ -549,7 +548,7 @@ describe('third-party usage telemetry', () => {
 
 function workerTypeScriptFiles(root: URL): URL[] {
   const files: URL[] = [];
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
+  for (const entry of readdirSync(root as any, { withFileTypes: true })) {
     if (entry.name === '__tests__') continue;
     const url = new URL(entry.name + (entry.isDirectory() ? '/' : ''), root);
     if (entry.isDirectory()) files.push(...workerTypeScriptFiles(url));
@@ -560,7 +559,7 @@ function workerTypeScriptFiles(root: URL): URL[] {
 
 function operatorJavaScriptFiles(root: URL): URL[] {
   const files: URL[] = [];
-  for (const entry of readdirSync(root, { withFileTypes: true })) {
+  for (const entry of readdirSync(root as any, { withFileTypes: true })) {
     if (entry.name === '__tests__') continue;
     const url = new URL(entry.name + (entry.isDirectory() ? '/' : ''), root);
     if (entry.isDirectory()) files.push(...operatorJavaScriptFiles(url));
@@ -715,7 +714,7 @@ describe('outbound-call inventory enforcement', () => {
       const relative = decodeURIComponent(file.pathname.slice(srcRoot.pathname.length));
       // These are browser-side, same-origin API calls embedded in the dashboard.
       if (relative === 'ui/dashboardHtml.ts') continue;
-      const source = readFileSync(file, 'utf8') as string;
+      const source = readFileSync(file as any, 'utf8') as string;
       violations.push(...rawFetchViolations(relative, source));
     }
     for (const file of operatorJavaScriptFiles(scriptsRoot)) {
@@ -724,7 +723,7 @@ describe('outbound-call inventory enforcement', () => {
       // provider request it triggers happens inside the instrumented Worker.
       if (scriptRelative === 'retry-llamaparse-failed.mjs') continue;
       if (scriptRelative.endsWith('.mjs')) continue;
-      const source = readFileSync(file, 'utf8') as string;
+      const source = readFileSync(file as any, 'utf8') as string;
       violations.push(...rawFetchViolations(`scripts/${scriptRelative}`, source));
     }
     expect(violations).toEqual([]);
@@ -767,11 +766,11 @@ describe('outbound-call inventory enforcement', () => {
     const owners: string[] = [];
     for (const file of workerTypeScriptFiles(srcRoot)) {
       const relative = decodeURIComponent(file.pathname.slice(srcRoot.pathname.length));
-      if (readFileSync(file, 'utf8').includes('createUsageTelemetryClient')) owners.push(relative);
+      if (readFileSync(file as any, 'utf8').includes('createUsageTelemetryClient')) owners.push(relative);
     }
     for (const file of operatorJavaScriptFiles(scriptsRoot)) {
       const relative = `scripts/${decodeURIComponent(file.pathname.slice(scriptsRoot.pathname.length))}`;
-      if (readFileSync(file, 'utf8').includes('createUsageTelemetryClient')) owners.push(relative);
+      if (readFileSync(file as any, 'utf8').includes('createUsageTelemetryClient')) owners.push(relative);
     }
     expect(owners.sort()).toEqual([
       'scripts/usage-telemetry.mjs',

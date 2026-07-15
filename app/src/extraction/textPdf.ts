@@ -89,6 +89,9 @@ async function extractPdfText(bytes: ArrayBuffer): Promise<PdfTextExtraction> {
   const pdf = await getDocumentProxy(new Uint8Array(bytes));
   const { text } = await extractText(pdf, { mergePages: true });
   const pageCount = typeof pdf.numPages === 'number' && Number.isFinite(pdf.numPages) ? pdf.numPages : null;
+  // Cleanup the memory to prevent OOM
+  if (typeof (pdf as any).destroy === 'function') (pdf as any).destroy();
+  else if (typeof (pdf as any).cleanup === 'function') (pdf as any).cleanup();
   return {
     text: typeof text === 'string' ? text : (text as string[]).join('\n'),
     pageCount,
