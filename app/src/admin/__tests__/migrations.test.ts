@@ -168,6 +168,12 @@ describe('admin migration bootstrap', () => {
       ...STRIPE_EVENT_SCHEMA_STATEMENTS,
       ...REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
       ...BENCHMARK_SCHEMA_STATEMENTS,
+      `CREATE TABLE IF NOT EXISTS batch_extractions_pending (
+     doc_id        TEXT PRIMARY KEY,
+     chamber       TEXT NOT NULL,
+     enqueued_at   TEXT NOT NULL
+   )`,
+      `CREATE INDEX IF NOT EXISTS idx_batch_pending_enqueued ON batch_extractions_pending (enqueued_at)`,
       `CREATE TABLE IF NOT EXISTS usage_telemetry_fallback_events (
      idempotency_key TEXT PRIMARY KEY,
      event_json TEXT NOT NULL,

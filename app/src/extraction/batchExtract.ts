@@ -332,6 +332,19 @@ async function safeText(res: Response): Promise<string> {
   }
 }
 
+async function pMap<T, U>(items: T[], limit: number, fn: (item: T) => Promise<U>): Promise<U[]> {
+  const results: U[] = new Array(items.length);
+  let i = 0;
+  const workers = Array.from({ length: limit }, async () => {
+    while (i < items.length) {
+      const index = i++;
+      results[index] = await fn(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 // ---------------------------------------------------------------------------
 // Anthropic Message Batches — inline array, no upload.
 // ---------------------------------------------------------------------------
@@ -507,11 +520,10 @@ async function submitOpenAi(env: Env, model: string, docs: BatchDoc[]): Promise<
   const key = await keyFor(env, 'openai');
   const endpoint = model.startsWith('gpt-5.6') ? '/v1/responses' : '/v1/chat/completions';
   // 1) upload each PDF to the Files API (purpose=user_data) → file_id.
-  const lines: string[] = [];
-  for (const d of docs) {
+  const lines: string[] = await pMap(docs, 5, async (d) => {
     const fileId = await uploadPdf('https://api.openai.com/v1/files', key, d.bytes, 'user_data');
-    lines.push(openaiLine(d, fileId, model));
-  }
+    return openaiLine(d, fileId, model);
+  });
   // 2) upload the JSONL of requests (purpose=batch) → input file.
   const fileId = await uploadJsonl('https://api.openai.com/v1/files', key, lines.join('\n'), { purpose: 'batch' });
   const res = await trackedFetch('https://api.openai.com/v1/batches', {
@@ -827,9 +839,8 @@ async function pollMistral(env: Env, jobId: string): Promise<BatchPoll> {
 async function submitXai(env: Env, model: string, docs: BatchDoc[]): Promise<string> {
   const key = await keyFor(env, 'xai');
   // 1) upload each PDF → file id.
-  const uploads: Array<{ docId: string; chamber: BatchChamber; fileId: string }> = [];
-  for (const d of docs) {
-    uploads.push({
+  const uploads = await pMap(docs, 5, async (d) => {
+    return {
       docId: d.docId,
       chamber: d.chamber,
       fileId: await uploadPdf(
@@ -841,8 +852,8 @@ async function submitXai(env: Env, model: string, docs: BatchDoc[]): Promise<str
         // retention when the Worker cannot retain uploaded ids for eager delete.
         { expiresAfterSeconds: 172_800 },
       ),
-    });
-  }
+    };
+  });
   // 2) create an empty batch.
   const cr = await trackedFetch('https://api.x.ai/v1/batches', {
     method: 'POST',
