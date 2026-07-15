@@ -48,6 +48,24 @@ function makeEnv() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('POST /batch-submit explicit docIds', () => {
+  it('rejects GPT-4o before loading documents or calling OpenAI', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ id: 'must-not-run' }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { env, queriedDocIds, insertedJobs } = makeEnv();
+
+    const response = await buildAdminRouter().request('/batch-submit', {
+      method: 'POST',
+      headers: { ...AUTH, 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'openai', model: 'gpt-4o', docIds: ['H-1'] }),
+    }, env);
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({ error: expect.stringContaining('retired') });
+    expect(queriedDocIds).toEqual([]);
+    expect(insertedJobs).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('trims and deduplicates ids before applying the requested limit or querying', async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => (
       Response.json({ id: 'provider-batch-1' })

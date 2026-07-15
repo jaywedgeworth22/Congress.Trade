@@ -3,6 +3,7 @@ import type { Env } from '../../shared/types';
 import {
   checkOpenAiModelAccess,
   clearOpenAiModelAccessCacheForTests,
+  OPENAI_BENCHMARK_ACCESS_MODELS,
   openAiModelAccessDecision,
 } from '../providerAccess';
 
@@ -34,6 +35,11 @@ function dependencies(options: {
 }
 
 describe('OpenAI benchmark model access', () => {
+  it('does not probe GPT-4o in the default disclosure model list', () => {
+    expect(OPENAI_BENCHMARK_ACCESS_MODELS).toContain('gpt-5.6-terra');
+    expect(OPENAI_BENCHMARK_ACCESS_MODELS).not.toContain('gpt-4o' as never);
+  });
+
   it('distinguishes a missing credential without making a provider request', async () => {
     const deps = dependencies({ key: null });
     const report = await checkOpenAiModelAccess({} as Env, {

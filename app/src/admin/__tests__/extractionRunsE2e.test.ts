@@ -192,6 +192,26 @@ describe('extraction_runs E2E: bake-off → store → dashboard', () => {
 describe('extraction_runs E2E: openai token usage capture', () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it('rejects GPT-4o before starting a new bake-off read', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true }) as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    const { env, extractionRuns } = makeEnv();
+
+    const bake = await app.request('/bakeoff', {
+      method: 'POST',
+      headers: { ...AUTH, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        docIds: ['H-TEST-1'],
+        models: [{ provider: 'openai', model: 'gpt-4o' }],
+      }),
+    }, env);
+
+    expect(bake.status).toBe(400);
+    await expect(bake.json()).resolves.toMatchObject({ error: expect.stringContaining('retired') });
+    expect(extractionRuns).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('persists usage_json when the openai response includes a usage field', async () => {
     vi.stubGlobal(
       'fetch',
@@ -200,11 +220,14 @@ describe('extraction_runs E2E: openai token usage capture', () => {
           return {
             ok: true,
             json: async () => ({
+              model: 'gpt-5.6-terra',
+              status: 'completed',
+              output_text: '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}',
               choices: [{ message: { content: '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}' } }],
               usage: {
-                prompt_tokens: 1200,
-                completion_tokens: 80,
-                prompt_tokens_details: { cached_tokens: 300 },
+                input_tokens: 1200,
+                output_tokens: 80,
+                input_tokens_details: { cached_tokens: 300 },
               },
             }),
           } as unknown as Response;
@@ -219,7 +242,7 @@ describe('extraction_runs E2E: openai token usage capture', () => {
       {
         method: 'POST',
         headers: { ...AUTH, 'content-type': 'application/json' },
-        body: JSON.stringify({ docIds: ['H-TEST-1'], models: [{ provider: 'openai', model: 'gpt-4o' }] }),
+        body: JSON.stringify({ docIds: ['H-TEST-1'], models: [{ provider: 'openai', model: 'gpt-5.6-terra' }] }),
       },
       env,
     );
@@ -254,6 +277,9 @@ describe('extraction_runs E2E: openai token usage capture', () => {
           return {
             ok: true,
             json: async () => ({
+              model: 'gpt-5.6-terra',
+              status: 'completed',
+              output_text: '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}',
               choices: [{ message: { content: '{"transactions":[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]}' } }],
               // no `usage` field — older models / some error paths omit it.
             }),
@@ -269,7 +295,7 @@ describe('extraction_runs E2E: openai token usage capture', () => {
       {
         method: 'POST',
         headers: { ...AUTH, 'content-type': 'application/json' },
-        body: JSON.stringify({ docIds: ['H-TEST-1'], models: [{ provider: 'openai', model: 'gpt-4o' }] }),
+        body: JSON.stringify({ docIds: ['H-TEST-1'], models: [{ provider: 'openai', model: 'gpt-5.6-terra' }] }),
       },
       env,
     );

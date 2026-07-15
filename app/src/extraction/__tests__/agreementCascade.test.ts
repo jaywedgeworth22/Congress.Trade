@@ -48,7 +48,7 @@ function stub(openai: string, anthropic: string, mistral?: string) {
   const seen: string[] = [];
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     const u = String(url);
-    if (u.includes('api.openai.com')) { seen.push('openai'); return { ok: true, json: async () => ({ choices: [{ message: { content: openai } }] }) } as unknown as Response; }
+    if (u.includes('api.openai.com')) { seen.push('openai'); return { ok: true, json: async () => ({ output_text: openai, choices: [{ message: { content: openai } }] }) } as unknown as Response; }
     if (u.includes('api.anthropic.com')) { seen.push('anthropic'); return { ok: true, json: async () => ({ content: [{ type: 'text', text: anthropic }] }) } as unknown as Response; }
     if (u.includes('api.mistral.ai') && mistral) { seen.push('mistral'); return { ok: true, json: async () => ({ document_annotation: mistral }) } as unknown as Response; }
     return { ok: false, status: 404, text: async () => 'nope' } as unknown as Response;
@@ -216,7 +216,7 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
 }
 
 const MODELS_C: AgreementModelsC = {
-  a: { provider: 'openai', model: 'gpt-4o' },
+  a: { provider: 'openai', model: 'gpt-5.6-terra' },
   b: { provider: 'anthropic', model: 'claude-haiku-4-5' },
   c: { provider: 'mistral', model: 'mistral-ocr-latest' },
 };
