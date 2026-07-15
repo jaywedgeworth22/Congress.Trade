@@ -474,18 +474,8 @@ export interface Env {
   LOGODEV_PUBLISHABLE_KEY?: string;
   /** 'true' enables the per-minute autonomous cross-vendor agreement → auto-publish pass. */
   AGREEMENT_AUTOPUBLISH_ENABLED?: string;
-  /** Agreement model A as "provider:model" (default mistral:mistral-ocr-latest). */
-  AGREEMENT_AUTOPUBLISH_MODEL_A?: string;
-  /** Agreement model B as "provider:model" (production: openai:gpt-5.6-terra). */
-  AGREEMENT_AUTOPUBLISH_MODEL_B?: string;
   /** Max review docs the autonomous pass attempts per cron tick (default 3). */
   AGREEMENT_AUTOPUBLISH_LIMIT?: string;
-  /**
-   * Tier-2 escalation model C as "provider:model" for the agreement cascade.
-   * Production uses anthropic:claude-sonnet-4-6, a third vendor distinct from
-   * Mistral (A) and OpenAI (B), so a tier-2 read is genuinely cross-vendor.
-   */
-  AGREEMENT_MODEL_C?: string;
   /** Max cascade attempts (tier passes) per review doc before it stays in human review (default 3). */
   AGREEMENT_MAX_ATTEMPTS?: string;
   /** Daily autonomous candidate-doc-read budget; -1 explicitly disables the cap (default 300). */
