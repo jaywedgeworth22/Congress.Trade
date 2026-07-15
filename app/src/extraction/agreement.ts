@@ -982,23 +982,20 @@ export async function processAgreementCascadeTier2(
 // Autonomous pass (cron backstop + queue consumer)
 // ---------------------------------------------------------------------------
 
-/** Parse "provider:model" or fall back. e.g. "mistral:mistral-ocr-latest". */
-function parseCandidate(s: string | undefined, fallback: BakeoffCandidate): BakeoffCandidate {
-  if (!s) return fallback;
+/** Parse an explicit "provider:model" selection. */
+function parseCandidate(s: string | undefined): BakeoffCandidate | null {
+  if (!s) return null;
   const [provider, ...rest] = s.split(':');
   const model = rest.join(':');
   const valid = ['gemini', 'openai', 'anthropic', 'mistral', 'xai', 'llamaparse'];
   return valid.includes(provider) && model
     ? upgradeRetiredDisclosureCandidate({ provider, model } as BakeoffCandidate)
-    : fallback;
+    : null;
 }
 
 export interface AgreementEnv {
   AGREEMENT_AUTOPUBLISH_ENABLED?: string;
-  AGREEMENT_AUTOPUBLISH_MODEL_A?: string;
-  AGREEMENT_AUTOPUBLISH_MODEL_B?: string;
   AGREEMENT_AUTOPUBLISH_LIMIT?: string;
-  AGREEMENT_MODEL_C?: string;
   AGREEMENT_SENATE_MODEL_A?: string;
   AGREEMENT_SENATE_MODEL_B?: string;
   AGREEMENT_SENATE_MODEL_C?: string;
@@ -1015,14 +1012,11 @@ export interface AgreementEnv {
   AGREEMENT_DAILY_LLM_BUDGET?: string;
 }
 
-/** Resolve the full suite of agreement env vars via Infisical / Wrangler fallback. */
+/** Resolve agreement controls and explicit per-chamber lineups. */
 export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
   return (await resolveSecrets(env, [
     'AGREEMENT_AUTOPUBLISH_ENABLED',
-    'AGREEMENT_AUTOPUBLISH_MODEL_A',
-    'AGREEMENT_AUTOPUBLISH_MODEL_B',
     'AGREEMENT_AUTOPUBLISH_LIMIT',
-    'AGREEMENT_MODEL_C',
     'AGREEMENT_SENATE_MODEL_A',
     'AGREEMENT_SENATE_MODEL_B',
     'AGREEMENT_SENATE_MODEL_C',
@@ -1040,36 +1034,27 @@ export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
   ])) as AgreementEnv;
 }
 
-/** Resolve the configured A/B agreement models (with sensible defaults). */
-function resolveModels(e: AgreementEnv, chamber: string): AgreementModels {
-  let modelA = e.AGREEMENT_AUTOPUBLISH_MODEL_A;
-  let modelB = e.AGREEMENT_AUTOPUBLISH_MODEL_B;
-  if (chamber === 'senate') {
-    modelA = e.AGREEMENT_SENATE_MODEL_A || modelA;
-    modelB = e.AGREEMENT_SENATE_MODEL_B || modelB;
-  } else if (chamber === 'house') {
-    modelA = e.AGREEMENT_HOUSE_MODEL_A || modelA;
-    modelB = e.AGREEMENT_HOUSE_MODEL_B || modelB;
-  } else if (chamber === 'executive') {
-    modelA = e.AGREEMENT_EXEC_MODEL_A || modelA;
-    modelB = e.AGREEMENT_EXEC_MODEL_B || modelB;
-  }
-  return {
-    a: parseCandidate(modelA, { provider: 'mistral', model: 'mistral-ocr-latest' }),
-    b: parseCandidate(modelB, { provider: 'openai', model: 'gpt-5.6-terra' }),
-  };
+/** Resolve the explicit A/B chamber lineup; missing config fails closed. */
+function resolveModels(e: AgreementEnv, chamber: string): AgreementModels | null {
+  const modelA = chamber === 'senate'
+    ? e.AGREEMENT_SENATE_MODEL_A
+    : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_A : e.AGREEMENT_HOUSE_MODEL_A;
+  const modelB = chamber === 'senate'
+    ? e.AGREEMENT_SENATE_MODEL_B
+    : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_B : e.AGREEMENT_HOUSE_MODEL_B;
+  const a = parseCandidate(modelA);
+  const b = parseCandidate(modelB);
+  return a && b ? { a, b } : null;
 }
 
-/** Resolve the A/B/C lineup for a tier-2+ pass (C defaults to a third vendor). */
-function resolveModelsWithC(e: AgreementEnv, chamber: string): AgreementModelsC {
+/** Resolve the explicit A/B/C lineup for a tier-2+ pass; missing config fails closed. */
+function resolveModelsWithC(e: AgreementEnv, chamber: string): AgreementModelsC | null {
   const ab = resolveModels(e, chamber);
-  let modelC = e.AGREEMENT_MODEL_C;
-  if (chamber === 'senate') modelC = e.AGREEMENT_SENATE_MODEL_C || modelC;
-  else if (chamber === 'house') modelC = e.AGREEMENT_HOUSE_MODEL_C || modelC;
-  else if (chamber === 'executive') modelC = e.AGREEMENT_EXEC_MODEL_C || modelC;
-  
-  const c = parseCandidate(modelC, { provider: 'anthropic', model: 'claude-haiku-4-5' });
-  return { a: ab.a, b: ab.b, c };
+  const modelC = chamber === 'senate'
+    ? e.AGREEMENT_SENATE_MODEL_C
+    : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_C : e.AGREEMENT_HOUSE_MODEL_C;
+  const c = parseCandidate(modelC);
+  return ab && c ? { ...ab, c } : null;
 }
 
 /** Max cascade attempts before a doc stays in human review (clamped 1–5). */
@@ -1435,6 +1420,13 @@ export async function handleAgreementCheck(
   const chamber = chamberRow?.chamber || 'house';
 
   const models = tier >= 2 ? resolveModelsWithC(e, chamber) : resolveModels(e, chamber);
+  if (!models) {
+    await leaveInReviewHighPriority(
+      env, docId, tier, {}, null, 'missing_chamber_model_config', queuedToken,
+    );
+    await finishTerminalClaim(env, docId, queuedToken, max);
+    return;
+  }
   const lineupError = duplicateLineupReason(
     tier >= 2
       ? [(models as AgreementModelsC).a, (models as AgreementModelsC).b, (models as AgreementModelsC).c]

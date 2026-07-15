@@ -117,13 +117,10 @@ describe('review queue durable state migration', () => {
 });
 
 describe('review queue autonomous configuration', () => {
-  it('pins distinct A/B/C vendors and all retry, budget, and big-doc controls', () => {
+  it('keeps agreement model selection per-chamber and pins retry, budget, and big-doc controls', () => {
     const wrangler = readFileSync(new URL('../../../wrangler.toml', testModuleUrl), 'utf8') as string;
     const devExample = readFileSync(new URL('../../../.dev.vars.example', testModuleUrl), 'utf8') as string;
     const keys = [
-      'AGREEMENT_AUTOPUBLISH_MODEL_A',
-      'AGREEMENT_AUTOPUBLISH_MODEL_B',
-      'AGREEMENT_MODEL_C',
       'AGREEMENT_AUTOPUBLISH_LIMIT',
       'AGREEMENT_MAX_ATTEMPTS',
       'AGREEMENT_DAILY_LLM_BUDGET',
@@ -133,13 +130,8 @@ describe('review queue autonomous configuration', () => {
     ];
 
     for (const key of keys) expect(setting(devExample, key)).toBe(setting(wrangler, key));
-    const providers = [
-      setting(wrangler, 'AGREEMENT_AUTOPUBLISH_MODEL_A').split(':')[0],
-      setting(wrangler, 'AGREEMENT_AUTOPUBLISH_MODEL_B').split(':')[0],
-      setting(wrangler, 'AGREEMENT_MODEL_C').split(':')[0],
-    ];
-    expect(new Set(providers).size).toBe(3);
-    expect(providers).toEqual(['mistral', 'openai', 'anthropic']);
+    expect(wrangler).toMatch(/explicit per-chamber Infisical keys/);
+    expect(devExample).toMatch(/no global model/);
     expect(setting(wrangler, 'AGREEMENT_DAILY_LLM_BUDGET')).toBe('300');
     expect(setting(wrangler, 'AGREEMENT_BIG_DOC_START_TIER2')).toBe('true');
   });

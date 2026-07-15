@@ -65,12 +65,9 @@ APP_BASE_URL = "https://congress-trade-preview.<your-workers-subdomain>.workers.
 STRIPE_MANAGED_PAYMENTS = "false"
 PREVIEW_DEPLOYMENT = "true"
 USAGE_MONITOR_ENVIRONMENT = "preview"
-# Preview intentionally omits Infisical and provider credentials. These
-# non-secret fallbacks make the persisted-lineup UI meaningful while every
-# provider remains unavailable and all secret/settings writes stay blocked.
-AGREEMENT_AUTOPUBLISH_MODEL_A = "openai:gpt-5.6-terra"
-AGREEMENT_AUTOPUBLISH_MODEL_B = "mistral:mistral-ocr-latest"
-AGREEMENT_MODEL_C = "anthropic:claude-haiku-4-5"
+# Preview intentionally omits Infisical and provider credentials. Agreement
+# model selections must be supplied explicitly per chamber; there are no
+# global model fallbacks, and provider-backed actions remain unavailable.
 # Same SENTRY_DSN secret as production is fine to reuse; this tag keeps preview
 # noise separate from production issues/alerts in the Sentry UI.
 SENTRY_ENVIRONMENT = "preview"

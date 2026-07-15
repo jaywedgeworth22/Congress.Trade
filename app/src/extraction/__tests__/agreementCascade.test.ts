@@ -201,9 +201,9 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
 
   const env = {
     AGREEMENT_AUTOPUBLISH_ENABLED: 'true',
-    AGREEMENT_AUTOPUBLISH_MODEL_A: 'openai:gpt-4o',
-    AGREEMENT_AUTOPUBLISH_MODEL_B: 'anthropic:claude-haiku-4-5',
-    AGREEMENT_MODEL_C: 'mistral:mistral-ocr-latest',
+    AGREEMENT_HOUSE_MODEL_A: 'openai:gpt-4o',
+    AGREEMENT_HOUSE_MODEL_B: 'anthropic:claude-haiku-4-5',
+    AGREEMENT_HOUSE_MODEL_C: 'mistral:mistral-ocr-latest',
     AGREEMENT_MAX_ATTEMPTS: opts.maxAttempts,
     OPENAI_API_KEY: 'k', ANTHROPIC_API_KEY: 'k', MISTRAL_API_KEY: 'k',
     DB: db,
