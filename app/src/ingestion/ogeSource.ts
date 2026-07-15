@@ -36,19 +36,63 @@ const OGE_ORIGIN = 'https://extapps2.oge.gov';
 const DEFAULT_POLL_INTERVAL_SEC = 21_600; // 6h — filings land every few weeks
 const POLL_SOURCE = 'oge';
 
-/** Known executive filers we ingest. Matching is against the PDF filename. */
+/** Known executive filers we ingest. Matching is against the PDF filename.
+ *  party/photoUrl are curated here (the OGE index carries neither) so the feed
+ *  renders executive filers with the same party chip + portrait treatment as
+ *  members of Congress. Portraits are official White House portraits hosted on
+ *  Wikimedia Commons (public domain, 17 U.S.C. §105), pinned to the 500px
+ *  thumbnail — one of the fixed widths Commons' thumbnail CDN serves. */
 interface ExecutiveFiler {
   pattern: RegExp;
   filerId: string;
   fullName: string;
+  party: 'R' | 'D';
+  photoUrl: string;
 }
+const COMMONS_THUMB = 'https://upload.wikimedia.org/wikipedia/commons/thumb';
 const EXECUTIVE_FILERS: ExecutiveFiler[] = [
-  { pattern: /trump/i, filerId: 'EXEC-DJT', fullName: 'Donald J. Trump' },
-  { pattern: /vance/i, filerId: 'EXEC-JDV', fullName: 'J.D. Vance' },
-  { pattern: /biden/i, filerId: 'EXEC-JRB', fullName: 'Joseph R. Biden' },
-  { pattern: /harris/i, filerId: 'EXEC-KDH', fullName: 'Kamala D. Harris' },
-  { pattern: /pence/i, filerId: 'EXEC-MRP', fullName: 'Michael R. Pence' },
-  { pattern: /obama/i, filerId: 'EXEC-BHO', fullName: 'Barack H. Obama' },
+  {
+    pattern: /trump/i,
+    filerId: 'EXEC-DJT',
+    fullName: 'Donald J. Trump',
+    party: 'R',
+    photoUrl: `${COMMONS_THUMB}/1/16/Official_Presidential_Portrait_of_President_Donald_J._Trump_%282025%29.jpg/500px-Official_Presidential_Portrait_of_President_Donald_J._Trump_%282025%29.jpg`,
+  },
+  {
+    pattern: /vance/i,
+    filerId: 'EXEC-JDV',
+    fullName: 'J.D. Vance',
+    party: 'R',
+    photoUrl: `${COMMONS_THUMB}/f/f3/January_2025_Official_Vice_Presidential_Portrait_of_JD_Vance.jpg/500px-January_2025_Official_Vice_Presidential_Portrait_of_JD_Vance.jpg`,
+  },
+  {
+    pattern: /biden/i,
+    filerId: 'EXEC-JRB',
+    fullName: 'Joseph R. Biden',
+    party: 'D',
+    photoUrl: `${COMMONS_THUMB}/6/68/Joe_Biden_presidential_portrait.jpg/500px-Joe_Biden_presidential_portrait.jpg`,
+  },
+  {
+    pattern: /harris/i,
+    filerId: 'EXEC-KDH',
+    fullName: 'Kamala D. Harris',
+    party: 'D',
+    photoUrl: `${COMMONS_THUMB}/4/41/Kamala_Harris_Vice_Presidential_Portrait.jpg/500px-Kamala_Harris_Vice_Presidential_Portrait.jpg`,
+  },
+  {
+    pattern: /pence/i,
+    filerId: 'EXEC-MRP',
+    fullName: 'Michael R. Pence',
+    party: 'R',
+    photoUrl: `${COMMONS_THUMB}/b/b9/Mike_Pence_official_Vice_Presidential_portrait.jpg/500px-Mike_Pence_official_Vice_Presidential_portrait.jpg`,
+  },
+  {
+    pattern: /obama/i,
+    filerId: 'EXEC-BHO',
+    fullName: 'Barack H. Obama',
+    party: 'D',
+    photoUrl: `${COMMONS_THUMB}/8/8d/President_Barack_Obama.jpg/500px-President_Barack_Obama.jpg`,
+  },
 ];
 
 /** True for Periodic Transaction Reports; annual 278/278e forms are skipped
@@ -122,6 +166,8 @@ export function parseOgeIndex(html: string): DiscoveredFiling[] {
       filedDate: ogeFiledDateFromName(filename),
       filerId: filer.filerId,
       filerName: filer.fullName,
+      party: filer.party,
+      photoUrl: filer.photoUrl,
     });
   }
   return out;
