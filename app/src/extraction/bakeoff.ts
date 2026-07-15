@@ -222,7 +222,7 @@ export function extractResponsesText(payload: unknown, provider = 'responses'): 
 }
 
 /**
- * OpenAI PDF vision call. GPT-5.6 uses Responses with original-detail page
+ * OpenAI PDF vision call. GPT-5.6 uses Responses with high-detail page
  * images (important for handwriting and small print). A legacy Chat Completions
  * shape remains for non-retired compatibility models; GPT-4o is rejected before
  * this adapter can make a provider request.
@@ -249,7 +249,7 @@ async function runOpenAi(
           {
             role: 'user',
             content: [
-              { type: 'input_file', filename: 'ptr.pdf', file_data: dataUrl, detail: 'original' },
+              { type: 'input_file', filename: 'ptr.pdf', file_data: dataUrl, detail: 'high' },
               { type: 'input_text', text: `${prompt}\nReturn ONLY a JSON object {"transactions": [...]} .` },
             ],
           },
