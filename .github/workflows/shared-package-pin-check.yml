@@ -89,9 +89,25 @@ jobs:
           fi
           echo "Peer installed ref (${PEER_REPO}/${PEER_PACKAGE_LOCK_PATH}): $PEER_V"
 
-          if [ "$LOCAL_V" = "$PEER_V" ]; then
-            echo "OK: both consumers install ${PKG} at the same ref (${LOCAL_V})."
+          # Compare the ref after '#' (the pinned commit/tag) rather than the full
+          # 'resolved' string: npm records the git TRANSPORT it happened to install
+          # over (git+ssh://git@github.com/... vs git+https://github.com/...), so two
+          # lockfiles pinning the IDENTICAL commit can differ in scheme alone. That
+          # exact false positive turned this check red on main 2026-07-13..15 while
+          # both consumers installed 0bc26ab9. Entries without '#' (registry
+          # versions) pass through unchanged, preserving the old comparison.
+          strip_transport() {
+            case "$1" in
+              *'#'*) printf '%s' "${1##*#}" ;;
+              *) printf '%s' "$1" ;;
+            esac
+          }
+          LOCAL_REF=$(strip_transport "$LOCAL_V")
+          PEER_REF=$(strip_transport "$PEER_V")
+
+          if [ "$LOCAL_REF" = "$PEER_REF" ]; then
+            echo "OK: both consumers install ${PKG} at the same ref (${LOCAL_REF})."
           else
-            echo "::error::${PKG} ref DIVERGED: this repo installs '${LOCAL_V}' but ${PEER_REPO} installs '${PEER_V}'. Bump BOTH repos to the same exact ref (bump them as a matched pair)."
+            echo "::error::${PKG} ref DIVERGED: this repo installs '${LOCAL_V}' (ref ${LOCAL_REF}) but ${PEER_REPO} installs '${PEER_V}' (ref ${PEER_REF}). Bump BOTH repos to the same exact ref (bump them as a matched pair)."
             exit 1
           fi
