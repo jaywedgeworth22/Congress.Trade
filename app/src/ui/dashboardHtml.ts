@@ -757,6 +757,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .delivery-card p { margin:0 0 8px; font-size:12.5px; line-height:1.5; color:var(--text); }
   .delivery-card p.note { margin-bottom:0; }
   .feed-stats { font-size: 11.5px; white-space: nowrap; margin-left: 2px; }
+  /* Mobile-only sort row (below the .table-wrap toolbar); hidden by default and
+     shown under the mobile breakpoint via the higher-specificity #view-feed rule. */
+  .feed-sort-mobile { display: none; align-items: center; gap: 8px; margin: 0 0 10px; }
+  .feed-sort-mobile #mobileSortKey { flex: 1; min-width: 0; }
   @media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
     html, body { width:100%; max-width:100%; overflow-x:hidden; }
     body { background: var(--bg); font-size: 13px; }
@@ -820,6 +824,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .panel-close { width:44px; height:44px; margin:-10px -10px -10px 0; }
     #view-feed .table-wrap { display: none; }
     #view-feed .feed-cards { display: grid; grid-template-columns: minmax(0, 1fr); }
+    #view-feed .feed-sort-mobile { display: flex; }
+    /* The Columns chooser only affects the (hidden) table's field set — feedCardHtml()
+       renders a fixed field set, so the control has no visible effect on phones. */
+    #colsBtn { display: none; }
     .col-resizer { display: none; }
     .row-flex { align-items: stretch; gap: 9px; }
     .row-flex > input, .row-flex > select, .row-flex > button { width: 100%; min-height: 40px; }
@@ -1380,12 +1388,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <strong id="kpiToday">—</strong> today &middot; <strong id="kpiTotal">—</strong> total
       </div>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()" style="margin-left:auto">🔍 Search</button>
-      <button class="btn ghost sm" onclick="toggleColChooser()" title="Show / Hide Columns">⚙ Columns</button>
+      <button class="btn ghost sm" id="colsBtn" onclick="toggleColChooser()" title="Show / Hide Columns">⚙ Columns</button>
       <button class="btn ghost sm" id="exportCsvBtn" onclick="exportCsv()" title="Download the filtered feed as CSV">⤓ Export CSV <span class="premium-mark" data-premium-cue="exportCsv">Premium</span></button>
       <label class="lbl" for="pageSize">Rows</label>
       <select id="pageSize" onchange="setPageSize(this.value)" title="Rows shown per page">
         <option value="25">25</option><option value="50" selected>50</option><option value="100">100</option><option value="250">250</option>
       </select>
+    </div>
+    <!-- Mobile-only compact sort control: the sortable table header (th.sortable)
+         is hidden below the 768px breakpoint along with .table-wrap, so this is
+         the only sort affordance on phones. Shares sortKey/sortDir + the
+         setSort()/feedQueryParams() refetch path with the desktop headers. -->
+    <div class="feed-sort-mobile" id="feedSortMobile">
+      <label class="lbl" for="mobileSortKey">Sort</label>
+      <select id="mobileSortKey" onchange="handleMobileSortKeyChange()"></select>
+      <button type="button" class="btn ghost sm" id="mobileSortDirBtn" onclick="toggleMobileSortDir()" aria-label="Toggle sort direction"></button>
     </div>
     <div class="panel-backdrop" id="panelBackdrop" onclick="closePanels()"></div>
     <div class="search-panel" id="colChooser">
@@ -2920,6 +2937,37 @@ function updateSortIndicators() {
     if (th.dataset.sort === sortKey) { th.classList.add('active'); arr.textContent = sortDir > 0 ? '▲' : '▼'; }
     else { th.classList.remove('active'); arr.textContent = '↕'; }
   }
+  syncMobileSortControl();
+}
+
+/* ---- mobile sort control (below 768px, in place of the hidden table header) ----
+   Options mirror the same sortable columns exposed by the desktop th.sortable
+   headers (visibleCols() already applies tier/hidden-column rules), so this stays
+   in sync whenever columns change and never offers a column the user can't see.
+   Selecting a key or flipping direction both go through setSort(), the same
+   sortKey/sortDir state + feedQueryParams()/fetchPage() refetch path the desktop
+   headers use. */
+function mobileSortableCols() {
+  return visibleCols().filter(function (c) { return !!c.sort; });
+}
+function syncMobileSortControl() {
+  var sel = el('mobileSortKey'); if (!sel) return;
+  sel.innerHTML = mobileSortableCols().map(function (c) {
+    return '<option value="' + esc(c.sort) + '"' + (c.sort === sortKey ? ' selected' : '') + '>' + esc(c.label) + '</option>';
+  }).join('');
+  sel.value = sortKey;
+  var btn = el('mobileSortDirBtn');
+  if (btn) {
+    btn.textContent = sortDir > 0 ? '▲' : '▼';
+    btn.title = sortDir > 0 ? 'Ascending — tap for descending' : 'Descending — tap for ascending';
+  }
+}
+function handleMobileSortKeyChange() {
+  var sel = el('mobileSortKey'); if (!sel || !sel.value || sel.value === sortKey) return;
+  setSort(sel.value);
+}
+function toggleMobileSortDir() {
+  setSort(sortKey); // same key -> setSort() flips sortDir
 }
 
 /* ---- fold-out search ---- */
