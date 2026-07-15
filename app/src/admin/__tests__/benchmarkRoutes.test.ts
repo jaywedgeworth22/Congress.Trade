@@ -22,9 +22,9 @@ const AUTH = {
 function env(overrides: Record<string, unknown> = {}): Env {
   return {
     ADMIN_TOKEN: 'admin-secret',
-    AGREEMENT_AUTOPUBLISH_MODEL_A: 'mistral:mistral-ocr-latest',
-    AGREEMENT_AUTOPUBLISH_MODEL_B: 'openai:gpt-5.6-terra',
-    AGREEMENT_MODEL_C: 'anthropic:claude-haiku-4-5',
+    AGREEMENT_HOUSE_MODEL_A: 'mistral:mistral-ocr-latest',
+    AGREEMENT_HOUSE_MODEL_B: 'openai:gpt-5.6-terra',
+    AGREEMENT_HOUSE_MODEL_C: 'anthropic:claude-haiku-4-5',
     OPENAI_API_KEY: 'openai-key',
     ANTHROPIC_API_KEY: 'anthropic-key',
     MISTRAL_API_KEY: 'mistral-key',

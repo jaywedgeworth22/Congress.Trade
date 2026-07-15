@@ -47,16 +47,17 @@ function dependencies(state: Record<string, string>, options: { failOnce?: strin
   };
 }
 
-function initialState(): Record<string, string> {
+function initialState(chamber: 'house' | 'senate' | 'executive' = 'house'): Record<string, string> {
+  const prefix = chamber === 'house' ? 'HOUSE' : chamber === 'senate' ? 'SENATE' : 'EXEC';
   return {
-    AGREEMENT_AUTOPUBLISH_MODEL_A: OLD.a,
-    AGREEMENT_AUTOPUBLISH_MODEL_B: OLD.b,
-    AGREEMENT_MODEL_C: OLD.c,
+    [`AGREEMENT_${prefix}_MODEL_A`]: OLD.a,
+    [`AGREEMENT_${prefix}_MODEL_B`]: OLD.b,
+    [`AGREEMENT_${prefix}_MODEL_C`]: OLD.c,
   };
 }
 
 describe('benchmark lineup settings', () => {
-  it('reads the effective global fallback and reports credential availability without values', async () => {
+  it('reads the explicit chamber lineup and reports credential availability without values', async () => {
     const env = {
       ...initialState(),
       OPENAI_API_KEY: 'openai-key',
@@ -75,6 +76,12 @@ describe('benchmark lineup settings', () => {
       configured: true,
     });
     expect(JSON.stringify(settings)).not.toContain('openai-key');
+  });
+
+  it('does not invent a lineup when a chamber has no explicit model keys', async () => {
+    const settings = await readBenchmarkLineupSettings({} as Env, 'house', dependencies({}) as never);
+    expect(settings.lineup).toBeNull();
+    expect(settings.valid).toBe(false);
   });
 
   it('rejects a lineup that lets one provider corroborate itself', () => {
@@ -182,7 +189,7 @@ describe('benchmark lineup settings', () => {
   });
 
   it('rejects a stale optimistic version before any write', async () => {
-    const state = initialState();
+    const state: Record<string, string> = {};
     const deps = dependencies(state);
     await expect(saveBenchmarkLineupSettings({} as Env, {
       chamber: 'house',

@@ -21,12 +21,6 @@ import type {
 
 type LineupSlot = 'a' | 'b' | 'c';
 
-const GLOBAL_KEYS = {
-  a: 'AGREEMENT_AUTOPUBLISH_MODEL_A',
-  b: 'AGREEMENT_AUTOPUBLISH_MODEL_B',
-  c: 'AGREEMENT_MODEL_C',
-} as const;
-
 export const BENCHMARK_LINEUP_KEYS: Record<
   BenchmarkChamber,
   Record<LineupSlot, string>
@@ -74,7 +68,7 @@ export interface BenchmarkCatalogEntry extends BenchmarkModelRef {
 export interface BenchmarkLineupSettings {
   chamber: BenchmarkChamber;
   lineup: BenchmarkSelectedLineup | null;
-  /** SHA-256 over the branch values plus their effective global fallbacks. */
+  /** SHA-256 over the explicit chamber values. */
   version: string;
   valid: boolean;
   keys: Record<LineupSlot, string>;
@@ -259,28 +253,16 @@ async function readSettingsWithDependencies(
   dependencies: SettingsDependencies,
 ): Promise<BenchmarkLineupSettings> {
   const keys = BENCHMARK_LINEUP_KEYS[chamber];
-  const requestedKeys = [
-    keys.a,
-    keys.b,
-    keys.c,
-    GLOBAL_KEYS.a,
-    GLOBAL_KEYS.b,
-    GLOBAL_KEYS.c,
-  ] as const;
+  const requestedKeys = [keys.a, keys.b, keys.c] as const;
   const values = await dependencies.resolve(env, [...requestedKeys]);
   const branchValues = {
     a: values[keys.a],
     b: values[keys.b],
     c: values[keys.c],
   };
-  const fallbackValues = {
-    a: values[GLOBAL_KEYS.a],
-    b: values[GLOBAL_KEYS.b],
-    c: values[GLOBAL_KEYS.c],
-  };
-  const a = parseBenchmarkModelRef(branchValues.a ?? fallbackValues.a);
-  const b = parseBenchmarkModelRef(branchValues.b ?? fallbackValues.b);
-  const c = parseBenchmarkModelRef(branchValues.c ?? fallbackValues.c);
+  const a = parseBenchmarkModelRef(branchValues.a);
+  const b = parseBenchmarkModelRef(branchValues.b);
+  const c = parseBenchmarkModelRef(branchValues.c);
   const lineup = a && b && c ? { a, b, c } : null;
   let valid = false;
   if (lineup) {
@@ -291,7 +273,7 @@ async function readSettingsWithDependencies(
       valid = false;
     }
   }
-  const version = await sha256(JSON.stringify({ chamber, branchValues, fallbackValues }));
+  const version = await sha256(JSON.stringify({ chamber, branchValues }));
   const catalog = benchmarkModelCatalog();
   const configuredByProvider = new Map<Provider, boolean>();
   await Promise.all([...new Set(catalog.map((candidate) => candidate.provider))].map(async (provider) => {
