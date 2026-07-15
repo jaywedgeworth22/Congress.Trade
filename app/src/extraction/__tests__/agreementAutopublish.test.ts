@@ -116,8 +116,8 @@ function makeEnv(flag: string | undefined) {
   const env = {
     AGREEMENT_AUTOPUBLISH_ENABLED: flag,
     ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k', GEMINI_API_KEY: 'k', MISTRAL_API_KEY: 'k',
-    AGREEMENT_HOUSE_MODEL_A: 'openai:gpt-4o',
-    AGREEMENT_HOUSE_MODEL_B: 'anthropic:claude-haiku-4-5',
+    AGREEMENT_HOUSE_MODEL_C: 'openai:gpt-4o',
+    AGREEMENT_HOUSE_MODEL_D: 'anthropic:claude-haiku-4-5',
     DB: db,
     RAW_FILES: { get: async () => ({ arrayBuffer: async () => new TextEncoder().encode('%PDF').buffer }) },
     INGEST_QUEUE: { send: async (m: unknown) => { sent.push(m); } },

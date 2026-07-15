@@ -983,7 +983,7 @@ export async function processAgreementCascadeTier2(
 // ---------------------------------------------------------------------------
 
 /** Parse an explicit "provider:model" selection. */
-function parseCandidate(s: string | undefined): BakeoffCandidate | null {
+export function parseCandidate(s: string | undefined): BakeoffCandidate | null {
   if (!s) return null;
   const [provider, ...rest] = s.split(':');
   const model = rest.join(':');
@@ -996,15 +996,15 @@ function parseCandidate(s: string | undefined): BakeoffCandidate | null {
 export interface AgreementEnv {
   AGREEMENT_AUTOPUBLISH_ENABLED?: string;
   AGREEMENT_AUTOPUBLISH_LIMIT?: string;
-  AGREEMENT_SENATE_MODEL_A?: string;
-  AGREEMENT_SENATE_MODEL_B?: string;
   AGREEMENT_SENATE_MODEL_C?: string;
-  AGREEMENT_HOUSE_MODEL_A?: string;
-  AGREEMENT_HOUSE_MODEL_B?: string;
+  AGREEMENT_SENATE_MODEL_D?: string;
+  AGREEMENT_SENATE_MODEL_E?: string;
   AGREEMENT_HOUSE_MODEL_C?: string;
-  AGREEMENT_EXEC_MODEL_A?: string;
-  AGREEMENT_EXEC_MODEL_B?: string;
+  AGREEMENT_HOUSE_MODEL_D?: string;
+  AGREEMENT_HOUSE_MODEL_E?: string;
   AGREEMENT_EXEC_MODEL_C?: string;
+  AGREEMENT_EXEC_MODEL_D?: string;
+  AGREEMENT_EXEC_MODEL_E?: string;
   AGREEMENT_MAX_ATTEMPTS?: string;
   AGREEMENT_BIG_DOC_START_TIER2?: string;
   AGREEMENT_BIG_DOC_PAGE_THRESHOLD?: string;
@@ -1012,20 +1012,25 @@ export interface AgreementEnv {
   AGREEMENT_DAILY_LLM_BUDGET?: string;
 }
 
-/** Resolve agreement controls and explicit per-chamber lineups. */
+/**
+ * Resolve agreement controls and the explicit per-chamber C/D/E trio. The A/B
+ * primary/failover slots are a SEPARATE live-ingestion concern (see
+ * resolvePrimaryFailoverModels in ./configuredVision) and are deliberately not
+ * requested here.
+ */
 export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
   return (await resolveSecrets(env, [
     'AGREEMENT_AUTOPUBLISH_ENABLED',
     'AGREEMENT_AUTOPUBLISH_LIMIT',
-    'AGREEMENT_SENATE_MODEL_A',
-    'AGREEMENT_SENATE_MODEL_B',
     'AGREEMENT_SENATE_MODEL_C',
-    'AGREEMENT_HOUSE_MODEL_A',
-    'AGREEMENT_HOUSE_MODEL_B',
+    'AGREEMENT_SENATE_MODEL_D',
+    'AGREEMENT_SENATE_MODEL_E',
     'AGREEMENT_HOUSE_MODEL_C',
-    'AGREEMENT_EXEC_MODEL_A',
-    'AGREEMENT_EXEC_MODEL_B',
+    'AGREEMENT_HOUSE_MODEL_D',
+    'AGREEMENT_HOUSE_MODEL_E',
     'AGREEMENT_EXEC_MODEL_C',
+    'AGREEMENT_EXEC_MODEL_D',
+    'AGREEMENT_EXEC_MODEL_E',
     'AGREEMENT_MAX_ATTEMPTS',
     'AGREEMENT_BIG_DOC_START_TIER2',
     'AGREEMENT_BIG_DOC_PAGE_THRESHOLD',
@@ -1034,25 +1039,25 @@ export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
   ])) as AgreementEnv;
 }
 
-/** Resolve the explicit A/B chamber lineup; missing config fails closed. */
+/** Resolve the explicit C/D chamber lineup (tier-1 pair); missing config fails closed. */
 function resolveModels(e: AgreementEnv, chamber: string): AgreementModels | null {
   const modelA = chamber === 'senate'
-    ? e.AGREEMENT_SENATE_MODEL_A
-    : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_A : e.AGREEMENT_HOUSE_MODEL_A;
+    ? e.AGREEMENT_SENATE_MODEL_C
+    : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_C : e.AGREEMENT_HOUSE_MODEL_C;
   const modelB = chamber === 'senate'
-    ? e.AGREEMENT_SENATE_MODEL_B
-    : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_B : e.AGREEMENT_HOUSE_MODEL_B;
+    ? e.AGREEMENT_SENATE_MODEL_D
+    : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_D : e.AGREEMENT_HOUSE_MODEL_D;
   const a = parseCandidate(modelA);
   const b = parseCandidate(modelB);
   return a && b ? { a, b } : null;
 }
 
-/** Resolve the explicit A/B/C lineup for a tier-2+ pass; missing config fails closed. */
+/** Resolve the explicit C/D/E lineup for a tier-2+ pass; missing config fails closed. */
 function resolveModelsWithC(e: AgreementEnv, chamber: string): AgreementModelsC | null {
   const ab = resolveModels(e, chamber);
   const modelC = chamber === 'senate'
-    ? e.AGREEMENT_SENATE_MODEL_C
-    : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_C : e.AGREEMENT_HOUSE_MODEL_C;
+    ? e.AGREEMENT_SENATE_MODEL_E
+    : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_E : e.AGREEMENT_HOUSE_MODEL_E;
   const c = parseCandidate(modelC);
   return ab && c ? { ...ab, c } : null;
 }
