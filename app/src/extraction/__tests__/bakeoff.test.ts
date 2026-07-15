@@ -267,7 +267,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     expect(result.usage).toBeUndefined();
   });
 
-  it('uses original-detail Responses PDF input and captures GPT-5.6 usage metadata', async () => {
+  it('uses high-detail Responses PDF input and captures GPT-5.6 usage metadata', async () => {
     const fetchSpy = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       ({
         ok: true,
@@ -319,7 +319,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     expect(request.input[0].content[0]).toMatchObject({
       type: 'input_file',
       filename: 'ptr.pdf',
-      detail: 'original',
+      detail: 'high',
     });
   });
 

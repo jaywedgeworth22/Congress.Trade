@@ -359,7 +359,7 @@ describe('submitBatch OpenAI GPT-5.6', () => {
     expect(request.body.input[0].content[0]).toEqual({
       type: 'input_file',
       file_id: 'file-1',
-      detail: 'original',
+      detail: 'high',
     });
     expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toMatchObject({
       endpoint: '/v1/responses',
