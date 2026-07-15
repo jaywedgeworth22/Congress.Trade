@@ -1,0 +1,392 @@
+<title>Chamber filter icons — 4 concepts</title>
+<style>
+  :root {
+    --bg:#f4f7fb; --panel:#ffffff; --border:#d3dced; --text:#142036;
+    --dim:#4f607c; --accent:#2563eb; --accent-soft:rgba(37,99,235,.13);
+    --site-bg:#0b1120; --site-panel:#15203a; --site-border:#243154;
+    --site-text:#e6edf6; --site-dim:#9db1cd; --site-accent:#4f8cff;
+    --site-accent-soft:rgba(79,140,255,.16);
+    --mono:ui-monospace,'SF Mono','Cascadia Mono',Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0b1120; --panel:#15203a; --border:#243154; --text:#e6edf6;
+      --dim:#9db1cd; --accent:#4f8cff; --accent-soft:rgba(79,140,255,.16); }
+  }
+  :root[data-theme="dark"] { --bg:#0b1120; --panel:#15203a; --border:#243154;
+    --text:#e6edf6; --dim:#9db1cd; --accent:#4f8cff; --accent-soft:rgba(79,140,255,.16); }
+  :root[data-theme="light"] { --bg:#f4f7fb; --panel:#ffffff; --border:#d3dced;
+    --text:#142036; --dim:#4f607c; --accent:#2563eb; --accent-soft:rgba(37,99,235,.13); }
+
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.55 var(--sans); }
+  .wrap { max-width:860px; margin:0 auto; padding:40px 20px 80px; }
+
+  header.lead { margin-bottom:8px; }
+  .eyebrow { font:600 11px/1 var(--mono); letter-spacing:.14em; text-transform:uppercase; color:var(--accent); }
+  h1 { font-size:26px; line-height:1.2; margin:10px 0 8px; letter-spacing:-.01em; text-wrap:balance; }
+  .lead p { color:var(--dim); max-width:60ch; margin:0 0 6px; }
+  .lead .premise { color:var(--text); }
+
+  section.concept { margin-top:44px; border-top:1px solid var(--border); padding-top:26px; }
+  .c-head { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  .c-num { font:600 12px/1 var(--mono); color:var(--dim); }
+  h2 { font-size:19px; margin:0; letter-spacing:-.01em; }
+  .rec { font:600 10px/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
+    color:var(--accent); border:1px solid var(--accent); border-radius:999px; padding:4px 8px; }
+  .c-sub { color:var(--dim); max-width:62ch; margin:8px 0 18px; }
+
+  /* ---- phone mockup: always renders in the SITE's dark theme ---- */
+  .phone { width:min(390px,100%); border:1px solid var(--border); border-radius:18px; overflow:hidden;
+    background:var(--site-bg); box-shadow:0 6px 24px rgba(5,10,25,.25); }
+  .phone .bar { display:flex; align-items:center; gap:10px; padding:11px 14px;
+    background:var(--site-panel); border-bottom:1px solid var(--site-border); }
+  /* Chosen wordmark face: Typewriter Slab (production: Zilla Slab, self-hosted) */
+  .brand { color:var(--site-text); font-weight:700; font-size:14px; letter-spacing:0; white-space:nowrap;
+    font-family:'American Typewriter',Rockwell,'Courier New',serif; }
+  .brand em { color:var(--site-accent); font-style:normal; }
+  .spacer { flex:1; }
+  .phone .rows { padding:12px 14px 16px; display:flex; flex-direction:column; gap:8px; }
+  .frow { display:flex; gap:8px; }
+  .fpill { height:10px; border-radius:6px; background:var(--site-border); opacity:.55; }
+  .caption { display:flex; justify-content:space-between; font:11px/1.4 var(--mono); color:var(--dim); margin-top:8px; width:min(390px,100%); }
+
+  /* ---- toggle primitives (site-dark styling) ---- */
+  .tg { -webkit-tap-highlight-color:transparent; display:inline-flex; align-items:center; justify-content:center;
+    background:transparent; border:1px solid var(--site-border); color:var(--site-dim);
+    border-radius:10px; cursor:pointer; padding:0; min-height:36px; transition:border-color .15s,background .15s,color .15s; }
+  .tg svg { display:block; }
+  .tg .glyph-fill { fill:none; }
+  .tg .stroke { stroke:currentColor; }
+  .tg.on { color:var(--site-accent); border-color:var(--site-accent); background:var(--site-accent-soft); }
+  .tg.on .glyph-fill { fill:var(--site-accent-soft); }
+  .tg:focus-visible { outline:2px solid var(--site-accent); outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce) { .tg { transition:none; } }
+
+  /* concept 1: one capitol, two wings + dome + separate WH */
+  .capgroup { display:inline-flex; align-items:stretch; border:1px solid var(--site-border); border-radius:12px; padding:4px; gap:2px; }
+  .capgroup .seg { border:none; border-radius:8px; min-height:38px; padding:0 4px; }
+  .capgroup .seg.on { background:var(--site-accent-soft); }
+
+  /* desktop-scale frame for concept 1 */
+  .desk { width:100%; border:1px solid var(--border); border-radius:16px; overflow:hidden;
+    background:var(--site-bg); margin-top:16px; box-shadow:0 6px 24px rgba(5,10,25,.25); }
+  .desk .bar { display:flex; align-items:center; gap:14px; padding:14px 20px;
+    background:var(--site-panel); border-bottom:1px solid var(--site-border); }
+  .desk .navlink { color:var(--site-dim); font-size:13px; font-weight:600; }
+  .desk .rows { padding:14px 20px 18px; display:flex; flex-direction:column; gap:9px; }
+
+  /* concept 3: pill containing letters */
+  .pill { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--site-border); border-radius:999px; padding:4px 10px 4px 8px; color:var(--site-dim); }
+  .pill .lt { min-height:26px; min-width:26px; border-radius:999px; font:700 11px/1 var(--sans); }
+
+  /* concept 4: segmented */
+  .segctl { display:inline-flex; border:1px solid var(--site-border); border-radius:10px; overflow:hidden; }
+  .segctl .tg { border:none; border-radius:0; min-width:38px; }
+  .segctl .tg + .tg { border-left:1px solid var(--site-border); }
+
+  .lab { font:700 11px/1 var(--sans); }
+
+  /* anatomy strip (page-theme surface) */
+  .anatomy { display:flex; gap:22px; flex-wrap:wrap; align-items:flex-end; margin-top:18px;
+    background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:18px 20px; }
+  .spec { display:flex; flex-direction:column; align-items:center; gap:8px; }
+  .spec .note { font:11px/1.4 var(--mono); color:var(--dim); text-align:center; max-width:20ch; }
+  .spec svg { color:var(--dim); }
+  .spec.acc svg { color:var(--accent); }
+  .spec.acc .fillme { fill:var(--accent-soft); }
+
+  ul.pc { margin:16px 0 0; padding:0; list-style:none; display:grid; gap:6px; max-width:66ch; }
+  ul.pc li { padding-left:20px; position:relative; color:var(--dim); }
+  ul.pc li::before { position:absolute; left:0; font:700 12px/1.6 var(--mono); }
+  ul.pc li.plus::before { content:'+'; color:var(--accent); }
+  ul.pc li.minus::before { content:'–'; color:var(--dim); }
+  ul.pc li strong { color:var(--text); font-weight:600; }
+
+  .qs { margin-top:48px; border-top:1px solid var(--border); padding-top:26px; }
+  .qs h2 { margin-bottom:10px; }
+  .qs ol { margin:0; padding-left:20px; color:var(--dim); display:grid; gap:8px; max-width:66ch; }
+  .qs li strong { color:var(--text); font-weight:600; }
+  .hint { margin-top:26px; font:12px/1.5 var(--mono); color:var(--dim); }
+</style>
+
+<div class="wrap">
+  <header class="lead">
+    <div class="eyebrow">Congress.Trade · design exploration</div>
+    <h1>Branch toggles: House / Senate / White House</h1>
+    <p class="premise">Premise: the Capitol dome is the icon for Congress, and the real building already splits the way the filter does — <strong>Senate in the north wing (left, as seen from the Mall), House in the south wing (right)</strong>. The White House reads differently at tiny sizes because it has a triangular pediment instead of a dome. Letters carry the H/S distinction; the buildings carry the branch distinction.</p>
+    <p>Every mockup below is live — tap the toggles. Phone frames render in the site's dark theme at 390&nbsp;px.</p>
+    <p><strong>Rev 2:</strong> concepts 01 + 04 are the chosen responsive pair — 01 (larger, letters fixed) from desktop down to normal phones, 04 as the H·S·P strip when the header can't afford 01. Concepts 02/03 kept below for the record.</p>
+  </header>
+
+  <!-- ============================================================ -->
+  <section class="concept">
+    <div class="c-head"><span class="c-num">01</span><h2>One Capitol, two wings</h2><span class="rec">Chosen · primary</span></div>
+    <p class="c-sub">A single Capitol silhouette where each wing is its own toggle — S lights the left wing, H lights the right — and tapping the dome toggles all of Congress. The White House sits beside it as one toggle. Rev&nbsp;2: glyphs grew to 30&nbsp;px, wing blocks are taller, and the letters now sit fully inside them.</p>
+
+    <div class="phone">
+      <div class="bar">
+        <span class="brand">Congress<em>.Trade</em></span>
+        <span class="spacer"></span>
+        <span class="capgroup" role="group" aria-label="Congress filter">
+          <button class="tg seg on" data-t="c1s" aria-pressed="true" aria-label="Senate" title="Senate">
+            <svg width="20" height="30" viewBox="0 0 20 32">
+              <path class="glyph-fill stroke" stroke-width="1.5" d="M2.5 14.5 h15 v11.5 h-15 z"/>
+              <path class="stroke" stroke-width="1.5" d="M1 29.5 h18" fill="none"/>
+              <text x="10" y="24" text-anchor="middle" font-size="10" font-weight="800" fill="currentColor" stroke="none" font-family="inherit">S</text>
+            </svg>
+          </button>
+          <button class="tg seg on" data-t="c1d" aria-pressed="true" aria-label="All of Congress" title="All of Congress">
+            <svg width="24" height="30" viewBox="0 0 24 32">
+              <path class="glyph-fill stroke" stroke-width="1.5" d="M4.5 14.5 h15 v11.5 h-15 z"/>
+              <path class="stroke" stroke-width="1.5" d="M5 14.5 C5 5.5 19 5.5 19 14.5 M12 4.5 v2.5 M2.5 29.5 h19" fill="none"/>
+              <circle cx="12" cy="3.4" r="1.1" fill="currentColor" stroke="none"/>
+            </svg>
+          </button>
+          <button class="tg seg on" data-t="c1h" aria-pressed="true" aria-label="House" title="House">
+            <svg width="20" height="30" viewBox="0 0 20 32">
+              <path class="glyph-fill stroke" stroke-width="1.5" d="M2.5 14.5 h15 v11.5 h-15 z"/>
+              <path class="stroke" stroke-width="1.5" d="M1 29.5 h18" fill="none"/>
+              <text x="10" y="24" text-anchor="middle" font-size="10" font-weight="800" fill="currentColor" stroke="none" font-family="inherit">H</text>
+            </svg>
+          </button>
+        </span>
+        <button class="tg" data-t="c1w" aria-pressed="false" aria-label="White House (Executive)" title="White House — Executive" style="padding:0 8px; min-height:46px;">
+          <svg width="32" height="30" viewBox="0 0 34 32">
+            <path class="glyph-fill stroke" stroke-width="1.5" d="M3 16.5 h28 v9.5 H3 z"/>
+            <path class="stroke" stroke-width="1.5" d="M10 16.5 l7-5.5 7 5.5 M17 5 v3.5 M12.5 20.5 v5.5 M17 20.5 v5.5 M21.5 20.5 v5.5 M1.5 29.5 h31" fill="none"/>
+          </svg>
+        </button>
+      </div>
+      <div class="rows">
+        <div class="frow"><span class="fpill" style="width:38%"></span><span class="fpill" style="width:22%"></span><span class="fpill" style="width:17%"></span></div>
+        <div class="frow"><span class="fpill" style="width:52%"></span><span class="fpill" style="width:30%"></span></div>
+        <div class="frow"><span class="fpill" style="width:44%"></span><span class="fpill" style="width:26%"></span><span class="fpill" style="width:12%"></span></div>
+      </div>
+    </div>
+    <div class="caption"><span>390 px · toggles ≈ 132 px total</span><span>dome = select / clear both</span></div>
+
+    <div class="desk">
+      <div class="bar">
+        <span class="brand" style="font-size:16px;">Congress<em>.Trade</em></span>
+        <span class="navlink">Feed</span><span class="navlink">Analytics</span><span class="navlink">Alerts</span>
+        <span class="spacer"></span>
+        <span class="capgroup" role="group" aria-label="Congress filter">
+          <button class="tg seg on" data-t="d1s" aria-pressed="true" aria-label="Senate" title="Senate">
+            <svg width="26" height="39" viewBox="0 0 20 32">
+              <path class="glyph-fill stroke" stroke-width="1.4" d="M2.5 14.5 h15 v11.5 h-15 z"/>
+              <path class="stroke" stroke-width="1.4" d="M1 29.5 h18" fill="none"/>
+              <text x="10" y="24" text-anchor="middle" font-size="10" font-weight="800" fill="currentColor" stroke="none" font-family="inherit">S</text>
+            </svg>
+          </button>
+          <button class="tg seg on" data-t="d1d" aria-pressed="true" aria-label="All of Congress" title="All of Congress">
+            <svg width="31" height="39" viewBox="0 0 24 32">
+              <path class="glyph-fill stroke" stroke-width="1.4" d="M4.5 14.5 h15 v11.5 h-15 z"/>
+              <path class="stroke" stroke-width="1.4" d="M5 14.5 C5 5.5 19 5.5 19 14.5 M12 4.5 v2.5 M2.5 29.5 h19" fill="none"/>
+              <circle cx="12" cy="3.4" r="1.1" fill="currentColor" stroke="none"/>
+            </svg>
+          </button>
+          <button class="tg seg on" data-t="d1h" aria-pressed="true" aria-label="House" title="House">
+            <svg width="26" height="39" viewBox="0 0 20 32">
+              <path class="glyph-fill stroke" stroke-width="1.4" d="M2.5 14.5 h15 v11.5 h-15 z"/>
+              <path class="stroke" stroke-width="1.4" d="M1 29.5 h18" fill="none"/>
+              <text x="10" y="24" text-anchor="middle" font-size="10" font-weight="800" fill="currentColor" stroke="none" font-family="inherit">H</text>
+            </svg>
+          </button>
+        </span>
+        <button class="tg" data-t="d1w" aria-pressed="false" aria-label="White House (Executive)" title="White House — Executive" style="padding:0 10px; min-height:53px; border-radius:12px;">
+          <svg width="41" height="39" viewBox="0 0 34 32">
+            <path class="glyph-fill stroke" stroke-width="1.4" d="M3 16.5 h28 v9.5 H3 z"/>
+            <path class="stroke" stroke-width="1.4" d="M10 16.5 l7-5.5 7 5.5 M17 5 v3.5 M12.5 20.5 v5.5 M17 20.5 v5.5 M21.5 20.5 v5.5 M1.5 29.5 h31" fill="none"/>
+          </svg>
+        </button>
+      </div>
+      <div class="rows">
+        <div class="frow"><span class="fpill" style="width:28%"></span><span class="fpill" style="width:18%"></span><span class="fpill" style="width:12%"></span><span class="fpill" style="width:20%"></span></div>
+        <div class="frow"><span class="fpill" style="width:40%"></span><span class="fpill" style="width:24%"></span><span class="fpill" style="width:14%"></span></div>
+      </div>
+    </div>
+    <div class="caption" style="width:100%;"><span>desktop · glyphs 39 px, hover tooltips name the chambers</span><span>same component, one size token</span></div>
+
+    <div class="anatomy">
+      <div class="spec acc">
+        <svg width="96" height="52" viewBox="0 0 48 26">
+          <path class="fillme stroke" stroke-width="1" d="M2 15 h12 v7 H2 z M34 15 h12 v7 h-12 z" />
+          <path class="stroke" stroke-width="1" d="M17 12 h14 v10 M17 22 v-10 M14 12.5 V22 M34 12.5 V22 M1 22 h46 M21 9 h6 M21.5 9 c0-3 1-4.6 2.5-4.6 s2.5 1.6 2.5 4.6 M24 2.6 v1.8" fill="none"/>
+          <circle cx="24" cy="2" r=".9" fill="currentColor" stroke="none"/>
+          <text x="8" y="21" text-anchor="middle" font-size="6.5" font-weight="800" fill="currentColor" stroke="none" font-family="inherit">S</text>
+          <text x="40" y="21" text-anchor="middle" font-size="6.5" font-weight="800" fill="currentColor" stroke="none" font-family="inherit">H</text>
+        </svg>
+        <span class="note">wings map to the real chambers — Senate north, House south</span>
+      </div>
+      <div class="spec">
+        <svg width="60" height="52" viewBox="0 0 30 26">
+          <path class="stroke" stroke-width="1" d="M3 13 h24 v9 H3 z M9 13 l6-4.5 6 4.5 M15 3.5 v2.2 M11.5 17 v5 M15 17 v5 M18.5 17 v5 M2 22 h26" fill="none"/>
+        </svg>
+        <span class="note">pediment + columns ≠ dome, even at 20 px</span>
+      </div>
+    </div>
+
+    <ul class="pc">
+      <li class="plus"><strong>Teaches the civics as it filters</strong> — the wing assignment is factually right, which makes the icon memorable instead of arbitrary.</li>
+      <li class="plus">Narrowest way to expose all three toggles plus a "whole Congress" affordance.</li>
+      <li class="minus">Wing tap targets are ~34 px; needs generous hit-slop padding to be comfortable.</li>
+      <li class="minus">The dome's select-all behavior must be learned (a first-run tooltip covers it).</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="concept">
+    <div class="c-head"><span class="c-num">02</span><h2>Three badge chips</h2></div>
+    <p class="c-sub">Every branch gets an equal-weight chip: dome-with-H, dome-with-S, White House glyph. No grouping, no hidden behavior — three independent switches, same as the shipped chip filter but pictographic.</p>
+
+    <div class="phone">
+      <div class="bar">
+        <span class="brand">Congress<em>.Trade</em></span>
+        <span class="spacer"></span>
+        <button class="tg on" data-t="one" aria-pressed="true" aria-label="House" title="House" style="padding:0 7px;">
+          <svg width="24" height="26" viewBox="0 0 24 26">
+            <path class="glyph-fill stroke" stroke-width="1.4" d="M4 11.5 h16 v10.5 H4 z"/>
+            <path class="stroke" stroke-width="1.4" d="M7 11.5 h10 M8.2 11.5 c0-3.4 1.5-5.2 3.8-5.2 s3.8 1.8 3.8 5.2 M12 3.4 v2 M2.5 22 h19" fill="none"/>
+            <text x="12" y="20" text-anchor="middle" font-size="8" font-weight="800" fill="currentColor" stroke="none" font-family="inherit">H</text>
+          </svg>
+        </button>
+        <button class="tg on" data-t="two" aria-pressed="true" aria-label="Senate" title="Senate" style="padding:0 7px;">
+          <svg width="24" height="26" viewBox="0 0 24 26">
+            <path class="glyph-fill stroke" stroke-width="1.4" d="M4 11.5 h16 v10.5 H4 z"/>
+            <path class="stroke" stroke-width="1.4" d="M7 11.5 h10 M8.2 11.5 c0-3.4 1.5-5.2 3.8-5.2 s3.8 1.8 3.8 5.2 M12 3.4 v2 M2.5 22 h19" fill="none"/>
+            <text x="12" y="20" text-anchor="middle" font-size="8" font-weight="800" fill="currentColor" stroke="none" font-family="inherit">S</text>
+          </svg>
+        </button>
+        <button class="tg" data-t="three" aria-pressed="false" aria-label="White House (Executive)" title="White House — Executive" style="padding:0 7px;">
+          <svg width="28" height="26" viewBox="0 0 28 26">
+            <path class="glyph-fill stroke" stroke-width="1.4" d="M2.5 13 h23 v9 h-23 z"/>
+            <path class="stroke" stroke-width="1.4" d="M8 13 l6-4.5 6 4.5 M14 3.5 v2.2 M10.5 17 v5 M14 17 v5 M17.5 17 v5 M1.5 22 h25" fill="none"/>
+          </svg>
+        </button>
+      </div>
+      <div class="rows">
+        <div class="frow"><span class="fpill" style="width:38%"></span><span class="fpill" style="width:22%"></span><span class="fpill" style="width:17%"></span></div>
+        <div class="frow"><span class="fpill" style="width:52%"></span><span class="fpill" style="width:30%"></span></div>
+      </div>
+    </div>
+    <div class="caption"><span>390 px · toggles ≈ 132 px total</span><span>independent switches</span></div>
+
+    <ul class="pc">
+      <li class="plus"><strong>Zero learning curve</strong> — three buttons, three states, exactly the mental model of the current chip row.</li>
+      <li class="plus">Each target is a full-size chip; best ergonomics of the four.</li>
+      <li class="minus">H and S chips are twins except for one small letter — at a glance the row reads as "two capitols," and the letter does all the work.</li>
+      <li class="minus">Widest footprint; crowds a 320 px viewport once search/menu icons join the bar.</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="concept">
+    <div class="c-head"><span class="c-num">03</span><h2>Congress pill with nested H / S</h2></div>
+    <p class="c-sub">Your suggestion, literally: one pill represents the legislative branch — small Capitol glyph as its emblem, H and S as round mini-toggles inside it. The White House stands alone as the executive toggle. The grouping tells users H and S are siblings before they read anything.</p>
+
+    <div class="phone">
+      <div class="bar">
+        <span class="brand">Congress<em>.Trade</em></span>
+        <span class="spacer"></span>
+        <span class="pill" role="group" aria-label="Congress filter">
+          <svg width="18" height="20" viewBox="0 0 22 24" style="color:var(--site-dim)">
+            <path class="stroke" stroke-width="1.5" d="M4 10.5 h14 v9 H4 z M7 10.5 h8 M7.9 10.5 c0-3 1.3-4.6 3.1-4.6 s3.1 1.6 3.1 4.6 M11 3 v1.8 M2.5 19.5 h17" fill="none"/>
+          </svg>
+          <button class="tg lt on" data-t="c3h" aria-pressed="true" aria-label="House" title="House">H</button>
+          <button class="tg lt on" data-t="c3s" aria-pressed="true" aria-label="Senate" title="Senate">S</button>
+        </span>
+        <button class="tg" data-t="c3w" aria-pressed="false" aria-label="White House (Executive)" title="White House — Executive" style="padding:0 8px; border-radius:999px;">
+          <svg width="28" height="24" viewBox="0 0 28 26">
+            <path class="glyph-fill stroke" stroke-width="1.4" d="M2.5 13 h23 v9 h-23 z"/>
+            <path class="stroke" stroke-width="1.4" d="M8 13 l6-4.5 6 4.5 M14 3.5 v2.2 M10.5 17 v5 M14 17 v5 M17.5 17 v5 M1.5 22 h25" fill="none"/>
+          </svg>
+        </button>
+      </div>
+      <div class="rows">
+        <div class="frow"><span class="fpill" style="width:38%"></span><span class="fpill" style="width:22%"></span><span class="fpill" style="width:17%"></span></div>
+        <div class="frow"><span class="fpill" style="width:52%"></span><span class="fpill" style="width:30%"></span></div>
+      </div>
+    </div>
+    <div class="caption"><span>390 px · toggles ≈ 140 px total</span><span>branch grouping is explicit</span></div>
+
+    <ul class="pc">
+      <li class="plus"><strong>Clearest information architecture</strong> — legislative vs executive is structural, not implied; scales to a third pill if the judiciary ever matters.</li>
+      <li class="plus">Capitol emblem never changes state, so it stays a legible landmark while H/S flip.</li>
+      <li class="minus">Widest of the compact options; the pill chrome spends pixels on grouping rather than targets.</li>
+      <li class="minus">Letter circles are abstract — the buildings live outside the toggles, so the tappable things themselves are just type.</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="concept">
+    <div class="c-head"><span class="c-num">04</span><h2>Ultra-compact segmented strip — H · S · P</h2><span class="rec">Chosen · compact fallback</span></div>
+    <p class="c-sub">The collapse target when the header can't afford concept 01: one segmented control, three letters — H, S, and <strong>P for President</strong>, keeping the system letter-pure instead of mixing a building glyph into a type row. ~92&nbsp;px all-in. Below the breakpoint, concept 01 swaps to this; the full labeled chips stay available in the filter sheet.</p>
+
+    <div class="phone" style="width:min(320px,100%);">
+      <div class="bar">
+        <span class="brand">Congress<em>.Trade</em></span>
+        <span class="spacer"></span>
+        <span class="segctl" role="group" aria-label="Chamber filter">
+          <button class="tg on lab" data-t="c4h" aria-pressed="true" aria-label="House" title="House">H</button>
+          <button class="tg on lab" data-t="c4s" aria-pressed="true" aria-label="Senate" title="Senate">S</button>
+          <button class="tg lab" data-t="c4p" aria-pressed="false" aria-label="President (Executive)" title="President — Executive">P</button>
+        </span>
+      </div>
+      <div class="rows">
+        <div class="frow"><span class="fpill" style="width:38%"></span><span class="fpill" style="width:22%"></span><span class="fpill" style="width:17%"></span></div>
+        <div class="frow"><span class="fpill" style="width:52%"></span><span class="fpill" style="width:30%"></span></div>
+      </div>
+    </div>
+    <div class="caption" style="width:min(320px,100%);"><span>320 px worst case · toggles ≈ 92 px</span><span>P = President, analogous to H / S</span></div>
+
+    <ul class="pc">
+      <li class="plus"><strong>Smallest footprint</strong> — survives 320 px alongside search and menu icons.</li>
+      <li class="plus">Letter-pure: H · S · P are the same kind of thing, so the row scans as one alphabet, not two icons and a letter.</li>
+      <li class="plus">Segmented form already says "these are one filter" without extra chrome.</li>
+      <li class="minus">P is the one letter users must learn (it's President, not a chamber); the tooltip and filter sheet spell it out.</li>
+      <li class="minus">Mixed on/off states inside one visual object can read as "broken" to some users; needs strong on-state contrast.</li>
+    </ul>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="qs">
+    <h2>To decide before implementation</h2>
+    <ol>
+      <li><strong>Dome behavior (concept 01):</strong> select-all/clear-all, or purely decorative? I'd make it toggle both wings — it gives "all of Congress" a one-tap gesture and the ≥1-chip-always-on rule still guards against empty states.</li>
+      <li><strong>Defaults stay as shipped:</strong> House + Senate on, White House off — the icons change the presentation, not the separate-by-default contract.</li>
+      <li><strong>Responsive ladder (decided):</strong> desktop and normal phones get concept 01 at the larger scale; when the header genuinely can't afford it, it collapses to the H·S·P strip (concept 04). Tooltips/long-press name the chambers at every size.</li>
+      <li><strong>State redundancy:</strong> on-state = accent stroke + tinted fill + full-opacity glyph; off = dim outline. Never color alone — the fill differences survive grayscale.</li>
+      <li><strong>First-run hint:</strong> one-time tooltip on the White House toggle ("New: Executive branch trades — OGE Form 278-T") doubles as feature announcement for the Trump tracking.</li>
+    </ol>
+    <p class="hint">All glyphs are hand-drawn stroke SVGs on the site's tokens (--accent #4f8cff on #15203a) — no icon-font or asset pipeline needed; they inline into dashboardHtml.ts as-is.</p>
+  </section>
+</div>
+
+<script>
+  var CAP_GROUPS = ['c1', 'd1']; // mobile + desktop instances of concept 01
+  function seg(p, k) { return document.querySelector('[data-t="' + p + k + '"]'); }
+  document.querySelectorAll('.tg[data-t]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var id = b.getAttribute('data-t');
+      var p = id.slice(0, 2), k = id.slice(2);
+      if (CAP_GROUPS.indexOf(p) >= 0 && k === 'd') { // dome: select all / clear all of congress
+        var s = seg(p, 's'), h = seg(p, 'h');
+        var anyOn = s.classList.contains('on') || h.classList.contains('on');
+        [s, h, b].forEach(function (el) {
+          el.classList.toggle('on', !anyOn);
+          el.setAttribute('aria-pressed', String(!anyOn));
+        });
+        return;
+      }
+      b.classList.toggle('on');
+      b.setAttribute('aria-pressed', b.classList.contains('on') ? 'true' : 'false');
+      if (CAP_GROUPS.indexOf(p) >= 0 && (k === 's' || k === 'h')) { // dome on iff both wings on
+        var s2 = seg(p, 's'), h2 = seg(p, 'h'), d = seg(p, 'd');
+        var both = s2.classList.contains('on') && h2.classList.contains('on');
+        d.classList.toggle('on', both);
+        d.setAttribute('aria-pressed', String(both));
+      }
+    });
+  });
+</script>
