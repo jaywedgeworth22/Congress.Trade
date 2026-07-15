@@ -189,16 +189,16 @@ describe('durable SSE admission', () => {
     const { env, leases } = makeEnv();
     const startedAt = Date.now();
     const response = await openSseStream(env, sub.id, 7, sub.secret, '203.0.113.1', {
-      maxStreamMs: 100,
+      maxStreamMs: 250,
       pollIntervalMs: 10,
-      reconnectGraceMs: 25,
-      slowReaderTimeoutMs: 80,
+      reconnectGraceMs: 125,
+      slowReaderTimeoutMs: 150,
     });
 
     const payload = await response.text();
     expect(payload).toContain('event: cursor\ndata: 7');
     expect(payload).toContain('event: reconnect');
-    expect(Date.now() - startedAt).toBeLessThan(500);
-    await vi.waitFor(() => expect(leases.size).toBe(0), { timeout: 500 });
+    expect(Date.now() - startedAt).toBeLessThan(750);
+    await vi.waitFor(() => expect(leases.size).toBe(0), { timeout: 750 });
   });
 });

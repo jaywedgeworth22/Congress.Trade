@@ -1771,10 +1771,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <label class="lbl" for="benchmarkHistory">Saved run</label>
         <select id="benchmarkHistory" onchange="loadBenchmarkRun(this.value)" aria-label="Saved benchmark run"><option value="">No saved runs</option></select>
         <button class="btn ghost sm" onclick="loadBenchmarkHistory()">Reload</button>
+        <button class="btn ghost sm" id="btnClearBenchmarkHistory" onclick="clearBenchmarkHistory()">Clear History</button>
         <button class="btn sm" id="btnRunBenchmark" onclick="runChamberBenchmark()">Run House benchmark</button>
+        <button class="btn ghost sm" id="btnRunAllBenchmarks" onclick="runAllBenchmarks()">Run all 3 branches</button>
         <button class="btn ghost sm" id="btnCancelBenchmark" onclick="cancelBenchmarkRun()" hidden>Stop and keep partial results</button>
       </div>
       <div id="benchmarkSettingsSummary" class="note">Loading saved House lineup…</div>
+      <div id="benchmarkManualLineup"></div>
       <div id="benchmarkMsg" class="note" role="status" aria-live="polite"></div>
       <div id="benchmarkResults" aria-live="polite"><div class="state">Loading saved House benchmarks…</div></div>
     </div>
@@ -5043,6 +5046,44 @@ function renderBenchmarkSettingsSummary() {
     ? ' <span class="note">Preview is read-only; save in production after approval.</span>'
     : '';
   box.innerHTML = '<strong>Saved ' + esc(benchmarkChamberLabel(benchmarkState.chamber)) + ' autopublish lineup:</strong> ' + esc(values.join(' · ')) + previewNote;
+  renderManualBenchmarkLineup();
+}
+
+function benchmarkCatalogModels() {
+  return ((benchmarkState.settings && benchmarkState.settings.catalog) || []).filter(function(model) {
+    return model && model.provider && model.model;
+  });
+}
+
+function benchmarkManualOptionHtml(selected) {
+  return benchmarkCatalogModels().map(function(model) {
+    var value = benchmarkModelKey(model);
+    var suffix = model.configured ? '' : ' (not configured)';
+    return '<option value="' + esc(value) + '"' + (value === selected ? ' selected' : '') +
+      (model.configured ? '' : ' disabled') + '>' + esc(value + suffix) + '</option>';
+  }).join('');
+}
+
+function renderManualBenchmarkLineup() {
+  var container = el('benchmarkManualLineup');
+  if (!container) return;
+  var settings = benchmarkState.settings;
+  if (!settings || settings.writeProtected) {
+    container.innerHTML = settings && settings.writeProtected
+      ? '<div class="benchmark-panel"><h4>Manual autopublish lineup</h4><div class="state">Preview is read-only; save the live lineup in production after approval.</div></div>'
+      : '';
+    return;
+  }
+  var saved = normalizedBenchmarkLineup(settings);
+  container.innerHTML = '<div class="benchmark-panel"><h4>Manual autopublish lineup</h4>' +
+    '<p class="sub">Choose A/B/C directly from the configured provider catalog. This does not require a completed benchmark run; benchmark-backed saves remain available below when a run has enough evidence.</p>' +
+    '<div class="benchmark-lineup">' +
+    '<label class="lbl">Model A (Primary)<select id="manualModelA">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.a)) + '</select></label>' +
+    '<label class="lbl">Model B (Crosscheck)<select id="manualModelB">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.b)) + '</select></label>' +
+    '<label class="lbl">Model C (Resolver)<select id="manualModelC">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.c)) + '</select></label>' +
+    '</div>' +
+    '<div class="row-flex"><button class="btn sm" id="saveManualBenchmarkLineup" onclick="saveManualBenchmarkLineup()">Save manual ' + esc(benchmarkChamberLabel(benchmarkState.chamber)) + ' lineup</button>' +
+    '<span id="manualBenchmarkLineupStatus" class="note" role="status"></span></div></div>';
 }
 
 function setBenchmarkButtons() {
@@ -5073,6 +5114,11 @@ function setBenchmarkButtons() {
     var pausedRun = benchmarkState.current && benchmarkState.current.status === 'running' && !benchmarkState.running;
     cancelButton.hidden = !pausedRun;
     cancelButton.disabled = !pausedRun;
+  }
+  var runAllButton = el('btnRunAllBenchmarks');
+  if (runAllButton) {
+    runAllButton.disabled = benchmarkState.running;
+    runAllButton.textContent = benchmarkState.running ? 'Benchmarks running...' : 'Run all 3 branches';
   }
 }
 
@@ -5178,6 +5224,27 @@ async function cancelBenchmarkRun() {
     if (button) button.disabled = false;
   } finally {
     setBenchmarkButtons();
+  }
+}
+
+async function clearBenchmarkHistory() {
+  if (benchmarkState.running) return;
+  var chamber = benchmarkState.chamber;
+  var label = benchmarkChamberLabel(chamber);
+  if (!window.confirm('Clear saved ' + label + ' benchmark history?\\n\\nThis deletes saved runs, documents, and model results for this branch. It does not change the saved A/B/C autopublish lineup.')) return;
+  var msg = el('benchmarkMsg');
+  if (msg) { msg.style.color = ''; msg.textContent = 'Clearing saved ' + label + ' benchmark history…'; }
+  try {
+    var result = await apiCall('/api/admin/benchmark/runs?chamber=' + encodeURIComponent(chamber), 'DELETE');
+    benchmarkState.current = null;
+    benchmarkState.runs = [];
+    await loadBenchmarkHistory(chamber);
+    if (msg) {
+      msg.style.color = 'var(--warn)';
+      msg.textContent = 'Cleared ' + result.runsDeleted + ' saved ' + label + ' benchmark run' + (result.runsDeleted === 1 ? '' : 's') + '.';
+    }
+  } catch (error) {
+    if (msg) { msg.style.color = 'var(--neg)'; msg.textContent = 'Could not clear benchmark history: ' + error.message; }
   }
 }
 
@@ -5483,6 +5550,40 @@ async function saveBenchmarkLineup() {
   }
 }
 
+async function saveManualBenchmarkLineup() {
+  if (benchmarkState.settings && benchmarkState.settings.writeProtected) return;
+  var lineup = {
+    a: benchmarkModelRef(el('manualModelA') && el('manualModelA').value),
+    b: benchmarkModelRef(el('manualModelB') && el('manualModelB').value),
+    c: benchmarkModelRef(el('manualModelC') && el('manualModelC').value)
+  };
+  var invalid = validateBenchmarkLineup(lineup);
+  var status = el('manualBenchmarkLineupStatus');
+  if (invalid) { if (status) { status.style.color = 'var(--neg)'; status.textContent = invalid; } return; }
+  var previous = normalizedBenchmarkLineup(benchmarkState.settings);
+  var currentText = 'A ' + (benchmarkModelKey(previous.a) || 'not set') + '\\nB ' + (benchmarkModelKey(previous.b) || 'not set') + '\\nC ' + (benchmarkModelKey(previous.c) || 'not set');
+  var nextText = 'A ' + benchmarkModelKey(lineup.a) + '\\nB ' + benchmarkModelKey(lineup.b) + '\\nC ' + benchmarkModelKey(lineup.c);
+  if (!window.confirm('Save this manual live ' + benchmarkChamberLabel(benchmarkState.chamber) + ' autopublish lineup?\\n\\nCurrent:\\n' + currentText + '\\n\\nNew:\\n' + nextText)) return;
+  var button = el('saveManualBenchmarkLineup');
+  if (button) button.disabled = true;
+  if (status) { status.style.color = ''; status.textContent = 'Saving and reading back the live settings…'; }
+  try {
+    var result = await apiCall('/api/admin/benchmark/settings/' + encodeURIComponent(benchmarkState.chamber), 'PUT', {
+      a: lineup.a,
+      b: lineup.b,
+      c: lineup.c,
+      expectedVersion: benchmarkState.settings && benchmarkState.settings.version
+    });
+    benchmarkState.settings = result.settings;
+    renderBenchmarkSettingsSummary();
+    if (status) { status.style.color = 'var(--pos)'; status.textContent = 'Manual lineup saved and verified.'; }
+  } catch (error) {
+    if (status) { status.style.color = 'var(--neg)'; status.textContent = 'Save failed: ' + error.message; }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function confirmBenchmarkUnknownOutcomeRetry(docId, model) {
   if (benchmarkState.unknownOutcomeRetryDecision !== null) {
     return benchmarkState.unknownOutcomeRetryDecision;
@@ -5530,8 +5631,9 @@ async function runBenchmarkCell(runId, docId, model) {
   throw lastError || new Error('Benchmark cell is still running; resume the saved run later.');
 }
 
-async function runChamberBenchmark(chamber) {
-  if (benchmarkState.running) return;
+async function runChamberBenchmark(chamber, options) {
+  options = options || {};
+  if (benchmarkState.running) return { status: 'busy' };
   if (chamber) benchmarkState.chamber = chamber;
   var selectedChamber = benchmarkState.chamber;
   var label = benchmarkChamberLabel(selectedChamber);
@@ -5548,7 +5650,7 @@ async function runChamberBenchmark(chamber) {
       blockedMsg.style.color = 'var(--warn)';
       blockedMsg.textContent = 'Select the paused ' + label + ' run and either Resume it or stop it before starting a clean run.';
     }
-    return;
+    return { status: 'blocked', message: 'paused run must be selected first' };
   }
   var models = resumable
     ? (resumable.models || [])
@@ -5557,12 +5659,12 @@ async function runChamberBenchmark(chamber) {
   var confirmText = resumable
     ? 'Resume the saved ' + label + ' benchmark?\\n\\nCompleted cells will be reused. Remaining untouched cells may make paid provider calls; if the original reservation was on a prior UTC day, this confirmation authorizes a new-day reservation for each remaining cell. An expired cell may already have been billed even though no provider outcome was saved. If one is found, you will be asked once before any retry; unreconciled prior billing keeps measured cost partial.'
     : 'Run the ' + label + ' benchmark now?\\n\\nThis will use up to ' + limit + ' filings and make up to ' + maxCalls + ' paid provider calls. Known-unavailable GPT-5.6 models will be excluded by a project-access readiness check before call reservation. Resolved ground-truth coverage is shown separately. Each completed call, latency, usage, and measurable cost will be saved.';
-  if (!window.confirm(confirmText)) return;
+  if (!options.skipConfirm && !window.confirm(confirmText)) return { status: 'cancelled' };
   benchmarkState.unknownOutcomeRetryDecision = null;
   benchmarkState.running = true;
   setBenchmarkButtons();
   var msg = el('benchmarkMsg');
-  if (msg) { msg.style.color = ''; msg.textContent = (resumable ? 'Resuming' : 'Creating') + ' the saved ' + label + ' run…'; }
+    if (msg) { msg.style.color = ''; msg.textContent = (resumable ? 'Resuming' : 'Creating') + ' the saved ' + label + ' run…'; }
   try {
     var started = resumable
       ? { run: resumable, docs: resumable.documents || [] }
@@ -5576,6 +5678,11 @@ async function runChamberBenchmark(chamber) {
     var run = started.run;
     var docs = started.docs || [];
     var skippedModels = started.skippedModels || [];
+    var reusedCells = Number(started.reusedCells || 0);
+    var callsNeedingReservation = Number(started.callsNeedingReservation == null ? started.plannedCalls || 0 : started.callsNeedingReservation);
+    if (!resumable && msg && reusedCells > 0) {
+      msg.textContent = 'Created ' + label + ' run: reused ' + reusedCells + ' prior successful cells; ' + callsNeedingReservation + ' cells may call providers.';
+    }
     // The server may remove models that its access diagnostic proves this
     // project cannot invoke. Drive cells from the persisted run, never the
     // preflight request, so excluded models cannot leak into paid execution.
@@ -5614,13 +5721,56 @@ async function runChamberBenchmark(chamber) {
       msg.style.color = feedback.warning ? 'var(--warn)' : 'var(--pos)';
       msg.textContent = feedback.message;
     }
+    return { status: 'completed', runId: completedRun.run && completedRun.run.id, reusedCells: reusedCells, reusedBillableCells: Number(started.reusedBillableCells || 0), callsNeedingReservation: callsNeedingReservation };
   } catch (error) {
     var stoppedMessage = label + ' benchmark paused: ' + error.message + '. Completed readings remain saved; select this run and Resume to continue.';
     await loadBenchmarkHistory(selectedChamber).catch(function() {});
     if (msg) { msg.style.color = 'var(--neg)'; msg.textContent = stoppedMessage; }
+    return { status: 'stopped', message: error.message };
   } finally {
     benchmarkState.running = false;
     setBenchmarkButtons();
+  }
+}
+
+async function runAllBenchmarks() {
+  if (benchmarkState.running) return;
+  var originalChamber = benchmarkState.chamber;
+  var chambers = ['house', 'senate', 'executive'];
+  if (!window.confirm(
+    'Run House, Senate, and Executive benchmarks now?\\n\\nEach branch saves its own history. Prior successful same-doc/model readings are reused, and only missing configured cells may make paid provider calls.'
+  )) return;
+  var msg = el('benchmarkMsg');
+  var summaries = [];
+  for (var i = 0; i < chambers.length; i++) {
+    var chamber = chambers[i];
+    benchmarkState.chamber = chamber;
+    if (msg) {
+      msg.style.color = '';
+      msg.textContent = 'Running ' + benchmarkChamberLabel(chamber) + ' benchmark (' + (i + 1) + '/3)…';
+    }
+    try {
+      await loadBenchmarkHistory(chamber);
+      var result = await runChamberBenchmark(chamber, { skipConfirm: true });
+      if (result && result.status === 'completed') {
+        summaries.push(benchmarkChamberLabel(chamber) + ': saved' + (result.reusedCells ? ' (' + result.reusedCells + ' reused)' : ''));
+      } else if (result && result.status === 'cancelled') {
+        summaries.push(benchmarkChamberLabel(chamber) + ': cancelled');
+        break;
+      } else {
+        summaries.push(benchmarkChamberLabel(chamber) + ': ' + ((result && result.message) || 'not completed'));
+        break;
+      }
+    } catch (error) {
+      summaries.push(benchmarkChamberLabel(chamber) + ': ' + error.message);
+      break;
+    }
+  }
+  benchmarkState.chamber = originalChamber;
+  await loadBenchmarkHistory(originalChamber).catch(function() {});
+  if (msg) {
+    msg.style.color = summaries.length === 3 ? 'var(--pos)' : 'var(--warn)';
+    msg.textContent = 'Run-all complete: ' + summaries.join(' · ');
   }
 }
 

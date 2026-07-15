@@ -54,6 +54,15 @@ export interface BeginBenchmarkRunInput {
   startedAt?: string;
 }
 
+export interface ReuseBenchmarkMeasurementsInput {
+  runId: string;
+  chamber: BenchmarkChamber;
+  models: BenchmarkModelRef[];
+  billableModels?: BenchmarkModelRef[];
+  documents: BenchmarkDocumentInput[];
+  reusedAt?: string;
+}
+
 export interface BenchmarkMeasurementInput {
   runId: string;
   docId: string;
@@ -475,6 +484,84 @@ export async function beginBenchmarkRun(
     createdAt: startedAt,
     updatedAt: startedAt,
   };
+}
+
+/**
+ * Copy the newest prior successful reading for the same chamber/doc/model into
+ * a new run. This is deliberately scoped to exact doc id plus provider:model so
+ * an operator can rerun House/Senate/Executive without paying again for cells
+ * already proven successful. Completion rescoring refreshes accuracy/F1 against
+ * the new run's ground-truth snapshot.
+ */
+export async function reuseSuccessfulBenchmarkMeasurements(
+  db: D1Database,
+  input: ReuseBenchmarkMeasurementsInput,
+): Promise<{ attempted: number; reused: number; reusedBillable: number }> {
+  if (!BENCHMARK_CHAMBERS.includes(input.chamber)) throw new Error('invalid benchmark chamber');
+  const runId = cleanPart(input.runId, 'runId');
+  const reusedAt = input.reusedAt ?? new Date().toISOString();
+  if (!Number.isFinite(Date.parse(reusedAt))) throw new Error('reusedAt must be an ISO timestamp');
+  const models = input.models.map((model) => ({
+    provider: cleanPart(model.provider, 'provider'),
+    model: cleanPart(model.model, 'model'),
+  }));
+  const billableKeys = new Set((input.billableModels ?? input.models).map((model) =>
+    `${cleanPart(model.provider, 'provider')}:${cleanPart(model.model, 'model')}`,
+  ));
+  const docIds = input.documents.map((document) => cleanPart(document.docId, 'docId'));
+  const statements: Array<{
+    sql: string;
+    params: Array<string | number | null>;
+    billable: boolean;
+  }> = [];
+  for (const docId of docIds) {
+    for (const model of models) {
+      statements.push({
+        sql: `INSERT INTO benchmark_model_results
+           (run_id, doc_id, provider, model, resolved_model, invoked, ok, outcome,
+            autonomous, error, row_count, avg_confidence, latency_ms, cost_usd,
+            cost_source, cost_detail_json, provider_request_id, usage_json,
+            result_json, perfect_match, true_positive, false_positive,
+            false_negative, started_at, completed_at, created_at)
+         SELECT ?, ?, provider, model, resolved_model, invoked, ok, outcome,
+                autonomous, error, row_count, avg_confidence, latency_ms, cost_usd,
+                cost_source, cost_detail_json, provider_request_id, usage_json,
+                result_json, perfect_match, true_positive, false_positive,
+                false_negative, started_at, completed_at, ?
+           FROM (
+             SELECT bmr.*
+               FROM benchmark_model_results bmr
+               JOIN benchmark_runs br ON br.id = bmr.run_id
+              WHERE br.chamber = ?
+                AND br.id <> ?
+                AND bmr.doc_id = ?
+                AND bmr.provider = ?
+                AND bmr.model = ?
+                AND bmr.outcome <> 'running'
+                AND bmr.ok = 1
+                AND bmr.claim_token IS NULL
+              ORDER BY br.started_at DESC, bmr.completed_at DESC, bmr.created_at DESC
+              LIMIT 1
+           )
+         ON CONFLICT (run_id, doc_id, provider, model) DO NOTHING`,
+        params: [runId, docId, reusedAt, input.chamber, runId, docId, model.provider, model.model],
+        billable: billableKeys.has(`${model.provider}:${model.model}`),
+      });
+    }
+  }
+  if (!statements.length) return { attempted: 0, reused: 0, reusedBillable: 0 };
+  let reused = 0;
+  let reusedBillable = 0;
+  for (let offset = 0; offset < statements.length; offset += 50) {
+    const chunk = statements.slice(offset, offset + 50);
+    const results = await batch(db, chunk.map((entry) => [entry.sql, entry.params]));
+    results.forEach((result, index) => {
+      const changes = Number(result.meta?.changes ?? 0);
+      reused += changes;
+      if (chunk[index]?.billable) reusedBillable += changes;
+    });
+  }
+  return { attempted: statements.length, reused, reusedBillable };
 }
 
 export async function getRunningBenchmarkRun(
@@ -1066,7 +1153,16 @@ export async function completeBenchmarkRun(
   let detail = await getBenchmarkRun(db, runId);
   if (!detail) throw new Error(`benchmark run ${runId} not found`);
   if (!runUsesCurrentScoringProfile(detail)) {
-    const rescored = await rescoreBenchmarkRun(db, detail.id, completedAt);
+    let rescored: BenchmarkRescoreResult | null;
+    try {
+      rescored = await rescoreBenchmarkRun(db, detail.id, completedAt);
+    } catch (error) {
+      const current = await getBenchmarkRun(db, runId);
+      if (current && current.status !== 'running') {
+        throw new BenchmarkRunStateConflictError(current.status);
+      }
+      throw error;
+    }
     if (!rescored) throw new Error(`benchmark run ${runId} disappeared during rescore`);
     detail = rescored.run;
   }
@@ -1205,4 +1301,46 @@ export async function listBenchmarkRuns(
         [limit],
       );
   return rows.map(mapRun);
+}
+
+export async function clearBenchmarkRuns(
+  db: D1Database,
+  chamber: BenchmarkChamber,
+): Promise<{ runsDeleted: number; documentsDeleted: number; resultsDeleted: number }> {
+  const active = await get<{ id: string }>(
+    db,
+    "SELECT id FROM benchmark_runs WHERE chamber = ? AND status = 'running' LIMIT 1",
+    [chamber],
+  );
+  if (active) {
+    throw new BenchmarkActiveRunConflictError(chamber, active.id);
+  }
+  const runRows = await all<{ id: string }>(
+    db,
+    'SELECT id FROM benchmark_runs WHERE chamber = ?',
+    [chamber],
+  );
+  if (!runRows.length) return { runsDeleted: 0, documentsDeleted: 0, resultsDeleted: 0 };
+  const runIds = runRows.map((row) => row.id);
+  const placeholders = runIds.map(() => '?').join(', ');
+  const results = await run(
+    db,
+    `DELETE FROM benchmark_model_results WHERE run_id IN (${placeholders})`,
+    runIds,
+  );
+  const documents = await run(
+    db,
+    `DELETE FROM benchmark_run_documents WHERE run_id IN (${placeholders})`,
+    runIds,
+  );
+  const runs = await run(
+    db,
+    `DELETE FROM benchmark_runs WHERE id IN (${placeholders}) AND chamber = ?`,
+    [...runIds, chamber],
+  );
+  return {
+    runsDeleted: Number(runs.meta?.changes ?? 0),
+    documentsDeleted: Number(documents.meta?.changes ?? 0),
+    resultsDeleted: Number(results.meta?.changes ?? 0),
+  };
 }

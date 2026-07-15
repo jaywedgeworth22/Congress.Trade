@@ -29,6 +29,7 @@ interface TelemetryContext {
 
 const context = new AsyncLocalStorage<TelemetryContext>();
 const USAGE_TELEMETRY_FALLBACK_PREFIX = '_ops/usage-telemetry/';
+const USAGE_TELEMETRY_FALLBACK_D1_LIMIT = 100;
 
 export interface UsageTelemetryFallbackHealth {
   available: boolean;
@@ -42,20 +43,29 @@ export async function inspectUsageTelemetryFallback(
   limit = 1_000,
 ): Promise<UsageTelemetryFallbackHealth> {
   const storage = (env as Partial<Env>).RAW_FILES;
-  if (!storage?.list) return { available: false, pending: null, truncated: false };
+  const boundedLimit = Math.max(1, Math.min(1_000, Math.floor(limit)));
+  let available = false;
+  let pending = 0;
+  let truncated = false;
   try {
-    const listed = await storage.list({
-      prefix: USAGE_TELEMETRY_FALLBACK_PREFIX,
-      limit: Math.max(1, Math.min(1_000, Math.floor(limit))),
-    });
-    return {
-      available: true,
-      pending: listed.objects.length,
-      truncated: listed.truncated === true,
-    };
-  } catch {
-    return { available: false, pending: null, truncated: false };
-  }
+    if (storage?.list) {
+      const listed = await storage.list({
+        prefix: USAGE_TELEMETRY_FALLBACK_PREFIX,
+        limit: boundedLimit,
+      });
+      available = true;
+      pending += listed.objects.length;
+      truncated = listed.truncated === true;
+    }
+  } catch {}
+  try {
+    const row = await env.DB.prepare(
+      'SELECT COUNT(*) AS pending FROM usage_telemetry_fallback_events',
+    ).first<{ pending: number }>();
+    available = true;
+    pending += Math.max(0, Number(row?.pending ?? 0));
+  } catch {}
+  return available ? { available, pending, truncated } : { available: false, pending: null, truncated: false };
 }
 
 export type DynamicThirdPartyTarget =
@@ -350,6 +360,34 @@ function parseUsageTelemetryFallback(raw: string): ThirdPartyUsageTelemetryEvent
   return parsed as unknown as ThirdPartyUsageTelemetryEvent;
 }
 
+function usageTelemetryErrorType(error: unknown): string {
+  return error instanceof Error ? error.name : 'unknown';
+}
+
+function usageTelemetryLastError(error: unknown): string {
+  return stableTag(usageTelemetryErrorType(error), 'unknown');
+}
+
+async function persistUsageTelemetryD1Fallback(
+  env: Env,
+  event: ThirdPartyUsageTelemetryEvent,
+  error: unknown,
+): Promise<boolean> {
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    `INSERT INTO usage_telemetry_fallback_events
+       (idempotency_key, event_json, attempts, last_error, created_at, updated_at)
+     VALUES (?, ?, 0, ?, ?, ?)
+     ON CONFLICT(idempotency_key) DO UPDATE SET
+       event_json = excluded.event_json,
+       last_error = excluded.last_error,
+       updated_at = excluded.updated_at`,
+  )
+    .bind(event.idempotencyKey, JSON.stringify(event), usageTelemetryLastError(error), now, now)
+    .run();
+  return true;
+}
+
 /** Preserve an event when Queue delivery or receiver delivery cannot proceed. */
 export async function persistUsageTelemetryFallback(
   env: Env,
@@ -362,17 +400,28 @@ export async function persistUsageTelemetryFallback(
     });
     return true;
   } catch (error) {
-    // Sentry's own transport uses silentFailure: logging failure to meter the
-    // logging transport would recursively create another Sentry envelope.
-    if (!options.silentFailure) {
-      console.error('usage telemetry durability exhausted', {
-        provider: event.provider,
-        service: event.service,
-        label: event.label,
-        errorType: error instanceof Error ? error.name : 'unknown',
-      });
+    try {
+      await deliverUsageTelemetryEvent(env, event);
+      return true;
+    } catch (directError) {
+      try {
+        return await persistUsageTelemetryD1Fallback(env, event, directError);
+      } catch (d1Error) {
+        // Sentry's own transport uses silentFailure: logging failure to meter the
+        // logging transport would recursively create another Sentry envelope.
+        if (!options.silentFailure) {
+          console.error('usage telemetry durability exhausted', {
+            provider: event.provider,
+            service: event.service,
+            label: event.label,
+            fallbackErrorType: usageTelemetryErrorType(error),
+            directErrorType: usageTelemetryErrorType(directError),
+            d1ErrorType: usageTelemetryErrorType(d1Error),
+          });
+        }
+        return false;
+      }
     }
-    return false;
   }
 }
 
@@ -550,30 +599,73 @@ export interface UsageTelemetryFallbackFlushResult {
 }
 
 /**
- * Drain a bounded batch from the failure-only R2 outbox. Receiver failures are
- * retained without logging/Sentry capture to avoid outage amplification.
+ * Drain a bounded batch from the failure-only R2/D1 outboxes. Receiver failures
+ * are retained without logging/Sentry capture to avoid outage amplification.
  */
 export async function flushUsageTelemetryFallback(
   env: Env,
   options: { limit?: number } = {},
 ): Promise<UsageTelemetryFallbackFlushResult> {
   const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 25)));
-  const listed = await env.RAW_FILES.list({
-    prefix: USAGE_TELEMETRY_FALLBACK_PREFIX,
-    limit,
-  });
+  const storage = (env as Partial<Env>).RAW_FILES;
+  const db = (env as Partial<Env>).DB;
+  const listed = storage?.list
+    ? await storage.list({
+        prefix: USAGE_TELEMETRY_FALLBACK_PREFIX,
+        limit,
+      })
+    : { objects: [] };
   let delivered = 0;
   let failed = 0;
   for (const object of listed.objects) {
     try {
-      const body = await env.RAW_FILES.get(object.key);
+      const body = await storage?.get(object.key);
       if (!body) continue;
       const event = parseUsageTelemetryFallback(await body.text());
       await deliverUsageTelemetryEvent(env, event);
-      await env.RAW_FILES.delete(object.key);
+      await storage?.delete(object.key);
       delivered += 1;
     } catch {
       failed += 1;
+    }
+  }
+  const remainingLimit = Math.max(0, limit - listed.objects.length);
+  if (remainingLimit > 0 && db?.prepare) {
+    try {
+      const rows = await db.prepare(
+        `SELECT idempotency_key, event_json
+           FROM usage_telemetry_fallback_events
+          ORDER BY updated_at ASC
+          LIMIT ?`,
+      )
+        .bind(Math.min(remainingLimit, USAGE_TELEMETRY_FALLBACK_D1_LIMIT))
+        .all<{ idempotency_key: string; event_json: string }>();
+      for (const row of rows.results ?? []) {
+        try {
+          const event = parseUsageTelemetryFallback(row.event_json);
+          await deliverUsageTelemetryEvent(env, event);
+          await db.prepare(
+            'DELETE FROM usage_telemetry_fallback_events WHERE idempotency_key = ?',
+          )
+            .bind(row.idempotency_key)
+            .run();
+          delivered += 1;
+        } catch (error) {
+          failed += 1;
+          await db.prepare(
+            `UPDATE usage_telemetry_fallback_events
+                SET attempts = attempts + 1,
+                    last_error = ?,
+                    updated_at = ?
+              WHERE idempotency_key = ?`,
+          )
+            .bind(usageTelemetryLastError(error), new Date().toISOString(), row.idempotency_key)
+            .run();
+        }
+      }
+      return { listed: listed.objects.length + (rows.results?.length ?? 0), delivered, failed };
+    } catch {
+      return { listed: listed.objects.length, delivered, failed: failed + 1 };
     }
   }
   return { listed: listed.objects.length, delivered, failed };
