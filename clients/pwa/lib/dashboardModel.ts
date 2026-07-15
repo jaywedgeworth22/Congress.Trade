@@ -1,4 +1,10 @@
-export type ChamberFilter = '' | 'house' | 'senate';
+export type ChamberFilter = '' | 'house' | 'senate' | 'executive';
+
+const CHAMBER_LABELS: Record<Exclude<ChamberFilter, ''>, string> = {
+  house: 'House',
+  senate: 'Senate',
+  executive: 'Executive',
+};
 
 export interface AmountBracket {
   id: string;
@@ -62,7 +68,7 @@ export function filterSummary(filters: FeedFilters): string {
   const memberName = filters.memberName.trim();
   if (ticker) parts.push(`Ticker: ${ticker.toUpperCase()}`);
   if (memberName) parts.push(`Politician: ${memberName}`);
-  if (filters.chamber) parts.push(filters.chamber === 'house' ? 'House' : 'Senate');
+  if (filters.chamber) parts.push(CHAMBER_LABELS[filters.chamber]);
   const bracket = AMOUNT_BRACKETS.find((item) => item.id === filters.amountBracketId);
   if (bracket) parts.push(bracket.label);
   return parts.join(' · ');
@@ -82,6 +88,22 @@ export function parseWatchlist(value: string): string[] {
       .map((ticker) => ticker.trim().toUpperCase())
       .filter(Boolean),
   ));
+}
+
+/**
+ * Helper line for the Delivery form's read-only scope summary. A new
+ * delivery's `filters.tickers` comes straight from the current Watchlist
+ * textarea (see submitSubscription), so this mirrors the backend's
+ * empty-tickers semantics: an empty/absent `tickers` array matches every
+ * ticker rather than none (see `matchesFilters` and
+ * `validateSubscriptionFilters` in app/src/delivery/subscriptions.ts).
+ */
+export function deliveryScopeHelperText(tickers: string[]): string {
+  if (tickers.length === 0) {
+    return 'Scoped to all tickers — your watchlist above is empty.';
+  }
+  const noun = tickers.length === 1 ? 'ticker' : 'tickers';
+  return `Scoped to your watchlist above (${tickers.length} ${noun}).`;
 }
 
 export function commandBody(
