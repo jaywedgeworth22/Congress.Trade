@@ -11,6 +11,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Without this the self-hosted runner's job shell resolves node to the
+      # stock Ubuntu 20.04 /usr/bin/node (v10, no npm on PATH), so npm ci and
+      # every downstream workerd/miniflare step no-ops. Mirrors ci.yml/deploy.yml.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Ensure strace available (best effort)
+        continue-on-error: true
+        run: |
+          command -v strace >/dev/null 2>&1 || sudo apt-get update -qq && sudo apt-get install -y -qq strace || echo "strace unavailable; strace step will be skipped"
+
       - name: System info
         continue-on-error: true
         run: |
