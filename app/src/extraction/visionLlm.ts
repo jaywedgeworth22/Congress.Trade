@@ -409,12 +409,50 @@ export function parseModelJson(text: string): ModelTx[] {
   let cleaned = text.trim();
   // Strip ```json ... ``` fences if the model wrapped them despite the schema.
   cleaned = cleaned.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
+  
   let value: unknown;
+  let parseError: Error | undefined;
   try {
     value = JSON.parse(cleaned);
   } catch (err) {
-    throw new Error(`visionLlm: could not parse model JSON: ${(err as Error).message}`);
+    parseError = err as Error;
   }
+
+  // If initial JSON.parse failed, try to find a valid JSON array or object using regex
+  if (value === undefined) {
+    let fallbackSuccess = false;
+    
+    // Look for JSON array
+    const arrayMatches = cleaned.matchAll(/(\[[\s\S]*?\])/g);
+    for (const match of arrayMatches) {
+      try {
+        value = JSON.parse(match[1]);
+        fallbackSuccess = true;
+        break; // Stop at first successful parse
+      } catch {
+        // continue
+      }
+    }
+    
+    // Look for JSON object (if array not found)
+    if (!fallbackSuccess) {
+      const objMatches = cleaned.matchAll(/(\{[\s\S]*?\})/g);
+      for (const match of objMatches) {
+        try {
+          value = JSON.parse(match[1]);
+          fallbackSuccess = true;
+          break; // Stop at first successful parse
+        } catch {
+          // continue
+        }
+      }
+    }
+
+    if (!fallbackSuccess) {
+      throw new Error(`visionLlm: could not parse model JSON: ${parseError?.message}`);
+    }
+  }
+
   if (Array.isArray(value)) return value as ModelTx[];
   // Some responses wrap the array, e.g. { transactions: [...] }.
   if (value && typeof value === 'object') {

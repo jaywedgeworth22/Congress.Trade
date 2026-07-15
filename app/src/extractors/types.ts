@@ -297,6 +297,43 @@ export class ArbitratingExtractor implements Extractor {
 }
 
 /**
+ * FallbackExtractor tries the primary extractor first. If it throws an error
+ * (e.g. rate limit, API key missing), it runs the secondary extractor instead,
+ * preserving any usage incurred by the failed primary run.
+ */
+export class FallbackExtractor implements Extractor {
+  readonly name: string;
+
+  constructor(
+    private readonly primary: Extractor,
+    private readonly secondary: Extractor,
+  ) {
+    this.name = `fallback(${primary.name},${secondary.name})`;
+  }
+
+  canHandle(f: Filing): boolean {
+    return this.primary.canHandle(f) || this.secondary.canHandle(f);
+  }
+
+  async extract(input: ExtractorInput): Promise<ExtractorResult> {
+    try {
+      return await this.primary.extract(input);
+    } catch (error) {
+      const secondaryResult = await this.secondary.extract(input);
+      if (error && typeof error === 'object') {
+        const primaryRuns = modelRunsForError(error, this.primary.name);
+        const secRuns = modelRunsForResult(secondaryResult);
+        const modelRuns = [...primaryRuns, ...secRuns];
+        if (modelRuns.length > 0) {
+          secondaryResult.modelRuns = modelRuns;
+        }
+      }
+      return secondaryResult;
+    }
+  }
+}
+
+/**
  * House PDFs often have extractable text even when the cheap byte-sniff
  * classifier misses it. Prefer deterministic text parsing, then fall back to
  * vision only when text extraction produces no usable transaction rows.
@@ -348,7 +385,10 @@ export class HousePdfExtractor implements Extractor {
 export function buildExtractorPipeline(env: Env): Extractor[] {
   const senateHtml = new SenateHtmlExtractor();
   const textPdf = new TextPdfExtractor();
-  const visionLlm = new VisionLlmExtractor(env);
+  
+  const geminiVision = new VisionLlmExtractor(env);
+  const anthropicVision = new AnthropicVisionExtractor(env);
+  const visionLlmWithFallback = new FallbackExtractor(geminiVision, anthropicVision);
 
   // The secondary is ALWAYS constructed (construction does no I/O): its API
   // key, model, and the ARBITRATION_ENABLED switch all resolve lazily at
@@ -362,7 +402,7 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
     name: 'visionLlm-secondary',
   });
 
-  const visionArbitrated = new ArbitratingExtractor(visionLlm, env, secondary);
+  const visionArbitrated = new ArbitratingExtractor(visionLlmWithFallback, env, secondary);
   const housePdf = new HousePdfExtractor(textPdf, visionArbitrated);
 
   return [senateHtml, housePdf, textPdf, visionArbitrated];
@@ -375,5 +415,6 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
 import { SenateHtmlExtractor } from '../extraction/senateHtml';
 import { TextPdfExtractor } from '../extraction/textPdf';
 import { VisionLlmExtractor } from '../extraction/visionLlm';
+import { AnthropicVisionExtractor } from '../extraction/anthropicVision';
 
-export { SenateHtmlExtractor, TextPdfExtractor, VisionLlmExtractor };
+export { SenateHtmlExtractor, TextPdfExtractor, VisionLlmExtractor, AnthropicVisionExtractor };

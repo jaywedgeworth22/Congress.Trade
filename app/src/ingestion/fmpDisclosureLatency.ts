@@ -582,14 +582,17 @@ async function fetchUnusualWhalesRows(apiKey: string, max: number, fetchImpl: ty
   return parseUnusualWhalesDisclosureRows(await fetchJson(url, headers, fetchImpl));
 }
 
-async function fetchQuiverRows(apiKey: string, _max: number, fetchImpl: typeof fetch): Promise<DisclosureProviderRow[]> {
+async function fetchQuiverRows(apiKey: string, max: number, fetchImpl: typeof fetch): Promise<DisclosureProviderRow[]> {
   const headers = { authorization: `Token ${apiKey}`, 'Accept': 'application/json' };
   const [house, senate] = await Promise.all([
     fetchJson('https://api.quiverquant.com/beta/live/housetrading?options=true', headers, fetchImpl),
     fetchJson('https://api.quiverquant.com/beta/live/senatetrading?options=true', headers, fetchImpl),
   ]);
-  return [...parseQuiverDisclosureRows('house', house), ...parseQuiverDisclosureRows('senate', senate)];
+  const houseSliced = Array.isArray(house) ? house.slice(0, max) : house;
+  const senateSliced = Array.isArray(senate) ? senate.slice(0, max) : senate;
+  return [...parseQuiverDisclosureRows('house', houseSliced), ...parseQuiverDisclosureRows('senate', senateSliced)];
 }
+
 
 async function resolveProviderSecret(env: Env, provider: ProviderDefinition): Promise<string | null> {
   for (const name of provider.secretNames) {

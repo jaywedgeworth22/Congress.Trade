@@ -109,6 +109,8 @@ export interface CandidateDocResult {
     /** Effective provider tier, included with the usage snapshot for cost provenance. */
     serviceTier?: string;
   };
+  /** Indicates if this result was loaded from the extraction_runs cache (prevents duplicate db inserts) */
+  cached?: boolean;
 }
 
 /** Per-model rollup across all documents. */
@@ -715,13 +717,29 @@ const LLAMAPARSE_JSON_SUFFIX =
  * the text. Exported for unit testing without a live key.
  */
 export function parseLlamaParseMarkdown(markdown: string): ParsedTx[] {
+  let lastErr: Error | undefined;
+
   // Prefer an explicit fenced block.
-  const fenced = markdown.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced) return parseModelJson(fenced[1]).map(toParsedTx);
-  // Fall back to the first bare JSON array in the text.
-  const bare = markdown.match(/(\[[\s\S]*?\])/);
-  if (bare) return parseModelJson(bare[1]).map(toParsedTx);
-  throw new Error('llamaparse: no JSON array found in markdown output');
+  const fenced = markdown.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi);
+  for (const match of fenced) {
+    try {
+      return parseModelJson(match[1]).map(toParsedTx);
+    } catch (e) {
+      lastErr = e as Error;
+    }
+  }
+
+  // Fall back to the first valid bare JSON array in the text.
+  const bareMatches = markdown.matchAll(/(\[[\s\S]*?\])/g);
+  for (const match of bareMatches) {
+    try {
+      return parseModelJson(match[1]).map(toParsedTx);
+    } catch (e) {
+      lastErr = e as Error;
+    }
+  }
+
+  throw new Error(`llamaparse: no JSON array found in markdown output. Last error: ${lastErr?.message ?? 'none'}`);
 }
 
 /** Read only an explicit provider-returned page count; never infer from bytes. */
@@ -874,6 +892,26 @@ export async function runCandidateOnDoc(
   const key = invocation ? invocation.apiKey : await keyFor(env, provider);
   if (!key) {
     return { ...base, ok: false, error: `${provider} API key not configured`, latencyMs: 0, rowCount: 0, rowKeys: [], avgConfidence: 0, rows: [] };
+  }
+
+  // Check cache for a prior successful run to avoid re-billing determininstic models.
+  const cachedRunResult = await env.DB?.prepare(
+    `SELECT result_json FROM extraction_runs WHERE doc_id = ? AND provider = ? AND model = ? AND ok = 1 ORDER BY created_at DESC LIMIT 1`
+  ).bind(docId, provider, model).first<{ result_json: string }>();
+
+  if (cachedRunResult && cachedRunResult.result_json) {
+    try {
+      const parsed = JSON.parse(cachedRunResult.result_json) as CandidateDocResult;
+      if (parsed && Array.isArray(parsed.rows)) {
+        return {
+          ...parsed,
+          cached: true,
+        };
+      }
+    } catch (err) {
+      // Ignore cache parse error and run the model normally
+      console.warn('Failed to parse cached extraction run JSON for', provider, model, docId);
+    }
   }
 
   const started = Date.now();
