@@ -95,12 +95,15 @@ export class OpenRouterVisionExtractor implements Extractor {
       const documentBase64 = arrayBufferToBase64(input.bytes);
 
 function supportsNativeVision(model: string): boolean {
+  // Only declare native PDF support for models confirmed to accept
+  // a PDF as a `type: 'file'` attachment without the file-parser plugin.
+  // Vision-only models (Qwen VL, Pixtral, Llava, Nova, etc.) still need
+  // the file-parser plugin to convert the PDF into model-readable content.
   const m = model.toLowerCase();
   if (m.includes('gpt-4o')) return true;
   if (m.includes('gpt-5')) return true;
-  if (m.includes('claude-3') || m.includes('claude-4')) return true;
+  if (m.includes('claude-3') || m.includes('claude-4') || m.includes('claude-5')) return true;
   if (m.includes('gemini-1.5') || m.includes('gemini-2') || m.includes('gemini-3')) return true;
-  if (m.includes('-vl-') || m.includes('pixtral') || m.includes('llava') || m.includes('nova')) return true;
   return false;
 }
 
