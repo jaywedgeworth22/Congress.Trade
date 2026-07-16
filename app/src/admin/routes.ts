@@ -7504,9 +7504,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const numOffset = Number(offset);
     const numLimit = Number(limit);
     
-    const rows = await all<{ id: string, asset_name: string }>(
+    const rows = await all<{ id: string, asset_name: string, ticker: string | null }>(
       c.env.DB,
-      'SELECT id, asset_name FROM transactions ORDER BY created_at DESC LIMIT ? OFFSET ?',
+      'SELECT id, asset_name, ticker FROM transactions ORDER BY created_at DESC LIMIT ? OFFSET ?',
       [numLimit, numOffset]
     );
     
@@ -7517,7 +7517,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
     // Run sequentially to avoid D1 limits on concurrent batches
     for (const row of rows) {
-      const cleanName = cleanAssetString(row.asset_name);
+      const cleanName = cleanAssetString(row.asset_name, row.ticker);
       if (cleanName !== row.asset_name) {
         await c.env.DB.prepare('UPDATE transactions SET asset_name = ? WHERE id = ?').bind(cleanName, row.id).run();
         cleaned++;
