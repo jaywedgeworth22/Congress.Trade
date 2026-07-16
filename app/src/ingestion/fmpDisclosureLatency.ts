@@ -201,7 +201,7 @@ const PROVIDERS: ProviderDefinition[] = [
   {
     id: 'unusual_whales',
     label: 'Unusual Whales',
-    secretNames: ['UNUSUAL_WHALES_API_KEY'],
+    secretNames: ['UNUSUAL_WHALES_API_KEY', 'UNUSUALWHALES_API_KEY'],
     requiresMembership: true,
     supportsDirectLatest: true,
     timestampKind: 'monitor',
