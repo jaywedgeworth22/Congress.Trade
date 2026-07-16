@@ -30,6 +30,7 @@ import {
   markSalvaged,
   toParsedTx,
   arrayBufferToBase64,
+  validatePdfForAnthropic,
 } from './visionLlm';
 import {
   MISTRAL_ANNOTATION_SCHEMA,
@@ -350,15 +351,89 @@ async function pMap<T, U>(items: T[], limit: number, fn: (item: T) => Promise<U>
 // ---------------------------------------------------------------------------
 // Anthropic Message Batches — inline array, no upload.
 //
-// Unlike the sync paths (bakeoff.ts runAnthropic, anthropicVision.ts), this
-// path sends each doc's ORIGINAL bytes as-is with no pdf-lib
-// validate/resave step at all, and there is no in-band per-item retry once a
-// batch is submitted (the resave-repair retry added for the 2026-07-15
-// invalid-PDF regression — see validatePdfForAnthropic/resavePdfForAnthropic
-// in visionLlm.ts — is sync-path-only). A batch item that 400s on an invalid
-// PDF surfaces as a per-doc failure in decodeAnthropicLine() below and is
-// left for a later sync pass (which DOES have the repair retry) to resolve.
+// Unlike the sync paths (bakeoff.ts runAnthropic, anthropicVision.ts), there
+// is no in-band per-item RETRY once a batch is submitted (the resave-repair
+// retry added for the 2026-07-15 invalid-PDF regression — see
+// validatePdfForAnthropic/resavePdfForAnthropic in visionLlm.ts — is
+// sync-path-only): a batch item that still 400s on an invalid PDF after
+// pre-validation surfaces as a per-doc failure in decodeAnthropicLine() below
+// and is left for a later sync pass (which DOES have the repair retry) to
+// resolve. Docs that DO pass pre-validation are sent as-is — their ORIGINAL
+// bytes, never a pdf-lib resave — mirroring the sync path's decision that
+// resaved bytes are a repair fallback only, not the default (see
+// validatePdfForAnthropic's doc comment for the receipted regression this
+// avoids).
+//
+// What IS pre-validated: each doc's PDF bytes are checked with
+// validatePdfForAnthropic (pdf-lib load-only, fail-fast, no resave) BEFORE
+// the batch request is built. A doc that fails this check is never sent to
+// Anthropic — one malformed PDF in a 200-doc inline array would otherwise
+// waste every other doc's provider call if the whole batch request 400s, and
+// even if Anthropic accepts the array and only that one line errors, the
+// error class is a document property established locally already, so there
+// is no reason to spend the round trip. The excluded docId still needs a
+// terminal BatchDocResult, though: batch_jobs.doc_ids accounting (set by the
+// caller from the full input `docs` list, not what actually reaches the
+// provider) expects every submitted docId to resolve to a result. Since
+// submitBatch's return type is a single opaque provider-batch-id string
+// threaded straight through to pollBatch by callers (admin/routes.ts,
+// batchCron.ts) with no other channel between submit and poll, pre-validation
+// failures are carried inside that string (see encodePrevalidatedBatchId /
+// decodePrevalidatedBatchId) and merged into pollAnthropic's results the same
+// way a real per-item provider error would appear. When EVERY doc in a batch
+// fails pre-validation, submitAnthropic makes zero provider calls and returns
+// an all-synthetic id that pollAnthropic resolves without ever contacting
+// Anthropic.
 // ---------------------------------------------------------------------------
+
+/** One doc excluded from the provider request by local pre-validation. */
+interface AnthropicPrevalidationFailure {
+  docId: string;
+  /** Captured from the thrown Error so it is always exactly what
+   *  validatePdfForAnthropic produces, never a hand-duplicated copy that
+   *  could drift out of sync with it. */
+  error: string;
+}
+
+/** Marker prefix identifying a providerBatchId that carries pre-validation
+ *  failures. Anthropic's own batch ids (`msgbatch_...`) never start with
+ *  this, so a plain provider id — including every historical `batch_jobs`
+ *  row persisted before this change — is left completely unaffected. */
+const PREVALIDATED_BATCH_ID_MARKER = 'ct-batch-prevalidated-v1:';
+
+function encodePrevalidatedBatchId(
+  realBatchId: string | null,
+  excluded: AnthropicPrevalidationFailure[],
+): string {
+  return PREVALIDATED_BATCH_ID_MARKER + JSON.stringify({ realBatchId, excluded });
+}
+
+function decodePrevalidatedBatchId(
+  providerBatchId: string,
+): { realBatchId: string | null; excluded: AnthropicPrevalidationFailure[] } | null {
+  if (!providerBatchId.startsWith(PREVALIDATED_BATCH_ID_MARKER)) return null;
+  try {
+    const parsed = JSON.parse(providerBatchId.slice(PREVALIDATED_BATCH_ID_MARKER.length)) as {
+      realBatchId?: unknown;
+      excluded?: unknown;
+    };
+    const excluded = Array.isArray(parsed.excluded)
+      ? parsed.excluded.flatMap((entry): AnthropicPrevalidationFailure[] => {
+          if (entry == null || typeof entry !== 'object') return [];
+          const e = entry as { docId?: unknown; error?: unknown };
+          return typeof e.docId === 'string' && e.docId && typeof e.error === 'string' && e.error
+            ? [{ docId: e.docId, error: e.error }]
+            : [];
+        })
+      : [];
+    const realBatchId = typeof parsed.realBatchId === 'string' && parsed.realBatchId
+      ? parsed.realBatchId
+      : null;
+    return { realBatchId, excluded };
+  } catch {
+    return null;
+  }
+}
 
 function anthropicRequest(doc: BatchDoc, model: string): unknown {
   return {
@@ -380,16 +455,37 @@ function anthropicRequest(doc: BatchDoc, model: string): unknown {
 }
 
 async function submitAnthropic(env: Env, model: string, docs: BatchDoc[]): Promise<string> {
+  // Pre-validate every doc's bytes before spending a provider call — see the
+  // section comment above for why this lives here rather than relying on a
+  // per-item provider 400.
+  const validDocs: BatchDoc[] = [];
+  const excluded: AnthropicPrevalidationFailure[] = [];
+  for (const doc of docs) {
+    try {
+      await validatePdfForAnthropic(doc.bytes);
+      validDocs.push(doc);
+    } catch (err) {
+      excluded.push({ docId: doc.docId, error: (err as Error).message });
+    }
+  }
+
+  if (validDocs.length === 0) {
+    // Every doc failed pre-validation: make zero provider calls. pollAnthropic
+    // resolves this id straight from the encoded failures, never contacting
+    // Anthropic at all.
+    return encodePrevalidatedBatchId(null, excluded);
+  }
+
   const key = await keyFor(env, 'anthropic');
   const res = await trackedFetch('https://api.anthropic.com/v1/messages/batches', {
     method: 'POST',
     headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ requests: docs.map((d) => anthropicRequest(d, model)) }),
+    body: JSON.stringify({ requests: validDocs.map((d) => anthropicRequest(d, model)) }),
   }, { service: 'llm-batch', operation: 'create-batch', model });
   if (!res.ok) throw new Error(`anthropic batch create ${res.status} ${await safeText(res)}`);
   const j = (await res.json()) as { id?: string };
   if (!j.id) throw new Error('anthropic batch: no id');
-  return j.id;
+  return excluded.length > 0 ? encodePrevalidatedBatchId(j.id, excluded) : j.id;
 }
 
 /**
@@ -436,11 +532,29 @@ export function decodeAnthropicLine(line: unknown): BatchDocResult {
   }
 }
 
-async function pollAnthropic(env: Env, batchId: string): Promise<BatchPoll> {
+/** Build the terminal BatchDocResult for a doc excluded by pre-validation —
+ *  same shape decodeAnthropicLine would produce for a real per-item provider
+ *  error, so downstream persistence (extraction_runs, providerFailure.ts
+ *  classification, review-queue routing) treats it identically. */
+function prevalidationFailureResult(entry: AnthropicPrevalidationFailure): BatchDocResult {
+  return { docId: entry.docId, ok: false, error: entry.error, rows: [] };
+}
+
+async function pollAnthropic(env: Env, providerBatchId: string): Promise<BatchPoll> {
+  const prevalidated = decodePrevalidatedBatchId(providerBatchId);
+  const excludedResults = (prevalidated?.excluded ?? []).map(prevalidationFailureResult);
+
+  if (prevalidated && prevalidated.realBatchId === null) {
+    // Every doc in this batch failed pre-validation at submit time; nothing
+    // was ever sent to Anthropic, so there is nothing to poll for.
+    return { done: true, failed: false, status: 'ended', results: excludedResults };
+  }
+
+  const realBatchId = prevalidated?.realBatchId ?? providerBatchId;
   const key = await keyFor(env, 'anthropic');
   const headers = { 'x-api-key': key, 'anthropic-version': '2023-06-01' };
   const res = await trackedFetch(
-    `https://api.anthropic.com/v1/messages/batches/${encodeURIComponent(batchId)}`,
+    `https://api.anthropic.com/v1/messages/batches/${encodeURIComponent(realBatchId)}`,
     { headers },
     { service: 'llm-batch', operation: 'poll-batch' },
   );
@@ -468,7 +582,7 @@ async function pollAnthropic(env: Env, batchId: string): Promise<BatchPoll> {
   );
   if (!rj.ok) throw new Error(`anthropic batch results ${rj.status}`);
   const results = parseJsonl(await rj.text()).map(decodeAnthropicLine);
-  return { done: true, failed: false, status: 'ended', results, ...timestamps };
+  return { done: true, failed: false, status: 'ended', results: [...results, ...excludedResults], ...timestamps };
 }
 
 // ---------------------------------------------------------------------------
