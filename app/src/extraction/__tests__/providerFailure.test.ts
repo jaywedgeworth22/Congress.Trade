@@ -23,7 +23,7 @@ describe('benchmark provider failure classification', () => {
   it('classifies provider-wide billing limits and preserves a machine-readable reset', () => {
     expect(classifyProviderFailure(
       'anthropic',
-      'claude-sonnet-4-6',
+      'claude-sonnet-5',
       'You have reached your specified API usage limits. You will regain access on 2026-08-01 at 00:00 UTC.',
     )).toMatchObject({
       code: 'provider_usage_limit',
@@ -53,7 +53,7 @@ describe('benchmark provider circuit planning', () => {
   const models = [
     { provider: 'openai', model: 'gpt-5.6-terra' },
     { provider: 'openai', model: 'gpt-4o' },
-    { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+    { provider: 'anthropic', model: 'claude-sonnet-5' },
     { provider: 'anthropic', model: 'claude-haiku-4-5' },
   ];
 
@@ -68,7 +68,7 @@ describe('benchmark provider circuit planning', () => {
 
   it('blocks every model from a provider whose account usage is exhausted', () => {
     const failure = {
-      provider: 'anthropic', model: 'claude-sonnet-4-6', docId: 'H-1', invoked: true,
+      provider: 'anthropic', model: 'claude-sonnet-5', docId: 'H-1', invoked: true,
       ok: false, outcome: 'skipped',
       error: 'You have reached your specified API usage limits.',
       result: null,

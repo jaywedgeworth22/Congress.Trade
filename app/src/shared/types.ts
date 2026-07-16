@@ -456,7 +456,7 @@ export interface Env {
   ARBITRATION_API_KEY?: string;
   /** Anthropic API key — Claude vision candidates in the extractor bake-off. */
   ANTHROPIC_API_KEY?: string;
-  /** Anthropic model override (defaults to 'claude-3-5-sonnet-20241022'). */
+  /** Anthropic model override (defaults to 'claude-sonnet-5'). */
   ANTHROPIC_MODEL?: string;
   /** OpenAI API key — GPT vision candidates in the extractor bake-off. */
   OPENAI_API_KEY?: string;
