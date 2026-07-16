@@ -61,16 +61,29 @@ export interface CandidateInvocation {
 }
 
 /**
- * Provider-neutral default lineup (overridable per request). Five companies:
- * Google, OpenAI, Anthropic, Mistral, xAI. The GPT-4o family is intentionally
- * absent from new disclosure extraction: GPT-5.6 Terra is the routine default,
- * Luna is the lower-cost first pass, and Sol is the difficult-scan adjudicator.
+ * Provider-neutral default lineup (overridable per request). Five companies via
+ * direct keys — Google, OpenAI, Anthropic, Mistral, xAI — plus a curated set of
+ * OpenRouter-transported candidates. The GPT-4o family is intentionally absent
+ * from new disclosure extraction (on BOTH the direct and OpenRouter transports;
+ * see isRetiredDisclosureCandidate): GPT-5.6 Terra is the routine default, Luna
+ * is the lower-cost first pass, and Sol is the difficult-scan adjudicator.
  *
- * Each provider takes a PDF via its own native path: Gemini/OpenAI/Anthropic as
- * an inline base64 part, Mistral via `/v1/ocr`, and xAI via the Files API
- * (upload → `file_id` → attach to a `grok-4.3` `/v1/responses` call; the model's
- * server-side OCR+vision reads the scan). grok-4.3 is agentic, so it is the
- * slowest/most expensive candidate — keep bake-off `docIds` small when it's in.
+ * Each direct provider takes a PDF via its own native path: Gemini/OpenAI/
+ * Anthropic as an inline base64 part, Mistral via `/v1/ocr`, and xAI via the
+ * Files API (upload → `file_id` → attach to a `grok-4.3` `/v1/responses` call;
+ * the model's server-side OCR+vision reads the scan). grok-4.3 is agentic, so
+ * it is the slowest/most expensive candidate — keep bake-off `docIds` small
+ * when it's in.
+ *
+ * Every openrouter slug below was verified LIVE against the OpenRouter models
+ * API on 2026-07-16. Fourteen prior entries that no longer exist on OpenRouter
+ * (gemini-pro-1.5 / flash-1.5 / 2.0-flash-thinking-exp, claude-3.5/3.7 family,
+ * mistral-large-2411, grok-2-vision-1212, qwen-2.5-vl-72b:free, qwen-max,
+ * yi-large, kimi-chat, minimax-hep-lite, deepseek-chat/-coder) were removed —
+ * every benchmark cell for a dead slug could only fail. deepseek-chat/-coder
+ * were replaced by the live deepseek-v4-pro/-flash pair per owner directive.
+ * `google/gemini-3.5-flash` is the OR-transport route around the currently
+ * blocked direct Gemini key.
  */
 export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'gemini', model: 'gemini-3.5-flash' },
@@ -81,36 +94,35 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'anthropic', model: 'claude-haiku-4-5' },
   { provider: 'mistral', model: 'mistral-ocr-latest' },
   { provider: 'xai', model: 'grok-4.3' },
-  { provider: 'openrouter', model: 'qwen/qwen-2.5-vl-72b-instruct:free' },
-  { provider: 'openrouter', model: 'google/gemini-pro-1.5' },
-  { provider: 'openrouter', model: 'google/gemini-flash-1.5' },
-  { provider: 'openrouter', model: 'google/gemini-2.0-flash-thinking-exp:free' },
-  { provider: 'openrouter', model: 'anthropic/claude-3.5-sonnet' },
-  { provider: 'openrouter', model: 'anthropic/claude-3.5-haiku' },
-  { provider: 'openrouter', model: 'anthropic/claude-3.7-opus' },
-  { provider: 'openrouter', model: 'openai/gpt-4o' },
-  { provider: 'openrouter', model: 'openai/gpt-4o-mini' },
-  { provider: 'openrouter', model: 'mistralai/mistral-large-2411' },
-  { provider: 'openrouter', model: 'x-ai/grok-2-vision-1212' },
-  { provider: 'openrouter', model: 'deepseek/deepseek-chat' },
-  { provider: 'openrouter', model: 'deepseek/deepseek-coder' },
+  { provider: 'openrouter', model: 'deepseek/deepseek-v4-pro' },
+  { provider: 'openrouter', model: 'deepseek/deepseek-v4-flash' },
+  { provider: 'openrouter', model: 'qwen/qwen3-vl-30b-a3b-instruct' },
+  { provider: 'openrouter', model: 'qwen/qwen3-vl-8b-instruct' },
+  { provider: 'openrouter', model: 'google/gemini-2.5-flash-lite' },
+  { provider: 'openrouter', model: 'amazon/nova-lite-v1' },
+  { provider: 'openrouter', model: 'z-ai/glm-4.6v' },
+  { provider: 'openrouter', model: 'google/gemini-3.5-flash' },
   { provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' },
-  { provider: 'openrouter', model: 'qwen/qwen-max' },
-  { provider: 'openrouter', model: '01-ai/yi-large' },
-  { provider: 'openrouter', model: 'moonshotai/kimi-chat' },
-  { provider: 'openrouter', model: 'minimax/minimax-hep-lite' },
 ];
 
-/** GPT-4o is retained only for decoding/replaying historical extraction runs. */
+/**
+ * GPT-4o is retained only for decoding/replaying historical extraction runs.
+ * The retirement (PR #414) covers both transports: the direct OpenAI provider
+ * and OpenRouter-transported `openai/gpt-4o*` / `openai/chatgpt-4o*` slugs.
+ */
 export function isRetiredDisclosureCandidate(candidate: Pick<BakeoffCandidate, 'provider' | 'model'>): boolean {
-  return candidate.provider === 'openai' && /^(?:gpt|chatgpt)-4o(?:-|$)/i.test(candidate.model.trim());
+  const model = candidate.model.trim();
+  if (candidate.provider === 'openai') return /^(?:gpt|chatgpt)-4o(?:-|$)/i.test(model);
+  if (candidate.provider === 'openrouter') return /^openai\/(?:gpt|chatgpt)-4o(?:-|$)/i.test(model);
+  return false;
 }
 
 /** Upgrade stale agreement configuration without rewriting historical run records. */
 export function upgradeRetiredDisclosureCandidate(candidate: BakeoffCandidate): BakeoffCandidate {
-  return isRetiredDisclosureCandidate(candidate)
-    ? { provider: 'openai', model: 'gpt-5.6-terra' }
-    : candidate;
+  if (!isRetiredDisclosureCandidate(candidate)) return candidate;
+  return candidate.provider === 'openrouter'
+    ? { provider: 'openrouter', model: 'openai/gpt-5.6-terra' }
+    : { provider: 'openai', model: 'gpt-5.6-terra' };
 }
 
 /** Production reasoning profile for the three GPT-5.6 scanned-document roles. */
