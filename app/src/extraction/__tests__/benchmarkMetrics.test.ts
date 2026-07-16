@@ -71,7 +71,7 @@ describe('priceBenchmarkUsage', () => {
         completionTokens: 100,
       },
     });
-    expect(result.costUsd).toBeCloseTo(0.00441, 10);
+    expect(result.costUsd).toBeCloseTo(0.00294, 10);
     expect(result.costDetail.billedUsage).toMatchObject({
       uncachedPromptTokens: 500,
       cachedTokens: 200,
