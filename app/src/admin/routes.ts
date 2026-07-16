@@ -4037,12 +4037,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     // Candidate lineup (default provider-neutral set, overridable).
     let candidates: BakeoffCandidate[] = DEFAULT_CANDIDATES;
     if (Array.isArray(body.models)) {
-      const valid: Provider[] = ['gemini', 'openai', 'anthropic', 'mistral', 'xai', 'llamaparse'];
+      const valid: Provider[] = ['gemini', 'openai', 'anthropic', 'mistral', 'xai', 'llamaparse', 'openrouter'];
       const parsed: BakeoffCandidate[] = [];
       for (const m of body.models) {
         const o = m as { provider?: unknown; model?: unknown };
         if (!valid.includes(o.provider as Provider) || typeof o.model !== 'string') {
-          return c.json({ error: 'each model must be {provider:gemini|openai|anthropic|mistral|xai|llamaparse, model:string}' }, 400);
+          return c.json({ error: 'each model must be {provider:gemini|openai|anthropic|mistral|xai|llamaparse|openrouter, model:string}' }, 400);
         }
         const candidate = { provider: o.provider as Provider, model: o.model };
         if (isRetiredDisclosureCandidate(candidate)) {

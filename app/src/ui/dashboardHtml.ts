@@ -18,7 +18,14 @@
  * Dependency-free vanilla JS. Loading / empty / error states are handled for
  * every panel; the "illustrative sample data" banner is removed the moment real
  * feed data loads.
+ *
+ * The benchmark model catalog is the ONE exception to "no imports": it is
+ * serialized from benchmarkModelCatalog() into the template at module load so
+ * the re-read menus, quick-run select, and custom benchmark model checkboxes
+ * can never drift from the server-side catalog again.
  */
+
+import { benchmarkModelCatalog } from '../benchmark/settings';
 
 export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -1845,9 +1852,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <!-- Populated by JS -->
         </div>
       </details>
-      <div id="benchmarkSettingsSummary" class="note">Loading saved House lineup…</div>
-      <div id="benchmarkManualLineup"></div>
-      <div id="benchmarkRoles"></div>
+      <div id="benchmarkSettingsSummary" class="note">Loading saved House model slots…</div>
+      <div id="benchmarkModelSlots"></div>
       <div id="benchmarkMsg" class="note" role="status" aria-live="polite"></div>
       <div id="benchmarkResults" aria-live="polite"><div class="state">Loading saved House benchmarks…</div></div>
     </div>
@@ -3575,41 +3581,13 @@ function statusBadge(status) {
   var c = STATUS_COLORS[s] || '#57606a';
   return '<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;color:#fff;background:' + c + '">' + esc(s) + '</span>';
 }
-/* Curated provider/model pairs the backend's POST /api/admin/bakeoff accepts,
-   grouped by provider — mirrors DEFAULT_CANDIDATES in src/extraction/bakeoff.ts
-   (and the valid-provider allowlist in src/admin/routes.ts). Kept as a static
-   list rather than fetched, same as REVIEW_AMOUNT_BRACKETS above. */
-var REREAD_MODELS = [
-  { provider: 'gemini', model: 'gemini-3.5-flash' },
-  { provider: 'openai', model: 'gpt-5.6-terra' },
-  { provider: 'openai', model: 'gpt-5.6-luna' },
-  { provider: 'openai', model: 'gpt-5.6-sol' },
-  { provider: 'anthropic', model: 'claude-sonnet-4-6' },
-  { provider: 'anthropic', model: 'claude-haiku-4-5' },
-  { provider: 'mistral', model: 'mistral-ocr-latest' },
-  { provider: 'xai', model: 'grok-4.3' },
-  { provider: 'llamaparse', model: 'fast' },
-  { provider: 'llamaparse', model: 'cost-effective' },
-  { provider: 'llamaparse', model: 'agentic' },
-  { provider: 'openrouter', model: 'qwen/qwen-2.5-vl-72b-instruct:free' },
-  { provider: 'openrouter', model: 'google/gemini-pro-1.5' },
-  { provider: 'openrouter', model: 'google/gemini-flash-1.5' },
-  { provider: 'openrouter', model: 'google/gemini-2.0-flash-thinking-exp:free' },
-  { provider: 'openrouter', model: 'anthropic/claude-3.5-sonnet' },
-  { provider: 'openrouter', model: 'anthropic/claude-3.5-haiku' },
-  { provider: 'openrouter', model: 'anthropic/claude-3.7-opus' },
-  { provider: 'openrouter', model: 'openai/gpt-4o' },
-  { provider: 'openrouter', model: 'openai/gpt-4o-mini' },
-  { provider: 'openrouter', model: 'mistralai/mistral-large-2411' },
-  { provider: 'openrouter', model: 'x-ai/grok-2-vision-1212' },
-  { provider: 'openrouter', model: 'deepseek/deepseek-chat' },
-  { provider: 'openrouter', model: 'deepseek/deepseek-coder' },
-  { provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' },
-  { provider: 'openrouter', model: 'qwen/qwen-max' },
-  { provider: 'openrouter', model: '01-ai/yi-large' },
-  { provider: 'openrouter', model: 'moonshotai/kimi-chat' },
-  { provider: 'openrouter', model: 'minimax/minimax-hep-lite' }
-];
+/* Server-injected model catalog: serialized from benchmarkModelCatalog()
+   (DEFAULT_CANDIDATES + LlamaParse) when this module is built, so every model
+   menu in the dashboard — the "Re-read with model…" multi-select, the per-row
+   quick-run select, and the Custom Model Selection checkbox grid — derives
+   from the ONE backend source of truth instead of a hand-maintained copy. */
+var BENCHMARK_CATALOG = ${JSON.stringify(benchmarkModelCatalog())};
+var REREAD_MODELS = BENCHMARK_CATALOG;
 /* <optgroup> per provider for the "Re-read with model…" multi-select. */
 function rereadModelOptionsHtml() {
   var byProvider = {};
@@ -5211,15 +5189,6 @@ function normalizedBenchmarkRoles(roles) {
   return { primary: normalize(source.primary), failover: normalize(source.failover) };
 }
 
-function validateBenchmarkRolesForm(roles) {
-  if (!roles.primary || !roles.failover) return 'Choose both primary and failover models.';
-  if (benchmarkModelKey(roles.primary) === benchmarkModelKey(roles.failover)) return 'Primary and failover must be different models.';
-  if (roles.primary.provider === roles.failover.provider) return 'Primary and failover must use different providers.';
-  return '';
-}
-
-
-
 function benchmarkCatalogModels() {
   return ((benchmarkState.settings && benchmarkState.settings.catalog) || []).filter(function(model) {
     return model && model.provider && model.model;
@@ -5235,95 +5204,184 @@ function benchmarkManualOptionHtml(selected) {
   }).join('');
 }
 
-function renderManualBenchmarkLineup() {
-  var container = el('benchmarkManualLineup');
+/* ------------------------------------------------------------------------
+   Unified per-chamber model slots (A–E). One panel replaces the former split
+   manual-trio and primary/failover panels. Slots map to the server exactly
+   as the AGREEMENT_*_MODEL_A..E env keys do:
+     A/B -> PUT /api/admin/benchmark/roles/:chamber    {primary, failover}
+     C/D/E -> PUT /api/admin/benchmark/settings/:chamber {a, b, c}
+   ------------------------------------------------------------------------ */
+
+var BENCHMARK_SLOT_DEFS = [
+  { id: 'slotModelA', slot: 'A', label: 'A — Primary extractor (reads every new filing first)' },
+  { id: 'slotModelB', slot: 'B', label: 'B — Failover extractor (used when A fails)' },
+  { id: 'slotModelC', slot: 'C', label: 'C — Agreement voter 1 (tier-1 pair)' },
+  { id: 'slotModelD', slot: 'D', label: 'D — Agreement voter 2 (tier-1 pair)' },
+  { id: 'slotModelE', slot: 'E', label: 'E — Agreement voter 3 (tier-2/3 escalation)' }
+];
+
+/* Saved model per slot, from the loaded roles (A/B) + lineup (C/D/E). */
+function benchmarkSavedSlotValues() {
+  var lineup = normalizedBenchmarkLineup(benchmarkState.settings);
+  var roles = normalizedBenchmarkRoles(benchmarkState.roles);
+  return { A: roles.primary, B: roles.failover, C: lineup.a, D: lineup.b, E: lineup.c };
+}
+
+function renderBenchmarkSettingsSummary() {
+  var summary = el('benchmarkSettingsSummary');
+  if (summary) {
+    var label = benchmarkChamberLabel(benchmarkState.chamber);
+    if (!benchmarkState.settings) {
+      summary.textContent = 'Saved ' + label + ' model slots are unavailable.';
+    } else {
+      var saved = benchmarkSavedSlotValues();
+      summary.textContent = 'Live ' + label + ' slots — ' + ['A', 'B', 'C', 'D', 'E'].map(function(slot) {
+        return slot + ' ' + (benchmarkModelKey(saved[slot]) || 'not set');
+      }).join(' · ');
+    }
+  }
+  renderBenchmarkModelSlots();
+}
+
+function renderBenchmarkModelSlots() {
+  var container = el('benchmarkModelSlots');
   if (!container) return;
   var settings = benchmarkState.settings;
   if (!settings || settings.writeProtected) {
     container.innerHTML = settings && settings.writeProtected
-      ? '<div class="benchmark-panel"><h4>Manual autopublish lineup</h4><div class="state">Preview is read-only; save the live lineup in production after approval.</div></div>'
+      ? '<div class="benchmark-panel"><h4>Model slots (A–E)</h4><div class="state">Preview is read-only; save the live model slots in production after approval.</div></div>'
       : '';
     return;
   }
-  var saved = normalizedBenchmarkLineup(settings);
-  container.innerHTML = '<div class="benchmark-panel"><h4>Manual autopublish lineup</h4>' +
-    '<p class="sub">Choose the agreement trio (C/D/E) directly from the configured provider catalog. This does not require a completed benchmark run; benchmark-backed saves remain available below when a run has enough evidence.</p>' +
+  var saved = benchmarkSavedSlotValues();
+  container.innerHTML = '<div class="benchmark-panel"><h4>Model slots (A–E)</h4>' +
+    '<p class="sub">One place to set all five live ' + esc(benchmarkChamberLabel(benchmarkState.chamber)) + ' models. A/B are the live-ingestion primary/failover extractors; C/D/E are the agreement trio that votes on autopublish. Saving writes A/B (roles) first, then C/D/E (lineup), each verified by readback. Benchmark-backed saves remain available below when a completed run has enough evidence.</p>' +
     '<div class="benchmark-lineup">' +
-    '<label class="lbl">Trio C<select id="manualModelA">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.a)) + '</select></label>' +
-    '<label class="lbl">Trio D<select id="manualModelB">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.b)) + '</select></label>' +
-    '<label class="lbl">Trio E<select id="manualModelC">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.c)) + '</select></label>' +
+    BENCHMARK_SLOT_DEFS.map(function(def) {
+      var selected = benchmarkModelKey(saved[def.slot]);
+      var placeholder = selected ? '' : '<option value="" selected disabled>— not set —</option>';
+      return '<label class="lbl">' + esc(def.label) + '<select id="' + def.id + '" onchange="updateBenchmarkSlotWarnings()">' +
+        placeholder + benchmarkManualOptionHtml(selected) + '</select></label>';
+    }).join('') +
     '</div>' +
-    '<div class="row-flex"><button class="btn sm" id="saveManualBenchmarkLineup" onclick="saveManualBenchmarkLineup()">Save manual ' + esc(benchmarkChamberLabel(benchmarkState.chamber)) + ' lineup</button>' +
-    '<span id="manualBenchmarkLineupStatus" class="note" role="status"></span></div></div>';
+    '<div id="benchmarkSlotWarnings" class="note" role="status" aria-live="polite"></div>' +
+    '<div class="row-flex"><button class="btn sm" id="saveBenchmarkModelSlots" onclick="saveBenchmarkModelSlots()">Save all five ' + esc(benchmarkChamberLabel(benchmarkState.chamber)) + ' slots</button>' +
+    '<span id="benchmarkModelSlotsStatus" class="note" role="status" aria-live="polite"></span></div></div>';
+  updateBenchmarkSlotWarnings();
 }
 
-function normalizedBenchmarkRoles(roles) {
-  var source = roles && roles.roles ? roles.roles : {};
-  function normalize(value) {
-    if (!value) return null;
-    if (value.provider && value.model) return { provider: value.provider, model: value.model };
-    return null;
-  }
-  return { primary: normalize(source.primary), failover: normalize(source.failover) };
+/* Current select values as model refs keyed by slot letter. */
+function selectedBenchmarkSlots() {
+  var slots = {};
+  BENCHMARK_SLOT_DEFS.forEach(function(def) {
+    var select = el(def.id);
+    slots[def.slot] = benchmarkModelRef(select && select.value);
+  });
+  return slots;
 }
 
-function renderBenchmarkRolesPanel() {
-  var container = el('benchmarkRoles');
-  if (!container) return;
-  var settings = benchmarkState.settings;
-  if (!settings || settings.writeProtected) {
-    container.innerHTML = settings && settings.writeProtected
-      ? '<div class="benchmark-panel"><h4>Primary / Failover extraction</h4><div class="state">Preview is read-only; save the live roles in production after approval.</div></div>'
-      : '';
-    return;
-  }
-  var saved = normalizedBenchmarkRoles(benchmarkState.roles);
-  container.innerHTML = '<div class="benchmark-panel"><h4>Primary / Failover extraction</h4>' +
-    '<p class="sub">Live-ingestion extraction model and its failover, tried before the agreement trio ever runs.</p>' +
-    '<div class="benchmark-lineup">' +
-    '<label class="lbl">Primary<select id="roleModelPrimary">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.primary)) + '</select></label>' +
-    '<label class="lbl">Failover<select id="roleModelFailover">' + benchmarkManualOptionHtml(benchmarkModelKey(saved.failover)) + '</select></label>' +
-    '</div>' +
-    '<div class="row-flex"><button class="btn sm" id="saveBenchmarkRoles" onclick="saveBenchmarkRoles()">Save ' + esc(benchmarkChamberLabel(benchmarkState.chamber)) + ' primary/failover</button>' +
-    '<span id="benchmarkRolesStatus" class="note" role="status"></span></div></div>';
-}
-
-function validateBenchmarkRolesForm(roles) {
-  if (!roles.primary || !roles.failover) return 'Choose both primary and failover models.';
-  if (benchmarkModelKey(roles.primary) === benchmarkModelKey(roles.failover)) return 'Primary and failover must be different models.';
-  if (roles.primary.provider === roles.failover.provider) return 'Primary and failover must use different providers.';
+/* Blocking pre-checks mirroring the server rules, phrased for the A–E panel. */
+function validateBenchmarkSlots(slots) {
+  if (!slots.A || !slots.B || !slots.C || !slots.D || !slots.E) return 'Choose a model for every slot (A–E).';
+  if (benchmarkModelKey(slots.A) === benchmarkModelKey(slots.B)) return 'A (primary) and B (failover) must be different models.';
+  if (slots.A.provider === slots.B.provider) return 'A (primary) and B (failover) must use different providers, so the failover survives a provider outage.';
+  var trioKeys = [benchmarkModelKey(slots.C), benchmarkModelKey(slots.D), benchmarkModelKey(slots.E)];
+  if (new Set(trioKeys).size !== 3) return 'C, D, and E must be three different models.';
+  var trioProviders = [slots.C.provider, slots.D.provider, slots.E.provider];
+  if (new Set(trioProviders).size !== 3) return 'C, D, and E must use three different providers, so agreement votes stay independent.';
   return '';
 }
 
-async function saveBenchmarkRoles() {
+/* Non-blocking advisory shown as the selects change (never blocks saving). */
+function updateBenchmarkSlotWarnings() {
+  var note = el('benchmarkSlotWarnings');
+  if (!note) return;
+  var slots = selectedBenchmarkSlots();
+  var warning = slots.A && ((slots.C && slots.A.provider === slots.C.provider) || (slots.D && slots.A.provider === slots.D.provider))
+    ? 'Note: tier-1 agreement shares a provider with the primary extractor — votes are less independent.'
+    : '';
+  note.style.color = warning ? 'var(--warn)' : '';
+  note.textContent = warning;
+}
+
+async function saveBenchmarkModelSlots() {
   if (benchmarkState.settings && benchmarkState.settings.writeProtected) return;
-  var roles = {
-    primary: benchmarkModelRef(el('roleModelPrimary') && el('roleModelPrimary').value),
-    failover: benchmarkModelRef(el('roleModelFailover') && el('roleModelFailover').value)
-  };
-  var invalid = validateBenchmarkRolesForm(roles);
-  var status = el('benchmarkRolesStatus');
+  var chamber = benchmarkState.chamber;
+  var label = benchmarkChamberLabel(chamber);
+  var slots = selectedBenchmarkSlots();
+  var status = el('benchmarkModelSlotsStatus');
+  var invalid = validateBenchmarkSlots(slots);
   if (invalid) { if (status) { status.style.color = 'var(--neg)'; status.textContent = invalid; } return; }
-  var previous = normalizedBenchmarkRoles(benchmarkState.roles);
-  var currentText = 'Primary ' + (benchmarkModelKey(previous.primary) || 'not set') + '\\nFailover ' + (benchmarkModelKey(previous.failover) || 'not set');
-  var nextText = 'Primary ' + benchmarkModelKey(roles.primary) + '\\nFailover ' + benchmarkModelKey(roles.failover);
-  if (!window.confirm('Save this live ' + benchmarkChamberLabel(benchmarkState.chamber) + ' primary/failover?\\n\\nCurrent:\\n' + currentText + '\\n\\nNew:\\n' + nextText)) return;
-  var button = el('saveBenchmarkRoles');
+  var saved = benchmarkSavedSlotValues();
+  var currentText = ['A', 'B', 'C', 'D', 'E'].map(function(slot) {
+    return slot + ' ' + (benchmarkModelKey(saved[slot]) || 'not set');
+  }).join('\\n');
+  var nextText = ['A', 'B', 'C', 'D', 'E'].map(function(slot) {
+    return slot + ' ' + benchmarkModelKey(slots[slot]);
+  }).join('\\n');
+  if (!window.confirm('Save all five live ' + label + ' model slots?\\n\\nCurrent:\\n' + currentText + '\\n\\nNew:\\n' + nextText)) return;
+  var button = el('saveBenchmarkModelSlots');
   if (button) button.disabled = true;
-  if (status) { status.style.color = ''; status.textContent = 'Saving and reading back the live settings…'; }
+  var outcomes = [];
+  var failed = false;
   try {
-    var result = await apiCall('/api/admin/benchmark/roles/' + encodeURIComponent(benchmarkState.chamber), 'PUT', {
-      primary: roles.primary,
-      failover: roles.failover,
-      expectedVersion: benchmarkState.roles && benchmarkState.roles.version
-    });
-    benchmarkState.roles = result.settings;
-    renderBenchmarkRolesPanel();
-    if (status) { status.style.color = 'var(--pos)'; status.textContent = 'Primary/failover saved and verified.'; }
+    // (a) Fetch fresh versions so each PUT carries the server's current
+    // expectedVersion instead of a possibly stale page-load snapshot.
+    if (status) { status.style.color = ''; status.textContent = 'Reading current slot versions…'; }
+    var freshRoles = await apiCall('/api/admin/benchmark/roles/' + encodeURIComponent(chamber), 'GET');
+    var freshSettings = await apiCall('/api/admin/benchmark/settings/' + encodeURIComponent(chamber), 'GET');
+    benchmarkState.roles = freshRoles;
+    benchmarkState.settings = freshSettings;
+    // (b) Save A/B roles, then C/D/E lineup — each reported separately so a
+    // server rejection of one write never silently hides the other's result.
+    if (status) status.textContent = 'Saving A/B (primary/failover extractors)…';
+    try {
+      var rolesResult = await apiCall('/api/admin/benchmark/roles/' + encodeURIComponent(chamber), 'PUT', {
+        primary: slots.A,
+        failover: slots.B,
+        expectedVersion: freshRoles.version
+      });
+      benchmarkState.roles = rolesResult.settings;
+      outcomes.push('A/B saved.');
+    } catch (rolesError) {
+      failed = true;
+      outcomes.push('A/B not saved: ' + rolesError.message);
+    }
+    if (status) status.textContent = 'Saving C/D/E (agreement trio)…';
+    try {
+      var lineupResult = await apiCall('/api/admin/benchmark/settings/' + encodeURIComponent(chamber), 'PUT', {
+        a: slots.C,
+        b: slots.D,
+        c: slots.E,
+        expectedVersion: freshSettings.version
+      });
+      benchmarkState.settings = lineupResult.settings;
+      outcomes.push('C/D/E saved.');
+    } catch (lineupError) {
+      failed = true;
+      outcomes.push('C/D/E not saved: ' + lineupError.message);
+    }
+    // (d) Re-fetch the effective runtime slots and re-render so the panel
+    // always shows what production will actually use.
+    try {
+      benchmarkState.roles = await apiCall('/api/admin/benchmark/roles/' + encodeURIComponent(chamber), 'GET');
+      benchmarkState.settings = await apiCall('/api/admin/benchmark/settings/' + encodeURIComponent(chamber), 'GET');
+    } catch (refreshError) {
+      failed = true;
+      outcomes.push('Reload of the effective slots failed: ' + refreshError.message);
+    }
+    renderBenchmarkSettingsSummary();
+    status = el('benchmarkModelSlotsStatus'); // re-render replaced the node
+    if (status) {
+      status.style.color = failed ? 'var(--neg)' : 'var(--pos)';
+      status.textContent = (failed ? outcomes.join(' ') : 'All five slots saved and verified. ' + outcomes.join(' '));
+    }
   } catch (error) {
-    if (status) { status.style.color = 'var(--neg)'; status.textContent = 'Save failed: ' + error.message; }
+    status = el('benchmarkModelSlotsStatus') || status;
+    if (status) { status.style.color = 'var(--neg)'; status.textContent = 'Save failed before any write: ' + error.message; }
   } finally {
-    if (button) button.disabled = false;
+    var saveButton = el('saveBenchmarkModelSlots');
+    if (saveButton) saveButton.disabled = false;
   }
 }
 
@@ -5713,11 +5771,11 @@ function selectedBenchmarkLineup() {
 }
 
 function validateBenchmarkLineup(lineup) {
-  if (!lineup.a || !lineup.b || !lineup.c) return 'Choose all three models.';
+  if (!lineup.a || !lineup.b || !lineup.c) return 'Choose all three agreement models (C, D, and E).';
   var keys = [benchmarkModelKey(lineup.a), benchmarkModelKey(lineup.b), benchmarkModelKey(lineup.c)];
-  if (new Set(keys).size !== 3) return 'A, B, and C must be different models.';
+  if (new Set(keys).size !== 3) return 'C, D, and E must be three different models.';
   var providers = [lineup.a.provider, lineup.b.provider, lineup.c.provider];
-  if (new Set(providers).size !== 3) return 'A, B, and C must use three different providers.';
+  if (new Set(providers).size !== 3) return 'C, D, and E must use three different providers.';
   return '';
 }
 
@@ -5803,40 +5861,6 @@ async function saveBenchmarkLineup() {
     }
   } catch (error) {
     if (status) { status.style.color = 'var(--neg)'; status.textContent = 'Settings were not saved: ' + error.message; }
-    if (button) button.disabled = false;
-  }
-}
-
-async function saveManualBenchmarkLineup() {
-  if (benchmarkState.settings && benchmarkState.settings.writeProtected) return;
-  var lineup = {
-    a: benchmarkModelRef(el('manualModelA') && el('manualModelA').value),
-    b: benchmarkModelRef(el('manualModelB') && el('manualModelB').value),
-    c: benchmarkModelRef(el('manualModelC') && el('manualModelC').value)
-  };
-  var invalid = validateBenchmarkLineup(lineup);
-  var status = el('manualBenchmarkLineupStatus');
-  if (invalid) { if (status) { status.style.color = 'var(--neg)'; status.textContent = invalid; } return; }
-  var previous = normalizedBenchmarkLineup(benchmarkState.settings);
-  var currentText = 'C ' + (benchmarkModelKey(previous.a) || 'not set') + '\\nD ' + (benchmarkModelKey(previous.b) || 'not set') + '\\nE ' + (benchmarkModelKey(previous.c) || 'not set');
-  var nextText = 'C ' + benchmarkModelKey(lineup.a) + '\\nD ' + benchmarkModelKey(lineup.b) + '\\nE ' + benchmarkModelKey(lineup.c);
-  if (!window.confirm('Save this manual live ' + benchmarkChamberLabel(benchmarkState.chamber) + ' autopublish lineup?\\n\\nCurrent:\\n' + currentText + '\\n\\nNew:\\n' + nextText)) return;
-  var button = el('saveManualBenchmarkLineup');
-  if (button) button.disabled = true;
-  if (status) { status.style.color = ''; status.textContent = 'Saving and reading back the live settings…'; }
-  try {
-    var result = await apiCall('/api/admin/benchmark/settings/' + encodeURIComponent(benchmarkState.chamber), 'PUT', {
-      a: lineup.a,
-      b: lineup.b,
-      c: lineup.c,
-      expectedVersion: benchmarkState.settings && benchmarkState.settings.version
-    });
-    benchmarkState.settings = result.settings;
-    renderBenchmarkSettingsSummary();
-    if (status) { status.style.color = 'var(--pos)'; status.textContent = 'Manual lineup saved and verified.'; }
-  } catch (error) {
-    if (status) { status.style.color = 'var(--neg)'; status.textContent = 'Save failed: ' + error.message; }
-  } finally {
     if (button) button.disabled = false;
   }
 }
@@ -7974,145 +7998,6 @@ document.addEventListener('mouseover', function(e) {
   chartTt.style.top = (window.scrollY + r.top) + 'px';
   chartTt.classList.add('visible');
 });
-
-async function loadAllModelSettings() {
-  const chambers = ['house', 'senate', 'executive'];
-  for (const chamber of chambers) {
-    try {
-      benchmarkState.chamberSettings[chamber] = await apiCall('/api/admin/benchmark/settings/' + encodeURIComponent(chamber), 'GET');
-    } catch (e) {
-      benchmarkState.chamberSettings[chamber] = null;
-    }
-    try {
-      benchmarkState.chamberRoles[chamber] = await apiCall('/api/admin/benchmark/roles/' + encodeURIComponent(chamber), 'GET');
-    } catch (e) {
-      benchmarkState.chamberRoles[chamber] = null;
-    }
-    renderModelSettingsForChamber(chamber);
-  }
-}
-
-function renderModelSettingsForChamber(chamber) {
-  var containerId = chamber === 'house' ? 'modelSettingsHouse' : chamber === 'senate' ? 'modelSettingsSenate' : 'modelSettingsExec';
-  var container = el(containerId);
-  if (!container) return;
-  var settings = benchmarkState.chamberSettings[chamber];
-  var roles = benchmarkState.chamberRoles[chamber];
-  
-  if (!settings) {
-    container.innerHTML = '<div class="state">Settings unavailable for ' + esc(benchmarkChamberLabel(chamber)) + '</div>';
-    return;
-  }
-  
-  var savedLineup = normalizedBenchmarkLineup(settings);
-  var savedRoles = normalizedBenchmarkRoles(roles);
-  var label = benchmarkChamberLabel(chamber);
-  var isReadOnly = settings.writeProtected;
-  var previewNote = isReadOnly ? '<div class="state" style="margin-top:10px">Preview is read-only.</div>' : '';
-
-  var lineupHtml = '<div class="benchmark-lineup" style="margin-top:10px">' +
-    '<label class="lbl">Trio C<select id="manualModelA_' + chamber + '">' + benchmarkManualOptionHtmlForChamber(chamber, benchmarkModelKey(savedLineup.a)) + '</select></label>' +
-    '<label class="lbl">Trio D<select id="manualModelB_' + chamber + '">' + benchmarkManualOptionHtmlForChamber(chamber, benchmarkModelKey(savedLineup.b)) + '</select></label>' +
-    '<label class="lbl">Trio E<select id="manualModelC_' + chamber + '">' + benchmarkManualOptionHtmlForChamber(chamber, benchmarkModelKey(savedLineup.c)) + '</select></label>' +
-    '</div>';
-
-  var rolesHtml = '<div class="benchmark-lineup" style="margin-top:10px">' +
-    '<label class="lbl">Primary<select id="roleModelPrimary_' + chamber + '">' + benchmarkManualOptionHtmlForChamber(chamber, benchmarkModelKey(savedRoles.primary)) + '</select></label>' +
-    '<label class="lbl">Failover<select id="roleModelFailover_' + chamber + '">' + benchmarkManualOptionHtmlForChamber(chamber, benchmarkModelKey(savedRoles.failover)) + '</select></label>' +
-    '</div>';
-
-  var actionsHtml = isReadOnly ? previewNote : 
-    '<div class="row-flex" style="margin-top:14px; gap:8px">' + 
-    '<button class="btn sm" id="saveManualLineup_' + chamber + '" onclick="saveManualBenchmarkLineup(\\'' + chamber + '\\')">Save Trio</button>' +
-    '<button class="btn sm ghost" id="saveRoles_' + chamber + '" onclick="saveBenchmarkRoles(\\'' + chamber + '\\')">Save Roles</button>' +
-    '<span id="modelSettingsStatus_' + chamber + '" class="note" role="status"></span></div>';
-
-  container.innerHTML = '<h4>' + esc(label) + ' Settings</h4>' +
-    '<div style="font-weight:600; font-size:0.9em; margin-top:10px;">Primary / Failover</div>' + rolesHtml +
-    '<div style="font-weight:600; font-size:0.9em; margin-top:16px;">Autopublish Trio</div>' + lineupHtml + 
-    actionsHtml;
-}
-
-function benchmarkManualOptionHtmlForChamber(chamber, selected) {
-  var settings = benchmarkState.chamberSettings[chamber];
-  var catalog = ((settings && settings.catalog) || []).filter(function(model) {
-    return model && model.provider && model.model;
-  });
-  return catalog.map(function(model) {
-    var value = benchmarkModelKey(model);
-    var suffix = model.configured ? '' : ' (not configured)';
-    return '<option value="' + esc(value) + '"' + (value === selected ? ' selected' : '') +
-      (model.configured ? '' : ' disabled') + '>' + esc(value + suffix) + '</option>';
-  }).join('');
-}
-async function saveManualBenchmarkLineup(chamber) {
-  var settings = benchmarkState.chamberSettings[chamber];
-  if (settings && settings.writeProtected) return;
-  var lineup = {
-    a: benchmarkModelRef(el('manualModelA_' + chamber) && el('manualModelA_' + chamber).value),
-    b: benchmarkModelRef(el('manualModelB_' + chamber) && el('manualModelB_' + chamber).value),
-    c: benchmarkModelRef(el('manualModelC_' + chamber) && el('manualModelC_' + chamber).value)
-  };
-  var invalid = validateBenchmarkLineup(lineup);
-  var status = el('modelSettingsStatus_' + chamber);
-  if (invalid) { if (status) { status.style.color = 'var(--neg)'; status.textContent = invalid; } return; }
-  var previous = normalizedBenchmarkLineup(settings);
-  var currentText = 'C ' + (benchmarkModelKey(previous.a) || 'not set') + '\\nD ' + (benchmarkModelKey(previous.b) || 'not set') + '\\nE ' + (benchmarkModelKey(previous.c) || 'not set');
-  var nextText = 'C ' + benchmarkModelKey(lineup.a) + '\\nD ' + benchmarkModelKey(lineup.b) + '\\nE ' + benchmarkModelKey(lineup.c);
-  if (!window.confirm('Save this manual live ' + benchmarkChamberLabel(chamber) + ' autopublish lineup?\\n\\nCurrent:\\n' + currentText + '\\n\\nNew:\\n' + nextText)) return;
-  var button = el('saveManualLineup_' + chamber);
-  if (button) button.disabled = true;
-  if (status) { status.style.color = ''; status.textContent = 'Saving lineup…'; }
-  try {
-    var result = await apiCall('/api/admin/benchmark/settings/' + encodeURIComponent(chamber), 'PUT', {
-      a: lineup.a,
-      b: lineup.b,
-      c: lineup.c,
-      expectedVersion: settings && settings.version
-    });
-    benchmarkState.chamberSettings[chamber] = result.settings;
-    renderModelSettingsForChamber(chamber);
-    if (status) { status.style.color = 'var(--pos)'; status.textContent = 'Manual lineup saved and verified.'; }
-  } catch (error) {
-    if (status) { status.style.color = 'var(--neg)'; status.textContent = 'Save failed: ' + error.message; }
-  } finally {
-    if (button) button.disabled = false;
-  }
-}
-
-async function saveBenchmarkRoles(chamber) {
-  var rolesSettings = benchmarkState.chamberRoles[chamber];
-  var settings = benchmarkState.chamberSettings[chamber];
-  if (settings && settings.writeProtected) return;
-  var roles = {
-    primary: benchmarkModelRef(el('roleModelPrimary_' + chamber) && el('roleModelPrimary_' + chamber).value),
-    failover: benchmarkModelRef(el('roleModelFailover_' + chamber) && el('roleModelFailover_' + chamber).value)
-  };
-  var invalid = validateBenchmarkRolesForm(roles);
-  var status = el('modelSettingsStatus_' + chamber);
-  if (invalid) { if (status) { status.style.color = 'var(--neg)'; status.textContent = invalid; } return; }
-  var previous = normalizedBenchmarkRoles(rolesSettings);
-  var currentText = 'Primary ' + (benchmarkModelKey(previous.primary) || 'not set') + '\\nFailover ' + (benchmarkModelKey(previous.failover) || 'not set');
-  var nextText = 'Primary ' + benchmarkModelKey(roles.primary) + '\\nFailover ' + benchmarkModelKey(roles.failover);
-  if (!window.confirm('Save this live ' + benchmarkChamberLabel(chamber) + ' primary/failover?\\n\\nCurrent:\\n' + currentText + '\\n\\nNew:\\n' + nextText)) return;
-  var button = el('saveRoles_' + chamber);
-  if (button) button.disabled = true;
-  if (status) { status.style.color = ''; status.textContent = 'Saving roles…'; }
-  try {
-    var result = await apiCall('/api/admin/benchmark/roles/' + encodeURIComponent(chamber), 'PUT', {
-      primary: roles.primary,
-      failover: roles.failover,
-      expectedVersion: rolesSettings && rolesSettings.version
-    });
-    benchmarkState.chamberRoles[chamber] = result.settings;
-    renderModelSettingsForChamber(chamber);
-    if (status) { status.style.color = 'var(--pos)'; status.textContent = 'Primary/failover saved and verified.'; }
-  } catch (error) {
-    if (status) { status.style.color = 'var(--neg)'; status.textContent = 'Save failed: ' + error.message; }
-  } finally {
-    if (button) button.disabled = false;
-  }
-}
 
 </script>
 </body>
