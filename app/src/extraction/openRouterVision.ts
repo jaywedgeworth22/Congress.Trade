@@ -100,6 +100,19 @@ export class OpenRouterVisionExtractor implements Extractor {
         fileData = `data:application/pdf;base64,${arrayBufferToBase64(input.bytes)}`;
       }
 
+function supportsNativeVision(model: string): boolean {
+  // Only declare native PDF support for models confirmed to accept
+  // a PDF as a `type: 'file'` attachment without the file-parser plugin.
+  // Vision-only models (Qwen VL, Pixtral, Llava, Nova, etc.) still need
+  // the file-parser plugin to convert the PDF into model-readable content.
+  const m = model.toLowerCase();
+  if (m.includes('gpt-4o')) return true;
+  if (m.includes('gpt-5')) return true;
+  if (m.includes('claude-3') || m.includes('claude-4') || m.includes('claude-5')) return true;
+  if (m.includes('gemini-1.5') || m.includes('gemini-2') || m.includes('gemini-3')) return true;
+  return false;
+}
+
       const callOpenRouter = async (): Promise<OpenAIChatPayload> => {
         const res = await fetchWithRetry(
           'https://openrouter.ai/api/v1/chat/completions',
@@ -115,12 +128,14 @@ export class OpenRouterVisionExtractor implements Extractor {
               model,
               max_tokens: MAX_TOKENS,
               response_format: { type: 'json_object' },
-              plugins: [
-                {
-                  id: 'file-parser',
-                  pdf: { engine: 'mistral-ocr' },
-                },
-              ],
+              ...(supportsNativeVision(model) ? {} : {
+                plugins: [
+                  {
+                    id: 'file-parser',
+                    pdf: { engine: 'mistral-ocr' },
+                  },
+                ],
+              }),
               messages: [
                 {
                   role: 'user',
