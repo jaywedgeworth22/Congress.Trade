@@ -103,6 +103,7 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'openrouter', model: 'z-ai/glm-4.6v' },
   { provider: 'openrouter', model: 'google/gemini-3.5-flash' },
   { provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' },
+  { provider: 'openrouter', model: 'openrouter/auto' },
 ];
 
 /**
