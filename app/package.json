@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.11.0",
-    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#v1.8.3",
+    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#fee9937c25db1de75c1a676826801e3399f36106",
     "@sentry/cloudflare": "^10.65.0",
     "fflate": "^0.8.3",
     "hono": "^4.12.30",
@@ -49,6 +49,6 @@
     }
   },
   "allowScripts": {
-    "github:jaywedgeworth22/congress-trading-shared#v1.8.3": true
+    "github:jaywedgeworth22/congress-trading-shared#fee9937c25db1de75c1a676826801e3399f36106": true
   }
 }
