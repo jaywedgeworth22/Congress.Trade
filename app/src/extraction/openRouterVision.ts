@@ -128,6 +128,7 @@ export class OpenRouterVisionExtractor implements Extractor {
             signal: AbortSignal.timeout(120_000),
           },
           this.name,
+          { model }
         );
 
         if (!res.ok) {

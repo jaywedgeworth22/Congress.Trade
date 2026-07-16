@@ -504,7 +504,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       'google/gemini-pro-1.5',
       'google/gemini-flash-1.5',
       'google/gemini-2.0-flash-thinking-exp:free',
-      'anthropic/claude-3.5-sonnet',
+      'anthropic/claude-sonnet',
       'anthropic/claude-3.5-haiku',
       'anthropic/claude-3.7-opus',
       'openai/gpt-4o',
@@ -527,7 +527,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       { provider: 'openai', model: 'gpt-5.6-terra' },
       { provider: 'openai', model: 'gpt-5.6-luna' },
       { provider: 'openai', model: 'gpt-5.6-sol' },
-      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      { provider: 'anthropic', model: 'claude-sonnet-5' },
       { provider: 'anthropic', model: 'claude-haiku-4-5' },
       { provider: 'mistral', model: 'mistral-ocr-latest' },
       { provider: 'xai', model: 'grok-4.3' },
@@ -779,7 +779,7 @@ describe('runCandidateOnDoc (anthropic): complete billed input usage', () => {
       ok: true,
       json: async () => ({
         id: 'msg_1',
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         stop_reason: 'end_turn',
         content: [{
           type: 'text',
@@ -801,7 +801,7 @@ describe('runCandidateOnDoc (anthropic): complete billed input usage', () => {
 
     const result = await runCandidateOnDoc(
       { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
-      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      { provider: 'anthropic', model: 'claude-sonnet-5' },
       'E-doc',
       bytes,
     );
@@ -1001,7 +1001,7 @@ describe('runCandidateOnDoc (anthropic): output-truncation handling', () => {
     ok: true,
     json: async () => ({
       id: 'msg_truncated',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       stop_reason: 'max_tokens',
       content: [{
         type: 'text',
@@ -1021,7 +1021,7 @@ describe('runCandidateOnDoc (anthropic): output-truncation handling', () => {
         ok: true,
         json: async () => ({
           id: 'msg_retry',
-          model: 'claude-sonnet-4-6',
+          model: 'claude-sonnet-5',
           stop_reason: 'end_turn',
           content: [{
             type: 'text',
@@ -1034,7 +1034,7 @@ describe('runCandidateOnDoc (anthropic): output-truncation handling', () => {
 
     const result = await runCandidateOnDoc(
       { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
-      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      { provider: 'anthropic', model: 'claude-sonnet-5' },
       'H-doc',
       bytes,
     );
@@ -1061,7 +1061,7 @@ describe('runCandidateOnDoc (anthropic): output-truncation handling', () => {
 
     const result = await runCandidateOnDoc(
       { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
-      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      { provider: 'anthropic', model: 'claude-sonnet-5' },
       'H-doc',
       bytes,
     );
@@ -1079,7 +1079,7 @@ describe('runCandidateOnDoc (anthropic): output-truncation handling', () => {
       ok: true,
       json: async () => ({
         id: 'msg_ok',
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         stop_reason: 'end_turn',
         content: [{ type: 'text', text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]' }],
         usage: { input_tokens: 400, output_tokens: 50 },
@@ -1089,7 +1089,7 @@ describe('runCandidateOnDoc (anthropic): output-truncation handling', () => {
 
     const result = await runCandidateOnDoc(
       { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
-      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      { provider: 'anthropic', model: 'claude-sonnet-5' },
       'H-doc',
       bytes,
     );
@@ -1109,7 +1109,7 @@ describe('runCandidateOnDoc (anthropic): invalid-PDF pre-validation', () => {
 
     const result = await runCandidateOnDoc(
       { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
-      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      { provider: 'anthropic', model: 'claude-sonnet-5' },
       'S-invalid',
       new TextEncoder().encode('this is not a pdf').buffer as ArrayBuffer,
     );
@@ -1127,7 +1127,7 @@ describe('runCandidateOnDoc (anthropic): invalid-PDF repair retry (2026-07-15 re
     ok: true,
     json: async () => ({
       id: 'msg_repaired',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       stop_reason: 'end_turn',
       content: [{
         type: 'text',
@@ -1146,7 +1146,7 @@ describe('runCandidateOnDoc (anthropic): invalid-PDF repair retry (2026-07-15 re
 
     const result = await runCandidateOnDoc(
       { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
-      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      { provider: 'anthropic', model: 'claude-sonnet-5' },
       'H-repair',
       bytes,
     );
@@ -1174,7 +1174,7 @@ describe('runCandidateOnDoc (anthropic): invalid-PDF repair retry (2026-07-15 re
 
     const result = await runCandidateOnDoc(
       { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
-      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      { provider: 'anthropic', model: 'claude-sonnet-5' },
       'H-repair-fails',
       bytes,
     );
@@ -1195,7 +1195,7 @@ describe('runCandidateOnDoc (anthropic): invalid-PDF repair retry (2026-07-15 re
 
     const result = await runCandidateOnDoc(
       { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
-      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      { provider: 'anthropic', model: 'claude-sonnet-5' },
       'H-other-failure',
       bytes,
     );
@@ -1237,7 +1237,7 @@ describe('runCandidateOnDoc: sync provider fetches carry a bounded timeout', () 
       ok: true,
       json: async () => ({
         id: 'msg_1',
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         stop_reason: 'end_turn',
         content: [{ type: 'text', text: '[]' }],
       }),
@@ -1246,7 +1246,7 @@ describe('runCandidateOnDoc: sync provider fetches carry a bounded timeout', () 
 
     await runCandidateOnDoc(
       { ANTHROPIC_API_KEY: 'anthropic-test' } as unknown as Env,
-      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      { provider: 'anthropic', model: 'claude-sonnet-5' },
       'H-doc',
       bytes,
     );
