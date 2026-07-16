@@ -22,6 +22,7 @@ import { parseAmountRange } from './amounts';
 import { PDFDocument } from 'pdf-lib';
 import { resolveSecret } from '../secrets/infisical';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import { GoogleGenAI } from '@google/genai';
 
 /**
  * Per-isolate sliding-window request throttle for the Gemini free/low tiers.
@@ -61,10 +62,7 @@ const geminiRateLimiter = new RateLimiter();
  */
 const DEFAULT_MODEL = 'gemini-3.5-flash';
 
-const ENDPOINT = (model: string, key: string): string =>
-  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
-    key,
-  )}`;
+
 
 /** Default confidence floor for vision output (most route to review). */
 const DEFAULT_CONFIDENCE = 0.6;
@@ -122,12 +120,14 @@ export class VisionLlmExtractor implements Extractor {
   }
 
     async extract(input: ExtractorInput): Promise<ExtractorResult> {
-    const keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
+let keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
+    if (!keyString && this.apiKeyName === 'GEMINI_API_KEY') {
+      keyString = (await resolveSecret(this.env, 'CT_GEMINI_API_KEY' as any)).value;
+    }
     if (!keyString) throw new Error(`${this.name}: API key is not configured`);
     // The key secret may hold several comma-separated keys; rotate to the next
     // one when a request fails (rate limit / quota) instead of giving up.
     const keys = keyString.split(',').map(k => k.trim()).filter(Boolean);
-    if (!keys.length) throw new Error(`${this.name}: API key is empty or invalid`);
     if (!input.bytes) throw new Error(`${this.name}: no bytes provided on ExtractorInput`);
 
     const model = await this.resolveModel();
@@ -169,59 +169,71 @@ export class VisionLlmExtractor implements Extractor {
     for (let i = 0; i < chunks.length; i++) {
       try {
         const chunkBytes = chunks[i];
-        const body = buildRequestBody(chunkBytes, input.filing.chamber);
+const prompt = input.filing.chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
 
-        let res: Response | null = null;
+        let res;
         let lastError: Error | null = null;
+        let jsonText = '';
 
         for (const k of keys) {
           try {
             await geminiRateLimiter.wait(this.env.GEMINI_RPM_LIMIT);
-            res = await fetchWithRetry(
-              ENDPOINT(model, k),
-              {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify(body),
-                signal: AbortSignal.timeout(120_000), // Slightly longer timeout for large chunks
-              },
-              this.name,
-              // Fewer in-request retries per key so an exhausted key hands off
-              // to the next one sooner; the key loop is the outer retry.
-              { model, maxAttempts: keys.length > 1 ? 2 : 4 },
-            );
+            const ai = new GoogleGenAI({ apiKey: k });
+            
+            res = await ai.models.generateContent({
+              model: model,
+              contents: [
+                {
+                  role: 'user',
+                  parts: [
+                    { text: prompt },
+                    {
+                      inlineData: {
+                        mimeType: 'application/pdf',
+                        data: arrayBufferToBase64(chunkBytes),
+                      },
+                    },
+                  ],
+                },
+              ],
+              config: {
+                temperature: 0,
+                responseMimeType: 'application/json',
+                responseSchema: RESPONSE_SCHEMA as any,
+              }
+            });
 
-            if (!res.ok) {
-              const detail = await safeText(res);
-              throw new Error(`${this.name}: Gemini API ${res.status} ${res.statusText} ${detail}`);
+            if (res.modelVersion) {
+              resolvedModel = res.modelVersion;
             }
+            if ((res as any).responseId) {
+              providerRequestId = (res as any).responseId;
+            }
+
+            jsonText = res.text || '';
+
+            if (res.usageMetadata) {
+              totalPromptTokens += res.usageMetadata.promptTokenCount ?? 0;
+              totalCompletionTokens +=
+                (res.usageMetadata.candidatesTokenCount ?? 0) +
+                (res.usageMetadata.thoughtsTokenCount ?? 0);
+              totalCachedTokens += res.usageMetadata.cachedContentTokenCount ?? 0;
+            }
+            
+            if (!jsonText) {
+              throw new Error(`${this.name}: Gemini returned no candidate text for chunk ${i + 1}/${chunks.length}`);
+            }
+
             lastError = null;
             break;
-          } catch (e) {
+          } catch (e: any) {
             lastError = e as Error;
             continue;
           }
         }
 
-        if (!res || !res.ok || lastError) {
+        if (!res || lastError) {
           throw lastError ?? new Error(`${this.name}: all API keys failed`);
-        }
-
-        const payload = (await res.json()) as GeminiResponse;
-        const jsonText = extractCandidateText(payload);
-        resolvedModel = payload.modelVersion ?? resolvedModel;
-        providerRequestId = payload.responseId ?? providerRequestId;
-
-        if (payload.usageMetadata) {
-          totalPromptTokens += payload.usageMetadata.promptTokenCount ?? 0;
-          totalCompletionTokens +=
-            (payload.usageMetadata.candidatesTokenCount ?? 0) +
-            (payload.usageMetadata.thoughtsTokenCount ?? 0);
-          totalCachedTokens += payload.usageMetadata.cachedContentTokenCount ?? 0;
-        }
-
-        if (!jsonText) {
-          throw new Error(`${this.name}: Gemini returned no candidate text for chunk ${i + 1}/${chunks.length}`);
         }
 
         combinedRaw += (i > 0 ? '\n\n--- CHUNK ---\n\n' : '') + jsonText;
@@ -278,63 +290,6 @@ export class VisionLlmExtractor implements Extractor {
       usage,
     };
   }
-}
-
-// ---------------------------------------------------------------------------
-// Transient-failure retry
-// ---------------------------------------------------------------------------
-
-/** Retry only 429 (rate limit / quota) — the failure mode that took out ~192
- *  House filings in a backfill burst. 5xx is left to fail fast (rarer, and often
- *  a real provider outage where retrying inline just wastes queue time). */
-function isRetryable(status: number): boolean {
-  return status === 429;
-}
-
-/**
- * Fetch with capped exponential backoff + jitter on retryable statuses, honoring
- * Retry-After. Runs inside the ingest queue consumer (generous per-message
- * duration), so short waits are safe — this turns a Gemini rate-limit BURST
- * (e.g. a bulk backfill firing hundreds of requests at once, which is exactly
- * how ~192 House filings hard-failed with `429 Too Many Requests`) into a brief
- * delay instead of a permanent extraction failure. Injectable `sleep`/`maxAttempts`
- * for tests.
- */
-export async function fetchWithRetry(
-  url: string,
-  init: RequestInit,
-  name = 'fetch',
-  opts: { maxAttempts?: number; sleep?: (ms: number) => Promise<void>; jitter?: () => number; model?: string } = {},
-): Promise<Response> {
-  const maxAttempts = opts.maxAttempts ?? 4;
-  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const jitter = opts.jitter ?? (() => Math.floor(Math.random() * 250));
-  let res = await trackedFetch(
-    url,
-    init,
-    { service: 'llm', operation: 'extract-document', model: opts.model },
-  );
-  for (let attempt = 1; attempt < maxAttempts && isRetryable(res.status); attempt++) {
-    const retryAfterSec = Number(res.headers.get('retry-after'));
-    const backoffMs =
-      Number.isFinite(retryAfterSec) && retryAfterSec > 0
-        ? Math.min(retryAfterSec * 1000, 30_000)
-        : Math.min(500 * 2 ** (attempt - 1), 8_000) + jitter();
-    // Release the errored response body so the connection can be reused.
-    try {
-      await res.body?.cancel();
-    } catch {
-      /* ignore */
-    }
-    console.warn(`${name}: ${res.status} — retry ${attempt}/${maxAttempts - 1} in ${backoffMs}ms`);
-    await sleep(backoffMs);
-    res = await trackedFetch(
-      url,
-      init,
-      { service: 'llm', operation: 'extract-document-retry', model: opts.model },
-    );
-  }
-  return res;
 }
 
 // ---------------------------------------------------------------------------
@@ -413,30 +368,7 @@ const RESPONSE_SCHEMA = {
   },
 } as const;
 
-function buildRequestBody(bytes: ArrayBuffer, chamber: Filing['chamber']): GeminiRequest {
-  const prompt = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
-  return {
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          { text: prompt },
-          {
-            inline_data: {
-              mime_type: 'application/pdf',
-              data: arrayBufferToBase64(bytes),
-            },
-          },
-        ],
-      },
-    ],
-    generationConfig: {
-      temperature: 0,
-      responseMimeType: 'application/json',
-      responseSchema: RESPONSE_SCHEMA as unknown as Record<string, unknown>,
-    },
-  };
-}
+
 
 // ---------------------------------------------------------------------------
 // Response mapping
@@ -761,42 +693,7 @@ function normalizeTxType(raw: string | null | undefined): TxType {
 // Gemini wire types + helpers
 // ---------------------------------------------------------------------------
 
-interface GeminiRequest {
-  contents: Array<{
-    role: string;
-    parts: Array<{ text?: string; inline_data?: { mime_type: string; data: string } }>;
-  }>;
-  generationConfig: {
-    temperature: number;
-    responseMimeType: string;
-    responseSchema: Record<string, unknown>;
-  };
-}
 
-interface GeminiResponse {
-  candidates?: Array<{
-    content?: { parts?: Array<{ text?: string }> };
-  }>;
-  usageMetadata?: {
-    promptTokenCount?: number;
-    candidatesTokenCount?: number;
-    thoughtsTokenCount?: number;
-    cachedContentTokenCount?: number;
-    totalTokenCount?: number;
-  };
-  modelVersion?: string;
-  responseId?: string;
-}
-
-function extractCandidateText(payload: GeminiResponse): string | null {
-  const parts = payload.candidates?.[0]?.content?.parts;
-  if (!parts) return null;
-  const text = parts
-    .map((p) => p.text ?? '')
-    .join('')
-    .trim();
-  return text || null;
-}
 
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -809,15 +706,50 @@ export function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-async function safeText(res: Response): Promise<string> {
-  try {
-    return (await res.text()).slice(0, 500);
-  } catch {
-    return '';
-  }
-}
+
 
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(1, n));
+}
+
+function isRetryable(status: number): boolean {
+  return status === 429;
+}
+
+export async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  name = 'fetch',
+  opts: { maxAttempts?: number; sleep?: (ms: number) => Promise<void>; jitter?: () => number; model?: string } = {},
+): Promise<Response> {
+  const maxAttempts = opts.maxAttempts ?? 4;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const jitter = opts.jitter ?? (() => Math.floor(Math.random() * 250));
+  let res = await trackedFetch(
+    url,
+    init,
+    { service: 'llm', operation: 'extract-document', model: opts.model },
+  );
+  for (let attempt = 1; attempt < maxAttempts && isRetryable(res.status); attempt++) {
+    const retryAfterSec = Number(res.headers.get('retry-after'));
+    const backoffMs =
+      Number.isFinite(retryAfterSec) && retryAfterSec > 0
+        ? Math.min(retryAfterSec * 1000, 30_000)
+        : Math.min(500 * 2 ** (attempt - 1), 8_000) + jitter();
+    // Release the errored response body so the connection can be reused.
+    try {
+      await res.body?.cancel();
+    } catch {
+      /* ignore */
+    }
+    console.warn(`${name}: ${res.status} — retry ${attempt}/${maxAttempts - 1} in ${backoffMs}ms`);
+    await sleep(backoffMs);
+    res = await trackedFetch(
+      url,
+      init,
+      { service: 'llm', operation: 'extract-document-retry', model: opts.model },
+    );
+  }
+  return res;
 }

@@ -151,14 +151,27 @@ export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Pr
   }
 
   try {
+    const headers: Record<string, string> = {
+      'user-agent': UA,
+      accept:
+        row.chamber === 'senate'
+          ? 'text/html,application/xhtml+xml,application/pdf,*/*'
+          : 'application/pdf,*/*',
+    };
+
+    if (row.chamber === 'senate' && env.CONFIG_KV) {
+      try {
+        const session = await env.CONFIG_KV.get<{ cookieHeader: string }>('senate_efd_session', 'json');
+        if (session?.cookieHeader) {
+          headers['cookie'] = session.cookieHeader;
+        }
+      } catch (err) {
+        console.warn('fetcher: failed to load senate session cookies from KV:', err);
+      }
+    }
+
     const res = await trackedFetch(sourceUrl, {
-      headers: {
-        'user-agent': UA,
-        accept:
-          row.chamber === 'senate'
-            ? 'text/html,application/xhtml+xml,application/pdf,*/*'
-            : 'application/pdf,*/*',
-      },
+      headers,
       redirect: 'follow',
     }, { service: 'filing-ingestion', operation: 'fetch-filing-document', dynamicTarget: 'filing-source' });
     if (!res.ok) {

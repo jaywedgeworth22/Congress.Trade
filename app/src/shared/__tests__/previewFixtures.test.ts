@@ -1,5 +1,4 @@
 // The Worker intentionally omits Node types, while Vitest runs this static fixture check in Node.
-// @ts-expect-error node:fs is available in the Vitest runtime.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
@@ -7,7 +6,7 @@ const fixtureUrl = new URL(
   '../../../scripts/seed-preview-fixtures.sql',
   (import.meta as ImportMeta & { url: string }).url,
 );
-const fixtureSql: string = readFileSync(fixtureUrl, 'utf8');
+const fixtureSql: string = readFileSync(fixtureUrl as any, 'utf8');
 
 function splitSqlValues(tuple: string): string[] {
   const values: string[] = [];

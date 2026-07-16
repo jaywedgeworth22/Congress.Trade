@@ -85,6 +85,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .table-wrap { overflow-x: auto; max-height: min(78vh, 920px); }
   #feedTable.resizable { table-layout: fixed; min-width: 100%; }
   #feedTable.resizable th, #feedTable.resizable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  #feedTable.resizable td.latency { white-space: normal; }
   #feedTable.resizable th { text-align: center; padding-right: 18px; }
   #feedTable.resizable td > * { max-width: 100%; min-width: 0; }
   #feedTable.resizable .asset-cell,
@@ -133,7 +134,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   nav.tabs button:hover { color: var(--text); background: var(--panel); }
   nav.tabs button.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
-  main { padding: 22px; max-width: 1480px; margin: 0 auto; }
+  main { padding: 22px; max-width: 1800px; margin: 0 auto; }
   .banner {
     font-size: 12px; color: var(--warn); border: 1px dashed color-mix(in srgb, var(--warn) 45%, transparent);
     background: color-mix(in srgb, var(--warn) 8%, transparent); padding: 8px 12px; border-radius: 8px; margin-bottom: 18px;
@@ -207,10 +208,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     margin: -4px 0 14px; padding: 12px 14px; background: var(--panel);
     border: 1px solid var(--border); border-radius: var(--radius);
   }
-  .search-panel.open { display: flex; position:relative; z-index:44; }
+  .search-panel.open, dialog.search-panel[open] { display: flex; position:relative; z-index:44; }
   .search-panel .lbl { font-size: 12px; color: var(--text-dim); margin-right: 2px; }
-  .panel-backdrop { display:none; position:fixed; inset:0; z-index:43; background:rgba(2,6,18,.46); }
-  .panel-backdrop.open { display:block; }
+  dialog.search-panel {
+    position: fixed; top: 120px; left: 50%; transform: translateX(-50%); margin: 0;
+    z-index: 100; max-width: 90vw; border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--panel) 90%, transparent);
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  }
+  dialog.search-panel::backdrop { background: rgba(2,6,18,.6); backdrop-filter: blur(4px); }
   .panel-head { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; }
   .panel-title { color:var(--text-dim); font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; }
   .panel-close {
@@ -605,6 +611,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .diag-meta span { font-size: 10px; }
     .diag-note { width: 100%; padding-top: 4px; margin-top: 4px; font-size: 10px; }
     .drawer-panel { width:100%; max-width:100%; bottom:0; top:auto; height:90vh; border-radius:12px 12px 0 0; }
+    .drawer.open .drawer-panel { animation: slideUpSpring 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
   }
   @media (max-width:600px){ .drawer-panel { width:100%; max-width:100%; } }
   footer { text-align:center; color: var(--text-dim); font-size:11px; padding:26px; }
@@ -706,6 +713,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: translateY(0); }
   }
+  @keyframes dialogPopSpring {
+    from { opacity: 0; transform: translate(-50%, 10px) scale(0.95); }
+    to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  }
+  @keyframes slideUpSpring {
+    from { opacity: 0; transform: translateY(100%); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes tickPop {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.15); color: var(--accent); }
+    100% { transform: scale(1); }
+  }
+  .tick-animate .tick-num { display: inline-block; animation: tickPop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1); }
+  dialog.search-panel[open] { animation: dialogPopSpring 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
   tr.row, .feed-card { animation: slideUpFade 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) backwards; }
   tr.row:nth-child(1), .feed-card:nth-child(1) { animation-delay: 0.05s; }
   tr.row:nth-child(2), .feed-card:nth-child(2) { animation-delay: 0.10s; }
@@ -853,6 +875,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #trTickers td.est, #tableTrTickers th.est { display: none; }
     .cluster-grid { grid-template-columns: 1fr; }
     .drawer-panel { top: auto; bottom: 0; height: 88vh; width: 100%; max-width: 100%; border-left: none; border-top: 1px solid var(--border); border-radius: 16px 16px 0 0; padding: 0 16px calc(18px + env(safe-area-inset-bottom)); }
+    .drawer.open .drawer-panel { animation: slideUpSpring 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
     .drawer-kv { grid-template-columns: 1fr; gap: 3px; }
     .drawer-kv dd { text-align: left; }
     .plan-grid { grid-template-columns: 1fr; }
@@ -1406,13 +1429,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <select id="mobileSortKey" onchange="handleMobileSortKeyChange()"></select>
       <button type="button" class="btn ghost sm" id="mobileSortDirBtn" onclick="toggleMobileSortDir()" aria-label="Toggle sort direction"></button>
     </div>
-    <div class="panel-backdrop" id="panelBackdrop" onclick="closePanels()"></div>
-    <div class="search-panel" id="colChooser">
+    <dialog class="search-panel" id="colChooser" onclick="if(event.target === this) closePanels()">
       <div class="panel-head"><span class="panel-title">Columns</span><button class="panel-close" onclick="closePanels()" aria-label="Close columns">×</button></div>
       <div id="colChooserBody" class="colopts"></div>
       <button class="btn ghost sm" onclick="resetCols()">Reset</button>
-    </div>
-    <div class="search-panel" id="searchPanel">
+    </dialog>
+    <dialog class="search-panel" id="searchPanel" onclick="if(event.target === this) closePanels()">
       <div class="panel-head"><span class="panel-title">Search</span><button class="panel-close" onclick="closePanels()" aria-label="Close search">×</button></div>
       <span class="lbl">Search All</span>
       <input id="qAll" placeholder="Politician, Asset, Symbol, Source…" style="min-width:240px;flex:1" oninput="renderFeed()" />
@@ -1421,7 +1443,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <span class="lbl">Max $</span>
       <input id="qMaxAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderFeed()" />
       <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
-    </div>
+    </dialog>
     <div class="table-wrap">
     <table id="feedTable">
       <colgroup id="feedCols"></colgroup>
@@ -2558,8 +2580,8 @@ var FEED_COLS = [
   { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return clipTextHtml(ownerLabel(r.chamber)); } },
   { id: 'source', label: 'Source', sort: 'source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
 ];
-var COL_HIDDEN_KEY = 'feed-cols-hidden-v2';
-var COL_ORDER_KEY = 'feed-cols-order-v1';
+var COL_HIDDEN_KEY = 'feed-cols-hidden-v3';
+var COL_ORDER_KEY = 'feed-cols-order-v3';
 function isAdminView() {
   return typeof ME !== 'undefined' && !!((ME.admin && ME.admin.allowed) || hasAdminToken());
 }
@@ -2646,22 +2668,32 @@ function panelIds() { return ['searchPanel', 'colChooser']; }
 function anyPanelOpen() {
   return panelIds().some(function (id) { var p = el(id); return !!(p && p.classList.contains('open')); });
 }
-function syncPanelBackdrop() {
-  var b = el('panelBackdrop');
-  if (b) b.classList.toggle('open', anyPanelOpen());
-}
+function syncPanelBackdrop() {}
 function closePanels() {
-  panelIds().forEach(function (id) { var p = el(id); if (p) p.classList.remove('open'); });
+  panelIds().forEach(function (id) {
+    var p = el(id);
+    if (p) {
+      p.classList.remove('open');
+      if (typeof p.close === 'function') p.close();
+    }
+  });
   var st = el('searchToggle'); if (st) st.classList.remove('on');
-  syncPanelBackdrop();
 }
 function setPanelOpen(id, open) {
   panelIds().forEach(function (pid) {
-    var p = el(pid); if (p) p.classList.toggle('open', pid === id && open);
+    var p = el(pid);
+    if (p) {
+      if (pid === id && open) {
+        p.classList.add('open');
+        if (typeof p.showModal === 'function' && !p.open) p.showModal();
+      } else {
+        p.classList.remove('open');
+        if (typeof p.close === 'function') p.close();
+      }
+    }
   });
   var st = el('searchToggle'); if (st) st.classList.toggle('on', id === 'searchPanel' && open);
   if (id === 'colChooser' && open) renderColChooser();
-  syncPanelBackdrop();
 }
 function renderColChooser() {
   var box = el('colChooserBody'); if (!box) return;
@@ -2784,8 +2816,11 @@ function updateFeedCountMsg(shown) {
   var start = total === 0 ? 0 : feedPage * feedPageSize + 1;
   var end = Math.min(feedPage * feedPageSize + shown, total);
   if (msg) {
-    msg.innerHTML = 'Showing ' + start + '-' + end + ' of ' + total + ' trades' +
+    msg.innerHTML = 'Showing <span class="tick-num">' + start + '-' + end + '</span> of <span class="tick-num">' + total + '</span> trades' +
       (!isPremium() && !isAdminView() ? '<span class="premium-count-note">CSV export is Premium</span>' : '');
+    msg.classList.remove('tick-animate');
+    void msg.offsetWidth;
+    msg.classList.add('tick-animate');
   }
   if (pageMsg) pageMsg.textContent = 'Page ' + (feedPage + 1) + ' of ' + Math.max(1, Math.ceil(total / feedPageSize));
   if (prev) prev.disabled = feedPage <= 0 || loadingPage;
@@ -2860,7 +2895,7 @@ function initColumnResize() {
   var DEFAULT_CAP = {
     asset: estimatedColWidth('asset', 48, 40, 54),
     member: estimatedColWidth('member', 220, 160, 286),
-    latency: 280
+    latency: 140
   };
   for (var i = 0; i < ths.length; i++) {
     var k = ths[i].dataset.col;
@@ -5133,18 +5168,24 @@ function normalizedBenchmarkLineup(settings) {
   return { a: normalize(source.a), b: normalize(source.b), c: normalize(source.c) };
 }
 
-function renderBenchmarkSettingsSummary() {
-  var box = el('benchmarkSettingsSummary');
-  if (!box) return;
-  var lineup = normalizedBenchmarkLineup(benchmarkState.settings);
-  var values = ['C ' + (benchmarkModelKey(lineup.a) || 'not set'), 'D ' + (benchmarkModelKey(lineup.b) || 'not set'), 'E ' + (benchmarkModelKey(lineup.c) || 'not set')];
-  var previewNote = benchmarkState.settings && benchmarkState.settings.writeProtected
-    ? ' <span class="note">Preview is read-only; save in production after approval.</span>'
-    : '';
-  box.innerHTML = '<strong>Saved ' + esc(benchmarkChamberLabel(benchmarkState.chamber)) + ' agreement trio:</strong> ' + esc(values.join(' · ')) + previewNote;
-  renderManualBenchmarkLineup();
-  renderBenchmarkRolesPanel();
+function normalizedBenchmarkRoles(roles) {
+  var source = roles && roles.roles ? roles.roles : {};
+  function normalize(value) {
+    if (!value) return null;
+    if (value.provider && value.model) return { provider: value.provider, model: value.model };
+    return null;
+  }
+  return { primary: normalize(source.primary), failover: normalize(source.failover) };
 }
+
+function validateBenchmarkRolesForm(roles) {
+  if (!roles.primary || !roles.failover) return 'Choose both primary and failover models.';
+  if (benchmarkModelKey(roles.primary) === benchmarkModelKey(roles.failover)) return 'Primary and failover must be different models.';
+  if (roles.primary.provider === roles.failover.provider) return 'Primary and failover must use different providers.';
+  return '';
+}
+
+
 
 function benchmarkCatalogModels() {
   return ((benchmarkState.settings && benchmarkState.settings.catalog) || []).filter(function(model) {
@@ -7889,6 +7930,146 @@ document.addEventListener('mouseover', function(e) {
   chartTt.style.top = (window.scrollY + r.top) + 'px';
   chartTt.classList.add('visible');
 });
+
+async function loadAllModelSettings() {
+  const chambers = ['house', 'senate', 'executive'];
+  for (const chamber of chambers) {
+    try {
+      benchmarkState.chamberSettings[chamber] = await apiCall('/api/admin/benchmark/settings/' + encodeURIComponent(chamber), 'GET');
+    } catch (e) {
+      benchmarkState.chamberSettings[chamber] = null;
+    }
+    try {
+      benchmarkState.chamberRoles[chamber] = await apiCall('/api/admin/benchmark/roles/' + encodeURIComponent(chamber), 'GET');
+    } catch (e) {
+      benchmarkState.chamberRoles[chamber] = null;
+    }
+    renderModelSettingsForChamber(chamber);
+  }
+}
+
+function renderModelSettingsForChamber(chamber) {
+  var containerId = chamber === 'house' ? 'modelSettingsHouse' : chamber === 'senate' ? 'modelSettingsSenate' : 'modelSettingsExec';
+  var container = el(containerId);
+  if (!container) return;
+  var settings = benchmarkState.chamberSettings[chamber];
+  var roles = benchmarkState.chamberRoles[chamber];
+  
+  if (!settings) {
+    container.innerHTML = '<div class="state">Settings unavailable for ' + esc(benchmarkChamberLabel(chamber)) + '</div>';
+    return;
+  }
+  
+  var savedLineup = normalizedBenchmarkLineup(settings);
+  var savedRoles = normalizedBenchmarkRoles(roles);
+  var label = benchmarkChamberLabel(chamber);
+  var isReadOnly = settings.writeProtected;
+  var previewNote = isReadOnly ? '<div class="state" style="margin-top:10px">Preview is read-only.</div>' : '';
+
+  var lineupHtml = '<div class="benchmark-lineup" style="margin-top:10px">' +
+    '<label class="lbl">Trio C<select id="manualModelA_' + chamber + '">' + benchmarkManualOptionHtmlForChamber(chamber, benchmarkModelKey(savedLineup.a)) + '</select></label>' +
+    '<label class="lbl">Trio D<select id="manualModelB_' + chamber + '">' + benchmarkManualOptionHtmlForChamber(chamber, benchmarkModelKey(savedLineup.b)) + '</select></label>' +
+    '<label class="lbl">Trio E<select id="manualModelC_' + chamber + '">' + benchmarkManualOptionHtmlForChamber(chamber, benchmarkModelKey(savedLineup.c)) + '</select></label>' +
+    '</div>';
+
+  var rolesHtml = '<div class="benchmark-lineup" style="margin-top:10px">' +
+    '<label class="lbl">Primary<select id="roleModelPrimary_' + chamber + '">' + benchmarkManualOptionHtmlForChamber(chamber, benchmarkModelKey(savedRoles.primary)) + '</select></label>' +
+    '<label class="lbl">Failover<select id="roleModelFailover_' + chamber + '">' + benchmarkManualOptionHtmlForChamber(chamber, benchmarkModelKey(savedRoles.failover)) + '</select></label>' +
+    '</div>';
+
+  var actionsHtml = isReadOnly ? previewNote : 
+    '<div class="row-flex" style="margin-top:14px; gap:8px">' + 
+    '<button class="btn sm" id="saveManualLineup_' + chamber + '" onclick="saveManualBenchmarkLineup(\\'' + chamber + '\\')">Save Trio</button>' +
+    '<button class="btn sm ghost" id="saveRoles_' + chamber + '" onclick="saveBenchmarkRoles(\\'' + chamber + '\\')">Save Roles</button>' +
+    '<span id="modelSettingsStatus_' + chamber + '" class="note" role="status"></span></div>';
+
+  container.innerHTML = '<h4>' + esc(label) + ' Settings</h4>' +
+    '<div style="font-weight:600; font-size:0.9em; margin-top:10px;">Primary / Failover</div>' + rolesHtml +
+    '<div style="font-weight:600; font-size:0.9em; margin-top:16px;">Autopublish Trio</div>' + lineupHtml + 
+    actionsHtml;
+}
+
+function benchmarkManualOptionHtmlForChamber(chamber, selected) {
+  var settings = benchmarkState.chamberSettings[chamber];
+  var catalog = ((settings && settings.catalog) || []).filter(function(model) {
+    return model && model.provider && model.model;
+  });
+  return catalog.map(function(model) {
+    var value = benchmarkModelKey(model);
+    var suffix = model.configured ? '' : ' (not configured)';
+    return '<option value="' + esc(value) + '"' + (value === selected ? ' selected' : '') +
+      (model.configured ? '' : ' disabled') + '>' + esc(value + suffix) + '</option>';
+  }).join('');
+}
+async function saveManualBenchmarkLineup(chamber) {
+  var settings = benchmarkState.chamberSettings[chamber];
+  if (settings && settings.writeProtected) return;
+  var lineup = {
+    a: benchmarkModelRef(el('manualModelA_' + chamber) && el('manualModelA_' + chamber).value),
+    b: benchmarkModelRef(el('manualModelB_' + chamber) && el('manualModelB_' + chamber).value),
+    c: benchmarkModelRef(el('manualModelC_' + chamber) && el('manualModelC_' + chamber).value)
+  };
+  var invalid = validateBenchmarkLineup(lineup);
+  var status = el('modelSettingsStatus_' + chamber);
+  if (invalid) { if (status) { status.style.color = 'var(--neg)'; status.textContent = invalid; } return; }
+  var previous = normalizedBenchmarkLineup(settings);
+  var currentText = 'C ' + (benchmarkModelKey(previous.a) || 'not set') + '\\nD ' + (benchmarkModelKey(previous.b) || 'not set') + '\\nE ' + (benchmarkModelKey(previous.c) || 'not set');
+  var nextText = 'C ' + benchmarkModelKey(lineup.a) + '\\nD ' + benchmarkModelKey(lineup.b) + '\\nE ' + benchmarkModelKey(lineup.c);
+  if (!window.confirm('Save this manual live ' + benchmarkChamberLabel(chamber) + ' autopublish lineup?\\n\\nCurrent:\\n' + currentText + '\\n\\nNew:\\n' + nextText)) return;
+  var button = el('saveManualLineup_' + chamber);
+  if (button) button.disabled = true;
+  if (status) { status.style.color = ''; status.textContent = 'Saving lineup…'; }
+  try {
+    var result = await apiCall('/api/admin/benchmark/settings/' + encodeURIComponent(chamber), 'PUT', {
+      a: lineup.a,
+      b: lineup.b,
+      c: lineup.c,
+      expectedVersion: settings && settings.version
+    });
+    benchmarkState.chamberSettings[chamber] = result.settings;
+    renderModelSettingsForChamber(chamber);
+    if (status) { status.style.color = 'var(--pos)'; status.textContent = 'Manual lineup saved and verified.'; }
+  } catch (error) {
+    if (status) { status.style.color = 'var(--neg)'; status.textContent = 'Save failed: ' + error.message; }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function saveBenchmarkRoles(chamber) {
+  var rolesSettings = benchmarkState.chamberRoles[chamber];
+  var settings = benchmarkState.chamberSettings[chamber];
+  if (settings && settings.writeProtected) return;
+  var roles = {
+    primary: benchmarkModelRef(el('roleModelPrimary_' + chamber) && el('roleModelPrimary_' + chamber).value),
+    failover: benchmarkModelRef(el('roleModelFailover_' + chamber) && el('roleModelFailover_' + chamber).value)
+  };
+  var invalid = validateBenchmarkRolesForm(roles);
+  var status = el('modelSettingsStatus_' + chamber);
+  if (invalid) { if (status) { status.style.color = 'var(--neg)'; status.textContent = invalid; } return; }
+  var previous = normalizedBenchmarkRoles(rolesSettings);
+  var currentText = 'Primary ' + (benchmarkModelKey(previous.primary) || 'not set') + '\\nFailover ' + (benchmarkModelKey(previous.failover) || 'not set');
+  var nextText = 'Primary ' + benchmarkModelKey(roles.primary) + '\\nFailover ' + benchmarkModelKey(roles.failover);
+  if (!window.confirm('Save this live ' + benchmarkChamberLabel(chamber) + ' primary/failover?\\n\\nCurrent:\\n' + currentText + '\\n\\nNew:\\n' + nextText)) return;
+  var button = el('saveRoles_' + chamber);
+  if (button) button.disabled = true;
+  if (status) { status.style.color = ''; status.textContent = 'Saving roles…'; }
+  try {
+    var result = await apiCall('/api/admin/benchmark/roles/' + encodeURIComponent(chamber), 'PUT', {
+      primary: roles.primary,
+      failover: roles.failover,
+      expectedVersion: rolesSettings && rolesSettings.version
+    });
+    benchmarkState.chamberRoles[chamber] = result.settings;
+    renderModelSettingsForChamber(chamber);
+    if (status) { status.style.color = 'var(--pos)'; status.textContent = 'Primary/failover saved and verified.'; }
+  } catch (error) {
+    if (status) { status.style.color = 'var(--neg)'; status.textContent = 'Save failed: ' + error.message; }
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 </script>
 </body>
 </html>`;
