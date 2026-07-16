@@ -504,7 +504,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       'google/gemini-pro-1.5',
       'google/gemini-flash-1.5',
       'google/gemini-2.0-flash-thinking-exp:free',
-      'anthropic/claude-sonnet',
+      'anthropic/claude-sonnet-5',
       'anthropic/claude-3.5-haiku',
       'anthropic/claude-3.7-opus',
       'openai/gpt-4o',
