@@ -7535,7 +7535,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     let updated = 0;
     const statements: any[] = [];
     for (const row of rows) {
-      const normalized = normalizeCompanyName(row.company_name);
+      const normalized = normalizeCompanyName(row.company_name, row.ticker);
       if (normalized && normalized !== row.company_name) {
         statements.push(
           c.env.DB.prepare('UPDATE securities_ref SET company_name = ? WHERE ticker = ?').bind(
