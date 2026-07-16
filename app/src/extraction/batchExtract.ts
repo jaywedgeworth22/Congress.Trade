@@ -349,6 +349,15 @@ async function pMap<T, U>(items: T[], limit: number, fn: (item: T) => Promise<U>
 
 // ---------------------------------------------------------------------------
 // Anthropic Message Batches — inline array, no upload.
+//
+// Unlike the sync paths (bakeoff.ts runAnthropic, anthropicVision.ts), this
+// path sends each doc's ORIGINAL bytes as-is with no pdf-lib
+// validate/resave step at all, and there is no in-band per-item retry once a
+// batch is submitted (the resave-repair retry added for the 2026-07-15
+// invalid-PDF regression — see validatePdfForAnthropic/resavePdfForAnthropic
+// in visionLlm.ts — is sync-path-only). A batch item that 400s on an invalid
+// PDF surfaces as a per-doc failure in decodeAnthropicLine() below and is
+// left for a later sync pass (which DOES have the repair retry) to resolve.
 // ---------------------------------------------------------------------------
 
 function anthropicRequest(doc: BatchDoc, model: string): unknown {

@@ -8,7 +8,7 @@
  *
  * Example of a document-specific case that stays unclassified on purpose:
  * `anthropic: invalid PDF (unparseable by pdf-lib)` (see
- * `normalizePdfForAnthropic` in visionLlm.ts) — the message is stable and
+ * `validatePdfForAnthropic` in visionLlm.ts) — the message is stable and
  * deterministic for that one document's bytes, but it says nothing about
  * whether the provider/model will reject the NEXT document, so it must not
  * become a provider- or model-scoped block the way an auth/quota failure does.

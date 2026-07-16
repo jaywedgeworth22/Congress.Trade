@@ -23,7 +23,9 @@ import {
   parseModelJson,
   parseAnthropicModelJson,
   markSalvaged,
-  normalizePdfForAnthropic,
+  validatePdfForAnthropic,
+  resavePdfForAnthropic,
+  isAnthropicInvalidPdfError,
   toParsedTx,
   arrayBufferToBase64,
   VisionLlmExtractor,
@@ -456,13 +458,21 @@ const ANTHROPIC_MAX_TOKENS_RETRY = 16000;
 /**
  * Anthropic messages call (base64 `document` block BEFORE the text block).
  *
- * PDF bytes are pre-validated/normalized via pdf-lib before any request is
- * sent (see {@link normalizePdfForAnthropic}); an unparseable PDF fails fast
- * without spending a provider call. When the model's first reply is cut off
- * (`stop_reason: 'max_tokens'`), one retry is made with a doubled token
- * budget; if the retry is STILL truncated (or the JSON is truncated and
- * unparseable), a bounded salvage recovers the complete leading transaction
- * rows instead of failing the whole read (see {@link parseAnthropicModelJson}).
+ * PDF bytes are pre-validated (pdf-lib load only, bytes unchanged) before any
+ * request is sent (see {@link validatePdfForAnthropic}); an unparseable PDF
+ * fails fast without spending a provider call. The ORIGINAL bytes are sent —
+ * NOT pdf-lib's resaved/re-serialized output (see {@link validatePdfForAnthropic}
+ * for why: Anthropic's parser rejects pdf-lib's serializer output for some
+ * PDFs it accepts in original form). If Anthropic 400s specifically with the
+ * receipted invalid-PDF message (see {@link isAnthropicInvalidPdfError}), one
+ * repair retry is made with {@link resavePdfForAnthropic}'s resaved bytes; if
+ * that retry also fails, the ORIGINAL error is surfaced.
+ *
+ * Independently, when the model's first reply is cut off (`stop_reason:
+ * 'max_tokens'`), one retry is made with a doubled token budget; if the retry
+ * is STILL truncated (or the JSON is truncated and unparseable), a bounded
+ * salvage recovers the complete leading transaction rows instead of failing
+ * the whole read (see {@link parseAnthropicModelJson}).
  */
 async function runAnthropic(
   model: string,
@@ -471,10 +481,9 @@ async function runAnthropic(
   chamber: string,
 ): Promise<ProviderResult> {
   const prompt = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
-  const normalizedBytes = await normalizePdfForAnthropic(bytes);
-  const documentBase64 = arrayBufferToBase64(normalizedBytes);
+  await validatePdfForAnthropic(bytes);
 
-  const callAnthropic = async (maxTokens: number): Promise<AnthropicMessagesPayload> => {
+  const callAnthropic = async (documentBase64: string, maxTokens: number): Promise<AnthropicMessagesPayload> => {
     const res = await trackedFetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -504,13 +513,39 @@ async function runAnthropic(
     return (await res.json()) as AnthropicMessagesPayload;
   };
 
-  let payload = await callAnthropic(ANTHROPIC_MAX_TOKENS);
-  let usageInfo = anthropicUsageFromPayload(payload.usage);
+  /** One full call (+ truncation retry) attempt against a given byte source. */
+  const attempt = async (
+    pdfBytes: ArrayBuffer,
+  ): Promise<{ payload: AnthropicMessagesPayload; usageInfo: UsageInfo }> => {
+    const documentBase64 = arrayBufferToBase64(pdfBytes);
+    let payload = await callAnthropic(documentBase64, ANTHROPIC_MAX_TOKENS);
+    let usageInfo = anthropicUsageFromPayload(payload.usage);
 
-  if (payload.stop_reason === 'max_tokens') {
-    const retryPayload = await callAnthropic(ANTHROPIC_MAX_TOKENS_RETRY);
-    usageInfo = sumUsageInfo(usageInfo, anthropicUsageFromPayload(retryPayload.usage));
-    payload = retryPayload;
+    if (payload.stop_reason === 'max_tokens') {
+      const retryPayload = await callAnthropic(documentBase64, ANTHROPIC_MAX_TOKENS_RETRY);
+      usageInfo = sumUsageInfo(usageInfo, anthropicUsageFromPayload(retryPayload.usage));
+      payload = retryPayload;
+    }
+    return { payload, usageInfo };
+  };
+
+  let payload: AnthropicMessagesPayload;
+  let usageInfo: UsageInfo;
+  try {
+    ({ payload, usageInfo } = await attempt(bytes));
+  } catch (err) {
+    // Repair retry: Anthropic's parser sometimes rejects previously-good PDF
+    // bytes outright (receipted 2026-07-15 doc H-2026-20034954 production
+    // regression). One shot only — resave via pdf-lib and retry ONCE; if the
+    // retry also fails (for this reason or any other), surface the ORIGINAL
+    // error, not the retry's.
+    if (!isAnthropicInvalidPdfError((err as Error).message)) throw err;
+    try {
+      const resavedBytes = await resavePdfForAnthropic(bytes);
+      ({ payload, usageInfo } = await attempt(resavedBytes));
+    } catch {
+      throw err;
+    }
   }
 
   const text = (payload.content ?? [])
