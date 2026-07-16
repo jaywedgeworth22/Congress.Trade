@@ -15,7 +15,7 @@ import {
 const OLD = {
   a: 'mistral:mistral-ocr-latest',
   b: 'openai:gpt-5.6-terra',
-  c: 'anthropic:claude-haiku-4-5',
+  c: 'anthropic:claude-sonnet-5',
 };
 
 const NEW = {
@@ -90,7 +90,7 @@ describe('benchmark lineup settings', () => {
     expect(settings.lineup).toEqual({
       a: { provider: 'mistral', model: 'mistral-ocr-latest' },
       b: { provider: 'openai', model: 'gpt-5.6-terra' },
-      c: { provider: 'anthropic', model: 'claude-haiku-4-5' },
+      c: { provider: 'anthropic', model: 'claude-sonnet-5' },
     });
     expect(settings.valid).toBe(true);
     expect(settings.version).toMatch(/^[a-f0-9]{64}$/);
@@ -109,7 +109,7 @@ describe('benchmark lineup settings', () => {
   it('rejects a lineup that lets one provider corroborate itself', () => {
     expect(() => validateBenchmarkLineup({
       a: { provider: 'anthropic', model: 'claude-sonnet-5' },
-      b: { provider: 'anthropic', model: 'claude-haiku-4-5' },
+      b: { provider: 'anthropic', model: 'claude-sonnet-5' },
       c: { provider: 'openai', model: 'gpt-5.6-terra' },
     })).toThrow(BenchmarkSettingsValidationError);
   });

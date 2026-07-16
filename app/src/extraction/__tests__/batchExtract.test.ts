@@ -59,7 +59,7 @@ describe('batch chamber prompts', () => {
     await expect(submitBatch(
       { ANTHROPIC_API_KEY: 'test-key' } as unknown as Env,
       'anthropic',
-      'claude-haiku-4-5',
+      'claude-sonnet-5',
       [{ docId: 'E-278T-1', chamber: 'executive', bytes }],
     )).resolves.toBe('batch-executive');
 
@@ -282,7 +282,7 @@ describe('submitBatch/pollBatch Anthropic: per-item PDF pre-validation', () => {
     const providerBatchId = await submitBatch(
       { ANTHROPIC_API_KEY: 'test-key' } as unknown as Env,
       'anthropic',
-      'claude-haiku-4-5',
+      'claude-sonnet-5',
       docs,
     );
 
@@ -349,7 +349,7 @@ describe('submitBatch/pollBatch Anthropic: per-item PDF pre-validation', () => {
     const providerBatchId = await submitBatch(
       { ANTHROPIC_API_KEY: 'test-key' } as unknown as Env,
       'anthropic',
-      'claude-haiku-4-5',
+      'claude-sonnet-5',
       docs,
     );
     expect(fetchMock).not.toHaveBeenCalled();
@@ -402,7 +402,7 @@ describe('submitBatch/pollBatch Anthropic: per-item PDF pre-validation', () => {
       // docId handed to submitBatch, computed from the input list BEFORE any
       // internal pre-validation exclusion.
       const expectedDocIds = docs.map((d) => d.docId);
-      const providerBatchId = await submitBatch(env, 'anthropic', 'claude-haiku-4-5', docs);
+      const providerBatchId = await submitBatch(env, 'anthropic', 'claude-sonnet-5', docs);
       const poll = await pollBatch(env, 'anthropic', providerBatchId);
 
       expect(poll.done).toBe(true);
@@ -433,7 +433,7 @@ describe('submitBatch/pollBatch Anthropic: per-item PDF pre-validation', () => {
     await expect(submitBatch(
       { ANTHROPIC_API_KEY: 'test-key' } as unknown as Env,
       'anthropic',
-      'claude-haiku-4-5',
+      'claude-sonnet-5',
       docs,
     )).resolves.toBe('msgbatch_plain_id');
   });

@@ -103,11 +103,11 @@ describe('resolvePrimaryFailoverModels', () => {
   it('resolves the per-chamber A/B keys and upgrades a retired candidate', async () => {
     const env = {
       AGREEMENT_HOUSE_MODEL_A: 'openai:gpt-4o',
-      AGREEMENT_HOUSE_MODEL_B: 'anthropic:claude-haiku-4-5',
+      AGREEMENT_HOUSE_MODEL_B: 'anthropic:claude-sonnet-5',
     } as unknown as Env;
     const { primary, failover } = await resolvePrimaryFailoverModels(env, 'house');
     expect(primary).toEqual({ provider: 'openai', model: 'gpt-5.6-terra' });
-    expect(failover).toEqual({ provider: 'anthropic', model: 'claude-haiku-4-5' });
+    expect(failover).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5' });
   });
 
   it('returns nulls for an unconfigured chamber', async () => {

@@ -122,7 +122,7 @@ function stubProviders(openaiText: string, anthropicText: string, mistralText?: 
 
 const MODELS: AgreementModels = {
   a: { provider: 'openai', model: 'gpt-5.6-terra' },
-  b: { provider: 'anthropic', model: 'claude-haiku-4-5' },
+  b: { provider: 'anthropic', model: 'claude-sonnet-5' },
 };
 
 describe('processAgreementDoc extraction_runs persistence', () => {
@@ -139,7 +139,7 @@ describe('processAgreementDoc extraction_runs persistence', () => {
     expect(extractionRuns.every((r) => r.doc_id === 'H-1')).toBe(true);
     const byProvider = Object.fromEntries(extractionRuns.map((r) => [r.provider, r]));
     expect(byProvider.openai).toMatchObject({ model: 'gpt-5.6-terra', ok: 1, row_count: 1 });
-    expect(byProvider.anthropic).toMatchObject({ model: 'claude-haiku-4-5', ok: 1, row_count: 1 });
+    expect(byProvider.anthropic).toMatchObject({ model: 'claude-sonnet-5', ok: 1, row_count: 1 });
     // Same batch id groups the two reads from one processAgreementDoc call.
     expect(extractionRuns[0].batch_id).toBe(extractionRuns[1].batch_id);
     expect(extractionRuns[0].batch_id).toBeTruthy();

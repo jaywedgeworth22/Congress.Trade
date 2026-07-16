@@ -311,7 +311,7 @@ describe('benchmark persistence', () => {
       chamber: 'house',
       models: [
         { provider: 'openai', model: 'gpt-5.6-terra' },
-        { provider: 'anthropic', model: 'claude-haiku-4-5' },
+        { provider: 'anthropic', model: 'claude-sonnet-5' },
       ],
       billableModels: [{ provider: 'openai', model: 'gpt-5.6-terra' }],
       documents: [{ docId: 'H-1', resolved: true }],

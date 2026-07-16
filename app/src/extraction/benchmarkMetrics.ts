@@ -100,7 +100,7 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
   },
   {
     provider: 'openrouter',
-    models: ['anthropic/claude-sonnet'],
+    models: ['anthropic/claude-sonnet-5'],
     meter: 'tokens',
     inputUsdPerMillion: 3,
     cachedInputUsdPerMillion: 3, // OpenRouter cache discounts vary, using base for benchmark
@@ -112,7 +112,7 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
   },
   {
     provider: 'openrouter',
-    models: ['anthropic/claude-3.5-haiku'],
+    models: ['anthropic/claude-sonnet-5'],
     meter: 'tokens',
     inputUsdPerMillion: 1,
     cachedInputUsdPerMillion: 1, // OpenRouter cache discounts vary, using base for benchmark
@@ -124,7 +124,7 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
   },
   {
     provider: 'openrouter',
-    models: ['anthropic/claude-3.7-opus'],
+    models: ['anthropic/claude-sonnet-5'],
     meter: 'tokens',
     inputUsdPerMillion: 15,
     cachedInputUsdPerMillion: 15, // OpenRouter cache discounts vary, using base for benchmark
@@ -338,7 +338,7 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
   },
   {
     provider: 'anthropic',
-    models: ['claude-haiku-4-5'],
+    models: ['claude-sonnet-5'],
     meter: 'tokens',
     inputUsdPerMillion: 1,
     cachedInputUsdPerMillion: 0.1,
