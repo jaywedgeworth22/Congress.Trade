@@ -6508,7 +6508,9 @@ function speedAxisMax(lanes) {
   var stopsHr = [1, 2, 4, 6, 8, 12, 16, 24, 36, 48, 72, 96, 144, 192, 240, 336, 504, 720];
   var needed = maxSec * 1.08 / 3600;
   for (var i = 0; i < stopsHr.length; i++) { if (stopsHr[i] >= needed) return stopsHr[i] * 3600; }
-  return stopsHr[stopsHr.length - 1] * 3600;
+  /* Beyond the largest stop, snap up to a 48h multiple that covers the data —
+     never a fixed ceiling that would clamp an extreme lead to the last stop. */
+  return Math.ceil(needed / 48) * 48 * 3600;
 }
 function speedLaneHtml(p, domainMin, domainMax) {
   function x(s) { return Math.max(0, Math.min(100, 100 * (s - domainMin) / (domainMax - domainMin))); }
