@@ -529,7 +529,6 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       { provider: 'openai', model: 'gpt-5.6-luna' },
       { provider: 'openai', model: 'gpt-5.6-sol' },
       { provider: 'anthropic', model: 'claude-sonnet-5' },
-      { provider: 'anthropic', model: 'claude-sonnet-5' },
       { provider: 'mistral', model: 'mistral-ocr-latest' },
       { provider: 'xai', model: 'grok-4.3' },
     ]);
