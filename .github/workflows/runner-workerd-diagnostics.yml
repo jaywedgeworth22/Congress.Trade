@@ -102,7 +102,10 @@ jobs:
         working-directory: app
         run: |
           echo '===== [7] MINIFLARE PROBE ====='
-          cat > /tmp/mf-probe.mjs <<'EOF'
+          # The probe must live inside app/ — Node ESM resolution walks up from
+          # the script's own directory, so a /tmp location never finds
+          # app/node_modules and the probe false-fails with ERR_MODULE_NOT_FOUND.
+          cat > app/mf-probe.mjs <<'EOF'
           import { Miniflare } from 'miniflare';
           try {
             const mf = new Miniflare({
@@ -116,7 +119,8 @@ jobs:
             console.error('MINIFLARE FAIL', e);
           }
           EOF
-          node /tmp/mf-probe.mjs || true
+          node app/mf-probe.mjs || true
+          rm -f app/mf-probe.mjs
 
       - name: Done
         run: |
