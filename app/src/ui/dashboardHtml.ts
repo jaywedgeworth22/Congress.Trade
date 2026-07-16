@@ -6479,7 +6479,6 @@ function fmtLead(secs) {
 }
 function speedEligible(d) {
   return (d.providers || []).filter(function (p) {
-    if (p.label === 'Quiver Quantitative' || p.label === 'Unusual Whales') return false;
     return p.matched >= SPEED_LANE_MIN_MATCHED;
   });
 }
@@ -6506,7 +6505,7 @@ function speedAxisMax(lanes) {
   lanes.forEach(function (p) {
     maxSec = Math.max(maxSec, Math.abs(p.medianLeadSec || 0), Math.abs(p.p90LeadSec || 0));
   });
-  var stopsHr = [1, 2, 4, 6, 8, 12, 16, 24, 36, 48];
+  var stopsHr = [1, 2, 4, 6, 8, 12, 16, 24, 36, 48, 72, 96, 144, 192];
   var needed = maxSec * 1.08 / 3600;
   for (var i = 0; i < stopsHr.length; i++) { if (stopsHr[i] >= needed) return stopsHr[i] * 3600; }
   return 48 * 3600;
@@ -6546,9 +6545,8 @@ function speedLaneHtml(p, domainMin, domainMax) {
 function renderSpeedProof() {
   var box = el('trLatencySection'); if (!box) return;
   fetchLatencySummary().then(function (d) {
-    var provs = (d.providers || []).filter(function (p) {
-      return p.label !== 'Quiver Quantitative' && p.label !== 'Unusual Whales';
-    }).sort(function (a, b) { return b.matched - a.matched; });
+    var provs = (d.providers || []).slice()
+      .sort(function (a, b) { return b.matched - a.matched; });
     if (!d.totals || !d.totals.racedDisclosures || !provs.length) { box.hidden = true; return; }
     var best = null;
     provs.forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
