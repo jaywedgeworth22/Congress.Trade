@@ -965,11 +965,29 @@ async function runUnusualWhalesDeepMatch(
 
   const errors: string[] = [];
   let fetchedRows = 0;
+  // Collect fresh rows from deep-match fetches directly so they are available
+  // for candidate matching regardless of first_observed_at age (the upsert
+  // only updates last_observed_at for existing rows, so loadProviderRows'
+  // first_observed_at >= cutoff filter can exclude them).
+  const deepFreshObservationRows: ProviderObservationRow[] = [];
   for (const date of targetDates) {
     try {
       const rows = await fetchUnusualWhalesRowsForDate(apiKey, fetchImpl, date);
       fetchedRows += rows.length;
       await upsertProviderRows(env, provider.id, rows, nowIso);
+      for (const row of rows) {
+        deepFreshObservationRows.push({
+          provider: row.provider,
+          chamber: row.chamber,
+          provider_key: row.providerKey,
+          first_observed_at: nowIso,
+          provider_published_at: row.providerPublishedAt,
+          source_url: row.sourceUrl,
+          filed_date: row.filedDate,
+          filer_name: row.filerName,
+          payload: JSON.stringify(row.payload).slice(0, PAYLOAD_LIMIT),
+        });
+      }
     } catch (err) {
       // A single date's failure (401/403/429/5xx, e.g. a lapsed trial key)
       // must not abort the rest of the deep-match dates or the outer probe;
@@ -978,10 +996,12 @@ async function runUnusualWhalesDeepMatch(
     }
   }
 
-  // Re-load provider rows so any freshly upserted deep-match rows (first_
-  // observed_at = nowIso, well within the recency cutoff) are considered.
+  // Merge DB-loaded rows (which may contain relevant rows from earlier normal
+  // passes) with the fresh deep-match rows. Duplicates are harmless — the
+  // matching loop iterates rows and breaks on the first match.
   const providerRows = await loadProviderRows(env, provider.id, now);
-  const result = await matchAndUpdateCandidates(env, provider, targetCandidates, providerRows, nowIso, errors);
+  const allRows = [...providerRows, ...deepFreshObservationRows];
+  const result = await matchAndUpdateCandidates(env, provider, targetCandidates, allRows, nowIso, errors);
   return { ...result, fetchedRows, errors };
 }
 
