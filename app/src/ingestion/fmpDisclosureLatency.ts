@@ -1082,7 +1082,13 @@ async function runProviderProbe(
     if (isUnusualWhales && freshRows.length) {
       const deep = await runUnusualWhalesDeepMatch(env, provider, apiKey, freshRows, now, nowIso, fetchImpl);
       totalFetchedRows += deep.fetchedRows;
-      totalPending += deep.pending;
+      // Don't add deep.pending: the deep-match pass operates on a subset of
+      // all pending candidates (those with old filed_dates that the normal
+      // pass couldn't match). Some of those may also appear in the normal
+      // pass's candidate set (top 100 by created_at), so summing the two
+      // pending counts would double-count any overlap. The normal pass's
+      // matched.pending is the authoritative pending snapshot — deep-match
+      // matched count is additive (new matches the normal pass missed).
       totalMatched += deep.matched;
       errors.push(...deep.errors);
     }
