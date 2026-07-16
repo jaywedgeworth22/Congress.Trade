@@ -399,8 +399,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   code { font-family: var(--mono); background: var(--bg); padding:1px 6px; border-radius:5px; font-size:12px; color: var(--accent); }
   /* ================= TRENDS / ANALYTICS ================= */
   .trend-grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-  .trend-grid2 > *, .trend-members-grid > *, .trend-side-stack > *, .timeliness-grid > * { min-width: 0; }
-  @media (max-width: 760px) { .trend-grid2 { grid-template-columns: 1fr; } }
+  .trend-grid-split { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 18px; }
+  .trend-grid-split > *, .trend-grid2 > *, .trend-members-grid > *, .trend-side-stack > *, .timeliness-grid > * { min-width: 0; }
+  @media (max-width: 760px) {
+    .trend-grid2 { grid-template-columns: 1fr; }
+    .trend-grid-split { grid-template-columns: 1fr; }
+  }
   .trend-members-grid { display:grid; grid-template-columns:minmax(0, 1.6fr) minmax(0, .85fr); gap:18px; align-items:start; }
   .trend-side-stack { display:grid; grid-template-columns:1fr; gap:18px; }
   @media (max-width: 920px) { .trend-members-grid { grid-template-columns:1fr; } }
@@ -863,7 +867,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .row-flex { align-items: stretch; gap: 9px; }
     .row-flex > input, .row-flex > select, .row-flex > button { width: 100%; min-height: 40px; }
     .sched-row { grid-template-columns: 1fr 1fr; }
-    .trend-grid2 { gap: 12px; }
+    .trend-grid2, .trend-grid-split { gap: 12px; }
     /* Narrow the fixed label/value gutters so the proportion bar keeps room. */
     .hbar .hlabel { width: 92px; font-size: 12px; }
     .hbar .hval { width: auto; min-width: 56px; }
@@ -1318,7 +1322,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 /* ---- 16. Desktop/tablet spacing + numeric edge alignment -------------- */
 @media (min-width: 721px) {
   #view-trends .section { padding: 19px 20px; }
-  #view-trends .trend-grid2 { gap: 18px; }
+  #view-trends .trend-grid2, #view-trends .trend-grid-split { gap: 18px; }
   /* Hang the standalone Est-Volume figures on a shared right edge. Identity
      and split-mix cells keep their left flow. (#trTickers td.est is hidden
      on phones by the base 720px query — this guard never undoes that.) */
@@ -1524,7 +1528,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 
     <!-- What Congress is trading + Heating up -->
-    <div class="trend-grid2">
+    <div class="trend-grid-split">
       <div class="section">
         <h3 class="tf-h">What Congress Is Trading <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
         <p class="sub">Most-traded assets in the window. Click a row for a deep dive. Bar = buy / sell mix.</p>
