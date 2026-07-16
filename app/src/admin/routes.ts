@@ -4058,9 +4058,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     let n = typeof body.n === 'number' && body.n > 0 ? Math.floor(body.n) : 20;
     if (n > 50) n = 50; // cap fan-out (n docs * candidates LLM calls)
 
-    let chamber = 'house';
-    if (body.chamber === 'senate') chamber = 'senate';
-    if (body.chamber === 'executive') chamber = 'executive';
+    const rawChamber = body.chamber;
+    const chamber = rawChamber === 'senate' ? 'senate'
+      : rawChamber === 'executive' ? 'executive'
+      : rawChamber == null || rawChamber === 'house' ? 'house'
+      : null;
+    if (!chamber) {
+      return c.json({ error: "chamber must be 'house', 'senate' or 'executive'" }, 400);
+    }
 
     // Pick the documents: explicit docIds, else the most recent PTRs with a raw PDF for the given chamber.
     let docs: Array<{ doc_id: string; raw_object_key: string | null }>;

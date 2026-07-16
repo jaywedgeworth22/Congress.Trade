@@ -113,6 +113,7 @@ export class AnthropicVisionExtractor implements Extractor {
             body: JSON.stringify({
               model,
               max_tokens: maxTokens,
+              thinking: { type: 'disabled' },
               messages: [
                 {
                   role: 'user',
