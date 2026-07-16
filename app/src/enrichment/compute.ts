@@ -9,7 +9,7 @@
  * deterministic so they unit-test without network or DB.
  */
 
-import { marketCapBucket as sharedMarketCapBucket } from '@jaywedgeworth22/congress-trading-shared';
+import { marketCapBucket as sharedMarketCapBucket, normalizeCompanyName } from '@jaywedgeworth22/congress-trading-shared';
 import type { MktCapBucket, SecurityRef } from './types';
 
 /** Bucket a USD market cap into the standard size tiers. null for missing/≤0. */
@@ -78,6 +78,7 @@ export function mergeRefs(ticker: string, partials: Array<Partial<SecurityRef> |
       if (v != null && v !== '') (out as unknown as Record<string, unknown>)[k] = v;
     }
   }
+  out.companyName = normalizeCompanyName(out.companyName);
   out.marketCapBucket = marketCapBucket(out.marketCap);
   out.source = sources.length ? sources.join('+') : null;
   return out;
