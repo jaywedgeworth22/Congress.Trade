@@ -482,6 +482,58 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     ]);
   });
 
+  it('lists only OpenRouter slugs verified live against the models API (2026-07-16)', () => {
+    const openRouterModels = DEFAULT_CANDIDATES
+      .filter((entry) => entry.provider === 'openrouter')
+      .map((entry) => entry.model);
+    expect(openRouterModels).toEqual([
+      'deepseek/deepseek-v4-pro',
+      'deepseek/deepseek-v4-flash',
+      'qwen/qwen3-vl-30b-a3b-instruct',
+      'qwen/qwen3-vl-8b-instruct',
+      'google/gemini-2.5-flash-lite',
+      'amazon/nova-lite-v1',
+      'z-ai/glm-4.6v',
+      'google/gemini-3.5-flash',
+      'qwen/qwen-2.5-72b-instruct',
+    ]);
+    // Slugs confirmed absent from the live OpenRouter models API must never
+    // reappear — every benchmark cell for a dead slug can only fail.
+    const deadSlugs = [
+      'qwen/qwen-2.5-vl-72b-instruct:free',
+      'google/gemini-pro-1.5',
+      'google/gemini-flash-1.5',
+      'google/gemini-2.0-flash-thinking-exp:free',
+      'anthropic/claude-3.5-sonnet',
+      'anthropic/claude-3.5-haiku',
+      'anthropic/claude-3.7-opus',
+      'openai/gpt-4o',
+      'openai/gpt-4o-mini',
+      'mistralai/mistral-large-2411',
+      'x-ai/grok-2-vision-1212',
+      'deepseek/deepseek-chat',
+      'deepseek/deepseek-coder',
+      'qwen/qwen-max',
+      '01-ai/yi-large',
+      'moonshotai/kimi-chat',
+      'minimax/minimax-hep-lite',
+    ];
+    for (const slug of deadSlugs) expect(openRouterModels).not.toContain(slug);
+    // The GPT-4o family must be absent from the whole default lineup on every
+    // transport, and the eight direct-provider entries stay unchanged.
+    expect(DEFAULT_CANDIDATES.some((entry) => /(?:^|\/)(?:gpt|chatgpt)-4o(?:-|$)/i.test(entry.model))).toBe(false);
+    expect(DEFAULT_CANDIDATES.filter((entry) => entry.provider !== 'openrouter')).toEqual([
+      { provider: 'gemini', model: 'gemini-3.5-flash' },
+      { provider: 'openai', model: 'gpt-5.6-terra' },
+      { provider: 'openai', model: 'gpt-5.6-luna' },
+      { provider: 'openai', model: 'gpt-5.6-sol' },
+      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      { provider: 'anthropic', model: 'claude-haiku-4-5' },
+      { provider: 'mistral', model: 'mistral-ocr-latest' },
+      { provider: 'xai', model: 'grok-4.3' },
+    ]);
+  });
+
   it('maps the GPT-5.6 roles to low, medium, and high reasoning', () => {
     expect(openAiDisclosureReasoningEffort('gpt-5.6-luna')).toBe('low');
     expect(openAiDisclosureReasoningEffort('gpt-5.6-terra')).toBe('medium');
@@ -495,6 +547,24 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     expect(isRetiredDisclosureCandidate({ provider: 'openai', model: 'gpt-5.6-terra' })).toBe(false);
     expect(upgradeRetiredDisclosureCandidate({ provider: 'openai', model: 'gpt-4o' }))
       .toEqual({ provider: 'openai', model: 'gpt-5.6-terra' });
+  });
+
+  it('retires OpenRouter-transported GPT-4o too, closing the transport loophole', () => {
+    expect(isRetiredDisclosureCandidate({ provider: 'openrouter', model: 'openai/gpt-4o' })).toBe(true);
+    expect(isRetiredDisclosureCandidate({ provider: 'openrouter', model: 'openai/gpt-4o-mini' })).toBe(true);
+    expect(isRetiredDisclosureCandidate({ provider: 'openrouter', model: 'openai/chatgpt-4o-latest' })).toBe(true);
+    expect(isRetiredDisclosureCandidate({ provider: 'openrouter', model: ' openai/GPT-4o ' })).toBe(true);
+    // Non-4o OpenRouter slugs and lookalike prefixes stay allowed.
+    expect(isRetiredDisclosureCandidate({ provider: 'openrouter', model: 'openai/gpt-5.6-terra' })).toBe(false);
+    expect(isRetiredDisclosureCandidate({ provider: 'openrouter', model: 'deepseek/deepseek-v4-pro' })).toBe(false);
+    expect(isRetiredDisclosureCandidate({ provider: 'openrouter', model: 'openai/gpt-4o1' })).toBe(false);
+    // A stale openrouter gpt-4o config upgrades on the SAME transport.
+    expect(upgradeRetiredDisclosureCandidate({ provider: 'openrouter', model: 'openai/gpt-4o' }))
+      .toEqual({ provider: 'openrouter', model: 'openai/gpt-5.6-terra' });
+    expect(upgradeRetiredDisclosureCandidate({ provider: 'openrouter', model: 'openai/gpt-4o-mini' }))
+      .toEqual({ provider: 'openrouter', model: 'openai/gpt-5.6-terra' });
+    expect(upgradeRetiredDisclosureCandidate({ provider: 'openrouter', model: 'z-ai/glm-4.6v' }))
+      .toEqual({ provider: 'openrouter', model: 'z-ai/glm-4.6v' });
   });
 
   it('blocks a low-level GPT-4o invocation before resolving a key or calling a provider', async () => {

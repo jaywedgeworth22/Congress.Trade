@@ -505,7 +505,7 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('wires a per-doc "Re-read with model…" bake-off control with multi-select', () => {
-    expect(DASHBOARD_HTML).toContain('var REREAD_MODELS');
+    expect(DASHBOARD_HTML).toContain('var REREAD_MODELS = BENCHMARK_CATALOG');
     expect(DASHBOARD_HTML).toContain('function rereadModelOptionsHtml(');
     expect(DASHBOARD_HTML).toContain('function rereadControlHtml(');
     expect(DASHBOARD_HTML).toContain('function rereadWithModel(');
@@ -514,14 +514,6 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('id="reread-sel-\' + esc(docId) + \'" multiple');
     expect(DASHBOARD_HTML).toContain('id="reread-btn-\' + esc(docId) + \'"');
     expect(DASHBOARD_HTML).toContain('id="reread-msg-\' + esc(docId) + \'"');
-    // curated provider/model pairs mirror DEFAULT_CANDIDATES in src/extraction/bakeoff.ts
-    expect(DASHBOARD_HTML).toContain("{ provider: 'gemini', model: 'gemini-3.5-flash' }");
-    expect(DASHBOARD_HTML).not.toContain("{ provider: 'openai', model: 'gpt-4o' }");
-    expect(DASHBOARD_HTML).toContain("{ provider: 'openai', model: 'gpt-5.6-terra' }");
-    expect(DASHBOARD_HTML).toContain("{ provider: 'anthropic', model: 'claude-sonnet-4-6' }");
-    expect(DASHBOARD_HTML).toContain("{ provider: 'anthropic', model: 'claude-haiku-4-5' }");
-    expect(DASHBOARD_HTML).toContain("{ provider: 'mistral', model: 'mistral-ocr-latest' }");
-    expect(DASHBOARD_HTML).toContain("{ provider: 'xai', model: 'grok-4.3' }");
     // grouped by provider via optgroup
     expect(DASHBOARD_HTML).toContain("'<optgroup label=\"' + esc(p) + '\">'");
     // posts the existing bake-off endpoint scoped to this doc, persisted
@@ -535,6 +527,89 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('viewReadings(docId); // refresh this doc\'s runs display with the new reading(s)');
   });
 
+  it('derives every model menu from the ONE server-injected benchmark catalog', () => {
+    // The catalog is serialized from benchmarkModelCatalog() at module load —
+    // no hand-maintained duplicate lists remain in the template.
+    expect(DASHBOARD_HTML).toContain('var BENCHMARK_CATALOG = [');
+    expect(DASHBOARD_HTML).toContain('var REREAD_MODELS = BENCHMARK_CATALOG;');
+    expect(DASHBOARD_HTML).not.toContain("{ provider: 'gemini', model: 'gemini-3.5-flash' }");
+    // Injected JSON carries the corrected DEFAULT_CANDIDATES + LlamaParse set.
+    expect(DASHBOARD_HTML).toContain('{"provider":"gemini","model":"gemini-3.5-flash"}');
+    expect(DASHBOARD_HTML).toContain('{"provider":"openai","model":"gpt-5.6-terra"}');
+    expect(DASHBOARD_HTML).toContain('{"provider":"openrouter","model":"deepseek/deepseek-v4-pro"}');
+    expect(DASHBOARD_HTML).toContain('{"provider":"openrouter","model":"deepseek/deepseek-v4-flash"}');
+    expect(DASHBOARD_HTML).toContain('{"provider":"openrouter","model":"google/gemini-3.5-flash"}');
+    expect(DASHBOARD_HTML).toContain('{"provider":"llamaparse","model":"fast"}');
+    // Dead-on-OpenRouter slugs and the retired GPT-4o family never render.
+    expect(DASHBOARD_HTML).not.toContain('gpt-4o');
+    expect(DASHBOARD_HTML).not.toContain('google/gemini-pro-1.5');
+    expect(DASHBOARD_HTML).not.toContain('deepseek/deepseek-chat');
+    expect(DASHBOARD_HTML).not.toContain('deepseek/deepseek-coder');
+    expect(DASHBOARD_HTML).not.toContain('qwen/qwen-2.5-vl-72b-instruct:free');
+    expect(DASHBOARD_HTML).not.toContain('moonshotai/kimi-chat');
+    expect(DASHBOARD_HTML).not.toContain('minimax/minimax-hep-lite');
+    // The AG #462 custom-selection checkbox grid and quick-run menu read the
+    // same derived list, so they reflect catalog corrections automatically.
+    expect(DASHBOARD_HTML).toContain('id="benchmarkModelCheckboxes"');
+    expect(DASHBOARD_HTML).toContain('Custom Model Selection (for new runs)');
+    expect(DASHBOARD_HTML).toContain('function benchmarkModelCheckboxesHtml() {\n  return REREAD_MODELS.map(');
+    expect(DASHBOARD_HTML).toContain("return '<option value=\"\">-- Choose Model --</option>' + REREAD_MODELS.map(");
+    expect(DASHBOARD_HTML).toContain('customModels = REREAD_MODELS.map(');
+  });
+
+  it('renders ONE unified per-chamber Model slots (A–E) panel with a single save flow', () => {
+    expect(DASHBOARD_HTML).toContain('id="benchmarkModelSlots"');
+    expect(DASHBOARD_HTML).toContain('<h4>Model slots (A–E)</h4>');
+    // Five labeled slot selects, populated from the server catalog.
+    expect(DASHBOARD_HTML).toContain("id: 'slotModelA', slot: 'A', label: 'A — Primary extractor (reads every new filing first)'");
+    expect(DASHBOARD_HTML).toContain("id: 'slotModelB', slot: 'B', label: 'B — Failover extractor (used when A fails)'");
+    expect(DASHBOARD_HTML).toContain("id: 'slotModelC', slot: 'C', label: 'C — Agreement voter 1 (tier-1 pair)'");
+    expect(DASHBOARD_HTML).toContain("id: 'slotModelD', slot: 'D', label: 'D — Agreement voter 2 (tier-1 pair)'");
+    expect(DASHBOARD_HTML).toContain("id: 'slotModelE', slot: 'E', label: 'E — Agreement voter 3 (tier-2/3 escalation)'");
+    expect(DASHBOARD_HTML).toContain('benchmarkManualOptionHtml(selected)');
+    // One save button; the handler GETs fresh versions then PUTs roles (A/B)
+    // followed by settings (C/D/E), reporting each call separately.
+    expect(DASHBOARD_HTML).toContain('onclick="saveBenchmarkModelSlots()"');
+    const save = DASHBOARD_HTML.match(/async function saveBenchmarkModelSlots\(\) \{[\s\S]*?\n\}/);
+    expect(save).not.toBeNull();
+    const gets = save![0].indexOf("apiCall('/api/admin/benchmark/roles/' + encodeURIComponent(chamber), 'GET')");
+    const putRoles = save![0].indexOf("apiCall('/api/admin/benchmark/roles/' + encodeURIComponent(chamber), 'PUT'");
+    const putSettings = save![0].indexOf("apiCall('/api/admin/benchmark/settings/' + encodeURIComponent(chamber), 'PUT'");
+    expect(gets).toBeGreaterThan(0);
+    expect(putRoles).toBeGreaterThan(gets);
+    expect(putSettings).toBeGreaterThan(putRoles);
+    expect(save![0]).toContain('expectedVersion: freshRoles.version');
+    expect(save![0]).toContain('expectedVersion: freshSettings.version');
+    expect(save![0]).toContain("outcomes.push('A/B not saved: ' + rolesError.message)");
+    expect(save![0]).toContain("outcomes.push('C/D/E not saved: ' + lineupError.message)");
+    // Client-side pre-checks stay, phrased for the A–E panel.
+    expect(DASHBOARD_HTML).toContain('Choose a model for every slot (A–E).');
+    expect(DASHBOARD_HTML).toContain('A (primary) and B (failover) must use different providers');
+    expect(DASHBOARD_HTML).toContain('C, D, and E must be three different models.');
+    expect(DASHBOARD_HTML).toContain('C, D, and E must use three different providers');
+    // Non-blocking provider-overlap advisory (a warning line, not an error).
+    expect(DASHBOARD_HTML).toContain('tier-1 agreement shares a provider with the primary extractor — votes are less independent');
+    expect(DASHBOARD_HTML).toContain('function updateBenchmarkSlotWarnings(');
+    // Preview deployments stay read-only.
+    expect(DASHBOARD_HTML).toContain('Preview is read-only; save the live model slots in production after approval.');
+    // The benchmark-backed (sourceRunId) save flow survives below the panel.
+    expect(DASHBOARD_HTML).toContain('sourceRunId: run.id');
+    // The two replaced panels are fully gone — no orphaned ids or handlers.
+    for (const gone of [
+      'manualModelA', 'manualModelB', 'manualModelC',
+      'roleModelPrimary', 'roleModelFailover',
+      'benchmarkManualLineup', 'id="benchmarkRoles"',
+      'saveManualBenchmarkLineup', 'saveBenchmarkRoles',
+      'manualBenchmarkLineupStatus', 'benchmarkRolesStatus',
+      'loadAllModelSettings', 'renderModelSettingsForChamber',
+      'modelSettingsHouse', 'modelSettingsSenate', 'modelSettingsExec',
+      'chamberSettings', 'chamberRoles',
+      'Manual autopublish lineup', 'Primary / Failover extraction',
+    ]) {
+      expect(DASHBOARD_HTML).not.toContain(gone);
+    }
+  });
+
   it('persists branch benchmarks and exposes measured cost, speed, history, simulation, and lineup save controls', () => {
     expect(DASHBOARD_HTML).toContain('id="benchmarkHistory"');
     expect(DASHBOARD_HTML).toContain("selectBenchmarkChamber('house')");
@@ -546,8 +621,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("'/api/admin/benchmark/settings/'");
     expect(DASHBOARD_HTML).toContain("'/api/admin/benchmark/runs?chamber=' + encodeURIComponent(chamber)");
     expect(DASHBOARD_HTML).toContain("onclick=\"clearBenchmarkHistory()\"");
-    expect(DASHBOARD_HTML).toContain('Manual autopublish lineup');
-    expect(DASHBOARD_HTML).toContain('saveManualBenchmarkLineup');
+    expect(DASHBOARD_HTML).toContain('Model slots (A–E)');
+    expect(DASHBOARD_HTML).toContain('saveBenchmarkModelSlots');
     expect(DASHBOARD_HTML).toContain('runAllBenchmarks()');
     expect(DASHBOARD_HTML).toContain('result.reusedCells');
     expect(DASHBOARD_HTML).toContain('callsNeedingReservation');
