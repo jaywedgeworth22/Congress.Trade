@@ -173,10 +173,27 @@ APP_BASE_URL = "https://congress.trade"
 # backoff, and publishes only after the configured cross-vendor checks pass.
 # Set ENABLED to "" to turn off.
 AGREEMENT_AUTOPUBLISH_ENABLED = "true"
-AGREEMENT_AUTOPUBLISH_MODEL_A = "openrouter:google/gemini-2.5-flash-lite"
-AGREEMENT_AUTOPUBLISH_MODEL_B = "openrouter:qwen/qwen3-vl-8b-instruct"
-AGREEMENT_MODEL_C = "openrouter:amazon/nova-lite-v1"
-# Agreement A/B/C model selections are explicit per-chamber Infisical keys.
+
+# House Models (Highest capability for difficult handwritten docs)
+AGREEMENT_HOUSE_MODEL_A = "openrouter:google/gemini-3.5-flash"
+AGREEMENT_HOUSE_MODEL_B = "openrouter:qwen/qwen3-vl-30b-a3b-instruct"
+AGREEMENT_HOUSE_MODEL_C = "openrouter:deepseek/deepseek-v4-pro"
+
+# Executive Models (Medium capability for typed standard forms)
+AGREEMENT_EXEC_MODEL_A = "openrouter:google/gemini-3.5-flash"
+AGREEMENT_EXEC_MODEL_B = "openrouter:deepseek/deepseek-v4-pro"
+AGREEMENT_EXEC_MODEL_C = "openrouter:z-ai/glm-4.6v"
+
+# Senate Models (Lowest capability for easiest HTML/typed docs)
+AGREEMENT_SENATE_MODEL_A = "openrouter:google/gemini-2.5-flash-lite"
+AGREEMENT_SENATE_MODEL_B = "openrouter:qwen/qwen3-vl-8b-instruct"
+AGREEMENT_SENATE_MODEL_C = "openrouter:amazon/nova-lite-v1"
+
+# General fallback for any other chamber / untested types
+AGREEMENT_AUTOPUBLISH_MODEL_A = "openrouter:google/gemini-3.5-flash"
+AGREEMENT_AUTOPUBLISH_MODEL_B = "openrouter:qwen/qwen3-vl-30b-a3b-instruct"
+AGREEMENT_MODEL_C = "openrouter:deepseek/deepseek-v4-pro"
+
 AGREEMENT_AUTOPUBLISH_LIMIT = "3"
 AGREEMENT_MAX_ATTEMPTS = "3"
 AGREEMENT_DAILY_LLM_BUDGET = "300"
