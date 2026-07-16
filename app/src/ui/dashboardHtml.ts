@@ -2490,10 +2490,8 @@ function memberCellHtml(r) {
     '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div>';
 }
 function assetCellHtml(r) {
-  // Prefer a real company name when the reported asset text is missing or is just
-  // the ticker again (e.g. "FB" with no name) — uses the enriched ref company name.
-  var nm = r.asset;
-  if ((!nm || nm === r.ticker) && r.refCompanyName) nm = r.refCompanyName;
+  // Prefer the clean, standardized company name from reference data when available.
+  var nm = r.refCompanyName || r.asset;
   if (!r.ticker && !nm) {
     return '<div class="asset-cell" title="Historical scanned filing needs official source backfill"><span class="muted">Unparsed Historical Filing</span></div>';
   }
@@ -3068,7 +3066,7 @@ function txToRow(tx) {
     photoUrl: tx.photoUrl || '',
     st: tx.state || '',
     chamber: tx.chamber || '',
-    asset: cleanAsset(tx.assetName || ''),
+    asset: cleanAsset(tx.refCompanyName || tx.assetName || ''),
     ticker: tx.ticker || '',
     assetType: tx.assetType || '',
     assetTypeName: tx.assetTypeName || '',
