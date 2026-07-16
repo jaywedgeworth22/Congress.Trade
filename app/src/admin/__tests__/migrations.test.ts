@@ -1,6 +1,5 @@
 // The Worker intentionally omits Node types, while Vitest runs this migration
 // parity check in Node.
-// @ts-expect-error node:fs is available in the Vitest runtime.
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { persistTransactions } from '../../extraction/normalizer';
@@ -54,12 +53,12 @@ async function sqliteDatabase(): Promise<SqliteDatabase> {
 }
 
 function migrationFiles(): string[] {
-  return readdirSync(migrationsUrl).filter((name: string) => name.endsWith('.sql')).sort();
+  return readdirSync(migrationsUrl as any).filter((name: string) => name.endsWith('.sql')).sort();
 }
 
 function applyMigrationFiles(db: SqliteDatabase, files: string[]): void {
   for (const name of files) {
-    db.exec(readFileSync(new URL(name, migrationsUrl), 'utf8'));
+    db.exec(readFileSync(new URL(name, migrationsUrl) as any, 'utf8'));
   }
 }
 

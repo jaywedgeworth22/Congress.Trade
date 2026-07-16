@@ -37,30 +37,33 @@ function makeBytes(s: string): ArrayBuffer {
 }
 const bytes: ArrayBuffer = makeBytes('%PDF-1.7 scanned');
 
-// Build a Gemini-shaped success response wrapping the model's JSON array.
-function geminiOk(modelJson: unknown) {
-  return {
-    ok: true,
-    status: 200,
-    statusText: 'OK',
-    async json() {
-      return { candidates: [{ content: { parts: [{ text: JSON.stringify(modelJson) }] } }] };
-    },
-  } as unknown as Response;
-}
+const mockGenerateContent = vi.fn();
 
-afterEach(() => vi.restoreAllMocks());
+vi.mock('@google/genai', () => {
+  return {
+    GoogleGenAI: class {
+      models = {
+        generateContent: mockGenerateContent
+      };
+    }
+  }
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  mockGenerateContent.mockClear();
+});
 
 describe('VisionLlmExtractor', () => {
   it('canHandle only scanned_pdf', () => {
     const ex = new VisionLlmExtractor(env);
-    expect(ex.canHandle(filing())).toBe(true);
+    expect(ex.canHandle({ ...filing(), docKind: 'scanned_pdf' })).toBe(true);
     expect(ex.canHandle({ ...filing(), docKind: 'text_pdf' })).toBe(false);
   });
 
   it('POSTs to Gemini once and maps the JSON array to ParsedTx[]', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      geminiOk([
+    mockGenerateContent.mockResolvedValueOnce({
+      text: JSON.stringify([
         {
           txDate: '2024-06-14',
           owner: 'spouse',
@@ -74,17 +77,18 @@ describe('VisionLlmExtractor', () => {
           confidence: 0.95,
         },
       ]),
-    );
-    vi.stubGlobal('fetch', fetchMock);
+      usageMetadata: {
+        promptTokenCount: 10,
+        candidatesTokenCount: 5,
+        totalTokenCount: 15
+      },
+      modelVersion: 'gemini-3.5-flash-test'
+    });
 
     const ex = new VisionLlmExtractor(env);
     const result = await ex.extract({ filing: filing(), bytes });
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const url = fetchMock.mock.calls[0][0] as string;
-    expect(url).toContain('generativelanguage.googleapis.com');
-    expect(url).toContain(':generateContent');
-    expect(url).toContain('key=test-key');
+    expect(mockGenerateContent).toHaveBeenCalledTimes(1);
 
     expect(result.extractor).toBe('visionLlm');
     expect(result.modelVersion).toBeTruthy();
@@ -97,22 +101,17 @@ describe('VisionLlmExtractor', () => {
     expect(t.confidence).toBeLessThanOrEqual(0.6);
   });
 
+
   it('throws on an API error', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 503,
-        statusText: 'Service Unavailable',
-        async text() {
-          return 'overloaded';
-        },
-      } as unknown as Response),
+    mockGenerateContent.mockRejectedValueOnce(
+      Object.assign(new Error('overloaded'), { status: 503 })
     );
     const ex = new VisionLlmExtractor(env);
-    await expect(ex.extract({ filing: filing(), bytes })).rejects.toThrow(/503/);
+    await expect(ex.extract({ filing: filing(), bytes })).rejects.toThrow(/overloaded/);
   });
 });
+
+
 
 describe('fetchWithRetry', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -151,6 +150,7 @@ describe('fetchWithRetry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
 
 describe('salvageTruncatedTransactions', () => {
   it('recovers complete leading rows from a truncated bare array and drops the trailing partial row', () => {

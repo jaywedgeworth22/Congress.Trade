@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 // Worker production code intentionally omits Node typings; this test validates
 // checked-in SQL/config artifacts under Vitest's Node runtime.
-// @ts-expect-error -- node:fs is test-only and absent from the Worker tsconfig types.
 import { existsSync, readFileSync } from 'node:fs';
 import { buildAdminRouter } from '../routes';
 
@@ -16,13 +15,13 @@ function setting(text: string, key: string): string {
 
 describe('review queue durable state migration', () => {
   it('uses collision-safe 0033-0037 files and guards replay + human holds', () => {
-    const deliveryMigration = new URL('../../../migrations/0030_delivery_outbox.sql', testModuleUrl);
-    const migration33 = new URL('../../../migrations/0033_doc_complexity_signals.sql', testModuleUrl);
-    const migration34 = new URL('../../../migrations/0034_agreement_cascade.sql', testModuleUrl);
-    const migration35 = new URL('../../../migrations/0035_llm_budget.sql', testModuleUrl);
-    const migration36 = new URL('../../../migrations/0036_review_resolution_safety.sql', testModuleUrl);
-    const migration37 = new URL('../../../migrations/0037_review_revision.sql', testModuleUrl);
-    const migration38 = new URL('../../../migrations/0038_benchmark_runs.sql', testModuleUrl);
+    const deliveryMigration = (new URL('../../../migrations/0030_delivery_outbox.sql', testModuleUrl) as any);
+    const migration33 = (new URL('../../../migrations/0033_doc_complexity_signals.sql', testModuleUrl) as any);
+    const migration34 = (new URL('../../../migrations/0034_agreement_cascade.sql', testModuleUrl) as any);
+    const migration35 = (new URL('../../../migrations/0035_llm_budget.sql', testModuleUrl) as any);
+    const migration36 = (new URL('../../../migrations/0036_review_resolution_safety.sql', testModuleUrl) as any);
+    const migration37 = (new URL('../../../migrations/0037_review_revision.sql', testModuleUrl) as any);
+    const migration38 = (new URL('../../../migrations/0038_benchmark_runs.sql', testModuleUrl) as any);
 
     expect(existsSync(deliveryMigration)).toBe(true);
     expect(existsSync(migration33)).toBe(true);
@@ -31,12 +30,12 @@ describe('review queue durable state migration', () => {
     expect(existsSync(migration36)).toBe(true);
     expect(existsSync(migration37)).toBe(true);
     expect(existsSync(migration38)).toBe(true);
-    expect(existsSync(new URL('../../../migrations/0025_doc_complexity_signals.sql', testModuleUrl))).toBe(false);
-    expect(existsSync(new URL('../../../migrations/0026_agreement_cascade.sql', testModuleUrl))).toBe(false);
-    expect(existsSync(new URL('../../../migrations/0027_llm_budget.sql', testModuleUrl))).toBe(false);
-    expect(existsSync(new URL('../../../migrations/0030_doc_complexity_signals.sql', testModuleUrl))).toBe(false);
-    expect(existsSync(new URL('../../../migrations/0031_agreement_cascade.sql', testModuleUrl))).toBe(false);
-    expect(existsSync(new URL('../../../migrations/0032_llm_budget.sql', testModuleUrl))).toBe(false);
+    expect(existsSync((new URL('../../../migrations/0025_doc_complexity_signals.sql', testModuleUrl) as any))).toBe(false);
+    expect(existsSync((new URL('../../../migrations/0026_agreement_cascade.sql', testModuleUrl) as any))).toBe(false);
+    expect(existsSync((new URL('../../../migrations/0027_llm_budget.sql', testModuleUrl) as any))).toBe(false);
+    expect(existsSync((new URL('../../../migrations/0030_doc_complexity_signals.sql', testModuleUrl) as any))).toBe(false);
+    expect(existsSync((new URL('../../../migrations/0031_agreement_cascade.sql', testModuleUrl) as any))).toBe(false);
+    expect(existsSync((new URL('../../../migrations/0032_llm_budget.sql', testModuleUrl) as any))).toBe(false);
 
     expect(readFileSync(deliveryMigration, 'utf8') as string).toMatch(
       /CREATE TABLE IF NOT EXISTS delivery_outbox/i,
@@ -117,10 +116,13 @@ describe('review queue durable state migration', () => {
 });
 
 describe('review queue autonomous configuration', () => {
-  it('keeps agreement model selection per-chamber and pins retry, budget, and big-doc controls', () => {
-    const wrangler = readFileSync(new URL('../../../wrangler.toml', testModuleUrl), 'utf8') as string;
-    const devExample = readFileSync(new URL('../../../.dev.vars.example', testModuleUrl), 'utf8') as string;
+  it('pins distinct A/B/C vendors and all retry, budget, and big-doc controls', () => {
+    const wrangler = readFileSync((new URL('../../../wrangler.toml', testModuleUrl) as any), 'utf8') as string;
+    const devExample = readFileSync((new URL('../../../.dev.vars.example', testModuleUrl) as any), 'utf8') as string;
     const keys = [
+      'AGREEMENT_AUTOPUBLISH_MODEL_A',
+      'AGREEMENT_AUTOPUBLISH_MODEL_B',
+      'AGREEMENT_MODEL_C',
       'AGREEMENT_AUTOPUBLISH_LIMIT',
       'AGREEMENT_MAX_ATTEMPTS',
       'AGREEMENT_DAILY_LLM_BUDGET',
@@ -130,8 +132,13 @@ describe('review queue autonomous configuration', () => {
     ];
 
     for (const key of keys) expect(setting(devExample, key)).toBe(setting(wrangler, key));
-    expect(wrangler).toMatch(/explicit per-chamber Infisical keys/);
-    expect(devExample).toMatch(/no global model/);
+    const providers = [
+      setting(wrangler, 'AGREEMENT_AUTOPUBLISH_MODEL_A').split(':')[0],
+      setting(wrangler, 'AGREEMENT_AUTOPUBLISH_MODEL_B').split(':')[0],
+      setting(wrangler, 'AGREEMENT_MODEL_C').split(':')[0],
+    ];
+    expect(new Set(providers).size).toBe(3);
+    expect(providers).toEqual(['mistral', 'openai', 'anthropic']);
     expect(setting(wrangler, 'AGREEMENT_DAILY_LLM_BUDGET')).toBe('300');
     expect(setting(wrangler, 'AGREEMENT_BIG_DOC_START_TIER2')).toBe('true');
   });
