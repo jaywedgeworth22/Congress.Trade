@@ -202,6 +202,10 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain(' of ' + "' + p.candidates + '" + ' matched');
     expect(DASHBOARD_HTML).toContain('A live measurement, not a promise');
     expect(DASHBOARD_HTML).toContain('trademarks of their respective owners');
+    // Every comparable provider rides the same honesty rails — no name-based
+    // exclusions (Quiver/Unusual Whales were once hidden here; owner restored).
+    expect(DASHBOARD_HTML).not.toContain("p.label === 'Quiver Quantitative'");
+    expect(DASHBOARD_HTML).not.toContain("p.label !== 'Quiver Quantitative'");
     // Accessible table twin + never buy/sell colors for the race.
     expect(DASHBOARD_HTML).toContain('id="speedTableBody"');
     expect(DASHBOARD_HTML).toContain('--rival');
