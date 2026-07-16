@@ -1839,6 +1839,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button class="btn ghost sm" id="btnRunAllBenchmarks" onclick="runAllBenchmarks()">Run all 3 branches</button>
         <button class="btn ghost sm" id="btnCancelBenchmark" onclick="cancelBenchmarkRun()" hidden>Stop and keep partial results</button>
       </div>
+      <details id="benchmarkModelSelection" style="margin-top: 10px; margin-bottom: 10px; font-size: 13px;">
+        <summary style="cursor: pointer; font-weight: 600;">Custom Model Selection (for new runs)</summary>
+        <div id="benchmarkModelCheckboxes" style="padding: 10px; border: 1px solid var(--border); border-radius: 4px; margin-top: 5px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 5px;">
+          <!-- Populated by JS -->
+        </div>
+      </details>
       <div id="benchmarkSettingsSummary" class="note">Loading saved House lineup…</div>
       <div id="benchmarkManualLineup"></div>
       <div id="benchmarkRoles"></div>
@@ -3584,7 +3590,25 @@ var REREAD_MODELS = [
   { provider: 'xai', model: 'grok-4.3' },
   { provider: 'llamaparse', model: 'fast' },
   { provider: 'llamaparse', model: 'cost-effective' },
-  { provider: 'llamaparse', model: 'agentic' }
+  { provider: 'llamaparse', model: 'agentic' },
+  { provider: 'openrouter', model: 'qwen/qwen-2.5-vl-72b-instruct:free' },
+  { provider: 'openrouter', model: 'google/gemini-pro-1.5' },
+  { provider: 'openrouter', model: 'google/gemini-flash-1.5' },
+  { provider: 'openrouter', model: 'google/gemini-2.0-flash-thinking-exp:free' },
+  { provider: 'openrouter', model: 'anthropic/claude-3.5-sonnet' },
+  { provider: 'openrouter', model: 'anthropic/claude-3.5-haiku' },
+  { provider: 'openrouter', model: 'anthropic/claude-3.7-opus' },
+  { provider: 'openrouter', model: 'openai/gpt-4o' },
+  { provider: 'openrouter', model: 'openai/gpt-4o-mini' },
+  { provider: 'openrouter', model: 'mistralai/mistral-large-2411' },
+  { provider: 'openrouter', model: 'x-ai/grok-2-vision-1212' },
+  { provider: 'openrouter', model: 'deepseek/deepseek-chat' },
+  { provider: 'openrouter', model: 'deepseek/deepseek-coder' },
+  { provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' },
+  { provider: 'openrouter', model: 'qwen/qwen-max' },
+  { provider: 'openrouter', model: '01-ai/yi-large' },
+  { provider: 'openrouter', model: 'moonshotai/kimi-chat' },
+  { provider: 'openrouter', model: 'minimax/minimax-hep-lite' }
 ];
 /* <optgroup> per provider for the "Re-read with model…" multi-select. */
 function rereadModelOptionsHtml() {
@@ -3599,6 +3623,15 @@ function rereadModelOptionsHtml() {
       return '<option value="' + esc(p + '|' + m.model) + '">' + esc(m.model) + '</option>';
     }).join('');
     return '<optgroup label="' + esc(p) + '">' + opts + '</optgroup>';
+  }).join('');
+}
+function benchmarkModelCheckboxesHtml() {
+  return REREAD_MODELS.map(function(m) {
+    var id = 'chk_' + m.provider + '_' + m.model.replace(/[^a-zA-Z0-9_-]/g, '_');
+    var val = esc(m.provider + '|' + m.model);
+    return '<label style="display:flex; align-items:center; gap:4px; font-size:12px; cursor:pointer;" title="' + esc(m.model) + '">' +
+           '<input type="checkbox" name="benchmark_model" value="' + val + '" checked> ' +
+           '<span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + esc(m.provider) + ': ' + esc(m.model) + '</span></label>';
   }).join('');
 }
 /* One-line per-model confidence chips for the row (full readings load on demand). */
@@ -5876,9 +5909,19 @@ async function runChamberBenchmark(chamber, options) {
     }
     return { status: 'blocked', message: 'paused run must be selected first' };
   }
+  var customModels = [];
+  var checks = document.querySelectorAll('input[name="benchmark_model"]:checked');
+  if (checks && checks.length > 0) {
+    checks.forEach(function(c) {
+      var parts = c.value.split('|');
+      if (parts.length === 2) customModels.push({ provider: parts[0], model: parts[1] });
+    });
+  } else {
+    customModels = REREAD_MODELS.map(function(model) { return { provider: model.provider, model: model.model }; });
+  }
   var models = resumable
     ? (resumable.models || [])
-    : REREAD_MODELS.map(function(model) { return { provider: model.provider, model: model.model }; });
+    : customModels;
   var maxCalls = limit * models.length;
   var confirmText = resumable
     ? 'Resume the saved ' + label + ' benchmark?\\n\\nCompleted cells will be reused. Remaining untouched cells may make paid provider calls; if the original reservation was on a prior UTC day, this confirmation authorizes a new-day reservation for each remaining cell. An expired cell may already have been billed even though no provider outcome was saved. If one is found, you will be asked once before any retry; unreconciled prior billing keeps measured cost partial.'
@@ -7872,6 +7915,7 @@ el('diagSettings').innerHTML = stateRow(4, 'Loading…');
 el('diagErrors').innerHTML = stateRow(4, 'Loading…');
 el('diagUsers').innerHTML = '<div class="state">Loading users…</div>';
 el('diagLogins').innerHTML = stateRow(4, 'Loading…');
+if (el('benchmarkModelCheckboxes')) el('benchmarkModelCheckboxes').innerHTML = benchmarkModelCheckboxesHtml();
 
 // Load user identity/permissions, then restore the saved tab so admin-gated tabs fallback properly if needed
 loadMe().then(function () {
