@@ -90,7 +90,7 @@ describe('GET /review/:docId/extractions — consensus', () => {
     const rowsDesc = [
       extractionRunRow({
         provider: 'anthropic',
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-5',
         kind: 'bakeoff',
         ok: 1,
         createdAt: '2026-06-25T00:00:03.000Z',
@@ -150,14 +150,14 @@ describe('GET /review/:docId/extractions — consensus', () => {
     expect(body.consensus).not.toBeNull();
     const consensus = body.consensus!;
     expect(consensus.summary.models).toEqual([
-      'anthropic:claude-sonnet-4-6',
+      'anthropic:claude-sonnet-5',
       'mistral:mistral-ocr-latest',
       'openai:gpt-4o',
     ]);
     expect(consensus.rows).toHaveLength(1);
     const row = consensus.rows[0];
     expect(row.presentIn).toEqual([
-      'anthropic:claude-sonnet-4-6',
+      'anthropic:claude-sonnet-5',
       'mistral:mistral-ocr-latest',
       'openai:gpt-4o',
     ]);
@@ -167,7 +167,7 @@ describe('GET /review/:docId/extractions — consensus', () => {
     expect(body.consensusStatus).toMatchObject({
       batchId: 'coherent-1',
       attemptedModels: [
-        'anthropic:claude-sonnet-4-6',
+        'anthropic:claude-sonnet-5',
         'mistral:mistral-ocr-latest',
         'openai:gpt-4o',
       ],
@@ -267,7 +267,7 @@ describe('GET /review/:docId/extractions — consensus', () => {
         createdAt: '2026-06-25T03:00:00.000Z', batchId: 'openai-only', rows: [tx()],
       }),
       extractionRunRow({
-        provider: 'anthropic', model: 'claude-sonnet-4-6', kind: 'bakeoff', ok: 1,
+        provider: 'anthropic', model: 'claude-sonnet-5', kind: 'bakeoff', ok: 1,
         createdAt: '2026-06-25T02:00:00.000Z', batchId: 'anthropic-only', rows: [tx()],
       }),
     ];
@@ -292,7 +292,7 @@ describe('GET /review/:docId/extractions — consensus', () => {
         rows: [tx({ owner: 'joint' })],
       }),
       extractionRunRow({
-        provider: 'anthropic', model: 'claude-sonnet-4-6', kind: 'bakeoff', ok: 0,
+        provider: 'anthropic', model: 'claude-sonnet-5', kind: 'bakeoff', ok: 0,
         createdAt: '2026-06-26T02:00:00.000Z', batchId: 'new-revision',
         error: 'timeout', rows: [],
       }),
@@ -301,7 +301,7 @@ describe('GET /review/:docId/extractions — consensus', () => {
         createdAt: '2026-06-25T02:00:00.000Z', batchId: 'old-revision', rows: [tx()],
       }),
       extractionRunRow({
-        provider: 'anthropic', model: 'claude-sonnet-4-6', kind: 'bakeoff', ok: 1,
+        provider: 'anthropic', model: 'claude-sonnet-5', kind: 'bakeoff', ok: 1,
         createdAt: '2026-06-25T02:00:00.000Z', batchId: 'old-revision', rows: [tx()],
       }),
     ];
@@ -324,7 +324,7 @@ describe('GET /review/:docId/extractions — consensus', () => {
     expect(body.consensusStatus).toMatchObject({
       batchId: 'new-revision',
       successfulModels: ['openai:gpt-4o'],
-      failedModels: [{ model: 'anthropic:claude-sonnet-4-6', error: 'timeout' }],
+      failedModels: [{ model: 'anthropic:claude-sonnet-5', error: 'timeout' }],
     });
     expect(body.consensusStatus.blockedReason).toContain('older successes were not mixed in');
   });

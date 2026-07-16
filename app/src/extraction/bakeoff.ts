@@ -90,7 +90,7 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'openai', model: 'gpt-5.6-terra' },
   { provider: 'openai', model: 'gpt-5.6-luna' },
   { provider: 'openai', model: 'gpt-5.6-sol' },
-  { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+  { provider: 'anthropic', model: 'claude-sonnet-5' },
   { provider: 'anthropic', model: 'claude-haiku-4-5' },
   { provider: 'mistral', model: 'mistral-ocr-latest' },
   { provider: 'xai', model: 'grok-4.3' },

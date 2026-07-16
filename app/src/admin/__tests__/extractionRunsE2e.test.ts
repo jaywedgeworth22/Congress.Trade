@@ -162,7 +162,7 @@ describe('extraction_runs E2E: bake-off → store → dashboard', () => {
       {
         method: 'POST',
         headers: { ...AUTH, 'content-type': 'application/json' },
-        body: JSON.stringify({ docIds: ['H-TEST-1'], models: [{ provider: 'anthropic', model: 'claude-sonnet-4-6' }] }),
+        body: JSON.stringify({ docIds: ['H-TEST-1'], models: [{ provider: 'anthropic', model: 'claude-sonnet-5' }] }),
       },
       env,
     );
@@ -171,7 +171,7 @@ describe('extraction_runs E2E: bake-off → store → dashboard', () => {
     expect(bakeBody.ok).toBe(true);
     expect(bakeBody.persisted).toBe(true);
     expect(bakeBody.batchId).toBeTruthy();
-    expect(bakeBody.perDoc['H-TEST-1']['anthropic:claude-sonnet-4-6']).toBe(1);
+    expect(bakeBody.perDoc['H-TEST-1']['anthropic:claude-sonnet-5']).toBe(1);
 
     // The reading was stored with the extracted row + a confidence.
     expect(extractionRuns).toHaveLength(1);

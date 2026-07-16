@@ -4057,7 +4057,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     let n = typeof body.n === 'number' && body.n > 0 ? Math.floor(body.n) : 20;
     if (n > 50) n = 50; // cap fan-out (n docs * candidates LLM calls)
 
-    // Pick the documents: explicit docIds, else the most recent House PTRs with a raw PDF.
+    let chamber = 'house';
+    if (body.chamber === 'senate') chamber = 'senate';
+    if (body.chamber === 'executive') chamber = 'executive';
+
+    // Pick the documents: explicit docIds, else the most recent PTRs with a raw PDF for the given chamber.
     let docs: Array<{ doc_id: string; raw_object_key: string | null }>;
     if (Array.isArray(body.docIds) && body.docIds.length > 0) {
       const ids = body.docIds.filter((x): x is string => typeof x === 'string').slice(0, n);
@@ -4074,10 +4078,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       docs = await all<{ doc_id: string; raw_object_key: string | null }>(
         c.env.DB,
         `SELECT doc_id, raw_object_key FROM filings
-          WHERE chamber = 'house' AND raw_object_key IS NOT NULL
+          WHERE chamber = ? AND raw_object_key IS NOT NULL
           ORDER BY first_seen_at DESC
           LIMIT ?`,
-        [n],
+        [chamber, n],
       );
     }
 
@@ -4088,7 +4092,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     docs = docs.filter((d) => d.raw_object_key);
 
     if (docs.length === 0) {
-      return c.json({ error: 'no House filings with a stored PDF were found to test' }, 404);
+      return c.json({ error: `no ${chamber} filings with a stored PDF were found to test` }, 404);
     }
 
     // Daily spend guardrail. A bake-off fans out (docs × candidates) external
