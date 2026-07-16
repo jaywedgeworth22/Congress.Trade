@@ -94,6 +94,16 @@ export class OpenRouterVisionExtractor implements Extractor {
       // Use OpenRouter's native file type for universal PDF processing (via native support or internal OCR plugins).
       const documentBase64 = arrayBufferToBase64(input.bytes);
 
+function supportsNativeVision(model: string): boolean {
+  const m = model.toLowerCase();
+  if (m.includes('gpt-4o')) return true;
+  if (m.includes('gpt-5')) return true;
+  if (m.includes('claude-3') || m.includes('claude-4')) return true;
+  if (m.includes('gemini-1.5') || m.includes('gemini-2') || m.includes('gemini-3')) return true;
+  if (m.includes('-vl-') || m.includes('pixtral') || m.includes('llava') || m.includes('nova')) return true;
+  return false;
+}
+
       const callOpenRouter = async (): Promise<OpenAIChatPayload> => {
         const res = await fetchWithRetry(
           'https://openrouter.ai/api/v1/chat/completions',
@@ -109,12 +119,14 @@ export class OpenRouterVisionExtractor implements Extractor {
               model,
               max_tokens: MAX_TOKENS,
               response_format: { type: 'json_object' },
-              plugins: [
-                {
-                  id: 'file-parser',
-                  pdf: { engine: 'mistral-ocr' },
-                },
-              ],
+              ...(supportsNativeVision(model) ? {} : {
+                plugins: [
+                  {
+                    id: 'file-parser',
+                    pdf: { engine: 'mistral-ocr' },
+                  },
+                ],
+              }),
               messages: [
                 {
                   role: 'user',
