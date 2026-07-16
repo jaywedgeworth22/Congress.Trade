@@ -174,15 +174,15 @@ APP_BASE_URL = "https://congress.trade"
 # Set ENABLED to "" to turn off.
 AGREEMENT_AUTOPUBLISH_ENABLED = "true"
 
-# House Models (Highest capability for difficult handwritten docs)
-AGREEMENT_HOUSE_MODEL_A = "openrouter:google/gemini-3.5-flash"
-AGREEMENT_HOUSE_MODEL_B = "openrouter:qwen/qwen3-vl-30b-a3b-instruct"
-AGREEMENT_HOUSE_MODEL_C = "openrouter:deepseek/deepseek-v4-pro"
-
-# Executive Models (Medium capability for typed standard forms)
+# Executive Models (Highest capability for difficult/mega-filing OGE 278-T handwritten docs)
 AGREEMENT_EXEC_MODEL_A = "openrouter:google/gemini-3.5-flash"
-AGREEMENT_EXEC_MODEL_B = "openrouter:deepseek/deepseek-v4-pro"
-AGREEMENT_EXEC_MODEL_C = "openrouter:z-ai/glm-4.6v"
+AGREEMENT_EXEC_MODEL_B = "openrouter:qwen/qwen3-vl-30b-a3b-instruct"
+AGREEMENT_EXEC_MODEL_C = "openrouter:deepseek/deepseek-v4-pro"
+
+# House Models (Medium capability for mixed handwritten/typed standard forms)
+AGREEMENT_HOUSE_MODEL_A = "openrouter:google/gemini-3.5-flash"
+AGREEMENT_HOUSE_MODEL_B = "openrouter:deepseek/deepseek-v4-pro"
+AGREEMENT_HOUSE_MODEL_C = "openrouter:z-ai/glm-4.6v"
 
 # Senate Models (Lowest capability for easiest HTML/typed docs)
 AGREEMENT_SENATE_MODEL_A = "openrouter:google/gemini-2.5-flash-lite"
