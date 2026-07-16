@@ -1555,7 +1555,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <thead>
               <tr>
                 <th style="width:32px"></th>
-                <th class="sortable" onclick="setTickerSort('trades')">Asset</th>
+                <th class="sortable" style="min-width: 140px;" onclick="setTickerSort('trades')">Asset</th>
                 <th class="sortable" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades"></span></th>
                 <th class="sortable r" onclick="setTickerSort('members')">Politicians <span class="sort-icon" data-sort="members"></span></th>
                 <th class="sortable r est" onclick="setTickerSort('volume')">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
@@ -1580,7 +1580,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <table id="tableTrTrending">
             <thead>
               <tr>
-                <th>Asset</th>
+                <th style="min-width: 140px;">Asset</th>
                 <th>Trades (Prior &rarr; Recent)</th>
                 <th>Change</th>
                 <th>Recent Politicians</th>
@@ -2873,7 +2873,7 @@ function estimatedColWidth(key, fallback, min, max) {
 }
 function minColWidth(key) {
   var map = {
-    asset: 40,
+    asset: 140,
     member: 62,
     amount: 56,
     imported: 62,
