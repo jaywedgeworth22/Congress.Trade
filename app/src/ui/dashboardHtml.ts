@@ -804,7 +804,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       padding: 6px 10px; align-items: center; backdrop-filter: none;
     }
     .brand { font-size: 15px; }
-    #srcPill { display: none; }
     .pill { padding: 3px 7px; }
     nav.tabs {
       position: fixed; left: 0; right: 0; bottom: 0; margin: 0;
@@ -1387,7 +1386,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <header class="top">
   <div class="brand">Congress<span class="dot">.</span>Trade</div>
   <span class="pill off" id="livePill">Status</span>
-  <span class="pill" id="srcPill">House + Senate</span>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
