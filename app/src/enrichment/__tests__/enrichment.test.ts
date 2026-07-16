@@ -96,6 +96,10 @@ describe('mergeRefs', () => {
     expect(merged.isEtf).toBe(true);
     expect(merged.sector).toBe('X'); // null didn't erase it
   });
+  it('normalizes company names when merging', () => {
+    const merged = mergeRefs('CBS', [{ companyName: 'CBS CORPORATION' }]);
+    expect(merged.companyName).toBe('CBS Corporation');
+  });
 });
 
 describe('parseFmpProfile', () => {
