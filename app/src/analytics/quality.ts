@@ -71,6 +71,7 @@ export interface QualityCrosscheckResult {
   summary: {
     fmp: ProviderQualityMetrics;
     quiver: ProviderQualityMetrics;
+    unusual_whales: ProviderQualityMetrics;
   };
   details: QualityFilingDetail[];
 }
@@ -112,23 +113,25 @@ export async function getQualityCrosscheck(env: Env): Promise<QualityCrosscheckR
   // 2) Group candidates by provider
   const fmpCandidates = candidates.filter((c) => c.provider === 'fmp');
   const quiverCandidates = candidates.filter((c) => c.provider === 'quiver');
+  const uwCandidates = candidates.filter((c) => c.provider === 'unusual_whales');
 
-  // 3) Fetch observations for FMP and Quiver
+  // 3) Fetch observations for FMP, Quiver, and Unusual Whales
   const observations = await all<ObservationRow>(
     env.DB,
     `SELECT provider, chamber, provider_key, first_observed_at, provider_published_at, source_url, filed_date, filer_name, payload
        FROM disclosure_provider_observations
-      WHERE provider IN ('fmp', 'quiver')`
+      WHERE provider IN ('fmp', 'quiver', 'unusual_whales')`
   );
 
   const fmpObs = observations.filter((o) => o.provider === 'fmp');
   const quiverObs = observations.filter((o) => o.provider === 'quiver');
+  const uwObs = observations.filter((o) => o.provider === 'unusual_whales');
 
   const details: QualityFilingDetail[] = [];
 
   // Helper to process a list of candidates against observations
   async function processProvider(
-    providerId: 'fmp' | 'quiver',
+    providerId: 'fmp' | 'quiver' | 'unusual_whales',
     provCandidates: CandidateRow[],
     provObs: ObservationRow[]
   ): Promise<ProviderQualityMetrics> {
@@ -168,11 +171,17 @@ export async function getQualityCrosscheck(env: Env): Promise<QualityCrosscheckR
             txDate: String(payload.transactionDate ?? ''),
             txType: String(payload.type ?? ''),
           }];
-        } else {
+        } else if (providerId === 'quiver') {
           return [{
             ticker: String(payload.Ticker ?? ''),
             txDate: String(payload.Date ?? ''),
             txType: String(payload.Transaction ?? ''),
+          }];
+        } else {
+          return [{
+            ticker: String(payload.ticker ?? payload.symbol ?? ''),
+            txDate: String(payload.transaction_date ?? payload.transactionDate ?? ''),
+            txType: String(payload.txn_type ?? payload.type ?? ''),
           }];
         }
       }).filter((tx) => tx.ticker && tx.txDate);
@@ -249,12 +258,14 @@ export async function getQualityCrosscheck(env: Env): Promise<QualityCrosscheckR
 
   const fmpMetrics = await processProvider('fmp', fmpCandidates, fmpObs);
   const quiverMetrics = await processProvider('quiver', quiverCandidates, quiverObs);
+  const uwMetrics = await processProvider('unusual_whales', uwCandidates, uwObs);
 
   return {
     generatedAt: new Date().toISOString(),
     summary: {
       fmp: fmpMetrics,
       quiver: quiverMetrics,
+      unusual_whales: uwMetrics,
     },
     details: details.sort((a, b) => (b.filedDate ?? '').localeCompare(a.filedDate ?? '')),
   };

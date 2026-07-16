@@ -224,7 +224,7 @@ PRICE_PROVIDER = "fmp"
 # scout via POST /api/ingest/detection) to measure who surfaced each filing
 # first. Enables the FMP-vs-us lead readout that answers the front-running thesis.
 DISCLOSURE_LATENCY_WATCH_ENABLED = "true"
-DISCLOSURE_LATENCY_PROVIDERS = "fmp,quiver"
+DISCLOSURE_LATENCY_PROVIDERS = "fmp,quiver,unusual_whales"
 # Executive-branch (OGE Form 278-T) filings watcher: polls the OGE President/VP
 # index (~6h cadence, fail-soft) for new Presidential periodic transaction
 # reports and runs them through the normal ingestion pipeline as
