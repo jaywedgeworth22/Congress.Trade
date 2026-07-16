@@ -91,9 +91,7 @@ export class OpenRouterVisionExtractor implements Extractor {
     let allRows: ParsedTx[] = [];
 
     try {
-      // NOTE: Many OpenAI-compatible providers on OpenRouter require rasterized images instead of PDFs.
-      // However, some providers support 'application/pdf'. We'll send it as base64.
-      // A robust implementation would either rely on an external PDF-to-Image API or check provider features.
+      // Use OpenRouter's native file type for universal PDF processing (via native support or internal OCR plugins).
       const documentBase64 = arrayBufferToBase64(input.bytes);
 
       const callOpenRouter = async (): Promise<OpenAIChatPayload> => {
@@ -116,9 +114,10 @@ export class OpenRouterVisionExtractor implements Extractor {
                   role: 'user',
                   content: [
                     {
-                      type: 'image_url',
-                      image_url: {
-                        url: `data:application/pdf;base64,${documentBase64}`,
+                      type: 'file',
+                      file: {
+                        filename: 'document.pdf',
+                        file_data: `data:application/pdf;base64,${documentBase64}`,
                       },
                     },
                     { type: 'text', text: `${promptToUse}\nReturn ONLY the JSON array.` },

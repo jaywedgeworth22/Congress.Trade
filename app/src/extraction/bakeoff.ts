@@ -80,6 +80,23 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'mistral', model: 'mistral-ocr-latest' },
   { provider: 'xai', model: 'grok-4.3' },
   { provider: 'openrouter', model: 'qwen/qwen-2.5-vl-72b-instruct:free' },
+  { provider: 'openrouter', model: 'google/gemini-pro-1.5' },
+  { provider: 'openrouter', model: 'google/gemini-flash-1.5' },
+  { provider: 'openrouter', model: 'google/gemini-2.0-flash-thinking-exp:free' },
+  { provider: 'openrouter', model: 'anthropic/claude-3.5-sonnet' },
+  { provider: 'openrouter', model: 'anthropic/claude-3.5-haiku' },
+  { provider: 'openrouter', model: 'anthropic/claude-3.7-opus' },
+  { provider: 'openrouter', model: 'openai/gpt-4o' },
+  { provider: 'openrouter', model: 'openai/gpt-4o-mini' },
+  { provider: 'openrouter', model: 'mistralai/mistral-large-2411' },
+  { provider: 'openrouter', model: 'x-ai/grok-2-vision-1212' },
+  { provider: 'openrouter', model: 'deepseek/deepseek-chat' },
+  { provider: 'openrouter', model: 'deepseek/deepseek-coder' },
+  { provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' },
+  { provider: 'openrouter', model: 'qwen/qwen-max' },
+  { provider: 'openrouter', model: '01-ai/yi-large' },
+  { provider: 'openrouter', model: 'moonshotai/kimi-chat' },
+  { provider: 'openrouter', model: 'minimax/minimax-hep-lite' },
 ];
 
 /** GPT-4o is retained only for decoding/replaying historical extraction runs. */
