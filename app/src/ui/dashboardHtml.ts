@@ -1555,7 +1555,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <thead>
               <tr>
                 <th style="width:32px"></th>
-                <th class="sortable" onclick="setTickerSort('trades')">Asset</th>
+                <th class="sortable" style="min-width: 140px;" onclick="setTickerSort('trades')">Asset</th>
                 <th class="sortable" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades"></span></th>
                 <th class="sortable r" onclick="setTickerSort('members')">Politicians <span class="sort-icon" data-sort="members"></span></th>
                 <th class="sortable r est" onclick="setTickerSort('volume')">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
@@ -1580,7 +1580,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <table id="tableTrTrending">
             <thead>
               <tr>
-                <th>Asset</th>
+                <th style="min-width: 140px;">Asset</th>
                 <th>Trades (Prior &rarr; Recent)</th>
                 <th>Change</th>
                 <th>Recent Politicians</th>
@@ -2490,8 +2490,10 @@ function memberCellHtml(r) {
     '<div class="' + nameClass + '" title="' + esc(r.member) + '">' + esc(fmtName(r.member)) + (r.st ? ' <span class="muted">· ' + esc(r.st) + '</span>' : '') + '</div></div>';
 }
 function assetCellHtml(r) {
-  // Prefer the clean, standardized company name from reference data when available.
-  var nm = r.refCompanyName || r.asset;
+  // Prefer a real company name when the reported asset text is missing or is just
+  // the ticker again (e.g. "FB" with no name) — uses the enriched ref company name.
+  var nm = r.asset;
+  if ((!nm || nm === r.ticker) && r.refCompanyName) nm = r.refCompanyName;
   if (!r.ticker && !nm) {
     return '<div class="asset-cell" title="Historical scanned filing needs official source backfill"><span class="muted">Unparsed Historical Filing</span></div>';
   }
@@ -2873,7 +2875,7 @@ function estimatedColWidth(key, fallback, min, max) {
 }
 function minColWidth(key) {
   var map = {
-    asset: 40,
+    asset: 140,
     member: 62,
     amount: 56,
     imported: 62,
@@ -3066,7 +3068,7 @@ function txToRow(tx) {
     photoUrl: tx.photoUrl || '',
     st: tx.state || '',
     chamber: tx.chamber || '',
-    asset: cleanAsset(tx.refCompanyName || tx.assetName || ''),
+    asset: cleanAsset(tx.assetName || ''),
     ticker: tx.ticker || '',
     assetType: tx.assetType || '',
     assetTypeName: tx.assetTypeName || '',

@@ -1,6 +1,27 @@
-export function cleanAssetString(name: string | null | undefined): string {
+export function cleanAssetString(name: string | null | undefined, ticker?: string | null): string {
   if (!name) return '';
   let str = name.trim();
+
+  // If the name is exactly the ticker, return the uppercase ticker
+  if (ticker && str.toLowerCase() === ticker.trim().toLowerCase()) {
+    return ticker.toUpperCase();
+  }
+
+  // Strip state of incorporation suffix (e.g. "/DE/", "/DE", "/CA") only if it matches a US state code
+  const STATES = new Set([
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"
+  ]);
+  str = str.replace(/\/([a-zA-Z]{2})(?:\/|\b)/g, (match, code) => {
+    if (STATES.has(code.toUpperCase())) {
+      return " ";
+    }
+    return match;
+  });
+  str = str.replace(/\s{2,}/g, " ").trim();
 
   // 1. Remove trailing stock exchanges in parentheses (e.g. "(NYSE)", "(NASDAQ: AAPL)")
   str = str.replace(/\s*\([A-Z]+(?:\s*:\s*[A-Z]+)?\)\s*$/i, '');
