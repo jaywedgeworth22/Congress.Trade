@@ -49,9 +49,9 @@ MISTRAL_API_KEY=""
 # fallbacks. Configure AGREEMENT_HOUSE_MODEL_{A,B,C},
 # AGREEMENT_SENATE_MODEL_{A,B,C}, and AGREEMENT_EXEC_MODEL_{A,B,C} in Infisical.
 AGREEMENT_AUTOPUBLISH_ENABLED="true"
-AGREEMENT_AUTOPUBLISH_MODEL_A="mistral:mistral-ocr-latest"
-AGREEMENT_AUTOPUBLISH_MODEL_B="openai:gpt-5.6-terra"
-AGREEMENT_MODEL_C="anthropic:claude-sonnet-4-6"
+AGREEMENT_AUTOPUBLISH_MODEL_A="openrouter:google/gemini-2.5-flash-lite"
+AGREEMENT_AUTOPUBLISH_MODEL_B="openrouter:qwen/qwen3-vl-8b-instruct"
+AGREEMENT_MODEL_C="openrouter:amazon/nova-lite-v1"
 AGREEMENT_AUTOPUBLISH_LIMIT="3"
 AGREEMENT_MAX_ATTEMPTS="3"
 # One model reading one doc = one read. This caps autonomous work only; the
