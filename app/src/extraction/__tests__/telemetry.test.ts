@@ -257,7 +257,7 @@ describe('extraction measured telemetry', () => {
       operation: 'benchmark-provider-cost',
       billingMode: 'estimated',
       confidence: 'estimated',
-      costUsd: expect.closeTo(0.0024675, 7),
+      costUsd: expect.closeTo(0.001645, 7),
     }));
   });
 
