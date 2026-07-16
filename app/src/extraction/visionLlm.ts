@@ -610,19 +610,50 @@ export function markSalvaged(tx: ParsedTx): ParsedTx {
 }
 
 /**
- * Normalize PDF bytes before they are base64-encoded into an Anthropic
- * `document` block. Anthropic's API 400s outright on some malformed PDFs (a
- * production Senate-corpus drain hit 8 hard failures from invalid PDF objects
- * in one run); round-tripping the bytes through pdf-lib's loader + serializer
- * repairs recoverable structural issues before the request is sent.
- * `ignoreEncryption` keeps encrypted-but-otherwise-valid PDFs from being
- * rejected as corrupt.
+ * Validate PDF bytes before they are base64-encoded into an Anthropic
+ * `document` block, WITHOUT altering them. Anthropic's API 400s outright on
+ * some malformed PDFs (a production Senate-corpus drain hit 8 hard failures
+ * from invalid PDF objects in one run), so pdf-lib's loader is used as a
+ * pre-flight parseability check; `ignoreEncryption` keeps
+ * encrypted-but-otherwise-valid PDFs from being rejected as corrupt.
+ *
+ * The ORIGINAL bytes are returned unchanged on success. Bytes are NOT
+ * resaved/re-serialized here by default: a 2026-07-15 production receipt
+ * (doc H-2026-20034954; Anthropic request ids req_011Cd4nNWmv3LPBZwfys7KhM
+ * and req_011Cd4nNpBAjfCCXj29EqSF7) showed Anthropic's PDF parser rejecting
+ * pdf-lib's re-serialized output — with `400 invalid_request_error: "...
+ * pdf.source.base64.data: The PDF specified was not valid."` — for a document
+ * it had previously read successfully in its ORIGINAL form. Unconditionally
+ * substituting resaved bytes (the pre-2026-07-15 behavior) traded that
+ * regression for the invalid-PDF fix it was meant to provide. Resaving is now
+ * a repair fallback only, tried after the original bytes are rejected (see
+ * {@link resavePdfForAnthropic} and {@link isAnthropicInvalidPdfError}).
  *
  * Throws a stable, secret-safe error (no raw pdf-lib parser detail) when the
  * PDF is unparseable outright, so the caller can short-circuit BEFORE making
  * any provider call.
  */
-export async function normalizePdfForAnthropic(bytes: ArrayBuffer): Promise<ArrayBuffer> {
+export async function validatePdfForAnthropic(bytes: ArrayBuffer): Promise<ArrayBuffer> {
+  try {
+    await PDFDocument.load(bytes, { ignoreEncryption: true });
+    return bytes;
+  } catch {
+    throw new Error('anthropic: invalid PDF (unparseable by pdf-lib)');
+  }
+}
+
+/**
+ * Repair-fallback ONLY: round-trip PDF bytes through pdf-lib's loader +
+ * serializer, returning the RE-SERIALIZED bytes. pdf-lib's serializer can
+ * repair some recoverable structural issues that make Anthropic reject a PDF
+ * outright — but its output is also sometimes rejected by Anthropic's parser
+ * for PDFs the ORIGINAL bytes were accepted for (see
+ * {@link validatePdfForAnthropic} for the receipted regression this caused
+ * when it was the unconditional default). Callers should reach for this only
+ * as a one-shot retry after the original bytes 400 with an invalid-PDF error
+ * (see {@link isAnthropicInvalidPdfError}), never as the primary bytes sent.
+ */
+export async function resavePdfForAnthropic(bytes: ArrayBuffer): Promise<ArrayBuffer> {
   try {
     const pdfDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
     const saved = await pdfDoc.save();
@@ -630,6 +661,18 @@ export async function normalizePdfForAnthropic(bytes: ArrayBuffer): Promise<Arra
   } catch {
     throw new Error('anthropic: invalid PDF (unparseable by pdf-lib)');
   }
+}
+
+/**
+ * True when an Anthropic error detail matches the receipted invalid-PDF
+ * failure class (production doc H-2026-20034954, 2026-07-15) — the provider
+ * rejecting the PDF bytes it was sent as unparseable. Callers use this to
+ * decide whether a one-shot resave-repair retry
+ * ({@link resavePdfForAnthropic}) is worth attempting before surfacing the
+ * error to the caller.
+ */
+export function isAnthropicInvalidPdfError(detail: string): boolean {
+  return detail.includes('The PDF specified was not valid') || detail.includes('pdf.source.base64.data');
 }
 
 export function toParsedTx(m: ModelTx): ParsedTx {

@@ -13,7 +13,9 @@ import {
   EXECUTIVE_SYSTEM_PROMPT,
   parseAnthropicModelJson,
   markSalvaged,
-  normalizePdfForAnthropic,
+  validatePdfForAnthropic,
+  resavePdfForAnthropic,
+  isAnthropicInvalidPdfError,
   toParsedTx,
   fetchWithRetry,
   arrayBufferToBase64,
@@ -89,13 +91,15 @@ export class AnthropicVisionExtractor implements Extractor {
     let allRows: ParsedTx[] = [];
 
     try {
-      // Pre-validate/normalize the PDF via pdf-lib before any provider call —
-      // Anthropic's API 400s outright on some malformed PDFs; an unparseable
-      // PDF fails fast here instead of spending a request.
-      const normalizedBytes = await normalizePdfForAnthropic(input.bytes);
-      const documentBase64 = arrayBufferToBase64(normalizedBytes);
+      // Pre-validate the PDF via pdf-lib before any provider call — bytes are
+      // unchanged on success. Anthropic's API 400s outright on some malformed
+      // PDFs; an unparseable PDF fails fast here instead of spending a
+      // request. See validatePdfForAnthropic's doc comment in visionLlm.ts
+      // for why the ORIGINAL bytes (not a pdf-lib resave) are the primary
+      // path sent below.
+      await validatePdfForAnthropic(input.bytes);
 
-      const callAnthropic = async (maxTokens: number): Promise<AnthropicMessagesPayload> => {
+      const callAnthropic = async (documentBase64: string, maxTokens: number): Promise<AnthropicMessagesPayload> => {
         const res = await fetchWithRetry(
           'https://api.anthropic.com/v1/messages',
           {
@@ -144,17 +148,48 @@ export class AnthropicVisionExtractor implements Extractor {
         return (await res.json()) as AnthropicMessagesPayload;
       };
 
-      // First call uses a modest token budget to protect cost. If the model
-      // was cut off mid-output, retry once with a doubled budget.
-      let payload = await callAnthropic(MAX_TOKENS);
-      totalPromptTokens = payload.usage?.input_tokens ?? 0;
-      totalCompletionTokens = payload.usage?.output_tokens ?? 0;
+      // One full call (+ truncation retry) attempt against a given byte
+      // source. First call uses a modest token budget to protect cost; if
+      // the model was cut off mid-output, retry once with a doubled budget.
+      const attempt = async (
+        pdfBytes: ArrayBuffer,
+      ): Promise<{ payload: AnthropicMessagesPayload; promptTokens: number; completionTokens: number }> => {
+        const documentBase64 = arrayBufferToBase64(pdfBytes);
+        let payload = await callAnthropic(documentBase64, MAX_TOKENS);
+        let promptTokens = payload.usage?.input_tokens ?? 0;
+        let completionTokens = payload.usage?.output_tokens ?? 0;
 
-      if (payload.stop_reason === 'max_tokens') {
-        const retryPayload = await callAnthropic(MAX_TOKENS_RETRY);
-        totalPromptTokens += retryPayload.usage?.input_tokens ?? 0;
-        totalCompletionTokens += retryPayload.usage?.output_tokens ?? 0;
-        payload = retryPayload;
+        if (payload.stop_reason === 'max_tokens') {
+          const retryPayload = await callAnthropic(documentBase64, MAX_TOKENS_RETRY);
+          promptTokens += retryPayload.usage?.input_tokens ?? 0;
+          completionTokens += retryPayload.usage?.output_tokens ?? 0;
+          payload = retryPayload;
+        }
+        return { payload, promptTokens, completionTokens };
+      };
+
+      let payload: AnthropicMessagesPayload;
+      try {
+        const result = await attempt(input.bytes);
+        payload = result.payload;
+        totalPromptTokens = result.promptTokens;
+        totalCompletionTokens = result.completionTokens;
+      } catch (err) {
+        // Repair retry: Anthropic's parser sometimes rejects previously-good
+        // PDF bytes outright (receipted 2026-07-15 doc H-2026-20034954
+        // production regression). One shot only — resave via pdf-lib and
+        // retry ONCE; if the retry also fails (for this reason or any
+        // other), surface the ORIGINAL error, not the retry's.
+        if (!isAnthropicInvalidPdfError((err as Error).message)) throw err;
+        try {
+          const resavedBytes = await resavePdfForAnthropic(input.bytes);
+          const result = await attempt(resavedBytes);
+          payload = result.payload;
+          totalPromptTokens = result.promptTokens;
+          totalCompletionTokens = result.completionTokens;
+        } catch {
+          throw err;
+        }
       }
 
       const text = (payload.content ?? [])

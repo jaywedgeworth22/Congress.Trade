@@ -6,7 +6,9 @@ import {
   salvageTruncatedTransactions,
   parseAnthropicModelJson,
   markSalvaged,
-  normalizePdfForAnthropic,
+  validatePdfForAnthropic,
+  resavePdfForAnthropic,
+  isAnthropicInvalidPdfError,
 } from '../visionLlm';
 import type { Env, Filing, ParsedTx } from '../../shared/types';
 
@@ -256,20 +258,86 @@ describe('markSalvaged', () => {
   });
 });
 
-describe('normalizePdfForAnthropic', () => {
-  it('round-trips a valid PDF through pdf-lib', async () => {
+/** A hand-written minimal PDF (not pdf-lib-generated) that pdf-lib CAN parse
+ *  but whose pdf-lib resave produces different bytes — lets tests assert
+ *  "original bytes, not resaved" without relying on incidental byte
+ *  equality between two pdf-lib serializations. */
+function handWrittenPdfBytes(): ArrayBuffer {
+  const text = [
+    '%PDF-1.4',
+    '1 0 obj',
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    'endobj',
+    '2 0 obj',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    'endobj',
+    '3 0 obj',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>',
+    'endobj',
+    'xref',
+    '0 4',
+    '0000000000 65535 f ',
+    '0000000009 00000 n ',
+    '0000000058 00000 n ',
+    '0000000115 00000 n ',
+    'trailer',
+    '<< /Size 4 /Root 1 0 R >>',
+    'startxref',
+    '190',
+    '%%EOF',
+  ].join('\n');
+  const src = new TextEncoder().encode(text);
+  const buf = new ArrayBuffer(src.byteLength);
+  new Uint8Array(buf).set(src);
+  return buf;
+}
+
+describe('validatePdfForAnthropic', () => {
+  it('returns the ORIGINAL bytes unchanged for a valid, parseable PDF (does NOT resave)', async () => {
+    const validBytes = handWrittenPdfBytes();
+
+    const result = await validatePdfForAnthropic(validBytes);
+    expect(result).toBe(validBytes);
+    expect(new Uint8Array(result)).toEqual(new Uint8Array(validBytes));
+  });
+
+  it('throws a stable, secret-safe message for unparseable bytes', async () => {
+    const bytes = new TextEncoder().encode('not a pdf at all').buffer as ArrayBuffer;
+    await expect(validatePdfForAnthropic(bytes)).rejects.toThrow('anthropic: invalid PDF (unparseable by pdf-lib)');
+  });
+});
+
+describe('resavePdfForAnthropic', () => {
+  it('round-trips a valid PDF through pdf-lib, producing a still-loadable (but re-serialized) PDF', async () => {
     const pdf = await PDFDocument.create();
     pdf.addPage([200, 200]);
     const saved = await pdf.save();
     const validBytes = saved.buffer.slice(saved.byteOffset, saved.byteOffset + saved.byteLength) as ArrayBuffer;
 
-    const normalized = await normalizePdfForAnthropic(validBytes);
-    // Still a valid, re-loadable PDF after the normalize round-trip.
-    await expect(PDFDocument.load(normalized)).resolves.toBeTruthy();
+    const resaved = await resavePdfForAnthropic(validBytes);
+    // Still a valid, re-loadable PDF after the resave round-trip.
+    await expect(PDFDocument.load(resaved)).resolves.toBeTruthy();
   });
 
   it('throws a stable, secret-safe message for unparseable bytes', async () => {
     const bytes = new TextEncoder().encode('not a pdf at all').buffer as ArrayBuffer;
-    await expect(normalizePdfForAnthropic(bytes)).rejects.toThrow('anthropic: invalid PDF (unparseable by pdf-lib)');
+    await expect(resavePdfForAnthropic(bytes)).rejects.toThrow('anthropic: invalid PDF (unparseable by pdf-lib)');
+  });
+});
+
+describe('isAnthropicInvalidPdfError', () => {
+  it('matches the receipted invalid-PDF message text', () => {
+    expect(isAnthropicInvalidPdfError(
+      'messages.0.content.0.pdf.source.base64.data: The PDF specified was not valid.',
+    )).toBe(true);
+  });
+
+  it('matches on the field-path fragment alone', () => {
+    expect(isAnthropicInvalidPdfError('invalid_request_error: pdf.source.base64.data is malformed')).toBe(true);
+  });
+
+  it('does not match unrelated error text', () => {
+    expect(isAnthropicInvalidPdfError('anthropic 429 rate limited')).toBe(false);
+    expect(isAnthropicInvalidPdfError('anthropic 500 internal server error')).toBe(false);
   });
 });
