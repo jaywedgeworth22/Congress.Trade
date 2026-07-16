@@ -1054,6 +1054,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 /* ---- 4. KPI cards: quieter label, confident value --------------------- */
 #view-trends .grid-cards .card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
   transition: border-color var(--tr-fast) var(--tr-ease),
               background var(--tr-fast) var(--tr-ease);
 }
@@ -6343,7 +6347,7 @@ function polCell(n) { n = Number(n || 0); return n + ' <span class="u-full">poli
 	}
 	function kpiInfo(k, v, tip, onClickStr, extraHtml) {
 	  var attr = onClickStr ? ' class="card clickable" onclick="' + esc(onClickStr) + '"' : ' class="card"';
-	  return '<div' + attr + '><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + '</div>' + (extraHtml || '') + '</div>';
+	  return '<div' + attr + '><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + (extraHtml || '') + '</div></div>';
 	}
 function setTickerSort(val) {
   var elSort = el('trTickerSort');
