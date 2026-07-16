@@ -23,9 +23,6 @@ function normalizeBaseUrl(configuredUrl) {
 }
 
 function configuredUsageSender(env) {
-  if (DISABLED.test((env.USAGE_MONITOR_ENABLED ?? '').trim())) {
-    throw new Error('operator usage telemetry is explicitly disabled');
-  }
   const configuredUrl = env.USAGE_MONITOR_INGEST_URL?.trim();
   const token = env.USAGE_MONITOR_INGEST_TOKEN?.trim();
   if (!configuredUrl || !token) {

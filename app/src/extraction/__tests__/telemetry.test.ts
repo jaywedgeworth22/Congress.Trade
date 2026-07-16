@@ -232,10 +232,10 @@ describe('extraction measured telemetry', () => {
     }));
   });
 
-  it('estimates Anthropic Haiku cost including cache read/write tiers, marked as estimated', async () => {
+  it('estimates Anthropic Sonnet cost including cache read/write tiers, marked as estimated', async () => {
     const result: CandidateDocResult = {
       provider: 'anthropic',
-      model: 'claude-haiku-4-5',
+      model: 'claude-sonnet-5',
       docId: 'H-anthropic',
       ok: true,
       latencyMs: 10,
@@ -250,15 +250,14 @@ describe('extraction measured telemetry', () => {
         cacheWriteTokens: 50,
       },
     };
-
     await pushExtractionTelemetry({} as Env, result, 'benchmark');
 
     expect(mocks.recordMeasuredThirdPartyUsage).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       provider: 'anthropic',
       operation: 'benchmark-provider-cost',
-      costUsd: expect.closeTo(0.0008225, 7),
       billingMode: 'estimated',
       confidence: 'estimated',
+      costUsd: expect.closeTo(0.0024675, 7),
     }));
   });
 
