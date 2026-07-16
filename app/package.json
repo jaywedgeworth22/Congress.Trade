@@ -22,7 +22,7 @@
   },
   "dependencies": {
 "@google/genai": "^2.11.0",
-    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#2b13da00b73561738cb56a0107d38d093c48ba6f",
+    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#ef17b72ecbe9c88e28c675ceae681dfc3dc64fa8",
     "@sentry/cloudflare": "^10.65.0",
     "fflate": "^0.8.3",
     "hono": "^4.12.30",

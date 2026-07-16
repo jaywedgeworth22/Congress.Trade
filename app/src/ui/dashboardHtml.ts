@@ -435,21 +435,27 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .hbar .hval { width:120px; text-align:right; font-family: var(--mono); font-size:12px; color: var(--text-dim); }
   .hbar .hval .est-money { font-family: var(--mono); }
   .timeliness-grid { margin-top: 8px; grid-template-columns: minmax(0, 1fr) minmax(0, .92fr); align-items: stretch; }
-  .timeliness-panel { min-width: 0; }
-  .timeliness-panel h3 { font-size: 13px; letter-spacing: 0; cursor: help; }
-  .lag-dist { min-height: 224px; padding-top: 6px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: space-between; gap: 9px; }
+  .timeliness-panel { min-width: 0; display: flex; flex-direction: column; height: 100%; }
+  .timeliness-panel h3 { font-size: 13px; letter-spacing: 0; cursor: help; margin-bottom: 4px; }
+  
+  .lag-dist-header { display: flex; justify-content: space-between; font-size: 11px; text-transform: uppercase; color: var(--text-dim); margin-top: 4px; padding: 0 4px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+  .lag-dist-header .day-col { width: 150px; }
+  .lag-dist-header .count-col { width: 120px; text-align: right; }
+  
+  .lag-dist { flex: 1; padding-top: 8px; padding-bottom: 8px; box-sizing: border-box; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
   .lag-dist .hbar { margin: 0; cursor: help; }
-  .lag-dist .hbar .hlabel { width: 150px; font-size: 14px; }
+  .lag-dist .hbar .hlabel { width: 150px; font-size: 15px; font-weight: 500; }
   .lag-dist .htrack { height: 18px; border-radius: 9px; }
-  .lag-dist .hbar .hval { font-size: 13px; }
-  .late-filers-wrap { max-height: 232px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+  .lag-dist .hbar .hval { font-size: 14px; font-weight: 600; width: 120px; text-align: right; }
+  
+  .late-filers-wrap { max-height: 242px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; margin-top: 4px; }
   .late-filers-wrap table { margin: 0; }
   .late-filers-wrap td { padding-top: 7px; padding-bottom: 7px; }
   .late-filers-wrap td[data-tip] { cursor: help; }
   @media (max-width: 760px) {
-    .timeliness-grid { grid-template-columns: 1fr; }
-    .lag-dist { min-height: 204px; }
-    .late-filers-wrap { max-height: 260px; }
+    .timeliness-grid { grid-template-columns: 1fr; gap: 24px; }
+    .lag-dist { min-height: auto; }
+    .late-filers-wrap { max-height: 242px; }
   }
   .mini-trade-stat { display:inline-grid; grid-template-columns:3ch 1ch minmax(5.5ch, auto); gap:6px; align-items:center; justify-content:end; }
   .mini-trade-stat .dot { text-align:center; opacity:.65; }
@@ -1660,11 +1666,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <div class="trend-grid2 timeliness-grid">
         <div class="timeliness-panel">
           <h3 title="Counts trade rows by disclosure lag: the number of days between transaction date and official filing date.">Lag Distribution</h3>
+          <div class="lag-dist-header"><span class="day-col">Days</span><span class="count-col">Count</span></div>
           <div id="trLagDist" class="lag-dist"></div>
         </div>
         <div class="timeliness-panel">
           <h3 title="Filers with the highest average trade-to-filing delay in the selected time window.">Slowest Filers (Avg Lag)</h3>
-          <div class="table-wrap"><table><tbody id="trLateFilers"></tbody></table></div>
+          <div class="late-filers-wrap"><table><tbody id="trLateFilers"></tbody></table></div>
         </div>
       </div>
     </div>
@@ -6472,7 +6479,6 @@ function fmtLead(secs) {
 }
 function speedEligible(d) {
   return (d.providers || []).filter(function (p) {
-    if (p.label === 'Quiver Quantitative' || p.label === 'Unusual Whales') return false;
     return p.matched >= SPEED_LANE_MIN_MATCHED;
   });
 }
@@ -6499,10 +6505,12 @@ function speedAxisMax(lanes) {
   lanes.forEach(function (p) {
     maxSec = Math.max(maxSec, Math.abs(p.medianLeadSec || 0), Math.abs(p.p90LeadSec || 0));
   });
-  var stopsHr = [1, 2, 4, 6, 8, 12, 16, 24, 36, 48];
+  var stopsHr = [1, 2, 4, 6, 8, 12, 16, 24, 36, 48, 72, 96, 144, 192, 240, 336, 504, 720];
   var needed = maxSec * 1.08 / 3600;
   for (var i = 0; i < stopsHr.length; i++) { if (stopsHr[i] >= needed) return stopsHr[i] * 3600; }
-  return 48 * 3600;
+  /* Beyond the largest stop, snap up to a 48h multiple that covers the data —
+     never a fixed ceiling that would clamp an extreme lead to the last stop. */
+  return Math.ceil(needed / 48) * 48 * 3600;
 }
 function speedLaneHtml(p, domainMin, domainMax) {
   function x(s) { return Math.max(0, Math.min(100, 100 * (s - domainMin) / (domainMax - domainMin))); }
@@ -6539,9 +6547,8 @@ function speedLaneHtml(p, domainMin, domainMax) {
 function renderSpeedProof() {
   var box = el('trLatencySection'); if (!box) return;
   fetchLatencySummary().then(function (d) {
-    var provs = (d.providers || []).filter(function (p) {
-      return p.label !== 'Quiver Quantitative' && p.label !== 'Unusual Whales';
-    }).sort(function (a, b) { return b.matched - a.matched; });
+    var provs = (d.providers || []).slice()
+      .sort(function (a, b) { return b.matched - a.matched; });
     if (!d.totals || !d.totals.racedDisclosures || !provs.length) { box.hidden = true; return; }
     var best = null;
     provs.forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
@@ -6749,7 +6756,7 @@ function loadTrTrending() {
     if (!rows.length) { body.innerHTML = stateRow(4, 'Not enough history to rank momentum.'); return; }
     body.innerHTML = rows.map(function (r) {
       return '<tr class="row clickable" data-ticker="' + esc(r.ticker) + '">' +
-        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' + esc(r.ticker) + '</span></div></div></td>' +
+        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' + esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(r.name) + '</span>' : '') + '</div></div></td>' +
         '<td class="muted">' + r.priorCount + ' → ' + r.recentCount + '</td>' +
         '<td class="net pos">▲ ' + r.deltaCount + '</td>' +
         '<td class="muted">' + polCell(r.recentMembers) + '</td></tr>';
