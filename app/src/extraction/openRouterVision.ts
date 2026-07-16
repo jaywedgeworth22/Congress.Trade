@@ -109,6 +109,12 @@ export class OpenRouterVisionExtractor implements Extractor {
               model,
               max_tokens: MAX_TOKENS,
               response_format: { type: 'json_object' },
+              plugins: [
+                {
+                  id: 'file-parser',
+                  pdf: { engine: 'mistral-ocr' },
+                },
+              ],
               messages: [
                 {
                   role: 'user',
