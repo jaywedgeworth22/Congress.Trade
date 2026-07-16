@@ -15,8 +15,9 @@ import {
   parseOpenAiBatchTimestamps,
   pollBatch,
   submitBatch,
+  type BatchDoc,
 } from '../batchExtract';
-import { EXECUTIVE_SYSTEM_PROMPT, SYSTEM_PROMPT } from '../visionLlm';
+import { EXECUTIVE_SYSTEM_PROMPT, SYSTEM_PROMPT, arrayBufferToBase64 } from '../visionLlm';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -255,6 +256,186 @@ describe('pollBatch Anthropic lifecycle timestamps', () => {
     const invalid = await pollBatch(env, 'anthropic', 'batch-invalid');
     expect(invalid).not.toHaveProperty('submittedAt');
     expect(invalid).not.toHaveProperty('terminalAt');
+  });
+});
+
+// Per-item PDF pre-validation for the Anthropic BATCH path (mirrors #461's
+// sync-path validatePdfForAnthropic gate — bakeoff.ts runAnthropic,
+// anthropicVision.ts — but excludes-and-records instead of retrying, since a
+// batch request is one HTTP call for N docs).
+describe('submitBatch/pollBatch Anthropic: per-item PDF pre-validation', () => {
+  const INVALID_PDF_ERROR = 'anthropic: invalid PDF (unparseable by pdf-lib)';
+  const validBytes = () => new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
+  const invalidBytes = () => new TextEncoder().encode('this is not a pdf').buffer as ArrayBuffer;
+
+  it('excludes an invalid-PDF doc from the provider request, records it ok:false with the stable sync-path error, and still submits + decodes the valid docs', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      Response.json({ id: 'batch-mixed-validation' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const docs: BatchDoc[] = [
+      { docId: 'H-valid-1', chamber: 'house', bytes: validBytes() },
+      { docId: 'H-invalid', chamber: 'house', bytes: invalidBytes() },
+      { docId: 'H-valid-2', chamber: 'house', bytes: validBytes() },
+    ];
+
+    const providerBatchId = await submitBatch(
+      { ANTHROPIC_API_KEY: 'test-key' } as unknown as Env,
+      'anthropic',
+      'claude-haiku-4-5',
+      docs,
+    );
+
+    // Exactly one provider call (create-batch), and only the two valid docs
+    // are in it — the invalid doc never reaches Anthropic.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(request.requests).toHaveLength(2);
+    expect(request.requests.map((r: { custom_id: string }) => r.custom_id))
+      .toEqual(['H-valid-1', 'H-valid-2']);
+    // ORIGINAL bytes sent, not a pdf-lib resave (mirrors #461's sync-path decision).
+    expect(request.requests[0].params.messages[0].content[0].source.data)
+      .toBe(arrayBufferToBase64(docs[0].bytes));
+
+    // The provider only ever saw the two valid docs, so its results only
+    // cover those two custom_ids.
+    const resultsUrl = 'https://api.anthropic.com/v1/messages/batches/batch-mixed-validation/results';
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/v1/messages/batches/batch-mixed-validation')) {
+        return Response.json({ processing_status: 'ended', results_url: resultsUrl });
+      }
+      if (url === resultsUrl) {
+        const lines = [
+          { custom_id: 'H-valid-1', result: { type: 'succeeded', message: {
+            content: [{ type: 'text', text: '[{"ticker":"AAPL","assetName":"Apple","txType":"P","amountRange":"$1,001 - $15,000"}]' }],
+          } } },
+          { custom_id: 'H-valid-2', result: { type: 'succeeded', message: {
+            content: [{ type: 'text', text: '[]' }],
+          } } },
+        ];
+        return new Response(lines.map((l) => JSON.stringify(l)).join('\n'));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    const poll = await pollBatch(
+      { ANTHROPIC_API_KEY: 'test-key' } as unknown as Env,
+      'anthropic',
+      providerBatchId,
+    );
+
+    expect(poll.done).toBe(true);
+    expect(poll.results).toHaveLength(3);
+    const byDocId = Object.fromEntries(poll.results.map((r) => [r.docId, r]));
+    expect(byDocId['H-valid-1']).toMatchObject({ ok: true });
+    expect(byDocId['H-valid-2']).toMatchObject({ ok: true });
+    // The excluded doc's recorded failure is bit-for-bit the same shape
+    // decodeAnthropicLine would produce for a real per-item provider error —
+    // so providerFailure.ts classification and review-queue routing treat it
+    // identically — with the exact stable error string.
+    expect(byDocId['H-invalid']).toEqual({ docId: 'H-invalid', ok: false, error: INVALID_PDF_ERROR, rows: [] });
+  });
+
+  it('makes zero provider calls and records every doc as failed when an entire batch fails pre-validation', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const docs: BatchDoc[] = [
+      { docId: 'H-bad-1', chamber: 'house', bytes: invalidBytes() },
+      { docId: 'H-bad-2', chamber: 'house', bytes: invalidBytes() },
+    ];
+
+    const providerBatchId = await submitBatch(
+      { ANTHROPIC_API_KEY: 'test-key' } as unknown as Env,
+      'anthropic',
+      'claude-haiku-4-5',
+      docs,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const poll = await pollBatch(
+      { ANTHROPIC_API_KEY: 'test-key' } as unknown as Env,
+      'anthropic',
+      providerBatchId,
+    );
+    // pollAnthropic must also make zero provider calls for an all-synthetic id.
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    expect(poll).toEqual({
+      done: true,
+      failed: false,
+      status: 'ended',
+      results: [
+        { docId: 'H-bad-1', ok: false, error: INVALID_PDF_ERROR, rows: [] },
+        { docId: 'H-bad-2', ok: false, error: INVALID_PDF_ERROR, rows: [] },
+      ],
+    });
+  });
+
+  it('keeps batch_jobs.doc_ids accounting consistent: every submitted docId resolves to exactly one terminal result, whether some or all docs fail pre-validation', async () => {
+    const checkAccounting = async (docs: BatchDoc[]) => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === 'https://api.anthropic.com/v1/messages/batches') {
+          return Response.json({ id: 'batch-accounting' });
+        }
+        if (url.endsWith('/v1/messages/batches/batch-accounting')) {
+          const resultsUrl = 'https://api.anthropic.com/v1/messages/batches/batch-accounting/results';
+          return Response.json({ processing_status: 'ended', results_url: resultsUrl });
+        }
+        if (url === 'https://api.anthropic.com/v1/messages/batches/batch-accounting/results') {
+          const lines = docs
+            .filter((d) => d.docId.startsWith('valid'))
+            .map((d) => JSON.stringify({ custom_id: d.docId, result: { type: 'succeeded', message: {
+              content: [{ type: 'text', text: '[]' }],
+            } } }));
+          return new Response(lines.join('\n'));
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const env = { ANTHROPIC_API_KEY: 'test-key' } as unknown as Env;
+      // Mirrors what callers (admin/routes.ts POST /batch-submit,
+      // batchCron.ts generateBatchJobs) persist as batch_jobs.doc_ids: every
+      // docId handed to submitBatch, computed from the input list BEFORE any
+      // internal pre-validation exclusion.
+      const expectedDocIds = docs.map((d) => d.docId);
+      const providerBatchId = await submitBatch(env, 'anthropic', 'claude-haiku-4-5', docs);
+      const poll = await pollBatch(env, 'anthropic', providerBatchId);
+
+      expect(poll.done).toBe(true);
+      const resultDocIds = poll.results.map((r) => r.docId);
+      expect(new Set(resultDocIds).size).toBe(resultDocIds.length); // no duplicate results
+      expect(new Set(resultDocIds)).toEqual(new Set(expectedDocIds)); // no missing / no extra docIds
+      vi.unstubAllGlobals();
+    };
+
+    // Mixed: some docs excluded, some sent to the provider.
+    await checkAccounting([
+      { docId: 'valid-1', chamber: 'house', bytes: validBytes() },
+      { docId: 'invalid-1', chamber: 'house', bytes: invalidBytes() },
+      { docId: 'valid-2', chamber: 'house', bytes: validBytes() },
+    ]);
+    // All-invalid: zero docs ever reach the provider.
+    await checkAccounting([
+      { docId: 'invalid-1', chamber: 'house', bytes: invalidBytes() },
+      { docId: 'invalid-2', chamber: 'house', bytes: invalidBytes() },
+    ]);
+  });
+
+  it('leaves a plain (non-composite) real provider batch id untouched when no doc is excluded', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ id: 'msgbatch_plain_id' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const docs: BatchDoc[] = [{ docId: 'H-only-valid', chamber: 'house', bytes: validBytes() }];
+    await expect(submitBatch(
+      { ANTHROPIC_API_KEY: 'test-key' } as unknown as Env,
+      'anthropic',
+      'claude-haiku-4-5',
+      docs,
+    )).resolves.toBe('msgbatch_plain_id');
   });
 });
 
