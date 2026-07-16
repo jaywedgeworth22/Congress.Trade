@@ -54,7 +54,7 @@ describe('benchmark provider circuit planning', () => {
     { provider: 'openai', model: 'gpt-5.6-terra' },
     { provider: 'openai', model: 'gpt-4o' },
     { provider: 'anthropic', model: 'claude-sonnet-5' },
-    { provider: 'anthropic', model: 'claude-haiku-4-5' },
+    { provider: 'anthropic', model: 'claude-sonnet-5' },
   ];
 
   it('blocks only the inaccessible OpenAI model while preserving GPT-4o', () => {

@@ -95,7 +95,7 @@ function stubBoth(openaiText: string, anthropicText: string) {
   }));
 }
 
-const MODELS = JSON.stringify([{ provider: 'openai', model: 'gpt-5.6-terra' }, { provider: 'anthropic', model: 'claude-haiku-4-5' }]);
+const MODELS = JSON.stringify([{ provider: 'openai', model: 'gpt-5.6-terra' }, { provider: 'anthropic', model: 'claude-sonnet-5' }]);
 
 describe('agreement-reprocess', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -149,7 +149,7 @@ describe('agreement-reprocess', () => {
       body: JSON.stringify({
         models: [
           { provider: 'openai', model: 'gpt-4o' },
-          { provider: 'anthropic', model: 'claude-haiku-4-5' },
+          { provider: 'anthropic', model: 'claude-sonnet-5' },
         ],
       }),
     }, env);

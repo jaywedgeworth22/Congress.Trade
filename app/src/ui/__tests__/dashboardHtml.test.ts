@@ -660,7 +660,7 @@ describe('DASHBOARD_HTML', () => {
       ['openai', 'gpt-5.6-sol'],
       ['openai', 'gpt-4o'],
       ['anthropic', 'claude-sonnet-5'],
-      ['anthropic', 'claude-haiku-4-5'],
+      ['anthropic', 'claude-sonnet-5'],
       ['mistral', 'mistral-ocr-latest'],
       ['xai', 'grok-4.3'],
       ['llamaparse', 'fast'],
