@@ -61,7 +61,7 @@ describe('priceBenchmarkUsage', () => {
   it('prices Anthropic base, cache-read, and both cache-write TTL meters', () => {
     const result = priceBenchmarkUsage({
       provider: 'anthropic',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       invoked: true,
       usage: {
         promptTokens: 1_000,

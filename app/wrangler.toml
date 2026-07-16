@@ -183,10 +183,10 @@ AGREEMENT_EXEC_MODEL_E = "openrouter:qwen/qwen-2.5-72b-instruct"
 
 # House Models (Medium capability for mixed handwritten/typed standard forms)
 AGREEMENT_HOUSE_MODEL_A = "openrouter:google/gemini-3.5-flash"
-AGREEMENT_HOUSE_MODEL_B = "openrouter:deepseek/deepseek-v4-pro"
+AGREEMENT_HOUSE_MODEL_B = "openrouter:deepseek/deepseek-v4-flash"
 AGREEMENT_HOUSE_MODEL_C = "openrouter:qwen/qwen3-vl-30b-a3b-instruct"
 AGREEMENT_HOUSE_MODEL_D = "openrouter:z-ai/glm-4.6v"
-AGREEMENT_HOUSE_MODEL_E = "openrouter:deepseek/deepseek-v4-flash"
+AGREEMENT_HOUSE_MODEL_E = "openrouter:deepseek/deepseek-v4-pro"
 
 # Senate Models (Lowest capability for easiest HTML/typed docs)
 AGREEMENT_SENATE_MODEL_A = "openrouter:google/gemini-2.5-flash-lite"

@@ -21,7 +21,7 @@ import {
   arrayBufferToBase64,
 } from './visionLlm';
 
-const DEFAULT_MODEL = 'claude-3-5-sonnet-20241022';
+const DEFAULT_MODEL = 'claude-sonnet-5';
 const DEFAULT_CONFIDENCE = 0.6;
 /** First-call token budget. Kept modest to protect cost on the common case. */
 const MAX_TOKENS = 8000;
@@ -133,6 +133,7 @@ export class AnthropicVisionExtractor implements Extractor {
             signal: AbortSignal.timeout(120_000),
           },
           this.name,
+          { model }
         );
 
         if (!res.ok) {
