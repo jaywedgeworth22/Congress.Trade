@@ -212,7 +212,7 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
   const env = {
     AGREEMENT_AUTOPUBLISH_ENABLED: 'true',
     AGREEMENT_HOUSE_MODEL_C: 'openai:gpt-4o',
-    AGREEMENT_HOUSE_MODEL_D: 'anthropic:claude-haiku-4-5',
+    AGREEMENT_HOUSE_MODEL_D: 'anthropic:claude-sonnet-5',
     AGREEMENT_HOUSE_MODEL_E: 'mistral:mistral-ocr-latest',
     AGREEMENT_MAX_ATTEMPTS: opts.maxAttempts,
     OPENAI_API_KEY: 'k', ANTHROPIC_API_KEY: 'k', MISTRAL_API_KEY: 'k',
@@ -227,7 +227,7 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
 
 const MODELS_C: AgreementModelsC = {
   a: { provider: 'openai', model: 'gpt-5.6-terra' },
-  b: { provider: 'anthropic', model: 'claude-haiku-4-5' },
+  b: { provider: 'anthropic', model: 'claude-sonnet-5' },
   c: { provider: 'mistral', model: 'mistral-ocr-latest' },
 };
 
