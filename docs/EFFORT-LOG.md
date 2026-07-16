@@ -664,3 +664,4 @@ Jul 8 18:10 CT)._
 
 - **2026-07-13** - `[Congress.Trade]`: Merged outstanding PRs (368, 365, 364, 363) and deployed to production (AG)
 - **UI/UX Audit Fixes (AG, M) — COMPLETED 2026-07-15.** Implemented audit feedback across `dashboardHtml.ts` and `clients/pwa/`: applied "Inter" font and `tabular-nums` for typography, added subtle inner borders for glassmorphism panels, integrated staggered keyframe animations and spring-physics easing for interactive elements, fixed mobile grid overflows, replaced visual `<b>` tags with semantic `<span>` tags, migrated filter sheets to native `<dialog>` for proper focus trapping, and resolved all build/test regressions. Changes merged via PR #419 and deployed to production.
+- `[x]` 2026-07-16 - Congress.Trade: Add OpenRouter models and pricing to `STANDARD_BENCHMARK_RATE_CARD` to ensure cost telemetry propagates to usage app.
