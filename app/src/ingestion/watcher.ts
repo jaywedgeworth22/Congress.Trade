@@ -411,8 +411,16 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
   try {
     const lastHouse = await getLastPollAt(env, 'house');
     if (shouldPollNow(now, cfg, lastHouse)) {
-      await pollHouse(env, now);
-      result.house = 'success';
+      const lastAttempt = await getLastAttemptAt(env, 'house');
+      const elapsedSec = lastAttempt ? (now.getTime() - lastAttempt.getTime()) / 1000 : Infinity;
+      const lastAttemptFailed = lastAttempt && (!lastHouse || lastHouse.getTime() < lastAttempt.getTime());
+      if (lastAttemptFailed && elapsedSec < 600) {
+        // Skip this poll tick to respect failure backoff
+      } else {
+        await setLastAttemptAt(env, 'house', now);
+        await pollHouse(env, now);
+        result.house = 'success';
+      }
     }
   } catch (err) {
     await recordSourceError(env, 'house', now.toISOString(), err);
@@ -423,8 +431,16 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
   try {
     const lastSenate = await getLastPollAt(env, 'senate');
     if (shouldPollNow(now, cfg, lastSenate)) {
-      await pollSenate(env, now);
-      result.senate = 'success';
+      const lastAttempt = await getLastAttemptAt(env, 'senate');
+      const elapsedSec = lastAttempt ? (now.getTime() - lastAttempt.getTime()) / 1000 : Infinity;
+      const lastAttemptFailed = lastAttempt && (!lastSenate || lastSenate.getTime() < lastAttempt.getTime());
+      if (lastAttemptFailed && elapsedSec < 600) {
+        // Skip this poll tick to respect failure backoff
+      } else {
+        await setLastAttemptAt(env, 'senate', now);
+        await pollSenate(env, now);
+        result.senate = 'success';
+      }
     }
   } catch (err) {
     await recordSourceError(env, 'senate', now.toISOString(), err);
@@ -442,4 +458,17 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
     result.executive = 'failure';
   }
   return result;
+}
+
+async function getLastAttemptAt(env: Env, source: string): Promise<Date | null> {
+  if (!env.CONFIG_KV) return null;
+  const iso = await env.CONFIG_KV.get(`last_attempt:${source}`);
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+async function setLastAttemptAt(env: Env, source: string, when: Date = new Date()): Promise<void> {
+  if (!env.CONFIG_KV) return;
+  await env.CONFIG_KV.put(`last_attempt:${source}`, when.toISOString());
 }

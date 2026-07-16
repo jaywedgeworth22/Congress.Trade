@@ -13,14 +13,20 @@ import { resolveSecret } from '../secrets/infisical';
 // Arbitration merge helpers (pure, unit-testable)
 // ---------------------------------------------------------------------------
 
+const ROW_KEY_CACHE = new WeakMap<ParsedTx, string>();
+
 /**
  * Stable matching key for a parsed row: ticker (or asset name when no ticker) +
  * transaction date + transaction type. Two extractors that read the same row
  * should produce the same key even if other fields differ slightly.
  */
 export function arbitrationRowKey(tx: ParsedTx): string {
+  const cached = ROW_KEY_CACHE.get(tx);
+  if (cached !== undefined) return cached;
   const sym = (tx.ticker || tx.assetName || '').trim().toUpperCase();
-  return `${sym}|${tx.txDate ?? ''}|${tx.txType}`;
+  const key = `${sym}|${tx.txDate ?? ''}|${tx.txType}`;
+  ROW_KEY_CACHE.set(tx, key);
+  return key;
 }
 
 /** Count how many of the comparable fields two matched rows agree on, out of N. */

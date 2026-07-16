@@ -177,6 +177,7 @@ import {
   BASE_SCHEMA_STATEMENTS,
   POST_0024_SCHEMA_STATEMENTS,
 } from './migrations';
+import { getQualityCrosscheck } from '../analytics/quality';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {
@@ -2726,6 +2727,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       updatedAt: row.updated_at,
     }));
     return c.json({ count: items.length, items });
+  });
+
+  // --- GET /disclosure-latency/quality-crosscheck --------------------------
+  // Compares parsed transactions in our database against provider observations
+  // to calculate quality edge and identify discrepancy issues.
+  r.get('/disclosure-latency/quality-crosscheck', async (c) => {
+    try {
+      const report = await getQualityCrosscheck(c.env);
+      return c.json(report);
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    }
   });
 
   // --- POST /disclosure-latency/probe -------------------------------------
