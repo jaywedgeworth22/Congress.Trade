@@ -92,7 +92,13 @@ export class OpenRouterVisionExtractor implements Extractor {
 
     try {
       // Use OpenRouter's native file type for universal PDF processing (via native support or internal OCR plugins).
-      const documentBase64 = arrayBufferToBase64(input.bytes);
+      // We can pass the URL directly instead of a massive Base64 string if the URL is available.
+      let fileData: string;
+      if (input.filing.sourceUrl) {
+        fileData = input.filing.sourceUrl;
+      } else {
+        fileData = `data:application/pdf;base64,${arrayBufferToBase64(input.bytes)}`;
+      }
 
       const callOpenRouter = async (): Promise<OpenAIChatPayload> => {
         const res = await fetchWithRetry(
@@ -123,7 +129,7 @@ export class OpenRouterVisionExtractor implements Extractor {
                       type: 'file',
                       file: {
                         filename: 'document.pdf',
-                        file_data: `data:application/pdf;base64,${documentBase64}`,
+                        file_data: fileData,
                       },
                     },
                     { type: 'text', text: `${promptToUse}\nReturn ONLY the JSON array.` },
