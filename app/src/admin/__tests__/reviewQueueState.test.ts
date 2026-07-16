@@ -137,8 +137,13 @@ describe('review queue autonomous configuration', () => {
       setting(wrangler, 'AGREEMENT_AUTOPUBLISH_MODEL_B').split(':')[0],
       setting(wrangler, 'AGREEMENT_MODEL_C').split(':')[0],
     ];
-    expect(new Set(providers).size).toBe(3);
-    expect(providers).toEqual(['mistral', 'openai', 'anthropic']);
+    const models = [
+      setting(wrangler, 'AGREEMENT_AUTOPUBLISH_MODEL_A'),
+      setting(wrangler, 'AGREEMENT_AUTOPUBLISH_MODEL_B'),
+      setting(wrangler, 'AGREEMENT_MODEL_C'),
+    ];
+    expect(new Set(models).size).toBe(3); // Distinct models
+    expect(providers).toEqual(['openrouter', 'openrouter', 'openrouter']);
     expect(setting(wrangler, 'AGREEMENT_DAILY_LLM_BUDGET')).toBe('300');
     expect(setting(wrangler, 'AGREEMENT_BIG_DOC_START_TIER2')).toBe('true');
   });
