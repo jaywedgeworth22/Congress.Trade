@@ -137,7 +137,7 @@ let keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKe
     let pageCount = 0;
     
     // Dynamically skip chunking for models with massive context windows
-    const isMassiveContextModel = model.includes('gemini-3.5-flash') || model.includes('claude-3.5-sonnet');
+    const isMassiveContextModel = model.includes('gemini-3.5-flash') || model.includes('claude-sonnet');
 
     try {
       const pdfDoc = await PDFDocument.load(input.bytes, { ignoreEncryption: true });
