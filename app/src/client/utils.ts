@@ -177,7 +177,7 @@ export function clientTradeFromRow(row: ClientTradeRow): ClientTrade {
       photoUrl: tx.photoUrl ?? null,
     },
     asset: {
-      name: tx.assetName,
+      name: tx.refCompanyName || tx.assetName,
       ticker: tx.ticker,
       type: tx.assetType,
       sector: tx.refSector ?? null,
