@@ -21,7 +21,7 @@ const OLD = {
 const NEW = {
   a: { provider: 'openai', model: 'gpt-5.6-terra' },
   b: { provider: 'gemini', model: 'gemini-3.5-flash' },
-  c: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+  c: { provider: 'anthropic', model: 'claude-sonnet-5' },
 };
 
 const OLD_ROLES = {
@@ -108,7 +108,7 @@ describe('benchmark lineup settings', () => {
 
   it('rejects a lineup that lets one provider corroborate itself', () => {
     expect(() => validateBenchmarkLineup({
-      a: { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+      a: { provider: 'anthropic', model: 'claude-sonnet-5' },
       b: { provider: 'anthropic', model: 'claude-haiku-4-5' },
       c: { provider: 'openai', model: 'gpt-5.6-terra' },
     })).toThrow(BenchmarkSettingsValidationError);
@@ -136,7 +136,7 @@ describe('benchmark lineup settings', () => {
     });
     expect(state.AGREEMENT_SENATE_MODEL_C).toBe('openai:gpt-5.6-terra');
     expect(state.AGREEMENT_SENATE_MODEL_D).toBe('gemini:gemini-3.5-flash');
-    expect(state.AGREEMENT_SENATE_MODEL_E).toBe('anthropic:claude-sonnet-4-6');
+    expect(state.AGREEMENT_SENATE_MODEL_E).toBe('anthropic:claude-sonnet-5');
   });
 
   it('supports the first-ever chamber save when no effective lineup exists', async () => {
@@ -155,7 +155,7 @@ describe('benchmark lineup settings', () => {
     expect(saved.audit).toMatchObject({ readbackVerified: true, rollbackAttempted: false });
     expect(state.AGREEMENT_HOUSE_MODEL_C).toBe('openai:gpt-5.6-terra');
     expect(state.AGREEMENT_HOUSE_MODEL_D).toBe('gemini:gemini-3.5-flash');
-    expect(state.AGREEMENT_HOUSE_MODEL_E).toBe('anthropic:claude-sonnet-4-6');
+    expect(state.AGREEMENT_HOUSE_MODEL_E).toBe('anthropic:claude-sonnet-5');
   });
 
   it('rolls back a partial write without pinning inherited branch overrides', async () => {

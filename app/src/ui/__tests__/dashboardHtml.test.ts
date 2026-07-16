@@ -655,7 +655,7 @@ describe('DASHBOARD_HTML', () => {
       ['openai', 'gpt-5.6-luna'],
       ['openai', 'gpt-5.6-sol'],
       ['openai', 'gpt-4o'],
-      ['anthropic', 'claude-sonnet-4-6'],
+      ['anthropic', 'claude-sonnet-5'],
       ['anthropic', 'claude-haiku-4-5'],
       ['mistral', 'mistral-ocr-latest'],
       ['xai', 'grok-4.3'],
@@ -1331,7 +1331,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     return factory() as ConsensusSandbox;
   }
 
-  const MODELS = ['anthropic:claude-sonnet-4-6', 'gemini:gemini-3.5-flash', 'openai:gpt-4o'];
+  const MODELS = ['anthropic:claude-sonnet-5', 'gemini:gemini-3.5-flash', 'openai:gpt-4o'];
 
   function fieldConsensus(
     value: unknown,
@@ -1379,7 +1379,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
   // contested (winner value null, every present value listed as a dissenter).
   const contestedRow = {
     rowKey: 'TSLA|2024-03-10|P',
-    presentIn: ['anthropic:claude-sonnet-4-6', 'gemini:gemini-3.5-flash'],
+    presentIn: ['anthropic:claude-sonnet-5', 'gemini:gemini-3.5-flash'],
     missingFrom: ['openai:gpt-4o'],
     rowConsensus: 'contested',
     fields: {
@@ -1393,7 +1393,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
         1,
         2,
         [
-          { model: 'anthropic:claude-sonnet-4-6', value: { amountMin: 1001, amountMax: 15000 } },
+          { model: 'anthropic:claude-sonnet-5', value: { amountMin: 1001, amountMax: 15000 } },
           { model: 'gemini:gemini-3.5-flash', value: { amountMin: 15001, amountMax: 50000 } },
         ],
         false,
@@ -1409,7 +1409,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     };
     const html = sandbox.consensusGridHtml('doc-1', consensus);
     expect(html).toContain('<div class="conf hi"><strong>Symbol:</strong> AAPL');
-    expect(html).toContain('<th>anthropic:claude-sonnet-4-6</th>');
+    expect(html).toContain('<th>anthropic:claude-sonnet-5</th>');
     expect(html).toContain('<th>Consensus</th>');
     expect(html).toContain("useConsensusRows('doc-1')");
     expect(html).toContain('>Use Consensus<');
@@ -1434,7 +1434,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     };
     const html = sandbox.consensusGridHtml('doc-1', consensus);
     expect(html).toContain('conf lo');
-    expect(html).toContain('anthropic:claude-sonnet-4-6: $1,001 - $15,000');
+    expect(html).toContain('anthropic:claude-sonnet-5: $1,001 - $15,000');
     expect(html).toContain('gemini:gemini-3.5-flash: $15,001 - $50,000');
     // the model missing from this row gets a muted placeholder, not a blank cell
     expect(html).toContain('Missing row');
@@ -1447,7 +1447,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
   const minorityRow = {
     rowKey: 'NVDA|2024-04-01|P',
     presentIn: ['openai:gpt-4o'],
-    missingFrom: ['anthropic:claude-sonnet-4-6', 'gemini:gemini-3.5-flash'],
+    missingFrom: ['anthropic:claude-sonnet-5', 'gemini:gemini-3.5-flash'],
     rowConsensus: 'contested',
     fields: {
       ticker: fieldConsensus('NVDA', 1, 1, [], true),
@@ -1631,12 +1631,12 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     const sandbox = loadConsensusSandbox();
     const html = sandbox.consensusGridHtml('doc-7', null, {
       batchId: 'new-revision', kind: 'bakeoff', createdAt: '2026-06-26T02:00:00.000Z',
-      failedModels: [{ model: 'anthropic:claude-sonnet-4-6', error: 'timeout' }],
+      failedModels: [{ model: 'anthropic:claude-sonnet-5', error: 'timeout' }],
       blockedReason: 'Latest comparable run set has fewer than two successful model readings; older successes were not mixed in.',
     });
     expect(html).toContain('Run set: bakeoff · new-revision');
     expect(html).toContain('Failed models:');
-    expect(html).toContain('anthropic:claude-sonnet-4-6 (timeout)');
+    expect(html).toContain('anthropic:claude-sonnet-5 (timeout)');
     expect(html).toContain('older successes were not mixed in');
   });
 

@@ -127,7 +127,7 @@ describe('AnthropicVisionExtractor: output-truncation handling', () => {
       } as unknown as Response);
     vi.stubGlobal('fetch', fetchMock);
 
-    const ex = new AnthropicVisionExtractor(env, { model: 'claude-sonnet-4-6' });
+    const ex = new AnthropicVisionExtractor(env, { model: 'claude-sonnet-5' });
     const result = await ex.extract({ filing: filing(), bytes });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -148,7 +148,7 @@ describe('AnthropicVisionExtractor: output-truncation handling', () => {
       .mockResolvedValueOnce(truncatedReply());
     vi.stubGlobal('fetch', fetchMock);
 
-    const ex = new AnthropicVisionExtractor(env, { model: 'claude-sonnet-4-6' });
+    const ex = new AnthropicVisionExtractor(env, { model: 'claude-sonnet-5' });
     const result = await ex.extract({ filing: filing(), bytes });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -169,7 +169,7 @@ describe('AnthropicVisionExtractor: output-truncation handling', () => {
     } as unknown as Response);
     vi.stubGlobal('fetch', fetchMock);
 
-    const ex = new AnthropicVisionExtractor(env, { model: 'claude-sonnet-4-6' });
+    const ex = new AnthropicVisionExtractor(env, { model: 'claude-sonnet-5' });
     const result = await ex.extract({ filing: filing(), bytes });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -197,7 +197,7 @@ describe('AnthropicVisionExtractor: invalid-PDF repair retry (2026-07-15 regress
       .mockResolvedValueOnce(successReply());
     vi.stubGlobal('fetch', fetchMock);
 
-    const ex = new AnthropicVisionExtractor(env, { model: 'claude-sonnet-4-6' });
+    const ex = new AnthropicVisionExtractor(env, { model: 'claude-sonnet-5' });
     const result = await ex.extract({ filing: filing(), bytes });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -217,7 +217,7 @@ describe('AnthropicVisionExtractor: invalid-PDF repair retry (2026-07-15 regress
       .mockResolvedValueOnce(invalidPdfReply());
     vi.stubGlobal('fetch', fetchMock);
 
-    const ex = new AnthropicVisionExtractor(env, { model: 'claude-sonnet-4-6' });
+    const ex = new AnthropicVisionExtractor(env, { model: 'claude-sonnet-5' });
     await expect(ex.extract({ filing: filing(), bytes })).rejects.toThrow('The PDF specified was not valid');
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -233,7 +233,7 @@ describe('AnthropicVisionExtractor: invalid-PDF repair retry (2026-07-15 regress
     } as unknown as Response);
     vi.stubGlobal('fetch', fetchMock);
 
-    const ex = new AnthropicVisionExtractor(env, { model: 'claude-sonnet-4-6' });
+    const ex = new AnthropicVisionExtractor(env, { model: 'claude-sonnet-5' });
     await expect(ex.extract({ filing: filing(), bytes })).rejects.toThrow('Anthropic API 500');
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
