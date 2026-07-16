@@ -193,7 +193,7 @@ function makeEnv(opts: {
   const env = {
     AGREEMENT_AUTOPUBLISH_ENABLED: 'true',
     AGREEMENT_HOUSE_MODEL_C: 'openai:gpt-4o',
-    AGREEMENT_HOUSE_MODEL_D: 'anthropic:claude-haiku-4-5',
+    AGREEMENT_HOUSE_MODEL_D: 'anthropic:claude-sonnet-5',
     OPENAI_API_KEY: 'k', ANTHROPIC_API_KEY: 'k',
     DB: db,
     RAW_FILES: { get: async () => ({ arrayBuffer: validPdfArrayBuffer }) },

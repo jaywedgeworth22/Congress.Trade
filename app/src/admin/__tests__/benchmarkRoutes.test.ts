@@ -23,10 +23,10 @@ function env(overrides: Record<string, unknown> = {}): Env {
   return {
     ADMIN_TOKEN: 'admin-secret',
     AGREEMENT_HOUSE_MODEL_A: 'openai:gpt-5.6-terra',
-    AGREEMENT_HOUSE_MODEL_B: 'anthropic:claude-haiku-4-5',
+    AGREEMENT_HOUSE_MODEL_B: 'anthropic:claude-sonnet-5',
     AGREEMENT_HOUSE_MODEL_C: 'mistral:mistral-ocr-latest',
     AGREEMENT_HOUSE_MODEL_D: 'openai:gpt-5.6-terra',
-    AGREEMENT_HOUSE_MODEL_E: 'anthropic:claude-haiku-4-5',
+    AGREEMENT_HOUSE_MODEL_E: 'anthropic:claude-sonnet-5',
     OPENAI_API_KEY: 'openai-key',
     ANTHROPIC_API_KEY: 'anthropic-key',
     MISTRAL_API_KEY: 'mistral-key',
@@ -299,7 +299,7 @@ function claimableBenchmarkDb(
 const BENCHMARK_MODELS = [
   { provider: 'openai', model: 'gpt-5.6-terra' },
   { provider: 'gemini', model: 'gemini-3.5-flash' },
-  { provider: 'anthropic', model: 'claude-haiku-4-5' },
+  { provider: 'anthropic', model: 'claude-sonnet-5' },
 ];
 
 function benchmarkMeasurement(
@@ -765,7 +765,7 @@ describe('durable benchmark admin routes', () => {
         limit: 1,
         models: [
           { provider: 'mistral', model: 'mistral-ocr-latest' },
-          { provider: 'anthropic', model: 'claude-haiku-4-5' },
+          { provider: 'anthropic', model: 'claude-sonnet-5' },
         ],
         confirmPaidRun: true,
       }),
@@ -785,7 +785,7 @@ describe('durable benchmark admin routes', () => {
             documentCount: 1,
             models: [
               { provider: 'mistral', model: 'mistral-ocr-latest' },
-              { provider: 'anthropic', model: 'claude-haiku-4-5' },
+              { provider: 'anthropic', model: 'claude-sonnet-5' },
             ],
           },
         },
@@ -1353,7 +1353,7 @@ describe('durable benchmark admin routes', () => {
   it('requires and reserves the full legacy A+B agreement lineup before any provider call', async () => {
     const lineup = {
       a: { provider: 'openai', model: 'gpt-5.6-terra' },
-      b: { provider: 'anthropic', model: 'claude-haiku-4-5' },
+      b: { provider: 'anthropic', model: 'claude-sonnet-5' },
     };
     const unconfirmed = await buildAdminRouter().request('/benchmark/dry-run/H-1', {
       method: 'POST', headers: AUTH, body: JSON.stringify({ models: lineup }),
@@ -1517,7 +1517,7 @@ describe('durable benchmark admin routes', () => {
   it('fills sibling models for a provider-scoped block without overwriting an in-flight cell', async () => {
     const terra = { provider: 'openai', model: 'gpt-5.6-terra' };
     const luna = { provider: 'openai', model: 'gpt-5.6-luna' };
-    const haiku = { provider: 'anthropic', model: 'claude-haiku-4-5' };
+    const haiku = { provider: 'anthropic', model: 'claude-sonnet-5' };
     const failure = {
       code: 'provider_usage_limit', scope: 'provider' as const, retryable: false as const,
       message: 'openai rejected the request because the account usage limit was reached.',
@@ -1651,7 +1651,7 @@ describe('durable benchmark admin routes', () => {
       lineup: {
         a: { provider: 'mistral', model: 'mistral-ocr-latest' },
         b: { provider: 'openai', model: 'gpt-5.6-terra' },
-        c: { provider: 'anthropic', model: 'claude-haiku-4-5' },
+        c: { provider: 'anthropic', model: 'claude-sonnet-5' },
       },
     });
     expect(body.version).toMatch(/^[a-f0-9]{64}$/);
@@ -1672,7 +1672,7 @@ describe('durable benchmark admin routes', () => {
       writeProtected: false,
       roles: {
         primary: { provider: 'openai', model: 'gpt-5.6-terra' },
-        failover: { provider: 'anthropic', model: 'claude-haiku-4-5' },
+        failover: { provider: 'anthropic', model: 'claude-sonnet-5' },
       },
     });
     expect(body.version).toMatch(/^[a-f0-9]{64}$/);
@@ -1793,7 +1793,7 @@ describe('durable benchmark admin routes', () => {
       models_json: JSON.stringify([
         { provider: 'openai', model: 'gpt-5.6-terra' },
         { provider: 'gemini', model: 'gemini-3.5-flash' },
-        { provider: 'anthropic', model: 'claude-haiku-4-5' },
+        { provider: 'anthropic', model: 'claude-sonnet-5' },
       ]),
       started_at: '2026-07-13T12:00:00.000Z',
       completed_at: '2026-07-13T12:01:00.000Z', duration_ms: 60_000,
@@ -1818,7 +1818,7 @@ describe('durable benchmark admin routes', () => {
     const results = [
       measurement('openai', 'gpt-5.6-terra', 100, 0.001),
       measurement('gemini', 'gemini-3.5-flash', 200, 0.002),
-      measurement('anthropic', 'claude-haiku-4-5', 300, 0.004),
+      measurement('anthropic', 'claude-sonnet-5', 300, 0.004),
     ];
     const db = {
       prepare(sql: string) {
@@ -1843,7 +1843,7 @@ describe('durable benchmark admin routes', () => {
       body: JSON.stringify({
         a: { provider: 'openai', model: 'gpt-5.6-terra' },
         b: { provider: 'gemini', model: 'gemini-3.5-flash' },
-        c: { provider: 'anthropic', model: 'claude-haiku-4-5' },
+        c: { provider: 'anthropic', model: 'claude-sonnet-5' },
       }),
     }, env({ DB: db }));
 
@@ -1882,7 +1882,7 @@ describe('durable benchmark admin routes', () => {
         latency_ms: 200, cost_usd: 0.002,
         result_json: JSON.stringify({ rows: [rowB], flags: [] }),
       }),
-      benchmarkMeasurement('anthropic', 'claude-haiku-4-5', {
+      benchmarkMeasurement('anthropic', 'claude-sonnet-5', {
         latency_ms: 300, cost_usd: 0.004,
         result_json: JSON.stringify({ rows: [rowA], flags: [] }),
       }),
@@ -1914,7 +1914,7 @@ describe('durable benchmark admin routes', () => {
         invoked: 0, ok: 0, autonomous: 0, cost_usd: null, cost_source: 'unknown',
       }),
       benchmarkMeasurement('gemini', 'gemini-3.5-flash', { cost_usd: 0.002 }),
-      benchmarkMeasurement('anthropic', 'claude-haiku-4-5', { cost_usd: 0.004 }),
+      benchmarkMeasurement('anthropic', 'claude-sonnet-5', { cost_usd: 0.004 }),
     ];
     const db = persistedBenchmarkDb(results);
     const simulation = await buildAdminRouter().request('/benchmark/runs/run-1/simulate', {
@@ -1962,7 +1962,7 @@ describe('durable benchmark admin routes', () => {
         ok: 0, autonomous: 0, outcome: 'skipped', error: 'model_not_found',
       }),
       benchmarkMeasurement('gemini', 'gemini-3.5-flash'),
-      benchmarkMeasurement('anthropic', 'claude-haiku-4-5'),
+      benchmarkMeasurement('anthropic', 'claude-sonnet-5'),
     ];
     const response = await buildAdminRouter().request('/benchmark/settings/house', {
       method: 'PUT',

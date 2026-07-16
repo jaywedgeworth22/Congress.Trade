@@ -573,11 +573,9 @@ export async function deliverUsageTelemetryEvent(
 ): Promise<void> {
   await withoutThirdPartyTelemetry(env, async () => {
     const secrets = await resolveSecrets(env, [
-      'USAGE_MONITOR_ENABLED',
       'USAGE_MONITOR_INGEST_URL',
       'USAGE_MONITOR_INGEST_TOKEN',
     ]);
-    if (/^(0|false|no|off)$/i.test((secrets.USAGE_MONITOR_ENABLED ?? '').trim())) return;
     const configuredUrl = secrets.USAGE_MONITOR_INGEST_URL?.trim();
     const token = secrets.USAGE_MONITOR_INGEST_TOKEN?.trim();
     if (!configuredUrl || !token) throw new Error('usage telemetry ingest is not configured');

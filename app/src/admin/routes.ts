@@ -4235,7 +4235,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const model =
       typeof body.model === 'string' && body.model
         ? body.model
-        : provider === 'anthropic' ? 'claude-haiku-4-5'
+        : provider === 'anthropic' ? 'claude-sonnet-5'
         : provider === 'openai' ? 'gpt-5.6-terra'
         : provider === 'xai' ? 'grok-4.3'
         : 'mistral-ocr-latest';
