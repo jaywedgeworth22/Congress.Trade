@@ -36,6 +36,7 @@ import {
   PriceSeriesSchema,
   SecurityRefInputSchema,
   ShortVolumeRowSchema,
+  normalizeCompanyName,
 } from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
 import { all, batch, get, run, type SqlParam } from '../shared/db';
@@ -7519,6 +7520,34 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
 
     return c.json({ ok: true, cleaned, processed: rows.length, nextOffset: numOffset + numLimit, done: rows.length < numLimit });
+  });
+
+  r.post('/securities/standardize-names', async (c) => {
+    const rows = await all<{ ticker: string; company_name: string | null }>(
+      c.env.DB,
+      'SELECT ticker, company_name FROM securities_ref WHERE company_name IS NOT NULL AND company_name <> ""'
+    );
+    let updated = 0;
+    const statements: any[] = [];
+    for (const row of rows) {
+      const normalized = normalizeCompanyName(row.company_name);
+      if (normalized && normalized !== row.company_name) {
+        statements.push(
+          c.env.DB.prepare('UPDATE securities_ref SET company_name = ? WHERE ticker = ?').bind(
+            normalized,
+            row.ticker
+          )
+        );
+        updated++;
+      }
+    }
+    // Execute in chunks of 100 to prevent D1 timeout / batch size limits
+    const chunkSize = 100;
+    for (let i = 0; i < statements.length; i += chunkSize) {
+      const chunk = statements.slice(i, i + chunkSize);
+      await c.env.DB.batch(chunk);
+    }
+    return c.json({ ok: true, scanned: rows.length, updated });
   });
 
   // Operator provisioning keeps explicit integration client ids; end-user
