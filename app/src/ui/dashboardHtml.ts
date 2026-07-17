@@ -777,6 +777,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-card.sp-ahead { border-color: color-mix(in srgb, var(--good) 35%, var(--border)); }
   .sp-card.sp-tied { border-color: color-mix(in srgb, var(--warn) 30%, var(--border)); }
   .sp-card.sp-behind { border-color: color-mix(in srgb, var(--rival) 30%, var(--border)); }
+  .sp-card.sp-tied { border-color: color-mix(in srgb, var(--text-dim) 25%, var(--border)); }
   /* Card header row */
   .sp-header { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
   .sp-name { font-size:13px; font-weight:700; color:var(--text); letter-spacing:0.1px; }
@@ -788,6 +789,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-badge.tied { background:color-mix(in srgb,var(--warn) 18%,transparent); color:var(--warn); border:1px solid color-mix(in srgb,var(--warn) 40%,transparent); }
   .sp-badge.behind { background:color-mix(in srgb,var(--rival) 15%,transparent); color:var(--rival); border:1px solid color-mix(in srgb,var(--rival) 35%,transparent); }
   .sp-badge.gathering { background:color-mix(in srgb,var(--text-dim) 12%,transparent); color:var(--text-dim); border:1px solid color-mix(in srgb,var(--border) 80%,transparent); }
+  .sp-badge.tied { background:color-mix(in srgb,var(--text-dim) 18%,transparent); color:var(--text); border:1px solid color-mix(in srgb,var(--border) 60%,transparent); }
   /* Win-rate bar */
   .sp-bar-wrap { display:flex; flex-direction:column; gap:5px; }
   .sp-bar-labels { display:flex; justify-content:space-between; font-size:11px; color:var(--text-dim); font-family:var(--mono); }
@@ -6573,8 +6575,8 @@ function spCardHtml(p) {
     var need = SPEED_LANE_MIN_MATCHED - p.matched;
     leadHtml = '<div class="sp-gathering">' +
       (p.matched > 0
-        ? 'We\\\'ve matched <strong>' + p.matched + '</strong> of ' + p.candidates + ' filings so far — ' + need + ' more needed for timing estimates.'
-        : 'Probes haven\\\'t found overlapping disclosures yet. Sample builds automatically.') +
+        ? "We've matched <strong>" + p.matched + "</strong> of " + p.candidates + " filings so far — " + need + " more needed for timing estimates."
+        : "Probes haven't found overlapping disclosures yet. Sample builds automatically.") +
       '</div>';
   } else {
     var med = p.medianLeadSec || 0;

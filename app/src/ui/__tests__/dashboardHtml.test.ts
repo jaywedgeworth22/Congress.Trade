@@ -196,7 +196,7 @@ describe('DASHBOARD_HTML', () => {
     // Honesty guard rails: lane threshold, empty-state copy,
     // losses always displayed, sample sizes visible, trademark fine print.
     expect(DASHBOARD_HTML).toContain('var SPEED_LANE_MIN_MATCHED = 5');
-    expect(DASHBOARD_HTML).toContain("Probes haven\\'t found overlapping disclosures yet.");
+    expect(DASHBOARD_HTML).toContain("Probes haven't found overlapping disclosures yet.");
     expect(DASHBOARD_HTML).toContain('<span class="sp-wlt-key">Losses</span>');
     expect(DASHBOARD_HTML).toContain('matched so far');
     expect(DASHBOARD_HTML).toContain('A live measurement, not a promise');
