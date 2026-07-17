@@ -592,8 +592,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .colopt { font-size:14px; color:var(--text); display:flex; align-items:center; gap:10px; margin:0; padding:6px 4px; border-radius:6px; cursor:pointer; min-width:0; transition:background-color 0.15s ease; }
   .colopt:hover { background:color-mix(in srgb,var(--text) 4%,transparent); }
   button.colopt { font-family:var(--sans); border:1px dashed var(--border); background:color-mix(in srgb,var(--panel-2) 65%,transparent); }
-  .colopt.locked { color:var(--text-dim); }
-  .colopt.locked:hover { color:var(--text); border-color:color-mix(in srgb,var(--accent) 55%,var(--border)); }
   .colopt.dragging { opacity:.45; border:1px solid var(--accent); }
   .col-drag { color:var(--text-dim); cursor:grab; font-size:16px; font-weight:700; line-height:1; padding:0 4px; }
   .colopt input { flex:0 0 auto; }
@@ -1513,11 +1511,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
     </div>
     <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center;display:none">
-      <span class="gate-note">Premium adds full-history CSV export and enrichment columns.
+      <span class="gate-note">Premium adds full-history CSV export.
         <button class="btn sm" onclick="openPricing()">Premium</button></span>
     </div>
-
-  </section>
 
   <!-- ================= TRENDS / ANALYTICS ================= -->
   <section class="view active" id="view-trends" role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false">
@@ -2029,8 +2025,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <li>Instant filing alerts — signed webhooks (HMAC-verified) to any URL</li>
       <li>Live SSE stream of every new filing — no polling</li>
       <li>Full-history CSV exports</li>
-      <li>Enrichment columns: sector, market cap, and country</li>
     </ul>
+
     <div class="plan-grid" id="pricingPlans">
       <div class="plan sel" id="planMonthly" onclick="selectPlan('monthly')">
         <div class="cad">Monthly</div>
@@ -2650,14 +2646,14 @@ var FEED_COLS = [
   { id: 'member', label: 'Politician', sort: 'member', def: true, tip: 'Politician who filed the disclosure.', cell: memberCellHtml },
   { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
-  { id: 'sector', label: 'Sector', sort: 'refSector', def: true, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
-  { id: 'marketcap', label: 'Cap', sort: 'refMarketCap', def: true, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
+  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
+  { id: 'marketcap', label: 'Cap', sort: 'refMarketCap', def: true, tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
+  { id: 'country', label: '🌎', sort: 'refCountry', def: true, cls: 'muted', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
   { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
   { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'Released to seen, then seen to imported for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
   { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
   { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
   { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
-  { id: 'country', label: '🌎', sort: 'refCountry', def: false, cls: 'muted', tier: 'premium', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
   { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
   { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return clipTextHtml(ownerLabel(r.chamber)); } },
@@ -2670,7 +2666,6 @@ function isAdminView() {
 }
 function canUseColumn(c) {
   if (c.tier === 'admin') return isAdminView();
-  if (c.tier === 'premium') return isAdminView() || (typeof ME !== 'undefined' && isPremium());
   return true;
 }
 function loadColOrder() { try { var v = JSON.parse(localStorage.getItem(COL_ORDER_KEY)); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
@@ -2780,17 +2775,9 @@ function setPanelOpen(id, open) {
 }
 function renderColChooser() {
   var box = el('colChooserBody'); if (!box) return;
-  var lockedPremium = !isAdminView() && !(typeof ME !== 'undefined' && isPremium());
-  var note = lockedPremium
-    ? '<div class="panel-note" style="margin-bottom:8px"><strong>Premium enrichment</strong><br/>Sector, market cap, and country are available with Premium.</div>'
-    : '';
-  note += '<div class="panel-note" style="margin-bottom:12px">Drag columns here to reorder the Trades table.</div>';
+  var note = '<div class="panel-note" style="margin-bottom:12px">Drag columns here to reorder the Trades table.</div>';
   box.innerHTML = note + chooserCols().map(function (c) {
     var tip = c.tip ? ' title="' + esc(c.tip) + '"' : '';
-    if (c.tier === 'premium' && lockedPremium) {
-      return '<button type="button" class="colopt locked" draggable="true" data-colid="' + esc(c.id) + '" data-premium-col="' + esc(c.id) + '"' + tip + '>' +
-        '<span class="col-drag" aria-hidden="true">≡</span><span class="colopt-name">' + esc(c.label) + '</span> <span class="premium-mark">Premium</span></button>';
-    }
     return '<label class="colopt" draggable="true" data-colid="' + esc(c.id) + '"' + tip + '><span class="col-drag" aria-hidden="true">≡</span><input type="checkbox" data-colid="' + c.id + '"' + (isColVisible(c.id) ? ' checked' : '') + ' /> <span class="colopt-name">' + esc(c.label) + '</span></label>';
   }).join('');
 }
@@ -7494,11 +7481,6 @@ function pricingCopy(intent) {
     sub: 'Browse and filter the dashboard for free. Premium adds full-history CSV downloads for research workflows.',
     features: ['Full-history CSV exports', 'Filtered downloads by asset, chamber, and transaction type'],
   };
-  if (intent === 'columns') return {
-    title: 'Premium Enrichment Columns',
-    sub: 'The public dashboard stays browsable. Premium adds enriched finance fields for deeper screening.',
-    features: ['Sector', 'Market cap', 'Country of issue'],
-  };
   if (intent === 'alerts') return {
     title: 'Get the Filing First',
     sub: 'Free users see filings when they check the site. Premium pushes them to you the moment our scout ingests — via signed webhooks or a live SSE stream.',
@@ -7506,7 +7488,6 @@ function pricingCopy(intent) {
       'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
       'Live SSE stream of every new filing — no polling',
       'Full-history CSV exports',
-      'Enrichment columns: sector, market cap, and country',
     ],
   };
   return {
@@ -7516,7 +7497,6 @@ function pricingCopy(intent) {
       'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
       'Live SSE stream of every new filing — no polling',
       'Full-history CSV exports',
-      'Enrichment columns: sector, market cap, and country',
     ],
   };
 }
@@ -7558,7 +7538,7 @@ function startCheckout() {
     return;
   }
   if (!ME.user) {
-    var feature = pricingIntent === 'csv' ? ' for CSV export' : pricingIntent === 'columns' ? ' for Premium columns' : '';
+    var feature = pricingIntent === 'csv' ? ' for CSV export' : '';
     closePricing(); openLogin(); el('loginMsg').textContent = 'Sign in to start your Premium trial' + feature + '.';
     return;
   }
@@ -7932,10 +7912,6 @@ renderFeedHeader();
 (function () {
   var box = el('colChooserBody');
   var draggingCol = null;
-  if (box) box.addEventListener('click', function (e) {
-    var btn = e.target && e.target.closest ? e.target.closest('[data-premium-col]') : null;
-    if (btn) openPricing('columns');
-  });
   if (box) box.addEventListener('change', function (e) {
     var cb = e.target;
     if (cb && cb.getAttribute && cb.getAttribute('data-colid')) {
