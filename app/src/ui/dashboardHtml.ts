@@ -1509,11 +1509,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
     </div>
     <div class="row-flex" id="gateRow" style="margin-top:10px;justify-content:center;display:none">
-      <span class="gate-note">Premium adds full-history CSV export and enrichment columns.
+      <span class="gate-note">Premium adds full-history CSV export.
         <button class="btn sm" onclick="openPricing()">Premium</button></span>
     </div>
-
-  </section>
 
   <!-- ================= TRENDS / ANALYTICS ================= -->
   <section class="view active" id="view-trends" role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false">
@@ -2025,8 +2023,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <li>Instant filing alerts — signed webhooks (HMAC-verified) to any URL</li>
       <li>Live SSE stream of every new filing — no polling</li>
       <li>Full-history CSV exports</li>
-      <li>Enrichment columns: sector, market cap, and country</li>
     </ul>
+
     <div class="plan-grid" id="pricingPlans">
       <div class="plan sel" id="planMonthly" onclick="selectPlan('monthly')">
         <div class="cad">Monthly</div>
