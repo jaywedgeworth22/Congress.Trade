@@ -71,6 +71,7 @@ import { uuid } from '../shared/ids';
 import { estimateTransactionValue } from '../shared/transactionValue';
 import { flushDeliveryOutbox } from '../delivery/outbox';
 import { resolveSecrets } from '../secrets/infisical';
+import { getUnderlyingProvider } from '../benchmark/settings';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -187,11 +188,26 @@ export function sameRowSet(a: CandidateDocResult, b: CandidateDocResult): boolea
   return sortedA.every((key, index) => key === sortedB[index]);
 }
 
-/** Reject a lineup that would let one provider corroborate itself. */
-function duplicateLineupReason(models: BakeoffCandidate[]): string | null {
+/**
+ * Reject a lineup that would let one provider corroborate itself.
+ *
+ * Provider distinctness is measured over the UNDERLYING vendor
+ * (getUnderlyingProvider), NOT the literal `provider` field. Every
+ * OpenRouter-transported model shares provider==='openrouter', so comparing the
+ * raw field wrongly rejects any trio with 2+ OpenRouter models as
+ * `duplicate_provider_lineup` and fails the cascade closed — which is why
+ * all-OpenRouter trios never publish. getUnderlyingProvider maps e.g.
+ * openrouter:google/gemini-3.5-flash → gemini, openrouter:x-ai/grok-4.3 → xai,
+ * openrouter:openai/gpt-5.6-terra → openai, and passes direct providers (and
+ * llamaparse) through unchanged. The model-label distinctness check
+ * (duplicate_model_lineup) is unaffected. Canonical copy of getUnderlyingProvider
+ * lives in benchmark/settings.ts, where validateBenchmarkLineup enforces the
+ * identical rule for the admin-configured trio.
+ */
+export function duplicateLineupReason(models: BakeoffCandidate[]): string | null {
   const ids = models.map((m) => label(m).trim().toLowerCase());
   if (new Set(ids).size !== ids.length) return 'duplicate_model_lineup';
-  const providers = models.map((m) => m.provider.trim().toLowerCase());
+  const providers = models.map((m) => getUnderlyingProvider(m).trim().toLowerCase());
   return new Set(providers).size === providers.length ? null : 'duplicate_provider_lineup';
 }
 

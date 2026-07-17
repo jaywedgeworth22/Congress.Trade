@@ -17,7 +17,7 @@ import {
   submitBatch,
   type BatchDoc,
 } from '../batchExtract';
-import { EXECUTIVE_SYSTEM_PROMPT, SYSTEM_PROMPT, arrayBufferToBase64 } from '../visionUtils';
+import { EXECUTIVE_SYSTEM_PROMPT, SYSTEM_PROMPT, arrayBufferToBase64 } from '../visionLlm';
 
 afterEach(() => {
   vi.useRealTimers();
