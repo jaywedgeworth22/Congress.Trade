@@ -198,7 +198,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('var SPEED_LANE_MIN_MATCHED = 5');
     expect(DASHBOARD_HTML).toContain('var SPEED_BOAST_MIN_MATCHED = 10');
     expect(DASHBOARD_HTML).toContain('No overlapping disclosures yet');
-    expect(DASHBOARD_HTML).toContain('Behind ');
+    expect(DASHBOARD_HTML).toContain('<span class="loss">L: ');
     expect(DASHBOARD_HTML).toContain(' of ' + "' + p.candidates + '" + ' matched');
     expect(DASHBOARD_HTML).toContain('A live measurement, not a promise');
     expect(DASHBOARD_HTML).toContain('trademarks of their respective owners');

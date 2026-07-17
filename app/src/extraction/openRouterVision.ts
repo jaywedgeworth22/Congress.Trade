@@ -128,14 +128,15 @@ function supportsNativeVision(model: string): boolean {
               model,
               max_tokens: MAX_TOKENS,
               response_format: { type: 'json_object' },
-              ...(supportsNativeVision(model) ? {} : {
-                plugins: [
+              plugins: [
+                { id: 'response-healing' },
+                ...(supportsNativeVision(model) ? [] : [
                   {
                     id: 'file-parser',
                     pdf: { engine: 'mistral-ocr' },
                   },
-                ],
-              }),
+                ]),
+              ],
               messages: [
                 {
                   role: 'user',
