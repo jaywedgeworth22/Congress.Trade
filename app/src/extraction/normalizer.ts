@@ -290,7 +290,7 @@ function buildTransaction(
   nowIso: string,
   rowIndex: number,
 ): FlaggedTx {
-  const cleanedAssetName = cleanAssetString(p.assetName);
+  const cleanedAssetName = cleanAssetString(p.assetName, p.ticker);
   const s = scoreFields(
     p.confidence,
     {
