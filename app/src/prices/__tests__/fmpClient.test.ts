@@ -20,6 +20,14 @@ describe('buildFmpPriceClient — tier-error surfacing', () => {
     ).toEqual([]);
   });
 
+  it('throws FMP_HTTP_500 on a server error (transient — must not read as no-data)', async () => {
+    // A 5xx must NOT be swallowed as [], or the price refresh would negative-cache
+    // priceable tickers during an FMP outage.
+    await expect(
+      buildFmpPriceClient('k', fetchWith(500)).eodHistory('AAPL', '2024-01-01', '2024-02-01'),
+    ).rejects.toThrow('FMP_HTTP_500');
+  });
+
   it('parses closes on 200', async () => {
     const closes = await buildFmpPriceClient(
       'k',
