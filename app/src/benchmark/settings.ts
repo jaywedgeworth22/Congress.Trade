@@ -78,6 +78,11 @@ const LLAMAPARSE_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'llamaparse', model: 'agentic' },
 ];
 
+// Direct-provider models kept in the catalog for DECODE/replay + validation of
+// historical extraction_runs and prior live config, even though they are no
+// longer OFFERED in DEFAULT_CANDIDATES (all live LLM extraction now routes through
+// OpenRouter; llamaparse is the sole direct transport). `mistral:mistral-ocr-latest`
+// was moved here when its offered slot became `openrouter:mistral/mistral-ocr-latest`.
 const LEGACY_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'openai', model: 'gpt-5.6-terra' },
   { provider: 'openai', model: 'gpt-5.6-luna' },
@@ -86,6 +91,7 @@ const LEGACY_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'anthropic', model: 'claude-sonnet-5' },
   { provider: 'anthropic', model: 'claude-haiku-4-5' },
   { provider: 'xai', model: 'grok-4.3' },
+  { provider: 'mistral', model: 'mistral-ocr-latest' },
 ];
 
 export function benchmarkModelCatalog(): BakeoffCandidate[] {

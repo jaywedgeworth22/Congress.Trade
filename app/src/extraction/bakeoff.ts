@@ -61,39 +61,46 @@ export interface CandidateInvocation {
 }
 
 /**
- * Provider-neutral default lineup (overridable per request). Five companies via
- * direct keys — Google, OpenAI, Anthropic, Mistral, xAI — plus a curated set of
- * OpenRouter-transported candidates. The GPT-4o family is intentionally absent
- * from new disclosure extraction (on BOTH the direct and OpenRouter transports;
- * see isRetiredDisclosureCandidate): GPT-5.6 Terra is the routine default, Luna
- * is the lower-cost first pass, and Sol is the difficult-scan adjudicator.
+ * Default extraction lineup (overridable per request). Per owner directive, ALL
+ * LLM extraction routes through OpenRouter for unified billing + observability:
+ * every entry below is an `openrouter:*` transport and there are ZERO
+ * direct-provider entries. The direct provider keys (Google/OpenAI/Anthropic/
+ * Mistral/xAI) are being removed from the offered catalog; llamaparse is the sole
+ * remaining DIRECT transport — a non-LLM document parser kept in
+ * LLAMAPARSE_CANDIDATES (see benchmark/settings.ts). Historical extraction_runs
+ * that reference direct providers still DECODE/replay via runCandidateOnDoc's
+ * direct-provider dispatch and the LEGACY_CANDIDATES catalog entries: only which
+ * models are OFFERED changes here, not decode support.
  *
- * Each direct provider takes a PDF via its own native path: Gemini/OpenAI/
- * Anthropic as an inline base64 part, Mistral via `/v1/ocr`, and xAI via the
- * Files API (upload → `file_id` → attach to a `grok-4.3` `/v1/responses` call;
- * the model's server-side OCR+vision reads the scan). grok-4.3 is agentic, so
- * it is the slowest/most expensive candidate — keep bake-off `docIds` small
- * when it's in.
+ * The GPT-4o family is intentionally absent from new disclosure extraction (see
+ * isRetiredDisclosureCandidate): GPT-5.6 Terra is the routine default, Luna is
+ * the lower-cost first pass, Sol is the difficult-scan adjudicator, and terra-pro
+ * is the higher-effort variant.
  *
- * Every openrouter slug below was verified LIVE against the OpenRouter models
- * API on 2026-07-16. Fourteen prior entries that no longer exist on OpenRouter
- * (gemini-pro-1.5 / flash-1.5 / 2.0-flash-thinking-exp, claude-3.5/3.7 family,
- * mistral-large-2411, grok-2-vision-1212, qwen-2.5-vl-72b:free, qwen-max,
- * yi-large, kimi-chat, minimax-hep-lite, deepseek-chat/-coder) were removed —
- * every benchmark cell for a dead slug could only fail. deepseek-chat/-coder
- * were replaced by the live deepseek-v4-pro/-flash pair per owner directive.
- * `google/gemini-3.5-flash` is the OR-transport route around the currently
- * blocked direct Gemini key.
+ * `mistral/mistral-ocr-latest` is NOT a listed OpenRouter chat model — the
+ * OpenRouter vision adapter (openRouterVision.ts) special-cases it as the
+ * mistral-ocr file-parser plugin, so it MUST stay this exact slug. Every other
+ * openrouter slug was verified LIVE against the OpenRouter models API (2026-07-16
+ * for the pre-existing set; terra-pro and claude-haiku-4.5 verified 2026-07-17).
+ * Note claude-haiku-4.5 uses a DOT — `anthropic/claude-haiku-4-5` (dash) does not
+ * exist on OpenRouter. Slugs confirmed absent from the live API (gemini-pro-1.5 /
+ * flash-1.5 / 2.0-flash-thinking-exp, claude-3.5/3.7 family, mistral-large-2411,
+ * grok-2-vision-1212, qwen-2.5-vl-72b:free, qwen-max, yi-large, kimi-chat,
+ * minimax-hep-lite, deepseek-chat/-coder) must never reappear — every benchmark
+ * cell for a dead slug can only fail. `google/gemini-3.5-flash` is the OR-transport
+ * route around the blocked direct Gemini key.
  */
 export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
-  // Native Mistral OCR — keep direct: uses the /v1/files document parse API
-  // not exposed through OpenRouter in the same way.
-  { provider: 'mistral', model: 'mistral-ocr-latest' },
-  // All other models routed through OpenRouter for unified billing + observability
+  // Mistral OCR via the OpenRouter mistral-ocr file-parser plugin (see
+  // openRouterVision.ts) — replaces the former native `mistral:mistral-ocr-latest`
+  // direct route; the direct entry lives in LEGACY_CANDIDATES for decode only.
+  { provider: 'openrouter', model: 'mistral/mistral-ocr-latest' },
   { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
+  { provider: 'openrouter', model: 'openai/gpt-5.6-terra-pro' },
   { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
   { provider: 'openrouter', model: 'openai/gpt-5.6-sol' },
   { provider: 'openrouter', model: 'anthropic/claude-sonnet-5' },
+  { provider: 'openrouter', model: 'anthropic/claude-haiku-4.5' },
   { provider: 'openrouter', model: 'x-ai/grok-4.3' },
   { provider: 'openrouter', model: 'deepseek/deepseek-v4-pro' },
   { provider: 'openrouter', model: 'deepseek/deepseek-v4-flash' },
