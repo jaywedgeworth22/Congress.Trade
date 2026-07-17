@@ -387,6 +387,47 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
     note: 'OCR 4 annotated-page price; this app requests document_annotation_format.',
   },
   {
+    provider: 'openrouter',
+    models: ['openai/gpt-5.6-terra-pro'],
+    meter: 'tokens',
+    inputUsdPerMillion: 2.5,
+    cachedInputUsdPerMillion: 0.25,
+    cacheWriteInputMultiplier: 1.25,
+    outputUsdPerMillion: 15,
+    longContextThresholdTokens: 272_000,
+    longContextInputMultiplier: 2,
+    longContextOutputMultiplier: 1.5,
+    version: 'openrouter-static-2026-07-17',
+    effectiveDate: '2026-07-17',
+    sourceUrl: 'https://openrouter.ai/docs#models',
+    note: 'OpenRouter passthrough of OpenAI GPT-5.6 Terra Pro pricing; verified against the live /api/v1/models listing 2026-07-17.',
+  },
+  {
+    provider: 'openrouter',
+    models: ['anthropic/claude-haiku-4.5'],
+    meter: 'tokens',
+    inputUsdPerMillion: 1,
+    cachedInputUsdPerMillion: 0.1,
+    cacheWriteInputMultiplier: 1.25,
+    cacheWriteOneHourInputMultiplier: 2,
+    outputUsdPerMillion: 5,
+    version: 'openrouter-static-2026-07-17',
+    effectiveDate: '2026-07-17',
+    sourceUrl: 'https://openrouter.ai/docs#models',
+    note: 'OpenRouter passthrough of Anthropic Claude Haiku 4.5 pricing; verified against the live /api/v1/models listing 2026-07-17.',
+  },
+  {
+    provider: 'openrouter',
+    models: ['mistral/mistral-ocr-latest'],
+    meter: 'pages',
+    usdPerPage: 0.002,
+    pageKind: 'annotated',
+    version: 'openrouter-mistral-ocr-2026-07-17',
+    effectiveDate: '2026-07-17',
+    sourceUrl: 'https://openrouter.ai/docs/features/multimodal/pdfs',
+    note: 'OpenRouter mistral-ocr file-parser plugin price ($2 per 1,000 pages).',
+  },
+  {
     provider: 'llamaparse',
     models: ['fast'],
     meter: 'pages',
@@ -532,10 +573,37 @@ function findRate(input: PriceBenchmarkUsageInput): BenchmarkRate | undefined {
   const rateCard = input.rateCard ?? STANDARD_BENCHMARK_RATE_CARD;
   const provider = input.provider.trim().toLowerCase();
   const models = [input.resolvedModel, input.model].filter((v): v is string => Boolean(v));
-  return rateCard.find((rate) =>
+  
+  const exact = rateCard.find((rate) =>
     rate.provider.toLowerCase() === provider &&
     models.some((model) => (rate.models as readonly string[]).includes(model)),
   );
+  if (exact) return exact;
+
+  if (provider === 'openrouter') {
+    for (const model of models) {
+      const parts = model.split('/');
+      if (parts.length > 1) {
+        const subProvider = parts[0].toLowerCase();
+        const subModel = parts.slice(1).join('/');
+        const mappedProvider = subProvider === 'google' ? 'gemini' : subProvider === 'x-ai' ? 'xai' : subProvider;
+        const normalizedSubModel = subModel.replace(/\./g, '-');
+        
+        const subRate = rateCard.find((rate) =>
+          rate.provider.toLowerCase() === mappedProvider &&
+          (rate.models as readonly string[]).some((m) => m.toLowerCase() === subModel.toLowerCase() || m.toLowerCase() === normalizedSubModel.toLowerCase()),
+        );
+        if (subRate) {
+          return {
+            ...subRate,
+            provider: 'openrouter',
+            models: [model],
+          } as any;
+        }
+      }
+    }
+  }
+  return undefined;
 }
 
 /** Price one invoked provider call without inventing missing usage. */

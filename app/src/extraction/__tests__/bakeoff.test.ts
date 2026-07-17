@@ -482,6 +482,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       .map((entry) => entry.model);
     expect(orGptModels).toEqual([
       'openai/gpt-5.6-terra',
+      'openai/gpt-5.6-terra-pro',
       'openai/gpt-5.6-luna',
       'openai/gpt-5.6-sol',
     ]);
@@ -492,10 +493,13 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       .filter((entry) => entry.provider === 'openrouter')
       .map((entry) => entry.model);
     expect(openRouterModels).toEqual([
+      'mistral/mistral-ocr-latest',
       'openai/gpt-5.6-terra',
+      'openai/gpt-5.6-terra-pro',
       'openai/gpt-5.6-luna',
       'openai/gpt-5.6-sol',
       'anthropic/claude-sonnet-5',
+      'anthropic/claude-haiku-4.5',
       'x-ai/grok-4.3',
       'deepseek/deepseek-v4-pro',
       'deepseek/deepseek-v4-flash',
@@ -529,13 +533,12 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       'moonshotai/kimi-chat',
       'minimax/minimax-hep-lite',
     ];
+
     for (const slug of deadSlugs) expect(openRouterModels).not.toContain(slug);
     // The GPT-4o family must be absent from the whole default lineup on every
-    // transport, and the only non-OR entry is native mistral (kept as fallback).
+    // transport, and there are no direct-provider non-OR entries in the default lineup.
     expect(DEFAULT_CANDIDATES.some((entry) => /(?:^|\/)(?:gpt|chatgpt)-4o(?:-|$)/i.test(entry.model))).toBe(false);
-    expect(DEFAULT_CANDIDATES.filter((entry) => entry.provider !== 'openrouter')).toEqual([
-      { provider: 'mistral', model: 'mistral-ocr-latest' },
-    ]);
+    expect(DEFAULT_CANDIDATES.filter((entry) => entry.provider !== 'openrouter')).toEqual([]);
   });
 
   it('maps the GPT-5.6 roles to low, medium, and high reasoning', () => {

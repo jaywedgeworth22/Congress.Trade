@@ -139,6 +139,7 @@ import {
 import {
   checkOpenAiModelAccess,
   openAiModelAccessDecision,
+  OPENAI_BENCHMARK_ACCESS_MODELS,
 } from '../benchmark/providerAccess';
 import {
   BenchmarkSettingsConflictError,
@@ -5244,22 +5245,38 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'invalid JSON body' }, 400);
     }
 
+    // Structural parse only (provider + model presence). Catalog membership is
+    // enforced below via validateBenchmarkModel, so the accepted set auto-tracks
+    // the OpenRouter-only offerings (DEFAULT_CANDIDATES) plus llamaparse and the
+    // legacy direct-provider decode entries — no hardcoded provider whitelist to
+    // drift out of sync with the catalog.
     const parseModel = (m: unknown): BakeoffCandidate | null => {
       const o = m as { provider?: unknown; model?: unknown };
-      const valid: Provider[] = ['gemini', 'openai', 'anthropic', 'mistral', 'xai'];
-      return valid.includes(o.provider as Provider) && typeof o.model === 'string'
-        ? { provider: o.provider as Provider, model: o.model }
-        : null;
+      if (typeof o.provider !== 'string' || typeof o.model !== 'string') return null;
+      const provider = o.provider.trim().toLowerCase();
+      const model = o.model.trim();
+      return provider && model ? { provider: provider as Provider, model } : null;
     };
-    const models = Array.isArray(body.models) ? body.models.map(parseModel) : [];
-    if (models.length !== 2 || models.some((m) => !m)) {
-      return c.json({ error: 'models must be exactly two {provider,model} from gemini|openai|anthropic|mistral|xai' }, 400);
+    const parsed = Array.isArray(body.models) ? body.models.map(parseModel) : [];
+    if (parsed.length !== 2 || parsed.some((m) => !m)) {
+      return c.json({ error: 'models must be exactly two {provider,model} entries from the benchmark model catalog' }, 400);
     }
-    const [mA, mB] = models as BakeoffCandidate[];
-    const mC = body.requireThird ? parseModel(body.requireThird) : null;
-    if (body.requireThird && !mC) return c.json({ error: 'requireThird must be {provider,model}' }, 400);
-    if ([mA, mB, mC].some((model) => model && isRetiredDisclosureCandidate(model))) {
+    const [rawA, rawB] = parsed as BakeoffCandidate[];
+    const rawC = body.requireThird ? parseModel(body.requireThird) : null;
+    if (body.requireThird && !rawC) return c.json({ error: 'requireThird must be {provider,model}' }, 400);
+    // Retired-candidate guard runs BEFORE catalog validation so a GPT-4o request
+    // still receives its explicit retirement message (GPT-4o is absent from the
+    // catalog and would otherwise fail with the generic not-in-catalog error).
+    if ([rawA, rawB, rawC].some((model) => model && isRetiredDisclosureCandidate(model))) {
       return c.json({ error: 'GPT-4o is retired for new disclosure extraction; use gpt-5.6-terra, gpt-5.6-luna, or gpt-5.6-sol' }, 400);
+    }
+    let mA: BakeoffCandidate, mB: BakeoffCandidate, mC: BakeoffCandidate | null;
+    try {
+      mA = validateBenchmarkModel(rawA, 'models[0]');
+      mB = validateBenchmarkModel(rawB, 'models[1]');
+      mC = rawC ? validateBenchmarkModel(rawC, 'requireThird') : null;
+    } catch (error) {
+      return c.json({ error: (error as Error).message }, 400);
     }
     const dryRun = body.dryRun !== false; // default true — preview unless explicitly false
 
@@ -5316,9 +5333,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // --- Durable benchmark runs ----------------------------------------------
   r.get('/benchmark/model-access/openai', async (c) => {
     const refresh = c.req.query('refresh') === '1' || c.req.query('refresh') === 'true';
-    const models = DEFAULT_CANDIDATES
+    let models = DEFAULT_CANDIDATES
       .filter((candidate) => candidate.provider === 'openai')
       .map((candidate) => candidate.model);
+    if (!models.length) models = [...OPENAI_BENCHMARK_ACCESS_MODELS];
     return c.json({ access: await checkOpenAiModelAccess(c.env, { models, refresh }) });
   });
 
