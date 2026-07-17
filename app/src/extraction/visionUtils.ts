@@ -16,6 +16,7 @@
  *   - On any API/parse failure: throw, so the pipeline marks the filing errored.
  */
 
+import { jsonrepair } from 'jsonrepair';
 import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types';
 import type { Env, Filing, Owner, ParsedTx, TxType } from '../shared/types';
 import { parseAmountRange } from './amounts';
@@ -397,15 +398,17 @@ function extractJsonFallback(text: string): unknown {
   const startIdx = text.search(/[[{]/);
   if (startIdx === -1) return undefined;
   
-  const openChar = text[startIdx];
+  const targetText = text.substring(startIdx);
+  const openChar = targetText[0];
   const closeChar = openChar === '[' ? ']' : '}';
   
   let depth = 0;
   let inString = false;
   let escape = false;
   
-  for (let i = startIdx; i < text.length; i++) {
-    const char = text[i];
+  // 1. Try to find a balanced block first
+  for (let i = 0; i < targetText.length; i++) {
+    const char = targetText[i];
     if (escape) {
       escape = false;
       continue;
@@ -425,15 +428,22 @@ function extractJsonFallback(text: string): unknown {
         depth--;
         if (depth === 0) {
           try {
-            return JSON.parse(text.substring(startIdx, i + 1));
+            return JSON.parse(targetText.substring(0, i + 1));
           } catch {
-            return undefined;
+            break; // Fall through to jsonrepair
           }
         }
       }
     }
   }
-  return undefined;
+
+  // 2. If balanced block extraction failed, fallback to jsonrepair
+  try {
+    const repaired = jsonrepair(targetText);
+    return JSON.parse(repaired);
+  } catch (err) {
+    return undefined;
+  }
 }
 
 export function parseModelJson(text: string): ModelTx[] {
