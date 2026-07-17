@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseModelJson } from '../visionUtils.js';
+import { parseModelJson } from '../visionLlm.js';
 
 describe('jsonrepair via extractJsonFallback', () => {
   it('parses valid un-fenced JSON perfectly', () => {

@@ -1,5 +1,5 @@
 import { expect, test, vi } from 'vitest';
-import { VisionLlmExtractor } from '../visionUtils';
+import { VisionLlmExtractor } from '../visionLlm';
 
 export const mockGenerateContent = vi.fn().mockResolvedValue({
   text: JSON.stringify([{
