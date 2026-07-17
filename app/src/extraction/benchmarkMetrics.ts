@@ -102,6 +102,18 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
     provider: 'openrouter',
     models: ['anthropic/claude-sonnet-5'],
     meter: 'tokens',
+    inputUsdPerMillion: 2,
+    cachedInputUsdPerMillion: 2, // OpenRouter cache discounts vary, using base for benchmark
+    outputUsdPerMillion: 10,
+    version: 'openrouter-static-2026-07-16',
+    effectiveDate: '2026-07-16',
+    sourceUrl: 'https://openrouter.ai/docs#models',
+    note: 'OpenRouter passthrough of Anthropic Sonnet 5 introductory pricing ($2/$10 through 2026-08-31); verified against the live /api/v1/models listing 2026-07-16.',
+  },
+  {
+    provider: 'openrouter',
+    models: ['anthropic/claude-sonnet'],
+    meter: 'tokens',
     inputUsdPerMillion: 3,
     cachedInputUsdPerMillion: 3, // OpenRouter cache discounts vary, using base for benchmark
     outputUsdPerMillion: 15,
@@ -112,7 +124,7 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
   },
   {
     provider: 'openrouter',
-    models: ['anthropic/claude-sonnet-5'],
+    models: ['anthropic/claude-3.5-haiku'],
     meter: 'tokens',
     inputUsdPerMillion: 1,
     cachedInputUsdPerMillion: 1, // OpenRouter cache discounts vary, using base for benchmark
@@ -124,7 +136,7 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
   },
   {
     provider: 'openrouter',
-    models: ['anthropic/claude-sonnet-5'],
+    models: ['anthropic/claude-3.7-opus'],
     meter: 'tokens',
     inputUsdPerMillion: 15,
     cachedInputUsdPerMillion: 15, // OpenRouter cache discounts vary, using base for benchmark
@@ -338,7 +350,7 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
   },
   {
     provider: 'anthropic',
-    models: ['claude-sonnet-5'],
+    models: ['claude-haiku-4-5'],
     meter: 'tokens',
     inputUsdPerMillion: 1,
     cachedInputUsdPerMillion: 0.1,
