@@ -271,6 +271,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #feedTable.tiny-traded .c-traded,
   #feedTable.tiny-filed .c-filed,
   #feedTable.tiny-imported .c-imported { font-size:12px; }
+  #feedTable .c-traded { font-weight: 600; color: var(--text); }
   /* The avatar shows initials by default; a successful headshot <img> overlays
      them, and onerror="this.remove()" drops the <img> to reveal initials. */
   .avatar { position: relative; flex: 0 0 auto; width: 24px; height: 24px; border-radius: 50%; overflow: hidden; display: inline-flex; align-items: center; justify-content: center; background: var(--panel-2); border: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text-dim); text-transform: uppercase; }
@@ -587,15 +588,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .mini-date { display:flex; flex-direction:column; gap:2px; line-height:1.25; }
   .mini-date .subline { color:var(--text-dim); font-size:11px; }
   .mini-source-link { display:block; margin-top:2px; font-size:11px; font-weight:600; }
-  .colopts { display:flex; flex-direction:column; gap:6px; flex:1; }
-  .colopt { font-size:13px; color:var(--text); display:flex; align-items:center; gap:10px; padding:8px 12px; background:var(--panel); border:1px solid var(--border); border-radius:6px; cursor:grab; margin-right:0; white-space:nowrap; min-width:0; }
-  button.colopt { font-family:var(--sans); }
+  .colopts { display:flex; flex-direction:column; gap:6px; flex:1; overflow-y:auto; overflow-x:hidden; }
+  .colopt { font-size:14px; color:var(--text); display:flex; align-items:center; gap:10px; margin:0; padding:6px 4px; border-radius:6px; cursor:pointer; min-width:0; transition:background-color 0.15s ease; }
+  .colopt:hover { background:color-mix(in srgb,var(--text) 4%,transparent); }
+  button.colopt { font-family:var(--sans); border:1px dashed var(--border); background:color-mix(in srgb,var(--panel-2) 65%,transparent); }
   .colopt.locked { color:var(--text-dim); }
   .colopt.locked:hover { color:var(--text); border-color:color-mix(in srgb,var(--accent) 55%,var(--border)); }
-  .colopt.dragging { opacity:.45; border-color:var(--accent); }
-  .col-drag { color:var(--text-dim); cursor:grab; font-size:14px; line-height:1; }
-  .colopt input { flex:0 0 auto; margin:0; }
-  .colopt-name { overflow:hidden; text-overflow:ellipsis; flex:1; }
+  .colopt.dragging { opacity:.45; border:1px solid var(--accent); }
+  .col-drag { color:var(--text-dim); cursor:grab; font-size:16px; font-weight:700; line-height:1; padding:0 4px; }
+  .colopt input { flex:0 0 auto; }
+  .colopt-name { overflow:hidden; text-overflow:ellipsis; }
   .premium-mark { display:inline-flex; align-items:center; justify-content:center; border:1px solid color-mix(in srgb,var(--accent) 42%,var(--border)); background:color-mix(in srgb,var(--accent) 9%,transparent); color:var(--accent); border-radius:999px; padding:1px 6px; font-size:10px; font-weight:800; line-height:1.4; }
   .panel-note { flex-basis:100%; width:100%; color:var(--text-dim); font-size:12px; line-height:1.45; margin-bottom:4px; }
   .premium-count-note { margin-left:8px; color:var(--text-dim); }
@@ -2103,6 +2105,19 @@ function fmtName(raw) {
   s = s.replace(/\s*\(\s*Senator\s*\)\s*/gi, '');
   while (s.indexOf('  ') >= 0) s = s.split('  ').join(' ');
   s = s.split(' , ').join(', ');
+
+  // Clean academic/medical titles and (Senator)
+  s = s.replace(/(?:,\s*)?(?:\bMD\b|\bFACS\b|\bPH\.?D\.?(?=\s|$)|\(Senator\))(?:,\s*)?/gi, ' ').trim();
+  s = s.replace(/[,\s.]+$/, '');
+
+  // Flip "Last, First" to "First Last"
+  if (s.indexOf(',') >= 0) {
+    var splitParts = s.split(',');
+    if (splitParts.length === 2) {
+      s = splitParts[1].trim() + ' ' + splitParts[0].trim();
+    }
+  }
+
   var parts = s.split(' ');
   var suf = NAME_SUFFIX[parts[parts.length - 1].toLowerCase()];
   if (!suf) return s;
@@ -2630,21 +2645,21 @@ function lagCellHtml(r) {
   return '<span' + over + ' title="Days from trade to official filing date (STOCK Act limit: 45)">' + d + '</span>';
 }
 var FEED_COLS = [
-  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'bold', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
-  { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
+  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
+  { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
   { id: 'member', label: 'Politician', sort: 'member', def: true, tip: 'Politician who filed the disclosure.', cell: memberCellHtml },
   { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
-  { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
+  { id: 'sector', label: 'Sector', sort: 'refSector', def: true, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
   { id: 'marketcap', label: 'Cap', sort: 'refMarketCap', def: true, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
-  { id: 'country', label: '🌎', sort: 'refCountry', def: true, cls: 'muted', tier: 'premium', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
+  { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
+  { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'Released to seen, then seen to imported for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
+  { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
   { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
   { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
-  { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
-  { id: 'latency', label: 'Latency', sort: null, def: false, cls: 'latency', tier: 'admin', tip: 'Released to seen, then seen to imported for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
-  { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
+  { id: 'country', label: '🌎', sort: 'refCountry', def: false, cls: 'muted', tier: 'premium', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
-  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
+  { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
   { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return clipTextHtml(ownerLabel(r.chamber)); } },
   { id: 'source', label: 'Source', sort: 'source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
 ];
@@ -2767,16 +2782,16 @@ function renderColChooser() {
   var box = el('colChooserBody'); if (!box) return;
   var lockedPremium = !isAdminView() && !(typeof ME !== 'undefined' && isPremium());
   var note = lockedPremium
-    ? '<div class="panel-note"><strong>Premium enrichment</strong><br/>Sector, market cap, and country are available with Premium.</div>'
+    ? '<div class="panel-note" style="margin-bottom:8px"><strong>Premium enrichment</strong><br/>Sector, market cap, and country are available with Premium.</div>'
     : '';
-  note += '<div class="panel-note">Drag columns here to reorder the Trades table.</div>';
+  note += '<div class="panel-note" style="margin-bottom:12px">Drag columns here to reorder the Trades table.</div>';
   box.innerHTML = note + chooserCols().map(function (c) {
     var tip = c.tip ? ' title="' + esc(c.tip) + '"' : '';
     if (c.tier === 'premium' && lockedPremium) {
       return '<button type="button" class="colopt locked" draggable="true" data-colid="' + esc(c.id) + '" data-premium-col="' + esc(c.id) + '"' + tip + '>' +
-        '<span class="col-drag" aria-hidden="true">↕</span><span class="colopt-name">' + esc(c.label) + '</span> <span class="premium-mark">Premium</span></button>';
+        '<span class="col-drag" aria-hidden="true">≡</span><span class="colopt-name">' + esc(c.label) + '</span> <span class="premium-mark">Premium</span></button>';
     }
-    return '<label class="colopt" draggable="true" data-colid="' + esc(c.id) + '"' + tip + '><span class="col-drag" aria-hidden="true">↕</span><input type="checkbox" data-colid="' + c.id + '"' + (isColVisible(c.id) ? ' checked' : '') + ' /> <span class="colopt-name">' + esc(c.label) + '</span></label>';
+    return '<label class="colopt" draggable="true" data-colid="' + esc(c.id) + '"' + tip + '><span class="col-drag" aria-hidden="true">≡</span><input type="checkbox" data-colid="' + c.id + '"' + (isColVisible(c.id) ? ' checked' : '') + ' /> <span class="colopt-name">' + esc(c.label) + '</span></label>';
   }).join('');
 }
 function toggleColChooser() {
@@ -2933,8 +2948,7 @@ function minColWidth(key) {
     marketcap: 66,
     country: 54,
     conf: 56,
-    source: 54,
-    latency: 74
+    latency: 44
   };
   return map[key] || 46;
 }
@@ -6610,7 +6624,6 @@ function renderSpeedProof() {
     var provs = (d.providers || []).slice()
       .sort(function (a, b) { return b.matched - a.matched; });
     if (!d.totals || !d.totals.racedDisclosures || !provs.length) { box.hidden = true; return; }
-
     box.hidden = false;
     var grid = el('spGrid');
     if (grid) grid.innerHTML = provs.map(spCardHtml).join('');
