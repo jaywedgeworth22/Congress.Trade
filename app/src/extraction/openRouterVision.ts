@@ -15,7 +15,7 @@ import {
   toParsedTx,
   fetchWithRetry,
   arrayBufferToBase64,
-} from './visionLlm';
+} from './visionUtils';
 
 const DEFAULT_MODEL = 'qwen/qwen-2.5-vl-72b-instruct:free';
 const DEFAULT_CONFIDENCE = 0.6;
