@@ -173,6 +173,21 @@ describe('priceBenchmarkUsage', () => {
     });
   });
 
+  it('prices OpenRouter Mistral structured OCR from provider-reported pages', () => {
+    const result = priceBenchmarkUsage({
+      provider: 'openrouter',
+      model: 'mistral/mistral-ocr-latest',
+      invoked: true,
+      usage: { pagesProcessed: 3 },
+    });
+    expect(result.costUsd).toBeCloseTo(0.006, 10);
+    expect(result.costDetail).toMatchObject({
+      pricingBasis: 'annotated_pages',
+      billedUsage: { pagesProcessed: 3 },
+      rates: { usdPerPage: 0.002 },
+    });
+  });
+
   it('prices each LlamaParse tier from provider-reported pages and public credits', () => {
     expect(priceBenchmarkUsage({
       provider: 'llamaparse', model: 'fast', invoked: true, usage: { pagesProcessed: 4 },

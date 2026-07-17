@@ -387,6 +387,17 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
     note: 'OCR 4 annotated-page price; this app requests document_annotation_format.',
   },
   {
+    provider: 'openrouter',
+    models: ['mistral/mistral-ocr-latest'],
+    meter: 'pages',
+    usdPerPage: 0.002,
+    pageKind: 'annotated',
+    version: 'openrouter-mistral-ocr-2026-07-17',
+    effectiveDate: '2026-07-17',
+    sourceUrl: 'https://openrouter.ai/docs/features/multimodal/pdfs',
+    note: 'OpenRouter mistral-ocr file-parser plugin price ($2 per 1,000 pages).',
+  },
+  {
     provider: 'llamaparse',
     models: ['fast'],
     meter: 'pages',
