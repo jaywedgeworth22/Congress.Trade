@@ -14,24 +14,24 @@ import {
 
 const OLD = {
   a: 'mistral:mistral-ocr-latest',
-  b: 'openai:gpt-5.6-terra',
-  c: 'anthropic:claude-sonnet-5',
+  b: 'openrouter:openai/gpt-5.6-terra',
+  c: 'openrouter:anthropic/claude-sonnet-5',
 };
 
 const NEW = {
-  a: { provider: 'openai', model: 'gpt-5.6-terra' },
-  b: { provider: 'gemini', model: 'gemini-3.5-flash' },
-  c: { provider: 'anthropic', model: 'claude-sonnet-5' },
+  a: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
+  b: { provider: 'openrouter', model: 'google/gemini-3.5-flash' },
+  c: { provider: 'openrouter', model: 'anthropic/claude-sonnet-5' },
 };
 
 const OLD_ROLES = {
   primary: 'mistral:mistral-ocr-latest',
-  failover: 'openai:gpt-5.6-terra',
+  failover: 'openrouter:openai/gpt-5.6-terra',
 };
 
 const NEW_ROLES = {
-  primary: { provider: 'openai', model: 'gpt-5.6-terra' },
-  failover: { provider: 'gemini', model: 'gemini-3.5-flash' },
+  primary: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
+  failover: { provider: 'openrouter', model: 'google/gemini-3.5-flash' },
 };
 
 function dependencies(state: Record<string, string>, options: { failOnce?: string } = {}) {
@@ -85,16 +85,17 @@ describe('benchmark lineup settings', () => {
       OPENAI_API_KEY: 'openai-key',
       MISTRAL_API_KEY: 'mistral-key',
       ANTHROPIC_API_KEY: 'anthropic-key',
+      OPENROUTER_API_KEY: 'openrouter-key',
     } as unknown as Env;
     const settings = await readBenchmarkLineupSettings(env, 'house');
     expect(settings.lineup).toEqual({
       a: { provider: 'mistral', model: 'mistral-ocr-latest' },
-      b: { provider: 'openai', model: 'gpt-5.6-terra' },
-      c: { provider: 'anthropic', model: 'claude-sonnet-5' },
+      b: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
+      c: { provider: 'openrouter', model: 'anthropic/claude-sonnet-5' },
     });
     expect(settings.valid).toBe(true);
     expect(settings.version).toMatch(/^[a-f0-9]{64}$/);
-    expect(settings.catalog.find((model) => model.provider === 'openai')).toMatchObject({
+    expect(settings.catalog.find((model) => model.provider === 'openrouter' && model.model.startsWith('openai'))).toMatchObject({
       configured: true,
     });
     expect(JSON.stringify(settings)).not.toContain('openai-key');
@@ -108,9 +109,9 @@ describe('benchmark lineup settings', () => {
 
   it('rejects a lineup that lets one provider corroborate itself', () => {
     expect(() => validateBenchmarkLineup({
-      a: { provider: 'anthropic', model: 'claude-sonnet-5' },
-      b: { provider: 'anthropic', model: 'claude-sonnet-5' },
-      c: { provider: 'openai', model: 'gpt-5.6-terra' },
+      a: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
+      b: { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
+      c: { provider: 'openrouter', model: 'anthropic/claude-sonnet-5' },
     })).toThrow(BenchmarkSettingsValidationError);
   });
 
@@ -134,9 +135,9 @@ describe('benchmark lineup settings', () => {
         'AGREEMENT_SENATE_MODEL_E',
       ],
     });
-    expect(state.AGREEMENT_SENATE_MODEL_C).toBe('openai:gpt-5.6-terra');
-    expect(state.AGREEMENT_SENATE_MODEL_D).toBe('gemini:gemini-3.5-flash');
-    expect(state.AGREEMENT_SENATE_MODEL_E).toBe('anthropic:claude-sonnet-5');
+    expect(state.AGREEMENT_SENATE_MODEL_C).toBe('openrouter:openai/gpt-5.6-terra');
+    expect(state.AGREEMENT_SENATE_MODEL_D).toBe('openrouter:google/gemini-3.5-flash');
+    expect(state.AGREEMENT_SENATE_MODEL_E).toBe('openrouter:anthropic/claude-sonnet-5');
   });
 
   it('supports the first-ever chamber save when no effective lineup exists', async () => {
@@ -153,9 +154,9 @@ describe('benchmark lineup settings', () => {
 
     expect(saved.settings).toMatchObject({ lineup: NEW, valid: true });
     expect(saved.audit).toMatchObject({ readbackVerified: true, rollbackAttempted: false });
-    expect(state.AGREEMENT_HOUSE_MODEL_C).toBe('openai:gpt-5.6-terra');
-    expect(state.AGREEMENT_HOUSE_MODEL_D).toBe('gemini:gemini-3.5-flash');
-    expect(state.AGREEMENT_HOUSE_MODEL_E).toBe('anthropic:claude-sonnet-5');
+    expect(state.AGREEMENT_HOUSE_MODEL_C).toBe('openrouter:openai/gpt-5.6-terra');
+    expect(state.AGREEMENT_HOUSE_MODEL_D).toBe('openrouter:google/gemini-3.5-flash');
+    expect(state.AGREEMENT_HOUSE_MODEL_E).toBe('openrouter:anthropic/claude-sonnet-5');
   });
 
   it('rolls back a partial write without pinning inherited branch overrides', async () => {
@@ -252,7 +253,7 @@ describe('benchmark lineup settings', () => {
     expect(fenceChecks).toBe(3);
     // The stale writer leaves its partial value for the live owner to reconcile;
     // critically, it does not delete or overwrite the successor's keyspace.
-    expect(state.AGREEMENT_HOUSE_MODEL_C).toBe('openai:gpt-5.6-terra');
+    expect(state.AGREEMENT_HOUSE_MODEL_C).toBe('openrouter:openai/gpt-5.6-terra');
   });
 
   it('aborts a timed-out Infisical mutation before the lease can expire', async () => {
@@ -305,7 +306,7 @@ describe('benchmark primary/failover role settings', () => {
     const settings = await readBenchmarkRoleSettings(env, 'house');
     expect(settings.roles).toEqual({
       primary: { provider: 'mistral', model: 'mistral-ocr-latest' },
-      failover: { provider: 'openai', model: 'gpt-5.6-terra' },
+      failover: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
     });
     expect(settings.valid).toBe(true);
     expect(settings.version).toMatch(/^[a-f0-9]{64}$/);
@@ -320,8 +321,8 @@ describe('benchmark primary/failover role settings', () => {
 
   it('rejects a primary/failover pair sharing one provider', () => {
     expect(() => validateBenchmarkRoles({
-      primary: { provider: 'openai', model: 'gpt-5.6-terra' },
-      failover: { provider: 'openai', model: 'gpt-5.6-luna' },
+      primary: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
+      failover: { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
     })).toThrow(BenchmarkSettingsValidationError);
   });
 
@@ -341,8 +342,8 @@ describe('benchmark primary/failover role settings', () => {
       rollbackAttempted: false,
       writtenKeys: ['AGREEMENT_SENATE_MODEL_A', 'AGREEMENT_SENATE_MODEL_B'],
     });
-    expect(state.AGREEMENT_SENATE_MODEL_A).toBe('openai:gpt-5.6-terra');
-    expect(state.AGREEMENT_SENATE_MODEL_B).toBe('gemini:gemini-3.5-flash');
+    expect(state.AGREEMENT_SENATE_MODEL_A).toBe('openrouter:openai/gpt-5.6-terra');
+    expect(state.AGREEMENT_SENATE_MODEL_B).toBe('openrouter:google/gemini-3.5-flash');
   });
 
   it('rejects a stale optimistic version before any write', async () => {
