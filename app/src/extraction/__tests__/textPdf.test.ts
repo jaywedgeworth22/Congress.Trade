@@ -316,4 +316,28 @@ describe('TextPdfExtractor page count', () => {
 
     expect(result.pageCount).toBeNull();
   });
+
+  it('does not detach the caller-supplied ArrayBuffer (regression guard for Sentry CONGRESS-TRADE-2)', async () => {
+    // getDocumentProxy/pdf.js transfers (and detaches) the buffer backing the
+    // Uint8Array view it is handed. Simulate that real behavior here via the
+    // standard structured-clone transfer algorithm, which is exactly what
+    // detachment looks like: the source buffer's byteLength drops to 0 and it
+    // can no longer back a typed array.
+    unpdfMocks.getDocumentProxy.mockImplementation(async (view: Uint8Array) => {
+      structuredClone(view.buffer, { transfer: [view.buffer] });
+      return { numPages: 1 };
+    });
+    unpdfMocks.extractText.mockResolvedValue({ text: '' });
+
+    const bytes = new ArrayBuffer(8);
+    const extractor = new TextPdfExtractor();
+    await extractor.extract({ filing: textPdfFiling(), bytes });
+
+    // The caller's own ArrayBuffer must survive untouched — pdf.js only ever
+    // detaches the throwaway copy — so the HousePdfExtractor vision fallback
+    // can reuse `bytes` after text extraction without hitting
+    // "Cannot perform Construct on a detached ArrayBuffer".
+    expect(bytes.byteLength).toBe(8);
+    expect(() => new Uint8Array(bytes)).not.toThrow();
+  });
 });
