@@ -78,9 +78,19 @@ const LLAMAPARSE_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'llamaparse', model: 'agentic' },
 ];
 
+const LEGACY_CANDIDATES: BakeoffCandidate[] = [
+  { provider: 'openai', model: 'gpt-5.6-terra' },
+  { provider: 'openai', model: 'gpt-5.6-luna' },
+  { provider: 'openai', model: 'gpt-5.6-sol' },
+  { provider: 'gemini', model: 'gemini-3.5-flash' },
+  { provider: 'anthropic', model: 'claude-sonnet-5' },
+  { provider: 'anthropic', model: 'claude-haiku-4-5' },
+  { provider: 'xai', model: 'grok-4.3' },
+];
+
 export function benchmarkModelCatalog(): BakeoffCandidate[] {
   const byKey = new Map<string, BakeoffCandidate>();
-  for (const candidate of [...DEFAULT_CANDIDATES, ...LLAMAPARSE_CANDIDATES]) {
+  for (const candidate of [...DEFAULT_CANDIDATES, ...LLAMAPARSE_CANDIDATES, ...LEGACY_CANDIDATES]) {
     byKey.set(`${candidate.provider}:${candidate.model}`, { ...candidate });
   }
   return [...byKey.values()];
@@ -236,6 +246,19 @@ export function validateBenchmarkModel(
   return match;
 }
 
+export function getUnderlyingProvider(model: { provider: string; model: string }): string {
+  if (model.provider === 'openrouter') {
+    const parts = model.model.split('/');
+    if (parts.length > 1) {
+      const sub = parts[0].toLowerCase();
+      if (sub === 'google') return 'gemini';
+      if (sub === 'x-ai') return 'xai';
+      return sub;
+    }
+  }
+  return model.provider;
+}
+
 export function validateBenchmarkLineup(input: {
   a: BenchmarkModelRef;
   b: BenchmarkModelRef;
@@ -250,7 +273,7 @@ export function validateBenchmarkLineup(input: {
   if (new Set(models.map(serializeBenchmarkModelRef)).size !== 3) {
     throw new BenchmarkSettingsValidationError('a, b, and c must be three distinct models');
   }
-  if (new Set(models.map((model) => model.provider)).size !== 3) {
+  if (new Set(models.map(getUnderlyingProvider)).size !== 3) {
     throw new BenchmarkSettingsValidationError('a, b, and c must use three distinct providers');
   }
   return lineup;
@@ -279,7 +302,7 @@ export function validateBenchmarkRoles(input: {
     primary: validateBenchmarkModel(input.primary, 'primary'),
     failover: validateBenchmarkModel(input.failover, 'failover'),
   };
-  if (roles.primary.provider === roles.failover.provider) {
+  if (getUnderlyingProvider(roles.primary) === getUnderlyingProvider(roles.failover)) {
     throw new BenchmarkSettingsValidationError('primary and failover must use different providers');
   }
   return roles;
