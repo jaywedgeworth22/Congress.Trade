@@ -170,6 +170,7 @@ const HOST_PROVIDERS = new Map<string, string>([
   ['cloudflare-dns.com', 'cloudflare-dns'],
   ['app.infisical.com', 'infisical'],
   ['usage.jays.services', 'usage-monitor'],
+  ['openrouter.ai', 'openrouter'],
 ]);
 
 const HOST_SUFFIX_PROVIDERS: Array<[suffix: string, provider: string]> = [
@@ -252,6 +253,23 @@ export function providerForThirdPartyRequest(
   } catch {
     return 'external-api';
   }
+}
+
+export function remapOpenRouterTelemetry(provider: string, model?: string): { provider: string; model?: string; transport?: string } {
+  if (provider === 'openrouter' && model) {
+    const parts = model.split('/');
+    if (parts.length > 1) {
+      const orProvider = parts[0].toLowerCase();
+      // map known openrouter prefixes to our internal provider names
+      let mappedProvider = orProvider;
+      if (orProvider === 'google') mappedProvider = 'gemini';
+      else if (orProvider === 'x-ai') mappedProvider = 'xai';
+      
+      const mappedModel = parts.slice(1).join('/');
+      return { provider: mappedProvider, model: mappedModel, transport: 'openrouter' };
+    }
+  }
+  return { provider, model };
 }
 
 function environmentName(env: Env): string {
@@ -713,13 +731,15 @@ export async function recordMeasuredThirdPartyUsage(
   } catch {
     return rejectMeasuredUsage('invalidOccurredAt');
   }
+  const mapped = remapOpenRouterTelemetry(usage.provider, usage.model);
+
   const event = baseEvent(env, {
-    provider: usage.provider,
+    provider: mapped.provider,
     service: usage.service,
     operation: usage.operation,
     idempotencyKey: usage.idempotencyKey,
     occurredAt,
-    model: usage.model,
+    model: mapped.model,
     metricType: usage.metricType ?? (usage.costUsd != null ? 'cost' : 'usage'),
     billingMode: usage.billingMode ?? 'actual',
     confidence: usage.confidence ?? 'actual',
@@ -730,7 +750,8 @@ export async function recordMeasuredThirdPartyUsage(
   const requests = nonNegativeFinite(usage.requests);
   event.requests = requests == null ? undefined : Math.floor(requests);
   event.credits = nonNegativeFinite(usage.credits);
-  event.metadata = safeMetadata({ ...(event.metadata ?? {}), ...(usage.metadata ?? {}) });
+  const remappedMetadata: Record<string, string> = mapped.transport ? { transport: mapped.transport } : {};
+  event.metadata = safeMetadata({ ...(event.metadata ?? {}), ...(usage.metadata ?? {}), ...remappedMetadata });
   return enqueueUsageTelemetryEvent(env, event);
 }
 
@@ -768,15 +789,17 @@ export async function trackedFetch(
     throw new Error('usage-monitor ingest must use the explicit telemetry transport');
   }
 
+  const mapped = remapOpenRouterTelemetry(provider, descriptor.model);
+
   const startedAt = Date.now();
   try {
     const response = await fetchImpl(input, init);
     if (env) {
       const event = baseEvent(env, {
-        provider,
+        provider: mapped.provider,
         service: descriptor.service,
         operation: descriptor.operation,
-        model: descriptor.model,
+        model: mapped.model,
         metricType: 'usage',
         billingMode: 'actual',
         confidence: 'actual',
@@ -784,8 +807,10 @@ export async function trackedFetch(
       event.quantity = 1;
       event.unit = 'request';
       event.requests = 1;
+      const remappedMetadata: Record<string, string> = mapped.transport ? { transport: mapped.transport } : {};
       event.metadata = {
         ...(event.metadata ?? {}),
+        ...remappedMetadata,
         success: response.ok,
         status: response.status,
         latencyMs: Math.max(0, Date.now() - startedAt),
@@ -797,10 +822,10 @@ export async function trackedFetch(
   } catch (error) {
     if (env) {
       const event = baseEvent(env, {
-        provider,
+        provider: mapped.provider,
         service: descriptor.service,
         operation: descriptor.operation,
-        model: descriptor.model,
+        model: mapped.model,
         metricType: 'usage',
         billingMode: 'actual',
         confidence: 'actual',
@@ -808,11 +833,16 @@ export async function trackedFetch(
       event.quantity = 1;
       event.unit = 'request';
       event.requests = 1;
+      const remappedMetadata: Record<string, string> = mapped.transport ? { transport: mapped.transport } : {};
       event.metadata = {
         ...(event.metadata ?? {}),
+        ...remappedMetadata,
         success: false,
+        status: null,
         latencyMs: Math.max(0, Date.now() - startedAt),
+        rateLimited: false,
         errorType: stableTag(error instanceof Error ? error.name : 'unknown', 'unknown'),
+        errors: error instanceof Error ? String(error.message) : String(error),
       };
       await enqueueUsageTelemetryEvent(env, event, { silentFailure: runtime.silentQueueFailure });
     }
