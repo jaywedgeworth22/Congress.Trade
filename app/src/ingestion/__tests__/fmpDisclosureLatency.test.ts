@@ -443,6 +443,12 @@ interface SeedCandidate {
   created_at?: string;
 }
 
+interface SeedTransaction {
+  doc_id: string;
+  tx_date: string | null;
+  deprecated_at?: string | null;
+}
+
 interface CandidateState {
   doc_id: string;
   provider: string;
@@ -464,7 +470,7 @@ interface CandidateState {
   updated_at: string;
 }
 
-function fakeLatencyDb(seed: SeedCandidate[] = []) {
+function fakeLatencyDb(seed: SeedCandidate[] = [], transactions: SeedTransaction[] = []) {
   const candidates = new Map<string, CandidateState>();
   for (const s of seed) {
     const createdAt = s.created_at ?? s.congress_first_seen_at ?? '2026-01-01T00:00:00.000Z';
@@ -505,13 +511,37 @@ function fakeLatencyDb(seed: SeedCandidate[] = []) {
   }
 
   function select(sql: string, params: unknown[]): Record<string, unknown>[] {
+    if (sql.includes('FROM transactions')) {
+      const docIds = new Set(params as string[]);
+      const seen = new Set<string>();
+      const rows: Record<string, unknown>[] = [];
+      for (const t of transactions) {
+        if (!docIds.has(t.doc_id) || t.tx_date == null || t.deprecated_at != null) continue;
+        const key = `${t.doc_id}::${t.tx_date}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rows.push({ doc_id: t.doc_id, tx_date: t.tx_date });
+      }
+      return rows;
+    }
     if (sql.includes('FROM disclosure_latency_candidates') && sql.includes('filed_date < ?')) {
       const [provider, beforeDate, cap] = params as [string, string, number];
+      // Mirrors the deep-match rotation ordering: last_checked_at ASC (SQLite
+      // sorts NULLs first in ASC — '' models that), then attempts ASC, then
+      // filed_date ASC.
       return Array.from(candidates.values())
         .filter(
           (c) => c.provider === provider && c.status === 'pending' && c.filed_date != null && c.filed_date < beforeDate,
         )
-        .sort((a, b) => ((a.filed_date ?? '') < (b.filed_date ?? '') ? -1 : (a.filed_date ?? '') > (b.filed_date ?? '') ? 1 : 0))
+        .sort((a, b) => {
+          const lcA = a.last_checked_at ?? '';
+          const lcB = b.last_checked_at ?? '';
+          if (lcA !== lcB) return lcA < lcB ? -1 : 1;
+          if (a.attempts !== b.attempts) return a.attempts - b.attempts;
+          const fdA = a.filed_date ?? '';
+          const fdB = b.filed_date ?? '';
+          return fdA < fdB ? -1 : fdA > fdB ? 1 : 0;
+        })
         .slice(0, cap)
         .map(candidateRow);
     }
@@ -522,6 +552,13 @@ function fakeLatencyDb(seed: SeedCandidate[] = []) {
         .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0))
         .slice(0, 100)
         .map(candidateRow);
+    }
+    if (sql.includes('FROM disclosure_provider_observations') && sql.includes('provider_key IN')) {
+      const [provider, ...keys] = params as string[];
+      const keySet = new Set(keys);
+      return Array.from(observations.values()).filter(
+        (o) => o.provider === provider && keySet.has(o.provider_key as string),
+      );
     }
     if (sql.includes('FROM disclosure_provider_observations')) {
       const [provider, cutoff] = params as [string, string];
@@ -644,16 +681,29 @@ function uwRecentTradesFetch(byDate: Record<string, unknown[]>, freshPage: unkno
 }
 
 describe('unusual_whales deep match (stranded pending observations)', () => {
-  it('fetches a date-anchored deep-match page for a pending observation outside the normal window, and matches it', async () => {
-    const db = fakeLatencyDb([
-      {
-        doc_id: 'H-old-1',
-        filed_date: '2026-01-05',
-        filer_name: 'Jane Smith',
-        congress_first_seen_at: '2026-01-05T12:00:00.000Z',
-        created_at: '2026-01-05T12:00:00.000Z',
-      },
-    ]);
+  it('fetches a transaction-date-anchored deep-match page for a pending observation outside the normal window, and matches it', async () => {
+    const db = fakeLatencyDb(
+      [
+        {
+          doc_id: 'H-old-1',
+          filed_date: '2026-01-05',
+          filer_name: 'Jane Smith',
+          congress_first_seen_at: '2026-01-05T12:00:00.000Z',
+          created_at: '2026-01-05T12:00:00.000Z',
+        },
+        // Stranded too, but with no live parsed transactions: has no
+        // transaction dates to anchor a deep fetch on, so it must be skipped
+        // (no extra call burned on a wrong-date page).
+        {
+          doc_id: 'H-old-no-tx',
+          filed_date: '2026-01-06',
+          filer_name: 'Bob Jones',
+          congress_first_seen_at: '2026-01-06T12:00:00.000Z',
+          created_at: '2026-01-06T12:00:00.000Z',
+        },
+      ],
+      [{ doc_id: 'H-old-1', tx_date: '2026-01-02' }],
+    );
     const env = {
       UNUSUAL_WHALES_API_KEY: 'test-key',
       CONFIG_KV: fakeKv(),
@@ -663,10 +713,12 @@ describe('unusual_whales deep match (stranded pending observations)', () => {
     const freshPage = [
       { filed_at_date: '2026-01-10', member_type: 'house', name: 'John Doe', politician_id: 'a', ticker: 'MSFT', transaction_date: '2026-01-08', txn_type: 'Sell' },
     ];
+    // UW's `date` param filters by TRANSACTION date, so the deep page is
+    // keyed by the filing's tx date (2026-01-02), not its filed date.
     const fetchImpl = uwRecentTradesFetch(
       {
-        '2026-01-05': [
-          { filed_at_date: '2026-01-05', member_type: 'house', name: 'Jane Smith', politician_id: 'b', ticker: 'AAPL', transaction_date: '2026-01-01', txn_type: 'Buy' },
+        '2026-01-02': [
+          { filed_at_date: '2026-01-05', member_type: 'house', name: 'Jane Smith', politician_id: 'b', ticker: 'AAPL', transaction_date: '2026-01-02', txn_type: 'Buy' },
         ],
       },
       freshPage,
@@ -677,32 +729,41 @@ describe('unusual_whales deep match (stranded pending observations)', () => {
       providers: ['unusual_whales'],
     });
 
-    // One normal recent-trades call plus exactly one deep-match call, for
-    // the single distinct filed_date among the provably-outside-window
-    // pending candidates.
+    // One normal recent-trades call plus exactly one deep-match call: the
+    // single transaction date of the only stranded candidate that has parsed
+    // transactions (H-old-no-tx is skipped).
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     const deepCallUrl = fetchImpl.mock.calls.map(([u]) => String(u)).find((u) => u.includes('date='));
-    expect(deepCallUrl).toContain('date=2026-01-05');
+    expect(deepCallUrl).toContain('date=2026-01-02');
+    expect(deepCallUrl).not.toContain('date=2026-01-05');
     expect(deepCallUrl).toContain('limit=200');
 
     expect(db.candidates.get('H-old-1::unusual_whales')?.status).toBe('matched');
+    expect(db.candidates.get('H-old-no-tx::unusual_whales')?.status).toBe('pending');
+    // No-tx candidate saw only the normal-pass attempt, never a deep attempt.
+    expect(db.candidates.get('H-old-no-tx::unusual_whales')?.attempts).toBe(1);
     expect(result.matched).toBe(1);
+    // De-duplicated pending: 2 distinct candidates examined across both
+    // passes, 1 matched -> 1 still pending (not the double-counted 3).
+    expect(result.pending).toBe(1);
     expect(result.errors).toEqual([]);
   });
 
-  it('caps deep-match fetches to the configured number of distinct dates, oldest pending first', async () => {
+  it('caps deep-match fetches to the configured number of distinct transaction dates', async () => {
     const seed: SeedCandidate[] = [];
+    const txs: SeedTransaction[] = [];
     for (let day = 1; day <= 10; day++) {
-      const date = `2026-01-${String(day).padStart(2, '0')}`;
+      const filed = `2026-01-${String(day).padStart(2, '0')}`;
       seed.push({
         doc_id: `H-old-${day}`,
-        filed_date: date,
+        filed_date: filed,
         filer_name: 'Nobody Matches',
-        congress_first_seen_at: `${date}T12:00:00.000Z`,
-        created_at: `${date}T12:00:00.000Z`,
+        congress_first_seen_at: `${filed}T12:00:00.000Z`,
+        created_at: `${filed}T12:00:00.000Z`,
       });
+      txs.push({ doc_id: `H-old-${day}`, tx_date: `2025-12-${String(day).padStart(2, '0')}` });
     }
-    const db = fakeLatencyDb(seed);
+    const db = fakeLatencyDb(seed, txs);
     const env = {
       UNUSUAL_WHALES_API_KEY: 'test-key',
       CONFIG_KV: fakeKv(),
@@ -716,11 +777,11 @@ describe('unusual_whales deep match (stranded pending observations)', () => {
     // No deep-match page returns a real match; this test only cares which
     // dates get fetched, not match outcomes.
     const fetchImpl = uwRecentTradesFetch(
-      Object.fromEntries(seed.map((s) => [s.filed_date as string, []])),
+      Object.fromEntries(txs.map((t) => [t.tx_date as string, []])),
       freshPage,
     );
 
-    await runDisclosureLatencyProbe(env, new Date('2026-01-15T12:00:00.000Z'), fetchImpl, {
+    const result = await runDisclosureLatencyProbe(env, new Date('2026-01-15T12:00:00.000Z'), fetchImpl, {
       force: true,
       providers: ['unusual_whales'],
     });
@@ -731,33 +792,168 @@ describe('unusual_whales deep match (stranded pending observations)', () => {
       .filter((d): d is string => !!d)
       .sort();
     expect(deepDates).toHaveLength(8);
+    // First run: every stranded candidate is untouched (NULL last_checked_at,
+    // equal attempts), so rotation order falls through to filed_date ASC and
+    // the 8 oldest-filed candidates' transaction dates are targeted.
     expect(deepDates).toEqual([
-      '2026-01-01', '2026-01-02', '2026-01-03', '2026-01-04',
-      '2026-01-05', '2026-01-06', '2026-01-07', '2026-01-08',
+      '2025-12-01', '2025-12-02', '2025-12-03', '2025-12-04',
+      '2025-12-05', '2025-12-06', '2025-12-07', '2025-12-08',
     ]);
 
-    // The two oldest-but-uncapped dates (09, 10) were never targeted: their
-    // candidates only saw the one normal-pass attempt, not a second
-    // deep-match attempt.
+    // The two candidates beyond the cap were never targeted: their rows only
+    // saw the one normal-pass attempt, not a second deep-match attempt.
     expect(db.candidates.get('H-old-9::unusual_whales')?.attempts).toBe(1);
     expect(db.candidates.get('H-old-10::unusual_whales')?.attempts).toBe(1);
     expect(db.candidates.get('H-old-9::unusual_whales')?.status).toBe('pending');
-    // The 8 capped dates were checked twice this run (normal pass + deep
+    // The 8 capped candidates were checked twice this run (normal pass + deep
     // pass), same attempt/backoff bookkeeping the normal pass already uses.
     expect(db.candidates.get('H-old-1::unusual_whales')?.attempts).toBe(2);
     expect(db.candidates.get('H-old-8::unusual_whales')?.attempts).toBe(2);
+    // De-duplicated pending: 10 distinct candidates examined across both
+    // passes (normal saw all 10, deep re-examined 8 of them), 0 matched.
+    expect(result.pending).toBe(10);
+  });
+
+  it('rotates through a backlog larger than the cap: successive runs fetch different dates', async () => {
+    const db = fakeLatencyDb(
+      [
+        {
+          doc_id: 'H-old-A',
+          filed_date: '2026-01-01',
+          filer_name: 'Nobody Matches',
+          congress_first_seen_at: '2026-01-01T12:00:00.000Z',
+          created_at: '2026-01-01T12:00:00.000Z',
+        },
+        {
+          doc_id: 'H-old-B',
+          filed_date: '2026-01-02',
+          filer_name: 'Nobody Matches',
+          congress_first_seen_at: '2026-01-02T12:00:00.000Z',
+          created_at: '2026-01-02T12:00:00.000Z',
+        },
+      ],
+      [
+        { doc_id: 'H-old-A', tx_date: '2025-12-20' },
+        { doc_id: 'H-old-B', tx_date: '2025-12-21' },
+      ],
+    );
+    const env = {
+      UNUSUAL_WHALES_API_KEY: 'test-key',
+      UW_DEEP_MATCH_DATES_PER_RUN: '1',
+      CONFIG_KV: fakeKv(),
+      DB: db,
+    } as unknown as Parameters<typeof runDisclosureLatencyProbe>[0];
+
+    const freshPage = [
+      { filed_at_date: '2026-01-10', member_type: 'house', name: 'John Doe', politician_id: 'z', ticker: 'MSFT', transaction_date: '2026-01-08', txn_type: 'Sell' },
+    ];
+    // Neither deep page matches, so both candidates stay pending across runs.
+    const fetchImpl = uwRecentTradesFetch({ '2025-12-20': [], '2025-12-21': [] }, freshPage);
+
+    const deepDatesOfRun = () =>
+      fetchImpl.mock.calls
+        .map(([u]) => String(u))
+        .map((u) => /[?&]date=([^&]+)/.exec(u)?.[1])
+        .filter((d): d is string => !!d);
+
+    await runDisclosureLatencyProbe(env, new Date('2026-01-10T15:00:00.000Z'), fetchImpl, {
+      force: true,
+      providers: ['unusual_whales'],
+    });
+    const firstRunDates = deepDatesOfRun();
+    expect(firstRunDates).toEqual(['2025-12-20']);
+
+    await runDisclosureLatencyProbe(env, new Date('2026-01-10T15:10:00.000Z'), fetchImpl, {
+      force: true,
+      providers: ['unusual_whales'],
+    });
+    const secondRunDates = deepDatesOfRun().slice(firstRunDates.length);
+    // The un-matched first-run target accrued an extra deep-pass attempt, so
+    // the rotation ordering (last_checked_at ASC, attempts ASC) now puts the
+    // other stranded candidate first: the second run fetches a DIFFERENT
+    // date instead of starving it behind the same oldest date forever.
+    expect(secondRunDates).toEqual(['2025-12-21']);
+  });
+
+  it('carries the DB-canonical first_observed_at (not now) when a deep-fetched row already existed, even past the 72h window', async () => {
+    const uwPayload = {
+      filed_at_date: '2026-01-05',
+      member_type: 'house',
+      name: 'Jane Smith',
+      politician_id: 'b',
+      ticker: 'AAPL',
+      transaction_date: '2026-01-02',
+      txn_type: 'Buy',
+    };
+    // Derive the provider key exactly as production parsing would.
+    const parsed = parseUnusualWhalesDisclosureRows({ data: [uwPayload] })[0];
+    const db = fakeLatencyDb(
+      [
+        {
+          doc_id: 'H-old-1',
+          filed_date: '2026-01-05',
+          filer_name: 'Jane Smith',
+          congress_first_seen_at: '2026-01-05T12:00:00.000Z',
+          created_at: '2026-01-05T12:00:00.000Z',
+        },
+      ],
+      [{ doc_id: 'H-old-1', tx_date: '2026-01-02' }],
+    );
+    // The observation already exists from a probe run 15 days before `now` -
+    // far outside loadProviderRows' 72h first_observed_at cutoff.
+    const existingFirstObservedAt = '2026-01-05T13:00:00.000Z';
+    db.observations.set(`unusual_whales::house::${parsed.providerKey}`, {
+      provider: 'unusual_whales',
+      chamber: 'house',
+      provider_key: parsed.providerKey,
+      first_observed_at: existingFirstObservedAt,
+      last_observed_at: existingFirstObservedAt,
+      provider_published_at: null,
+      source_url: null,
+      filed_date: '2026-01-05',
+      filer_name: 'Jane Smith',
+      payload: JSON.stringify(uwPayload),
+    });
+    const env = {
+      UNUSUAL_WHALES_API_KEY: 'test-key',
+      CONFIG_KV: fakeKv(),
+      DB: db,
+    } as unknown as Parameters<typeof runDisclosureLatencyProbe>[0];
+
+    const freshPage = [
+      { filed_at_date: '2026-01-20', member_type: 'house', name: 'John Doe', politician_id: 'a', ticker: 'MSFT', transaction_date: '2026-01-18', txn_type: 'Sell' },
+    ];
+    const fetchImpl = uwRecentTradesFetch({ '2026-01-02': [uwPayload] }, freshPage);
+
+    const result = await runDisclosureLatencyProbe(env, new Date('2026-01-20T15:00:00.000Z'), fetchImpl, {
+      force: true,
+      providers: ['unusual_whales'],
+    });
+
+    // The deep-fetched row matched despite its first observation predating
+    // the 72h window (which would have excluded it via loadProviderRows)...
+    const row = db.candidates.get('H-old-1::unusual_whales');
+    expect(row?.status).toBe('matched');
+    expect(result.matched).toBe(1);
+    // ...and the recorded provider_first_seen_at is the DB-canonical first
+    // observation, not an inflated "now" that would falsely report UW as 15
+    // days late.
+    expect(row?.provider_first_seen_at).toBe(existingFirstObservedAt);
   });
 
   it('degrades a single deep-match date fetch failure (401) without failing the probe; attempt still recorded, observation stays pending', async () => {
-    const db = fakeLatencyDb([
-      {
-        doc_id: 'H-old-1',
-        filed_date: '2026-01-05',
-        filer_name: 'Jane Smith',
-        congress_first_seen_at: '2026-01-05T12:00:00.000Z',
-        created_at: '2026-01-05T12:00:00.000Z',
-      },
-    ]);
+    const db = fakeLatencyDb(
+      [
+        {
+          doc_id: 'H-old-1',
+          filed_date: '2026-01-05',
+          filer_name: 'Jane Smith',
+          congress_first_seen_at: '2026-01-05T12:00:00.000Z',
+          created_at: '2026-01-05T12:00:00.000Z',
+        },
+      ],
+      [{ doc_id: 'H-old-1', tx_date: '2026-01-02' }],
+    );
     const env = {
       UNUSUAL_WHALES_API_KEY: 'test-key',
       CONFIG_KV: fakeKv(),
@@ -767,7 +963,7 @@ describe('unusual_whales deep match (stranded pending observations)', () => {
     const freshPage = [
       { filed_at_date: '2026-01-10', member_type: 'house', name: 'John Doe', politician_id: 'a', ticker: 'MSFT', transaction_date: '2026-01-08', txn_type: 'Sell' },
     ];
-    // byDate deliberately omits '2026-01-05' so uwRecentTradesFetch's fallback
+    // byDate deliberately omits '2026-01-02' so uwRecentTradesFetch's fallback
     // returns a 401 for the deep-match call (simulates a lapsed trial key).
     const fetchImpl = uwRecentTradesFetch({}, freshPage);
 
@@ -788,15 +984,20 @@ describe('unusual_whales deep match (stranded pending observations)', () => {
   });
 
   it('UW_DEEP_MATCH_DATES_PER_RUN=0 disables the deep-match pass entirely (no extra fetches)', async () => {
-    const db = fakeLatencyDb([
-      {
-        doc_id: 'H-old-1',
-        filed_date: '2026-01-05',
-        filer_name: 'Jane Smith',
-        congress_first_seen_at: '2026-01-05T12:00:00.000Z',
-        created_at: '2026-01-05T12:00:00.000Z',
-      },
-    ]);
+    const db = fakeLatencyDb(
+      [
+        {
+          doc_id: 'H-old-1',
+          filed_date: '2026-01-05',
+          filer_name: 'Jane Smith',
+          congress_first_seen_at: '2026-01-05T12:00:00.000Z',
+          created_at: '2026-01-05T12:00:00.000Z',
+        },
+      ],
+      // Transactions exist, so it is unambiguously the knob (not missing tx
+      // dates) that disables the pass.
+      [{ doc_id: 'H-old-1', tx_date: '2026-01-02' }],
+    );
     const env = {
       UNUSUAL_WHALES_API_KEY: 'test-key',
       UW_DEEP_MATCH_DATES_PER_RUN: '0',
@@ -808,7 +1009,7 @@ describe('unusual_whales deep match (stranded pending observations)', () => {
       { filed_at_date: '2026-01-10', member_type: 'house', name: 'John Doe', politician_id: 'a', ticker: 'MSFT', transaction_date: '2026-01-08', txn_type: 'Sell' },
     ];
     const fetchImpl = uwRecentTradesFetch(
-      { '2026-01-05': [{ filed_at_date: '2026-01-05', member_type: 'house', name: 'Jane Smith', politician_id: 'b' }] },
+      { '2026-01-02': [{ filed_at_date: '2026-01-05', member_type: 'house', name: 'Jane Smith', politician_id: 'b' }] },
       freshPage,
     );
 
