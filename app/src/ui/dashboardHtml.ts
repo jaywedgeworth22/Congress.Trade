@@ -6562,7 +6562,7 @@ function renderSpeedProof() {
     var heroHtml = eligibleProvs.map(function (p) {
       var numHtml = '';
       var labelHtml = '';
-      if (p.medianLeadSec != null && p.medianLeadSec > 0) {
+      if (p.medianLeadSec != null && p.medianLeadSec > 0 && p.matched >= SPEED_LANE_MIN_MATCHED) {
         numHtml = '<div class="speed-hero-num">' + fmtLead(p.medianLeadSec) + '</div>';
         labelHtml = '<div class="speed-hero-label">typical lead</div>';
       } else {
