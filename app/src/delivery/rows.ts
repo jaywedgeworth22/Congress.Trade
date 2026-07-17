@@ -174,8 +174,10 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
   // Strip 'Common Stock' from all asset names served to clients
   transaction.assetName = transaction.assetName.replace(/(?:\s*(?:-)?\s*Common Stock\b)/ig, '').trim();
 
-  // Normalize capitalization of the asset name
-  transaction.assetName = normalizeCompanyName(transaction.assetName, row.ticker) || transaction.assetName;
+  // Normalize capitalization of company asset names (skip non-tickered assets like municipal bonds)
+  if (row.ticker) {
+    transaction.assetName = normalizeCompanyName(transaction.assetName, row.ticker) || transaction.assetName;
+  }
 
 
   return {
