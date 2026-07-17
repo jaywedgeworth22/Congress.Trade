@@ -573,10 +573,37 @@ function findRate(input: PriceBenchmarkUsageInput): BenchmarkRate | undefined {
   const rateCard = input.rateCard ?? STANDARD_BENCHMARK_RATE_CARD;
   const provider = input.provider.trim().toLowerCase();
   const models = [input.resolvedModel, input.model].filter((v): v is string => Boolean(v));
-  return rateCard.find((rate) =>
+  
+  const exact = rateCard.find((rate) =>
     rate.provider.toLowerCase() === provider &&
     models.some((model) => (rate.models as readonly string[]).includes(model)),
   );
+  if (exact) return exact;
+
+  if (provider === 'openrouter') {
+    for (const model of models) {
+      const parts = model.split('/');
+      if (parts.length > 1) {
+        const subProvider = parts[0].toLowerCase();
+        const subModel = parts.slice(1).join('/');
+        const mappedProvider = subProvider === 'google' ? 'gemini' : subProvider === 'x-ai' ? 'xai' : subProvider;
+        const normalizedSubModel = subModel.replace(/\./g, '-');
+        
+        const subRate = rateCard.find((rate) =>
+          rate.provider.toLowerCase() === mappedProvider &&
+          (rate.models as readonly string[]).some((m) => m.toLowerCase() === subModel.toLowerCase() || m.toLowerCase() === normalizedSubModel.toLowerCase()),
+        );
+        if (subRate) {
+          return {
+            ...subRate,
+            provider: 'openrouter',
+            models: [model],
+          } as any;
+        }
+      }
+    }
+  }
+  return undefined;
 }
 
 /** Price one invoked provider call without inventing missing usage. */

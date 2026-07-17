@@ -7,6 +7,7 @@
 
 import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types';
 import type { Env, Filing, ParsedTx } from '../shared/types';
+import { getDocumentProxy } from 'unpdf';
 import { resolveSecret } from '../secrets/infisical';
 import {
   SYSTEM_PROMPT,
@@ -95,6 +96,16 @@ export class OpenRouterVisionExtractor implements Extractor {
 
     const model = await this.resolveModel();
     const promptToUse = input.filing.chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
+
+    let pagesProcessed: number | undefined = undefined;
+    if (model.toLowerCase().includes('mistral-ocr')) {
+      try {
+        const pdf = await getDocumentProxy(new Uint8Array(input.bytes.slice(0)));
+        pagesProcessed = typeof pdf.numPages === 'number' && Number.isFinite(pdf.numPages) ? pdf.numPages : undefined;
+      } catch {
+        // ignore
+      }
+    }
 
     let totalPromptTokens = 0;
     let totalCompletionTokens = 0;
@@ -214,8 +225,12 @@ export class OpenRouterVisionExtractor implements Extractor {
       allRows = parsedRows.map(toParsedTx);
     } catch (err) {
       const usage =
-        totalPromptTokens > 0 || totalCompletionTokens > 0
-          ? { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens }
+        totalPromptTokens > 0 || totalCompletionTokens > 0 || pagesProcessed != null
+          ? {
+              promptTokens: totalPromptTokens,
+              completionTokens: totalCompletionTokens,
+              ...(pagesProcessed != null ? { pagesProcessed } : {}),
+            }
           : undefined;
       throw Object.assign(err as Error, { usage });
     }
@@ -226,8 +241,12 @@ export class OpenRouterVisionExtractor implements Extractor {
         : DEFAULT_CONFIDENCE;
 
     const usage =
-      totalPromptTokens > 0 || totalCompletionTokens > 0
-        ? { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens }
+      totalPromptTokens > 0 || totalCompletionTokens > 0 || pagesProcessed != null
+        ? {
+            promptTokens: totalPromptTokens,
+            completionTokens: totalCompletionTokens,
+            ...(pagesProcessed != null ? { pagesProcessed } : {}),
+          }
         : undefined;
 
     return {
