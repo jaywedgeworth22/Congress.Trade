@@ -96,8 +96,11 @@ export async function runFreshnessCheck(env: Env, now = new Date()): Promise<Sta
       fundamentals_latest: string | null;
     }>(
       env.DB,
+      // price_latest reads the maintained, indexed securities_ref.latest_price_date
+      // (max across tickers) rather than MAX(date) over the ~1.43M-row price_eod
+      // table, which has no date-leading index and so full-scanned every cron run.
       'SELECT (SELECT MAX(date) FROM spx_eod) AS spx_latest, ' +
-        '(SELECT MAX(date) FROM price_eod) AS price_latest, ' +
+        '(SELECT MAX(latest_price_date) FROM securities_ref) AS price_latest, ' +
         '(SELECT MAX(updated_at) FROM fundamentals_eod) AS fundamentals_latest',
     );
     snapshot = {
