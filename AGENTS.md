@@ -289,3 +289,6 @@ Client apps (peer clients of the backend, not separate products):
 - **Same bar at every tier:** full gates, receipts, and board discipline apply no matter
   which model did the work.
 - Canonical reference: `/Users/jay/apps/AGENT-SYNC.md` — "Delegation & model economics".
+
+## Production Deployment Urgency
+- **NO HOLDING OFF PRODUCTION**: Do not hold completed or near-completed work on preview servers or locally unless actively testing something known to be unsafe or broken in production. If the code is ready, merge and deploy it to production immediately.
