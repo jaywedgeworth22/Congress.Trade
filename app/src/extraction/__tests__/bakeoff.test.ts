@@ -533,9 +533,10 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       'moonshotai/kimi-chat',
       'minimax/minimax-hep-lite',
     ];
+
     for (const slug of deadSlugs) expect(openRouterModels).not.toContain(slug);
     // The GPT-4o family must be absent from the whole default lineup on every
-    // transport, and the only non-OR entry is native mistral (kept as fallback).
+    // transport, and there are no direct-provider non-OR entries in the default lineup.
     expect(DEFAULT_CANDIDATES.some((entry) => /(?:^|\/)(?:gpt|chatgpt)-4o(?:-|$)/i.test(entry.model))).toBe(false);
     expect(DEFAULT_CANDIDATES.filter((entry) => entry.provider !== 'openrouter')).toEqual([]);
   });
