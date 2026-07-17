@@ -144,8 +144,10 @@ describe('runPriceRefresh — successful fetch bookkeeping', () => {
 });
 
 describe('runPriceRefresh — incremental fetch window (Fix 3)', () => {
-  it('fetches a ticker covering both the cached close and all trade dates', async () => {
+  it('backfills from the oldest trade when the cache does not yet cover it', async () => {
     seedTrade('t3', 'MSFT', '2012-03-01'); // ancient first trade
+    // Cache is a single recent close → its earliest cached date (2026-07-01) is
+    // AFTER the oldest trade, so there is a historical gap to backfill.
     db.prepare("INSERT INTO price_eod (ticker, date, close) VALUES ('MSFT', '2026-07-01', 300)").run();
     // latest_price_date far in the past → guaranteed stale → selected regardless of run date.
     db.prepare(
@@ -157,11 +159,28 @@ describe('runPriceRefresh — incremental fetch window (Fix 3)', () => {
     await runPriceRefresh(env, { max: 10 });
 
     const call = h.eodCalls.find((c) => c.symbol === 'MSFT');
-    // Must cover the oldest trade (2012-03-01 minus 7d = 2012-02-23) not just
-    // the cached max minus 7d — otherwise trade/filing anchors for old
-    // transactions are permanently NULL (latest_price_date is updated to the
-    // latest close after this pass, so the ticker is never re-selected).
+    // Gap below the cache → fetch from the oldest trade (2012-03-01 − 7d) so its
+    // trade/filing anchors can be computed.
     expect(call?.from).toBe('2012-02-23');
+  });
+
+  it('uses the narrow 7-day window once the cache already covers the oldest trade', async () => {
+    seedTrade('t3b', 'IBM', '2026-06-10'); // oldest trade
+    // Cache spans from BEFORE the oldest trade to a recent close → no gap.
+    db.prepare("INSERT INTO price_eod (ticker, date, close) VALUES ('IBM', '2026-06-01', 100)").run();
+    db.prepare("INSERT INTO price_eod (ticker, date, close) VALUES ('IBM', '2026-07-01', 110)").run();
+    db.prepare(
+      `INSERT INTO securities_ref (ticker, latest_price_date, enriched_at)
+       VALUES ('IBM', '2020-01-01', '2020-01-01T00:00:00Z')`,
+    ).run();
+    h.responses.set('IBM', [{ date: '2026-07-11', close: 115 }]);
+
+    await runPriceRefresh(env, { max: 10 });
+
+    const call = h.eodCalls.find((c) => c.symbol === 'IBM');
+    // No gap (cached min 2026-06-01 <= oldest trade) → narrow window off the cached
+    // max (2026-07-01 − 7d), NOT a full re-download of the multi-year history.
+    expect(call?.from).toBe('2026-06-24');
   });
 
   it('fetches SPX covering both the cached spx close and the oldest trade date', async () => {
@@ -179,7 +198,9 @@ describe('runPriceRefresh — incremental fetch window (Fix 3)', () => {
   });
 
   it('fetches SPX from just the cached overlap once the series already covers the oldest trade', async () => {
-    seedTrade('t5', 'NVDA', '2026-07-01'); // oldest trade already within cache
+    seedTrade('t5', 'NVDA', '2026-06-10'); // oldest trade
+    // SPX cache spans from BEFORE the oldest trade to a recent close → no gap.
+    db.prepare("INSERT INTO spx_eod (date, close) VALUES ('2026-06-01', 4900)").run();
     db.prepare("INSERT INTO spx_eod (date, close) VALUES ('2026-07-02', 5000)").run();
     h.responses.set('SPY', [{ date: '2026-07-11', close: 5100 }]);
     h.responses.set('NVDA', [{ date: '2026-07-11', close: 120 }]);
@@ -187,7 +208,8 @@ describe('runPriceRefresh — incremental fetch window (Fix 3)', () => {
     await runPriceRefresh(env, { max: 10 });
 
     const spy = h.eodCalls.find((c) => c.symbol === 'SPY');
-    // min(2026-07-02, 2026-07-01) − 7d = 2026-06-24 — narrow window, no full refetch.
-    expect(spy?.from).toBe('2026-06-24');
+    // No gap (cached min 2026-06-01 <= oldest trade) → narrow window off cached max
+    // (2026-07-02 − 7d = 2026-06-25), not a full re-download of the series.
+    expect(spy?.from).toBe('2026-06-25');
   });
 });

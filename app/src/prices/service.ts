@@ -202,25 +202,26 @@ export async function runPriceRefresh(
   const pace = getSharedFmpPacer(fmpMaxPerMinute);
   let calls = 0;
 
-  // 1) Refresh the S&P 500 series (one call). Fetch from the earlier of the last
-  //    cached close and the oldest trade date (each minus a 7-day overlap) — NOT
-  //    from 2012 unconditionally. This mirrors the per-ticker window: covering the
-  //    oldest trade guarantees every trade's spx_at_trade/spx_at_filing anchor can
-  //    be computed, so a partial sibling import of only recent SPX rows can't
-  //    permanently strand older trades with NULL SPX anchors. Once the series is
-  //    complete the window is just the recent overlap; the no-op guard on the
-  //    upsert keeps unchanged rows from being rewritten either way.
-  const spxCached = await get<{ d: string | null }>(env.DB, 'SELECT MAX(date) AS d FROM spx_eod');
+  // 1) Refresh the S&P 500 series (one call). Same gap-based window as per-ticker:
+  //    backfill from the oldest trade only when the cached SPX series doesn't yet
+  //    cover it (so older trades' spx_at_trade/spx_at_filing anchors can be
+  //    computed); once complete, use the cheap 7-day incremental window instead of
+  //    re-downloading the whole ~3,500-row series every run.
+  const spxCached = await get<{ mn: string | null; mx: string | null }>(
+    env.DB,
+    'SELECT MIN(date) AS mn, MAX(date) AS mx FROM spx_eod',
+  );
   const oldestTradeRow = await get<{ d: string | null }>(
     env.DB,
     "SELECT MIN(tx_date) AS d FROM transactions WHERE tx_date IS NOT NULL AND tx_date <> ''",
   );
   let spxFrom: string;
-  if (spxCached?.d) {
-    const base = oldestTradeRow?.d
-      ? Math.min(new Date(spxCached.d).getTime(), new Date(oldestTradeRow.d).getTime())
-      : new Date(spxCached.d).getTime();
-    spxFrom = isoDaysAgo(7, new Date(base));
+  if (spxCached?.mx) {
+    const hasGapBelowCache =
+      oldestTradeRow?.d != null && spxCached.mn != null && oldestTradeRow.d < spxCached.mn;
+    spxFrom = hasGapBelowCache
+      ? isoDaysAgo(7, new Date(oldestTradeRow.d as string))
+      : isoDaysAgo(7, new Date(spxCached.mx));
   } else {
     spxFrom = oldestTradeRow?.d ? isoDaysAgo(7, new Date(oldestTradeRow.d)) : isoDaysAgo(365 * 5);
   }
@@ -263,30 +264,30 @@ export async function runPriceRefresh(
     );
     if (trades.length === 0) continue;
 
-    // Fetch only NEW closes: start from the last cached close (minus a 7-day
-    // overlap for late corrections), NOT from the first trade every pass. This
-    // turns a routine refresh from re-downloading + re-upserting the ticker's
-    // entire ~1,578-row multi-year history into ~5-10 rows. Fall back to the
-    // trade-based window only for a cold cache with no price_eod rows yet.
-    const cachedPrice = await get<{ d: string | null }>(
+    // Decide the fetch window from the CACHED coverage (min + max date):
+    //  - cold cache (no rows): fetch the full trade-based history once.
+    //  - a gap below the cache (oldest trade predates the earliest cached close,
+    //    e.g. a historical backfill added an older trade): fetch from the oldest
+    //    trade so its trade/filing anchors can be computed.
+    //  - otherwise the historical range is already complete: use the cheap 7-day
+    //    incremental window off the latest cached close. This is the key guard —
+    //    without checking the earliest cached close, a ticker whose oldest trade
+    //    predates its cache (i.e. essentially every ticker) would re-download its
+    //    entire multi-year series every stale day; the no-op upsert guard avoids
+    //    row writes but not the provider transfer or per-row D1 work.
+    const cached = await get<{ mn: string | null; mx: string | null }>(
       env.DB,
-      'SELECT MAX(date) AS d FROM price_eod WHERE ticker = ?',
+      'SELECT MIN(date) AS mn, MAX(date) AS mx FROM price_eod WHERE ticker = ?',
       [ticker],
     );
     let oldestTrade = trades[0].tx_date;
     for (const t of trades) if (t.tx_date < oldestTrade) oldestTrade = t.tx_date;
     let from: string;
-    if (cachedPrice?.d) {
-      // Cover both the recent-window (freshness + 7-day overlap for corrections)
-      // AND the oldest trade (historical completeness so trade/filing anchors aren't
-      // permanently NULL for older transactions). Without this, a ticker that has
-      // recent cached closes but gap-covered transactions would never fill those gaps
-      // because the narrow window skips them — yet latest_price_date is updated to
-      // the latest close, so the ticker is never re-selected for missing history.
-      from = isoDaysAgo(7, new Date(Math.min(
-        new Date(cachedPrice.d).getTime(),
-        new Date(oldestTrade).getTime(),
-      )));
+    if (cached?.mx) {
+      const hasGapBelowCache = cached.mn != null && oldestTrade < cached.mn;
+      from = hasGapBelowCache
+        ? isoDaysAgo(7, new Date(oldestTrade))
+        : isoDaysAgo(7, new Date(cached.mx));
     } else {
       from = isoDaysAgo(7, new Date(oldestTrade));
     }
