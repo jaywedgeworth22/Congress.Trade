@@ -31,100 +31,17 @@ import {
   toParsedTx,
   arrayBufferToBase64,
   validatePdfForAnthropic,
-} from './visionUtils';
+} from './visionLlm';
 import {
+  MISTRAL_ANNOTATION_SCHEMA,
+  extractResponsesText,
+  extractXaiResponseText,
   isRetiredDisclosureCandidate,
   openAiDisclosureReasoningEffort,
+  parseMistralOcrResponse,
 } from './bakeoff';
 import { resolveSecret } from '../secrets/infisical';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
-
-
-export function extractResponsesText(payload: unknown, provider = 'responses'): string {
-  const p = (payload ?? {}) as {
-    output_text?: unknown;
-    output?: Array<{ content?: Array<{ text?: string }> }>;
-  };
-  if (typeof p.output_text === 'string' && p.output_text.trim()) return p.output_text.trim();
-  const text = (p.output ?? [])
-    .flatMap((item) => item.content ?? [])
-    .map((content) => content.text ?? '')
-    .join('')
-    .trim();
-  if (!text) throw new Error(`${provider}: no text in /v1/responses output`);
-  return text;
-}
-export const MISTRAL_ANNOTATION_SCHEMA = {
-  name: 'congress_ptr_transactions',
-  strict: true,
-  schema: {
-    type: 'object',
-    additionalProperties: false,
-    properties: {
-      transactions: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            txDate: { type: ['string', 'null'] },
-            owner: { type: ['string', 'null'] },
-            assetName: { type: ['string', 'null'] },
-            ticker: { type: ['string', 'null'] },
-            assetType: { type: ['string', 'null'] },
-            assetTypeName: { type: ['string', 'null'] },
-            txType: { type: ['string', 'null'] },
-            amountRange: { type: ['string', 'null'] },
-            isOption: { type: ['boolean', 'null'] },
-            capGainsOver200: { type: ['boolean', 'null'] },
-            filingStatus: { type: ['string', 'null'] },
-            subholding: { type: ['string', 'null'] },
-            location: { type: ['string', 'null'] },
-            description: { type: ['string', 'null'] },
-            supplementalText: { type: ['string', 'null'] },
-            confidence: { type: 'number', minimum: 0, maximum: 1 },
-          },
-          required: [
-            'assetName',
-            'ticker',
-            'assetType',
-            'assetTypeName',
-            'txType',
-            'amountRange',
-            'txDate',
-            'owner',
-            'isOption',
-            'capGainsOver200',
-            'filingStatus',
-            'subholding',
-            'location',
-            'description',
-            'supplementalText',
-            'confidence',
-          ],
-        },
-      },
-    },
-    required: ['transactions'],
-  },
-} as const;
-export function parseMistralOcrResponse(payload: unknown): ParsedTx[] {
-  const p = (payload ?? {}) as { document_annotation?: unknown; pages?: Array<{ markdown?: string }> };
-  if (p.document_annotation != null) {
-    const text =
-      typeof p.document_annotation === 'string'
-        ? p.document_annotation
-        : JSON.stringify(p.document_annotation);
-    return parseModelJson(text).map(toParsedTx);
-  }
-  const markdown = (p.pages ?? []).map((pg) => pg.markdown ?? '').join('\n');
-  const fenced = markdown.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced) return parseModelJson(fenced[1]).map(toParsedTx);
-  throw new Error('mistral: no document_annotation or JSON block in OCR output');
-}
-
-
-
 
 export type BatchProvider = 'anthropic' | 'openai' | 'mistral' | 'xai';
 export type BatchChamber = 'house' | 'senate' | 'executive';
@@ -1152,7 +1069,7 @@ export function decodeXaiResult(item: unknown): BatchDocResult {
   try {
     let text = '';
     if (resp?.chat_get_completion) text = resp.chat_get_completion.choices?.[0]?.message?.content ?? '';
-    else if (resp?.responses) text = extractResponsesText(resp.responses, 'xai');
+    else if (resp?.responses) text = extractXaiResponseText(resp.responses);
     if (!text) return { docId, ok: false, error: 'no content in result', rows: [], usage };
     return { docId, ok: true, rows: parseModelJson(text).map(toParsedTx), usage };
   } catch (err) {
