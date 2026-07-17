@@ -47,10 +47,8 @@ describe('PWA column utilities', () => {
     // Traded is public
     expect(canUseColumn(tradedCol, false, false)).toBe(true);
 
-    // Sector is premium
-    expect(canUseColumn(sectorCol, false, false)).toBe(false);
-    expect(canUseColumn(sectorCol, true, false)).toBe(true);
-    expect(canUseColumn(sectorCol, false, true)).toBe(true);
+    // Sector is public (no longer premium)
+    expect(canUseColumn(sectorCol, false, false)).toBe(true);
 
     // Latency is admin
     expect(canUseColumn(latencyCol, true, false)).toBe(false);
