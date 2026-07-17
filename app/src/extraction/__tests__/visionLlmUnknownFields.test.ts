@@ -113,7 +113,7 @@ describe('vision LLM unreadable fields', () => {
 
   it('attaches billed usage from successful chunks when a later chunk fails', async () => {
     const pdf = await PDFDocument.create();
-    for (let page = 0; page < 16; page++) pdf.addPage([500, 500]);
+    for (let page = 0; page < 51; page++) pdf.addPage([500, 500]);
     const bytes = await pdf.save();
     
     mockGenerateContent
@@ -124,11 +124,11 @@ describe('vision LLM unreadable fields', () => {
           candidatesTokenCount: 9,
           totalTokenCount: 129,
         },
-        modelVersion: 'gemini-3.5-flash-20260713',
+        modelVersion: 'legacy-model-variant',
       })
       .mockRejectedValueOnce(Object.assign(new Error('unprocessable chunk'), { status: 422 }));
 
-    const extraction = new VisionLlmExtractor(env, { apiKey: 'gemini-test', model: 'gemini-1.5-pro' }).extract({
+    const extraction = new VisionLlmExtractor(env, { apiKey: 'gemini-test', model: 'legacy-model' }).extract({
       filing: { docKind: 'scanned_pdf', chamber: 'house' } as never,
       bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
     });
@@ -139,7 +139,7 @@ describe('vision LLM unreadable fields', () => {
         completionTokens: 9,
         cachedTokens: 0,
       },
-      resolvedModel: 'gemini-3.5-flash-20260713',
+      resolvedModel: 'legacy-model-variant',
     });
     expect(mockGenerateContent).toHaveBeenCalledTimes(2);
   });
