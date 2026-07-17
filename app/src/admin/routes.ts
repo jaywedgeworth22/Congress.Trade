@@ -36,7 +36,6 @@ import {
   PriceSeriesSchema,
   SecurityRefInputSchema,
   ShortVolumeRowSchema,
-  normalizeCompanyName,
 } from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
 import { all, batch, get, run, type SqlParam } from '../shared/db';
@@ -72,6 +71,7 @@ import { mapFiling } from '../delivery/rows';
 import { verifyAccessJwt, certsUrl } from './access';
 import { adminRuntimeConfig } from './identity';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
+import { normalizeCompanyName } from '../shared/companyName';
 import { constantTimeEqual } from '../auth/tokens';
 import { getCurrentUser } from '../auth/session';
 import {
