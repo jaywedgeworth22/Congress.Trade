@@ -257,7 +257,11 @@ describe('extraction measured telemetry', () => {
       operation: 'benchmark-provider-cost',
       billingMode: 'estimated',
       confidence: 'estimated',
-      costUsd: expect.closeTo(0.0024675, 7),
+      // Sonnet 5 introductory pricing ($2/$10 through 2026-08-31):
+      // 350 uncached-in * 2 + 100 cache-read * 0.2 + 50 cache-write * 2 * 1.25
+      // + 80 out * 10, all per MTok = 0.001645. From 2026-09-01 standard
+      // pricing ($3/$15) makes the same fixture 0.0024675.
+      costUsd: expect.closeTo(0.001645, 7),
     }));
   });
 
