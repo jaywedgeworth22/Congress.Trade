@@ -44,6 +44,17 @@ export interface OpenRouterVisionOptions {
   name?: string;
 }
 
+
+/** Returns true for models that accept a PDF as a `type: 'file'` attachment natively. */
+function supportsNativeVision(model: string): boolean {
+  const m = model.toLowerCase();
+  if (m.includes('gpt-4o')) return true;
+  if (m.includes('gpt-5')) return true;
+  if (m.includes('claude-3') || m.includes('claude-4') || m.includes('claude-5')) return true;
+  if (m.includes('gemini-1.5') || m.includes('gemini-2') || m.includes('gemini-3')) return true;
+  return false;
+}
+
 export class OpenRouterVisionExtractor implements Extractor {
   readonly name: string;
   private readonly modelOverride?: string;
@@ -100,20 +111,45 @@ export class OpenRouterVisionExtractor implements Extractor {
         fileData = `data:application/pdf;base64,${arrayBufferToBase64(input.bytes)}`;
       }
 
-function supportsNativeVision(model: string): boolean {
-  // Only declare native PDF support for models confirmed to accept
-  // a PDF as a `type: 'file'` attachment without the file-parser plugin.
-  // Vision-only models (Qwen VL, Pixtral, Llava, Nova, etc.) still need
-  // the file-parser plugin to convert the PDF into model-readable content.
-  const m = model.toLowerCase();
-  if (m.includes('gpt-4o')) return true;
-  if (m.includes('gpt-5')) return true;
-  if (m.includes('claude-3') || m.includes('claude-4') || m.includes('claude-5')) return true;
-  if (m.includes('gemini-1.5') || m.includes('gemini-2') || m.includes('gemini-3')) return true;
-  return false;
-}
-
       const callOpenRouter = async (): Promise<OpenAIChatPayload> => {
+        // Mistral OCR via OpenRouter requires image_url with the document URL
+        // (or base64 data URI) — NOT the file-parser plugin approach.
+        const isMistralOcr = model.includes('mistral-ocr');
+        let messageContent: unknown[];
+        if (isMistralOcr) {
+          // Per OpenRouter docs: Mistral OCR accepts `image_url` pointing to the PDF.
+          messageContent = [
+            {
+              type: 'text',
+              text: `${promptToUse}\nReturn ONLY the JSON array.`,
+            },
+            {
+              type: 'image_url',
+              image_url: { url: fileData },
+            },
+          ];
+        } else {
+          messageContent = [
+            {
+              type: 'file',
+              file: {
+                filename: 'document.pdf',
+                file_data: fileData,
+              },
+            },
+            { type: 'text', text: `${promptToUse}\nReturn ONLY the JSON array.` },
+          ];
+        }
+
+        const plugins = isMistralOcr
+          ? [{ id: 'response-healing' }]
+          : [
+              { id: 'response-healing' },
+              ...(supportsNativeVision(model)
+                ? []
+                : [{ id: 'file-parser', pdf: { engine: 'mistral-ocr' } }]),
+            ];
+
         const res = await fetchWithRetry(
           'https://openrouter.ai/api/v1/chat/completions',
           {
@@ -128,28 +164,11 @@ function supportsNativeVision(model: string): boolean {
               model,
               max_tokens: MAX_TOKENS,
               response_format: { type: 'json_object' },
-              plugins: [
-                { id: 'response-healing' },
-                ...(supportsNativeVision(model) ? [] : [
-                  {
-                    id: 'file-parser',
-                    pdf: { engine: 'mistral-ocr' },
-                  },
-                ]),
-              ],
+              plugins,
               messages: [
                 {
                   role: 'user',
-                  content: [
-                    {
-                      type: 'file',
-                      file: {
-                        filename: 'document.pdf',
-                        file_data: fileData,
-                      },
-                    },
-                    { type: 'text', text: `${promptToUse}\nReturn ONLY the JSON array.` },
-                  ],
+                  content: messageContent,
                 },
               ],
             }),

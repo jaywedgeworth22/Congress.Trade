@@ -535,6 +535,11 @@ export interface Env {
   FMP_DISCLOSURE_WATCH_LIMIT?: string;
   /** Unusual Whales API key for recent Congress trades. */
   UNUSUAL_WHALES_API_KEY?: string;
+  /** Distinct filed dates the UW disclosure-latency deep-match pass may query
+   *  per probe run (recent-trades?date=<filedDate>), for pending observations
+   *  older than the normal ~200-row window. Default 8; clamped to [0, 25];
+   *  0 disables the pass. */
+  UW_DEEP_MATCH_DATES_PER_RUN?: string;
   /** Quiver API bearer token for live Congress trading endpoints. */
   QUIVER_API_KEY?: string;
   QUIVER_API_TOKEN?: string;
