@@ -7353,17 +7353,30 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
               [ticker, latestCached.d, nowIso],
             );
           }
-          // Recompute per-trade anchors for this ticker from the cached series.
+          // Recompute BOTH the trade-date and filing-date anchors for this ticker
+          // from the cached series, mirroring runPriceRefresh. The import now marks
+          // the ticker fresh (above), so the daily refresh won't re-select it to
+          // fill these later — if we only wrote the trade anchors here,
+          // price_at_filing/spx_at_filing would stay null and the
+          // member-performance/skill queries (which use the filing anchor) would
+          // permanently exclude these trades. Filing anchor = the close on/before
+          // the disclosure date, falling back to the trade date.
           await run(
             c.env.DB,
-            `INSERT INTO tx_performance (tx_id, price_at_trade, spx_at_trade, computed_at)
+            `INSERT INTO tx_performance (tx_id, price_at_trade, spx_at_trade, price_at_filing, spx_at_filing, computed_at)
              SELECT t.id,
                (SELECT close FROM price_eod p WHERE p.ticker = t.ticker AND p.date <= t.tx_date ORDER BY p.date DESC LIMIT 1),
                (SELECT close FROM spx_eod s WHERE s.date <= t.tx_date ORDER BY s.date DESC LIMIT 1),
+               (SELECT close FROM price_eod p WHERE p.ticker = t.ticker AND p.date <= COALESCE(f.filed_date, f.first_seen_at, t.tx_date) ORDER BY p.date DESC LIMIT 1),
+               (SELECT close FROM spx_eod s WHERE s.date <= COALESCE(f.filed_date, f.first_seen_at, t.tx_date) ORDER BY s.date DESC LIMIT 1),
                ?
              FROM transactions t
+             LEFT JOIN filings f ON f.doc_id = t.doc_id
              WHERE t.ticker = ? AND t.tx_date IS NOT NULL AND t.tx_date <> ''
-             ON CONFLICT(tx_id) DO UPDATE SET price_at_trade=excluded.price_at_trade, spx_at_trade=excluded.spx_at_trade, computed_at=excluded.computed_at`,
+             ON CONFLICT(tx_id) DO UPDATE SET
+               price_at_trade=excluded.price_at_trade, spx_at_trade=excluded.spx_at_trade,
+               price_at_filing=excluded.price_at_filing, spx_at_filing=excluded.spx_at_filing,
+               computed_at=excluded.computed_at`,
             [nowIso, ticker],
           );
           summary.pricedTickers++;
