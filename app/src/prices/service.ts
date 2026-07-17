@@ -295,12 +295,16 @@ export async function runPriceRefresh(
       continue;
     }
     if (hist.length === 0) {
-      // Negative-cache: the provider returns no closes for this ticker (delisted,
-      // foreign, or non-equity). Without this, the backfill loop's done:true —
-      // which requires "traded tickers with no price_eod row == 0" — is
-      // unreachable for the ~544 such tickers, so the loop (and its D1 write/read
-      // spend) never stopped. The re-check TTL in selectTickersNeedingPrices lets
-      // a temporarily-empty ticker recover on a later pass.
+      // Reaching here means the provider returned a CONFIRMED empty result (a 2xx
+      // with no rows, or a 404 "unknown symbol") — the price clients THROW on
+      // transient/global failures (401/402/403/429/5xx), which are caught above
+      // and skip the ticker without marking it. So an empty here is a genuine
+      // "no closes for this ticker" (delisted, foreign, or non-equity), never a
+      // rate-limit/outage. Negative-cache it: without this, the backfill loop's
+      // done:true — which requires "traded tickers with no price_eod row == 0" —
+      // is unreachable for the ~544 such tickers, so the loop (and its D1
+      // write/read spend) never stopped. The re-check TTL in
+      // selectTickersNeedingPrices lets a temporarily-empty ticker recover later.
       if (!dryRun) {
         await run(
           env.DB,

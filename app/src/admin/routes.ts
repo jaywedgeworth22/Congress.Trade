@@ -7298,36 +7298,41 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           }
           summary.priceRows += closes.length;
           if (typeof o.currentPrice === 'number') {
-            const priceDate = typeof o.currentPriceDate === 'string' ? o.currentPriceDate : nowIso.slice(0, 10);
             await run(
               c.env.DB,
-              `INSERT INTO securities_ref (ticker, current_price, current_price_date, latest_price_date, price_unavailable, price_checked_at) VALUES (?, ?, ?, ?, 0, ?)
-               ON CONFLICT(ticker) DO UPDATE SET
-                 current_price=excluded.current_price,
-                 current_price_date=excluded.current_price_date,
-                 latest_price_date=excluded.latest_price_date,
-                 price_unavailable=0,
-                 price_checked_at=excluded.price_checked_at`,
-              [ticker, o.currentPrice, priceDate, priceDate, nowIso],
+              `INSERT INTO securities_ref (ticker, current_price, current_price_date) VALUES (?, ?, ?)
+               ON CONFLICT(ticker) DO UPDATE SET current_price=excluded.current_price, current_price_date=excluded.current_price_date`,
+              [ticker, o.currentPrice, typeof o.currentPriceDate === 'string' ? o.currentPriceDate : nowIso.slice(0, 10)],
             );
           }
-          if (closes.length) {
-            // Also cover a closes-only import (no currentPrice) and set
-            // latest_price_date to the true max now cached for the ticker rather
-            // than the current-price date — the value selectTickersNeedingPrices
-            // compares against. Without this, a price-history-only push keeps
-            // latest_price_date NULL and the ticker is re-selected every daily run,
-            // re-igniting the backfill re-fetch spend this guards against.
-            await run(
+          // Single authoritative price-freshness maintenance: derive
+          // latest_price_date ONLY from the true max cached CLOSE date — never
+          // today() or a bare currentPriceDate, which would mark a ticker
+          // fresh-through-today while price_eod holds only old rows and defeat the
+          // re-selection guard. A dateless import (no closes and no cached rows)
+          // leaves latest_price_date UNCHANGED — the guard below skips when there's
+          // nothing cached — so it's never advanced without real data. Clearing
+          // price_unavailable + stamping price_checked_at mirrors what
+          // runPriceRefresh does on a successful upsert, so imported prices rescue
+          // a previously negative-cached ticker.
+          if (closes.length || typeof o.currentPrice === 'number') {
+            const maxCached = await get<{ d: string | null }>(
               c.env.DB,
-              `INSERT INTO securities_ref (ticker, latest_price_date, price_unavailable, price_checked_at)
-                 VALUES (?, (SELECT MAX(date) FROM price_eod WHERE ticker = ?), 0, ?)
-               ON CONFLICT(ticker) DO UPDATE SET
-                 latest_price_date = excluded.latest_price_date,
-                 price_unavailable = 0,
-                 price_checked_at = excluded.price_checked_at`,
-              [ticker, ticker, nowIso],
+              'SELECT MAX(date) AS d FROM price_eod WHERE ticker = ?',
+              [ticker],
             );
+            if (maxCached?.d) {
+              await run(
+                c.env.DB,
+                `INSERT INTO securities_ref (ticker, latest_price_date, price_unavailable, price_checked_at)
+                   VALUES (?, ?, 0, ?)
+                 ON CONFLICT(ticker) DO UPDATE SET
+                   latest_price_date = excluded.latest_price_date,
+                   price_unavailable = 0,
+                   price_checked_at = excluded.price_checked_at`,
+                [ticker, maxCached.d, nowIso],
+              );
+            }
           }
           // Recompute per-trade anchors for this ticker from the cached series.
           await run(

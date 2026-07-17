@@ -87,6 +87,25 @@ describe('POST /securities/import — price freshness bookkeeping', () => {
     ).not.toContain('IMPT');
   });
 
+  it('leaves latest_price_date UNCHANGED for an import with no closes and no cached rows', async () => {
+    seedTrade('NOCLOSE');
+    // Pre-existing freshness value with NO cached price_eod rows.
+    db.prepare(
+      "INSERT INTO securities_ref (ticker, latest_price_date) VALUES ('NOCLOSE', '2026-06-01')",
+    ).run();
+
+    // Empty closes + a currentPrice but no currentPriceDate: there is no cached
+    // close date to derive from, so latest_price_date must NOT advance (esp. not
+    // to today() or a synthetic date).
+    await importPrices({ prices: [{ ticker: 'NOCLOSE', closes: [], currentPrice: 55 }] });
+
+    const row = db
+      .prepare('SELECT latest_price_date, current_price FROM securities_ref WHERE ticker = ?')
+      .get('NOCLOSE');
+    expect(row?.latest_price_date).toBe('2026-06-01'); // unchanged
+    expect(row?.current_price).toBe(55); // current price anchor still updates
+  });
+
   it('clears a prior negative-cache when fresh prices are imported', async () => {
     seedTrade('REVIVE');
     db.prepare(

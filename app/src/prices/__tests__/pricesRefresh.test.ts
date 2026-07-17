@@ -13,6 +13,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const h = vi.hoisted(() => ({
   eodCalls: [] as Array<{ symbol: string; from: string; to: string }>,
   responses: new Map<string, Array<{ date: string; close: number }>>(),
+  // Symbols whose fetch throws — simulating the client's new behavior of throwing
+  // on transient/global failures (401/402/403/429/5xx) rather than returning [].
+  errors: new Set<string>(),
 }));
 
 vi.mock('../../secrets/infisical', async (importOriginal) => ({
@@ -26,10 +29,12 @@ vi.mock('../fmp', () => ({
   buildFmpPriceClient: () => ({
     eodHistory: async (symbol: string, from: string, to: string) => {
       h.eodCalls.push({ symbol, from, to });
+      if (h.errors.has(symbol)) throw new Error('FMP_HTTP_429');
       return h.responses.get(symbol) ?? [];
     },
     spxHistory: async (from: string, to: string) => {
       h.eodCalls.push({ symbol: 'SPY', from, to });
+      if (h.errors.has('SPY')) throw new Error('FMP_HTTP_429');
       return h.responses.get('SPY') ?? [];
     },
   }),
@@ -46,6 +51,7 @@ let close: () => void;
 beforeEach(async () => {
   h.eodCalls.length = 0;
   h.responses.clear();
+  h.errors.clear();
   const opened = await openMigratedD1();
   db = opened.db;
   close = opened.close;
@@ -76,8 +82,8 @@ function srRow(ticker: string): Record<string, unknown> | undefined {
 }
 
 describe('runPriceRefresh — negative-cache on empty history', () => {
-  it('marks a never-cached ticker price_unavailable when the fetch returns empty', async () => {
-    seedTrade('t1', 'DEAD', '2026-01-05'); // delisted/foreign → no closes ever
+  it('marks a never-cached ticker price_unavailable on a CONFIRMED-empty (no-throw) response', async () => {
+    seedTrade('t1', 'DEAD', '2026-01-05'); // delisted/foreign → provider returns [] (no throw)
     const res = await runPriceRefresh(env, { max: 10 });
 
     const row = srRow('DEAD');
@@ -89,6 +95,18 @@ describe('runPriceRefresh — negative-cache on empty history', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM price_eod WHERE ticker = ?').get('DEAD')).toEqual({
       n: 0,
     });
+  });
+
+  it('does NOT negative-cache when the provider fetch THROWS (transient error) — retry next cycle', async () => {
+    seedTrade('t1', 'FLAKY', '2026-01-05');
+    h.errors.add('FLAKY'); // simulate 429/5xx/auth failure → client throws
+
+    const res = await runPriceRefresh(env, { max: 10 });
+
+    // No securities_ref row was created and no negative-cache written: a transient
+    // outage must not lock a priceable ticker out for the 30-day TTL.
+    expect(srRow('FLAKY')).toBeUndefined();
+    expect(res.errors.some((e) => e.includes('FLAKY'))).toBe(true);
   });
 
   it('does not write the negative-cache on a dry run', async () => {
