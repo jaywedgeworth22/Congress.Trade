@@ -6566,8 +6566,8 @@ function spCardHtml(p) {
     var need = SPEED_LANE_MIN_MATCHED - p.matched;
     leadHtml = '<div class="sp-gathering">' +
       (p.matched > 0
-        ? 'We\'ve matched <strong>' + p.matched + '</strong> of ' + p.candidates + ' filings so far — ' + need + ' more needed for timing estimates.'
-        : 'Probes haven\'t found overlapping disclosures yet. Sample builds automatically.') +
+        ? 'We\\\'ve matched <strong>' + p.matched + '</strong> of ' + p.candidates + ' filings so far — ' + need + ' more needed for timing estimates.'
+        : 'Probes haven\\\'t found overlapping disclosures yet. Sample builds automatically.') +
       '</div>';
   } else {
     var med = p.medianLeadSec || 0;
