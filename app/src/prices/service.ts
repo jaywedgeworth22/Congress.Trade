@@ -29,6 +29,15 @@ const DEFAULT_DAILY_CAP = 230;
  * letting a temporarily-empty ticker recover on its own.
  */
 const PRICE_UNAVAILABLE_RECHECK_DAYS = 30;
+/**
+ * If a successful fetch's newest close is older than this many days, the ticker's
+ * price series has effectively stopped (delisted/halted) even though it still has
+ * cached history. We negative-cache it (with the retry TTL) so it isn't
+ * re-selected + re-fetched every single day. A generous bar keeps weekends,
+ * holidays, and normal provider lag from ever tripping it — only a series that is
+ * weeks stale gets marked.
+ */
+const PRICE_STALE_LISTING_DAYS = 14;
 type EnvX = Env & {
   FMP_API_KEY?: string;
   FMP_DAILY_CALL_CAP?: string;
@@ -339,22 +348,26 @@ export async function runPriceRefresh(
         ),
       );
     }
-    // Current price = latest cached close; also clear any stale negative-cache and
-    // record latest_price_date (the indexed column selection + freshness read from
-    // instead of scanning price_eod). When we know the share count, recompute
+    // Current price = latest cached close; record latest_price_date (the indexed
+    // column selection + freshness read from instead of scanning price_eod). If
+    // the newest available close is weeks stale, the series has stopped
+    // (delisted/halted) even though the fetch wasn't empty — negative-cache it
+    // (TTL-bounded) so it isn't re-selected + re-fetched daily forever; otherwise
+    // clear any prior negative-cache. When we know the share count, recompute
     // market_cap (= shares_outstanding * price) + its bucket so the cap tracks the
     // latest close. The bucket thresholds mirror marketCapBucket() in
     // enrichment/compute.ts.
     const latest = hist[0];
+    const priceStalled = latest.date < isoDaysAgo(PRICE_STALE_LISTING_DAYS);
     await run(
       env.DB,
       `INSERT INTO securities_ref (ticker, current_price, current_price_date, latest_price_date, price_unavailable, price_checked_at)
-         VALUES (?, ?, ?, ?, 0, ?)
+         VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(ticker) DO UPDATE SET
          current_price=excluded.current_price,
          current_price_date=excluded.current_price_date,
          latest_price_date=excluded.latest_price_date,
-         price_unavailable=0,
+         price_unavailable=excluded.price_unavailable,
          price_checked_at=excluded.price_checked_at,
          market_cap = CASE
            WHEN securities_ref.shares_outstanding IS NOT NULL AND securities_ref.shares_outstanding > 0
@@ -369,7 +382,7 @@ export async function runPriceRefresh(
            WHEN securities_ref.shares_outstanding * excluded.current_price >=    300000000 THEN 'small'
            WHEN securities_ref.shares_outstanding * excluded.current_price >=     50000000 THEN 'micro'
            ELSE 'nano' END`,
-      [ticker, latest.close, latest.date, latest.date, nowIso],
+      [ticker, latest.close, latest.date, latest.date, priceStalled ? 1 : 0, nowIso],
     );
     result.sharePrices.push({ ticker, closes: hist, currentPrice: latest.close, currentPriceDate: latest.date });
     // Per-trade anchors: recompute from the CACHED price_eod / spx_eod series (not

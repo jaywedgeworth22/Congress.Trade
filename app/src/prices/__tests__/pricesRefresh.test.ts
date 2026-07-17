@@ -116,30 +116,55 @@ describe('runPriceRefresh — negative-cache on empty history', () => {
   });
 });
 
+// Dates relative to the real clock so the "fresh close" assertions don't rot as
+// time passes (the stalled-listing check compares against isoDaysAgo(14)).
+const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+
 describe('runPriceRefresh — successful fetch bookkeeping', () => {
   it('caches closes, records latest_price_date, and clears any prior negative-cache', async () => {
+    const d1 = daysAgo(1);
+    const d2 = daysAgo(2);
     seedTrade('t2', 'AAPL', '2026-01-05');
-    // Pre-mark it unavailable to prove a successful fetch clears the flag.
+    // Pre-mark it unavailable to prove a fresh successful fetch clears the flag.
     db.prepare(
       `INSERT INTO securities_ref (ticker, price_unavailable, price_checked_at)
        VALUES ('AAPL', 1, '2026-06-01T00:00:00Z')`,
     ).run();
     h.responses.set('AAPL', [
-      { date: '2026-07-10', close: 200 },
-      { date: '2026-07-09', close: 198 },
+      { date: d1, close: 200 },
+      { date: d2, close: 198 },
     ]);
 
     await runPriceRefresh(env, { max: 10 });
 
     const row = srRow('AAPL');
-    expect(row?.price_unavailable).toBe(0);
-    expect(row?.latest_price_date).toBe('2026-07-10');
+    expect(row?.price_unavailable).toBe(0); // recent close → not stalled
+    expect(row?.latest_price_date).toBe(d1);
     expect(row?.current_price).toBe(200);
-    expect(row?.current_price_date).toBe('2026-07-10');
+    expect(row?.current_price_date).toBe(d1);
     const rows = db
       .prepare('SELECT date FROM price_eod WHERE ticker = ? ORDER BY date')
       .all('AAPL');
-    expect(rows.map((r) => r.date)).toEqual(['2026-07-09', '2026-07-10']);
+    expect(rows.map((r) => r.date)).toEqual([d2, d1]);
+  });
+
+  it('negative-caches a delisted ticker whose newest close is weeks stale (non-empty fetch)', async () => {
+    seedTrade('t2b', 'GONE', '2019-01-05'); // trades exist, but the series stopped
+    db.prepare(
+      // stale latest_price_date → selected; the provider still returns its OLD closes.
+      "INSERT INTO securities_ref (ticker, latest_price_date, enriched_at) VALUES ('GONE', '2020-01-15', '2020-01-01T00:00:00Z')",
+    ).run();
+    h.responses.set('GONE', [{ date: '2020-01-15', close: 50 }]); // newest close is years old
+
+    await runPriceRefresh(env, { max: 10 });
+
+    const row = srRow('GONE');
+    // Marked unavailable (TTL-bounded) so it stops being re-selected + re-fetched
+    // every day, even though the fetch was non-empty. latest_price_date/current
+    // price still reflect the last real close.
+    expect(row?.price_unavailable).toBe(1);
+    expect(row?.latest_price_date).toBe('2020-01-15');
+    expect(row?.current_price).toBe(50);
   });
 });
 
