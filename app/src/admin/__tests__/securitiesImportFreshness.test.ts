@@ -113,6 +113,43 @@ describe('POST /securities/import — price freshness bookkeeping', () => {
     expect(row?.current_price).toBe(55); // current price anchor still updates
   });
 
+  it('populates BOTH trade-date and filing-date anchors from a closes-only import', async () => {
+    // A trade with a known disclosure (filing) date, plus an SPX series.
+    db.prepare("INSERT INTO filings (doc_id, filed_date) VALUES ('D-anch', '2026-07-12')").run();
+    db.prepare(
+      `INSERT INTO transactions (id, doc_id, ticker, tx_date, source, created_at)
+       VALUES ('tx-anch', 'D-anch', 'ANCH', '2026-07-08', 'primary', '2026-07-08T00:00:00Z')`,
+    ).run();
+    db.prepare("INSERT INTO spx_eod (date, close) VALUES ('2026-07-07', 5000),('2026-07-11', 5100)").run();
+
+    await importPrices({
+      prices: [
+        {
+          ticker: 'ANCH',
+          closes: [
+            { date: '2026-07-08', close: 50 },
+            { date: '2026-07-12', close: 55 },
+            { date: '2026-07-15', close: 60 },
+          ],
+        },
+      ],
+    });
+
+    const perf = db
+      .prepare(
+        'SELECT price_at_trade, spx_at_trade, price_at_filing, spx_at_filing FROM tx_performance WHERE tx_id = ?',
+      )
+      .get('tx-anch');
+    // Trade-date anchors (close on/before 2026-07-08).
+    expect(perf?.price_at_trade).toBe(50);
+    expect(perf?.spx_at_trade).toBe(5000);
+    // Filing-date anchors (close on/before the disclosure date 2026-07-12) — these
+    // would be null if the import only wrote trade anchors, and the daily refresh
+    // would never fill them since the ticker is now marked fresh.
+    expect(perf?.price_at_filing).toBe(55);
+    expect(perf?.spx_at_filing).toBe(5100);
+  });
+
   it('clears a prior negative-cache when fresh prices are imported', async () => {
     seedTrade('REVIVE');
     db.prepare(
