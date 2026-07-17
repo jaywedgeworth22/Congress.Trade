@@ -965,6 +965,24 @@ async function runUnusualWhalesDeepMatch(
 
   const errors: string[] = [];
   let fetchedRows = 0;
+  // Pre-load existing observations so we can preserve the real first_observed_at
+  // for rows that already existed — the upsert only bumps last_observed_at for
+  // existing rows, and loadProviderRows' first_observed_at >= cutoff filter
+  // would exclude them, leaving only the synthetic rows below whose
+  // first_observed_at would be wrong (nowIso instead of the actual first-seen).
+  const existingObsRows = await all<Pick<ProviderObservationRow, 'chamber' | 'provider_key' | 'first_observed_at'>>(
+    env.DB,
+    `SELECT chamber, provider_key, first_observed_at
+       FROM disclosure_provider_observations
+      WHERE provider = ?
+      LIMIT 5000`,
+    [provider.id],
+  );
+  const firstObservedAtByKey = new Map<string, string>();
+  for (const obs of existingObsRows) {
+    firstObservedAtByKey.set(`${obs.chamber}:${obs.provider_key}`, obs.first_observed_at);
+  }
+
   // Collect fresh rows from deep-match fetches directly so they are available
   // for candidate matching regardless of first_observed_at age (the upsert
   // only updates last_observed_at for existing rows, so loadProviderRows'
@@ -980,7 +998,7 @@ async function runUnusualWhalesDeepMatch(
           provider: row.provider,
           chamber: row.chamber,
           provider_key: row.providerKey,
-          first_observed_at: nowIso,
+          first_observed_at: firstObservedAtByKey.get(`${row.chamber}:${row.providerKey}`) ?? nowIso,
           provider_published_at: row.providerPublishedAt,
           source_url: row.sourceUrl,
           filed_date: row.filedDate,
