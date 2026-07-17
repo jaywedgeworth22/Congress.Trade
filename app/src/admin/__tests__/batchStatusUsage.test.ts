@@ -170,11 +170,21 @@ function makeEnv(jobOverrides: {
       return { success: true, meta: { changes } };
     },
   });
+  // R2 is the sole durable outbox for a failed Queue hand-off (see
+  // shared/thirdPartyTelemetry.ts) — bound here the same as it always is in
+  // production, so a simulated Queue failure below falls through to a real
+  // fallback write instead of being unrecoverable.
+  const fallbackObjects = new Map<string, string>();
   const env = {
     ADMIN_TOKEN: 'test-admin',
     OPENAI_API_KEY: 'test-openai-key',
     XAI_API_KEY: 'test-xai-key',
     DB: { prepare } as unknown as D1Database,
+    RAW_FILES: {
+      put: vi.fn(async (key: string, value: unknown) => {
+        fallbackObjects.set(key, String(value));
+      }),
+    },
     INGEST_QUEUE: {
       send: vi.fn(async (message: unknown) => {
         usageEvents.push(message);
@@ -191,6 +201,7 @@ function makeEnv(jobOverrides: {
   return {
     env,
     usageEvents,
+    fallbackObjects,
     getUsageJson: () => usageJson,
     getResultSummaryJson: () => resultSummaryJson,
     getStatus: () => status,
@@ -511,7 +522,7 @@ describe('POST /batch-status/:jobId usage accounting', () => {
     });
   });
 
-  it('continues aggregate accounting when Queue/R2/direct delivery fail but D1 retains telemetry', async () => {
+  it('continues aggregate accounting when Queue delivery fails but the R2 fallback outbox retains telemetry', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/v1/batches/batch-123')) {
@@ -538,6 +549,7 @@ describe('POST /batch-status/:jobId usage accounting', () => {
     const {
       env,
       usageEvents,
+      fallbackObjects,
       getStatus,
       getExtractionRunIds,
     } = makeEnv({ measuredUsageDeliveryFailures: 1 });
@@ -555,9 +567,10 @@ describe('POST /batch-status/:jobId usage accounting', () => {
       return event?.label === 'batch-job-tokens' ? [event] : [];
     });
     expect(attempts).toHaveLength(1);
+    expect(fallbackObjects.size).toBe(1);
   });
 
-  it('reuses one deterministic row when D1 fallback retains a failed per-result telemetry delivery', async () => {
+  it('reuses one deterministic row when the R2 fallback outbox retains a failed per-result telemetry delivery', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith('/v1/batches/batch-123')) {
@@ -610,7 +623,7 @@ describe('POST /batch-status/:jobId usage accounting', () => {
     expect(attempts[0]).toMatchObject({ quantity: 15, unit: 'token' });
   });
 
-  it('pins a valid outcome before side effects and proceeds when measured usage is retained in D1', async () => {
+  it('pins a valid outcome before side effects and proceeds when measured usage is retained in the R2 fallback outbox', async () => {
     const resultLine = (docId: string, promptTokens: number) => ({
       custom_id: docId,
       response: {
@@ -672,7 +685,7 @@ describe('POST /batch-status/:jobId usage accounting', () => {
     ))).toBe(true);
   });
 
-  it('fails a persisted invalid winner without requiring a telemetry retry when D1 fallback retains usage', async () => {
+  it('fails a persisted invalid winner without requiring a telemetry retry when the R2 fallback outbox retains usage', async () => {
     let providerPolls = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
