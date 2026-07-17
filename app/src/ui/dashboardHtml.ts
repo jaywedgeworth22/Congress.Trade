@@ -775,6 +775,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   .sp-card:hover { border-color:color-mix(in srgb, var(--accent) 55%, var(--border)); box-shadow: 0 6px 28px rgba(0,0,0,.22); }
   .sp-card.sp-ahead { border-color: color-mix(in srgb, var(--good) 35%, var(--border)); }
+  .sp-card.sp-tied { border-color: color-mix(in srgb, var(--warn) 30%, var(--border)); }
   .sp-card.sp-behind { border-color: color-mix(in srgb, var(--rival) 30%, var(--border)); }
   /* Card header row */
   .sp-header { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
@@ -784,6 +785,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     white-space:nowrap; flex-shrink:0;
   }
   .sp-badge.ahead { background:color-mix(in srgb,var(--good) 18%,transparent); color:var(--good); border:1px solid color-mix(in srgb,var(--good) 40%,transparent); }
+  .sp-badge.tied { background:color-mix(in srgb,var(--warn) 18%,transparent); color:var(--warn); border:1px solid color-mix(in srgb,var(--warn) 40%,transparent); }
   .sp-badge.behind { background:color-mix(in srgb,var(--rival) 15%,transparent); color:var(--rival); border:1px solid color-mix(in srgb,var(--rival) 35%,transparent); }
   .sp-badge.gathering { background:color-mix(in srgb,var(--text-dim) 12%,transparent); color:var(--text-dim); border:1px solid color-mix(in srgb,var(--border) 80%,transparent); }
   /* Win-rate bar */
@@ -792,6 +794,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-bar-track { position:relative; height:8px; border-radius:999px; background:color-mix(in srgb,var(--border) 55%,transparent); overflow:hidden; }
   .sp-bar-fill { position:absolute; inset:0 auto 0 0; border-radius:999px; background: linear-gradient(90deg, var(--good) 0%, color-mix(in srgb,var(--good) 70%,var(--accent)) 100%); transition: width 0.6s cubic-bezier(0.4,0,0.2,1); }
   .sp-bar-fill.behind { background: linear-gradient(90deg, var(--rival) 0%, color-mix(in srgb,var(--rival) 65%,var(--text-dim)) 100%); }
+  .sp-bar-fill.tied { background: linear-gradient(90deg, var(--warn) 0%, color-mix(in srgb,var(--warn) 65%,var(--text-dim)) 100%); }
   /* Lead stat */
   .sp-lead { display:flex; align-items:baseline; gap:6px; }
   .sp-lead-num { font-size:30px; font-weight:800; letter-spacing:-0.5px; line-height:1; color:var(--good); font-variant-numeric:tabular-nums; }
@@ -6534,8 +6537,10 @@ function refreshSpeedUpdated() {
 /* Build a single provider scorecard card. */
 function spCardHtml(p) {
   var hasStats = p.matched >= SPEED_LANE_MIN_MATCHED;
-  var ahead = hasStats && (p.usFirstCount || 0) > (p.providerFirstCount || 0);
-  var cardCls = 'sp-card' + (hasStats ? (ahead ? ' sp-ahead' : ' sp-behind') : '');
+  var wins = p.usFirstCount || 0, losses = p.providerFirstCount || 0;
+  var ahead = hasStats && wins > losses;
+  var tied = hasStats && !ahead && wins === losses;
+  var cardCls = 'sp-card' + (hasStats ? (ahead ? ' sp-ahead' : tied ? ' sp-tied' : ' sp-behind') : '');
 
   /* Header: provider name + outcome badge */
   var badgeCls, badgeTxt;
@@ -6543,6 +6548,8 @@ function spCardHtml(p) {
     badgeCls = 'sp-badge gathering'; badgeTxt = '📊 Gathering data';
   } else if (ahead) {
     badgeCls = 'sp-badge ahead'; badgeTxt = '⚡ Ahead';
+  } else if (tied) {
+    badgeCls = 'sp-badge tied'; badgeTxt = '⚖️ Tied';
   } else {
     badgeCls = 'sp-badge behind'; badgeTxt = '▼ Behind';
   }
@@ -6553,7 +6560,7 @@ function spCardHtml(p) {
   var barHtml = '';
   if (hasStats && p.matched > 0) {
     var winPct = Math.round(100 * (p.usFirstCount || 0) / p.matched);
-    var fillCls = ahead ? 'sp-bar-fill' : 'sp-bar-fill behind';
+    var fillCls = ahead ? 'sp-bar-fill' : tied ? 'sp-bar-fill tied' : 'sp-bar-fill behind';
     barHtml = '<div class="sp-bar-wrap">' +
       '<div class="sp-bar-labels"><span>Win rate</span><span>' + winPct + '%  (' + p.usFirstCount + '/' + p.matched + ')</span></div>' +
       '<div class="sp-bar-track"><div class="' + fillCls + '" style="width:' + winPct + '%"></div></div>' +

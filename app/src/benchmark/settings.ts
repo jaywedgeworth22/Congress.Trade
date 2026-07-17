@@ -246,6 +246,10 @@ export function validateBenchmarkModel(
   return match;
 }
 
+function isOpenRouterAuto(model: { provider: string; model: string }): boolean {
+  return model.provider === 'openrouter' && model.model === 'auto';
+}
+
 export function getUnderlyingProvider(model: { provider: string; model: string }): string {
   if (model.provider === 'openrouter') {
     const parts = model.model.split('/');
@@ -272,6 +276,11 @@ export function validateBenchmarkLineup(input: {
   const models = [lineup.a, lineup.b, lineup.c as BenchmarkModelRef];
   if (new Set(models.map(serializeBenchmarkModelRef)).size !== 3) {
     throw new BenchmarkSettingsValidationError('a, b, and c must be three distinct models');
+  }
+  if (models.some(isOpenRouterAuto)) {
+    throw new BenchmarkSettingsValidationError(
+      'openrouter/auto cannot be part of a 3-model lineup because its routing is unpredictable',
+    );
   }
   if (new Set(models.map(getUnderlyingProvider)).size !== 3) {
     throw new BenchmarkSettingsValidationError('a, b, and c must use three distinct providers');
@@ -302,6 +311,11 @@ export function validateBenchmarkRoles(input: {
     primary: validateBenchmarkModel(input.primary, 'primary'),
     failover: validateBenchmarkModel(input.failover, 'failover'),
   };
+  if (isOpenRouterAuto(roles.primary) || isOpenRouterAuto(roles.failover)) {
+    throw new BenchmarkSettingsValidationError(
+      'openrouter/auto cannot be selected as primary or failover because its routing is unpredictable',
+    );
+  }
   if (getUnderlyingProvider(roles.primary) === getUnderlyingProvider(roles.failover)) {
     throw new BenchmarkSettingsValidationError('primary and failover must use different providers');
   }
