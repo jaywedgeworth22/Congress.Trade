@@ -38,6 +38,14 @@ const USAGE_TELEMETRY_CIRCUIT_KV_KEY = 'usage_telemetry_circuit_breaker';
 /** Set once the legacy D1 fallback table is observed empty, so the scheduled
  *  flush stops re-querying an empty table forever. */
 const USAGE_TELEMETRY_D1_DRAIN_COMPLETE_KV_KEY = 'usage_telemetry_d1_drain_complete';
+/** Best-effort pending-R2-outbox object count, so the capacity cap is an O(1) KV
+ *  read on the write path instead of an unbounded (and thus unenforceable) R2
+ *  list. Reconciled during flush; see usageTelemetryOutboxAtCapacity. */
+const USAGE_TELEMETRY_OUTBOX_COUNT_KV_KEY = 'usage_telemetry_outbox_count';
+/** A legacy D1 fallback row is dropped after this many failed drain attempts so a
+ *  poison/undeliverable row can't wedge the oldest-first drain. Small on purpose:
+ *  the table is legacy and is only ever drained while the receiver is healthy. */
+const USAGE_TELEMETRY_D1_MAX_ROW_ATTEMPTS = 5;
 
 export interface UsageTelemetryFallbackHealth {
   available: boolean;
@@ -379,6 +387,17 @@ function usageTelemetryErrorType(error: unknown): string {
 
 // --- Env-tunable circuit breaker + outbox limits (see types.ts for the Env
 // fields; every one has a safe built-in default and none require a redeploy) --
+//
+// These are read from the immutable Worker env (like every other telemetry limit
+// here and like SENTRY_TRACES_SAMPLE_RATE), NOT from the app's dynamic config
+// source (D1 poll_config / CONFIG_KV cache / Infisical). That is deliberate:
+// they are operational safety limits read synchronously on the hot path (every
+// telemetry write and flush), so they must be O(1) and ALWAYS available — even
+// during an incident where KV, D1, or Infisical is the very thing degraded.
+// Routing an anti-overage safety limit through a runtime source that can itself
+// be down (or that would add a per-write round-trip) is an anti-pattern. Worker
+// vars are still operator-overridable via wrangler `[vars]` / Infisical-backed
+// secrets without a code change.
 
 function usageTelemetryCircuitFailureThreshold(env: Env): number {
   const n = Number.parseInt(env.USAGE_TELEMETRY_CIRCUIT_FAILURE_THRESHOLD ?? '', 10);
@@ -529,22 +548,96 @@ async function markUsageTelemetryD1DrainComplete(env: Env): Promise<void> {
   } catch {}
 }
 
+// --- R2 outbox object-count bookkeeping (durable in CONFIG_KV; one key) -------
+// The cap must be enforced without an O(n) R2 list on the hot path: R2 `list`
+// pages at ~1000 objects/call, so a single list can't even establish the count
+// against a multi-thousand cap (the earlier list-based check could never
+// actually enforce it). Instead we keep a best-effort object COUNT in KV — an
+// O(1) read on admission, incremented on write and decremented on drain/expiry,
+// reconciled during flush.
+
+async function readUsageTelemetryOutboxCount(env: Env): Promise<number | null> {
+  const kv = (env as Partial<Env>).CONFIG_KV;
+  if (!kv) return null;
+  try {
+    const raw = await kv.get(USAGE_TELEMETRY_OUTBOX_COUNT_KV_KEY);
+    if (raw == null) return null;
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeUsageTelemetryOutboxCount(env: Env, count: number): Promise<void> {
+  const kv = (env as Partial<Env>).CONFIG_KV;
+  if (!kv) return;
+  try {
+    await kv.put(USAGE_TELEMETRY_OUTBOX_COUNT_KV_KEY, String(Math.max(0, Math.floor(count))));
+  } catch {}
+}
+
+/** Best-effort adjust; a lost update only shifts the soft cap by a few objects
+ *  and is re-reconciled on the next flush. No-op until a baseline exists. */
+async function adjustUsageTelemetryOutboxCount(env: Env, delta: number): Promise<void> {
+  if (delta === 0) return;
+  const current = await readUsageTelemetryOutboxCount(env);
+  if (current == null) return;
+  await writeUsageTelemetryOutboxCount(env, current + delta);
+}
+
 /**
- * USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS bounds total pending R2 outbox objects.
- * Checked before every write so a sustained receiver outage can't inflate
- * storage without bound. Once at capacity, a new event is dropped outright —
- * D1 is no longer a durable target for new events (see below), so there is no
- * further fallback left to spill into.
+ * Bounded, paginated R2 count that short-circuits once it reaches `cap`, so it is
+ * never an unbounded list. Returns null when R2 listing is unavailable. Used only
+ * on the cold path — to seed the O(1) KV counter on a miss and to reconcile a
+ * large outbox during flush — never per hot-path write.
+ */
+async function countUsageTelemetryOutboxObjects(
+  storage: R2Bucket | undefined,
+  cap: number,
+): Promise<number | null> {
+  if (!storage?.list) return null;
+  let count = 0;
+  let cursor: string | undefined;
+  try {
+    do {
+      const listed = await storage.list({
+        prefix: USAGE_TELEMETRY_FALLBACK_PREFIX,
+        limit: 1_000,
+        cursor,
+      });
+      count += listed.objects.length;
+      cursor = listed.truncated ? listed.cursor : undefined;
+    } while (cursor && count < cap);
+  } catch {
+    return null;
+  }
+  return count;
+}
+
+/**
+ * USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS bounds total pending R2 outbox objects so a
+ * sustained receiver outage can't inflate storage without bound. Once at capacity
+ * a new event is dropped outright — D1 is no longer a durable target for new
+ * events (see below), so there is no further fallback left to spill into.
+ *
+ * This is a SOFT cap: R2 has no atomic list+write and the KV counter is
+ * best-effort (no atomic KV increment either — see #3), so a handful of
+ * concurrent writes near the boundary can overshoot slightly before the next
+ * write or flush observes the cap. That is acceptable for an anti-unbounded-
+ * growth guard (it bounds growth; it is not a hard quota). The check is an O(1)
+ * KV counter read on the hot path; on a counter miss (fresh deploy / KV miss) it
+ * seeds the counter once from a bounded, short-circuited paginated count so
+ * subsequent writes stay O(1).
  */
 async function usageTelemetryOutboxAtCapacity(env: Env, storage: R2Bucket | undefined): Promise<boolean> {
-  if (!storage?.list) return false;
   const cap = usageTelemetryFallbackMaxObjects(env);
-  try {
-    const listed = await storage.list({ prefix: USAGE_TELEMETRY_FALLBACK_PREFIX, limit: cap });
-    return listed.objects.length >= cap;
-  } catch {
-    return false;
-  }
+  const counted = await readUsageTelemetryOutboxCount(env);
+  if (counted != null) return counted >= cap;
+  const baseline = await countUsageTelemetryOutboxObjects(storage, cap);
+  if (baseline == null) return false; // no R2 listing available; cannot bound here
+  await writeUsageTelemetryOutboxCount(env, baseline);
+  return baseline >= cap;
 }
 
 /**
@@ -575,6 +668,8 @@ export async function persistUsageTelemetryFallback(
     await storage.put(usageTelemetryFallbackKey(event), JSON.stringify(event), {
       httpMetadata: { contentType: 'application/json' },
     });
+    // Best-effort O(1) increment so the next admission check stays list-free.
+    await adjustUsageTelemetryOutboxCount(env, 1);
     return true;
   } catch (error) {
     try {
@@ -824,19 +919,22 @@ export async function flushUsageTelemetryFallback(
   const db = (env as Partial<Env>).DB;
   const ttlMs = usageTelemetryFallbackTtlMs(env);
   const now = Date.now();
+  const r2Available = Boolean(storage?.list);
   const listed = storage?.list
     ? await storage.list({
         prefix: USAGE_TELEMETRY_FALLBACK_PREFIX,
         limit,
       })
-    : { objects: [] };
+    : { objects: [] as R2Object[], truncated: false as const };
   let delivered = 0;
   let failed = 0;
   let expired = 0;
+  let r2Removed = 0; // objects actually deleted from R2 this cycle (delivered + expired)
   for (const object of listed.objects) {
     if (object.uploaded && now - object.uploaded.getTime() > ttlMs) {
       try {
         await storage?.delete(object.key);
+        r2Removed += 1;
       } catch {}
       expired += 1;
       continue;
@@ -847,9 +945,21 @@ export async function flushUsageTelemetryFallback(
       const event = parseUsageTelemetryFallback(await body.text());
       await deliverUsageTelemetryEvent(env, event);
       await storage?.delete(object.key);
+      r2Removed += 1;
       delivered += 1;
     } catch {
       failed += 1;
+    }
+  }
+  // Maintain the O(1) admission counter. When the bounded list was the entire
+  // outbox (not truncated), the exact remainder is known, so set it
+  // authoritatively — this self-heals any drift, including R2 objects that
+  // predate the counter. Otherwise best-effort decrement by what we removed.
+  if (r2Available) {
+    if (!listed.truncated) {
+      await writeUsageTelemetryOutboxCount(env, Math.max(0, listed.objects.length - r2Removed));
+    } else if (r2Removed > 0) {
+      await adjustUsageTelemetryOutboxCount(env, -r2Removed);
     }
   }
   const remainingLimit = Math.max(0, limit - listed.objects.length);
@@ -857,13 +967,13 @@ export async function flushUsageTelemetryFallback(
   if (remainingLimit > 0 && db?.prepare && !d1DrainComplete) {
     try {
       const rows = await db.prepare(
-        `SELECT idempotency_key, event_json
+        `SELECT idempotency_key, event_json, attempts
            FROM usage_telemetry_fallback_events
           ORDER BY updated_at ASC
           LIMIT ?`,
       )
         .bind(Math.min(remainingLimit, usageTelemetryD1DrainLimit(env)))
-        .all<{ idempotency_key: string; event_json: string }>();
+        .all<{ idempotency_key: string; event_json: string; attempts: number }>();
       const results = rows.results ?? [];
       for (const row of results) {
         try {
@@ -876,11 +986,32 @@ export async function flushUsageTelemetryFallback(
             .run();
           delivered += 1;
         } catch {
-          // Deliberately no UPDATE here: re-writing a row on every failed
-          // cycle is the exact churn that turned this table into a large D1
-          // overage. Leave the row untouched; the next non-skipped flush
-          // (bounded, same as this one) retries it as-is.
           failed += 1;
+          // Bounded, circuit-gated quarantine so one poison legacy row can't
+          // wedge the oldest-first drain. This runs ONLY while the receiver is
+          // healthy (flush returns early when the breaker is open) and NEVER
+          // writes new rows, so it is not the outage churn that caused the
+          // incident (which re-churned every row on every cycle during a total
+          // outage while new rows kept arriving). Move the failing row to the
+          // back of the queue so the rows behind it still drain, and drop it
+          // once it exceeds a small attempt budget — an unparseable or
+          // deterministically-rejected row can never be delivered.
+          const attempts = Number(row.attempts ?? 0) + 1;
+          if (attempts >= USAGE_TELEMETRY_D1_MAX_ROW_ATTEMPTS) {
+            await db.prepare(
+              'DELETE FROM usage_telemetry_fallback_events WHERE idempotency_key = ?',
+            )
+              .bind(row.idempotency_key)
+              .run();
+          } else {
+            await db.prepare(
+              `UPDATE usage_telemetry_fallback_events
+                  SET attempts = ?, updated_at = ?
+                WHERE idempotency_key = ?`,
+            )
+              .bind(attempts, new Date().toISOString(), row.idempotency_key)
+              .run();
+          }
         }
       }
       if (results.length === 0) await markUsageTelemetryD1DrainComplete(env);

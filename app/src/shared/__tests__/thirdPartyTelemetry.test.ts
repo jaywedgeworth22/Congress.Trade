@@ -130,8 +130,10 @@ function scriptedCircuitKv(circuitReads: Array<Record<string, unknown> | null>) 
 }
 
 function fallbackD1(initial: Record<string, string> = {}) {
-  const rows = new Map<string, { event_json: string; attempts: number; last_error: string | null }>(
-    Object.entries(initial).map(([key, eventJson]) => [key, { event_json: eventJson, attempts: 0, last_error: null }]),
+  let seq = 0;
+  const stamp = () => new Date(Date.UTC(2026, 0, 1) + seq++).toISOString();
+  const rows = new Map<string, { event_json: string; attempts: number; updated_at: string }>(
+    Object.entries(initial).map(([key, eventJson]) => [key, { event_json: eventJson, attempts: 0, updated_at: stamp() }]),
   );
   const prepare = vi.fn((sql: string) => {
     let params: unknown[] = [];
@@ -147,31 +149,27 @@ function fallbackD1(initial: Record<string, string> = {}) {
       async all<T>() {
         if (/FROM usage_telemetry_fallback_events/i.test(sql)) {
           const limit = Math.max(0, Number(params[0] ?? rows.size));
+          // Mirror ORDER BY updated_at ASC so "move failing row to the back" is observable.
+          const ordered = [...rows.entries()].sort((a, b) => a[1].updated_at.localeCompare(b[1].updated_at));
           return {
-            results: [...rows.entries()].slice(0, limit).map(([idempotency_key, row]) => ({
+            results: ordered.slice(0, limit).map(([idempotency_key, row]) => ({
               idempotency_key,
               event_json: row.event_json,
+              attempts: row.attempts,
             })) as T[],
           };
         }
         return { results: [] as T[] };
       },
       async run() {
-        if (/INSERT INTO usage_telemetry_fallback_events/i.test(sql)) {
-          const [key, eventJson, lastError] = params;
-          rows.set(String(key), {
-            event_json: String(eventJson),
-            attempts: rows.get(String(key))?.attempts ?? 0,
-            last_error: lastError == null ? null : String(lastError),
-          });
-        } else if (/DELETE FROM usage_telemetry_fallback_events/i.test(sql)) {
+        if (/DELETE FROM usage_telemetry_fallback_events/i.test(sql)) {
           rows.delete(String(params[0]));
         } else if (/UPDATE usage_telemetry_fallback_events/i.test(sql)) {
-          const [lastError, _updatedAt, key] = params;
+          const [attempts, updatedAt, key] = params;
           const row = rows.get(String(key));
           if (row) {
-            row.attempts += 1;
-            row.last_error = lastError == null ? null : String(lastError);
+            row.attempts = Number(attempts);
+            row.updated_at = String(updatedAt);
           }
         }
         return { success: true, meta: { changes: 1 } };
@@ -435,7 +433,7 @@ describe('third-party usage telemetry', () => {
     expect(fallback.remove).toHaveBeenCalledWith(key);
   });
 
-  it('drains legacy D1 fallback rows without re-writing them on failure, then deletes on success', async () => {
+  it('drains legacy D1 fallback rows, bumping attempts on a transient failure then deleting on success', async () => {
     const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
     let receiverAvailable = false;
     vi.stubGlobal('fetch', vi.fn(async () => receiverAvailable
@@ -458,10 +456,10 @@ describe('third-party usage telemetry', () => {
     expect(await flushUsageTelemetryFallback(env)).toEqual({
       listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false,
     });
-    // No re-churn: a failed drain attempt leaves the row exactly as it was
-    // (no UPDATE ... attempts + 1), which is what stopped the D1 write
-    // amplification that caused the cost incident.
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
+    // A failed drain attempt bumps attempts (bounded quarantine budget) and
+    // moves the row to the back so it can't wedge the oldest-first drain — but
+    // the row is retained (below the drop budget) for a later retry.
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(1);
     expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
 
     receiverAvailable = true;
@@ -469,6 +467,39 @@ describe('third-party usage telemetry', () => {
       listed: 1, delivered: 1, failed: 0, expired: 0, skipped: false,
     });
     expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(false);
+  });
+
+  it('does not let one poison legacy D1 row wedge the drain: quarantines it after a bounded budget while rows behind it still deliver', async () => {
+    // Oldest row is permanently unparseable (poison); a good row sits behind it.
+    const poisonKey = 'ct-third-party:poison-legacy-row';
+    const goodEvent = { ...deliveryEvent, idempotencyKey: 'ct-third-party:good-legacy-row' };
+    const fallback = fallbackD1({
+      [poisonKey]: 'not-valid-json{',
+      [goodEvent.idempotencyKey]: JSON.stringify(goodEvent),
+    });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const env = {
+      RAW_FILES: fallbackBucket().bucket,
+      DB: fallback.db,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+    } as unknown as Env;
+
+    // First flush: poison row fails (parse) and is bumped+moved to back; the
+    // good row behind it is delivered and deleted in the SAME cycle.
+    const first = await flushUsageTelemetryFallback(env);
+    expect(first).toMatchObject({ delivered: 1, failed: 1 });
+    expect(fallback.rows.has(goodEvent.idempotencyKey)).toBe(false);
+    expect(fallback.rows.get(poisonKey)?.attempts).toBe(1);
+
+    // The poison row is dropped once it exhausts its bounded attempt budget (5),
+    // so it can never block the drain forever.
+    for (let i = 0; i < 5; i += 1) await flushUsageTelemetryFallback(env);
+    expect(fallback.rows.has(poisonKey)).toBe(false);
   });
 
   it('marks the legacy D1 drain complete once observed empty, then skips further D1 queries', async () => {
@@ -680,6 +711,70 @@ describe('third-party usage telemetry', () => {
 
     expect(accepted).toBe(true);
     expect(fallback.put).toHaveBeenCalledOnce();
+  });
+
+  it('enforces the cap with an O(1) KV counter read and does not list R2 when the counter is at capacity', async () => {
+    const { kv, store } = fakeConfigKv({ usage_telemetry_outbox_count: '2' });
+    const list = vi.fn();
+    const put = vi.fn();
+    const env = {
+      CONFIG_KV: kv,
+      RAW_FILES: { list, put },
+      USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS: '2',
+    } as unknown as Env;
+
+    const accepted = await persistUsageTelemetryFallback(env, deliveryEvent, { silentFailure: true });
+
+    expect(accepted).toBe(false);
+    // O(1): admission is gated on the KV counter, never an R2 list on the hot path.
+    expect(list).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+    expect(store.get('usage_telemetry_outbox_count')).toBe('2');
+  });
+
+  it('increments the KV outbox counter on a successful fallback write, staying list-free', async () => {
+    const { kv, store } = fakeConfigKv({ usage_telemetry_outbox_count: '1' });
+    const list = vi.fn();
+    const put = vi.fn(async () => {});
+    const env = {
+      CONFIG_KV: kv,
+      RAW_FILES: { list, put },
+      USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS: '5',
+    } as unknown as Env;
+
+    const accepted = await persistUsageTelemetryFallback(env, deliveryEvent);
+
+    expect(accepted).toBe(true);
+    expect(list).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledOnce();
+    expect(store.get('usage_telemetry_outbox_count')).toBe('2');
+  });
+
+  it('seeds the counter from a bounded paginated count spanning R2 list pages when the KV counter is missing', async () => {
+    // R2 list pages at ~1000 objects, so a single list cannot establish the count
+    // against a multi-thousand cap (the old list-based check could never enforce
+    // it). Prove the seed count pages across the boundary and enforces the cap.
+    const page1 = Array.from({ length: 1000 }, (_, i) => ({ key: `_ops/usage-telemetry/p1-${i}.json` }));
+    const page2 = Array.from({ length: 10 }, (_, i) => ({ key: `_ops/usage-telemetry/p2-${i}.json` }));
+    const list = vi.fn(async (opts: { cursor?: string }) => (
+      opts.cursor
+        ? { objects: page2, truncated: false }
+        : { objects: page1, truncated: true, cursor: 'next' }
+    ));
+    const put = vi.fn();
+    const { kv, store } = fakeConfigKv(); // counter absent -> seed via paginated count
+    const env = {
+      CONFIG_KV: kv,
+      RAW_FILES: { list, put },
+      USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS: '1005',
+    } as unknown as Env;
+
+    const accepted = await persistUsageTelemetryFallback(env, deliveryEvent, { silentFailure: true });
+
+    expect(accepted).toBe(false); // 1010 >= 1005 — a single 1000-object page would have missed this
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(put).not.toHaveBeenCalled();
+    expect(store.get('usage_telemetry_outbox_count')).toBe('1010'); // seeded for O(1) future reads
   });
 
   it('accepts actual measured cost while dropping unapproved metadata fields', async () => {
