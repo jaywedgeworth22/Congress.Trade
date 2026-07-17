@@ -762,13 +762,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* ---- Speed vs data providers (public latency proof) ---- */
   .speed-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
   .speed-head h3 { margin:0; }
-  .speed-body { display:grid; grid-template-columns:230px 1fr; gap:20px; align-items:start; min-height:170px; margin-top:10px; }
-  .speed-hero { transition: opacity 0.25s ease-in-out; }
-  .speed-hero.fade-out { opacity: 0; }
-  .speed-hero-num { font-size:44px; font-weight:800; letter-spacing:-0.5px; line-height:1.05; }
-  .speed-hero-label { color:var(--text-dim); font-size:13px; margin-top:3px; }
-  .speed-record { margin-top:10px; font-size:13px; font-family:var(--mono); font-variant-numeric:tabular-nums; }
-  .speed-n { margin-top:5px; font-size:11px; color:var(--text-dim); }
+  .speed-body { display:flex; flex-direction:column; gap:16px; min-height:170px; margin-top:10px; }
+  .speed-heroes-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin-bottom:4px; }
+  .speed-hero-card { background:color-mix(in srgb, var(--panel-2) 35%, transparent); border:1px solid var(--border); border-radius:10px; padding:12px 14px; text-align:left; display:flex; flex-direction:column; justify-content:center; }
+  .speed-hero-title { font-size:11px; font-weight:600; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; }
+  .speed-hero-num { font-size:32px; font-weight:800; letter-spacing:-0.5px; line-height:1.05; }
+  .speed-hero-label { color:var(--text-dim); font-size:12px; margin-top:3px; }
+  .speed-record { margin-top:8px; font-size:12px; font-family:var(--mono); font-variant-numeric:tabular-nums; }
+  .speed-n { margin-top:4px; font-size:11px; color:var(--text-dim); }
   .race-annot { position:relative; height:14px; font-size:11px; color:var(--text-dim); }
   .race-annot span { position:absolute; transform:translateX(-4px); white-space:nowrap; }
   .race-lane { margin-bottom:12px; }
@@ -1936,7 +1937,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <span class="note" id="speedUpdated"></span>
     </div>
     <div class="speed-body">
-      <div class="speed-hero" id="speedHero"><div class="sk sk-line" style="width:70%;height:34px"></div><div class="sk sk-line" style="width:55%"></div></div>
+      <div class="speed-heroes-grid" id="speedHero"><div class="sk sk-line" style="width:70%;height:34px"></div><div class="sk sk-line" style="width:55%"></div></div>
       <div id="speedRace"></div>
     </div>
     <p class="note">How this is measured: every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades and match them against filings we already ingested, comparing first-seen timestamps. Stats cover the most recent matched filings per provider and update continuously &mdash; wins, losses, and misses alike. &ldquo;Matched&rdquo; counts filings that had appeared in the provider&rsquo;s feed by probe time; a filing can appear there later. Nothing is hand-picked and nothing is frozen: these numbers move. A live measurement, not a promise.</p>
@@ -6559,8 +6560,6 @@ function speedLaneHtml(p, domainMin, domainMax) {
       '<div class="race-dot us" style="left:' + x(0) + '%"></div>' +
     '</div></div>';
 }
-var speedHeroInterval = null;
-var speedHeroIndex = 0;
 function renderSpeedProof() {
   var box = el('trLatencySection'); if (!box) return;
   fetchLatencySummary().then(function (d) {
@@ -6572,41 +6571,27 @@ function renderSpeedProof() {
     var eligibleProvs = provs.filter(function (p) { return p.matched >= 1; });
     if (!eligibleProvs.length) { box.hidden = true; return; }
 
-    if (speedHeroInterval) clearInterval(speedHeroInterval);
-
-    function showHero(index) {
-      var p = eligibleProvs[index % eligibleProvs.length];
-      var heroHtml = '';
+    var heroHtml = eligibleProvs.map(function (p) {
+      var numHtml = '';
+      var labelHtml = '';
       if (p.medianLeadSec != null && p.medianLeadSec > 0) {
-        heroHtml = '<div class="speed-hero-num">' + fmtLead(p.medianLeadSec) + '</div>' +
-          '<div class="speed-hero-label">typical head start vs ' + esc(p.label) + '</div>';
+        numHtml = '<div class="speed-hero-num">' + fmtLead(p.medianLeadSec) + '</div>';
+        labelHtml = '<div class="speed-hero-label">typical head start</div>';
       } else {
-        heroHtml = '<div class="speed-hero-num">' + p.usFirstCount + ' of ' + p.matched + '</div>' +
-          '<div class="speed-hero-label">matched filings where we were first vs ' + esc(p.label) + '</div>';
+        numHtml = '<div class="speed-hero-num">' + p.usFirstCount + ' of ' + p.matched + '</div>';
+        labelHtml = '<div class="speed-hero-label">filings surfaced first</div>';
       }
-      heroHtml += '<div class="speed-record">Ahead ' + p.usFirstCount + ' · Behind ' + (p.providerFirstCount || 0) + ' · Ties ' + (p.tieCount || 0) + '</div>' +
-        '<div class="speed-n">n = ' + p.matched + ' matched filings<br/>positive means we published first</div>';
-      
-      var heroEl = el('speedHero');
-      if (heroEl) {
-        heroEl.classList.add('fade-out');
-        setTimeout(function () {
-          heroEl.innerHTML = heroHtml;
-          heroEl.classList.remove('fade-out');
-        }, 250);
-      }
-    }
+      return '<div class="speed-hero-card">' +
+        '<div class="speed-hero-title">' + esc(p.label) + '</div>' +
+        numHtml +
+        labelHtml +
+        '<div class="speed-record">Ahead ' + p.usFirstCount + ' · Behind ' + (p.providerFirstCount || 0) + ' · Ties ' + (p.tieCount || 0) + '</div>' +
+        '<div class="speed-n">n = ' + p.matched + ' matched filings</div>' +
+        '</div>';
+    }).join('');
 
-    // Initial render
-    showHero(speedHeroIndex);
-
-    // Cycle every 4 seconds
-    if (eligibleProvs.length > 1) {
-      speedHeroInterval = setInterval(function () {
-        speedHeroIndex++;
-        showHero(speedHeroIndex);
-      }, 4000);
-    }
+    var heroEl = el('speedHero');
+    if (heroEl) heroEl.innerHTML = heroHtml;
 
     box.hidden = false;
     var withLane = provs.filter(function (p) { return p.matched >= SPEED_LANE_MIN_MATCHED; });
