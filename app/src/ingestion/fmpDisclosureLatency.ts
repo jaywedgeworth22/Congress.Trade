@@ -965,11 +965,47 @@ async function runUnusualWhalesDeepMatch(
 
   const errors: string[] = [];
   let fetchedRows = 0;
+  // Pre-load existing observations so we can preserve the real first_observed_at
+  // for rows that already existed — the upsert only bumps last_observed_at for
+  // existing rows, and loadProviderRows' first_observed_at >= cutoff filter
+  // would exclude them, leaving only the synthetic rows below whose
+  // first_observed_at would be wrong (nowIso instead of the actual first-seen).
+  const existingObsRows = await all<Pick<ProviderObservationRow, 'chamber' | 'provider_key' | 'first_observed_at'>>(
+    env.DB,
+    `SELECT chamber, provider_key, first_observed_at
+       FROM disclosure_provider_observations
+      WHERE provider = ?
+      LIMIT 5000`,
+    [provider.id],
+  );
+  const firstObservedAtByKey = new Map<string, string>();
+  for (const obs of existingObsRows) {
+    firstObservedAtByKey.set(`${obs.chamber}:${obs.provider_key}`, obs.first_observed_at);
+  }
+
+  // Collect fresh rows from deep-match fetches directly so they are available
+  // for candidate matching regardless of first_observed_at age (the upsert
+  // only updates last_observed_at for existing rows, so loadProviderRows'
+  // first_observed_at >= cutoff filter can exclude them).
+  const deepFreshObservationRows: ProviderObservationRow[] = [];
   for (const date of targetDates) {
     try {
       const rows = await fetchUnusualWhalesRowsForDate(apiKey, fetchImpl, date);
       fetchedRows += rows.length;
       await upsertProviderRows(env, provider.id, rows, nowIso);
+      for (const row of rows) {
+        deepFreshObservationRows.push({
+          provider: row.provider,
+          chamber: row.chamber,
+          provider_key: row.providerKey,
+          first_observed_at: firstObservedAtByKey.get(`${row.chamber}:${row.providerKey}`) ?? nowIso,
+          provider_published_at: row.providerPublishedAt,
+          source_url: row.sourceUrl,
+          filed_date: row.filedDate,
+          filer_name: row.filerName,
+          payload: JSON.stringify(row.payload).slice(0, PAYLOAD_LIMIT),
+        });
+      }
     } catch (err) {
       // A single date's failure (401/403/429/5xx, e.g. a lapsed trial key)
       // must not abort the rest of the deep-match dates or the outer probe;
@@ -978,10 +1014,12 @@ async function runUnusualWhalesDeepMatch(
     }
   }
 
-  // Re-load provider rows so any freshly upserted deep-match rows (first_
-  // observed_at = nowIso, well within the recency cutoff) are considered.
+  // Merge DB-loaded rows (which may contain relevant rows from earlier normal
+  // passes) with the fresh deep-match rows. Duplicates are harmless — the
+  // matching loop iterates rows and breaks on the first match.
   const providerRows = await loadProviderRows(env, provider.id, now);
-  const result = await matchAndUpdateCandidates(env, provider, targetCandidates, providerRows, nowIso, errors);
+  const allRows = [...providerRows, ...deepFreshObservationRows];
+  const result = await matchAndUpdateCandidates(env, provider, targetCandidates, allRows, nowIso, errors);
   return { ...result, fetchedRows, errors };
 }
 
@@ -1082,7 +1120,13 @@ async function runProviderProbe(
     if (isUnusualWhales && freshRows.length) {
       const deep = await runUnusualWhalesDeepMatch(env, provider, apiKey, freshRows, now, nowIso, fetchImpl);
       totalFetchedRows += deep.fetchedRows;
-      totalPending += deep.pending;
+      // Don't add deep.pending: the deep-match pass operates on a subset of
+      // all pending candidates (those with old filed_dates that the normal
+      // pass couldn't match). Some of those may also appear in the normal
+      // pass's candidate set (top 100 by created_at), so summing the two
+      // pending counts would double-count any overlap. The normal pass's
+      // matched.pending is the authoritative pending snapshot — deep-match
+      // matched count is additive (new matches the normal pass missed).
       totalMatched += deep.matched;
       errors.push(...deep.errors);
     }
