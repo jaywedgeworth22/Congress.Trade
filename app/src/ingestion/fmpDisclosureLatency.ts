@@ -37,6 +37,7 @@ type EnvWithWatch = Env & {
   QUIVER_API_TOKEN?: string;
   FINNHUB_API_KEY?: string;
   AINVEST_API_KEY?: string;
+  UW_DEEP_MATCH_DATES_PER_RUN?: string;
 };
 
 interface CandidateRow {
@@ -166,6 +167,24 @@ interface ProviderDefinition {
 const DEFAULT_LIMIT = 100;
 const RECENT_PROVIDER_HOURS = 72;
 const PAYLOAD_LIMIT = 20_000;
+/**
+ * Unusual Whales' recent-trades page only holds ~200 rows, so a pending
+ * observation whose filing has scrolled outside that window can never match
+ * on the normal pass. The deep-match pass re-queries recent-trades anchored
+ * to specific transaction dates (see runUnusualWhalesDeepMatch) for up to
+ * this many distinct dates per probe run, rotating through the stranded
+ * backlog least-recently-checked first. 0 disables the pass entirely (e.g.
+ * once a trial API key lapses and the extra calls would just 401).
+ */
+const UW_DEEP_MATCH_DEFAULT_DATES_PER_RUN = 8;
+const UW_DEEP_MATCH_MAX_DATES_PER_RUN = 25;
+/** Upper bound on how many provably-outside-window pending rows we'll scan
+ *  per run to pick deep-match dates from; well above the ~52 UW rows
+ *  currently stranded in production. */
+const UW_DEEP_MATCH_CANDIDATE_LIMIT = 500;
+/** Bind-parameter chunk size for `IN (...)` lookups (D1 caps bound params per
+ *  statement; stay comfortably under it). */
+const SQL_IN_CHUNK = 50;
 /** Mirrors DEFAULT_DAILY_CAP in enrichment/service.ts (free-tier fallback). */
 const FMP_DEFAULT_DAILY_CAP = 230;
 /**
@@ -272,6 +291,19 @@ async function limit(env: EnvWithWatch): Promise<number> {
     env.FMP_DISCLOSURE_WATCH_LIMIT;
   const n = parseInt(raw || '', 10);
   return Number.isFinite(n) && n > 0 ? Math.min(n, 500) : DEFAULT_LIMIT;
+}
+
+/** How many distinct filed dates the UW deep-match pass may query per probe
+ *  run. Unset/invalid -> default 8; explicit "0" disables the pass; clamped
+ *  to [0, 25] otherwise so a misconfigured value can't blow up UW call
+ *  volume. */
+async function uwDeepMatchDatesPerRun(env: EnvWithWatch): Promise<number> {
+  const raw =
+    (await resolveSecret(env, 'UW_DEEP_MATCH_DATES_PER_RUN')).value ?? env.UW_DEEP_MATCH_DATES_PER_RUN;
+  if (raw == null || raw.trim() === '') return UW_DEEP_MATCH_DEFAULT_DATES_PER_RUN;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n)) return UW_DEEP_MATCH_DEFAULT_DATES_PER_RUN;
+  return Math.min(Math.max(n, 0), UW_DEEP_MATCH_MAX_DATES_PER_RUN);
 }
 
 /** True when `err` reflects an optional table/column that hasn't been migrated yet. */
@@ -576,10 +608,32 @@ async function fetchFmpRows(
   return (await Promise.all([fetchOne('house'), fetchOne('senate')])).flat();
 }
 
+function unusualWhalesHeaders(apiKey: string): Record<string, string> {
+  return { authorization: `Bearer ${apiKey}`, 'UW-CLIENT-API-ID': '100001' };
+}
+
 async function fetchUnusualWhalesRows(apiKey: string, max: number, fetchImpl: typeof fetch): Promise<DisclosureProviderRow[]> {
   const url = `https://api.unusualwhales.com/api/congress/recent-trades?limit=${Math.min(max, 200)}`;
-  const headers = { authorization: `Bearer ${apiKey}`, 'UW-CLIENT-API-ID': '100001' };
-  return parseUnusualWhalesDisclosureRows(await fetchJson(url, headers, fetchImpl));
+  return parseUnusualWhalesDisclosureRows(await fetchJson(url, unusualWhalesHeaders(apiKey), fetchImpl));
+}
+
+/**
+ * Deep-match fetch: same recent-trades endpoint and parser as
+ * fetchUnusualWhalesRows, anchored to one date via UW's `date` query param
+ * instead of just taking the newest ~200 rows. IMPORTANT: UW's `date` param
+ * filters by TRANSACTION date, not filed_at_date (verified against the live
+ * API), so callers must pass a parsed transaction date from the filing, never
+ * the candidate's filed_date. Used by runUnusualWhalesDeepMatch to pull
+ * disclosures that have already scrolled outside the normal window. Not a
+ * fork of the parsing/matching logic - only the request URL differs.
+ */
+async function fetchUnusualWhalesRowsForDate(
+  apiKey: string,
+  fetchImpl: typeof fetch,
+  txDate: string,
+): Promise<DisclosureProviderRow[]> {
+  const url = `https://api.unusualwhales.com/api/congress/recent-trades?limit=200&date=${encodeURIComponent(txDate)}`;
+  return parseUnusualWhalesDisclosureRows(await fetchJson(url, unusualWhalesHeaders(apiKey), fetchImpl));
 }
 
 async function fetchQuiverRows(apiKey: string, max: number, fetchImpl: typeof fetch): Promise<DisclosureProviderRow[]> {
@@ -740,26 +794,25 @@ async function loadProviderRows(env: Env, provider: ProviderId, now: Date): Prom
   );
 }
 
-async function matchPendingCandidates(
+/**
+ * Matches a given set of candidates against a given set of already-loaded
+ * provider observation rows, applying the same status/attempts/backoff
+ * bookkeeping and match alert regardless of which pass (normal window or
+ * deep-match) produced the candidate/row sets. This is the single place
+ * that owns the match-loop + DB-update shape so the deep-match pass never
+ * forks the matching algorithm - it just supplies a different candidate
+ * list and provider-row set.
+ */
+async function matchAndUpdateCandidates(
   env: Env,
   provider: ProviderDefinition,
-  now: Date,
+  candidates: CandidateRow[],
+  providerRows: ProviderObservationRow[],
   nowIso: string,
   errors: string[],
-): Promise<{ pending: number; matched: number }> {
-  const candidates = await all<CandidateRow>(
-    env.DB,
-    `SELECT doc_id, provider, chamber, source_url, filed_date, filer_name,
-            congress_first_seen_at, attempts
-       FROM disclosure_latency_candidates
-      WHERE provider = ? AND status = 'pending'
-      ORDER BY created_at DESC
-      LIMIT 100`,
-    [provider.id],
-  );
-  const providerRows = await loadProviderRows(env, provider.id, now);
-
+): Promise<{ pending: number; matched: number; matchedDocIds: string[] }> {
   let matched = 0;
+  const matchedDocIds: string[] = [];
   const updates: Array<[string, SqlParam[]]> = [];
   const alerts: Array<() => Promise<void>> = [];
 
@@ -814,6 +867,7 @@ async function matchPendingCandidates(
         ],
       ]);
       matched++;
+      matchedDocIds.push(candidate.doc_id);
       const m = match;
       alerts.push(() => alertMatch(env, provider, candidate, m));
     } else {
@@ -833,7 +887,230 @@ async function matchPendingCandidates(
     await alertFn();
   }
 
-  return { pending: candidates.length, matched };
+  return { pending: candidates.length, matched, matchedDocIds };
+}
+
+async function matchPendingCandidates(
+  env: Env,
+  provider: ProviderDefinition,
+  now: Date,
+  nowIso: string,
+  errors: string[],
+): Promise<{ pending: number; matched: number; examinedDocIds: string[]; matchedDocIds: string[] }> {
+  const candidates = await all<CandidateRow>(
+    env.DB,
+    `SELECT doc_id, provider, chamber, source_url, filed_date, filer_name,
+            congress_first_seen_at, attempts
+       FROM disclosure_latency_candidates
+      WHERE provider = ? AND status = 'pending'
+      ORDER BY created_at DESC
+      LIMIT 100`,
+    [provider.id],
+  );
+  const providerRows = await loadProviderRows(env, provider.id, now);
+  const result = await matchAndUpdateCandidates(env, provider, candidates, providerRows, nowIso, errors);
+  return { ...result, examinedDocIds: candidates.map((c) => c.doc_id) };
+}
+
+/**
+ * Live (non-deprecated) parsed transaction dates for a set of filings, as a
+ * doc_id -> sorted distinct YYYY-MM-DD list. Chunked `IN` lookups keep each
+ * statement under D1's bound-parameter cap.
+ */
+async function loadTransactionDates(env: Env, docIds: string[]): Promise<Map<string, string[]>> {
+  const byDoc = new Map<string, string[]>();
+  const distinct = Array.from(new Set(docIds));
+  for (let i = 0; i < distinct.length; i += SQL_IN_CHUNK) {
+    const chunk = distinct.slice(i, i + SQL_IN_CHUNK);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const rows = await all<{ doc_id: string; tx_date: string }>(
+      env.DB,
+      `SELECT DISTINCT doc_id, tx_date
+         FROM transactions
+        WHERE doc_id IN (${placeholders}) AND tx_date IS NOT NULL AND deprecated_at IS NULL`,
+      chunk,
+    );
+    for (const row of rows) {
+      const date = normalizeDate(row.tx_date);
+      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+      const list = byDoc.get(row.doc_id) ?? [];
+      if (!list.includes(date)) list.push(date);
+      byDoc.set(row.doc_id, list);
+    }
+  }
+  for (const list of byDoc.values()) list.sort();
+  return byDoc;
+}
+
+/**
+ * Observation rows for exactly the given provider keys, straight from the DB
+ * with NO first_observed_at recency cutoff (unlike loadProviderRows). Used by
+ * the deep-match pass so a just-fetched row is always matchable even when its
+ * first observation predates the 72h window, and so matching sees the
+ * DB-canonical first_observed_at that the upsert preserved for rows this
+ * monitor had already observed - provider_first_seen_at must never be
+ * inflated to "now" for a row we actually saw earlier.
+ */
+async function loadObservationRowsByKeys(
+  env: Env,
+  provider: ProviderId,
+  providerKeys: string[],
+): Promise<ProviderObservationRow[]> {
+  const out: ProviderObservationRow[] = [];
+  for (let i = 0; i < providerKeys.length; i += SQL_IN_CHUNK) {
+    const chunk = providerKeys.slice(i, i + SQL_IN_CHUNK);
+    const placeholders = chunk.map(() => '?').join(', ');
+    out.push(
+      ...(await all<ProviderObservationRow>(
+        env.DB,
+        `SELECT provider, chamber, provider_key, first_observed_at, provider_published_at,
+                source_url, filed_date, filer_name, payload
+           FROM disclosure_provider_observations
+          WHERE provider = ? AND provider_key IN (${placeholders})`,
+        [provider, ...chunk],
+      )),
+    );
+  }
+  return out;
+}
+
+/**
+ * Bounded "deep match" pass for Unusual Whales. Its recent-trades feed only
+ * exposes the newest ~200 rows, so a pending observation whose filing has
+ * already scrolled outside that window can never match on the normal pass -
+ * it would sit pending forever even after UW publishes it. This re-queries
+ * recent-trades anchored to specific TRANSACTION dates (UW's `date` param
+ * filters by transaction date, not filed_at_date) drawn from each stranded
+ * filing's live parsed transactions, for up to `UW_DEEP_MATCH_DATES_PER_RUN`
+ * distinct dates per run, and reuses matchAndUpdateCandidates for the actual
+ * matching - no forked matching logic.
+ *
+ * Rotation: stranded candidates are visited least-recently-checked first
+ * (never-checked NULLs first), so with a backlog larger than the per-run cap
+ * successive runs cycle through the whole backlog instead of re-selecting the
+ * same dates forever. `attempts` breaks the tie the normal pass leaves when
+ * it stamps every pending row with the same last_checked_at in the same run:
+ * deep-pass targets accrue an extra attempt, pushing them behind untargeted
+ * rows on the next run.
+ *
+ * Matches found this way still get providerFirstSeenAt from the observation
+ * row's DB-canonical first_observed_at (monitor-first-seen), the same honest
+ * lower-bound semantics this provider already uses for its normal pass; we
+ * never fabricate a provider-published timestamp from a deep-match hit.
+ *
+ * Only called when the normal pass's fetch already succeeded (freshRows
+ * non-empty), so once a trial UW key lapses and the normal fetch starts
+ * 401ing, this pass simply never runs - no extra failing calls, no extra
+ * noise, silent degradation back to the normal-only behavior.
+ */
+async function runUnusualWhalesDeepMatch(
+  env: Env,
+  provider: ProviderDefinition,
+  apiKey: string,
+  freshRows: DisclosureProviderRow[],
+  nowIso: string,
+  fetchImpl: typeof fetch,
+): Promise<{
+  pending: number;
+  matched: number;
+  fetchedRows: number;
+  errors: string[];
+  examinedDocIds: string[];
+  matchedDocIds: string[];
+}> {
+  const empty = {
+    pending: 0,
+    matched: 0,
+    fetchedRows: 0,
+    errors: [] as string[],
+    examinedDocIds: [] as string[],
+    matchedDocIds: [] as string[],
+  };
+  const capPerRun = await uwDeepMatchDatesPerRun(env as EnvWithWatch);
+  if (capPerRun <= 0) return empty;
+
+  const oldestFreshDate = freshRows
+    .map((row) => row.filedDate)
+    .filter((d): d is string => !!d)
+    .sort()[0];
+  if (!oldestFreshDate) return empty;
+
+  // Still-pending UW candidates whose filed_date predates the oldest row on
+  // the page we just fetched - provably outside this run's window. Ordered
+  // for rotation (see the function doc comment). The EXISTS clause requires
+  // at least one live parsed transaction BEFORE the scan cap applies:
+  // transactionless candidates (failed/empty extractions) never receive a
+  // deep attempt, so without the filter they would keep their rotation rank
+  // forever and a least-recently-checked window full of them would
+  // permanently starve every eligible candidate ranked behind them.
+  const oldPending = await all<CandidateRow>(
+    env.DB,
+    `SELECT doc_id, provider, chamber, source_url, filed_date, filer_name,
+            congress_first_seen_at, attempts
+       FROM disclosure_latency_candidates c
+      WHERE c.provider = ? AND c.status = 'pending' AND c.filed_date IS NOT NULL AND c.filed_date < ?
+        AND EXISTS (SELECT 1 FROM transactions t
+                     WHERE t.doc_id = c.doc_id AND t.tx_date IS NOT NULL AND t.deprecated_at IS NULL)
+      ORDER BY c.last_checked_at ASC, c.attempts ASC, c.filed_date ASC
+      LIMIT ?`,
+    [provider.id, oldestFreshDate, UW_DEEP_MATCH_CANDIDATE_LIMIT],
+  );
+  if (!oldPending.length) return empty;
+
+  // UW's `date` filter selects by transaction date, so the fetch targets are
+  // the stranded filings' parsed transaction dates - never their filed_date.
+  const txDatesByDoc = await loadTransactionDates(env, oldPending.map((c) => c.doc_id));
+
+  // Walk candidates in rotation order, accumulating distinct transaction
+  // dates until the per-run cap is reached. A candidate is targeted when at
+  // least one of its transaction dates gets fetched this run (any row from
+  // the filing can match it, whichever date page the row appears on).
+  const targetDates: string[] = [];
+  const targetDateSet = new Set<string>();
+  const targetCandidates: CandidateRow[] = [];
+  for (const candidate of oldPending) {
+    // A filing with no live parsed transactions has no transaction dates to
+    // anchor a deep fetch on - and with no rows on any date page it could
+    // never row-match - so skip it rather than burn a trial call on a
+    // wrong-date page. The candidate query's EXISTS clause already excludes
+    // these; this in-loop skip is belt-and-suspenders for transactions
+    // deprecated between the two queries.
+    const txDates = txDatesByDoc.get(candidate.doc_id) ?? [];
+    if (!txDates.length) continue;
+    for (const date of txDates) {
+      if (targetDateSet.has(date) || targetDateSet.size >= capPerRun) continue;
+      targetDateSet.add(date);
+      targetDates.push(date);
+    }
+    if (txDates.some((date) => targetDateSet.has(date))) targetCandidates.push(candidate);
+  }
+  if (!targetDates.length) return empty;
+
+  const errors: string[] = [];
+  let fetchedRows = 0;
+  const fetchedKeys = new Set<string>();
+  for (const date of targetDates) {
+    try {
+      const rows = await fetchUnusualWhalesRowsForDate(apiKey, fetchImpl, date);
+      fetchedRows += rows.length;
+      await upsertProviderRows(env, provider.id, rows, nowIso);
+      for (const row of rows) fetchedKeys.add(row.providerKey);
+    } catch (err) {
+      // A single date's failure (401/403/429/5xx, e.g. a lapsed trial key)
+      // must not abort the rest of the deep-match dates or the outer probe;
+      // it flows into the same attempt/error bookkeeping as a normal miss.
+      errors.push((err as Error).message);
+    }
+  }
+
+  // Match against the post-upsert DB rows for exactly the keys the deep
+  // fetches returned: no 72h first_observed_at cutoff (a just-fetched row
+  // must be matchable even when this monitor first saw it long ago), and the
+  // DB-canonical first_observed_at rides along so provider_first_seen_at is
+  // never inflated to nowIso for a previously observed row.
+  const providerRows = await loadObservationRowsByKeys(env, provider.id, Array.from(fetchedKeys));
+  const result = await matchAndUpdateCandidates(env, provider, targetCandidates, providerRows, nowIso, errors);
+  return { ...result, fetchedRows, errors, examinedDocIds: targetCandidates.map((c) => c.doc_id) };
 }
 
 async function runProviderProbe(
@@ -855,8 +1132,10 @@ async function runProviderProbe(
 
   const nowIso = now.toISOString();
   const isFmp = provider.id === 'fmp';
+  const isUnusualWhales = provider.id === 'unusual_whales';
   const envx = env as EnvWithWatch;
   let fetchedRows = 0;
+  let freshRows: DisclosureProviderRow[] = [];
 
   // FMP is the only provider here metered against the shared FMP budget: its
   // calls draw on the same 'fmp:calls:<date>' daily counter and the same
@@ -904,6 +1183,7 @@ async function runProviderProbe(
     try {
       const rows = await provider.fetchRows(apiKey, max, fetchImpl, pace);
       fetchedRows = rows.length;
+      freshRows = rows;
       await upsertProviderRows(env, provider.id, rows, nowIso);
     } catch (err) {
       errors.push((err as Error).message);
@@ -918,7 +1198,32 @@ async function runProviderProbe(
 
   try {
     const matched = await matchPendingCandidates(env, provider, now, nowIso, errors);
-    return { ...base, configured: true, enabled: true, fetchedRows, pending: matched.pending, matched: matched.matched, errors };
+    let totalFetchedRows = fetchedRows;
+    let totalPending = matched.pending;
+    let totalMatched = matched.matched;
+
+    // UW's recent-trades page is capped at ~200 rows, so pending observations
+    // older than that window can never match here. Only worth attempting once
+    // the normal fetch actually returned rows to anchor a window against -
+    // when a lapsed trial key makes that fetch 401 (freshRows stays empty),
+    // this is skipped, degrading silently back to the normal-only behavior.
+    if (isUnusualWhales && freshRows.length) {
+      const deep = await runUnusualWhalesDeepMatch(env, provider, apiKey, freshRows, nowIso, fetchImpl);
+      totalFetchedRows += deep.fetchedRows;
+      totalMatched += deep.matched;
+      errors.push(...deep.errors);
+      // De-duplicated pending count across both passes: a stranded candidate
+      // can appear in the normal pass's newest-100 page AND in the deep
+      // pass's target set, and either pass may have just matched it, so
+      // summing the two per-pass pending counts would double-count. Count
+      // each distinct examined candidate once and subtract everything
+      // matched this run.
+      const examined = new Set([...matched.examinedDocIds, ...deep.examinedDocIds]);
+      const matchedIds = new Set([...matched.matchedDocIds, ...deep.matchedDocIds]);
+      totalPending = examined.size - matchedIds.size;
+    }
+
+    return { ...base, configured: true, enabled: true, fetchedRows: totalFetchedRows, pending: totalPending, matched: totalMatched, errors };
   } catch (err) {
     if (storageMissing(err)) {
       return { ...base, configured: true, enabled: true, fetchedRows, pending: 0, matched: 0, errors, reason: 'latency tables missing; run /api/admin/migrate' };
