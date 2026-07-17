@@ -144,10 +144,10 @@ export async function insertFilingIfNew(
         `INSERT INTO filers (bioguide_id, chamber, full_name, party, state, district, committees, photo_url)
          VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
          ON CONFLICT(bioguide_id) DO UPDATE SET
-           party = COALESCE(party, excluded.party),
-           photo_url = COALESCE(photo_url, excluded.photo_url)
-         WHERE (filers.party IS NULL AND excluded.party IS NOT NULL)
-            OR (filers.photo_url IS NULL AND excluded.photo_url IS NOT NULL)`,
+           party = COALESCE(excluded.party, party),
+           photo_url = COALESCE(excluded.photo_url, photo_url)
+         WHERE (excluded.party IS NOT NULL AND (filers.party IS NULL OR filers.party != excluded.party))
+            OR (excluded.photo_url IS NOT NULL AND (filers.photo_url IS NULL OR filers.photo_url != excluded.photo_url))`,
         [f.filerId, f.chamber, f.filerName, f.party ?? null, f.state ?? null, f.district ?? null, f.photoUrl ?? null],
       );
     } else {
