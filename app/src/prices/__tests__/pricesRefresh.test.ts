@@ -126,7 +126,7 @@ describe('runPriceRefresh — successful fetch bookkeeping', () => {
 });
 
 describe('runPriceRefresh — incremental fetch window (Fix 3)', () => {
-  it('fetches a ticker only from the last cached close minus a 7-day overlap', async () => {
+  it('fetches a ticker covering both the cached close and all trade dates', async () => {
     seedTrade('t3', 'MSFT', '2012-03-01'); // ancient first trade
     db.prepare("INSERT INTO price_eod (ticker, date, close) VALUES ('MSFT', '2026-07-01', 300)").run();
     // latest_price_date far in the past → guaranteed stale → selected regardless of run date.
@@ -139,8 +139,11 @@ describe('runPriceRefresh — incremental fetch window (Fix 3)', () => {
     await runPriceRefresh(env, { max: 10 });
 
     const call = h.eodCalls.find((c) => c.symbol === 'MSFT');
-    // 2026-07-01 (max cached) minus 7 days — NOT the 2012 first-trade window.
-    expect(call?.from).toBe('2026-06-24');
+    // Must cover the oldest trade (2012-03-01 minus 7d = 2012-02-23) not just
+    // the cached max minus 7d — otherwise trade/filing anchors for old
+    // transactions are permanently NULL (latest_price_date is updated to the
+    // latest close after this pass, so the ticker is never re-selected).
+    expect(call?.from).toBe('2012-02-23');
   });
 
   it('fetches SPX only from the last cached spx close minus a 7-day overlap', async () => {

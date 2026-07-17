@@ -267,12 +267,21 @@ export async function runPriceRefresh(
       'SELECT MAX(date) AS d FROM price_eod WHERE ticker = ?',
       [ticker],
     );
+    let oldestTrade = trades[0].tx_date;
+    for (const t of trades) if (t.tx_date < oldestTrade) oldestTrade = t.tx_date;
     let from: string;
     if (cachedPrice?.d) {
-      from = isoDaysAgo(7, new Date(cachedPrice.d));
+      // Cover both the recent-window (freshness + 7-day overlap for corrections)
+      // AND the oldest trade (historical completeness so trade/filing anchors aren't
+      // permanently NULL for older transactions). Without this, a ticker that has
+      // recent cached closes but gap-covered transactions would never fill those gaps
+      // because the narrow window skips them — yet latest_price_date is updated to
+      // the latest close, so the ticker is never re-selected for missing history.
+      from = isoDaysAgo(7, new Date(Math.min(
+        new Date(cachedPrice.d).getTime(),
+        new Date(oldestTrade).getTime(),
+      )));
     } else {
-      let oldestTrade = trades[0].tx_date;
-      for (const t of trades) if (t.tx_date < oldestTrade) oldestTrade = t.tx_date;
       from = isoDaysAgo(7, new Date(oldestTrade));
     }
     let hist: Close[] = [];
