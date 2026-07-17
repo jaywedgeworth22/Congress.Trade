@@ -33,8 +33,13 @@ describe('buildMassivePriceClient', () => {
     const out = await buildMassivePriceClient('k', fetchWith(200, aggs)).eodHistory('AAPL', '2024-01-01', '2024-01-05');
     expect(out[0]).toEqual({ date: '2024-01-03', close: 184.25 });
   });
-  it('returns [] (no throw) on a non-OK response so a fallback chain continues', async () => {
-    expect(await buildMassivePriceClient('k', fetchWith(403)).eodHistory('AAPL', 'a', 'b')).toEqual([]);
-    expect(await buildMassivePriceClient('k', fetchWith(429)).spxHistory('a', 'b')).toEqual([]);
+  it('returns [] on 404 (unknown symbol) but throws on transient/auth/server errors', async () => {
+    // 404 = genuine "no data" so a delisted/unknown ticker can be negative-cached.
+    expect(await buildMassivePriceClient('k', fetchWith(404)).eodHistory('ZZZZ', 'a', 'b')).toEqual([]);
+    // Auth/rate/server failures throw so the caller skips + retries instead of
+    // negative-caching priceable tickers during a transient outage.
+    await expect(buildMassivePriceClient('k', fetchWith(403)).eodHistory('AAPL', 'a', 'b')).rejects.toThrow('MASSIVE_HTTP_403');
+    await expect(buildMassivePriceClient('k', fetchWith(429)).spxHistory('a', 'b')).rejects.toThrow('MASSIVE_HTTP_429');
+    await expect(buildMassivePriceClient('k', fetchWith(500)).eodHistory('AAPL', 'a', 'b')).rejects.toThrow('MASSIVE_HTTP_500');
   });
 });

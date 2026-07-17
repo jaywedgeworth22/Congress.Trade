@@ -56,8 +56,12 @@ export function buildFmpPriceClient(apiKey: string, fetchImpl: typeof fetch = fe
       headers: { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json' },
     }, { service: 'market-prices', operation: 'fetch-price-history' }, fetchImpl);
     if (!res.ok) {
-      assertFmpTierOk(res.status); // throws on 401/402/403/429 (key/plan broken)
-      return []; // other non-OK (404, …) => treat as "no data"
+      assertFmpTierOk(res.status); // throws FMP_HTTP_401/402/403/429 (key/plan broken)
+      if (res.status === 404) return []; // unknown ticker => genuinely no data (safe to negative-cache)
+      // Any other non-OK (5xx, 408, …) is a transient/server failure that fails
+      // identically for every ticker — throw so the caller retries next cycle
+      // instead of negative-caching a priceable ticker on an outage.
+      throw new Error('FMP_HTTP_' + res.status);
     }
     return parseEodHistory(await res.json());
   }
