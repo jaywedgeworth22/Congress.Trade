@@ -136,13 +136,28 @@ let keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKe
     let chunks: ArrayBuffer[] = [input.bytes];
     let pageCount = 0;
     
-    // Dynamically skip chunking for models with massive context windows
-    const isMassiveContextModel = model.includes('gemini-3.5-flash') || model.includes('claude-sonnet-5');
+    // Dynamically skip chunking for models with massive context windows:
+    // - All Gemini models (1.5, 2.0, 2.5, 3.0, 3.5 - any variant)
+    // - All Claude 3+ models (claude-3, claude-sonnet, claude-opus, etc.)
+    // - GPT-4o and later (gpt-4o, gpt-4.1, gpt-5, o1, o3, o4)
+    // - Any model accessed via OpenRouter (since OpenRouter handles PDF processing natively server-side)
+    const lowerModel = model.toLowerCase();
+    const isMassiveContextModel =
+      lowerModel.includes('gemini') ||
+      lowerModel.includes('claude-3') ||
+      lowerModel.includes('claude-sonnet') ||
+      lowerModel.includes('claude-opus') ||
+      lowerModel.includes('claude-haiku') ||
+      lowerModel.includes('gpt-4o') ||
+      lowerModel.includes('gpt-4.1') ||
+      lowerModel.includes('gpt-5') ||
+      /(^|[\/:])(o1|o3|o4)/.test(lowerModel) ||
+      lowerModel.includes('openrouter');
 
     try {
       const pdfDoc = await PDFDocument.load(input.bytes, { ignoreEncryption: true });
       pageCount = pdfDoc.getPageCount();
-      const MAX_PAGES = 15;
+      const MAX_PAGES = 50;
       if (pageCount > MAX_PAGES && !isMassiveContextModel) {
         chunks = [];
         for (let i = 0; i < pageCount; i += MAX_PAGES) {

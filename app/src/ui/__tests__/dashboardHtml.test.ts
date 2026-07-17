@@ -193,13 +193,12 @@ describe('DASHBOARD_HTML', () => {
     // Filter-independent: not stamped with the Trends window chip and not in loadTrends.
     expect(DASHBOARD_HTML).not.toMatch(/Speed vs\. Data Providers[^<]*<\/h3[^>]*class="tf-h"/);
     expect(DASHBOARD_HTML).toContain('function renderSpeedProof(');
-    // Honesty guard rails: lane threshold, boast threshold, empty-state copy,
+    // Honesty guard rails: lane threshold, empty-state copy,
     // losses always displayed, sample sizes visible, trademark fine print.
     expect(DASHBOARD_HTML).toContain('var SPEED_LANE_MIN_MATCHED = 5');
-    expect(DASHBOARD_HTML).toContain('var SPEED_BOAST_MIN_MATCHED = 10');
-    expect(DASHBOARD_HTML).toContain('No overlapping disclosures yet');
-    expect(DASHBOARD_HTML).toContain('Behind ');
-    expect(DASHBOARD_HTML).toContain(' of ' + "' + p.candidates + '" + ' matched');
+    expect(DASHBOARD_HTML).toContain("Probes haven't found overlapping disclosures yet.");
+    expect(DASHBOARD_HTML).toContain('<span class="sp-wlt-key">Losses</span>');
+    expect(DASHBOARD_HTML).toContain('matched so far');
     expect(DASHBOARD_HTML).toContain('A live measurement, not a promise');
     expect(DASHBOARD_HTML).toContain('trademarks of their respective owners');
     // Every comparable provider rides the same honesty rails — no name-based
