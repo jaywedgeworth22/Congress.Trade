@@ -760,11 +760,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* ---- Speed vs data providers (public latency proof) ---- */
   .speed-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
   .speed-head h3 { margin:0; }
-  .speed-body { display:grid; grid-template-columns:230px 1fr; gap:20px; align-items:start; min-height:170px; margin-top:10px; }
-  .speed-hero-num { font-size:44px; font-weight:800; letter-spacing:-0.5px; line-height:1.05; }
-  .speed-hero-label { color:var(--text-dim); font-size:13px; margin-top:3px; }
-  .speed-record { margin-top:10px; font-size:13px; font-family:var(--mono); font-variant-numeric:tabular-nums; }
-  .speed-n { margin-top:5px; font-size:11px; color:var(--text-dim); }
+  .speed-body { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:20px; align-items:start; min-height:170px; margin-top:10px; }
+  .speed-hero-card { background:color-mix(in srgb, var(--panel-2) 35%, transparent); border:1px solid var(--border); border-radius:10px; padding:12px 14px; text-align:center; display:flex; flex-direction:column; justify-content:space-between; }
+  .speed-hero-top { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px; }
+  .speed-hero-title { font-size:12px; font-weight:600; color:var(--text); text-transform:uppercase; letter-spacing:0.5px; }
+  .speed-hero-badge { font-size:11px; color:var(--text-dim); background:var(--panel); padding:2px 6px; border-radius:4px; }
+  .speed-hero-main { padding:8px 0; }
+  .speed-hero-num { font-size:36px; font-weight:800; letter-spacing:-0.5px; line-height:1.05; }
+  .speed-hero-label { color:var(--text-dim); font-size:12px; margin-top:4px; }
+  .speed-hero-foot { display:flex; justify-content:center; gap:8px; font-size:12px; font-family:var(--mono); color:var(--text-dim); margin-top:8px; padding-top:8px; border-top:1px dashed var(--border); }
+  .speed-hero-foot .win { color:var(--accent); font-weight:600; }
+  .speed-hero-foot .loss { color:var(--rival); }
   .race-annot { position:relative; height:14px; font-size:11px; color:var(--text-dim); }
   .race-annot span { position:absolute; transform:translateX(-4px); white-space:nowrap; }
   .race-lane { margin-bottom:12px; }
@@ -773,16 +779,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .race-name .race-nn { color:var(--text-dim); font-weight:400; font-size:11px; margin-left:6px; }
   .race-vals { font-family:var(--mono); font-variant-numeric:tabular-nums; }
   .race-vals .p90 { color:var(--text-dim); }
-  .race-strip { position:relative; height:20px; }
-  .race-rail { position:absolute; left:0; right:0; top:9px; height:2px; background:color-mix(in srgb, var(--border) 80%, transparent); }
-  .race-span { position:absolute; top:9px; height:2px; background:var(--rival); }
-  .race-dot { position:absolute; top:4px; width:12px; height:12px; border-radius:50%; box-shadow:0 0 0 2px var(--panel); transform:translateX(-50%); }
+  .race-strip { position:relative; height:16px; margin-top:6px; }
+  .race-rail { position:absolute; left:0; right:0; top:7px; height:2px; background:color-mix(in srgb, var(--border) 40%, transparent); }
+  .race-span { position:absolute; top:5px; height:6px; border-radius:3px; background:color-mix(in srgb, var(--rival) 60%, transparent); }
+  .race-dot { position:absolute; top:3px; width:10px; height:10px; border-radius:50%; transform:translateX(-50%); }
   .race-dot.us { background:var(--accent); }
   .race-dot.them { background:var(--rival); }
-  .race-p90tick { position:absolute; top:5px; width:2px; height:10px; background:var(--rival); transform:translateX(-50%); }
+  .race-p90tick { position:absolute; top:4px; width:2px; height:8px; background:var(--rival); transform:translateX(-50%); }
   .race-empty { font-size:12px; color:var(--text-dim); padding:2px 0 4px; }
-  .race-axis { position:relative; height:16px; font-size:10.5px; color:var(--text-dim); font-family:var(--mono); border-top:1px solid var(--border); margin-top:2px; }
-  .race-axis span { position:absolute; top:2px; transform:translateX(-50%); white-space:nowrap; }
+  .race-axis { position:relative; height:16px; font-size:10.5px; color:var(--text-dim); font-family:var(--mono); border-top:1px solid color-mix(in srgb, var(--border) 50%, transparent); margin-top:2px; padding-top:4px; }
+  .race-axis span { position:absolute; top:4px; transform:translateX(-50%); white-space:nowrap; opacity:0.6; }
   .race-axis span:first-child { transform:none; }
   .race-axis span:last-child { transform:translateX(-100%); }
   .speed-fineprint { font-size:10.5px; }
@@ -2058,6 +2064,7 @@ var NAME_SUFFIX = { 'jr': 'Jr', 'jr.': 'Jr', 'sr': 'Sr', 'sr.': 'Sr', 'ii': 'II'
 function fmtName(raw) {
   var s = String(raw == null ? '' : raw).trim();
   if (!s) return '';
+  s = s.replace(/\s*\(\s*Senator\s*\)\s*/gi, '');
   while (s.indexOf('  ') >= 0) s = s.split('  ').join(' ');
   s = s.split(' , ').join(', ');
   var parts = s.split(' ');
@@ -6550,27 +6557,36 @@ function renderSpeedProof() {
     var provs = (d.providers || []).slice()
       .sort(function (a, b) { return b.matched - a.matched; });
     if (!d.totals || !d.totals.racedDisclosures || !provs.length) { box.hidden = true; return; }
-    var best = null;
-    provs.forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
-    var heroHtml = '';
-    if (best && (best.medianLeadSec || 0) > 0) {
-      heroHtml = '<div class="speed-hero-num">' + fmtLead(best.medianLeadSec) + '</div>' +
-        '<div class="speed-hero-label">typical head start vs ' + esc(best.label) + '</div>';
-    } else if (best && best.usFirstCount > (best.providerFirstCount || 0)) {
-      heroHtml = '<div class="speed-hero-num">' + best.usFirstCount + ' of ' + best.matched + '</div>' +
-        '<div class="speed-hero-label">matched filings where we were first vs ' + esc(best.label) + '</div>';
-    } else if (best) {
-      box.hidden = true; return; /* unfavorable window: hide, never spin */
-    } else {
-      var any = null; provs.forEach(function (p) { if (p.matched >= 1 && !any) any = p; });
-      if (!any) { box.hidden = true; return; }
-      heroHtml = '<div class="speed-hero-num">' + any.usFirstCount + ' of ' + any.matched + '</div>' +
-        '<div class="speed-hero-label">matched filings where we were first vs ' + esc(any.label) + '</div>';
-    }
-    if (best) {
-      heroHtml += '<div class="speed-record">Ahead ' + best.usFirstCount + ' · Behind ' + (best.providerFirstCount || 0) + ' · Ties ' + (best.tieCount || 0) + '</div>' +
-        '<div class="speed-n">n = ' + best.matched + ' matched filings<br/>positive means we published first</div>';
-    }
+    var eligibleProvs = provs.filter(function (p) { return p.matched >= 1; });
+    if (!eligibleProvs.length) { box.hidden = true; return; }
+
+    var heroHtml = eligibleProvs.map(function (p) {
+      var numHtml = '';
+      var labelHtml = '';
+      if (p.medianLeadSec != null && p.medianLeadSec > 0) {
+        numHtml = '<div class="speed-hero-num">' + fmtLead(p.medianLeadSec) + '</div>';
+        labelHtml = '<div class="speed-hero-label">typical lead</div>';
+      } else {
+        numHtml = '<div class="speed-hero-num">' + p.usFirstCount + ' of ' + p.matched + '</div>';
+        labelHtml = '<div class="speed-hero-label">filings surfaced first</div>';
+      }
+      return '<div class="speed-hero-card">' +
+        '<div class="speed-hero-top">' +
+          '<span class="speed-hero-title">' + esc(p.label) + '</span>' +
+          '<span class="speed-hero-badge">n=' + p.matched + '</span>' +
+        '</div>' +
+        '<div class="speed-hero-main">' +
+          numHtml +
+          labelHtml +
+        '</div>' +
+        '<div class="speed-hero-foot">' +
+          '<span class="win">W: ' + p.usFirstCount + '</span> • ' +
+          '<span class="loss">L: ' + (p.providerFirstCount || 0) + '</span> • ' +
+          '<span class="tie">T: ' + (p.tieCount || 0) + '</span>' +
+        '</div>' +
+        '</div>';
+    }).join('');
+
     box.hidden = false;
     el('speedHero').innerHTML = heroHtml;
     var withLane = provs.filter(function (p) { return p.matched >= SPEED_LANE_MIN_MATCHED; });
