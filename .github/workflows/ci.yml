@@ -18,12 +18,14 @@ jobs:
   # runs-on is switchable via the CT_CI_RUNNER repository variable:
   # unset/empty -> GitHub-hosted ubuntu-latest; "congress-ci" -> the
   # resource-guarded self-hosted runner on the Hetzner/Coolify box (saves
-  # metered Actions minutes). If the self-hosted runner is down and PRs
-  # queue, clear the variable to fall back:
+  # metered Actions minutes). dependabot[bot] PRs always stay on GitHub-hosted
+  # runners: they execute third-party dependency install scripts, which must
+  # not run on the box that hosts production and a repo-scoped PAT. If the
+  # self-hosted runner is down and PRs queue, clear the variable to fall back:
   #   gh variable set CT_CI_RUNNER --body "" (or delete it)
   build:
     name: typecheck + test
-    runs-on: ${{ vars.CT_CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: app
@@ -50,8 +52,8 @@ jobs:
 
   pwa:
     name: PWA typecheck + test + build
-    # Same CT_CI_RUNNER switch as the build job above.
-    runs-on: ${{ vars.CT_CI_RUNNER || 'ubuntu-latest' }}
+    # Same CT_CI_RUNNER switch (and dependabot carve-out) as the build job above.
+    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: clients/pwa
