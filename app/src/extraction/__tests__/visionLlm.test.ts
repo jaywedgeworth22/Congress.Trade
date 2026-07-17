@@ -111,6 +111,46 @@ describe('VisionLlmExtractor', () => {
     const ex = new VisionLlmExtractor(env);
     await expect(ex.extract({ filing: filing(), bytes })).rejects.toThrow(/overloaded/);
   });
+
+  it('skips chunking for massive context models (e.g. Gemini, Claude 3, OpenRouter) even with >50 pages', async () => {
+    const pdf = await PDFDocument.create();
+    for (let i = 0; i < 60; i++) {
+      pdf.addPage([200, 200]);
+    }
+    const saved = await pdf.save();
+    const testBytes = saved.buffer.slice(saved.byteOffset, saved.byteOffset + saved.byteLength) as ArrayBuffer;
+
+    mockGenerateContent.mockResolvedValueOnce({
+      text: '[]',
+      usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
+      modelVersion: 'gemini-2.0-flash-test'
+    });
+
+    const ex = new VisionLlmExtractor(env, { model: 'openrouter:openai/gpt-4o' });
+    await ex.extract({ filing: filing(), bytes: testBytes });
+
+    expect(mockGenerateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it('chunks into 50-page segments for older/non-massive context models with >50 pages', async () => {
+    const pdf = await PDFDocument.create();
+    for (let i = 0; i < 60; i++) {
+      pdf.addPage([200, 200]);
+    }
+    const saved = await pdf.save();
+    const testBytes = saved.buffer.slice(saved.byteOffset, saved.byteOffset + saved.byteLength) as ArrayBuffer;
+
+    mockGenerateContent.mockResolvedValue({
+      text: '[]',
+      usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
+      modelVersion: 'legacy-model'
+    });
+
+    const ex = new VisionLlmExtractor(env, { model: 'legacy-model' });
+    await ex.extract({ filing: filing(), bytes: testBytes });
+
+    expect(mockGenerateContent).toHaveBeenCalledTimes(2);
+  });
 });
 
 
