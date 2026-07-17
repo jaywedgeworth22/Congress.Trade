@@ -7311,6 +7311,24 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
               [ticker, o.currentPrice, priceDate, priceDate, nowIso],
             );
           }
+          if (closes.length) {
+            // Also cover a closes-only import (no currentPrice) and set
+            // latest_price_date to the true max now cached for the ticker rather
+            // than the current-price date — the value selectTickersNeedingPrices
+            // compares against. Without this, a price-history-only push keeps
+            // latest_price_date NULL and the ticker is re-selected every daily run,
+            // re-igniting the backfill re-fetch spend this guards against.
+            await run(
+              c.env.DB,
+              `INSERT INTO securities_ref (ticker, latest_price_date, price_unavailable, price_checked_at)
+                 VALUES (?, (SELECT MAX(date) FROM price_eod WHERE ticker = ?), 0, ?)
+               ON CONFLICT(ticker) DO UPDATE SET
+                 latest_price_date = excluded.latest_price_date,
+                 price_unavailable = 0,
+                 price_checked_at = excluded.price_checked_at`,
+              [ticker, ticker, nowIso],
+            );
+          }
           // Recompute per-trade anchors for this ticker from the cached series.
           await run(
             c.env.DB,
