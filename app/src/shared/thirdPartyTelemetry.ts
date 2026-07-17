@@ -842,7 +842,7 @@ export async function trackedFetch(
         latencyMs: Math.max(0, Date.now() - startedAt),
         rateLimited: false,
         errorType: stableTag(error instanceof Error ? error.name : 'unknown', 'unknown'),
-        errors: error instanceof Error ? String(error.message) : String(error),
+        errors: stableTag(error instanceof Error ? error.name : 'unknown', 'unknown'),
       };
       await enqueueUsageTelemetryEvent(env, event, { silentFailure: runtime.silentQueueFailure });
     }
