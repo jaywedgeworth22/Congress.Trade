@@ -9,6 +9,7 @@ import {
   BASE_SCHEMA_STATEMENTS,
   EST_VALUE_SCHEMA_STATEMENTS,
   POST_0024_SCHEMA_STATEMENTS,
+  PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
   RELIABILITY_SCHEMA_STATEMENTS,
   REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
   STRIPE_EVENT_SCHEMA_STATEMENTS,
@@ -183,7 +184,17 @@ describe('admin migration bootstrap', () => {
    )`,
       `CREATE INDEX IF NOT EXISTS idx_usage_telemetry_fallback_events_updated
      ON usage_telemetry_fallback_events (updated_at)`,
+      ...PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
     ]);
+  });
+
+  it('negative-caches un-priceable tickers and indexes latest_price_date (0043)', () => {
+    const sql = PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('price_unavailable INTEGER NOT NULL DEFAULT 0');
+    expect(sql).toContain('price_checked_at TEXT');
+    expect(sql).toContain('latest_price_date TEXT');
+    expect(sql).toContain('idx_secref_latest_price_date');
+    expect(sql).toContain('SELECT MAX(pe.date) FROM price_eod');
   });
 
   it('includes the review autonomy schema mirrored by migrations 0033-0037', () => {

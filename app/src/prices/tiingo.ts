@@ -47,7 +47,13 @@ export function buildTiingoPriceClient(apiKey: string, fetchImpl: typeof fetch =
     const res = await trackedFetch(url, {
       headers: { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json' },
     }, { service: 'market-prices', operation: 'fetch-price-history' }, fetchImpl);
-    if (!res.ok) return []; // 401/403/404/429 → "no data" so a chain falls through
+    if (!res.ok) {
+      if (res.status === 404) return []; // symbol not found → genuinely no data (safe to negative-cache)
+      // Auth/rate/server errors (401/403/429/5xx) fail identically for every
+      // ticker — throw so the caller skips + retries rather than negative-caching
+      // priceable tickers during a transient outage.
+      throw new Error('TIINGO_HTTP_' + res.status);
+    }
     return parseTiingoPrices(await res.json());
   }
   return {

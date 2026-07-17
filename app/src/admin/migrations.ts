@@ -145,6 +145,37 @@ export const REVIEW_REVISION_SCHEMA_STATEMENTS = [
   'ALTER TABLE review_queue ADD COLUMN review_revision INTEGER NOT NULL DEFAULT 1',
 ] as const;
 
+/**
+ * 0043_price_backfill_termination.sql — negative-cache un-priceable tickers so
+ * the backfill-market loop can reach done:true, and maintain an indexed
+ * latest_price_date so price selection + freshness stop full-scanning price_eod.
+ * Keep in exact lockstep with migrations/0043_price_backfill_termination.sql.
+ */
+export const PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS = [
+  'ALTER TABLE securities_ref ADD COLUMN price_unavailable INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE securities_ref ADD COLUMN price_checked_at TEXT',
+  'ALTER TABLE securities_ref ADD COLUMN latest_price_date TEXT',
+  'CREATE INDEX IF NOT EXISTS idx_secref_latest_price_date ON securities_ref (latest_price_date)',
+  `UPDATE securities_ref
+   SET latest_price_date = (
+     SELECT MAX(pe.date) FROM price_eod pe WHERE pe.ticker = securities_ref.ticker
+   )
+ WHERE latest_price_date IS NULL`,
+  `UPDATE securities_ref
+   SET current_price = (
+         SELECT pe.close FROM price_eod pe
+          WHERE pe.ticker = securities_ref.ticker
+          ORDER BY pe.date DESC LIMIT 1
+       ),
+       current_price_date = (
+         SELECT pe.date FROM price_eod pe
+          WHERE pe.ticker = securities_ref.ticker
+          ORDER BY pe.date DESC LIMIT 1
+       )
+ WHERE current_price IS NULL
+   AND EXISTS (SELECT 1 FROM price_eod pe WHERE pe.ticker = securities_ref.ticker)`,
+] as const;
+
 /** Ordered review-queue autonomy schema mirrored by file migrations 0033-0037. */
 export const REVIEW_AUTONOMY_SCHEMA_STATEMENTS = [
   ...REVIEW_COMPLEXITY_SCHEMA_STATEMENTS,
@@ -182,4 +213,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
    )`,
   `CREATE INDEX IF NOT EXISTS idx_usage_telemetry_fallback_events_updated
      ON usage_telemetry_fallback_events (updated_at)`,
+  // 0043_price_backfill_termination.sql
+  ...PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
 ] as const;
