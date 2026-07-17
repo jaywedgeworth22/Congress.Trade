@@ -21,6 +21,8 @@ import type {
 } from '../shared/types';
 import { parseJson, toBool } from '../shared/db';
 import { canonicalizeAssetType } from '../shared/assetTypes';
+import { normalizeCompanyName } from '../shared/companyName';
+
 
 // ---------------------------------------------------------------------------
 // Raw row shapes (mirror the D1 column names in migrations/0001_init.sql)
@@ -171,6 +173,10 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
 
   // Strip 'Common Stock' from all asset names served to clients
   transaction.assetName = transaction.assetName.replace(/(?:\s*(?:-)?\s*Common Stock\b)/ig, '').trim();
+
+  // Normalize capitalization of the asset name
+  transaction.assetName = normalizeCompanyName(transaction.assetName, row.ticker) || transaction.assetName;
+
 
   return {
     ...transaction,
