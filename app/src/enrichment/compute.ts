@@ -9,7 +9,8 @@
  * deterministic so they unit-test without network or DB.
  */
 
-import { marketCapBucket as sharedMarketCapBucket, normalizeCompanyName } from '@jaywedgeworth22/congress-trading-shared';
+import { marketCapBucket as sharedMarketCapBucket } from '@jaywedgeworth22/congress-trading-shared';
+import { normalizeCompanyName } from '../shared/companyName';
 import type { MktCapBucket, SecurityRef } from './types';
 
 /** Bucket a USD market cap into the standard size tiers. null for missing/≤0. */
