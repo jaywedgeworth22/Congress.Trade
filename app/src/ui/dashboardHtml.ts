@@ -92,7 +92,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .table-wrap { overflow-x: auto; max-height: min(78vh, 920px); }
   #feedTable.resizable { table-layout: fixed; min-width: 100%; }
   #feedTable.resizable th, #feedTable.resizable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  #feedTable.resizable td.latency { white-space: normal; }
+  #feedTable.resizable th.c-latency, #feedTable.resizable td.latency { white-space: normal; width: 55px; min-width: 55px; max-width: 55px; word-break: break-word; }
   #feedTable.resizable th { text-align: center; padding-right: 18px; }
   #feedTable.resizable td > * { max-width: 100%; min-width: 0; }
   #feedTable.resizable .asset-cell,
@@ -587,15 +587,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .mini-date { display:flex; flex-direction:column; gap:2px; line-height:1.25; }
   .mini-date .subline { color:var(--text-dim); font-size:11px; }
   .mini-source-link { display:block; margin-top:2px; font-size:11px; font-weight:600; }
-  .colopts { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:6px; flex:1; }
-  .colopt { font-size:13px; color:var(--text); display:inline-flex; align-items:center; gap:7px; margin-right:0; white-space:nowrap; cursor:pointer; min-width:0; }
-  button.colopt { font-family:var(--sans); border:1px dashed var(--border); background:color-mix(in srgb,var(--panel-2) 65%,transparent); border-radius:999px; padding:3px 8px; }
+  .colopts { display:flex; flex-direction:column; gap:6px; flex:1; }
+  .colopt { font-size:13px; color:var(--text); display:flex; align-items:center; gap:10px; padding:8px 12px; background:var(--panel); border:1px solid var(--border); border-radius:6px; cursor:grab; margin-right:0; white-space:nowrap; min-width:0; }
+  button.colopt { font-family:var(--sans); }
   .colopt.locked { color:var(--text-dim); }
   .colopt.locked:hover { color:var(--text); border-color:color-mix(in srgb,var(--accent) 55%,var(--border)); }
   .colopt.dragging { opacity:.45; border-color:var(--accent); }
   .col-drag { color:var(--text-dim); cursor:grab; font-size:14px; line-height:1; }
-  .colopt input { flex:0 0 auto; }
-  .colopt-name { overflow:hidden; text-overflow:ellipsis; }
+  .colopt input { flex:0 0 auto; margin:0; }
+  .colopt-name { overflow:hidden; text-overflow:ellipsis; flex:1; }
   .premium-mark { display:inline-flex; align-items:center; justify-content:center; border:1px solid color-mix(in srgb,var(--accent) 42%,var(--border)); background:color-mix(in srgb,var(--accent) 9%,transparent); color:var(--accent); border-radius:999px; padding:1px 6px; font-size:10px; font-weight:800; line-height:1.4; }
   .panel-note { flex-basis:100%; width:100%; color:var(--text-dim); font-size:12px; line-height:1.45; margin-bottom:4px; }
   .premium-count-note { margin-left:8px; color:var(--text-dim); }
@@ -2594,23 +2594,22 @@ function lagCellHtml(r) {
   return '<span' + over + ' title="Days from trade to official filing date (STOCK Act limit: 45)">' + d + '</span>';
 }
 var FEED_COLS = [
-  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
+  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'bold', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
+  { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
   { id: 'member', label: 'Politician', sort: 'member', def: true, tip: 'Politician who filed the disclosure.', cell: memberCellHtml },
   { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
   { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
-  { id: 'sector', label: 'Sector', sort: 'refSector', def: true, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
-  { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: true, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
-  { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
-  { id: 'conf', label: 'Confidence', sort: 'conf', def: true, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
-  { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'Released to seen, then seen to imported for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
+  { id: 'marketcap', label: 'Cap', sort: 'refMarketCap', def: true, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
+  { id: 'country', label: '🌎', sort: 'refCountry', def: true, cls: 'muted', tier: 'premium', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
   { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
   { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
-  { id: 'country', label: 'Country', sort: 'refCountry', def: false, cls: 'muted', tier: 'premium', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
-  { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
   { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
-  { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return clipTextHtml(ownerLabel(r.chamber)); } },
-  { id: 'source', label: 'Source', sort: 'source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
+  { id: 'latency', label: 'Latency', sort: null, def: false, cls: 'latency', tier: 'admin', tip: 'Released to seen, then seen to imported for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
+  { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
+  { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
+  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
+  { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return clipTextHtml(ownerLabel(r.chamber)); } }
 ];
 var COL_HIDDEN_KEY = 'feed-cols-hidden-v3';
 var COL_ORDER_KEY = 'feed-cols-order-v3';
