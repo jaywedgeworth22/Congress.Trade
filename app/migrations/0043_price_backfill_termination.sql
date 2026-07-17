@@ -29,3 +29,23 @@ UPDATE securities_ref
      SELECT MAX(pe.date) FROM price_eod pe WHERE pe.ticker = securities_ref.ticker
    )
  WHERE latest_price_date IS NULL;
+
+-- Also seed current_price/current_price_date from the latest cached close for any
+-- row that has cached closes but no live anchor (e.g. closes-only imports accepted
+-- before the import handler populated it). Otherwise the new selector — which
+-- skips rows with a fresh latest_price_date (set just above) — would never repair
+-- the missing anchor, and current-return/member-performance analytics would keep
+-- excluding otherwise fully-priced tickers.
+UPDATE securities_ref
+   SET current_price = (
+         SELECT pe.close FROM price_eod pe
+          WHERE pe.ticker = securities_ref.ticker
+          ORDER BY pe.date DESC LIMIT 1
+       ),
+       current_price_date = (
+         SELECT pe.date FROM price_eod pe
+          WHERE pe.ticker = securities_ref.ticker
+          ORDER BY pe.date DESC LIMIT 1
+       )
+ WHERE current_price IS NULL
+   AND EXISTS (SELECT 1 FROM price_eod pe WHERE pe.ticker = securities_ref.ticker);

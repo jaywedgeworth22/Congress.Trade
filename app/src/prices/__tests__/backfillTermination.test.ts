@@ -21,6 +21,7 @@ vi.mock('../../secrets/infisical', async (importOriginal) => ({
 
 import type { Env } from '../../shared/types';
 import { marketPending } from '../../admin/routes';
+import { PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS } from '../../admin/migrations';
 import {
   selectTickersNeedingPrices,
   lastTradingDay,
@@ -137,6 +138,34 @@ describe('selectTickersNeedingPrices — no perpetual re-selection', () => {
   it('with the real clock, a ticker carrying the last trading day is not re-selected', async () => {
     seedTicker('CUR', { latestPriceDate: lastTradingDay() });
     expect(await selectTickersNeedingPrices(env, 50)).toEqual([]);
+  });
+});
+
+describe('0043 migration backfill', () => {
+  it('seeds latest_price_date AND current_price from cached closes for anchor-less rows', () => {
+    // A row that was imported closes-only under the OLD handler: cached closes but
+    // null latest_price_date / current_price.
+    db.prepare(
+      "INSERT INTO price_eod (ticker, date, close) VALUES ('OLDIMP','2026-07-14',10),('OLDIMP','2026-07-15',12)",
+    ).run();
+    db.prepare("INSERT INTO securities_ref (ticker) VALUES ('OLDIMP')").run();
+
+    // Re-run the migration's idempotent data backfill against the seeded rows (the
+    // ALTER/CREATE parts already ran on the empty DB at open).
+    for (const sql of PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS) {
+      if (sql.trim().startsWith('UPDATE')) db.exec(sql);
+    }
+
+    const row = db
+      .prepare(
+        'SELECT latest_price_date, current_price, current_price_date FROM securities_ref WHERE ticker = ?',
+      )
+      .get('OLDIMP');
+    expect(row?.latest_price_date).toBe('2026-07-15');
+    // Without the current_price backfill the now-"fresh" selector would skip this
+    // ticker forever, leaving current-return analytics blank.
+    expect(row?.current_price).toBe(12);
+    expect(row?.current_price_date).toBe('2026-07-15');
   });
 });
 

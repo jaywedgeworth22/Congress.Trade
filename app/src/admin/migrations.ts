@@ -161,6 +161,19 @@ export const PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS = [
      SELECT MAX(pe.date) FROM price_eod pe WHERE pe.ticker = securities_ref.ticker
    )
  WHERE latest_price_date IS NULL`,
+  `UPDATE securities_ref
+   SET current_price = (
+         SELECT pe.close FROM price_eod pe
+          WHERE pe.ticker = securities_ref.ticker
+          ORDER BY pe.date DESC LIMIT 1
+       ),
+       current_price_date = (
+         SELECT pe.date FROM price_eod pe
+          WHERE pe.ticker = securities_ref.ticker
+          ORDER BY pe.date DESC LIMIT 1
+       )
+ WHERE current_price IS NULL
+   AND EXISTS (SELECT 1 FROM price_eod pe WHERE pe.ticker = securities_ref.ticker)`,
 ] as const;
 
 /** Ordered review-queue autonomy schema mirrored by file migrations 0033-0037. */
