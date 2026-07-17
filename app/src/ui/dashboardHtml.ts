@@ -755,42 +755,68 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   tr.row:nth-child(9), .feed-card:nth-child(9) { animation-delay: 0.45s; }
   tr.row:nth-child(10), .feed-card:nth-child(10) { animation-delay: 0.50s; }
   
-  /* ---- Speed vs data providers (public latency proof) ---- */
-  .speed-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+  /* ---- Speed vs data providers (provider scorecard grid) ---- */
+  .speed-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
   .speed-head h3 { margin:0; }
-  .speed-body { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:20px; align-items:start; min-height:170px; margin-top:10px; }
-  .speed-hero-card { background:color-mix(in srgb, var(--panel-2) 35%, transparent); border:1px solid var(--border); border-radius:10px; padding:12px 14px; text-align:center; display:flex; flex-direction:column; justify-content:space-between; }
-  .speed-hero-top { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px; }
-  .speed-hero-title { font-size:12px; font-weight:600; color:var(--text); text-transform:uppercase; letter-spacing:0.5px; }
-  .speed-hero-badge { font-size:11px; color:var(--text-dim); background:var(--panel); padding:2px 6px; border-radius:4px; }
-  .speed-hero-main { padding:8px 0; }
-  .speed-hero-num { font-size:36px; font-weight:800; letter-spacing:-0.5px; line-height:1.05; }
-  .speed-hero-label { color:var(--text-dim); font-size:12px; margin-top:4px; }
-  .speed-hero-foot { display:flex; justify-content:center; gap:8px; font-size:12px; font-family:var(--mono); color:var(--text-dim); margin-top:8px; padding-top:8px; border-top:1px dashed var(--border); }
-  .speed-hero-foot .win { color:var(--accent); font-weight:600; }
-  .speed-hero-foot .loss { color:var(--rival); }
-  .race-annot { position:relative; height:14px; font-size:11px; color:var(--text-dim); }
-  .race-annot span { position:absolute; transform:translateX(-4px); white-space:nowrap; }
-  .race-lane { margin-bottom:12px; }
-  .race-top { display:flex; justify-content:space-between; gap:10px; font-size:12px; margin-bottom:4px; flex-wrap:wrap; }
-  .race-name { font-weight:600; }
-  .race-name .race-nn { color:var(--text-dim); font-weight:400; font-size:11px; margin-left:6px; }
-  .race-vals { font-family:var(--mono); font-variant-numeric:tabular-nums; }
-  .race-vals .p90 { color:var(--text-dim); }
-  .race-strip { position:relative; height:16px; margin-top:6px; }
-  .race-rail { position:absolute; left:0; right:0; top:7px; height:2px; background:color-mix(in srgb, var(--border) 40%, transparent); }
-  .race-span { position:absolute; top:5px; height:6px; border-radius:3px; background:color-mix(in srgb, var(--rival) 60%, transparent); }
-  .race-dot { position:absolute; top:3px; width:10px; height:10px; border-radius:50%; transform:translateX(-50%); }
-  .race-dot.us { background:var(--accent); }
-  .race-dot.them { background:var(--rival); }
-  .race-p90tick { position:absolute; top:4px; width:2px; height:8px; background:var(--rival); transform:translateX(-50%); }
-  .race-empty { font-size:12px; color:var(--text-dim); padding:2px 0 4px; }
-  .race-axis { position:relative; height:16px; font-size:10.5px; color:var(--text-dim); font-family:var(--mono); border-top:1px solid color-mix(in srgb, var(--border) 50%, transparent); margin-top:2px; padding-top:4px; }
-  .race-axis span { position:absolute; top:4px; transform:translateX(-50%); white-space:nowrap; opacity:0.6; }
-  .race-axis span:first-child { transform:none; }
-  .race-axis span:last-child { transform:translateX(-100%); }
+  .speed-kicker { font-size:11px; font-weight:700; letter-spacing:1.2px; text-transform:uppercase; color:var(--accent); margin-bottom:4px; opacity:0.85; }
+  /* Scorecard grid — one card per provider, side by side */
+  .sp-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:16px; margin-top:14px; }
+  .sp-card {
+    background: color-mix(in srgb, var(--panel-2) 55%, transparent);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 18px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .sp-card:hover { border-color:color-mix(in srgb, var(--accent) 55%, var(--border)); box-shadow: 0 6px 28px rgba(0,0,0,.22); }
+  .sp-card.sp-ahead { border-color: color-mix(in srgb, var(--good) 35%, var(--border)); }
+  .sp-card.sp-tied { border-color: color-mix(in srgb, var(--warn) 30%, var(--border)); }
+  .sp-card.sp-behind { border-color: color-mix(in srgb, var(--rival) 30%, var(--border)); }
+  .sp-card.sp-tied { border-color: color-mix(in srgb, var(--text-dim) 25%, var(--border)); }
+  /* Card header row */
+  .sp-header { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+  .sp-name { font-size:13px; font-weight:700; color:var(--text); letter-spacing:0.1px; }
+  .sp-badge {
+    font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px;
+    white-space:nowrap; flex-shrink:0;
+  }
+  .sp-badge.ahead { background:color-mix(in srgb,var(--good) 18%,transparent); color:var(--good); border:1px solid color-mix(in srgb,var(--good) 40%,transparent); }
+  .sp-badge.tied { background:color-mix(in srgb,var(--warn) 18%,transparent); color:var(--warn); border:1px solid color-mix(in srgb,var(--warn) 40%,transparent); }
+  .sp-badge.behind { background:color-mix(in srgb,var(--rival) 15%,transparent); color:var(--rival); border:1px solid color-mix(in srgb,var(--rival) 35%,transparent); }
+  .sp-badge.gathering { background:color-mix(in srgb,var(--text-dim) 12%,transparent); color:var(--text-dim); border:1px solid color-mix(in srgb,var(--border) 80%,transparent); }
+  .sp-badge.tied { background:color-mix(in srgb,var(--text-dim) 18%,transparent); color:var(--text); border:1px solid color-mix(in srgb,var(--border) 60%,transparent); }
+  /* Win-rate bar */
+  .sp-bar-wrap { display:flex; flex-direction:column; gap:5px; }
+  .sp-bar-labels { display:flex; justify-content:space-between; font-size:11px; color:var(--text-dim); font-family:var(--mono); }
+  .sp-bar-track { position:relative; height:8px; border-radius:999px; background:color-mix(in srgb,var(--border) 55%,transparent); overflow:hidden; }
+  .sp-bar-fill { position:absolute; inset:0 auto 0 0; border-radius:999px; background: linear-gradient(90deg, var(--good) 0%, color-mix(in srgb,var(--good) 70%,var(--accent)) 100%); transition: width 0.6s cubic-bezier(0.4,0,0.2,1); }
+  .sp-bar-fill.behind { background: linear-gradient(90deg, var(--rival) 0%, color-mix(in srgb,var(--rival) 65%,var(--text-dim)) 100%); }
+  .sp-bar-fill.tied { background: linear-gradient(90deg, var(--warn) 0%, color-mix(in srgb,var(--warn) 65%,var(--text-dim)) 100%); }
+  /* Lead stat */
+  .sp-lead { display:flex; align-items:baseline; gap:6px; }
+  .sp-lead-num { font-size:30px; font-weight:800; letter-spacing:-0.5px; line-height:1; color:var(--good); font-variant-numeric:tabular-nums; }
+  .sp-lead-num.negative { color:var(--rival); }
+  .sp-lead-num.neutral { color:var(--text-dim); font-size:20px; }
+  .sp-lead-label { font-size:11.5px; color:var(--text-dim); line-height:1.3; }
+  /* W/L/T stat row */
+  .sp-wlt { display:flex; gap:0; border-top:1px solid color-mix(in srgb,var(--border) 60%,transparent); padding-top:10px; font-family:var(--mono); font-size:12px; }
+  .sp-wlt-item { flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; }
+  .sp-wlt-item + .sp-wlt-item { border-left:1px solid color-mix(in srgb,var(--border) 50%,transparent); }
+  .sp-wlt-val { font-size:17px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .sp-wlt-val.w { color:var(--good); }
+  .sp-wlt-val.l { color:var(--rival); }
+  .sp-wlt-val.t { color:var(--text-dim); }
+  .sp-wlt-key { font-size:9.5px; text-transform:uppercase; letter-spacing:0.8px; color:var(--text-dim); opacity:0.7; }
+  /* n= sample chip */
+  .sp-sample { font-size:10.5px; color:var(--text-dim); font-family:var(--mono); }
+  /* Empty / gathering state */
+  .sp-gathering { font-size:12px; color:var(--text-dim); line-height:1.5; padding:4px 0; }
+  /* Old race-lane kept for compat with table view */
   .speed-fineprint { font-size:10.5px; }
-  .speed-table summary { cursor:pointer; font-size:12px; color:var(--text-dim); }
+  .speed-table summary { cursor:pointer; font-size:12px; color:var(--text-dim); padding:6px 0; }
   .speed-table table td, .speed-table table th { font-variant-numeric:tabular-nums; }
   .speed-mini { display:none; border:1px solid var(--border); border-radius:10px; padding:10px 12px; font-size:12.5px; margin:12px 0; gap:8px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
   .speed-mini.show { display:flex; }
@@ -900,9 +926,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .drawer-kv dd { text-align: left; }
     .plan-grid { grid-template-columns: 1fr; }
     .toolbar .chamber-chips { grid-column: 1 / -1; }
-    .speed-body { display:block; min-height:210px; }
-    .speed-hero { margin-bottom:14px; }
-    .speed-hero-num { font-size:34px; }
+    .sp-grid { grid-template-columns: 1fr; gap: 12px; }
+    .sp-lead-num { font-size:26px; }
     .delivery-grid { grid-template-columns: 1fr; }
     .toast { bottom: calc(78px + env(safe-area-inset-bottom)); width: calc(100vw - 24px); max-width: 420px; }
   }
@@ -1928,22 +1953,33 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
   </section>
 
-  <!-- Speed vs data providers (filter-independent live latency proof).
-       Moved to bottom of site per user request. -->
+  <!-- Provider speed scorecard (filter-independent live latency proof). -->
   <div class="section speed-proof" id="trLatencySection" style="margin-top:24px; padding:0 16px;">
     <div class="speed-head">
-      <h3>Speed vs. Data Providers <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
-      <span class="note" id="speedUpdated"></span>
+      <div>
+        <div class="speed-kicker">⚡ Live speed proof</div>
+        <h3 style="margin:0">We publish first &mdash; here&rsquo;s the data <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
+      </div>
+      <span class="note" id="speedUpdated" style="white-space:nowrap"></span>
     </div>
-    <div class="speed-body">
-      <div class="speed-hero" id="speedHero"><div class="sk sk-line" style="width:70%;height:34px"></div><div class="sk sk-line" style="width:55%"></div></div>
-      <div id="speedRace"></div>
+    <!-- Scorecard cards injected here by renderSpeedProof() -->
+    <div class="sp-grid" id="spGrid">
+      <div class="sp-card" aria-hidden="true" style="min-height:160px">
+        <div class="sk sk-line" style="width:55%;height:14px"></div>
+        <div class="sk sk-line" style="width:100%;height:8px;margin-top:8px"></div>
+        <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
+      </div>
+      <div class="sp-card" aria-hidden="true" style="min-height:160px">
+        <div class="sk sk-line" style="width:55%;height:14px"></div>
+        <div class="sk sk-line" style="width:100%;height:8px;margin-top:8px"></div>
+        <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
+      </div>
     </div>
-    <p class="note">How this is measured: every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades and match them against filings we already ingested, comparing first-seen timestamps. Stats cover the most recent matched filings per provider and update continuously &mdash; wins, losses, and misses alike. &ldquo;Matched&rdquo; counts filings that had appeared in the provider&rsquo;s feed by probe time; a filing can appear there later. Nothing is hand-picked and nothing is frozen: these numbers move. A live measurement, not a promise.</p>
-    <details class="speed-table">
-      <summary>View as table</summary>
+    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades and match them against filings we already ingested, comparing first-seen timestamps. Stats cover the most recent matched filings per provider and update continuously &mdash; wins, losses, and ties alike. Nothing is hand-picked and nothing is frozen. A live measurement, not a promise.</p>
+    <details class="speed-table" style="margin-top:8px">
+      <summary>Raw data table</summary>
       <div class="table-wrap"><table>
-        <thead><tr><th>Provider</th><th>Matched</th><th>We were first</th><th>They were first</th><th>Ties</th><th>Typical lead</th><th>Average</th><th>p90</th></tr></thead>
+        <thead><tr><th>Provider</th><th>Matched</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
         <tbody id="speedTableBody"></tbody>
       </table></div>
     </details>
@@ -6442,16 +6478,14 @@ function loadTrends() {
   loadTrMembers(); loadTrParties(); loadTrSectors(); loadTrLag();
 }
 
-/* ================= SPEED VS DATA PROVIDERS (latency proof) ================= */
+/* ================= SPEED VS DATA PROVIDERS (provider scorecard) ================= */
 /* Public aggregate scoreboard from GET /api/analytics/latency-summary.
    Deliberately NOT part of loadTrends(): the data is filter-independent and
-   memoized to the server's ~5-minute cache. Honesty rules: every provider
-   lane always renders (full race lane at >= 5 matches, text-only below that,
-   neutral empty state at 0); the hero only boasts when favorable, and the
-   whole module hides rather than ever pairing a positive hero with a
-   suppressed negative lane. */
+   memoized to the server's ~5-minute cache.
+   Honesty rules: every provider always renders; cards show collecting state
+   below SPEED_LANE_MIN_MATCHED; the whole section hides if no data at all. */
 var LATENCY = { data: null, at: 0, promise: null };
-var SPEED_LANE_MIN_MATCHED = 5;   /* full lane + lead stats */
+var SPEED_LANE_MIN_MATCHED = 5;   /* full scorecard stats */
 var SPEED_BOAST_MIN_MATCHED = 10; /* compact strip + pricing proof line */
 
 function fetchLatencySummary() {
@@ -6473,15 +6507,11 @@ function fmtLead(secs) {
   if (s < 172800) return sign + one(s / 3600) + ' hr';
   return sign + one(s / 86400) + ' days';
 }
-function speedEligible(d) {
-  return (d.providers || []).filter(function (p) {
-    return p.matched >= SPEED_LANE_MIN_MATCHED;
-  });
-}
 /* Best-covered provider that boast copy may cite (well-sampled AND favorable). */
 function speedBoastProvider(d) {
   var best = null;
-  speedEligible(d).forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
+  (d.providers || []).filter(function (p) { return p.matched >= SPEED_LANE_MIN_MATCHED; })
+    .forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
   return best && best.matched >= SPEED_BOAST_MIN_MATCHED && (best.medianLeadSec || 0) > 0 ? best : null;
 }
 function speedUpdatedText() {
@@ -6495,50 +6525,73 @@ function speedUpdatedText() {
 function refreshSpeedUpdated() {
   var n = el('speedUpdated'); if (n && LATENCY.data) n.textContent = speedUpdatedText();
 }
-/* Linear axis ceiling snapped to clean hour stops (log axes hide the story). */
-function speedAxisMax(lanes) {
-  var maxSec = 1;
-  lanes.forEach(function (p) {
-    maxSec = Math.max(maxSec, Math.abs(p.medianLeadSec || 0), Math.abs(p.p90LeadSec || 0));
-  });
-  var stopsHr = [1, 2, 4, 6, 8, 12, 16, 24, 36, 48, 72, 96, 144, 192, 240, 336, 504, 720];
-  var needed = maxSec * 1.08 / 3600;
-  for (var i = 0; i < stopsHr.length; i++) { if (stopsHr[i] >= needed) return stopsHr[i] * 3600; }
-  /* Beyond the largest stop, snap up to a 48h multiple that covers the data —
-     never a fixed ceiling that would clamp an extreme lead to the last stop. */
-  return Math.ceil(needed / 48) * 48 * 3600;
-}
-function speedLaneHtml(p, domainMin, domainMax) {
-  function x(s) { return Math.max(0, Math.min(100, 100 * (s - domainMin) / (domainMax - domainMin))); }
-  var n = '<span class="race-nn">n = ' + p.matched + ' of ' + p.candidates + ' matched</span>';
-  if (p.matched === 0) {
-    return '<div class="race-lane"><div class="race-top"><span class="race-name">' + esc(p.label) + n + '</span></div>' +
-      '<div class="race-empty">No overlapping disclosures yet &mdash; none of the ' + p.candidates +
-      ' filings we tracked had appeared in this provider&rsquo;s feed when probed. An empty sample isn&rsquo;t a lead we can measure.</div></div>';
+/* Build a single provider scorecard card. */
+function spCardHtml(p) {
+  var hasStats = p.matched >= SPEED_LANE_MIN_MATCHED;
+  var wins = p.usFirstCount || 0, losses = p.providerFirstCount || 0;
+  var ahead = hasStats && wins > losses;
+  var tied = hasStats && !ahead && wins === losses;
+  var cardCls = 'sp-card' + (hasStats ? (ahead ? ' sp-ahead' : tied ? ' sp-tied' : ' sp-behind') : '');
+
+  /* Header: provider name + outcome badge */
+  var badgeCls, badgeTxt;
+  if (!hasStats) {
+    badgeCls = 'sp-badge gathering'; badgeTxt = '📊 Gathering data';
+  } else if (ahead) {
+    badgeCls = 'sp-badge ahead'; badgeTxt = '⚡ Ahead';
+  } else if (tied) {
+    badgeCls = 'sp-badge tied'; badgeTxt = '⚖️ Tied';
+  } else {
+    badgeCls = 'sp-badge behind'; badgeTxt = '▼ Behind';
   }
-  if (p.matched < SPEED_LANE_MIN_MATCHED) {
-    return '<div class="race-lane"><div class="race-top"><span class="race-name">' + esc(p.label) + n + '</span></div>' +
-      '<div class="race-empty">We were first on ' + p.usFirstCount + ' of ' + p.matched +
-      ' so far &mdash; too few matches to estimate timing.</div></div>';
+  var header = '<div class="sp-header"><span class="sp-name">' + esc(p.label) + '</span>' +
+    '<span class="' + badgeCls + '">' + badgeTxt + '</span></div>';
+
+  /* Win-rate bar */
+  var barHtml = '';
+  if (hasStats && p.matched > 0) {
+    var winPct = Math.round(100 * (p.usFirstCount || 0) / p.matched);
+    var fillCls = ahead ? 'sp-bar-fill' : tied ? 'sp-bar-fill tied' : 'sp-bar-fill behind';
+    barHtml = '<div class="sp-bar-wrap">' +
+      '<div class="sp-bar-labels"><span>Win rate</span><span>' + winPct + '%  (' + p.usFirstCount + '/' + p.matched + ')</span></div>' +
+      '<div class="sp-bar-track"><div class="' + fillCls + '" style="width:' + winPct + '%"></div></div>' +
+      '</div>';
   }
-  var med = p.medianLeadSec || 0, p90 = p.p90LeadSec;
-  var vals = '<span class="val-label">Typical:</span> ' + (med >= 0 ? '+' : '') + fmtLead(med) +
-    (p90 != null ? ' <span class="p90"><span class="val-label">| P90:</span> ' + fmtLead(p90) + '</span>' : '');
-  var aria = esc(p.label) + ': Congress.Trade was first on ' + p.usFirstCount + ' of ' + p.matched +
-    ' matched disclosures; typical lead ' + fmtLead(med) + (p90 != null ? '; 1 in 10 exceeded ' + fmtLead(p90) : '') + '.';
-  var hi = Math.max(med, p90 == null ? med : p90);
-  var spanLeft = Math.min(x(0), x(med));
-  var spanW = Math.max(x(hi), x(med), x(0)) - spanLeft;
-  return '<div class="race-lane" role="img" aria-label="' + aria + '">' +
-    '<div class="race-top"><span class="race-name">' + esc(p.label) + n + '</span>' +
-      '<span class="race-vals">' + vals + '</span></div>' +
-    '<div class="race-strip" aria-hidden="true">' +
-      '<div class="race-rail"></div>' +
-      '<div class="race-span" style="left:' + spanLeft + '%;width:' + spanW + '%"></div>' +
-      (p90 != null ? '<div class="race-p90tick" style="left:' + x(p90) + '%"></div>' : '') +
-      '<div class="race-dot them" style="left:' + x(med) + '%"></div>' +
-      '<div class="race-dot us" style="left:' + x(0) + '%"></div>' +
-    '</div></div>';
+
+  /* Lead stat */
+  var leadHtml = '';
+  if (!hasStats) {
+    var need = SPEED_LANE_MIN_MATCHED - p.matched;
+    leadHtml = '<div class="sp-gathering">' +
+      (p.matched > 0
+        ? "We've matched <strong>" + p.matched + "</strong> of " + p.candidates + " filings so far — " + need + " more needed for timing estimates."
+        : "Probes haven't found overlapping disclosures yet. Sample builds automatically.") +
+      '</div>';
+  } else {
+    var med = p.medianLeadSec || 0;
+    var isPos = med > 0;
+    var numCls = 'sp-lead-num' + (isPos ? '' : (med < 0 ? ' negative' : ' neutral'));
+    var sign = isPos ? '+' : '';
+    var p90Txt = p.p90LeadSec != null ? '<div style="font-size:11px;color:var(--text-dim);margin-top:3px">P90: ' + fmtLead(p.p90LeadSec) + '</div>' : '';
+    leadHtml = '<div class="sp-lead">' +
+      '<div class="' + numCls + '">' + sign + fmtLead(med) + '</div>' +
+      '<div class="sp-lead-label">typical lead<br>vs. their feed' + p90Txt + '</div>' +
+      '</div>';
+  }
+
+  /* W / L / T stat row */
+  var wlt = '';
+  if (hasStats) {
+    wlt = '<div class="sp-wlt">' +
+      '<div class="sp-wlt-item"><span class="sp-wlt-val w">' + (p.usFirstCount || 0) + '</span><span class="sp-wlt-key">Wins</span></div>' +
+      '<div class="sp-wlt-item"><span class="sp-wlt-val l">' + (p.providerFirstCount || 0) + '</span><span class="sp-wlt-key">Losses</span></div>' +
+      '<div class="sp-wlt-item"><span class="sp-wlt-val t">' + (p.tieCount || 0) + '</span><span class="sp-wlt-key">Ties</span></div>' +
+      '</div>';
+  } else if (p.matched > 0) {
+    wlt = '<div class="sp-sample">n = ' + p.matched + ' / ' + p.candidates + ' matched so far</div>';
+  }
+
+  return '<div class="' + cardCls + '">' + header + barHtml + leadHtml + wlt + '</div>';
 }
 function renderSpeedProof() {
   var box = el('trLatencySection'); if (!box) return;
@@ -6546,62 +6599,16 @@ function renderSpeedProof() {
     var provs = (d.providers || []).slice()
       .sort(function (a, b) { return b.matched - a.matched; });
     if (!d.totals || !d.totals.racedDisclosures || !provs.length) { box.hidden = true; return; }
-    var eligibleProvs = provs.filter(function (p) { return p.matched >= 1; });
-    if (!eligibleProvs.length) { box.hidden = true; return; }
-
-    var heroHtml = eligibleProvs.map(function (p) {
-      var numHtml = '';
-      var labelHtml = '';
-      if (p.medianLeadSec != null && p.medianLeadSec > 0 && p.matched >= SPEED_LANE_MIN_MATCHED) {
-        numHtml = '<div class="speed-hero-num">' + fmtLead(p.medianLeadSec) + '</div>';
-        labelHtml = '<div class="speed-hero-label">typical lead</div>';
-      } else {
-        numHtml = '<div class="speed-hero-num">' + p.usFirstCount + ' of ' + p.matched + '</div>';
-        labelHtml = '<div class="speed-hero-label">filings surfaced first</div>';
-      }
-      return '<div class="speed-hero-card">' +
-        '<div class="speed-hero-top">' +
-          '<span class="speed-hero-title">' + esc(p.label) + '</span>' +
-          '<span class="speed-hero-badge">n=' + p.matched + '</span>' +
-        '</div>' +
-        '<div class="speed-hero-main">' +
-          numHtml +
-          labelHtml +
-        '</div>' +
-        '<div class="speed-hero-foot">' +
-          '<span class="win">W: ' + p.usFirstCount + '</span> • ' +
-          '<span class="loss">L: ' + (p.providerFirstCount || 0) + '</span> • ' +
-          '<span class="tie">T: ' + (p.tieCount || 0) + '</span>' +
-        '</div>' +
-        '</div>';
-    }).join('');
 
     box.hidden = false;
-    el('speedHero').innerHTML = heroHtml;
-    var withLane = provs.filter(function (p) { return p.matched >= SPEED_LANE_MIN_MATCHED; });
-    var domainMin = 0;
-    withLane.forEach(function (p) { domainMin = Math.min(domainMin, p.medianLeadSec || 0); });
-    if (domainMin < 0) domainMin = -speedAxisMax([{ medianLeadSec: domainMin, p90LeadSec: 0 }]);
-    var domainMax = speedAxisMax(withLane);
-    var raceHtml = '';
-    if (withLane.length) {
-      var zeroX = 100 * (0 - domainMin) / (domainMax - domainMin);
-      raceHtml += '<div class="race-annot"><span style="left:' + zeroX + '%">▼ we alert here</span></div>';
-    }
-    raceHtml += provs.map(function (p) { return speedLaneHtml(p, domainMin, domainMax); }).join('');
-    if (withLane.length) {
-      var ticks = '';
-      for (var i = 0; i <= 4; i++) {
-        var t = domainMin + (domainMax - domainMin) * i / 4;
-        ticks += '<span style="left:' + (25 * i) + '%">' + (t === 0 ? '0' : fmtLead(t)) + '</span>';
-      }
-      raceHtml += '<div class="race-axis" aria-hidden="true">' + ticks + '</div>';
-    }
-    el('speedRace').innerHTML = raceHtml;
+    var grid = el('spGrid');
+    if (grid) grid.innerHTML = provs.map(spCardHtml).join('');
+
+    /* Raw data table (inside <details>) */
     var tb = el('speedTableBody');
     if (tb) tb.innerHTML = provs.map(function (p) {
       function td(v) { return '<td>' + v + '</td>'; }
-      return '<tr>' + td(esc(p.label)) + td(p.matched + ' / ' + p.candidates) + td(p.usFirstCount) +
+      return '<tr>' + td(esc(p.label)) + td(p.matched + ' / ' + p.candidates) + td(p.usFirstCount || 0) +
         td(p.providerFirstCount || 0) + td(p.tieCount || 0) +
         td(p.medianLeadSec != null ? fmtLead(p.medianLeadSec) : '—') +
         td(p.avgLeadSec != null ? fmtLead(p.avgLeadSec) : '—') +

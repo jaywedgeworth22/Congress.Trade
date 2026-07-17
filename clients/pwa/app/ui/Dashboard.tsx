@@ -22,6 +22,15 @@ import {
   type FeedFilters,
 } from '../../lib/dashboardModel';
 import { TradeCard } from './TradeCard';
+import { ColumnConfig } from './ColumnConfig';
+import { SpeedScorecard } from './SpeedScorecard';
+import { TradeTable } from './TradeTable';
+import {
+  ColumnDef,
+  getOrderedColumns,
+  loadHiddenCols,
+  isAdminView as checkAdminView,
+} from '../../lib/columns';
 
 type DeliveryMode = 'sse' | 'webhook';
 type RetryIntent = { kind: 'preferences' | 'subscription'; body: CommandBody };
@@ -46,6 +55,20 @@ export default function Dashboard() {
   const [retryIntent, setRetryIntent] = useState<RetryIntent | null>(null);
   const [oneTimeDelivery, setOneTimeDelivery] = useState<OneTimeDelivery | null>(null);
 
+  const [viewMode, setViewMode] = useState<'card' | 'table'>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('feed-view-mode');
+      if (saved === 'card' || saved === 'table') return saved;
+    }
+    return 'card';
+  });
+
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
+
+  // Column config states
+  const [columns, setColumns] = useState<ColumnDef[]>([]);
+  const [hiddenCols, setHiddenCols] = useState<string[]>([]);
+
   const firstFilterRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -65,7 +88,18 @@ export default function Dashboard() {
     keepPreviousData: true,
   });
   const user = bootstrap?.auth.user;
-  const premium = bootstrap?.auth.entitlement.premium;
+  const premium = bootstrap?.auth.entitlement.premium ?? false;
+  const isAdmin = checkAdminView();
+
+  useEffect(() => {
+    setColumns(getOrderedColumns(premium, isAdmin));
+    setHiddenCols(loadHiddenCols(premium, isAdmin));
+  }, [premium, isAdmin]);
+
+  const handleConfigChange = () => {
+    setColumns(getOrderedColumns(premium, isAdmin));
+    setHiddenCols(loadHiddenCols(premium, isAdmin));
+  };
   const {
     data: preferencesEnvelope,
     error: preferencesError,
@@ -287,6 +321,8 @@ export default function Dashboard() {
         <div><span>Plan</span><strong>{premium ? 'Premium' : 'Free'}</strong></div>
       </section>
 
+      <SpeedScorecard />
+
       <button
         ref={triggerRef}
         className="toolbar-trigger"
@@ -303,6 +339,76 @@ export default function Dashboard() {
           {currentFilterCount || 'Filters'}
         </span>
       </button>
+
+      <div className="view-controls-row" style={{ display: 'flex', gap: '8px', marginBottom: '16px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+        <div className="segmented-controls" style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: '10px', overflow: 'hidden', background: 'var(--panel)', backdropFilter: 'blur(10px)' }}>
+          <button
+            type="button"
+            style={{
+              padding: '6px 12px',
+              fontSize: '12px',
+              fontWeight: 700,
+              background: viewMode === 'card' ? 'var(--accent)' : 'transparent',
+              color: viewMode === 'card' ? 'var(--text)' : 'var(--muted)',
+              border: 'none',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+            onClick={() => {
+              setViewMode('card');
+              localStorage.setItem('feed-view-mode', 'card');
+            }}
+          >
+            🎴 Cards
+          </button>
+          <button
+            type="button"
+            style={{
+              padding: '6px 12px',
+              fontSize: '12px',
+              fontWeight: 700,
+              background: viewMode === 'table' ? 'var(--accent)' : 'transparent',
+              color: viewMode === 'table' ? 'var(--text)' : 'var(--muted)',
+              border: 'none',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+            onClick={() => {
+              setViewMode('table');
+              localStorage.setItem('feed-view-mode', 'table');
+            }}
+          >
+            📊 Table
+          </button>
+        </div>
+
+        <button
+          type="button"
+          style={{
+            padding: '6px 14px',
+            fontSize: '12px',
+            fontWeight: 700,
+            borderRadius: '10px',
+            background: isConfigOpen ? 'var(--panel-2)' : 'var(--panel)',
+            color: isConfigOpen ? 'var(--text)' : 'var(--muted)',
+            border: '1px solid var(--border)',
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+          }}
+          onClick={() => setIsConfigOpen(!isConfigOpen)}
+        >
+          ⚙️ Columns
+        </button>
+      </div>
+
+      {isConfigOpen && (
+        <ColumnConfig
+          isPremium={premium}
+          isAdmin={isAdmin}
+          onChange={handleConfigChange}
+          onClose={() => setIsConfigOpen(false)}
+        />
+      )}
 
       <dialog
         ref={dialogRef}
@@ -453,7 +559,15 @@ export default function Dashboard() {
         {!isFeedLoading && !feedError && (feed?.items.length ?? 0) === 0 ? (
           <div className="empty">No trades match these filters.</div>
         ) : null}
-        {(feed?.items ?? []).map((item) => <TradeCard key={item.id} item={item} />)}
+        {viewMode === 'card' ? (
+          (feed?.items ?? []).map((item) => <TradeCard key={item.id} item={item} />)
+        ) : (
+          <TradeTable
+            items={feed?.items ?? []}
+            columns={columns}
+            hiddenCols={hiddenCols}
+          />
+        )}
       </section>
 
       <section className="control-panel" id="controls" aria-label="Account controls">
