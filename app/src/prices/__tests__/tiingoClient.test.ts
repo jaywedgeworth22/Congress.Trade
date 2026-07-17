@@ -43,9 +43,13 @@ describe('buildTiingoPriceClient', () => {
     await buildTiingoPriceClient('k', fetchImpl).spxHistory('2024-01-01', '2024-01-05');
     expect(calledUrl).toContain('/tiingo/daily/SPY/prices');
   });
-  it('returns [] (no throw) on a non-OK response so a fallback chain continues (error-caught-not-thrown)', async () => {
-    expect(await buildTiingoPriceClient('k', fetchWith(403)).eodHistory('AAPL', 'a', 'b')).toEqual([]);
+  it('returns [] on 404 (unknown symbol) but throws on transient/auth/server errors', async () => {
+    // 404 = genuine "no data" so a delisted/unknown ticker can be negative-cached.
     expect(await buildTiingoPriceClient('k', fetchWith(404, { detail: 'Not Found.' })).eodHistory('ZZZZ', 'a', 'b')).toEqual([]);
-    expect(await buildTiingoPriceClient('k', fetchWith(429)).spxHistory('a', 'b')).toEqual([]);
+    // Auth/rate/server failures throw so the caller skips + retries instead of
+    // negative-caching priceable tickers during a transient outage.
+    await expect(buildTiingoPriceClient('k', fetchWith(403)).eodHistory('AAPL', 'a', 'b')).rejects.toThrow('TIINGO_HTTP_403');
+    await expect(buildTiingoPriceClient('k', fetchWith(429)).spxHistory('a', 'b')).rejects.toThrow('TIINGO_HTTP_429');
+    await expect(buildTiingoPriceClient('k', fetchWith(500)).eodHistory('AAPL', 'a', 'b')).rejects.toThrow('TIINGO_HTTP_500');
   });
 });

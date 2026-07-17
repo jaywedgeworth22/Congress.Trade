@@ -104,7 +104,7 @@ import {
 } from '../enrichment/service';
 import { mergeRefs } from '../enrichment/compute';
 import type { SecurityRef } from '../enrichment/types';
-import { runPriceRefresh } from '../prices/service';
+import { runPriceRefresh, priceUnavailableCutoffIso } from '../prices/service';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets, updateSecret } from '../secrets/infisical';
 import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
 import { pollExecutive } from '../ingestion/watcher';
@@ -3312,9 +3312,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       note: runtimeSecrets.LOGODEV_PUBLISHABLE_KEY ? 'Ticker logo proxy token available' : 'LOGODEV_PUBLISHABLE_KEY is not available to this Worker runtime',
     });
 
+    // Read the maintained, indexed securities_ref.latest_price_date instead of
+    // MAX(date) over the ~1.43M-row price_eod table (no date-leading index there,
+    // so that was a full scan on every /diagnostics poll).
     const priceRows = await optionalAll<{ last_used_at: string | null }>(
       c.env,
-      `SELECT MAX(date) AS last_used_at FROM price_eod`
+      `SELECT MAX(latest_price_date) AS last_used_at FROM securities_ref`
     );
     const priceRow = priceRows[0];
     const hasPriceProvider = !!(runtimeSecrets.FMP_API_KEY || runtimeSecrets.MASSIVE_API_KEY || runtimeSecrets.TIINGO_API_KEY);
@@ -7296,25 +7299,86 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             );
           }
           summary.priceRows += closes.length;
+          // The latest cached close (date + value) AFTER writing this import's
+          // closes — the single source for both current-price and freshness
+          // bookkeeping. Reading the MAX cached row (not just the imported delta)
+          // means a backfill of OLDER closes never regresses a newer current price
+          // or latest_price_date.
+          const latestCached =
+            closes.length || typeof o.currentPrice === 'number'
+              ? await get<{ d: string | null; c: number | null }>(
+                  c.env.DB,
+                  'SELECT date AS d, close AS c FROM price_eod WHERE ticker = ? ORDER BY date DESC LIMIT 1',
+                  [ticker],
+                )
+              : null;
+
+          // Current-price anchor. An explicit currentPrice wins (unchanged
+          // behavior); otherwise derive it from the latest cached close so a
+          // closes-only push still populates current_price/current_price_date —
+          // the ticker is marked fresh below and won't be re-selected to fill them,
+          // so leaving them null would strand current-return analytics.
+          let currentPrice: number | null = null;
+          let currentPriceDate = nowIso.slice(0, 10);
           if (typeof o.currentPrice === 'number') {
+            currentPrice = o.currentPrice;
+            if (typeof o.currentPriceDate === 'string') currentPriceDate = o.currentPriceDate;
+          } else if (latestCached?.c != null && latestCached.d) {
+            currentPrice = latestCached.c;
+            currentPriceDate = latestCached.d;
+          }
+          if (currentPrice !== null) {
             await run(
               c.env.DB,
               `INSERT INTO securities_ref (ticker, current_price, current_price_date) VALUES (?, ?, ?)
                ON CONFLICT(ticker) DO UPDATE SET current_price=excluded.current_price, current_price_date=excluded.current_price_date`,
-              [ticker, o.currentPrice, typeof o.currentPriceDate === 'string' ? o.currentPriceDate : nowIso.slice(0, 10)],
+              [ticker, currentPrice, currentPriceDate],
             );
           }
-          // Recompute per-trade anchors for this ticker from the cached series.
+          // Freshness: derive latest_price_date ONLY from the true max cached CLOSE
+          // date — never today() or a bare currentPriceDate, which would mark a
+          // ticker fresh-through-today while price_eod holds only old rows and
+          // defeat the re-selection guard. A dateless import with no cached rows
+          // leaves latest_price_date UNCHANGED (guard below), so it's never
+          // advanced without real data. Clearing price_unavailable + stamping
+          // price_checked_at mirrors runPriceRefresh on a successful upsert, so an
+          // import rescues a previously negative-cached ticker.
+          if (latestCached?.d) {
+            await run(
+              c.env.DB,
+              `INSERT INTO securities_ref (ticker, latest_price_date, price_unavailable, price_checked_at)
+                 VALUES (?, ?, 0, ?)
+               ON CONFLICT(ticker) DO UPDATE SET
+                 latest_price_date = excluded.latest_price_date,
+                 price_unavailable = 0,
+                 price_checked_at = excluded.price_checked_at`,
+              [ticker, latestCached.d, nowIso],
+            );
+          }
+          // Recompute BOTH the trade-date and filing-date anchors for this ticker
+          // from the cached series, mirroring runPriceRefresh. The import now marks
+          // the ticker fresh (above), so the daily refresh won't re-select it to
+          // fill these later — if we only wrote the trade anchors here,
+          // price_at_filing/spx_at_filing would stay null and the
+          // member-performance/skill queries (which use the filing anchor) would
+          // permanently exclude these trades. Filing anchor = the close on/before
+          // the disclosure date, falling back to the trade date.
           await run(
             c.env.DB,
-            `INSERT INTO tx_performance (tx_id, price_at_trade, spx_at_trade, computed_at)
+            `INSERT INTO tx_performance (tx_id, price_at_trade, spx_at_trade, price_at_filing, spx_at_filing, computed_at)
              SELECT t.id,
                (SELECT close FROM price_eod p WHERE p.ticker = t.ticker AND p.date <= t.tx_date ORDER BY p.date DESC LIMIT 1),
                (SELECT close FROM spx_eod s WHERE s.date <= t.tx_date ORDER BY s.date DESC LIMIT 1),
+               (SELECT close FROM price_eod p WHERE p.ticker = t.ticker AND p.date <= COALESCE(f.filed_date, f.first_seen_at, t.tx_date) ORDER BY p.date DESC LIMIT 1),
+               (SELECT close FROM spx_eod s WHERE s.date <= COALESCE(f.filed_date, f.first_seen_at, t.tx_date) ORDER BY s.date DESC LIMIT 1),
                ?
              FROM transactions t
+             LEFT JOIN filings f ON f.doc_id = t.doc_id
              WHERE t.ticker = ? AND t.tx_date IS NOT NULL AND t.tx_date <> ''
-             ON CONFLICT(tx_id) DO UPDATE SET price_at_trade=excluded.price_at_trade, spx_at_trade=excluded.spx_at_trade, computed_at=excluded.computed_at`,
+             ON CONFLICT(tx_id) DO UPDATE SET
+               price_at_trade=excluded.price_at_trade, spx_at_trade=excluded.spx_at_trade,
+               price_at_filing=excluded.price_at_filing, spx_at_filing=excluded.spx_at_filing,
+               computed_at=excluded.computed_at`,
             [nowIso, ticker],
           );
           summary.pricedTickers++;
@@ -7805,9 +7869,18 @@ async function marketCoverage(env: Env): Promise<MarketCoverage> {
 /**
  * Count tickers still needing work: `enrich` = traded tickers with no useful
  * securities_ref coverage; `prices` = traded (dated) tickers with no cached
- * price_eod. Drives the `done` flag for the backfill-market loop.
+ * price_eod that are NOT negative-cached as un-priceable. Drives the `done` flag
+ * for the backfill-market loop.
+ *
+ * Two things make `prices` reach 0 (so `done:true` is reachable) instead of
+ * plateauing at the ~544 never-priceable tickers that ran the loop forever:
+ *   1. `NOT EXISTS` instead of `LEFT JOIN price_eod ... WHERE pe.ticker IS NULL`
+ *      — the anti-join materialized every one of a ticker's ~1,578 price_eod rows
+ *      before discarding them; NOT EXISTS index-seeks and stops at the first row.
+ *   2. excluding tickers marked `price_unavailable` within the re-check TTL, which
+ *      the price refresh sets when the EOD history API returns empty for them.
  */
-async function marketPending(env: Env): Promise<{ enrich: number; prices: number }> {
+export async function marketPending(env: Env): Promise<{ enrich: number; prices: number }> {
   const retryIncomplete = await hasConfiguredKeyedEnrichmentProvider(env);
   const e = await get<{ n: number }>(
     env.DB,
@@ -7822,10 +7895,16 @@ async function marketPending(env: Env): Promise<{ enrich: number; prices: number
     env.DB,
     `SELECT COUNT(*) AS n FROM (
        SELECT t.ticker FROM transactions t
-       LEFT JOIN price_eod pe ON pe.ticker = t.ticker
+       LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
        WHERE t.ticker IS NOT NULL AND t.ticker <> '' AND t.tx_date IS NOT NULL
-         AND pe.ticker IS NULL
+         AND NOT EXISTS (SELECT 1 FROM price_eod pe WHERE pe.ticker = t.ticker)
+         AND NOT (
+           COALESCE(sr.price_unavailable, 0) = 1
+           AND sr.price_checked_at IS NOT NULL
+           AND sr.price_checked_at >= ?
+         )
        GROUP BY t.ticker)`,
+    [priceUnavailableCutoffIso()],
   );
   return { enrich: e?.n ?? 0, prices: p?.n ?? 0 };
 }
