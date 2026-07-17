@@ -249,13 +249,15 @@ export class OpenRouterVisionExtractor implements Extractor {
           }
         : undefined;
 
-    return {
+    const result = {
       transactions: allRows,
       confidence: docConfidence,
       raw: combinedRaw,
       extractor: this.name,
       modelVersion: model,
       usage,
+      pageCount: pagesProcessed,
     };
+    return result;
   }
 }
