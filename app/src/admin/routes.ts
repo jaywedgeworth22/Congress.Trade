@@ -7298,11 +7298,17 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           }
           summary.priceRows += closes.length;
           if (typeof o.currentPrice === 'number') {
+            const priceDate = typeof o.currentPriceDate === 'string' ? o.currentPriceDate : nowIso.slice(0, 10);
             await run(
               c.env.DB,
-              `INSERT INTO securities_ref (ticker, current_price, current_price_date) VALUES (?, ?, ?)
-               ON CONFLICT(ticker) DO UPDATE SET current_price=excluded.current_price, current_price_date=excluded.current_price_date`,
-              [ticker, o.currentPrice, typeof o.currentPriceDate === 'string' ? o.currentPriceDate : nowIso.slice(0, 10)],
+              `INSERT INTO securities_ref (ticker, current_price, current_price_date, latest_price_date, price_unavailable, price_checked_at) VALUES (?, ?, ?, ?, 0, ?)
+               ON CONFLICT(ticker) DO UPDATE SET
+                 current_price=excluded.current_price,
+                 current_price_date=excluded.current_price_date,
+                 latest_price_date=excluded.latest_price_date,
+                 price_unavailable=0,
+                 price_checked_at=excluded.price_checked_at`,
+              [ticker, o.currentPrice, priceDate, priceDate, nowIso],
             );
           }
           // Recompute per-trade anchors for this ticker from the cached series.
