@@ -655,7 +655,10 @@ async function submitOpenAi(env: Env, model: string, docs: BatchDoc[]): Promise<
   const key = await keyFor(env, 'openai');
   const endpoint = model.startsWith('gpt-5.6') ? '/v1/responses' : '/v1/chat/completions';
   // 1) upload each PDF to the Files API (purpose=user_data) → file_id.
-  const lines: string[] = await pMap(docs, 5, async (d) => {
+  // Concurrency limit of 25 provides 5x throughput while leaving safe headroom
+  // under Cloudflare Workers' hard ceiling of 50 concurrent subrequests per invocation
+  // (for batch creation and JSONL input uploads).
+  const lines: string[] = await pMap(docs, 25, async (d) => {
     const fileId = await uploadPdf('https://api.openai.com/v1/files', key, d.bytes, 'user_data');
     return openaiLine(d, fileId, model);
   });
@@ -974,7 +977,10 @@ async function pollMistral(env: Env, jobId: string): Promise<BatchPoll> {
 async function submitXai(env: Env, model: string, docs: BatchDoc[]): Promise<string> {
   const key = await keyFor(env, 'xai');
   // 1) upload each PDF → file id.
-  const uploads = await pMap(docs, 5, async (d) => {
+  // Concurrency limit of 25 provides 5x throughput while leaving safe headroom
+  // under Cloudflare Workers' hard ceiling of 50 concurrent subrequests per invocation
+  // (for batch creation, status polling, and other operations).
+  const uploads = await pMap(docs, 25, async (d) => {
     return {
       docId: d.docId,
       chamber: d.chamber,
