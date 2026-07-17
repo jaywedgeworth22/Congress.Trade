@@ -12,6 +12,7 @@ import {
  */
 export const OPENAI_BENCHMARK_ACCESS_MODELS = [
   'gpt-5.6-terra',
+  'gpt-5.6-terra-pro',
   'gpt-5.6-luna',
   'gpt-5.6-sol',
   'gpt-5.5',

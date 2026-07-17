@@ -173,6 +173,58 @@ describe('priceBenchmarkUsage', () => {
     });
   });
 
+  it('prices OpenRouter gpt-5.6-terra-pro from measured tokens', () => {
+    const result = priceBenchmarkUsage({
+      provider: 'openrouter',
+      model: 'openai/gpt-5.6-terra-pro',
+      invoked: true,
+      usage: { promptTokens: 1_000, cachedTokens: 200, completionTokens: 100 },
+    });
+    expect(result.costSource).toBe('usage_priced');
+    expect(result.costUsd).toBeCloseTo(0.00355, 10);
+    expect(result.costDetail).toMatchObject({
+      pricingBasis: 'tokens',
+      rateCardVersion: 'openrouter-static-2026-07-17',
+      billedUsage: { promptTokens: 1_000, uncachedPromptTokens: 800, cachedTokens: 200, completionTokens: 100 },
+      rates: { inputUsdPerMillion: 2.5, cachedInputUsdPerMillion: 0.25, outputUsdPerMillion: 15 },
+    });
+  });
+
+  it('prices OpenRouter claude-haiku-4.5 with cache writes', () => {
+    const result = priceBenchmarkUsage({
+      provider: 'openrouter',
+      model: 'anthropic/claude-haiku-4.5',
+      invoked: true,
+      usage: {
+        promptTokens: 1_000,
+        cachedTokens: 200,
+        cacheWriteTokens: 200,
+        cacheWriteOneHourTokens: 100,
+        completionTokens: 100,
+      },
+    });
+    expect(result.costSource).toBe('usage_priced');
+    expect(result.costUsd).toBeCloseTo(0.00147, 10);
+    expect(result.costDetail).toMatchObject({
+      pricingBasis: 'tokens',
+      rateCardVersion: 'openrouter-static-2026-07-17',
+      billedUsage: {
+        uncachedPromptTokens: 500,
+        cachedTokens: 200,
+        cacheWriteTokens: 200,
+        cacheWriteOneHourTokens: 100,
+        completionTokens: 100,
+      },
+      rates: {
+        inputUsdPerMillion: 1,
+        cachedInputUsdPerMillion: 0.1,
+        cacheWriteInputMultiplier: 1.25,
+        cacheWriteOneHourInputMultiplier: 2,
+        outputUsdPerMillion: 5,
+      },
+    });
+  });
+
   it('prices OpenRouter Mistral structured OCR from provider-reported pages', () => {
     const result = priceBenchmarkUsage({
       provider: 'openrouter',

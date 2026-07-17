@@ -139,6 +139,7 @@ import {
 import {
   checkOpenAiModelAccess,
   openAiModelAccessDecision,
+  OPENAI_BENCHMARK_ACCESS_MODELS,
 } from '../benchmark/providerAccess';
 import {
   BenchmarkSettingsConflictError,
@@ -5332,9 +5333,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // --- Durable benchmark runs ----------------------------------------------
   r.get('/benchmark/model-access/openai', async (c) => {
     const refresh = c.req.query('refresh') === '1' || c.req.query('refresh') === 'true';
-    const models = DEFAULT_CANDIDATES
+    let models = DEFAULT_CANDIDATES
       .filter((candidate) => candidate.provider === 'openai')
       .map((candidate) => candidate.model);
+    if (!models.length) models = [...OPENAI_BENCHMARK_ACCESS_MODELS];
     return c.json({ access: await checkOpenAiModelAccess(c.env, { models, refresh }) });
   });
 
