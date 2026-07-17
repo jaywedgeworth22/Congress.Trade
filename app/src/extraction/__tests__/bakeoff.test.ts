@@ -471,14 +471,19 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     expect(properties.txType.type).toEqual(['string', 'null']);
   });
 
-  it('offers only the three GPT-5.6 tiers for new OpenAI disclosure reads', () => {
-    const openAiModels = DEFAULT_CANDIDATES
+  it('routes all GPT-5.6 tiers through OpenRouter (no direct openai entries)', () => {
+    const directOpenAiModels = DEFAULT_CANDIDATES
       .filter((entry) => entry.provider === 'openai')
       .map((entry) => entry.model);
-    expect(openAiModels).toEqual([
-      'gpt-5.6-terra',
-      'gpt-5.6-luna',
-      'gpt-5.6-sol',
+    expect(directOpenAiModels).toEqual([]);
+
+    const orGptModels = DEFAULT_CANDIDATES
+      .filter((entry) => entry.provider === 'openrouter' && entry.model.startsWith('openai/gpt-5.6'))
+      .map((entry) => entry.model);
+    expect(orGptModels).toEqual([
+      'openai/gpt-5.6-terra',
+      'openai/gpt-5.6-luna',
+      'openai/gpt-5.6-sol',
     ]);
   });
 
@@ -487,6 +492,11 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       .filter((entry) => entry.provider === 'openrouter')
       .map((entry) => entry.model);
     expect(openRouterModels).toEqual([
+      'openai/gpt-5.6-terra',
+      'openai/gpt-5.6-luna',
+      'openai/gpt-5.6-sol',
+      'anthropic/claude-sonnet-5',
+      'x-ai/grok-4.3',
       'deepseek/deepseek-v4-pro',
       'deepseek/deepseek-v4-flash',
       'qwen/qwen3-vl-30b-a3b-instruct',
@@ -505,9 +515,9 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       'google/gemini-pro-1.5',
       'google/gemini-flash-1.5',
       'google/gemini-2.0-flash-thinking-exp:free',
-      'anthropic/claude-sonnet-5',
-      'anthropic/claude-sonnet-5',
-      'anthropic/claude-sonnet-5',
+      'anthropic/claude-3.5-sonnet',
+      'anthropic/claude-3.5-haiku',
+      'anthropic/claude-3.7-opus',
       'openai/gpt-4o',
       'openai/gpt-4o-mini',
       'mistralai/mistral-large-2411',
@@ -521,17 +531,10 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     ];
     for (const slug of deadSlugs) expect(openRouterModels).not.toContain(slug);
     // The GPT-4o family must be absent from the whole default lineup on every
-    // transport, and the eight direct-provider entries stay unchanged.
+    // transport, and the only non-OR entry is native mistral (kept as fallback).
     expect(DEFAULT_CANDIDATES.some((entry) => /(?:^|\/)(?:gpt|chatgpt)-4o(?:-|$)/i.test(entry.model))).toBe(false);
     expect(DEFAULT_CANDIDATES.filter((entry) => entry.provider !== 'openrouter')).toEqual([
-      { provider: 'gemini', model: 'gemini-3.5-flash' },
-      { provider: 'openai', model: 'gpt-5.6-terra' },
-      { provider: 'openai', model: 'gpt-5.6-luna' },
-      { provider: 'openai', model: 'gpt-5.6-sol' },
-      { provider: 'anthropic', model: 'claude-sonnet-5' },
-      { provider: 'anthropic', model: 'claude-sonnet-5' },
       { provider: 'mistral', model: 'mistral-ocr-latest' },
-      { provider: 'xai', model: 'grok-4.3' },
     ]);
   });
 

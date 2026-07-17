@@ -663,7 +663,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const user = await getCurrentUserFromRequest(c);
     if (!user) return c.json({ error: 'authentication required for durable subscriptions' }, 401);
     if (!isPremiumUser(user)) {
-      return c.json({ error: 'subscription management requires a Premium account', upgradeRequired: true, feature: 'alerts' }, 402);
+      return c.json({ error: `${delivery === 'webhook' ? 'Webhook' : 'SSE'} delivery requires a Premium account`, upgradeRequired: true, feature: 'alerts' }, 402);
     }
     const clientId = `user:${user.id}`;
     const subRl = await rateLimit(c.env, 'sub-create-user', clientId, 10, 3600);
