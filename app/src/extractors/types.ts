@@ -392,25 +392,27 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
   const senateHtml = new SenateHtmlExtractor();
   const textPdf = new TextPdfExtractor();
   
-  const openRouterVision = new OpenRouterVisionExtractor(env);
+  const geminiVision = new VisionLlmExtractor(env);
+  const anthropicVision = new AnthropicVisionExtractor(env);
+  const visionLlmWithFallback = new FallbackExtractor(geminiVision, anthropicVision);
 
   // Per-chamber PRIMARY/FAILOVER extraction model (AGREEMENT_*_MODEL_A/_B),
   // provider-generic via the bake-off harness. Unmigrated/dev chambers (no
   // explicit primary configured) delegate straight through to the legacy
   // vision-LLM fallback chain above, so behavior is unchanged until an
   // operator opts a chamber in.
-  const configuredVision = new ConfiguredVisionExtractor(env, openRouterVision);
+  const configuredVision = new ConfiguredVisionExtractor(env, visionLlmWithFallback);
 
   // The secondary is ALWAYS constructed (construction does no I/O): its API
   // key, model, and the ARBITRATION_ENABLED switch all resolve lazily at
   // extraction time (Infisical first, env fallback), so arbitration can be
   // turned on entirely from Infisical without a redeploy. When the flag stays
   // off, ArbitratingExtractor never invokes this instance.
-  const secondary = new OpenRouterVisionExtractor(env, {
+  const secondary = new VisionLlmExtractor(env, {
     apiKeyName: 'ARBITRATION_API_KEY',
     modelEnvName: 'ARBITRATION_MODEL',
-    defaultModel: 'openai/gpt-5.6-luna', // Updated default arbitration model
-    name: 'openRouterVision-secondary',
+    defaultModel: 'gemini-2.5-flash',
+    name: 'visionLlm-secondary',
   });
 
   const visionArbitrated = new ArbitratingExtractor(configuredVision, env, secondary);
@@ -425,10 +427,11 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
 
 import { SenateHtmlExtractor } from '../extraction/senateHtml';
 import { TextPdfExtractor } from '../extraction/textPdf';
-import { OpenRouterVisionExtractor } from '../extraction/openRouterVision';
+import { VisionLlmExtractor } from '../extraction/visionLlm';
+import { AnthropicVisionExtractor } from '../extraction/anthropicVision';
 import { ConfiguredVisionExtractor } from '../extraction/configuredVision';
 
 export {
-  SenateHtmlExtractor, TextPdfExtractor, OpenRouterVisionExtractor,
+  SenateHtmlExtractor, TextPdfExtractor, VisionLlmExtractor, AnthropicVisionExtractor,
   ConfiguredVisionExtractor,
 };

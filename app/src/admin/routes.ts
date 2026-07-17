@@ -65,7 +65,7 @@ import {
   HARD_FAILURE_FLAGS,
   hasHardFailureFlags,
 } from '../extraction/normalizer';
-import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionUtils';
+import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionLlm';
 import { enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement';
 import { mapFiling } from '../delivery/rows';
 import { verifyAccessJwt, certsUrl } from './access';
