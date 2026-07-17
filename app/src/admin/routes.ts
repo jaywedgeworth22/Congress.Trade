@@ -2913,6 +2913,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       : usageMonitorFallback.pending == null
         || usageMonitorFallbackPending > 0
         || usageMonitorFallback.truncated
+        || usageMonitorFallback.circuitOpen
         || !usageMonitorEnvironmentConfigured
         || !usageMonitorQueueConfigured
         ? 'warn'
@@ -2929,6 +2930,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             usageMonitorEnvironmentConfigured ? 'environment configured' : 'environment defaults at runtime',
             usageMonitorQueueConfigured ? 'Queue bound' : 'Queue binding unavailable',
             fallbackNote,
+            usageMonitorFallback.circuitOpen ? 'circuit breaker OPEN: live delivery suppressed' : 'circuit breaker closed',
             'receiver delivery receipts are not persisted locally',
           ].join('; ');
     connections.push({

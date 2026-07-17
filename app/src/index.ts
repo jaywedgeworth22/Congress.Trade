@@ -54,6 +54,7 @@ import {
 import {
   deliverUsageTelemetryEvent,
   flushUsageTelemetryFallback,
+  isUsageTelemetryCircuitOpen,
   persistUsageTelemetryFallback,
   trackedFetch,
   withThirdPartyTelemetry,
@@ -163,6 +164,15 @@ async function handleIngestMessage(env: Env, msg: QueueMessage, queueAttempt = 1
       await handleAgreementCheck(env, msg.docId, msg.rawObjectKey, msg.escalationTier, msg.claimToken);
       return;
     case 'usage.telemetry':
+      // While the circuit breaker is open (receiver known-down), skip the live
+      // delivery attempt entirely and go straight to the R2 outbox. Acking
+      // here (instead of throwing so the queue retries) is what stops a dead
+      // receiver from being hammered by this message's own retry/backoff
+      // cadence on top of every other in-flight event doing the same thing.
+      if (await isUsageTelemetryCircuitOpen(env)) {
+        await persistUsageTelemetryFallback(env, msg.event);
+        return;
+      }
       await deliverUsageTelemetryEvent(env, msg.event);
       return;
     default:
@@ -192,8 +202,15 @@ async function handleDeadLetterMessage(
 ): Promise<void> {
   const recoveryError = new Error(`consumer retry budget exhausted; received by ${queue}`);
   if (msg.type === 'usage.telemetry') {
-    // The ingest DLQ has a much larger retry budget. Keep attempting the exact
-    // same idempotent event instead of trying to attach it to a filing outbox.
+    // The ingest DLQ has a much larger retry budget (up to 100 retries), which
+    // is exactly the amplification surface a dead receiver hit during the
+    // incident this circuit breaker guards against. Respect it here too:
+    // while open, persist to the R2 outbox and stop, instead of continuing to
+    // attempt the exact same idempotent event on every DLQ redelivery.
+    if (await isUsageTelemetryCircuitOpen(env)) {
+      await persistUsageTelemetryFallback(env, msg.event);
+      return;
+    }
     await deliverUsageTelemetryEvent(env, msg.event);
     return;
   }

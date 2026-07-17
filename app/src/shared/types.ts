@@ -579,6 +579,25 @@ export interface Env {
   USAGE_MONITOR_INGEST_URL?: string;
   USAGE_MONITOR_INGEST_TOKEN?: string;
   USAGE_MONITOR_ENVIRONMENT?: string;
+  /**
+   * Usage telemetry delivery circuit breaker + R2 outbox limits (see
+   * shared/thirdPartyTelemetry.ts). All are env-overridable; every one has a
+   * safe built-in default and none require a redeploy to tune during an
+   * incident. Added after a receiver outage let unbounded retries churn a
+   * growing D1 table into a large overage — see docs/rollouts for the record.
+   */
+  /** Consecutive delivery failures before the circuit opens (default 3). */
+  USAGE_TELEMETRY_CIRCUIT_FAILURE_THRESHOLD?: string;
+  /** First open-circuit backoff window in ms; doubles per repeated probe failure (default 30000 = 30s). */
+  USAGE_TELEMETRY_CIRCUIT_BASE_BACKOFF_MS?: string;
+  /** Cap on the exponential backoff window in ms (default 1800000 = 30min). */
+  USAGE_TELEMETRY_CIRCUIT_MAX_BACKOFF_MS?: string;
+  /** Hard cap on pending R2 outbox objects; new events are dropped past this (default 5000). */
+  USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS?: string;
+  /** Age in days at which a pending R2 outbox object is discarded unsent (default 14). */
+  USAGE_TELEMETRY_FALLBACK_TTL_DAYS?: string;
+  /** Max legacy D1 fallback rows read per flush cycle during the one-time drain (default 100, hard cap 500). */
+  USAGE_TELEMETRY_D1_DRAIN_LIMIT?: string;
   /** Admin + scoped import bearer tokens. */
   ADMIN_TOKEN?: string;
   /** Admin email allowlist for site-session admin access and Cloudflare Access. */
