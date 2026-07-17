@@ -590,8 +590,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .colopts { display:flex; flex-direction:column; gap:6px; flex:1; }
   .colopt { font-size:13px; color:var(--text); display:flex; align-items:center; gap:10px; padding:8px 12px; background:var(--panel); border:1px solid var(--border); border-radius:6px; cursor:grab; margin-right:0; white-space:nowrap; min-width:0; }
   button.colopt { font-family:var(--sans); }
-  .colopt.locked { color:var(--text-dim); }
-  .colopt.locked:hover { color:var(--text); border-color:color-mix(in srgb,var(--accent) 55%,var(--border)); }
   .colopt.dragging { opacity:.45; border-color:var(--accent); }
   .col-drag { color:var(--text-dim); cursor:grab; font-size:14px; line-height:1; }
   .colopt input { flex:0 0 auto; margin:0; }
@@ -2600,15 +2598,15 @@ var FEED_COLS = [
   { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
   { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
-  { id: 'marketcap', label: 'Cap', sort: 'refMarketCap', def: true, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
-  { id: 'country', label: '🌎', sort: 'refCountry', def: true, cls: 'muted', tier: 'premium', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
+  { id: 'marketcap', label: 'Cap', sort: 'refMarketCap', def: true, tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
+  { id: 'country', label: '🌎', sort: 'refCountry', def: true, cls: 'muted', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
   { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
   { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
   { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
   { id: 'latency', label: 'Latency', sort: null, def: false, cls: 'latency', tier: 'admin', tip: 'Released to seen, then seen to imported for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
   { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
   { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
-  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
+  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
   { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return clipTextHtml(ownerLabel(r.chamber)); } },
   { id: 'source', label: 'Source', sort: 'source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
 ];
@@ -2619,7 +2617,6 @@ function isAdminView() {
 }
 function canUseColumn(c) {
   if (c.tier === 'admin') return isAdminView();
-  if (c.tier === 'premium') return isAdminView() || (typeof ME !== 'undefined' && isPremium());
   return true;
 }
 function loadColOrder() { try { var v = JSON.parse(localStorage.getItem(COL_ORDER_KEY)); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
@@ -2729,17 +2726,9 @@ function setPanelOpen(id, open) {
 }
 function renderColChooser() {
   var box = el('colChooserBody'); if (!box) return;
-  var lockedPremium = !isAdminView() && !(typeof ME !== 'undefined' && isPremium());
-  var note = lockedPremium
-    ? '<div class="panel-note"><strong>Premium enrichment</strong><br/>Sector, market cap, and country are available with Premium.</div>'
-    : '';
-  note += '<div class="panel-note">Drag columns here to reorder the Trades table.</div>';
+  var note = '<div class="panel-note">Drag columns here to reorder the Trades table.</div>';
   box.innerHTML = note + chooserCols().map(function (c) {
     var tip = c.tip ? ' title="' + esc(c.tip) + '"' : '';
-    if (c.tier === 'premium' && lockedPremium) {
-      return '<button type="button" class="colopt locked" draggable="true" data-colid="' + esc(c.id) + '" data-premium-col="' + esc(c.id) + '"' + tip + '>' +
-        '<span class="col-drag" aria-hidden="true">↕</span><span class="colopt-name">' + esc(c.label) + '</span> <span class="premium-mark">Premium</span></button>';
-    }
     return '<label class="colopt" draggable="true" data-colid="' + esc(c.id) + '"' + tip + '><span class="col-drag" aria-hidden="true">↕</span><input type="checkbox" data-colid="' + c.id + '"' + (isColVisible(c.id) ? ' checked' : '') + ' /> <span class="colopt-name">' + esc(c.label) + '</span></label>';
   }).join('');
 }
@@ -7474,11 +7463,6 @@ function pricingCopy(intent) {
     sub: 'Browse and filter the dashboard for free. Premium adds full-history CSV downloads for research workflows.',
     features: ['Full-history CSV exports', 'Filtered downloads by asset, chamber, and transaction type'],
   };
-  if (intent === 'columns') return {
-    title: 'Premium Enrichment Columns',
-    sub: 'The public dashboard stays browsable. Premium adds enriched finance fields for deeper screening.',
-    features: ['Sector', 'Market cap', 'Country of issue'],
-  };
   if (intent === 'alerts') return {
     title: 'Get the Filing First',
     sub: 'Free users see filings when they check the site. Premium pushes them to you the moment our scout ingests — via signed webhooks or a live SSE stream.',
@@ -7486,7 +7470,6 @@ function pricingCopy(intent) {
       'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
       'Live SSE stream of every new filing — no polling',
       'Full-history CSV exports',
-      'Enrichment columns: sector, market cap, and country',
     ],
   };
   return {
@@ -7496,7 +7479,6 @@ function pricingCopy(intent) {
       'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
       'Live SSE stream of every new filing — no polling',
       'Full-history CSV exports',
-      'Enrichment columns: sector, market cap, and country',
     ],
   };
 }
@@ -7538,7 +7520,7 @@ function startCheckout() {
     return;
   }
   if (!ME.user) {
-    var feature = pricingIntent === 'csv' ? ' for CSV export' : pricingIntent === 'columns' ? ' for Premium columns' : '';
+    var feature = pricingIntent === 'csv' ? ' for CSV export' : '';
     closePricing(); openLogin(); el('loginMsg').textContent = 'Sign in to start your Premium trial' + feature + '.';
     return;
   }
@@ -7912,10 +7894,6 @@ renderFeedHeader();
 (function () {
   var box = el('colChooserBody');
   var draggingCol = null;
-  if (box) box.addEventListener('click', function (e) {
-    var btn = e.target && e.target.closest ? e.target.closest('[data-premium-col]') : null;
-    if (btn) openPricing('columns');
-  });
   if (box) box.addEventListener('change', function (e) {
     var cb = e.target;
     if (cb && cb.getAttribute && cb.getAttribute('data-colid')) {

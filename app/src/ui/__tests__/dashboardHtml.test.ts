@@ -284,8 +284,12 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('uses subtle Premium cues without implying the public feed is paywalled', () => {
-    expect(DASHBOARD_HTML).toContain('Premium enrichment');
-    expect(DASHBOARD_HTML).toContain('data-premium-col');
+    // Columns are never Premium-gated (owner decision 2026-07-17): Premium is
+    // delivery (webhooks/SSE) plus the full-history CSV export only.
+    expect(DASHBOARD_HTML).not.toContain('data-premium-col');
+    expect(DASHBOARD_HTML).not.toContain('Premium enrichment');
+    expect(DASHBOARD_HTML).not.toContain("tier: 'premium'");
+    expect(DASHBOARD_HTML).not.toContain('Premium Enrichment Columns');
     expect(DASHBOARD_HTML).toContain('CSV Export Requires Premium');
     expect(DASHBOARD_HTML).toContain('CSV export is Premium');
     expect(DASHBOARD_HTML).toContain('Full-history CSV exports');
