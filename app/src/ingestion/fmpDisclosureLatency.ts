@@ -1037,14 +1037,21 @@ async function runUnusualWhalesDeepMatch(
 
   // Still-pending UW candidates whose filed_date predates the oldest row on
   // the page we just fetched - provably outside this run's window. Ordered
-  // for rotation (see the function doc comment).
+  // for rotation (see the function doc comment). The EXISTS clause requires
+  // at least one live parsed transaction BEFORE the scan cap applies:
+  // transactionless candidates (failed/empty extractions) never receive a
+  // deep attempt, so without the filter they would keep their rotation rank
+  // forever and a least-recently-checked window full of them would
+  // permanently starve every eligible candidate ranked behind them.
   const oldPending = await all<CandidateRow>(
     env.DB,
     `SELECT doc_id, provider, chamber, source_url, filed_date, filer_name,
             congress_first_seen_at, attempts
-       FROM disclosure_latency_candidates
-      WHERE provider = ? AND status = 'pending' AND filed_date IS NOT NULL AND filed_date < ?
-      ORDER BY last_checked_at ASC, attempts ASC, filed_date ASC
+       FROM disclosure_latency_candidates c
+      WHERE c.provider = ? AND c.status = 'pending' AND c.filed_date IS NOT NULL AND c.filed_date < ?
+        AND EXISTS (SELECT 1 FROM transactions t
+                     WHERE t.doc_id = c.doc_id AND t.tx_date IS NOT NULL AND t.deprecated_at IS NULL)
+      ORDER BY c.last_checked_at ASC, c.attempts ASC, c.filed_date ASC
       LIMIT ?`,
     [provider.id, oldestFreshDate, UW_DEEP_MATCH_CANDIDATE_LIMIT],
   );
@@ -1065,7 +1072,9 @@ async function runUnusualWhalesDeepMatch(
     // A filing with no live parsed transactions has no transaction dates to
     // anchor a deep fetch on - and with no rows on any date page it could
     // never row-match - so skip it rather than burn a trial call on a
-    // wrong-date page.
+    // wrong-date page. The candidate query's EXISTS clause already excludes
+    // these; this in-loop skip is belt-and-suspenders for transactions
+    // deprecated between the two queries.
     const txDates = txDatesByDoc.get(candidate.doc_id) ?? [];
     if (!txDates.length) continue;
     for (const date of txDates) {

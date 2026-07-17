@@ -511,7 +511,7 @@ function fakeLatencyDb(seed: SeedCandidate[] = [], transactions: SeedTransaction
   }
 
   function select(sql: string, params: unknown[]): Record<string, unknown>[] {
-    if (sql.includes('FROM transactions')) {
+    if (sql.includes('SELECT DISTINCT doc_id, tx_date')) {
       const docIds = new Set(params as string[]);
       const seen = new Set<string>();
       const rows: Record<string, unknown>[] = [];
@@ -526,12 +526,23 @@ function fakeLatencyDb(seed: SeedCandidate[] = [], transactions: SeedTransaction
     }
     if (sql.includes('FROM disclosure_latency_candidates') && sql.includes('filed_date < ?')) {
       const [provider, beforeDate, cap] = params as [string, string, number];
+      // Honor the transaction-eligibility EXISTS clause only when the SQL
+      // actually carries it, so tests fail if the implementation drops it
+      // (the scan cap must never be spent on transactionless candidates).
+      const requiresLiveTx = /EXISTS\s*\(SELECT 1 FROM transactions/i.test(sql);
+      const hasLiveTx = (docId: string) =>
+        transactions.some((t) => t.doc_id === docId && t.tx_date != null && t.deprecated_at == null);
       // Mirrors the deep-match rotation ordering: last_checked_at ASC (SQLite
       // sorts NULLs first in ASC — '' models that), then attempts ASC, then
       // filed_date ASC.
       return Array.from(candidates.values())
         .filter(
-          (c) => c.provider === provider && c.status === 'pending' && c.filed_date != null && c.filed_date < beforeDate,
+          (c) =>
+            c.provider === provider &&
+            c.status === 'pending' &&
+            c.filed_date != null &&
+            c.filed_date < beforeDate &&
+            (!requiresLiveTx || hasLiveTx(c.doc_id)),
         )
         .sort((a, b) => {
           const lcA = a.last_checked_at ?? '';
@@ -873,6 +884,64 @@ describe('unusual_whales deep match (stranded pending observations)', () => {
     // other stranded candidate first: the second run fetches a DIFFERENT
     // date instead of starving it behind the same oldest date forever.
     expect(secondRunDates).toEqual(['2025-12-21']);
+  });
+
+  it('does not let transactionless candidates consume the scan cap: an eligible candidate ranked behind a full window of them is still targeted in the same run', async () => {
+    // 500 (= UW_DEEP_MATCH_CANDIDATE_LIMIT) stranded candidates with NO live
+    // parsed transactions, all ranking AHEAD of the eligible candidate in
+    // rotation order (older filed_date; and older created_at keeps them out
+    // of the normal pass's newest-100 stamp where possible). If the scan cap
+    // were applied before transaction eligibility, they would fill the whole
+    // window every run and the eligible candidate would never be reached.
+    const seed: SeedCandidate[] = [];
+    for (let i = 0; i < 500; i++) {
+      seed.push({
+        doc_id: `H-no-tx-${i}`,
+        filed_date: '2026-01-01',
+        filer_name: 'No Extraction',
+        congress_first_seen_at: '2026-01-01T12:00:00.000Z',
+        created_at: '2026-01-01T12:00:00.000Z',
+      });
+    }
+    seed.push({
+      doc_id: 'H-eligible',
+      filed_date: '2026-01-05',
+      filer_name: 'Jane Smith',
+      congress_first_seen_at: '2026-01-05T12:00:00.000Z',
+      created_at: '2026-01-05T12:00:00.000Z',
+    });
+    const db = fakeLatencyDb(seed, [{ doc_id: 'H-eligible', tx_date: '2026-01-02' }]);
+    const env = {
+      UNUSUAL_WHALES_API_KEY: 'test-key',
+      CONFIG_KV: fakeKv(),
+      DB: db,
+    } as unknown as Parameters<typeof runDisclosureLatencyProbe>[0];
+
+    const freshPage = [
+      { filed_at_date: '2026-01-10', member_type: 'house', name: 'John Doe', politician_id: 'a', ticker: 'MSFT', transaction_date: '2026-01-08', txn_type: 'Sell' },
+    ];
+    const fetchImpl = uwRecentTradesFetch(
+      {
+        '2026-01-02': [
+          { filed_at_date: '2026-01-05', member_type: 'house', name: 'Jane Smith', politician_id: 'b', ticker: 'AAPL', transaction_date: '2026-01-02', txn_type: 'Buy' },
+        ],
+      },
+      freshPage,
+    );
+
+    const result = await runDisclosureLatencyProbe(env, new Date('2026-01-10T15:00:00.000Z'), fetchImpl, {
+      force: true,
+      providers: ['unusual_whales'],
+    });
+
+    // The scan only counts transaction-eligible rows, so the eligible
+    // candidate is selected and deep-fetched in this same run instead of
+    // being starved behind 500 transactionless rows.
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const deepCallUrl = fetchImpl.mock.calls.map(([u]) => String(u)).find((u) => u.includes('date='));
+    expect(deepCallUrl).toContain('date=2026-01-02');
+    expect(db.candidates.get('H-eligible::unusual_whales')?.status).toBe('matched');
+    expect(result.matched).toBe(1);
   });
 
   it('carries the DB-canonical first_observed_at (not now) when a deep-fetched row already existed, even past the 72h window', async () => {
