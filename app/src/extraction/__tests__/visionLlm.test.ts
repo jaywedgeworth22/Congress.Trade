@@ -9,7 +9,7 @@ import {
   validatePdfForAnthropic,
   resavePdfForAnthropic,
   isAnthropicInvalidPdfError,
-} from '../visionLlm';
+} from '../visionUtils';
 import type { Env, Filing, ParsedTx } from '../../shared/types';
 
 const filing = (): Filing => ({

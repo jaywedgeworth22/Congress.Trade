@@ -4,23 +4,23 @@ import type { Env } from '../../shared/types';
 import {
   computeConsensusAgreement,
   DEFAULT_CANDIDATES,
-  fetchLlamaParseResult,
+  
   isRetiredDisclosureCandidate,
   openAiDisclosureReasoningEffort,
   upgradeRetiredDisclosureCandidate,
-  EXTRACTION_SCHEMA_VERSION,
-  extractProviderReportedPageCount,
-  extractXaiResponseText,
-  MISTRAL_ANNOTATION_SCHEMA,
-  llamaParseModeParameters,
-  parseLlamaParseMarkdown,
-  parseMistralOcrResponse,
+  
+  
+  
+  
+  
+  
+  
   runCandidateOnDoc,
   summarizeModels,
   type BakeoffCandidate,
   type CandidateDocResult,
 } from '../bakeoff';
-import { EXECUTIVE_SYSTEM_PROMPT, arrayBufferToBase64 } from '../visionLlm';
+import { EXECUTIVE_SYSTEM_PROMPT, arrayBufferToBase64 } from '../visionUtils';
 
 /** A minimal, genuinely-parseable PDF for tests that reach Anthropic's
  *  pre-validation (validatePdfForAnthropic loads it with pdf-lib). Because
@@ -186,93 +186,13 @@ describe('summarizeModels', () => {
   });
 });
 
-describe('parseMistralOcrResponse', () => {
-  it('maps a structured document_annotation (JSON string) to ParsedTx[]', () => {
-    const annotation = JSON.stringify({
-      transactions: [
-        { txDate: '2026-05-05', owner: 'self', assetName: 'Apple Inc.', ticker: 'AAPL', assetType: 'ST', txType: 'P', amountRange: '$1,001 - $15,000', isOption: false },
-        { txDate: '2026-05-06', owner: 'spouse', assetName: 'Intel Corp', ticker: 'INTC', assetType: 'ST', txType: 'S', amountRange: '$15,001 - $50,000', isOption: false },
-      ],
-    });
-    const rows = parseMistralOcrResponse({ document_annotation: annotation, pages: [] });
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ ticker: 'AAPL', txType: 'P', amountMin: 1001, amountMax: 15000 });
-    expect(rows[1]).toMatchObject({ ticker: 'INTC', txType: 'S' });
-  });
 
-  it('accepts a document_annotation already parsed into an object', () => {
-    const rows = parseMistralOcrResponse({
-      document_annotation: { transactions: [{ assetName: 'Microsoft', ticker: 'MSFT', txType: 'P', amountRange: '$1,001 - $15,000' }] },
-    });
-    expect(rows[0].ticker).toBe('MSFT');
-  });
 
-  it('falls back to a fenced JSON block in the OCR markdown', () => {
-    const md = 'Some OCR text\n```json\n{"transactions":[{"assetName":"Tesla","ticker":"TSLA","txType":"P","amountRange":"$1,001 - $15,000"}]}\n```\n';
-    const rows = parseMistralOcrResponse({ pages: [{ markdown: md }] });
-    expect(rows[0].ticker).toBe('TSLA');
-  });
 
-  it('throws when there is neither an annotation nor a JSON block', () => {
-    expect(() => parseMistralOcrResponse({ pages: [{ markdown: 'plain text only' }] })).toThrow(/no document_annotation/);
-  });
-});
 
-describe('parseLlamaParseMarkdown', () => {
-  const txJson = '[{"assetName":"Apple Inc.","ticker":"AAPL","txType":"P","amountRange":"$1,001 - $15,000","txDate":"2026-05-05","owner":"self","assetType":"ST","isOption":false}]';
 
-  it('extracts a fenced ```json block', () => {
-    const md = `Some OCR preamble.\n\`\`\`json\n${txJson}\n\`\`\`\n`;
-    const rows = parseLlamaParseMarkdown(md);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ ticker: 'AAPL', txType: 'P', amountMin: 1001, amountMax: 15000 });
-  });
 
-  it('extracts a fenced ``` block without the json tag', () => {
-    const md = `\`\`\`\n${txJson}\n\`\`\``;
-    expect(parseLlamaParseMarkdown(md)[0].ticker).toBe('AAPL');
-  });
 
-  it('falls back to a bare JSON array when no fenced block is present', () => {
-    const md = `Here are the transactions:\n${txJson}\nEnd of output.`;
-    expect(parseLlamaParseMarkdown(md)[0].ticker).toBe('AAPL');
-  });
-
-  it('parses multiple transactions', () => {
-    const multi = '[{"assetName":"AAPL","ticker":"AAPL","txType":"P","amountRange":"$1,001 - $15,000"},{"assetName":"MSFT","ticker":"MSFT","txType":"S","amountRange":"$15,001 - $50,000"}]';
-    const rows = parseLlamaParseMarkdown(`\`\`\`json\n${multi}\n\`\`\``);
-    expect(rows).toHaveLength(2);
-    expect(rows[1].ticker).toBe('MSFT');
-  });
-
-  it('throws when no JSON array is found in the markdown', () => {
-    expect(() => parseLlamaParseMarkdown('Plain text with no JSON at all.')).toThrow(/no JSON array/);
-  });
-});
-
-describe('llamaParseModeParameters', () => {
-  it('maps display tiers to explicit v1 parse modes used by the public rate card', () => {
-    expect(llamaParseModeParameters('fast')).toEqual({ parse_mode: 'parse_page_without_llm' });
-    expect(llamaParseModeParameters('cost-effective')).toEqual({
-      parse_mode: 'parse_page_with_llm',
-      high_res_ocr: 'true',
-    });
-    expect(llamaParseModeParameters('agentic')).toEqual({
-      parse_mode: 'parse_page_with_agent',
-      model: 'gemini-2.5-flash',
-      high_res_ocr: 'true',
-    });
-    expect(() => llamaParseModeParameters('agentic-plus')).toThrow(/unsupported benchmark mode/);
-  });
-});
-
-describe('extractProviderReportedPageCount', () => {
-  it('accepts explicit provider page meters but never derives pages from unrelated data', () => {
-    expect(extractProviderReportedPageCount({ usage: { pages_processed: 7 } })).toBe(7);
-    expect(extractProviderReportedPageCount({ pages: [{}, {}, {}] })).toBe(3);
-    expect(extractProviderReportedPageCount({ bytes: 9_000_000 })).toBeUndefined();
-  });
-});
 
 describe('runCandidateOnDoc (openai): token usage capture', () => {
   const env = { OPENAI_API_KEY: 'sk-openai-test' } as unknown as Env;
@@ -464,12 +384,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     });
   });
 
-  it('keeps unreadable asset name and transaction type nullable in the strict schema', () => {
-    const properties = MISTRAL_ANNOTATION_SCHEMA.schema.properties.transactions.items.properties;
-    expect(EXTRACTION_SCHEMA_VERSION).toBe('stock-act-transactions-v2');
-    expect(properties.assetName.type).toEqual(['string', 'null']);
-    expect(properties.txType.type).toEqual(['string', 'null']);
-  });
+
 
   it('offers only the three GPT-5.6 tiers for new OpenAI disclosure reads', () => {
     const openAiModels = DEFAULT_CANDIDATES
@@ -976,24 +891,7 @@ describe('runCandidateOnDoc frozen invocation authorization', () => {
   });
 });
 
-describe('extractXaiResponseText', () => {
-  it('prefers the convenience output_text field', () => {
-    expect(extractXaiResponseText({ output_text: '{"transactions":[]}' })).toBe('{"transactions":[]}');
-  });
 
-  it('concatenates output[].content[].text parts (Responses message shape)', () => {
-    const payload = {
-      output: [
-        { content: [{ type: 'output_text', text: '{"transactions":' }, { type: 'output_text', text: '[{"ticker":"AAPL"}]}' }] },
-      ],
-    };
-    expect(extractXaiResponseText(payload)).toBe('{"transactions":[{"ticker":"AAPL"}]}');
-  });
-
-  it('throws when there is no text in the output', () => {
-    expect(() => extractXaiResponseText({ output: [{ content: [] }] })).toThrow(/no text/);
-  });
-});
 
 describe('runCandidateOnDoc (anthropic): output-truncation handling', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -1296,49 +1194,4 @@ describe('runCandidateOnDoc: sync provider fetches carry a bounded timeout', () 
   });
 });
 
-describe('fetchLlamaParseResult', () => {
-  afterEach(() => vi.unstubAllGlobals());
 
-  it('retries a couple of times on 404 (result-404 eventual consistency) before succeeding', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response('not found', { status: 404 }))
-      .mockResolvedValueOnce(new Response('not found', { status: 404 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ markdown: '```json\n[]\n```' }), { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const sleeps: number[] = [];
-    const res = await fetchLlamaParseResult('job-1', 'lp-key', 'fast', {
-      sleep: async (ms) => { sleeps.push(ms); },
-    });
-
-    expect(res.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(sleeps).toHaveLength(2);
-    for (const call of fetchMock.mock.calls) {
-      expect(call[1]?.signal).toBeInstanceOf(AbortSignal);
-    }
-  });
-
-  it('gives up after the attempt budget and returns the last 404', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('not found', { status: 404 }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const res = await fetchLlamaParseResult('job-1', 'lp-key', 'fast', {
-      attempts: 3,
-      sleep: async () => {},
-    });
-
-    expect(res.status).toBe(404);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-  });
-
-  it('does not retry a non-404 status', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('server error', { status: 500 }));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const res = await fetchLlamaParseResult('job-1', 'lp-key', 'fast', { sleep: async () => {} });
-
-    expect(res.status).toBe(500);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-});

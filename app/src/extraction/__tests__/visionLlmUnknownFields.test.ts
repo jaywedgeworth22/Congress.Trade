@@ -6,7 +6,7 @@ import {
   EXTRACTION_PROMPT_VERSION,
   VisionLlmExtractor,
   toParsedTx,
-} from '../visionLlm';
+} from '../visionUtils';
 
 const { mockGenerateContent } = vi.hoisted(() => ({ mockGenerateContent: vi.fn() }));
 
