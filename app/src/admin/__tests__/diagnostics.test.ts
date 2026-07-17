@@ -64,6 +64,11 @@ function fakeDb() {
               ] as T[],
             };
           }
+          // Price cache freshness now reads the maintained, indexed
+          // securities_ref.latest_price_date instead of MAX(date) over price_eod.
+          if (/FROM securities_ref/i.test(sql) && /latest_price_date/i.test(sql)) {
+            return { results: [{ last_used_at: '2026-06-24' }] as T[] };
+          }
           if (/FROM price_eod/i.test(sql)) {
             return {
               results: [

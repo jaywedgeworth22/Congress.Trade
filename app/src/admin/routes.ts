@@ -104,7 +104,7 @@ import {
 } from '../enrichment/service';
 import { mergeRefs } from '../enrichment/compute';
 import type { SecurityRef } from '../enrichment/types';
-import { runPriceRefresh } from '../prices/service';
+import { runPriceRefresh, priceUnavailableCutoffIso } from '../prices/service';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets, updateSecret } from '../secrets/infisical';
 import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
 import { pollExecutive } from '../ingestion/watcher';
@@ -3310,9 +3310,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       note: runtimeSecrets.LOGODEV_PUBLISHABLE_KEY ? 'Ticker logo proxy token available' : 'LOGODEV_PUBLISHABLE_KEY is not available to this Worker runtime',
     });
 
+    // Read the maintained, indexed securities_ref.latest_price_date instead of
+    // MAX(date) over the ~1.43M-row price_eod table (no date-leading index there,
+    // so that was a full scan on every /diagnostics poll).
     const priceRows = await optionalAll<{ last_used_at: string | null }>(
       c.env,
-      `SELECT MAX(date) AS last_used_at FROM price_eod`
+      `SELECT MAX(latest_price_date) AS last_used_at FROM securities_ref`
     );
     const priceRow = priceRows[0];
     const hasPriceProvider = !!(runtimeSecrets.FMP_API_KEY || runtimeSecrets.MASSIVE_API_KEY || runtimeSecrets.TIINGO_API_KEY);
@@ -7803,9 +7806,18 @@ async function marketCoverage(env: Env): Promise<MarketCoverage> {
 /**
  * Count tickers still needing work: `enrich` = traded tickers with no useful
  * securities_ref coverage; `prices` = traded (dated) tickers with no cached
- * price_eod. Drives the `done` flag for the backfill-market loop.
+ * price_eod that are NOT negative-cached as un-priceable. Drives the `done` flag
+ * for the backfill-market loop.
+ *
+ * Two things make `prices` reach 0 (so `done:true` is reachable) instead of
+ * plateauing at the ~544 never-priceable tickers that ran the loop forever:
+ *   1. `NOT EXISTS` instead of `LEFT JOIN price_eod ... WHERE pe.ticker IS NULL`
+ *      — the anti-join materialized every one of a ticker's ~1,578 price_eod rows
+ *      before discarding them; NOT EXISTS index-seeks and stops at the first row.
+ *   2. excluding tickers marked `price_unavailable` within the re-check TTL, which
+ *      the price refresh sets when the EOD history API returns empty for them.
  */
-async function marketPending(env: Env): Promise<{ enrich: number; prices: number }> {
+export async function marketPending(env: Env): Promise<{ enrich: number; prices: number }> {
   const retryIncomplete = await hasConfiguredKeyedEnrichmentProvider(env);
   const e = await get<{ n: number }>(
     env.DB,
@@ -7820,10 +7832,16 @@ async function marketPending(env: Env): Promise<{ enrich: number; prices: number
     env.DB,
     `SELECT COUNT(*) AS n FROM (
        SELECT t.ticker FROM transactions t
-       LEFT JOIN price_eod pe ON pe.ticker = t.ticker
+       LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
        WHERE t.ticker IS NOT NULL AND t.ticker <> '' AND t.tx_date IS NOT NULL
-         AND pe.ticker IS NULL
+         AND NOT EXISTS (SELECT 1 FROM price_eod pe WHERE pe.ticker = t.ticker)
+         AND NOT (
+           COALESCE(sr.price_unavailable, 0) = 1
+           AND sr.price_checked_at IS NOT NULL
+           AND sr.price_checked_at >= ?
+         )
        GROUP BY t.ticker)`,
+    [priceUnavailableCutoffIso()],
   );
   return { enrich: e?.n ?? 0, prices: p?.n ?? 0 };
 }
