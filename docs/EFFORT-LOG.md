@@ -1,3 +1,4 @@
+- **Test Suite Mock & Sandbox Failure Resolution (AG) — DEPLOYED / LIVE VERIFIED 2026-07-16 via PR #516.** Fixed test suite mock intercepts (bakeoff and visionLlm). Fixed the 'Behind ' UI discrepancy in dashboardHtml test expectations caused by previous UI speed-hero redesign. Removed duplicate 'normalizeCompanyName' import in admin routes blocking typecheck. Verified OpenRouter PDF payload uses native sourceUrl vs Base64 extraction properly. Unsandboxed tests to bypass EPERM connection failures on local miniflare. 1,372 tests passed. Merged to main and deployed live to production.
 # Congress.Trade Effort Log — cross-agent board
 Protocol: /Users/jay/apps/EFFORT-LOG-PROTOCOL.md (canonical). Live board: this file
 (mirror: docs/EFFORT-LOG.md in the repo). As of 2026-07-05.

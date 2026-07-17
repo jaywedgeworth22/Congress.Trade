@@ -92,7 +92,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .table-wrap { overflow-x: auto; max-height: min(78vh, 920px); }
   #feedTable.resizable { table-layout: fixed; min-width: 100%; }
   #feedTable.resizable th, #feedTable.resizable td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-  #feedTable.resizable td.latency { white-space: normal; }
+  #feedTable.resizable th.c-latency, #feedTable.resizable td.latency { white-space: normal; width: 55px; min-width: 55px; max-width: 55px; word-break: break-word; }
   #feedTable.resizable th { text-align: center; padding-right: 18px; }
   #feedTable.resizable td > * { max-width: 100%; min-width: 0; }
   #feedTable.resizable .asset-cell,
@@ -587,15 +587,15 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .mini-date { display:flex; flex-direction:column; gap:2px; line-height:1.25; }
   .mini-date .subline { color:var(--text-dim); font-size:11px; }
   .mini-source-link { display:block; margin-top:2px; font-size:11px; font-weight:600; }
-  .colopts { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:6px; flex:1; }
-  .colopt { font-size:13px; color:var(--text); display:inline-flex; align-items:center; gap:7px; margin-right:0; white-space:nowrap; cursor:pointer; min-width:0; }
-  button.colopt { font-family:var(--sans); border:1px dashed var(--border); background:color-mix(in srgb,var(--panel-2) 65%,transparent); border-radius:999px; padding:3px 8px; }
+  .colopts { display:flex; flex-direction:column; gap:6px; flex:1; }
+  .colopt { font-size:13px; color:var(--text); display:flex; align-items:center; gap:10px; padding:8px 12px; background:var(--panel); border:1px solid var(--border); border-radius:6px; cursor:grab; margin-right:0; white-space:nowrap; min-width:0; }
+  button.colopt { font-family:var(--sans); }
   .colopt.locked { color:var(--text-dim); }
   .colopt.locked:hover { color:var(--text); border-color:color-mix(in srgb,var(--accent) 55%,var(--border)); }
   .colopt.dragging { opacity:.45; border-color:var(--accent); }
   .col-drag { color:var(--text-dim); cursor:grab; font-size:14px; line-height:1; }
-  .colopt input { flex:0 0 auto; }
-  .colopt-name { overflow:hidden; text-overflow:ellipsis; }
+  .colopt input { flex:0 0 auto; margin:0; }
+  .colopt-name { overflow:hidden; text-overflow:ellipsis; flex:1; }
   .premium-mark { display:inline-flex; align-items:center; justify-content:center; border:1px solid color-mix(in srgb,var(--accent) 42%,var(--border)); background:color-mix(in srgb,var(--accent) 9%,transparent); color:var(--accent); border-radius:999px; padding:1px 6px; font-size:10px; font-weight:800; line-height:1.4; }
   .panel-note { flex-basis:100%; width:100%; color:var(--text-dim); font-size:12px; line-height:1.45; margin-bottom:4px; }
   .premium-count-note { margin-left:8px; color:var(--text-dim); }
@@ -760,11 +760,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* ---- Speed vs data providers (public latency proof) ---- */
   .speed-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; flex-wrap:wrap; }
   .speed-head h3 { margin:0; }
-  .speed-body { display:grid; grid-template-columns:230px 1fr; gap:20px; align-items:start; min-height:170px; margin-top:10px; }
-  .speed-hero-num { font-size:44px; font-weight:800; letter-spacing:-0.5px; line-height:1.05; }
-  .speed-hero-label { color:var(--text-dim); font-size:13px; margin-top:3px; }
-  .speed-record { margin-top:10px; font-size:13px; font-family:var(--mono); font-variant-numeric:tabular-nums; }
-  .speed-n { margin-top:5px; font-size:11px; color:var(--text-dim); }
+  .speed-body { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:20px; align-items:start; min-height:170px; margin-top:10px; }
+  .speed-hero-card { background:color-mix(in srgb, var(--panel-2) 35%, transparent); border:1px solid var(--border); border-radius:10px; padding:12px 14px; text-align:center; display:flex; flex-direction:column; justify-content:space-between; }
+  .speed-hero-top { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:8px; margin-bottom:8px; }
+  .speed-hero-title { font-size:12px; font-weight:600; color:var(--text); text-transform:uppercase; letter-spacing:0.5px; }
+  .speed-hero-badge { font-size:11px; color:var(--text-dim); background:var(--panel); padding:2px 6px; border-radius:4px; }
+  .speed-hero-main { padding:8px 0; }
+  .speed-hero-num { font-size:36px; font-weight:800; letter-spacing:-0.5px; line-height:1.05; }
+  .speed-hero-label { color:var(--text-dim); font-size:12px; margin-top:4px; }
+  .speed-hero-foot { display:flex; justify-content:center; gap:8px; font-size:12px; font-family:var(--mono); color:var(--text-dim); margin-top:8px; padding-top:8px; border-top:1px dashed var(--border); }
+  .speed-hero-foot .win { color:var(--accent); font-weight:600; }
+  .speed-hero-foot .loss { color:var(--rival); }
   .race-annot { position:relative; height:14px; font-size:11px; color:var(--text-dim); }
   .race-annot span { position:absolute; transform:translateX(-4px); white-space:nowrap; }
   .race-lane { margin-bottom:12px; }
@@ -773,16 +779,16 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .race-name .race-nn { color:var(--text-dim); font-weight:400; font-size:11px; margin-left:6px; }
   .race-vals { font-family:var(--mono); font-variant-numeric:tabular-nums; }
   .race-vals .p90 { color:var(--text-dim); }
-  .race-strip { position:relative; height:20px; }
-  .race-rail { position:absolute; left:0; right:0; top:9px; height:2px; background:color-mix(in srgb, var(--border) 80%, transparent); }
-  .race-span { position:absolute; top:9px; height:2px; background:var(--rival); }
-  .race-dot { position:absolute; top:4px; width:12px; height:12px; border-radius:50%; box-shadow:0 0 0 2px var(--panel); transform:translateX(-50%); }
+  .race-strip { position:relative; height:16px; margin-top:6px; }
+  .race-rail { position:absolute; left:0; right:0; top:7px; height:2px; background:color-mix(in srgb, var(--border) 40%, transparent); }
+  .race-span { position:absolute; top:5px; height:6px; border-radius:3px; background:color-mix(in srgb, var(--rival) 60%, transparent); }
+  .race-dot { position:absolute; top:3px; width:10px; height:10px; border-radius:50%; transform:translateX(-50%); }
   .race-dot.us { background:var(--accent); }
   .race-dot.them { background:var(--rival); }
-  .race-p90tick { position:absolute; top:5px; width:2px; height:10px; background:var(--rival); transform:translateX(-50%); }
+  .race-p90tick { position:absolute; top:4px; width:2px; height:8px; background:var(--rival); transform:translateX(-50%); }
   .race-empty { font-size:12px; color:var(--text-dim); padding:2px 0 4px; }
-  .race-axis { position:relative; height:16px; font-size:10.5px; color:var(--text-dim); font-family:var(--mono); border-top:1px solid var(--border); margin-top:2px; }
-  .race-axis span { position:absolute; top:2px; transform:translateX(-50%); white-space:nowrap; }
+  .race-axis { position:relative; height:16px; font-size:10.5px; color:var(--text-dim); font-family:var(--mono); border-top:1px solid color-mix(in srgb, var(--border) 50%, transparent); margin-top:2px; padding-top:4px; }
+  .race-axis span { position:absolute; top:4px; transform:translateX(-50%); white-space:nowrap; opacity:0.6; }
   .race-axis span:first-child { transform:none; }
   .race-axis span:last-child { transform:translateX(-100%); }
   .speed-fineprint { font-size:10.5px; }
@@ -2058,6 +2064,7 @@ var NAME_SUFFIX = { 'jr': 'Jr', 'jr.': 'Jr', 'sr': 'Sr', 'sr.': 'Sr', 'ii': 'II'
 function fmtName(raw) {
   var s = String(raw == null ? '' : raw).trim();
   if (!s) return '';
+  s = s.replace(/\s*\(\s*Senator\s*\)\s*/gi, '');
   while (s.indexOf('  ') >= 0) s = s.split('  ').join(' ');
   s = s.split(' , ').join(', ');
   var parts = s.split(' ');
@@ -2587,21 +2594,21 @@ function lagCellHtml(r) {
   return '<span' + over + ' title="Days from trade to official filing date (STOCK Act limit: 45)">' + d + '</span>';
 }
 var FEED_COLS = [
-  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
+  { id: 'traded', label: 'Traded', sort: 'txdate', def: true, cls: 'bold', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
+  { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
   { id: 'member', label: 'Politician', sort: 'member', def: true, tip: 'Politician who filed the disclosure.', cell: memberCellHtml },
   { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
   { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
   { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
-  { id: 'sector', label: 'Sector', sort: 'refSector', def: true, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
-  { id: 'marketcap', label: 'Market Cap', sort: 'refMarketCap', def: true, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
-  { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
-  { id: 'conf', label: 'Confidence', sort: 'conf', def: true, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
-  { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'Released to seen, then seen to imported for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
+  { id: 'marketcap', label: 'Cap', sort: 'refMarketCap', def: true, tier: 'premium', tip: 'Market-cap size tier from enriched reference data.', cell: function (r) { return clipTextHtml(ownerLabel(r.refMarketCapBucket)); } },
+  { id: 'country', label: '🌎', sort: 'refCountry', def: true, cls: 'muted', tier: 'premium', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
   { id: 'published', label: 'Published', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first saw or imported the filing. Official filed date appears in details when available.', cell: publishedCellHtml },
   { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
-  { id: 'country', label: 'Country', sort: 'refCountry', def: false, cls: 'muted', tier: 'premium', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
-  { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
   { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
+  { id: 'latency', label: 'Latency', sort: null, def: false, cls: 'latency', tier: 'admin', tip: 'Released to seen, then seen to imported for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
+  { id: 'conf', label: 'Confidence', sort: 'conf', def: false, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
+  { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
+  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tier: 'premium', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
   { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return clipTextHtml(ownerLabel(r.chamber)); } },
   { id: 'source', label: 'Source', sort: 'source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
 ];
@@ -6550,27 +6557,36 @@ function renderSpeedProof() {
     var provs = (d.providers || []).slice()
       .sort(function (a, b) { return b.matched - a.matched; });
     if (!d.totals || !d.totals.racedDisclosures || !provs.length) { box.hidden = true; return; }
-    var best = null;
-    provs.forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
-    var heroHtml = '';
-    if (best && (best.medianLeadSec || 0) > 0) {
-      heroHtml = '<div class="speed-hero-num">' + fmtLead(best.medianLeadSec) + '</div>' +
-        '<div class="speed-hero-label">typical head start vs ' + esc(best.label) + '</div>';
-    } else if (best && best.usFirstCount > (best.providerFirstCount || 0)) {
-      heroHtml = '<div class="speed-hero-num">' + best.usFirstCount + ' of ' + best.matched + '</div>' +
-        '<div class="speed-hero-label">matched filings where we were first vs ' + esc(best.label) + '</div>';
-    } else if (best) {
-      box.hidden = true; return; /* unfavorable window: hide, never spin */
-    } else {
-      var any = null; provs.forEach(function (p) { if (p.matched >= 1 && !any) any = p; });
-      if (!any) { box.hidden = true; return; }
-      heroHtml = '<div class="speed-hero-num">' + any.usFirstCount + ' of ' + any.matched + '</div>' +
-        '<div class="speed-hero-label">matched filings where we were first vs ' + esc(any.label) + '</div>';
-    }
-    if (best) {
-      heroHtml += '<div class="speed-record">Ahead ' + best.usFirstCount + ' · Behind ' + (best.providerFirstCount || 0) + ' · Ties ' + (best.tieCount || 0) + '</div>' +
-        '<div class="speed-n">n = ' + best.matched + ' matched filings<br/>positive means we published first</div>';
-    }
+    var eligibleProvs = provs.filter(function (p) { return p.matched >= 1; });
+    if (!eligibleProvs.length) { box.hidden = true; return; }
+
+    var heroHtml = eligibleProvs.map(function (p) {
+      var numHtml = '';
+      var labelHtml = '';
+      if (p.medianLeadSec != null && p.medianLeadSec > 0 && p.matched >= SPEED_LANE_MIN_MATCHED) {
+        numHtml = '<div class="speed-hero-num">' + fmtLead(p.medianLeadSec) + '</div>';
+        labelHtml = '<div class="speed-hero-label">typical lead</div>';
+      } else {
+        numHtml = '<div class="speed-hero-num">' + p.usFirstCount + ' of ' + p.matched + '</div>';
+        labelHtml = '<div class="speed-hero-label">filings surfaced first</div>';
+      }
+      return '<div class="speed-hero-card">' +
+        '<div class="speed-hero-top">' +
+          '<span class="speed-hero-title">' + esc(p.label) + '</span>' +
+          '<span class="speed-hero-badge">n=' + p.matched + '</span>' +
+        '</div>' +
+        '<div class="speed-hero-main">' +
+          numHtml +
+          labelHtml +
+        '</div>' +
+        '<div class="speed-hero-foot">' +
+          '<span class="win">W: ' + p.usFirstCount + '</span> • ' +
+          '<span class="loss">L: ' + (p.providerFirstCount || 0) + '</span> • ' +
+          '<span class="tie">T: ' + (p.tieCount || 0) + '</span>' +
+        '</div>' +
+        '</div>';
+    }).join('');
+
     box.hidden = false;
     el('speedHero').innerHTML = heroHtml;
     var withLane = provs.filter(function (p) { return p.matched >= SPEED_LANE_MIN_MATCHED; });
