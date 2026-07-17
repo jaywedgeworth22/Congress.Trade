@@ -2114,7 +2114,11 @@ function fmtName(raw) {
   if (s.indexOf(',') >= 0) {
     var splitParts = s.split(',');
     if (splitParts.length === 2) {
-      s = splitParts[1].trim() + ' ' + splitParts[0].trim();
+      // Don't flip when the part after the comma is a generational suffix
+      // (e.g. "David A Perdue, Jr" is NOT "Last, First" format).
+      if (!NAME_SUFFIX[splitParts[1].trim().toLowerCase()]) {
+        s = splitParts[1].trim() + ' ' + splitParts[0].trim();
+      }
     }
   }
 
