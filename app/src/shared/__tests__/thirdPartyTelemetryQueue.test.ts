@@ -211,4 +211,51 @@ describe('usage telemetry queue routing', () => {
     expect(put.mock.invocationCallOrder[0]).toBeLessThan(retry.mock.invocationCallOrder[0]);
     expect(mocks.captureException).not.toHaveBeenCalled();
   });
+
+  /** CONFIG_KV double reporting the usage telemetry circuit breaker as open. */
+  function openCircuitConfigKv() {
+    const state = JSON.stringify({ consecutiveFailures: 5, openUntil: Date.now() + 60_000 });
+    return {
+      get: vi.fn(async (key: string, type?: string) => (
+        key === 'usage_telemetry_circuit_breaker' && type === 'json' ? JSON.parse(state) : null
+      )),
+      put: vi.fn(async () => {}),
+    };
+  }
+
+  it('routes a new usage.telemetry message straight to the R2 outbox without a delivery attempt while the circuit is open, then acks it', async () => {
+    mocks.deliver.mockClear();
+    const { batch, ack, retry } = messageBatch('congress-feed-ingest');
+    const put = vi.fn(async () => {});
+    const env = { RAW_FILES: { put }, CONFIG_KV: openCircuitConfigKv() } as unknown as Env;
+
+    await worker.queue(batch, env, {} as ExecutionContext);
+
+    expect(mocks.deliver).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledWith(
+      '_ops/usage-telemetry/ct-third-party%3Atest-event.json',
+      JSON.stringify(event),
+      expect.anything(),
+    );
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it('routes a DLQ usage.telemetry redelivery straight to the R2 outbox without a delivery attempt while the circuit is open, then acks it (no further DLQ churn)', async () => {
+    mocks.deliver.mockClear();
+    const { batch, ack, retry } = messageBatch('congress-feed-ingest-dlq');
+    const put = vi.fn(async () => {});
+    const env = { RAW_FILES: { put }, CONFIG_KV: openCircuitConfigKv() } as unknown as Env;
+
+    await worker.queue(batch, env, {} as ExecutionContext);
+
+    expect(mocks.deliver).not.toHaveBeenCalled();
+    expect(put).toHaveBeenCalledWith(
+      '_ops/usage-telemetry/ct-third-party%3Atest-event.json',
+      JSON.stringify(event),
+      expect.anything(),
+    );
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+  });
 });

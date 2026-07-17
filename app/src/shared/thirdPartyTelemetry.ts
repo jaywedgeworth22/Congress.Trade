@@ -29,12 +29,22 @@ interface TelemetryContext {
 
 const context = new AsyncLocalStorage<TelemetryContext>();
 const USAGE_TELEMETRY_FALLBACK_PREFIX = '_ops/usage-telemetry/';
-const USAGE_TELEMETRY_FALLBACK_D1_LIMIT = 100;
+
+// --- Circuit breaker + legacy-D1-drain durable markers ----------------------
+// Both live in CONFIG_KV as a single key each (not per-event), so an outage
+// that generates many events never multiplies KV writes with event volume.
+/** Consecutive-failure count + open-until timestamp; see isUsageTelemetryCircuitOpen. */
+const USAGE_TELEMETRY_CIRCUIT_KV_KEY = 'usage_telemetry_circuit_breaker';
+/** Set once the legacy D1 fallback table is observed empty, so the scheduled
+ *  flush stops re-querying an empty table forever. */
+const USAGE_TELEMETRY_D1_DRAIN_COMPLETE_KV_KEY = 'usage_telemetry_d1_drain_complete';
 
 export interface UsageTelemetryFallbackHealth {
   available: boolean;
   pending: number | null;
   truncated: boolean;
+  /** True while the circuit breaker is suppressing live delivery attempts. */
+  circuitOpen: boolean;
 }
 
 /** Secret-free local durability snapshot for admin diagnostics. */
@@ -65,7 +75,10 @@ export async function inspectUsageTelemetryFallback(
     available = true;
     pending += Math.max(0, Number(row?.pending ?? 0));
   } catch {}
-  return available ? { available, pending, truncated } : { available: false, pending: null, truncated: false };
+  const circuitOpen = await isUsageTelemetryCircuitOpen(env);
+  return available
+    ? { available, pending, truncated, circuitOpen }
+    : { available: false, pending: null, truncated: false, circuitOpen };
 }
 
 export type DynamicThirdPartyTarget =
@@ -364,38 +377,174 @@ function usageTelemetryErrorType(error: unknown): string {
   return error instanceof Error ? error.name : 'unknown';
 }
 
-function usageTelemetryLastError(error: unknown): string {
-  return stableTag(usageTelemetryErrorType(error), 'unknown');
+// --- Env-tunable circuit breaker + outbox limits (see types.ts for the Env
+// fields; every one has a safe built-in default and none require a redeploy) --
+
+function usageTelemetryCircuitFailureThreshold(env: Env): number {
+  const n = Number.parseInt(env.USAGE_TELEMETRY_CIRCUIT_FAILURE_THRESHOLD ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 3;
 }
 
-async function persistUsageTelemetryD1Fallback(
-  env: Env,
-  event: ThirdPartyUsageTelemetryEvent,
-  error: unknown,
-): Promise<boolean> {
-  const now = new Date().toISOString();
-  await env.DB.prepare(
-    `INSERT INTO usage_telemetry_fallback_events
-       (idempotency_key, event_json, attempts, last_error, created_at, updated_at)
-     VALUES (?, ?, 0, ?, ?, ?)
-     ON CONFLICT(idempotency_key) DO UPDATE SET
-       event_json = excluded.event_json,
-       last_error = excluded.last_error,
-       updated_at = excluded.updated_at`,
-  )
-    .bind(event.idempotencyKey, JSON.stringify(event), usageTelemetryLastError(error), now, now)
-    .run();
-  return true;
+function usageTelemetryCircuitBaseBackoffMs(env: Env): number {
+  const n = Number.parseInt(env.USAGE_TELEMETRY_CIRCUIT_BASE_BACKOFF_MS ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 30_000;
 }
 
-/** Preserve an event when Queue delivery or receiver delivery cannot proceed. */
+function usageTelemetryCircuitMaxBackoffMs(env: Env): number {
+  const n = Number.parseInt(env.USAGE_TELEMETRY_CIRCUIT_MAX_BACKOFF_MS ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 1_800_000;
+}
+
+function usageTelemetryFallbackMaxObjects(env: Env): number {
+  const n = Number.parseInt(env.USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 5_000;
+}
+
+function usageTelemetryFallbackTtlMs(env: Env): number {
+  const n = Number.parseInt(env.USAGE_TELEMETRY_FALLBACK_TTL_DAYS ?? '', 10);
+  const days = Number.isFinite(n) && n > 0 ? n : 14;
+  return days * 24 * 60 * 60 * 1000;
+}
+
+function usageTelemetryD1DrainLimit(env: Env): number {
+  const n = Number.parseInt(env.USAGE_TELEMETRY_D1_DRAIN_LIMIT ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 500) : 100;
+}
+
+// --- Circuit breaker state (durable in CONFIG_KV; one key, not per-event) ---
+
+interface UsageTelemetryCircuitState {
+  consecutiveFailures: number;
+  /** Epoch ms until which live delivery is suppressed; null means closed. */
+  openUntil: number | null;
+}
+
+const CLOSED_USAGE_TELEMETRY_CIRCUIT: UsageTelemetryCircuitState = {
+  consecutiveFailures: 0,
+  openUntil: null,
+};
+
+async function readUsageTelemetryCircuitState(env: Env): Promise<UsageTelemetryCircuitState> {
+  const kv = (env as Partial<Env>).CONFIG_KV;
+  if (!kv) return CLOSED_USAGE_TELEMETRY_CIRCUIT;
+  try {
+    const stored = await kv.get<UsageTelemetryCircuitState>(USAGE_TELEMETRY_CIRCUIT_KV_KEY, 'json');
+    if (stored && typeof stored.consecutiveFailures === 'number') return stored;
+  } catch {}
+  return CLOSED_USAGE_TELEMETRY_CIRCUIT;
+}
+
+async function writeUsageTelemetryCircuitState(env: Env, state: UsageTelemetryCircuitState): Promise<void> {
+  const kv = (env as Partial<Env>).CONFIG_KV;
+  if (!kv) return;
+  try {
+    // A week-long TTL just bounds worst-case staleness; every delivery attempt
+    // (success or failure) rewrites this key on its own cadence regardless.
+    await kv.put(USAGE_TELEMETRY_CIRCUIT_KV_KEY, JSON.stringify(state), { expirationTtl: 7 * 24 * 3600 });
+  } catch {}
+}
+
+/** True while the circuit breaker is suppressing live delivery attempts. */
+export async function isUsageTelemetryCircuitOpen(env: Env): Promise<boolean> {
+  const state = await readUsageTelemetryCircuitState(env);
+  return state.openUntil != null && Date.now() < state.openUntil;
+}
+
+/**
+ * Reset on a successful delivery. Skips the KV write entirely when the
+ * circuit is already closed, so a healthy receiver never pays a write per
+ * delivered event — only actual state transitions touch KV.
+ */
+async function recordUsageTelemetryDeliverySuccess(env: Env): Promise<void> {
+  const state = await readUsageTelemetryCircuitState(env);
+  if (state.consecutiveFailures === 0 && state.openUntil == null) return;
+  await writeUsageTelemetryCircuitState(env, CLOSED_USAGE_TELEMETRY_CIRCUIT);
+}
+
+/**
+ * Exponential backoff keyed off consecutive failures past the threshold, capped
+ * at usageTelemetryCircuitMaxBackoffMs. There is no separate "half-open" state:
+ * once `openUntil` elapses, isUsageTelemetryCircuitOpen simply reports closed
+ * again, so the next real attempt (a new event or the next scheduled flush) IS
+ * the probe. A probe success calls recordUsageTelemetryDeliverySuccess and
+ * fully closes the circuit; a probe failure lands back here and reopens with a
+ * longer window.
+ */
+async function recordUsageTelemetryDeliveryFailure(env: Env): Promise<void> {
+  const state = await readUsageTelemetryCircuitState(env);
+  const consecutiveFailures = state.consecutiveFailures + 1;
+  const threshold = usageTelemetryCircuitFailureThreshold(env);
+  const openUntil = consecutiveFailures >= threshold
+    ? Date.now() + Math.min(
+        usageTelemetryCircuitMaxBackoffMs(env),
+        usageTelemetryCircuitBaseBackoffMs(env) * 2 ** (consecutiveFailures - threshold),
+      )
+    : state.openUntil;
+  await writeUsageTelemetryCircuitState(env, { consecutiveFailures, openUntil });
+}
+
+async function isUsageTelemetryD1DrainComplete(env: Env): Promise<boolean> {
+  const kv = (env as Partial<Env>).CONFIG_KV;
+  if (!kv) return false;
+  try {
+    return (await kv.get(USAGE_TELEMETRY_D1_DRAIN_COMPLETE_KV_KEY)) != null;
+  } catch {
+    return false;
+  }
+}
+
+async function markUsageTelemetryD1DrainComplete(env: Env): Promise<void> {
+  const kv = (env as Partial<Env>).CONFIG_KV;
+  if (!kv) return;
+  try {
+    await kv.put(USAGE_TELEMETRY_D1_DRAIN_COMPLETE_KV_KEY, '1');
+  } catch {}
+}
+
+/**
+ * USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS bounds total pending R2 outbox objects.
+ * Checked before every write so a sustained receiver outage can't inflate
+ * storage without bound. Once at capacity, a new event is dropped outright —
+ * D1 is no longer a durable target for new events (see below), so there is no
+ * further fallback left to spill into.
+ */
+async function usageTelemetryOutboxAtCapacity(env: Env, storage: R2Bucket | undefined): Promise<boolean> {
+  if (!storage?.list) return false;
+  const cap = usageTelemetryFallbackMaxObjects(env);
+  try {
+    const listed = await storage.list({ prefix: USAGE_TELEMETRY_FALLBACK_PREFIX, limit: cap });
+    return listed.objects.length >= cap;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Preserve an event when Queue delivery cannot proceed. R2 is the sole durable
+ * outbox for new events — D1's `usage_telemetry_fallback_events` table is
+ * legacy-drain-only from here on (see flushUsageTelemetryFallback) and is
+ * never written to for a new event, which is what let a receiver outage churn
+ * a growing D1 table into a large read/write overage previously.
+ */
 export async function persistUsageTelemetryFallback(
   env: Env,
   event: ThirdPartyUsageTelemetryEvent,
   options: { silentFailure?: boolean } = {},
 ): Promise<boolean> {
+  const storage = (env as Partial<Env>).RAW_FILES;
+  if (await usageTelemetryOutboxAtCapacity(env, storage)) {
+    if (!options.silentFailure) {
+      console.log('usage telemetry outbox at capacity; dropping event', {
+        provider: event.provider,
+        service: event.service,
+        label: event.label,
+      });
+    }
+    return false;
+  }
   try {
-    await env.RAW_FILES.put(usageTelemetryFallbackKey(event), JSON.stringify(event), {
+    if (!storage) throw new Error('R2 fallback binding unavailable');
+    await storage.put(usageTelemetryFallbackKey(event), JSON.stringify(event), {
       httpMetadata: { contentType: 'application/json' },
     });
     return true;
@@ -404,23 +553,18 @@ export async function persistUsageTelemetryFallback(
       await deliverUsageTelemetryEvent(env, event);
       return true;
     } catch (directError) {
-      try {
-        return await persistUsageTelemetryD1Fallback(env, event, directError);
-      } catch (d1Error) {
-        // Sentry's own transport uses silentFailure: logging failure to meter the
-        // logging transport would recursively create another Sentry envelope.
-        if (!options.silentFailure) {
-          console.error('usage telemetry durability exhausted', {
-            provider: event.provider,
-            service: event.service,
-            label: event.label,
-            fallbackErrorType: usageTelemetryErrorType(error),
-            directErrorType: usageTelemetryErrorType(directError),
-            d1ErrorType: usageTelemetryErrorType(d1Error),
-          });
-        }
-        return false;
+      // Sentry's own transport uses silentFailure: logging failure to meter the
+      // logging transport would recursively create another Sentry envelope.
+      if (!options.silentFailure) {
+        console.error('usage telemetry durability exhausted', {
+          provider: event.provider,
+          service: event.service,
+          label: event.label,
+          fallbackErrorType: usageTelemetryErrorType(error),
+          directErrorType: usageTelemetryErrorType(directError),
+        });
       }
+      return false;
     }
   }
 }
@@ -566,47 +710,92 @@ export function normalizeUsageMonitorBaseUrl(configuredUrl: string): string {
   return baseUrl;
 }
 
-/** Queue-consumer transport. The shared client is intentionally not tracked. */
+/** Thrown by deliverUsageTelemetryEvent when the circuit breaker is open. Never
+ *  network-visible: fetchImpl is not reached on this path. */
+export class UsageTelemetryCircuitOpenError extends Error {
+  constructor() {
+    super('usage telemetry circuit is open; live delivery suppressed');
+    this.name = 'UsageTelemetryCircuitOpenError';
+  }
+}
+
+/**
+ * Queue-consumer + fallback-drain transport. The shared client is intentionally
+ * not tracked. Gated by the durable circuit breaker: while open this throws
+ * immediately without ever calling the receiver, and every real attempt
+ * (success or failure) updates the same breaker state, so a sustained receiver
+ * outage stops hammering it after a bounded number of consecutive failures
+ * instead of retrying at full request volume for the outage's duration.
+ */
 export async function deliverUsageTelemetryEvent(
   env: Env,
   event: ThirdPartyUsageTelemetryEvent,
 ): Promise<void> {
-  await withoutThirdPartyTelemetry(env, async () => {
-    const secrets = await resolveSecrets(env, [
-      'USAGE_MONITOR_INGEST_URL',
-      'USAGE_MONITOR_INGEST_TOKEN',
-    ]);
-    const configuredUrl = secrets.USAGE_MONITOR_INGEST_URL?.trim();
-    const token = secrets.USAGE_MONITOR_INGEST_TOKEN?.trim();
-    if (!configuredUrl || !token) throw new Error('usage telemetry ingest is not configured');
-    const baseUrl = normalizeUsageMonitorBaseUrl(configuredUrl);
-    if (!baseUrl) throw new Error('usage telemetry ingest URL is invalid');
-    const client = createUsageTelemetryClient({
-      baseUrl,
-      token,
-      requireExplicitIdempotencyKey: true,
+  if (await isUsageTelemetryCircuitOpen(env)) {
+    throw new UsageTelemetryCircuitOpenError();
+  }
+  try {
+    await withoutThirdPartyTelemetry(env, async () => {
+      const secrets = await resolveSecrets(env, [
+        'USAGE_MONITOR_INGEST_URL',
+        'USAGE_MONITOR_INGEST_TOKEN',
+      ]);
+      const configuredUrl = secrets.USAGE_MONITOR_INGEST_URL?.trim();
+      const token = secrets.USAGE_MONITOR_INGEST_TOKEN?.trim();
+      if (!configuredUrl || !token) throw new Error('usage telemetry ingest is not configured');
+      const baseUrl = normalizeUsageMonitorBaseUrl(configuredUrl);
+      if (!baseUrl) throw new Error('usage telemetry ingest URL is invalid');
+      const client = createUsageTelemetryClient({
+        baseUrl,
+        token,
+        requireExplicitIdempotencyKey: true,
+      });
+      await client.send([event]);
     });
-    await client.send([event]);
-  });
+  } catch (error) {
+    await recordUsageTelemetryDeliveryFailure(env);
+    throw error;
+  }
+  await recordUsageTelemetryDeliverySuccess(env);
 }
 
 export interface UsageTelemetryFallbackFlushResult {
   listed: number;
   delivered: number;
   failed: number;
+  /** R2 objects discarded unsent for exceeding USAGE_TELEMETRY_FALLBACK_TTL_DAYS. */
+  expired: number;
+  /** True when the whole cycle was skipped because the circuit breaker is open. */
+  skipped: boolean;
 }
 
 /**
- * Drain a bounded batch from the failure-only R2/D1 outboxes. Receiver failures
- * are retained without logging/Sentry capture to avoid outage amplification.
+ * Drain a bounded batch from the R2 outbox, plus a one-time drain of any
+ * pre-existing legacy D1 rows (read + delete only — a failed D1 row is never
+ * re-written, so a stalled receiver can no longer churn a growing D1 table;
+ * that churn is what caused the D1 read/write overage this guards against).
+ * R2 is the sole durable outbox for new events; D1 only ever shrinks from here.
+ * Receiver failures are retained without logging/Sentry capture to avoid
+ * outage amplification.
+ *
+ * Backs off entirely (no R2 list, no D1 read) while the circuit breaker is
+ * open: re-listing/re-attempting the whole outbox every cron tick during a
+ * known outage is exactly the pattern that caused the incident. Once the
+ * breaker's backoff window elapses, the next call here doubles as its
+ * half-open probe (see isUsageTelemetryCircuitOpen).
  */
 export async function flushUsageTelemetryFallback(
   env: Env,
   options: { limit?: number } = {},
 ): Promise<UsageTelemetryFallbackFlushResult> {
+  if (await isUsageTelemetryCircuitOpen(env)) {
+    return { listed: 0, delivered: 0, failed: 0, expired: 0, skipped: true };
+  }
   const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 25)));
   const storage = (env as Partial<Env>).RAW_FILES;
   const db = (env as Partial<Env>).DB;
+  const ttlMs = usageTelemetryFallbackTtlMs(env);
+  const now = Date.now();
   const listed = storage?.list
     ? await storage.list({
         prefix: USAGE_TELEMETRY_FALLBACK_PREFIX,
@@ -615,7 +804,15 @@ export async function flushUsageTelemetryFallback(
     : { objects: [] };
   let delivered = 0;
   let failed = 0;
+  let expired = 0;
   for (const object of listed.objects) {
+    if (object.uploaded && now - object.uploaded.getTime() > ttlMs) {
+      try {
+        await storage?.delete(object.key);
+      } catch {}
+      expired += 1;
+      continue;
+    }
     try {
       const body = await storage?.get(object.key);
       if (!body) continue;
@@ -628,7 +825,8 @@ export async function flushUsageTelemetryFallback(
     }
   }
   const remainingLimit = Math.max(0, limit - listed.objects.length);
-  if (remainingLimit > 0 && db?.prepare) {
+  const d1DrainComplete = await isUsageTelemetryD1DrainComplete(env);
+  if (remainingLimit > 0 && db?.prepare && !d1DrainComplete) {
     try {
       const rows = await db.prepare(
         `SELECT idempotency_key, event_json
@@ -636,9 +834,10 @@ export async function flushUsageTelemetryFallback(
           ORDER BY updated_at ASC
           LIMIT ?`,
       )
-        .bind(Math.min(remainingLimit, USAGE_TELEMETRY_FALLBACK_D1_LIMIT))
+        .bind(Math.min(remainingLimit, usageTelemetryD1DrainLimit(env)))
         .all<{ idempotency_key: string; event_json: string }>();
-      for (const row of rows.results ?? []) {
+      const results = rows.results ?? [];
+      for (const row of results) {
         try {
           const event = parseUsageTelemetryFallback(row.event_json);
           await deliverUsageTelemetryEvent(env, event);
@@ -648,23 +847,19 @@ export async function flushUsageTelemetryFallback(
             .bind(row.idempotency_key)
             .run();
           delivered += 1;
-        } catch (error) {
+        } catch {
+          // Deliberately no UPDATE here: re-writing a row on every failed
+          // cycle is the exact churn that turned this table into a large D1
+          // overage. Leave the row untouched; the next non-skipped flush
+          // (bounded, same as this one) retries it as-is.
           failed += 1;
-          await db.prepare(
-            `UPDATE usage_telemetry_fallback_events
-                SET attempts = attempts + 1,
-                    last_error = ?,
-                    updated_at = ?
-              WHERE idempotency_key = ?`,
-          )
-            .bind(usageTelemetryLastError(error), new Date().toISOString(), row.idempotency_key)
-            .run();
         }
       }
-      return { listed: listed.objects.length + (rows.results?.length ?? 0), delivered, failed };
+      if (results.length === 0) await markUsageTelemetryD1DrainComplete(env);
+      return { listed: listed.objects.length + results.length, delivered, failed, expired, skipped: false };
     } catch {
-      return { listed: listed.objects.length, delivered, failed: failed + 1 };
+      return { listed: listed.objects.length, delivered, failed: failed + 1, expired, skipped: false };
     }
   }
-  return { listed: listed.objects.length, delivered, failed };
+  return { listed: listed.objects.length, delivered, failed, expired, skipped: false };
 }

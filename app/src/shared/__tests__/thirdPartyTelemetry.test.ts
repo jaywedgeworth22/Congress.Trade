@@ -7,10 +7,13 @@ import {
   deliverUsageTelemetryEvent,
   enqueueUsageTelemetryEvent,
   flushUsageTelemetryFallback,
+  isUsageTelemetryCircuitOpen,
+  persistUsageTelemetryFallback,
   providerForThirdPartyRequest,
   recordMeasuredThirdPartyUsage,
   stableMeasuredUsageIdempotencyKey,
   trackedFetch,
+  UsageTelemetryCircuitOpenError,
   type MeasuredThirdPartyUsage,
   withThirdPartyTelemetry,
   withoutThirdPartyTelemetry,
@@ -52,7 +55,7 @@ function fakeEnv(messages: QueueMessage[]): Env {
   } as unknown as Env;
 }
 
-function fallbackBucket(initial: Record<string, string> = {}) {
+function fallbackBucket(initial: Record<string, string> = {}, uploadedAt: Record<string, Date> = {}) {
   const objects = new Map(Object.entries(initial));
   const put = vi.fn(async (key: string, value: unknown) => {
     if (typeof value !== 'string') throw new Error('test bucket expects string values');
@@ -72,10 +75,27 @@ function fallbackBucket(initial: Record<string, string> = {}) {
       const filtered = [...objects.keys()]
         .filter((key) => !options?.prefix || key.startsWith(options.prefix));
       const keys = filtered.slice(0, options?.limit ?? filtered.length);
-      return { objects: keys.map((key) => ({ key })), truncated: false };
+      return { objects: keys.map((key) => ({ key, uploaded: uploadedAt[key] })), truncated: false };
     },
   } as unknown as R2Bucket;
   return { bucket, objects, put, remove };
+}
+
+/** Minimal CONFIG_KV double for circuit-breaker + D1-drain-marker state. */
+function fakeConfigKv(initial: Record<string, string> = {}) {
+  const store = new Map(Object.entries(initial));
+  const get = vi.fn(async (key: string, type?: string) => {
+    const raw = store.get(key);
+    if (raw == null) return null;
+    return type === 'json' ? JSON.parse(raw) : raw;
+  });
+  const put = vi.fn(async (key: string, value: string) => {
+    store.set(key, value);
+  });
+  const del = vi.fn(async (key: string) => {
+    store.delete(key);
+  });
+  return { kv: { get, put, delete: del } as unknown as KVNamespace, store, get, put, delete: del };
 }
 
 function fallbackD1(initial: Record<string, string> = {}) {
@@ -295,7 +315,12 @@ describe('third-party usage telemetry', () => {
     expect(requestedUrls).toEqual(['https://usage.jays.services/api/ingest/usage']);
   });
 
-  it('persists to D1 when Queue, R2 fallback, and direct delivery all fail', async () => {
+  it('never writes a new row to the legacy D1 fallback table, even when Queue, R2, and direct delivery all fail', async () => {
+    // D1's usage_telemetry_fallback_events table is legacy-drain-only: this is
+    // the exact failure combination that used to fall through to a D1 INSERT,
+    // and that per-event D1 write (repeated for every event during a receiver
+    // outage) is what caused the D1 read/write cost incident.
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'receiver unavailable' }), {
       status: 503,
       headers: { 'content-type': 'application/json' },
@@ -312,12 +337,13 @@ describe('third-party usage telemetry', () => {
 
     const accepted = await enqueueUsageTelemetryEvent(env, deliveryEvent);
 
-    expect(accepted).toBe(true);
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.event_json).toBe(JSON.stringify(deliveryEvent));
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.last_error).toBe('error');
+    expect(accepted).toBe(false);
+    expect(fallback.prepare).not.toHaveBeenCalled();
+    expect(fallback.rows.size).toBe(0);
+    error.mockRestore();
   });
 
-  it('reports a secret-safe terminal loss only when Queue, R2, direct delivery, and D1 all fail', async () => {
+  it('reports a secret-safe terminal loss only when Queue, R2, and direct delivery all fail', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'receiver unavailable' }), {
       status: 503,
@@ -326,7 +352,6 @@ describe('third-party usage telemetry', () => {
     const env = {
       INGEST_QUEUE: { send: vi.fn(async () => { throw new Error('queue-secret-value'); }) },
       RAW_FILES: { put: vi.fn(async () => { throw new TypeError('r2-secret-value'); }) },
-      DB: { prepare: vi.fn(() => { throw new RangeError('d1-secret-value'); }) },
       USAGE_MONITOR_ENABLED: 'true',
       USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
       USAGE_MONITOR_INGEST_TOKEN: 'test-token',
@@ -339,10 +364,8 @@ describe('third-party usage telemetry', () => {
     expect(serializedLog).toContain('usage telemetry durability exhausted');
     expect(serializedLog).toContain('TypeError');
     expect(serializedLog).toContain('Error');
-    expect(serializedLog).toContain('RangeError');
     expect(serializedLog).not.toContain('queue-secret-value');
     expect(serializedLog).not.toContain('r2-secret-value');
-    expect(serializedLog).not.toContain('d1-secret-value');
     expect(serializedLog).not.toContain('receiver unavailable');
     error.mockRestore();
   });
@@ -367,17 +390,21 @@ describe('third-party usage telemetry', () => {
       USAGE_MONITOR_INGEST_TOKEN: 'test-token',
     } as unknown as Env;
 
-    expect(await flushUsageTelemetryFallback(env)).toEqual({ listed: 1, delivered: 0, failed: 1 });
+    expect(await flushUsageTelemetryFallback(env)).toEqual({
+      listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false,
+    });
     expect(fallback.objects.has(key)).toBe(true);
     expect(fallback.remove).not.toHaveBeenCalled();
 
     receiverAvailable = true;
-    expect(await flushUsageTelemetryFallback(env)).toEqual({ listed: 1, delivered: 1, failed: 0 });
+    expect(await flushUsageTelemetryFallback(env)).toEqual({
+      listed: 1, delivered: 1, failed: 0, expired: 0, skipped: false,
+    });
     expect(fallback.objects.has(key)).toBe(false);
     expect(fallback.remove).toHaveBeenCalledWith(key);
   });
 
-  it('drains D1 fallback events and deletes them after receiver acceptance', async () => {
+  it('drains legacy D1 fallback rows without re-writing them on failure, then deletes on success', async () => {
     const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
     let receiverAvailable = false;
     vi.stubGlobal('fetch', vi.fn(async () => receiverAvailable
@@ -397,12 +424,199 @@ describe('third-party usage telemetry', () => {
       USAGE_MONITOR_INGEST_TOKEN: 'test-token',
     } as unknown as Env;
 
-    expect(await flushUsageTelemetryFallback(env)).toEqual({ listed: 1, delivered: 0, failed: 1 });
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(1);
+    expect(await flushUsageTelemetryFallback(env)).toEqual({
+      listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false,
+    });
+    // No re-churn: a failed drain attempt leaves the row exactly as it was
+    // (no UPDATE ... attempts + 1), which is what stopped the D1 write
+    // amplification that caused the cost incident.
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
+    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
 
     receiverAvailable = true;
-    expect(await flushUsageTelemetryFallback(env)).toEqual({ listed: 1, delivered: 1, failed: 0 });
+    expect(await flushUsageTelemetryFallback(env)).toEqual({
+      listed: 1, delivered: 1, failed: 0, expired: 0, skipped: false,
+    });
     expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(false);
+  });
+
+  it('marks the legacy D1 drain complete once observed empty, then skips further D1 queries', async () => {
+    const { kv } = fakeConfigKv();
+    const fallback = fallbackD1();
+    const env = {
+      RAW_FILES: fallbackBucket().bucket,
+      DB: fallback.db,
+      CONFIG_KV: kv,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+    } as unknown as Env;
+
+    const first = await flushUsageTelemetryFallback(env);
+    expect(first).toEqual({ listed: 0, delivered: 0, failed: 0, expired: 0, skipped: false });
+    expect(fallback.prepare).toHaveBeenCalled();
+
+    fallback.prepare.mockClear();
+    const second = await flushUsageTelemetryFallback(env);
+    expect(second).toEqual({ listed: 0, delivered: 0, failed: 0, expired: 0, skipped: false });
+    expect(fallback.prepare).not.toHaveBeenCalled();
+  });
+
+  it('discards R2 outbox objects older than USAGE_TELEMETRY_FALLBACK_TTL_DAYS without attempting delivery', async () => {
+    const staleKey = '_ops/usage-telemetry/stale-event.json';
+    const freshKey = '_ops/usage-telemetry/fresh-event.json';
+    const staleEvent = { ...deliveryEvent, idempotencyKey: 'ct-third-party:stale-event' };
+    const freshEvent = { ...deliveryEvent, idempotencyKey: 'ct-third-party:fresh-event' };
+    const now = new Date('2026-07-17T00:00:00.000Z');
+    const fallback = fallbackBucket(
+      { [staleKey]: JSON.stringify(staleEvent), [freshKey]: JSON.stringify(freshEvent) },
+      {
+        [staleKey]: new Date(now.getTime() - 20 * 24 * 60 * 60 * 1000),
+        [freshKey]: new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000),
+      },
+    );
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const env = {
+      RAW_FILES: fallback.bucket,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+      USAGE_TELEMETRY_FALLBACK_TTL_DAYS: '14',
+    } as unknown as Env;
+
+    const result = await flushUsageTelemetryFallback(env);
+
+    expect(result).toMatchObject({ delivered: 1, failed: 0, expired: 1, skipped: false });
+    expect(fallback.objects.has(staleKey)).toBe(false);
+    expect(fallback.objects.has(freshKey)).toBe(false);
+    // Only the fresh (non-expired) event ever reaches the receiver.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the whole flush cycle without listing R2 or querying D1 while the circuit breaker is open', async () => {
+    const list = vi.fn(async () => ({ objects: [], truncated: false }));
+    const prepare = vi.fn();
+    const { kv } = fakeConfigKv({
+      usage_telemetry_circuit_breaker: JSON.stringify({ consecutiveFailures: 5, openUntil: Date.now() + 60_000 }),
+    });
+    const env = {
+      CONFIG_KV: kv,
+      RAW_FILES: { list },
+      DB: { prepare },
+    } as unknown as Env;
+
+    const result = await flushUsageTelemetryFallback(env);
+
+    expect(result).toEqual({ listed: 0, delivered: 0, failed: 0, expired: 0, skipped: true });
+    expect(list).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it('opens the circuit after consecutive delivery failures and suppresses further live delivery attempts without calling fetch', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: 'receiver unavailable' }), {
+      status: 503,
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { kv } = fakeConfigKv();
+    const env = {
+      CONFIG_KV: kv,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+      USAGE_TELEMETRY_CIRCUIT_FAILURE_THRESHOLD: '2',
+    } as unknown as Env;
+
+    await expect(deliverUsageTelemetryEvent(env, deliveryEvent)).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
+
+    await expect(deliverUsageTelemetryEvent(env, deliveryEvent)).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(true);
+
+    await expect(deliverUsageTelemetryEvent(env, deliveryEvent)).rejects.toThrow(UsageTelemetryCircuitOpenError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('half-open probe: a successful delivery once the backoff window elapses fully closes the circuit again', async () => {
+    let receiverAvailable = false;
+    const fetchMock = vi.fn(async () => (receiverAvailable
+      ? new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      : new Response(JSON.stringify({ error: 'receiver unavailable' }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        })));
+    vi.stubGlobal('fetch', fetchMock);
+    const { kv } = fakeConfigKv();
+    const env = {
+      CONFIG_KV: kv,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+      USAGE_TELEMETRY_CIRCUIT_FAILURE_THRESHOLD: '1',
+      USAGE_TELEMETRY_CIRCUIT_BASE_BACKOFF_MS: '30000',
+    } as unknown as Env;
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-17T00:00:00.000Z'));
+    await expect(deliverUsageTelemetryEvent(env, deliveryEvent)).rejects.toThrow();
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(true);
+
+    // Still within the backoff window: suppressed without a new fetch call.
+    vi.setSystemTime(new Date('2026-07-17T00:00:15.000Z'));
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(true);
+    await expect(deliverUsageTelemetryEvent(env, deliveryEvent)).rejects.toThrow(UsageTelemetryCircuitOpenError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Backoff elapsed: the next attempt is the half-open probe. Receiver is
+    // healthy again, so it succeeds and fully closes the circuit.
+    receiverAvailable = true;
+    vi.setSystemTime(new Date('2026-07-17T00:00:31.000Z'));
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
+    await deliverUsageTelemetryEvent(env, deliveryEvent);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
+  });
+
+  it('drops a new fallback event once the R2 outbox is at USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS capacity', async () => {
+    const fallback = fallbackBucket({
+      '_ops/usage-telemetry/existing-1.json': '{}',
+      '_ops/usage-telemetry/existing-2.json': '{}',
+    });
+    const env = {
+      RAW_FILES: fallback.bucket,
+      USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS: '2',
+    } as unknown as Env;
+
+    const accepted = await persistUsageTelemetryFallback(env, deliveryEvent, { silentFailure: true });
+
+    expect(accepted).toBe(false);
+    expect(fallback.put).not.toHaveBeenCalled();
+  });
+
+  it('still writes a new fallback event under the R2 outbox capacity', async () => {
+    const fallback = fallbackBucket({
+      '_ops/usage-telemetry/existing-1.json': '{}',
+    });
+    const env = {
+      RAW_FILES: fallback.bucket,
+      USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS: '2',
+    } as unknown as Env;
+
+    const accepted = await persistUsageTelemetryFallback(env, deliveryEvent);
+
+    expect(accepted).toBe(true);
+    expect(fallback.put).toHaveBeenCalledOnce();
   });
 
   it('accepts actual measured cost while dropping unapproved metadata fields', async () => {
