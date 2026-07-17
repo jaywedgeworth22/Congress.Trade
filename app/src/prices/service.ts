@@ -97,21 +97,40 @@ export function priceUnavailableCutoffIso(from = new Date()): string {
   return isoInstantDaysAgo(PRICE_UNAVAILABLE_RECHECK_DAYS, from);
 }
 
+/** The current calendar date (Y/M/D) in US Eastern time, where the market close +
+ *  EOD publish happen. Computed via Intl so it's DST-correct in the Worker. */
+function easternYmd(from: Date): { y: number; m: number; d: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(from);
+  const pick = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+  return { y: pick('year'), m: pick('month'), d: pick('day') };
+}
+
 /**
- * The most recent COMPLETED US trading day (YYYY-MM-DD, UTC-based). We start at
- * "yesterday" because today's close isn't published until after the US market
- * closes (and providers lag further), then walk back over Sat/Sun. This replaces
- * the old `isoDaysAgo(1)` cutoff, which treated calendar-"yesterday" as the bar:
- * on Sundays and Mondays that is always newer than Friday's latest close, so
- * EVERY ticker looked stale and got re-selected/re-fetched every weekend — a core
- * driver of the runaway backfill. Market holidays aren't modeled (they'd
- * over-select ~9 days/yr, each now just a cheap incremental fetch), only weekends.
+ * The most recent COMPLETED US trading day (YYYY-MM-DD): the latest weekday
+ * strictly before *today in US Eastern time*, walking back over Sat/Sun.
+ *
+ * Anchored on Eastern — NOT UTC — on purpose. The daily job fires at 00:00 UTC,
+ * which is the PRIOR weekday's evening in ET, before that session's EOD close is
+ * reliably published. A UTC-midnight "yesterday" bar (the earlier version) then
+ * demanded a close that doesn't exist yet, so the newest tickers looked stale
+ * every run and were re-selected forever — the whole daily budget churning the
+ * same head of the list instead of draining the backlog. Using the ET calendar
+ * day and requiring the weekday strictly before it keeps the bar at/behind what
+ * providers have actually published. Market holidays aren't modeled (they'd
+ * over-select ~9 days/yr, each now a cheap incremental fetch), only weekends.
  */
 export function lastTradingDay(from = new Date()): string {
-  const d = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
-  d.setUTCDate(d.getUTCDate() - 1); // today's close isn't available yet
-  while (d.getUTCDay() === 0 || d.getUTCDay() === 6) d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
+  const { y, m, d } = easternYmd(from);
+  // Anchor the ET calendar day at UTC midnight so the day/weekend math is exact.
+  const day = new Date(Date.UTC(y, m - 1, d));
+  day.setUTCDate(day.getUTCDate() - 1); // the prior session (today's isn't published yet)
+  while (day.getUTCDay() === 0 || day.getUTCDay() === 6) day.setUTCDate(day.getUTCDate() - 1);
+  return day.toISOString().slice(0, 10);
 }
 
 export interface PriceRefreshResult {

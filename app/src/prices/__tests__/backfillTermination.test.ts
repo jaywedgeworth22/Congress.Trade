@@ -169,10 +169,21 @@ describe('0043 migration backfill', () => {
   });
 });
 
-describe('lastTradingDay — weekend handling', () => {
-  it('never returns a Saturday or Sunday and stays behind "today"', () => {
-    expect(lastTradingDay(new Date('2026-07-13T12:00:00Z'))).toBe('2026-07-10'); // Mon → Fri
-    expect(lastTradingDay(new Date('2026-07-12T12:00:00Z'))).toBe('2026-07-10'); // Sun → Fri
-    expect(lastTradingDay(new Date('2026-07-14T12:00:00Z'))).toBe('2026-07-13'); // Tue → Mon
+describe('lastTradingDay — Eastern-time / weekend handling', () => {
+  it('never returns a Saturday or Sunday and stays behind the ET "today"', () => {
+    // Noon UTC = morning ET, so the ET calendar day matches the UTC date here.
+    expect(lastTradingDay(new Date('2026-07-13T12:00:00Z'))).toBe('2026-07-10'); // Mon ET → Fri
+    expect(lastTradingDay(new Date('2026-07-12T12:00:00Z'))).toBe('2026-07-10'); // Sun ET → Fri
+    expect(lastTradingDay(new Date('2026-07-14T12:00:00Z'))).toBe('2026-07-13'); // Tue ET → Mon
+  });
+
+  it('is anchored on Eastern time, not UTC, at the 00:00 UTC cron tick', () => {
+    // 2026-07-14T00:00Z is still Monday EVENING in ET (2026-07-13 ~20:00), before
+    // Monday's EOD close is published. A UTC-yesterday bar would demand Monday
+    // (07-13); the ET bar correctly stays at Friday (07-10) so the newest tickers
+    // aren't perpetually re-selected against an unpublished session.
+    expect(lastTradingDay(new Date('2026-07-14T00:00:00Z'))).toBe('2026-07-10');
+    // Wednesday's 00:00 UTC tick is Tuesday evening ET → last completed session Monday.
+    expect(lastTradingDay(new Date('2026-07-15T00:00:00Z'))).toBe('2026-07-13');
   });
 });
