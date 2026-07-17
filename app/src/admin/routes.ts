@@ -71,6 +71,7 @@ import { mapFiling } from '../delivery/rows';
 import { verifyAccessJwt, certsUrl } from './access';
 import { adminRuntimeConfig } from './identity';
 import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
+import { normalizeCompanyName } from '../shared/companyName';
 import { constantTimeEqual } from '../auth/tokens';
 import { getCurrentUser } from '../auth/session';
 import {
