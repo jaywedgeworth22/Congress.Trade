@@ -461,6 +461,13 @@ async function recordUsageTelemetryDeliverySuccess(env: Env): Promise<void> {
   await writeUsageTelemetryCircuitState(env, CLOSED_USAGE_TELEMETRY_CIRCUIT);
 }
 
+/** The later of two open-until deadlines; a set deadline always beats null. */
+function laterUsageTelemetryOpenUntil(a: number | null, b: number | null): number | null {
+  if (a == null) return b;
+  if (b == null) return a;
+  return Math.max(a, b);
+}
+
 /**
  * Exponential backoff keyed off consecutive failures past the threshold, capped
  * at usageTelemetryCircuitMaxBackoffMs. There is no separate "half-open" state:
@@ -469,18 +476,39 @@ async function recordUsageTelemetryDeliverySuccess(env: Env): Promise<void> {
  * the probe. A probe success calls recordUsageTelemetryDeliverySuccess and
  * fully closes the circuit; a probe failure lands back here and reopens with a
  * longer window.
+ *
+ * Concurrency: CONFIG_KV has no atomic increment (an exact counter would need a
+ * Durable Object, which is unjustified for a best-effort storm-brake and would
+ * serialize every delivery through one instance). So concurrent recorders can
+ * lose an increment during a receiver outage. This is deliberately tolerated
+ * because the breaker only has to STOP a runaway storm, not count exactly, and
+ * the dominant incident cost — D1 write amplification — is already eliminated
+ * unconditionally (D1 is drain-only). To keep a lost update from doing HARM, the
+ * write is monotonic: it re-reads immediately before persisting and merges, so a
+ * racing writer can never (a) lower consecutiveFailures or (b) clear/shorten an
+ * openUntil that another recorder just set. Net effect of a lost increment is
+ * therefore bounded EXTRA failures before opening — never reset progress and
+ * never a re-closed circuit. Only recordUsageTelemetryDeliverySuccess (a real
+ * 2xx, i.e. the receiver is actually healthy) resets the state.
  */
 async function recordUsageTelemetryDeliveryFailure(env: Env): Promise<void> {
   const state = await readUsageTelemetryCircuitState(env);
-  const consecutiveFailures = state.consecutiveFailures + 1;
+  const proposedFailures = state.consecutiveFailures + 1;
   const threshold = usageTelemetryCircuitFailureThreshold(env);
-  const openUntil = consecutiveFailures >= threshold
+  const proposedOpenUntil = proposedFailures >= threshold
     ? Date.now() + Math.min(
         usageTelemetryCircuitMaxBackoffMs(env),
-        usageTelemetryCircuitBaseBackoffMs(env) * 2 ** (consecutiveFailures - threshold),
+        usageTelemetryCircuitBaseBackoffMs(env) * 2 ** (proposedFailures - threshold),
       )
     : state.openUntil;
-  await writeUsageTelemetryCircuitState(env, { consecutiveFailures, openUntil });
+  // Monotonic merge-on-write: re-read the current stored state and never regress
+  // below it, so a concurrent failure recorder's progress toward opening (or an
+  // open circuit it just tripped) is never lost to this write. See note above.
+  const current = await readUsageTelemetryCircuitState(env);
+  await writeUsageTelemetryCircuitState(env, {
+    consecutiveFailures: Math.max(current.consecutiveFailures, proposedFailures),
+    openUntil: laterUsageTelemetryOpenUntil(current.openUntil, proposedOpenUntil),
+  });
 }
 
 async function isUsageTelemetryD1DrainComplete(env: Env): Promise<boolean> {

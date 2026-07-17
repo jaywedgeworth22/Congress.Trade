@@ -98,6 +98,37 @@ function fakeConfigKv(initial: Record<string, string> = {}) {
   return { kv: { get, put, delete: del } as unknown as KVNamespace, store, get, put, delete: del };
 }
 
+const CIRCUIT_KV_KEY = 'usage_telemetry_circuit_breaker';
+
+/**
+ * CONFIG_KV double that scripts successive reads of the circuit-breaker key so a
+ * concurrent recorder updating it between another recorder's initial read and
+ * its monotonic merge re-read can be simulated. Behaves as a plain store for
+ * every other key (e.g. Infisical secret cache), and captures each value
+ * written back to the circuit key.
+ */
+function scriptedCircuitKv(circuitReads: Array<Record<string, unknown> | null>) {
+  const store = new Map<string, string>();
+  const circuitPuts: Array<Record<string, unknown>> = [];
+  let readIndex = 0;
+  const get = vi.fn(async (key: string, type?: string) => {
+    if (key === CIRCUIT_KV_KEY) {
+      const value = circuitReads[Math.min(readIndex, circuitReads.length - 1)];
+      readIndex += 1;
+      return value; // kv.get(key, 'json') hands back an already-parsed object
+    }
+    const raw = store.get(key);
+    if (raw == null) return null;
+    return type === 'json' ? JSON.parse(raw) : raw;
+  });
+  const put = vi.fn(async (key: string, value: string) => {
+    if (key === CIRCUIT_KV_KEY) circuitPuts.push(JSON.parse(value));
+    else store.set(key, value);
+  });
+  const del = vi.fn(async (key: string) => { store.delete(key); });
+  return { kv: { get, put, delete: del } as unknown as KVNamespace, circuitPuts, get, put };
+}
+
 function fallbackD1(initial: Record<string, string> = {}) {
   const rows = new Map<string, { event_json: string; attempts: number; last_error: string | null }>(
     Object.entries(initial).map(([key, eventJson]) => [key, { event_json: eventJson, attempts: 0, last_error: null }]),
@@ -543,6 +574,38 @@ describe('third-party usage telemetry', () => {
 
     await expect(deliverUsageTelemetryEvent(env, deliveryEvent)).rejects.toThrow(UsageTelemetryCircuitOpenError);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('records a failure monotonically: a stale-closed recorder cannot re-close or lower a circuit a concurrent recorder just opened', async () => {
+    // CONFIG_KV has no atomic increment, so a recorder that read a stale-closed
+    // snapshot must not, on write-back, clobber an open circuit or drop the
+    // failure count that a concurrent recorder advanced in the meantime. The
+    // merge re-read observes the concurrently-opened state (3rd circuit read).
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: 'receiver unavailable' }), {
+      status: 503,
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const concurrentlyOpened = 9_999_999_999_999; // far-future openUntil set by a peer recorder
+    const { kv, circuitPuts } = scriptedCircuitKv([
+      { consecutiveFailures: 1, openUntil: null }, // isOpen() read: closed -> attempt delivery
+      { consecutiveFailures: 1, openUntil: null }, // recordFailure initial read: proposes (2, null)
+      { consecutiveFailures: 3, openUntil: concurrentlyOpened }, // merge re-read: peer opened it
+    ]);
+    const env = {
+      CONFIG_KV: kv,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+      USAGE_TELEMETRY_CIRCUIT_FAILURE_THRESHOLD: '3',
+    } as unknown as Env;
+
+    await expect(deliverUsageTelemetryEvent(env, deliveryEvent)).rejects.toThrow();
+
+    // The written state keeps the peer's open circuit and higher count intact,
+    // rather than the stale (2, null) this recorder computed on its own.
+    expect(circuitPuts).toHaveLength(1);
+    expect(circuitPuts[0]).toEqual({ consecutiveFailures: 3, openUntil: concurrentlyOpened });
   });
 
   it('half-open probe: a successful delivery once the backoff window elapses fully closes the circuit again', async () => {
