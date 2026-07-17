@@ -86,14 +86,15 @@ export interface CandidateInvocation {
  * blocked direct Gemini key.
  */
 export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
-  { provider: 'gemini', model: 'gemini-3.5-flash' },
-  { provider: 'openai', model: 'gpt-5.6-terra' },
-  { provider: 'openai', model: 'gpt-5.6-luna' },
-  { provider: 'openai', model: 'gpt-5.6-sol' },
-  { provider: 'anthropic', model: 'claude-sonnet-5' },
-  { provider: 'anthropic', model: 'claude-haiku-4-5' },
+  // Native Mistral OCR — keep direct: uses the /v1/files document parse API
+  // not exposed through OpenRouter in the same way.
   { provider: 'mistral', model: 'mistral-ocr-latest' },
-  { provider: 'xai', model: 'grok-4.3' },
+  // All other models routed through OpenRouter for unified billing + observability
+  { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
+  { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
+  { provider: 'openrouter', model: 'openai/gpt-5.6-sol' },
+  { provider: 'openrouter', model: 'anthropic/claude-sonnet-5' },
+  { provider: 'openrouter', model: 'x-ai/grok-4.3' },
   { provider: 'openrouter', model: 'deepseek/deepseek-v4-pro' },
   { provider: 'openrouter', model: 'deepseek/deepseek-v4-flash' },
   { provider: 'openrouter', model: 'qwen/qwen3-vl-30b-a3b-instruct' },
