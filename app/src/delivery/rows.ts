@@ -159,8 +159,21 @@ export function mapTransaction(row: TransactionRow): Transaction {
  * unaffected.
  */
 export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
+  const transaction = mapTransaction(row);
+
+  // If the asset name is exactly the ticker, replace it with the rich company name from enrichment
+  if (
+    transaction.assetName.toLowerCase() === row.ticker?.toLowerCase() &&
+    row.ref_company_name
+  ) {
+    transaction.assetName = row.ref_company_name;
+  }
+
+  // Strip 'Common Stock' from all asset names served to clients
+  transaction.assetName = transaction.assetName.replace(/(?:\s*(?:-)?\s*Common Stock\b)/ig, '').trim();
+
   return {
-    ...mapTransaction(row),
+    ...transaction,
     fullName: row.filer_full_name,
     state: row.filer_state,
     photoUrl: row.filer_photo_url,
