@@ -52,6 +52,7 @@ export function cleanAssetString(name: string | null | undefined, ticker?: strin
   }
 
   // 4. Entity normalizations (case-insensitive)
+  str = str.replace(/(?:\s*(?:-)?\s*Common Stock\b)/ig, '');
   str = str.replace(/\bINC(?:\.|\b)/gi, 'Inc.');
   str = str.replace(/\bL\.?L\.?C(?:\.|\b)/gi, 'LLC');
   str = str.replace(/\bL\.?P(?:\.|\b)/gi, 'LP');
