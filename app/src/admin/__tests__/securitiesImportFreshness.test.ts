@@ -75,11 +75,18 @@ describe('POST /securities/import — price freshness bookkeeping', () => {
     expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
 
     const row = db
-      .prepare('SELECT latest_price_date, price_unavailable, price_checked_at FROM securities_ref WHERE ticker = ?')
+      .prepare(
+        'SELECT latest_price_date, price_unavailable, price_checked_at, current_price, current_price_date FROM securities_ref WHERE ticker = ?',
+      )
       .get('IMPT');
     expect(row?.latest_price_date).toBe('2026-07-15');
     expect(row?.price_unavailable).toBe(0);
     expect(row?.price_checked_at).toBeTruthy();
+    // current_price is derived from the latest imported close even though the
+    // push carried no explicit currentPrice — otherwise current-return analytics
+    // would be stranded null for a now-"fresh" ticker.
+    expect(row?.current_price).toBe(100);
+    expect(row?.current_price_date).toBe('2026-07-15');
 
     // After import: fresh through the imported max → NOT re-selected.
     expect(

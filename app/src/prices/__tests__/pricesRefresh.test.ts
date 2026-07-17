@@ -164,8 +164,8 @@ describe('runPriceRefresh — incremental fetch window (Fix 3)', () => {
     expect(call?.from).toBe('2012-02-23');
   });
 
-  it('fetches SPX only from the last cached spx close minus a 7-day overlap', async () => {
-    seedTrade('t4', 'NVDA', '2026-01-05');
+  it('fetches SPX covering both the cached spx close and the oldest trade date', async () => {
+    seedTrade('t4', 'NVDA', '2026-01-05'); // oldest trade
     db.prepare("INSERT INTO spx_eod (date, close) VALUES ('2026-07-02', 5000)").run();
     h.responses.set('SPY', [{ date: '2026-07-11', close: 5100 }]);
     h.responses.set('NVDA', [{ date: '2026-07-11', close: 120 }]);
@@ -173,6 +173,21 @@ describe('runPriceRefresh — incremental fetch window (Fix 3)', () => {
     await runPriceRefresh(env, { max: 10 });
 
     const spy = h.eodCalls.find((c) => c.symbol === 'SPY');
-    expect(spy?.from).toBe('2026-06-25'); // 2026-07-02 minus 7 days
+    // min(cached spx 2026-07-02, oldest trade 2026-01-05) − 7d = 2025-12-29, so
+    // older trades can still get spx_at_trade/spx_at_filing anchors.
+    expect(spy?.from).toBe('2025-12-29');
+  });
+
+  it('fetches SPX from just the cached overlap once the series already covers the oldest trade', async () => {
+    seedTrade('t5', 'NVDA', '2026-07-01'); // oldest trade already within cache
+    db.prepare("INSERT INTO spx_eod (date, close) VALUES ('2026-07-02', 5000)").run();
+    h.responses.set('SPY', [{ date: '2026-07-11', close: 5100 }]);
+    h.responses.set('NVDA', [{ date: '2026-07-11', close: 120 }]);
+
+    await runPriceRefresh(env, { max: 10 });
+
+    const spy = h.eodCalls.find((c) => c.symbol === 'SPY');
+    // min(2026-07-02, 2026-07-01) − 7d = 2026-06-24 — narrow window, no full refetch.
+    expect(spy?.from).toBe('2026-06-24');
   });
 });

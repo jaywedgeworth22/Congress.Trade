@@ -202,21 +202,27 @@ export async function runPriceRefresh(
   const pace = getSharedFmpPacer(fmpMaxPerMinute);
   let calls = 0;
 
-  // 1) Refresh the S&P 500 series (one call). Fetch only from the last cached
-  //    close (minus a 7-day safety overlap) forward — NOT from 2012 every time —
-  //    so a routine refresh writes ~5 new rows instead of re-upserting the entire
-  //    ~3,500-row history. Fall back to the oldest-trade window only for a cold
-  //    cache with no spx_eod rows yet.
+  // 1) Refresh the S&P 500 series (one call). Fetch from the earlier of the last
+  //    cached close and the oldest trade date (each minus a 7-day overlap) — NOT
+  //    from 2012 unconditionally. This mirrors the per-ticker window: covering the
+  //    oldest trade guarantees every trade's spx_at_trade/spx_at_filing anchor can
+  //    be computed, so a partial sibling import of only recent SPX rows can't
+  //    permanently strand older trades with NULL SPX anchors. Once the series is
+  //    complete the window is just the recent overlap; the no-op guard on the
+  //    upsert keeps unchanged rows from being rewritten either way.
   const spxCached = await get<{ d: string | null }>(env.DB, 'SELECT MAX(date) AS d FROM spx_eod');
+  const oldestTradeRow = await get<{ d: string | null }>(
+    env.DB,
+    "SELECT MIN(tx_date) AS d FROM transactions WHERE tx_date IS NOT NULL AND tx_date <> ''",
+  );
   let spxFrom: string;
   if (spxCached?.d) {
-    spxFrom = isoDaysAgo(7, new Date(spxCached.d));
+    const base = oldestTradeRow?.d
+      ? Math.min(new Date(spxCached.d).getTime(), new Date(oldestTradeRow.d).getTime())
+      : new Date(spxCached.d).getTime();
+    spxFrom = isoDaysAgo(7, new Date(base));
   } else {
-    const oldest = await get<{ d: string }>(
-      env.DB,
-      "SELECT MIN(tx_date) AS d FROM transactions WHERE tx_date IS NOT NULL AND tx_date <> ''",
-    );
-    spxFrom = oldest?.d ? isoDaysAgo(7, new Date(oldest.d)) : isoDaysAgo(365 * 5);
+    spxFrom = oldestTradeRow?.d ? isoDaysAgo(7, new Date(oldestTradeRow.d)) : isoDaysAgo(365 * 5);
   }
   let spx: Close[] = [];
   try {
