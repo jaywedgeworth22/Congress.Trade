@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Env, Filing } from '../../shared/types';
+
+const unpdfMocks = vi.hoisted(() => ({
+  getDocumentProxy: vi.fn().mockResolvedValue({ numPages: 5 }),
+}));
+vi.mock('unpdf', () => ({
+  getDocumentProxy: unpdfMocks.getDocumentProxy,
+}));
+
 import { OpenRouterVisionExtractor } from '../openRouterVision';
 
 const filing = (): Filing => ({
@@ -120,5 +128,33 @@ describe('OpenRouterVisionExtractor', () => {
     expect(caughtErr).toBeDefined();
     expect(caughtErr?.message).toContain('could not parse model JSON');
     expect(caughtErr?.usage).toMatchObject({ promptTokens: 100, completionTokens: 50 });
+  });
+
+  it('propagates page count for mistral-ocr model', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 'gen-123',
+        model: 'mistral/mistral-ocr-latest',
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({ transactions: [] }),
+            },
+          },
+        ],
+        usage: { prompt_tokens: 100, completion_tokens: 50 },
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env, { model: 'mistral/mistral-ocr-latest' });
+    const result = await ex.extract({
+      filing: filing(),
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    });
+
+    expect(result.usage).toMatchObject({ promptTokens: 100, completionTokens: 50, pagesProcessed: 5 });
+    expect((result as any).pageCount).toBe(5);
   });
 });
