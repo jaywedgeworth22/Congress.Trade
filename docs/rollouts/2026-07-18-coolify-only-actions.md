@@ -51,6 +51,12 @@ Cloudflare Worker remained healthy. The runner service was contained while the
 host recovered. This is why cache removal and the resource follow-ups below are
 release requirements, not optional optimization.
 
+The reboot also exposed a persistent-workspace interaction: the Sentry reporter's
+sparse checkout left only its script materialized, and later checkout runs did
+not reliably restore `app/` or `clients/pwa/`. The reporter now uses a full
+checkout, CI explicitly materializes tracked paths before use, and the policy
+guard rejects future sparse-checkout directives.
+
 ## Follow-ups
 
 - Convert `congress-ci` to a one-job ephemeral runner with a destroyed workspace

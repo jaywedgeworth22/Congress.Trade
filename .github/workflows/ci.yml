@@ -36,6 +36,17 @@ jobs:
 
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      # The persistent workspace may have been left in sparse-checkout mode by
+      # an older reporter run. Explicitly restore every tracked path before a
+      # step relies on app/ or the workflow-policy script.
+      - name: Materialize the full repository checkout
+        working-directory: .
+        run: |
+          git sparse-checkout disable || true
+          git reset --hard HEAD
+          test -f scripts/check-actions-runner-policy.mjs
+          test -d app
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
@@ -74,6 +85,13 @@ jobs:
           exit 1
 
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Materialize the full repository checkout
+        working-directory: .
+        run: |
+          git sparse-checkout disable || true
+          git reset --hard HEAD
+          test -d clients/pwa
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:

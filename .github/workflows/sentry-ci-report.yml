@@ -79,10 +79,6 @@ jobs:
         # triggered the observed workflow. Do not add `ref: ${{ github.event.workflow_run.head_sha }}`
         # without re-reviewing the security implications.
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          sparse-checkout: |
-            scripts/sentry-ci-report.py
-          sparse-checkout-cone-mode: false
 
       - name: Report failure + cron check-in to Sentry fleet-infra
         shell: bash
