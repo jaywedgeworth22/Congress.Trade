@@ -596,6 +596,20 @@ describe('third-party usage telemetry', () => {
     )).toBe(true);
   });
 
+  it('quarantines a malformed R2 outbox object instead of replaying it forever', async () => {
+    const outboxKey = '_ops/usage-telemetry/ct-third-party%3Amalformed-r2.json';
+    const fallback = fallbackBucket({ [outboxKey]: 'not-json' });
+    const env = { RAW_FILES: fallback.bucket } as unknown as Env;
+
+    const result = await flushUsageTelemetryFallback(env);
+
+    expect(result).toMatchObject({ listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false });
+    expect(fallback.objects.has(outboxKey)).toBe(false);
+    expect(fallback.objects.has(
+      '_ops/usage-telemetry-quarantine/_ops%2Fusage-telemetry%2Fct-third-party%253Amalformed-r2.json.json',
+    )).toBe(true);
+  });
+
   it('never ages out a valid legacy D1 row on transient receiver failures', async () => {
     const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'rate limited' }), {

@@ -1252,6 +1252,24 @@ export async function flushUsageTelemetryFallback(
       let event: ThirdPartyUsageTelemetryEvent | null = null;
       try {
         event = parseUsageTelemetryFallback(raw);
+      } catch {
+        // A malformed R2 object can never become deliverable. Quarantine it
+        // before deletion so the poison payload is retained for diagnosis and
+        // cannot monopolize the bounded outbox on every flush.
+        const quarantined = await writeUsageTelemetryQuarantine(
+          storage,
+          object.key,
+          raw,
+          'malformed',
+        );
+        if (quarantined) {
+          await storage?.delete(object.key);
+          r2Removed += 1;
+        }
+        failed += 1;
+        continue;
+      }
+      try {
         await deliverUsageTelemetryEvent(env, event);
         await storage?.delete(object.key);
         r2Removed += 1;
