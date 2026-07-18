@@ -126,6 +126,37 @@ describe('upsertUserFromGoogle', () => {
     expect(u2.name).toBe('Jay R');
     expect(u2.picture).toBe('p2');
   });
+
+  it('refuses to match or create an account from an unverified Google email', async () => {
+    const { env, byId } = fakeEnv();
+    // Seed a victim account owned via the (verified) magic-link path.
+    const victim = await upsertUserByEmail(env, 'victim@x.com');
+
+    // An attacker's Google profile claims the victim's address without
+    // email_verified: the upsert must throw and mutate nothing.
+    await expect(
+      upsertUserFromGoogle(env, {
+        sub: 'attacker-sub',
+        email: 'victim@x.com',
+        emailVerified: false,
+        name: 'Attacker',
+        picture: null,
+      }),
+    ).rejects.toThrow(/not verified/);
+    const untouched = byId.get(victim.id)!;
+    expect(untouched.google_sub).toBeNull();
+    expect(untouched.name).toBeNull();
+
+    // And it must not create new accounts from unverified emails either.
+    await expect(
+      upsertUserFromGoogle(env, {
+        sub: 'attacker-sub',
+        email: 'new-unverified@x.com',
+        emailVerified: false,
+      }),
+    ).rejects.toThrow(/not verified/);
+    expect(byId.size).toBe(1);
+  });
 });
 
 describe('upsertUserByEmail (magic-link)', () => {
