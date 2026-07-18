@@ -110,7 +110,7 @@ describe('D1 row budgets', () => {
     recordD1Meta({ rows_read: 7, rows_written: 3 });
     await flushD1Budget({ DB: db, CONFIG_KV: fakeKv() } as unknown as Env, new Date('2036-01-05T00:00:00.000Z'));
 
-    expect(totals).toEqual({ read: 7, written: 3 });
+    expect(totals).toEqual({ read: 7, written: 4 });
     expect(statements.join('\n')).toMatch(/ON CONFLICT\(day\) DO UPDATE SET/);
   });
 });

@@ -213,7 +213,11 @@ export async function flushD1Budget(env: Env, now = new Date()): Promise<void> {
   pending = { read: 0, written: 0 };
   try {
     const day = dayStr(now);
-    const totals = (await bumpD1Totals(env, snap, now)) ?? (await bumpKvTotals(env, snap, now));
+    // The atomic D1 counter update is itself one D1 row write. Include that
+    // write in the D1 budget so read-only traffic cannot evade the write alarm
+    // merely because its application queries reported rows_written = 0.
+    const d1Delta = { read: snap.read, written: snap.written + 1 };
+    const totals = (await bumpD1Totals(env, d1Delta, now)) ?? (await bumpKvTotals(env, snap, now));
     const { read: readTotal, written: writtenTotal } = totals;
     warnIfOverSoft(day, readTotal, writtenTotal, await rowBudgets(env));
   } catch {
