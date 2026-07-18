@@ -8,19 +8,23 @@ struct FeedDashboardView: View {
     @State private var appliedSearch = ""
     @State private var searchTask: Task<Void, Never>?
     @State private var selectedTrade: ClientTrade?
-    
-    // New Interactive Filters
-    @State private var selectedChambers: Set<String> = ["house", "senate", "executive"]
 
     var filteredTrades: [ClientTrade] {
         let needle = appliedSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        
+        let chambers = store.selectedChambers
+        // A selection identical to the backend's true default also keeps rows
+        // whose chamber could not be resolved (matches the server's absent-
+        // `chamber` clause); any explicit narrower/wider selection is an
+        // exact IN-list and drops unresolved rows, same as the request sent.
+        let matchesDefaultSelection = chambers == CongressTradeStore.defaultChambers
+
         return cachedTrades.filter { trade in
-            // Filter by Chamber
-            let chamber = trade.member.chamber?.lowercased() ?? "unknown"
-            if !selectedChambers.contains(chamber) && !selectedChambers.isEmpty { return false }
-            
-            // Filter by Search text
+            if let raw = trade.member.chamber?.lowercased(), let chamber = ChamberFilter(rawValue: raw) {
+                if !chambers.contains(chamber) { return false }
+            } else if !matchesDefaultSelection {
+                return false
+            }
+
             if !needle.isEmpty {
                 return TradeSearch.matches(trade, normalizedNeedle: needle)
             }
@@ -41,17 +45,16 @@ struct FeedDashboardView: View {
 
                     SearchField(text: $searchText)
                     
-                    // Filter Chips
+                    // Filter Chips — the same selection drives the feed request (CT-AUD-010).
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
-                            FilterChip(title: "House", isSelected: selectedChambers.contains("house")) {
-                                toggleChamber("house")
-                            }
-                            FilterChip(title: "Senate", isSelected: selectedChambers.contains("senate")) {
-                                toggleChamber("senate")
-                            }
-                            FilterChip(title: "Executive", isSelected: selectedChambers.contains("executive")) {
-                                toggleChamber("executive")
+                            ForEach(ChamberFilter.allCases) { chamber in
+                                FilterChip(
+                                    title: chamber.label,
+                                    isSelected: store.selectedChambers.contains(chamber)
+                                ) {
+                                    toggleChamber(chamber)
+                                }
                             }
                         }
                     }
@@ -136,20 +139,16 @@ struct FeedDashboardView: View {
         }
     }
     
-    private func toggleChamber(_ chamber: String) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-            if selectedChambers.contains(chamber) {
-                // If it's the last one, don't allow unselecting, or just let it be empty (shows nothing)
-                selectedChambers.remove(chamber)
-            } else {
-                selectedChambers.insert(chamber)
-            }
-            
-            // If all are unselected, maybe select all?
-            if selectedChambers.isEmpty {
-                selectedChambers = ["house", "senate", "executive"]
-            }
+    private func toggleChamber(_ chamber: ChamberFilter) {
+        var next = store.selectedChambers
+        if next.contains(chamber) {
+            next.remove(chamber)
+        } else {
+            next.insert(chamber)
         }
+        // setChamberSelection resets an empty selection back to the documented
+        // default and resyncs the feed against the new selection (CT-AUD-010).
+        Task { await store.setChamberSelection(next) }
     }
 }
 
