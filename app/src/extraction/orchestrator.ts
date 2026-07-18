@@ -221,18 +221,33 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
     return { filing, transactions: [], extractor: 'none', modelVersion: null };
   }
 
-  const breakerKey = `provider_ban:${extractor.name}`;
-  if (env.CONFIG_KV) {
+  const breakerName = extractor.circuitBreakerName ?? extractor.name;
+  // HousePdfExtractor tries deterministic text parsing first for text-layer
+  // filings. A vision-provider ban must not block that healthy path before it
+  // gets a chance to run; scanned PDFs still consult the concrete vision ban.
+  // ConfiguredVisionExtractor checks the concrete candidate provider before
+  // each primary/failover attempt. The wrapper name is not a valid provider
+  // scope, so never consult or write provider_ban:configuredVision here.
+  const configuredVisionOwnsBreaker = extractor.name.includes('configuredVision');
+  const checkBreaker = !configuredVisionOwnsBreaker
+    && !(extractor.name.startsWith('housePdf(') && filing.docKind === 'text_pdf');
+  const breakerKey = `provider_ban:${breakerName}`;
+  let isBanned: string | null = null;
+  if (checkBreaker && env.CONFIG_KV) {
     try {
-      const isBanned = await env.CONFIG_KV.get(breakerKey);
-      if (isBanned) {
-        const message = `orchestrator: ${extractor.name} circuit breaker is open (banned due to recent 429/402). Reprocess this filing later.`;
-        await markError(env, docId, message);
-        throw new Error(message);
-      }
+      isBanned = await env.CONFIG_KV.get(breakerKey);
     } catch (kvErr) {
+      // Only the KV read is fault-tolerant (a down KV must not block extraction).
+      // The ban check itself must run outside this try — otherwise its throw
+      // below would be caught right here and silently swallowed, defeating the
+      // circuit breaker entirely.
       console.warn('orchestrator: failed to read circuit breaker from KV:', (kvErr as Error).message);
     }
+  }
+  if (checkBreaker && isBanned) {
+    const message = `orchestrator: ${breakerName} provider rate limit circuit breaker is open (banned due to recent 429/402). Reprocess this filing later.`;
+    await markError(env, docId, message);
+    throw new Error(message);
   }
 
   let result;
@@ -255,9 +270,9 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
       : `orchestrator: ${extractor.name} failed: ${detail}`;
     await markError(env, docId, message);
 
-    if (isProviderRateLimit(err) && env.CONFIG_KV) {
+    if (isProviderRateLimit(err) && env.CONFIG_KV && !configuredVisionOwnsBreaker) {
       try {
-        await env.CONFIG_KV.put(breakerKey, '1', { expirationTtl: 3600 });
+        await env.CONFIG_KV.put(breakerKey, String(Date.now() + 3600 * 1000), { expirationTtl: 3600 });
       } catch (kvErr) {
         console.warn('orchestrator: failed to set circuit breaker in KV:', (kvErr as Error).message);
       }
