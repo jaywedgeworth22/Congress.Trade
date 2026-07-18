@@ -8,6 +8,15 @@
 #
 #   ADMIN_TOKEN=xxx bash scripts/ship.sh                  # deploy + ensure schema
 #   bash scripts/ship.sh --deploy-only                    # deploy + health only
+#   bash scripts/ship.sh --deploy-no-verify               # deploy (wrangler + sourcemaps) only,
+#                                                          # NO liveness/health/migrate calls against
+#                                                          # congress.trade. For runners without the
+#                                                          # Cloudflare-allowlisted egress IP (e.g. a
+#                                                          # GitHub-hosted CI runner). Pair with a later
+#                                                          # --verify-only run from an allowlisted runner.
+#   ADMIN_TOKEN=xxx bash scripts/ship.sh --verify-only    # migrate + health checks only, no redeploy.
+#                                                          # For a lightweight follow-up job on the
+#                                                          # allowlisted runner after --deploy-no-verify.
 #   ADMIN_TOKEN=xxx bash scripts/ship.sh --enrich         # + repopulate photos
 #   ADMIN_TOKEN=xxx bash scripts/ship.sh --backfill       # + reload senate history
 #   ADMIN_TOKEN=xxx bash scripts/ship.sh --house          # + crawl recent House PTRs
@@ -20,6 +29,8 @@ BASE="${BASE:-https://congress.trade}"
 WORKERS_DEV_HOST="${WORKERS_DEV_HOST:-}"
 ADMIN_BASE="$BASE"
 DEPLOY_ONLY=false
+DEPLOY_NO_VERIFY=false
+VERIFY_ONLY=false
 ADMIN_STEPS=()
 
 # congress.trade sits behind a Cloudflare managed challenge that 403s requests
@@ -33,9 +44,17 @@ usage() {
   cat <<'EOF'
 Usage: ADMIN_TOKEN=... bash scripts/ship.sh [--enrich] [--backfill] [--house]
        bash scripts/ship.sh --deploy-only
+       bash scripts/ship.sh --deploy-no-verify
+       ADMIN_TOKEN=... bash scripts/ship.sh --verify-only [--enrich] [--backfill] [--house]
 
 Default mode deploys, checks /health liveness, migrates, then checks /api/health readiness.
 Use --deploy-only only when intentionally skipping admin post-deploy steps.
+Use --deploy-no-verify to deploy the Worker (wrangler + sourcemaps) with NO liveness/health/
+migrate calls against congress.trade at all — for runners without the Cloudflare-allowlisted
+egress IP. Pair it with a later --verify-only run (from an allowlisted runner) to complete
+migrate + health.
+Use --verify-only to run liveness + migrate + health/readiness checks WITHOUT redeploying the
+Worker — a lightweight follow-up to --deploy-no-verify on the allowlisted runner.
 EOF
 }
 
@@ -43,6 +62,12 @@ for arg in "$@"; do
   case "$arg" in
     --deploy-only)
       DEPLOY_ONLY=true
+      ;;
+    --deploy-no-verify)
+      DEPLOY_NO_VERIFY=true
+      ;;
+    --verify-only)
+      VERIFY_ONLY=true
       ;;
     --enrich|--backfill|--house)
       ADMIN_STEPS+=("$arg")
@@ -59,14 +84,23 @@ for arg in "$@"; do
   esac
 done
 
-if [ "$DEPLOY_ONLY" = true ] && [ "${#ADMIN_STEPS[@]}" -gt 0 ]; then
-  echo "!! --deploy-only cannot be combined with admin steps." >&2
+MODE_COUNT=0
+[ "$DEPLOY_ONLY" = true ] && MODE_COUNT=$((MODE_COUNT + 1))
+[ "$DEPLOY_NO_VERIFY" = true ] && MODE_COUNT=$((MODE_COUNT + 1))
+[ "$VERIFY_ONLY" = true ] && MODE_COUNT=$((MODE_COUNT + 1))
+if [ "$MODE_COUNT" -gt 1 ]; then
+  echo "!! --deploy-only, --deploy-no-verify, and --verify-only are mutually exclusive." >&2
   exit 2
 fi
 
-if [ "$DEPLOY_ONLY" != true ] && [ -z "${ADMIN_TOKEN:-}" ]; then
+if { [ "$DEPLOY_ONLY" = true ] || [ "$DEPLOY_NO_VERIFY" = true ]; } && [ "${#ADMIN_STEPS[@]}" -gt 0 ]; then
+  echo "!! --deploy-only/--deploy-no-verify cannot be combined with admin steps." >&2
+  exit 2
+fi
+
+if [ "$DEPLOY_ONLY" != true ] && [ "$DEPLOY_NO_VERIFY" != true ] && [ -z "${ADMIN_TOKEN:-}" ]; then
   echo "!! ADMIN_TOKEN is required for production deploys that run /api/admin/migrate." >&2
-  echo "   Set ADMIN_TOKEN=... or pass --deploy-only to explicitly skip admin post-deploy steps." >&2
+  echo "   Set ADMIN_TOKEN=... or pass --deploy-only/--deploy-no-verify to explicitly skip admin post-deploy steps." >&2
   exit 1
 fi
 
@@ -155,8 +189,20 @@ console.log(`   OK: ${checked} inline <script> block(s) parsed cleanly.`);
 NODE_SMOKE
 }
 
-echo "==> Deploying"
-npm run deploy
+if [ "$VERIFY_ONLY" != true ]; then
+  echo "==> Deploying"
+  npm run deploy
+else
+  echo "==> Verify-only mode: Worker already deployed by a separate job; skipping npm run deploy."
+fi
+
+if [ "$DEPLOY_NO_VERIFY" = true ]; then
+  echo "==> Deploy-no-verify mode: Worker deployed; skipped liveness/health/migrate checks against congress.trade."
+  echo "   Run 'ADMIN_TOKEN=... bash scripts/ship.sh --verify-only' from a runner with the"
+  echo "   Cloudflare-allowlisted egress IP to complete migrate + health verification."
+  echo "==> Done."
+  exit 0
+fi
 
 echo "==> Live Worker liveness check"
 ADMIN_BASE="$BASE"
