@@ -50,7 +50,7 @@
 import type { Env, Subscription, Transaction } from '../shared/types';
 import { all, get, run } from '../shared/db';
 import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows';
-import { matchesFiltersWithContext } from './subscriptions';
+import { matchesFiltersWithContext, subscriptionOwnerEntitled } from './subscriptions';
 import { constantTimeEqual } from '../auth/tokens';
 import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
 import { prefixedId } from '../shared/ids';
@@ -233,6 +233,16 @@ export async function openSseStream(
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  // Entitlement re-check at connection time (panel HIGH: a lapsed owner's
+  // stream token must stop opening premium streams). Placed after the token
+  // check so unauthenticated probes cannot enumerate owner billing state.
+  if (!(await subscriptionOwnerEntitled(env, sub.clientId))) {
+    return new Response(
+      JSON.stringify({ error: 'subscription owner requires an active Premium account', upgradeRequired: true }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } },
+    );
   }
 
   // Authentication deliberately precedes rate counters and lease writes so an
