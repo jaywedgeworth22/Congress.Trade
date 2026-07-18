@@ -604,6 +604,25 @@ function isTerminalLegacyUsageTelemetryRejection(error: unknown): boolean {
     && [400, 409, 413, 422].includes(error.status);
 }
 
+async function writeUsageTelemetryQuarantine(
+  storage: R2Bucket | undefined,
+  idempotencyKey: string,
+  payload: string,
+  reason: 'malformed' | 'terminal_receiver_rejection',
+): Promise<boolean> {
+  if (!storage?.put) return false;
+  const quarantineKey = `${USAGE_TELEMETRY_QUARANTINE_PREFIX}${encodeURIComponent(idempotencyKey)}.json`;
+  try {
+    await storage.put(quarantineKey, payload, {
+      httpMetadata: { contentType: 'application/json' },
+      customMetadata: { reason },
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function advanceTerminalLegacyUsageTelemetryRow(
   db: D1Database,
   storage: R2Bucket | undefined,
@@ -612,14 +631,13 @@ async function advanceTerminalLegacyUsageTelemetryRow(
 ): Promise<void> {
   const attempts = Number(row.attempts ?? 0) + 1;
   if (attempts >= USAGE_TELEMETRY_D1_MAX_ROW_ATTEMPTS) {
-    if (!storage?.put) return;
-    const quarantineKey = `${USAGE_TELEMETRY_QUARANTINE_PREFIX}${encodeURIComponent(row.idempotency_key)}.json`;
-    try {
-      await storage.put(quarantineKey, row.event_json, {
-        httpMetadata: { contentType: 'application/json' },
-        customMetadata: { reason },
-      });
-    } catch {
+    const quarantined = await writeUsageTelemetryQuarantine(
+      storage,
+      row.idempotency_key,
+      row.event_json,
+      reason,
+    );
+    if (!quarantined) {
       // Never delete the only durable copy if quarantine persistence fails.
       return;
     }
@@ -1221,11 +1239,32 @@ export async function flushUsageTelemetryFallback(
     try {
       const body = await storage?.get(object.key);
       if (!body) continue;
-      const event = parseUsageTelemetryFallback(await body.text());
-      await deliverUsageTelemetryEvent(env, event);
-      await storage?.delete(object.key);
-      r2Removed += 1;
-      delivered += 1;
+      const raw = await body.text();
+      let event: ThirdPartyUsageTelemetryEvent | null = null;
+      try {
+        event = parseUsageTelemetryFallback(raw);
+        await deliverUsageTelemetryEvent(env, event);
+        await storage?.delete(object.key);
+        r2Removed += 1;
+        delivered += 1;
+      } catch (error) {
+        // Keep transient receiver failures on the outbox. Deterministic
+        // rejections are quarantined after a single failure so poison R2 objects
+        // cannot monopolize the bounded list forever.
+        if (event != null && isTerminalLegacyUsageTelemetryRejection(error)) {
+          const quarantined = await writeUsageTelemetryQuarantine(
+            storage,
+            event.idempotencyKey,
+            raw,
+            'terminal_receiver_rejection',
+          );
+          if (quarantined) {
+            await storage?.delete(object.key);
+            r2Removed += 1;
+          }
+        }
+        failed += 1;
+      }
     } catch {
       failed += 1;
     }
@@ -1255,7 +1294,7 @@ export async function flushUsageTelemetryFallback(
         .all<{ idempotency_key: string; event_json: string; attempts: number }>();
       const results = rows.results ?? [];
       for (const row of results) {
-        let event: ThirdPartyUsageTelemetryEvent;
+        let event: ThirdPartyUsageTelemetryEvent | null = null;
         try {
           event = parseUsageTelemetryFallback(row.event_json);
         } catch {

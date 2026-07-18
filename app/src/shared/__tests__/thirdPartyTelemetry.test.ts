@@ -572,6 +572,30 @@ describe('third-party usage telemetry', () => {
     expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
   });
 
+  it('quarantines a terminal R2 outbox object instead of replaying it forever', async () => {
+    const poisonEvent = { ...deliveryEvent, idempotencyKey: 'ct-third-party:terminal-r2' };
+    const outboxKey = '_ops/usage-telemetry/ct-third-party%3Aterminal-r2.json';
+    const fallback = fallbackBucket({ [outboxKey]: JSON.stringify(poisonEvent) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'idempotency conflict' }), {
+      status: 409,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const env = {
+      RAW_FILES: fallback.bucket,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+    } as unknown as Env;
+
+    const result = await flushUsageTelemetryFallback(env);
+
+    expect(result).toMatchObject({ listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false });
+    expect(fallback.objects.has(outboxKey)).toBe(false);
+    expect(fallback.objects.has(
+      '_ops/usage-telemetry-quarantine/ct-third-party%3Aterminal-r2.json',
+    )).toBe(true);
+  });
+
   it('never ages out a valid legacy D1 row on transient receiver failures', async () => {
     const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'rate limited' }), {
