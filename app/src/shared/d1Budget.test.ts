@@ -9,6 +9,34 @@ function fakeKv(initial: Record<string, string> = {}) {
   };
 }
 
+function fakeD1() {
+  const totals = { read: 0, written: 0 };
+  const statements: string[] = [];
+  const db = {
+    prepare(sql: string) {
+      statements.push(sql);
+      const statement = {
+        bind(...params: unknown[]) {
+          return {
+            async run() {
+              if (/INSERT INTO d1_budget/i.test(sql)) {
+                totals.read += Number(params[1] ?? 0);
+                totals.written += Number(params[2] ?? 0);
+              }
+              return { success: true };
+            },
+            async first<T>() {
+              return { rows_read: totals.read, rows_written: totals.written } as T;
+            },
+          };
+        },
+      };
+      return statement;
+    },
+  };
+  return { db, totals, statements };
+}
+
 async function loadBudget(values: Record<string, string | undefined>) {
   vi.resetModules();
   const resolveSecret = vi.fn(async (_env: unknown, key: string) => ({
@@ -71,5 +99,18 @@ describe('D1 row budgets', () => {
     await kv.put('d1:rows_read:2036-01-04', '100');
 
     await expect(isD1RowBudgetExceeded({ CONFIG_KV: kv } as unknown as Env, now)).resolves.toBe(true);
+  });
+
+  it('uses an atomic D1 UPSERT for concurrent isolate-safe totals', async () => {
+    const { flushD1Budget, recordD1Meta } = await loadBudget({
+      D1_DAILY_ROWS_READ_BUDGET: '100',
+      D1_DAILY_ROWS_WRITTEN_BUDGET: '100',
+    });
+    const { db, totals, statements } = fakeD1();
+    recordD1Meta({ rows_read: 7, rows_written: 3 });
+    await flushD1Budget({ DB: db, CONFIG_KV: fakeKv() } as unknown as Env, new Date('2036-01-05T00:00:00.000Z'));
+
+    expect(totals).toEqual({ read: 7, written: 3 });
+    expect(statements.join('\n')).toMatch(/ON CONFLICT\(day\) DO UPDATE SET/);
   });
 });

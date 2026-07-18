@@ -24,6 +24,18 @@ export async function get<T = Record<string, unknown>>(
   return row ?? null;
 }
 
+/** Fetch the first row through .all(), preserving D1 row metadata for aggregate queries. */
+export async function first<T = Record<string, unknown>>(
+  db: D1Database,
+  sql: string,
+  params: SqlParam[] = [],
+): Promise<T | null> {
+  const stmt = bindParams(db.prepare(sql), params);
+  const res = await stmt.all<T>();
+  recordD1Meta(res?.meta);
+  return res?.results?.[0] ?? null;
+}
+
 /** Fetch all rows mapped to T[]. */
 export async function all<T = Record<string, unknown>>(
   db: D1Database,

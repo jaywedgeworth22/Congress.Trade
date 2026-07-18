@@ -19,7 +19,7 @@
 
 import { Hono } from 'hono';
 import type { Env } from '../shared/types';
-import { all, get, parseJson } from '../shared/db';
+import { all, first, get, parseJson } from '../shared/db';
 import { cached, cacheKey } from '../shared/kvCache';
 import { assetTypeCategoryLabel, isAssetTypeCategory } from '../shared/assetTypes';
 import {
@@ -196,7 +196,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const f = commonFromQuery(c.req.query());
     const data = await cached(c.env, cacheKey('summary', f as never), 120, async () => {
       const built = buildSummaryQuery(f);
-      const row = (await get<Record<string, unknown>>(c.env.DB, built.sql, built.params)) ?? {};
+      const row = (await first<Record<string, unknown>>(c.env.DB, built.sql, built.params)) ?? {};
       const buyCount = num(row.buy_count);
       const sellCount = num(row.sell_count);
       const totalTrades = num(row.total_trades);
@@ -851,7 +851,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const sellersQ = buildTickerTopTradersQuery(tickerParam, 'S', f);
       const recentQ = buildTickerRecentTradesQuery(tickerParam, f);
       const [sumRow, tsRows, buyerRows, sellerRows, recentRows, refRow] = await Promise.all([
-        get<Record<string, unknown>>(c.env.DB, sumQ.sql, sumQ.params),
+        first<Record<string, unknown>>(c.env.DB, sumQ.sql, sumQ.params),
         all<Record<string, unknown>>(c.env.DB, tsQ.sql, tsQ.params),
         all<Record<string, unknown>>(c.env.DB, buyersQ.sql, buyersQ.params),
         all<Record<string, unknown>>(c.env.DB, sellersQ.sql, sellersQ.params),
@@ -1019,7 +1019,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           'SELECT bioguide_id, chamber, full_name, party, state, district, committees, photo_url FROM filers WHERE bioguide_id = ?',
           [filerId],
         ),
-        get<Record<string, unknown>>(c.env.DB, statsQ.sql, statsQ.params),
+        first<Record<string, unknown>>(c.env.DB, statsQ.sql, statsQ.params),
         all<Record<string, unknown>>(c.env.DB, topQ.sql, topQ.params),
         all<Record<string, unknown>>(c.env.DB, recentQ.sql, recentQ.params),
       ]);

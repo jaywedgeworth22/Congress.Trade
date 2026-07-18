@@ -9,8 +9,7 @@
  *
  *   - METER: every all()/run()/batch() through shared/db.ts reports its
  *     D1Meta.rows_read / rows_written here (recordD1Meta), accumulated per
- *     isolate and flushed once per invocation to a KV day-counter — the same
- *     pattern as the FMP daily-call cap (enrichment/service.ts).
+ *     isolate and flushed once per invocation to an atomic D1 day-counter.
  *   - ALERT (default, always on): flushD1Budget() warns + sends a Sentry
  *     message when the day's total crosses a soft fraction of the budget, so a
  *     spike is visible in hours, not at invoice time. No blocking.
@@ -20,10 +19,10 @@
  *     jobs) can self-abort. It never gates health, auth, billing, delivery, or
  *     the public read path.
  *
- * Everything here FAILS OPEN: any KV/meta error is swallowed so the guard can
- * never take the app down. Counts are APPROXIMATE (per-isolate accumulation +
- * eventually-consistent KV + multiple isolates), which is fine for a budget
- * alarm — reconcile against D1's own Row Metrics for the authoritative number.
+ * Everything here FAILS OPEN: any D1/KV/meta error is swallowed so the guard
+ * can never take the app down. D1's atomic counter prevents concurrent isolate
+ * flushes from losing increments; reconcile against D1's own Row Metrics for
+ * the authoritative number.
  *
  * NOTE: get() in shared/db.ts uses .first(), which returns the row directly and
  * carries no D1Meta, so single-row point reads are intentionally unmetered. The
@@ -69,6 +68,11 @@ function dayStr(now: Date): string {
 
 function dayKey(kind: 'read' | 'written', now: Date): string {
   return `d1:rows_${kind}:${dayStr(now)}`;
+}
+
+interface DayTotals {
+  read: number;
+  written: number;
 }
 
 function intVar(v: string | undefined, fallback: number): number {
@@ -117,18 +121,62 @@ export function recordD1Meta(
   if (typeof w === 'number' && w > 0) pending.written += w;
 }
 
-async function bumpDayCounter(
-  env: Env,
-  kind: 'read' | 'written',
-  delta: number,
-  now: Date,
-): Promise<number | null> {
-  if (delta <= 0) return null;
-  const key = dayKey(kind, now);
-  const prev = parseInt((await env.CONFIG_KV.get(key)) ?? '0', 10) || 0;
-  const next = prev + delta;
-  await env.CONFIG_KV.put(key, String(next), { expirationTtl: DAY_TTL_SEC });
-  return next;
+/** Atomically add both dimensions in one D1 statement. Returns null only when
+ * the binding/schema is unavailable, allowing the compatibility fallback. */
+async function bumpD1Totals(env: Env, delta: RowDelta, now: Date): Promise<DayTotals | null> {
+  const db = (env as Partial<Env>).DB;
+  if (!db || typeof db.prepare !== 'function') return null;
+  try {
+    await db.prepare(
+      `INSERT INTO d1_budget (day, rows_read, rows_written) VALUES (?, ?, ?)
+       ON CONFLICT(day) DO UPDATE SET
+         rows_read = rows_read + excluded.rows_read,
+         rows_written = rows_written + excluded.rows_written`,
+    ).bind(dayStr(now), delta.read, delta.written).run();
+    const row = await db
+      .prepare('SELECT rows_read, rows_written FROM d1_budget WHERE day = ?')
+      .bind(dayStr(now))
+      .first<{ rows_read: number; rows_written: number }>();
+    return {
+      read: Number(row?.rows_read ?? 0),
+      written: Number(row?.rows_written ?? 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Compatibility path for isolates running before migration 0045 is applied. */
+async function bumpKvTotals(env: Env, delta: RowDelta, now: Date): Promise<DayTotals> {
+  const readKey = dayKey('read', now);
+  const writtenKey = dayKey('written', now);
+  const [read, written] = await Promise.all([env.CONFIG_KV.get(readKey), env.CONFIG_KV.get(writtenKey)]);
+  const totals = {
+    read: (parseInt(read ?? '0', 10) || 0) + delta.read,
+    written: (parseInt(written ?? '0', 10) || 0) + delta.written,
+  };
+  await Promise.all([
+    env.CONFIG_KV.put(readKey, String(totals.read), { expirationTtl: DAY_TTL_SEC }),
+    env.CONFIG_KV.put(writtenKey, String(totals.written), { expirationTtl: DAY_TTL_SEC }),
+  ]);
+  return totals;
+}
+
+async function readD1Totals(env: Env, now: Date): Promise<DayTotals | null> {
+  const db = (env as Partial<Env>).DB;
+  if (!db || typeof db.prepare !== 'function') return null;
+  try {
+    const row = await db
+      .prepare('SELECT rows_read, rows_written FROM d1_budget WHERE day = ?')
+      .bind(dayStr(now))
+      .first<{ rows_read: number; rows_written: number }>();
+    return {
+      read: Number(row?.rows_read ?? 0),
+      written: Number(row?.rows_written ?? 0),
+    };
+  } catch {
+    return null;
+  }
 }
 
 function warnIfOverSoft(
@@ -156,7 +204,7 @@ function warnIfOverSoft(
 }
 
 /**
- * Flush the isolate's accumulated D1 row usage to today's KV counters, and warn
+ * Flush the isolate's accumulated D1 row usage to today's atomic D1 counter, and warn
  * if the day's total crossed the soft threshold. Call once at an invocation tail
  * (via ctx.waitUntil). No-op when nothing is pending; fails open.
  */
@@ -166,15 +214,12 @@ export async function flushD1Budget(env: Env, now = new Date()): Promise<void> {
   pending = { read: 0, written: 0 };
   try {
     const day = dayStr(now);
-    const [readTotal, writtenTotal] = await Promise.all([
-      bumpDayCounter(env, 'read', snap.read, now),
-      bumpDayCounter(env, 'written', snap.written, now),
-    ]);
-    const base = lastTotals && lastTotals.day === day ? lastTotals : { day, read: 0, written: 0 };
+    const totals = (await bumpD1Totals(env, snap, now)) ?? (await bumpKvTotals(env, snap, now));
+    const { read: readTotal, written: writtenTotal } = totals;
     lastTotals = {
       day,
-      read: readTotal ?? base.read,
-      written: writtenTotal ?? base.written,
+      read: readTotal,
+      written: writtenTotal,
     };
     warnIfOverSoft(day, readTotal, writtenTotal, await rowBudgets(env));
   } catch {
@@ -203,14 +248,12 @@ export async function isD1RowBudgetExceeded(env: Env, now = new Date()): Promise
     // lastTotals cache is isolate-local and can be stale when another Worker
     // isolate records usage after this one has already checked the budget.
     await flushD1Budget(env, now);
-    const [r, w] = await Promise.all([
-      env.CONFIG_KV.get(dayKey('read', now)),
-      env.CONFIG_KV.get(dayKey('written', now)),
-    ]);
-    const read = parseInt(r ?? '0', 10) || 0;
-    const written = parseInt(w ?? '0', 10) || 0;
+    const totals = (await readD1Totals(env, now)) ?? {
+      read: parseInt((await env.CONFIG_KV.get(dayKey('read', now))) ?? '0', 10) || 0,
+      written: parseInt((await env.CONFIG_KV.get(dayKey('written', now))) ?? '0', 10) || 0,
+    };
     const budgets = await rowBudgets(env);
-    return read >= budgets.read || written >= budgets.written;
+    return totals.read >= budgets.read || totals.written >= budgets.written;
   } catch {
     return false;
   }

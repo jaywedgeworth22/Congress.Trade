@@ -195,9 +195,18 @@ export const TX_DOC_INDEX_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_tx_doc ON transactions (doc_id)',
 ] as const;
 
+/** 0045_d1_budget.sql — atomic daily D1 row counters. */
+export const D1_BUDGET_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS d1_budget (
+     day          TEXT PRIMARY KEY,
+     rows_read    INTEGER NOT NULL DEFAULT 0,
+     rows_written INTEGER NOT NULL DEFAULT 0
+   )`,
+] as const;
+
 /**
  * Ordered schema tail shared by POST /api/admin/migrate and migration parity
- * tests. Keep this in the same order as file migrations 0029 through 0044.
+ * tests. Keep this in the same order as file migrations 0029 through 0045.
  */
 export const POST_0024_SCHEMA_STATEMENTS = [
   // 0025_extraction_runs_usage.sql
@@ -227,4 +236,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
   // 0044_tx_doc_index.sql
   ...TX_DOC_INDEX_SCHEMA_STATEMENTS,
+  // 0045_d1_budget.sql
+  ...D1_BUDGET_SCHEMA_STATEMENTS,
 ] as const;

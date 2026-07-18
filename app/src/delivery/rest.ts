@@ -21,7 +21,7 @@
 import { Hono, type Context } from 'hono';
 import { MAX_REFS_BATCH } from '@jaywedgeworth22/congress-trading-shared';
 import type { Chamber, Env, Subscription, TxType } from '../shared/types';
-import { all, get } from '../shared/db';
+import { all, first, get } from '../shared/db';
 import { cached } from '../shared/kvCache';
 import {
   buildTransactionsQuery,
@@ -274,11 +274,11 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // Total = ALL rows matching the same ticker/member/type/chamber filters,
     // ignoring the cursor backstop (so the UI can show "showing X of N").
     const countQuery = buildTransactionsCountQuery(params);
-    const countRow = await get<{ total: number }>(c.env.DB, countQuery.sql, countQuery.params);
+    const countRow = await first<{ total: number }>(c.env.DB, countQuery.sql, countQuery.params);
     const total = countRow?.total ?? transactions.length;
     const today = new Date().toISOString().slice(0, 10);
     const todayQuery = buildTransactionsTodayFilingsQuery(params, today);
-    const todayRow = await get<{ total: number }>(c.env.DB, todayQuery.sql, todayQuery.params);
+    const todayRow = await first<{ total: number }>(c.env.DB, todayQuery.sql, todayQuery.params);
     // Count served rows against the caller's daily budget. Incremental polls
     // (the dashboard's steady state) return zero rows and skip the KV write.
     await spendRowBudget(c.env, ip, transactions.length);

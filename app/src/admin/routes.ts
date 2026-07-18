@@ -38,7 +38,7 @@ import {
   ShortVolumeRowSchema,
 } from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
-import { all, batch, batchPrepared, get, run, type SqlParam } from '../shared/db';
+import { all, batch, batchPrepared, first, get, run, type SqlParam } from '../shared/db';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
 import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
 import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config';
@@ -7075,7 +7075,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.get('/enrich-securities/status', async (c) => {
     const used = await getDailyUsed(c.env);
     const retryIncomplete = await hasConfiguredKeyedEnrichmentProvider(c.env);
-    const row = await get<{ pending: number }>(
+    const row = await first<{ pending: number }>(
       c.env.DB,
       `SELECT COUNT(*) AS pending FROM (
          SELECT t.ticker FROM transactions t
@@ -7084,7 +7084,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
            AND ${enrichmentNeededSql('sr', retryIncomplete)}
          GROUP BY t.ticker)`,
     );
-    const enriched = await get<{ n: number }>(
+    const enriched = await first<{ n: number }>(
       c.env.DB,
       'SELECT COUNT(*) AS n FROM securities_ref WHERE enriched_at IS NOT NULL',
     );
@@ -7917,7 +7917,7 @@ async function marketCoverage(env: Env): Promise<MarketCoverage> {
  */
 export async function marketPending(env: Env): Promise<{ enrich: number; prices: number }> {
   const retryIncomplete = await hasConfiguredKeyedEnrichmentProvider(env);
-  const e = await get<{ n: number }>(
+  const e = await first<{ n: number }>(
     env.DB,
     `SELECT COUNT(*) AS n FROM (
        SELECT t.ticker FROM transactions t
@@ -7926,7 +7926,7 @@ export async function marketPending(env: Env): Promise<{ enrich: number; prices:
          AND ${enrichmentNeededSql('sr', retryIncomplete)}
        GROUP BY t.ticker)`,
   );
-  const p = await get<{ n: number }>(
+  const p = await first<{ n: number }>(
     env.DB,
     `SELECT COUNT(*) AS n FROM (
        SELECT t.ticker FROM transactions t
