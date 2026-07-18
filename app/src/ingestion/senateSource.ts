@@ -114,6 +114,23 @@ export function delay(ms: number): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
+ * True when an HTML body is the eFD "prohibition against private use"
+ * agreement/landing wall rather than an actual filing/report page.
+ *
+ * Any request to /search/view/... without an agreement-accepted session cookie
+ * is redirected (followed transparently by fetch) to this wall, which the
+ * server returns with HTTP 200 + text/html — indistinguishable from a real
+ * electronic-report page by status/content-type alone. Persisting it as the
+ * filing's raw bytes silently poisons the pipeline: it classifies as
+ * senate_html and extracts zero transactions. Signature verified against the
+ * live page: the wall embeds the `prohibition_agreement` form field (and an
+ * `agreement_form` element); real report pages contain neither.
+ */
+export function looksLikeSenateAgreementWall(html: string): boolean {
+  return /prohibition_agreement/i.test(html) || /id=["']agreement_form["']/i.test(html);
+}
+
+/**
  * Extract the hidden csrfmiddlewaretoken from the landing page HTML.
  * Returns '' if not found.
  */
@@ -207,8 +224,10 @@ const POLITE_DELAY_MS = 750;
 const SENATE_PAGE_SIZE = 100;
 const SENATE_MAX_PAGES = 25;
 
-/** Browser-like base headers shared across the efdsearch request flow. */
-const BROWSER_HEADERS: Record<string, string> = {
+/** Browser-like base headers shared across the efdsearch request flow (and
+ *  reused by the House live-search overlay, which sits behind a similar
+ *  anti-bot layer on the Clerk host). */
+export const BROWSER_HEADERS: Record<string, string> = {
   'user-agent': UA,
   'accept-language': 'en-US,en;q=0.9',
   'sec-ch-ua': '"Chromium";v="124", "Not:A-Brand";v="99"',
@@ -227,6 +246,88 @@ export interface FetchSenatePtrFilingsOptions {
   politeDelayMs?: number;
   /** KV namespace for caching the Senate eFD session (Strategy B) */
   kv?: any;
+}
+
+/** KV key holding the cached, agreement-accepted eFD session. Shared with the
+ *  fetcher (which reuses the session cookie to download report pages). */
+export const SENATE_SESSION_KV_KEY = 'senate_efd_session';
+
+/** An agreement-accepted eFD session: cookies + the CSRF token to send back. */
+export interface SenateSession {
+  csrfCookie: string;
+  cookieHeader: string;
+}
+
+/**
+ * Run the eFD landing + agreement-acceptance handshake and return a usable
+ * session (cookie header + CSRF token). When `kv` is provided the session is
+ * cached for 24h under SENATE_SESSION_KV_KEY so the discovery poll and the
+ * filing fetcher share one session instead of re-negotiating (or, worse,
+ * fetching report pages sessionless and receiving the agreement wall).
+ */
+export async function establishSenateSession(
+  opts: { kv?: any; politeDelayMs?: number } = {},
+  fetchImpl: typeof fetch = fetch,
+): Promise<SenateSession> {
+  const politeDelayMs = boundedNonNegativeInt(opts.politeDelayMs, POLITE_DELAY_MS);
+  const jar = new CookieJar();
+  // 1) GET landing page -> csrftoken cookie + hidden middleware token.
+  const landing = await trackedFetch(SENATE_SEARCH, {
+    headers: {
+      ...BROWSER_HEADERS,
+      accept:
+        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-site': 'none',
+      'sec-fetch-user': '?1',
+      'upgrade-insecure-requests': '1',
+    },
+  }, { service: 'filing-discovery', operation: 'open-senate-search-session' }, fetchImpl);
+  if (!landing.ok) throw new Error(`senate GET /search/ -> HTTP ${landing.status}`);
+  jar.absorb(landing);
+  const landingHtml = await landing.text();
+  const middlewareToken = parseCsrfMiddlewareToken(landingHtml);
+  if (!middlewareToken) throw new Error('senate: csrfmiddlewaretoken not found on landing page');
+
+  await delay(politeDelayMs);
+
+  // 2) POST agreement acceptance (carry cookies).
+  const agreeBody = new URLSearchParams({
+    prohibition_agreement: '1',
+    csrfmiddlewaretoken: middlewareToken,
+  });
+  const agree = await trackedFetch(SENATE_HOME, {
+    method: 'POST',
+    headers: {
+      ...BROWSER_HEADERS,
+      'content-type': 'application/x-www-form-urlencoded',
+      cookie: jar.header(),
+      referer: SENATE_SEARCH,
+      origin: SENATE_BASE,
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-site': 'same-origin',
+    },
+    body: agreeBody.toString(),
+    redirect: 'manual',
+  }, { service: 'filing-discovery', operation: 'accept-senate-search-terms' }, fetchImpl);
+  // 200 or 302 are both fine; we only care that cookies are refreshed.
+  jar.absorb(agree);
+  await delay(politeDelayMs);
+
+  const csrfCookie = jar.get('csrftoken') ?? middlewareToken;
+  const cookieHeader = jar.header();
+
+  if (opts.kv) {
+    try {
+      // Cache session for 24 hours.
+      await opts.kv.put(SENATE_SESSION_KV_KEY, JSON.stringify({ csrfCookie, cookieHeader }), { expirationTtl: 86400 });
+    } catch (err) {
+      console.warn('watcher: Failed to write senate session to KV:', err);
+    }
+  }
+  return { csrfCookie, cookieHeader };
 }
 
 function boundedPositiveInt(raw: number | undefined, fallback: number, max: number): number {
@@ -260,13 +361,12 @@ export async function fetchSenatePtrFilings(
   const maxPages = boundedPositiveInt(opts.maxPages, SENATE_MAX_PAGES, SENATE_MAX_PAGES);
   const politeDelayMs = boundedNonNegativeInt(opts.politeDelayMs, POLITE_DELAY_MS);
 
-  const SESSION_KV_KEY = 'senate_efd_session';
-  let session: { csrfCookie: string; cookieHeader: string } | null = null;
+  let session: SenateSession | null = null;
 
   if (opts.kv) {
     try {
-      const cached = await opts.kv.get(SESSION_KV_KEY, 'json');
-      if (cached) session = cached as { csrfCookie: string; cookieHeader: string };
+      const cached = await opts.kv.get(SENATE_SESSION_KV_KEY, 'json');
+      if (cached) session = cached as SenateSession;
     } catch (err) {
       console.warn('watcher: Failed to read senate session from KV:', err);
     }
@@ -277,70 +377,9 @@ export async function fetchSenatePtrFilings(
   const useCached = !!session;
   let handshakeDone = false;
 
-  const performHandshake = async () => {
-    const jar = new CookieJar();
-    // 1) GET landing page -> csrftoken cookie + hidden middleware token.
-    const landing = await trackedFetch(SENATE_SEARCH, {
-      headers: {
-        ...BROWSER_HEADERS,
-        accept:
-          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'sec-fetch-dest': 'document',
-        'sec-fetch-mode': 'navigate',
-        'sec-fetch-site': 'none',
-        'sec-fetch-user': '?1',
-        'upgrade-insecure-requests': '1',
-      },
-    }, { service: 'filing-discovery', operation: 'open-senate-search-session' }, fetchImpl);
-    if (!landing.ok) throw new Error(`senate GET /search/ -> HTTP ${landing.status}`);
-    jar.absorb(landing);
-    const landingHtml = await landing.text();
-    const middlewareToken = parseCsrfMiddlewareToken(landingHtml);
-    if (!middlewareToken) throw new Error('senate: csrfmiddlewaretoken not found on landing page');
-
-    await delay(politeDelayMs);
-
-    // 2) POST agreement acceptance (carry cookies).
-    const agreeBody = new URLSearchParams({
-      prohibition_agreement: '1',
-      csrfmiddlewaretoken: middlewareToken,
-    });
-    const agree = await trackedFetch(SENATE_HOME, {
-      method: 'POST',
-      headers: {
-        ...BROWSER_HEADERS,
-        'content-type': 'application/x-www-form-urlencoded',
-        cookie: jar.header(),
-        referer: SENATE_SEARCH,
-        origin: SENATE_BASE,
-        'sec-fetch-dest': 'document',
-        'sec-fetch-mode': 'navigate',
-        'sec-fetch-site': 'same-origin',
-      },
-      body: agreeBody.toString(),
-      redirect: 'manual',
-    }, { service: 'filing-discovery', operation: 'accept-senate-search-terms' }, fetchImpl);
-    // 200 or 302 are both fine; we only care that cookies are refreshed.
-    jar.absorb(agree);
-    await delay(politeDelayMs);
-
-    const csrfCookie = jar.get('csrftoken') ?? middlewareToken;
-    const cookieHeader = jar.header();
-
-    if (opts.kv) {
-      try {
-        // Cache session for 24 hours.
-        await opts.kv.put(SESSION_KV_KEY, JSON.stringify({ csrfCookie, cookieHeader }), { expirationTtl: 86400 });
-      } catch (err) {
-        console.warn('watcher: Failed to write senate session to KV:', err);
-      }
-    }
-    return { csrfCookie, cookieHeader };
-  };
-
   while (true) {
     if (!session && !handshakeDone) {
-      session = await performHandshake();
+      session = await establishSenateSession({ kv: opts.kv, politeDelayMs }, fetchImpl);
       handshakeDone = true;
     }
     if (!session) break;
@@ -386,7 +425,7 @@ export async function fetchSenatePtrFilings(
         if (useCached && !handshakeDone) {
           console.warn(`watcher: senate cached session invalid (HTTP ${data.status} ${contentType}), retrying handshake`);
           if (opts.kv) {
-            await opts.kv.delete(SESSION_KV_KEY).catch(() => {});
+            await opts.kv.delete(SENATE_SESSION_KV_KEY).catch(() => {});
           }
           pageError = true;
           break;
