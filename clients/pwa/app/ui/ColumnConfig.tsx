@@ -7,24 +7,24 @@ import {
   saveHiddenCols,
   saveColOrder,
   defaultHidden,
+  canUseColumn,
 } from '../../lib/columns';
 
 interface ColumnConfigProps {
-  isPremium: boolean;
   isAdmin: boolean;
   onChange: () => void;
   onClose?: () => void;
 }
 
-export function ColumnConfig({ isPremium, isAdmin, onChange, onClose }: ColumnConfigProps) {
+export function ColumnConfig({ isAdmin, onChange, onClose }: ColumnConfigProps) {
   const [columns, setColumns] = useState<ColumnDef[]>([]);
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
 
   // Hydrate from localStorage on mount
   useEffect(() => {
-    setColumns(getOrderedColumns(isPremium, isAdmin));
-    setHiddenIds(loadHiddenCols(isPremium, isAdmin));
-  }, [isPremium, isAdmin]);
+    setColumns(getOrderedColumns(isAdmin));
+    setHiddenIds(loadHiddenCols(isAdmin));
+  }, [isAdmin]);
 
   const handleToggleVisibility = (id: string) => {
     let nextHidden: string[];
@@ -53,15 +53,11 @@ export function ColumnConfig({ isPremium, isAdmin, onChange, onClose }: ColumnCo
   };
 
   const handleReset = () => {
-    const defaultOrder = ALL_COLUMNS.filter((c) => {
-      if (c.tier === 'admin') return isAdmin;
-      if (c.tier === 'premium') return isAdmin || isPremium;
-      return true;
-    });
+    const defaultOrder = ALL_COLUMNS.filter((c) => canUseColumn(c, isAdmin));
     setColumns(defaultOrder);
     saveColOrder(defaultOrder.map((c) => c.id));
 
-    const defHiddenList = defaultHidden(isPremium, isAdmin);
+    const defHiddenList = defaultHidden(isAdmin);
     setHiddenIds(defHiddenList);
     saveHiddenCols(defHiddenList);
 

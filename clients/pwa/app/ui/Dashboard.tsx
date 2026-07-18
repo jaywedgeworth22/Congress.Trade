@@ -92,13 +92,13 @@ export default function Dashboard() {
   const isAdmin = checkAdminView();
 
   useEffect(() => {
-    setColumns(getOrderedColumns(premium, isAdmin));
-    setHiddenCols(loadHiddenCols(premium, isAdmin));
-  }, [premium, isAdmin]);
+    setColumns(getOrderedColumns(isAdmin));
+    setHiddenCols(loadHiddenCols(isAdmin));
+  }, [isAdmin]);
 
   const handleConfigChange = () => {
-    setColumns(getOrderedColumns(premium, isAdmin));
-    setHiddenCols(loadHiddenCols(premium, isAdmin));
+    setColumns(getOrderedColumns(isAdmin));
+    setHiddenCols(loadHiddenCols(isAdmin));
   };
   const {
     data: preferencesEnvelope,
@@ -403,7 +403,6 @@ export default function Dashboard() {
 
       {isConfigOpen && (
         <ColumnConfig
-          isPremium={premium}
           isAdmin={isAdmin}
           onChange={handleConfigChange}
           onClose={() => setIsConfigOpen(false)}
