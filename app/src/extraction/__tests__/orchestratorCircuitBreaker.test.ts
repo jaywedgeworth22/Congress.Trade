@@ -145,4 +145,35 @@ describe('orchestrator provider-ban circuit breaker', () => {
     expect(result?.extractor).toBe('textPdf');
     expect(runs.some((r) => /SET ingest_status = 'error'/i.test(r.sql))).toBe(false);
   });
+
+  it('does not let a vision ban block the text-first House wrapper', async () => {
+    const extract = vi.fn(async () => ({
+      transactions: [{ id: 'tx-1' }],
+      confidence: 0.9,
+      raw: 'text',
+      extractor: 'textPdf',
+    }));
+    mocks.buildExtractorPipeline.mockReturnValue([
+      {
+        name: 'housePdf(textPdf,visionLlm)',
+        circuitBreakerName: 'visionLlm',
+        canHandle: () => true,
+        extract,
+      },
+    ]);
+
+    const { db } = fakeDb();
+    const kvGet = vi.fn(async () => '1');
+    const env = {
+      DB: db,
+      RAW_FILES: fakeRawFiles(new ArrayBuffer(8)),
+      CONFIG_KV: { get: kvGet, put: vi.fn(), delete: vi.fn() },
+    } as unknown as Env;
+
+    const result = await extractParsed(env, 'H-1');
+
+    expect(result?.extractor).toBe('textPdf');
+    expect(extract).toHaveBeenCalledTimes(1);
+    expect(kvGet).not.toHaveBeenCalled();
+  });
 });

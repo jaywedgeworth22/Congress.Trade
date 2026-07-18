@@ -221,9 +221,14 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
     return { filing, transactions: [], extractor: 'none', modelVersion: null };
   }
 
-  const breakerKey = `provider_ban:${extractor.name}`;
+  const breakerName = extractor.circuitBreakerName ?? extractor.name;
+  // HousePdfExtractor tries deterministic text parsing first for text-layer
+  // filings. A vision-provider ban must not block that healthy path before it
+  // gets a chance to run; scanned PDFs still consult the concrete vision ban.
+  const checkBreaker = !(extractor.name.startsWith('housePdf(') && filing.docKind === 'text_pdf');
+  const breakerKey = `provider_ban:${breakerName}`;
   let isBanned: string | null = null;
-  if (env.CONFIG_KV) {
+  if (checkBreaker && env.CONFIG_KV) {
     try {
       isBanned = await env.CONFIG_KV.get(breakerKey);
     } catch (kvErr) {
@@ -234,8 +239,8 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
       console.warn('orchestrator: failed to read circuit breaker from KV:', (kvErr as Error).message);
     }
   }
-  if (isBanned) {
-    const message = `orchestrator: ${extractor.name} circuit breaker is open (banned due to recent 429/402). Reprocess this filing later.`;
+  if (checkBreaker && isBanned) {
+    const message = `orchestrator: ${breakerName} provider rate limit circuit breaker is open (banned due to recent 429/402). Reprocess this filing later.`;
     await markError(env, docId, message);
     throw new Error(message);
   }
