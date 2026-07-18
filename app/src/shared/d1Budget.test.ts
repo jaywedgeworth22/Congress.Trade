@@ -56,4 +56,20 @@ describe('D1 row budgets', () => {
     await expect(isD1RowBudgetExceeded({ CONFIG_KV: kv } as unknown as Env, now)).resolves.toBe(true);
     expect(resolveSecret).toHaveBeenCalledWith(expect.anything(), 'D1_DAILY_ROWS_WRITTEN_BUDGET');
   });
+
+  it('refreshes shared counters instead of trusting stale isolate-local totals', async () => {
+    const { flushD1Budget, isD1RowBudgetExceeded, recordD1Meta } = await loadBudget({
+      D1_ROW_BUDGET_ENFORCE: 'true',
+      D1_DAILY_ROWS_READ_BUDGET: '100',
+      D1_DAILY_ROWS_WRITTEN_BUDGET: '100',
+    });
+    const now = new Date('2036-01-04T00:00:00.000Z');
+    const kv = fakeKv();
+
+    recordD1Meta({ rows_read: 1 });
+    await flushD1Budget({ CONFIG_KV: kv } as unknown as Env, now);
+    await kv.put('d1:rows_read:2036-01-04', '100');
+
+    await expect(isD1RowBudgetExceeded({ CONFIG_KV: kv } as unknown as Env, now)).resolves.toBe(true);
+  });
 });

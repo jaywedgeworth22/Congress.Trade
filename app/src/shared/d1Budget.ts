@@ -199,20 +199,16 @@ async function enforceEnabled(env: Env): Promise<boolean> {
 export async function isD1RowBudgetExceeded(env: Env, now = new Date()): Promise<boolean> {
   try {
     if (!(await enforceEnabled(env))) return false;
-    const day = dayStr(now);
-    let read: number;
-    let written: number;
-    if (lastTotals && lastTotals.day === day) {
-      read = lastTotals.read;
-      written = lastTotals.written;
-    } else {
-      const [r, w] = await Promise.all([
-        env.CONFIG_KV.get(dayKey('read', now)),
-        env.CONFIG_KV.get(dayKey('written', now)),
-      ]);
-      read = parseInt(r ?? '0', 10) || 0;
-      written = parseInt(w ?? '0', 10) || 0;
-    }
+    // Flush local work first, then always read the shared counters. The
+    // lastTotals cache is isolate-local and can be stale when another Worker
+    // isolate records usage after this one has already checked the budget.
+    await flushD1Budget(env, now);
+    const [r, w] = await Promise.all([
+      env.CONFIG_KV.get(dayKey('read', now)),
+      env.CONFIG_KV.get(dayKey('written', now)),
+    ]);
+    const read = parseInt(r ?? '0', 10) || 0;
+    const written = parseInt(w ?? '0', 10) || 0;
     const budgets = await rowBudgets(env);
     return read >= budgets.read || written >= budgets.written;
   } catch {
