@@ -911,7 +911,7 @@ function usageTelemetryErrorStatus(error: unknown): number | null {
  * plain Errors, so retain the stable error phrases it emits as a fallback
  * until the shared package exposes the response status directly.
  */
-function isTerminalUsageTelemetryDeliveryError(error: unknown): boolean {
+export function isTerminalUsageTelemetryDeliveryError(error: unknown): boolean {
   if (error instanceof UsageTelemetryCircuitOpenError) return false;
   const status = usageTelemetryErrorStatus(error);
   const message = error instanceof Error ? error.message : String(error ?? '');
@@ -1026,10 +1026,25 @@ export async function flushUsageTelemetryFallback(
       continue;
     }
     let event: ThirdPartyUsageTelemetryEvent;
+    let body: R2ObjectBody | null;
     try {
-      const body = await storage?.get(object.key);
-      if (!body) continue;
-      event = parseUsageTelemetryFallback(await body.text());
+      body = (await storage?.get(object.key)) ?? null;
+    } catch {
+      // A transient R2 read failure must retain the object for the next flush.
+      failed += 1;
+      continue;
+    }
+    if (!body) continue;
+    let raw: string;
+    try {
+      raw = await body.text();
+    } catch {
+      // A transient stream/read failure must retain the object too.
+      failed += 1;
+      continue;
+    }
+    try {
+      event = parseUsageTelemetryFallback(raw);
     } catch {
       // A malformed R2 object is terminal and must not pin the bounded list.
       try {
