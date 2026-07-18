@@ -10,7 +10,13 @@ on:
 
 jobs:
   gitleaks:
-    runs-on: ubuntu-latest
+    # Use the same resource-guarded Coolify runner as CI when configured. This
+    # keeps the required check independent of GitHub-hosted Actions billing.
+    # Fork PRs and rejected bot actors stay on GitHub-hosted infrastructure
+    # because untrusted security tooling must not run on the production box.
+    # If the self-hosted runner is unavailable, clearing CT_CI_RUNNER restores
+    # the GitHub-hosted fallback.
+    runs-on: ${{ ((!endsWith(github.actor, '[bot]') || github.actor == 'cursor[bot]') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
     permissions:
       contents: read
       pull-requests: read
@@ -49,3 +55,8 @@ jobs:
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The action's SARIF artifact upload assumes $HOME is the artifact
+          # root; the Coolify runner's workspace is mounted elsewhere. The
+          # scan and PR comments remain enabled; disable only that optional
+          # upload when CT_CI_RUNNER selects self-hosted execution.
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: ${{ vars.CT_CI_RUNNER && 'false' || 'true' }}
