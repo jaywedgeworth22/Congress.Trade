@@ -445,6 +445,18 @@ function usageTelemetryCircuitMaxBackoffMs(env: Env): number {
   return Number.isFinite(n) && n > 0 ? n : 1_800_000;
 }
 
+function usageTelemetryDeliveryTimeoutMs(env: Env): number {
+  const n = Number.parseInt(env.USAGE_TELEMETRY_DELIVERY_TIMEOUT_MS ?? '', 10);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 60_000) : 15_000;
+}
+
+function usageTelemetryCircuitProbeLeaseMs(env: Env): number {
+  const timeoutFloor = usageTelemetryDeliveryTimeoutMs(env) + 5_000;
+  const n = Number.parseInt(env.USAGE_TELEMETRY_CIRCUIT_PROBE_LEASE_MS ?? '', 10);
+  const configured = Number.isFinite(n) && n > 0 ? n : 30_000;
+  return Math.min(300_000, Math.max(timeoutFloor, configured));
+}
+
 function usageTelemetryFallbackMaxObjects(env: Env): number {
   const n = Number.parseInt(env.USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS ?? '', 10);
   return Number.isFinite(n) && n > 0 ? n : 5_000;
@@ -474,29 +486,46 @@ const CLOSED_USAGE_TELEMETRY_CIRCUIT: UsageTelemetryCircuitState = {
   openUntil: null,
 };
 
-async function readUsageTelemetryCircuitState(env: Env): Promise<UsageTelemetryCircuitState> {
+async function readUsageTelemetryCircuitState(env: Env): Promise<UsageTelemetryCircuitState | null> {
   const kv = (env as Partial<Env>).CONFIG_KV;
   if (!kv) return CLOSED_USAGE_TELEMETRY_CIRCUIT;
   try {
     const stored = await kv.get<UsageTelemetryCircuitState>(USAGE_TELEMETRY_CIRCUIT_KV_KEY, 'json');
-    if (stored && typeof stored.consecutiveFailures === 'number') return stored;
-  } catch {}
+    if (stored == null) return CLOSED_USAGE_TELEMETRY_CIRCUIT;
+    if (
+      Number.isFinite(stored.consecutiveFailures)
+      && stored.consecutiveFailures >= 0
+      && (stored.openUntil == null || Number.isFinite(stored.openUntil))
+    ) return stored;
+    // A malformed persisted state is an unavailable control plane, not proof
+    // that the receiver is healthy. Fail closed until it is repaired/expired.
+    return null;
+  } catch {
+    // The breaker control plane is unavailable. Production always binds
+    // CONFIG_KV, so fail closed to R2 rather than hammering a receiver whose
+    // outage state cannot be read.
+    return null;
+  }
   return CLOSED_USAGE_TELEMETRY_CIRCUIT;
 }
 
-async function writeUsageTelemetryCircuitState(env: Env, state: UsageTelemetryCircuitState): Promise<void> {
+async function writeUsageTelemetryCircuitState(env: Env, state: UsageTelemetryCircuitState): Promise<boolean> {
   const kv = (env as Partial<Env>).CONFIG_KV;
-  if (!kv) return;
+  if (!kv) return false;
   try {
     // A week-long TTL just bounds worst-case staleness; every delivery attempt
     // (success or failure) rewrites this key on its own cadence regardless.
     await kv.put(USAGE_TELEMETRY_CIRCUIT_KV_KEY, JSON.stringify(state), { expirationTtl: 7 * 24 * 3600 });
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** True while the circuit breaker is suppressing live delivery attempts. */
 export async function isUsageTelemetryCircuitOpen(env: Env): Promise<boolean> {
   const state = await readUsageTelemetryCircuitState(env);
+  if (!state) return true;
   return state.openUntil != null && Date.now() < state.openUntil;
 }
 
@@ -505,10 +534,11 @@ export async function isUsageTelemetryCircuitOpen(env: Env): Promise<boolean> {
  * circuit is already closed, so a healthy receiver never pays a write per
  * delivered event — only actual state transitions touch KV.
  */
-async function recordUsageTelemetryDeliverySuccess(env: Env): Promise<void> {
+async function recordUsageTelemetryDeliverySuccess(env: Env): Promise<boolean> {
   const state = await readUsageTelemetryCircuitState(env);
-  if (state.consecutiveFailures === 0 && state.openUntil == null) return;
-  await writeUsageTelemetryCircuitState(env, CLOSED_USAGE_TELEMETRY_CIRCUIT);
+  if (!state) return false;
+  if (state.consecutiveFailures === 0 && state.openUntil == null) return true;
+  return writeUsageTelemetryCircuitState(env, CLOSED_USAGE_TELEMETRY_CIRCUIT);
 }
 
 /** The later of two open-until deadlines; a set deadline always beats null. */
@@ -519,13 +549,65 @@ function laterUsageTelemetryOpenUntil(a: number | null, b: number | null): numbe
 }
 
 /**
+ * Claim the singleton D1 lease only when an open circuit's cooldown elapsed.
+ * The conditional upsert is one atomic SQLite statement: exactly one contender
+ * observes `meta.changes === 1`; every concurrent contender fails closed before
+ * calling the receiver. Closed-circuit traffic never touches D1.
+ */
+async function claimUsageTelemetryHalfOpenProbe(
+  env: Env,
+  state: UsageTelemetryCircuitState,
+): Promise<string | null> {
+  if (state.openUntil == null) return null;
+  const nowMs = Date.now();
+  if (nowMs < state.openUntil) throw new UsageTelemetryCircuitOpenError();
+  const db = (env as Partial<Env>).DB;
+  if (!db?.prepare) throw new UsageTelemetryCircuitOpenError();
+  const token = crypto.randomUUID();
+  const now = new Date(nowMs).toISOString();
+  const expiresAt = new Date(nowMs + usageTelemetryCircuitProbeLeaseMs(env)).toISOString();
+  try {
+    const result = await db.prepare(
+      `INSERT INTO usage_telemetry_probe_lease (id, lease_token, expires_at, updated_at)
+       VALUES (1, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         lease_token = excluded.lease_token,
+         expires_at = excluded.expires_at,
+         updated_at = excluded.updated_at
+       WHERE usage_telemetry_probe_lease.expires_at <= excluded.updated_at`,
+    )
+      .bind(token, expiresAt, now)
+      .run();
+    if (Number(result.meta?.changes ?? 0) !== 1) throw new UsageTelemetryCircuitOpenError();
+    return token;
+  } catch (error) {
+    if (error instanceof UsageTelemetryCircuitOpenError) throw error;
+    // Missing migration, D1 outage, or an unknown result all fail closed. A
+    // half-open coordination failure must never turn into concurrent probes.
+    throw new UsageTelemetryCircuitOpenError();
+  }
+}
+
+async function releaseUsageTelemetryHalfOpenProbe(env: Env, token: string): Promise<void> {
+  try {
+    await env.DB.prepare(
+      'DELETE FROM usage_telemetry_probe_lease WHERE id = 1 AND lease_token = ?',
+    )
+      .bind(token)
+      .run();
+  } catch {
+    // A stale lease expires on its own. Never weaken the breaker because
+    // cleanup failed after the receiver was already proven healthy.
+  }
+}
+
+/**
  * Exponential backoff keyed off consecutive failures past the threshold, capped
- * at usageTelemetryCircuitMaxBackoffMs. There is no separate "half-open" state:
- * once `openUntil` elapses, isUsageTelemetryCircuitOpen simply reports closed
- * again, so the next real attempt (a new event or the next scheduled flush) IS
- * the probe. A probe success calls recordUsageTelemetryDeliverySuccess and
- * fully closes the circuit; a probe failure lands back here and reopens with a
- * longer window.
+ * at usageTelemetryCircuitMaxBackoffMs. Once `openUntil` elapses, the next real
+ * delivery must atomically claim the singleton D1 half-open lease. That keeps
+ * only one receiver probe in flight across isolates. A successful probe closes
+ * the KV circuit before releasing the lease; a failed probe reopens the circuit
+ * and leaves the short lease to expire.
  *
  * Concurrency: CONFIG_KV has no atomic increment (an exact counter would need a
  * Durable Object, which is unjustified for a best-effort storm-brake and would
@@ -541,8 +623,8 @@ function laterUsageTelemetryOpenUntil(a: number | null, b: number | null): numbe
  * never a re-closed circuit. Only recordUsageTelemetryDeliverySuccess (a real
  * 2xx, i.e. the receiver is actually healthy) resets the state.
  */
-async function recordUsageTelemetryDeliveryFailure(env: Env): Promise<void> {
-  const state = await readUsageTelemetryCircuitState(env);
+async function recordUsageTelemetryDeliveryFailure(env: Env): Promise<boolean> {
+  const state = await readUsageTelemetryCircuitState(env) ?? CLOSED_USAGE_TELEMETRY_CIRCUIT;
   const proposedFailures = state.consecutiveFailures + 1;
   const threshold = usageTelemetryCircuitFailureThreshold(env);
   const proposedOpenUntil = proposedFailures >= threshold
@@ -554,8 +636,8 @@ async function recordUsageTelemetryDeliveryFailure(env: Env): Promise<void> {
   // Monotonic merge-on-write: re-read the current stored state and never regress
   // below it, so a concurrent failure recorder's progress toward opening (or an
   // open circuit it just tripped) is never lost to this write. See note above.
-  const current = await readUsageTelemetryCircuitState(env);
-  await writeUsageTelemetryCircuitState(env, {
+  const current = await readUsageTelemetryCircuitState(env) ?? state;
+  return writeUsageTelemetryCircuitState(env, {
     consecutiveFailures: Math.max(current.consecutiveFailures, proposedFailures),
     openUntil: laterUsageTelemetryOpenUntil(current.openUntil, proposedOpenUntil),
   });
@@ -898,6 +980,15 @@ export class UsageTelemetryCircuitOpenError extends Error {
   }
 }
 
+/** Explicit unmetered receiver primitive; telemetry must never meter itself. */
+async function fetchUsageTelemetryReceiver(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  fetchImpl: typeof fetch = fetch,
+): Promise<Response> {
+  return fetchImpl(input, init);
+}
+
 /**
  * Queue-consumer + fallback-drain transport. The shared client is intentionally
  * not tracked. Gated by the durable circuit breaker: while open this throws
@@ -910,9 +1001,9 @@ export async function deliverUsageTelemetryEvent(
   env: Env,
   event: ThirdPartyUsageTelemetryEvent,
 ): Promise<void> {
-  if (await isUsageTelemetryCircuitOpen(env)) {
-    throw new UsageTelemetryCircuitOpenError();
-  }
+  const circuitState = await readUsageTelemetryCircuitState(env);
+  if (!circuitState) throw new UsageTelemetryCircuitOpenError();
+  const probeLeaseToken = await claimUsageTelemetryHalfOpenProbe(env, circuitState);
   try {
     await withoutThirdPartyTelemetry(env, async () => {
       const secrets = await resolveSecrets(env, [
@@ -928,6 +1019,18 @@ export async function deliverUsageTelemetryEvent(
         baseUrl,
         token,
         requireExplicitIdempotencyKey: true,
+        fetchImpl: async (input, init) => {
+          const controller = new AbortController();
+          const timer = setTimeout(
+            () => controller.abort(),
+            usageTelemetryDeliveryTimeoutMs(env),
+          );
+          try {
+            return await fetchUsageTelemetryReceiver(input, { ...init, signal: controller.signal });
+          } finally {
+            clearTimeout(timer);
+          }
+        },
       });
       await client.send([event]);
     });
@@ -935,7 +1038,10 @@ export async function deliverUsageTelemetryEvent(
     await recordUsageTelemetryDeliveryFailure(env);
     throw error;
   }
-  await recordUsageTelemetryDeliverySuccess(env);
+  const closedPersisted = await recordUsageTelemetryDeliverySuccess(env);
+  if (probeLeaseToken && closedPersisted) {
+    await releaseUsageTelemetryHalfOpenProbe(env, probeLeaseToken);
+  }
 }
 
 export interface UsageTelemetryFallbackFlushResult {
