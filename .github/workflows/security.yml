@@ -10,7 +10,13 @@ on:
 
 jobs:
   gitleaks:
-    runs-on: ubuntu-latest
+    # Use the same resource-guarded Coolify runner as CI when configured. This
+    # keeps the required check independent of GitHub-hosted Actions billing.
+    # Dependabot PRs stay on GitHub-hosted infrastructure because dependency
+    # install/security tooling must not run on the production-hosting box.
+    # If the self-hosted runner is unavailable, clearing CT_CI_RUNNER restores
+    # the GitHub-hosted fallback.
+    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
     permissions:
       contents: read
       pull-requests: read
