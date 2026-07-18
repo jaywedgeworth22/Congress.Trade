@@ -27,6 +27,36 @@ function fakeDb(rows: unknown[]) {
 }
 
 describe('review queue admin API', () => {
+  it('matches a complete comma-separated reason token and escapes LIKE wildcards', async () => {
+    const sqls: string[] = [];
+    const binds: unknown[][] = [];
+    const db = {
+      prepare(sql: string) {
+        sqls.push(sql);
+        return {
+          bind(...args: unknown[]) {
+            binds.push(args);
+            return this;
+          },
+          async all<T>() { return { results: [] as T[] }; },
+          async first<T>() { return null as T | null; },
+        };
+      },
+    } as unknown as D1Database;
+
+    const res = await app.request(
+      '/review-queue?reason=low_confidence%25_%5Ctoken',
+      { headers: { Authorization: 'Bearer admin-secret' } },
+      { ADMIN_TOKEN: 'admin-secret', DB: db },
+    );
+
+    expect(res.status).toBe(200);
+    const matchingSql = sqls.find((sql) => /COUNT\(\*\) AS n FROM review_queue rq/i.test(sql));
+    expect(matchingSql).toContain("(',' || COALESCE(rq.reason, '') || ',') LIKE ? ESCAPE '\\'");
+    expect(binds).toContainEqual([0]);
+    expect(binds.some((args) => args.includes('%,low\\_confidence\\%\\_\\\\token,%'))).toBe(true);
+  });
+
   it('includes source document metadata for clickable review links', async () => {
     const res = await app.request(
       '/review-queue',
