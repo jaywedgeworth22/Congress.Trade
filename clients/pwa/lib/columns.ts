@@ -4,7 +4,7 @@ export interface ColumnDef {
   id: string;
   label: string;
   def: boolean; // default visible
-  tier?: 'premium' | 'admin';
+  tier?: 'admin';
   tip?: string;
   sort?: string | null;
 }
@@ -43,9 +43,8 @@ export function isAdminView(): boolean {
   }
 }
 
-export function canUseColumn(c: ColumnDef, isPremium: boolean, isAdmin: boolean): boolean {
+export function canUseColumn(c: ColumnDef, isAdmin: boolean): boolean {
   if (c.tier === 'admin') return isAdmin;
-  if (c.tier === 'premium') return isAdmin || isPremium;
   return true;
 }
 
@@ -66,8 +65,8 @@ export function saveColOrder(v: string[]) {
   } catch {}
 }
 
-export function getOrderedColumns(isPremium: boolean, isAdmin: boolean): ColumnDef[] {
-  const available = ALL_COLUMNS.filter(c => canUseColumn(c, isPremium, isAdmin));
+export function getOrderedColumns(isAdmin: boolean): ColumnDef[] {
+  const available = ALL_COLUMNS.filter(c => canUseColumn(c, isAdmin));
   const order = loadColOrder();
   if (order.length === 0) return available;
 
@@ -86,18 +85,18 @@ export function getOrderedColumns(isPremium: boolean, isAdmin: boolean): ColumnD
   });
 }
 
-export function defaultHidden(isPremium: boolean, isAdmin: boolean): string[] {
-  const available = ALL_COLUMNS.filter(c => canUseColumn(c, isPremium, isAdmin));
+export function defaultHidden(isAdmin: boolean): string[] {
+  const available = ALL_COLUMNS.filter(c => canUseColumn(c, isAdmin));
   return available.filter(c => !c.def).map(c => c.id);
 }
 
-export function loadHiddenCols(isPremium: boolean, isAdmin: boolean): string[] {
-  if (typeof localStorage === 'undefined') return defaultHidden(isPremium, isAdmin);
+export function loadHiddenCols(isAdmin: boolean): string[] {
+  if (typeof localStorage === 'undefined') return defaultHidden(isAdmin);
   try {
     const v = JSON.parse(localStorage.getItem(COL_HIDDEN_KEY) || 'null');
-    return Array.isArray(v) ? v : defaultHidden(isPremium, isAdmin);
+    return Array.isArray(v) ? v : defaultHidden(isAdmin);
   } catch {
-    return defaultHidden(isPremium, isAdmin);
+    return defaultHidden(isAdmin);
   }
 }
 

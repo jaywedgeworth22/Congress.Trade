@@ -35,9 +35,9 @@ import {
   type FeedTransactionRow,
   type TxQueryParams,
 } from './rows';
-import { getCurrentUser, getCurrentUserFromRequest } from '../auth/session';
-import { getUserById } from '../auth/users';
+import { getCurrentUserFromRequest } from '../auth/session';
 import { isPremiumUser } from '../billing/entitlement';
+import { getUserById } from '../auth/users';
 import {
   createSubscription,
   getSubscription,
@@ -293,13 +293,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /export/transactions.csv ---------------------------------------
-  // Premium-only full-history CSV download. Honors the same ticker/member/
-  // type/chamber filters as the feed; non-premium callers get 402 + an upgrade
-  // hint so the UI can route them to checkout.
+  // Public/free full-history CSV download. Honors the same ticker/member/
+  // type/chamber filters as the feed.
   r.get('/export/transactions.csv', async (c) => {
-    if (!isPremiumUser(await getCurrentUser(c))) {
-      return c.json({ error: 'CSV export requires Premium', upgradeRequired: true, feature: 'exportCsv' }, 402);
-    }
     // Even for premium users, a full-history CSV is a heavy D1 scan; cap per IP
     // so it can't be scripted into unbounded read/CPU cost. Fails open if KV down.
     const exRl = await rateLimit(c.env, 'export-ip', clientIp(c.req.raw), 30, 600);
