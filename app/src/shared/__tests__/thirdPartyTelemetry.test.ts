@@ -493,6 +493,50 @@ describe('third-party usage telemetry', () => {
     expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
   });
 
+  it('retains global receiver authentication failures and opens the outage circuit', async () => {
+    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const env = {
+      RAW_FILES: fallbackBucket().bucket,
+      DB: fallback.db,
+      CONFIG_KV: fakeConfigKv().kv,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+      USAGE_TELEMETRY_CIRCUIT_FAILURE_THRESHOLD: '1',
+    } as unknown as Env;
+
+    await flushUsageTelemetryFallback(env);
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
+    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(true);
+  });
+
+  it('quarantines terminal R2 delivery rejects instead of retrying poison objects forever', async () => {
+    const key = '_ops/usage-telemetry/terminal.json';
+    const fallback = fallbackBucket({ [key]: JSON.stringify(deliveryEvent) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'schema validation failed' }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const env = {
+      RAW_FILES: fallback.bucket,
+      CONFIG_KV: fakeConfigKv().kv,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+    } as unknown as Env;
+
+    expect(await flushUsageTelemetryFallback(env)).toEqual({
+      listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false,
+    });
+    expect(fallback.objects.has(key)).toBe(false);
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
+  });
+
   it('does not let one poison legacy D1 row wedge the drain: quarantines it after a bounded budget while rows behind it still deliver', async () => {
     // Oldest row is permanently unparseable (poison); a good row sits behind it.
     const poisonKey = 'ct-third-party:poison-legacy-row';
