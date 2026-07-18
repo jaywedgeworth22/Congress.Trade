@@ -1,9 +1,23 @@
 # Current Handoff
 
-Last updated: 2026-07-14
+Last updated: 2026-07-18
 
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
+
+## 2026-07-18 — Public dashboard render recovery (CODEX)
+
+- Production showed only the navigation because commit `ba10898` removed the closing `</section>`
+  for the Trades view. The browser nested Trends and every later view inside hidden `#view-feed`.
+- PR #566 restores the close and adds a parsed-DOM regression requiring all five primary panels to
+  remain direct children of `main`. Typecheck, 83 focused UI tests, and the serial full 135-file /
+  1,421-test suite pass; an independent adversarial review found no adjacent structural defect.
+- Emergency production Worker `8ff8c421-b19a-4cb6-82e9-eee59535d17d` is live from code commit
+  `c2369bf`. Browser verification shows real Trends analytics, 50 Trades rows/cards, working
+  Trends/Trades/Alerts navigation, correct sibling-panel DOM, and no console warnings/errors.
+- Permanent landing is blocked only because GitHub refuses to start required checks while the
+  account has a payment/spending-limit failure; even admin merge is rejected. PR #566 remains
+  mergeable and must land before a later `main` deployment can reintroduce the outage.
 
 ## 2026-07-14 — Immutable shared-package v1.7.1 consumer adoption (CODEX)
 
