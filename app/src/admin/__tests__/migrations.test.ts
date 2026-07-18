@@ -17,6 +17,7 @@ import {
   REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
   STRIPE_EVENT_SCHEMA_STATEMENTS,
   USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
+  SUBSCRIPTION_QUOTA_ACTIVE_ONLY_SCHEMA_STATEMENTS,
 } from '../migrations';
 import { BENCHMARK_SCHEMA_STATEMENTS } from '../../benchmark/schema';
 import {
@@ -192,6 +193,7 @@ describe('admin migration bootstrap', () => {
       'CREATE INDEX IF NOT EXISTS idx_tx_doc ON transactions (doc_id)',
       ...D1_BUDGET_SCHEMA_STATEMENTS,
       ...USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
+      ...SUBSCRIPTION_QUOTA_ACTIVE_ONLY_SCHEMA_STATEMENTS,
       ...RETENTION_INDEX_SCHEMA_STATEMENTS,
     ]);
   });
@@ -208,6 +210,14 @@ describe('admin migration bootstrap', () => {
     expect(sql).toContain('CHECK (id = 1)');
     expect(sql).toContain('lease_token TEXT NOT NULL');
     expect(sql).toContain('expires_at  TEXT NOT NULL');
+  });
+
+  it('counts only active rows toward the total subscription quota trigger (0047)', () => {
+    const sql = SUBSCRIPTION_QUOTA_ACTIVE_ONLY_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('DROP TRIGGER IF EXISTS trg_subscriptions_total_quota');
+    expect(sql).toContain('trg_subscriptions_total_quota');
+    expect(sql).toContain('client_id = NEW.client_id AND active = 1');
+    expect(sql).toContain('subscription total quota exceeded');
   });
 
   it('negative-caches un-priceable tickers and indexes latest_price_date (0043)', () => {
