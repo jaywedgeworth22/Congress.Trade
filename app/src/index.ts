@@ -549,7 +549,14 @@ const queueWorker = Sentry.withSentry(
             // Usage Monitor outage retries must not create a Sentry envelope,
             // which would create another Usage Monitor event and amplify.
             if (messageType === 'usage.telemetry') {
-              await persistUsageTelemetryFallback(env, (message.body as QueueMessage & { type: 'usage.telemetry' }).event);
+              const retained = await persistUsageTelemetryFallback(
+                env,
+                (message.body as QueueMessage & { type: 'usage.telemetry' }).event,
+              );
+              if (retained) {
+                message.ack();
+                continue;
+              }
             } else {
               Sentry.captureException(err as Error, {
                 tags: { queue: batch.queue, recovery: 'dead-letter' },
@@ -605,7 +612,14 @@ const queueWorker = Sentry.withSentry(
             ? null
             : classifyTransientIngestError(err, message.attempts);
           if (messageType === 'usage.telemetry') {
-            await persistUsageTelemetryFallback(env, (message.body as QueueMessage & { type: 'usage.telemetry' }).event);
+            const retained = await persistUsageTelemetryFallback(
+              env,
+              (message.body as QueueMessage & { type: 'usage.telemetry' }).event,
+            );
+            if (retained) {
+              message.ack();
+              continue;
+            }
           } else {
             console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
             // console.error above is only a breadcrumb/log; the retry swallows the
