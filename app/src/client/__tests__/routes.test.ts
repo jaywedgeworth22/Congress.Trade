@@ -240,6 +240,16 @@ function makeEnv(opts: { quotaRace?: boolean } = {}) {
       return null as T | null;
     },
     async all<T>() {
+      if (/COUNT\(\*\) AS total_trades/i.test(sql)) {
+        return { results: [summaryFor(filterFeedRows(sql, this.params)) as T] };
+      }
+      if (/COUNT\(\*\) AS total/i.test(sql) && /FROM subscriptions WHERE client_id/i.test(sql)) {
+        const owned = Array.from(subscriptions.values()).filter((row) => row.client_id === this.params[0]);
+        return { results: [{ total: owned.length, active: owned.filter((row) => row.active === 1).length } as T] };
+      }
+      if (/COUNT\(\*\) AS total(?:\s|,|$)/i.test(sql)) {
+        return { results: [{ total: filterFeedRows(sql, this.params).length } as T] };
+      }
       if (/FROM client_commands WHERE user_id = \?/i.test(sql)) {
         return {
           results: Array.from(commands.values()).filter((row) => row.user_id === this.params[0]) as T[],
