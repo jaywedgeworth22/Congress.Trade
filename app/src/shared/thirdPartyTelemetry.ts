@@ -265,7 +265,7 @@ export function remapOpenRouterTelemetry(provider: string, model?: string): { pr
       let mappedProvider = orProvider;
       if (orProvider === 'google') mappedProvider = 'gemini';
       else if (orProvider === 'x-ai') mappedProvider = 'xai';
-      
+
       const mappedModel = parts.slice(1).join('/');
       return { provider: mappedProvider, model: mappedModel, transport: 'openrouter' };
     }
@@ -681,7 +681,7 @@ async function usageTelemetryOutboxAtCapacity(env: Env, storage: R2Bucket | unde
 export async function persistUsageTelemetryFallback(
   env: Env,
   event: ThirdPartyUsageTelemetryEvent,
-  options: { silentFailure?: boolean } = {},
+  options: { silentFailure?: boolean; throwOnFailure?: boolean } = {},
 ): Promise<boolean> {
   const storage = (env as Partial<Env>).RAW_FILES;
   if (await usageTelemetryOutboxAtCapacity(env, storage)) {
@@ -696,11 +696,23 @@ export async function persistUsageTelemetryFallback(
   }
   try {
     if (!storage) throw new Error('R2 fallback binding unavailable');
-    await storage.put(usageTelemetryFallbackKey(event), JSON.stringify(event), {
+    const key = usageTelemetryFallbackKey(event);
+    // Queue retries are idempotent. Do not count an existing object again when
+    // the put merely refreshes its contents.
+    let alreadyPresent = false;
+    if (storage.head) {
+      try {
+        alreadyPresent = Boolean(await storage.head(key));
+      } catch {
+        // A failed best-effort probe must not turn a durable write into a
+        // dropped event; the soft counter can be reconciled during flush.
+      }
+    }
+    await storage.put(key, JSON.stringify(event), {
       httpMetadata: { contentType: 'application/json' },
     });
     // Best-effort O(1) increment so the next admission check stays list-free.
-    await adjustUsageTelemetryOutboxCount(env, 1);
+    if (!alreadyPresent) await adjustUsageTelemetryOutboxCount(env, 1);
     return true;
   } catch (error) {
     try {
@@ -718,6 +730,7 @@ export async function persistUsageTelemetryFallback(
           directErrorType: usageTelemetryErrorType(directError),
         });
       }
+      if (options.throwOnFailure) throw directError;
       return false;
     }
   }
@@ -885,6 +898,34 @@ export class UsageTelemetryCircuitOpenError extends Error {
   }
 }
 
+function usageTelemetryErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== 'object') return null;
+  const candidate = error as { status?: unknown; response?: { status?: unknown } };
+  const status = candidate.status ?? candidate.response?.status;
+  return typeof status === 'number' && Number.isInteger(status) ? status : null;
+}
+
+/**
+ * A receiver outage is retryable; a deterministic 4xx payload/idempotency
+ * rejection is not. The shared client currently exposes HTTP failures as
+ * plain Errors, so retain the stable error phrases it emits as a fallback
+ * until the shared package exposes the response status directly.
+ */
+export function isTerminalUsageTelemetryDeliveryError(error: unknown): boolean {
+  if (error instanceof UsageTelemetryCircuitOpenError) return false;
+  const status = usageTelemetryErrorStatus(error);
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  // Authentication, endpoint, and receiver-wide 4xxs are transient from the
+  // application's perspective: they must open the circuit and push retries to
+  // durable fallback. Only errors that identify this event's payload or
+  // idempotency identity as invalid are safe to quarantine.
+  const eventSpecific = /\b(?:schema|idempotency|invalid payload|malformed payload|required.*idempotency|event\s+\d+.*invalid)\b/i.test(message);
+  if (eventSpecific) return true;
+  // If a future client exposes status without a useful body, only treat 400 as
+  // potentially event-specific after the explicit message check above.
+  return status === 400 && /\b(?:validation|field|property)\b/i.test(message);
+}
+
 /**
  * Queue-consumer + fallback-drain transport. The shared client is intentionally
  * not tracked. Gated by the durable circuit breaker: while open this throws
@@ -919,7 +960,9 @@ export async function deliverUsageTelemetryEvent(
       await client.send([event]);
     });
   } catch (error) {
-    await recordUsageTelemetryDeliveryFailure(env);
+    if (!isTerminalUsageTelemetryDeliveryError(error)) {
+      await recordUsageTelemetryDeliveryFailure(env);
+    }
     throw error;
   }
   await recordUsageTelemetryDeliverySuccess(env);
@@ -982,16 +1025,48 @@ export async function flushUsageTelemetryFallback(
       expired += 1;
       continue;
     }
+    let event: ThirdPartyUsageTelemetryEvent;
+    let body: R2ObjectBody | null;
     try {
-      const body = await storage?.get(object.key);
-      if (!body) continue;
-      const event = parseUsageTelemetryFallback(await body.text());
+      body = (await storage?.get(object.key)) ?? null;
+    } catch {
+      // A transient R2 read failure must retain the object for the next flush.
+      failed += 1;
+      continue;
+    }
+    if (!body) continue;
+    let raw: string;
+    try {
+      raw = await body.text();
+    } catch {
+      // A transient stream/read failure must retain the object too.
+      failed += 1;
+      continue;
+    }
+    try {
+      event = parseUsageTelemetryFallback(raw);
+    } catch {
+      // A malformed R2 object is terminal and must not pin the bounded list.
+      try {
+        await storage?.delete(object.key);
+        r2Removed += 1;
+      } catch {}
+      failed += 1;
+      continue;
+    }
+    try {
       await deliverUsageTelemetryEvent(env, event);
       await storage?.delete(object.key);
       r2Removed += 1;
       delivered += 1;
-    } catch {
+    } catch (error) {
       failed += 1;
+      if (isTerminalUsageTelemetryDeliveryError(error)) {
+        try {
+          await storage?.delete(object.key);
+          r2Removed += 1;
+        } catch {}
+      }
     }
   }
   // Maintain the O(1) admission counter. When the bounded list was the entire
@@ -1019,26 +1094,13 @@ export async function flushUsageTelemetryFallback(
         .all<{ idempotency_key: string; event_json: string; attempts: number }>();
       const results = rows.results ?? [];
       for (const row of results) {
+        let event: ThirdPartyUsageTelemetryEvent;
         try {
-          const event = parseUsageTelemetryFallback(row.event_json);
-          await deliverUsageTelemetryEvent(env, event);
-          await db.prepare(
-            'DELETE FROM usage_telemetry_fallback_events WHERE idempotency_key = ?',
-          )
-            .bind(row.idempotency_key)
-            .run();
-          delivered += 1;
+          event = parseUsageTelemetryFallback(row.event_json);
         } catch {
           failed += 1;
-          // Bounded, circuit-gated quarantine so one poison legacy row can't
-          // wedge the oldest-first drain. This runs ONLY while the receiver is
-          // healthy (flush returns early when the breaker is open) and NEVER
-          // writes new rows, so it is not the outage churn that caused the
-          // incident (which re-churned every row on every cycle during a total
-          // outage while new rows kept arriving). Move the failing row to the
-          // back of the queue so the rows behind it still drain, and drop it
-          // once it exceeds a small attempt budget — an unparseable or
-          // deterministically-rejected row can never be delivered.
+          // Only malformed/terminal rows are quarantined. Receiver failures
+          // below retain the row regardless of how long the outage lasts.
           const attempts = Number(row.attempts ?? 0) + 1;
           if (attempts >= USAGE_TELEMETRY_D1_MAX_ROW_ATTEMPTS) {
             await db.prepare(
@@ -1055,6 +1117,41 @@ export async function flushUsageTelemetryFallback(
               .bind(attempts, new Date().toISOString(), row.idempotency_key)
               .run();
           }
+          continue;
+        }
+        try {
+          await deliverUsageTelemetryEvent(env, event);
+          await db.prepare(
+            'DELETE FROM usage_telemetry_fallback_events WHERE idempotency_key = ?',
+          )
+            .bind(row.idempotency_key)
+            .run();
+          delivered += 1;
+        } catch (error) {
+          if (isTerminalUsageTelemetryDeliveryError(error)) {
+            // Deterministic receiver rejects cannot succeed on retry. Advance
+            // and eventually quarantine them so they cannot pin the oldest-first
+            // drain or starve newer legacy rows. Outages remain untouched.
+            const attempts = Number(row.attempts ?? 0) + 1;
+            if (attempts >= USAGE_TELEMETRY_D1_MAX_ROW_ATTEMPTS) {
+              await db.prepare(
+                'DELETE FROM usage_telemetry_fallback_events WHERE idempotency_key = ?',
+              )
+                .bind(row.idempotency_key)
+                .run();
+            } else {
+              await db.prepare(
+                `UPDATE usage_telemetry_fallback_events
+                    SET attempts = ?, updated_at = ?
+                  WHERE idempotency_key = ?`,
+              )
+                .bind(attempts, new Date().toISOString(), row.idempotency_key)
+                .run();
+            }
+          }
+          // Keep valid rows intact across receiver and circuit-breaker
+          // failures. They will be retried after the next half-open probe.
+          failed += 1;
         }
       }
       if (results.length === 0) await markUsageTelemetryD1DrainComplete(env);
