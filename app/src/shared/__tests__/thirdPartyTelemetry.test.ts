@@ -596,18 +596,63 @@ describe('third-party usage telemetry', () => {
     )).toBe(true);
   });
 
-  it('quarantines a malformed R2 outbox object instead of replaying it forever', async () => {
-    const outboxKey = '_ops/usage-telemetry/ct-third-party%3Amalformed-r2.json';
-    const fallback = fallbackBucket({ [outboxKey]: 'not-json' });
+  it('quarantines malformed R2 bytes by source object identity before deleting the outbox object', async () => {
+    const outboxKey = '_ops/usage-telemetry/malformed-object.json';
+    const raw = 'not-valid-json{';
+    const fallback = fallbackBucket({ [outboxKey]: raw });
     const env = { RAW_FILES: fallback.bucket } as unknown as Env;
+
+    const result = await flushUsageTelemetryFallback(env);
+    const quarantineKey = `_ops/usage-telemetry-quarantine/${encodeURIComponent(outboxKey)}.json`;
+
+    expect(result).toMatchObject({ listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false });
+    expect(fallback.objects.has(outboxKey)).toBe(false);
+    expect(fallback.objects.get(quarantineKey)).toBe(raw);
+    expect(fallback.put).toHaveBeenCalledWith(
+      quarantineKey,
+      raw,
+      expect.objectContaining({ customMetadata: { reason: 'malformed' } }),
+    );
+  });
+
+  it('retains malformed R2 bytes when quarantine persistence fails', async () => {
+    const outboxKey = '_ops/usage-telemetry/malformed-retained.json';
+    const raw = 'still-not-valid-json{';
+    const fallback = fallbackBucket({ [outboxKey]: raw });
+    const quarantinePut = vi.fn(async () => { throw new Error('R2 quarantine unavailable'); });
+    const env = {
+      RAW_FILES: { ...fallback.bucket, put: quarantinePut },
+    } as unknown as Env;
 
     const result = await flushUsageTelemetryFallback(env);
 
     expect(result).toMatchObject({ listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false });
-    expect(fallback.objects.has(outboxKey)).toBe(false);
+    expect(fallback.objects.get(outboxKey)).toBe(raw);
+    expect(fallback.remove).not.toHaveBeenCalled();
+    expect(quarantinePut).toHaveBeenCalledOnce();
+  });
+
+  it('retains an R2 event when a 400 response is receiver-wide rather than event-specific', async () => {
+    const outboxKey = '_ops/usage-telemetry/ct-third-party%3Areceiver-contract.json';
+    const fallback = fallbackBucket({ [outboxKey]: JSON.stringify(deliveryEvent) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'receiver unavailable' }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const env = {
+      RAW_FILES: fallback.bucket,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+    } as unknown as Env;
+
+    const result = await flushUsageTelemetryFallback(env);
+
+    expect(result).toMatchObject({ listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false });
+    expect(fallback.objects.has(outboxKey)).toBe(true);
     expect(fallback.objects.has(
-      '_ops/usage-telemetry-quarantine/_ops%2Fusage-telemetry%2Fct-third-party%253Amalformed-r2.json.json',
-    )).toBe(true);
+      '_ops/usage-telemetry-quarantine/ct-third-party%3Areceiver-contract.json',
+    )).toBe(false);
   });
 
   it('never ages out a valid legacy D1 row on transient receiver failures', async () => {
@@ -646,6 +691,29 @@ describe('third-party usage telemetry', () => {
     for (let i = 0; i < 6; i += 1) await flushUsageTelemetryFallback(env);
     expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
     expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+  });
+
+  it('retains global receiver authentication failures and opens the outage circuit', async () => {
+    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
+    const { kv } = fakeConfigKv();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const env = {
+      RAW_FILES: fallbackBucket().bucket,
+      DB: fallback.db,
+      CONFIG_KV: kv,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+      USAGE_TELEMETRY_CIRCUIT_FAILURE_THRESHOLD: '1',
+    } as unknown as Env;
+
+    await flushUsageTelemetryFallback(env);
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
+    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(true);
   });
 
   it('does not let one poison legacy D1 row wedge the drain: quarantines it after a bounded budget while rows behind it still deliver', async () => {
@@ -906,6 +974,68 @@ describe('third-party usage telemetry', () => {
     expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
   });
 
+  it('does not claim the half-open lease until secret resolution completes', async () => {
+    const { kv } = fakeConfigKv({
+      usage_telemetry_circuit_breaker: JSON.stringify({
+        consecutiveFailures: 1,
+        openUntil: Date.now() - 1,
+      }),
+    });
+    const probeLease = probeLeaseD1();
+    let releaseSecrets!: () => void;
+    const secretGate = new Promise<void>((resolve) => { releaseSecrets = resolve; });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/v1/auth/universal-auth/login')) {
+        await secretGate;
+        return new Response(JSON.stringify({ accessToken: 'test-token' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.includes('/api/v3/secrets/raw')) {
+        return new Response(JSON.stringify({
+          secrets: [
+            { secretKey: 'USAGE_MONITOR_INGEST_URL', secretValue: 'https://usage.jays.services/api/ingest/usage' },
+            { secretKey: 'USAGE_MONITOR_INGEST_TOKEN', secretValue: 'test-ingest-token' },
+          ],
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      if (url.includes('usage.jays.services')) {
+        return new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`unexpected test request: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const env = {
+      CONFIG_KV: kv,
+      DB: probeLease.db,
+      INFISICAL_BASE_URL: 'https://infisical-lease-order.test',
+      INFISICAL_APP_PROJECT_ID: 'lease-order-project',
+      INFISICAL_APP_CLIENT_ID: 'lease-order-client',
+      INFISICAL_APP_CLIENT_SECRET: 'lease-order-secret',
+      INFISICAL_ALLOW_ENV_FALLBACK: 'false',
+      USAGE_MONITOR_ENABLED: 'true',
+    } as unknown as Env;
+
+    const pending = deliverUsageTelemetryEvent(env, deliveryEvent);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(probeLease.prepare).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.every(([input]) => !String(input).includes('usage.jays.services'))).toBe(true);
+
+    releaseSecrets();
+    await pending;
+    expect(probeLease.prepare).toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('usage.jays.services'))).toBe(true);
+    expect(probeLease.getLease()).toBeNull();
+  });
+
   it('does not let a stale-KV lease contender reopen the circuit after the owner succeeds', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-17T00:01:30.000Z'));
@@ -1117,6 +1247,23 @@ describe('third-party usage telemetry', () => {
     const accepted = await persistUsageTelemetryFallback(env, deliveryEvent, { silentFailure: true });
 
     expect(accepted).toBe(false);
+    expect(fallback.put).not.toHaveBeenCalled();
+  });
+
+  it('throws at outbox capacity when the caller requires exact-event durability', async () => {
+    const fallback = fallbackBucket({
+      '_ops/usage-telemetry/existing.json': '{}',
+    });
+    const env = {
+      RAW_FILES: fallback.bucket,
+      USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS: '1',
+    } as unknown as Env;
+
+    await expect(persistUsageTelemetryFallback(
+      env,
+      deliveryEvent,
+      { silentFailure: true, throwOnFailure: true },
+    )).rejects.toThrow('outbox is at capacity');
     expect(fallback.put).not.toHaveBeenCalled();
   });
 

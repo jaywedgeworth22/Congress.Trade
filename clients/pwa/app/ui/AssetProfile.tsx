@@ -8,23 +8,22 @@ import { TradeCard } from './TradeCard';
 import { TradeTable } from './TradeTable';
 import { ColumnConfig } from './ColumnConfig';
 import { getOrderedColumns, loadHiddenCols, ColumnDef } from '../../lib/columns';
+import { formatSummaryCount, formatSummaryVolume } from '../../lib/formatters';
 
 export type AssetProfileResponse = ClientFeedResponse & {
   ticker: string;
   asset: {
-    name: string;
-    ticker: string;
-    type: string | null;
+    companyName: string | null;
+    logoUrl: string | null;
+    assetClass: string | null;
     sector: string | null;
     marketCapBucket: string | null;
   };
   summary: {
     totalTrades: number;
+    estimatedVolumeUsd: number | null;
     buyCount: number;
     sellCount: number;
-    volMin: number;
-    volMax: number;
-    estimatedVolumeUsd: number;
     memberCount: number;
   };
 };
@@ -79,15 +78,15 @@ export default function AssetProfile({ ticker }: { ticker: string }) {
     <div className="app-shell profile-shell">
       <header className="profile-header">
         <img 
-          src={`/api/logos/ticker?symbol=${encodeURIComponent(ticker)}`} 
-          alt={asset.name || ticker} 
+          src={asset.logoUrl || `/api/logos/ticker?symbol=${encodeURIComponent(ticker)}`}
+          alt={asset.companyName || ticker}
           className="profile-logo"
           onError={(e) => { e.currentTarget.style.display = 'none'; }}
         />
         <div className="profile-title">
-          <h1>{asset.name || ticker}</h1>
+          <h1>{asset.companyName || ticker}</h1>
           <p className="profile-subtitle">
-            {[asset.ticker, asset.sector, asset.marketCapBucket]
+            {[ticker, asset.sector, asset.marketCapBucket]
               .filter(Boolean)
               .join(' • ')}
           </p>
@@ -97,12 +96,12 @@ export default function AssetProfile({ ticker }: { ticker: string }) {
       <section className="profile-stats">
         <div className="stat-card">
           <div className="stat-label">Total Trades</div>
-          <div className="stat-value">{summary.totalTrades.toLocaleString()}</div>
+          <div className="stat-value">{formatSummaryCount(summary.totalTrades)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Estimated Volume</div>
           <div className="stat-value">
-            ${summary.estimatedVolumeUsd > 0 ? (summary.estimatedVolumeUsd / 1_000_000).toFixed(1) + 'M' : '0'}
+            {formatSummaryVolume(summary.estimatedVolumeUsd)}
           </div>
         </div>
         <div className="stat-card">

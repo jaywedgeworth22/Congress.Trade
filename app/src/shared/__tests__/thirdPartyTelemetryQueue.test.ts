@@ -172,6 +172,19 @@ describe('usage telemetry queue routing', () => {
     expect(retry).not.toHaveBeenCalled();
   });
 
+  it('ACKs a deterministic per-event receiver reject without persisting poison to R2', async () => {
+    mocks.deliver.mockRejectedValueOnce(Object.assign(new Error('invalid payload'), { status: 400 }));
+    const { batch, ack, retry } = messageBatch('congress-feed-ingest');
+    const put = vi.fn();
+    const env = { RAW_FILES: { put } } as unknown as Env;
+
+    await worker.queue(batch, env, {} as ExecutionContext);
+
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
   it('ACKs after durably retaining a failed Usage Monitor delivery in R2', async () => {
     mocks.deliver.mockRejectedValueOnce(new Error('usage telemetry ingest failed'));
     const { batch, ack, retry } = messageBatch('congress-feed-ingest');
@@ -251,6 +264,32 @@ describe('usage telemetry queue routing', () => {
     await worker.queue(batch, env, {} as ExecutionContext);
 
     expect(mocks.deliver).not.toHaveBeenCalled();
+    expect(ack).not.toHaveBeenCalled();
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it('retries instead of ACKing when the open-circuit R2 outbox is at capacity', async () => {
+    mocks.deliver.mockClear();
+    const { batch, ack, retry } = messageBatch('congress-feed-ingest');
+    const put = vi.fn();
+    const circuitState = { consecutiveFailures: 5, openUntil: Date.now() + 60_000 };
+    const env = {
+      RAW_FILES: { put },
+      CONFIG_KV: {
+        get: vi.fn(async (key: string, type?: string) => {
+          if (key === 'usage_telemetry_circuit_breaker' && type === 'json') return circuitState;
+          if (key === 'usage_telemetry_outbox_count') return '1';
+          return null;
+        }),
+        put: vi.fn(async () => {}),
+      },
+      USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS: '1',
+    } as unknown as Env;
+
+    await worker.queue(batch, env, {} as ExecutionContext);
+
+    expect(mocks.deliver).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
     expect(ack).not.toHaveBeenCalled();
     expect(retry).toHaveBeenCalledOnce();
   });

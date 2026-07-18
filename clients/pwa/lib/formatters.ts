@@ -30,6 +30,14 @@ export function formatEstimatedValue(value: number | null): string {
   return value == null ? 'Unknown' : `Est. ${compactUsd.format(value)}`;
 }
 
+export function formatSummaryCount(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : 'Unknown';
+}
+
+export function formatSummaryVolume(value: number | null | undefined): string {
+  return typeof value === 'number' && Number.isFinite(value) ? compactUsd.format(value) : 'Unknown';
+}
+
 export function formatShortDate(value: string | null): string {
   if (!value) return 'Unavailable';
   const date = new Date(`${value.slice(0, 10)}T00:00:00Z`);

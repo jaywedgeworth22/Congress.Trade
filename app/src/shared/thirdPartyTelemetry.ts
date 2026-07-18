@@ -266,7 +266,7 @@ export function remapOpenRouterTelemetry(provider: string, model?: string): { pr
       let mappedProvider = orProvider;
       if (orProvider === 'google') mappedProvider = 'gemini';
       else if (orProvider === 'x-ai') mappedProvider = 'xai';
-      
+
       const mappedModel = parts.slice(1).join('/');
       return { provider: mappedProvider, model: mappedModel, transport: 'openrouter' };
     }
@@ -593,24 +593,37 @@ async function claimUsageTelemetryHalfOpenProbe(
 }
 
 class UsageTelemetryDeliveryHttpError extends Error {
-  constructor(readonly status: number) {
-    super(`usage telemetry receiver rejected request (HTTP ${status})`);
+  constructor(readonly status: number, message?: string) {
+    // Preserve the shared client's sanitized receiver message alongside the
+    // status. Classification must distinguish an event-specific 400/409/422
+    // from a receiver-wide contract or configuration failure.
+    super(message || `usage telemetry receiver rejected request (HTTP ${status})`);
     this.name = 'UsageTelemetryDeliveryHttpError';
   }
 }
 
-function isTerminalLegacyUsageTelemetryRejection(error: unknown): boolean {
-  return error instanceof UsageTelemetryDeliveryHttpError
-    && [400, 409, 413, 422].includes(error.status);
+function usageTelemetryErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== 'object') return null;
+  const candidate = error as { status?: unknown; response?: { status?: unknown } };
+  const status = candidate.status ?? candidate.response?.status;
+  return typeof status === 'number' && Number.isInteger(status) ? status : null;
 }
 
-/**
- * Queue consumers use this classification to ACK deterministic event-level
- * rejects instead of retrying the same poison payload. Receiver-wide failures
- * remain on the circuit breaker and durable outbox path.
- */
+/** True only for deterministic per-event receiver rejects that cannot become
+ * successful when the identical queue payload is retried. The plain-error
+ * branch keeps the queue boundary compatible with a future shared client that
+ * exposes status/message directly instead of the local HTTP wrapper. */
 export function isTerminalUsageTelemetryDeliveryError(error: unknown): boolean {
-  return isTerminalLegacyUsageTelemetryRejection(error);
+  if (error instanceof UsageTelemetryCircuitOpenError) return false;
+  if (error instanceof UsageTelemetryDeliveryHttpError) {
+    const eventSpecific = /\b(?:schema|idempotency|invalid payload|malformed payload|required.*idempotency|event\s+\d+.*invalid)\b/i.test(error.message);
+    return eventSpecific || (error.status === 400 && /\b(?:validation|field|property)\b/i.test(error.message));
+  }
+  const status = usageTelemetryErrorStatus(error);
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  const eventSpecific = /\b(?:schema|idempotency|invalid payload|malformed payload|required.*idempotency|event\s+\d+.*invalid)\b/i.test(message);
+  if (eventSpecific) return true;
+  return status === 400 && /\b(?:validation|field|property)\b/i.test(message);
 }
 
 async function writeUsageTelemetryQuarantine(
@@ -852,6 +865,9 @@ export async function persistUsageTelemetryFallback(
         label: event.label,
       });
     }
+    if (options.throwOnFailure) {
+      throw new Error('usage telemetry outbox is at capacity');
+    }
     return false;
   }
   try {
@@ -1049,6 +1065,24 @@ export function normalizeUsageMonitorBaseUrl(configuredUrl: string): string {
   return baseUrl;
 }
 
+interface UsageTelemetryReceiverConfig {
+  baseUrl: string;
+  token: string;
+}
+
+async function resolveUsageTelemetryReceiverConfig(env: Env): Promise<UsageTelemetryReceiverConfig> {
+  const secrets = await resolveSecrets(env, [
+    'USAGE_MONITOR_INGEST_URL',
+    'USAGE_MONITOR_INGEST_TOKEN',
+  ]);
+  const configuredUrl = secrets.USAGE_MONITOR_INGEST_URL?.trim();
+  const token = secrets.USAGE_MONITOR_INGEST_TOKEN?.trim();
+  if (!configuredUrl || !token) throw new Error('usage telemetry ingest is not configured');
+  const baseUrl = normalizeUsageMonitorBaseUrl(configuredUrl);
+  if (!baseUrl) throw new Error('usage telemetry ingest URL is invalid');
+  return { baseUrl, token };
+}
+
 /** Thrown by deliverUsageTelemetryEvent when the circuit breaker is open. Never
  *  network-visible: fetchImpl is not reached on this path. */
 export class UsageTelemetryCircuitOpenError extends Error {
@@ -1100,10 +1134,35 @@ export async function deliverUsageTelemetryEvent(
   env: Env,
   event: ThirdPartyUsageTelemetryEvent,
 ): Promise<void> {
-  const circuitState = await readUsageTelemetryCircuitState(env);
+  let circuitState = await readUsageTelemetryCircuitState(env);
   if (!circuitState) throw new UsageTelemetryCircuitOpenError();
   if (circuitState.openUntil != null && Date.now() < circuitState.openUntil) {
     throw new UsageTelemetryCircuitOpenError();
+  }
+  let receiverConfig: UsageTelemetryReceiverConfig | null = null;
+  if (circuitState.openUntil != null) {
+    // Resolve Infisical before claiming the half-open lease. Secret resolution
+    // has its own network path and is not AbortSignal-aware; holding the lease
+    // across an unbounded resolution would let it expire before the receiver
+    // call, allowing another isolate to overlap the supposed singleton probe.
+    try {
+      receiverConfig = await withoutThirdPartyTelemetry(
+        env,
+        () => resolveUsageTelemetryReceiverConfig(env),
+      );
+    } catch (error) {
+      await recordUsageTelemetryDeliveryFailure(env);
+      throw error;
+    }
+
+    // Resolution may have waited behind another isolate's successful probe.
+    // Refresh the durable state before claiming from the stale expired state.
+    const refreshedState = await readUsageTelemetryCircuitState(env);
+    if (!refreshedState) throw new UsageTelemetryCircuitOpenError();
+    if (refreshedState.openUntil != null && Date.now() < refreshedState.openUntil) {
+      throw new UsageTelemetryCircuitOpenError();
+    }
+    circuitState = refreshedState;
   }
   let probeLease: { token: string; expiresAtMs: number } | null;
   try {
@@ -1130,15 +1189,8 @@ export async function deliverUsageTelemetryEvent(
   }
   try {
     await withoutThirdPartyTelemetry(env, async () => {
-      const secrets = await resolveSecrets(env, [
-        'USAGE_MONITOR_INGEST_URL',
-        'USAGE_MONITOR_INGEST_TOKEN',
-      ]);
-      const configuredUrl = secrets.USAGE_MONITOR_INGEST_URL?.trim();
-      const token = secrets.USAGE_MONITOR_INGEST_TOKEN?.trim();
-      if (!configuredUrl || !token) throw new Error('usage telemetry ingest is not configured');
-      const baseUrl = normalizeUsageMonitorBaseUrl(configuredUrl);
-      if (!baseUrl) throw new Error('usage telemetry ingest URL is invalid');
+      const { baseUrl, token } = receiverConfig
+        ?? await resolveUsageTelemetryReceiverConfig(env);
       const controller = new AbortController();
       const timer = setTimeout(
         () => controller.abort(),
@@ -1162,7 +1214,10 @@ export async function deliverUsageTelemetryEvent(
         await client.send([event]);
       } catch (error) {
         if (controller.signal.aborted) throw new UsageTelemetryDeliveryTimeoutError();
-        if (receiverStatus != null) throw new UsageTelemetryDeliveryHttpError(receiverStatus);
+        if (receiverStatus != null) {
+          const message = error instanceof Error ? error.message : String(error ?? '');
+          throw new UsageTelemetryDeliveryHttpError(receiverStatus, message);
+        }
         throw error;
       } finally {
         // Keep the same deadline active through response-body parsing and
@@ -1171,7 +1226,7 @@ export async function deliverUsageTelemetryEvent(
       }
     });
   } catch (error) {
-    if (isTerminalLegacyUsageTelemetryRejection(error)) {
+    if (isTerminalUsageTelemetryDeliveryError(error)) {
       const closedPersisted = await recordUsageTelemetryDeliverySuccess(env);
       if (probeLease && closedPersisted) {
         await releaseUsageTelemetryHalfOpenProbe(env, probeLease.token);
@@ -1235,7 +1290,7 @@ export async function flushUsageTelemetryFallback(
   let delivered = 0;
   let failed = 0;
   let expired = 0;
-  let r2Removed = 0; // objects actually deleted from R2 this cycle (delivered + expired)
+  let r2Removed = 0; // outbox objects deleted this cycle (delivered + expired + quarantined)
   for (const object of listed.objects) {
     if (object.uploaded && now - object.uploaded.getTime() > ttlMs) {
       try {
@@ -1252,38 +1307,23 @@ export async function flushUsageTelemetryFallback(
       let event: ThirdPartyUsageTelemetryEvent | null = null;
       try {
         event = parseUsageTelemetryFallback(raw);
-      } catch {
-        // A malformed R2 object can never become deliverable. Quarantine it
-        // before deletion so the poison payload is retained for diagnosis and
-        // cannot monopolize the bounded outbox on every flush.
-        const quarantined = await writeUsageTelemetryQuarantine(
-          storage,
-          object.key,
-          raw,
-          'malformed',
-        );
-        if (quarantined) {
-          await storage?.delete(object.key);
-          r2Removed += 1;
-        }
-        failed += 1;
-        continue;
-      }
-      try {
         await deliverUsageTelemetryEvent(env, event);
         await storage?.delete(object.key);
         r2Removed += 1;
         delivered += 1;
       } catch (error) {
         // Keep transient receiver failures on the outbox. Deterministic
-        // rejections are quarantined after a single failure so poison R2 objects
-        // cannot monopolize the bounded list forever.
-        if (event != null && isTerminalLegacyUsageTelemetryRejection(error)) {
+        // rejections and malformed payloads are quarantined before deletion so
+        // poison R2 objects cannot monopolize the bounded list forever without
+        // first preserving the exact bytes for operator inspection.
+        const quarantineIdentity = event?.idempotencyKey ?? object.key;
+        const quarantineReason = event == null ? 'malformed' : 'terminal_receiver_rejection';
+        if (event == null || isTerminalUsageTelemetryDeliveryError(error)) {
           const quarantined = await writeUsageTelemetryQuarantine(
             storage,
-            event.idempotencyKey,
+            quarantineIdentity,
             raw,
-            'terminal_receiver_rejection',
+            quarantineReason,
           );
           if (quarantined) {
             await storage?.delete(object.key);
@@ -1343,7 +1383,7 @@ export async function flushUsageTelemetryFallback(
           // Keep valid rows intact across transient receiver/circuit failures.
           // Deterministic per-event rejections are bounded and moved to the
           // back so one poison row cannot wedge the legacy drain forever.
-          if (isTerminalLegacyUsageTelemetryRejection(error)) {
+          if (isTerminalUsageTelemetryDeliveryError(error)) {
             await advanceTerminalLegacyUsageTelemetryRow(
               db,
               storage,
