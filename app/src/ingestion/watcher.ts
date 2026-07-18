@@ -145,7 +145,9 @@ export async function insertFilingIfNew(
          VALUES (?, ?, ?, ?, ?, ?, NULL, ?)
          ON CONFLICT(bioguide_id) DO UPDATE SET
            party = COALESCE(excluded.party, party),
-           photo_url = COALESCE(excluded.photo_url, photo_url)`,
+           photo_url = COALESCE(excluded.photo_url, photo_url)
+         WHERE (excluded.party IS NOT NULL AND (filers.party IS NULL OR filers.party != excluded.party))
+            OR (excluded.photo_url IS NOT NULL AND (filers.photo_url IS NULL OR filers.photo_url != excluded.photo_url))`,
         [f.filerId, f.chamber, f.filerName, f.party ?? null, f.state ?? null, f.district ?? null, f.photoUrl ?? null],
       );
     } else {
@@ -176,7 +178,7 @@ export async function insertFilingIfNew(
   // ZIP later surfaces the same doc WITH a date, so COALESCE it in then instead
   // of leaving the row permanently dateless.
   if (filedDate) {
-    await run(env.DB, 'UPDATE filings SET filed_date = COALESCE(filed_date, ?) WHERE doc_id = ?', [
+    await run(env.DB, 'UPDATE filings SET filed_date = ? WHERE doc_id = ? AND filed_date IS NULL', [
       filedDate,
       f.docId,
     ]);
@@ -192,7 +194,7 @@ export async function insertFilingIfNew(
     try {
       await run(
         env.DB,
-        'UPDATE disclosure_latency_candidates SET filed_date = COALESCE(filed_date, ?) WHERE doc_id = ?',
+        'UPDATE disclosure_latency_candidates SET filed_date = ? WHERE doc_id = ? AND filed_date IS NULL',
         [filedDate, f.docId],
       );
     } catch (err) {
@@ -200,11 +202,11 @@ export async function insertFilingIfNew(
     }
   }
   if (f.filerId) {
-    await run(env.DB, 'UPDATE filings SET filer_id = COALESCE(filer_id, ?) WHERE doc_id = ?', [
+    await run(env.DB, 'UPDATE filings SET filer_id = ? WHERE doc_id = ? AND filer_id IS NULL', [
       f.filerId,
       f.docId,
     ]);
-    await run(env.DB, 'UPDATE transactions SET filer_id = COALESCE(filer_id, ?) WHERE doc_id = ?', [
+    await run(env.DB, 'UPDATE transactions SET filer_id = ? WHERE doc_id = ? AND filer_id IS NULL', [
       f.filerId,
       f.docId,
     ]);
