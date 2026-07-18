@@ -15,13 +15,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Build + wrangler deploy. Runs on a GitHub-hosted runner: wrangler deploy
+  # talks to Cloudflare's API (api.cloudflare.com) via CLOUDFLARE_API_TOKEN,
+  # which does not require the Hetzner box's allowlisted egress IP. Moving
+  # this job off the shared self-hosted box avoids the OOM/contention it hit
+  # (2026-07-17: a concurrent Socratic.Trade deploy on the same box got this
+  # job's `npm ci` killed with exit 137). No health/migrate calls happen here
+  # — those need the allowlisted IP and run in the `verify` job below.
   deploy:
     if: github.event.inputs.confirm == 'deploy-production'
-    # Self-hosted runner on the Hetzner box (Coolify service "github-runner",
-    # container coolify-hetzner-congress). Its egress IP 91.98.44.8 is allowlisted
-    # in Cloudflare (IP Access Rule) so the post-deploy /api/health + /api/admin
-    # calls bypass Bot Fight Mode — which GitHub-hosted datacenter runners cannot.
-    runs-on: [self-hosted, congress-deploy]
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     defaults:
@@ -37,7 +40,7 @@ jobs:
           cache-dependency-path: app/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Typecheck
         run: npm run typecheck
@@ -45,13 +48,53 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Deploy to Cloudflare Workers
-        run: bash scripts/ship.sh
+      - name: Deploy to Cloudflare Workers (build + wrangler deploy + sourcemaps, no health/migrate)
+        run: bash scripts/ship.sh --deploy-no-verify
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
           # Consumed by sentry-cli in the postdeploy sourcemap upload. Optional:
           # the postdeploy step fails open when it is absent (see app/package.json).
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          WORKERS_DEV_HOST: congress-trade.jaywedgeworth22.workers.dev
+
+  # Post-deploy migrate + health verification against production congress.trade.
+  # Self-hosted runner on the Hetzner box (Coolify service "github-runner",
+  # container coolify-hetzner-congress). Its egress IP 91.98.44.8 is
+  # allowlisted in Cloudflare (IP Access Rule) so these calls bypass Bot
+  # Fight Mode / the managed challenge — GitHub-hosted datacenter runner IPs
+  # are not allowlisted and would 403. A browser User-Agent is also mandatory
+  # even from the allowlisted IP (Cloudflare's managed challenge 403s
+  # non-browser UAs) — scripts/ship.sh already sends one on every request.
+  # This job only curls the already-deployed Worker (no npm ci, no build), so
+  # it is lightweight and cannot OOM the box the way the old combined job did.
+  verify:
+    needs: deploy
+    # Switchable via the CT_DEPLOY_VERIFY_RUNNER repository variable (mirrors
+    # CT_CI_RUNNER in ci.yml): set it to a JSON array of runner labels (e.g.
+    # '["ubuntu-latest"]') to move verification off the box if it's down.
+    # NOTE: a GitHub-hosted fallback here will fail the health/migrate calls
+    # below unless the Cloudflare IP Access Rule is relaxed too — the default
+    # is the allowlisted self-hosted runner.
+    runs-on: ${{ vars.CT_DEPLOY_VERIFY_RUNNER && fromJSON(vars.CT_DEPLOY_VERIFY_RUNNER) || fromJSON('["self-hosted","congress-deploy"]') }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      # No npm ci here (this job never installs deps or builds — that's what
+      # keeps it lightweight and OOM-proof). setup-node just puts a `node`
+      # binary on PATH: scripts/ship.sh's dashboard smoke check shells out to
+      # `node --check` to parse-check the served page's inline <script>s.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Migrate + health verify (no rebuild, no redeploy)
+        run: bash scripts/ship.sh --verify-only
+        env:
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
           WORKERS_DEV_HOST: congress-trade.jaywedgeworth22.workers.dev
