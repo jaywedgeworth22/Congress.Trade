@@ -40,10 +40,14 @@ export const DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS = [
   'ALTER TABLE transactions ADD COLUMN first_seen_at TEXT',
   'ALTER TABLE transactions ADD COLUMN filed_date TEXT',
   `UPDATE transactions SET
-     first_seen_at = COALESCE(first_seen_at, (SELECT first_seen_at FROM filings WHERE filings.doc_id = transactions.doc_id)),
+   first_seen_at = COALESCE(first_seen_at, (SELECT first_seen_at FROM filings WHERE filings.doc_id = transactions.doc_id)),
      filed_date = COALESCE(filed_date, (SELECT filed_date FROM filings WHERE filings.doc_id = transactions.doc_id))
-   WHERE (first_seen_at IS NULL OR filed_date IS NULL)
-     AND EXISTS (SELECT 1 FROM filings WHERE filings.doc_id = transactions.doc_id)`,
+   WHERE EXISTS (
+     SELECT 1 FROM filings
+      WHERE filings.doc_id = transactions.doc_id
+        AND ((transactions.first_seen_at IS NULL AND filings.first_seen_at IS NOT NULL)
+          OR (transactions.filed_date IS NULL AND filings.filed_date IS NOT NULL))
+   )`,
   `ALTER TABLE transactions ADD COLUMN disclosure_available_at TEXT GENERATED ALWAYS AS (
      COALESCE(first_seen_at, CASE WHEN filed_date IS NOT NULL THEN filed_date || 'T00:00:00.000Z' END, created_at)
    )`,

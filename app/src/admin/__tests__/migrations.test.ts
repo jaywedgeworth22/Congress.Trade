@@ -376,6 +376,14 @@ describe('admin migration bootstrap', () => {
         `INSERT INTO transactions (id, doc_id, created_at, first_seen_at, filed_date)
            VALUES ('tx-partial', 'doc-1', '2026-06-02T00:00:00.000Z', '2026-06-02T00:00:00.000Z', NULL)`,
       );
+      db.exec(
+        `INSERT INTO filings (doc_id, filed_date, first_seen_at)
+           VALUES ('doc-2', NULL, '2026-06-03T12:00:00.000Z')`,
+      );
+      db.exec(
+        `INSERT INTO transactions (id, doc_id, created_at, first_seen_at, filed_date)
+           VALUES ('tx-unfillable', 'doc-2', '2026-06-03T00:00:00.000Z', '2026-06-03T12:00:00.000Z', NULL)`,
+      );
 
       expect(runStatements()).toBe(1);
       expect(db.prepare(
@@ -389,6 +397,12 @@ describe('admin migration bootstrap', () => {
       ).get('tx-partial')).toEqual({
         first_seen_at: '2026-06-02T00:00:00.000Z',
         filed_date: '2026-06-01',
+      });
+      expect(db.prepare(
+        'SELECT first_seen_at, filed_date FROM transactions WHERE id = ?',
+      ).get('tx-unfillable')).toEqual({
+        first_seen_at: '2026-06-03T12:00:00.000Z',
+        filed_date: null,
       });
       const afterPartialBackfill = db.prepare(
         'SELECT id, first_seen_at, filed_date FROM transactions ORDER BY id',
