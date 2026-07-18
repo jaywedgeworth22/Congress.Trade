@@ -100,6 +100,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #feedTable.resizable .asset-cell > div,
   #feedTable.resizable .member-cell > div { flex: 1 1 auto; }
   #feedHead th { position: sticky; top: 0; z-index: 4; background: var(--panel); text-align: center; }
+  #feedTable th:first-child, #feedTable td:first-child { position: sticky; left: 0; z-index: 5; background: var(--panel); }
+  #feedTable th:first-child { z-index: 6; }
   #feedHead th .arr { display: inline-block; width: 1em; margin-left: 4px; text-align: center; color: var(--text-dim); }
   .col-resizer { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; user-select: none; touch-action: none; }
   .col-resizer:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
@@ -386,7 +388,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .section p.sub { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; }
   .row-flex { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
   .pager { margin-top:14px; justify-content:space-between; }
-  .pager-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .pager-controls { display:flex; gap:0px; align-items:center; flex-wrap:wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .pager-controls button { border: none !important; border-radius: 0 !important; }
+  .pager-controls span { padding: 0 10px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
   .pager select { padding:5px 9px; font-size:12px; }
   .switch { position: relative; width: 46px; height: 26px; }
   .switch input { display: none; }
@@ -2424,7 +2428,7 @@ function fmtMs(ms) {
 function applyTheme(t) {
   if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
   else document.documentElement.removeAttribute('data-theme');
-  var label = el('themeMenuLabel'); if (label) label.textContent = (t === 'light') ? 'Light Mode' : 'Dark Mode';
+  var label = el('themeMenuLabel'); if (label) label.textContent = (t === 'light') ? 'Switch to Dark Mode' : 'Switch to Light Mode';
 }
 function toggleTheme() {
   var cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';

@@ -6868,7 +6868,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       });
     }
     const flagged = await recomputeTransactions(c.env, mapFiling(filingRow), read.rows);
-    const blockingFlagSet = new Set<string>([...HARD_FAILURE_FLAGS, 'future_tx_date']);
+    const blockingFlagSet = new Set<string>(HARD_FAILURE_FLAGS);
     const hardFlags = Array.from(new Set(
       flagged.flatMap((result) => result.flags).filter((flag) => blockingFlagSet.has(flag)),
     ));
