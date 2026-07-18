@@ -83,6 +83,12 @@ describe('checkReadiness', () => {
     ]);
   });
 
+  it('requires the singleton usage-telemetry half-open probe lease', async () => {
+    expect((await checkReadiness(dbMissing('FROM usage_telemetry_probe_lease'))).missing).toEqual([
+      'usage_telemetry_probe_lease',
+    ]);
+  });
+
   it('reports a missing quota trigger even when all columns exist', async () => {
     const db = { prepare(sql: string) { return {
       bind() { return this; },

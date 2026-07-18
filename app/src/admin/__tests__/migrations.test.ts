@@ -15,6 +15,7 @@ import {
   RELIABILITY_SCHEMA_STATEMENTS,
   REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
   STRIPE_EVENT_SCHEMA_STATEMENTS,
+  USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
 } from '../migrations';
 import { BENCHMARK_SCHEMA_STATEMENTS } from '../../benchmark/schema';
 import {
@@ -189,7 +190,16 @@ describe('admin migration bootstrap', () => {
       ...PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
       'CREATE INDEX IF NOT EXISTS idx_tx_doc ON transactions (doc_id)',
       ...D1_BUDGET_SCHEMA_STATEMENTS,
+      ...USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
     ]);
+  });
+
+  it('includes the singleton usage telemetry half-open lease schema (0046)', () => {
+    const sql = USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('usage_telemetry_probe_lease');
+    expect(sql).toContain('CHECK (id = 1)');
+    expect(sql).toContain('lease_token TEXT NOT NULL');
+    expect(sql).toContain('expires_at  TEXT NOT NULL');
   });
 
   it('negative-caches un-priceable tickers and indexes latest_price_date (0043)', () => {
