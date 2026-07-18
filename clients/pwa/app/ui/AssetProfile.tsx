@@ -19,12 +19,12 @@ export type AssetProfileResponse = ClientFeedResponse & {
     marketCapBucket: string | null;
   };
   summary: {
-    txCount: number;
+    totalTrades: number;
     buyCount: number;
     sellCount: number;
     volMin: number;
     volMax: number;
-    estValue: number;
+    estimatedVolumeUsd: number;
     memberCount: number;
   };
 };
@@ -97,12 +97,12 @@ export default function AssetProfile({ ticker }: { ticker: string }) {
       <section className="profile-stats">
         <div className="stat-card">
           <div className="stat-label">Total Trades</div>
-          <div className="stat-value">{summary.txCount.toLocaleString()}</div>
+          <div className="stat-value">{summary.totalTrades.toLocaleString()}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Estimated Volume</div>
           <div className="stat-value">
-            ${summary.estValue > 0 ? (summary.estValue / 1_000_000).toFixed(1) + 'M' : '0'}
+            ${summary.estimatedVolumeUsd > 0 ? (summary.estimatedVolumeUsd / 1_000_000).toFixed(1) + 'M' : '0'}
           </div>
         </div>
         <div className="stat-card">
