@@ -3,6 +3,8 @@ import {
   complianceInfo,
   formatAmount,
   formatEstimatedValue,
+  formatSummaryCount,
+  formatSummaryVolume,
   formatShortDate,
   reportingLagDays,
 } from '../formatters';
@@ -14,6 +16,15 @@ describe('trade formatters', () => {
     expect(formatAmount(null, 15_000)).toBe('Up to $15,000');
     expect(formatEstimatedValue(32_500.5)).toMatch(/^Est\. \$\d+K$/);
     expect(formatEstimatedValue(null)).toBe('Unknown');
+  });
+
+  it('safely formats backend summary values', () => {
+    expect(formatSummaryCount(12_345)).toBe('12,345');
+    expect(formatSummaryCount(undefined)).toBe('Unknown');
+    expect(formatSummaryCount(Number.NaN)).toBe('Unknown');
+    expect(formatSummaryVolume(1_250_000)).toBe('$1M');
+    expect(formatSummaryVolume(null)).toBe('Unknown');
+    expect(formatSummaryVolume(Number.POSITIVE_INFINITY)).toBe('Unknown');
   });
 
   it('formats dates in UTC and preserves invalid source values', () => {
