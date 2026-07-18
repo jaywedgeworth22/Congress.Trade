@@ -12,6 +12,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Materialize the full repository checkout
+        run: |
+          git sparse-checkout disable || true
+          git reset --hard HEAD
+          test -d app
+
       # Without this the self-hosted runner's job shell resolves node to the
       # stock Ubuntu 20.04 /usr/bin/node (v10, no npm on PATH), so npm ci and
       # every downstream workerd/miniflare step no-ops. Mirrors ci.yml/deploy.yml.

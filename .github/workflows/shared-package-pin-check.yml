@@ -53,6 +53,12 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Materialize the full repository checkout
+        run: |
+          git sparse-checkout disable || true
+          git reset --hard HEAD
+          test -f app/package-lock.json
+
       - name: Compare shared-package version against the peer consumer
         env:
           GH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
