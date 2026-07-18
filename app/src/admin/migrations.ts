@@ -186,8 +186,18 @@ export const REVIEW_AUTONOMY_SCHEMA_STATEMENTS = [
 ] as const;
 
 /**
+ * 0044_tx_doc_index.sql — plain doc_id index on transactions so the correlated
+ * `WHERE doc_id = ?` dedupe/selector subqueries (which the partial
+ * row_key-gated composites cannot serve) stop full-scanning the table.
+ * Keep in exact lockstep with migrations/0044_tx_doc_index.sql.
+ */
+export const TX_DOC_INDEX_SCHEMA_STATEMENTS = [
+  'CREATE INDEX IF NOT EXISTS idx_tx_doc ON transactions (doc_id)',
+] as const;
+
+/**
  * Ordered schema tail shared by POST /api/admin/migrate and migration parity
- * tests. Keep this in the same order as file migrations 0029 through 0039.
+ * tests. Keep this in the same order as file migrations 0029 through 0044.
  */
 export const POST_0024_SCHEMA_STATEMENTS = [
   // 0025_extraction_runs_usage.sql
@@ -215,4 +225,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
      ON usage_telemetry_fallback_events (updated_at)`,
   // 0043_price_backfill_termination.sql
   ...PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
+  // 0044_tx_doc_index.sql
+  ...TX_DOC_INDEX_SCHEMA_STATEMENTS,
 ] as const;

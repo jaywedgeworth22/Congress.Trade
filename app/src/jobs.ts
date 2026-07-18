@@ -22,6 +22,7 @@ import { runPhotoEnrichment, runTickerBackfill } from './admin/routes';
 import { runBulkSnapshot } from './export/snapshot';
 import { resolveSecrets } from './secrets/infisical';
 import { recordMeasuredThirdPartyUsage } from './shared/thirdPartyTelemetry';
+import { isD1RowBudgetExceeded } from './shared/d1Budget';
 // NOTE: runHouseReconciler (./ingestion/houseReconciler) is intentionally not
 // imported here yet -- it is reserved for future scheduled-job wiring. Importing
 // it unused would trip noUnusedLocals (enabled in this PR).
@@ -37,6 +38,16 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     await env.CONFIG_KV.put(DAILY_KEY, day, { expirationTtl: 172800 });
   } catch {
     return; // no KV → skip rather than risk hammering providers every minute
+  }
+
+  // Opt-in D1 spend guard (D1_ROW_BUDGET_ENFORCE): if today's metered D1 rows
+  // already exceeded the budget, skip this discretionary daily batch — its big
+  // enrichment/price/backfill upserts are the main controllable D1 write spend.
+  // Default OFF (alert-only). The date stamp above stays set, so we don't
+  // re-check every minute; a fresh budget frees the jobs next UTC day.
+  if (await isD1RowBudgetExceeded(env)) {
+    console.warn('daily jobs skipped: D1 row budget exceeded (D1_ROW_BUDGET_ENFORCE armed)');
+    return;
   }
 
   const errors: string[] = [];

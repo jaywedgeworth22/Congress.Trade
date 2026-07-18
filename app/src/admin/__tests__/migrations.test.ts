@@ -185,6 +185,7 @@ describe('admin migration bootstrap', () => {
       `CREATE INDEX IF NOT EXISTS idx_usage_telemetry_fallback_events_updated
      ON usage_telemetry_fallback_events (updated_at)`,
       ...PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
+      'CREATE INDEX IF NOT EXISTS idx_tx_doc ON transactions (doc_id)',
     ]);
   });
 

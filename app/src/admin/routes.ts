@@ -7009,6 +7009,38 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     return c.json({ applied, skipped });
   });
 
+  // --- POST /analyze ------------------------------------------------------
+  // Refresh the SQLite query-planner statistics (sqlite_stat1) via the Worker's
+  // D1 binding, so the planner has up-to-date selectivity after new indexes /
+  // large backfills. Operator-triggered and idempotent — deliberately NOT part
+  // of /migrate: ANALYZE reads rows (a cost we are otherwise cutting) and would
+  // re-run on every deploy, and a single unsupported statement in the migrate
+  // loop 500s the whole migration. Runs whole-DB by default, or a single table
+  // via { table }. Fails soft: if D1 rejects ANALYZE, report it, never throw.
+  // (Single-column equality indexes like idx_tx_doc are used without stats; run
+  // this only if you want the planner's cost estimates refreshed globally.)
+  r.post('/analyze', async (c) => {
+    let table: string | undefined;
+    try {
+      const raw = await c.req.text();
+      if (raw) {
+        const body = JSON.parse(raw) as Record<string, unknown>;
+        if (typeof body.table === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(body.table)) {
+          table = body.table;
+        }
+      }
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const sql = table ? `ANALYZE "${table}"` : 'ANALYZE';
+    try {
+      await run(c.env.DB, sql);
+      return c.json({ ok: true, analyzed: table ?? 'all' });
+    } catch (err) {
+      return c.json({ ok: false, error: (err as Error).message, sql }, 200);
+    }
+  });
+
   // --- POST /enrich-securities --------------------------------------------
   // Budgeted asset enrichment: SEC EDGAR (free) + FMP (key-gated). Processes the
   // tickers that most need it (newest-traded first, then backfilling older ones),

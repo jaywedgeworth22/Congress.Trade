@@ -34,22 +34,37 @@ routes = [
 # ---------------------------------------------------------------------------
 # Observability
 # Keep this in config so dashboard changes are not overwritten on deploy.
-# Invocation logs are useful while the app is ingesting/backfilling and while
-# the error rate is being investigated.
+# COST NOTE: Workers Logs bills per log event (20M/mo included on Paid, then
+# $0.60/M). The per-minute cron (~43.8k invocations/mo, mostly no-op ticks)
+# plus every fetch/queue invocation each emit one automatic "invocation log";
+# at 100% sampling that was the dominant, relentless log-volume driver. Error
+# and cron-health visibility does NOT depend on these settings — Sentry
+# (@sentry/cloudflare) captures exceptions + console warn/error in-process and
+# runs Sentry.withMonitor cron check-ins (see src/index.ts). So we can cut
+# Workers Logs volume ~an order of magnitude without losing error visibility.
+# All three values below are deploy-time (not Infisical-tunable); raise them
+# temporarily for a deep-debug window, then lower again.
 # ---------------------------------------------------------------------------
 [observability]
 enabled = true
-head_sampling_rate = 1
+# Logs sampling is configured granularly under [observability.logs] below.
 
 [observability.logs]
 enabled = true
-head_sampling_rate = 1
+# Sample explicit console.* output to 10% of invocations. Errors still reach
+# Sentry regardless of this head-based sample, so error visibility is preserved.
+head_sampling_rate = 0.1
 persist = true
-invocation_logs = true
+# Stop the automatic per-invocation ("cf-worker-event") log. On a self-gating
+# no-op cron tick that was the ONLY event produced, so this zeroes the cron's
+# steady-state log cost. Per-invocation health is covered by Sentry.withMonitor.
+invocation_logs = false
 
 [observability.traces]
 enabled = true
 persist = true
+# 5% trace sampling. Billed against the shared observability quota since
+# 2026-03-01 but a small fraction of volume. Lower to 0.02 to trim further.
 head_sampling_rate = 0.05
 
 # ---------------------------------------------------------------------------

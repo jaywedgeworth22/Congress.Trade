@@ -525,6 +525,12 @@ export interface Env {
   DISCLOSURE_LATENCY_WATCH_ENABLED?: string;
   /** Enables the public-API anti-scraping guard (UA blocklist + per-IP budgets). Unset = off. */
   SCRAPE_GUARD_ENABLED?: string;
+  /** App-level D1 daily rows-READ budget (stringified int). Soft-warns at 80%; default 200M/day. Infisical-tunable. */
+  D1_DAILY_ROWS_READ_BUDGET?: string;
+  /** App-level D1 daily rows-WRITTEN budget (stringified int). Soft-warns at 80%; default 2M/day (~$10/mo of D1 writes). Infisical-tunable. */
+  D1_DAILY_ROWS_WRITTEN_BUDGET?: string;
+  /** Arm the D1 row-budget HARD stop (skip discretionary daily jobs when over budget). Unset = off (alert-only). Infisical-tunable. */
+  D1_ROW_BUDGET_ENFORCE?: string;
   /** Comma-separated provider ids to race: fmp, unusual_whales, quiver. Defaults to direct comparable providers. */
   DISCLOSURE_LATENCY_PROVIDERS?: string;
   /** Latest rows to fetch per provider/chamber endpoint when the latency monitor runs. */
