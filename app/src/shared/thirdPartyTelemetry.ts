@@ -210,6 +210,7 @@ const SAFE_METADATA_KEYS = new Set([
   'fmpCallsThisRun',
   'priceProvider',
   'errors',
+  'transport',
 ]);
 
 function stableTag(value: string, fallback: string): string {
@@ -270,6 +271,18 @@ export function remapOpenRouterTelemetry(provider: string, model?: string): { pr
     }
   }
   return { provider, model };
+}
+
+/**
+ * Remapping OpenRouter events changes the receiver-visible provider/model
+ * dimensions. Version an existing stable key when that happens so a replay of
+ * a pre-remap event cannot collide with the new payload under the old key.
+ */
+function measuredUsageKey(
+  idempotencyKey: string | undefined,
+  transport: string | undefined,
+): string | undefined {
+  return idempotencyKey && transport ? `${idempotencyKey}:transport-v2` : idempotencyKey;
 }
 
 function environmentName(env: Env): string {
@@ -737,7 +750,7 @@ export async function recordMeasuredThirdPartyUsage(
     provider: mapped.provider,
     service: usage.service,
     operation: usage.operation,
-    idempotencyKey: usage.idempotencyKey,
+    idempotencyKey: measuredUsageKey(usage.idempotencyKey, mapped.transport),
     occurredAt,
     model: mapped.model,
     metricType: usage.metricType ?? (usage.costUsd != null ? 'cost' : 'usage'),
