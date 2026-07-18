@@ -7605,6 +7605,7 @@ function handleAuthQueryParams() {
   if (login === 'ok') showToast('Signed in.');
   else if (login === 'error') showToast('Sign-in failed — please try again.', true);
   else if (login === 'expired') showToast('That sign-in link expired — request a new one.', true);
+  else if (login === 'unverified') showToast('Sign-in failed — verify your email with Google first, or use an email sign-in link.', true);
   if (checkout === 'success') showToast('🎉 You’re in! Your premium trial is active.');
   else if (checkout === 'cancel') showToast('Checkout canceled — no charge was made.');
   if (login || checkout || p.get('billing')) {
