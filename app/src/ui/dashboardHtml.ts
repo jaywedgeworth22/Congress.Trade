@@ -2024,7 +2024,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <ul class="feature-list" id="pricingFeatures">
       <li>Instant filing alerts — signed webhooks (HMAC-verified) to any URL</li>
       <li>Live SSE stream of every new filing — no polling</li>
-      <li>Full-history CSV exports</li>
     </ul>
 
     <div class="plan-grid" id="pricingPlans">
