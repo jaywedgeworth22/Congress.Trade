@@ -23,6 +23,7 @@ for (const name of workflowNames) {
     "windows-latest",
     "CT_CI_RUNNER",
     "CT_DEPLOY_VERIFY_RUNNER",
+    "sparse-checkout:",
   ]) {
     if (text.includes(forbidden)) {
       errors.push(`${name}: forbidden hosted-runner or billable-cache token: ${forbidden}`);
