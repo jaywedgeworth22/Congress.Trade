@@ -48,6 +48,11 @@ async function baseUrl(c: Context<{ Bindings: Env }>): Promise<string> {
   return new URL(c.req.url).origin;
 }
 
+/** OAuth redirect URI must remain on the host that set the host-only state cookie. */
+function oauthCallbackUrl(c: Context<{ Bindings: Env }>): string {
+  return `${new URL(c.req.url).origin}/auth/google/callback`;
+}
+
 /** Trim the User down to what the browser is allowed to see. */
 function publicUser(u: User): { id: string; email: string; name: string | null; picture: string | null } {
   return { id: u.id, email: u.email, name: u.name, picture: u.picture };
@@ -125,8 +130,7 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       path: '/',
       maxAge: 600,
     });
-    const base = await baseUrl(c);
-    const url = await buildGoogleAuthUrl(c.env, `${base}/auth/google/callback`, state);
+    const url = await buildGoogleAuthUrl(c.env, oauthCallbackUrl(c), state);
     return c.redirect(url);
   });
 
@@ -148,7 +152,7 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       return c.redirect(`${targetOrigin}/?login=error`);
     }
     try {
-      const redirectUri = `${base}/auth/google/callback`;
+      const redirectUri = oauthCallbackUrl(c);
       const accessToken = await exchangeGoogleCode(c.env, code, redirectUri);
       const profile = await fetchGoogleProfile(accessToken);
       // Account-takeover guard: never match-or-create an account by an email

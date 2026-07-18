@@ -123,6 +123,10 @@ export async function setSessionCookie(c: Context<{ Bindings: Env }>, token: str
     path: '/',
     maxAge: SESSION_TTL_SEC,
   });
+  // Replace the legacy cookie and evict its distinct Domain-scoped copy so it
+  // is no longer sent to sibling subdomains after the next authenticated flow.
+  const legacyDomain = await legacyCookieDomain(c);
+  if (legacyDomain) deleteCookie(c, SESSION_COOKIE, { path: '/', domain: legacyDomain });
 }
 
 export async function clearSessionCookie(c: Context<{ Bindings: Env }>): Promise<void> {

@@ -126,10 +126,24 @@ describe('host-only session cookies (CT-AUD-007)', () => {
     });
 
     const res = await app.request('https://congress.trade/login', {}, env);
-    const setCookie = res.headers.get('set-cookie') ?? '';
-    expect(setCookie).toContain('ct_session=tok');
-    expect(setCookie).toContain('HttpOnly');
-    expect(setCookie.toLowerCase()).not.toContain('domain=');
+    const hostOnly = res.headers.getSetCookie().find((v) => v.startsWith('ct_session=tok')) ?? '';
+    expect(hostOnly).toContain('HttpOnly');
+    expect(hostOnly.toLowerCase()).not.toContain('domain=');
+  });
+
+  it('setSessionCookie expires the legacy Domain-scoped cookie', async () => {
+    const { env } = fakeEnv({ id: 'user-1' });
+    (env as any).APP_BASE_URL = 'https://congress.trade';
+    const app = new Hono<{ Bindings: Env }>();
+    app.get('/login', async (c) => {
+      await setSessionCookie(c, 'replacement-token');
+      return c.json({ ok: true });
+    });
+
+    const res = await app.request('https://www.congress.trade/login', {}, env);
+    const cookies = res.headers.getSetCookie();
+    expect(cookies.some((v) => v.startsWith('ct_session=replacement-token') && !/domain=/i.test(v))).toBe(true);
+    expect(cookies.some((v) => /domain=congress\.trade/i.test(v) && /max-age=0/i.test(v))).toBe(true);
   });
 
   it('clearSessionCookie evicts host-only and legacy Domain-scoped cookies', async () => {
