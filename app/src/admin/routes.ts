@@ -38,11 +38,7 @@ import {
   ShortVolumeRowSchema,
 } from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
-<<<<<<< HEAD
-import { all, batch, chunkArray, get, run, type SqlParam } from '../shared/db';
-=======
-import { all, batch, batchPrepared, first, get, run, type SqlParam } from '../shared/db';
->>>>>>> origin/main
+import { all, batch, batchPrepared, chunkArray, first, get, run, type SqlParam } from '../shared/db';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
 import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
 import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config';
