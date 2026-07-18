@@ -100,6 +100,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #feedTable.resizable .asset-cell > div,
   #feedTable.resizable .member-cell > div { flex: 1 1 auto; }
   #feedHead th { position: sticky; top: 0; z-index: 4; background: var(--panel); text-align: center; }
+  #feedTable th:first-child, #feedTable td:first-child { position: sticky; left: 0; z-index: 5; background: var(--panel); }
+  #feedTable th:first-child { z-index: 6; }
   #feedHead th .arr { display: inline-block; width: 1em; margin-left: 4px; text-align: center; color: var(--text-dim); }
   .col-resizer { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; user-select: none; touch-action: none; }
   .col-resizer:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
@@ -386,7 +388,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .section p.sub { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; }
   .row-flex { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
   .pager { margin-top:14px; justify-content:space-between; }
-  .pager-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .pager-controls { display:flex; gap:0px; align-items:center; flex-wrap:wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .pager-controls button { border: none !important; border-radius: 0 !important; }
+  .pager-controls span { padding: 0 10px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
   .pager select { padding:5px 9px; font-size:12px; }
   .switch { position: relative; width: 46px; height: 26px; }
   .switch input { display: none; }
@@ -2052,6 +2056,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 var TRADES = [];          // live transactions (newest first)
 var TRADE_BY_ID = {};     // trade id -> row, including mini-list rows cached from drawers
 var REVIEW = [];          // review-queue items
+var REVIEW_TOTALS = null; // aggregate queue counts returned with the current page
 var DECISIONS = [];       // ingestion decision audit rows
 var REVIEW_RUNS = {};     // docId -> full extraction runs loaded on demand
 var REVIEW_CONSENSUS = {}; // docId -> { rows, summary } | null, loaded alongside REVIEW_RUNS
@@ -2419,7 +2424,7 @@ function fmtMs(ms) {
 function applyTheme(t) {
   if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
   else document.documentElement.removeAttribute('data-theme');
-  var label = el('themeMenuLabel'); if (label) label.textContent = (t === 'light') ? 'Light Mode' : 'Dark Mode';
+  var label = el('themeMenuLabel'); if (label) label.textContent = (t === 'light') ? 'Switch to Dark Mode' : 'Switch to Light Mode';
 }
 function toggleTheme() {
   var cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
@@ -3411,6 +3416,7 @@ function setReviewTab(resolved) {
 function loadReview() {
   if (!canUseAdmin()) {
     REVIEW = [];
+    REVIEW_TOTALS = null;
     if (el('reviewCount')) el('reviewCount').textContent = '';
     if (el('kpiReview')) el('kpiReview').textContent = '—';
     return Promise.resolve();
@@ -3418,7 +3424,7 @@ function loadReview() {
   // API HOOK: GET /api/admin/review-queue?resolved=
   return fetch('/api/admin/review-queue?resolved=' + REVIEW_RESOLVED, { headers: adminHeaders() })
     .then(okOrThrow)
-    .then(function (data) { REVIEW = data.items || []; renderReview(); loadDecisionHistory(); })
+    .then(function (data) { REVIEW = data.items || []; REVIEW_TOTALS = data.totals || null; renderReview(); loadDecisionHistory(); })
     .catch(function (e) {
       el('reviewBody').innerHTML = stateRow(6, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load review queue: ' + e.message));
     });
@@ -3683,8 +3689,10 @@ function modelsSummaryHtml(models) {
 }
 function renderReview() {
   var body = el('reviewBody');
-  el('reviewCount').textContent = REVIEW.length ? '(' + REVIEW.length + ')' : '';
-  if (el('kpiReview') && REVIEW_RESOLVED === 0) el('kpiReview').textContent = REVIEW.length;
+  var matchingTotal = REVIEW_TOTALS && typeof REVIEW_TOTALS.matching === 'number' ? REVIEW_TOTALS.matching : REVIEW.length;
+  var unresolvedTotal = REVIEW_TOTALS && typeof REVIEW_TOTALS.unresolved === 'number' ? REVIEW_TOTALS.unresolved : REVIEW.length;
+  el('reviewCount').textContent = matchingTotal ? '(' + matchingTotal + ')' : '';
+  if (el('kpiReview') && REVIEW_RESOLVED === 0) el('kpiReview').textContent = unresolvedTotal;
   if (REVIEW.length === 0) {
     body.innerHTML = stateRow(6, REVIEW_RESOLVED ? 'No reviewed documents yet.' : 'Nothing awaiting review — queue is clear.');
     return;
@@ -3989,8 +3997,7 @@ function resolveReview(docId, decision) {
     .then(okOrThrow)
     .then(function () {
       if (isUnpublish) { loadReview(); } // item returns to pending; reload current tab
-      else { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); renderReview(); }
-      loadDecisionHistory();
+      else { loadReview(); }
       loadFeed();
     })
     .catch(function (e) {
@@ -4297,7 +4304,7 @@ function meSubmit(docId) {
     })
   })
     .then(okOrThrow)
-    .then(function () { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); if (tr && tr.parentNode) tr.parentNode.removeChild(tr); renderReview(); loadDecisionHistory(); loadFeed(); })
+    .then(function () { loadReview(); loadFeed(); })
     .catch(function (e) {
       if (tr) tr.querySelectorAll('button,input,select').forEach(function (b) { b.disabled = false; });
       alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review submit failed: ' + e.message));

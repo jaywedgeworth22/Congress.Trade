@@ -105,6 +105,11 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
     `SELECT idempotency_key, event_json, attempts, last_error, created_at, updated_at
        FROM usage_telemetry_fallback_events LIMIT 0`,
   ],
+  [
+    'usage_telemetry_probe_lease',
+    `SELECT id, lease_token, expires_at, updated_at
+       FROM usage_telemetry_probe_lease LIMIT 0`,
+  ],
   ['dead_letter_events', 'SELECT queue, msg_type, tx_id, attempts FROM dead_letter_events LIMIT 0'],
   [
     'idx_deliveries_subscription_tx',

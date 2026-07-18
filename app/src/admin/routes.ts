@@ -38,7 +38,7 @@ import {
   ShortVolumeRowSchema,
 } from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
-import { all, batch, batchPrepared, first, get, run, type SqlParam } from '../shared/db';
+import { all, batch, batchPrepared, chunkArray, first, get, run, type SqlParam } from '../shared/db';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
 import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
 import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config';
@@ -591,6 +591,124 @@ interface ReviewRow {
   agreement_suppressed_at?: string | null;
   agreement_suppression_reason?: string | null;
   review_revision?: number | null;
+}
+
+// --- GET /review-queue pagination/filter helpers ---------------------------
+
+const REVIEW_QUEUE_DEFAULT_LIMIT = 50;
+const REVIEW_QUEUE_MAX_LIMIT = 200;
+// D1 bounds a statement to ~100 bound parameters. This is the chunk size for
+// batched `IN (...)` per-model detail lookups keyed off a page of doc_ids;
+// 90 leaves headroom vs. the hard cap.
+const REVIEW_QUEUE_IN_CHUNK = 90;
+
+interface ReviewQueueCursor {
+  createdAt: string;
+  docId: string;
+}
+
+/** Opaque keyset cursor over (created_at, doc_id) — the pair review_queue
+ *  rows are ordered/tie-broken by. base64(JSON) is sufficient; it only needs
+ *  to round-trip through this API, never be interpreted by the client. */
+function encodeReviewQueueCursor(cur: ReviewQueueCursor): string {
+  return btoa(JSON.stringify(cur));
+}
+
+function decodeReviewQueueCursor(raw: string): ReviewQueueCursor | null {
+  try {
+    const parsed = JSON.parse(atob(raw)) as Partial<ReviewQueueCursor>;
+    if (typeof parsed.createdAt === 'string' && typeof parsed.docId === 'string') {
+      return { createdAt: parsed.createdAt, docId: parsed.docId };
+    }
+  } catch {
+    /* malformed cursor — caller treats this as null (400) */
+  }
+  return null;
+}
+
+interface ReviewQueueFilters {
+  resolved: number;
+  chamber: string | null;
+  reasonPrefix: string | null;
+}
+
+/** WHERE clause + bound params shared by the page query and the `matching`
+ *  total — everything except the keyset cursor condition (which only the
+ *  page query needs; totals cover the whole filtered set). */
+function reviewQueueFilterWhere(f: ReviewQueueFilters): { clause: string; params: SqlParam[] } {
+  const clauses = ['rq.resolved = ?'];
+  const params: SqlParam[] = [f.resolved];
+  if (f.chamber) {
+    clauses.push('f.chamber = ?');
+    params.push(f.chamber);
+  }
+  if (f.reasonPrefix) {
+    // Match one complete token in the comma-joined reason string. Escape the
+    // LIKE metacharacters so a reason filter cannot widen its own match.
+    const escaped = f.reasonPrefix
+      .replace(/\\/g, '\\\\')
+      .replace(/%/g, '\\%')
+      .replace(/_/g, '\\_');
+    clauses.push("(',' || COALESCE(rq.reason, '') || ',') LIKE ? ESCAPE '\\'");
+    params.push(`%,${escaped},%`);
+  }
+  return { clause: clauses.join(' AND '), params };
+}
+
+interface ReviewQueueTotals {
+  unresolved: number;
+  matching: number;
+  byReason: Record<string, number>;
+  byChamber: Record<string, number>;
+}
+
+/**
+ * Cheap aggregate-only queries (COUNT/GROUP BY, no payload/join-per-row cost)
+ * so the dashboard header stays accurate without re-scanning + materializing
+ * the whole queue on every page request.
+ *  - unresolved: total pending backlog, independent of the current filters —
+ *    a stable KPI regardless of which page/filter the operator is viewing.
+ *  - matching: total rows for the current resolved+chamber+reason filters —
+ *    powers "X of Y" display since keyset pagination alone doesn't expose a
+ *    total.
+ *  - byReason / byChamber: breakdowns scoped to `resolved` only (not the
+ *    chamber/reason filters, so the breakdown itself isn't self-filtered).
+ */
+async function reviewQueueTotals(db: D1Database, filters: ReviewQueueFilters): Promise<ReviewQueueTotals> {
+  const matchingWhere = reviewQueueFilterWhere(filters);
+  const [unresolvedRow, matchingRow, reasonRows, chamberRows] = await Promise.all([
+    get<{ n: number }>(db, `SELECT COUNT(*) AS n FROM review_queue WHERE resolved = 0`),
+    get<{ n: number }>(
+      db,
+      `SELECT COUNT(*) AS n FROM review_queue rq LEFT JOIN filings f ON f.doc_id = rq.doc_id WHERE ${matchingWhere.clause}`,
+      matchingWhere.params,
+    ),
+    all<{ reason: string | null; n: number }>(
+      db,
+      `SELECT rq.reason AS reason, COUNT(*) AS n FROM review_queue rq WHERE rq.resolved = ? GROUP BY rq.reason`,
+      [filters.resolved],
+    ),
+    all<{ chamber: string | null; n: number }>(
+      db,
+      `SELECT f.chamber AS chamber, COUNT(*) AS n
+         FROM review_queue rq LEFT JOIN filings f ON f.doc_id = rq.doc_id
+        WHERE rq.resolved = ?
+        GROUP BY f.chamber`,
+      [filters.resolved],
+    ),
+  ]);
+
+  const byReason: Record<string, number> = {};
+  for (const row of reasonRows) byReason[row.reason ?? ''] = Number(row.n) || 0;
+  const byChamber: Record<string, number> = {};
+  for (const row of chamberRows) byChamber[row.chamber ?? ''] = Number(row.n) || 0;
+
+  return {
+    unresolved: unresolvedRow?.n ?? 0,
+    matching: matchingRow?.n ?? 0,
+    byReason,
+    byChamber,
+  };
 }
 
 interface DiagnosticConnection {
@@ -1718,8 +1836,66 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // ?resolved=1 lists already-reviewed items (history) instead of the pending
   // queue (default 0). ingest_status distinguishes confirmed (persisted) from
   // rejected (error) for resolved items.
+  //
+  // Cursor-paginated, newest-first (keyset on created_at+doc_id — see
+  // reviewQueueFilterWhere/encodeReviewQueueCursor above). ?limit= (default
+  // 50, max 200) + ?cursor= (opaque; encodes the last row's created_at+doc_id
+  // seen so far). The response carries `nextCursor` (null on the last page)
+  // and `totals` — a handful of cheap COUNT/GROUP BY aggregates so the
+  // dashboard header stays accurate without re-scanning the whole table.
+  //
+  // Filters: ?chamber= (exact match against filings.chamber) and ?reason=
+  // (exact token match against the stored comma-joined reason string).
+  //
+  // Back-compat: a caller supplying neither `limit` nor `cursor` (the
+  // pre-pagination contract) gets one page capped at REVIEW_QUEUE_MAX_LIMIT
+  // rows with `truncated: true` if the queue holds more than that, instead of
+  // the old unbounded (4.8MB+ at current backlog size) response.
+  //
+  // Per-model extraction runs are fetched only for the current page's
+  // doc_ids, batched into IN (...) chunks of REVIEW_QUEUE_IN_CHUNK (<=90) to
+  // stay under D1's ~100 bound-parameter-per-statement limit. Previously this
+  // was a single unchunked IN (...) over the ENTIRE queue: once the pending
+  // backlog passed ~100 docs, D1's bind() throws ("too many SQL variables"),
+  // and that throw landed inside a catch-all try/catch here (added only to
+  // tolerate a not-yet-migrated extraction_runs table) — so the whole
+  // per-model payload silently degraded to `[]` for every row, with no error
+  // surfaced anywhere. Chunking fixes that; each chunk still degrades
+  // independently (and harmlessly) if extraction_runs doesn't exist yet.
   r.get('/review-queue', async (c) => {
     const resolved = c.req.query('resolved') === '1' ? 1 : 0;
+    const chamber = c.req.query('chamber') || null;
+    const reasonPrefix = c.req.query('reason') || null;
+
+    const hasLimitParam = c.req.query('limit') !== undefined;
+    const hasCursorParam = c.req.query('cursor') !== undefined;
+    const legacyUnbounded = !hasLimitParam && !hasCursorParam;
+
+    let limit = REVIEW_QUEUE_DEFAULT_LIMIT;
+    if (hasLimitParam) {
+      const rawLimit = parseInt(c.req.query('limit') || '', 10);
+      if (Number.isFinite(rawLimit) && rawLimit > 0) limit = rawLimit;
+    }
+    limit = Math.min(limit, REVIEW_QUEUE_MAX_LIMIT);
+    if (legacyUnbounded) limit = REVIEW_QUEUE_MAX_LIMIT;
+
+    let cursor: ReviewQueueCursor | null = null;
+    if (hasCursorParam) {
+      cursor = decodeReviewQueueCursor(c.req.query('cursor') || '');
+      if (!cursor) return c.json({ error: 'invalid cursor' }, 400);
+    }
+
+    const filters: ReviewQueueFilters = { resolved, chamber, reasonPrefix };
+    const baseWhere = reviewQueueFilterWhere(filters);
+    const clauses = [baseWhere.clause];
+    const params: SqlParam[] = [...baseWhere.params];
+    if (cursor) {
+      clauses.push('(rq.created_at < ? OR (rq.created_at = ? AND rq.doc_id < ?))');
+      params.push(cursor.createdAt, cursor.createdAt, cursor.docId);
+    }
+
+    // Fetch one extra row past the page size so we know whether another page
+    // follows without a separate COUNT query.
     const rows = await all<
       ReviewRow & { ingest_status?: string | null; manual_rows?: number | null; live_rows?: number | null }
     >(
@@ -1744,18 +1920,30 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
              WHERE t.doc_id = rq.doc_id AND t.deprecated_at IS NULL) AS live_rows
         FROM review_queue rq
         LEFT JOIN filings f ON f.doc_id = rq.doc_id
-        WHERE rq.resolved = ?
-        ORDER BY rq.created_at ${resolved ? 'DESC' : 'ASC'}`,
-      [resolved],
+        WHERE ${clauses.join(' AND ')}
+        ORDER BY rq.created_at DESC, rq.doc_id DESC
+        LIMIT ?`,
+      [...params, limit + 1],
     );
 
-    // Attach per-model extraction results (latest run per provider:model per doc).
-    // Wrapped so a missing extraction_runs table (pre-migration) degrades to [].
+    const hasMore = rows.length > limit;
+    const pageRows = hasMore ? rows.slice(0, limit) : rows;
+    const lastRow = pageRows[pageRows.length - 1];
+    const nextCursor =
+      hasMore && lastRow
+        ? encodeReviewQueueCursor({ createdAt: lastRow.created_at ?? '', docId: lastRow.doc_id })
+        : null;
+
+    // Attach per-model extraction results (latest run per provider:model per
+    // doc) — only for this page's doc_ids, chunked (see comment above).
     const modelsByDoc = new Map<string, Array<Record<string, unknown>>>();
-    if (rows.length) {
+    for (const idChunk of chunkArray(
+      pageRows.map((r) => r.doc_id),
+      REVIEW_QUEUE_IN_CHUNK,
+    )) {
+      if (!idChunk.length) continue;
       try {
-        const ids = rows.map((r) => r.doc_id);
-        const placeholders = ids.map(() => '?').join(',');
+        const placeholders = idChunk.map(() => '?').join(',');
         const runs = await all<{
           doc_id: string;
           provider: string;
@@ -1772,7 +1960,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           `SELECT doc_id, provider, model, kind, ok, error, row_count, latency_ms, avg_confidence, created_at
              FROM extraction_runs WHERE doc_id IN (${placeholders})
             ORDER BY created_at DESC`,
-          ids,
+          idChunk,
         );
         for (const er of runs) {
           const list = modelsByDoc.get(er.doc_id) ?? [];
@@ -1792,11 +1980,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           modelsByDoc.set(er.doc_id, list);
         }
       } catch {
-        /* extraction_runs not migrated yet — no per-model data */
+        /* extraction_runs not migrated yet — no per-model data for this
+           chunk's docs (never for the whole page: chunking keeps one bad/
+           missing-table chunk from taking every other chunk down with it). */
       }
     }
 
-    const items = rows.map((row) => {
+    const items = pageRows.map((row) => {
       const manual = (row.manual_rows ?? 0) > 0;
       const status = !row.resolved || row.resolved === 0
         ? 'pending'
@@ -1825,7 +2015,21 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         models: modelsByDoc.get(row.doc_id) ?? [],
       };
     });
-    return c.json({ items, count: items.length, resolved: resolved === 1 });
+
+    const totals = await reviewQueueTotals(c.env.DB, filters);
+
+    const body: Record<string, unknown> = {
+      items,
+      count: items.length,
+      resolved: resolved === 1,
+      nextCursor,
+      totals,
+    };
+    // Only surface `truncated` on the legacy unbounded call shape — an
+    // explicit limit/cursor caller asked for a bounded page on purpose, that
+    // isn't "truncation".
+    if (legacyUnbounded) body.truncated = hasMore;
+    return c.json(body);
   });
 
   // --- GET /ingestion-decisions ------------------------------------------
@@ -6668,7 +6872,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       });
     }
     const flagged = await recomputeTransactions(c.env, mapFiling(filingRow), read.rows);
-    const blockingFlagSet = new Set<string>([...HARD_FAILURE_FLAGS, 'future_tx_date']);
+    const blockingFlagSet = new Set<string>(HARD_FAILURE_FLAGS);
     const hardFlags = Array.from(new Set(
       flagged.flatMap((result) => result.flags).filter((flag) => blockingFlagSet.has(flag)),
     ));
