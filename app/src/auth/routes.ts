@@ -24,7 +24,6 @@ import {
   setSessionCookie,
   clearSessionCookie,
   getSessionTokensFromRequest,
-  getCookieDomain,
   getSafeRedirectUrl,
 } from './session';
 import { buildGoogleAuthUrl, exchangeGoogleCode, fetchGoogleProfile } from './google';
@@ -101,7 +100,6 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   r.get('/google/start', async (c) => {
     if (!(await resolveSecret(c.env, 'GOOGLE_OAUTH_CLIENT_ID')).value) return c.json({ error: 'google login not configured' }, 503);
     const state = randomToken(16);
-    const domain = await getCookieDomain(c);
 
     // Save the initiator's origin so we can redirect back to it on callback
     const referer = c.req.header('Referer');
@@ -111,13 +109,13 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
         requestOrigin = new URL(referer).origin;
       } catch {}
     }
+    // Host-only cookies: Domain is deliberately omitted (CT-AUD-007).
     setCookie(c, 'ct_auth_origin', requestOrigin, {
       httpOnly: true,
       secure: new URL(c.req.url).protocol === 'https:',
       sameSite: 'Lax',
       path: '/',
       maxAge: 600,
-      domain,
     });
 
     setCookie(c, OAUTH_STATE_COOKIE, state, {
@@ -126,7 +124,6 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       sameSite: 'Lax',
       path: '/',
       maxAge: 600,
-      domain,
     });
     const base = await baseUrl(c);
     const url = await buildGoogleAuthUrl(c.env, `${base}/auth/google/callback`, state);
@@ -139,14 +136,13 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     const code = url.searchParams.get('code');
     const state = url.searchParams.get('state');
     const cookieState = getCookie(c, OAUTH_STATE_COOKIE);
-    const domain = await getCookieDomain(c);
-    deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/', domain });
+    deleteCookie(c, OAUTH_STATE_COOKIE, { path: '/' });
 
     const authOrigin = getCookie(c, 'ct_auth_origin');
-    deleteCookie(c, 'ct_auth_origin', { path: '/', domain });
+    deleteCookie(c, 'ct_auth_origin', { path: '/' });
 
     const base = await baseUrl(c);
-    const targetOrigin = getSafeRedirectUrl(authOrigin, base, domain);
+    const targetOrigin = getSafeRedirectUrl(authOrigin, base);
 
     if (!code || !state || !cookieState || !(await constantTimeEqual(state, cookieState))) {
       return c.redirect(`${targetOrigin}/?login=error`);
@@ -155,6 +151,12 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       const redirectUri = `${base}/auth/google/callback`;
       const accessToken = await exchangeGoogleCode(c.env, code, redirectUri);
       const profile = await fetchGoogleProfile(accessToken);
+      // Account-takeover guard: never match-or-create an account by an email
+      // Google has not verified (upsertUserFromGoogle enforces this too).
+      if (!profile.emailVerified) {
+        console.warn('google callback rejected: unverified email');
+        return c.redirect(`${targetOrigin}/?login=unverified`);
+      }
       const user = await upsertUserFromGoogle(c.env, profile);
       await setSessionCookie(c, await createSession(c.env, user.id));
       return c.redirect(`${targetOrigin}/?login=ok`);
@@ -218,8 +220,7 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     const email = token ? await consumeMagicToken(c.env, token) : null;
 
     const base = await baseUrl(c);
-    const domain = await getCookieDomain(c);
-    const targetOrigin = getSafeRedirectUrl(originParam || undefined, base, domain);
+    const targetOrigin = getSafeRedirectUrl(originParam || undefined, base);
 
     if (!email) return c.redirect(`${targetOrigin}/?login=expired`);
     const user = await upsertUserByEmail(c.env, email);

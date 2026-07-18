@@ -68,8 +68,19 @@ export interface GoogleProfile {
   picture?: string | null;
 }
 
-/** Upsert a user from a verified Google profile, keyed by email. */
+/**
+ * Upsert a user from a verified Google profile, keyed by email.
+ *
+ * SECURITY: Google only attests ownership of an email when email_verified is
+ * true. Matching-or-creating by an UNVERIFIED email would let an attacker who
+ * registers a Google account claiming a victim's address take over the
+ * victim's existing (e.g. magic-link) account. Callers should check
+ * `emailVerified` first for a friendly error; this throw is the backstop.
+ */
 export async function upsertUserFromGoogle(env: Env, p: GoogleProfile): Promise<User> {
+  if (p.emailVerified !== true) {
+    throw new Error('google profile email is not verified; refusing to match or create an account');
+  }
   const email = p.email.toLowerCase();
   const now = new Date().toISOString();
   const existing = await getUserByEmail(env, email);
