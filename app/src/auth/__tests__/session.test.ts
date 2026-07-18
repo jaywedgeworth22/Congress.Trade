@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { Hono } from 'hono';
-import { createSession, resolveSession, destroySession, getCurrentUserFromRequest, getCookieDomain, getSafeRedirectUrl } from '../session';
+import {
+  createSession,
+  resolveSession,
+  destroySession,
+  getCurrentUserFromRequest,
+  getSessionTokensFromRequest,
+  getSafeRedirectUrl,
+  setSessionCookie,
+  clearSessionCookie,
+} from '../session';
 import type { Env } from '../../shared/types';
 
 function fakeEnv(user?: { id: string }) {
@@ -83,36 +92,100 @@ describe('sessions', () => {
     expect(((await res.json()) as { user: { id: string } }).user.id).toBe('user-1');
   });
 
-  it('getCookieDomain resolves domain from APP_BASE_URL correctly', async () => {
-    const { env: envProd } = fakeEnv();
-    (envProd as any).APP_BASE_URL = 'https://congress.trade';
-    const cProd = { env: envProd } as any;
-    expect(await getCookieDomain(cProd)).toBe('congress.trade');
+  it('logout revokes duplicate legacy + host-only session cookies together', async () => {
+    const { env } = fakeEnv({ id: 'user-1' });
+    const legacyToken = await createSession(env, 'user-1');
+    const hostOnlyToken = await createSession(env, 'user-1');
+    const app = new Hono<{ Bindings: Env }>();
+    app.post('/logout', async (c) => {
+      const tokens = getSessionTokensFromRequest(c);
+      await Promise.all(tokens.map((token) => destroySession(c.env, token)));
+      return c.json({ revoked: tokens.length });
+    });
 
-    const { env: envLocal } = fakeEnv();
-    (envLocal as any).APP_BASE_URL = 'http://localhost:8787';
-    const cLocal = { env: envLocal } as any;
-    expect(await getCookieDomain(cLocal)).toBeUndefined();
+    // A migrating browser sends both the old Domain=apex cookie and the new
+    // host-only cookie under the same name; both KV sessions must die.
+    const res = await app.request('http://localhost/logout', {
+      method: 'POST',
+      headers: { Cookie: `ct_session=${legacyToken}; ct_session=${hostOnlyToken}` },
+    }, env);
+    expect(((await res.json()) as { revoked: number }).revoked).toBe(2);
+    expect(await resolveSession(env, legacyToken)).toBeNull();
+    expect(await resolveSession(env, hostOnlyToken)).toBeNull();
   });
+});
 
-  it('getCookieDomain does not bypass fail-closed secret resolution', async () => {
-    const { env } = fakeEnv();
+describe('host-only session cookies (CT-AUD-007)', () => {
+  it('setSessionCookie emits no Domain attribute', async () => {
+    const { env } = fakeEnv({ id: 'user-1' });
     (env as any).APP_BASE_URL = 'https://congress.trade';
-    (env as any).INFISICAL_ALLOW_ENV_FALLBACK = 'false';
-    expect(await getCookieDomain({ env } as any)).toBeUndefined();
+    const app = new Hono<{ Bindings: Env }>();
+    app.get('/login', async (c) => {
+      await setSessionCookie(c, 'tok');
+      return c.json({ ok: true });
+    });
+
+    const res = await app.request('https://congress.trade/login', {}, env);
+    const hostOnly = res.headers.getSetCookie().find((v) => v.startsWith('ct_session=tok')) ?? '';
+    expect(hostOnly).toContain('HttpOnly');
+    expect(hostOnly.toLowerCase()).not.toContain('domain=');
   });
 
-  it('getSafeRedirectUrl validates and sanitizes origins correctly', () => {
-    const base = 'https://congress.trade';
-    const domain = 'congress.trade';
+  it('setSessionCookie expires the legacy Domain-scoped cookie', async () => {
+    const { env } = fakeEnv({ id: 'user-1' });
+    (env as any).APP_BASE_URL = 'https://congress.trade';
+    const app = new Hono<{ Bindings: Env }>();
+    app.get('/login', async (c) => {
+      await setSessionCookie(c, 'replacement-token');
+      return c.json({ ok: true });
+    });
 
-    // Allowed domains
-    expect(getSafeRedirectUrl('https://congress.trade/path', base, domain)).toBe('https://congress.trade/path');
-    expect(getSafeRedirectUrl('https://admin.congress.trade/path', base, domain)).toBe('https://admin.congress.trade/path');
-    expect(getSafeRedirectUrl('http://localhost:8787/path', base, domain)).toBe('http://localhost:8787/path');
+    const res = await app.request('https://www.congress.trade/login', {}, env);
+    const cookies = res.headers.getSetCookie();
+    const hostOnlyIndex = cookies.findIndex((v) => v.startsWith('ct_session=replacement-token') && !/domain=/i.test(v));
+    const legacyIndex = cookies.findIndex((v) => /domain=congress\.trade/i.test(v) && /max-age=0/i.test(v));
+    expect(hostOnlyIndex).toBeGreaterThanOrEqual(0);
+    expect(legacyIndex).toBeGreaterThanOrEqual(0);
+    expect(legacyIndex).toBeLessThan(hostOnlyIndex);
+  });
 
-    // Mismatched domains fallback to defaultBase
-    expect(getSafeRedirectUrl('https://malicious.com/path', base, domain)).toBe(base);
-    expect(getSafeRedirectUrl(undefined, base, domain)).toBe(base);
+  it('clearSessionCookie evicts host-only and legacy Domain-scoped cookies', async () => {
+    const { env } = fakeEnv({ id: 'user-1' });
+    (env as any).APP_BASE_URL = 'https://congress.trade';
+    const app = new Hono<{ Bindings: Env }>();
+    app.post('/logout', async (c) => {
+      await clearSessionCookie(c);
+      return c.json({ ok: true });
+    });
+
+    const res = await app.request('https://congress.trade/logout', { method: 'POST' }, env);
+    const cookies = res.headers.getSetCookie();
+    const hostOnly = cookies.find((v) => v.startsWith('ct_session=') && !/domain=/i.test(v));
+    const legacy = cookies.find((v) => /domain=congress\.trade/i.test(v));
+    expect(hostOnly).toContain('Max-Age=0');
+    expect(legacy).toContain('Max-Age=0');
+  });
+});
+
+describe('getSafeRedirectUrl (exact-origin allowlist)', () => {
+  const base = 'https://congress.trade';
+
+  it('allows the exact configured origin and local dev', () => {
+    expect(getSafeRedirectUrl('https://congress.trade/path', base)).toBe('https://congress.trade/path');
+    expect(getSafeRedirectUrl('http://localhost:8787/path', base)).toBe('http://localhost:8787/path');
+    expect(getSafeRedirectUrl('http://127.0.0.1:8787/path', base)).toBe('http://127.0.0.1:8787/path');
+  });
+
+  it('rejects hostile sibling subdomains and lookalike hosts', () => {
+    expect(getSafeRedirectUrl('https://evil.congress.trade/steal', base)).toBe(base);
+    expect(getSafeRedirectUrl('https://admin.congress.trade/path', base)).toBe(base);
+    expect(getSafeRedirectUrl('https://congress.trade.evil.com/path', base)).toBe(base);
+    expect(getSafeRedirectUrl('https://malicious.com/path', base)).toBe(base);
+  });
+
+  it('rejects scheme downgrades, garbage, and empty values', () => {
+    expect(getSafeRedirectUrl('http://congress.trade/path', base)).toBe(base);
+    expect(getSafeRedirectUrl('not a url', base)).toBe(base);
+    expect(getSafeRedirectUrl(undefined, base)).toBe(base);
   });
 });

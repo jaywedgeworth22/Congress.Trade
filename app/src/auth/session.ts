@@ -63,7 +63,14 @@ function isHttps(c: Context): boolean {
   }
 }
 
-export async function getCookieDomain(c: Context<{ Bindings: Env }>): Promise<string | undefined> {
+/**
+ * Legacy Domain= attribute derivation, retained ONLY so logout can evict
+ * session cookies issued before the switch to host-only cookies (CT-AUD-007).
+ * Cookies are no longer EMITTED with a Domain attribute: a Domain= cookie is
+ * sent to every subdomain, so a compromised or hostile sibling host (e.g.
+ * evil.congress.trade) would receive the session token.
+ */
+async function legacyCookieDomain(c: Context<{ Bindings: Env }>): Promise<string | undefined> {
   const configured = (await resolveSecret(c.env, 'APP_BASE_URL')).value?.trim();
   if (!configured) return undefined;
   try {
@@ -82,49 +89,77 @@ export async function getCookieDomain(c: Context<{ Bindings: Env }>): Promise<st
   }
 }
 
-export function getSafeRedirectUrl(origin: string | undefined, defaultBase: string, domain: string | undefined): string {
+/**
+ * Post-login redirect validation: exact-origin allowlist only (CT-AUD-007).
+ * A candidate origin is accepted when it exactly matches the configured
+ * APP_BASE_URL origin, or is localhost/127.0.0.1 (local dev). Anything else —
+ * including sibling subdomains like https://evil.congress.trade — falls back
+ * to the configured base.
+ */
+export function getSafeRedirectUrl(origin: string | undefined, defaultBase: string): string {
   if (!origin) return defaultBase;
   try {
     const originUrl = new URL(origin);
     const defaultUrl = new URL(defaultBase);
 
-    // If it exactly matches the default origin, it's safe
+    // Exact match on the configured origin is safe.
     if (originUrl.origin === defaultUrl.origin) return origin;
 
-    // If it's localhost or 127.0.0.1 (local dev), it's safe
+    // Local dev is safe.
     if (originUrl.hostname === 'localhost' || originUrl.hostname === '127.0.0.1') return origin;
 
-    // If we have a shared root domain configured, allow any subdomain of it
-    if (domain) {
-      if (originUrl.hostname.endsWith('.' + domain) || originUrl.hostname === domain) {
-        return origin;
-      }
-    }
     return defaultBase;
   } catch {
     return defaultBase;
   }
 }
 
+/** Host-only session cookie: Domain is deliberately omitted (CT-AUD-007). */
 export async function setSessionCookie(c: Context<{ Bindings: Env }>, token: string): Promise<void> {
-  const domain = await getCookieDomain(c);
+  // Expire the legacy Domain-scoped cookie first. Browsers process Set-Cookie
+  // headers in order; emitting this after the host-only replacement can expire
+  // the just-issued cookie on the apex host as well.
+  const legacyDomain = await legacyCookieDomain(c);
+  if (legacyDomain) deleteCookie(c, SESSION_COOKIE, { path: '/', domain: legacyDomain });
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
     secure: isHttps(c),
     sameSite: 'Lax',
     path: '/',
     maxAge: SESSION_TTL_SEC,
-    domain,
   });
 }
 
 export async function clearSessionCookie(c: Context<{ Bindings: Env }>): Promise<void> {
-  const domain = await getCookieDomain(c);
-  deleteCookie(c, SESSION_COOKIE, { path: '/', domain });
+  deleteCookie(c, SESSION_COOKIE, { path: '/' });
+  // Also evict any pre-host-only cookie that was issued with Domain=<apex>;
+  // it is a distinct cookie in the browser jar and would otherwise linger.
+  const legacyDomain = await legacyCookieDomain(c);
+  if (legacyDomain) deleteCookie(c, SESSION_COOKIE, { path: '/', domain: legacyDomain });
 }
 
 export function getSessionToken(c: Context): string | undefined {
   return getCookie(c, SESSION_COOKIE);
+}
+
+/**
+ * Every ct_session value present on the request. During the host-only cookie
+ * migration a browser can hold two ct_session cookies (the legacy Domain=apex
+ * one and the new host-only one); logout must revoke both KV sessions, and
+ * Hono's getCookie only surfaces one of them.
+ */
+function allCookieSessionTokens(c: Context): string[] {
+  const header = c.req.header('Cookie');
+  if (!header) return [];
+  const tokens: string[] = [];
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() !== SESSION_COOKIE) continue;
+    const value = part.slice(eq + 1).trim();
+    if (value) tokens.push(value);
+  }
+  return tokens;
 }
 
 function bearerSessionToken(c: Context): string | undefined {
@@ -142,9 +177,10 @@ export function getSessionTokenFromRequest(c: Context): string | undefined {
 }
 
 /** Return every distinct session credential presented by the request. Logout
- * uses this to revoke a browser cookie and native bearer token together. */
+ * uses this to revoke browser cookies (including a duplicate legacy
+ * Domain-scoped cookie) and a native bearer token together. */
 export function getSessionTokensFromRequest(c: Context): string[] {
-  const tokens = [getSessionToken(c), bearerSessionToken(c)].filter(
+  const tokens = [...allCookieSessionTokens(c), bearerSessionToken(c)].filter(
     (token): token is string => Boolean(token),
   );
   return [...new Set(tokens)];
