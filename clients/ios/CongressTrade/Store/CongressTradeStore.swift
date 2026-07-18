@@ -34,6 +34,11 @@ final class CongressTradeStore: ObservableObject {
     private var pendingWatchlistMutation: PendingWatchlistMutation?
     private var pendingDeliveryMutation: PendingDeliveryMutation?
     private var pendingSubscriptionMutations: [String: PendingSubscriptionMutation] = [:]
+    /// Set when a `refresh()` is requested while one is already running (e.g. the
+    /// user toggles chambers mid catch-up). The in-flight refresh re-runs once
+    /// against the latest `selectedChambers` when it finishes, so a chip change
+    /// during a sync never leaves the newly selected filter unsynced.
+    private var refreshQueued = false
 
     private static let cacheLimit = 500
     /// Rows requested per feed page during catch-up sync.
@@ -87,7 +92,13 @@ final class CongressTradeStore: ObservableObject {
     }
 
     func refresh() async {
-        guard !isRefreshing else { return }
+        // A refresh requested while one is in flight (a chip toggle during a
+        // catch-up loop) is captured here and replayed against the latest
+        // selection when the current pass ends, rather than silently dropped.
+        guard !isRefreshing else {
+            refreshQueued = true
+            return
+        }
         isRefreshing = true
         feedNotice = nil
         let chambers = selectedChambers
@@ -118,6 +129,12 @@ final class CongressTradeStore: ObservableObject {
                 : error.localizedDescription
         }
         isRefreshing = false
+        // Replay a coalesced request against the now-current selection (a single
+        // re-run collapses any number of chip toggles that arrived mid-refresh).
+        if refreshQueued {
+            refreshQueued = false
+            await refresh()
+        }
     }
 
     private struct FeedSyncResult {
@@ -132,7 +149,16 @@ final class CongressTradeStore: ObservableObject {
     /// short of a full page (exhausted) or the bounded page cap is hit, and
     /// retries transient failures with backoff in between. CT-AUD-009.
     private func syncFeed(filterKey: String, chamberParam: String?) async throws -> FeedSyncResult {
-        guard let startingCursor = cursorStore.cursor(for: filterKey) ?? fetchMaxLocalCursor() else {
+        // Only the default (house+senate) filter may resume from the pre-existing
+        // local cache: rows cached before per-filter cursors shipped are that
+        // default view, so their max cursor is a valid resume point for it alone.
+        // Any OTHER filter that has never been synced must cold-start from a fresh
+        // newest-page snapshot — seeding it from the default view's watermark
+        // would skip every matching row at or below that unrelated cursor.
+        let isDefaultFilter = filterKey == Self.chamberFilterKey(for: Self.defaultChambers)
+        let resumeCursor = cursorStore.cursor(for: filterKey)
+            ?? (isDefaultFilter ? fetchMaxLocalCursor() : nil)
+        guard let startingCursor = resumeCursor else {
             // Cold start for this exact filter: bounded newest-page snapshot,
             // not a full historical backfill.
             let response = try await fetchPageWithRetry(
