@@ -1,0 +1,54 @@
+name: Deploy PWA
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'clients/pwa/**'
+      - '.github/workflows/deploy-pwa.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-pwa
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: clients/pwa/package-lock.json
+
+      - name: Install dependencies
+        working-directory: clients/pwa
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: clients/pwa
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: clients/pwa
+        run: npm test
+
+      - name: Build Next.js PWA
+        working-directory: clients/pwa
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: congress-trade-pwa
+          directory: clients/pwa/out
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
