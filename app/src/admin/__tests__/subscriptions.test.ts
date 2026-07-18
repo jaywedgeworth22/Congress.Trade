@@ -6,22 +6,26 @@ import type { SubscriptionRow } from '../../delivery/rows';
 
 function makeEnv(seed: SubscriptionRow[], envOverrides: Record<string, string> = {}) {
   const rows = new Map(seed.map((row) => [row.id, { ...row }]));
+  // Mirrors the corrected quota query: only active rows count.
+  const quotaCounts = (clientId: unknown) => {
+    const active = Array.from(rows.values()).filter(
+      (row) => row.client_id === clientId && row.active === 1,
+    );
+    return { total: active.length, active: active.length };
+  };
   const prepare = (sql: string) => ({
     params: [] as unknown[],
     async first<T>() {
-      if (/COUNT\(\*\) AS total/i.test(sql)) {
-        // Mirrors the corrected quota query: only active rows count.
-        const active = Array.from(rows.values()).filter(
-          (row) => row.client_id === this.params[0] && row.active === 1,
-        );
-        return { total: active.length, active: active.length } as T;
-      }
+      if (/COUNT\(\*\) AS total/i.test(sql)) return quotaCounts(this.params[0]) as T;
       if (/FROM subscriptions WHERE id = \?/i.test(sql)) {
         return (rows.get(String(this.params[0])) ?? null) as T | null;
       }
       return null as T | null;
     },
     async all<T>() {
+      // The `first` db helper reads results[0] from .all(); serve the quota
+      // aggregate here too so it keeps its {total, active} shape.
+      if (/COUNT\(\*\) AS total/i.test(sql)) return { results: [quotaCounts(this.params[0])] as T[] };
       if (/FROM subscriptions/i.test(sql)) return { results: Array.from(rows.values()) as T[] };
       return { results: [] as T[] };
     },
