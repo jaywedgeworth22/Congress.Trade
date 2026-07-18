@@ -55,3 +55,8 @@ jobs:
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The action's SARIF artifact upload assumes $HOME is the artifact
+          # root; the Coolify runner's workspace is mounted elsewhere. The
+          # scan and PR comments remain enabled; disable only that optional
+          # upload when CT_CI_RUNNER selects self-hosted execution.
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: ${{ vars.CT_CI_RUNNER && 'false' || 'true' }}
