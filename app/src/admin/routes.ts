@@ -145,6 +145,8 @@ import {
   BenchmarkSettingsConflictError,
   BenchmarkSettingsValidationError,
   BenchmarkSettingsWriteError,
+  getUnderlyingProvider,
+  isOpenRouterAuto,
   readBenchmarkLineupSettings,
   readBenchmarkRoleSettings,
   saveBenchmarkLineupSettings,
@@ -6135,10 +6137,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         return c.json({ error: (error as Error).message }, 400);
       }
       const lineup = [agModels.a, agModels.b, ...(agModels.c ? [agModels.c] : [])];
+      if (lineup.some(isOpenRouterAuto)) {
+        return c.json({
+          error: 'openrouter/auto cannot be used in agreement benchmarks because its routing is unpredictable',
+        }, 400);
+      }
       if (new Set(lineup.map((model) => `${model.provider}:${model.model}`)).size !== lineup.length) {
         return c.json({ error: 'agreement benchmark models must be distinct' }, 400);
       }
-      if (new Set(lineup.map((model) => model.provider)).size !== lineup.length) {
+      if (new Set(lineup.map(getUnderlyingProvider)).size !== lineup.length) {
         return c.json({ error: 'agreement benchmark models must use distinct providers' }, 400);
       }
       const filing = await get<{ raw_object_key: string | null }>(
