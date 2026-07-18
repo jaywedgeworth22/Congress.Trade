@@ -142,8 +142,11 @@ describe('host-only session cookies (CT-AUD-007)', () => {
 
     const res = await app.request('https://www.congress.trade/login', {}, env);
     const cookies = res.headers.getSetCookie();
-    expect(cookies.some((v) => v.startsWith('ct_session=replacement-token') && !/domain=/i.test(v))).toBe(true);
-    expect(cookies.some((v) => /domain=congress\.trade/i.test(v) && /max-age=0/i.test(v))).toBe(true);
+    const hostOnlyIndex = cookies.findIndex((v) => v.startsWith('ct_session=replacement-token') && !/domain=/i.test(v));
+    const legacyIndex = cookies.findIndex((v) => /domain=congress\.trade/i.test(v) && /max-age=0/i.test(v));
+    expect(hostOnlyIndex).toBeGreaterThanOrEqual(0);
+    expect(legacyIndex).toBeGreaterThanOrEqual(0);
+    expect(legacyIndex).toBeLessThan(hostOnlyIndex);
   });
 
   it('clearSessionCookie evicts host-only and legacy Domain-scoped cookies', async () => {

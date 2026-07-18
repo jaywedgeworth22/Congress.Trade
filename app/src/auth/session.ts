@@ -116,6 +116,11 @@ export function getSafeRedirectUrl(origin: string | undefined, defaultBase: stri
 
 /** Host-only session cookie: Domain is deliberately omitted (CT-AUD-007). */
 export async function setSessionCookie(c: Context<{ Bindings: Env }>, token: string): Promise<void> {
+  // Expire the legacy Domain-scoped cookie first. Browsers process Set-Cookie
+  // headers in order; emitting this after the host-only replacement can expire
+  // the just-issued cookie on the apex host as well.
+  const legacyDomain = await legacyCookieDomain(c);
+  if (legacyDomain) deleteCookie(c, SESSION_COOKIE, { path: '/', domain: legacyDomain });
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
     secure: isHttps(c),
@@ -123,10 +128,6 @@ export async function setSessionCookie(c: Context<{ Bindings: Env }>, token: str
     path: '/',
     maxAge: SESSION_TTL_SEC,
   });
-  // Replace the legacy cookie and evict its distinct Domain-scoped copy so it
-  // is no longer sent to sibling subdomains after the next authenticated flow.
-  const legacyDomain = await legacyCookieDomain(c);
-  if (legacyDomain) deleteCookie(c, SESSION_COOKIE, { path: '/', domain: legacyDomain });
 }
 
 export async function clearSessionCookie(c: Context<{ Bindings: Env }>): Promise<void> {
