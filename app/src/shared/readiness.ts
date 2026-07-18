@@ -65,6 +65,7 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
        FROM review_queue LIMIT 0`,
   ],
   ['llm_budget', 'SELECT day, reads FROM llm_budget LIMIT 0'],
+  ['d1_budget', 'SELECT day, rows_read, rows_written FROM d1_budget LIMIT 0'],
   ['ingestion_decisions', 'SELECT doc_id, action, transaction_ids FROM ingestion_decisions LIMIT 0'],
   ['client_commands', 'SELECT id, user_id, status, idempotency_key FROM client_commands LIMIT 0'],
   ['securities_ref', 'SELECT ticker, sector, market_cap_bucket FROM securities_ref LIMIT 0'],

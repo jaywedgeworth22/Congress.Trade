@@ -21,7 +21,8 @@
 import { Hono, type Context } from 'hono';
 import { MAX_REFS_BATCH } from '@jaywedgeworth22/congress-trading-shared';
 import type { Chamber, Env, Subscription, TxType } from '../shared/types';
-import { all, get } from '../shared/db';
+import { all, first, get } from '../shared/db';
+import { cached } from '../shared/kvCache';
 import {
   buildTransactionsQuery,
   buildTransactionsCountQuery,
@@ -273,11 +274,11 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // Total = ALL rows matching the same ticker/member/type/chamber filters,
     // ignoring the cursor backstop (so the UI can show "showing X of N").
     const countQuery = buildTransactionsCountQuery(params);
-    const countRow = await get<{ total: number }>(c.env.DB, countQuery.sql, countQuery.params);
+    const countRow = await first<{ total: number }>(c.env.DB, countQuery.sql, countQuery.params);
     const total = countRow?.total ?? transactions.length;
     const today = new Date().toISOString().slice(0, 10);
     const todayQuery = buildTransactionsTodayFilingsQuery(params, today);
-    const todayRow = await get<{ total: number }>(c.env.DB, todayQuery.sql, todayQuery.params);
+    const todayRow = await first<{ total: number }>(c.env.DB, todayQuery.sql, todayQuery.params);
     // Count served rows against the caller's daily budget. Incremental polls
     // (the dashboard's steady state) return zero rows and skip the KV write.
     await spendRowBudget(c.env, ip, transactions.length);
@@ -608,39 +609,46 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // --- GET /members -------------------------------------------------------
   // Filers that actually appear in the transaction feed, joined to filer meta.
   r.get('/members', async (c) => {
-    const rows = await all<{
-      filer_id: string;
-      full_name: string | null;
-      chamber: string | null;
-      party: string | null;
-      state: string | null;
-      district: string | null;
-      tx_count: number;
-    }>(
-      c.env.DB,
-      `SELECT t.filer_id AS filer_id,
-              f.full_name AS full_name,
-              f.chamber   AS chamber,
-              f.party     AS party,
-              f.state     AS state,
-              f.district  AS district,
-              COUNT(*)    AS tx_count
-         FROM transactions t
-         LEFT JOIN filers f ON f.bioguide_id = t.filer_id
-        WHERE t.filer_id IS NOT NULL
-        GROUP BY t.filer_id
-        ORDER BY tx_count DESC`,
-    );
-    const members = rows.map((row) => ({
-      filerId: row.filer_id,
-      fullName: row.full_name,
-      chamber: row.chamber,
-      party: row.party,
-      state: row.state,
-      district: row.district,
-      txCount: row.tx_count,
-    }));
-    return c.json({ members, count: members.length });
+    // Full-corpus GROUP BY over transactions with a joined-table filter — not
+    // indexable, and recomputed on every members page load. Cache the whole
+    // roster (no params → a single key); it only shifts with the daily ingest
+    // bursts, so a 30-min TTL is invisible to users and cuts a full scan per hit.
+    const payload = await cached(c.env, 'members:roster', 1800, async () => {
+      const rows = await all<{
+        filer_id: string;
+        full_name: string | null;
+        chamber: string | null;
+        party: string | null;
+        state: string | null;
+        district: string | null;
+        tx_count: number;
+      }>(
+        c.env.DB,
+        `SELECT t.filer_id AS filer_id,
+                f.full_name AS full_name,
+                f.chamber   AS chamber,
+                f.party     AS party,
+                f.state     AS state,
+                f.district  AS district,
+                COUNT(*)    AS tx_count
+           FROM transactions t
+           LEFT JOIN filers f ON f.bioguide_id = t.filer_id
+          WHERE t.filer_id IS NOT NULL
+          GROUP BY t.filer_id
+          ORDER BY tx_count DESC`,
+      );
+      const members = rows.map((row) => ({
+        filerId: row.filer_id,
+        fullName: row.full_name,
+        chamber: row.chamber,
+        party: row.party,
+        state: row.state,
+        district: row.district,
+        txCount: row.tx_count,
+      }));
+      return { members, count: members.length };
+    });
+    return c.json(payload);
   });
 
   // --- POST /subscriptions ------------------------------------------------

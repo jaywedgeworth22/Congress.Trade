@@ -5,6 +5,7 @@
  */
 
 import type { Env } from './types';
+import { recordD1Meta } from './d1Budget';
 
 export type SqlParam = string | number | boolean | null | ArrayBuffer;
 
@@ -23,6 +24,18 @@ export async function get<T = Record<string, unknown>>(
   return row ?? null;
 }
 
+/** Fetch the first row through .all(), preserving D1 row metadata for aggregate queries. */
+export async function first<T = Record<string, unknown>>(
+  db: D1Database,
+  sql: string,
+  params: SqlParam[] = [],
+): Promise<T | null> {
+  const stmt = bindParams(db.prepare(sql), params);
+  const res = await stmt.all<T>();
+  recordD1Meta(res?.meta);
+  return res?.results?.[0] ?? null;
+}
+
 /** Fetch all rows mapped to T[]. */
 export async function all<T = Record<string, unknown>>(
   db: D1Database,
@@ -31,7 +44,8 @@ export async function all<T = Record<string, unknown>>(
 ): Promise<T[]> {
   const stmt = bindParams(db.prepare(sql), params);
   const res = await stmt.all<T>();
-  return res.results ?? [];
+  recordD1Meta(res?.meta);
+  return res?.results ?? [];
 }
 
 /** Execute a write (INSERT/UPDATE/DELETE) and return the D1 meta result. */
@@ -41,7 +55,9 @@ export async function run(
   params: SqlParam[] = [],
 ): Promise<D1Result> {
   const stmt = bindParams(db.prepare(sql), params);
-  return stmt.run();
+  const res = await stmt.run();
+  recordD1Meta(res?.meta);
+  return res;
 }
 
 /**
@@ -54,13 +70,39 @@ export async function batch(
 ): Promise<D1Result[]> {
   const prepared = statements.map(([sql, params]) => bindParams(db.prepare(sql), params));
   if (typeof db.batch === 'function') {
-    return db.batch(prepared);
+    const results = await db.batch(prepared);
+    for (const r of results ?? []) recordD1Meta(r?.meta);
+    return results;
   }
-  
+
   // Fallback for mock environments (e.g., vitest without db.batch implemented)
   const results: D1Result[] = [];
   for (const stmt of prepared) {
-    results.push(await stmt.run());
+    const r = await stmt.run();
+    recordD1Meta(r?.meta);
+    results.push(r);
+  }
+  return results;
+}
+
+/**
+ * Run already-prepared statements atomically while preserving D1 row metering.
+ * Use this at application call sites that need dynamic bind construction.
+ */
+export async function batchPrepared(
+  db: D1Database,
+  statements: D1PreparedStatement[],
+): Promise<D1Result[]> {
+  if (typeof db.batch === 'function') {
+    const results = await db.batch(statements);
+    for (const r of results ?? []) recordD1Meta(r?.meta);
+    return results;
+  }
+  const results: D1Result[] = [];
+  for (const stmt of statements) {
+    const r = await stmt.run();
+    recordD1Meta(r?.meta);
+    results.push(r);
   }
   return results;
 }
