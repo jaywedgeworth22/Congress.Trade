@@ -48,11 +48,6 @@ async function baseUrl(c: Context<{ Bindings: Env }>): Promise<string> {
   return new URL(c.req.url).origin;
 }
 
-/** OAuth redirect URI must remain on the host that set the host-only state cookie. */
-function oauthCallbackUrl(c: Context<{ Bindings: Env }>): string {
-  return `${new URL(c.req.url).origin}/auth/google/callback`;
-}
-
 /** Trim the User down to what the browser is allowed to see. */
 function publicUser(u: User): { id: string; email: string; name: string | null; picture: string | null } {
   return { id: u.id, email: u.email, name: u.name, picture: u.picture };
@@ -104,6 +99,17 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   // --- GET /auth/google/start ---------------------------------------------
   r.get('/google/start', async (c) => {
     if (!(await resolveSecret(c.env, 'GOOGLE_OAUTH_CLIENT_ID')).value) return c.json({ error: 'google login not configured' }, 503);
+    const base = await baseUrl(c);
+    const requestUrl = new URL(c.req.url);
+    const callbackBase = new URL(base);
+    // State is host-only, so canonicalize the start request before issuing it
+    // when a user arrived on a non-apex alias. This keeps the state cookie and
+    // the fixed, documented Google callback host aligned.
+    if (requestUrl.origin !== callbackBase.origin) {
+      requestUrl.protocol = callbackBase.protocol;
+      requestUrl.host = callbackBase.host;
+      return c.redirect(requestUrl.toString());
+    }
     const state = randomToken(16);
 
     // Save the initiator's origin so we can redirect back to it on callback
@@ -130,7 +136,7 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       path: '/',
       maxAge: 600,
     });
-    const url = await buildGoogleAuthUrl(c.env, oauthCallbackUrl(c), state);
+    const url = await buildGoogleAuthUrl(c.env, `${base}/auth/google/callback`, state);
     return c.redirect(url);
   });
 
@@ -152,7 +158,7 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       return c.redirect(`${targetOrigin}/?login=error`);
     }
     try {
-      const redirectUri = oauthCallbackUrl(c);
+      const redirectUri = `${base}/auth/google/callback`;
       const accessToken = await exchangeGoogleCode(c.env, code, redirectUri);
       const profile = await fetchGoogleProfile(accessToken);
       // Account-takeover guard: never match-or-create an account by an email
