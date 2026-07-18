@@ -24,7 +24,7 @@ import type { Env, Subscription, Transaction } from '../shared/types';
 import { all, get, run } from '../shared/db';
 import { prefixedId } from '../shared/ids';
 import { mapSubscription, mapTransaction, type SubscriptionRow, type TransactionRow } from './rows';
-import { matchesFiltersWithContext, webhookTargetLengthError } from './subscriptions';
+import { matchesFiltersWithContext, subscriptionOwnerEntitled, webhookTargetLengthError } from './subscriptions';
 import { resolveSecret } from '../secrets/infisical';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget';
 import { notifyAdmin } from '../alerts/notify';
@@ -273,6 +273,16 @@ async function deliverToSubscription(
   );
   if (!stillActive) return;
 
+  // Entitlement re-check at delivery time (panel HIGH: trial-and-cancel kept
+  // premium webhooks flowing forever). A lapsed owner's delivery is skipped —
+  // durably marked, never retried — without consuming a delivery attempt. If
+  // the owner renews, later transactions flow again (and a re-dispatch of
+  // this one can still claim the 'skipped' row).
+  if (!(await subscriptionOwnerEntitled(env, sub.clientId))) {
+    await markDeliverySkipped(env, sub.id, tx.id);
+    return;
+  }
+
   const claim = await claimDelivery(env, sub.id, tx.id);
   if (claim.outcome === 'delivered') return;
   if (claim.outcome === 'busy') {
@@ -371,6 +381,24 @@ type DeliveryClaim =
   | { outcome: 'claimed'; id: string; token: string; attempt: number }
   | { outcome: 'busy'; delaySeconds: number }
   | { outcome: 'delivered' };
+
+/**
+ * Durably record that a delivery was skipped because the subscription owner's
+ * entitlement lapsed. Insert-only: if a deliveries row already exists (e.g. a
+ * mid-retry lapse), it is left untouched — the entitlement gate above simply
+ * stops further POSTs without consuming attempts.
+ */
+async function markDeliverySkipped(env: Env, subscriptionId: string, txId: string): Promise<void> {
+  await run(
+    env.DB,
+    `INSERT INTO deliveries (id, subscription_id, tx_id, status, attempts, last_error, updated_at)
+     VALUES (?, ?, ?, 'skipped', 0, 'subscription owner entitlement inactive', ?)
+     ON CONFLICT (subscription_id, tx_id) DO NOTHING`,
+    [prefixedId('dlv'), subscriptionId, txId, new Date().toISOString()],
+  ).catch((err) =>
+    console.warn('markDeliverySkipped failed', subscriptionId, txId, (err as Error).message),
+  );
+}
 
 async function alertTerminalDelivery(
   env: Env,

@@ -56,6 +56,7 @@ import {
   deliverUsageTelemetryEvent,
   flushUsageTelemetryFallback,
   isUsageTelemetryCircuitOpen,
+  isTerminalUsageTelemetryDeliveryError,
   persistUsageTelemetryFallback,
   trackedFetch,
   withThirdPartyTelemetry,
@@ -539,10 +540,23 @@ const queueWorker = Sentry.withSentry(
             message.ack();
           } catch (err) {
             const messageType = (message.body as QueueMessage).type;
+            if (messageType === 'usage.telemetry' && isTerminalUsageTelemetryDeliveryError(err)) {
+              // Deterministic payload/idempotency rejects cannot be recovered
+              // by replaying the same DLQ message.
+              message.ack();
+              continue;
+            }
             // Usage Monitor outage retries must not create a Sentry envelope,
             // which would create another Usage Monitor event and amplify.
             if (messageType === 'usage.telemetry') {
-              await persistUsageTelemetryFallback(env, (message.body as QueueMessage & { type: 'usage.telemetry' }).event);
+              const retained = await persistUsageTelemetryFallback(
+                env,
+                (message.body as QueueMessage & { type: 'usage.telemetry' }).event,
+              );
+              if (retained) {
+                message.ack();
+                continue;
+              }
             } else {
               Sentry.captureException(err as Error, {
                 tags: { queue: batch.queue, recovery: 'dead-letter' },
@@ -588,11 +602,24 @@ const queueWorker = Sentry.withSentry(
           message.ack();
         } catch (err) {
           const messageType = (message.body as QueueMessage).type;
+          if (messageType === 'usage.telemetry' && isTerminalUsageTelemetryDeliveryError(err)) {
+            // Ack deterministic payload/idempotency rejects instead of writing
+            // the same poison event back to R2 and retrying it forever.
+            message.ack();
+            continue;
+          }
           const ingestRetry = isDelivery
             ? null
             : classifyTransientIngestError(err, message.attempts);
           if (messageType === 'usage.telemetry') {
-            await persistUsageTelemetryFallback(env, (message.body as QueueMessage & { type: 'usage.telemetry' }).event);
+            const retained = await persistUsageTelemetryFallback(
+              env,
+              (message.body as QueueMessage & { type: 'usage.telemetry' }).event,
+            );
+            if (retained) {
+              message.ack();
+              continue;
+            }
           } else {
             console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
             // console.error above is only a breadcrumb/log; the retry swallows the

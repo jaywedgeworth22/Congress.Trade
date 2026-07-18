@@ -911,13 +911,19 @@ function usageTelemetryErrorStatus(error: unknown): number | null {
  * plain Errors, so retain the stable error phrases it emits as a fallback
  * until the shared package exposes the response status directly.
  */
-function isTerminalUsageTelemetryDeliveryError(error: unknown): boolean {
+export function isTerminalUsageTelemetryDeliveryError(error: unknown): boolean {
   if (error instanceof UsageTelemetryCircuitOpenError) return false;
   const status = usageTelemetryErrorStatus(error);
-  if (status !== null) return status >= 400 && status < 500 && status !== 408 && status !== 429;
   const message = error instanceof Error ? error.message : String(error ?? '');
-  return /\b(?:400|401|403|404|405|409|410|412|413|415|422|424|428|431)\b/.test(message)
-    || /\b(?:bad request|unauthorized|forbidden|not found|conflict|unprocessable|schema|idempotency|invalid payload|malformed payload|required.*idempotency)\b/i.test(message);
+  // Authentication, endpoint, and receiver-wide 4xxs are transient from the
+  // application's perspective: they must open the circuit and push retries to
+  // durable fallback. Only errors that identify this event's payload or
+  // idempotency identity as invalid are safe to quarantine.
+  const eventSpecific = /\b(?:schema|idempotency|invalid payload|malformed payload|required.*idempotency|event\s+\d+.*invalid)\b/i.test(message);
+  if (eventSpecific) return true;
+  // If a future client exposes status without a useful body, only treat 400 as
+  // potentially event-specific after the explicit message check above.
+  return status === 400 && /\b(?:validation|field|property)\b/i.test(message);
 }
 
 /**
@@ -1019,16 +1025,48 @@ export async function flushUsageTelemetryFallback(
       expired += 1;
       continue;
     }
+    let event: ThirdPartyUsageTelemetryEvent;
+    let body: R2ObjectBody | null;
     try {
-      const body = await storage?.get(object.key);
-      if (!body) continue;
-      const event = parseUsageTelemetryFallback(await body.text());
+      body = (await storage?.get(object.key)) ?? null;
+    } catch {
+      // A transient R2 read failure must retain the object for the next flush.
+      failed += 1;
+      continue;
+    }
+    if (!body) continue;
+    let raw: string;
+    try {
+      raw = await body.text();
+    } catch {
+      // A transient stream/read failure must retain the object too.
+      failed += 1;
+      continue;
+    }
+    try {
+      event = parseUsageTelemetryFallback(raw);
+    } catch {
+      // A malformed R2 object is terminal and must not pin the bounded list.
+      try {
+        await storage?.delete(object.key);
+        r2Removed += 1;
+      } catch {}
+      failed += 1;
+      continue;
+    }
+    try {
       await deliverUsageTelemetryEvent(env, event);
       await storage?.delete(object.key);
       r2Removed += 1;
       delivered += 1;
-    } catch {
+    } catch (error) {
       failed += 1;
+      if (isTerminalUsageTelemetryDeliveryError(error)) {
+        try {
+          await storage?.delete(object.key);
+          r2Removed += 1;
+        } catch {}
+      }
     }
   }
   // Maintain the O(1) admission counter. When the bounded list was the entire

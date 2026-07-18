@@ -395,6 +395,7 @@ export default function Dashboard() {
             cursor: 'pointer',
             transition: 'all 0.2s',
           }}
+          className="desktop-only"
           onClick={() => setIsConfigOpen(!isConfigOpen)}
         >
           ⚙️ Columns
