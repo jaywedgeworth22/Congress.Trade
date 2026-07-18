@@ -1,0 +1,4 @@
+# Keep the static Pages app same-origin while proxying its relative client API
+# calls to the canonical Congress.Trade Worker. This preserves the existing
+# blank NEXT_PUBLIC_API_BASE_URL and avoids requiring public CORS on the API.
+/api/* https://congress.trade/api/:splat 200
