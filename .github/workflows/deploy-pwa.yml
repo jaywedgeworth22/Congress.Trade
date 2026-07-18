@@ -50,6 +50,6 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           projectName: congress-trade-pwa
-          directory: clients/pwa/out
+          directory: out
           workingDirectory: clients/pwa
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
