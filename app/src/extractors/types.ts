@@ -207,6 +207,8 @@ export interface ExtractorInput {
 export interface Extractor {
   /** Stable extractor name, recorded on filings.extractor. */
   name: string;
+  /** Optional concrete provider scope for the rate-limit circuit breaker. */
+  circuitBreakerName?: string;
   /** True if this extractor can handle the given filing (by docKind etc.). */
   canHandle(f: Filing): boolean;
   /** Run extraction. Implementations resolve to an ExtractorResult. */
@@ -231,6 +233,7 @@ export interface Extractor {
  */
 export class ArbitratingExtractor implements Extractor {
   readonly name: string;
+  readonly circuitBreakerName: string;
 
   constructor(
     private readonly primary: Extractor,
@@ -238,6 +241,7 @@ export class ArbitratingExtractor implements Extractor {
     private readonly secondary?: Extractor,
   ) {
     this.name = `arbitrating(${primary.name}${secondary ? `,${secondary.name}` : ''})`;
+    this.circuitBreakerName = primary.circuitBreakerName ?? primary.name;
   }
 
   canHandle(f: Filing): boolean {
@@ -309,12 +313,14 @@ export class ArbitratingExtractor implements Extractor {
  */
 export class FallbackExtractor implements Extractor {
   readonly name: string;
+  readonly circuitBreakerName: string;
 
   constructor(
     private readonly primary: Extractor,
     private readonly secondary: Extractor,
   ) {
     this.name = `fallback(${primary.name},${secondary.name})`;
+    this.circuitBreakerName = primary.circuitBreakerName ?? primary.name;
   }
 
   canHandle(f: Filing): boolean {
@@ -346,12 +352,14 @@ export class FallbackExtractor implements Extractor {
  */
 export class HousePdfExtractor implements Extractor {
   readonly name: string;
+  readonly circuitBreakerName: string;
 
   constructor(
     private readonly textPdf: Extractor,
     private readonly visionPdf: Extractor,
   ) {
     this.name = `housePdf(${textPdf.name},${visionPdf.name})`;
+    this.circuitBreakerName = visionPdf.circuitBreakerName ?? visionPdf.name;
   }
 
   canHandle(f: Filing): boolean {
