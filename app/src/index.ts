@@ -171,7 +171,7 @@ async function handleIngestMessage(env: Env, msg: QueueMessage, queueAttempt = 1
       // receiver from being hammered by this message's own retry/backoff
       // cadence on top of every other in-flight event doing the same thing.
       if (await isUsageTelemetryCircuitOpen(env)) {
-        await persistUsageTelemetryFallback(env, msg.event);
+        await persistUsageTelemetryFallback(env, msg.event, { throwOnFailure: true });
         return;
       }
       await deliverUsageTelemetryEvent(env, msg.event);
@@ -209,7 +209,7 @@ async function handleDeadLetterMessage(
     // while open, persist to the R2 outbox and stop, instead of continuing to
     // attempt the exact same idempotent event on every DLQ redelivery.
     if (await isUsageTelemetryCircuitOpen(env)) {
-      await persistUsageTelemetryFallback(env, msg.event);
+      await persistUsageTelemetryFallback(env, msg.event, { throwOnFailure: true });
       return;
     }
     await deliverUsageTelemetryEvent(env, msg.event);

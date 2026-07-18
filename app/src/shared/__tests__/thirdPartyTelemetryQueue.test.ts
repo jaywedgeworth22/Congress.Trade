@@ -241,6 +241,19 @@ describe('usage telemetry queue routing', () => {
     expect(retry).not.toHaveBeenCalled();
   });
 
+  it('retries instead of ACKing when an open-circuit fallback write is not durable', async () => {
+    mocks.deliver.mockClear();
+    const { batch, ack, retry } = messageBatch('congress-feed-ingest');
+    const put = vi.fn(async () => { throw new Error('R2 unavailable'); });
+    const env = { RAW_FILES: { put }, CONFIG_KV: openCircuitConfigKv() } as unknown as Env;
+
+    await worker.queue(batch, env, {} as ExecutionContext);
+
+    expect(mocks.deliver).not.toHaveBeenCalled();
+    expect(ack).not.toHaveBeenCalled();
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
   it('routes a DLQ usage.telemetry redelivery straight to the R2 outbox without a delivery attempt while the circuit is open, then acks it (no further DLQ churn)', async () => {
     mocks.deliver.mockClear();
     const { batch, ack, retry } = messageBatch('congress-feed-ingest-dlq');
