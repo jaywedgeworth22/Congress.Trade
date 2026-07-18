@@ -172,20 +172,19 @@ describe('usage telemetry queue routing', () => {
     expect(retry).not.toHaveBeenCalled();
   });
 
-  it('retries without ACK when Usage Monitor delivery fails', async () => {
+  it('ACKs after durable fallback persistence when Usage Monitor delivery fails', async () => {
     mocks.deliver.mockRejectedValueOnce(new Error('usage telemetry ingest failed'));
     const { batch, ack, retry } = messageBatch('congress-feed-ingest');
     const put = vi.fn(async () => {});
     const env = { RAW_FILES: { put } } as unknown as Env;
     await worker.queue(batch, env, {} as ExecutionContext);
-    expect(ack).not.toHaveBeenCalled();
-    expect(retry).toHaveBeenCalledOnce();
+    expect(ack).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
     expect(put).toHaveBeenCalledWith(
       '_ops/usage-telemetry/ct-third-party%3Atest-event.json',
       JSON.stringify(event),
       expect.anything(),
     );
-    expect(put.mock.invocationCallOrder[0]).toBeLessThan(retry.mock.invocationCallOrder[0]);
     expect(mocks.captureException).not.toHaveBeenCalled();
   });
 
@@ -198,7 +197,7 @@ describe('usage telemetry queue routing', () => {
     expect(retry).not.toHaveBeenCalled();
   });
 
-  it('persists a DLQ receiver failure before requesting another retry', async () => {
+  it('persists and ACKs a DLQ receiver failure when fallback persistence succeeds', async () => {
     mocks.deliver.mockRejectedValueOnce(new Error('usage telemetry ingest failed'));
     const { batch, ack, retry } = messageBatch('congress-feed-ingest-dlq');
     const put = vi.fn(async () => {});
@@ -206,9 +205,9 @@ describe('usage telemetry queue routing', () => {
 
     await worker.queue(batch, env, {} as ExecutionContext);
 
-    expect(ack).not.toHaveBeenCalled();
+    expect(ack).toHaveBeenCalledOnce();
     expect(put).toHaveBeenCalledOnce();
-    expect(put.mock.invocationCallOrder[0]).toBeLessThan(retry.mock.invocationCallOrder[0]);
+    expect(retry).not.toHaveBeenCalled();
     expect(mocks.captureException).not.toHaveBeenCalled();
   });
 
