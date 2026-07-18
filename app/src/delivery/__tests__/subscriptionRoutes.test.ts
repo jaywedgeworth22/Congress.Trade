@@ -41,6 +41,11 @@ function makeEnv(
       return null as T | null;
     },
     async all<T>() {
+      if (/COUNT\(\*\) AS total/i.test(sql)) {
+        const clientId = String(this.params[0]);
+        const owned = Array.from(rows.values()).filter((row) => row.client_id === clientId);
+        return { results: [{ total: owned.length, active: owned.filter((row) => row.active === 1).length } as T] };
+      }
       if (/FROM subscriptions/i.test(sql)) {
         return { results: Array.from(rows.values()) as T[] };
       }

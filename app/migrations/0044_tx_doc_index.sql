@@ -1,0 +1,19 @@
+-- 0044_tx_doc_index.sql
+-- Plain doc_id index on transactions.
+--
+-- The only doc_id-leading indexes today are PARTIAL uniques gated on
+-- `row_key IS NOT NULL` (idx_transactions_live_doc_source_rowkey). SQLite will
+-- not use a partial index for a query that cannot prove the partial predicate,
+-- so every correlated dedupe/selector subquery of the shape
+--   EXISTS / NOT EXISTS / COUNT(*) FROM transactions WHERE doc_id = ? [AND source ...]
+-- that omits row_key currently FULL-SCANS transactions. Several of these run
+-- once per outer row inside cron selectors (extraction/normalizer.ts,
+-- extraction/agreement.ts lease-acquire + autopublish, ingestion/
+-- fmpDisclosureLatency.ts), so cost scales as (rows scanned in the driving
+-- table) x (rows in transactions) — the single biggest indexable rows-read
+-- amplifier in the app. A doc_id seek collapses each of these to this filing's
+-- handful of rows.
+--
+-- Keep in exact lockstep with TX_DOC_INDEX_SCHEMA_STATEMENTS in
+-- src/admin/migrations.ts (the runtime POST /api/admin/migrate path).
+CREATE INDEX IF NOT EXISTS idx_tx_doc ON transactions (doc_id);
