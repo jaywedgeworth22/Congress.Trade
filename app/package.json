@@ -32,8 +32,8 @@
     "unpdf": "^1.6.2"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.18.5",
-    "@cloudflare/workers-types": "^5.20260716.1",
+    "@cloudflare/vitest-pool-workers": "^0.18.6",
+    "@cloudflare/workers-types": "^5.20260717.1",
     "@fontsource/zilla-slab": "^5.2.8",
     "@sentry/cli": "^3.6.0",
     "@typescript-eslint/eslint-plugin": "^8.64.0",
