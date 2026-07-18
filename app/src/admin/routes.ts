@@ -38,7 +38,7 @@ import {
   ShortVolumeRowSchema,
 } from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
-import { all, batch, get, run, type SqlParam } from '../shared/db';
+import { all, batch, batchPrepared, get, run, type SqlParam } from '../shared/db';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
 import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
 import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config';
@@ -982,7 +982,7 @@ export async function runTickerBackfill(
     }
   }
   for (let i = 0; i < updates.length; i += 50) {
-    await env.DB.batch(updates.slice(i, i + 50));
+    await batchPrepared(env.DB, updates.slice(i, i + 50));
   }
   return { scanned: rows.length, resolved: updates.length };
 }
@@ -1028,7 +1028,7 @@ export async function runPhotoEnrichment(
     );
   }
   for (let i = 0; i < updates.length; i += 50) {
-    await env.DB.batch(updates.slice(i, i + 50));
+    await batchPrepared(env.DB, updates.slice(i, i + 50));
   }
   return { filers: filers.length, matched, unmatched: filers.length - matched };
 }
@@ -1226,7 +1226,7 @@ export async function reserveBenchmarkCalls(env: Env, plannedCalls: number): Pro
   const day = now.slice(0, 10);
   let results: D1Result[];
   try {
-    results = await env.DB.batch([
+    results = await batchPrepared(env.DB, [
       env.DB.prepare(
         `INSERT OR IGNORE INTO benchmark_daily_call_usage
            (day, reserved_calls, updated_at)
@@ -7025,7 +7025,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       const raw = await c.req.text();
       if (raw) {
         const body = JSON.parse(raw) as Record<string, unknown>;
-        if (typeof body.table === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(body.table)) {
+        if (body.table !== undefined) {
+          if (typeof body.table !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(body.table)) {
+            return c.json({ error: 'table must be a valid SQLite identifier' }, 400);
+          }
           table = body.table;
         }
       }
@@ -7268,7 +7271,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       for (let i = 0; i < refStmts.length; i += 100) {
         const chunk = refStmts.slice(i, i + 100);
         try {
-          await c.env.DB.batch(chunk.map((r) => r.stmt));
+          await batchPrepared(c.env.DB, chunk.map((r) => r.stmt));
           summary.refs += chunk.length;
         } catch {
           // Batch failed as a unit — retry the chunk row-by-row to surface the
@@ -7291,7 +7294,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         .filter((x) => typeof x.date === 'string' && typeof x.close === 'number')
         .slice(0, limits.spx);
       for (let i = 0; i < rows.length; i += 100) {
-        await c.env.DB.batch(
+        await batchPrepared(c.env.DB,
           rows.slice(i, i + 100).map((x) =>
             c.env.DB.prepare(
               'INSERT INTO spx_eod (date, close) VALUES (?, ?) ON CONFLICT(date) DO UPDATE SET close=excluded.close',
@@ -7315,7 +7318,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           : [];
         try {
           for (let i = 0; i < closes.length; i += 100) {
-            await c.env.DB.batch(
+            await batchPrepared(c.env.DB,
               closes.slice(i, i + 100).map((x) =>
                 c.env.DB.prepare(
                   `INSERT INTO price_eod (ticker, date, close, volume) VALUES (?, ?, ?, ?)
@@ -7428,7 +7431,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
         .slice(0, limits.insider);
       for (let i = 0; i < rows.length; i += 100) {
-        await c.env.DB.batch(
+        await batchPrepared(c.env.DB,
           rows.slice(i, i + 100).map((o) =>
             c.env.DB.prepare(
               `INSERT INTO insider_eod (ticker, date, sentiment, buy_filings, sell_filings, buy_shares, sell_shares, owners)
@@ -7462,7 +7465,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
         .slice(0, limits.shortVolume);
       for (let i = 0; i < rows.length; i += 100) {
-        await c.env.DB.batch(
+        await batchPrepared(c.env.DB,
           rows.slice(i, i + 100).map((o) =>
             c.env.DB.prepare(
               `INSERT INTO short_volume_eod (ticker, date, short_volume_ratio, elevated)
@@ -7491,7 +7494,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
         .slice(0, 20000);
       for (let i = 0; i < rows.length; i += 100) {
-        await c.env.DB.batch(
+        await batchPrepared(c.env.DB,
           rows.slice(i, i + 100).map((o) =>
             c.env.DB.prepare(
               `INSERT INTO fundamentals_eod (ticker, date, pe_ratio, eps, beta, dividend_yield,
@@ -7536,7 +7539,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
         .slice(0, 20000);
       for (let i = 0; i < rows.length; i += 100) {
-        await c.env.DB.batch(
+        await batchPrepared(c.env.DB,
           rows.slice(i, i + 100).map((o) =>
             c.env.DB.prepare(
               `INSERT INTO analyst_consensus (ticker, date, rating, target_mean, target_high,
@@ -7667,7 +7670,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const chunkSize = 100;
     for (let i = 0; i < statements.length; i += chunkSize) {
       const chunk = statements.slice(i, i + chunkSize);
-      await c.env.DB.batch(chunk);
+      await batchPrepared(c.env.DB, chunk);
     }
     return c.json({ ok: true, scanned: rows.length, updated });
   });

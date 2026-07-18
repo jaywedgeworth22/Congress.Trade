@@ -73,6 +73,28 @@ export async function batch(
   return results;
 }
 
+/**
+ * Run already-prepared statements atomically while preserving D1 row metering.
+ * Use this at application call sites that need dynamic bind construction.
+ */
+export async function batchPrepared(
+  db: D1Database,
+  statements: D1PreparedStatement[],
+): Promise<D1Result[]> {
+  if (typeof db.batch === 'function') {
+    const results = await db.batch(statements);
+    for (const r of results ?? []) recordD1Meta(r?.meta);
+    return results;
+  }
+  const results: D1Result[] = [];
+  for (const stmt of statements) {
+    const r = await stmt.run();
+    recordD1Meta(r?.meta);
+    results.push(r);
+  }
+  return results;
+}
+
 /** Convenience accessor so callers can pass `env` instead of `env.DB`. */
 export function dbOf(env: Env): D1Database {
   return env.DB;

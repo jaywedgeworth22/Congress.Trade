@@ -80,12 +80,27 @@ function truthy(v: string | undefined): boolean {
   return /^(1|true|yes|on)$/i.test((v ?? '').trim());
 }
 
-function readBudget(env: Env): number {
-  return intVar(env.D1_DAILY_ROWS_READ_BUDGET, DEFAULT_READ_BUDGET);
+interface RowBudgets {
+  read: number;
+  written: number;
 }
 
-function writtenBudget(env: Env): number {
-  return intVar(env.D1_DAILY_ROWS_WRITTEN_BUDGET, DEFAULT_WRITTEN_BUDGET);
+async function rowBudgets(env: Env): Promise<RowBudgets> {
+  try {
+    const [read, written] = await Promise.all([
+      resolveSecret(env, 'D1_DAILY_ROWS_READ_BUDGET'),
+      resolveSecret(env, 'D1_DAILY_ROWS_WRITTEN_BUDGET'),
+    ]);
+    return {
+      read: intVar(read.value ?? env.D1_DAILY_ROWS_READ_BUDGET, DEFAULT_READ_BUDGET),
+      written: intVar(written.value ?? env.D1_DAILY_ROWS_WRITTEN_BUDGET, DEFAULT_WRITTEN_BUDGET),
+    };
+  } catch {
+    return {
+      read: intVar(env.D1_DAILY_ROWS_READ_BUDGET, DEFAULT_READ_BUDGET),
+      written: intVar(env.D1_DAILY_ROWS_WRITTEN_BUDGET, DEFAULT_WRITTEN_BUDGET),
+    };
+  }
 }
 
 /**
@@ -117,13 +132,13 @@ async function bumpDayCounter(
 }
 
 function warnIfOverSoft(
-  env: Env,
   day: string,
   readTotal: number | null,
   writtenTotal: number | null,
+  budgets: RowBudgets,
 ): void {
-  const rB = readBudget(env);
-  const wB = writtenBudget(env);
+  const rB = budgets.read;
+  const wB = budgets.written;
   const overRead = readTotal != null && readTotal >= rB * SOFT_RATIO;
   const overWritten = writtenTotal != null && writtenTotal >= wB * SOFT_RATIO;
   if (!overRead && !overWritten) return;
@@ -161,7 +176,7 @@ export async function flushD1Budget(env: Env, now = new Date()): Promise<void> {
       read: readTotal ?? base.read,
       written: writtenTotal ?? base.written,
     };
-    warnIfOverSoft(env, day, readTotal, writtenTotal);
+    warnIfOverSoft(day, readTotal, writtenTotal, await rowBudgets(env));
   } catch {
     /* best-effort meter; never surface an error to the caller */
   }
@@ -198,7 +213,8 @@ export async function isD1RowBudgetExceeded(env: Env, now = new Date()): Promise
       read = parseInt(r ?? '0', 10) || 0;
       written = parseInt(w ?? '0', 10) || 0;
     }
-    return read >= readBudget(env) || written >= writtenBudget(env);
+    const budgets = await rowBudgets(env);
+    return read >= budgets.read || written >= budgets.written;
   } catch {
     return false;
   }
