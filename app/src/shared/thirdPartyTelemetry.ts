@@ -29,6 +29,7 @@ interface TelemetryContext {
 
 const context = new AsyncLocalStorage<TelemetryContext>();
 const USAGE_TELEMETRY_FALLBACK_PREFIX = '_ops/usage-telemetry/';
+const USAGE_TELEMETRY_QUARANTINE_PREFIX = '_ops/usage-telemetry-quarantine/';
 
 // --- Circuit breaker + legacy-D1-drain durable markers ----------------------
 // Both live in CONFIG_KV as a single key each (not per-event), so an outage
@@ -557,15 +558,16 @@ function laterUsageTelemetryOpenUntil(a: number | null, b: number | null): numbe
 async function claimUsageTelemetryHalfOpenProbe(
   env: Env,
   state: UsageTelemetryCircuitState,
-): Promise<string | null> {
+): Promise<{ token: string; expiresAtMs: number } | null> {
   if (state.openUntil == null) return null;
   const nowMs = Date.now();
   if (nowMs < state.openUntil) throw new UsageTelemetryCircuitOpenError();
   const db = (env as Partial<Env>).DB;
-  if (!db?.prepare) throw new UsageTelemetryCircuitOpenError();
+  if (!db?.prepare) throw new UsageTelemetryProbeLeaseUnavailableError();
   const token = crypto.randomUUID();
   const now = new Date(nowMs).toISOString();
-  const expiresAt = new Date(nowMs + usageTelemetryCircuitProbeLeaseMs(env)).toISOString();
+  const expiresAtMs = nowMs + usageTelemetryCircuitProbeLeaseMs(env);
+  const expiresAt = new Date(expiresAtMs).toISOString();
   try {
     const result = await db.prepare(
       `INSERT INTO usage_telemetry_probe_lease (id, lease_token, expires_at, updated_at)
@@ -578,14 +580,63 @@ async function claimUsageTelemetryHalfOpenProbe(
     )
       .bind(token, expiresAt, now)
       .run();
-    if (Number(result.meta?.changes ?? 0) !== 1) throw new UsageTelemetryCircuitOpenError();
-    return token;
+    if (Number(result.meta?.changes ?? 0) !== 1) {
+      throw new UsageTelemetryProbeLeaseContendedError();
+    }
+    return { token, expiresAtMs };
   } catch (error) {
-    if (error instanceof UsageTelemetryCircuitOpenError) throw error;
+    if (error instanceof UsageTelemetryProbeLeaseContendedError) throw error;
     // Missing migration, D1 outage, or an unknown result all fail closed. A
     // half-open coordination failure must never turn into concurrent probes.
-    throw new UsageTelemetryCircuitOpenError();
+    throw new UsageTelemetryProbeLeaseUnavailableError();
   }
+}
+
+class UsageTelemetryDeliveryHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`usage telemetry receiver rejected request (HTTP ${status})`);
+    this.name = 'UsageTelemetryDeliveryHttpError';
+  }
+}
+
+function isTerminalLegacyUsageTelemetryRejection(error: unknown): boolean {
+  return error instanceof UsageTelemetryDeliveryHttpError
+    && [400, 409, 413, 422].includes(error.status);
+}
+
+async function advanceTerminalLegacyUsageTelemetryRow(
+  db: D1Database,
+  storage: R2Bucket | undefined,
+  row: { idempotency_key: string; event_json: string; attempts: number },
+  reason: 'malformed' | 'terminal_receiver_rejection',
+): Promise<void> {
+  const attempts = Number(row.attempts ?? 0) + 1;
+  if (attempts >= USAGE_TELEMETRY_D1_MAX_ROW_ATTEMPTS) {
+    if (!storage?.put) return;
+    const quarantineKey = `${USAGE_TELEMETRY_QUARANTINE_PREFIX}${encodeURIComponent(row.idempotency_key)}.json`;
+    try {
+      await storage.put(quarantineKey, row.event_json, {
+        httpMetadata: { contentType: 'application/json' },
+        customMetadata: { reason },
+      });
+    } catch {
+      // Never delete the only durable copy if quarantine persistence fails.
+      return;
+    }
+    await db.prepare(
+      'DELETE FROM usage_telemetry_fallback_events WHERE idempotency_key = ?',
+    )
+      .bind(row.idempotency_key)
+      .run();
+    return;
+  }
+  await db.prepare(
+    `UPDATE usage_telemetry_fallback_events
+        SET attempts = ?, updated_at = ?
+      WHERE idempotency_key = ?`,
+  )
+    .bind(attempts, new Date().toISOString(), row.idempotency_key)
+    .run();
 }
 
 async function releaseUsageTelemetryHalfOpenProbe(env: Env, token: string): Promise<void> {
@@ -980,6 +1031,27 @@ export class UsageTelemetryCircuitOpenError extends Error {
   }
 }
 
+class UsageTelemetryProbeLeaseContendedError extends UsageTelemetryCircuitOpenError {
+  constructor() {
+    super();
+    this.name = 'UsageTelemetryProbeLeaseContendedError';
+  }
+}
+
+class UsageTelemetryProbeLeaseUnavailableError extends UsageTelemetryCircuitOpenError {
+  constructor() {
+    super();
+    this.name = 'UsageTelemetryProbeLeaseUnavailableError';
+  }
+}
+
+class UsageTelemetryDeliveryTimeoutError extends Error {
+  constructor() {
+    super('usage telemetry receiver timed out');
+    this.name = 'UsageTelemetryDeliveryTimeoutError';
+  }
+}
+
 /** Explicit unmetered receiver primitive; telemetry must never meter itself. */
 async function fetchUsageTelemetryReceiver(
   input: RequestInfo | URL,
@@ -1003,7 +1075,32 @@ export async function deliverUsageTelemetryEvent(
 ): Promise<void> {
   const circuitState = await readUsageTelemetryCircuitState(env);
   if (!circuitState) throw new UsageTelemetryCircuitOpenError();
-  const probeLeaseToken = await claimUsageTelemetryHalfOpenProbe(env, circuitState);
+  if (circuitState.openUntil != null && Date.now() < circuitState.openUntil) {
+    throw new UsageTelemetryCircuitOpenError();
+  }
+  let probeLease: { token: string; expiresAtMs: number } | null;
+  try {
+    probeLease = await claimUsageTelemetryHalfOpenProbe(env, circuitState);
+  } catch (error) {
+    // A contender is proof that one probe already owns the singleton lease;
+    // it must not inflate failures or race that probe's eventual close. A real
+    // coordination outage has no known owner, so reopen with normal backoff.
+    if (error instanceof UsageTelemetryProbeLeaseUnavailableError) {
+      await recordUsageTelemetryDeliveryFailure(env);
+    }
+    throw error;
+  }
+  if (probeLease) {
+    const gatePersisted = await writeUsageTelemetryCircuitState(env, {
+      consecutiveFailures: circuitState.consecutiveFailures,
+      openUntil: probeLease.expiresAtMs,
+    });
+    if (!gatePersisted) {
+      // Do not call the receiver unless the one-probe gate is durable. The D1
+      // lease remains and expires by itself, preserving fail-closed behavior.
+      throw new UsageTelemetryCircuitOpenError();
+    }
+  }
   try {
     await withoutThirdPartyTelemetry(env, async () => {
       const secrets = await resolveSecrets(env, [
@@ -1015,32 +1112,51 @@ export async function deliverUsageTelemetryEvent(
       if (!configuredUrl || !token) throw new Error('usage telemetry ingest is not configured');
       const baseUrl = normalizeUsageMonitorBaseUrl(configuredUrl);
       if (!baseUrl) throw new Error('usage telemetry ingest URL is invalid');
-      const client = createUsageTelemetryClient({
-        baseUrl,
-        token,
-        requireExplicitIdempotencyKey: true,
-        fetchImpl: async (input, init) => {
-          const controller = new AbortController();
-          const timer = setTimeout(
-            () => controller.abort(),
-            usageTelemetryDeliveryTimeoutMs(env),
-          );
-          try {
-            return await fetchUsageTelemetryReceiver(input, { ...init, signal: controller.signal });
-          } finally {
-            clearTimeout(timer);
-          }
-        },
-      });
-      await client.send([event]);
+      const controller = new AbortController();
+      const timer = setTimeout(
+        () => controller.abort(),
+        usageTelemetryDeliveryTimeoutMs(env),
+      );
+      let receiverStatus: number | null = null;
+      try {
+        const client = createUsageTelemetryClient({
+          baseUrl,
+          token,
+          requireExplicitIdempotencyKey: true,
+          fetchImpl: async (input, init) => {
+            const response = await fetchUsageTelemetryReceiver(
+              input,
+              { ...init, signal: controller.signal },
+            );
+            receiverStatus = response.status;
+            return response;
+          },
+        });
+        await client.send([event]);
+      } catch (error) {
+        if (controller.signal.aborted) throw new UsageTelemetryDeliveryTimeoutError();
+        if (receiverStatus != null) throw new UsageTelemetryDeliveryHttpError(receiverStatus);
+        throw error;
+      } finally {
+        // Keep the same deadline active through response-body parsing and
+        // response-schema validation, not just until fetch returns headers.
+        clearTimeout(timer);
+      }
     });
   } catch (error) {
+    if (isTerminalLegacyUsageTelemetryRejection(error)) {
+      const closedPersisted = await recordUsageTelemetryDeliverySuccess(env);
+      if (probeLease && closedPersisted) {
+        await releaseUsageTelemetryHalfOpenProbe(env, probeLease.token);
+      }
+      throw error;
+    }
     await recordUsageTelemetryDeliveryFailure(env);
     throw error;
   }
   const closedPersisted = await recordUsageTelemetryDeliverySuccess(env);
-  if (probeLeaseToken && closedPersisted) {
-    await releaseUsageTelemetryHalfOpenProbe(env, probeLeaseToken);
+  if (probeLease && closedPersisted) {
+    await releaseUsageTelemetryHalfOpenProbe(env, probeLease.token);
   }
 }
 
@@ -1056,9 +1172,10 @@ export interface UsageTelemetryFallbackFlushResult {
 
 /**
  * Drain a bounded batch from the R2 outbox, plus a one-time drain of any
- * pre-existing legacy D1 rows (read + delete only — a failed D1 row is never
- * re-written, so a stalled receiver can no longer churn a growing D1 table;
- * that churn is what caused the D1 read/write overage this guards against).
+ * pre-existing legacy D1 rows. Transient receiver failures never rewrite the
+ * row; only malformed or deterministic per-event rejections consume a bounded
+ * five-update quarantine budget before deletion. A stalled receiver therefore
+ * cannot churn a growing D1 table, which caused the prior D1 overage.
  * R2 is the sole durable outbox for new events; D1 only ever shrinks from here.
  * Receiver failures are retained without logging/Sentry capture to avoid
  * outage amplification.
@@ -1145,22 +1262,7 @@ export async function flushUsageTelemetryFallback(
           failed += 1;
           // Only malformed/terminal rows are quarantined. Receiver failures
           // below retain the row regardless of how long the outage lasts.
-          const attempts = Number(row.attempts ?? 0) + 1;
-          if (attempts >= USAGE_TELEMETRY_D1_MAX_ROW_ATTEMPTS) {
-            await db.prepare(
-              'DELETE FROM usage_telemetry_fallback_events WHERE idempotency_key = ?',
-            )
-              .bind(row.idempotency_key)
-              .run();
-          } else {
-            await db.prepare(
-              `UPDATE usage_telemetry_fallback_events
-                  SET attempts = ?, updated_at = ?
-                WHERE idempotency_key = ?`,
-            )
-              .bind(attempts, new Date().toISOString(), row.idempotency_key)
-              .run();
-          }
+          await advanceTerminalLegacyUsageTelemetryRow(db, storage, row, 'malformed');
           continue;
         }
         try {
@@ -1171,9 +1273,18 @@ export async function flushUsageTelemetryFallback(
             .bind(row.idempotency_key)
             .run();
           delivered += 1;
-        } catch {
-          // Keep valid rows intact across receiver and circuit-breaker
-          // failures. They will be retried after the next half-open probe.
+        } catch (error) {
+          // Keep valid rows intact across transient receiver/circuit failures.
+          // Deterministic per-event rejections are bounded and moved to the
+          // back so one poison row cannot wedge the legacy drain forever.
+          if (isTerminalLegacyUsageTelemetryRejection(error)) {
+            await advanceTerminalLegacyUsageTelemetryRow(
+              db,
+              storage,
+              row,
+              'terminal_receiver_rejection',
+            );
+          }
           failed += 1;
         }
       }
