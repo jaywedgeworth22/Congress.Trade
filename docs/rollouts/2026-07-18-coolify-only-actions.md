@@ -42,6 +42,24 @@ can return after a dedicated ephemeral, wiped, isolated runner is available.
 5. Confirm the GitHub `production` and `preview` environments restrict their
    deployment branches to `main` and `staging`, respectively.
 
+During live validation, pre-change workflows that still requested GitHub cache
+restore repeatedly wedged in `setup-node` and saturated the shared Coolify host.
+The host had no swap and rebooted after reaching approximately 7.4 of 7.6 GiB
+used. Socratic.Trade briefly timed out, then recovered with HTTP 200, DB and
+scheduler healthy, and Litestream back in `replicating` state; Congress.Trade's
+Cloudflare Worker remained healthy. The runner service was contained while the
+host recovered. This is why cache removal and the resource follow-ups below are
+release requirements, not optional optimization.
+
+After recovery, a persistent 4 GiB `/swapfile` was enabled with swappiness 10;
+the host reported 4.0 GiB swap available and no swap in use under normal load.
+
+The reboot also exposed a persistent-workspace interaction: the Sentry reporter's
+sparse checkout left only its script materialized, and later checkout runs did
+not reliably restore `app/` or `clients/pwa/`. The reporter now uses a full
+checkout, CI explicitly materializes tracked paths before use, and the policy
+guard rejects future sparse-checkout directives.
+
 ## Follow-ups
 
 - Convert `congress-ci` to a one-job ephemeral runner with a destroyed workspace
@@ -50,8 +68,8 @@ can return after a dedicated ephemeral, wiped, isolated runner is available.
   remain excluded; Dependabot CI fails explicitly instead of reporting a false
   green skipped check. Private-fork workflow execution is disabled at the
   repository level.
-- Give the runner containers explicit CPU, memory, and PID limits and reserve
-  host memory/swap so a CI/deploy overlap cannot OOM production.
+- Recheck the existing runner CPU/memory limits under concurrent CI/deploy load,
+  add PID limits, and keep explicit production memory reserve despite swap.
 - Re-enable Codex Autofix only on a dedicated ephemeral runner label, and pin
   the shared reusable workflow to an immutable commit.
 - Keep Actions cache/artifact storage disabled or separately budgeted; owned
