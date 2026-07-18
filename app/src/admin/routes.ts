@@ -145,6 +145,8 @@ import {
   BenchmarkSettingsConflictError,
   BenchmarkSettingsValidationError,
   BenchmarkSettingsWriteError,
+  getUnderlyingProvider,
+  isOpenRouterAuto,
   readBenchmarkLineupSettings,
   readBenchmarkRoleSettings,
   saveBenchmarkLineupSettings,
@@ -177,6 +179,7 @@ import {
 } from '../shared/thirdPartyTelemetry';
 import {
   BASE_SCHEMA_STATEMENTS,
+  DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS,
   POST_0024_SCHEMA_STATEMENTS,
 } from './migrations';
 import { getQualityCrosscheck } from '../analytics/quality';
@@ -6135,10 +6138,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         return c.json({ error: (error as Error).message }, 400);
       }
       const lineup = [agModels.a, agModels.b, ...(agModels.c ? [agModels.c] : [])];
+      if (lineup.some(isOpenRouterAuto)) {
+        return c.json({
+          error: 'openrouter/auto cannot be used in agreement benchmarks because its routing is unpredictable',
+        }, 400);
+      }
       if (new Set(lineup.map((model) => `${model.provider}:${model.model}`)).size !== lineup.length) {
         return c.json({ error: 'agreement benchmark models must be distinct' }, 400);
       }
-      if (new Set(lineup.map((model) => model.provider)).size !== lineup.length) {
+      if (new Set(lineup.map(getUnderlyingProvider)).size !== lineup.length) {
         return c.json({ error: 'agreement benchmark models must use distinct providers' }, 400);
       }
       const filing = await get<{ raw_object_key: string | null }>(
@@ -6916,15 +6924,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_created ON ingestion_decisions (created_at DESC)',
       'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_action ON ingestion_decisions (action, created_at DESC)',
       // 0020_disclosure_available_generated.sql — generated column for disclosure availability.
-      'ALTER TABLE transactions ADD COLUMN first_seen_at TEXT',
-      'ALTER TABLE transactions ADD COLUMN filed_date TEXT',
-      `UPDATE transactions SET
-         first_seen_at = (SELECT first_seen_at FROM filings WHERE filings.doc_id = transactions.doc_id),
-         filed_date = (SELECT filed_date FROM filings WHERE filings.doc_id = transactions.doc_id)`,
-      `ALTER TABLE transactions ADD COLUMN disclosure_available_at TEXT GENERATED ALWAYS AS (
-         COALESCE(first_seen_at, CASE WHEN filed_date IS NOT NULL THEN filed_date || 'T00:00:00.000Z' END, created_at)
-       )`,
-      'CREATE INDEX IF NOT EXISTS idx_tx_disclosure_available_ticker ON transactions (disclosure_available_at, ticker, id)',
+      ...DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS,
       // 0021_disclosure_latency_watch.sql — Congress.Trade-vs-FMP disclosure race monitor.
       `CREATE TABLE IF NOT EXISTS disclosure_latency_candidates (
          doc_id TEXT NOT NULL,

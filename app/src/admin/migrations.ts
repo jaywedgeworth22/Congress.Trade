@@ -27,6 +27,33 @@ export const BASE_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_ingest_log_source ON ingest_log (source, polled_at)',
 ] as const;
 
+/**
+ * 0020_disclosure_available_generated.sql — point-in-time disclosure
+ * availability (first_seen_at/filed_date backfill + generated column + index).
+ * Mirrors migrations/0020_disclosure_available_generated.sql's schema exactly,
+ * but the backfill UPDATE below preserves any value already present on the
+ * transaction and only fills missing columns from a matching filing. POST
+ * /api/admin/migrate replays this whole statement list on every call; the
+ * one-shot file migration does not need the same replay-safe guard.
+ */
+export const DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS = [
+  'ALTER TABLE transactions ADD COLUMN first_seen_at TEXT',
+  'ALTER TABLE transactions ADD COLUMN filed_date TEXT',
+  `UPDATE transactions SET
+   first_seen_at = COALESCE(first_seen_at, (SELECT first_seen_at FROM filings WHERE filings.doc_id = transactions.doc_id)),
+     filed_date = COALESCE(filed_date, (SELECT filed_date FROM filings WHERE filings.doc_id = transactions.doc_id))
+   WHERE EXISTS (
+     SELECT 1 FROM filings
+      WHERE filings.doc_id = transactions.doc_id
+        AND ((transactions.first_seen_at IS NULL AND filings.first_seen_at IS NOT NULL)
+          OR (transactions.filed_date IS NULL AND filings.filed_date IS NOT NULL))
+   )`,
+  `ALTER TABLE transactions ADD COLUMN disclosure_available_at TEXT GENERATED ALWAYS AS (
+     COALESCE(first_seen_at, CASE WHEN filed_date IS NOT NULL THEN filed_date || 'T00:00:00.000Z' END, created_at)
+   )`,
+  'CREATE INDEX IF NOT EXISTS idx_tx_disclosure_available_ticker ON transactions (disclosure_available_at, ticker, id)',
+] as const;
+
 export const EST_VALUE_SCHEMA_STATEMENTS = [
   'ALTER TABLE transactions ADD COLUMN est_value REAL',
   `UPDATE transactions SET est_value = CASE
