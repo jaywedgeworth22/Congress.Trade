@@ -29,6 +29,12 @@ import { isD1RowBudgetExceeded } from './shared/d1Budget';
 
 const DAILY_KEY = 'jobs:daily:lastdate';
 
+async function dailyBudgetExceeded(env: Env, stage: string): Promise<boolean> {
+  if (!(await isD1RowBudgetExceeded(env))) return false;
+  console.warn(`daily jobs stopped before ${stage}: D1 row budget exceeded`);
+  return true;
+}
+
 export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<void> {
   const day = now.toISOString().slice(0, 10);
   try {
@@ -45,8 +51,7 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   // enrichment/price/backfill upserts are the main controllable D1 write spend.
   // Default OFF (alert-only). The date stamp above stays set, so we don't
   // re-check every minute; a fresh budget frees the jobs next UTC day.
-  if (await isD1RowBudgetExceeded(env)) {
-    console.warn('daily jobs skipped: D1 row budget exceeded (D1_ROW_BUDGET_ENFORCE armed)');
+  if (await dailyBudgetExceeded(env, 'enrichment')) {
     return;
   }
 
@@ -88,6 +93,7 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     console.warn('daily enrichment failed:', (err as Error).message);
     errors.push('enrichment: ' + (err as Error).message);
   }
+  if (await dailyBudgetExceeded(env, 'price refresh')) return;
   try {
     const r = await runPriceRefresh(env, { maxPerMinute });
     hadFmpKey = hadFmpKey || r.hasFmpKey;
@@ -163,6 +169,8 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     console.warn('freshness check failed:', (err as Error).message);
   }
 
+  if (await dailyBudgetExceeded(env, 'bulk snapshot')) return;
+
   // Write the daily bulk market-data snapshot to R2 (prices, S&P, securities
   // reference, fundamentals, analyst consensus) for App B to pull. Runs AFTER
   // the enrichment + price refresh above so it captures the freshest data
@@ -175,6 +183,8 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     console.warn('bulk snapshot failed:', (err as Error).message);
   }
 
+  if (await dailyBudgetExceeded(env, 'photo enrichment')) return;
+
   // Fill politician headshots + party/state/district from congress-legislators.
   // Best-effort, COALESCE-preserving, so new filers get a photo/party without a
   // manual POST /enrich-photos. Never blocks the cron.
@@ -183,6 +193,8 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   } catch (err) {
     console.warn('photo enrichment failed:', (err as Error).message);
   }
+
+  if (await dailyBudgetExceeded(env, 'ticker backfill')) return;
 
   // Backfill ticker resolution for name-but-no-ticker rows (seed/historic), so
   // they become visible to the leaderboards. Bounded + best-effort.
