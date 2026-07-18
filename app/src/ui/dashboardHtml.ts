@@ -1725,6 +1725,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <thead><tr><th>Filed</th><th>Doc</th><th>Status</th><th>Reason</th><th>Payload</th><th></th></tr></thead>
         <tbody id="reviewBody"></tbody>
       </table>
+      <button class="btn ghost sm" id="reviewLoadMore" style="display:none;margin-top:8px" onclick="loadMoreReview()">Load more</button>
       <p class="note">Confirm promotes the read to the live feed; Manual lets you hand-key the rows (recorded as <code>source=manual</code>) when the automated read is wrong or too low-confidence; Reject discards it. Models / readings come from <code>extraction_runs</code> (populated by <code>POST /api/admin/bakeoff</code>). <code>POST /api/admin/review/:docId {decision}</code></p>
       <div style="margin-top:14px">
         <h3>All Filing Decisions</h3>
@@ -2051,7 +2052,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 /* ============================ STATE ============================ */
 var TRADES = [];          // live transactions (newest first)
 var TRADE_BY_ID = {};     // trade id -> row, including mini-list rows cached from drawers
-var REVIEW = [];          // review-queue items
+var REVIEW = [];          // review-queue items (accumulated across "Load more" pages)
+var REVIEW_NEXT_CURSOR = null; // opaque keyset cursor for the next review-queue page, or null when exhausted
+var REVIEW_TOTALS = null; // { unresolved, matching, byReason, byChamber } from the last review-queue fetch
+var REVIEW_PAGE_SIZE = 50; // ?limit= sent to GET /api/admin/review-queue
+var reviewLoadingMore = false; // guards against overlapping "Load more" fetches
 var DECISIONS = [];       // ingestion decision audit rows
 var REVIEW_RUNS = {};     // docId -> full extraction runs loaded on demand
 var REVIEW_CONSENSUS = {}; // docId -> { rows, summary } | null, loaded alongside REVIEW_RUNS
@@ -3411,17 +3416,45 @@ function setReviewTab(resolved) {
 function loadReview() {
   if (!canUseAdmin()) {
     REVIEW = [];
+    REVIEW_NEXT_CURSOR = null;
+    REVIEW_TOTALS = null;
     if (el('reviewCount')) el('reviewCount').textContent = '';
     if (el('kpiReview')) el('kpiReview').textContent = '—';
     return Promise.resolve();
   }
-  // API HOOK: GET /api/admin/review-queue?resolved=
-  return fetch('/api/admin/review-queue?resolved=' + REVIEW_RESOLVED, { headers: adminHeaders() })
+  // API HOOK: GET /api/admin/review-queue?resolved=&limit= (first page; resets
+  // any previously accumulated "Load more" pages for the other tab/filters)
+  return fetch('/api/admin/review-queue?resolved=' + REVIEW_RESOLVED + '&limit=' + REVIEW_PAGE_SIZE, { headers: adminHeaders() })
     .then(okOrThrow)
-    .then(function (data) { REVIEW = data.items || []; renderReview(); loadDecisionHistory(); })
+    .then(function (data) {
+      REVIEW = data.items || [];
+      REVIEW_NEXT_CURSOR = data.nextCursor || null;
+      REVIEW_TOTALS = data.totals || null;
+      renderReview();
+      loadDecisionHistory();
+    })
     .catch(function (e) {
       el('reviewBody').innerHTML = stateRow(6, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load review queue: ' + e.message));
     });
+}
+function loadMoreReview() {
+  if (!canUseAdmin() || !REVIEW_NEXT_CURSOR || reviewLoadingMore) return Promise.resolve();
+  reviewLoadingMore = true;
+  var btn = el('reviewLoadMore');
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  // API HOOK: GET /api/admin/review-queue?resolved=&limit=&cursor= (next page)
+  return fetch('/api/admin/review-queue?resolved=' + REVIEW_RESOLVED + '&limit=' + REVIEW_PAGE_SIZE + '&cursor=' + encodeURIComponent(REVIEW_NEXT_CURSOR), { headers: adminHeaders() })
+    .then(okOrThrow)
+    .then(function (data) {
+      REVIEW = REVIEW.concat(data.items || []);
+      REVIEW_NEXT_CURSOR = data.nextCursor || null;
+      REVIEW_TOTALS = data.totals || REVIEW_TOTALS;
+      renderReview();
+    })
+    .catch(function (e) {
+      if (btn) btn.textContent = 'Could not load more: ' + e.message;
+    })
+    .then(function () { reviewLoadingMore = false; });
 }
 function loadDecisionHistory() {
   // API HOOK: GET /api/admin/ingestion-decisions
@@ -3683,8 +3716,20 @@ function modelsSummaryHtml(models) {
 }
 function renderReview() {
   var body = el('reviewBody');
-  el('reviewCount').textContent = REVIEW.length ? '(' + REVIEW.length + ')' : '';
-  if (el('kpiReview') && REVIEW_RESOLVED === 0) el('kpiReview').textContent = REVIEW.length;
+  // Prefer the server's cheap aggregate totals over REVIEW.length: once
+  // "Load more" pages are involved, REVIEW.length is just what's loaded so
+  // far, not the true matching/backlog count.
+  var matchingCount = (REVIEW_TOTALS && typeof REVIEW_TOTALS.matching === 'number') ? REVIEW_TOTALS.matching : REVIEW.length;
+  el('reviewCount').textContent = matchingCount ? '(' + matchingCount + ')' : '';
+  if (el('kpiReview') && REVIEW_RESOLVED === 0) {
+    el('kpiReview').textContent = (REVIEW_TOTALS && typeof REVIEW_TOTALS.unresolved === 'number') ? REVIEW_TOTALS.unresolved : REVIEW.length;
+  }
+  var loadMoreBtn = el('reviewLoadMore');
+  if (loadMoreBtn) {
+    loadMoreBtn.disabled = false;
+    loadMoreBtn.textContent = 'Load more';
+    loadMoreBtn.style.display = REVIEW_NEXT_CURSOR ? '' : 'none';
+  }
   if (REVIEW.length === 0) {
     body.innerHTML = stateRow(6, REVIEW_RESOLVED ? 'No reviewed documents yet.' : 'Nothing awaiting review — queue is clear.');
     return;
