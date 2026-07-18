@@ -4037,8 +4037,9 @@ function resolveReview(docId, decision) {
   })
     .then(okOrThrow)
     .then(function () {
-      if (isUnpublish) { loadReview(); } // item returns to pending; reload current tab
-      else { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); renderReview(); }
+      // Refresh the server-provided totals for every action. A local row
+      // removal leaves REVIEW_TOTALS stale after confirm/reject.
+      loadReview();
       loadDecisionHistory();
       loadFeed();
     })
@@ -4346,7 +4347,13 @@ function meSubmit(docId) {
     })
   })
     .then(okOrThrow)
-    .then(function () { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); if (tr && tr.parentNode) tr.parentNode.removeChild(tr); renderReview(); loadDecisionHistory(); loadFeed(); })
+    .then(function () {
+      // Re-fetch the queue so REVIEW_TOTALS and the visible rows agree after
+      // manual/edited confirmation.
+      loadReview();
+      loadDecisionHistory();
+      loadFeed();
+    })
     .catch(function (e) {
       if (tr) tr.querySelectorAll('button,input,select').forEach(function (b) { b.disabled = false; });
       alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review submit failed: ' + e.message));
