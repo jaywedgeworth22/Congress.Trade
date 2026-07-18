@@ -35,6 +35,7 @@ import { buildClientRouter } from './client/routes';
 import { buildExportRouter } from './export/routes';
 import { buildUiRouter } from './ui/routes';
 import { maybeRunDailyJobs } from './jobs';
+import { flushD1Budget } from './shared/d1Budget';
 import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement';
 import { refreshSecrets } from './secrets/infisical';
 import { runDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency';
@@ -406,7 +407,11 @@ const requestAndScheduledWorker = Sentry.withSentry(
   {
     /** HTTP entrypoint. */
     fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> | Response {
-      return withThirdPartyTelemetry(env, () => app.fetch(request, env, ctx));
+      const response = withThirdPartyTelemetry(env, () => app.fetch(request, env, ctx));
+      // Flush this request's metered D1 rows after the response settles — the
+      // read path is where analytics/scraper scans accrue. Best-effort, never blocks.
+      ctx.waitUntil(Promise.resolve(response).catch(() => undefined).then(() => flushD1Budget(env)));
+      return response;
     },
 
     /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow.
@@ -415,21 +420,28 @@ const requestAndScheduledWorker = Sentry.withSentry(
       return withThirdPartyTelemetry(env, async () => {
       // Register independent maintenance first. A watcher/config failure must
       // never prevent durable outboxes, secrets, or daily jobs from running.
-      ctx.waitUntil(
+      // `track` also collects each task so the D1 row meter flushes once, after
+      // all of them settle (the heavy D1 work runs inside these tasks).
+      const tasks: Promise<unknown>[] = [];
+      const track = (p: Promise<unknown>): void => {
+        tasks.push(p);
+        ctx.waitUntil(p);
+      };
+      track(
         Sentry.withMonitor('delivery-outbox-cron', () =>
           flushDeliveryOutbox(env, { limit: 100 }),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'delivery-outbox' } }),
         ),
       );
-      ctx.waitUntil(
+      track(
         Sentry.withMonitor('ingestion-outbox-cron', () =>
           flushIngestionOutbox(env, { limit: 100 }),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'ingestion-outbox' } }),
         ),
       );
-      ctx.waitUntil(
+      track(
         flushUsageTelemetryFallback(env, { limit: 25 })
           .then((result) => {
             if (result.failed > 0) {
@@ -444,28 +456,28 @@ const requestAndScheduledWorker = Sentry.withSentry(
             });
           }),
       );
-      ctx.waitUntil(
+      track(
         Sentry.withMonitor('secrets-refresh-cron', () =>
           refreshSecrets(env),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'secrets-refresh' } }),
         ),
       );
-      ctx.waitUntil(
+      track(
         Sentry.withMonitor('disclosure-latency-cron', () =>
           runDisclosureLatencyProbe(env),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'disclosure-latency' } }),
         ),
       );
-      ctx.waitUntil(
+      track(
         Sentry.withMonitor('daily-jobs-cron', () =>
           maybeRunDailyJobs(env),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'daily-jobs' } }),
         ),
       );
-      ctx.waitUntil(
+      track(
         Sentry.withMonitor(
           'agreement-autopublish-cron',
           () => maybeRunAgreementAutopublish(env),
@@ -481,7 +493,7 @@ const requestAndScheduledWorker = Sentry.withSentry(
       );
       // Sentry Crons: alerts if the per-minute watcher tick stops checking in or
       // starts overrunning, independent of whether shouldPollNow decides to poll.
-      ctx.waitUntil(
+      track(
         Sentry.withMonitor(
           'watcher-cron',
           () => runWatcher(env, new Date()),
@@ -495,6 +507,8 @@ const requestAndScheduledWorker = Sentry.withSentry(
           Sentry.captureException(err, { tags: { cron: 'watcher' } }),
         ),
       );
+      // Flush the isolate's metered D1 rows once all cron work settles.
+      ctx.waitUntil(Promise.allSettled(tasks).then(() => flushD1Budget(env)));
       });
     },
   },
@@ -537,6 +551,10 @@ const queueWorker = Sentry.withSentry(
             message.retry({ delaySeconds: 60 });
           }
         }
+        // Flush this DLQ batch's metered D1 rows (outbox-reopen writes). The
+        // queue handler awaits all its work inline, so we await the flush too
+        // (messages are already ack'd; a quick KV write does not delay them).
+        await flushD1Budget(env);
         return;
       }
 
@@ -590,6 +608,8 @@ const queueWorker = Sentry.withSentry(
           }
         }
       }
+      // Flush this batch's metered D1 rows (ingest/delivery writes).
+      await flushD1Budget(env);
       });
     },
   },

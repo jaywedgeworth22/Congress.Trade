@@ -11,7 +11,7 @@
  */
 
 import type { Env } from '../shared/types';
-import { all, get, run } from '../shared/db';
+import { all, batchPrepared, get, run } from '../shared/db';
 import { remainingBudget } from '../enrichment/compute';
 import { getDailyUsed, addDailyUsed } from '../enrichment/service';
 import { getSharedFmpPacer } from '../shared/pace';
@@ -261,7 +261,8 @@ export async function runPriceRefresh(
     budget--;
     if (spx.length && !dryRun) {
       for (let i = 0; i < spx.length; i += 100) {
-        await env.DB.batch(
+        await batchPrepared(
+          env.DB,
           spx.slice(i, i + 100).map((c) =>
             env.DB.prepare(
               // No-op guard: only write when the close actually changed, so the
@@ -359,7 +360,8 @@ export async function runPriceRefresh(
     // Cache closes. The no-op guard skips unchanged rows in the re-fetched
     // overlap window so identical closes aren't rewritten every pass.
     for (let i = 0; i < hist.length; i += 100) {
-      await env.DB.batch(
+      await batchPrepared(
+        env.DB,
         hist.slice(i, i + 100).map((c) =>
           env.DB.prepare(
             'INSERT INTO price_eod (ticker, date, close) VALUES (?, ?, ?) ON CONFLICT(ticker, date) DO UPDATE SET close=excluded.close WHERE price_eod.close <> excluded.close',

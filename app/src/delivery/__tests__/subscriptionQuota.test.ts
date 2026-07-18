@@ -10,7 +10,9 @@ import type { Env } from '../../shared/types';
 
 function envWithCounts(total: number, active: number): Env {
   return { DB: { prepare: () => ({
-    bind() { return this; }, async first<T>() { return { total, active } as T; },
+    bind() { return this; },
+    async first<T>() { return { total, active } as T; },
+    async all<T>() { return { results: [{ total, active } as T] }; },
   }) } as unknown as D1Database } as Env;
 }
 
