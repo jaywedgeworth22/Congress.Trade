@@ -29,7 +29,6 @@ interface TelemetryContext {
 
 const context = new AsyncLocalStorage<TelemetryContext>();
 const USAGE_TELEMETRY_FALLBACK_PREFIX = '_ops/usage-telemetry/';
-const USAGE_TELEMETRY_QUARANTINE_PREFIX = '_ops/usage-telemetry-quarantine/';
 
 // --- Circuit breaker + legacy-D1-drain durable markers ----------------------
 // Both live in CONFIG_KV as a single key each (not per-event), so an outage
@@ -266,7 +265,7 @@ export function remapOpenRouterTelemetry(provider: string, model?: string): { pr
       let mappedProvider = orProvider;
       if (orProvider === 'google') mappedProvider = 'gemini';
       else if (orProvider === 'x-ai') mappedProvider = 'xai';
-      
+
       const mappedModel = parts.slice(1).join('/');
       return { provider: mappedProvider, model: mappedModel, transport: 'openrouter' };
     }
@@ -446,18 +445,6 @@ function usageTelemetryCircuitMaxBackoffMs(env: Env): number {
   return Number.isFinite(n) && n > 0 ? n : 1_800_000;
 }
 
-function usageTelemetryDeliveryTimeoutMs(env: Env): number {
-  const n = Number.parseInt(env.USAGE_TELEMETRY_DELIVERY_TIMEOUT_MS ?? '', 10);
-  return Number.isFinite(n) && n > 0 ? Math.min(n, 60_000) : 15_000;
-}
-
-function usageTelemetryCircuitProbeLeaseMs(env: Env): number {
-  const timeoutFloor = usageTelemetryDeliveryTimeoutMs(env) + 5_000;
-  const n = Number.parseInt(env.USAGE_TELEMETRY_CIRCUIT_PROBE_LEASE_MS ?? '', 10);
-  const configured = Number.isFinite(n) && n > 0 ? n : 30_000;
-  return Math.min(300_000, Math.max(timeoutFloor, configured));
-}
-
 function usageTelemetryFallbackMaxObjects(env: Env): number {
   const n = Number.parseInt(env.USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS ?? '', 10);
   return Number.isFinite(n) && n > 0 ? n : 5_000;
@@ -487,46 +474,29 @@ const CLOSED_USAGE_TELEMETRY_CIRCUIT: UsageTelemetryCircuitState = {
   openUntil: null,
 };
 
-async function readUsageTelemetryCircuitState(env: Env): Promise<UsageTelemetryCircuitState | null> {
+async function readUsageTelemetryCircuitState(env: Env): Promise<UsageTelemetryCircuitState> {
   const kv = (env as Partial<Env>).CONFIG_KV;
   if (!kv) return CLOSED_USAGE_TELEMETRY_CIRCUIT;
   try {
     const stored = await kv.get<UsageTelemetryCircuitState>(USAGE_TELEMETRY_CIRCUIT_KV_KEY, 'json');
-    if (stored == null) return CLOSED_USAGE_TELEMETRY_CIRCUIT;
-    if (
-      Number.isFinite(stored.consecutiveFailures)
-      && stored.consecutiveFailures >= 0
-      && (stored.openUntil == null || Number.isFinite(stored.openUntil))
-    ) return stored;
-    // A malformed persisted state is an unavailable control plane, not proof
-    // that the receiver is healthy. Fail closed until it is repaired/expired.
-    return null;
-  } catch {
-    // The breaker control plane is unavailable. Production always binds
-    // CONFIG_KV, so fail closed to R2 rather than hammering a receiver whose
-    // outage state cannot be read.
-    return null;
-  }
+    if (stored && typeof stored.consecutiveFailures === 'number') return stored;
+  } catch {}
   return CLOSED_USAGE_TELEMETRY_CIRCUIT;
 }
 
-async function writeUsageTelemetryCircuitState(env: Env, state: UsageTelemetryCircuitState): Promise<boolean> {
+async function writeUsageTelemetryCircuitState(env: Env, state: UsageTelemetryCircuitState): Promise<void> {
   const kv = (env as Partial<Env>).CONFIG_KV;
-  if (!kv) return false;
+  if (!kv) return;
   try {
     // A week-long TTL just bounds worst-case staleness; every delivery attempt
     // (success or failure) rewrites this key on its own cadence regardless.
     await kv.put(USAGE_TELEMETRY_CIRCUIT_KV_KEY, JSON.stringify(state), { expirationTtl: 7 * 24 * 3600 });
-    return true;
-  } catch {
-    return false;
-  }
+  } catch {}
 }
 
 /** True while the circuit breaker is suppressing live delivery attempts. */
 export async function isUsageTelemetryCircuitOpen(env: Env): Promise<boolean> {
   const state = await readUsageTelemetryCircuitState(env);
-  if (!state) return true;
   return state.openUntil != null && Date.now() < state.openUntil;
 }
 
@@ -535,11 +505,10 @@ export async function isUsageTelemetryCircuitOpen(env: Env): Promise<boolean> {
  * circuit is already closed, so a healthy receiver never pays a write per
  * delivered event — only actual state transitions touch KV.
  */
-async function recordUsageTelemetryDeliverySuccess(env: Env): Promise<boolean> {
+async function recordUsageTelemetryDeliverySuccess(env: Env): Promise<void> {
   const state = await readUsageTelemetryCircuitState(env);
-  if (!state) return false;
-  if (state.consecutiveFailures === 0 && state.openUntil == null) return true;
-  return writeUsageTelemetryCircuitState(env, CLOSED_USAGE_TELEMETRY_CIRCUIT);
+  if (state.consecutiveFailures === 0 && state.openUntil == null) return;
+  await writeUsageTelemetryCircuitState(env, CLOSED_USAGE_TELEMETRY_CIRCUIT);
 }
 
 /** The later of two open-until deadlines; a set deadline always beats null. */
@@ -550,133 +519,13 @@ function laterUsageTelemetryOpenUntil(a: number | null, b: number | null): numbe
 }
 
 /**
- * Claim the singleton D1 lease only when an open circuit's cooldown elapsed.
- * The conditional upsert is one atomic SQLite statement: exactly one contender
- * observes `meta.changes === 1`; every concurrent contender fails closed before
- * calling the receiver. Closed-circuit traffic never touches D1.
- */
-async function claimUsageTelemetryHalfOpenProbe(
-  env: Env,
-  state: UsageTelemetryCircuitState,
-): Promise<{ token: string; expiresAtMs: number } | null> {
-  if (state.openUntil == null) return null;
-  const nowMs = Date.now();
-  if (nowMs < state.openUntil) throw new UsageTelemetryCircuitOpenError();
-  const db = (env as Partial<Env>).DB;
-  if (!db?.prepare) throw new UsageTelemetryProbeLeaseUnavailableError();
-  const token = crypto.randomUUID();
-  const now = new Date(nowMs).toISOString();
-  const expiresAtMs = nowMs + usageTelemetryCircuitProbeLeaseMs(env);
-  const expiresAt = new Date(expiresAtMs).toISOString();
-  try {
-    const result = await db.prepare(
-      `INSERT INTO usage_telemetry_probe_lease (id, lease_token, expires_at, updated_at)
-       VALUES (1, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         lease_token = excluded.lease_token,
-         expires_at = excluded.expires_at,
-         updated_at = excluded.updated_at
-       WHERE usage_telemetry_probe_lease.expires_at <= excluded.updated_at`,
-    )
-      .bind(token, expiresAt, now)
-      .run();
-    if (Number(result.meta?.changes ?? 0) !== 1) {
-      throw new UsageTelemetryProbeLeaseContendedError();
-    }
-    return { token, expiresAtMs };
-  } catch (error) {
-    if (error instanceof UsageTelemetryProbeLeaseContendedError) throw error;
-    // Missing migration, D1 outage, or an unknown result all fail closed. A
-    // half-open coordination failure must never turn into concurrent probes.
-    throw new UsageTelemetryProbeLeaseUnavailableError();
-  }
-}
-
-class UsageTelemetryDeliveryHttpError extends Error {
-  constructor(readonly status: number) {
-    super(`usage telemetry receiver rejected request (HTTP ${status})`);
-    this.name = 'UsageTelemetryDeliveryHttpError';
-  }
-}
-
-function isTerminalLegacyUsageTelemetryRejection(error: unknown): boolean {
-  return error instanceof UsageTelemetryDeliveryHttpError
-    && [400, 409, 413, 422].includes(error.status);
-}
-
-async function writeUsageTelemetryQuarantine(
-  storage: R2Bucket | undefined,
-  idempotencyKey: string,
-  payload: string,
-  reason: 'malformed' | 'terminal_receiver_rejection',
-): Promise<boolean> {
-  if (!storage?.put) return false;
-  const quarantineKey = `${USAGE_TELEMETRY_QUARANTINE_PREFIX}${encodeURIComponent(idempotencyKey)}.json`;
-  try {
-    await storage.put(quarantineKey, payload, {
-      httpMetadata: { contentType: 'application/json' },
-      customMetadata: { reason },
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function advanceTerminalLegacyUsageTelemetryRow(
-  db: D1Database,
-  storage: R2Bucket | undefined,
-  row: { idempotency_key: string; event_json: string; attempts: number },
-  reason: 'malformed' | 'terminal_receiver_rejection',
-): Promise<void> {
-  const attempts = Number(row.attempts ?? 0) + 1;
-  if (attempts >= USAGE_TELEMETRY_D1_MAX_ROW_ATTEMPTS) {
-    const quarantined = await writeUsageTelemetryQuarantine(
-      storage,
-      row.idempotency_key,
-      row.event_json,
-      reason,
-    );
-    if (!quarantined) {
-      // Never delete the only durable copy if quarantine persistence fails.
-      return;
-    }
-    await db.prepare(
-      'DELETE FROM usage_telemetry_fallback_events WHERE idempotency_key = ?',
-    )
-      .bind(row.idempotency_key)
-      .run();
-    return;
-  }
-  await db.prepare(
-    `UPDATE usage_telemetry_fallback_events
-        SET attempts = ?, updated_at = ?
-      WHERE idempotency_key = ?`,
-  )
-    .bind(attempts, new Date().toISOString(), row.idempotency_key)
-    .run();
-}
-
-async function releaseUsageTelemetryHalfOpenProbe(env: Env, token: string): Promise<void> {
-  try {
-    await env.DB.prepare(
-      'DELETE FROM usage_telemetry_probe_lease WHERE id = 1 AND lease_token = ?',
-    )
-      .bind(token)
-      .run();
-  } catch {
-    // A stale lease expires on its own. Never weaken the breaker because
-    // cleanup failed after the receiver was already proven healthy.
-  }
-}
-
-/**
  * Exponential backoff keyed off consecutive failures past the threshold, capped
- * at usageTelemetryCircuitMaxBackoffMs. Once `openUntil` elapses, the next real
- * delivery must atomically claim the singleton D1 half-open lease. That keeps
- * only one receiver probe in flight across isolates. A successful probe closes
- * the KV circuit before releasing the lease; a failed probe reopens the circuit
- * and leaves the short lease to expire.
+ * at usageTelemetryCircuitMaxBackoffMs. There is no separate "half-open" state:
+ * once `openUntil` elapses, isUsageTelemetryCircuitOpen simply reports closed
+ * again, so the next real attempt (a new event or the next scheduled flush) IS
+ * the probe. A probe success calls recordUsageTelemetryDeliverySuccess and
+ * fully closes the circuit; a probe failure lands back here and reopens with a
+ * longer window.
  *
  * Concurrency: CONFIG_KV has no atomic increment (an exact counter would need a
  * Durable Object, which is unjustified for a best-effort storm-brake and would
@@ -692,8 +541,8 @@ async function releaseUsageTelemetryHalfOpenProbe(env: Env, token: string): Prom
  * never a re-closed circuit. Only recordUsageTelemetryDeliverySuccess (a real
  * 2xx, i.e. the receiver is actually healthy) resets the state.
  */
-async function recordUsageTelemetryDeliveryFailure(env: Env): Promise<boolean> {
-  const state = await readUsageTelemetryCircuitState(env) ?? CLOSED_USAGE_TELEMETRY_CIRCUIT;
+async function recordUsageTelemetryDeliveryFailure(env: Env): Promise<void> {
+  const state = await readUsageTelemetryCircuitState(env);
   const proposedFailures = state.consecutiveFailures + 1;
   const threshold = usageTelemetryCircuitFailureThreshold(env);
   const proposedOpenUntil = proposedFailures >= threshold
@@ -705,8 +554,8 @@ async function recordUsageTelemetryDeliveryFailure(env: Env): Promise<boolean> {
   // Monotonic merge-on-write: re-read the current stored state and never regress
   // below it, so a concurrent failure recorder's progress toward opening (or an
   // open circuit it just tripped) is never lost to this write. See note above.
-  const current = await readUsageTelemetryCircuitState(env) ?? state;
-  return writeUsageTelemetryCircuitState(env, {
+  const current = await readUsageTelemetryCircuitState(env);
+  await writeUsageTelemetryCircuitState(env, {
     consecutiveFailures: Math.max(current.consecutiveFailures, proposedFailures),
     openUntil: laterUsageTelemetryOpenUntil(current.openUntil, proposedOpenUntil),
   });
@@ -1049,34 +898,32 @@ export class UsageTelemetryCircuitOpenError extends Error {
   }
 }
 
-class UsageTelemetryProbeLeaseContendedError extends UsageTelemetryCircuitOpenError {
-  constructor() {
-    super();
-    this.name = 'UsageTelemetryProbeLeaseContendedError';
-  }
+function usageTelemetryErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== 'object') return null;
+  const candidate = error as { status?: unknown; response?: { status?: unknown } };
+  const status = candidate.status ?? candidate.response?.status;
+  return typeof status === 'number' && Number.isInteger(status) ? status : null;
 }
 
-class UsageTelemetryProbeLeaseUnavailableError extends UsageTelemetryCircuitOpenError {
-  constructor() {
-    super();
-    this.name = 'UsageTelemetryProbeLeaseUnavailableError';
-  }
-}
-
-class UsageTelemetryDeliveryTimeoutError extends Error {
-  constructor() {
-    super('usage telemetry receiver timed out');
-    this.name = 'UsageTelemetryDeliveryTimeoutError';
-  }
-}
-
-/** Explicit unmetered receiver primitive; telemetry must never meter itself. */
-async function fetchUsageTelemetryReceiver(
-  input: RequestInfo | URL,
-  init: RequestInit | undefined,
-  fetchImpl: typeof fetch = fetch,
-): Promise<Response> {
-  return fetchImpl(input, init);
+/**
+ * A receiver outage is retryable; a deterministic 4xx payload/idempotency
+ * rejection is not. The shared client currently exposes HTTP failures as
+ * plain Errors, so retain the stable error phrases it emits as a fallback
+ * until the shared package exposes the response status directly.
+ */
+export function isTerminalUsageTelemetryDeliveryError(error: unknown): boolean {
+  if (error instanceof UsageTelemetryCircuitOpenError) return false;
+  const status = usageTelemetryErrorStatus(error);
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  // Authentication, endpoint, and receiver-wide 4xxs are transient from the
+  // application's perspective: they must open the circuit and push retries to
+  // durable fallback. Only errors that identify this event's payload or
+  // idempotency identity as invalid are safe to quarantine.
+  const eventSpecific = /\b(?:schema|idempotency|invalid payload|malformed payload|required.*idempotency|event\s+\d+.*invalid)\b/i.test(message);
+  if (eventSpecific) return true;
+  // If a future client exposes status without a useful body, only treat 400 as
+  // potentially event-specific after the explicit message check above.
+  return status === 400 && /\b(?:validation|field|property)\b/i.test(message);
 }
 
 /**
@@ -1091,33 +938,8 @@ export async function deliverUsageTelemetryEvent(
   env: Env,
   event: ThirdPartyUsageTelemetryEvent,
 ): Promise<void> {
-  const circuitState = await readUsageTelemetryCircuitState(env);
-  if (!circuitState) throw new UsageTelemetryCircuitOpenError();
-  if (circuitState.openUntil != null && Date.now() < circuitState.openUntil) {
+  if (await isUsageTelemetryCircuitOpen(env)) {
     throw new UsageTelemetryCircuitOpenError();
-  }
-  let probeLease: { token: string; expiresAtMs: number } | null;
-  try {
-    probeLease = await claimUsageTelemetryHalfOpenProbe(env, circuitState);
-  } catch (error) {
-    // A contender is proof that one probe already owns the singleton lease;
-    // it must not inflate failures or race that probe's eventual close. A real
-    // coordination outage has no known owner, so reopen with normal backoff.
-    if (error instanceof UsageTelemetryProbeLeaseUnavailableError) {
-      await recordUsageTelemetryDeliveryFailure(env);
-    }
-    throw error;
-  }
-  if (probeLease) {
-    const gatePersisted = await writeUsageTelemetryCircuitState(env, {
-      consecutiveFailures: circuitState.consecutiveFailures,
-      openUntil: probeLease.expiresAtMs,
-    });
-    if (!gatePersisted) {
-      // Do not call the receiver unless the one-probe gate is durable. The D1
-      // lease remains and expires by itself, preserving fail-closed behavior.
-      throw new UsageTelemetryCircuitOpenError();
-    }
   }
   try {
     await withoutThirdPartyTelemetry(env, async () => {
@@ -1130,52 +952,20 @@ export async function deliverUsageTelemetryEvent(
       if (!configuredUrl || !token) throw new Error('usage telemetry ingest is not configured');
       const baseUrl = normalizeUsageMonitorBaseUrl(configuredUrl);
       if (!baseUrl) throw new Error('usage telemetry ingest URL is invalid');
-      const controller = new AbortController();
-      const timer = setTimeout(
-        () => controller.abort(),
-        usageTelemetryDeliveryTimeoutMs(env),
-      );
-      let receiverStatus: number | null = null;
-      try {
-        const client = createUsageTelemetryClient({
-          baseUrl,
-          token,
-          requireExplicitIdempotencyKey: true,
-          fetchImpl: async (input, init) => {
-            const response = await fetchUsageTelemetryReceiver(
-              input,
-              { ...init, signal: controller.signal },
-            );
-            receiverStatus = response.status;
-            return response;
-          },
-        });
-        await client.send([event]);
-      } catch (error) {
-        if (controller.signal.aborted) throw new UsageTelemetryDeliveryTimeoutError();
-        if (receiverStatus != null) throw new UsageTelemetryDeliveryHttpError(receiverStatus);
-        throw error;
-      } finally {
-        // Keep the same deadline active through response-body parsing and
-        // response-schema validation, not just until fetch returns headers.
-        clearTimeout(timer);
-      }
+      const client = createUsageTelemetryClient({
+        baseUrl,
+        token,
+        requireExplicitIdempotencyKey: true,
+      });
+      await client.send([event]);
     });
   } catch (error) {
-    if (isTerminalLegacyUsageTelemetryRejection(error)) {
-      const closedPersisted = await recordUsageTelemetryDeliverySuccess(env);
-      if (probeLease && closedPersisted) {
-        await releaseUsageTelemetryHalfOpenProbe(env, probeLease.token);
-      }
-      throw error;
+    if (!isTerminalUsageTelemetryDeliveryError(error)) {
+      await recordUsageTelemetryDeliveryFailure(env);
     }
-    await recordUsageTelemetryDeliveryFailure(env);
     throw error;
   }
-  const closedPersisted = await recordUsageTelemetryDeliverySuccess(env);
-  if (probeLease && closedPersisted) {
-    await releaseUsageTelemetryHalfOpenProbe(env, probeLease.token);
-  }
+  await recordUsageTelemetryDeliverySuccess(env);
 }
 
 export interface UsageTelemetryFallbackFlushResult {
@@ -1190,10 +980,9 @@ export interface UsageTelemetryFallbackFlushResult {
 
 /**
  * Drain a bounded batch from the R2 outbox, plus a one-time drain of any
- * pre-existing legacy D1 rows. Transient receiver failures never rewrite the
- * row; only malformed or deterministic per-event rejections consume a bounded
- * five-update quarantine budget before deletion. A stalled receiver therefore
- * cannot churn a growing D1 table, which caused the prior D1 overage.
+ * pre-existing legacy D1 rows (read + delete only — a failed D1 row is never
+ * re-written, so a stalled receiver can no longer churn a growing D1 table;
+ * that churn is what caused the D1 read/write overage this guards against).
  * R2 is the sole durable outbox for new events; D1 only ever shrinks from here.
  * Receiver failures are retained without logging/Sentry capture to avoid
  * outage amplification.
@@ -1236,37 +1025,48 @@ export async function flushUsageTelemetryFallback(
       expired += 1;
       continue;
     }
+    let event: ThirdPartyUsageTelemetryEvent;
+    let body: R2ObjectBody | null;
     try {
-      const body = await storage?.get(object.key);
-      if (!body) continue;
-      const raw = await body.text();
-      let event: ThirdPartyUsageTelemetryEvent | null = null;
+      body = (await storage?.get(object.key)) ?? null;
+    } catch {
+      // A transient R2 read failure must retain the object for the next flush.
+      failed += 1;
+      continue;
+    }
+    if (!body) continue;
+    let raw: string;
+    try {
+      raw = await body.text();
+    } catch {
+      // A transient stream/read failure must retain the object too.
+      failed += 1;
+      continue;
+    }
+    try {
+      event = parseUsageTelemetryFallback(raw);
+    } catch {
+      // A malformed R2 object is terminal and must not pin the bounded list.
       try {
-        event = parseUsageTelemetryFallback(raw);
-        await deliverUsageTelemetryEvent(env, event);
         await storage?.delete(object.key);
         r2Removed += 1;
-        delivered += 1;
-      } catch (error) {
-        // Keep transient receiver failures on the outbox. Deterministic
-        // rejections are quarantined after a single failure so poison R2 objects
-        // cannot monopolize the bounded list forever.
-        if (event != null && isTerminalLegacyUsageTelemetryRejection(error)) {
-          const quarantined = await writeUsageTelemetryQuarantine(
-            storage,
-            event.idempotencyKey,
-            raw,
-            'terminal_receiver_rejection',
-          );
-          if (quarantined) {
-            await storage?.delete(object.key);
-            r2Removed += 1;
-          }
-        }
-        failed += 1;
-      }
-    } catch {
+      } catch {}
       failed += 1;
+      continue;
+    }
+    try {
+      await deliverUsageTelemetryEvent(env, event);
+      await storage?.delete(object.key);
+      r2Removed += 1;
+      delivered += 1;
+    } catch (error) {
+      failed += 1;
+      if (isTerminalUsageTelemetryDeliveryError(error)) {
+        try {
+          await storage?.delete(object.key);
+          r2Removed += 1;
+        } catch {}
+      }
     }
   }
   // Maintain the O(1) admission counter. When the bounded list was the entire
@@ -1294,14 +1094,29 @@ export async function flushUsageTelemetryFallback(
         .all<{ idempotency_key: string; event_json: string; attempts: number }>();
       const results = rows.results ?? [];
       for (const row of results) {
-        let event: ThirdPartyUsageTelemetryEvent | null = null;
+        let event: ThirdPartyUsageTelemetryEvent;
         try {
           event = parseUsageTelemetryFallback(row.event_json);
         } catch {
           failed += 1;
           // Only malformed/terminal rows are quarantined. Receiver failures
           // below retain the row regardless of how long the outage lasts.
-          await advanceTerminalLegacyUsageTelemetryRow(db, storage, row, 'malformed');
+          const attempts = Number(row.attempts ?? 0) + 1;
+          if (attempts >= USAGE_TELEMETRY_D1_MAX_ROW_ATTEMPTS) {
+            await db.prepare(
+              'DELETE FROM usage_telemetry_fallback_events WHERE idempotency_key = ?',
+            )
+              .bind(row.idempotency_key)
+              .run();
+          } else {
+            await db.prepare(
+              `UPDATE usage_telemetry_fallback_events
+                  SET attempts = ?, updated_at = ?
+                WHERE idempotency_key = ?`,
+            )
+              .bind(attempts, new Date().toISOString(), row.idempotency_key)
+              .run();
+          }
           continue;
         }
         try {
@@ -1313,17 +1128,29 @@ export async function flushUsageTelemetryFallback(
             .run();
           delivered += 1;
         } catch (error) {
-          // Keep valid rows intact across transient receiver/circuit failures.
-          // Deterministic per-event rejections are bounded and moved to the
-          // back so one poison row cannot wedge the legacy drain forever.
-          if (isTerminalLegacyUsageTelemetryRejection(error)) {
-            await advanceTerminalLegacyUsageTelemetryRow(
-              db,
-              storage,
-              row,
-              'terminal_receiver_rejection',
-            );
+          if (isTerminalUsageTelemetryDeliveryError(error)) {
+            // Deterministic receiver rejects cannot succeed on retry. Advance
+            // and eventually quarantine them so they cannot pin the oldest-first
+            // drain or starve newer legacy rows. Outages remain untouched.
+            const attempts = Number(row.attempts ?? 0) + 1;
+            if (attempts >= USAGE_TELEMETRY_D1_MAX_ROW_ATTEMPTS) {
+              await db.prepare(
+                'DELETE FROM usage_telemetry_fallback_events WHERE idempotency_key = ?',
+              )
+                .bind(row.idempotency_key)
+                .run();
+            } else {
+              await db.prepare(
+                `UPDATE usage_telemetry_fallback_events
+                    SET attempts = ?, updated_at = ?
+                  WHERE idempotency_key = ?`,
+              )
+                .bind(attempts, new Date().toISOString(), row.idempotency_key)
+                .run();
+            }
           }
+          // Keep valid rows intact across receiver and circuit-breaker
+          // failures. They will be retried after the next half-open probe.
           failed += 1;
         }
       }

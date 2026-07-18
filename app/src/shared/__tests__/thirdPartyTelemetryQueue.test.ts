@@ -172,20 +172,20 @@ describe('usage telemetry queue routing', () => {
     expect(retry).not.toHaveBeenCalled();
   });
 
-  it('ACKs after durably retaining a failed Usage Monitor delivery in R2', async () => {
+  it('retries without ACK when Usage Monitor delivery fails', async () => {
     mocks.deliver.mockRejectedValueOnce(new Error('usage telemetry ingest failed'));
     const { batch, ack, retry } = messageBatch('congress-feed-ingest');
     const put = vi.fn(async () => {});
     const env = { RAW_FILES: { put } } as unknown as Env;
     await worker.queue(batch, env, {} as ExecutionContext);
-    expect(ack).toHaveBeenCalledOnce();
-    expect(retry).not.toHaveBeenCalled();
+    expect(ack).not.toHaveBeenCalled();
+    expect(retry).toHaveBeenCalledOnce();
     expect(put).toHaveBeenCalledWith(
       '_ops/usage-telemetry/ct-third-party%3Atest-event.json',
       JSON.stringify(event),
       expect.anything(),
     );
-    expect(put.mock.invocationCallOrder[0]).toBeLessThan(ack.mock.invocationCallOrder[0]);
+    expect(put.mock.invocationCallOrder[0]).toBeLessThan(retry.mock.invocationCallOrder[0]);
     expect(mocks.captureException).not.toHaveBeenCalled();
   });
 
@@ -198,7 +198,7 @@ describe('usage telemetry queue routing', () => {
     expect(retry).not.toHaveBeenCalled();
   });
 
-  it('ACKs a DLQ receiver failure after durably retaining it in R2', async () => {
+  it('persists a DLQ receiver failure before requesting another retry', async () => {
     mocks.deliver.mockRejectedValueOnce(new Error('usage telemetry ingest failed'));
     const { batch, ack, retry } = messageBatch('congress-feed-ingest-dlq');
     const put = vi.fn(async () => {});
@@ -206,10 +206,9 @@ describe('usage telemetry queue routing', () => {
 
     await worker.queue(batch, env, {} as ExecutionContext);
 
-    expect(ack).toHaveBeenCalledOnce();
-    expect(retry).not.toHaveBeenCalled();
+    expect(ack).not.toHaveBeenCalled();
     expect(put).toHaveBeenCalledOnce();
-    expect(put.mock.invocationCallOrder[0]).toBeLessThan(ack.mock.invocationCallOrder[0]);
+    expect(put.mock.invocationCallOrder[0]).toBeLessThan(retry.mock.invocationCallOrder[0]);
     expect(mocks.captureException).not.toHaveBeenCalled();
   });
 
@@ -254,7 +253,6 @@ describe('usage telemetry queue routing', () => {
     expect(ack).not.toHaveBeenCalled();
     expect(retry).toHaveBeenCalledOnce();
   });
-
   it('routes a DLQ usage.telemetry redelivery straight to the R2 outbox without a delivery attempt while the circuit is open, then acks it (no further DLQ churn)', async () => {
     mocks.deliver.mockClear();
     const { batch, ack, retry } = messageBatch('congress-feed-ingest-dlq');

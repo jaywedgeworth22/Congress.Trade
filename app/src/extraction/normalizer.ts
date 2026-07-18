@@ -82,6 +82,7 @@ export const HARD_FAILURE_FLAGS = [
   'bad_asset_name',
   'unreadable_is_option',
   'unreadable_cap_gains',
+  'future_tx_date',
 ];
 const HARD_FAILURE_FLAG_SET = new Set<string>(HARD_FAILURE_FLAGS);
 

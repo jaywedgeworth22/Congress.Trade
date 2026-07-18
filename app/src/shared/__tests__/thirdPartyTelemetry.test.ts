@@ -132,40 +132,6 @@ function scriptedCircuitKv(circuitReads: Array<Record<string, unknown> | null>) 
   return { kv: { get, put, delete: del } as unknown as KVNamespace, circuitPuts, get, put };
 }
 
-/** Atomic singleton lease double for the half-open D1 coordination row. */
-function probeLeaseD1() {
-  let lease: { token: string; expiresAt: string } | null = null;
-  const prepare = vi.fn((sql: string) => {
-    let params: unknown[] = [];
-    const statement = {
-      bind(...values: unknown[]) {
-        params = values;
-        return statement;
-      },
-      async run() {
-        if (/INSERT INTO usage_telemetry_probe_lease/i.test(sql)) {
-          const [token, expiresAt, now] = params.map(String);
-          if (lease && lease.expiresAt > now) return { success: true, meta: { changes: 0 } };
-          lease = { token, expiresAt };
-          return { success: true, meta: { changes: 1 } };
-        }
-        if (/DELETE FROM usage_telemetry_probe_lease/i.test(sql)) {
-          if (lease?.token !== String(params[0])) return { success: true, meta: { changes: 0 } };
-          lease = null;
-          return { success: true, meta: { changes: 1 } };
-        }
-        throw new Error(`unexpected probe lease SQL: ${sql}`);
-      },
-    };
-    return statement;
-  });
-  return {
-    db: { prepare } as unknown as D1Database,
-    getLease: () => lease,
-    prepare,
-  };
-}
-
 function fallbackD1(initial: Record<string, string> = {}) {
   let seq = 0;
   const stamp = () => new Date(Date.UTC(2026, 0, 1) + seq++).toISOString();
@@ -470,7 +436,7 @@ describe('third-party usage telemetry', () => {
     expect(fallback.remove).toHaveBeenCalledWith(key);
   });
 
-  it('retains legacy D1 fallback rows unchanged on a transient failure, then deletes on success', async () => {
+  it('drains legacy D1 fallback rows, bumping attempts on a transient failure then deleting on success', async () => {
     const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
     let receiverAvailable = false;
     vi.stubGlobal('fetch', vi.fn(async () => receiverAvailable
@@ -504,134 +470,71 @@ describe('third-party usage telemetry', () => {
     expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(false);
   });
 
-  it('bounds deterministic receiver rejections so one valid legacy D1 row cannot poison the drain forever', async () => {
-    const goodEvent = { ...deliveryEvent, idempotencyKey: 'ct-third-party:terminal-row-follower' };
-    const fallback = fallbackD1({
-      [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent),
-      [goodEvent.idempotencyKey]: JSON.stringify(goodEvent),
-    });
-    const quarantine = fallbackBucket();
-    const { kv } = fakeConfigKv();
-    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const parsed = JSON.parse(String(init?.body)) as { events: ThirdPartyUsageTelemetryEvent[] };
-      return parsed.events[0]?.idempotencyKey === deliveryEvent.idempotencyKey
-        ? new Response(JSON.stringify({ error: 'idempotency conflict' }), {
-            status: 409,
-            headers: { 'content-type': 'application/json' },
-          })
-        : new Response(JSON.stringify({ ok: true, accepted: 1 }), {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          });
-    }));
+  it('advances terminal legacy D1 rejects instead of pinning the oldest row', async () => {
+    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'schema validation failed' }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    })));
     const env = {
-      RAW_FILES: quarantine.bucket,
+      RAW_FILES: fallbackBucket().bucket,
       DB: fallback.db,
-      CONFIG_KV: kv,
+      CONFIG_KV: fakeConfigKv().kv,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+    } as unknown as Env;
+
+    expect(await flushUsageTelemetryFallback(env)).toMatchObject({
+      listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false,
+    });
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(1);
+    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
+  });
+
+  it('retains global receiver authentication failures and opens the outage circuit', async () => {
+    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const env = {
+      RAW_FILES: fallbackBucket().bucket,
+      DB: fallback.db,
+      CONFIG_KV: fakeConfigKv().kv,
       USAGE_MONITOR_ENABLED: 'true',
       USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
       USAGE_MONITOR_INGEST_TOKEN: 'test-token',
       USAGE_TELEMETRY_CIRCUIT_FAILURE_THRESHOLD: '1',
     } as unknown as Env;
 
-    expect(await flushUsageTelemetryFallback(env)).toMatchObject({ delivered: 1, failed: 1 });
-    expect(fallback.rows.has(goodEvent.idempotencyKey)).toBe(false);
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(1);
-    expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
-    for (let attempts = 2; attempts < 5; attempts += 1) {
-      expect(await flushUsageTelemetryFallback(env)).toMatchObject({ delivered: 0, failed: 1 });
-      expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(attempts);
-      expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
-    }
-    expect(await flushUsageTelemetryFallback(env)).toMatchObject({ delivered: 0, failed: 1 });
-    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(false);
-    expect(quarantine.objects.has(
-      '_ops/usage-telemetry-quarantine/ct-third-party%3Adelivery-test.json',
-    )).toBe(true);
+    await flushUsageTelemetryFallback(env);
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
+    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(true);
   });
 
-  it('retains a terminal legacy D1 row when R2 quarantine persistence fails', async () => {
-    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'invalid payload' }), {
+  it('quarantines terminal R2 delivery rejects instead of retrying poison objects forever', async () => {
+    const key = '_ops/usage-telemetry/terminal.json';
+    const fallback = fallbackBucket({ [key]: JSON.stringify(deliveryEvent) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'schema validation failed' }), {
       status: 400,
       headers: { 'content-type': 'application/json' },
     })));
     const env = {
-      RAW_FILES: {
-        list: vi.fn(async () => ({ objects: [], truncated: false })),
-        put: vi.fn(async () => { throw new Error('R2 unavailable'); }),
-      },
-      DB: fallback.db,
-      USAGE_MONITOR_ENABLED: 'true',
-      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
-      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
-    } as unknown as Env;
-
-    for (let i = 0; i < 6; i += 1) await flushUsageTelemetryFallback(env);
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(4);
-    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
-  });
-
-  it('quarantines a terminal R2 outbox object instead of replaying it forever', async () => {
-    const poisonEvent = { ...deliveryEvent, idempotencyKey: 'ct-third-party:terminal-r2' };
-    const outboxKey = '_ops/usage-telemetry/ct-third-party%3Aterminal-r2.json';
-    const fallback = fallbackBucket({ [outboxKey]: JSON.stringify(poisonEvent) });
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'idempotency conflict' }), {
-      status: 409,
-      headers: { 'content-type': 'application/json' },
-    })));
-    const env = {
       RAW_FILES: fallback.bucket,
+      CONFIG_KV: fakeConfigKv().kv,
       USAGE_MONITOR_ENABLED: 'true',
       USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
       USAGE_MONITOR_INGEST_TOKEN: 'test-token',
     } as unknown as Env;
 
-    const result = await flushUsageTelemetryFallback(env);
-
-    expect(result).toMatchObject({ listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false });
-    expect(fallback.objects.has(outboxKey)).toBe(false);
-    expect(fallback.objects.has(
-      '_ops/usage-telemetry-quarantine/ct-third-party%3Aterminal-r2.json',
-    )).toBe(true);
-  });
-
-  it('never ages out a valid legacy D1 row on transient receiver failures', async () => {
-    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'rate limited' }), {
-      status: 429,
-      headers: { 'content-type': 'application/json' },
-    })));
-    const env = {
-      RAW_FILES: fallbackBucket().bucket,
-      DB: fallback.db,
-      USAGE_MONITOR_ENABLED: 'true',
-      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
-      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
-    } as unknown as Env;
-
-    for (let i = 0; i < 7; i += 1) await flushUsageTelemetryFallback(env);
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
-    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
-  });
-
-  it('treats a malformed successful receiver response as transient for legacy D1 retention', async () => {
-    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"unexpected":true}', {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    })));
-    const env = {
-      RAW_FILES: fallbackBucket().bucket,
-      DB: fallback.db,
-      USAGE_MONITOR_ENABLED: 'true',
-      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
-      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
-    } as unknown as Env;
-
-    for (let i = 0; i < 6; i += 1) await flushUsageTelemetryFallback(env);
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
-    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+    expect(await flushUsageTelemetryFallback(env)).toEqual({
+      listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false,
+    });
+    expect(fallback.objects.has(key)).toBe(false);
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
   });
 
   it('does not let one poison legacy D1 row wedge the drain: quarantines it after a bounded budget while rows behind it still deliver', async () => {
@@ -817,10 +720,8 @@ describe('third-party usage telemetry', () => {
         })));
     vi.stubGlobal('fetch', fetchMock);
     const { kv } = fakeConfigKv();
-    const probeLease = probeLeaseD1();
     const env = {
       CONFIG_KV: kv,
-      DB: probeLease.db,
       USAGE_MONITOR_ENABLED: 'true',
       USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
       USAGE_MONITOR_INGEST_TOKEN: 'test-token',
@@ -847,247 +748,6 @@ describe('third-party usage telemetry', () => {
     await deliverUsageTelemetryEvent(env, deliveryEvent);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
-    expect(probeLease.getLease()).toBeNull();
-  });
-
-  it('allows only one concurrent half-open receiver probe across isolates', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-07-17T00:01:00.000Z'));
-    const { kv } = fakeConfigKv({
-      usage_telemetry_circuit_breaker: JSON.stringify({
-        consecutiveFailures: 1,
-        openUntil: Date.now() - 1,
-      }),
-    });
-    const probeLease = probeLeaseD1();
-    let resolveReceiver!: (response: Response) => void;
-    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {
-      resolveReceiver = resolve;
-    }));
-    vi.stubGlobal('fetch', fetchMock);
-    const env = {
-      CONFIG_KV: kv,
-      DB: probeLease.db,
-      USAGE_MONITOR_ENABLED: 'true',
-      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
-      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
-    } as unknown as Env;
-
-    const firstProbe = deliverUsageTelemetryEvent(env, deliveryEvent);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(probeLease.getLease()).not.toBeNull();
-
-    await expect(deliverUsageTelemetryEvent(env, deliveryEvent))
-      .rejects.toThrow(UsageTelemetryCircuitOpenError);
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(await isUsageTelemetryCircuitOpen(env)).toBe(true);
-
-    resolveReceiver(new Response(JSON.stringify({ ok: true, accepted: 1 }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }));
-    await firstProbe;
-    expect(probeLease.getLease()).toBeNull();
-    expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
-  });
-
-  it('does not let a stale-KV lease contender reopen the circuit after the owner succeeds', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-07-17T00:01:30.000Z'));
-    const expiredState = { consecutiveFailures: 2, openUntil: Date.now() - 1 };
-    const probeGateState = { consecutiveFailures: 2, openUntil: Date.now() + 30_000 };
-    const { kv, circuitPuts } = scriptedCircuitKv([
-      expiredState,
-      expiredState,
-      probeGateState,
-    ]);
-    const probeLease = probeLeaseD1();
-    let resolveReceiver!: (response: Response) => void;
-    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => {
-      resolveReceiver = resolve;
-    }));
-    vi.stubGlobal('fetch', fetchMock);
-    const env = {
-      CONFIG_KV: kv,
-      DB: probeLease.db,
-      USAGE_MONITOR_ENABLED: 'true',
-      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
-      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
-    } as unknown as Env;
-
-    const ownerProbe = deliverUsageTelemetryEvent(env, deliveryEvent);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).toHaveBeenCalledOnce();
-    await expect(deliverUsageTelemetryEvent(env, deliveryEvent))
-      .rejects.toThrow(UsageTelemetryCircuitOpenError);
-    expect(fetchMock).toHaveBeenCalledOnce();
-
-    resolveReceiver(new Response(JSON.stringify({ ok: true, accepted: 1 }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }));
-    await ownerProbe;
-    expect(circuitPuts).toEqual([
-      probeGateState,
-      { consecutiveFailures: 0, openUntil: null },
-    ]);
-    expect(probeLease.getLease()).toBeNull();
-  });
-
-  it('fails closed without calling the receiver when the half-open D1 lease cannot be claimed', async () => {
-    const { kv } = fakeConfigKv({
-      usage_telemetry_circuit_breaker: JSON.stringify({
-        consecutiveFailures: 1,
-        openUntil: Date.now() - 1,
-      }),
-    });
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    const prepare = vi.fn(() => { throw new Error('D1 unavailable'); });
-    const env = {
-      CONFIG_KV: kv,
-      DB: { prepare },
-      USAGE_MONITOR_ENABLED: 'true',
-      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
-      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
-      USAGE_TELEMETRY_CIRCUIT_FAILURE_THRESHOLD: '1',
-    } as unknown as Env;
-
-    await expect(deliverUsageTelemetryEvent(env, deliveryEvent))
-      .rejects.toThrow(UsageTelemetryCircuitOpenError);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(await isUsageTelemetryCircuitOpen(env)).toBe(true);
-    await expect(deliverUsageTelemetryEvent(env, deliveryEvent))
-      .rejects.toThrow(UsageTelemetryCircuitOpenError);
-    expect(prepare).toHaveBeenCalledOnce();
-  });
-
-  it('does not probe when the durable KV probe-in-flight gate cannot be persisted', async () => {
-    const expiredState = { consecutiveFailures: 1, openUntil: Date.now() - 1 };
-    const probeLease = probeLeaseD1();
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    const env = {
-      CONFIG_KV: {
-        get: vi.fn(async () => expiredState),
-        put: vi.fn(async () => { throw new Error('KV unavailable'); }),
-      },
-      DB: probeLease.db,
-      USAGE_MONITOR_ENABLED: 'true',
-      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
-      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
-    } as unknown as Env;
-
-    await expect(deliverUsageTelemetryEvent(env, deliveryEvent))
-      .rejects.toThrow(UsageTelemetryCircuitOpenError);
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(probeLease.getLease()).not.toBeNull();
-  });
-
-  it('fails closed without calling the receiver when CONFIG_KV cannot be read', async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    const env = {
-      CONFIG_KV: { get: vi.fn(async () => { throw new Error('KV unavailable'); }) },
-      USAGE_MONITOR_ENABLED: 'true',
-      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
-      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
-    } as unknown as Env;
-
-    await expect(deliverUsageTelemetryEvent(env, deliveryEvent))
-      .rejects.toThrow(UsageTelemetryCircuitOpenError);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('fails closed without calling the receiver when CONFIG_KV circuit state is malformed', async () => {
-    const { kv } = fakeConfigKv({
-      usage_telemetry_circuit_breaker: JSON.stringify({
-        consecutiveFailures: -1,
-        openUntil: 'not-a-timestamp',
-      }),
-    });
-    const fetchMock = vi.fn();
-    vi.stubGlobal('fetch', fetchMock);
-    const env = {
-      CONFIG_KV: kv,
-      USAGE_MONITOR_ENABLED: 'true',
-      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
-      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
-    } as unknown as Env;
-
-    await expect(deliverUsageTelemetryEvent(env, deliveryEvent))
-      .rejects.toThrow(UsageTelemetryCircuitOpenError);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('aborts a hung receiver within the configured delivery timeout and opens the circuit', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-07-17T00:02:00.000Z'));
-    const { kv } = fakeConfigKv();
-    let observedSignal: AbortSignal | undefined;
-    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
-      observedSignal = init?.signal ?? undefined;
-      return new Promise<Response>((_resolve, reject) => {
-        observedSignal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
-      });
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const env = {
-      CONFIG_KV: kv,
-      USAGE_MONITOR_ENABLED: 'true',
-      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
-      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
-      USAGE_TELEMETRY_DELIVERY_TIMEOUT_MS: '100',
-      USAGE_TELEMETRY_CIRCUIT_FAILURE_THRESHOLD: '1',
-    } as unknown as Env;
-
-    const pending = deliverUsageTelemetryEvent(env, deliveryEvent);
-    const rejection = expect(pending).rejects.toThrow('timed out');
-    await vi.advanceTimersByTimeAsync(101);
-    await rejection;
-    expect(observedSignal?.aborted).toBe(true);
-    expect(await isUsageTelemetryCircuitOpen(env)).toBe(true);
-  });
-
-  it('keeps the delivery timeout active while a receiver response body is stalled', async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-07-17T00:03:00.000Z'));
-    const { kv } = fakeConfigKv();
-    let observedSignal: AbortSignal | undefined;
-    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
-      observedSignal = init?.signal ?? undefined;
-      const body = new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode('{"ok":'));
-          observedSignal?.addEventListener('abort', () => {
-            controller.error(new DOMException('Aborted', 'AbortError'));
-          });
-        },
-      });
-      return Promise.resolve(new Response(body, {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      }));
-    });
-    vi.stubGlobal('fetch', fetchMock);
-    const env = {
-      CONFIG_KV: kv,
-      USAGE_MONITOR_ENABLED: 'true',
-      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
-      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
-      USAGE_TELEMETRY_DELIVERY_TIMEOUT_MS: '100',
-      USAGE_TELEMETRY_CIRCUIT_FAILURE_THRESHOLD: '1',
-    } as unknown as Env;
-
-    const pending = deliverUsageTelemetryEvent(env, deliveryEvent);
-    const rejection = expect(pending).rejects.toThrow('timed out');
-    await vi.advanceTimersByTimeAsync(0);
-    expect(fetchMock).toHaveBeenCalledOnce();
-    await vi.advanceTimersByTimeAsync(101);
-    await rejection;
-    expect(observedSignal?.aborted).toBe(true);
-    expect(await isUsageTelemetryCircuitOpen(env)).toBe(true);
   });
 
   it('drops a new fallback event once the R2 outbox is at USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS capacity', async () => {
@@ -1172,7 +832,6 @@ describe('third-party usage telemetry', () => {
     expect(fallback.put).toHaveBeenCalledOnce();
     expect(store.get('usage_telemetry_outbox_count')).toBe('1');
   });
-
   it('seeds the counter from a bounded paginated count spanning R2 list pages when the KV counter is missing', async () => {
     // R2 list pages at ~1000 objects, so a single list cannot establish the count
     // against a multi-thousand cap (the old list-based check could never enforce
