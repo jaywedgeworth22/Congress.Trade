@@ -21,7 +21,7 @@ vi.mock('../ogeSource', () => ({
   pollOgeExecutive: mocks.pollOgeExecutive,
 }));
 
-import { runWatcher } from '../watcher';
+import { computeSenateLookbackDays, inHousePriorYearWindow, runWatcher } from '../watcher';
 
 function housePtr(docId: string, overrides: Partial<Record<'filingDate' | 'first' | 'last' | 'stateDst', string>> = {}) {
   return {
@@ -38,13 +38,15 @@ function housePtr(docId: string, overrides: Partial<Record<'filingDate' | 'first
 function fakeEnv(
   overrides: Partial<{ HOUSE_LIVE_SEARCH_ENABLED: string }> = {},
   faults: { throwOnFilingsInsert?: boolean } = {},
+  kvSeed: Record<string, string> = {},
 ): {
   env: Env;
+  kv: Map<string, string>;
   kvPuts: Array<[string, string]>;
   dbRuns: Array<{ sql: string; params: unknown[] }>;
   queueSends: Array<unknown>;
 } {
-  const kv = new Map<string, string>();
+  const kv = new Map<string, string>(Object.entries(kvSeed));
   const kvPuts: Array<[string, string]> = [];
   const dbRuns: Array<{ sql: string; params: unknown[] }> = [];
   const queueSends: Array<unknown> = [];
@@ -118,7 +120,7 @@ function fakeEnv(
     },
   } as unknown as Env;
 
-  return { env, kvPuts, dbRuns, queueSends };
+  return { env, kv, kvPuts, dbRuns, queueSends };
 }
 
 describe('runWatcher', () => {
@@ -270,5 +272,232 @@ describe('runWatcher', () => {
 
     expect(result?.executive).toBe('failure');
     expect(kvPuts.map(([key]) => key)).not.toContain('last_poll:oge');
+  });
+
+  // --- Senate lookback: daily deep sweep + outage catch-up -----------------
+  const SENATE_NOW = new Date('2026-07-16T15:00:00.000Z'); // Thu 11:00 ET
+
+  function quietHouse() {
+    mocks.fetchHouseIndex.mockResolvedValue([]);
+    mocks.pollHouseLiveSearch.mockResolvedValue([]);
+  }
+
+  function senateSince(): Date {
+    expect(mocks.fetchSenatePtrFilings).toHaveBeenCalledTimes(1);
+    return mocks.fetchSenatePtrFilings.mock.calls[0][0].since;
+  }
+
+  it('widens the senate window to the max lookback on the first poll of a UTC day (deep sweep) and stamps only after success', async () => {
+    const { env, kvPuts } = fakeEnv({}, {}, {
+      'last_poll:senate': new Date(SENATE_NOW.getTime() - 6 * 3600_000).toISOString(),
+    });
+    quietHouse();
+    mocks.fetchSenatePtrFilings.mockResolvedValueOnce([]);
+
+    const result = await runWatcher(env, SENATE_NOW);
+
+    expect(result.senate).toBe('success');
+    expect(senateSince()).toEqual(new Date(SENATE_NOW.getTime() - 30 * 86_400_000));
+    expect(kvPuts).toContainEqual(['senate_deep_sweep:lastdate', '2026-07-16']);
+  });
+
+  it('uses the base 7-day senate window when polling is healthy and the deep sweep already ran today', async () => {
+    const { env } = fakeEnv({}, {}, {
+      'senate_deep_sweep:lastdate': '2026-07-16',
+      'last_poll:senate': new Date(SENATE_NOW.getTime() - 6 * 3600_000).toISOString(),
+    });
+    quietHouse();
+    mocks.fetchSenatePtrFilings.mockResolvedValueOnce([]);
+
+    await runWatcher(env, SENATE_NOW);
+
+    expect(senateSince()).toEqual(new Date(SENATE_NOW.getTime() - 7 * 86_400_000));
+  });
+
+  it('catches up over an outage: a 12-day-stale last success widens the window to cover the gap + 1 day', async () => {
+    const { env } = fakeEnv({}, {}, {
+      'senate_deep_sweep:lastdate': '2026-07-16',
+      'last_poll:senate': new Date(SENATE_NOW.getTime() - 12 * 86_400_000).toISOString(),
+    });
+    quietHouse();
+    mocks.fetchSenatePtrFilings.mockResolvedValueOnce([]);
+
+    await runWatcher(env, SENATE_NOW);
+
+    expect(senateSince()).toEqual(new Date(SENATE_NOW.getTime() - 13 * 86_400_000));
+  });
+
+  it('does not consume the day\'s deep sweep when the senate poll fails', async () => {
+    const { env, kvPuts } = fakeEnv({}, {}, {
+      'last_poll:senate': new Date(SENATE_NOW.getTime() - 6 * 3600_000).toISOString(),
+    });
+    quietHouse();
+    mocks.fetchSenatePtrFilings.mockRejectedValueOnce(new Error('efd 403'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    let result;
+    try {
+      result = await runWatcher(env, SENATE_NOW);
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(result?.senate).toBe('failure');
+    expect(kvPuts.map(([key]) => key)).not.toContain('senate_deep_sweep:lastdate');
+  });
+
+  // --- House year-boundary prior-year sweep --------------------------------
+  const JANUARY_NOW = new Date('2026-01-05T15:00:00.000Z'); // Mon Jan 5, 10:00 ET
+
+  it('also sweeps the prior-year House index during the January overlap window', async () => {
+    const { env, kvPuts, queueSends } = fakeEnv();
+    mocks.fetchHouseIndex.mockImplementation(async (year: number) =>
+      year === 2026
+        ? [housePtr('30000001')]
+        : [{ ...housePtr('29990001'), pipelineDocId: 'H-2025-29990001' }],
+    );
+    mocks.pollHouseLiveSearch.mockResolvedValue([]);
+    mocks.fetchSenatePtrFilings.mockResolvedValue([]);
+
+    await runWatcher(env, JANUARY_NOW);
+
+    expect(mocks.fetchHouseIndex.mock.calls.map((c) => c[0])).toEqual([2026, 2025]);
+    expect(queueSends).toEqual(expect.arrayContaining([
+      expect.objectContaining({ docId: 'H-2026-30000001' }),
+      expect.objectContaining({ docId: 'H-2025-29990001' }),
+    ]));
+    expect(kvPuts).toContainEqual(['house_prior_year:last_fetch_at', JANUARY_NOW.toISOString()]);
+  });
+
+  it('rate-limits the prior-year sweep to one fetch per hour', async () => {
+    const { env } = fakeEnv({}, {}, {
+      'house_prior_year:last_fetch_at': new Date(JANUARY_NOW.getTime() - 10 * 60_000).toISOString(),
+    });
+    mocks.fetchHouseIndex.mockResolvedValue([]);
+    mocks.pollHouseLiveSearch.mockResolvedValue([]);
+    mocks.fetchSenatePtrFilings.mockResolvedValue([]);
+
+    await runWatcher(env, JANUARY_NOW);
+
+    expect(mocks.fetchHouseIndex.mock.calls.map((c) => c[0])).toEqual([2026]);
+  });
+
+  it('fails soft when the prior-year sweep errors: current-year filings still land', async () => {
+    const { env, kvPuts, queueSends } = fakeEnv();
+    mocks.fetchHouseIndex.mockImplementation(async (year: number) => {
+      if (year === 2025) throw new Error('prior-year ZIP 500');
+      return [housePtr('30000001')];
+    });
+    mocks.pollHouseLiveSearch.mockResolvedValue([]);
+    mocks.fetchSenatePtrFilings.mockResolvedValue([]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      await runWatcher(env, JANUARY_NOW);
+    } finally {
+      warn.mockRestore();
+    }
+
+    expect(queueSends).toEqual(expect.arrayContaining([
+      expect.objectContaining({ docId: 'H-2026-30000001' }),
+    ]));
+    expect(kvPuts.map(([key]) => key)).toContain('last_poll:house');
+  });
+
+  // --- House live-search failure visibility --------------------------------
+  it('escalates to console.error after 12 consecutive live-search failures', async () => {
+    const { env, kv } = fakeEnv({}, {}, {
+      'house_live_search:consecutive_failures': '11',
+    });
+    mocks.fetchHouseIndex.mockResolvedValue([]);
+    mocks.pollHouseLiveSearch.mockRejectedValue(new Error('anti-bot 403'));
+    mocks.fetchSenatePtrFilings.mockResolvedValue([]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await runWatcher(env, new Date('2026-07-16T15:00:00.000Z'));
+      expect(kv.get('house_live_search:consecutive_failures')).toBe('12');
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining('failed 12 consecutive polls'),
+        'anti-bot 403',
+      );
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it('warns (not errors) on a sub-threshold live-search failure and resets the counter on success', async () => {
+    const { env, kv } = fakeEnv({}, {}, {
+      'house_live_search:consecutive_failures': '4',
+    });
+    mocks.fetchHouseIndex.mockResolvedValue([]);
+    mocks.pollHouseLiveSearch.mockRejectedValueOnce(new Error('flaky'));
+    mocks.fetchSenatePtrFilings.mockResolvedValue([]);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    try {
+      await runWatcher(env, new Date('2026-07-16T15:00:00.000Z'));
+      expect(kv.get('house_live_search:consecutive_failures')).toBe('5');
+      expect(error).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+    }
+
+    // A later successful overlay resets the streak.
+    const second = fakeEnv({}, {}, { 'house_live_search:consecutive_failures': '5' });
+    mocks.pollHouseLiveSearch.mockResolvedValueOnce([]);
+    await runWatcher(second.env, new Date('2026-07-16T16:00:00.000Z'));
+    expect(second.kv.get('house_live_search:consecutive_failures')).toBe('0');
+  });
+});
+
+describe('computeSenateLookbackDays', () => {
+  const NOW = new Date('2026-07-16T15:00:00.000Z');
+  const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86_400_000);
+
+  it('stays on the base window while polling is healthy', () => {
+    expect(computeSenateLookbackDays(NOW, daysAgo(0.1), 7, 30, false)).toBe(7);
+    expect(computeSenateLookbackDays(NOW, daysAgo(5), 7, 30, false)).toBe(7);
+  });
+
+  it('covers an outage gap with one day of margin', () => {
+    expect(computeSenateLookbackDays(NOW, daysAgo(12), 7, 30, false)).toBe(13);
+  });
+
+  it('caps outage catch-up at the max window', () => {
+    expect(computeSenateLookbackDays(NOW, daysAgo(90), 7, 30, false)).toBe(30);
+  });
+
+  it('uses the max window for the daily deep sweep and when there is no success on record', () => {
+    expect(computeSenateLookbackDays(NOW, daysAgo(0.1), 7, 30, true)).toBe(30);
+    expect(computeSenateLookbackDays(NOW, null, 7, 30, false)).toBe(30);
+  });
+
+  it('never shrinks below the base window even if max is misconfigured lower', () => {
+    expect(computeSenateLookbackDays(NOW, daysAgo(0.1), 7, 3, true)).toBe(7);
+  });
+});
+
+describe('inHousePriorYearWindow', () => {
+  it('is true within the first N days of January (ET)', () => {
+    expect(inHousePriorYearWindow(new Date('2026-01-05T15:00:00.000Z'), 14)).toBe(true);
+    expect(inHousePriorYearWindow(new Date('2026-01-14T15:00:00.000Z'), 14)).toBe(true);
+  });
+
+  it('is false after the window, in other months, and when disabled', () => {
+    expect(inHousePriorYearWindow(new Date('2026-01-15T15:00:00.000Z'), 14)).toBe(false);
+    expect(inHousePriorYearWindow(new Date('2026-02-01T15:00:00.000Z'), 14)).toBe(false);
+    expect(inHousePriorYearWindow(new Date('2026-01-05T15:00:00.000Z'), 0)).toBe(false);
+  });
+
+  it('evaluates the boundary in ET, not UTC', () => {
+    // Jan 1 00:30 UTC is still Dec 31 19:30 ET -> outside the window.
+    expect(inHousePriorYearWindow(new Date('2026-01-01T00:30:00.000Z'), 14)).toBe(false);
+    // Jan 1 15:00 UTC is Jan 1 10:00 ET -> inside.
+    expect(inHousePriorYearWindow(new Date('2026-01-01T15:00:00.000Z'), 14)).toBe(true);
   });
 });
