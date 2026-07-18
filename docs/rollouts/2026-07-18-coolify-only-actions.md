@@ -51,6 +51,9 @@ Cloudflare Worker remained healthy. The runner service was contained while the
 host recovered. This is why cache removal and the resource follow-ups below are
 release requirements, not optional optimization.
 
+After recovery, a persistent 4 GiB `/swapfile` was enabled with swappiness 10;
+the host reported 4.0 GiB swap available and no swap in use under normal load.
+
 The reboot also exposed a persistent-workspace interaction: the Sentry reporter's
 sparse checkout left only its script materialized, and later checkout runs did
 not reliably restore `app/` or `clients/pwa/`. The reporter now uses a full
@@ -65,8 +68,8 @@ guard rejects future sparse-checkout directives.
   remain excluded; Dependabot CI fails explicitly instead of reporting a false
   green skipped check. Private-fork workflow execution is disabled at the
   repository level.
-- Give the runner containers explicit CPU, memory, and PID limits and reserve
-  host memory/swap so a CI/deploy overlap cannot OOM production.
+- Recheck the existing runner CPU/memory limits under concurrent CI/deploy load,
+  add PID limits, and keep explicit production memory reserve despite swap.
 - Re-enable Codex Autofix only on a dedicated ephemeral runner label, and pin
   the shared reusable workflow to an immutable commit.
 - Keep Actions cache/artifact storage disabled or separately budgeted; owned
