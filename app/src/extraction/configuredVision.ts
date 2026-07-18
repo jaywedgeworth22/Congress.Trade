@@ -19,6 +19,7 @@
  */
 
 import type { Env, Filing } from '../shared/types';
+import { IngestRetryError } from '../ingestion/fetcher';
 import { resolveSecrets } from '../secrets/infisical';
 import {
   runCandidateOnDoc,
@@ -73,6 +74,39 @@ export async function resolvePrimaryFailoverModels(env: Env, chamber: string): P
 }
 
 const candidateLabel = (c: BakeoffCandidate): string => `${c.provider}:${c.model}`;
+
+const PROVIDER_BAN_TTL_SECONDS = 60 * 60;
+
+function isProviderRateLimit(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b(429|402|too many requests|quota exceeded|rate[- ]?limit|payment required)\b/i.test(message);
+}
+
+async function providerBanRetryAfter(env: Env, provider: string): Promise<number | null> {
+  if (!env.CONFIG_KV) return null;
+  try {
+    const raw = await env.CONFIG_KV.get(`provider_ban:${provider}`);
+    if (!raw) return null;
+    const until = Number(raw);
+    if (!Number.isFinite(until) || until <= Date.now()) return null;
+    return Math.max(1, Math.min(PROVIDER_BAN_TTL_SECONDS, Math.ceil((until - Date.now()) / 1000)));
+  } catch {
+    return null;
+  }
+}
+
+async function recordProviderBan(env: Env, provider: string): Promise<void> {
+  if (!env.CONFIG_KV) return;
+  try {
+    await env.CONFIG_KV.put(
+      `provider_ban:${provider}`,
+      String(Date.now() + PROVIDER_BAN_TTL_SECONDS * 1000),
+      { expirationTtl: PROVIDER_BAN_TTL_SECONDS },
+    );
+  } catch {
+    // A down KV must not hide the provider failure from the queue retry path.
+  }
+}
 
 /** Stable, secret-safe error string for one candidate's failed read. */
 function candidateErrorString(candidate: BakeoffCandidate, result: CandidateDocResult): string {
@@ -144,36 +178,49 @@ export class ConfiguredVisionExtractor implements Extractor {
     const bytes = input.bytes;
     const docId = input.filing.docId;
 
-    let primaryResult: CandidateDocResult | null = null;
-    let primaryErr: string;
-    try {
-      primaryResult = await runCandidateOnDoc(this.env, primary, docId, bytes);
-      primaryErr = primaryResult.ok ? '' : candidateErrorString(primary, primaryResult);
-    } catch (err) {
-      primaryErr = `${candidateLabel(primary)}: ${(err as Error).message}`;
-    }
-    if (primaryResult?.ok) return toExtractorResult(primary, primaryResult);
+    const candidates = [primary, failover].filter(
+      (candidate, index, all): candidate is BakeoffCandidate =>
+        Boolean(candidate) && all.findIndex((item) => candidateLabel(item!) === candidateLabel(candidate!)) === index,
+    );
+    const errors: string[] = [];
+    let allFailuresWereRateLimits = true;
+    let blockedRetryAfter = 0;
 
-    // Explicit primary configured: a failure never silently reverts to the
-    // legacy chain. Try the failover (when configured and genuinely distinct),
-    // else surface both stable error strings so the orchestrator records the
-    // failure and the queue retries.
-    if (!failover || candidateLabel(failover) === candidateLabel(primary)) {
-      throw new Error(
-        `${this.name}: primary failed (${primaryErr}); no distinct failover configured`,
+    for (const candidate of candidates) {
+      const label = candidateLabel(candidate);
+      const retryAfter = await providerBanRetryAfter(this.env, candidate.provider);
+      if (retryAfter !== null) {
+        blockedRetryAfter = blockedRetryAfter === 0 ? retryAfter : Math.min(blockedRetryAfter, retryAfter);
+        errors.push(`${label}: provider rate limit circuit breaker is open`);
+        continue;
+      }
+
+      let result: CandidateDocResult;
+      try {
+        result = await runCandidateOnDoc(this.env, candidate, docId, bytes);
+      } catch (error) {
+        const message = `${label}: ${(error as Error).message}`;
+        errors.push(message);
+        if (isProviderRateLimit(error)) await recordProviderBan(this.env, candidate.provider);
+        else allFailuresWereRateLimits = false;
+        continue;
+      }
+      if (result.ok) return toExtractorResult(candidate, result);
+
+      const message = candidateErrorString(candidate, result);
+      errors.push(message);
+      if (isProviderRateLimit(result.error)) await recordProviderBan(this.env, candidate.provider);
+      else allFailuresWereRateLimits = false;
+    }
+
+    if (blockedRetryAfter > 0 && allFailuresWereRateLimits) {
+      throw new IngestRetryError(
+        `${this.name}: all configured providers are rate-limited; retry-after: ${blockedRetryAfter}s`,
+        blockedRetryAfter,
       );
     }
-
-    let failoverResult: CandidateDocResult | null = null;
-    let failoverErr: string;
-    try {
-      failoverResult = await runCandidateOnDoc(this.env, failover, docId, bytes);
-      failoverErr = failoverResult.ok ? '' : candidateErrorString(failover, failoverResult);
-    } catch (err) {
-      failoverErr = `${candidateLabel(failover)}: ${(err as Error).message}`;
-    }
-    if (failoverResult?.ok) return toExtractorResult(failover, failoverResult);
-
+    const primaryErr = errors[0] ?? `${candidateLabel(primary)}: extraction failed`;
+    const failoverErr = errors[1] ?? 'no distinct failover configured';
     throw new Error(`${this.name}: primary failed (${primaryErr}); failover failed (${failoverErr})`);
   }
 }

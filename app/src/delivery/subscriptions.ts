@@ -8,9 +8,11 @@
  */
 
 import type { Env, Subscription, SubscriptionFilters, Transaction } from '../shared/types';
-import { all, get, run } from '../shared/db';
+import { all, first, get, run } from '../shared/db';
 import { prefixedId } from '../shared/ids';
 import { mapSubscription, type SubscriptionRow } from './rows';
+import { getUserById } from '../auth/users';
+import { isPremiumUser } from '../billing/entitlement';
 
 const SELECT_COLS =
   'id, client_id, delivery, target_url, secret, filters, cursor, active, created_at';
@@ -21,6 +23,25 @@ export const MAX_SUBSCRIPTION_SECRET_LENGTH = 256;
 export const MAX_WEBHOOK_TARGET_URL_LENGTH = 2048;
 
 export class SubscriptionQuotaError extends Error {}
+
+/**
+ * Entitlement re-check at delivery/connection time. Subscription creation is
+ * premium-gated, but a durable subscription outlives its owner's billing
+ * state (trial-and-cancel would otherwise keep webhook/SSE delivery working
+ * forever). User-owned rows store clientId as `user:<id>`; the owner must
+ * still satisfy the same canonical predicate the UI/REST layer uses
+ * (billing/entitlement isPremiumUser over the users row). Admin
+ * operator-provisioned integration ids are intentionally ungated, matching
+ * the PATCH /subscriptions/:id policy.
+ */
+export async function subscriptionOwnerEntitled(
+  env: Env,
+  clientId: string | null | undefined,
+): Promise<boolean> {
+  if (!clientId?.startsWith('user:')) return true;
+  const owner = await getUserById(env, clientId.slice('user:'.length));
+  return isPremiumUser(owner);
+}
 
 export function subscriptionSecretError(value: unknown): string | null {
   if (value === undefined) return null;
@@ -69,7 +90,7 @@ export async function assertSubscriptionQuota(
   clientId: string,
   opts: { creating?: boolean; activating?: boolean } = {},
 ): Promise<void> {
-  const row = await get<{ total: number; active: number }>(
+  const row = await first<{ total: number; active: number }>(
     env.DB,
     `SELECT COUNT(*) AS total,
             COALESCE(SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END), 0) AS active

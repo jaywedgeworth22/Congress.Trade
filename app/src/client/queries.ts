@@ -1,5 +1,5 @@
 import type { Env, Subscription, User } from '../shared/types';
-import { all, get } from '../shared/db';
+import { all, first, get } from '../shared/db';
 import {
   buildTransactionsCountQuery,
   buildTransactionsQuery,
@@ -80,7 +80,7 @@ export async function readClientTradeList(env: Env, params: TxQueryParams): Prom
   const items = rows.map(clientTradeFromRow);
   const maxCursor = items.reduce((m, t) => (t.cursor > m ? t.cursor : m), params.since ?? 0);
   const countQuery = buildTransactionsCountQuery(params);
-  const countRow = await get<{ total: number | string | null }>(env.DB, countQuery.sql, countQuery.params);
+  const countRow = await first<{ total: number | string | null }>(env.DB, countQuery.sql, countQuery.params);
   return {
     items,
     cursor: maxCursor,

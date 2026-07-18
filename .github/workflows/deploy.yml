@@ -15,29 +15,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Build + wrangler deploy. Runs on a GitHub-hosted runner: wrangler deploy
-  # talks to Cloudflare's API (api.cloudflare.com) via CLOUDFLARE_API_TOKEN,
-  # which does not require the Hetzner box's allowlisted egress IP. Moving
-  # this job off the shared self-hosted box avoids the OOM/contention it hit
-  # (2026-07-17: a concurrent Socratic.Trade deploy on the same box got this
-  # job's `npm ci` killed with exit 137). No health/migrate calls happen here
-  # — those need the allowlisted IP and run in the `verify` job below.
+  # Production deploys are owner-triggered, main-only, and use the privileged
+  # Coolify deploy runner. The production environment adds a GitHub-side ref
+  # gate before repository secrets are released.
   deploy:
-    if: github.event.inputs.confirm == 'deploy-production'
-    runs-on: ubuntu-latest
+    if: >-
+      github.event.inputs.confirm == 'deploy-production' &&
+      github.ref == 'refs/heads/main'
+    environment: production
+    runs-on: [self-hosted, congress-deploy]
+    timeout-minutes: 30
     permissions:
       contents: read
     defaults:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
@@ -70,26 +68,22 @@ jobs:
   # it is lightweight and cannot OOM the box the way the old combined job did.
   verify:
     needs: deploy
-    # Switchable via the CT_DEPLOY_VERIFY_RUNNER repository variable (mirrors
-    # CT_CI_RUNNER in ci.yml): set it to a JSON array of runner labels (e.g.
-    # '["ubuntu-latest"]') to move verification off the box if it's down.
-    # NOTE: a GitHub-hosted fallback here will fail the health/migrate calls
-    # below unless the Cloudflare IP Access Rule is relaxed too — the default
-    # is the allowlisted self-hosted runner.
-    runs-on: ${{ vars.CT_DEPLOY_VERIFY_RUNNER && fromJSON(vars.CT_DEPLOY_VERIFY_RUNNER) || fromJSON('["self-hosted","congress-deploy"]') }}
+    environment: production
+    runs-on: [self-hosted, congress-deploy]
+    timeout-minutes: 10
     permissions:
       contents: read
     defaults:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       # No npm ci here (this job never installs deps or builds — that's what
       # keeps it lightweight and OOM-proof). setup-node just puts a `node`
       # binary on PATH: scripts/ship.sh's dashboard smoke check shells out to
       # `node --check` to parse-check the served page's inline <script>s.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
 

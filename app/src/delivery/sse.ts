@@ -50,11 +50,12 @@
 import type { Env, Subscription, Transaction } from '../shared/types';
 import { all, get, run } from '../shared/db';
 import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows';
-import { matchesFiltersWithContext } from './subscriptions';
+import { matchesFiltersWithContext, subscriptionOwnerEntitled } from './subscriptions';
 import { constantTimeEqual } from '../auth/tokens';
 import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
 import { prefixedId } from '../shared/ids';
 import { rateLimit } from '../shared/rateLimit';
+import { flushD1Budget } from '../shared/d1Budget';
 
 /** How often to poll D1 for new rows. */
 const POLL_INTERVAL_MS = 5_000;
@@ -235,6 +236,16 @@ export async function openSseStream(
     });
   }
 
+  // Entitlement re-check at connection time (panel HIGH: a lapsed owner's
+  // stream token must stop opening premium streams). Placed after the token
+  // check so unauthenticated probes cannot enumerate owner billing state.
+  if (!(await subscriptionOwnerEntitled(env, sub.clientId))) {
+    return new Response(
+      JSON.stringify({ error: 'subscription owner requires an active Premium account', upgradeRequired: true }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
   // Authentication deliberately precedes rate counters and lease writes so an
   // attacker cannot consume another subscription's capacity with a guessed id.
   const subscriptionRate = await rateLimit(
@@ -291,6 +302,11 @@ export async function openSseStream(
     // source of truth; module globals are isolate-local and cannot safely gate
     // this query in a distributed Worker.
     cursor = await drainSseBacklog(env, sub, cursor, send);
+    // The HTTP handler's waitUntil settles when this Response is created, but
+    // the producer continues querying D1 in the background. Flush those rows
+    // while the stream is alive instead of leaving them in the isolate until
+    // an unrelated invocation happens to flush them.
+    await flushD1Budget(env);
 
     // 2) Live poll loop. Stop early enough to enqueue a resumable reconnect
     // frame, while the outer hard deadline still guarantees termination if a
@@ -302,6 +318,7 @@ export async function openSseStream(
       if (closed || Date.now() >= deadlineAt - reconnectGraceMs) break;
       const before = cursor;
       cursor = await drainSseBacklog(env, sub, cursor, send);
+      await flushD1Budget(env);
       if (cursor === before) {
         // Idle tick — heartbeat so intermediaries keep the socket open.
         await send(`event: ping\ndata: ${Date.now()}\n\n`);
@@ -342,6 +359,9 @@ export async function openSseStream(
         }
       }
       await releaseSseLease(env, leaseId);
+      // releaseSseLease is also a D1 operation and the producer's final
+      // flush covers it even when the stream ended before another poll tick.
+      await flushD1Budget(env);
     }
   })();
 

@@ -35,6 +35,7 @@ import { buildClientRouter } from './client/routes';
 import { buildExportRouter } from './export/routes';
 import { buildUiRouter } from './ui/routes';
 import { maybeRunDailyJobs } from './jobs';
+import { flushD1Budget } from './shared/d1Budget';
 import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement';
 import { refreshSecrets } from './secrets/infisical';
 import { runDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency';
@@ -55,6 +56,7 @@ import {
   deliverUsageTelemetryEvent,
   flushUsageTelemetryFallback,
   isUsageTelemetryCircuitOpen,
+  isTerminalUsageTelemetryDeliveryError,
   persistUsageTelemetryFallback,
   trackedFetch,
   withThirdPartyTelemetry,
@@ -170,7 +172,7 @@ async function handleIngestMessage(env: Env, msg: QueueMessage, queueAttempt = 1
       // receiver from being hammered by this message's own retry/backoff
       // cadence on top of every other in-flight event doing the same thing.
       if (await isUsageTelemetryCircuitOpen(env)) {
-        await persistUsageTelemetryFallback(env, msg.event);
+        await persistUsageTelemetryFallback(env, msg.event, { throwOnFailure: true });
         return;
       }
       await deliverUsageTelemetryEvent(env, msg.event);
@@ -208,7 +210,7 @@ async function handleDeadLetterMessage(
     // while open, persist to the R2 outbox and stop, instead of continuing to
     // attempt the exact same idempotent event on every DLQ redelivery.
     if (await isUsageTelemetryCircuitOpen(env)) {
-      await persistUsageTelemetryFallback(env, msg.event);
+      await persistUsageTelemetryFallback(env, msg.event, { throwOnFailure: true });
       return;
     }
     await deliverUsageTelemetryEvent(env, msg.event);
@@ -406,7 +408,11 @@ const requestAndScheduledWorker = Sentry.withSentry(
   {
     /** HTTP entrypoint. */
     fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> | Response {
-      return withThirdPartyTelemetry(env, () => app.fetch(request, env, ctx));
+      const response = withThirdPartyTelemetry(env, () => app.fetch(request, env, ctx));
+      // Flush this request's metered D1 rows after the response settles — the
+      // read path is where analytics/scraper scans accrue. Best-effort, never blocks.
+      ctx.waitUntil(Promise.resolve(response).catch(() => undefined).then(() => flushD1Budget(env)));
+      return response;
     },
 
     /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow.
@@ -415,21 +421,28 @@ const requestAndScheduledWorker = Sentry.withSentry(
       return withThirdPartyTelemetry(env, async () => {
       // Register independent maintenance first. A watcher/config failure must
       // never prevent durable outboxes, secrets, or daily jobs from running.
-      ctx.waitUntil(
+      // `track` also collects each task so the D1 row meter flushes once, after
+      // all of them settle (the heavy D1 work runs inside these tasks).
+      const tasks: Promise<unknown>[] = [];
+      const track = (p: Promise<unknown>): void => {
+        tasks.push(p);
+        ctx.waitUntil(p);
+      };
+      track(
         Sentry.withMonitor('delivery-outbox-cron', () =>
           flushDeliveryOutbox(env, { limit: 100 }),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'delivery-outbox' } }),
         ),
       );
-      ctx.waitUntil(
+      track(
         Sentry.withMonitor('ingestion-outbox-cron', () =>
           flushIngestionOutbox(env, { limit: 100 }),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'ingestion-outbox' } }),
         ),
       );
-      ctx.waitUntil(
+      track(
         flushUsageTelemetryFallback(env, { limit: 25 })
           .then((result) => {
             if (result.failed > 0) {
@@ -444,28 +457,28 @@ const requestAndScheduledWorker = Sentry.withSentry(
             });
           }),
       );
-      ctx.waitUntil(
+      track(
         Sentry.withMonitor('secrets-refresh-cron', () =>
           refreshSecrets(env),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'secrets-refresh' } }),
         ),
       );
-      ctx.waitUntil(
+      track(
         Sentry.withMonitor('disclosure-latency-cron', () =>
           runDisclosureLatencyProbe(env),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'disclosure-latency' } }),
         ),
       );
-      ctx.waitUntil(
+      track(
         Sentry.withMonitor('daily-jobs-cron', () =>
           maybeRunDailyJobs(env),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'daily-jobs' } }),
         ),
       );
-      ctx.waitUntil(
+      track(
         Sentry.withMonitor(
           'agreement-autopublish-cron',
           () => maybeRunAgreementAutopublish(env),
@@ -481,7 +494,7 @@ const requestAndScheduledWorker = Sentry.withSentry(
       );
       // Sentry Crons: alerts if the per-minute watcher tick stops checking in or
       // starts overrunning, independent of whether shouldPollNow decides to poll.
-      ctx.waitUntil(
+      track(
         Sentry.withMonitor(
           'watcher-cron',
           () => runWatcher(env, new Date()),
@@ -495,6 +508,8 @@ const requestAndScheduledWorker = Sentry.withSentry(
           Sentry.captureException(err, { tags: { cron: 'watcher' } }),
         ),
       );
+      // Flush the isolate's metered D1 rows once all cron work settles.
+      ctx.waitUntil(Promise.allSettled(tasks).then(() => flushD1Budget(env)));
       });
     },
   },
@@ -525,6 +540,12 @@ const queueWorker = Sentry.withSentry(
             message.ack();
           } catch (err) {
             const messageType = (message.body as QueueMessage).type;
+            if (messageType === 'usage.telemetry' && isTerminalUsageTelemetryDeliveryError(err)) {
+              // Deterministic payload/idempotency rejects cannot be recovered
+              // by replaying the same DLQ message.
+              message.ack();
+              continue;
+            }
             // Usage Monitor outage retries must not create a Sentry envelope,
             // which would create another Usage Monitor event and amplify.
             if (messageType === 'usage.telemetry') {
@@ -537,6 +558,10 @@ const queueWorker = Sentry.withSentry(
             message.retry({ delaySeconds: 60 });
           }
         }
+        // Flush this DLQ batch's metered D1 rows (outbox-reopen writes). The
+        // queue handler awaits all its work inline, so we await the flush too
+        // (messages are already ack'd; a quick KV write does not delay them).
+        await flushD1Budget(env);
         return;
       }
 
@@ -570,6 +595,12 @@ const queueWorker = Sentry.withSentry(
           message.ack();
         } catch (err) {
           const messageType = (message.body as QueueMessage).type;
+          if (messageType === 'usage.telemetry' && isTerminalUsageTelemetryDeliveryError(err)) {
+            // Ack deterministic payload/idempotency rejects instead of writing
+            // the same poison event back to R2 and retrying it forever.
+            message.ack();
+            continue;
+          }
           const ingestRetry = isDelivery
             ? null
             : classifyTransientIngestError(err, message.attempts);
@@ -590,6 +621,8 @@ const queueWorker = Sentry.withSentry(
           }
         }
       }
+      // Flush this batch's metered D1 rows (ingest/delivery writes).
+      await flushD1Budget(env);
       });
     },
   },

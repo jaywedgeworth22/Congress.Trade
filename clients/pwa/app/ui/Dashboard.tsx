@@ -639,6 +639,11 @@ export default function Dashboard() {
             </form>
           </>
         ) : null}
+        
+        <div style={{ marginTop: '32px', paddingTop: '16px', borderTop: '1px solid var(--border)', fontSize: '12px', color: 'var(--muted)', textAlign: 'center' }}>
+          <a href="/terms-of-service" style={{ color: 'var(--muted)', textDecoration: 'none', marginRight: '12px' }}>Terms of Service</a>
+          <a href="/privacy-policy" style={{ color: 'var(--muted)', textDecoration: 'none' }}>Privacy Policy</a>
+        </div>
       </section>
 
       <nav className="bottom-nav" aria-label="Primary">

@@ -1,0 +1,4 @@
+self-hosted-runner:
+  labels:
+    - congress-ci
+    - congress-deploy

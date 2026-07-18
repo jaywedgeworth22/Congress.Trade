@@ -477,7 +477,7 @@ export function buildMemberPerformanceLeaderboardQuery(
     '((sr.current_price / p.price_at_filing) - 1.0) - ((sx.spx_now / p.spx_at_filing) - 1.0)';
   const ANCHOR_DATE = 'COALESCE(f.filed_date, f.first_seen_at, t.tx_date)';
   const ELAPSED_DAYS = `(julianday('now') - julianday(${ANCHOR_DATE}))`;
-  const ANNUALIZED_EXCESS = `((${EXCESS}) * (365.25 / ${ELAPSED_DAYS}))`;
+  const ANNUALIZED_EXCESS = `((${EXCESS}) * (365.25 / MAX(30.0, ${ELAPSED_DAYS})))`;
   const allWhere = [
     "t.tx_type = 'P'",
     't.is_option = 0',
