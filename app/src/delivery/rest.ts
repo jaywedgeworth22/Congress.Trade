@@ -178,10 +178,22 @@ function filtersFromQuery(q: Record<string, string>): TxQueryParams {
   };
 }
 
-/** CSV-escape a single cell (RFC 4180: wrap in quotes, double embedded quotes). */
-function csvCell(value: unknown): string {
+/**
+ * CSV-escape a single cell (RFC 4180: wrap in quotes, double embedded quotes),
+ * neutralizing spreadsheet formula injection (CT-AUD-008): Excel/Sheets treat
+ * cells starting with = + - @ (or tab/CR) as formulas, so a hostile member/
+ * asset/ticker string like "=HYPERLINK(...)" would execute on open. String
+ * cells starting with such a character are prefixed with a single quote (the
+ * standard mitigation). Numeric cells (amount_min/amount_max/confidence are
+ * numbers) and purely numeric negative strings keep their exact formatting.
+ */
+export function csvCell(value: unknown): string {
   const s = value == null ? '' : String(value);
-  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  const neutralized =
+    typeof value === 'string' && /^[=+\-@\t\r]/.test(s) && !/^-\d+(\.\d+)?$/.test(s)
+      ? `'${s}`
+      : s;
+  return /[",\r\n]/.test(neutralized) ? `"${neutralized.replace(/"/g, '""')}"` : neutralized;
 }
 
 export function buildRestRouter(): Hono<{ Bindings: Env }> {

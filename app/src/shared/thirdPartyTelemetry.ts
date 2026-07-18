@@ -604,6 +604,15 @@ function isTerminalLegacyUsageTelemetryRejection(error: unknown): boolean {
     && [400, 409, 413, 422].includes(error.status);
 }
 
+/**
+ * Queue consumers use this classification to ACK deterministic event-level
+ * rejects instead of retrying the same poison payload. Receiver-wide failures
+ * remain on the circuit breaker and durable outbox path.
+ */
+export function isTerminalUsageTelemetryDeliveryError(error: unknown): boolean {
+  return isTerminalLegacyUsageTelemetryRejection(error);
+}
+
 async function writeUsageTelemetryQuarantine(
   storage: R2Bucket | undefined,
   idempotencyKey: string,
