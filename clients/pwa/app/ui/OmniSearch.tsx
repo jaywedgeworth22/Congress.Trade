@@ -76,7 +76,9 @@ export function OmniSearch() {
               {results.map((item) => (
                 <li key={`${item.type}-${item.id}`}>
                   <Link 
-                    href={item.type === 'politician' ? `/politician/${item.id}` : `/asset/${item.id}`}
+                    href={item.type === 'politician'
+                      ? `/politician?slug=${encodeURIComponent(item.id)}`
+                      : `/asset?ticker=${encodeURIComponent(item.id)}`}
                     className="search-result-link"
                     onClick={() => setIsOpen(false)}
                   >
