@@ -67,6 +67,9 @@ function fallbackBucket(initial: Record<string, string> = {}, uploadedAt: Record
   const bucket = {
     put,
     delete: remove,
+    async head(key: string) {
+      return objects.has(key) ? {} : null;
+    },
     async get(key: string) {
       const value = objects.get(key);
       return value == null ? null : { text: async () => value };
@@ -456,10 +459,8 @@ describe('third-party usage telemetry', () => {
     expect(await flushUsageTelemetryFallback(env)).toEqual({
       listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false,
     });
-    // A failed drain attempt bumps attempts (bounded quarantine budget) and
-    // moves the row to the back so it can't wedge the oldest-first drain — but
-    // the row is retained (below the drop budget) for a later retry.
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(1);
+    // Receiver failures retain the valid row unchanged for a later retry.
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
     expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
 
     receiverAvailable = true;
@@ -748,6 +749,21 @@ describe('third-party usage telemetry', () => {
     expect(list).not.toHaveBeenCalled();
     expect(put).toHaveBeenCalledOnce();
     expect(store.get('usage_telemetry_outbox_count')).toBe('2');
+  });
+
+  it('does not increment the KV outbox counter when an idempotent write overwrites an existing R2 object', async () => {
+    const key = '_ops/usage-telemetry/ct-third-party%3Adelivery-test.json';
+    const fallback = fallbackBucket({ [key]: JSON.stringify(deliveryEvent) });
+    const { kv, store } = fakeConfigKv({ usage_telemetry_outbox_count: '1' });
+    const env = {
+      CONFIG_KV: kv,
+      RAW_FILES: fallback.bucket,
+      USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS: '5',
+    } as unknown as Env;
+
+    expect(await persistUsageTelemetryFallback(env, deliveryEvent)).toBe(true);
+    expect(fallback.put).toHaveBeenCalledOnce();
+    expect(store.get('usage_telemetry_outbox_count')).toBe('1');
   });
 
   it('seeds the counter from a bounded paginated count spanning R2 list pages when the KV counter is missing', async () => {
