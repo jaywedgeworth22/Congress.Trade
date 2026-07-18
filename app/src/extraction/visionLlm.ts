@@ -457,6 +457,7 @@ function extractJsonFallback(text: string): unknown {
     const repaired = jsonrepair(targetText);
     return JSON.parse(repaired);
   } catch (err) {
+    console.warn('visionLlm: jsonrepair fallback failed:', (err as Error).message);
     return undefined;
   }
 }
@@ -796,8 +797,11 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
+// 429 (rate limit) and transient 5xx (including Cloudflare's 522 connection-timeout
+// and 529 overloaded) are worth a retry. Other 4xx (bad request, auth, invalid PDF,
+// etc.) are the caller's problem and won't succeed on a second attempt.
 function isRetryable(status: number): boolean {
-  return status === 429;
+  return status === 429 || (status >= 500 && status < 600);
 }
 
 export async function fetchWithRetry(
@@ -809,30 +813,45 @@ export async function fetchWithRetry(
   const maxAttempts = opts.maxAttempts ?? 4;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const jitter = opts.jitter ?? (() => Math.floor(Math.random() * 250));
-  let res = await trackedFetch(
-    url,
-    init,
-    { service: 'llm', operation: 'extract-document', model: opts.model },
-  );
-  for (let attempt = 1; attempt < maxAttempts && isRetryable(res.status); attempt++) {
-    const retryAfterSec = Number(res.headers.get('retry-after'));
+
+  for (let attempt = 1; ; attempt++) {
+    // res/networkErr are scoped per attempt (not hoisted across iterations) so a
+    // network error on attempt N+1 can't be masked by a stale Response left over
+    // from a retryable-but-successful-fetch attempt N.
+    let res: Response | undefined;
+    let networkErr: unknown;
+    try {
+      res = await trackedFetch(
+        url,
+        init,
+        { service: 'llm', operation: attempt === 1 ? 'extract-document' : 'extract-document-retry', model: opts.model },
+      );
+    } catch (err) {
+      networkErr = err;
+    }
+
+    const shouldRetry = networkErr !== undefined || (res !== undefined && isRetryable(res.status));
+    if (!shouldRetry || attempt === maxAttempts) {
+      if (networkErr !== undefined) throw networkErr;
+      return res as Response;
+    }
+
+    const retryAfterSec = res ? Number(res.headers.get('retry-after')) : NaN;
     const backoffMs =
       Number.isFinite(retryAfterSec) && retryAfterSec > 0
         ? Math.min(retryAfterSec * 1000, 30_000)
         : Math.min(500 * 2 ** (attempt - 1), 8_000) + jitter();
-    // Release the errored response body so the connection can be reused.
-    try {
-      await res.body?.cancel();
-    } catch {
-      /* ignore */
+    if (res) {
+      // Release the errored response body so the connection can be reused.
+      try {
+        await res.body?.cancel();
+      } catch {
+        /* ignore */
+      }
+      console.warn(`${name}: ${res.status} — retry ${attempt}/${maxAttempts - 1} in ${backoffMs}ms`);
+    } else {
+      console.warn(`${name}: network error (${(networkErr as Error)?.message ?? networkErr}) — retry ${attempt}/${maxAttempts - 1} in ${backoffMs}ms`);
     }
-    console.warn(`${name}: ${res.status} — retry ${attempt}/${maxAttempts - 1} in ${backoffMs}ms`);
     await sleep(backoffMs);
-    res = await trackedFetch(
-      url,
-      init,
-      { service: 'llm', operation: 'extract-document-retry', model: opts.model },
-    );
   }
-  return res;
 }

@@ -222,17 +222,22 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
   }
 
   const breakerKey = `provider_ban:${extractor.name}`;
+  let isBanned: string | null = null;
   if (env.CONFIG_KV) {
     try {
-      const isBanned = await env.CONFIG_KV.get(breakerKey);
-      if (isBanned) {
-        const message = `orchestrator: ${extractor.name} circuit breaker is open (banned due to recent 429/402). Reprocess this filing later.`;
-        await markError(env, docId, message);
-        throw new Error(message);
-      }
+      isBanned = await env.CONFIG_KV.get(breakerKey);
     } catch (kvErr) {
+      // Only the KV read is fault-tolerant (a down KV must not block extraction).
+      // The ban check itself must run outside this try — otherwise its throw
+      // below would be caught right here and silently swallowed, defeating the
+      // circuit breaker entirely.
       console.warn('orchestrator: failed to read circuit breaker from KV:', (kvErr as Error).message);
     }
+  }
+  if (isBanned) {
+    const message = `orchestrator: ${extractor.name} circuit breaker is open (banned due to recent 429/402). Reprocess this filing later.`;
+    await markError(env, docId, message);
+    throw new Error(message);
   }
 
   let result;

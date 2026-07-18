@@ -184,12 +184,79 @@ describe('fetchWithRetry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it('does not retry a non-429 status', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('bad', { status: 500 }));
+  it('does not retry a non-429 4xx status', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('bad request', { status: 400 }));
     vi.stubGlobal('fetch', fetchMock);
     const res = await fetchWithRetry('https://x', {}, 'test', { sleep: async () => {} });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(400);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a transient 500 then returns the success', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('server error', { status: 500 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await fetchWithRetry('https://x', {}, 'test', {
+      sleep: async () => {},
+      jitter: () => 0,
+    });
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([522, 529, 503, 502])('retries Cloudflare/upstream status %d', async (status) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('upstream error', { status }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await fetchWithRetry('https://x', {}, 'test', {
+      sleep: async () => {},
+      jitter: () => 0,
+    });
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up after maxAttempts on a persistent 5xx', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await fetchWithRetry('https://x', {}, 'test', {
+      maxAttempts: 3,
+      sleep: async () => {},
+      jitter: () => 0,
+    });
+    expect(res.status).toBe(503);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('retries a network error then returns the success', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const res = await fetchWithRetry('https://x', {}, 'test', {
+      sleep: async () => {},
+      jitter: () => 0,
+    });
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('throws the network error once maxAttempts is exhausted', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      fetchWithRetry('https://x', {}, 'test', {
+        maxAttempts: 2,
+        sleep: async () => {},
+        jitter: () => 0,
+      }),
+    ).rejects.toThrow('fetch failed');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });
 
