@@ -51,14 +51,32 @@ Cloudflare Worker remained healthy. The runner service was contained while the
 host recovered. This is why cache removal and the resource follow-ups below are
 release requirements, not optional optimization.
 
-After recovery, a persistent 4 GiB `/swapfile` was enabled with swappiness 10;
-the host reported 4.0 GiB swap available and no swap in use under normal load.
+After recovery, a persistent 4 GiB `/swapfile` was enabled with swappiness 10.
+Concurrent production deployment and CI later used about 1.3 GiB of swap while
+retaining roughly 2.5 GiB of available RAM, preventing another immediate
+memory-exhaustion failure.
 
 The reboot also exposed a persistent-workspace interaction: the Sentry reporter's
 sparse checkout left only its script materialized, and later checkout runs did
 not reliably restore `app/` or `clients/pwa/`. The reporter now uses a full
 checkout, CI explicitly materializes tracked paths before use, and the policy
 guard rejects future sparse-checkout directives.
+
+Closeout receipts:
+
+- Core routing PR #568 merged as `2149d69`; workspace-recovery PR #575 merged
+  as `be1d4e1`.
+- Latest #575 backend, PWA, gitleaks, and package-pin runs all passed on the
+  Coolify CI runner. Their timing APIs, and production deploy run `29642001268`,
+  returned an empty `billable` object: no GitHub-hosted runner minutes.
+- Deploy run `29642001268` shipped Worker version
+  `d48cb502-2f28-41d5-9447-0dbba96f91db`, applied the canonical
+  `d1_budget` migration, passed readiness, and parsed all three served inline
+  dashboard scripts. Live Congress health is HTTP 200 with
+  `ok/db/schema=true`; Socratic health, scheduler, and Litestream replication
+  are also green.
+- Sentry CI reporting was re-enabled after its full-checkout fix landed. No
+  workflow KEEPOUT remains.
 
 ## Follow-ups
 
