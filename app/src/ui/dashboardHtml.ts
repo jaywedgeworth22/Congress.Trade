@@ -1515,6 +1515,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <button class="btn sm" onclick="openPricing()">Premium</button></span>
     </div>
 
+  </section>
+
   <!-- ================= TRENDS / ANALYTICS ================= -->
   <section class="view active" id="view-trends" role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false">
     <div class="toolbar">
