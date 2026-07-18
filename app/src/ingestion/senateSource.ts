@@ -34,6 +34,7 @@
  */
 
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import * as cheerio from 'cheerio';
 
 const SENATE_BASE = 'https://efdsearch.senate.gov';
 const SENATE_SEARCH = `${SENATE_BASE}/search/`;
@@ -135,10 +136,9 @@ export function looksLikeSenateAgreementWall(html: string): boolean {
  * Returns '' if not found.
  */
 export function parseCsrfMiddlewareToken(html: string): string {
-  const m =
-    /name=["']csrfmiddlewaretoken["']\s+value=["']([^"']+)["']/i.exec(html) ||
-    /value=["']([^"']+)["']\s+name=["']csrfmiddlewaretoken["']/i.exec(html);
-  return m ? m[1] : '';
+  const $ = cheerio.load(html);
+  const token = $('input[name="csrfmiddlewaretoken"]').val();
+  return typeof token === 'string' ? token : '';
 }
 
 /**
@@ -147,9 +147,10 @@ export function parseCsrfMiddlewareToken(html: string): string {
  * Returns { reportPath, reportId } or null if no parseable href.
  */
 export function parseReportLink(cellHtml: string): { reportPath: string; reportId: string } | null {
-  const hrefMatch = /href=["']([^"']+)["']/i.exec(cellHtml);
-  if (!hrefMatch) return null;
-  const reportPath = hrefMatch[1];
+  const $ = cheerio.load(cellHtml);
+  const href = $('a').attr('href');
+  if (!href) return null;
+  const reportPath = href;
   // id is the last non-empty path segment (handles trailing slash).
   const segments = reportPath.split('/').filter((s) => s.length > 0);
   const reportId = segments[segments.length - 1] ?? '';
@@ -173,15 +174,16 @@ export function parseSenateRows(rows: string[][]): SenateFiling[] {
   for (const row of rows) {
     if (!Array.isArray(row)) continue;
     const cells = row.map((c) => (typeof c === 'string' ? c : ''));
+    const textCells = cells.map((c) => cheerio.load(c).text().trim());
     const linkCell = cells.find((c) => /\/search\/view\/(?:ptr|paper)\//i.test(c)) ?? '';
     const parsed = parseReportLink(linkCell);
     if (!parsed) continue;
-    const first = (cells[0] ?? '').trim();
-    const last = (cells[1] ?? '').trim();
-    const nameCell = cells.find((c) => /\(Senator\)/i.test(c) && !/</.test(c)) ?? '';
-    const fullName = (nameCell || `${first} ${last}`).trim();
-    const filedDate = (cells.find((c) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c.trim())) ?? '').trim();
-    const filingTypeLabel = (cells.find((c) => /report/i.test(c) && !/</.test(c)) ?? '').trim();
+    const first = textCells[0] ?? '';
+    const last = textCells[1] ?? '';
+    const nameText = textCells.find((c) => /\(Senator\)/i.test(c)) ?? '';
+    const fullName = nameText || `${first} ${last}`.trim();
+    const filedDate = textCells.find((c) => /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(c)) ?? '';
+    const filingTypeLabel = textCells.find((c) => /report/i.test(c)) ?? '';
     out.push({
       reportId: parsed.reportId,
       first,

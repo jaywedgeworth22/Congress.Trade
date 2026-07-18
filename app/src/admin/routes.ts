@@ -643,10 +643,14 @@ function reviewQueueFilterWhere(f: ReviewQueueFilters): { clause: string; params
     params.push(f.chamber);
   }
   if (f.reasonPrefix) {
-    // Prefix match against the comma-joined reason string (e.g. reason=
-    // "low_confidence" matches the stored "low_confidence,unresolved_ticker").
-    clauses.push('rq.reason LIKE ?');
-    params.push(`${f.reasonPrefix}%`);
+    // Match one complete token in the comma-joined reason string. Escape the
+    // LIKE metacharacters so a reason filter cannot widen its own match.
+    const escaped = f.reasonPrefix
+      .replace(/\\/g, '\\\\')
+      .replace(/%/g, '\\%')
+      .replace(/_/g, '\\_');
+    clauses.push("(',' || COALESCE(rq.reason, '') || ',') LIKE ? ESCAPE '\\'");
+    params.push(`%,${escaped},%`);
   }
   return { clause: clauses.join(' AND '), params };
 }
@@ -1841,7 +1845,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // dashboard header stays accurate without re-scanning the whole table.
   //
   // Filters: ?chamber= (exact match against filings.chamber) and ?reason=
-  // (prefix match against the stored comma-joined reason string).
+  // (exact token match against the stored comma-joined reason string).
   //
   // Back-compat: a caller supplying neither `limit` nor `cursor` (the
   // pre-pagination contract) gets one page capped at REVIEW_QUEUE_MAX_LIMIT
