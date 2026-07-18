@@ -200,6 +200,41 @@ describe('runWatcher', () => {
     expect(kvPuts.map(([key]) => key)).toContain('last_poll:house');
   });
 
+  it('isolates a live-search counter KV failure from the authoritative bulk persist', async () => {
+    const base = fakeEnv();
+    const COUNTER_KEY = 'house_live_search:consecutive_failures';
+    const innerKv = base.env.CONFIG_KV as {
+      get(k: string): Promise<string | null>;
+      put(k: string, v: string): Promise<void>;
+    };
+    // KV that throws ONLY on the observability counter key; every other key
+    // (last_poll, etc.) behaves normally. On the pre-fix code the success-path
+    // counter reset throwing fell into the poll's failure catch, which did more
+    // unguarded KV work that escaped and skipped persistAndEnqueue entirely.
+    (base.env as { CONFIG_KV: unknown }).CONFIG_KV = {
+      async get(key: string) {
+        if (key === COUNTER_KEY) throw new Error('kv counter read down');
+        return innerKv.get(key);
+      },
+      async put(key: string, value: string) {
+        if (key === COUNTER_KEY) throw new Error('kv counter write down');
+        return innerKv.put(key, value);
+      },
+    };
+    mocks.fetchHouseIndex.mockResolvedValueOnce([housePtr('20026001')]);
+    mocks.pollHouseLiveSearch.mockResolvedValueOnce([]); // live search itself succeeds
+    mocks.fetchSenatePtrFilings.mockResolvedValueOnce([]);
+
+    await runWatcher(base.env, new Date('2026-07-04T15:00:00.000Z'));
+
+    // The counter KV blip must NOT abort the bulk path: the filing is still
+    // enqueued and the House poll is still checkpointed as a success.
+    expect(base.queueSends).toEqual([
+      expect.objectContaining({ docId: 'H-2026-20026001', chamber: 'house' }),
+    ]);
+    expect(base.kvPuts.map(([key]) => key)).toContain('last_poll:house');
+  });
+
   // --- Executive (OGE 278-T) path -----------------------------------------
   const ogeFiling = {
     docId: 'OGE-2026-0001',

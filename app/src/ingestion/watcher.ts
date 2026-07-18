@@ -421,6 +421,7 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
   // yet. Fail-soft — a flaky/anti-bot live endpoint must never break the stable
   // bulk path. INSERT OR IGNORE de-dupes the overlap with the bulk rows above.
   if (await houseLiveSearchEnabled(env)) {
+    let liveErr: Error | null = null;
     try {
       const live = await pollHouseLiveSearch(year);
       for (const f of live) {
@@ -428,24 +429,39 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
           byDoc.set(f.pipelineDocId, houseDiscovery(f));
         }
       }
-      if (env.CONFIG_KV) {
-        const prevFails = parseInt((await env.CONFIG_KV.get(HOUSE_LIVE_SEARCH_FAILS_KV_KEY)) ?? '0', 10) || 0;
-        if (prevFails !== 0) await env.CONFIG_KV.put(HOUSE_LIVE_SEARCH_FAILS_KV_KEY, '0');
-      }
     } catch (err) {
-      const message = (err as Error).message;
-      let fails = 1;
+      liveErr = err as Error;
+    }
+    // Consecutive-failure counter — fully isolated in its own try/catch. A KV
+    // blip here must never (a) fall into the poll's failure path and record a
+    // live-search *success* as a failure, nor (b) escape and abort the
+    // authoritative bulk persist/enqueue below. The observability overlay is
+    // strictly best-effort; the bulk path is not.
+    let fails = liveErr ? 1 : 0;
+    try {
       if (env.CONFIG_KV) {
-        fails = (parseInt((await env.CONFIG_KV.get(HOUSE_LIVE_SEARCH_FAILS_KV_KEY)) ?? '0', 10) || 0) + 1;
-        await env.CONFIG_KV.put(HOUSE_LIVE_SEARCH_FAILS_KV_KEY, String(fails));
+        if (!liveErr) {
+          const prevFails = parseInt((await env.CONFIG_KV.get(HOUSE_LIVE_SEARCH_FAILS_KV_KEY)) ?? '0', 10) || 0;
+          if (prevFails !== 0) await env.CONFIG_KV.put(HOUSE_LIVE_SEARCH_FAILS_KV_KEY, '0');
+        } else {
+          fails = (parseInt((await env.CONFIG_KV.get(HOUSE_LIVE_SEARCH_FAILS_KV_KEY)) ?? '0', 10) || 0) + 1;
+          await env.CONFIG_KV.put(HOUSE_LIVE_SEARCH_FAILS_KV_KEY, String(fails));
+        }
       }
+    } catch (counterErr) {
+      console.warn(
+        'watcher: house live-search failure-counter update failed (ignored):',
+        (counterErr as Error).message,
+      );
+    }
+    if (liveErr) {
       if (fails % HOUSE_LIVE_SEARCH_ESCALATE_EVERY === 0) {
         console.error(
           `watcher: house live search has failed ${fails} consecutive polls — intraday House discovery is degraded to the daily bulk index:`,
-          message,
+          liveErr.message,
         );
       } else {
-        console.warn('watcher: house live search failed (bulk index still used):', message);
+        console.warn('watcher: house live search failed (bulk index still used):', liveErr.message);
       }
     }
   }
