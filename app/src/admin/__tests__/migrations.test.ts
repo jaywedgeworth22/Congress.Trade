@@ -7,6 +7,7 @@ import { checkReadiness } from '../../shared/readiness';
 import type { Env, Transaction } from '../../shared/types';
 import {
   BASE_SCHEMA_STATEMENTS,
+  D1_BUDGET_SCHEMA_STATEMENTS,
   EST_VALUE_SCHEMA_STATEMENTS,
   POST_0024_SCHEMA_STATEMENTS,
   PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
@@ -185,6 +186,8 @@ describe('admin migration bootstrap', () => {
       `CREATE INDEX IF NOT EXISTS idx_usage_telemetry_fallback_events_updated
      ON usage_telemetry_fallback_events (updated_at)`,
       ...PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
+      'CREATE INDEX IF NOT EXISTS idx_tx_doc ON transactions (doc_id)',
+      ...D1_BUDGET_SCHEMA_STATEMENTS,
     ]);
   });
 

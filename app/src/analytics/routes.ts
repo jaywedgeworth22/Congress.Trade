@@ -19,7 +19,8 @@
 
 import { Hono } from 'hono';
 import type { Env } from '../shared/types';
-import { all, get, parseJson } from '../shared/db';
+import { all, first, get, parseJson } from '../shared/db';
+import { cached, cacheKey } from '../shared/kvCache';
 import { assetTypeCategoryLabel, isAssetTypeCategory } from '../shared/assetTypes';
 import {
   asChambers,
@@ -170,32 +171,6 @@ function granularityFromQuery(q: Record<string, string>, w: Window): Granularity
   return isGranularity(q.granularity) ? q.granularity : autoGranularity(w);
 }
 
-/** Stable cache key from an endpoint name + the resolved params object. */
-function cacheKey(name: string, obj: Record<string, unknown>): string {
-  const sorted = Object.keys(obj)
-    .sort()
-    .map((k) => `${k}=${obj[k] ?? ''}`)
-    .join('&');
-  return `analytics:${name}:${sorted}`;
-}
-
-/** Read-through cache over CONFIG_KV. A miss or any KV error just recomputes. */
-async function cached<T>(env: Env, key: string, ttlSec: number, fn: () => Promise<T>): Promise<T> {
-  try {
-    const hit = await env.CONFIG_KV.get(key);
-    if (hit) return JSON.parse(hit) as T;
-  } catch {
-    /* fall through to compute */
-  }
-  const value = await fn();
-  try {
-    await env.CONFIG_KV.put(key, JSON.stringify(value), { expirationTtl: Math.max(60, ttlSec) });
-  } catch {
-    /* best-effort cache; ignore */
-  }
-  return value;
-}
-
 /** Common envelope fields stamped on every response. */
 function meta(f: CommonQuery, extra: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -219,9 +194,9 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   // --- GET /summary -------------------------------------------------------
   r.get('/summary', async (c) => {
     const f = commonFromQuery(c.req.query());
-    const data = await cached(c.env, cacheKey('summary', f as never), 60, async () => {
+    const data = await cached(c.env, cacheKey('summary', f as never), 120, async () => {
       const built = buildSummaryQuery(f);
-      const row = (await get<Record<string, unknown>>(c.env.DB, built.sql, built.params)) ?? {};
+      const row = (await first<Record<string, unknown>>(c.env.DB, built.sql, built.params)) ?? {};
       const buyCount = num(row.buy_count);
       const sellCount = num(row.sell_count);
       const totalTrades = num(row.total_trades);
@@ -250,7 +225,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const sort = asTickerSort(q.sort);
     const limit = q.limit ? Number(q.limit) : undefined;
     const key = cacheKey('ticker-leaderboard', { ...f, sort, limit });
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 900, async () => {
       const built = buildTickerLeaderboardQuery({ ...f, sort, limit });
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const tickers = rows.map((row) => {
@@ -286,7 +261,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const f = commonFromQuery(q);
     const limit = Math.max(1, Math.min(100, Math.floor(Number(q.limit) || 40)));
     const key = cacheKey('conviction', { ...f, limit });
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 900, async () => {
       // Conviction is NOT monotonic in trade count (broad bipartisan low-trade
       // names can outscore the trade-count leaders), so rank over a generous
       // candidate pool rather than just the top `limit`.
@@ -487,7 +462,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const sort = asMemberSort(q.sort);
     const limit = q.limit ? Number(q.limit) : undefined;
     const key = cacheKey('member-leaderboard', { ...f, sort, limit });
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 900, async () => {
       const built = buildMemberLeaderboardQuery({ ...f, sort, limit });
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const members = rows.map((row) => {
@@ -522,7 +497,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const minMembers = q.minMembers ? Number(q.minMembers) : undefined;
     const limit = q.limit ? Math.min(100, Number(q.limit)) : undefined; // public cap (builder allows 200 for internal callers)
     const key = cacheKey('cluster-buys', { ...f, minMembers, limit });
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 900, async () => {
       const built = buildClusterBuysQuery({ ...f, minMembers, limit });
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       // Follow-up: representative politicians for each cluster ticker (one query).
@@ -566,7 +541,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const f = commonFromQuery(q);
     const limit = q.limit ? Math.min(100, Number(q.limit)) : undefined; // public cap (builder allows 200 for internal callers)
     const key = cacheKey('trending', { ...f, limit });
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 900, async () => {
       const built = buildTrendingQuery({ ...f, limit });
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const trending = rows.map((row) => {
@@ -595,7 +570,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const f = commonFromQuery(q);
     const granularity = granularityFromQuery(q, f.window);
     const key = cacheKey('volume-over-time', { ...f, granularity });
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 900, async () => {
       const built = buildVolumeOverTimeQuery({ ...f, granularity });
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const series = rows.map((row) => ({
@@ -616,7 +591,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const f = commonFromQuery(q);
     const granularity = granularityFromQuery(q, f.window);
     const key = cacheKey('party-split', { ...f, granularity });
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 900, async () => {
       const overallQ = buildPartySplitQuery(f);
       const periodQ = buildPartySplitOverTimeQuery({ ...f, granularity });
       const [overallRows, periodRows] = await Promise.all([
@@ -671,7 +646,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const f = commonFromQuery(q);
     const limit = q.limit ? Number(q.limit) : undefined;
     const key = cacheKey('sector-breakdown', { ...f, limit });
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 900, async () => {
       const built = buildSectorBreakdownQuery({ ...f, limit });
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const sectors = rows.map((row) => ({
@@ -697,7 +672,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const f = commonFromQuery(q);
     const limit = q.limit ? Number(q.limit) : undefined;
     const key = cacheKey('sector-flow', { ...f, limit });
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 900, async () => {
       const built = buildSectorFlowQuery({ ...f, limit });
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const sectors = rows.map((row) => ({
@@ -721,7 +696,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const q = c.req.query();
     const f = commonFromQuery(q);
     const key = cacheKey('market-cap-breakdown', f as never);
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 900, async () => {
       const built = buildMarketCapBreakdownQuery(f);
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const buckets = rows.map((row) => ({
@@ -750,7 +725,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const limit = q.limit ? Number(q.limit) : undefined;
     const minTrades = q.minTrades ? Number(q.minTrades) : undefined;
     const key = cacheKey('member-performance', { ...f, limit, minTrades });
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 900, async () => {
       const built = buildMemberPerformanceLeaderboardQuery({ ...f, limit, minTrades });
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const members = rows.map((row) => {
@@ -788,7 +763,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const q = c.req.query();
     const f = commonFromQuery(q);
     const key = cacheKey('filing-lag', f as never);
-    const data = await cached(c.env, key, 600, async () => {
+    const data = await cached(c.env, key, 1800, async () => {
       const histQ = buildFilingLagHistogramQuery(f);
       const lateQ = buildLateFilersQuery(f);
       const [histRows, lateRows] = await Promise.all([
@@ -838,7 +813,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       .sort((a, b) => a - b)
       .slice(0, 8);
     const key = cacheKey(`backtest:${tickerParam}`, { ...f, filerId, h: useHorizons.join('-') });
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 600, async () => {
       const cohortQ = buildTickerBacktestCohortQuery(tickerParam, f, filerId);
       const [cohortRows, priceAsc, spxAsc] = await Promise.all([
         all<{ tx_date: string }>(c.env.DB, cohortQ.sql, cohortQ.params),
@@ -869,14 +844,14 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     }
     const granularity = granularityFromQuery(q, f.window);
     const key = cacheKey(`ticker:${tickerParam}`, { ...f, granularity });
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 600, async () => {
       const sumQ = buildTickerSummaryQuery(tickerParam, f);
       const tsQ = buildTickerTimeSeriesQuery(tickerParam, { ...f, granularity });
       const buyersQ = buildTickerTopTradersQuery(tickerParam, 'P', f);
       const sellersQ = buildTickerTopTradersQuery(tickerParam, 'S', f);
       const recentQ = buildTickerRecentTradesQuery(tickerParam, f);
       const [sumRow, tsRows, buyerRows, sellerRows, recentRows, refRow] = await Promise.all([
-        get<Record<string, unknown>>(c.env.DB, sumQ.sql, sumQ.params),
+        first<Record<string, unknown>>(c.env.DB, sumQ.sql, sumQ.params),
         all<Record<string, unknown>>(c.env.DB, tsQ.sql, tsQ.params),
         all<Record<string, unknown>>(c.env.DB, buyersQ.sql, buyersQ.params),
         all<Record<string, unknown>>(c.env.DB, sellersQ.sql, sellersQ.params),
@@ -1034,7 +1009,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'invalid member id' }, 400);
     }
     const key = cacheKey(`member:${filerId}`, f as never);
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 600, async () => {
       const statsQ = buildMemberStatsQuery(filerId, f);
       const topQ = buildMemberTopTickersQuery(filerId, f);
       const recentQ = buildMemberRecentTradesQuery(filerId, f);
@@ -1044,7 +1019,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           'SELECT bioguide_id, chamber, full_name, party, state, district, committees, photo_url FROM filers WHERE bioguide_id = ?',
           [filerId],
         ),
-        get<Record<string, unknown>>(c.env.DB, statsQ.sql, statsQ.params),
+        first<Record<string, unknown>>(c.env.DB, statsQ.sql, statsQ.params),
         all<Record<string, unknown>>(c.env.DB, topQ.sql, topQ.params),
         all<Record<string, unknown>>(c.env.DB, recentQ.sql, recentQ.params),
       ]);
@@ -1135,7 +1110,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: 'invalid member id' }, 400);
     }
     const key = cacheKey(`member-perf:${filerId}`, f as never);
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 600, async () => {
       const built = buildMemberPerformanceQuery(filerId, f);
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const currentSpx = await latestSpxClose(c.env);
@@ -1160,7 +1135,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     const f = commonFromQuery(q);
     const limit = Math.max(1, Math.min(500, Math.floor(Number(q.limit) || 100)));
     const key = cacheKey('conflicts', { ...f, limit });
-    const data = await cached(c.env, key, 300, async () => {
+    const data = await cached(c.env, key, 900, async () => {
       const built = buildConflictCandidatesQuery({ ...f, limit: 2000 });
       const rows = await all<Record<string, unknown>>(c.env.DB, built.sql, built.params);
       const conflicts: Array<Record<string, unknown>> = [];
@@ -1196,7 +1171,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   // Congress.Trade surfaced the disclosure first. KV-cached: the underlying
   // summary scans up to 5000 candidate rows per compute.
   r.get('/latency-summary', async (c) => {
-    const data = await cached(c.env, 'analytics:latency-summary', 300, async () => {
+    const data = await cached(c.env, 'analytics:latency-summary', 900, async () => {
       const { publicSummary } = await getDisclosureLatencySummary(c.env);
       return {
         generatedAt: publicSummary.generatedAt,

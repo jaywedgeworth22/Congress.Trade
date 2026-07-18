@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   runTickerBackfill: vi.fn(),
   runBulkSnapshot: vi.fn(),
   createUsageTelemetryClient: vi.fn(),
+  isD1RowBudgetExceeded: vi.fn(),
 }));
 
 vi.mock('../secrets/infisical', () => ({
@@ -52,6 +53,9 @@ vi.mock('../export/snapshot', () => ({
 vi.mock('@jaywedgeworth22/congress-trading-shared', () => ({
   createUsageTelemetryClient: mocks.createUsageTelemetryClient,
 }));
+vi.mock('../shared/d1Budget', () => ({
+  isD1RowBudgetExceeded: mocks.isD1RowBudgetExceeded,
+}));
 
 import { maybeRunDailyJobs } from '../jobs';
 
@@ -73,6 +77,7 @@ describe('maybeRunDailyJobs secret resolution', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.resolveSecrets.mockResolvedValue({});
+    mocks.isD1RowBudgetExceeded.mockResolvedValue(false);
     mocks.getDailyUsed.mockResolvedValue(0);
     mocks.runEnrichment.mockResolvedValue({
       hasFmpKey: false,
@@ -150,5 +155,19 @@ describe('maybeRunDailyJobs secret resolution', () => {
       env,
       expect.objectContaining({ maxPerMinute: undefined, edgarMaxPerMinute: undefined }),
     );
+  });
+
+  it('re-checks the D1 budget between expensive daily stages', async () => {
+    const env = fakeEnv();
+    mocks.isD1RowBudgetExceeded
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    await maybeRunDailyJobs(env, new Date('2026-07-10T00:00:00Z'));
+
+    expect(mocks.runEnrichment).toHaveBeenCalledTimes(1);
+    expect(mocks.runPriceRefresh).not.toHaveBeenCalled();
+    expect(mocks.runBulkSnapshot).not.toHaveBeenCalled();
+    expect(mocks.isD1RowBudgetExceeded).toHaveBeenCalledTimes(2);
   });
 });
