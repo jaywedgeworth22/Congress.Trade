@@ -151,6 +151,12 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       const redirectUri = `${base}/auth/google/callback`;
       const accessToken = await exchangeGoogleCode(c.env, code, redirectUri);
       const profile = await fetchGoogleProfile(accessToken);
+      // Account-takeover guard: never match-or-create an account by an email
+      // Google has not verified (upsertUserFromGoogle enforces this too).
+      if (!profile.emailVerified) {
+        console.warn('google callback rejected: unverified email');
+        return c.redirect(`${targetOrigin}/?login=unverified`);
+      }
       const user = await upsertUserFromGoogle(c.env, profile);
       await setSessionCookie(c, await createSession(c.env, user.id));
       return c.redirect(`${targetOrigin}/?login=ok`);
