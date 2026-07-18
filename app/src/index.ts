@@ -56,6 +56,7 @@ import {
   deliverUsageTelemetryEvent,
   flushUsageTelemetryFallback,
   isUsageTelemetryCircuitOpen,
+  isTerminalUsageTelemetryDeliveryError,
   persistUsageTelemetryFallback,
   trackedFetch,
   withThirdPartyTelemetry,
@@ -171,7 +172,7 @@ async function handleIngestMessage(env: Env, msg: QueueMessage, queueAttempt = 1
       // receiver from being hammered by this message's own retry/backoff
       // cadence on top of every other in-flight event doing the same thing.
       if (await isUsageTelemetryCircuitOpen(env)) {
-        await persistUsageTelemetryFallback(env, msg.event);
+        await persistUsageTelemetryFallback(env, msg.event, { throwOnFailure: true });
         return;
       }
       await deliverUsageTelemetryEvent(env, msg.event);
@@ -209,7 +210,7 @@ async function handleDeadLetterMessage(
     // while open, persist to the R2 outbox and stop, instead of continuing to
     // attempt the exact same idempotent event on every DLQ redelivery.
     if (await isUsageTelemetryCircuitOpen(env)) {
-      await persistUsageTelemetryFallback(env, msg.event);
+      await persistUsageTelemetryFallback(env, msg.event, { throwOnFailure: true });
       return;
     }
     await deliverUsageTelemetryEvent(env, msg.event);
@@ -539,6 +540,12 @@ const queueWorker = Sentry.withSentry(
             message.ack();
           } catch (err) {
             const messageType = (message.body as QueueMessage).type;
+            if (messageType === 'usage.telemetry' && isTerminalUsageTelemetryDeliveryError(err)) {
+              // Deterministic payload/idempotency rejects cannot be recovered
+              // by replaying the same DLQ message.
+              message.ack();
+              continue;
+            }
             // Usage Monitor outage retries must not create a Sentry envelope,
             // which would create another Usage Monitor event and amplify.
             if (messageType === 'usage.telemetry') {
@@ -588,6 +595,12 @@ const queueWorker = Sentry.withSentry(
           message.ack();
         } catch (err) {
           const messageType = (message.body as QueueMessage).type;
+          if (messageType === 'usage.telemetry' && isTerminalUsageTelemetryDeliveryError(err)) {
+            // Ack deterministic payload/idempotency rejects instead of writing
+            // the same poison event back to R2 and retrying it forever.
+            message.ack();
+            continue;
+          }
           const ingestRetry = isDelivery
             ? null
             : classifyTransientIngestError(err, message.attempts);
