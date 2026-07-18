@@ -17,6 +17,21 @@ for (const name of workflowNames) {
   const text = await readFile(new URL(name, workflowsDir), "utf8");
   const lines = text.split("\n");
 
+  if (name === "sentry-ci-report.yml") {
+    for (const required of [
+      "  report:\n    if: >-\n",
+      "github.event.workflow_run.conclusion == 'failure'",
+      "github.event.workflow_run.conclusion == 'timed_out'",
+      "github.event.workflow_run.conclusion == 'startup_failure'",
+      "github.event.workflow_run.event == 'schedule'",
+    ]) {
+      if (!text.includes(required)) {
+        errors.push(`${name}: Sentry reporter must reject guaranteed no-op workflow completions before runner scheduling`);
+        break;
+      }
+    }
+  }
+
   for (const forbidden of [
     "ubuntu-latest",
     "macos-latest",
