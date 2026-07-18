@@ -100,6 +100,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #feedTable.resizable .asset-cell > div,
   #feedTable.resizable .member-cell > div { flex: 1 1 auto; }
   #feedHead th { position: sticky; top: 0; z-index: 4; background: var(--panel); text-align: center; }
+  #feedTable th:first-child, #feedTable td:first-child { position: sticky; left: 0; z-index: 5; background: var(--panel); }
+  #feedTable th:first-child { z-index: 6; }
   #feedHead th .arr { display: inline-block; width: 1em; margin-left: 4px; text-align: center; color: var(--text-dim); }
   .col-resizer { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; user-select: none; touch-action: none; }
   .col-resizer:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
@@ -386,7 +388,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .section p.sub { margin: 0 0 16px; color: var(--text-dim); font-size: 13px; }
   .row-flex { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
   .pager { margin-top:14px; justify-content:space-between; }
-  .pager-controls { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .pager-controls { display:flex; gap:0px; align-items:center; flex-wrap:wrap; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .pager-controls button { border: none !important; border-radius: 0 !important; }
+  .pager-controls span { padding: 0 10px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
   .pager select { padding:5px 9px; font-size:12px; }
   .switch { position: relative; width: 46px; height: 26px; }
   .switch input { display: none; }
@@ -1725,7 +1729,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <thead><tr><th>Filed</th><th>Doc</th><th>Status</th><th>Reason</th><th>Payload</th><th></th></tr></thead>
         <tbody id="reviewBody"></tbody>
       </table>
-      <button class="btn ghost sm" id="reviewLoadMore" style="display:none;margin-top:8px" onclick="loadMoreReview()">Load more</button>
       <p class="note">Confirm promotes the read to the live feed; Manual lets you hand-key the rows (recorded as <code>source=manual</code>) when the automated read is wrong or too low-confidence; Reject discards it. Models / readings come from <code>extraction_runs</code> (populated by <code>POST /api/admin/bakeoff</code>). <code>POST /api/admin/review/:docId {decision}</code></p>
       <div style="margin-top:14px">
         <h3>All Filing Decisions</h3>
@@ -2052,11 +2055,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 /* ============================ STATE ============================ */
 var TRADES = [];          // live transactions (newest first)
 var TRADE_BY_ID = {};     // trade id -> row, including mini-list rows cached from drawers
-var REVIEW = [];          // review-queue items (accumulated across "Load more" pages)
-var REVIEW_NEXT_CURSOR = null; // opaque keyset cursor for the next review-queue page, or null when exhausted
-var REVIEW_TOTALS = null; // { unresolved, matching, byReason, byChamber } from the last review-queue fetch
-var REVIEW_PAGE_SIZE = 50; // ?limit= sent to GET /api/admin/review-queue
-var reviewLoadingMore = false; // guards against overlapping "Load more" fetches
+var REVIEW = [];          // review-queue items
 var DECISIONS = [];       // ingestion decision audit rows
 var REVIEW_RUNS = {};     // docId -> full extraction runs loaded on demand
 var REVIEW_CONSENSUS = {}; // docId -> { rows, summary } | null, loaded alongside REVIEW_RUNS
@@ -2424,7 +2423,7 @@ function fmtMs(ms) {
 function applyTheme(t) {
   if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
   else document.documentElement.removeAttribute('data-theme');
-  var label = el('themeMenuLabel'); if (label) label.textContent = (t === 'light') ? 'Light Mode' : 'Dark Mode';
+  var label = el('themeMenuLabel'); if (label) label.textContent = (t === 'light') ? 'Switch to Dark Mode' : 'Switch to Light Mode';
 }
 function toggleTheme() {
   var cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
@@ -3416,45 +3415,17 @@ function setReviewTab(resolved) {
 function loadReview() {
   if (!canUseAdmin()) {
     REVIEW = [];
-    REVIEW_NEXT_CURSOR = null;
-    REVIEW_TOTALS = null;
     if (el('reviewCount')) el('reviewCount').textContent = '';
     if (el('kpiReview')) el('kpiReview').textContent = '—';
     return Promise.resolve();
   }
-  // API HOOK: GET /api/admin/review-queue?resolved=&limit= (first page; resets
-  // any previously accumulated "Load more" pages for the other tab/filters)
-  return fetch('/api/admin/review-queue?resolved=' + REVIEW_RESOLVED + '&limit=' + REVIEW_PAGE_SIZE, { headers: adminHeaders() })
+  // API HOOK: GET /api/admin/review-queue?resolved=
+  return fetch('/api/admin/review-queue?resolved=' + REVIEW_RESOLVED, { headers: adminHeaders() })
     .then(okOrThrow)
-    .then(function (data) {
-      REVIEW = data.items || [];
-      REVIEW_NEXT_CURSOR = data.nextCursor || null;
-      REVIEW_TOTALS = data.totals || null;
-      renderReview();
-      loadDecisionHistory();
-    })
+    .then(function (data) { REVIEW = data.items || []; renderReview(); loadDecisionHistory(); })
     .catch(function (e) {
       el('reviewBody').innerHTML = stateRow(6, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load review queue: ' + e.message));
     });
-}
-function loadMoreReview() {
-  if (!canUseAdmin() || !REVIEW_NEXT_CURSOR || reviewLoadingMore) return Promise.resolve();
-  reviewLoadingMore = true;
-  var btn = el('reviewLoadMore');
-  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
-  // API HOOK: GET /api/admin/review-queue?resolved=&limit=&cursor= (next page)
-  return fetch('/api/admin/review-queue?resolved=' + REVIEW_RESOLVED + '&limit=' + REVIEW_PAGE_SIZE + '&cursor=' + encodeURIComponent(REVIEW_NEXT_CURSOR), { headers: adminHeaders() })
-    .then(okOrThrow)
-    .then(function (data) {
-      REVIEW = REVIEW.concat(data.items || []);
-      REVIEW_NEXT_CURSOR = data.nextCursor || null;
-      REVIEW_TOTALS = data.totals || REVIEW_TOTALS;
-      renderReview();
-    })
-    .catch(function (e) {
-      if (btn) btn.textContent = 'Could not load more: ' + e.message;
-    })
-    .then(function () { reviewLoadingMore = false; });
 }
 function loadDecisionHistory() {
   // API HOOK: GET /api/admin/ingestion-decisions
@@ -3716,20 +3687,8 @@ function modelsSummaryHtml(models) {
 }
 function renderReview() {
   var body = el('reviewBody');
-  // Prefer the server's cheap aggregate totals over REVIEW.length: once
-  // "Load more" pages are involved, REVIEW.length is just what's loaded so
-  // far, not the true matching/backlog count.
-  var matchingCount = (REVIEW_TOTALS && typeof REVIEW_TOTALS.matching === 'number') ? REVIEW_TOTALS.matching : REVIEW.length;
-  el('reviewCount').textContent = matchingCount ? '(' + matchingCount + ')' : '';
-  if (el('kpiReview') && REVIEW_RESOLVED === 0) {
-    el('kpiReview').textContent = (REVIEW_TOTALS && typeof REVIEW_TOTALS.unresolved === 'number') ? REVIEW_TOTALS.unresolved : REVIEW.length;
-  }
-  var loadMoreBtn = el('reviewLoadMore');
-  if (loadMoreBtn) {
-    loadMoreBtn.disabled = false;
-    loadMoreBtn.textContent = 'Load more';
-    loadMoreBtn.style.display = REVIEW_NEXT_CURSOR ? '' : 'none';
-  }
+  el('reviewCount').textContent = REVIEW.length ? '(' + REVIEW.length + ')' : '';
+  if (el('kpiReview') && REVIEW_RESOLVED === 0) el('kpiReview').textContent = REVIEW.length;
   if (REVIEW.length === 0) {
     body.innerHTML = stateRow(6, REVIEW_RESOLVED ? 'No reviewed documents yet.' : 'Nothing awaiting review — queue is clear.');
     return;
@@ -7650,7 +7609,6 @@ function handleAuthQueryParams() {
   if (login === 'ok') showToast('Signed in.');
   else if (login === 'error') showToast('Sign-in failed — please try again.', true);
   else if (login === 'expired') showToast('That sign-in link expired — request a new one.', true);
-  else if (login === 'unverified') showToast('Sign-in failed — verify your email with Google first, or use an email sign-in link.', true);
   if (checkout === 'success') showToast('🎉 You’re in! Your premium trial is active.');
   else if (checkout === 'cancel') showToast('Checkout canceled — no charge was made.');
   if (login || checkout || p.get('billing')) {
