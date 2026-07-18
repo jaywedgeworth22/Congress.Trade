@@ -97,6 +97,27 @@ function memoryAdmit(
   return true;
 }
 
+/**
+ * Undo a single `memoryAdmit` increment for the current window. Called when the
+ * KV read fails *after* the synchronous admit already counted the request: the
+ * outage path must stay fully fail-open, so the in-memory counter must not
+ * retain a charge for a request we are now allowing through. Without this, a
+ * sustained KV read outage would latch the isolate counter at `limit` and lock
+ * a user out of magic-link login for the rest of the window.
+ */
+function memoryRollback(
+  bucket: string,
+  identifier: string,
+  windowSec: number,
+  windowStart: number,
+): void {
+  const key = `${bucket}|${identifier}|${windowSec}`;
+  const entry = memoryWindows.get(key);
+  if (entry && entry.windowStart === windowStart && entry.count > 0) {
+    entry.count -= 1;
+  }
+}
+
 /** Test-only: clear the per-isolate counters between cases. */
 export function resetMemoryRateLimitForTests(): void {
   memoryWindows.clear();
@@ -131,6 +152,14 @@ export async function rateLimit(
   const windowStart = now - (now % windowSec);
   const retryAfterSec = windowStart + windowSec - now;
 
+  // Fail open when KV is entirely absent — checked BEFORE the in-memory gate so
+  // a missing binding can never surface as a 429. If the memory gate ran first
+  // it would keep blocking per-isolate once `limit` was reached, defeating the
+  // fail-open invariant these auth endpoints rely on. This check is synchronous,
+  // so moving it up does not reopen the same-isolate race the memory gate closes.
+  const kv = env.CONFIG_KV;
+  if (!kv) return { ok: true, remaining: limit, retryAfterSec: 0 };
+
   // Auth buckets: synchronous same-isolate check FIRST (before any await), so
   // a parallel burst cannot all pass on the same stale KV read. Fail-open
   // semantics are preserved for everything else: memory only ever blocks when
@@ -142,9 +171,6 @@ export async function rateLimit(
     return { ok: false, remaining: 0, retryAfterSec };
   }
 
-  const kv = env.CONFIG_KV;
-  if (!kv) return { ok: true, remaining: limit, retryAfterSec: 0 };
-
   const key = `rl:${bucket}:${await hashIdentifier(identifier)}:${windowStart}`;
 
   let count = 0;
@@ -152,7 +178,11 @@ export async function rateLimit(
     const cur = await kv.get(key);
     count = cur ? parseInt(cur, 10) || 0 : 0;
   } catch {
-    return { ok: true, remaining: limit, retryAfterSec: 0 }; // fail open
+    // KV read failed: fail open, and roll back the in-memory admit counted
+    // above so a sustained outage cannot latch the per-isolate counter at the
+    // limit and lock the user out — the outage path must stay fully fail-open.
+    memoryRollback(bucket, identifier, windowSec, windowStart);
+    return { ok: true, remaining: limit, retryAfterSec: 0 };
   }
 
   if (count >= limit) {

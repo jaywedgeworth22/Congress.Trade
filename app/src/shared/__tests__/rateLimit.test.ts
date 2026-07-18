@@ -84,6 +84,34 @@ describe('rateLimit auth-bucket same-isolate hardening', () => {
     );
     expect(results.every((r) => r.ok)).toBe(true);
   });
+
+  it('fails open on magic-ip when CONFIG_KV is entirely absent, regardless of prior in-memory count', async () => {
+    // No CONFIG_KV binding at all. The memory gate must never turn a missing
+    // binding into a 429, so every serial request stays fail-open even past
+    // the nominal limit.
+    const env = {} as Env;
+    for (let i = 0; i < 10; i++) {
+      expect((await rateLimit(env, 'magic-ip', '1.2.3.4', 1, 600)).ok).toBe(true);
+    }
+  });
+
+  it('does not latch the memory block on magic-ip during a KV read outage', async () => {
+    // Every KV read throws (outage). Serial magic-link retries during the
+    // outage must all fail open — the in-memory admit is rolled back on the
+    // read failure so the counter never latches at the limit and locks the
+    // user out for the rest of the (600s) window.
+    const env = {
+      CONFIG_KV: {
+        get: async () => {
+          throw new Error('kv down');
+        },
+        put: async () => {},
+      },
+    } as unknown as Env;
+    for (let i = 0; i < 10; i++) {
+      expect((await rateLimit(env, 'magic-ip', '1.2.3.4', 3, 600)).ok).toBe(true);
+    }
+  });
 });
 
 describe('clientIp', () => {
