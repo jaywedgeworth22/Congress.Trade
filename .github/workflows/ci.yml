@@ -15,28 +15,34 @@ permissions:
   contents: read
 
 jobs:
-  # runs-on is switchable via the CT_CI_RUNNER repository variable:
-  # unset/empty -> GitHub-hosted ubuntu-latest; "congress-ci" -> the
-  # resource-guarded self-hosted runner on the Hetzner/Coolify box (saves
-  # metered Actions minutes). dependabot[bot] PRs always stay on GitHub-hosted
-  # runners: they execute third-party dependency install scripts, which must
-  # not run on the box that hosts production and a repo-scoped PAT. If the
-  # self-hosted runner is down and PRs queue, clear the variable to fall back:
-  #   gh variable set CT_CI_RUNNER --body "" (or delete it)
   build:
     name: typecheck + test
-    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
+    # Fork and Dependabot code must not execute on the persistent Coolify
+    # runner. Dependabot updates stay blocked until CI is disposable/ephemeral.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, congress-ci]
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
+      - name: Block dependency-bot code on the persistent runner
+        if: github.actor == 'dependabot[bot]'
+        run: |
+          echo "::error::Dependabot PRs require disposable CI; update on a trusted human branch."
+          exit 1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
+
+      - name: Enforce owned-runner workflow policy
+        working-directory: .
+        run: node scripts/check-actions-runner-policy.mjs
 
       - name: Install dependencies
         run: npm ci
@@ -52,19 +58,26 @@ jobs:
 
   pwa:
     name: PWA typecheck + test + build
-    # Same CT_CI_RUNNER switch (and dependabot carve-out) as the build job above.
-    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, congress-ci]
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: clients/pwa
     steps:
-      - uses: actions/checkout@v4
+      - name: Block dependency-bot code on the persistent runner
+        if: github.actor == 'dependabot[bot]'
+        run: |
+          echo "::error::Dependabot PRs require disposable CI; update on a trusted human branch."
+          exit 1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: clients/pwa/package-lock.json
 
       - name: Install dependencies
         run: npm ci
