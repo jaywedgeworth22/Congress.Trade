@@ -231,9 +231,19 @@ export const D1_BUDGET_SCHEMA_STATEMENTS = [
    )`,
 ] as const;
 
+/** 0046_usage_telemetry_probe_lease.sql — singleton half-open probe lease. */
+export const USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS usage_telemetry_probe_lease (
+     id          INTEGER PRIMARY KEY CHECK (id = 1),
+     lease_token TEXT NOT NULL,
+     expires_at  TEXT NOT NULL,
+     updated_at  TEXT NOT NULL
+   )`,
+] as const;
+
 /**
  * Ordered schema tail shared by POST /api/admin/migrate and migration parity
- * tests. Keep this in the same order as file migrations 0029 through 0045.
+ * tests. Keep this in the same order as file migrations 0029 through 0046.
  */
 export const POST_0024_SCHEMA_STATEMENTS = [
   // 0025_extraction_runs_usage.sql
@@ -265,4 +275,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...TX_DOC_INDEX_SCHEMA_STATEMENTS,
   // 0045_d1_budget.sql
   ...D1_BUDGET_SCHEMA_STATEMENTS,
+  // 0046_usage_telemetry_probe_lease.sql
+  ...USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
 ] as const;
