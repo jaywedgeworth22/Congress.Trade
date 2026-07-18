@@ -8,7 +8,7 @@
  */
 
 import type { Env, Subscription, SubscriptionFilters, Transaction } from '../shared/types';
-import { all, get, run } from '../shared/db';
+import { all, first, get, run } from '../shared/db';
 import { prefixedId } from '../shared/ids';
 import { mapSubscription, type SubscriptionRow } from './rows';
 
@@ -69,7 +69,7 @@ export async function assertSubscriptionQuota(
   clientId: string,
   opts: { creating?: boolean; activating?: boolean } = {},
 ): Promise<void> {
-  const row = await get<{ total: number; active: number }>(
+  const row = await first<{ total: number; active: number }>(
     env.DB,
     `SELECT COUNT(*) AS total,
             COALESCE(SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END), 0) AS active
