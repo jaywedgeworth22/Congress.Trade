@@ -527,6 +527,14 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('JSON.stringify({ decision: decision, edits: [] })');
   });
 
+  it('uses review totals for queue KPIs and reloads them after review actions', () => {
+    expect(DASHBOARD_HTML).toContain('var REVIEW_TOTALS = null;');
+    expect(DASHBOARD_HTML).toContain('REVIEW_TOTALS = data.totals || null');
+    expect(DASHBOARD_HTML).toContain('typeof REVIEW_TOTALS.unresolved === \'number\'');
+    expect(DASHBOARD_HTML).toContain("else { loadReview(); }");
+    expect(DASHBOARD_HTML).toContain('.then(function () { loadReview(); loadFeed(); })');
+  });
+
   it('wires a per-doc "Re-read with model…" bake-off control with multi-select', () => {
     expect(DASHBOARD_HTML).toContain('var REREAD_MODELS = BENCHMARK_CATALOG');
     expect(DASHBOARD_HTML).toContain('function rereadModelOptionsHtml(');
