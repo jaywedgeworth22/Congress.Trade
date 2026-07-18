@@ -8,6 +8,7 @@ import type { Env, Transaction } from '../../shared/types';
 import {
   BASE_SCHEMA_STATEMENTS,
   D1_BUDGET_SCHEMA_STATEMENTS,
+  DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS,
   EST_VALUE_SCHEMA_STATEMENTS,
   POST_0024_SCHEMA_STATEMENTS,
   PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
@@ -330,6 +331,99 @@ describe('admin migration bootstrap', () => {
       ).get('run-cancel-race', 'H-2')).toEqual({ count: 0 });
     } finally {
       db.close();
+    }
+  });
+
+  it('preserves partial disclosure dates on replayed /migrate runs (0020 regression)', async () => {
+    const db = await sqliteDatabase();
+    try {
+      for (const sql of BASE_SCHEMA_STATEMENTS) db.exec(sql);
+      db.exec(
+        `INSERT INTO filings (doc_id, filed_date, first_seen_at)
+           VALUES ('doc-1', '2026-06-01', '2026-06-01T12:00:00.000Z')`,
+      );
+      db.exec(
+        `INSERT INTO transactions (id, doc_id, created_at)
+           VALUES ('tx-needs-backfill', 'doc-1', '2026-06-01T12:00:00.000Z')`,
+      );
+
+      const runStatements = (): number => {
+        let updateChanges = -1;
+        for (const sql of DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS) {
+          try {
+            const result = db.prepare(sql).run();
+            if (/^\s*UPDATE transactions SET/i.test(sql)) updateChanges = Number(result.changes);
+          } catch (error) {
+            if (!/duplicate column|already exists/i.test((error as Error).message)) throw error;
+          }
+        }
+        return updateChanges;
+      };
+
+      expect(runStatements()).toBe(1);
+      expect(db.prepare(
+        'SELECT first_seen_at, filed_date FROM transactions WHERE id = ?',
+      ).get('tx-needs-backfill')).toEqual({
+        first_seen_at: '2026-06-01T12:00:00.000Z',
+        filed_date: '2026-06-01',
+      });
+
+      db.exec(
+        `INSERT INTO transactions (id, doc_id, created_at, first_seen_at, filed_date)
+           VALUES ('tx-seed', NULL, '2026-05-01T00:00:00.000Z', '2026-05-01T00:00:00.000Z', '2026-04-30')`,
+      );
+      db.exec(
+        `INSERT INTO transactions (id, doc_id, created_at, first_seen_at, filed_date)
+           VALUES ('tx-partial', 'doc-1', '2026-06-02T00:00:00.000Z', '2026-06-02T00:00:00.000Z', NULL)`,
+      );
+
+      expect(runStatements()).toBe(1);
+      expect(db.prepare(
+        'SELECT first_seen_at, filed_date FROM transactions WHERE id = ?',
+      ).get('tx-seed')).toEqual({
+        first_seen_at: '2026-05-01T00:00:00.000Z',
+        filed_date: '2026-04-30',
+      });
+      expect(db.prepare(
+        'SELECT first_seen_at, filed_date FROM transactions WHERE id = ?',
+      ).get('tx-partial')).toEqual({
+        first_seen_at: '2026-06-02T00:00:00.000Z',
+        filed_date: '2026-06-01',
+      });
+      const afterPartialBackfill = db.prepare(
+        'SELECT id, first_seen_at, filed_date FROM transactions ORDER BY id',
+      ).all();
+      expect(runStatements()).toBe(0);
+      expect(db.prepare(
+        'SELECT id, first_seen_at, filed_date FROM transactions ORDER BY id',
+      ).all()).toEqual(afterPartialBackfill);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('enforces unique migration sequence numbers except for the grandfathered 0041 pair', () => {
+    const files = migrationFiles();
+    const grandfatheredSequence = 41;
+    const grandfatheredPair = [
+      '0041_batch_extractions_pending.sql',
+      '0041_benchmark_single_running_chamber.sql',
+    ].sort();
+    const bySequence = new Map<number, string[]>();
+    let previousSequence = -1;
+    for (const name of files) {
+      const match = name.match(/^(\d{4})_/);
+      expect(match, `${name} must start with a 4-digit sequence number`).not.toBeNull();
+      const sequence = Number(match?.[1]);
+      expect(sequence, `${name} moves the migration sequence backwards`).toBeGreaterThanOrEqual(previousSequence);
+      previousSequence = sequence;
+      bySequence.set(sequence, [...(bySequence.get(sequence) ?? []), name]);
+    }
+    for (const [sequence, names] of bySequence) {
+      if (names.length === 1) continue;
+      expect(sequence, `sequence ${sequence} has an ungrandfathered duplicate: ${names.join(', ')}`)
+        .toBe(grandfatheredSequence);
+      expect(names.slice().sort()).toEqual(grandfatheredPair);
     }
   });
 });
