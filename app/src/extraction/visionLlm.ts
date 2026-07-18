@@ -830,7 +830,11 @@ export async function fetchWithRetry(
       networkErr = err;
     }
 
-    const shouldRetry = networkErr !== undefined || (res !== undefined && isRetryable(res.status));
+    // An AbortSignal is one-shot. Once a caller's deadline has fired, reusing
+    // the same init would make every subsequent attempt fail immediately and
+    // would only add misleading retry delays to an already-cancelled request.
+    const callerAborted = init.signal?.aborted === true;
+    const shouldRetry = !callerAborted && (networkErr !== undefined || (res !== undefined && isRetryable(res.status)));
     if (!shouldRetry || attempt === maxAttempts) {
       if (networkErr !== undefined) throw networkErr;
       return res as Response;

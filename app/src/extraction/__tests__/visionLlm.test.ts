@@ -258,6 +258,22 @@ describe('fetchWithRetry', () => {
     ).rejects.toThrow('fetch failed');
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('does not retry after the caller aborts the request', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      controller.abort();
+      throw new DOMException('The operation was aborted', 'AbortError');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      fetchWithRetry('https://x', { signal: controller.signal }, 'test', {
+        sleep: async () => {},
+      }),
+    ).rejects.toThrow('aborted');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 
