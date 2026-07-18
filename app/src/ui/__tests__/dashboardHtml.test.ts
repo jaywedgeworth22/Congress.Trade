@@ -10,6 +10,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { parse } from 'node-html-parser';
 import { DASHBOARD_HTML } from '../dashboardHtml';
 
 function scriptBlocks(html: string): string[] {
@@ -64,6 +65,21 @@ describe('DASHBOARD_HTML', () => {
     for (const js of scriptBlocks(DASHBOARD_HTML)) {
       // new Function compiles (parses) the body without running it — DOM refs OK.
       expect(() => new Function(js)).not.toThrow();
+    }
+  });
+
+  it('keeps every primary view as a direct child of main', () => {
+    const document = parse(DASHBOARD_HTML);
+    const main = document.querySelector('main');
+    expect(main).not.toBeNull();
+
+    const viewIds = ['view-feed', 'view-trends', 'view-review', 'view-subs', 'view-admin'];
+    expect(document.querySelectorAll('section.view').map((view) => view.id)).toEqual(viewIds);
+
+    for (const id of viewIds) {
+      const view = document.querySelector('#' + id);
+      if (!view) throw new Error(id + ' should exist');
+      expect(view.parentNode, id + ' must not be nested inside another hidden view').toBe(main);
     }
   });
 
