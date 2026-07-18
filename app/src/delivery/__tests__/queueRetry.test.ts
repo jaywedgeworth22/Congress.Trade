@@ -67,6 +67,14 @@ function fakeEnv(
     bind(...params: unknown[]) { this.params = params; return this; },
     async first<T>() {
       if (/FROM transactions WHERE id = \?/i.test(sql)) return txRow as T;
+      // Delivery-time entitlement re-check: the subscription owner is premium.
+      if (/FROM users WHERE id/i.test(sql)) {
+        return {
+          id: 'user_1', email: 'owner@example.test', name: null, picture: null,
+          google_sub: null, email_verified: 1, created_at: '2026-01-01T00:00:00.000Z',
+          last_login_at: null, subscription_status: 'active', plan: 'monthly',
+        } as T;
+      }
       if (/SELECT chamber FROM filings/i.test(sql)) return { chamber: 'house' } as T;
       if (/FROM securities_ref/i.test(sql)) return { sector: 'Technology', market_cap_bucket: 'mega' } as T;
       if (/FROM subscriptions/i.test(sql) && /WHERE id = \?/i.test(sql)) {
