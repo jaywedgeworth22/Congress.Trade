@@ -99,6 +99,17 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
   // --- GET /auth/google/start ---------------------------------------------
   r.get('/google/start', async (c) => {
     if (!(await resolveSecret(c.env, 'GOOGLE_OAUTH_CLIENT_ID')).value) return c.json({ error: 'google login not configured' }, 503);
+    const base = await baseUrl(c);
+    const requestUrl = new URL(c.req.url);
+    const callbackBase = new URL(base);
+    // State is host-only, so canonicalize the start request before issuing it
+    // when a user arrived on a non-apex alias. This keeps the state cookie and
+    // the fixed, documented Google callback host aligned.
+    if (requestUrl.origin !== callbackBase.origin) {
+      requestUrl.protocol = callbackBase.protocol;
+      requestUrl.host = callbackBase.host;
+      return c.redirect(requestUrl.toString());
+    }
     const state = randomToken(16);
 
     // Save the initiator's origin so we can redirect back to it on callback
@@ -125,7 +136,6 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
       path: '/',
       maxAge: 600,
     });
-    const base = await baseUrl(c);
     const url = await buildGoogleAuthUrl(c.env, `${base}/auth/google/callback`, state);
     return c.redirect(url);
   });
