@@ -252,8 +252,8 @@ export function validateBenchmarkModel(
   return match;
 }
 
-function isOpenRouterAuto(model: { provider: string; model: string }): boolean {
-  return model.provider === 'openrouter' && model.model === 'auto';
+export function isOpenRouterAuto(model: { provider: string; model: string }): boolean {
+  return model.provider === 'openrouter' && (model.model === 'auto' || model.model === 'openrouter/auto');
 }
 
 export function getUnderlyingProvider(model: { provider: string; model: string }): string {

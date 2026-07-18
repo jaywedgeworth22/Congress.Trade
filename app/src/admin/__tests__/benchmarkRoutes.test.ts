@@ -1377,6 +1377,54 @@ describe('durable benchmark admin routes', () => {
     expect(ledger.reservedCalls()).toBe(1);
   });
 
+  it('accepts an all-OpenRouter agreement lineup whose underlying vendors are distinct', async () => {
+    const lineup = {
+      a: { provider: 'llamaparse', model: 'cost-effective' },
+      b: { provider: 'openrouter', model: 'google/gemini-3.5-flash' },
+      c: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
+    };
+    const response = await buildAdminRouter().request('/benchmark/dry-run/H-1', {
+      method: 'POST', headers: AUTH, body: JSON.stringify({ models: lineup }),
+    }, env({ LLAMAPARSE_API_KEY: 'llamaparse-key', OPENROUTER_API_KEY: 'openrouter-key' }));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      requiresConfirmation: true,
+      plannedCalls: 3,
+      configuredModels: [lineup.a, lineup.b, lineup.c],
+    });
+  });
+
+  it('rejects an OpenRouter agreement lineup where two models share the same underlying vendor', async () => {
+    const lineup = {
+      a: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
+      b: { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
+    };
+    const response = await buildAdminRouter().request('/benchmark/dry-run/H-1', {
+      method: 'POST', headers: AUTH, body: JSON.stringify({ models: lineup }),
+    }, env());
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: 'agreement benchmark models must use distinct providers',
+    });
+  });
+
+  it('rejects the catalog-form OpenRouter auto route before provider distinctness checks', async () => {
+    const lineup = {
+      a: { provider: 'openrouter', model: 'openrouter/auto' },
+      b: { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
+    };
+    const response = await buildAdminRouter().request('/benchmark/dry-run/H-1', {
+      method: 'POST', headers: AUTH, body: JSON.stringify({ models: lineup }),
+    }, env());
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: 'openrouter/auto cannot be used in agreement benchmarks because its routing is unpredictable',
+    });
+  });
+
   it('returns pending instead of duplicating a paid cell held by another lease', async () => {
     const running = benchmarkMeasurement('openai', 'gpt-5.6-terra', {
       invoked: 0,
