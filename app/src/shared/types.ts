@@ -598,6 +598,10 @@ export interface Env {
   USAGE_TELEMETRY_CIRCUIT_BASE_BACKOFF_MS?: string;
   /** Cap on the exponential backoff window in ms (default 1800000 = 30min). */
   USAGE_TELEMETRY_CIRCUIT_MAX_BACKOFF_MS?: string;
+  /** Receiver request deadline in ms (default 15000, hard cap 60000). */
+  USAGE_TELEMETRY_DELIVERY_TIMEOUT_MS?: string;
+  /** Atomic half-open probe lease in ms; always exceeds the delivery deadline (default 30000). */
+  USAGE_TELEMETRY_CIRCUIT_PROBE_LEASE_MS?: string;
   /** Hard cap on pending R2 outbox objects; new events are dropped past this (default 5000). */
   USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS?: string;
   /** Age in days at which a pending R2 outbox object is discarded unsent (default 14). */
