@@ -8,6 +8,7 @@ import { TradeCard } from './TradeCard';
 import { TradeTable } from './TradeTable';
 import { ColumnConfig } from './ColumnConfig';
 import { getOrderedColumns, loadHiddenCols, ColumnDef } from '../../lib/columns';
+import { formatSummaryCount, formatSummaryVolume } from '../../lib/formatters';
 
 export type PoliticianProfileResponse = ClientFeedResponse & {
   member: {
@@ -18,15 +19,13 @@ export type PoliticianProfileResponse = ClientFeedResponse & {
     state: string | null;
     district: string | null;
     photoUrl: string | null;
-    committees: string | null;
+    committees: string[];
   };
   summary: {
-    txCount: number;
+    totalTrades: number;
+    estimatedVolumeUsd: number | null;
     buyCount: number;
     sellCount: number;
-    volMin: number;
-    volMax: number;
-    estValue: number;
     uniqueTickers: number;
     uniqueAssets: number;
   };
@@ -99,12 +98,12 @@ export default function PoliticianProfile({ slug }: { slug: string }) {
       <section className="profile-stats">
         <div className="stat-card">
           <div className="stat-label">Total Trades</div>
-          <div className="stat-value">{summary.txCount.toLocaleString()}</div>
+          <div className="stat-value">{formatSummaryCount(summary.totalTrades)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Estimated Volume</div>
           <div className="stat-value">
-            ${summary.estValue > 0 ? (summary.estValue / 1_000_000).toFixed(1) + 'M' : '0'}
+            {formatSummaryVolume(summary.estimatedVolumeUsd)}
           </div>
         </div>
         <div className="stat-card">
