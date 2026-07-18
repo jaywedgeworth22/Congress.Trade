@@ -48,7 +48,6 @@ let pending: RowDelta = { read: 0, written: 0 };
 
 /** Best-known day totals from the last flush, so the enforce check can usually
  *  answer without a KV round trip. */
-let lastTotals: { day: string; read: number; written: number } | null = null;
 
 /** Day we last emitted a soft-threshold warning for (once per isolate per day). */
 let warnedDay: string | null = null;
@@ -216,11 +215,6 @@ export async function flushD1Budget(env: Env, now = new Date()): Promise<void> {
     const day = dayStr(now);
     const totals = (await bumpD1Totals(env, snap, now)) ?? (await bumpKvTotals(env, snap, now));
     const { read: readTotal, written: writtenTotal } = totals;
-    lastTotals = {
-      day,
-      read: readTotal,
-      written: writtenTotal,
-    };
     warnIfOverSoft(day, readTotal, writtenTotal, await rowBudgets(env));
   } catch {
     /* best-effort meter; never surface an error to the caller */
@@ -245,8 +239,6 @@ export async function isD1RowBudgetExceeded(env: Env, now = new Date()): Promise
   try {
     if (!(await enforceEnabled(env))) return false;
     // Flush local work first, then always read the shared counters. The
-    // lastTotals cache is isolate-local and can be stale when another Worker
-    // isolate records usage after this one has already checked the budget.
     await flushD1Budget(env, now);
     const totals = (await readD1Totals(env, now)) ?? {
       read: parseInt((await env.CONFIG_KV.get(dayKey('read', now))) ?? '0', 10) || 0,
