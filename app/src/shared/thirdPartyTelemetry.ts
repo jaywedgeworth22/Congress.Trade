@@ -615,6 +615,32 @@ async function countUsageTelemetryOutboxObjects(
   return count;
 }
 
+/** Hard ceiling on how many objects a daily reconcile will walk, so a
+ *  pathological outbox cannot turn the once-a-day maintenance pass into an
+ *  unbounded scan. Far above any expected pending count; the admission cap
+ *  (USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS) is normally much smaller than this. */
+const USAGE_TELEMETRY_RECONCILE_MAX_OBJECTS = 100_000;
+
+/**
+ * Full paginated recount of the R2 outbox, overwriting the KV counter with
+ * ground truth. CT-AUD-019: the hot-path counter is best-effort (no atomic KV
+ * increment, plus the overwrite-vs-new-object distinction fixed above in
+ * persistUsageTelemetryFallback) so it can drift from the real object count
+ * over time. Unlike countUsageTelemetryOutboxObjects's admission-check use
+ * (which short-circuits at a small cap), this walks every page up to
+ * USAGE_TELEMETRY_RECONCILE_MAX_OBJECTS so the counter is corrected rather
+ * than merely bounded. Intended to run once per day from the maintenance job
+ * (see jobs.ts), not per-request. Returns null when R2 listing is unavailable
+ * (no reconcile possible) and leaves the existing counter untouched.
+ */
+export async function reconcileUsageTelemetryOutboxCount(env: Env): Promise<number | null> {
+  const storage = (env as Partial<Env>).RAW_FILES;
+  const count = await countUsageTelemetryOutboxObjects(storage, USAGE_TELEMETRY_RECONCILE_MAX_OBJECTS);
+  if (count == null) return null;
+  await writeUsageTelemetryOutboxCount(env, count);
+  return count;
+}
+
 /**
  * USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS bounds total pending R2 outbox objects so a
  * sustained receiver outage can't inflate storage without bound. Once at capacity
@@ -665,11 +691,30 @@ export async function persistUsageTelemetryFallback(
   }
   try {
     if (!storage) throw new Error('R2 fallback binding unavailable');
-    await storage.put(usageTelemetryFallbackKey(event), JSON.stringify(event), {
+    const key = usageTelemetryFallbackKey(event);
+    // CT-AUD-019: the R2 key is deterministic (the event's idempotencyKey), so
+    // a retry of an already-persisted event (queue redelivery, DLQ replay, a
+    // second concurrent enqueue failure for the same event) `put`s the SAME
+    // key — an overwrite, not a new object. Counting every put() unconditionally
+    // double-(or N-times-)counted the outbox on retry storms even though the
+    // object count never actually grew. Check existence first via a cheap
+    // `head`, and only advance the counter when this key is genuinely new. If
+    // `head` itself fails (transient R2 hiccup), assume new rather than risk
+    // silently under-counting — the daily reconcile (see
+    // reconcileUsageTelemetryOutboxCount) corrects any drift either way.
+    let isNewObject = true;
+    try {
+      isNewObject = (await storage.head(key)) == null;
+    } catch {
+      isNewObject = true;
+    }
+    await storage.put(key, JSON.stringify(event), {
       httpMetadata: { contentType: 'application/json' },
     });
-    // Best-effort O(1) increment so the next admission check stays list-free.
-    await adjustUsageTelemetryOutboxCount(env, 1);
+    if (isNewObject) {
+      // Best-effort O(1) increment so the next admission check stays list-free.
+      await adjustUsageTelemetryOutboxCount(env, 1);
+    }
     return true;
   } catch (error) {
     try {
