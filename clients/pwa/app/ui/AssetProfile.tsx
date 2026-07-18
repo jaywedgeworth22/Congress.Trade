@@ -13,9 +13,9 @@ import { formatSummaryCount, formatSummaryVolume } from '../../lib/formatters';
 export type AssetProfileResponse = ClientFeedResponse & {
   ticker: string;
   asset: {
-    name: string;
-    ticker: string;
-    type: string | null;
+    companyName: string | null;
+    logoUrl: string | null;
+    assetClass: string | null;
     sector: string | null;
     marketCapBucket: string | null;
   };
@@ -24,9 +24,6 @@ export type AssetProfileResponse = ClientFeedResponse & {
     estimatedVolumeUsd: number | null;
     buyCount: number;
     sellCount: number;
-    volMin: number;
-    volMax: number;
-    estValue: number;
     memberCount: number;
   };
 };
@@ -81,15 +78,15 @@ export default function AssetProfile({ ticker }: { ticker: string }) {
     <div className="app-shell profile-shell">
       <header className="profile-header">
         <img 
-          src={`/api/logos/ticker?symbol=${encodeURIComponent(ticker)}`} 
-          alt={asset.name || ticker} 
+          src={asset.logoUrl || `/api/logos/ticker?symbol=${encodeURIComponent(ticker)}`}
+          alt={asset.companyName || ticker}
           className="profile-logo"
           onError={(e) => { e.currentTarget.style.display = 'none'; }}
         />
         <div className="profile-title">
-          <h1>{asset.name || ticker}</h1>
+          <h1>{asset.companyName || ticker}</h1>
           <p className="profile-subtitle">
-            {[asset.ticker, asset.sector, asset.marketCapBucket]
+            {[ticker, asset.sector, asset.marketCapBucket]
               .filter(Boolean)
               .join(' • ')}
           </p>

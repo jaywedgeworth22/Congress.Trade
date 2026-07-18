@@ -19,16 +19,13 @@ export type PoliticianProfileResponse = ClientFeedResponse & {
     state: string | null;
     district: string | null;
     photoUrl: string | null;
-    committees: string | null;
+    committees: string[];
   };
   summary: {
     totalTrades: number;
     estimatedVolumeUsd: number | null;
     buyCount: number;
     sellCount: number;
-    volMin: number;
-    volMax: number;
-    estValue: number;
     uniqueTickers: number;
     uniqueAssets: number;
   };
