@@ -77,6 +77,12 @@ Closeout receipts:
   are also green.
 - Sentry CI reporting was re-enabled after its full-checkout fix landed. No
   workflow KEEPOUT remains.
+- Live queue validation then found that every ordinary successful workflow still
+  scheduled a reporter job even though the reporter script intentionally did
+  nothing for those events. A job-level condition now reserves the CI runner
+  only for `failure`, `timed_out`, or `startup_failure` conclusions, plus every
+  scheduled run that needs a Sentry Crons success/error check-in. The policy
+  guard requires that gate so successful-run no-op fan-out cannot return.
 
 ## Follow-ups
 
