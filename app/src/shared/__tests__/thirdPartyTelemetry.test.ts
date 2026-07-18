@@ -67,6 +67,9 @@ function fallbackBucket(initial: Record<string, string> = {}, uploadedAt: Record
   const bucket = {
     put,
     delete: remove,
+    async head(key: string) {
+      return objects.has(key) ? {} : null;
+    },
     async get(key: string) {
       const value = objects.get(key);
       return value == null ? null : { text: async () => value };
@@ -456,10 +459,8 @@ describe('third-party usage telemetry', () => {
     expect(await flushUsageTelemetryFallback(env)).toEqual({
       listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false,
     });
-    // A failed drain attempt bumps attempts (bounded quarantine budget) and
-    // moves the row to the back so it can't wedge the oldest-first drain — but
-    // the row is retained (below the drop budget) for a later retry.
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(1);
+    // Receiver failures retain the valid row unchanged for a later retry.
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
     expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
 
     receiverAvailable = true;
@@ -467,6 +468,73 @@ describe('third-party usage telemetry', () => {
       listed: 1, delivered: 1, failed: 0, expired: 0, skipped: false,
     });
     expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(false);
+  });
+
+  it('advances terminal legacy D1 rejects instead of pinning the oldest row', async () => {
+    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'schema validation failed' }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const env = {
+      RAW_FILES: fallbackBucket().bucket,
+      DB: fallback.db,
+      CONFIG_KV: fakeConfigKv().kv,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+    } as unknown as Env;
+
+    expect(await flushUsageTelemetryFallback(env)).toMatchObject({
+      listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false,
+    });
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(1);
+    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
+  });
+
+  it('retains global receiver authentication failures and opens the outage circuit', async () => {
+    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const env = {
+      RAW_FILES: fallbackBucket().bucket,
+      DB: fallback.db,
+      CONFIG_KV: fakeConfigKv().kv,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+      USAGE_TELEMETRY_CIRCUIT_FAILURE_THRESHOLD: '1',
+    } as unknown as Env;
+
+    await flushUsageTelemetryFallback(env);
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
+    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(true);
+  });
+
+  it('quarantines terminal R2 delivery rejects instead of retrying poison objects forever', async () => {
+    const key = '_ops/usage-telemetry/terminal.json';
+    const fallback = fallbackBucket({ [key]: JSON.stringify(deliveryEvent) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'schema validation failed' }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const env = {
+      RAW_FILES: fallback.bucket,
+      CONFIG_KV: fakeConfigKv().kv,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+    } as unknown as Env;
+
+    expect(await flushUsageTelemetryFallback(env)).toEqual({
+      listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false,
+    });
+    expect(fallback.objects.has(key)).toBe(false);
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
   });
 
   it('does not let one poison legacy D1 row wedge the drain: quarantines it after a bounded budget while rows behind it still deliver', async () => {
@@ -750,6 +818,20 @@ describe('third-party usage telemetry', () => {
     expect(store.get('usage_telemetry_outbox_count')).toBe('2');
   });
 
+  it('does not increment the KV outbox counter when an idempotent write overwrites an existing R2 object', async () => {
+    const key = '_ops/usage-telemetry/ct-third-party%3Adelivery-test.json';
+    const fallback = fallbackBucket({ [key]: JSON.stringify(deliveryEvent) });
+    const { kv, store } = fakeConfigKv({ usage_telemetry_outbox_count: '1' });
+    const env = {
+      CONFIG_KV: kv,
+      RAW_FILES: fallback.bucket,
+      USAGE_TELEMETRY_FALLBACK_MAX_OBJECTS: '5',
+    } as unknown as Env;
+
+    expect(await persistUsageTelemetryFallback(env, deliveryEvent)).toBe(true);
+    expect(fallback.put).toHaveBeenCalledOnce();
+    expect(store.get('usage_telemetry_outbox_count')).toBe('1');
+  });
   it('seeds the counter from a bounded paginated count spanning R2 list pages when the KV counter is missing', async () => {
     // R2 list pages at ~1000 objects, so a single list cannot establish the count
     // against a multi-thousand cap (the old list-based check could never enforce
