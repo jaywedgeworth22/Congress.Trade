@@ -131,3 +131,24 @@ export function toBool(value: unknown): boolean {
 export function fromBool(value: boolean): number {
   return value ? 1 : 0;
 }
+
+/**
+ * Split an array into chunks no larger than `size`. Used to keep `IN (...)`
+ * queries under D1's bound-parameter limit (~100 per statement) when the
+ * candidate id list can grow arbitrarily large — e.g. a paginated admin
+ * endpoint joining per-row detail for a page of doc_ids. A single unchunked
+ * `IN (...)` over more than ~100 ids makes `.bind()` throw, which is easy to
+ * accidentally swallow in a broader try/catch and lose the whole result set
+ * silently rather than just the overflow rows — chunk first. Default of 90
+ * leaves headroom for any other bound params sharing the same statement.
+ */
+export function chunkArray<T>(items: readonly T[], size = 90): T[][] {
+  if (!Number.isInteger(size) || size <= 0) {
+    throw new Error(`chunkArray: size must be a positive integer, got ${size}`);
+  }
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size) as T[]);
+  }
+  return chunks;
+}
