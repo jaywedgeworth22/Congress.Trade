@@ -42,6 +42,15 @@ can return after a dedicated ephemeral, wiped, isolated runner is available.
 5. Confirm the GitHub `production` and `preview` environments restrict their
    deployment branches to `main` and `staging`, respectively.
 
+During live validation, pre-change workflows that still requested GitHub cache
+restore repeatedly wedged in `setup-node` and saturated the shared Coolify host.
+The host had no swap and rebooted after reaching approximately 7.4 of 7.6 GiB
+used. Socratic.Trade briefly timed out, then recovered with HTTP 200, DB and
+scheduler healthy, and Litestream back in `replicating` state; Congress.Trade's
+Cloudflare Worker remained healthy. The runner service was contained while the
+host recovered. This is why cache removal and the resource follow-ups below are
+release requirements, not optional optimization.
+
 ## Follow-ups
 
 - Convert `congress-ci` to a one-job ephemeral runner with a destroyed workspace
