@@ -820,6 +820,29 @@ describe('third-party usage telemetry', () => {
     expect(JSON.stringify(message)).not.toContain('never.example');
   });
 
+  it('preserves OpenRouter transport metadata and versions stable remapped keys', async () => {
+    const messages: QueueMessage[] = [];
+    await recordMeasuredThirdPartyUsage(fakeEnv(messages), {
+      provider: 'openrouter',
+      service: 'llm',
+      operation: 'benchmark-cost',
+      idempotencyKey: 'ct-openrouter-run-123-cost',
+      occurredAt: '2026-07-18T12:00:00.000Z',
+      model: 'openai/gpt-5.6-terra',
+      metricType: 'cost',
+      costUsd: 0.0123,
+      billingMode: 'actual',
+      confidence: 'actual',
+    });
+    const message = messages[0];
+    if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
+    expect(message.event).toMatchObject({
+      idempotencyKey: 'ct-openrouter-run-123-cost-transport-v2',
+      provider: 'openai',
+      metadata: { model: 'gpt-5.6-terra', transport: 'openrouter' },
+    });
+  });
+
   it('requires a valid occurrence timestamp at runtime for every explicit stable key', async () => {
     const messages: QueueMessage[] = [];
     const env = fakeEnv(messages);
