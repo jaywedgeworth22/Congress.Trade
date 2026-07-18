@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import useSWR from 'swr';
 import { apiGet } from '../../lib/clientApi';
+import { profileHref } from '../../lib/profileRoutes';
 
 export type SearchResultItem = {
   id: string;
@@ -76,9 +77,7 @@ export function OmniSearch() {
               {results.map((item) => (
                 <li key={`${item.type}-${item.id}`}>
                   <Link 
-                    href={item.type === 'politician'
-                      ? `/politician?slug=${encodeURIComponent(item.id)}`
-                      : `/asset?ticker=${encodeURIComponent(item.id)}`}
+                    href={profileHref(item.type, item.id)}
                     className="search-result-link"
                     onClick={() => setIsOpen(false)}
                   >
