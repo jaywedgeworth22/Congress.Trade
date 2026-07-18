@@ -632,6 +632,29 @@ describe('third-party usage telemetry', () => {
     expect(quarantinePut).toHaveBeenCalledOnce();
   });
 
+  it('retains an R2 event when a 400 response is receiver-wide rather than event-specific', async () => {
+    const outboxKey = '_ops/usage-telemetry/ct-third-party%3Areceiver-contract.json';
+    const fallback = fallbackBucket({ [outboxKey]: JSON.stringify(deliveryEvent) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'receiver unavailable' }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const env = {
+      RAW_FILES: fallback.bucket,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+    } as unknown as Env;
+
+    const result = await flushUsageTelemetryFallback(env);
+
+    expect(result).toMatchObject({ listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false });
+    expect(fallback.objects.has(outboxKey)).toBe(true);
+    expect(fallback.objects.has(
+      '_ops/usage-telemetry-quarantine/ct-third-party%3Areceiver-contract.json',
+    )).toBe(false);
+  });
+
   it('never ages out a valid legacy D1 row on transient receiver failures', async () => {
     const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'rate limited' }), {

@@ -593,8 +593,11 @@ async function claimUsageTelemetryHalfOpenProbe(
 }
 
 class UsageTelemetryDeliveryHttpError extends Error {
-  constructor(readonly status: number) {
-    super(`usage telemetry receiver rejected request (HTTP ${status})`);
+  constructor(readonly status: number, message?: string) {
+    // Preserve the shared client's sanitized receiver message alongside the
+    // status. Classification must distinguish an event-specific 400/409/422
+    // from a receiver-wide contract or configuration failure.
+    super(message || `usage telemetry receiver rejected request (HTTP ${status})`);
     this.name = 'UsageTelemetryDeliveryHttpError';
   }
 }
@@ -613,7 +616,8 @@ function usageTelemetryErrorStatus(error: unknown): number | null {
 export function isTerminalUsageTelemetryDeliveryError(error: unknown): boolean {
   if (error instanceof UsageTelemetryCircuitOpenError) return false;
   if (error instanceof UsageTelemetryDeliveryHttpError) {
-    return [400, 409, 413, 422].includes(error.status);
+    const eventSpecific = /\b(?:schema|idempotency|invalid payload|malformed payload|required.*idempotency|event\s+\d+.*invalid)\b/i.test(error.message);
+    return eventSpecific || (error.status === 400 && /\b(?:validation|field|property)\b/i.test(error.message));
   }
   const status = usageTelemetryErrorStatus(error);
   const message = error instanceof Error ? error.message : String(error ?? '');
@@ -1210,7 +1214,10 @@ export async function deliverUsageTelemetryEvent(
         await client.send([event]);
       } catch (error) {
         if (controller.signal.aborted) throw new UsageTelemetryDeliveryTimeoutError();
-        if (receiverStatus != null) throw new UsageTelemetryDeliveryHttpError(receiverStatus);
+        if (receiverStatus != null) {
+          const message = error instanceof Error ? error.message : String(error ?? '');
+          throw new UsageTelemetryDeliveryHttpError(receiverStatus, message);
+        }
         throw error;
       } finally {
         // Keep the same deadline active through response-body parsing and
