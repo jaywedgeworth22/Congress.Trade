@@ -2056,6 +2056,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 var TRADES = [];          // live transactions (newest first)
 var TRADE_BY_ID = {};     // trade id -> row, including mini-list rows cached from drawers
 var REVIEW = [];          // review-queue items
+var REVIEW_TOTALS = null; // aggregate queue counts returned with the current page
 var DECISIONS = [];       // ingestion decision audit rows
 var REVIEW_RUNS = {};     // docId -> full extraction runs loaded on demand
 var REVIEW_CONSENSUS = {}; // docId -> { rows, summary } | null, loaded alongside REVIEW_RUNS
@@ -3415,6 +3416,7 @@ function setReviewTab(resolved) {
 function loadReview() {
   if (!canUseAdmin()) {
     REVIEW = [];
+    REVIEW_TOTALS = null;
     if (el('reviewCount')) el('reviewCount').textContent = '';
     if (el('kpiReview')) el('kpiReview').textContent = '—';
     return Promise.resolve();
@@ -3422,7 +3424,7 @@ function loadReview() {
   // API HOOK: GET /api/admin/review-queue?resolved=
   return fetch('/api/admin/review-queue?resolved=' + REVIEW_RESOLVED, { headers: adminHeaders() })
     .then(okOrThrow)
-    .then(function (data) { REVIEW = data.items || []; renderReview(); loadDecisionHistory(); })
+    .then(function (data) { REVIEW = data.items || []; REVIEW_TOTALS = data.totals || null; renderReview(); loadDecisionHistory(); })
     .catch(function (e) {
       el('reviewBody').innerHTML = stateRow(6, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load review queue: ' + e.message));
     });
@@ -3687,8 +3689,10 @@ function modelsSummaryHtml(models) {
 }
 function renderReview() {
   var body = el('reviewBody');
-  el('reviewCount').textContent = REVIEW.length ? '(' + REVIEW.length + ')' : '';
-  if (el('kpiReview') && REVIEW_RESOLVED === 0) el('kpiReview').textContent = REVIEW.length;
+  var matchingTotal = REVIEW_TOTALS && typeof REVIEW_TOTALS.matching === 'number' ? REVIEW_TOTALS.matching : REVIEW.length;
+  var unresolvedTotal = REVIEW_TOTALS && typeof REVIEW_TOTALS.unresolved === 'number' ? REVIEW_TOTALS.unresolved : REVIEW.length;
+  el('reviewCount').textContent = matchingTotal ? '(' + matchingTotal + ')' : '';
+  if (el('kpiReview') && REVIEW_RESOLVED === 0) el('kpiReview').textContent = unresolvedTotal;
   if (REVIEW.length === 0) {
     body.innerHTML = stateRow(6, REVIEW_RESOLVED ? 'No reviewed documents yet.' : 'Nothing awaiting review — queue is clear.');
     return;
@@ -3993,8 +3997,7 @@ function resolveReview(docId, decision) {
     .then(okOrThrow)
     .then(function () {
       if (isUnpublish) { loadReview(); } // item returns to pending; reload current tab
-      else { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); renderReview(); }
-      loadDecisionHistory();
+      else { loadReview(); }
       loadFeed();
     })
     .catch(function (e) {
@@ -4301,7 +4304,7 @@ function meSubmit(docId) {
     })
   })
     .then(okOrThrow)
-    .then(function () { REVIEW = REVIEW.filter(function (x) { return x.docId !== docId; }); if (tr && tr.parentNode) tr.parentNode.removeChild(tr); renderReview(); loadDecisionHistory(); loadFeed(); })
+    .then(function () { loadReview(); loadFeed(); })
     .catch(function (e) {
       if (tr) tr.querySelectorAll('button,input,select').forEach(function (b) { b.disabled = false; });
       alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review submit failed: ' + e.message));
