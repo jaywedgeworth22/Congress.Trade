@@ -28,10 +28,9 @@ and `/auth/*` to Wrangler and all other paths to Next.js.
 
 Deploy the exported `out/` directory to Cloudflare Pages. This project uses
 Pages Functions for `/api/*` and `/auth/*`, so browser requests stay same-origin
-while the Pages layer forwards those routes to `https://congress.trade`.
-Do not use `_redirects` to proxy an external hostname; Pages only supports
-proxying relative URLs. Keep the Pages hostname on the same cookie domain as
-the Worker so `ct_session` and OAuth-state cookies survive the round trip.
+while the Pages layer forwards those routes to `https://congress.trade` and
+normalizes upstream cookie domains onto the Pages host. Do not use `_redirects`
+to proxy an external hostname; Pages only supports proxying relative URLs.
 
 ## Verification
 
