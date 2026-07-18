@@ -898,6 +898,28 @@ export class UsageTelemetryCircuitOpenError extends Error {
   }
 }
 
+function usageTelemetryErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== 'object') return null;
+  const candidate = error as { status?: unknown; response?: { status?: unknown } };
+  const status = candidate.status ?? candidate.response?.status;
+  return typeof status === 'number' && Number.isInteger(status) ? status : null;
+}
+
+/**
+ * A receiver outage is retryable; a deterministic 4xx payload/idempotency
+ * rejection is not. The shared client currently exposes HTTP failures as
+ * plain Errors, so retain the stable error phrases it emits as a fallback
+ * until the shared package exposes the response status directly.
+ */
+function isTerminalUsageTelemetryDeliveryError(error: unknown): boolean {
+  if (error instanceof UsageTelemetryCircuitOpenError) return false;
+  const status = usageTelemetryErrorStatus(error);
+  if (status !== null) return status >= 400 && status < 500 && status !== 408 && status !== 429;
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return /\b(?:400|401|403|404|405|409|410|412|413|415|422|424|428|431)\b/.test(message)
+    || /\b(?:bad request|unauthorized|forbidden|not found|conflict|unprocessable|schema|idempotency|invalid payload|malformed payload|required.*idempotency)\b/i.test(message);
+}
+
 /**
  * Queue-consumer + fallback-drain transport. The shared client is intentionally
  * not tracked. Gated by the durable circuit breaker: while open this throws
@@ -932,7 +954,9 @@ export async function deliverUsageTelemetryEvent(
       await client.send([event]);
     });
   } catch (error) {
-    await recordUsageTelemetryDeliveryFailure(env);
+    if (!isTerminalUsageTelemetryDeliveryError(error)) {
+      await recordUsageTelemetryDeliveryFailure(env);
+    }
     throw error;
   }
   await recordUsageTelemetryDeliverySuccess(env);
@@ -1065,7 +1089,28 @@ export async function flushUsageTelemetryFallback(
             .bind(row.idempotency_key)
             .run();
           delivered += 1;
-        } catch {
+        } catch (error) {
+          if (isTerminalUsageTelemetryDeliveryError(error)) {
+            // Deterministic receiver rejects cannot succeed on retry. Advance
+            // and eventually quarantine them so they cannot pin the oldest-first
+            // drain or starve newer legacy rows. Outages remain untouched.
+            const attempts = Number(row.attempts ?? 0) + 1;
+            if (attempts >= USAGE_TELEMETRY_D1_MAX_ROW_ATTEMPTS) {
+              await db.prepare(
+                'DELETE FROM usage_telemetry_fallback_events WHERE idempotency_key = ?',
+              )
+                .bind(row.idempotency_key)
+                .run();
+            } else {
+              await db.prepare(
+                `UPDATE usage_telemetry_fallback_events
+                    SET attempts = ?, updated_at = ?
+                  WHERE idempotency_key = ?`,
+              )
+                .bind(attempts, new Date().toISOString(), row.idempotency_key)
+                .run();
+            }
+          }
           // Keep valid rows intact across receiver and circuit-breaker
           // failures. They will be retried after the next half-open probe.
           failed += 1;

@@ -470,6 +470,29 @@ describe('third-party usage telemetry', () => {
     expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(false);
   });
 
+  it('advances terminal legacy D1 rejects instead of pinning the oldest row', async () => {
+    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'schema validation failed' }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    })));
+    const env = {
+      RAW_FILES: fallbackBucket().bucket,
+      DB: fallback.db,
+      CONFIG_KV: fakeConfigKv().kv,
+      USAGE_MONITOR_ENABLED: 'true',
+      USAGE_MONITOR_INGEST_URL: 'https://usage.jays.services/api/ingest/usage',
+      USAGE_MONITOR_INGEST_TOKEN: 'test-token',
+    } as unknown as Env;
+
+    expect(await flushUsageTelemetryFallback(env)).toMatchObject({
+      listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false,
+    });
+    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(1);
+    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+    expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
+  });
+
   it('does not let one poison legacy D1 row wedge the drain: quarantines it after a bounded budget while rows behind it still deliver', async () => {
     // Oldest row is permanently unparseable (poison); a good row sits behind it.
     const poisonKey = 'ct-third-party:poison-legacy-row';
