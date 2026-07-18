@@ -1,5 +1,6 @@
 import AssetProfile from '../../ui/AssetProfile';
 
-export default function Page({ params }: { params: { ticker: string } }) {
-  return <AssetProfile ticker={params.ticker} />;
+export default async function Page({ params }: { params: Promise<{ ticker: string }> }) {
+  const { ticker } = await params;
+  return <AssetProfile ticker={ticker} />;
 }
