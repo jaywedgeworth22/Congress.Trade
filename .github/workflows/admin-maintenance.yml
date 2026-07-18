@@ -42,11 +42,15 @@ concurrency:
 
 jobs:
   maintain:
-    if: inputs.confirm == 'run-production-maintenance'
+    if: >-
+      inputs.confirm == 'run-production-maintenance' &&
+      github.ref == 'refs/heads/main'
+    environment: production
     # Self-hosted like deploy.yml: Cloudflare serves GitHub's hosted (Azure)
     # runners a managed bot challenge before requests reach the Worker, so
     # admin curls must come from the same runner ship.sh already uses.
     runs-on: [self-hosted, congress-deploy]
+    timeout-minutes: 15
     env:
       BASE_URL: https://congress.trade
       ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}

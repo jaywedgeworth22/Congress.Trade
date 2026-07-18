@@ -10,7 +10,13 @@ on:
 
 jobs:
   gitleaks:
-    runs-on: ubuntu-latest
+    # Do not schedule fork PRs on the persistent self-hosted runner. The
+    # in-job bot gate below remains defense in depth for same-repo bot actors.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, congress-ci]
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: read
@@ -35,7 +41,7 @@ jobs:
                 ;;
             esac
           fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
       - name: Clean stale gitleaks installer temp files
@@ -49,3 +55,6 @@ jobs:
       - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Avoid the action's GitHub artifact upload path and storage charge;
+          # the scan result and PR annotations remain enabled.
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"

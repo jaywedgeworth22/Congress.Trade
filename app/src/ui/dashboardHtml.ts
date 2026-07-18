@@ -1464,7 +1464,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
       <button class="btn ghost sm" id="searchToggle" onclick="toggleSearch()" style="margin-left:auto">🔍 Search</button>
       <button class="btn ghost sm" id="colsBtn" onclick="toggleColChooser()" title="Show / Hide Columns">⚙ Columns</button>
-      <button class="btn ghost sm" id="exportCsvBtn" onclick="exportCsv()" title="Download the filtered feed as CSV">⤓ Export CSV <span class="premium-mark" data-premium-cue="exportCsv">Premium</span></button>
+      <button class="btn ghost sm" id="exportCsvBtn" onclick="exportCsv()" title="Download the filtered feed as CSV">⤓ Export CSV</button>
       <label class="lbl" for="pageSize">Rows</label>
       <select id="pageSize" onchange="setPageSize(this.value)" title="Rows shown per page">
         <option value="25">25</option><option value="50" selected>50</option><option value="100">100</option><option value="250">250</option>
@@ -1514,6 +1514,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <span class="gate-note">Premium adds full-history CSV export.
         <button class="btn sm" onclick="openPricing()">Premium</button></span>
     </div>
+
+  </section>
 
   <!-- ================= TRENDS / ANALYTICS ================= -->
   <section class="view active" id="view-trends" role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false">
@@ -2024,7 +2026,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <ul class="feature-list" id="pricingFeatures">
       <li>Instant filing alerts — signed webhooks (HMAC-verified) to any URL</li>
       <li>Live SSE stream of every new filing — no polling</li>
-      <li>Full-history CSV exports</li>
     </ul>
 
     <div class="plan-grid" id="pricingPlans">
@@ -2886,8 +2887,7 @@ function updateFeedCountMsg(shown) {
   var start = total === 0 ? 0 : feedPage * feedPageSize + 1;
   var end = Math.min(feedPage * feedPageSize + shown, total);
   if (msg) {
-    msg.innerHTML = 'Showing <span class="tick-num">' + start + '-' + end + '</span> of <span class="tick-num">' + total + '</span> trades' +
-      (!isPremium() && !isAdminView() ? '<span class="premium-count-note">CSV export is Premium</span>' : '');
+    msg.innerHTML = 'Showing <span class="tick-num">' + start + '-' + end + '</span> of <span class="tick-num">' + total + '</span> trades';
     msg.classList.remove('tick-animate');
     void msg.offsetWidth;
     msg.classList.add('tick-animate');
@@ -7476,18 +7476,12 @@ function newBillingRequestId() {
   return Array.prototype.map.call(bytes, function (b) { return b.toString(16).padStart(2, '0'); }).join('');
 }
 function pricingCopy(intent) {
-  if (intent === 'csv') return {
-    title: 'CSV Export Requires Premium',
-    sub: 'Browse and filter the dashboard for free. Premium adds full-history CSV downloads for research workflows.',
-    features: ['Full-history CSV exports', 'Filtered downloads by asset, chamber, and transaction type'],
-  };
   if (intent === 'alerts') return {
     title: 'Get the Filing First',
     sub: 'Free users see filings when they check the site. Premium pushes them to you the moment our scout ingests — via signed webhooks or a live SSE stream.',
     features: [
       'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
       'Live SSE stream of every new filing — no polling',
-      'Full-history CSV exports',
     ],
   };
   return {
@@ -7496,7 +7490,6 @@ function pricingCopy(intent) {
     features: [
       'Instant filing alerts — signed webhooks (HMAC-verified) to any URL',
       'Live SSE stream of every new filing — no polling',
-      'Full-history CSV exports',
     ],
   };
 }
@@ -7538,8 +7531,7 @@ function startCheckout() {
     return;
   }
   if (!ME.user) {
-    var feature = pricingIntent === 'csv' ? ' for CSV export' : '';
-    closePricing(); openLogin(); el('loginMsg').textContent = 'Sign in to start your Premium trial' + feature + '.';
+    closePricing(); openLogin(); el('loginMsg').textContent = 'Sign in to start your Premium trial.';
     return;
   }
   var btn = el('subscribeBtn'); if (btn) btn.disabled = true;
@@ -7573,7 +7565,6 @@ function manageBilling() {
 
 /* ---- CSV export (premium) ---- */
 function exportCsv() {
-  if (!isPremium()) { openPricing('csv'); return; }
   var p = new URLSearchParams();
   var t = el('qTicker').value.trim(); if (t) p.set('ticker', t);
   var ty = el('qType').value; if (ty) p.set('type', ty);

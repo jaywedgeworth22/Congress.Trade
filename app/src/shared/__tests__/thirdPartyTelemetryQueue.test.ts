@@ -253,7 +253,6 @@ describe('usage telemetry queue routing', () => {
     expect(ack).not.toHaveBeenCalled();
     expect(retry).toHaveBeenCalledOnce();
   });
-
   it('routes a DLQ usage.telemetry redelivery straight to the R2 outbox without a delivery attempt while the circuit is open, then acks it (no further DLQ churn)', async () => {
     mocks.deliver.mockClear();
     const { batch, ack, retry } = messageBatch('congress-feed-ingest-dlq');

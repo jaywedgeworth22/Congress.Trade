@@ -78,14 +78,10 @@ describe('GET /transactions is public (ungated)', () => {
 });
 
 describe('GET /export/transactions.csv', () => {
-  it('returns 402 + upgradeRequired for non-premium visitors', async () => {
+  it('returns 200 text/csv for anyone (un-gated)', async () => {
     const app = buildRestRouter();
     const res = await app.request('http://localhost/export/transactions.csv', {}, fakeEnv());
-    expect(res.status).toBe(402);
-    expect(await res.json()).toMatchObject({
-      error: 'CSV export requires Premium',
-      upgradeRequired: true,
-      feature: 'exportCsv',
-    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/csv');
   });
 });

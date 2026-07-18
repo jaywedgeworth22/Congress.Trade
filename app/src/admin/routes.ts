@@ -38,7 +38,7 @@ import {
   ShortVolumeRowSchema,
 } from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
-import { all, batch, get, run, type SqlParam } from '../shared/db';
+import { all, batch, batchPrepared, first, get, run, type SqlParam } from '../shared/db';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
 import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
 import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config';
@@ -145,6 +145,8 @@ import {
   BenchmarkSettingsConflictError,
   BenchmarkSettingsValidationError,
   BenchmarkSettingsWriteError,
+  getUnderlyingProvider,
+  isOpenRouterAuto,
   readBenchmarkLineupSettings,
   readBenchmarkRoleSettings,
   saveBenchmarkLineupSettings,
@@ -177,6 +179,7 @@ import {
 } from '../shared/thirdPartyTelemetry';
 import {
   BASE_SCHEMA_STATEMENTS,
+  DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS,
   POST_0024_SCHEMA_STATEMENTS,
 } from './migrations';
 import { getQualityCrosscheck } from '../analytics/quality';
@@ -982,7 +985,7 @@ export async function runTickerBackfill(
     }
   }
   for (let i = 0; i < updates.length; i += 50) {
-    await env.DB.batch(updates.slice(i, i + 50));
+    await batchPrepared(env.DB, updates.slice(i, i + 50));
   }
   return { scanned: rows.length, resolved: updates.length };
 }
@@ -1028,7 +1031,7 @@ export async function runPhotoEnrichment(
     );
   }
   for (let i = 0; i < updates.length; i += 50) {
-    await env.DB.batch(updates.slice(i, i + 50));
+    await batchPrepared(env.DB, updates.slice(i, i + 50));
   }
   return { filers: filers.length, matched, unmatched: filers.length - matched };
 }
@@ -1226,7 +1229,7 @@ export async function reserveBenchmarkCalls(env: Env, plannedCalls: number): Pro
   const day = now.slice(0, 10);
   let results: D1Result[];
   try {
-    results = await env.DB.batch([
+    results = await batchPrepared(env.DB, [
       env.DB.prepare(
         `INSERT OR IGNORE INTO benchmark_daily_call_usage
            (day, reserved_calls, updated_at)
@@ -6135,10 +6138,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         return c.json({ error: (error as Error).message }, 400);
       }
       const lineup = [agModels.a, agModels.b, ...(agModels.c ? [agModels.c] : [])];
+      if (lineup.some(isOpenRouterAuto)) {
+        return c.json({
+          error: 'openrouter/auto cannot be used in agreement benchmarks because its routing is unpredictable',
+        }, 400);
+      }
       if (new Set(lineup.map((model) => `${model.provider}:${model.model}`)).size !== lineup.length) {
         return c.json({ error: 'agreement benchmark models must be distinct' }, 400);
       }
-      if (new Set(lineup.map((model) => model.provider)).size !== lineup.length) {
+      if (new Set(lineup.map(getUnderlyingProvider)).size !== lineup.length) {
         return c.json({ error: 'agreement benchmark models must use distinct providers' }, 400);
       }
       const filing = await get<{ raw_object_key: string | null }>(
@@ -6916,15 +6924,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_created ON ingestion_decisions (created_at DESC)',
       'CREATE INDEX IF NOT EXISTS idx_ingestion_decisions_action ON ingestion_decisions (action, created_at DESC)',
       // 0020_disclosure_available_generated.sql — generated column for disclosure availability.
-      'ALTER TABLE transactions ADD COLUMN first_seen_at TEXT',
-      'ALTER TABLE transactions ADD COLUMN filed_date TEXT',
-      `UPDATE transactions SET
-         first_seen_at = (SELECT first_seen_at FROM filings WHERE filings.doc_id = transactions.doc_id),
-         filed_date = (SELECT filed_date FROM filings WHERE filings.doc_id = transactions.doc_id)`,
-      `ALTER TABLE transactions ADD COLUMN disclosure_available_at TEXT GENERATED ALWAYS AS (
-         COALESCE(first_seen_at, CASE WHEN filed_date IS NOT NULL THEN filed_date || 'T00:00:00.000Z' END, created_at)
-       )`,
-      'CREATE INDEX IF NOT EXISTS idx_tx_disclosure_available_ticker ON transactions (disclosure_available_at, ticker, id)',
+      ...DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS,
       // 0021_disclosure_latency_watch.sql — Congress.Trade-vs-FMP disclosure race monitor.
       `CREATE TABLE IF NOT EXISTS disclosure_latency_candidates (
          doc_id TEXT NOT NULL,
@@ -7009,6 +7009,41 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     return c.json({ applied, skipped });
   });
 
+  // --- POST /analyze ------------------------------------------------------
+  // Refresh the SQLite query-planner statistics (sqlite_stat1) via the Worker's
+  // D1 binding, so the planner has up-to-date selectivity after new indexes /
+  // large backfills. Operator-triggered and idempotent — deliberately NOT part
+  // of /migrate: ANALYZE reads rows (a cost we are otherwise cutting) and would
+  // re-run on every deploy, and a single unsupported statement in the migrate
+  // loop 500s the whole migration. Runs whole-DB by default, or a single table
+  // via { table }. Fails soft: if D1 rejects ANALYZE, report it, never throw.
+  // (Single-column equality indexes like idx_tx_doc are used without stats; run
+  // this only if you want the planner's cost estimates refreshed globally.)
+  r.post('/analyze', async (c) => {
+    let table: string | undefined;
+    try {
+      const raw = await c.req.text();
+      if (raw) {
+        const body = JSON.parse(raw) as Record<string, unknown>;
+        if (body.table !== undefined) {
+          if (typeof body.table !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(body.table)) {
+            return c.json({ error: 'table must be a valid SQLite identifier' }, 400);
+          }
+          table = body.table;
+        }
+      }
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const sql = table ? `ANALYZE "${table}"` : 'ANALYZE';
+    try {
+      await run(c.env.DB, sql);
+      return c.json({ ok: true, analyzed: table ?? 'all' });
+    } catch (err) {
+      return c.json({ ok: false, error: (err as Error).message, sql }, 200);
+    }
+  });
+
   // --- POST /enrich-securities --------------------------------------------
   // Budgeted asset enrichment: SEC EDGAR (free) + FMP (key-gated). Processes the
   // tickers that most need it (newest-traded first, then backfilling older ones),
@@ -7040,7 +7075,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.get('/enrich-securities/status', async (c) => {
     const used = await getDailyUsed(c.env);
     const retryIncomplete = await hasConfiguredKeyedEnrichmentProvider(c.env);
-    const row = await get<{ pending: number }>(
+    const row = await first<{ pending: number }>(
       c.env.DB,
       `SELECT COUNT(*) AS pending FROM (
          SELECT t.ticker FROM transactions t
@@ -7049,7 +7084,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
            AND ${enrichmentNeededSql('sr', retryIncomplete)}
          GROUP BY t.ticker)`,
     );
-    const enriched = await get<{ n: number }>(
+    const enriched = await first<{ n: number }>(
       c.env.DB,
       'SELECT COUNT(*) AS n FROM securities_ref WHERE enriched_at IS NOT NULL',
     );
@@ -7236,7 +7271,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       for (let i = 0; i < refStmts.length; i += 100) {
         const chunk = refStmts.slice(i, i + 100);
         try {
-          await c.env.DB.batch(chunk.map((r) => r.stmt));
+          await batchPrepared(c.env.DB, chunk.map((r) => r.stmt));
           summary.refs += chunk.length;
         } catch {
           // Batch failed as a unit — retry the chunk row-by-row to surface the
@@ -7259,7 +7294,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         .filter((x) => typeof x.date === 'string' && typeof x.close === 'number')
         .slice(0, limits.spx);
       for (let i = 0; i < rows.length; i += 100) {
-        await c.env.DB.batch(
+        await batchPrepared(c.env.DB,
           rows.slice(i, i + 100).map((x) =>
             c.env.DB.prepare(
               'INSERT INTO spx_eod (date, close) VALUES (?, ?) ON CONFLICT(date) DO UPDATE SET close=excluded.close',
@@ -7283,7 +7318,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           : [];
         try {
           for (let i = 0; i < closes.length; i += 100) {
-            await c.env.DB.batch(
+            await batchPrepared(c.env.DB,
               closes.slice(i, i + 100).map((x) =>
                 c.env.DB.prepare(
                   `INSERT INTO price_eod (ticker, date, close, volume) VALUES (?, ?, ?, ?)
@@ -7396,7 +7431,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
         .slice(0, limits.insider);
       for (let i = 0; i < rows.length; i += 100) {
-        await c.env.DB.batch(
+        await batchPrepared(c.env.DB,
           rows.slice(i, i + 100).map((o) =>
             c.env.DB.prepare(
               `INSERT INTO insider_eod (ticker, date, sentiment, buy_filings, sell_filings, buy_shares, sell_shares, owners)
@@ -7430,7 +7465,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
         .slice(0, limits.shortVolume);
       for (let i = 0; i < rows.length; i += 100) {
-        await c.env.DB.batch(
+        await batchPrepared(c.env.DB,
           rows.slice(i, i + 100).map((o) =>
             c.env.DB.prepare(
               `INSERT INTO short_volume_eod (ticker, date, short_volume_ratio, elevated)
@@ -7459,7 +7494,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
         .slice(0, 20000);
       for (let i = 0; i < rows.length; i += 100) {
-        await c.env.DB.batch(
+        await batchPrepared(c.env.DB,
           rows.slice(i, i + 100).map((o) =>
             c.env.DB.prepare(
               `INSERT INTO fundamentals_eod (ticker, date, pe_ratio, eps, beta, dividend_yield,
@@ -7504,7 +7539,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         .filter((o) => typeof o.ticker === 'string' && typeof o.date === 'string')
         .slice(0, 20000);
       for (let i = 0; i < rows.length; i += 100) {
-        await c.env.DB.batch(
+        await batchPrepared(c.env.DB,
           rows.slice(i, i + 100).map((o) =>
             c.env.DB.prepare(
               `INSERT INTO analyst_consensus (ticker, date, rating, target_mean, target_high,
@@ -7635,7 +7670,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const chunkSize = 100;
     for (let i = 0; i < statements.length; i += chunkSize) {
       const chunk = statements.slice(i, i + chunkSize);
-      await c.env.DB.batch(chunk);
+      await batchPrepared(c.env.DB, chunk);
     }
     return c.json({ ok: true, scanned: rows.length, updated });
   });
@@ -7882,7 +7917,7 @@ async function marketCoverage(env: Env): Promise<MarketCoverage> {
  */
 export async function marketPending(env: Env): Promise<{ enrich: number; prices: number }> {
   const retryIncomplete = await hasConfiguredKeyedEnrichmentProvider(env);
-  const e = await get<{ n: number }>(
+  const e = await first<{ n: number }>(
     env.DB,
     `SELECT COUNT(*) AS n FROM (
        SELECT t.ticker FROM transactions t
@@ -7891,7 +7926,7 @@ export async function marketPending(env: Env): Promise<{ enrich: number; prices:
          AND ${enrichmentNeededSql('sr', retryIncomplete)}
        GROUP BY t.ticker)`,
   );
-  const p = await get<{ n: number }>(
+  const p = await first<{ n: number }>(
     env.DB,
     `SELECT COUNT(*) AS n FROM (
        SELECT t.ticker FROM transactions t

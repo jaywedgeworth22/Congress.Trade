@@ -765,7 +765,6 @@ describe('third-party usage telemetry', () => {
     expect(fallback.put).toHaveBeenCalledOnce();
     expect(store.get('usage_telemetry_outbox_count')).toBe('1');
   });
-
   it('seeds the counter from a bounded paginated count spanning R2 list pages when the KV counter is missing', async () => {
     // R2 list pages at ~1000 objects, so a single list cannot establish the count
     // against a multi-thousand cap (the old list-based check could never enforce
@@ -834,6 +833,29 @@ describe('third-party usage telemetry', () => {
       costInUsdTicks: 321_000_000,
     });
     expect(JSON.stringify(message)).not.toContain('never.example');
+  });
+
+  it('preserves OpenRouter transport metadata and versions stable remapped keys', async () => {
+    const messages: QueueMessage[] = [];
+    await recordMeasuredThirdPartyUsage(fakeEnv(messages), {
+      provider: 'openrouter',
+      service: 'llm',
+      operation: 'benchmark-cost',
+      idempotencyKey: 'ct-openrouter-run-123-cost',
+      occurredAt: '2026-07-18T12:00:00.000Z',
+      model: 'openai/gpt-5.6-terra',
+      metricType: 'cost',
+      costUsd: 0.0123,
+      billingMode: 'actual',
+      confidence: 'actual',
+    });
+    const message = messages[0];
+    if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
+    expect(message.event).toMatchObject({
+      idempotencyKey: 'ct-openrouter-run-123-cost-transport-v2',
+      provider: 'openai',
+      metadata: { model: 'gpt-5.6-terra', transport: 'openrouter' },
+    });
   });
 
   it('requires a valid occurrence timestamp at runtime for every explicit stable key', async () => {

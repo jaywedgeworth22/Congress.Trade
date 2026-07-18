@@ -1,9 +1,10 @@
 name: Sentry CI Report
 
-# Fleet-wide CI observability: fires after every other workflow in this repo
-# completes and reports failures to the shared `fleet-infra` Sentry project
-# (org jays-services). ADDITIVE ONLY — this file must never modify the
-# behavior of the workflows it observes.
+# Fleet-wide CI observability: receives completion events from the observed
+# workflows, but only reserves a runner for failures or scheduled check-ins.
+# It reports those actionable events to the shared `fleet-infra` Sentry project
+# (org jays-services). ADDITIVE ONLY — this file must never modify the behavior
+# of the workflows it observes.
 #
 # Two independent signals per completed run:
 #   1. On conclusion == failure: a Sentry error event, tagged with
@@ -23,8 +24,8 @@ name: Sentry CI Report
 #      STOPS firing (not "runs and fails" but "never runs again") raises a
 #      missed-check-in alert instead of going unnoticed.
 #
-# Raw Sentry envelope HTTP via curl + python3 (both preinstalled on
-# ubuntu-latest) — no action marketplace dependency, no new job permissions
+# Raw Sentry envelope HTTP via curl + python3 (both available on the Coolify
+# CI runner) — no action marketplace dependency, no new job permissions
 # beyond what's needed to read the triggering run.
 #
 # workflows observed (from `ls .github/workflows/` at authoring time — see
@@ -67,8 +68,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The script has no side effect for an ordinary successful push/PR/manual
+  # run. Gate those events before runner scheduling so observability cannot
+  # starve the single CI runner with guaranteed no-op jobs. Keep this list in
+  # lockstep with ALERT_CONCLUSIONS in scripts/sentry-ci-report.py. Every
+  # scheduled run remains eligible because Sentry Crons needs both success and
+  # error check-ins.
   report:
-    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' ||
+      github.event.workflow_run.conclusion == 'timed_out' ||
+      github.event.workflow_run.conclusion == 'startup_failure' ||
+      github.event.workflow_run.event == 'schedule'
+    runs-on: [self-hosted, congress-ci]
+    timeout-minutes: 5
     steps:
       - name: Checkout (for the reporter script only; does not touch observed workflows)
         # Deliberately no `ref:` override: actions/checkout defaults workflow_run events to the
@@ -77,11 +90,7 @@ jobs:
         # script rather than whatever version lives on an arbitrary (possibly fork/PR) branch that
         # triggered the observed workflow. Do not add `ref: ${{ github.event.workflow_run.head_sha }}`
         # without re-reviewing the security implications.
-        uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            scripts/sentry-ci-report.py
-          sparse-checkout-cone-mode: false
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Report failure + cron check-in to Sentry fleet-infra
         shell: bash

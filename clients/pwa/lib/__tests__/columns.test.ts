@@ -45,14 +45,14 @@ describe('PWA column utilities', () => {
     const latencyCol = ALL_COLUMNS.find(c => c.id === 'latency')!;
 
     // Traded is public
-    expect(canUseColumn(tradedCol, false, false)).toBe(true);
+    expect(canUseColumn(tradedCol, false)).toBe(true);
 
     // Sector is public (no longer premium)
-    expect(canUseColumn(sectorCol, false, false)).toBe(true);
+    expect(canUseColumn(sectorCol, false)).toBe(true);
 
     // Latency is admin
-    expect(canUseColumn(latencyCol, true, false)).toBe(false);
-    expect(canUseColumn(latencyCol, false, true)).toBe(true);
+    expect(canUseColumn(latencyCol, false)).toBe(false);
+    expect(canUseColumn(latencyCol, true)).toBe(true);
   });
 
   it('saves and loads column order', () => {
@@ -62,13 +62,13 @@ describe('PWA column utilities', () => {
   });
 
   it('returns ordered columns based on preferences', () => {
-    const premiumOrder = getOrderedColumns(true, false);
+    const premiumOrder = getOrderedColumns(false);
     expect(premiumOrder.length).toBeLessThan(ALL_COLUMNS.length); // admin cols excluded
 
     const mockOrder = ['asset', 'traded'];
     saveColOrder(mockOrder);
 
-    const ordered = getOrderedColumns(true, false);
+    const ordered = getOrderedColumns(false);
     expect(ordered[0].id).toBe('asset');
     expect(ordered[1].id).toBe('traded');
   });
@@ -76,11 +76,11 @@ describe('PWA column utilities', () => {
   it('saves and loads hidden columns', () => {
     const mockHidden = ['published', 'lag'];
     saveHiddenCols(mockHidden);
-    expect(loadHiddenCols(false, false)).toEqual(mockHidden);
+    expect(loadHiddenCols(false)).toEqual(mockHidden);
   });
 
   it('falls back to default hidden columns when localStorage is empty', () => {
-    const defaults = defaultHidden(false, false);
-    expect(loadHiddenCols(false, false)).toEqual(defaults);
+    const defaults = defaultHidden(false);
+    expect(loadHiddenCols(false)).toEqual(defaults);
   });
 });
