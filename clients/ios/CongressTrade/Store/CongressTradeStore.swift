@@ -276,6 +276,10 @@ final class CongressTradeStore: ObservableObject {
     }
 
     private func cacheHasExecutiveTrades() -> Bool {
+        // If we have ever synced the non-default all-three filter, the cache is no longer the pure legacy default.
+        if cursorStore.cursor(for: Self.chamberFilterKey(for: Self.initialChambers)) != nil {
+            return true
+        }
         guard let context = modelContext else { return false }
         let descriptor = FetchDescriptor<ClientTrade>()
         do {
