@@ -12,6 +12,9 @@ export interface AiUsageParams {
   serviceTier?: string;
   /** Source component generating this event (e.g. 'orchestrator' or 'bakeoff'). */
   component?: string;
+  /** Provider-side call/generation id for monitor-side spend verification.
+   *  Pass `undefined` (never `""`) when absent. */
+  providerRequestId?: string;
 }
 
 /** Report provider-measured token usage through the durable telemetry queue. */
@@ -32,6 +35,7 @@ export async function reportAiUsage(env: Env, params: AiUsageParams): Promise<vo
     unit: 'token',
     billingMode: 'actual',
     confidence: 'actual',
+    providerRequestId: params.providerRequestId,
     metadata: {
       promptTokens,
       completionTokens,

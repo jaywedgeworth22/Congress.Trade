@@ -104,6 +104,68 @@ describe('OpenRouterVisionExtractor', () => {
     ).rejects.toThrow('openRouterVision: API key is not configured');
   });
 
+  it('captures the OpenRouter generation id as providerRequestId on the result', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 'gen-123',
+        model: 'qwen/qwen-2.5-vl-72b-instruct:free',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env);
+    const result = await ex.extract({
+      filing: filing(),
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    });
+
+    expect(result.providerRequestId).toBe('gen-123');
+  });
+
+  it('omits providerRequestId entirely when the response carries no id', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        model: 'qwen/qwen-2.5-vl-72b-instruct:free',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env);
+    const result = await ex.extract({
+      filing: filing(),
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    });
+
+    expect(result.providerRequestId).toBeUndefined();
+    expect('providerRequestId' in result && result.providerRequestId !== undefined).toBe(false);
+  });
+
+  it('maps a blank response id to undefined, never an empty string', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: '',
+        model: 'qwen/qwen-2.5-vl-72b-instruct:free',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env);
+    const result = await ex.extract({
+      filing: filing(),
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    });
+
+    expect(result.providerRequestId).toBeUndefined();
+  });
+
   it('attaches usage to error when parsing fails', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce({
       ok: true,
@@ -137,6 +199,141 @@ describe('OpenRouterVisionExtractor', () => {
     expect(caughtErr).toBeDefined();
     expect(caughtErr?.message).toContain('could not parse model JSON');
     expect(caughtErr?.usage).toMatchObject({ promptTokens: 100, completionTokens: 50 });
+    // The call was billed before the parse failure: the generation id must
+    // survive onto the thrown error for bakeoff.ts's error-path telemetry.
+    expect((caughtErr as Error & { providerRequestId?: string })?.providerRequestId).toBe('gen-123');
+  });
+
+  it('spreads classifier enrichment into the request body with keys flat under trace', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'gen-1',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const enrichedEnv = {
+      OPENROUTER_API_KEY: 'test-key',
+      USAGE_MONITOR_ENVIRONMENT: 'test',
+      CF_VERSION_METADATA: { id: 'abc123def456', tag: 'v42' },
+    } as unknown as Env;
+    const ex = new OpenRouterVisionExtractor(enrichedEnv);
+    await ex.extract({
+      filing: filing(),
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    // Top-level user = deterministic per-doc id; session_id absent (no run id
+    // in scope), never "".
+    expect(body.user).toBe('S-1');
+    expect('session_id' in body).toBe(false);
+    // Classifier keys FLAT under trace — no metadata sub-object anywhere.
+    expect(body.trace).toEqual({
+      sourceApp: 'congress-trade',
+      environment: 'test',
+      service: 'openRouterVision',
+      feature: 'vision-extract-senate',
+      keyRef: 'OPENROUTER_API_KEY',
+      gitSha: 'abc123def456',
+    });
+    expect(body.trace.metadata).toBeUndefined();
+    expect('metadata' in body).toBe(false);
+    // Enrichment must never displace the core request fields.
+    expect(body.model).toBe('qwen/qwen-2.5-vl-72b-instruct:free');
+    expect(body.messages).toHaveLength(1);
+  });
+
+  it('keeps user deterministic across repeated extractions of the same document', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'gen-1',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env);
+    const bytes = new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer;
+    await ex.extract({ filing: filing(), bytes });
+    await ex.extract({ filing: filing(), bytes });
+
+    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body as string));
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0].user).toBe('S-1');
+    expect(bodies[1].user).toBe('S-1');
+    expect(bodies[0].trace).toEqual(bodies[1].trace);
+  });
+
+  it('omits user (never "") when the filing has no docId, keeping trace intact', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'gen-1',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env);
+    // The bake-off harness constructs partial Filing literals; docId may be
+    // missing entirely. `user` must be omitted, not sent as "".
+    await ex.extract({
+      filing: { docKind: 'scanned_pdf', chamber: 'senate' } as unknown as Filing,
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect('user' in body).toBe(false);
+    expect(body.trace).toMatchObject({
+      sourceApp: 'congress-trade',
+      service: 'openRouterVision',
+      feature: 'vision-extract-senate',
+      keyRef: 'OPENROUTER_API_KEY',
+    });
+  });
+
+  it('degrades to an unenriched request when classifier enrichment throws, without failing extraction', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'gen-degraded',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // A >80-char gitSha fails the shared builder's STATIC-field validation at
+    // runtime — exactly the class of unexpected error the call site must
+    // degrade on rather than fail the paid extraction call.
+    const badEnv = {
+      OPENROUTER_API_KEY: 'test-key',
+      CF_VERSION_METADATA: { id: 'x'.repeat(100), tag: 'v1' },
+    } as unknown as Env;
+    const ex = new OpenRouterVisionExtractor(badEnv);
+    const result = await ex.extract({
+      filing: filing(),
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    });
+
+    // Extraction succeeded; the request went out WITHOUT any enrichment.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect('trace' in body).toBe(false);
+    expect('user' in body).toBe(false);
+    expect('session_id' in body).toBe(false);
+    expect(result.extractor).toBe('openRouterVision');
+    expect(result.providerRequestId).toBe('gen-degraded');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('classifier enrichment failed'),
+      expect.any(String),
+    );
+    warn.mockRestore();
   });
 
   it('propagates page count for mistral-ocr model', async () => {
