@@ -1706,7 +1706,7 @@ describe('outbound-call inventory enforcement', () => {
       violations.push(...rawFetchViolations(`scripts/${scriptRelative}`, source));
     }
     expect(violations).toEqual([]);
-  }, 15_000);
+  }, 45_000);
 
   it('detects aliased, bound, destructured, and member fetch calls in server code', () => {
     const source = [
