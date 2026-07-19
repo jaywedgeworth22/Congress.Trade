@@ -208,6 +208,92 @@ describe('ConfiguredVisionExtractor', () => {
     expect(legacy.extract).not.toHaveBeenCalled();
   });
 
+  it('substitutes the cheapest healthy catalog candidate when the per-model breaker is open', async () => {
+    const kv = new Map<string, string>([
+      // Billing/auth breaker open for the CONCRETE configured primary model.
+      ['provider_ban:openai:gpt-5.6-terra', String(Date.now() + 3600_000)],
+    ]);
+    const decisions: unknown[][] = [];
+    const env = {
+      AGREEMENT_HOUSE_MODEL_A: 'openai:gpt-5.6-terra',
+      AGREEMENT_HOUSE_MODEL_B: 'anthropic:claude-sonnet-5',
+      OPENROUTER_API_KEY: 'test-key',
+      CONFIG_KV: {
+        get: async (key: string) => kv.get(key) ?? null,
+        put: async (key: string, value: string) => { kv.set(key, value); },
+      },
+      DB: {
+        prepare(sql: string) {
+          return {
+            params: [] as unknown[],
+            bind(...p: unknown[]) { this.params = p; return this; },
+            async run() {
+              if (/INSERT INTO ingestion_decisions/i.test(sql)) decisions.push(this.params);
+              return { success: true, meta: { changes: 1 } };
+            },
+            async first() { return null; },
+            async all() { return { results: [] }; },
+          };
+        },
+      },
+    } as unknown as Env;
+    // The substitute (not the banned primary) is what gets invoked.
+    mocks.runCandidateOnDoc.mockResolvedValueOnce(okResult({
+      provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct',
+      resolvedModel: 'qwen/qwen-2.5-72b-instruct',
+    }));
+    const legacy = legacyExtractor(LEGACY_RESULT);
+    const extractor = new ConfiguredVisionExtractor(env, legacy);
+    const result = await extractor.extract(input());
+
+    expect(legacy.extract).not.toHaveBeenCalled();
+    expect(mocks.runCandidateOnDoc).toHaveBeenCalledTimes(1);
+    // Cheapest rate-card-priced offered candidate outside the configured slots.
+    expect(mocks.runCandidateOnDoc.mock.calls[0][1]).toEqual(
+      { provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' },
+    );
+    expect(result.extractor).toBe('configured(openrouter:qwen/qwen-2.5-72b-instruct)');
+    expect(JSON.parse(result.raw)).toMatchObject({ overlayFor: 'openai:gpt-5.6-terra' });
+    // The substitution left an ingestion_decisions audit row.
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0][2]).toBe('provider_substituted');
+    const payload = JSON.parse(String(decisions[0][6])) as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      configured: 'openai:gpt-5.6-terra',
+      substitute: 'openrouter:qwen/qwen-2.5-72b-instruct',
+      reason: 'model_breaker_open',
+      costFlagged: false,
+    });
+  });
+
+  it('keeps pre-overlay behavior (skip slot, use failover) when the overlay is disabled', async () => {
+    const kv = new Map<string, string>([
+      ['provider_ban:openai:gpt-5.6-terra', String(Date.now() + 3600_000)],
+    ]);
+    const env = {
+      AGREEMENT_HOUSE_MODEL_A: 'openai:gpt-5.6-terra',
+      AGREEMENT_HOUSE_MODEL_B: 'anthropic:claude-sonnet-5',
+      PROVIDER_OVERLAY_ENABLED: 'false',
+      CONFIG_KV: {
+        get: async (key: string) => kv.get(key) ?? null,
+        put: async (key: string, value: string) => { kv.set(key, value); },
+      },
+    } as unknown as Env;
+    mocks.runCandidateOnDoc.mockResolvedValueOnce(okResult({
+      provider: 'anthropic', model: 'claude-sonnet-5', resolvedModel: 'claude-sonnet-5',
+    }));
+    const legacy = legacyExtractor(LEGACY_RESULT);
+    const extractor = new ConfiguredVisionExtractor(env, legacy);
+    const result = await extractor.extract(input());
+
+    expect(mocks.runCandidateOnDoc).toHaveBeenCalledTimes(1);
+    expect(mocks.runCandidateOnDoc.mock.calls[0][1]).toEqual(
+      { provider: 'anthropic', model: 'claude-sonnet-5' },
+    );
+    expect(result.extractor).toBe('configured(anthropic:claude-sonnet-5)');
+    expect(JSON.parse(result.raw).overlayFor).toBeUndefined();
+  });
+
   it('is provider-generic: a non-vision-LLM candidate (mistral OCR) maps the same way', async () => {
     const env = {
       AGREEMENT_SENATE_MODEL_A: 'mistral:mistral-ocr-latest',

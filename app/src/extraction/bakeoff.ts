@@ -1175,8 +1175,10 @@ export async function runCandidateOnDoc(
     let serviceTier: string | undefined;
     const chamber = docId.startsWith('E-') ? 'executive' : (docId.startsWith('S-') ? 'senate' : 'house');
     if (provider === 'gemini') {
+      // docId is included so the metadata-grounded prompt can fill filing
+      // facts (form type / filed year / page count / filer name) from D1.
       const result = await new VisionLlmExtractor(env, { model, apiKey: key }).extract({
-        filing: { docKind: 'scanned_pdf', chamber } as never,
+        filing: { docId, docKind: 'scanned_pdf', chamber } as never,
         bytes,
       });
       rows = result.transactions;
@@ -1209,8 +1211,9 @@ export async function runCandidateOnDoc(
       resolvedModel = lp.resolvedModel;
       providerRequestId = lp.providerRequestId;
     } else if (provider === 'openrouter') {
+      // docId included for the same metadata-grounded prompt lookup as above.
       const result = await new OpenRouterVisionExtractor(env, { model, apiKey: key }).extract({
-        filing: { docKind: 'scanned_pdf', chamber } as never,
+        filing: { docId, docKind: 'scanned_pdf', chamber } as never,
         bytes,
       });
       rows = result.transactions;
