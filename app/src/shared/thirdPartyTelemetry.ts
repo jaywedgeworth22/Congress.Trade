@@ -122,6 +122,15 @@ interface MeasuredThirdPartyUsageFields {
   billingMode?: ThirdPartyUsageTelemetryEvent['billingMode'];
   confidence?: ThirdPartyUsageTelemetryEvent['confidence'];
   metadata?: Record<string, string | number | boolean | null>;
+  /**
+   * Provider-side call/generation id (e.g. OpenRouter's `id` on a completions
+   * response), for monitor-side spend verification (`GET
+   * /api/v1/generation?id=...`). Callers must pass `undefined` — never `""`
+   * — when absent; an empty string would fail the shared schema's `min(1)`
+   * constraint on delivery. Never part of the idempotency-key basis (see
+   * measuredUsageKey/baseEvent below), matching the shared package contract.
+   */
+  providerRequestId?: string;
 }
 
 /**
@@ -286,7 +295,13 @@ function measuredUsageKey(
   return idempotencyKey && transport ? `${idempotencyKey}:transport-v2` : idempotencyKey;
 }
 
-function environmentName(env: Env): string {
+/**
+ * Exported so other call sites (e.g. the OpenRouter classifier-metadata
+ * enrichment built for the outbound request in openRouterVision.ts) can stay
+ * byte-identical with the environment value this module actually pushes on
+ * every telemetry event, instead of re-deriving their own definition.
+ */
+export function environmentName(env: Env): string {
   return (env.USAGE_MONITOR_ENVIRONMENT || env.INFISICAL_ENV || 'production').trim() || 'production';
 }
 
@@ -336,6 +351,18 @@ function rejectMeasuredUsage(errorType: 'missingOccurredAt' | 'invalidOccurredAt
   return false;
 }
 
+/**
+ * Defensive clamp matching the shared package's `UsageTelemetryEventSchema`
+ * (`.trim().min(1).max(200)`) so a pathological provider-returned id can
+ * never throw inside `createUsageTelemetryClient().send()` and take down
+ * delivery of an otherwise-valid event. Blank/whitespace-only collapses to
+ * `undefined` — never an empty string on the wire.
+ */
+function sanitizeProviderRequestId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.slice(0, 200) : undefined;
+}
+
 function baseEvent(
   env: Env,
   input: {
@@ -348,6 +375,7 @@ function baseEvent(
     metricType: 'usage' | 'cost' | 'limit';
     billingMode: ThirdPartyUsageTelemetryEvent['billingMode'];
     confidence: ThirdPartyUsageTelemetryEvent['confidence'];
+    providerRequestId?: string;
   },
 ): ThirdPartyUsageTelemetryEvent {
   const service = stableTag(input.service, 'external-api');
@@ -369,6 +397,7 @@ function baseEvent(
     confidence: input.confidence,
     occurredAt: canonicalOccurredAt(input.occurredAt),
     metadata: input.model ? { model: stableTag(input.model, 'unknown-model') } : undefined,
+    providerRequestId: sanitizeProviderRequestId(input.providerRequestId),
   };
 }
 
@@ -945,6 +974,7 @@ export async function recordMeasuredThirdPartyUsage(
     metricType: usage.metricType ?? (usage.costUsd != null ? 'cost' : 'usage'),
     billingMode: usage.billingMode ?? 'actual',
     confidence: usage.confidence ?? 'actual',
+    providerRequestId: usage.providerRequestId,
   });
   event.quantity = nonNegativeFinite(usage.quantity);
   event.unit = usage.unit;
