@@ -12,6 +12,8 @@
  *   GET   /diagnostics              -> connection status + recent app errors
  *   GET   /subscriptions            -> admin list of subscriptions
  *   POST  /subscriptions            -> operator-provisioned subscription
+ *   POST  /subscriptions/:id/rotate-secret -> rotate signing secret (shown-once if generated)
+ *   POST  /subscriptions/:id/deactivate    -> deactivate (drops from fanout, frees creation quota)
  *
  * AUTH (deny-by-default once provisioned). A request is authorized if EITHER:
  *   1. Bearer token — env.ADMIN_TOKEN is set and the request carries a matching
@@ -46,7 +48,11 @@ import { uuid } from '../shared/ids';
 import {
   assertSubscriptionQuota,
   createSubscription,
+  deactivateSubscription,
+  getSubscription,
   listSubscriptions,
+  rotateSubscriptionSecret,
+  rotateSubscriptionSecretError,
   SubscriptionQuotaError,
   subscriptionSecretError,
   validateSubscriptionFilters,
@@ -807,6 +813,35 @@ function titleCaseSource(source: string): string {
 function adminSubscription(sub: Subscription): Omit<Subscription, 'secret'> & { hasSecret: boolean } {
   const { secret, ...rest } = sub;
   return { ...rest, hasSecret: Boolean(secret) };
+}
+
+/**
+ * Console-safe audit trail for subscription lifecycle admin mutations
+ * (rotate-secret, deactivate). Subscriptions carry no doc_id, so they can't
+ * use the ingestion_decisions table (doc_id is NOT NULL there); this mirrors
+ * the try/catch-and-log pattern used for review-queue audit receipts
+ * elsewhere in this file. Never throws and never logs the secret value.
+ */
+function auditAdminSubscriptionAction(
+  c: { req: { header(name: string): string | undefined } },
+  action: 'rotate-secret' | 'deactivate',
+  subscriptionId: string,
+  extra?: Record<string, unknown>,
+): void {
+  try {
+    console.log(
+      'admin subscription audit:',
+      JSON.stringify({
+        action,
+        subscriptionId,
+        actor: adminActor(c),
+        at: new Date().toISOString(),
+        ...extra,
+      }),
+    );
+  } catch (err) {
+    console.error('admin subscription audit log failed', subscriptionId, (err as Error).message);
+  }
 }
 
 interface EditedTx {
@@ -7934,6 +7969,62 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       if (err instanceof SubscriptionQuotaError) return c.json({ error: err.message }, 409);
       throw err;
     }
+  });
+
+  // --- POST /subscriptions/:id/rotate-secret ------------------------------
+  // Rotate a subscription's signing secret without exposing it. Body:
+  //   { secret?: string }  — caller-supplied secret (32-256 chars, no
+  //   whitespace), or omitted to auto-generate like creation does.
+  // Response mirrors the create endpoint's shown-once semantics: an
+  // auto-generated secret is returned exactly once; a caller-supplied secret
+  // is NEVER echoed back. This unblocks incident remediation (CT-AUD-003):
+  // a compromised or drifted webhook HMAC key can be replaced with a value
+  // that never transits any response or log.
+  r.post('/subscriptions/:id/rotate-secret', async (c) => {
+    const id = c.req.param('id');
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    let secret: string | undefined;
+    if (body.secret !== undefined) {
+      const secretError = rotateSubscriptionSecretError(body.secret);
+      if (secretError) return c.json({ error: secretError }, 400);
+      secret = body.secret as string;
+    }
+    const existing = await getSubscription(c.env, id);
+    if (!existing) return c.json({ error: 'subscription not found' }, 404);
+    const { subscription, generated } = await rotateSubscriptionSecret(c.env, id, secret);
+    auditAdminSubscriptionAction(c, 'rotate-secret', id, { generated });
+    return c.json({
+      ok: true,
+      secretSet: true,
+      ...adminSubscription(subscription),
+      // Shown-once: only a server-generated secret is ever echoed, matching
+      // the create endpoint. A caller-supplied secret never round-trips.
+      ...(generated && subscription.secret ? { secret: subscription.secret } : {}),
+      ...(generated && subscription.delivery === 'sse' && subscription.secret
+        ? { streamUrl: `/api/stream?subscription=${encodeURIComponent(subscription.id)}&token=${encodeURIComponent(subscription.secret)}` }
+        : {}),
+    });
+  });
+
+  // --- POST /subscriptions/:id/deactivate ---------------------------------
+  // Set a subscription inactive: webhook/SSE fanout already filters on
+  // active = 1, so a deactivated subscription stops receiving deliveries, and
+  // the creation quota counts only active rows, so its slot is freed (fixes
+  // the lifetime-lockout where 20 historical rows blocked new creations with
+  // no delete path). Idempotent.
+  r.post('/subscriptions/:id/deactivate', async (c) => {
+    const id = c.req.param('id');
+    const existing = await getSubscription(c.env, id);
+    if (!existing) return c.json({ error: 'subscription not found' }, 404);
+    const subscription = existing.active ? await deactivateSubscription(c.env, id) : existing;
+    auditAdminSubscriptionAction(c, 'deactivate', id, { wasActive: existing.active });
+    return c.json({ ok: true, ...adminSubscription(subscription) });
   });
 
   return r;
