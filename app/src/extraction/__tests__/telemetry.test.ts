@@ -136,6 +136,58 @@ describe('extraction measured telemetry', () => {
       .toEqual(firstEmission);
   });
 
+  it('threads providerRequestId onto every pushed measurement dimension for monitor-side verification', async () => {
+    const result: CandidateDocResult = {
+      provider: 'openrouter',
+      model: 'openai/gpt-5.6-terra',
+      providerRequestId: 'gen-or-123',
+      occurredAt: '2026-07-18T12:00:00.000Z',
+      docId: 'H-2',
+      ok: true,
+      latencyMs: 100,
+      rowCount: 0,
+      rowKeys: [],
+      avgConfidence: 0,
+      rows: [],
+      usage: {
+        promptTokens: 900,
+        completionTokens: 50,
+        pagesProcessed: 3,
+        costInUsdTicks: 321_000_000,
+        attachmentSearchCalls: 2,
+      },
+    };
+
+    await pushExtractionTelemetry({} as Env, result, 'benchmark');
+
+    expect(mocks.recordMeasuredThirdPartyUsage).toHaveBeenCalledTimes(4);
+    for (const [, usage] of mocks.recordMeasuredThirdPartyUsage.mock.calls) {
+      expect(usage.providerRequestId).toBe('gen-or-123');
+    }
+  });
+
+  it('omits providerRequestId from pushed measurements when the result has none', async () => {
+    const result: CandidateDocResult = {
+      provider: 'gemini',
+      model: 'gemini-3.5-flash',
+      docId: 'H-3',
+      ok: true,
+      latencyMs: 10,
+      rowCount: 0,
+      rowKeys: [],
+      avgConfidence: 0,
+      rows: [],
+      usage: { promptTokens: 100, completionTokens: 10 },
+    };
+
+    await pushExtractionTelemetry({} as Env, result, 'benchmark');
+
+    expect(mocks.recordMeasuredThirdPartyUsage).toHaveBeenCalled();
+    for (const [, usage] of mocks.recordMeasuredThirdPartyUsage.mock.calls) {
+      expect('providerRequestId' in usage).toBe(false);
+    }
+  });
+
   it('keeps long mixed provider ids and every measured dimension collision-resistant', async () => {
     const prefix = 'MiXeD/Provider_ID+'.repeat(12);
     const buildResult = (providerRequestId: string): CandidateDocResult => ({
