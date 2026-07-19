@@ -11,6 +11,7 @@ struct CongressTradeApp: App {
             MainTabView()
                 .environmentObject(store)
                 .preferredColorScheme(colorScheme)
+                .font(.custom("ZillaSlab-Regular", size: 17, relativeTo: .body))
         }
         .modelContainer(for: ClientTrade.self)
     }
@@ -35,9 +36,9 @@ struct MainTabView: View {
                     Label("Feed", systemImage: "list.bullet.rectangle")
                 }
 
-            WatchlistView()
+            TrendsView()
                 .tabItem {
-                    Label("Watch", systemImage: "line.3.horizontal.decrease.circle")
+                    Label("Trends", systemImage: "chart.line.uptrend.xyaxis")
                 }
 
             DeliveryView()
@@ -45,9 +46,9 @@ struct MainTabView: View {
                     Label("Delivery", systemImage: "antenna.radiowaves.left.and.right")
                 }
 
-            CommandStatusView()
+            SettingsView()
                 .tabItem {
-                    Label("Status", systemImage: "checkmark.seal")
+                    Label("Settings", systemImage: "gearshape")
                 }
         }
         .tint(.blue)
