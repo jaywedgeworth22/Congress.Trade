@@ -174,6 +174,7 @@ struct FilterChip: View {
 }
 
 struct HeaderSummary: View {
+    @EnvironmentObject private var store: CongressTradeStore
     let tradeCount: Int
     let cursor: Int
     let signedIn: Bool
@@ -183,10 +184,6 @@ struct HeaderSummary: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Live Control Surface")
-                        .font(.caption.weight(.bold))
-                        .textCase(.uppercase)
-                        .foregroundStyle(.blue.opacity(0.8))
                     Text("Fast Congressional trade monitoring")
                         .font(.title3.weight(.bold))
                 }
@@ -195,8 +192,28 @@ struct HeaderSummary: View {
             }
 
             HStack(spacing: 8) {
-                MetricTile(title: "Trades", value: "\(tradeCount)")
-                MetricTile(title: "Cursor", value: "\(cursor)")
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("VIEW LIMIT")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    Picker("Limit", selection: Binding(
+                        get: { store.viewLimit },
+                        set: { store.viewLimit = $0 }
+                    )) {
+                        Text("50").tag(50)
+                        Text("100").tag(100)
+                        Text("200").tag(200)
+                        Text("500").tag(500)
+                    }
+                    .pickerStyle(.menu)
+                    .tint(.primary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+
+                MetricTile(title: "Trades", value: "\(cursor)")
                 MetricTile(title: "Plan", value: entitlementLabel)
             }
         }
