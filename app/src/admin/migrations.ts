@@ -242,8 +242,21 @@ export const USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS = [
 ] as const;
 
 /**
+ * 0048_retention_indexes.sql — timestamp-leading indexes so the daily retention
+ * sweep's `WHERE <ts> < ?` batch deletes range-scan by age instead of full-
+ * scanning. `dead_letter_events` already has `idx_dead_letter_created`;
+ * `ingest_log` and `source_attempts` only had `(source, <ts>)` composites whose
+ * leading `source` column the age-only predicate cannot use.
+ */
+export const RETENTION_INDEX_SCHEMA_STATEMENTS = [
+  'CREATE INDEX IF NOT EXISTS idx_ingest_log_polled_at ON ingest_log (polled_at)',
+  'CREATE INDEX IF NOT EXISTS idx_source_attempts_attempted_at ON source_attempts (attempted_at)',
+] as const;
+
+/**
  * Ordered schema tail shared by POST /api/admin/migrate and migration parity
- * tests. Keep this in the same order as file migrations 0029 through 0046.
+ * tests. Keep this in the same order as file migrations 0029 through 0048
+ * (0047 lands via a peer branch; index adds are order-independent).
  */
 export const POST_0024_SCHEMA_STATEMENTS = [
   // 0025_extraction_runs_usage.sql
@@ -277,4 +290,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...D1_BUDGET_SCHEMA_STATEMENTS,
   // 0046_usage_telemetry_probe_lease.sql
   ...USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
+  // 0048_retention_indexes.sql
+  ...RETENTION_INDEX_SCHEMA_STATEMENTS,
 ] as const;
