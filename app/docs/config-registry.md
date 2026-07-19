@@ -28,8 +28,13 @@ reports names + sources only, never values).
 
 ### Model/LLM keys
 `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `MISTRAL_API_KEY`,
-`XAI_API_KEY`, `LLAMAPARSE_API_KEY`,
+`XAI_API_KEY`, `OPENROUTER_API_KEY`, `LLAMAPARSE_API_KEY`,
 `ARBITRATION_API_KEY`
+
+`OPENROUTER_API_KEY` is the unified transport for ALL live LLM extraction
+(agreement trio + benchmark candidates); its configured/health status is
+surfaced in `GET /api/admin/diagnostics` (`provider:openrouter`) and
+`GET /api/admin/config-sources`.
 
 ### Auth, billing, email
 `ADMIN_TOKEN`¹, `INGEST_TOKEN`, `ADMIN_MAINTENANCE_TOKEN`², `ADMIN_EMAILS`, `ACCESS_AUD`,
@@ -69,6 +74,14 @@ safe only while a strong client secret exists.
   `OGE_POLL_INTERVAL_SEC`, `OGE_MAX_VISION_BYTES`
 - Extraction: `VISION_PRIMARY_MODEL`, `ARBITRATION_ENABLED`,
   `ARBITRATION_MODEL`
+- OpenRouter PDF pipeline: `OPENROUTER_MODEL` (default
+  `google/gemini-3.5-flash`), `OPENROUTER_PDF_ENGINE_TEXT` (file-parser engine
+  for typed/text PDFs; default `cloudflare-ai` — free markdown conversion),
+  `OPENROUTER_PDF_ENGINE_SCANNED` (engine for scans read by
+  non-native-vision models; default `mistral-ocr`, $2/1k pages),
+  `OPENROUTER_MAX_PRICE` (optional per-request provider price ceiling, JSON
+  like `{"prompt":5,"completion":20}` in USD per million tokens — composes
+  with the daily USD budget governors, it does not replace them)
 - Agreement autopublish controls and per-chamber lineups:
   `AGREEMENT_AUTOPUBLISH_ENABLED`,
   `AGREEMENT_HOUSE_MODEL_A/B/C`, `AGREEMENT_SENATE_MODEL_A/B/C`, and
