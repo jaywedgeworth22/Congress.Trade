@@ -131,7 +131,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
-- **[Congress.Trade][CLAUDE] Dashboard truth + a11y + $9 pricing consistency — COMPLETED 2026-07-19, PR pending.**
+- **[Congress.Trade][CLAUDE] Dashboard truth + a11y + $9 pricing consistency — COMPLETED 2026-07-19, PR #654 (squash auto-merge armed).**
   Verified the 8-item app-review backlog against current `main` (branch had 47 uncommitted lines
   already fixing several items) and finished the rest in `dashboardHtml.ts` + `legalHtml.ts`:
   (1) Consensus Moves "— · ~$40K" dangling fragment — already fixed on the branch (conditional
