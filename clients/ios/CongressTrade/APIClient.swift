@@ -5,6 +5,37 @@ protocol SessionTokenStore {
     func save(_ token: String) throws
     func clear() throws
 }
+
+/// Persists the feed sync watermark (`ClientFeedResponse.cursor`) per request
+/// shape. A single global cursor is only valid for resuming the exact same
+/// filter that produced it — rows excluded by a narrower filter (e.g. an
+/// unselected chamber) were never fetched, so widening the filter later must
+/// resume from that filter's own watermark, not whatever the last-used
+/// filter happened to reach. CT-AUD-009.
+protocol SyncCursorStore {
+    func cursor(for key: String) -> Int?
+    func setCursor(_ cursor: Int, for key: String)
+}
+
+final class UserDefaultsSyncCursorStore: SyncCursorStore {
+    private let defaults: UserDefaults
+    private let keyPrefix = "trade.congress.sync.cursor."
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    func cursor(for key: String) -> Int? {
+        let storageKey = keyPrefix + key
+        guard defaults.object(forKey: storageKey) != nil else { return nil }
+        return defaults.integer(forKey: storageKey)
+    }
+
+    func setCursor(_ cursor: Int, for key: String) {
+        defaults.set(cursor, forKey: keyPrefix + key)
+    }
+}
+
 struct FeedQuery: Equatable {
     var limit: Int = 30
     var since: Int?
@@ -107,6 +138,30 @@ final class CongressTradeAPIClient {
         try await get("commands/\(id)")
     }
 
+    /// Confirms a previously cached trade is still live on the server.
+    ///
+    /// The feed and count queries silently exclude retracted ("deprecated")
+    /// rows going forward — there is no tombstone/push signal for a row that
+    /// was already synced to a device before an admin later un-published it
+    /// (see `app/docs/client-mobile-api.md` "Chamber filter" section and
+    /// `app/src/delivery/rows.ts`'s `t.deprecated_at IS NULL` filter). The one
+    /// place the backend *does* signal this directly is `GET /trade/:id`,
+    /// which 404s once a row is deprecated. Callers use that to reconcile an
+    /// already-cached item on demand (e.g. when its detail view is opened).
+    func tradeStillExists(id: String) async throws -> Bool {
+        do {
+            let _: Ack = try await get("trade/\(id)")
+            return true
+        } catch let error as APIError {
+            if case .server(let status, _, _) = error, status == 404 {
+                return false
+            }
+            throw error
+        }
+    }
+
+    private struct Ack: Decodable {}
+
     func createSSESubscription(
         tickers: [String],
         idempotencyKey: String
@@ -178,7 +233,7 @@ final class CongressTradeAPIClient {
             throw APIError.invalidResponse
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw APIError.server(status: http.statusCode, message: "Could not revoke this session")
+            throw APIError.server(status: http.statusCode, message: "Could not revoke this session", retryAfterSeconds: nil)
         }
     }
 
@@ -214,7 +269,7 @@ final class CongressTradeAPIClient {
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
         let response: ClientCommandResponse<T> = try await send(request)
         if response.command.status == .failed {
-            throw APIError.server(status: 400, message: response.command.error ?? "Command failed")
+            throw APIError.server(status: 400, message: response.command.error ?? "Command failed", retryAfterSeconds: nil)
         }
         return response
     }
@@ -239,7 +294,8 @@ final class CongressTradeAPIClient {
         }
         guard (200..<300).contains(http.statusCode) else {
             let error = try? decoder.decode(APIErrorResponse.self, from: data)
-            throw APIError.server(status: http.statusCode, message: error?.error ?? "Request failed")
+            let retryAfter = (http.value(forHTTPHeaderField: "Retry-After")).flatMap { Int($0) }
+            throw APIError.server(status: http.statusCode, message: error?.error ?? "Request failed", retryAfterSeconds: retryAfter)
         }
         return try decoder.decode(T.self, from: data)
     }
@@ -259,7 +315,7 @@ struct APIErrorResponse: Decodable {
 
 enum APIError: LocalizedError {
     case invalidResponse
-    case server(status: Int, message: String)
+    case server(status: Int, message: String, retryAfterSeconds: Int?)
     case transport(URLError)
 
     var isOffline: Bool {
@@ -273,11 +329,31 @@ enum APIError: LocalizedError {
         ].contains(error.code)
     }
 
+    /// Whether a retry is worth attempting: rate limiting (429), transient
+    /// server failure (5xx), or a transport-level hiccup. Anything else
+    /// (400/401/404/etc.) is a permanent rejection that retrying cannot fix.
+    var isRetryable: Bool {
+        switch self {
+        case .server(let status, _, _):
+            return status == 429 || (500...599).contains(status)
+        case .transport:
+            return true
+        case .invalidResponse:
+            return false
+        }
+    }
+
+    /// Server-provided `Retry-After` (seconds), when present on a 429/5xx.
+    var retryAfterSeconds: Int? {
+        guard case .server(_, _, let retryAfterSeconds) = self else { return nil }
+        return retryAfterSeconds
+    }
+
     var errorDescription: String? {
         switch self {
         case .invalidResponse:
             return "Invalid server response."
-        case .server(_, let message):
+        case .server(_, let message, _):
             return message
         case .transport(let error):
             return error.localizedDescription
