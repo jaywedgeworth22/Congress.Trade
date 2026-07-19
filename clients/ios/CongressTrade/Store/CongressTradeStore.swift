@@ -24,7 +24,7 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var hasStoredSessionToken = false
     /// Canonical chamber chip selection. Drives both the visible chips and
     /// the `chamber=` feed request — see `chamberQueryValue`. CT-AUD-010.
-    @Published private(set) var selectedChambers: Set<ChamberFilter> = CongressTradeStore.defaultChambers
+    @Published private(set) var selectedChambers: Set<ChamberFilter> = CongressTradeStore.initialChambers
 
     var modelContext: ModelContext?
 
@@ -52,6 +52,7 @@ final class CongressTradeStore: ObservableObject {
     /// congressional chambers, excluding Executive (OGE 278-T) disclosures
     /// unless explicitly requested. See app/docs/client-mobile-api.md.
     static let defaultChambers: Set<ChamberFilter> = [.house, .senate]
+    static let initialChambers: Set<ChamberFilter> = [.house, .senate, .executive]
 
     init(
         api: CongressTradeAPIClient,
@@ -87,7 +88,7 @@ final class CongressTradeStore: ObservableObject {
     /// would be indistinguishable from "no filter chosen yet"); an attempt to
     /// deselect the last chip resets to the documented default instead.
     func setChamberSelection(_ chambers: Set<ChamberFilter>) async {
-        selectedChambers = chambers.isEmpty ? Self.defaultChambers : chambers
+        selectedChambers = chambers.isEmpty ? Self.initialChambers : chambers
         await refresh()
     }
 
@@ -157,7 +158,7 @@ final class CongressTradeStore: ObservableObject {
         // would skip every matching row at or below that unrelated cursor.
         let isDefaultFilter = filterKey == Self.chamberFilterKey(for: Self.defaultChambers)
         let resumeCursor = cursorStore.cursor(for: filterKey)
-            ?? (isDefaultFilter ? fetchMaxLocalCursor() : nil)
+            ?? (isDefaultFilter && !cacheHasExecutiveTrades() ? fetchMaxLocalCursor() : nil)
         guard let startingCursor = resumeCursor else {
             // Cold start for this exact filter: bounded newest-page snapshot,
             // not a full historical backfill.
@@ -243,7 +244,7 @@ final class CongressTradeStore: ObservableObject {
     }
 
     private static func chamberFilterKey(for chambers: Set<ChamberFilter>) -> String {
-        let normalized = chambers.isEmpty ? defaultChambers : chambers
+        let normalized = chambers.isEmpty ? initialChambers : chambers
         return normalized.map(\.rawValue).sorted().joined(separator: ",")
     }
 
@@ -255,8 +256,9 @@ final class CongressTradeStore: ObservableObject {
     /// narrow to just those two and drop unresolved rows. See
     /// `app/src/delivery/rows.ts` `buildTxFilters`.
     private static func chamberQueryValue(for chambers: Set<ChamberFilter>) -> String? {
-        let normalized = chambers.isEmpty ? defaultChambers : chambers
-        if normalized == defaultChambers { return nil }
+        let normalized = chambers.isEmpty ? initialChambers : chambers
+        let backendDefault: Set<ChamberFilter> = [.house, .senate]
+        if normalized == backendDefault { return nil }
         return normalized.map(\.rawValue).sorted().joined(separator: ",")
     }
 
@@ -270,6 +272,21 @@ final class CongressTradeStore: ObservableObject {
             return results.first?.cursor
         } catch {
             return nil
+        }
+    }
+
+    private func cacheHasExecutiveTrades() -> Bool {
+        // If we have ever synced the non-default all-three filter, the cache is no longer the pure legacy default.
+        if cursorStore.cursor(for: Self.chamberFilterKey(for: Self.initialChambers)) != nil {
+            return true
+        }
+        guard let context = modelContext else { return false }
+        let descriptor = FetchDescriptor<ClientTrade>()
+        do {
+            let trades = try context.fetch(descriptor)
+            return trades.contains { $0.member.chamber?.lowercased() == "executive" }
+        } catch {
+            return false
         }
     }
 
