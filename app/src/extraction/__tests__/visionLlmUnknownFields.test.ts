@@ -105,7 +105,7 @@ describe('vision LLM unreadable fields', () => {
   });
 
   it('retains valid transaction types and exports a stable prompt version', () => {
-    expect(EXTRACTION_PROMPT_VERSION).toBe('stock-act-ptr-v2');
+    expect(EXTRACTION_PROMPT_VERSION).toBe('stock-act-ptr-v3-grounded');
     expect(toParsedTx({ txType: 'P', assetName: 'Asset' }).txType).toBe('P');
     expect(toParsedTx({ txType: 'S', assetName: 'Asset' }).txType).toBe('S');
     expect(toParsedTx({ txType: 'E', assetName: 'Asset' }).txType).toBe('E');

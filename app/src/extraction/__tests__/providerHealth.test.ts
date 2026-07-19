@@ -159,7 +159,9 @@ describe('recordProviderHealth', () => {
     expect(store.has(healthWindowKey(candidate))).toBe(true);
     // The ban is scoped to the concrete provider:model, not the provider.
     expect(store.has('provider_ban:openrouter')).toBe(false);
-    const retryAfter = await providerModelBanRetryAfter(env, candidate);
+    // recordProviderHealth wrote the ban relative to the injected T0 clock
+    // (not wall-clock Date.now()), so the read must use the same clock.
+    const retryAfter = await providerModelBanRetryAfter(env, candidate, T0 + 4);
     expect(retryAfter).toBeGreaterThan(0);
   });
 

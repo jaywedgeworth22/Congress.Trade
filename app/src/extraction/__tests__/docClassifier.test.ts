@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { PDFDocument, StandardFonts } from 'pdf-lib';
+import { PDFDocument } from 'pdf-lib';
 import type { Env } from '../../shared/types';
 import {
   computeDocClassSignals,
@@ -16,14 +16,39 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
+// pdf-lib's `.save()` always Flate-compresses page content streams (there is
+// no SaveOptions toggle for it), which hides the BT..Tj text-show operators
+// from the raw byte-prefix sniff that computeDocClassSignals (and the
+// pre-existing src/ingestion/classifier.ts heuristic it mirrors) relies on.
+// A hand-written, uncompressed-but-still-pdf-lib-loadable PDF exercises the
+// deterministic tier the same way src/ingestion/__tests__/classifier.test.ts
+// already does for classifyPdfBytes, without pdf-lib silently deflating the
+// text layer out of the sniff window.
 async function typedPdf(): Promise<ArrayBuffer> {
-  const pdf = await PDFDocument.create();
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const page = pdf.addPage([400, 400]);
-  page.drawText('Periodic Transaction Report — AAPL P $1,001 - $15,000', {
-    x: 20, y: 200, size: 12, font,
-  });
-  return toArrayBuffer(await pdf.save());
+  const content = 'BT /F1 12 Tf 20 200 Td (Periodic Transaction Report AAPL P) Tj ET';
+  const pdf = `%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length ${content.length} >>
+stream
+${content}
+endstream
+endobj
+trailer
+<< /Size 6 /Root 1 0 R >>
+%%EOF`;
+  return toArrayBuffer(new TextEncoder().encode(pdf));
 }
 
 async function blankPdf(): Promise<ArrayBuffer> {

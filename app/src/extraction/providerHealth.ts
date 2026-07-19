@@ -339,14 +339,15 @@ export async function recordProviderHealth(
 export async function providerModelBanRetryAfter(
   env: Env,
   candidate: { provider: string; model: string },
+  now = Date.now(),
 ): Promise<number | null> {
   if (!env.CONFIG_KV) return null;
   try {
     const raw = await env.CONFIG_KV.get(modelBanKey(candidate));
     if (!raw) return null;
     const until = Number(raw);
-    if (!Number.isFinite(until) || until <= Date.now()) return null;
-    return Math.max(1, Math.ceil((until - Date.now()) / 1000));
+    if (!Number.isFinite(until) || until <= now) return null;
+    return Math.max(1, Math.ceil((until - now) / 1000));
   } catch {
     return null;
   }
