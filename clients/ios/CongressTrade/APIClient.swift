@@ -120,6 +120,10 @@ final class CongressTradeAPIClient {
         return try await request(components.url!)
     }
 
+    func member(id: String) async throws -> ClientMemberResponse {
+        try await get("member/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)")
+    }
+
     func subscriptions() async throws -> SubscriptionListResponse {
         try await get("subscriptions")
     }
