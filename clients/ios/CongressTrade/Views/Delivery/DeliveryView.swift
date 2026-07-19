@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct DeliveryView: View {
     @EnvironmentObject private var store: CongressTradeStore
@@ -107,15 +108,18 @@ struct SubscriptionRow: View {
 
 struct DeliveryCredentialView: View {
     let credential: DeliveryCredential
+    @EnvironmentObject private var store: CongressTradeStore
     @Environment(\.dismiss) private var dismiss
+    @State private var copiedField: String?
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Label("Shown Once", systemImage: "exclamationmark.shield.fill")
+                    Label("Shown Once — Not Recoverable", systemImage: "exclamationmark.shield.fill")
                         .foregroundStyle(.orange)
-                    Text("Save this credential now. Congress.Trade does not return the secret in later subscription lists.")
+                        .font(.headline)
+                    Text("Congress.Trade never returns this secret again, in this app or any other client. Copy it somewhere safe now; if you lose it, pause this delivery and create a new one.")
                         .foregroundStyle(.secondary)
                 }
                 if let streamURL = credential.streamURL {
@@ -124,6 +128,7 @@ struct DeliveryCredentialView: View {
                             .font(.footnote.monospaced())
                             .textSelection(.enabled)
                             .privacySensitive()
+                        CopyButton(label: "Copy Stream URL", value: streamURL, copiedField: $copiedField)
                     }
                 }
                 if let secret = credential.secret {
@@ -132,13 +137,8 @@ struct DeliveryCredentialView: View {
                             .font(.footnote.monospaced())
                             .textSelection(.enabled)
                             .privacySensitive()
+                        CopyButton(label: "Copy Secret", value: secret, copiedField: $copiedField)
                     }
-                }
-                Section {
-                    ShareLink(item: credential.shareText) {
-                        Label("Share Securely", systemImage: "square.and.arrow.up")
-                    }
-                    .disabled(credential.shareText.isEmpty)
                 }
             }
             .navigationTitle("Delivery Credential")
@@ -150,5 +150,35 @@ struct DeliveryCredentialView: View {
                 }
             }
         }
+        .onDisappear {
+            // The secret is shown exactly once; drop it from app state as soon
+            // as this view goes away rather than relying only on the sheet
+            // binding to nil it out. CT-AUD-023.
+            store.clearPendingDeliveryCredential()
+        }
+    }
+}
+
+/// Explicit, deliberate copy control for a one-time secret. Replaces the
+/// generic system `ShareLink`, which hands the secret to an arbitrary
+/// share-sheet destination (Messages, AirDrop, third-party apps, ...) with no
+/// record of where it went. CT-AUD-023.
+private struct CopyButton: View {
+    let label: String
+    let value: String
+    @Binding var copiedField: String?
+
+    var body: some View {
+        Button {
+            UIPasteboard.general.string = value
+            copiedField = value
+            Task {
+                try? await Task.sleep(for: .seconds(2))
+                if copiedField == value { copiedField = nil }
+            }
+        } label: {
+            Label(copiedField == value ? "Copied" : label, systemImage: copiedField == value ? "checkmark" : "doc.on.doc")
+        }
+        .buttonStyle(.bordered)
     }
 }
