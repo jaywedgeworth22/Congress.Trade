@@ -187,7 +187,7 @@ struct HeaderSummary: View {
                         .font(.caption.weight(.bold))
                         .textCase(.uppercase)
                         .foregroundStyle(.blue.opacity(0.8))
-                    Text("Fast congressional trade monitoring")
+                    Text("Fast Congressional trade monitoring")
                         .font(.title3.weight(.bold))
                 }
                 Spacer()
