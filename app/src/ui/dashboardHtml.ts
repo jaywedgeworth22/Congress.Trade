@@ -20,12 +20,12 @@
  * feed data loads.
  *
  * The benchmark model catalog is the ONE exception to "no imports": it is
- * serialized from benchmarkModelCatalog() into the template at module load so
- * the re-read menus, quick-run select, and custom benchmark model checkboxes
+ * serialized from benchmarkSelectableCatalog() into the template at module load
+ * so the re-read menus, quick-run select, and custom benchmark model checkboxes
  * can never drift from the server-side catalog again.
  */
 
-import { benchmarkModelCatalog } from '../benchmark/settings';
+import { benchmarkSelectableCatalog } from '../benchmark/settings';
 
 export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -3644,12 +3644,14 @@ function statusBadge(status) {
   var c = STATUS_COLORS[s] || '#57606a';
   return '<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;color:#fff;background:' + c + '">' + esc(s) + '</span>';
 }
-/* Server-injected model catalog: serialized from benchmarkModelCatalog()
-   (DEFAULT_CANDIDATES + LlamaParse) when this module is built, so every model
-   menu in the dashboard — the "Re-read with model…" multi-select, the per-row
-   quick-run select, and the Custom Model Selection checkbox grid — derives
-   from the ONE backend source of truth instead of a hand-maintained copy. */
-var BENCHMARK_CATALOG = ${JSON.stringify(benchmarkModelCatalog())};
+/* Server-injected model catalog: serialized from benchmarkSelectableCatalog()
+   (DEFAULT_CANDIDATES + LlamaParse — excludes decode-only LEGACY_CANDIDATES and
+   NON_OFFERED_CANDIDATES) when this module is built, so every model menu in the
+   dashboard — the "Re-read with model…" multi-select, the per-row quick-run
+   select, and the Custom Model Selection checkbox grid — only ever offers
+   models Jay actually holds a key for, and derives from the ONE backend source
+   of truth instead of a hand-maintained copy. */
+var BENCHMARK_CATALOG = ${JSON.stringify(benchmarkSelectableCatalog())};
 var REREAD_MODELS = BENCHMARK_CATALOG;
 /* <optgroup> per provider for the "Re-read with model…" multi-select. */
 function rereadModelOptionsHtml() {
@@ -5260,7 +5262,17 @@ function benchmarkCatalogModels() {
 }
 
 function benchmarkManualOptionHtml(selected) {
-  return benchmarkCatalogModels().map(function(model) {
+  var options = benchmarkCatalogModels();
+  // A live slot may be pinned to a model that isn't in the routine offered
+  // list (e.g. a targeted Sol/Terra Pro run, or a since-removed candidate).
+  // Surface it as an explicit selected option instead of silently falling
+  // through to the browser's default (first-option) selection, which would
+  // let an unrelated "Save all five slots" click quietly overwrite it.
+  var matchesSelected = options.some(function(model) { return benchmarkModelKey(model) === selected; });
+  var current = (selected && !matchesSelected)
+    ? '<option value="' + esc(selected) + '" selected>' + esc(selected + ' (current — not in offered list)') + '</option>'
+    : '';
+  return current + options.map(function(model) {
     var value = benchmarkModelKey(model);
     var suffix = model.configured ? '' : ' (not configured)';
     return '<option value="' + esc(value) + '"' + (value === selected ? ' selected' : '') +

@@ -4,6 +4,8 @@ import {
   BenchmarkSettingsConflictError,
   BenchmarkSettingsValidationError,
   BenchmarkSettingsWriteError,
+  benchmarkModelCatalog,
+  benchmarkSelectableCatalog,
   readBenchmarkLineupSettings,
   readBenchmarkRoleSettings,
   saveBenchmarkLineupSettings,
@@ -11,6 +13,42 @@ import {
   validateBenchmarkLineup,
   validateBenchmarkRoles,
 } from '../settings';
+
+describe('benchmarkModelCatalog vs benchmarkSelectableCatalog', () => {
+  it('keeps NON_OFFERED_CANDIDATES valid for save/decode while excluding them from the offered UI catalog', () => {
+    const fullKeys = benchmarkModelCatalog().map((m) => `${m.provider}:${m.model}`);
+    const offeredKeys = benchmarkSelectableCatalog().map((m) => `${m.provider}:${m.model}`);
+
+    // The full catalog (used by validateBenchmarkModel to gate save/decode)
+    // must still accept these — a regression that silently dropped
+    // NON_OFFERED_CANDIDATES here would reject historical config/runs with no
+    // other test signal (see 2026-07-19 review finding).
+    for (const key of [
+      'openrouter:openrouter/auto',
+      'openrouter:openai/gpt-5.6-terra-pro',
+      'openrouter:openai/gpt-5.6-sol',
+    ]) {
+      expect(fullKeys).toContain(key);
+      expect(offeredKeys).not.toContain(key);
+    }
+  });
+
+  it('excludes direct-provider LEGACY_CANDIDATES (no API key) from the offered UI catalog but keeps them in the full catalog', () => {
+    const fullKeys = benchmarkModelCatalog().map((m) => `${m.provider}:${m.model}`);
+    const offeredKeys = benchmarkSelectableCatalog().map((m) => `${m.provider}:${m.model}`);
+
+    for (const key of [
+      'openai:gpt-5.6-terra',
+      'gemini:gemini-3.5-flash',
+      'anthropic:claude-sonnet-5',
+      'mistral:mistral-ocr-latest',
+      'xai:grok-4.3',
+    ]) {
+      expect(fullKeys).toContain(key);
+      expect(offeredKeys).not.toContain(key);
+    }
+  });
+});
 
 const OLD = {
   a: 'mistral:mistral-ocr-latest',
