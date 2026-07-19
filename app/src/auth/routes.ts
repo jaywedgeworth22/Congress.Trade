@@ -113,9 +113,12 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     const state = randomToken(16);
 
     // Save the initiator's origin so we can redirect back to it on callback
+    const clientParam = new URL(c.req.url).searchParams.get('client');
     const referer = c.req.header('Referer');
     let requestOrigin = new URL(c.req.url).origin;
-    if (referer) {
+    if (clientParam === 'ios') {
+      requestOrigin = 'congresstrade://auth';
+    } else if (referer) {
       try {
         requestOrigin = new URL(referer).origin;
       } catch {}
@@ -168,7 +171,11 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
         return c.redirect(`${targetOrigin}/?login=unverified`);
       }
       const user = await upsertUserFromGoogle(c.env, profile);
-      await setSessionCookie(c, await createSession(c.env, user.id));
+      const sessionToken = await createSession(c.env, user.id);
+      await setSessionCookie(c, sessionToken);
+      if (targetOrigin.startsWith('congresstrade://')) {
+        return c.redirect(`${targetOrigin}?token=${encodeURIComponent(sessionToken)}`);
+      }
       return c.redirect(`${targetOrigin}/?login=ok`);
     } catch (err) {
       console.error('google callback failed:', (err as Error).message);
@@ -206,9 +213,12 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
     }
     try {
       const token = await issueMagicToken(c.env, email);
+      const clientParam = new URL(c.req.url).searchParams.get('client');
       const referer = c.req.header('Referer');
       let requestOrigin = new URL(c.req.url).origin;
-      if (referer) {
+      if (clientParam === 'ios') {
+        requestOrigin = 'congresstrade://auth';
+      } else if (referer) {
         try {
           requestOrigin = new URL(referer).origin;
         } catch {}
@@ -234,7 +244,11 @@ export function buildAuthRouter(): Hono<{ Bindings: Env }> {
 
     if (!email) return c.redirect(`${targetOrigin}/?login=expired`);
     const user = await upsertUserByEmail(c.env, email);
-    await setSessionCookie(c, await createSession(c.env, user.id));
+    const sessionToken = await createSession(c.env, user.id);
+    await setSessionCookie(c, sessionToken);
+    if (targetOrigin.startsWith('congresstrade://')) {
+      return c.redirect(`${targetOrigin}?token=${encodeURIComponent(sessionToken)}`);
+    }
     return c.redirect(`${targetOrigin}/?login=ok`);
   });
 

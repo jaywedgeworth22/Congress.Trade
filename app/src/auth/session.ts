@@ -102,6 +102,9 @@ export function getSafeRedirectUrl(origin: string | undefined, defaultBase: stri
     const originUrl = new URL(origin);
     const defaultUrl = new URL(defaultBase);
 
+    // iOS app scheme is safe
+    if (originUrl.protocol === 'congresstrade:') return origin;
+
     // Exact match on the configured origin is safe.
     if (originUrl.origin === defaultUrl.origin) return origin;
 

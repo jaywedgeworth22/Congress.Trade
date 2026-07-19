@@ -8,6 +8,8 @@ struct FeedDashboardView: View {
     @State private var appliedSearch = ""
     @State private var searchTask: Task<Void, Never>?
     @State private var selectedTrade: ClientTrade?
+    @State private var selectedPoliticianId: String?
+    @State private var selectedPoliticianName: String?
 
     var filteredTrades: [ClientTrade] {
         let needle = appliedSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -86,7 +88,12 @@ struct FeedDashboardView: View {
                             Button {
                                 selectedTrade = trade
                             } label: {
-                                TradeCard(trade: trade)
+                                TradeCard(trade: trade, onPoliticianTap: {
+                                    if let memberId = trade.member.id {
+                                        selectedPoliticianName = trade.member.name
+                                        selectedPoliticianId = memberId
+                                    }
+                                })
                             }
                             .buttonStyle(.plain)
                             .accessibilityHint("Opens trade details")
@@ -124,6 +131,14 @@ struct FeedDashboardView: View {
             }
             .sheet(item: $selectedTrade) { trade in
                 TradeDetailView(trade: trade)
+            }
+            .sheet(isPresented: Binding<Bool>(
+                get: { selectedPoliticianId != nil },
+                set: { if !$0 { selectedPoliticianId = nil } }
+            )) {
+                if let memberId = selectedPoliticianId {
+                    PoliticianDetailView(memberId: memberId, memberName: selectedPoliticianName ?? "Politician")
+                }
             }
             .onChange(of: searchText) { _, newValue in
                 searchTask?.cancel()
@@ -253,6 +268,7 @@ struct SearchField: View {
 
 struct TradeCard: View {
     let trade: ClientTrade
+    var onPoliticianTap: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -278,50 +294,59 @@ struct TradeCard: View {
             Divider()
 
             HStack(alignment: .center, spacing: 10) {
-                if let photoUrlString = trade.member.photoUrl,
-                   let url = URL(string: photoUrlString) {
-                    AsyncImage(url: url) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .aspectRatio(contentMode: .fill)
-                        case .failure:
+                Button {
+                    onPoliticianTap?()
+                } label: {
+                    HStack(alignment: .center, spacing: 10) {
+                        if let photoUrlString = trade.member.photoUrl,
+                           let url = URL(string: photoUrlString) {
+                            AsyncImage(url: url) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                case .failure:
+                                    Text(trade.member.party?.partyEmoji ?? "🦅")
+                                        .font(.system(size: 18))
+                                        .frame(width: 36, height: 36)
+                                        .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                                case .empty:
+                                    ProgressView()
+                                        .controlSize(.small)
+                                @unknown default:
+                                    EmptyView()
+                                }
+                            }
+                            .frame(width: 36, height: 36)
+                            .clipShape(Circle())
+                            .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
+                        } else {
                             Text(trade.member.party?.partyEmoji ?? "🦅")
                                 .font(.system(size: 18))
                                 .frame(width: 36, height: 36)
                                 .background(Color(uiColor: .secondarySystemBackground), in: Circle())
-                        case .empty:
-                            ProgressView()
-                                .controlSize(.small)
-                        @unknown default:
-                            EmptyView()
+                                .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
                         }
-                    }
-                    .frame(width: 36, height: 36)
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
-                } else {
-                    Text(trade.member.party?.partyEmoji ?? "🦅")
-                        .font(.system(size: 18))
-                        .frame(width: 36, height: 36)
-                        .background(Color(uiColor: .secondarySystemBackground), in: Circle())
-                        .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
-                }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 4) {
-                        Text(trade.member.name ?? "Unknown Politician")
-                            .font(.body.weight(.bold))
-                        if trade.member.photoUrl != nil {
-                            Text(trade.member.party?.partyEmoji ?? "")
-                                .font(.caption)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 4) {
+                                Text(trade.member.name ?? "Unknown Politician")
+                                    .font(.body.weight(.bold))
+                                if trade.member.photoUrl != nil {
+                                    Text(trade.member.party?.partyEmoji ?? "")
+                                        .font(.caption)
+                                }
+                            }
+                            Text(memberMeta)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.secondary)
                         }
                     }
-                    Text(memberMeta)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
+                .disabled(onPoliticianTap == nil)
+                
                 Spacer()
                 VStack(alignment: .trailing, spacing: 4) {
                     Text(trade.amountLabel)

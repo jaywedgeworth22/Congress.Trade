@@ -50,12 +50,16 @@ export async function pushExtractionTelemetry(
   const usage = result.usage;
   if (!usage) return;
   const costInUsdTicks = usage.costInUsdTicks;
-  if (
-    typeof costInUsdTicks === 'number'
-    && Number.isFinite(costInUsdTicks)
-    && costInUsdTicks >= 0
-  ) {
-    const costUsd = costInUsdTicks / 10_000_000_000;
+  // Provider-native charge: xAI reports exact ticks; OpenRouter usage
+  // accounting reports the charged dollars directly (usage.cost → costUsd).
+  const providerNativeCostUsd =
+    typeof costInUsdTicks === 'number' && Number.isFinite(costInUsdTicks) && costInUsdTicks >= 0
+      ? costInUsdTicks / 10_000_000_000
+      : typeof usage.costUsd === 'number' && Number.isFinite(usage.costUsd) && usage.costUsd >= 0
+        ? usage.costUsd
+        : null;
+  if (providerNativeCostUsd != null) {
+    const costUsd = providerNativeCostUsd;
     const measuredCost = {
       provider: result.provider,
       service: 'llm',
@@ -68,7 +72,7 @@ export async function pushExtractionTelemetry(
       billingMode: 'actual' as const,
       confidence: 'actual' as const,
       metadata: {
-        costInUsdTicks,
+        ...(costInUsdTicks == null ? {} : { costInUsdTicks }),
         success: result.ok,
         latencyMs: result.latencyMs,
         ...(usage.attachmentSearchCalls == null

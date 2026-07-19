@@ -72,7 +72,7 @@ import {
   hasHardFailureFlags,
 } from '../extraction/normalizer';
 import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionLlm';
-import { enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement';
+import { duplicateLineupReason, enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement';
 import { acknowledgeAutopilotHalt, getAutopilotStatus } from '../extraction/autopilot';
 import { providerHealthDiagnostics } from '../extraction/providerHealth';
 import { mapFiling } from '../delivery/rows';
@@ -3016,7 +3016,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       ],
       'model-keys': [
         'GEMINI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'MISTRAL_API_KEY', 'XAI_API_KEY',
-        'LLAMAPARSE_API_KEY', 'ARBITRATION_API_KEY',
+        'OPENROUTER_API_KEY', 'LLAMAPARSE_API_KEY', 'ARBITRATION_API_KEY',
       ],
       'auth-billing': [
         'ADMIN_TOKEN', 'INGEST_TOKEN', 'ADMIN_MAINTENANCE_TOKEN', 'ADMIN_EMAILS', 'ACCESS_AUD', 'ACCESS_TEAM_DOMAIN',
@@ -3038,6 +3038,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         'SEED_HOUSE_URL', 'SEED_SENATE_URL',
         'OGE_WATCH_ENABLED', 'OGE_INDEX_URL', 'OGE_POLL_INTERVAL_SEC', 'OGE_MAX_VISION_BYTES',
         'VISION_PRIMARY_MODEL', 'ARBITRATION_ENABLED', 'ARBITRATION_MODEL',
+        'OPENROUTER_MODEL', 'OPENROUTER_PDF_ENGINE_TEXT', 'OPENROUTER_PDF_ENGINE_SCANNED', 'OPENROUTER_MAX_PRICE',
         'AGREEMENT_AUTOPUBLISH_ENABLED', 'AGREEMENT_AUTOPUBLISH_LIMIT', 'AGREEMENT_MAX_ATTEMPTS', 'AGREEMENT_DAILY_LLM_BUDGET',
         'AGREEMENT_BIG_DOC_START_TIER2', 'AGREEMENT_BIG_DOC_PAGE_THRESHOLD', 'AGREEMENT_BIG_DOC_BYTES_THRESHOLD',
         'AGREEMENT_HOUSE_MODEL_A', 'AGREEMENT_HOUSE_MODEL_B', 'AGREEMENT_HOUSE_MODEL_C',
@@ -3099,6 +3100,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'OPENAI_API_KEY',
       'MISTRAL_API_KEY',
       'XAI_API_KEY',
+      'OPENROUTER_API_KEY',
       'LLAMAPARSE_API_KEY',
       'ARBITRATION_API_KEY',
       'FMP_API_KEY',
@@ -3319,6 +3321,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         label: 'xAI OCR',
         configured: !!runtimeSecrets.XAI_API_KEY,
         note: runtimeSecrets.XAI_API_KEY ? 'Bake-off / batch OCR candidate' : 'XAI_API_KEY is not available to this Worker runtime',
+      },
+      {
+        id: 'provider:openrouter',
+        provider: 'openrouter',
+        label: 'OpenRouter LLM Gateway',
+        configured: !!runtimeSecrets.OPENROUTER_API_KEY,
+        note: runtimeSecrets.OPENROUTER_API_KEY
+          ? 'Unified transport for live LLM extraction (agreement trio + benchmark candidates)'
+          : 'OPENROUTER_API_KEY is not available to this Worker runtime',
       },
       {
         id: 'provider:llamaparse',
@@ -5575,6 +5586,20 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       mC = rawC ? validateBenchmarkModel(rawC, 'requireThird') : null;
     } catch (error) {
       return c.json({ error: (error as Error).message }, 400);
+    }
+    // Cross-vendor independence, enforced up front (processAgreementDoc would
+    // otherwise skip every doc): openrouter (and llamaparse) lineups are
+    // accepted, but OpenRouter slugs count as their UNDERLYING vendor — e.g.
+    // openrouter:openai/gpt-5.6-terra + openrouter:openai/gpt-5.6-luna is one
+    // vendor twice and is rejected.
+    const lineupError = duplicateLineupReason([mA, mB, ...(mC ? [mC] : [])]);
+    if (lineupError) {
+      return c.json({
+        error: lineupError === 'duplicate_provider_lineup'
+          ? 'models must use distinct underlying vendors (an openrouter model counts as its underlying vendor)'
+          : 'models must be distinct',
+        code: lineupError,
+      }, 400);
     }
     const dryRun = body.dryRun !== false; // default true — preview unless explicitly false
 
