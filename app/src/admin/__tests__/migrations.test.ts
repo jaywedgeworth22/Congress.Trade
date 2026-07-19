@@ -13,6 +13,7 @@ import {
   POST_0024_SCHEMA_STATEMENTS,
   PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
   RELIABILITY_SCHEMA_STATEMENTS,
+  RETENTION_INDEX_SCHEMA_STATEMENTS,
   REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
   STRIPE_EVENT_SCHEMA_STATEMENTS,
   USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
@@ -191,7 +192,14 @@ describe('admin migration bootstrap', () => {
       'CREATE INDEX IF NOT EXISTS idx_tx_doc ON transactions (doc_id)',
       ...D1_BUDGET_SCHEMA_STATEMENTS,
       ...USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
+      ...RETENTION_INDEX_SCHEMA_STATEMENTS,
     ]);
+  });
+
+  it('indexes retention-sweep timestamp columns so age-only deletes range-scan (0048)', () => {
+    const sql = RETENTION_INDEX_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('idx_ingest_log_polled_at ON ingest_log (polled_at)');
+    expect(sql).toContain('idx_source_attempts_attempted_at ON source_attempts (attempted_at)');
   });
 
   it('includes the singleton usage telemetry half-open lease schema (0046)', () => {

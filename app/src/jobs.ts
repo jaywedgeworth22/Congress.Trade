@@ -12,6 +12,7 @@
  */
 
 import type { Env } from './shared/types';
+import { run } from './shared/db';
 import { runEnrichment } from './enrichment/service';
 import { runPriceRefresh } from './prices/service';
 import { hasFmpTierFailure } from './shared/fmpStatus';
@@ -33,6 +34,63 @@ async function dailyBudgetExceeded(env: Env, stage: string): Promise<boolean> {
   if (!(await isD1RowBudgetExceeded(env))) return false;
   console.warn(`daily jobs stopped before ${stage}: D1 row budget exceeded`);
   return true;
+}
+
+// --- Operational-table retention -------------------------------------------
+// dead_letter_events / ingest_log / source_attempts are append-only telemetry
+// tables with no pruning path, so they grow without bound (3,517 DLQ rows and
+// counting in production). Each is deleted in bounded batches — an `id IN
+// (SELECT ... LIMIT n)` subquery, because D1/SQLite has no `DELETE ... LIMIT`
+// — capped per run so one daily pass can never blow the D1 write/time budget.
+// A backlog larger than the per-run cap simply drains over successive days.
+
+interface RetentionPolicy {
+  table: string;
+  /** ISO-8601 timestamp column the age cutoff compares against. */
+  column: string;
+  days: number;
+}
+
+export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
+  { table: 'dead_letter_events', column: 'created_at', days: 30 },
+  { table: 'ingest_log', column: 'polled_at', days: 90 },
+  { table: 'source_attempts', column: 'attempted_at', days: 30 },
+];
+
+/** Rows per DELETE statement — small enough to stay comfortably inside D1's
+ *  per-query limits even with index maintenance. */
+export const RETENTION_DELETE_BATCH = 500;
+/** Batches per table per daily run: caps one pass at 10k rows/table. */
+export const RETENTION_MAX_BATCHES_PER_TABLE = 20;
+
+/**
+ * Delete expired rows from the operational tables above. Best-effort: a
+ * failure on one table (e.g. table missing on a fresh preview DB) is logged
+ * and does not stop the others. Returns rows deleted per table for tests and
+ * log lines.
+ */
+export async function runRetentionSweep(env: Env, now = new Date()): Promise<Record<string, number>> {
+  const deleted: Record<string, number> = {};
+  for (const policy of RETENTION_POLICIES) {
+    const cutoff = new Date(now.getTime() - policy.days * 86_400_000).toISOString();
+    let total = 0;
+    try {
+      for (let batch = 0; batch < RETENTION_MAX_BATCHES_PER_TABLE; batch++) {
+        const res = await run(
+          env.DB,
+          `DELETE FROM ${policy.table} WHERE id IN (SELECT id FROM ${policy.table} WHERE ${policy.column} < ? LIMIT ?)`,
+          [cutoff, RETENTION_DELETE_BATCH],
+        );
+        const changes = Number(res.meta?.changes ?? 0);
+        total += changes;
+        if (changes < RETENTION_DELETE_BATCH) break; // backlog drained
+      }
+    } catch (err) {
+      console.warn(`retention sweep failed for ${policy.table}:`, (err as Error).message);
+    }
+    deleted[policy.table] = total;
+  }
+  return deleted;
 }
 
 export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<void> {
@@ -202,5 +260,17 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     await runTickerBackfill(env, 5000);
   } catch (err) {
     console.warn('ticker backfill failed:', (err as Error).message);
+  }
+
+  if (await dailyBudgetExceeded(env, 'retention sweep')) return;
+
+  // Prune unbounded operational tables (dead_letter_events / ingest_log /
+  // source_attempts). Bounded batches + per-run cap; never blocks the cron.
+  try {
+    const swept = await runRetentionSweep(env, now);
+    const total = Object.values(swept).reduce((s, n) => s + n, 0);
+    if (total > 0) console.log('retention sweep deleted rows:', JSON.stringify(swept));
+  } catch (err) {
+    console.warn('retention sweep failed:', (err as Error).message);
   }
 }
