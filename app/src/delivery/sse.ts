@@ -316,6 +316,16 @@ export async function openSseStream(
       if (remainingBeforeSleep <= reconnectGraceMs) break;
       await sleep(Math.min(pollIntervalMs, remainingBeforeSleep - reconnectGraceMs));
       if (closed || Date.now() >= deadlineAt - reconnectGraceMs) break;
+
+      const activeCheck = await get<{ active: number }>(
+        env.DB,
+        'SELECT active FROM subscriptions WHERE id = ?',
+        [sub.id],
+      );
+      if (!activeCheck || !activeCheck.active) {
+        break;
+      }
+
       const before = cursor;
       cursor = await drainSseBacklog(env, sub, cursor, send);
       await flushD1Budget(env);
