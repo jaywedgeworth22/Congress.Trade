@@ -4,6 +4,7 @@ import type { Env } from '../../shared/types';
 import {
   computeConsensusAgreement,
   DEFAULT_CANDIDATES,
+  NON_OFFERED_CANDIDATES,
   fetchLlamaParseResult,
   isRetiredDisclosureCandidate,
   openAiDisclosureReasoningEffort,
@@ -477,29 +478,29 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       .map((entry) => entry.model);
     expect(directOpenAiModels).toEqual([]);
 
+    // terra-pro and sol were moved to NON_OFFERED_CANDIDATES (2026-07-19,
+    // owner directive) — they stay catalog-valid but are no longer part of the
+    // routine offered/default lineup.
     const orGptModels = DEFAULT_CANDIDATES
       .filter((entry) => entry.provider === 'openrouter' && entry.model.startsWith('openai/gpt-5.6'))
       .map((entry) => entry.model);
     expect(orGptModels).toEqual([
       'openai/gpt-5.6-terra',
-      'openai/gpt-5.6-terra-pro',
       'openai/gpt-5.6-luna',
-      'openai/gpt-5.6-sol',
     ]);
   });
 
-  it('lists only OpenRouter slugs verified live against the models API (2026-07-16)', () => {
+  it('lists only OpenRouter slugs verified live against the models API', () => {
     const openRouterModels = DEFAULT_CANDIDATES
       .filter((entry) => entry.provider === 'openrouter')
       .map((entry) => entry.model);
     expect(openRouterModels).toEqual([
       'mistral/mistral-ocr-latest',
       'openai/gpt-5.6-terra',
-      'openai/gpt-5.6-terra-pro',
       'openai/gpt-5.6-luna',
-      'openai/gpt-5.6-sol',
       'anthropic/claude-sonnet-5',
       'anthropic/claude-haiku-4.5',
+      'anthropic/claude-opus-4.8',
       'x-ai/grok-4.3',
       'deepseek/deepseek-v4-pro',
       'deepseek/deepseek-v4-flash',
@@ -510,7 +511,6 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       'z-ai/glm-4.6v',
       'google/gemini-3.5-flash',
       'qwen/qwen-2.5-72b-instruct',
-      'openrouter/auto',
     ]);
     // Slugs confirmed absent from the live OpenRouter models API must never
     // reappear — every benchmark cell for a dead slug can only fail.
@@ -539,6 +539,19 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     // transport, and there are no direct-provider non-OR entries in the default lineup.
     expect(DEFAULT_CANDIDATES.some((entry) => /(?:^|\/)(?:gpt|chatgpt)-4o(?:-|$)/i.test(entry.model))).toBe(false);
     expect(DEFAULT_CANDIDATES.filter((entry) => entry.provider !== 'openrouter')).toEqual([]);
+  });
+
+  it('keeps openrouter/auto and the higher-tier GPT-5.6 models catalog-valid but out of the default lineup', () => {
+    const defaultKeys = DEFAULT_CANDIDATES.map((entry) => `${entry.provider}:${entry.model}`);
+    expect(defaultKeys).not.toContain('openrouter:openrouter/auto');
+    expect(defaultKeys).not.toContain('openrouter:openai/gpt-5.6-terra-pro');
+    expect(defaultKeys).not.toContain('openrouter:openai/gpt-5.6-sol');
+
+    expect(NON_OFFERED_CANDIDATES).toEqual([
+      { provider: 'openrouter', model: 'openrouter/auto' },
+      { provider: 'openrouter', model: 'openai/gpt-5.6-terra-pro' },
+      { provider: 'openrouter', model: 'openai/gpt-5.6-sol' },
+    ]);
   });
 
   it('maps the GPT-5.6 roles to low, medium, and high reasoning', () => {
