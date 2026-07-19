@@ -13,7 +13,7 @@ struct TradeDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     // Hero Header
                     VStack(alignment: .center, spacing: 12) {
-                        AssetMark(symbol: trade.asset.ticker ?? trade.asset.type ?? "A")
+                        AssetMark(symbol: trade.asset.ticker ?? trade.asset.type ?? "A", isTicker: trade.asset.ticker != nil)
                             .scaleEffect(1.3)
                             .padding(.bottom, 8)
                         

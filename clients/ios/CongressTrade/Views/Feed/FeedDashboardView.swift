@@ -240,7 +240,7 @@ struct TradeCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 12) {
-                AssetMark(symbol: assetTitle)
+                AssetMark(symbol: assetTitle, isTicker: trade.asset.ticker != nil)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(assetTitle)
                         .font(.headline)

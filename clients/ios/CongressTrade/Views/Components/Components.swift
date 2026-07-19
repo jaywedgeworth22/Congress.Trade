@@ -82,8 +82,10 @@ struct StatusPill: View {
 
 struct AssetMark: View {
     let symbol: String
+    var isTicker: Bool = true
 
     private var logoURL: URL? {
+        guard isTicker else { return nil }
         guard let encodedSymbol = symbol.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             return nil
         }
