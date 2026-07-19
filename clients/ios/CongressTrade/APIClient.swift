@@ -128,6 +128,11 @@ final class CongressTradeAPIClient {
         try await get("preferences")
     }
 
+    func latencySummary() async throws -> LatencySummary {
+        let url = originURL.appendingPathComponent("api/analytics/latency-summary")
+        return try await request(url)
+    }
+
     func commands(limit: Int = 20) async throws -> CommandListResponse {
         var components = URLComponents(url: endpointURL("commands"), resolvingAgainstBaseURL: false)!
         components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
