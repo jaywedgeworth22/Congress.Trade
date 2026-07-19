@@ -18,9 +18,17 @@ async function recordResultMeasurement(
   suffix: string,
   measurement: ResultMeasurement,
 ): Promise<void> {
+  // Thread the provider's own call/generation id (when the candidate
+  // extractor captured one) onto every pushed measurement dimension, so the
+  // monitor can verify reported cost against the provider's own record. Kept
+  // separate from the idempotency-key derivation below — this only adds a
+  // field on the outgoing event, it does not change what identifies it.
+  const withProvenance: ResultMeasurement = result.providerRequestId
+    ? { ...measurement, providerRequestId: result.providerRequestId }
+    : measurement;
   if (result.providerRequestId && result.occurredAt) {
     await recordMeasuredThirdPartyUsage(env, {
-      ...measurement,
+      ...withProvenance,
       idempotencyKey: await stableMeasuredUsageIdempotencyKey(
         'provider-result',
         suffix,
@@ -33,7 +41,7 @@ async function recordResultMeasurement(
   }
   await recordMeasuredThirdPartyUsage(
     env,
-    result.occurredAt ? { ...measurement, occurredAt: result.occurredAt } : measurement,
+    result.occurredAt ? { ...withProvenance, occurredAt: result.occurredAt } : withProvenance,
   );
 }
 

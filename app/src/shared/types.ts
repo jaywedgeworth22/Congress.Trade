@@ -441,6 +441,13 @@ export interface ThirdPartyUsageTelemetryEvent {
   confidence: 'actual' | 'estimated' | 'manual';
   occurredAt: string;
   metadata?: Record<string, string | number | boolean | null>;
+  /**
+   * Provider-side call/generation id (e.g. OpenRouter's `id` on a completions
+   * response). Optional in the shared `UsageTelemetryEventSchema`; lets the
+   * monitor verify reported cost against the provider's own record. Never
+   * part of the idempotency-key basis.
+   */
+  providerRequestId?: string;
 }
 
 // ---------------------------------------------------------------------------
