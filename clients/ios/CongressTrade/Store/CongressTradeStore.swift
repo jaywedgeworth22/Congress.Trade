@@ -207,6 +207,7 @@ final class CongressTradeStore: ObservableObject {
                 attempt += 1
                 guard error.isRetryable, attempt < Self.maxAttemptsPerPage else { throw error }
                 let backoffSeconds = error.retryAfterSeconds.map(Double.init) ?? pow(2.0, Double(attempt))
+                guard backoffSeconds <= 15.0 else { throw error }
                 await sleeper(backoffSeconds)
             }
         }
