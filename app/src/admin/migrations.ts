@@ -241,9 +241,46 @@ export const USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS = [
    )`,
 ] as const;
 
+/** 0049_autopilot.sql — backlog-autopilot run receipts + daily USD spend meter. */
+export const AUTOPILOT_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS autopilot_runs (
+     id                  TEXT PRIMARY KEY,
+     status              TEXT NOT NULL DEFAULT 'running',
+     run_trigger         TEXT NOT NULL,
+     revision            INTEGER NOT NULL DEFAULT 1,
+     backlog_before      INTEGER,
+     docs_attempted      INTEGER NOT NULL DEFAULT 0,
+     docs_published      INTEGER NOT NULL DEFAULT 0,
+     docs_deferred       INTEGER NOT NULL DEFAULT 0,
+     spend_microusd      INTEGER NOT NULL DEFAULT 0,
+     budget_microusd     INTEGER NOT NULL DEFAULT 0,
+     error_class_counts  TEXT,
+     sample_errors       TEXT,
+     outcomes            TEXT,
+     skip_reasons        TEXT,
+     halt_reason         TEXT,
+     acknowledged_at     TEXT,
+     acknowledged_by     TEXT,
+     started_at          TEXT NOT NULL,
+     updated_at          TEXT NOT NULL,
+     finished_at         TEXT
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_autopilot_runs_status
+     ON autopilot_runs (status, started_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS autopilot_budget (
+     day            TEXT PRIMARY KEY,
+     spend_microusd INTEGER NOT NULL DEFAULT 0
+   )`,
+] as const;
+
+/** 0050_doc_class.sql — pre-extraction document classification. */
+export const DOC_CLASS_SCHEMA_STATEMENTS = [
+  'ALTER TABLE filings ADD COLUMN doc_class TEXT',
+] as const;
+
 /**
  * Ordered schema tail shared by POST /api/admin/migrate and migration parity
- * tests. Keep this in the same order as file migrations 0029 through 0046.
+ * tests. Keep this in the same order as file migrations 0029 through 0050.
  */
 export const POST_0024_SCHEMA_STATEMENTS = [
   // 0025_extraction_runs_usage.sql
@@ -277,4 +314,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...D1_BUDGET_SCHEMA_STATEMENTS,
   // 0046_usage_telemetry_probe_lease.sql
   ...USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
+  // 0049_autopilot.sql
+  ...AUTOPILOT_SCHEMA_STATEMENTS,
+  // 0050_doc_class.sql
+  ...DOC_CLASS_SCHEMA_STATEMENTS,
 ] as const;

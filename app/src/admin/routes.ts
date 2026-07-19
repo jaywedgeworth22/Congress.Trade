@@ -67,6 +67,8 @@ import {
 } from '../extraction/normalizer';
 import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionLlm';
 import { enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement';
+import { acknowledgeAutopilotHalt, getAutopilotStatus } from '../extraction/autopilot';
+import { providerHealthDiagnostics } from '../extraction/providerHealth';
 import { mapFiling } from '../delivery/rows';
 import { verifyAccessJwt, certsUrl } from './access';
 import { adminRuntimeConfig } from './identity';
@@ -3007,6 +3009,15 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         'AGREEMENT_SENATE_MODEL_D', 'AGREEMENT_SENATE_MODEL_E',
         'AGREEMENT_EXEC_MODEL_A', 'AGREEMENT_EXEC_MODEL_B', 'AGREEMENT_EXEC_MODEL_C',
         'AGREEMENT_EXEC_MODEL_D', 'AGREEMENT_EXEC_MODEL_E',
+        'PROVIDER_HEALTH_WINDOW_MINUTES', 'PROVIDER_HEALTH_CONSECUTIVE_THRESHOLD',
+        'PROVIDER_HEALTH_FAILURE_RATE', 'PROVIDER_HEALTH_MIN_SAMPLES',
+        'PROVIDER_OVERLAY_ENABLED', 'PROVIDER_OVERLAY_COST_RATIO_LIMIT',
+        'PROVIDER_MODEL_BAN_TTL_SECONDS',
+        'AUTOPILOT_ENABLED', 'AUTOPILOT_BACKLOG_THRESHOLD', 'AUTOPILOT_DAILY_USD_BUDGET',
+        'AUTOPILOT_MAX_DOCS_PER_RUN', 'AUTOPILOT_ERROR_CLASS_HALT_THRESHOLD',
+        'AUTOPILOT_MIN_INTERVAL_MINUTES', 'AUTOPILOT_BATCH_PRESEED',
+        'DOC_CLASSIFIER_ENABLED', 'DOC_CLASSIFIER_MODEL', 'DOC_CLASSIFIER_PARSE_ENGINE',
+        'DOC_CLASS_EMPTY_SPOTCHECK_RATE',
         'ADMIN_OPEN_IN_DEV',
         'IMPORT_MAX_BYTES', 'IMPORT_MAX_REFS', 'IMPORT_MAX_SPX', 'IMPORT_MAX_PRICES',
         'IMPORT_MAX_CLOSES_PER_TICKER', 'IMPORT_MAX_INSIDER', 'IMPORT_MAX_SHORT_VOLUME',
@@ -3839,8 +3850,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     };
 
     errors.sort((a, b) => Date.parse(b.at ?? '') - Date.parse(a.at ?? ''));
+    // Provider-health overlay state: open circuit breakers (per provider AND
+    // per concrete provider:model) + rolling per-model health windows. Null
+    // when KV is unavailable. Names/counters only, never secrets.
+    const providerHealth = await providerHealthDiagnostics(c.env).catch(() => null);
     return c.json({
       generatedAt: now.toISOString(),
+      providerHealth,
       connections,
       usageTelemetry: {
         state: usageMonitorState,
@@ -5435,6 +5451,39 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       turnaroundMin: Math.round((turnaroundMs / 60000) * 10) / 10,
       summary,
     });
+  });
+
+  // --- GET /autopilot/status ----------------------------------------------
+  // Backlog-autopilot operational snapshot: knobs, backlog size, today's USD
+  // spend vs budget, the last 10 run receipts (per-doc outcomes, error-class
+  // counts, sample errors, spend), and any unacknowledged halt blocking new
+  // runs. Values are knob settings and receipts only — never secrets.
+  r.get('/autopilot/status', async (c) => {
+    return c.json(await getAutopilotStatus(c.env));
+  });
+
+  // --- POST /autopilot/acknowledge ----------------------------------------
+  // Acknowledge a halted autopilot run (error-class kill-switch, stalled
+  // consumer, or enqueue failure). The cron will not start a new run while an
+  // unacknowledged halted run exists — a human must look at the receipt
+  // first. Body: { runId? } (defaults to the most recent halted run).
+  r.post('/autopilot/acknowledge', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const runId = typeof body.runId === 'string' && body.runId.trim() ? body.runId.trim() : undefined;
+    const acknowledged = await acknowledgeAutopilotHalt(c.env, {
+      runId,
+      actor: adminActor(c),
+    });
+    if (!acknowledged) {
+      return c.json({ error: 'no halted autopilot run to acknowledge' }, 404);
+    }
+    return c.json({ acknowledged });
   });
 
   // --- POST /agreement-reprocess ------------------------------------------

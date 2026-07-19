@@ -72,6 +72,7 @@ import { estimateTransactionValue } from '../shared/transactionValue';
 import { flushDeliveryOutbox } from '../delivery/outbox';
 import { resolveSecrets } from '../secrets/infisical';
 import { getUnderlyingProvider } from '../benchmark/settings';
+import { recordProviderHealth } from './providerHealth';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -250,7 +251,7 @@ interface AgreementReviewState {
   review_revision: number;
 }
 
-const AGREEMENT_CLAIM_LEASE_MS = 15 * 60 * 1000;
+export const AGREEMENT_CLAIM_LEASE_MS = 15 * 60 * 1000;
 
 async function loadReviewState(env: Env, docId: string): Promise<AgreementReviewState | null> {
   return get<AgreementReviewState>(
@@ -526,6 +527,9 @@ async function readAndPersist(
     const r = await runCandidateOnDoc(env, m, docId, bytes, invocations?.[index]);
     if (!r.cached) {
       await persistExtractionRun(env, r, 'agreement', runBatchId);
+      // Feed the per-provider:model rolling health window (billing/auth
+      // breaker) from cascade reads too. Best-effort by construction.
+      await recordProviderHealth(env, m, r.ok, r.error);
     }
     reads.push(r);
   }
@@ -1068,8 +1072,9 @@ function resolveModels(e: AgreementEnv, chamber: string): AgreementModels | null
   return a && b ? { a, b } : null;
 }
 
-/** Resolve the explicit C/D/E lineup for a tier-2+ pass; missing config fails closed. */
-function resolveModelsWithC(e: AgreementEnv, chamber: string): AgreementModelsC | null {
+/** Resolve the explicit C/D/E lineup for a tier-2+ pass; missing config fails
+ *  closed. Exported for the backlog autopilot's per-doc cost estimation. */
+export function resolveModelsWithC(e: AgreementEnv, chamber: string): AgreementModelsC | null {
   const ab = resolveModels(e, chamber);
   const modelC = chamber === 'senate'
     ? e.AGREEMENT_SENATE_MODEL_E
@@ -1078,8 +1083,9 @@ function resolveModelsWithC(e: AgreementEnv, chamber: string): AgreementModelsC 
   return ab && c ? { ...ab, c } : null;
 }
 
-/** Max cascade attempts before a doc stays in human review (clamped 1–5). */
-function maxAttempts(e: AgreementEnv): number {
+/** Max cascade attempts before a doc stays in human review (clamped 1–5).
+ *  Exported for the backlog autopilot's eligibility selector. */
+export function maxAttempts(e: AgreementEnv): number {
   const n = parseInt(e.AGREEMENT_MAX_ATTEMPTS || '3', 10);
   return Math.min(Math.max(Number.isFinite(n) ? n : 3, 1), 5);
 }
@@ -1194,13 +1200,26 @@ async function deferForBudgetExhausted(
 /**
  * Decide the starting tier for a fresh (tier-1) pass. Cheap complexity signals
  * (filings.page_count / filings.raw_bytes, populated best-effort by the
- * orchestrator) push a big doc straight to tier 2 for a third opinion. Gated by
- * AGREEMENT_BIG_DOC_START_TIER2 (default on). Never throws (pre-migration safe).
+ * orchestrator) push a big doc straight to tier 2 for a third opinion, and a
+ * doc classified 'hard_scan' (docClassifier.ts) gets the full trio from the
+ * start — its handwriting/skew is exactly what drives tier-1 disagreement.
+ * Gated by AGREEMENT_BIG_DOC_START_TIER2 (default on). Never throws
+ * (pre-migration safe: doc_class is read separately from the 0033 columns).
  */
 async function resolveStartTier(env: Env, e: AgreementEnv, docId: string): Promise<number> {
   if (e.AGREEMENT_BIG_DOC_START_TIER2 === 'false') return 1;
   const pageMax = parseInt(e.AGREEMENT_BIG_DOC_PAGE_THRESHOLD || '10', 10) || 10;
   const bytesMax = parseInt(e.AGREEMENT_BIG_DOC_BYTES_THRESHOLD || '2097152', 10) || 2097152;
+  try {
+    const docClassRow = await get<{ doc_class: string | null }>(
+      env.DB,
+      'SELECT doc_class FROM filings WHERE doc_id = ?',
+      [docId],
+    );
+    if (docClassRow?.doc_class === 'hard_scan') return 2;
+  } catch {
+    // doc_class column not migrated yet — fall through to the size signals.
+  }
   try {
     const row = await get<{ page_count: number | null; raw_bytes: number | null }>(
       env.DB,
@@ -1416,6 +1435,10 @@ export async function enqueueAgreementCheck(
  * counter. Once the day's budget is exhausted, the doc is left in review with
  * a diagnostics receipt and does NOT consume an agreement attempt or escalate
  * — it gets a fresh shot once the day rolls over.
+ *
+ * Returns the per-doc outcome (or null when no check ran: disabled flag, lost
+ * lease, or duplicate delivery). The queue consumer ignores the return value;
+ * the backlog autopilot uses it for its run receipt and halt logic.
  */
 export async function handleAgreementCheck(
   env: Env,
@@ -1423,9 +1446,9 @@ export async function handleAgreementCheck(
   rawObjectKey: string | null,
   escalationTier?: number,
   claimToken?: string,
-): Promise<void> {
+): Promise<AgreementDocResult | null> {
   const e = await resolveAgreementEnv(env);
-  if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return;
+  if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return null;
   const max = maxAttempts(e);
 
   // A fresh check (tier unset) may start at tier 2 for a complex doc.
@@ -1435,18 +1458,18 @@ export async function handleAgreementCheck(
   // Backward-compatible tokenless messages acquire a fresh lease. Modern queue
   // messages carry the enqueue lease, which the attempt CAS consumes below.
   const queuedToken = claimToken ?? await acquireAgreementLease(env, docId, max);
-  if (!queuedToken) return;
+  if (!queuedToken) return null;
 
   const chamberRow = await get<{ chamber: string }>(env.DB, 'SELECT chamber FROM filings WHERE doc_id = ?', [docId]);
   const chamber = chamberRow?.chamber || 'house';
 
   const models = tier >= 2 ? resolveModelsWithC(e, chamber) : resolveModels(e, chamber);
   if (!models) {
-    await leaveInReviewHighPriority(
+    const flagged = await leaveInReviewHighPriority(
       env, docId, tier, {}, null, 'missing_chamber_model_config', queuedToken,
     );
     await finishTerminalClaim(env, docId, queuedToken, max);
-    return;
+    return flagged;
   }
   const lineupError = duplicateLineupReason(
     tier >= 2
@@ -1454,15 +1477,15 @@ export async function handleAgreementCheck(
       : [(models as AgreementModels).a, (models as AgreementModels).b],
   );
   if (lineupError) {
-    await leaveInReviewHighPriority(
+    const flagged = await leaveInReviewHighPriority(
       env, docId, tier, modelLabels(models), null, lineupError, queuedToken,
     );
     await finishTerminalClaim(env, docId, queuedToken, max);
-    return;
+    return flagged;
   }
 
   const claimed = await claimAgreementAttempt(env, docId, queuedToken, tier, max);
-  if (!claimed) return; // duplicate/redelivered message, cap, resolved row, or lost lease
+  if (!claimed) return null; // duplicate/redelivered message, cap, resolved row, or lost lease
 
   try {
     const budget = dailyLlmBudget(e);
@@ -1470,7 +1493,7 @@ export async function handleAgreementCheck(
     if (!(await reserveLlmBudget(env, budget, readsNeeded))) {
       await deferForBudgetExhausted(env, docId, tier, budget, claimed.token);
       console.log(`agreement.check ${docId} tier${tier}: LLM budget exhausted (cap ${budget}/day) → deferred, no attempt spent`);
-      return;
+      return { docId, outcome: 'skipped', tier, reason: 'llm_budget_exhausted' };
     }
 
     // A human may resolve the row after enqueue/claim but before the model calls.
@@ -1478,7 +1501,7 @@ export async function handleAgreementCheck(
     if (!(await ownsUnresolvedReview(env, docId, claimed.token))) {
       await refundLlmBudget(env, budget, readsNeeded);
       await rollbackUnspentAttempt(env, docId, claimed.token, null);
-      return;
+      return { docId, outcome: 'skipped', tier, reason: 'review_resolved_or_claim_lost' };
     }
 
     if (tier >= 2) {
@@ -1500,7 +1523,7 @@ export async function handleAgreementCheck(
         }
       }
       console.log(`agreement.check ${docId} tier${tier}: ${res.outcome}${res.inserted ? ` (+${res.inserted} tx)` : ''}`);
-      return;
+      return res;
     }
 
     const tier1Models = models as AgreementModels;
@@ -1511,7 +1534,7 @@ export async function handleAgreementCheck(
       if (claimed.attempts < max) {
         const escalated = await enqueueAgreementCheck(env, docId, rawObjectKey, 2, claimed.token);
         console.log(`agreement.check ${docId} tier1: disagree → ${escalated ? 'escalated to tier2' : 'escalation enqueue failed'}`);
-        return;
+        return { ...res, reason: escalated ? 'escalated_tier2' : 'escalation_enqueue_failed' };
       }
       // Attempt cap reached — leave in human review, flagged high-priority.
       await leaveInReviewHighPriority(
@@ -1519,7 +1542,7 @@ export async function handleAgreementCheck(
       );
       await finishTerminalClaim(env, docId, claimed.token, max);
       console.log(`agreement.check ${docId} tier1: disagree, attempt cap (${max}) reached → human review`);
-      return;
+      return { ...res, reason: 'attempt_cap_reached' };
     }
     if (res.outcome === 'agree_but_hardfail') {
       await leaveInReviewHighPriority(
@@ -1540,6 +1563,7 @@ export async function handleAgreementCheck(
       }
     }
     console.log(`agreement.check ${docId} tier1: ${res.outcome}${res.inserted ? ` (+${res.inserted} tx)` : ''}`);
+    return res;
   } catch (err) {
     console.error(`agreement.check ${docId} tier${tier} failed after claim:`, (err as Error).message);
     if (claimed.attempts >= max) {

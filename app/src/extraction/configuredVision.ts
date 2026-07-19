@@ -28,6 +28,15 @@ import {
   type CandidateDocResult,
 } from './bakeoff';
 import { parseCandidate } from './agreement';
+import {
+  providerModelBanRetryAfter,
+  recordProviderHealth,
+  resolveProviderHealthKnobs,
+  selectOverlaySubstitute,
+  type OverlaySubstitute,
+} from './providerHealth';
+import { getUnderlyingProvider } from '../benchmark/settings';
+import { recordIngestionDecision } from '../shared/ingestionDecisions';
 import type { Extractor, ExtractorInput, ExtractorResult, ExtractorUsage } from '../extractors/types';
 
 /** Conservative confidence ceiling shared with visionLlm.ts's DEFAULT_CONFIDENCE
@@ -127,7 +136,11 @@ function toExtractorUsage(usage: CandidateDocResult['usage']): ExtractorUsage | 
 }
 
 /** Map one successful candidate read into the Extractor contract's result shape. */
-function toExtractorResult(candidate: BakeoffCandidate, result: CandidateDocResult): ExtractorResult {
+function toExtractorResult(
+  candidate: BakeoffCandidate,
+  result: CandidateDocResult,
+  overlayFor?: string,
+): ExtractorResult {
   const usage = toExtractorUsage(result.usage);
   const modelVersion = result.resolvedModel ?? candidate.model;
   const extractor = `configured(${candidateLabel(candidate)})`;
@@ -141,6 +154,9 @@ function toExtractorResult(candidate: BakeoffCandidate, result: CandidateDocResu
       provider: candidate.provider,
       model: candidate.model,
       rowCount: result.rowCount,
+      // Runtime health-overlay provenance: which configured slot this read
+      // substituted for (audit lives in ingestion_decisions as well).
+      ...(overlayFor ? { overlayFor } : {}),
     }),
     extractor,
     modelVersion,
@@ -182,34 +198,90 @@ export class ConfiguredVisionExtractor implements Extractor {
       (candidate, index, all): candidate is BakeoffCandidate =>
         Boolean(candidate) && all.findIndex((item) => candidateLabel(item!) === candidateLabel(candidate!)) === index,
     );
+    const healthKnobs = await resolveProviderHealthKnobs(this.env);
+    const configuredLabels = candidates.map(candidateLabel);
     const errors: string[] = [];
     let allFailuresWereRateLimits = true;
     let blockedRetryAfter = 0;
 
-    for (const candidate of candidates) {
+    for (const [slotIndex, candidate] of candidates.entries()) {
       const label = candidateLabel(candidate);
       const retryAfter = await providerBanRetryAfter(this.env, candidate.provider);
-      if (retryAfter !== null) {
-        blockedRetryAfter = blockedRetryAfter === 0 ? retryAfter : Math.min(blockedRetryAfter, retryAfter);
-        errors.push(`${label}: provider rate limit circuit breaker is open`);
-        continue;
+      const modelRetryAfter = await providerModelBanRetryAfter(this.env, candidate);
+      // A blocked slot (per-provider rate-limit ban OR the per-model
+      // billing/auth breaker) resolves to a runtime OVERLAY substitute when
+      // one is healthy: the configured lineup stays authoritative in
+      // Infisical and resumes as soon as the ban expires. When the overlay is
+      // disabled or no healthy substitute exists, behavior is exactly the
+      // pre-overlay behavior (slot skipped; retry-after bookkeeping).
+      let effective = candidate;
+      let overlay: OverlaySubstitute | null = null;
+      if (retryAfter !== null || modelRetryAfter !== null) {
+        if (healthKnobs.overlayEnabled) {
+          const otherSlots = candidates.filter((_, index) => index !== slotIndex);
+          overlay = await selectOverlaySubstitute(this.env, candidate, {
+            excludeLabels: configuredLabels,
+            excludeUnderlyingProviders: otherSlots.map((other) => getUnderlyingProvider(other)),
+            costRatioLimit: healthKnobs.costRatioLimit,
+          });
+        }
+        if (!overlay) {
+          if (retryAfter !== null) {
+            blockedRetryAfter = blockedRetryAfter === 0 ? retryAfter : Math.min(blockedRetryAfter, retryAfter);
+            errors.push(`${label}: provider rate limit circuit breaker is open`);
+          } else {
+            errors.push(`${label}: provider-model circuit breaker is open (billing/auth failures)`);
+            allFailuresWereRateLimits = false;
+          }
+          continue;
+        }
+        effective = overlay.candidate;
+        const overlayPayload = {
+          slot: slotIndex === 0 ? 'primary' : 'failover',
+          configured: label,
+          substitute: candidateLabel(overlay.candidate),
+          reason: modelRetryAfter !== null ? 'model_breaker_open' : 'provider_breaker_open',
+          nominalCostUsd: overlay.nominalCostUsd,
+          configuredCostUsd: overlay.configuredCostUsd,
+          costRatio: overlay.costRatio,
+          costFlagged: overlay.flagged,
+        };
+        if (overlay.flagged) {
+          console.warn(
+            `${this.name}: overlay substitute ${overlayPayload.substitute} exceeds the `
+            + `${healthKnobs.costRatioLimit}x rate-card cost guard for ${label} `
+            + `(ratio ${overlay.costRatio == null ? 'unknown' : overlay.costRatio.toFixed(2)})`,
+          );
+        }
+        await recordIngestionDecision(this.env.DB, {
+          docId,
+          action: 'provider_substituted',
+          source: 'pipeline',
+          reason: 'provider_health_overlay',
+          payload: overlayPayload,
+        }).catch(() => {});
       }
 
+      const effectiveLabel = candidateLabel(effective);
       let result: CandidateDocResult;
       try {
-        result = await runCandidateOnDoc(this.env, candidate, docId, bytes);
+        result = await runCandidateOnDoc(this.env, effective, docId, bytes);
       } catch (error) {
-        const message = `${label}: ${(error as Error).message}`;
+        const message = `${effectiveLabel}: ${(error as Error).message}`;
         errors.push(message);
-        if (isProviderRateLimit(error)) await recordProviderBan(this.env, candidate.provider);
+        await recordProviderHealth(this.env, effective, false, (error as Error).message, healthKnobs);
+        if (isProviderRateLimit(error)) await recordProviderBan(this.env, effective.provider);
         else allFailuresWereRateLimits = false;
         continue;
       }
-      if (result.ok) return toExtractorResult(candidate, result);
+      if (!result.cached) {
+        await recordProviderHealth(this.env, effective, result.ok, result.error, healthKnobs);
+      }
+      if (result.ok) return toExtractorResult(effective, result, overlay ? label : undefined);
 
-      const message = candidateErrorString(candidate, result);
+      const message = candidateErrorString(effective, result);
       errors.push(message);
-      if (isProviderRateLimit(result.error)) await recordProviderBan(this.env, candidate.provider);
+      if (isProviderRateLimit(result.error)) await recordProviderBan(this.env, effective.provider);
       else allFailuresWereRateLimits = false;
     }
 

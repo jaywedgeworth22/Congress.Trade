@@ -6,9 +6,11 @@ import { persistTransactions } from '../../extraction/normalizer';
 import { checkReadiness } from '../../shared/readiness';
 import type { Env, Transaction } from '../../shared/types';
 import {
+  AUTOPILOT_SCHEMA_STATEMENTS,
   BASE_SCHEMA_STATEMENTS,
   D1_BUDGET_SCHEMA_STATEMENTS,
   DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS,
+  DOC_CLASS_SCHEMA_STATEMENTS,
   EST_VALUE_SCHEMA_STATEMENTS,
   POST_0024_SCHEMA_STATEMENTS,
   PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
@@ -191,7 +193,20 @@ describe('admin migration bootstrap', () => {
       'CREATE INDEX IF NOT EXISTS idx_tx_doc ON transactions (doc_id)',
       ...D1_BUDGET_SCHEMA_STATEMENTS,
       ...USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
+      ...AUTOPILOT_SCHEMA_STATEMENTS,
+      ...DOC_CLASS_SCHEMA_STATEMENTS,
     ]);
+  });
+
+  it('includes the autopilot receipts/budget + doc_class schema (0049-0050)', () => {
+    const sql = AUTOPILOT_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('autopilot_runs');
+    expect(sql).toContain('run_trigger         TEXT NOT NULL');
+    expect(sql).toContain('spend_microusd INTEGER NOT NULL DEFAULT 0');
+    expect(sql).toContain('idx_autopilot_runs_status');
+    expect(sql).toContain('autopilot_budget');
+    expect(DOC_CLASS_SCHEMA_STATEMENTS.join('\n'))
+      .toContain('ALTER TABLE filings ADD COLUMN doc_class TEXT');
   });
 
   it('includes the singleton usage telemetry half-open lease schema (0046)', () => {
