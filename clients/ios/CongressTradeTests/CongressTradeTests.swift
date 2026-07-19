@@ -246,6 +246,7 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: cursorStore,
             sleeper: { _ in }
         )
+        await store.setChamberSelection([.house, .senate])
         await store.refresh()
 
         XCTAssertEqual(feedCallCount, 3, "Should keep paging while pages are full, stopping only once a short page signals exhaustion")
@@ -275,6 +276,7 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: cursorStore,
             sleeper: { _ in }
         )
+        await store.setChamberSelection([.house, .senate])
         await store.refresh()
 
         XCTAssertEqual(feedCallCount, 20, "A very large backlog must not turn one refresh into an unbounded crawl")

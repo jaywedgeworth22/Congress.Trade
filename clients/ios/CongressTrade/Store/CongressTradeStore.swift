@@ -158,7 +158,7 @@ final class CongressTradeStore: ObservableObject {
         // would skip every matching row at or below that unrelated cursor.
         let isDefaultFilter = filterKey == Self.chamberFilterKey(for: Self.defaultChambers)
         let resumeCursor = cursorStore.cursor(for: filterKey)
-            ?? (isDefaultFilter ? fetchMaxLocalCursor() : nil)
+            ?? (isDefaultFilter && !cacheHasExecutiveTrades() ? fetchMaxLocalCursor() : nil)
         guard let startingCursor = resumeCursor else {
             // Cold start for this exact filter: bounded newest-page snapshot,
             // not a full historical backfill.
@@ -272,6 +272,17 @@ final class CongressTradeStore: ObservableObject {
             return results.first?.cursor
         } catch {
             return nil
+        }
+    }
+
+    private func cacheHasExecutiveTrades() -> Bool {
+        guard let context = modelContext else { return false }
+        let descriptor = FetchDescriptor<ClientTrade>()
+        do {
+            let trades = try context.fetch(descriptor)
+            return trades.contains { $0.member.chamber?.lowercased() == "executive" }
+        } catch {
+            return false
         }
     }
 
