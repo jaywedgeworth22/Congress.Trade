@@ -326,7 +326,7 @@ struct TradeCard: View {
                 VStack(alignment: .trailing, spacing: 4) {
                     Text(trade.amountLabel)
                         .font(.title3.weight(.heavy))
-                        .foregroundStyle(trade.transaction.type == "P" ? .green : .primary)
+                        .foregroundStyle(.primary)
                     Text(trade.member.chamber?.capitalized ?? "Unknown")
                         .font(.caption2.weight(.bold))
                         .padding(.horizontal, 6)

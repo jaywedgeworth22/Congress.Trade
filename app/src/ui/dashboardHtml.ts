@@ -1963,7 +1963,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <div class="section speed-proof" id="trLatencySection" style="margin-top:24px; padding:0 16px;">
     <div class="speed-head">
       <div>
-        <div class="speed-kicker">⚡ Live speed proof</div>
         <h3 style="margin:0">We publish first &mdash; here&rsquo;s the data <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
       </div>
       <span class="note" id="speedUpdated" style="white-space:nowrap"></span>
@@ -6537,7 +6536,7 @@ function speedUpdatedText() {
   var d = LATENCY.data; if (!d || !d.generatedAt) return '';
   var t = Date.parse(d.generatedAt); if (!isFinite(t)) return '';
   var mins = Math.max(0, Math.round((Date.now() - t) / 60000));
-  var txt = 'LIVE · updated ' + (mins < 1 ? 'just now' : mins + ' min ago');
+  var txt = 'LIVE ⚡ updated ' + (mins < 1 ? 'just now' : mins + ' min ago');
   if (mins > 30) txt += ' · data may be stale';
   return txt;
 }

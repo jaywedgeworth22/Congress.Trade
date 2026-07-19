@@ -67,7 +67,7 @@ export function SpeedScorecard() {
       const parsed = Date.parse(data.generatedAt);
       if (Number.isNaN(parsed)) return;
       const mins = Math.max(0, Math.round((Date.now() - parsed) / 60000));
-      let text = `LIVE · updated ${mins < 1 ? 'just now' : `${mins} min ago`}`;
+      let text = `LIVE ⚡ updated ${mins < 1 ? 'just now' : `${mins} min ago`}`;
       if (mins > 30) text += ' · data may be stale';
       setTimeAgoText(text);
     };
