@@ -10,6 +10,9 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Deployed
+- **iOS App Assets and Styling (AG) — COMPLETED / MERGED 2026-07-19 via PR #630.**
+  - **Fonts**: Imported custom Zilla Slab font (Regular & Bold) into the Xcode project, registered in `.pbxproj` via `INFOPLIST_KEY_UIAppFonts`, and applied globally in SwiftUI via `App.swift`.
+  - **App Icon**: Updated `AppIcon.appiconset` with the new custom logo resized to standard 1024x1024 resolution.
 - **Native iOS Enhancements (AG) — COMPLETED / MERGED 2026-07-19 via PR #619.**
   - **Portrait & Logo Porting**: Integrated phase-based `AsyncImage` with party/chamber emoji fallbacks for profile pictures. Set up dynamic company logo fetches requesting light theme variants from the `/api/logos/ticker` endpoint, falling back to a monogram for non-ticker asset types (like House type codes).
   - **Executive Defaults & Cache Safety**: Split `defaultChambers` from `initialChambers` so default UI selections include Executive disclosures while keeping backend default compatibility intact. Added `cacheHasExecutiveTrades()` checks on `cursorStore` to prevent mixed-cache sync cursor bugs.
@@ -722,3 +725,4 @@ Jul 8 18:10 CT)._
 - **Replace Sonnet Models with Sonnet 5 (AG, S) — COMPLETED 2026-07-16.** Removed old claude-sonnet-4-6 and claude-3-5-sonnet slugs across codebase and Infisical, replacing them with claude-sonnet-5 to take advantage of introductory pricing.- **Migrate to OpenRouter Extraction Architecture (AG, M) — COMPLETED 2026-07-16.** Consolidated the vision extraction pipeline around OpenRouter API. Configured dynamic PDF plugin engine selection to leverage native multimodal inputs for supporting models (e.g., GPT-4o, Gemini 1.5) and mistral-ocr for pure-text models. Enforced structured JSON output globally. Also identified that OpenRouter does not support asynchronous batch completions, so the legacy historical batch processing script was left intact on native provider endpoints.
 
 - **Resolve & Merge Outstanding PRs (AG, L) — COMPLETED 2026-07-18.** Resolved merge conflicts for Telemetry/Lease (PR #587) and merged all outstanding PWA, security, and pagination PRs (#585, #589, #590, #588). Deployed Congress.Trade to production.
+- 2026-07-19 — AG — Completed — Native iOS Refactor: Removed WatchlistView, replaced CommandStatusView with SettingsView, adjusted FeedDashboardView UI and Store page limits. Branch: antigravity/ios-ui-refactor.
