@@ -22,7 +22,17 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, congress-ci]
+    # Runner selection with a hosted escape hatch. When repo variable
+    # CT_CI_RUNNER is set (normally `congress-ci`) jobs run on the Coolify
+    # box at $0. Clearing it falls back to GitHub-hosted runners:
+    #   gh variable set CT_CI_RUNNER --body ""     # -> ubuntu-latest (paid, always available)
+    #   gh variable set CT_CI_RUNNER --body congress-ci   # -> self-hosted ($0)
+    # This valve exists because the required merge checks live in this file:
+    # when the box's egress degrades (observed 2026-07-19: every job dying in
+    # "Set up job" on `Failed to download action .../actions/setup-node`,
+    # HttpClient.Timeout after 3 attempts) merges block repo-wide with no way
+    # out. Dependabot never resolves to the persistent runner regardless.
+    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 20
     defaults:
       run:
@@ -72,7 +82,17 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, congress-ci]
+    # Runner selection with a hosted escape hatch. When repo variable
+    # CT_CI_RUNNER is set (normally `congress-ci`) jobs run on the Coolify
+    # box at $0. Clearing it falls back to GitHub-hosted runners:
+    #   gh variable set CT_CI_RUNNER --body ""     # -> ubuntu-latest (paid, always available)
+    #   gh variable set CT_CI_RUNNER --body congress-ci   # -> self-hosted ($0)
+    # This valve exists because the required merge checks live in this file:
+    # when the box's egress degrades (observed 2026-07-19: every job dying in
+    # "Set up job" on `Failed to download action .../actions/setup-node`,
+    # HttpClient.Timeout after 3 attempts) merges block repo-wide with no way
+    # out. Dependabot never resolves to the persistent runner regardless.
+    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 20
     defaults:
       run:
