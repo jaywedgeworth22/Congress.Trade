@@ -193,3 +193,25 @@ export async function getLastPollAt(env: Env, source: string): Promise<Date | nu
 export async function setLastPollAt(env: Env, source: string, when: Date = new Date()): Promise<void> {
   await env.CONFIG_KV.put(`${KV_LAST_POLL_PREFIX}${source}`, when.toISOString());
 }
+
+const KV_LAST_ATTEMPT_PREFIX = 'last_attempt:';
+
+/**
+ * Read the last poll ATTEMPT timestamp for a source (stamped before the poll
+ * runs, unlike last_poll:* which only advances on success). The pair drives
+ * per-source failure backoff: attempt newer than success == last attempt
+ * failed. Defensive about CONFIG_KV so unit fakes without KV stay valid.
+ */
+export async function getLastAttemptAt(env: Env, source: string): Promise<Date | null> {
+  if (!env.CONFIG_KV) return null;
+  const iso = await env.CONFIG_KV.get(`${KV_LAST_ATTEMPT_PREFIX}${source}`);
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Record a poll attempt timestamp for a source. Defaults to now. */
+export async function setLastAttemptAt(env: Env, source: string, when: Date = new Date()): Promise<void> {
+  if (!env.CONFIG_KV) return;
+  await env.CONFIG_KV.put(`${KV_LAST_ATTEMPT_PREFIX}${source}`, when.toISOString());
+}

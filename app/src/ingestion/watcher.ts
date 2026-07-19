@@ -16,7 +16,9 @@ import type { Chamber, Env } from '../shared/types';
 import { batch, run } from '../shared/db';
 import {
   getConfig,
+  getLastAttemptAt,
   getLastPollAt,
+  setLastAttemptAt,
   setLastPollAt,
   shouldPollNow,
 } from '../shared/config';
@@ -39,6 +41,31 @@ async function houseLiveSearchEnabled(env: Env): Promise<boolean> {
   } catch {
     return (env as EnvWithFlags).HOUSE_LIVE_SEARCH_ENABLED !== 'false';
   }
+}
+
+/**
+ * Resolve an integer tunable (Infisical first, env var fallback — resolveSecret
+ * already implements that ordering) clamped to [min, max]. Fail-soft: any
+ * resolution error falls back to the env var, then the default. Never throws —
+ * a secrets outage must not change polling behavior beyond using defaults.
+ */
+async function tunableInt(
+  env: Env,
+  key: keyof Env & string,
+  fallback: number,
+  min: number,
+  max: number,
+): Promise<number> {
+  let raw: string | undefined;
+  try {
+    raw = (await resolveSecret(env, key)).value;
+  } catch {
+    const envValue = env[key];
+    raw = typeof envValue === 'string' ? envValue : undefined;
+  }
+  const n = parseInt(raw ?? '', 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(Math.max(n, min), max);
 }
 
 /** One row to (maybe) insert + enqueue. */
@@ -310,6 +337,41 @@ async function recordSourceError(env: Env, source: 'house' | 'senate', nowIso: s
   await recordSourceAttempt(env, source, nowIso, 'failure', 0, message);
 }
 
+/** Days into January during which the previous year's House index is ALSO
+ *  polled (tunable via HOUSE_PRIOR_YEAR_OVERLAP_DAYS; 0 disables). */
+const DEFAULT_HOUSE_PRIOR_YEAR_OVERLAP_DAYS = 14;
+/** How often, at most, the prior-year ZIP is fetched during the overlap window
+ *  (the regular poll cadence is 5 min; one prior-year fetch/hour is plenty and
+ *  polite to the Clerk host). */
+const HOUSE_PRIOR_YEAR_FETCH_INTERVAL_MS = 3600_000;
+const HOUSE_PRIOR_YEAR_KV_KEY = 'house_prior_year:last_fetch_at';
+
+/** KV counter + escalation threshold for consecutive live-search failures.
+ *  The overlay fails SOFT by design (bulk index still authoritative), but a
+ *  persistent failure silently degrades House discovery from intraday to
+ *  daily — production data showed every filing landing only in the ~13:00 UTC
+ *  bulk-XML window. Escalate to console.error (Sentry-visible) once per
+ *  sustained outage window instead of warn-spam that nobody sees. */
+const HOUSE_LIVE_SEARCH_FAILS_KV_KEY = 'house_live_search:consecutive_failures';
+const HOUSE_LIVE_SEARCH_ESCALATE_EVERY = 12;
+
+/**
+ * True when `now` (in ET, the Clerk's clock) falls within the first
+ * `overlapDays` days of January — the window where filings submitted in late
+ * December can still be appearing in the PRIOR year's index after we've rolled
+ * to polling the new year. Exported for tests.
+ */
+export function inHousePriorYearWindow(now: Date, overlapDays: number): boolean {
+  if (overlapDays <= 0) return false;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    month: 'numeric',
+    day: 'numeric',
+  }).formatToParts(now);
+  const lookup = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? NaN);
+  return lookup('month') === 1 && lookup('day') <= overlapDays;
+}
+
 /**
  * Poll the House yearly bulk index, diff against D1, enqueue new PTRs.
  * Throws on any failure (caught by the per-source guard in runWatcher).
@@ -322,14 +384,44 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
   const all = await fetchHouseIndex(year);
   const ptrs = all.filter((f) => f.isPtr);
 
-  // Intraday overlay: catch same-day PTRs that the daily XML hasn't picked up
-  // yet. Fail-soft — a flaky/anti-bot live endpoint must never break the stable
-  // bulk path. INSERT OR IGNORE de-dupes the overlap with the bulk rows above.
   const byDoc = new Map<string, DiscoveredFiling>();
   for (const f of ptrs) {
     byDoc.set(f.pipelineDocId, houseDiscovery(f));
   }
+
+  // YEAR-BOUNDARY GAP: for the first N days of a new ET year, also sweep the
+  // PRIOR year's index (hourly, not every poll). A PTR filed Dec 30 can enter
+  // the {YEAR-1}FD index days later — after we've switched to polling {YEAR} —
+  // and would otherwise never be discovered. Fail-soft: a prior-year fetch
+  // problem must not fail the current-year poll.
+  const overlapDays = await tunableInt(
+    env,
+    'HOUSE_PRIOR_YEAR_OVERLAP_DAYS',
+    DEFAULT_HOUSE_PRIOR_YEAR_OVERLAP_DAYS,
+    0,
+    31,
+  );
+  if (inHousePriorYearWindow(now, overlapDays)) {
+    try {
+      const lastIso = env.CONFIG_KV ? await env.CONFIG_KV.get(HOUSE_PRIOR_YEAR_KV_KEY) : null;
+      const lastMs = lastIso ? Date.parse(lastIso) : NaN;
+      if (!Number.isFinite(lastMs) || now.getTime() - lastMs >= HOUSE_PRIOR_YEAR_FETCH_INTERVAL_MS) {
+        const prior = (await fetchHouseIndex(year - 1)).filter((f) => f.isPtr);
+        for (const f of prior) {
+          if (!byDoc.has(f.pipelineDocId)) byDoc.set(f.pipelineDocId, houseDiscovery(f));
+        }
+        if (env.CONFIG_KV) await env.CONFIG_KV.put(HOUSE_PRIOR_YEAR_KV_KEY, nowIso);
+      }
+    } catch (err) {
+      console.warn('watcher: house prior-year index poll failed (current year unaffected):', (err as Error).message);
+    }
+  }
+
+  // Intraday overlay: catch same-day PTRs that the daily XML hasn't picked up
+  // yet. Fail-soft — a flaky/anti-bot live endpoint must never break the stable
+  // bulk path. INSERT OR IGNORE de-dupes the overlap with the bulk rows above.
   if (await houseLiveSearchEnabled(env)) {
+    let liveErr: Error | null = null;
     try {
       const live = await pollHouseLiveSearch(year);
       for (const f of live) {
@@ -338,7 +430,39 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
         }
       }
     } catch (err) {
-      console.warn('watcher: house live search failed (bulk index still used):', (err as Error).message);
+      liveErr = err as Error;
+    }
+    // Consecutive-failure counter — fully isolated in its own try/catch. A KV
+    // blip here must never (a) fall into the poll's failure path and record a
+    // live-search *success* as a failure, nor (b) escape and abort the
+    // authoritative bulk persist/enqueue below. The observability overlay is
+    // strictly best-effort; the bulk path is not.
+    let fails = liveErr ? 1 : 0;
+    try {
+      if (env.CONFIG_KV) {
+        if (!liveErr) {
+          const prevFails = parseInt((await env.CONFIG_KV.get(HOUSE_LIVE_SEARCH_FAILS_KV_KEY)) ?? '0', 10) || 0;
+          if (prevFails !== 0) await env.CONFIG_KV.put(HOUSE_LIVE_SEARCH_FAILS_KV_KEY, '0');
+        } else {
+          fails = (parseInt((await env.CONFIG_KV.get(HOUSE_LIVE_SEARCH_FAILS_KV_KEY)) ?? '0', 10) || 0) + 1;
+          await env.CONFIG_KV.put(HOUSE_LIVE_SEARCH_FAILS_KV_KEY, String(fails));
+        }
+      }
+    } catch (counterErr) {
+      console.warn(
+        'watcher: house live-search failure-counter update failed (ignored):',
+        (counterErr as Error).message,
+      );
+    }
+    if (liveErr) {
+      if (fails % HOUSE_LIVE_SEARCH_ESCALATE_EVERY === 0) {
+        console.error(
+          `watcher: house live search has failed ${fails} consecutive polls — intraday House discovery is degraded to the daily bulk index:`,
+          liveErr.message,
+        );
+      } else {
+        console.warn('watcher: house live search failed (bulk index still used):', liveErr.message);
+      }
     }
   }
 
@@ -350,13 +474,77 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
   return newCount;
 }
 
+/** Default / max lookback windows for the Senate submitted-date filter.
+ *  Tunable via SENATE_LOOKBACK_DAYS / SENATE_MAX_LOOKBACK_DAYS. */
+const DEFAULT_SENATE_LOOKBACK_DAYS = 7;
+const DEFAULT_SENATE_MAX_LOOKBACK_DAYS = 30;
+/** Hard ceiling on the tunable max so a typo'd knob can't request years of
+ *  DataTables pages in a single cron tick. */
+const SENATE_LOOKBACK_HARD_CAP_DAYS = 365;
+const SENATE_DEEP_SWEEP_KV_KEY = 'senate_deep_sweep:lastdate';
+
+/**
+ * Effective lookback (days) for a Senate discovery poll.
+ *
+ * The base window (default 7d) only works while polling is healthy. Two
+ * recovery mechanisms widen it, both bounded by maxDays:
+ *   - GAP CATCH-UP: when the last SUCCESSFUL senate poll is older than the
+ *     base window (an anti-bot 403 stretch, a deploy break, a parser
+ *     regression), the window covers the whole outage + 1 day of margin.
+ *     Previously a >7-day outage meant every filing submitted before the
+ *     recovery was PERMANENTLY missed — there was no sweep that ever looked
+ *     back further.
+ *   - DAILY DEEP SWEEP: once per UTC day the poll uses the full maxDays
+ *     window regardless of health, so slow-listed/backdated submissions and
+ *     any silent same-window misses self-heal within a day.
+ * Exported for tests.
+ */
+export function computeSenateLookbackDays(
+  now: Date,
+  lastSuccessAt: Date | null,
+  baseDays: number,
+  maxDays: number,
+  deepSweepDue: boolean,
+): number {
+  const max = Math.max(baseDays, maxDays);
+  if (deepSweepDue || !lastSuccessAt) return max;
+  const gapDays = Math.ceil((now.getTime() - lastSuccessAt.getTime()) / 86_400_000) + 1;
+  return Math.min(max, Math.max(baseDays, gapDays));
+}
+
 /**
  * Poll the Senate efdsearch DataTables API, diff against D1, enqueue new PTRs.
  * Throws on any failure (caught by the per-source guard in runWatcher).
  */
 async function pollSenate(env: Env, now: Date): Promise<number> {
   const nowIso = now.toISOString();
-  const filings = await fetchSenatePtrFilings({ now, kv: env.CONFIG_KV });
+  const baseDays = await tunableInt(
+    env,
+    'SENATE_LOOKBACK_DAYS',
+    DEFAULT_SENATE_LOOKBACK_DAYS,
+    1,
+    SENATE_LOOKBACK_HARD_CAP_DAYS,
+  );
+  const maxDays = await tunableInt(
+    env,
+    'SENATE_MAX_LOOKBACK_DAYS',
+    DEFAULT_SENATE_MAX_LOOKBACK_DAYS,
+    baseDays,
+    SENATE_LOOKBACK_HARD_CAP_DAYS,
+  );
+  const today = nowIso.slice(0, 10);
+  let deepSweepDue = false;
+  if (env.CONFIG_KV) {
+    try {
+      deepSweepDue = (await env.CONFIG_KV.get(SENATE_DEEP_SWEEP_KV_KEY)) !== today;
+    } catch {
+      /* KV read failure -> stay on the regular window */
+    }
+  }
+  const lastSuccessAt = await getLastPollAt(env, 'senate');
+  const lookbackDays = computeSenateLookbackDays(now, lastSuccessAt, baseDays, maxDays, deepSweepDue);
+  const since = new Date(now.getTime() - lookbackDays * 86_400_000);
+  const filings = await fetchSenatePtrFilings({ now, since, kv: env.CONFIG_KV });
   const discovered: DiscoveredFiling[] = filings.map((f) => {
     const filerName = f.fullName || [f.first, f.last].filter(Boolean).join(' ').trim() || null;
     return {
@@ -372,6 +560,15 @@ async function pollSenate(env: Env, now: Date): Promise<number> {
   await logPoll(env, 'senate', nowIso, newCount, nowIso);
   await setLastPollAt(env, 'senate', now);
   await recordSourceAttempt(env, 'senate', nowIso, 'success', newCount, null);
+  // Stamp the deep sweep ONLY after a fully successful poll: a 403 day must
+  // not consume the day's widened window.
+  if (deepSweepDue && env.CONFIG_KV) {
+    try {
+      await env.CONFIG_KV.put(SENATE_DEEP_SWEEP_KV_KEY, today, { expirationTtl: 172800 });
+    } catch {
+      /* best-effort; worst case tomorrow's first poll widens again */
+    }
+  }
   return newCount;
 }
 
@@ -460,17 +657,4 @@ export async function runWatcher(env: Env, now: Date = new Date()): Promise<Watc
     result.executive = 'failure';
   }
   return result;
-}
-
-async function getLastAttemptAt(env: Env, source: string): Promise<Date | null> {
-  if (!env.CONFIG_KV) return null;
-  const iso = await env.CONFIG_KV.get(`last_attempt:${source}`);
-  if (!iso) return null;
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-async function setLastAttemptAt(env: Env, source: string, when: Date = new Date()): Promise<void> {
-  if (!env.CONFIG_KV) return;
-  await env.CONFIG_KV.put(`last_attempt:${source}`, when.toISOString());
 }
