@@ -520,6 +520,14 @@ export interface Env {
   SEED_SENATE_URL?: string;
   /** House live search polling flag; fail-soft (on unless explicitly "false"). */
   HOUSE_LIVE_SEARCH_ENABLED?: string;
+  /** Days into January during which the prior-year House index is also swept
+   *  (year-boundary gap; default 14, 0 disables). Infisical-tunable. */
+  HOUSE_PRIOR_YEAR_OVERLAP_DAYS?: string;
+  /** Base Senate submitted-date lookback in days (default 7). Infisical-tunable. */
+  SENATE_LOOKBACK_DAYS?: string;
+  /** Widened Senate lookback (days) used for the daily deep sweep and outage
+   *  catch-up (default 30; raise temporarily for one-off deep recovery). */
+  SENATE_MAX_LOOKBACK_DAYS?: string;
   /** Enables the OGE executive-branch (278-T) filings watcher. Infisical-tunable. */
   OGE_WATCH_ENABLED?: string;
   /** Override URL for the OGE President/VP filings index view. */

@@ -22,18 +22,48 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var lastSuccessfulRefresh: Date?
     @Published private(set) var isOffline = false
     @Published private(set) var hasStoredSessionToken = false
+    /// Canonical chamber chip selection. Drives both the visible chips and
+    /// the `chamber=` feed request — see `chamberQueryValue`. CT-AUD-010.
+    @Published private(set) var selectedChambers: Set<ChamberFilter> = CongressTradeStore.initialChambers
 
     var modelContext: ModelContext?
 
     private let api: CongressTradeAPIClient
+    private let cursorStore: SyncCursorStore
+    private let sleeper: (Double) async -> Void
     private var pendingWatchlistMutation: PendingWatchlistMutation?
     private var pendingDeliveryMutation: PendingDeliveryMutation?
     private var pendingSubscriptionMutations: [String: PendingSubscriptionMutation] = [:]
+    /// Set when a `refresh()` is requested while one is already running (e.g. the
+    /// user toggles chambers mid catch-up). The in-flight refresh re-runs once
+    /// against the latest `selectedChambers` when it finishes, so a chip change
+    /// during a sync never leaves the newly selected filter unsynced.
+    private var refreshQueued = false
 
     private static let cacheLimit = 500
+    /// Rows requested per feed page during catch-up sync.
+    private static let pageLimit = 50
+    /// Hard bound on pages fetched in a single `refresh()` catch-up loop, so a
+    /// large backlog can't turn one pull-to-refresh into an unbounded crawl.
+    private static let maxCatchUpPages = 20
+    /// Attempts (including the first) for a single page fetch before giving up.
+    private static let maxAttemptsPerPage = 3
+    /// The backend's true default view when `chamber` is omitted entirely:
+    /// congressional chambers, excluding Executive (OGE 278-T) disclosures
+    /// unless explicitly requested. See app/docs/client-mobile-api.md.
+    static let defaultChambers: Set<ChamberFilter> = [.house, .senate]
+    static let initialChambers: Set<ChamberFilter> = [.house, .senate, .executive]
 
-    init(api: CongressTradeAPIClient) {
+    init(
+        api: CongressTradeAPIClient,
+        cursorStore: SyncCursorStore = UserDefaultsSyncCursorStore(),
+        sleeper: @escaping (Double) async -> Void = { seconds in
+            try? await Task.sleep(nanoseconds: UInt64((seconds * 1_000_000_000).rounded()))
+        }
+    ) {
         self.api = api
+        self.cursorStore = cursorStore
+        self.sleeper = sleeper
         let storedToken = try? api.tokenStore.load()
         self.hasStoredSessionToken = storedToken?.isEmpty == false
     }
@@ -53,30 +83,39 @@ final class CongressTradeStore: ObservableObject {
             .filter { !$0.isEmpty }
     }
 
+    /// Selects the chamber chips and immediately resyncs against that
+    /// selection's own request/cursor. Never allows an empty selection (that
+    /// would be indistinguishable from "no filter chosen yet"); an attempt to
+    /// deselect the last chip resets to the documented default instead.
+    func setChamberSelection(_ chambers: Set<ChamberFilter>) async {
+        selectedChambers = chambers.isEmpty ? Self.initialChambers : chambers
+        await refresh()
+    }
+
     func refresh() async {
-        guard !isRefreshing else { return }
+        // A refresh requested while one is in flight (a chip toggle during a
+        // catch-up loop) is captured here and replayed against the latest
+        // selection when the current pass ends, rather than silently dropped.
+        guard !isRefreshing else {
+            refreshQueued = true
+            return
+        }
         isRefreshing = true
         feedNotice = nil
+        let chambers = selectedChambers
+        let filterKey = Self.chamberFilterKey(for: chambers)
+        let chamberParam = Self.chamberQueryValue(for: chambers)
         do {
-            let maxCursor = fetchMaxLocalCursor()
-            let order = maxCursor == nil ? "desc" : "asc"
             async let bootstrapTask = api.bootstrap()
-            async let feedTask = api.feed(query: FeedQuery(limit: 50, since: maxCursor, order: order))
+            let sync = try await syncFeed(filterKey: filterKey, chamberParam: chamberParam)
 
             bootstrap = try await bootstrapTask
-            let response = try await feedTask
-
-            if let context = modelContext {
-                for item in response.items {
-                    context.insert(item)
-                }
-                try context.save()
-                try trimCache(in: context)
+            if let latest = sync.lastResponse {
+                feed = latest
             }
-
-            feed = response
             lastSuccessfulRefresh = Date()
             isOffline = false
+            feedNotice = sync.notice
             if signedIn {
                 await refreshSignedInState()
             } else {
@@ -91,6 +130,136 @@ final class CongressTradeStore: ObservableObject {
                 : error.localizedDescription
         }
         isRefreshing = false
+        // Replay a coalesced request against the now-current selection (a single
+        // re-run collapses any number of chip toggles that arrived mid-refresh).
+        if refreshQueued {
+            refreshQueued = false
+            await refresh()
+        }
+    }
+
+    private struct FeedSyncResult {
+        let lastResponse: ClientFeedResponse?
+        let notice: String?
+    }
+
+    /// Runs the catch-up loop for one filter: resumes from that filter's own
+    /// persisted cursor (falling back to whatever's already cached locally on
+    /// first run after this feature ships, then a fresh newest-page snapshot
+    /// for a brand new install), paginates forward until a page comes back
+    /// short of a full page (exhausted) or the bounded page cap is hit, and
+    /// retries transient failures with backoff in between. CT-AUD-009.
+    private func syncFeed(filterKey: String, chamberParam: String?) async throws -> FeedSyncResult {
+        // Only the default (house+senate) filter may resume from the pre-existing
+        // local cache: rows cached before per-filter cursors shipped are that
+        // default view, so their max cursor is a valid resume point for it alone.
+        // Any OTHER filter that has never been synced must cold-start from a fresh
+        // newest-page snapshot — seeding it from the default view's watermark
+        // would skip every matching row at or below that unrelated cursor.
+        let isDefaultFilter = filterKey == Self.chamberFilterKey(for: Self.defaultChambers)
+        let resumeCursor = cursorStore.cursor(for: filterKey)
+            ?? (isDefaultFilter && !cacheHasExecutiveTrades() ? fetchMaxLocalCursor() : nil)
+        guard let startingCursor = resumeCursor else {
+            // Cold start for this exact filter: bounded newest-page snapshot,
+            // not a full historical backfill.
+            let response = try await fetchPageWithRetry(
+                FeedQuery(limit: Self.pageLimit, since: nil, chamber: chamberParam, order: "desc")
+            )
+            try persist(response)
+            cursorStore.setCursor(response.cursor, for: filterKey)
+            return FeedSyncResult(lastResponse: response, notice: nil)
+        }
+
+        var cursor = startingCursor
+        var lastResponse: ClientFeedResponse?
+        var pages = 0
+        while pages < Self.maxCatchUpPages {
+            let response = try await fetchPageWithRetry(
+                FeedQuery(limit: Self.pageLimit, since: cursor, chamber: chamberParam, order: "asc")
+            )
+            try persist(response)
+            pages += 1
+            lastResponse = response
+            if response.count > 0 {
+                cursor = max(cursor, response.cursor)
+                cursorStore.setCursor(cursor, for: filterKey)
+            }
+            // A short page (fewer rows than requested) is the exhaustion
+            // signal: the backend already excludes deprecated/retracted rows
+            // from this count (`t.deprecated_at IS NULL` is applied before
+            // LIMIT), so "short page" reliably means "caught up", not
+            // "some rows were skipped".
+            if response.count < response.limit {
+                return FeedSyncResult(lastResponse: lastResponse, notice: nil)
+            }
+        }
+        return FeedSyncResult(
+            lastResponse: lastResponse,
+            notice: "Caught up on the latest \(pages * Self.pageLimit) trades. Pull to refresh again to keep catching up."
+        )
+    }
+
+    private func fetchPageWithRetry(_ query: FeedQuery) async throws -> ClientFeedResponse {
+        var attempt = 0
+        while true {
+            do {
+                return try await api.feed(query: query)
+            } catch let error as APIError {
+                attempt += 1
+                guard error.isRetryable, attempt < Self.maxAttemptsPerPage else { throw error }
+                let backoffSeconds = error.retryAfterSeconds.map(Double.init) ?? pow(2.0, Double(attempt))
+                guard backoffSeconds <= 15.0 else { throw error }
+                await sleeper(backoffSeconds)
+            }
+        }
+    }
+
+    private func persist(_ response: ClientFeedResponse) throws {
+        guard let context = modelContext else { return }
+        for item in response.items {
+            context.insert(item)
+        }
+        try context.save()
+        try trimCache(in: context)
+    }
+
+    /// Confirms a cached trade is still live; removes it locally and returns
+    /// `true` if the server reports it retracted (404 on `GET /trade/:id`).
+    /// Best-effort: network errors leave the cached copy untouched rather
+    /// than risk dropping a still-valid row on a flaky connection.
+    @discardableResult
+    func reconcileIfDeprecated(_ trade: ClientTrade) async -> Bool {
+        do {
+            let stillExists = try await api.tradeStillExists(id: trade.id)
+            guard !stillExists else { return false }
+            if let context = modelContext {
+                context.delete(trade)
+                try? context.save()
+            }
+            feedNotice = "A disclosure you had open was retracted by its source and removed from your feed."
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private static func chamberFilterKey(for chambers: Set<ChamberFilter>) -> String {
+        let normalized = chambers.isEmpty ? initialChambers : chambers
+        return normalized.map(\.rawValue).sorted().joined(separator: ",")
+    }
+
+    /// The `chamber=` query value for a selection, or `nil` to omit the
+    /// parameter entirely when the selection matches the backend's true
+    /// default. Omitting (rather than spelling out "house,senate") matters:
+    /// the backend's absent-chamber default also keeps rows whose chamber
+    /// could not be resolved, while an explicit `chamber=house,senate` would
+    /// narrow to just those two and drop unresolved rows. See
+    /// `app/src/delivery/rows.ts` `buildTxFilters`.
+    private static func chamberQueryValue(for chambers: Set<ChamberFilter>) -> String? {
+        let normalized = chambers.isEmpty ? initialChambers : chambers
+        let backendDefault: Set<ChamberFilter> = [.house, .senate]
+        if normalized == backendDefault { return nil }
+        return normalized.map(\.rawValue).sorted().joined(separator: ",")
     }
 
     private func fetchMaxLocalCursor() -> Int? {
@@ -103,6 +272,21 @@ final class CongressTradeStore: ObservableObject {
             return results.first?.cursor
         } catch {
             return nil
+        }
+    }
+
+    private func cacheHasExecutiveTrades() -> Bool {
+        // If we have ever synced the non-default all-three filter, the cache is no longer the pure legacy default.
+        if cursorStore.cursor(for: Self.chamberFilterKey(for: Self.initialChambers)) != nil {
+            return true
+        }
+        guard let context = modelContext else { return false }
+        let descriptor = FetchDescriptor<ClientTrade>()
+        do {
+            let trades = try context.fetch(descriptor)
+            return trades.contains { $0.member.chamber?.lowercased() == "executive" }
+        } catch {
+            return false
         }
     }
 
@@ -207,6 +391,13 @@ final class CongressTradeStore: ObservableObject {
             deliveryNotice = "Could not create delivery. Retry will safely reuse this request: \(error.localizedDescription)"
         }
         isCreatingDelivery = false
+    }
+
+    /// Drops the one-time delivery secret from app state. Called when the
+    /// credential sheet disappears so the value doesn't linger in memory any
+    /// longer than the user is actively viewing it. CT-AUD-023.
+    func clearPendingDeliveryCredential() {
+        pendingDeliveryCredential = nil
     }
 
     func toggleSubscription(_ subscription: Subscription) async {

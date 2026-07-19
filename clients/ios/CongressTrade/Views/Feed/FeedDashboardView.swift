@@ -8,19 +8,23 @@ struct FeedDashboardView: View {
     @State private var appliedSearch = ""
     @State private var searchTask: Task<Void, Never>?
     @State private var selectedTrade: ClientTrade?
-    
-    // New Interactive Filters
-    @State private var selectedChambers: Set<String> = ["house", "senate", "executive"]
 
     var filteredTrades: [ClientTrade] {
         let needle = appliedSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        
+        let chambers = store.selectedChambers
+        // A selection identical to the backend's true default also keeps rows
+        // whose chamber could not be resolved (matches the server's absent-
+        // `chamber` clause); any explicit narrower/wider selection is an
+        // exact IN-list and drops unresolved rows, same as the request sent.
+        let matchesDefaultSelection = chambers == CongressTradeStore.defaultChambers
+
         return cachedTrades.filter { trade in
-            // Filter by Chamber
-            let chamber = trade.member.chamber?.lowercased() ?? "unknown"
-            if !selectedChambers.contains(chamber) && !selectedChambers.isEmpty { return false }
-            
-            // Filter by Search text
+            if let raw = trade.member.chamber?.lowercased(), let chamber = ChamberFilter(rawValue: raw) {
+                if !chambers.contains(chamber) { return false }
+            } else if !matchesDefaultSelection {
+                return false
+            }
+
             if !needle.isEmpty {
                 return TradeSearch.matches(trade, normalizedNeedle: needle)
             }
@@ -41,17 +45,16 @@ struct FeedDashboardView: View {
 
                     SearchField(text: $searchText)
                     
-                    // Filter Chips
+                    // Filter Chips — the same selection drives the feed request (CT-AUD-010).
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
-                            FilterChip(title: "House", isSelected: selectedChambers.contains("house")) {
-                                toggleChamber("house")
-                            }
-                            FilterChip(title: "Senate", isSelected: selectedChambers.contains("senate")) {
-                                toggleChamber("senate")
-                            }
-                            FilterChip(title: "Executive", isSelected: selectedChambers.contains("executive")) {
-                                toggleChamber("executive")
+                            ForEach(ChamberFilter.allCases) { chamber in
+                                FilterChip(
+                                    title: chamber.label,
+                                    isSelected: store.selectedChambers.contains(chamber)
+                                ) {
+                                    toggleChamber(chamber)
+                                }
                             }
                         }
                     }
@@ -136,20 +139,16 @@ struct FeedDashboardView: View {
         }
     }
     
-    private func toggleChamber(_ chamber: String) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-            if selectedChambers.contains(chamber) {
-                // If it's the last one, don't allow unselecting, or just let it be empty (shows nothing)
-                selectedChambers.remove(chamber)
-            } else {
-                selectedChambers.insert(chamber)
-            }
-            
-            // If all are unselected, maybe select all?
-            if selectedChambers.isEmpty {
-                selectedChambers = ["house", "senate", "executive"]
-            }
+    private func toggleChamber(_ chamber: ChamberFilter) {
+        var next = store.selectedChambers
+        if next.contains(chamber) {
+            next.remove(chamber)
+        } else {
+            next.insert(chamber)
         }
+        // setChamberSelection resets an empty selection back to the documented
+        // default and resyncs the feed against the new selection (CT-AUD-010).
+        Task { await store.setChamberSelection(next) }
     }
 }
 
@@ -166,10 +165,10 @@ struct FilterChip: View {
                 .padding(.vertical, 6)
                 .foregroundStyle(isSelected ? .white : .primary)
                 .background(
-                    isSelected ? Color.blue : Color.white.opacity(0.1),
+                    isSelected ? Color.blue : Color(uiColor: .secondarySystemBackground),
                     in: Capsule()
                 )
-                .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 1))
+                .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
         }
     }
 }
@@ -188,7 +187,7 @@ struct HeaderSummary: View {
                         .font(.caption.weight(.bold))
                         .textCase(.uppercase)
                         .foregroundStyle(.blue.opacity(0.8))
-                    Text("Fast congressional trade monitoring")
+                    Text("Fast Congressional trade monitoring")
                         .font(.title3.weight(.bold))
                 }
                 Spacer()
@@ -204,7 +203,7 @@ struct HeaderSummary: View {
         .padding(16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(AppTheme.border)
+        .overlay(AppTheme.border(cornerRadius: 16))
     }
 }
 
@@ -231,7 +230,7 @@ struct SearchField: View {
         .padding(12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(AppTheme.border)
+        .overlay(AppTheme.border(cornerRadius: 12))
     }
 }
 
@@ -241,7 +240,7 @@ struct TradeCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .center, spacing: 12) {
-                AssetMark(symbol: assetTitle)
+                AssetMark(symbol: assetTitle, isTicker: trade.asset.ticker != nil)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(assetTitle)
                         .font(.headline)
@@ -259,15 +258,48 @@ struct TradeCard: View {
                 )
             }
 
-            Divider().background(Color.white.opacity(0.1))
+            Divider()
 
-            HStack(alignment: .bottom) {
+            HStack(alignment: .center, spacing: 10) {
+                if let photoUrlString = trade.member.photoUrl,
+                   let url = URL(string: photoUrlString) {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        case .failure:
+                            Text(trade.member.party?.partyEmoji ?? "🦅")
+                                .font(.system(size: 18))
+                                .frame(width: 36, height: 36)
+                                .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                        case .empty:
+                            ProgressView()
+                                .controlSize(.small)
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
+                    .frame(width: 36, height: 36)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
+                } else {
+                    Text(trade.member.party?.partyEmoji ?? "🦅")
+                        .font(.system(size: 18))
+                        .frame(width: 36, height: 36)
+                        .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                        .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
+                }
+
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 4) {
-                        Text(trade.member.party?.partyEmoji ?? "")
-                            .font(.subheadline)
                         Text(trade.member.name ?? "Unknown Politician")
                             .font(.body.weight(.bold))
+                        if trade.member.photoUrl != nil {
+                            Text(trade.member.party?.partyEmoji ?? "")
+                                .font(.caption)
+                        }
                     }
                     Text(memberMeta)
                         .font(.caption.weight(.medium))
@@ -278,12 +310,12 @@ struct TradeCard: View {
                     Text(trade.amountLabel)
                         .font(.title3.weight(.heavy))
                         .foregroundStyle(trade.transaction.type == "P" ? .green : .primary)
-                    Text(trade.source == .primary ? "Live Read" : "Historical")
+                    Text(trade.member.chamber?.capitalized ?? "Unknown")
                         .font(.caption2.weight(.bold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(trade.source == .primary ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2), in: Capsule())
-                        .foregroundStyle(trade.source == .primary ? .blue : .secondary)
+                        .background(chamberGradient.opacity(0.15), in: Capsule())
+                        .foregroundStyle(chamberGradient)
                 }
             }
 
@@ -297,7 +329,7 @@ struct TradeCard: View {
         .background(chamberGradient.opacity(0.05), in: RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                .stroke(AppTheme.borderColor, lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 4)
     }

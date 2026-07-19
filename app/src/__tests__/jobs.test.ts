@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   runBulkSnapshot: vi.fn(),
   createUsageTelemetryClient: vi.fn(),
   isD1RowBudgetExceeded: vi.fn(),
+  dbRun: vi.fn(),
 }));
 
 vi.mock('../secrets/infisical', () => ({
@@ -56,8 +57,20 @@ vi.mock('@jaywedgeworth22/congress-trading-shared', () => ({
 vi.mock('../shared/d1Budget', () => ({
   isD1RowBudgetExceeded: mocks.isD1RowBudgetExceeded,
 }));
+// Only `run` is stubbed (retention sweep DELETEs); everything else stays real
+// so transitive importers of shared/db keep their actual helpers.
+vi.mock('../shared/db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../shared/db')>()),
+  run: mocks.dbRun,
+}));
 
-import { maybeRunDailyJobs } from '../jobs';
+import {
+  maybeRunDailyJobs,
+  runRetentionSweep,
+  RETENTION_POLICIES,
+  RETENTION_DELETE_BATCH,
+  RETENTION_MAX_BATCHES_PER_TABLE,
+} from '../jobs';
 
 function fakeEnv(): Env {
   const kv = new Map<string, string>();
@@ -101,6 +114,57 @@ describe('maybeRunDailyJobs secret resolution', () => {
     mocks.runBulkSnapshot.mockResolvedValue({ tables: {} });
     mocks.runPhotoEnrichment.mockResolvedValue(undefined);
     mocks.runTickerBackfill.mockResolvedValue(undefined);
+    mocks.dbRun.mockResolvedValue({ meta: { changes: 0 } });
+  });
+
+  it('runs the retention sweep as part of the daily pass, one bounded DELETE per table', async () => {
+    const env = fakeEnv();
+
+    await maybeRunDailyJobs(env, new Date('2026-07-10T00:00:00Z'));
+
+    const sqls = mocks.dbRun.mock.calls.map(([, sql]) => sql as string);
+    for (const policy of RETENTION_POLICIES) {
+      const del = sqls.filter((s) => s.includes(`DELETE FROM ${policy.table}`));
+      // changes:0 on the first batch → exactly one bounded DELETE per table.
+      expect(del).toHaveLength(1);
+      expect(del[0]).toContain(`${policy.column} < ?`);
+      expect(del[0]).toContain('LIMIT ?');
+    }
+    // Cutoff + LIMIT params: ISO cutoff `days` before `now`, batch-size LIMIT.
+    const [, dlqSql, dlqParams] = mocks.dbRun.mock.calls.find(([, sql]) =>
+      (sql as string).includes('DELETE FROM dead_letter_events'),
+    )!;
+    expect(dlqSql).toContain('IN (SELECT id FROM dead_letter_events');
+    expect(dlqParams).toEqual([
+      new Date(Date.parse('2026-07-10T00:00:00Z') - 30 * 86_400_000).toISOString(),
+      RETENTION_DELETE_BATCH,
+    ]);
+  });
+
+  it('caps retention batches per table when the backlog never drains', async () => {
+    // Every DELETE reports a full batch → the loop must stop at the cap
+    // instead of spinning until the table is empty.
+    mocks.dbRun.mockResolvedValue({ meta: { changes: RETENTION_DELETE_BATCH } });
+
+    const deleted = await runRetentionSweep(fakeEnv(), new Date('2026-07-10T00:00:00Z'));
+
+    expect(mocks.dbRun).toHaveBeenCalledTimes(
+      RETENTION_POLICIES.length * RETENTION_MAX_BATCHES_PER_TABLE,
+    );
+    for (const policy of RETENTION_POLICIES) {
+      expect(deleted[policy.table]).toBe(RETENTION_DELETE_BATCH * RETENTION_MAX_BATCHES_PER_TABLE);
+    }
+  });
+
+  it('retention failure on one table does not abort the others or the daily run', async () => {
+    mocks.dbRun.mockImplementation(async (_db: unknown, sql: string) => {
+      if (sql.includes('ingest_log')) throw new Error('no such table: ingest_log');
+      return { meta: { changes: 0 } };
+    });
+
+    const deleted = await runRetentionSweep(fakeEnv(), new Date('2026-07-10T00:00:00Z'));
+
+    expect(deleted).toEqual({ dead_letter_events: 0, ingest_log: 0, source_attempts: 0 });
   });
 
   it('folds FMP_MAX_PER_MINUTE and EDGAR_MAX_PER_MINUTE into the same resolveSecrets call as the USAGE_MONITOR_* vars', async () => {

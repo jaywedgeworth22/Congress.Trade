@@ -2,8 +2,10 @@ import SwiftUI
 
 struct TradeDetailView: View {
     let trade: ClientTrade
+    @EnvironmentObject private var store: CongressTradeStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @State private var didCheckRetraction = false
 
     var body: some View {
         NavigationStack {
@@ -11,7 +13,7 @@ struct TradeDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     // Hero Header
                     VStack(alignment: .center, spacing: 12) {
-                        AssetMark(symbol: trade.asset.ticker ?? trade.asset.type ?? "A")
+                        AssetMark(symbol: trade.asset.ticker ?? trade.asset.type ?? "A", isTicker: trade.asset.ticker != nil)
                             .scaleEffect(1.3)
                             .padding(.bottom, 8)
                         
@@ -100,6 +102,17 @@ struct TradeDetailView: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .task {
+            // The feed never re-announces a row it already served once it's
+            // retracted (see app/docs/client-mobile-api.md); reconcile this
+            // cached copy against `GET /trade/:id` on open so a stale,
+            // retracted disclosure doesn't linger silently. CT-AUD-009.
+            guard !didCheckRetraction else { return }
+            didCheckRetraction = true
+            if await store.reconcileIfDeprecated(trade) {
+                dismiss()
+            }
+        }
     }
     
     private var chamberGradient: Color {

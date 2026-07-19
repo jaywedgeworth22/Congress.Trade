@@ -6,6 +6,9 @@ import {
   formatSenateDate,
   CookieJar,
   fetchSenatePtrFilings,
+  establishSenateSession,
+  looksLikeSenateAgreementWall,
+  SENATE_SESSION_KV_KEY,
 } from '../senateSource';
 
 describe('parseCsrfMiddlewareToken', () => {
@@ -120,6 +123,66 @@ describe('CookieJar', () => {
     jar.absorbString('csrftoken=old');
     jar.absorbString('csrftoken=new; Path=/');
     expect(jar.get('csrftoken')).toBe('new');
+  });
+});
+
+describe('looksLikeSenateAgreementWall', () => {
+  it('recognizes the agreement/landing wall by its form signature', () => {
+    expect(
+      looksLikeSenateAgreementWall(
+        '<form id="agreement_form"><input name="prohibition_agreement" value="1"></form>',
+      ),
+    ).toBe(true);
+    expect(looksLikeSenateAgreementWall('... name="prohibition_agreement" ...')).toBe(true);
+    expect(looksLikeSenateAgreementWall("<form id='agreement_form'>")).toBe(true);
+  });
+
+  it('does not flag real report pages', () => {
+    expect(
+      looksLikeSenateAgreementWall('<table id="filedReports"><tr><td>AAPL</td></tr></table>'),
+    ).toBe(false);
+    expect(looksLikeSenateAgreementWall('<html><body>Periodic Transaction Report</body></html>')).toBe(false);
+  });
+});
+
+describe('establishSenateSession', () => {
+  it('negotiates the agreement handshake and caches the session in KV', async () => {
+    const kvPuts: Array<[string, string]> = [];
+    const kv = {
+      async put(key: string, value: string) {
+        kvPuts.push([key, value]);
+      },
+    };
+    const posted: string[] = [];
+    const fetchImpl = async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ): Promise<Response> => {
+      const url = String(input);
+      if (url.endsWith('/search/')) {
+        return new Response(
+          `<form><input type="hidden" name="csrfmiddlewaretoken" value="csrf-hidden"></form>`,
+          { headers: { 'set-cookie': 'csrftoken=csrf-cookie; Path=/' } },
+        );
+      }
+      if (url.endsWith('/search/home/')) {
+        posted.push(String(init?.body ?? ''));
+        return new Response('', { status: 302, headers: { 'set-cookie': 'sessionid=sess; Path=/' } });
+      }
+      throw new Error(`unexpected URL: ${url}`);
+    };
+
+    const session = await establishSenateSession({ kv, politeDelayMs: 0 }, fetchImpl as typeof fetch);
+
+    expect(session.csrfCookie).toBe('csrf-cookie');
+    expect(session.cookieHeader).toContain('csrftoken=csrf-cookie');
+    expect(session.cookieHeader).toContain('sessionid=sess');
+    // Accepts the prohibition agreement with the hidden middleware token.
+    expect(posted[0]).toContain('prohibition_agreement=1');
+    expect(posted[0]).toContain('csrfmiddlewaretoken=csrf-hidden');
+    expect(kvPuts).toHaveLength(1);
+    expect(kvPuts[0][0]).toBe(SENATE_SESSION_KV_KEY);
+    expect(JSON.parse(kvPuts[0][1])).toEqual(session);
   });
 });
 
