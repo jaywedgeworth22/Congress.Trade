@@ -71,7 +71,7 @@ function makeEnv() {
 
   const env = {
     ADMIN_TOKEN: 'test-admin',
-    ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k',
+    ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k', OPENROUTER_API_KEY: 'k',
     DB: db,
     RAW_FILES: { get: async () => ({ arrayBuffer: validPdfArrayBuffer }) },
     DELIVERY_QUEUE: { send: async () => {}, sendBatch: async () => {} },
@@ -96,6 +96,22 @@ function stubBoth(openaiText: string, anthropicText: string) {
 }
 
 const MODELS = JSON.stringify([{ provider: 'openai', model: 'gpt-5.6-terra' }, { provider: 'anthropic', model: 'claude-sonnet-5' }]);
+
+/** Both openrouter-transported reads return the same content, keyed only by
+ *  the openrouter.ai endpoint (both trio members share one transport). */
+function stubOpenRouter(content: string) {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    if (String(url).includes('openrouter.ai')) {
+      return { ok: true, json: async () => ({
+        id: 'gen-or-1',
+        model: 'served/model-slug',
+        choices: [{ message: { content } }],
+        usage: { prompt_tokens: 100, completion_tokens: 50 },
+      }) } as unknown as Response;
+    }
+    return { ok: false, status: 404, text: async () => 'nope' } as unknown as Response;
+  }));
+}
 
 describe('agreement-reprocess', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -155,5 +171,48 @@ describe('agreement-reprocess', () => {
     }, env);
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({ error: expect.stringContaining('retired') });
+  });
+
+  // --- OR-capable whitelist: OpenRouter-transported models are accepted from
+  // the same benchmark catalog (DEFAULT_CANDIDATES), but distinctness is
+  // measured over the UNDERLYING vendor so two openrouter slugs from the same
+  // vendor can't corroborate each other. ---
+
+  it('accepts two openrouter-transported models with distinct underlying vendors', async () => {
+    stubOpenRouter(ROW_AAPL);
+    const { env, insertedTx } = makeEnv();
+    const orModels = JSON.stringify([
+      { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
+      { provider: 'openrouter', model: 'anthropic/claude-sonnet-5' },
+    ]);
+    const res = await app.request('/agreement-reprocess', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ docIds: ['H-1'], models: JSON.parse(orModels), dryRun: false }),
+    }, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { summary: { published: number }; results: Array<{ outcome: string }> };
+    expect(body.summary.published).toBe(1);
+    expect(body.results[0].outcome).toBe('published');
+    expect(insertedTx).toHaveLength(1);
+  });
+
+  it('rejects two openrouter-transported models that share the same underlying vendor', async () => {
+    const { env } = makeEnv();
+    const res = await app.request('/agreement-reprocess', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({
+        docIds: ['H-1'],
+        models: [
+          { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
+          { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
+        ],
+      }),
+    }, env);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; code: string };
+    expect(body.code).toBe('duplicate_provider_lineup');
+    expect(body.error).toContain('distinct underlying vendors');
   });
 });
