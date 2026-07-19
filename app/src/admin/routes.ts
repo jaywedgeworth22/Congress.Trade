@@ -120,6 +120,8 @@ import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion
 import { estimateTransactionValue } from '../shared/transactionValue';
 import { isValidBracket } from '../shared/brackets';
 import { flushDeliveryOutbox } from '../delivery/outbox';
+import { readTargetCircuits } from '../delivery/targetCircuit';
+import { inspectLlmSpend } from '../shared/llmSpend';
 import {
   beginBenchmarkRun,
   claimBenchmarkMeasurement,
@@ -3891,9 +3893,47 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     // per concrete provider:model) + rolling per-model health windows. Null
     // when KV is unavailable. Names/counters only, never secrets.
     const providerHealth = await providerHealthDiagnostics(c.env).catch(() => null);
+
+    // --- Hard resource governors (owner mandate 2026-07-18) ---------------
+    // One line each: today's LLM dollars vs ceiling, today's D1 rows vs
+    // budget + write-governor quarantines, and every known outbound target
+    // circuit with its parked/quarantined backlog.
+    const llmSpend = await inspectLlmSpend(c.env).catch(() => null);
+    const d1BudgetRows = await optionalAll<{ rows_read: number; rows_written: number }>(
+      c.env,
+      'SELECT rows_read, rows_written FROM d1_budget WHERE day = ?',
+      [now.toISOString().slice(0, 10)],
+    );
+    const writeQuarantineRows = await optionalAll<{ events: number; dropped: number }>(
+      c.env,
+      `SELECT COUNT(*) AS events, COALESCE(SUM(dropped), 0) AS dropped
+         FROM d1_write_quarantine WHERE day = ?`,
+      [now.toISOString().slice(0, 10)],
+    );
+    const outboundTargets = await readTargetCircuits(c.env, 25).catch(() => []);
+    const parkedRows = await optionalAll<{ parked: number; quarantined: number }>(
+      c.env,
+      `SELECT SUM(CASE WHEN status = 'parked' THEN 1 ELSE 0 END) AS parked,
+              SUM(CASE WHEN status = 'quarantined' THEN 1 ELSE 0 END) AS quarantined
+         FROM deliveries`,
+    );
+    const resourceGovernors = {
+      llmSpend,
+      d1: {
+        today: d1BudgetRows[0] ?? null,
+        writeQuarantineToday: writeQuarantineRows[0] ?? null,
+      },
+      outbound: {
+        targets: outboundTargets,
+        parkedDeliveries: Number(parkedRows[0]?.parked ?? 0),
+        quarantinedDeliveries: Number(parkedRows[0]?.quarantined ?? 0),
+      },
+    };
+
     return c.json({
       generatedAt: now.toISOString(),
       providerHealth,
+      resourceGovernors,
       connections,
       usageTelemetry: {
         state: usageMonitorState,
@@ -3907,6 +3947,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       },
       secrets: secretStatus,
       userStats,
+      resourceGovernors,
       errors: errors.slice(0, 75),
       errorCount: errors.length,
     });

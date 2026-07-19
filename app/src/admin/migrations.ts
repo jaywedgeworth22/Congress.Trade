@@ -313,8 +313,40 @@ export const DOC_CLASS_SCHEMA_STATEMENTS = [
 ] as const;
 
 /**
- * Ordered schema tail shared by POST /api/admin/migrate and migration parity
- * tests. Keep this in the same order as file migrations 0029 through 0050.
+ * 0049_resource_governors.sql — hard resource governors: daily LLM USD meter,
+ * governed-write quarantine markers, per-target outbound circuit state. Keep
+ * in exact lockstep with migrations/0049_resource_governors.sql.
+ */
+export const RESOURCE_GOVERNOR_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS llm_spend (
+  day        TEXT NOT NULL,
+  provider   TEXT NOT NULL,
+  usd        REAL NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (day, provider)
+)`,
+  `CREATE TABLE IF NOT EXISTS d1_write_quarantine (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  writer     TEXT NOT NULL,
+  day        TEXT NOT NULL,
+  dropped    INTEGER NOT NULL,
+  reason     TEXT,
+  created_at TEXT NOT NULL
+)`,
+  'CREATE INDEX IF NOT EXISTS idx_d1_write_quarantine_day ON d1_write_quarantine (day, writer)',
+  `CREATE TABLE IF NOT EXISTS delivery_target_circuit (
+  target_key           TEXT PRIMARY KEY,
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  open_until           TEXT,
+  failures_day         TEXT,
+  failures_today       INTEGER NOT NULL DEFAULT 0,
+  last_error           TEXT,
+  updated_at           TEXT NOT NULL
+)`,
+] as const;
+
+/**
+ * tests. Keep this in the same order as file migrations 0029 through 0051.
  */
 export const POST_0024_SCHEMA_STATEMENTS = [
   // 0025_extraction_runs_usage.sql
@@ -356,4 +388,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...AUTOPILOT_SCHEMA_STATEMENTS,
   // 0050_doc_class.sql
   ...DOC_CLASS_SCHEMA_STATEMENTS,
+  // 0051_resource_governors.sql
+  ...RESOURCE_GOVERNOR_SCHEMA_STATEMENTS,
 ] as const;

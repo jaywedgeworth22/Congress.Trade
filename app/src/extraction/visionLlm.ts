@@ -24,6 +24,7 @@ import { PDFDocument } from 'pdf-lib';
 import { resolveSecret } from '../secrets/infisical';
 import { get } from '../shared/db';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import { assertLlmSpendWithinCeiling } from '../shared/llmSpend';
 import { GoogleGenAI } from '@google/genai';
 
 /**
@@ -122,6 +123,10 @@ export class VisionLlmExtractor implements Extractor {
   }
 
     async extract(input: ExtractorInput): Promise<ExtractorResult> {
+    // GOVERNOR 1: the Gemini SDK path performs its own fetches (it cannot ride
+    // the fetchWithRetry spend guard), so gate the whole extraction here.
+    // Throws a terminal LlmBudgetExceededError (error-class 'budget').
+    await assertLlmSpendWithinCeiling(this.env, 'gemini');
 let keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
     if (!keyString && this.apiKeyName === 'GEMINI_API_KEY') {
       keyString = (await resolveSecret(this.env, 'CT_GEMINI_API_KEY' as any)).value;
@@ -925,13 +930,26 @@ export async function fetchWithRetry(
   url: string,
   init: RequestInit,
   name = 'fetch',
-  opts: { maxAttempts?: number; sleep?: (ms: number) => Promise<void>; jitter?: () => number; model?: string } = {},
+  opts: {
+    maxAttempts?: number;
+    sleep?: (ms: number) => Promise<void>;
+    jitter?: () => number;
+    model?: string;
+    /** GOVERNOR 1: when set, every network attempt (including retries) is
+     *  pre-flighted against the daily LLM USD ceiling. A budget halt throws a
+     *  terminal LlmBudgetExceededError (error-class 'budget') that is never
+     *  retried here — no retry storm, no failover spend. */
+    spendGuard?: { env: Env; provider: string };
+  } = {},
 ): Promise<Response> {
   const maxAttempts = opts.maxAttempts ?? 4;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const jitter = opts.jitter ?? (() => Math.floor(Math.random() * 250));
 
   for (let attempt = 1; ; attempt++) {
+    if (opts.spendGuard) {
+      await assertLlmSpendWithinCeiling(opts.spendGuard.env, opts.spendGuard.provider);
+    }
     // res/networkErr are scoped per attempt (not hoisted across iterations) so a
     // network error on attempt N+1 can't be masked by a stale Response left over
     // from a retryable-but-successful-fetch attempt N.
