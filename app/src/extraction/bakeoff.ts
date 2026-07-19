@@ -79,13 +79,14 @@ export interface CandidateInvocation {
  *
  * `mistral/mistral-ocr-latest` is NOT a listed OpenRouter chat model — the
  * OpenRouter vision adapter (openRouterVision.ts) special-cases it as the
- * mistral-ocr file-parser plugin, so it MUST stay this exact slug. Every other
- * openrouter slug was verified LIVE against the OpenRouter models API (2026-07-16
- * for the pre-existing set; terra-pro and claude-haiku-4.5 verified 2026-07-17).
- * Note claude-haiku-4.5 uses a DOT — `anthropic/claude-haiku-4-5` (dash) does not
- * exist on OpenRouter. Slugs confirmed absent from the live API (gemini-pro-1.5 /
- * flash-1.5 / 2.0-flash-thinking-exp, claude-3.5/3.7 family, mistral-large-2411,
- * grok-2-vision-1212, qwen-2.5-vl-72b:free, qwen-max, yi-large, kimi-chat,
+ * mistral-ocr file-parser plugin, so it MUST stay this exact slug. Every other openrouter slug was verified LIVE
+ * against the OpenRouter models API (2026-07-16 for the pre-existing set; claude-haiku-4.5
+ * verified 2026-07-17, anthropic/claude-opus-4.8 verified 2026-07-19).
+ * openrouter/auto and the higher-tier GPT-5.6 models (terra-pro, sol) were moved to
+ * NON_OFFERED_CANDIDATES. Note claude-haiku-4.5 uses a DOT — `anthropic/claude-haiku-4-5`
+ * (dash) does not exist on OpenRouter. Slugs confirmed absent from the live API
+ * (gemini-pro-1.5 / flash-1.5 / 2.0-flash-thinking-exp, claude-3.5/3.7 family,
+ * mistral-large-2411, grok-2-vision-1212, qwen-2.5-vl-72b:free, qwen-max, yi-large, kimi-chat,
  * minimax-hep-lite, deepseek-chat/-coder) must never reappear — every benchmark
  * cell for a dead slug can only fail. `google/gemini-3.5-flash` is the OR-transport
  * route around the blocked direct Gemini key.
@@ -96,11 +97,10 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   // direct route; the direct entry lives in LEGACY_CANDIDATES for decode only.
   { provider: 'openrouter', model: 'mistral/mistral-ocr-latest' },
   { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
-  { provider: 'openrouter', model: 'openai/gpt-5.6-terra-pro' },
   { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
-  { provider: 'openrouter', model: 'openai/gpt-5.6-sol' },
   { provider: 'openrouter', model: 'anthropic/claude-sonnet-5' },
   { provider: 'openrouter', model: 'anthropic/claude-haiku-4.5' },
+  { provider: 'openrouter', model: 'anthropic/claude-opus-4.8' },
   { provider: 'openrouter', model: 'x-ai/grok-4.3' },
   { provider: 'openrouter', model: 'deepseek/deepseek-v4-pro' },
   { provider: 'openrouter', model: 'deepseek/deepseek-v4-flash' },
@@ -111,7 +111,19 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'openrouter', model: 'z-ai/glm-4.6v' },
   { provider: 'openrouter', model: 'google/gemini-3.5-flash' },
   { provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' },
+];
+
+/** Known-good routes kept catalog-valid (decode/replay + one-line re-enable)
+ *  but intentionally NOT offered in the benchmark UI and NOT part of the
+ *  default bake-off lineup. */
+export const NON_OFFERED_CANDIDATES: BakeoffCandidate[] = [
+  // Routing is unpredictable; owner will trial it separately, not alongside
+  // fixed-model benchmarking. Already rejected for live A–E slots by
+  // isOpenRouterAuto() and by CODEX PR #556's dry-run guard.
   { provider: 'openrouter', model: 'openrouter/auto' },
+  // High-effort/high-cost models removed from the routine offered list.
+  { provider: 'openrouter', model: 'openai/gpt-5.6-terra-pro' },
+  { provider: 'openrouter', model: 'openai/gpt-5.6-sol' },
 ];
 
 /**
