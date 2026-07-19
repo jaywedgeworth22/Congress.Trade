@@ -175,6 +175,8 @@ export interface CandidateDocResult {
     pagesProcessed?: number;
     /** Exact xAI request charge; 1 USD = 10^10 ticks. Includes server-side tools. */
     costInUsdTicks?: number;
+    /** Provider-reported dollar charge (OpenRouter usage accounting). */
+    costUsd?: number;
     /** Successful billable attachment_search calls reported for an xAI file request. */
     attachmentSearchCalls?: number;
     /** Effective provider tier, included with the usage snapshot for cost provenance. */
@@ -1211,7 +1213,9 @@ export async function runCandidateOnDoc(
       resolvedModel = lp.resolvedModel;
       providerRequestId = lp.providerRequestId;
     } else if (provider === 'openrouter') {
-      // docId included for the same metadata-grounded prompt lookup as above.
+      // docId is threaded through so the extractor can reuse (and persist)
+      // OpenRouter file annotations for this document — trio members 2/3,
+      // cascade retries, and reprocess all skip repeat PDF-parse fees.
       const result = await new OpenRouterVisionExtractor(env, { model, apiKey: key }).extract({
         filing: { docId, docKind: 'scanned_pdf', chamber } as never,
         bytes,

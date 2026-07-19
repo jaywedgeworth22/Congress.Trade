@@ -161,6 +161,9 @@ export interface ExtractorUsage {
   cacheWriteOneHourTokens?: number;
   pagesProcessed?: number;
   serviceTier?: string;
+  /** Provider-reported dollar charge for the request (e.g. OpenRouter usage
+   *  accounting `usage.cost`); preferred over rate-card estimates downstream. */
+  costUsd?: number;
 }
 
 /** One provider/model invocation retained across arbitration. */
