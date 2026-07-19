@@ -165,10 +165,10 @@ struct FilterChip: View {
                 .padding(.vertical, 6)
                 .foregroundStyle(isSelected ? .white : .primary)
                 .background(
-                    isSelected ? Color.blue : Color.white.opacity(0.1),
+                    isSelected ? Color.blue : Color(uiColor: .secondarySystemBackground),
                     in: Capsule()
                 )
-                .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 1))
+                .overlay(Capsule().stroke(AppTheme.borderColor, lineWidth: 1))
         }
     }
 }
@@ -203,7 +203,7 @@ struct HeaderSummary: View {
         .padding(16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(AppTheme.border)
+        .overlay(AppTheme.border(cornerRadius: 16))
     }
 }
 
@@ -230,7 +230,7 @@ struct SearchField: View {
         .padding(12)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(AppTheme.border)
+        .overlay(AppTheme.border(cornerRadius: 12))
     }
 }
 
@@ -258,15 +258,38 @@ struct TradeCard: View {
                 )
             }
 
-            Divider().background(Color.white.opacity(0.1))
+            Divider()
 
-            HStack(alignment: .bottom) {
+            HStack(alignment: .center, spacing: 10) {
+                if let photoUrlString = trade.member.photoUrl,
+                   let url = URL(string: photoUrlString) {
+                    AsyncImage(url: url) { image in
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    .frame(width: 36, height: 36)
+                    .clipShape(Circle())
+                    .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
+                } else {
+                    Text(trade.member.party?.partyEmoji ?? "🦅")
+                        .font(.system(size: 18))
+                        .frame(width: 36, height: 36)
+                        .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                        .overlay(Circle().stroke(AppTheme.borderColor, lineWidth: 1))
+                }
+
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 4) {
-                        Text(trade.member.party?.partyEmoji ?? "")
-                            .font(.subheadline)
                         Text(trade.member.name ?? "Unknown Politician")
                             .font(.body.weight(.bold))
+                        if trade.member.photoUrl != nil {
+                            Text(trade.member.party?.partyEmoji ?? "")
+                                .font(.caption)
+                        }
                     }
                     Text(memberMeta)
                         .font(.caption.weight(.medium))
@@ -277,12 +300,12 @@ struct TradeCard: View {
                     Text(trade.amountLabel)
                         .font(.title3.weight(.heavy))
                         .foregroundStyle(trade.transaction.type == "P" ? .green : .primary)
-                    Text(trade.source == .primary ? "Live Read" : "Historical")
+                    Text(trade.member.chamber?.capitalized ?? "Unknown")
                         .font(.caption2.weight(.bold))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(trade.source == .primary ? Color.blue.opacity(0.2) : Color.gray.opacity(0.2), in: Capsule())
-                        .foregroundStyle(trade.source == .primary ? .blue : .secondary)
+                        .background(chamberGradient.opacity(0.15), in: Capsule())
+                        .foregroundStyle(chamberGradient)
                 }
             }
 
@@ -296,7 +319,7 @@ struct TradeCard: View {
         .background(chamberGradient.opacity(0.05), in: RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                .stroke(AppTheme.borderColor, lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 4)
     }

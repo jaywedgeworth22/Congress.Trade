@@ -51,7 +51,7 @@ final class CongressTradeStore: ObservableObject {
     /// The backend's true default view when `chamber` is omitted entirely:
     /// congressional chambers, excluding Executive (OGE 278-T) disclosures
     /// unless explicitly requested. See app/docs/client-mobile-api.md.
-    static let defaultChambers: Set<ChamberFilter> = [.house, .senate]
+    static let defaultChambers: Set<ChamberFilter> = [.house, .senate, .executive]
 
     init(
         api: CongressTradeAPIClient,
