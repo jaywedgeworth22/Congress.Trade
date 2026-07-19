@@ -407,6 +407,15 @@ export type QueueMessage =
       /** Durable hand-off for one secret-safe external API usage event. */
       type: 'usage.telemetry';
       event: ThirdPartyUsageTelemetryEvent;
+    }
+  | {
+      /**
+       * One backlog-autopilot processing slice (a few docs); the consumer
+       * re-enqueues itself until the run completes or halts. Runs in the
+       * queue (generous per-message duration), never in the cron.
+       */
+      type: 'autopilot.tick';
+      runId: string;
     };
 
 /**
