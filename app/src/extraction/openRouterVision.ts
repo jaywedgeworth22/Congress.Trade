@@ -32,6 +32,11 @@ import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/t
 import type { Env, Filing, ParsedTx } from '../shared/types';
 import { getDocumentProxy } from 'unpdf';
 import { resolveSecret } from '../secrets/infisical';
+import { environmentName } from '../shared/thirdPartyTelemetry';
+import {
+  openrouterRequestEnrichment,
+  type OpenRouterRequestEnrichment,
+} from '@jaywedgeworth22/congress-trading-shared';
 import {
   buildExtractionPrompt,
   loadExtractionPromptContext,
@@ -53,6 +58,8 @@ const DEFAULT_TEXT_ENGINE = 'cloudflare-ai';
 const DEFAULT_SCAN_ENGINE = 'mistral-ocr';
 
 interface OpenAIChatPayload {
+  /** OpenRouter's generation id for this response (e.g. "gen-..."), used as
+   *  providerRequestId for monitor-side spend verification. */
   id?: string;
   /** Served model slug (may differ from the requested alias). */
   model?: string;
@@ -313,6 +320,46 @@ export class OpenRouterVisionExtractor implements Extractor {
     return (this.env[name] as string | undefined) || fallback;
   }
 
+  /**
+   * Usage-compliance classifier metadata for the OpenRouter request: a stable
+   * `trace` object (sourceApp/environment/service/feature/keyRef/gitSha) plus
+   * a deterministic per-document `user` id, per
+   * DESIGN-usage-compliance-classifier.md §2. Built once per extraction call
+   * (not per fetchWithRetry attempt) so `user` stays byte-identical across
+   * retries of the same document.
+   *
+   * Best-effort by design: the shared builder fails fast on an invalid STATIC
+   * field (a programming error), but that must never take down a paid
+   * extraction call. Any error here — expected or not — degrades to sending
+   * the OpenRouter request WITHOUT enrichment; the extraction itself proceeds
+   * unaffected.
+   */
+  private buildClassifierEnrichment(input: ExtractorInput): OpenRouterRequestEnrichment | undefined {
+    try {
+      return openrouterRequestEnrichment({
+        sourceApp: 'congress-trade',
+        environment: environmentName(this.env),
+        service: this.name,
+        feature: input.filing.chamber ? `vision-extract-${input.filing.chamber}` : undefined,
+        keyRef: this.apiKeyName,
+        gitSha: this.env.CF_VERSION_METADATA?.id || this.env.CF_VERSION_METADATA?.tag || undefined,
+        // Deterministic per-doc id, stable across fetchWithRetry's retries of
+        // this same call. Never "" — an unpopulated docId (e.g. a caller that
+        // constructs a partial Filing, as the bake-off harness does for
+        // non-OpenRouter candidates) must OMIT `user`, not send a blank one.
+        user: input.filing.docId || undefined,
+        // No run/session id is in scope at this call site today.
+        sessionId: undefined,
+      });
+    } catch (err) {
+      console.warn(
+        `${this.name}: classifier enrichment failed; sending OpenRouter request without it:`,
+        (err as Error).message,
+      );
+      return undefined;
+    }
+  }
+
   async extract(input: ExtractorInput): Promise<ExtractorResult> {
     const key = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
     if (!key) throw new Error(`${this.name}: API key is not configured`);
@@ -324,6 +371,10 @@ export class OpenRouterVisionExtractor implements Extractor {
     // structurally so this routing works the moment the column ships without
     // coupling to that lane's type change.
     const docClass = (input.filing as Filing & { docClass?: string | null }).docClass ?? null;
+
+    // Computed once per extraction call — never per retry — so `user` stays
+    // deterministic across fetchWithRetry's internal attempts.
+    const classifierEnrichment = this.buildClassifierEnrichment(input);
 
     let pagesProcessed: number | undefined = undefined;
     if (model.toLowerCase().includes('mistral-ocr')) {
@@ -444,6 +495,10 @@ export class OpenRouterVisionExtractor implements Extractor {
               ...(Object.keys(provider).length ? { provider } : {}),
               plugins,
               messages: buildMessages(),
+              // Usage-compliance classifier metadata (top-level user/session_id
+              // + flat trace object) — undefined when enrichment degraded, in
+              // which case this spreads nothing.
+              ...classifierEnrichment,
             }),
             signal: AbortSignal.timeout(120_000),
           },
@@ -485,6 +540,9 @@ export class OpenRouterVisionExtractor implements Extractor {
       }
       const { payload } = call;
 
+      // Generation id for monitor-side spend verification. Never an empty
+      // string — `payload.id` is either a real id or omitted entirely.
+      providerRequestId = payload.id || undefined;
       totalPromptTokens = payload.usage?.prompt_tokens ?? 0;
       totalCompletionTokens = payload.usage?.completion_tokens ?? 0;
       totalCachedTokens = payload.usage?.prompt_tokens_details?.cached_tokens ?? 0;
@@ -543,6 +601,9 @@ export class OpenRouterVisionExtractor implements Extractor {
               ...(providerCostUsd != null ? { costUsd: providerCostUsd } : {}),
             }
           : undefined;
+      // Attach the generation id even on a post-response failure (e.g. JSON
+      // parse error) — the call was already billed and a downstream consumer
+      // (bakeoff.ts's error path) reads providerRequestId off the thrown error.
       throw Object.assign(err as Error, { usage, resolvedModel, providerRequestId });
     }
 

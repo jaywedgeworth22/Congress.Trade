@@ -127,6 +127,9 @@ async function reportExtractorUsage(env: Env, runs: ExtractorModelRun[]): Promis
       provider: providerForModel(modelRun.modelVersion),
       model: modelRun.modelVersion ?? 'unknown',
       component: 'orchestrator',
+      // `|| undefined` so a blank id from an upstream extractor can never
+      // reach the wire as "" (the shared schema rejects empty strings).
+      providerRequestId: modelRun.providerRequestId || undefined,
       ...modelRun.usage,
     });
   }

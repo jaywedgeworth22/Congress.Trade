@@ -1213,9 +1213,9 @@ export async function runCandidateOnDoc(
       resolvedModel = lp.resolvedModel;
       providerRequestId = lp.providerRequestId;
     } else if (provider === 'openrouter') {
-      // docId is threaded through so the extractor can reuse (and persist)
-      // OpenRouter file annotations for this document — trio members 2/3,
-      // cascade retries, and reprocess all skip repeat PDF-parse fees.
+      // docId is threaded through so openRouterVision.ts's classifier
+      // enrichment can populate a deterministic per-doc `user` id, and so
+      // the extractor can reuse (and persist) OpenRouter file annotations.
       const result = await new OpenRouterVisionExtractor(env, { model, apiKey: key }).extract({
         filing: { docId, docKind: 'scanned_pdf', chamber } as never,
         bytes,
