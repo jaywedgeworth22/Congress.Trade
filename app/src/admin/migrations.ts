@@ -203,6 +203,28 @@ export const PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS = [
    AND EXISTS (SELECT 1 FROM price_eod pe WHERE pe.ticker = securities_ref.ticker)`,
 ] as const;
 
+/**
+ * 0047_subscription_quota_active_only.sql — recreate trg_subscriptions_total_quota
+ * so the 20-per-client lifetime cap only counts currently-active rows,
+ * matching the corrected preflight in assertSubscriptionQuota
+ * (src/delivery/subscriptions.ts). Fixes the "lifetime subscription lockout"
+ * bug where deactivated rows permanently occupied a creation-quota slot with
+ * no delete path to reclaim it. Keep in exact lockstep with
+ * migrations/0047_subscription_quota_active_only.sql.
+ */
+export const SUBSCRIPTION_QUOTA_ACTIVE_ONLY_SCHEMA_STATEMENTS = [
+  'DROP TRIGGER IF EXISTS trg_subscriptions_total_quota',
+  `CREATE TRIGGER IF NOT EXISTS trg_subscriptions_total_quota
+   BEFORE INSERT ON subscriptions
+   WHEN (
+     SELECT COUNT(*) FROM subscriptions
+      WHERE client_id = NEW.client_id AND active = 1
+   ) >= 20
+   BEGIN
+     SELECT RAISE(ABORT, 'subscription total quota exceeded');
+   END`,
+] as const;
+
 /** Ordered review-queue autonomy schema mirrored by file migrations 0033-0037. */
 export const REVIEW_AUTONOMY_SCHEMA_STATEMENTS = [
   ...REVIEW_COMPLEXITY_SCHEMA_STATEMENTS,
@@ -290,6 +312,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...D1_BUDGET_SCHEMA_STATEMENTS,
   // 0046_usage_telemetry_probe_lease.sql
   ...USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
+  // 0047_subscription_quota_active_only.sql
+  ...SUBSCRIPTION_QUOTA_ACTIVE_ONLY_SCHEMA_STATEMENTS,
   // 0048_retention_indexes.sql
   ...RETENTION_INDEX_SCHEMA_STATEMENTS,
 ] as const;
