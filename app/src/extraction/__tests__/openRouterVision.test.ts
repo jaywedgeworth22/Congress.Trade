@@ -47,7 +47,7 @@ describe('OpenRouterVisionExtractor', () => {
       ok: true,
       json: async () => ({
         id: 'gen-123',
-        model: 'qwen/qwen-2.5-vl-72b-instruct:free',
+        model: 'google/gemini-3.5-flash',
         choices: [
           {
             message: {
@@ -109,7 +109,7 @@ describe('OpenRouterVisionExtractor', () => {
       ok: true,
       json: async () => ({
         id: 'gen-123',
-        model: 'qwen/qwen-2.5-vl-72b-instruct:free',
+        model: 'google/gemini-3.5-flash',
         choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
         usage: { prompt_tokens: 10, completion_tokens: 5 },
       }),
@@ -129,7 +129,7 @@ describe('OpenRouterVisionExtractor', () => {
     const fetchMock = vi.fn().mockResolvedValueOnce({
       ok: true,
       json: async () => ({
-        model: 'qwen/qwen-2.5-vl-72b-instruct:free',
+        model: 'google/gemini-3.5-flash',
         choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
         usage: { prompt_tokens: 10, completion_tokens: 5 },
       }),
@@ -151,7 +151,7 @@ describe('OpenRouterVisionExtractor', () => {
       ok: true,
       json: async () => ({
         id: '',
-        model: 'qwen/qwen-2.5-vl-72b-instruct:free',
+        model: 'google/gemini-3.5-flash',
         choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
       }),
     } as unknown as Response);
@@ -171,7 +171,7 @@ describe('OpenRouterVisionExtractor', () => {
       ok: true,
       json: async () => ({
         id: 'gen-123',
-        model: 'qwen/qwen-2.5-vl-72b-instruct:free',
+        model: 'google/gemini-3.5-flash',
         choices: [
           {
             message: {
@@ -242,7 +242,7 @@ describe('OpenRouterVisionExtractor', () => {
     expect(body.trace.metadata).toBeUndefined();
     expect('metadata' in body).toBe(false);
     // Enrichment must never displace the core request fields.
-    expect(body.model).toBe('qwen/qwen-2.5-vl-72b-instruct:free');
+    expect(body.model).toBe('google/gemini-3.5-flash');
     expect(body.messages).toHaveLength(1);
   });
 
