@@ -260,7 +260,7 @@ describe('ConfiguredVisionExtractor', () => {
     const payload = JSON.parse(String(decisions[0][6])) as Record<string, unknown>;
     expect(payload).toMatchObject({
       configured: 'openai:gpt-5.6-terra',
-      substitute: 'openrouter:qwen/qwen-2.5-72b-instruct',
+      substitute: 'openrouter:amazon/nova-lite-v1',
       reason: 'model_breaker_open',
       costFlagged: false,
     });
