@@ -365,3 +365,78 @@ describe('agreement cascade — tier 2 / tier 3', () => {
     expect(cap.reviewFlags).toHaveLength(1);
   });
 });
+
+/**
+ * Text-field agreement normalization (AGREEMENT_TEXT_NORMALIZATION, default
+ * on): production regression shape — every model correctly reads "First Data
+ * Corp." but formats it differently (casing/punctuation), which used to make
+ * EVERY tier require byte-identical text and left the doc unresolved.
+ *
+ * NOTE on confidence values: toParsedTx (visionLlm.ts) caps every parsed row's
+ * confidence at DEFAULT_CONFIDENCE (0.6) via `Math.min(modelConf, 0.6)` — a
+ * pre-existing, deliberate conservative-vision-read policy unrelated to this
+ * PR. Any stubbed row confidence >= 0.6 is therefore indistinguishable from
+ * any other after parsing; these tests use values below 0.6 so the
+ * confidence-preferred selection in resolveAgreedRows/buildMajorityRows is
+ * actually exercised instead of silently degenerating to a tie every time.
+ */
+describe('agreement cascade — text-field normalization', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('tier 1: near-miss text (casing/punctuation only) now agrees, and publishes the higher-confidence model\'s own text — not simply "always A"', async () => {
+    // A is listed FIRST (slot order) but has the LOWER confidence; B has the
+    // higher confidence. The old code always used A's raw rows on unanimity,
+    // which would have published A's "FIRST DATA CORP" wording (re-cleaned to
+    // "First Data Corp." at persist time — no comma). B's own wording
+    // ("First Data, Corp.") is already in cleanAssetString's fixed-point form,
+    // so it round-trips unchanged through the persist-time re-clean and stays
+    // distinguishable from what "always A" would have produced.
+    stub(
+      asJson([row('AAPL', 'P', AB, { assetName: 'FIRST DATA CORP', ticker: null, confidence: 0.3 })]),
+      asJson([row('AAPL', 'P', AB, { assetName: 'First Data, Corp.', ticker: null, confidence: 0.55 })]),
+    );
+    const { env, cap } = makeEnv();
+    await handleAgreementCheck(env, 'H-text-tier1', 'raw/H-text-tier1');
+    expect(cap.inserted).toHaveLength(1);
+    expect(cap.sent).toHaveLength(0); // agreed → no escalation to tier 2
+    const insertedRows = JSON.parse(cap.inserted[0][0] as string) as Array<{ assetName: string }>;
+    expect(insertedRows[0].assetName).toBe('First Data, Corp.'); // B's wording, not A's
+  });
+
+  it('tier 3: 2-of-3 normalize-equal text + 1 different picks the MAJORITY text, preferring the higher-confidence contributor within the winning bloc', async () => {
+    // A and B both correctly read "First Data Corp." (different casing /
+    // punctuation); C reads a genuinely different suffix ("LLC") — a real
+    // disagreement, not formatting drift — so C is the minority. B has the
+    // higher confidence of the two majority contributors. Ticker ('AAPL', from
+    // the row() helper's first arg) is deliberately left populated (not
+    // nulled like the tier-1 test above): tier 3's buildMajorityRows groups
+    // reads into rows via arbitrationRowKey, which is untouched by this PR
+    // and falls back to raw (non-normalized) assetName only when ticker is
+    // absent — an orthogonal, pre-existing row-identity concern, not the
+    // per-field text-comparator behavior this test targets.
+    stub(
+      asJson([row('AAPL', 'P', AB, { assetName: 'FIRST DATA CORP', confidence: 0.3 })]),
+      asJson([row('AAPL', 'P', AB, { assetName: 'First Data, Corp.', confidence: 0.55 })]),
+      asJson([row('AAPL', 'P', AB, { assetName: 'First Data LLC', confidence: 0.5 })]),
+    );
+    const { env, cap } = makeEnv();
+    const res = await processAgreementCascadeTier2(env, MODELS_C, 'H-text-tier3', 'raw/x', false);
+    expect(res).toMatchObject({ outcome: 'published', tier: 3 });
+    const insertedRows = JSON.parse(cap.inserted[0][0] as string) as Array<{ assetName: string }>;
+    expect(insertedRows).toHaveLength(1);
+    expect(insertedRows[0].assetName).toBe('First Data, Corp.'); // majority (A+B) text, B's wording
+  });
+
+  it('kill switch (AGREEMENT_TEXT_NORMALIZATION=false) restores byte-strict comparison: the SAME near-miss pair that agrees by default now disagrees', async () => {
+    stub(
+      asJson([row('AAPL', 'P', AB, { assetName: 'FIRST DATA CORP', ticker: null })]),
+      asJson([row('AAPL', 'P', AB, { assetName: 'First Data, Corp.', ticker: null })]),
+    );
+    const { env, cap } = makeEnv({ env: { AGREEMENT_TEXT_NORMALIZATION: 'false' } });
+    await handleAgreementCheck(env, 'H-text-killswitch', 'raw/H-text-killswitch');
+    expect(cap.inserted).toHaveLength(0); // byte-strict → disagree, no publish
+    expect(cap.sent).toEqual([
+      expect.objectContaining({ type: 'agreement.check', escalationTier: 2 }),
+    ]);
+  });
+});
