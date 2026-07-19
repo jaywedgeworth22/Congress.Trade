@@ -134,11 +134,44 @@ struct CommandListResponse: Decodable {
     let commands: [ClientCommand]
 }
 
+/// Mirrors the backend's `SubscriptionFilters` contract 1:1
+/// (`app/src/shared/types.ts`). All fields are optional/undefined => "all";
+/// keep this struct's field set in lock-step with the backend so decoding an
+/// existing subscription's filters (`GET /subscriptions`) never silently
+/// drops a documented field before it can be redisplayed or re-encoded.
 struct SubscriptionFilters: Codable, Hashable {
     var members: [String]?
     var tickers: [String]?
     var chambers: [String]?
+    /// Minimum transaction amount_min (bracket floor) to deliver.
     var minAmount: Int?
+    /// Maximum transaction amount_min (bracket floor); pairs with minAmount for a range.
+    var maxAmount: Int?
+    /// Transaction sides to include, e.g. ["P"] for buys only.
+    var sides: [String]?
+    /// GICS sectors to include (securities_ref.sector).
+    var sectors: [String]?
+    /// Market-cap buckets to include (mega...nano, securities_ref.market_cap_bucket).
+    var marketCapBuckets: [String]?
+}
+
+/// Canonical chamber chip selection. One set drives both the visible chips
+/// and the `chamber=` request parameter (CT-AUD-010) — there is no separate
+/// "what the UI shows" vs "what was requested" state.
+enum ChamberFilter: String, CaseIterable, Codable, Hashable, Identifiable {
+    case house
+    case senate
+    case executive
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .house: return "House"
+        case .senate: return "Senate"
+        case .executive: return "Executive"
+        }
+    }
 }
 
 struct ClientCommandResponse<ResultPayload: Decodable>: Decodable {
@@ -195,12 +228,6 @@ struct DeliveryCredential: Identifiable, Equatable {
     let delivery: String
     let streamURL: String?
     let secret: String?
-
-    var shareText: String {
-        [streamURL, secret.map { "Subscription secret: \($0)" }]
-            .compactMap { $0 }
-            .joined(separator: "\n")
-    }
 }
 
 enum JSONValue: Codable, Hashable {
