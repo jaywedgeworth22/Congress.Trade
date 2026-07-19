@@ -76,6 +76,60 @@ safe only while a strong client secret exists.
   `AGREEMENT_AUTOPUBLISH_LIMIT`, `AGREEMENT_MAX_ATTEMPTS`,
   `AGREEMENT_DAILY_LLM_BUDGET`, `AGREEMENT_BIG_DOC_START_TIER2`,
   `AGREEMENT_BIG_DOC_PAGE_THRESHOLD`, `AGREEMENT_BIG_DOC_BYTES_THRESHOLD`
+- Provider-health routing + runtime overlay (`src/extraction/providerHealth.ts`;
+  billing/auth failures open a per-`provider:model` circuit breaker and the
+  live extractor substitutes the cheapest healthy catalog candidate at
+  runtime — the configured lineup stays authoritative and resumes on
+  recovery):
+  - `PROVIDER_HEALTH_WINDOW_MINUTES` — rolling health window (default `15`)
+  - `PROVIDER_HEALTH_CONSECUTIVE_THRESHOLD` — consecutive billing/auth
+    failures that open the per-model breaker (default `5`)
+  - `PROVIDER_HEALTH_FAILURE_RATE` — windowed billing/auth failure-rate trip
+    (default `0.8`, needs `PROVIDER_HEALTH_MIN_SAMPLES`, default `5`)
+  - `PROVIDER_OVERLAY_ENABLED` — runtime substitution for a breaker-blocked
+    slot (default on; `false` restores skip-to-failover-only behavior)
+  - `PROVIDER_OVERLAY_COST_RATIO_LIMIT` — substitutes costing more than this
+    multiple of the configured slot's rate-card cost are flagged in the
+    `ingestion_decisions` audit + diagnostics, never selected silently
+    (default `3`)
+  - `PROVIDER_MODEL_BAN_TTL_SECONDS` — per-model breaker TTL (default `3600`)
+- Backlog autopilot (`src/extraction/autopilot.ts`; cron-gated, queue-driven
+  drain of the unresolved review backlog through the SAME agreement cascade —
+  status/receipts at `GET /api/admin/autopilot/status`, halted runs need
+  `POST /api/admin/autopilot/acknowledge` before a new run may start):
+  - `AUTOPILOT_ENABLED` — master switch; effective only where
+    `AGREEMENT_AUTOPUBLISH_ENABLED=true`, and `false` disables the autopilot
+    without touching the per-minute cascade (default on)
+  - `AUTOPILOT_BACKLOG_THRESHOLD` — unresolved-review count that triggers an
+    extra same-day run (default `150`; a run always triggers on the first
+    cron tick of each UTC day)
+  - `AUTOPILOT_DAILY_USD_BUDGET` — per-UTC-day USD spend meter priced via the
+    shared benchmark rate card; reservations happen BEFORE model calls and
+    the run halts when exhausted (default `5.00`)
+  - `AUTOPILOT_MAX_DOCS_PER_RUN` — pilot-sized run cap (default `50`)
+  - `AUTOPILOT_ERROR_CLASS_HALT_THRESHOLD` — same-class error count
+    (billing/auth/quota/parse/timeout) that halts the whole run with a
+    receipt requiring acknowledgment (default `2`)
+  - `AUTOPILOT_MIN_INTERVAL_MINUTES` — spacing between backlog-triggered runs
+    (default `60`)
+  - `AUTOPILOT_BATCH_PRESEED` — pre-seed cascade reads through the cheaper
+    direct-provider batch APIs where the chamber trio supports it (default
+    off; a no-op for all-OpenRouter trios)
+- Document classifier (`src/extraction/docClassifier.ts`; assigns
+  `filings.doc_class` ∈ typed | clean_scan | hard_scan | empty | corrupt —
+  deterministic signals first, ONE ~free enum-constrained OpenRouter call
+  only for ambiguous scans. Consumers: autopilot ordering (typed/clean
+  first), cascade start tier (hard_scan → full trio), empty auto-resolve +
+  corrupt quarantine, receipt attribution):
+  - `DOC_CLASSIFIER_ENABLED` — model tier for ambiguous docs (default on;
+    `false` = deterministic signals only, ambiguity defaults to hard_scan)
+  - `DOC_CLASSIFIER_MODEL` — bottom-tier OpenRouter model for the one
+    classification call (default `google/gemini-2.5-flash-lite`)
+  - `DOC_CLASSIFIER_PARSE_ENGINE` — OpenRouter file-parser engine for the
+    classification call (default `cloudflare-ai`, the free parse)
+  - `DOC_CLASS_EMPTY_SPOTCHECK_RATE` — fraction of doc_class=empty docs left
+    in review for a human spot-check instead of auto-resolving (default
+    `0.1`)
 - Import guardrails (all seven): `IMPORT_MAX_BYTES`, `IMPORT_MAX_REFS`,
   `IMPORT_MAX_SPX`, `IMPORT_MAX_PRICES`, `IMPORT_MAX_CLOSES_PER_TICKER`,
   `IMPORT_MAX_INSIDER`, `IMPORT_MAX_SHORT_VOLUME`

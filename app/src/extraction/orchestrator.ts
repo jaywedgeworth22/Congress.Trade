@@ -23,6 +23,7 @@ import {
 } from '../extractors/types';
 import { normalize } from './normalizer';
 import { enqueueAgreementCheck } from './agreement';
+import { ensureDocClass } from './docClassifier';
 import { reportAiUsage } from '../shared/telemetry';
 
 interface FilingRow {
@@ -204,7 +205,18 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
     console.warn('orchestrator: failed to record raw_bytes:', docId, (err as Error).message);
   }
 
-  
+  // Pre-extraction document classification (typed / clean_scan / hard_scan /
+  // empty / corrupt): deterministic signals first, one ~free enum-constrained
+  // model call only for ambiguous scans, cached on filings.doc_class. Feeds
+  // cascade tiering, autopilot ordering, and per-class handling. Best-effort —
+  // never fails or delays extraction on error.
+  try {
+    await ensureDocClass(env, docId, bytes, filing.docKind);
+  } catch (err) {
+    console.warn('orchestrator: doc classification failed:', docId, (err as Error).message);
+  }
+
+
 
   const html =
     filing.docKind === 'senate_html'
