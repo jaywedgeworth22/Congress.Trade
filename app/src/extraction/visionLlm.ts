@@ -22,6 +22,7 @@ import type { Env, Filing, Owner, ParsedTx, TxType } from '../shared/types';
 import { parseAmountRange } from './amounts';
 import { PDFDocument } from 'pdf-lib';
 import { resolveSecret } from '../secrets/infisical';
+import { get } from '../shared/db';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
 import { GoogleGenAI } from '@google/genai';
 
@@ -182,10 +183,18 @@ let keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKe
     let resolvedModel = model;
     let providerRequestId: string | undefined;
 
+    // Metadata-grounded prompt: known filing facts (chamber, form type, filed
+    // year, page count, filer name) orient the model on the form layout.
+    const promptContext = await loadExtractionPromptContext(
+      this.env,
+      input.filing,
+      pageCount > 0 ? pageCount : undefined,
+    );
+    const prompt = buildExtractionPrompt(promptContext);
+
     for (let i = 0; i < chunks.length; i++) {
       try {
         const chunkBytes = chunks[i];
-const prompt = input.filing.chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
 
         let res;
         let lastError: Error | null = null;
@@ -312,8 +321,10 @@ const prompt = input.filing.chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : 
 // Request construction
 // ---------------------------------------------------------------------------
 
-/** Stable identifier for the extraction instructions sent to vision models. */
-export const EXTRACTION_PROMPT_VERSION = 'stock-act-ptr-v2';
+/** Stable identifier for the extraction instructions sent to vision models.
+ *  BUMP DISCIPLINE: any change to SYSTEM_PROMPT / EXECUTIVE_SYSTEM_PROMPT /
+ *  buildExtractionPrompt's grounding block requires a new version string. */
+export const EXTRACTION_PROMPT_VERSION = 'stock-act-ptr-v3-grounded';
 
 export const SYSTEM_PROMPT = `You are a meticulous data-extraction engine for U.S. congressional STOCK Act
 Periodic Transaction Reports (PTRs). The attached document is a scanned PTR.
@@ -356,6 +367,112 @@ Extract EVERY disclosed transaction row. For each transaction return:
 - supplementalText: capture the "Notification Date" or other notes here.
 - confidence: YOUR confidence for this row in [0,1], lowering it when handwriting or scan quality is poor.
 Return ONLY the structured JSON array. Do not guess values you cannot read; use null instead.`;
+
+// ---------------------------------------------------------------------------
+// Metadata-grounded prompts (EXTRACTION_PROMPT_VERSION 'stock-act-ptr-v3-grounded')
+//
+// The ingestion pipeline already KNOWS several facts about every filing
+// (chamber, form-type code, filed date, page count, registered filer name)
+// before any model reads it. Injecting them lets the models orient on the
+// correct form layout instead of guessing it blind — a measured driver of
+// cross-model disagreement on scanned PTRs. The grounding block is strictly
+// orienting context: models are told to never invent rows from it and to
+// never let it override what the document itself shows.
+// ---------------------------------------------------------------------------
+
+export interface ExtractionPromptContext {
+  chamber?: string | null;
+  /** Filing-type code as ingested (e.g. 'P' for a PTR, 'A' for an amendment). */
+  filingType?: string | null;
+  /** ISO date (or date-time) the filing was filed; only the year is injected. */
+  filedDate?: string | null;
+  pageCount?: number | null;
+  /** Filer name as registered in the filers table. */
+  filerName?: string | null;
+}
+
+function chamberFact(chamber: string | null | undefined): string | null {
+  if (chamber === 'house') return 'Chamber: U.S. House of Representatives (House PTR form)';
+  if (chamber === 'senate') return 'Chamber: U.S. Senate (Senate PTR form)';
+  if (chamber === 'executive') return 'Chamber: Executive Branch (OGE Form 278-T)';
+  return null;
+}
+
+/**
+ * Select the chamber-appropriate base prompt and append the KNOWN DOCUMENT
+ * FACTS grounding block for whichever metadata is available. With no usable
+ * metadata the base prompt is returned unchanged.
+ */
+export function buildExtractionPrompt(context: ExtractionPromptContext = {}): string {
+  const base = context.chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
+  const facts: string[] = [];
+  const chamber = chamberFact(context.chamber);
+  if (chamber) facts.push(chamber);
+  const filingType = context.filingType?.trim();
+  if (filingType) facts.push(`Filing-type code: ${filingType.slice(0, 24)}`);
+  const filedYear = context.filedDate?.match(/^(\d{4})-/)?.[1];
+  if (filedYear) facts.push(`Filed year: ${filedYear} (transaction dates should not be after the filing date)`);
+  if (typeof context.pageCount === 'number' && Number.isFinite(context.pageCount) && context.pageCount > 0) {
+    facts.push(`Document page count: ${Math.round(context.pageCount)}`);
+  }
+  const filerName = context.filerName?.trim();
+  if (filerName) facts.push(`Filer name (as registered): ${filerName.slice(0, 120)}`);
+  if (!facts.length) return base;
+  return `${base}\n\nKNOWN DOCUMENT FACTS (verified ingestion metadata — use them to orient on the correct form layout and to disambiguate hard-to-read header fields; NEVER invent transactions from them, and NEVER let them override what the document itself legibly shows):\n${facts.map((fact) => `- ${fact}`).join('\n')}`;
+}
+
+/**
+ * Assemble the prompt context for a filing, filling gaps from D1 best-effort
+ * (filings row for filing_type/filed_date/page_count, filers row for the
+ * registered name). Never throws and never blocks extraction: with no DB (or
+ * a partial synthetic filing, as in the bake-off harness) it simply returns
+ * whatever facts are already on the filing object.
+ */
+export async function loadExtractionPromptContext(
+  env: Env | undefined,
+  filing: Partial<Filing> | undefined,
+  pageCountHint?: number | null,
+): Promise<ExtractionPromptContext> {
+  const context: ExtractionPromptContext = {
+    chamber: filing?.chamber ?? null,
+    filingType: filing?.filingType ?? null,
+    filedDate: filing?.filedDate ?? null,
+    pageCount: pageCountHint ?? null,
+  };
+  const docId = filing?.docId;
+  if (!env?.DB || !docId) return context;
+  try {
+    const row = await get<{
+      chamber: string | null;
+      filing_type: string | null;
+      filed_date: string | null;
+      page_count: number | null;
+      filer_id: string | null;
+    }>(
+      env.DB,
+      'SELECT chamber, filing_type, filed_date, page_count, filer_id FROM filings WHERE doc_id = ?',
+      [docId],
+    );
+    if (row) {
+      context.chamber = context.chamber ?? row.chamber;
+      context.filingType = context.filingType ?? row.filing_type;
+      context.filedDate = context.filedDate ?? row.filed_date;
+      if (context.pageCount == null && row.page_count != null) context.pageCount = row.page_count;
+      const filerId = filing?.filerId ?? row.filer_id;
+      if (filerId) {
+        const filer = await get<{ full_name: string | null }>(
+          env.DB,
+          'SELECT full_name FROM filers WHERE bioguide_id = ?',
+          [filerId],
+        );
+        if (filer?.full_name) context.filerName = filer.full_name;
+      }
+    }
+  } catch {
+    // Pre-migration DB / lookup hiccup: extraction proceeds with what we have.
+  }
+  return context;
+}
 
 /** Gemini responseSchema constraining output to our transaction array. */
 const RESPONSE_SCHEMA = {
