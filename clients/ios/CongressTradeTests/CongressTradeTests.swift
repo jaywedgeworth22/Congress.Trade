@@ -158,7 +158,6 @@ final class CongressTradeTests: XCTestCase {
         }
 
         await store.setChamberSelection([.house, .senate])
-        await store.refresh()
 
         let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
         XCTAssertNil(
@@ -247,7 +246,6 @@ final class CongressTradeTests: XCTestCase {
             sleeper: { _ in }
         )
         await store.setChamberSelection([.house, .senate])
-        await store.refresh()
 
         XCTAssertEqual(feedCallCount, 3, "Should keep paging while pages are full, stopping only once a short page signals exhaustion")
         XCTAssertEqual(cursorStore.cursor(for: "house,senate"), 210)
@@ -277,7 +275,6 @@ final class CongressTradeTests: XCTestCase {
             sleeper: { _ in }
         )
         await store.setChamberSelection([.house, .senate])
-        await store.refresh()
 
         XCTAssertEqual(feedCallCount, 20, "A very large backlog must not turn one refresh into an unbounded crawl")
         XCTAssertEqual(store.feedNotice, "Caught up on the latest 1000 trades. Pull to refresh again to keep catching up.")
