@@ -83,9 +83,24 @@ struct StatusPill: View {
 struct AssetMark: View {
     let symbol: String
 
+    private var logoURL: URL? {
+        guard let encodedSymbol = symbol.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            return nil
+        }
+        let base = CongressTradeAPIClient.defaultBaseURL
+        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.path = "/api/logos/ticker"
+        components.queryItems = [
+            URLQueryItem(name: "symbol", value: encodedSymbol),
+            URLQueryItem(name: "theme", value: "light")
+        ]
+        return components.url
+    }
+
     var body: some View {
-        if let encodedSymbol = symbol.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
-           let url = URL(string: "https://congress.trade/api/logos/ticker?symbol=\(encodedSymbol)") {
+        if let url = logoURL {
             AsyncImage(url: url) { phase in
                 switch phase {
                 case .success(let image):

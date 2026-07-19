@@ -146,7 +146,7 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: InMemorySyncCursorStore(),
             sleeper: { _ in }
         )
-        XCTAssertEqual(store.selectedChambers, [.house, .senate])
+        XCTAssertEqual(store.selectedChambers, [.house, .senate, .executive])
 
         var feedURL: URL?
         MockURLProtocol.handler = { request in
@@ -157,6 +157,7 @@ final class CongressTradeTests: XCTestCase {
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
+        await store.setChamberSelection([.house, .senate])
         await store.refresh()
 
         let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
@@ -206,7 +207,7 @@ final class CongressTradeTests: XCTestCase {
 
         await store.setChamberSelection([])
 
-        XCTAssertEqual(store.selectedChambers, [.house, .senate])
+        XCTAssertEqual(store.selectedChambers, [.house, .senate, .executive])
     }
 
     // MARK: - Feed catch-up sync (CT-AUD-009)
