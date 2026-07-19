@@ -1,10 +1,10 @@
 import SwiftUI
 
 enum AppTheme {
-    static let background = Color.black // Enhanced dark mode base
-    static let panel = Color(uiColor: .systemGray6).opacity(0.4) // Glassmorphism base
+    static let background = Color(uiColor: .systemBackground)
+    static let panel = Color(uiColor: .systemGray6).opacity(0.4)
     static let panelElevated = Color(uiColor: .systemGray5).opacity(0.6)
-    static let borderColor = Color.white.opacity(0.15)
+    static let borderColor = Color(uiColor: .separator)
     static let primaryGradient = LinearGradient(colors: [.blue, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
     
     // Web app aesthetic alignment
@@ -12,10 +12,9 @@ enum AppTheme {
     static let senateColor = Color.purple.opacity(0.8)
     static let execColor = Color.orange.opacity(0.8)
 
-    static var border: some View {
-        RoundedRectangle(cornerRadius: 16)
+    static func border(cornerRadius: CGFloat = 16) -> some View {
+        RoundedRectangle(cornerRadius: cornerRadius)
             .stroke(borderColor, lineWidth: 1)
-            .blendMode(.overlay)
     }
 }
 
@@ -83,8 +82,50 @@ struct StatusPill: View {
 
 struct AssetMark: View {
     let symbol: String
+    var isTicker: Bool = true
+
+    private var logoURL: URL? {
+        guard isTicker else { return nil }
+        guard let encodedSymbol = symbol.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
+            return nil
+        }
+        let base = CongressTradeAPIClient.defaultBaseURL
+        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.path = "/api/logos/ticker"
+        components.queryItems = [
+            URLQueryItem(name: "symbol", value: encodedSymbol),
+            URLQueryItem(name: "theme", value: "light")
+        ]
+        return components.url
+    }
 
     var body: some View {
+        if let url = logoURL {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .padding(6)
+                        .frame(width: 48, height: 48)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(AppTheme.borderColor, lineWidth: 1)
+                        )
+                default:
+                    fallbackMark
+                }
+            }
+        } else {
+            fallbackMark
+        }
+    }
+
+    private var fallbackMark: some View {
         Text(String(symbol.prefix(4)).uppercased())
             .font(.caption.weight(.heavy).monospaced())
             .frame(width: 48, height: 48)
@@ -150,7 +191,7 @@ struct DetailSection<Content: View>: View {
         .padding(16)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
         .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(AppTheme.border)
+        .overlay(AppTheme.border(cornerRadius: 16))
     }
 }
 
@@ -187,7 +228,7 @@ struct NoticeView: View {
             .padding(12)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
             .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(AppTheme.border)
+            .overlay(AppTheme.border(cornerRadius: 12))
     }
 }
 
@@ -224,7 +265,7 @@ struct FeedFreshnessView: View {
             .padding(12)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
             .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(AppTheme.border)
+            .overlay(AppTheme.border(cornerRadius: 12))
         }
     }
 }

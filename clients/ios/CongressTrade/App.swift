@@ -4,14 +4,23 @@ import SwiftData
 @main
 struct CongressTradeApp: App {
     @StateObject private var store = CongressTradeStore(api: CongressTradeAPIClient())
+    @AppStorage("app_color_scheme") private var appColorScheme = "system"
 
     var body: some Scene {
         WindowGroup {
             MainTabView()
                 .environmentObject(store)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(colorScheme)
         }
         .modelContainer(for: ClientTrade.self)
+    }
+
+    private var colorScheme: ColorScheme? {
+        switch appColorScheme {
+        case "light": return .light
+        case "dark": return .dark
+        default: return nil
+        }
     }
 }
 

@@ -146,7 +146,7 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: InMemorySyncCursorStore(),
             sleeper: { _ in }
         )
-        XCTAssertEqual(store.selectedChambers, [.house, .senate])
+        XCTAssertEqual(store.selectedChambers, [.house, .senate, .executive])
 
         var feedURL: URL?
         MockURLProtocol.handler = { request in
@@ -157,7 +157,7 @@ final class CongressTradeTests: XCTestCase {
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
-        await store.refresh()
+        await store.setChamberSelection([.house, .senate])
 
         let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
         XCTAssertNil(
@@ -206,7 +206,7 @@ final class CongressTradeTests: XCTestCase {
 
         await store.setChamberSelection([])
 
-        XCTAssertEqual(store.selectedChambers, [.house, .senate])
+        XCTAssertEqual(store.selectedChambers, [.house, .senate, .executive])
     }
 
     // MARK: - Feed catch-up sync (CT-AUD-009)
@@ -245,7 +245,7 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: cursorStore,
             sleeper: { _ in }
         )
-        await store.refresh()
+        await store.setChamberSelection([.house, .senate])
 
         XCTAssertEqual(feedCallCount, 3, "Should keep paging while pages are full, stopping only once a short page signals exhaustion")
         XCTAssertEqual(cursorStore.cursor(for: "house,senate"), 210)
@@ -274,7 +274,7 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: cursorStore,
             sleeper: { _ in }
         )
-        await store.refresh()
+        await store.setChamberSelection([.house, .senate])
 
         XCTAssertEqual(feedCallCount, 20, "A very large backlog must not turn one refresh into an unbounded crawl")
         XCTAssertEqual(store.feedNotice, "Caught up on the latest 1000 trades. Pull to refresh again to keep catching up.")
