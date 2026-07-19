@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WatchlistView: View {
     @EnvironmentObject private var store: CongressTradeStore
+    @AppStorage("app_color_scheme") private var appColorScheme = "system"
     @State private var sessionTokenInput = ""
     @State private var watchlistText = ""
     @State private var hasInitializedWatchlist = false
@@ -37,6 +38,15 @@ struct WatchlistView: View {
                     Text("Keychain Authentication")
                 } footer: {
                     Text("The iPhone app saves preferences on the backend. The phone never stores provider keys, admin tokens, crawler logic, or MCP orchestration.")
+                }
+
+                Section("Appearance") {
+                    Picker("Theme Mode", selection: $appColorScheme) {
+                        Text("Match System").tag("system")
+                        Text("Light").tag("light")
+                        Text("Dark").tag("dark")
+                    }
+                    .pickerStyle(.segmented)
                 }
 
                 Section("Saved Tickers") {
