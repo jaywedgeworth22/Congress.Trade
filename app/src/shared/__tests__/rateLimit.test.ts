@@ -112,6 +112,23 @@ describe('rateLimit auth-bucket same-isolate hardening', () => {
       expect((await rateLimit(env, 'magic-ip', '1.2.3.4', 3, 600)).ok).toBe(true);
     }
   });
+
+  it('does not latch the memory block on magic-ip during a KV write outage', async () => {
+    // Reads succeed (always stale 0) but every write throws. Serial retries must
+    // stay fail-open — the memory admit is rolled back on the write failure so
+    // the counter never latches at the limit.
+    const env = {
+      CONFIG_KV: {
+        get: async () => null,
+        put: async () => {
+          throw new Error('kv write down');
+        },
+      },
+    } as unknown as Env;
+    for (let i = 0; i < 10; i++) {
+      expect((await rateLimit(env, 'magic-ip', '1.2.3.4', 3, 600)).ok).toBe(true);
+    }
+  });
 });
 
 describe('clientIp', () => {

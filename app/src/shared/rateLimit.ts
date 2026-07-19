@@ -193,7 +193,10 @@ export async function rateLimit(
     // Expire a little past the window so stale counters self-clean.
     await kv.put(key, String(count + 1), { expirationTtl: windowSec + 5 });
   } catch {
-    /* fail open on write error */
+    // Write failed: fail open AND roll back the in-memory admit, so a KV write
+    // outage (reads succeed, writes throw) cannot latch a per-isolate block for
+    // the rest of the window either. Matches the read-failure path above.
+    memoryRollback(bucket, identifier, windowSec, windowStart);
   }
   return { ok: true, remaining: limit - count - 1, retryAfterSec: 0 };
 }
