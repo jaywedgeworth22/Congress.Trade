@@ -731,6 +731,49 @@ export function priceBenchmarkUsage(input: PriceBenchmarkUsageInput): BenchmarkC
   };
 }
 
+// ---------------------------------------------------------------------------
+// A-priori planning estimates (provider-health overlay + backlog autopilot)
+// ---------------------------------------------------------------------------
+
+/**
+ * Nominal per-document read profile used ONLY for a-priori cost planning
+ * (overlay substitution ordering, the 3x cost guard, and autopilot budget
+ * reservations). Roughly one small scanned PTR: ~8K input tokens (prompt +
+ * PDF pages) and ~2K output tokens, or 4 OCR pages. These are planning
+ * constants, not accounting — measured usage is always settled afterwards via
+ * priceBenchmarkUsage, which refuses to invent missing usage.
+ */
+export const NOMINAL_DOC_PROMPT_TOKENS = 8_000;
+export const NOMINAL_DOC_COMPLETION_TOKENS = 2_000;
+export const NOMINAL_DOC_PAGES = 4;
+
+/**
+ * Estimate the rate-card cost of ONE model read of a nominal document.
+ * Returns null when the model has no rate-card entry (callers must treat an
+ * unpriceable model as ineligible for cost-ranked substitution).
+ *
+ * Unlike priceBenchmarkUsage, this deliberately ignores
+ * `requiresProviderReportedCost` (xAI): this is a planning estimate made
+ * before any request exists, so token-only pricing is the best available
+ * forecast and is never recorded as an actual cost.
+ */
+export function estimateNominalReadCostUsd(
+  provider: string,
+  model: string,
+  opts: { pageCount?: number | null; rateCard?: readonly BenchmarkRate[] } = {},
+): number | null {
+  const rate = findRate({ provider, model, invoked: true, rateCard: opts.rateCard });
+  if (!rate) return null;
+  if (rate.meter === 'pages') {
+    const pages = Math.max(1, Math.round(opts.pageCount ?? NOMINAL_DOC_PAGES));
+    return pages * rate.usdPerPage;
+  }
+  return (
+    NOMINAL_DOC_PROMPT_TOKENS * rate.inputUsdPerMillion
+    + NOMINAL_DOC_COMPLETION_TOKENS * rate.outputUsdPerMillion
+  ) / 1_000_000;
+}
+
 export interface CostObservation {
   invoked: boolean;
   costUsd: number | null;

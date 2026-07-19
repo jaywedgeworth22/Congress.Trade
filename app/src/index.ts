@@ -37,6 +37,11 @@ import { buildUiRouter } from './ui/routes';
 import { maybeRunDailyJobs } from './jobs';
 import { flushD1Budget } from './shared/d1Budget';
 import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement';
+import {
+  handleAutopilotTick,
+  markAutopilotRunHalted,
+  maybeStartBacklogAutopilot,
+} from './extraction/autopilot';
 import { refreshSecrets } from './secrets/infisical';
 import { runDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency';
 import { buildDetectionRouter } from './ingestion/detectionRoutes';
@@ -165,6 +170,11 @@ async function handleIngestMessage(env: Env, msg: QueueMessage, queueAttempt = 1
       // scheduled-handler waitUntil cancels long model work.
       await handleAgreementCheck(env, msg.docId, msg.rawObjectKey, msg.escalationTier, msg.claimToken);
       return;
+    case 'autopilot.tick':
+      // One backlog-autopilot slice (a few docs through the same cascade
+      // machinery); the handler re-enqueues itself until the run finishes.
+      await handleAutopilotTick(env, msg.runId);
+      return;
     case 'usage.telemetry':
       // While the circuit breaker is open (receiver known-down), skip the live
       // delivery attempt entirely and go straight to the R2 outbox. Acking
@@ -217,6 +227,13 @@ async function handleDeadLetterMessage(
     return;
   }
   await recordDeadLetterDurable(env, queue, msg, attempts, recoveryError);
+
+  if (msg.type === 'autopilot.tick') {
+    // A dead-lettered autopilot slice means the run's consumer kept failing:
+    // surface it as a halt requiring acknowledgment, never silently drop it.
+    await markAutopilotRunHalted(env, msg.runId, 'tick_dead_lettered');
+    return;
+  }
 
   if (queue.includes('delivery')) {
     if (msg.type !== 'delivery.dispatch') throw new Error('delivery DLQ message has no transaction identity');
@@ -476,6 +493,16 @@ const requestAndScheduledWorker = Sentry.withSentry(
           maybeRunDailyJobs(env),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'daily-jobs' } }),
+        ),
+      );
+      // Backlog autopilot gate: decides whether a bulk drain run is due
+      // (daily, or backlog over threshold) and enqueues the first
+      // autopilot.tick — the actual model work runs in the queue consumer.
+      track(
+        Sentry.withMonitor('backlog-autopilot-cron', () =>
+          maybeStartBacklogAutopilot(env),
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'backlog-autopilot' } }),
         ),
       );
       track(

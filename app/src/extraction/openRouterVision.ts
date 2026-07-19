@@ -10,8 +10,8 @@ import type { Env, Filing, ParsedTx } from '../shared/types';
 import { getDocumentProxy } from 'unpdf';
 import { resolveSecret } from '../secrets/infisical';
 import {
-  SYSTEM_PROMPT,
-  EXECUTIVE_SYSTEM_PROMPT,
+  buildExtractionPrompt,
+  loadExtractionPromptContext,
   parseModelJson,
   toParsedTx,
   fetchWithRetry,
@@ -95,7 +95,6 @@ export class OpenRouterVisionExtractor implements Extractor {
     if (!input.bytes) throw new Error(`${this.name}: no bytes provided on ExtractorInput`);
 
     const model = await this.resolveModel();
-    const promptToUse = input.filing.chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
 
     let pagesProcessed: number | undefined = undefined;
     if (model.toLowerCase().includes('mistral-ocr')) {
@@ -106,6 +105,11 @@ export class OpenRouterVisionExtractor implements Extractor {
         // ignore
       }
     }
+
+    // Metadata-grounded prompt: known filing facts (chamber, form type, filed
+    // year, page count, filer name) orient the model on the form layout.
+    const promptContext = await loadExtractionPromptContext(this.env, input.filing, pagesProcessed);
+    const promptToUse = buildExtractionPrompt(promptContext);
 
     let totalPromptTokens = 0;
     let totalCompletionTokens = 0;

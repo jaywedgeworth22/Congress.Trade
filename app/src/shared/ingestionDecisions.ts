@@ -9,7 +9,13 @@ export type IngestionDecisionAction =
   | 'rejected'
   | 'unpublished'
   | 'auto_retry_requested'
-  | 'agreement_published';
+  | 'agreement_published'
+  /** Runtime provider-health overlay substituted a blocked slot's model. */
+  | 'provider_substituted'
+  /** Autopilot auto-resolved a doc_class='empty' review item (no transactions). */
+  | 'auto_resolved_empty'
+  /** Autopilot quarantined a doc_class='corrupt' review item (cascade suppressed). */
+  | 'doc_quarantined';
 
 export type IngestionDecisionSource = 'pipeline' | 'admin' | 'agreement';
 
