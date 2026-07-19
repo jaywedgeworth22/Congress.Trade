@@ -17,6 +17,11 @@
 import type { Env } from '../shared/types';
 import { get, run } from '../shared/db';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import {
+  SENATE_SESSION_KV_KEY,
+  establishSenateSession,
+  looksLikeSenateAgreementWall,
+} from './senateSource';
 
 const UA = 'congress-feed/0.1 (+https://congress.trade)';
 
@@ -118,6 +123,22 @@ export function rawKeyFor(docId: string): string {
   return `raw/${docId}`;
 }
 
+/**
+ * True when already-buffered raw bytes are the Senate eFD agreement wall
+ * instead of a filing. A sessionless (or expired-session) GET of any
+ * /search/view/... report URL is transparently redirected to the wall, which
+ * arrives as HTTP 200 text/html — so it MUST be sniffed by content before the
+ * bytes are persisted. PDFs can never be the wall; only HTML-ish bodies are
+ * decoded and tested.
+ */
+export function isSenateAgreementWallBytes(bytes: Uint8Array): boolean {
+  if (bytes.length >= 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46) {
+    return false; // %PDF — a real document, never the wall
+  }
+  const prefix = new TextDecoder('utf-8').decode(bytes.subarray(0, Math.min(bytes.length, 65536)));
+  return looksLikeSenateAgreementWall(prefix);
+}
+
 /** Mark a filing as errored (does not throw). */
 async function markError(env: Env, docId: string, message: string): Promise<void> {
   try {
@@ -187,7 +208,7 @@ export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Pr
       return;
     }
 
-    const contentType = res.headers.get('content-type') ?? '';
+    let contentType = res.headers.get('content-type') ?? '';
     const contentLength = Number(res.headers.get('content-length'));
     if (Number.isFinite(contentLength) && contentLength > MAX_RAW_FILING_BYTES) {
       await res.body?.cancel().catch(() => {});
@@ -198,7 +219,39 @@ export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Pr
 
     // Persist raw bytes verbatim; retain content-type so the classifier can use
     // it as a cheap signal without re-fetching.
-    const rawBytes = await bufferFilingBody(res.body);
+    let rawBytes = await bufferFilingBody(res.body);
+
+    // SENATE AGREEMENT-WALL GUARD. When the KV session is missing or expired,
+    // eFD answers the report URL with the agreement wall (HTTP 200, text/html).
+    // Storing that page as the filing's raw bytes silently yields a
+    // zero-transaction "senate_html" extraction, so: detect the wall BEFORE the
+    // R2 write, negotiate a fresh agreement-accepted session (cached back to
+    // KV for subsequent filings), and refetch once. If the wall persists, the
+    // message is retried later rather than poisoning the pipeline.
+    if (row.chamber === 'senate' && isSenateAgreementWallBytes(rawBytes)) {
+      const session = await establishSenateSession({ kv: env.CONFIG_KV });
+      const retry = await trackedFetch(sourceUrl, {
+        headers: { ...headers, cookie: session.cookieHeader },
+        redirect: 'follow',
+      }, { service: 'filing-ingestion', operation: 'fetch-filing-document', dynamicTarget: 'filing-source' });
+      if (!retry.ok || !retry.body) {
+        await retry.body?.cancel().catch(() => {});
+        const message = `fetcher: senate agreement wall for ${sourceUrl}; refetch -> HTTP ${retry.status}`;
+        await markError(env, docId, message);
+        throw new IngestRetryError(message, ingestBackoffSeconds(queueAttempt));
+      }
+      const retryBytes = await bufferFilingBody(retry.body);
+      if (isSenateAgreementWallBytes(retryBytes)) {
+        // Session refresh did not clear the wall (likely anti-bot). Drop the
+        // cached session so the next attempt re-negotiates from scratch.
+        if (env.CONFIG_KV) await env.CONFIG_KV.delete(SENATE_SESSION_KV_KEY).catch(() => {});
+        const message = `fetcher: senate agreement wall persisted after session refresh for ${sourceUrl}`;
+        await markError(env, docId, message);
+        throw new IngestRetryError(message, ingestBackoffSeconds(queueAttempt));
+      }
+      rawBytes = retryBytes;
+      contentType = retry.headers.get('content-type') ?? contentType;
+    }
     await env.RAW_FILES.put(key, rawBytes, {
       httpMetadata: { contentType: contentType || 'application/octet-stream' },
     });
