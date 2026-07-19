@@ -317,3 +317,30 @@ enum TradeSearch {
         ].contains { ($0 ?? "").lowercased().contains(normalizedNeedle) }
     }
 }
+
+struct LatencyProvider: Decodable, Identifiable {
+    let id: String
+    let label: String
+    let candidates: Int
+    let matched: Int
+    let coveragePct: Double
+    let usFirstCount: Int
+    let providerFirstCount: Int
+    let tieCount: Int
+    let medianLeadSec: Int?
+    let avgLeadSec: Int?
+    let p90LeadSec: Int?
+}
+
+struct LatencySummary: Decodable {
+    let generatedAt: String
+    let totals: LatencyTotals
+    let providers: [LatencyProvider]
+    
+    struct LatencyTotals: Decodable {
+        let racedDisclosures: Int
+        let matched: Int
+        let pending: Int
+        let comparableProviders: Int
+    }
+}
