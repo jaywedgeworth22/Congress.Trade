@@ -256,7 +256,8 @@ final class CongressTradeStore: ObservableObject {
     /// `app/src/delivery/rows.ts` `buildTxFilters`.
     private static func chamberQueryValue(for chambers: Set<ChamberFilter>) -> String? {
         let normalized = chambers.isEmpty ? defaultChambers : chambers
-        if normalized == defaultChambers { return nil }
+        let backendDefault: Set<ChamberFilter> = [.house, .senate]
+        if normalized == backendDefault { return nil }
         return normalized.map(\.rawValue).sorted().joined(separator: ",")
     }
 

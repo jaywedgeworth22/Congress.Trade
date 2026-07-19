@@ -263,13 +263,23 @@ struct TradeCard: View {
             HStack(alignment: .center, spacing: 10) {
                 if let photoUrlString = trade.member.photoUrl,
                    let url = URL(string: photoUrlString) {
-                    AsyncImage(url: url) { image in
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    } placeholder: {
-                        ProgressView()
-                            .controlSize(.small)
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                        case .failure:
+                            Text(trade.member.party?.partyEmoji ?? "🦅")
+                                .font(.system(size: 18))
+                                .frame(width: 36, height: 36)
+                                .background(Color(uiColor: .secondarySystemBackground), in: Circle())
+                        case .empty:
+                            ProgressView()
+                                .controlSize(.small)
+                        @unknown default:
+                            EmptyView()
+                        }
                     }
                     .frame(width: 36, height: 36)
                     .clipShape(Circle())
