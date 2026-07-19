@@ -23,7 +23,7 @@
  */
 
 import { unzipSync } from 'fflate';
-import { CookieJar, delay } from './senateSource';
+import { BROWSER_HEADERS, CookieJar, delay } from './senateSource';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
 /** A single filing row parsed out of the House yearly index XML. */
@@ -192,7 +192,6 @@ export async function fetchHouseIndex(year: number | string): Promise<HouseFilin
 
 const HOUSE_FD_BASE = 'https://disclosures-clerk.house.gov/FinancialDisclosure';
 const HOUSE_SEARCH_RESULT = `${HOUSE_FD_BASE}/ViewMemberSearchResult`;
-const HOUSE_UA = 'congress-feed/0.1 (+https://congress.trade)';
 const HOUSE_POLITE_DELAY_MS = 500;
 
 /** Strip HTML tags + collapse whitespace to recover a cell's visible text. */
@@ -324,9 +323,16 @@ export async function pollHouseLiveSearch(
 ): Promise<HouseFiling[]> {
   const jar = new CookieJar();
 
+  // Browser-like headers (shared with the Senate eFD flow): the interactive
+  // search sits behind an anti-bot layer that quietly refuses obvious
+  // non-browser clients from datacenter egress IPs. Production discovered ZERO
+  // filings intraday with the bare "congress-feed/0.1" UA (every first_seen
+  // clustered in the daily bulk-XML window), while the endpoint answers the
+  // same request off-network. The bulk ZIP fetch intentionally KEEPS its plain
+  // UA — that path is WAF-tolerated as-is.
   // 1) GET the search page to pick up any session cookie the result POST needs.
   const landing = await trackedFetch(`${HOUSE_FD_BASE}/ViewSearch`, {
-    headers: { 'user-agent': HOUSE_UA, accept: 'text/html,*/*' },
+    headers: { ...BROWSER_HEADERS, accept: 'text/html,*/*' },
   }, { service: 'filing-discovery', operation: 'open-house-search-session' }, fetchImpl);
   if (landing.ok) jar.absorb(landing);
 
@@ -336,7 +342,7 @@ export async function pollHouseLiveSearch(
   const res = await trackedFetch(HOUSE_SEARCH_RESULT, {
     method: 'POST',
     headers: {
-      'user-agent': HOUSE_UA,
+      ...BROWSER_HEADERS,
       'content-type': 'application/x-www-form-urlencoded',
       accept: 'text/html,application/xhtml+xml,*/*',
       referer: `${HOUSE_FD_BASE}/ViewSearch`,

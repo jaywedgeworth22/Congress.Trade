@@ -25,7 +25,7 @@
 
 import type { Env } from '../shared/types';
 import { resolveSecret } from '../secrets/infisical';
-import { getLastPollAt } from '../shared/config';
+import { getLastAttemptAt, getLastPollAt, setLastAttemptAt } from '../shared/config';
 import type { DiscoveredFiling } from './watcher';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
 
@@ -33,7 +33,11 @@ export const OGE_DEFAULT_INDEX_URL =
   'https://extapps2.oge.gov/201/Presiden.nsf/President%20and%20Vice%20President%20Index?OpenView&ExpandView&Count=500';
 
 const OGE_ORIGIN = 'https://extapps2.oge.gov';
-const DEFAULT_POLL_INTERVAL_SEC = 21_600; // 6h — filings land every few weeks
+const DEFAULT_POLL_INTERVAL_SEC = 21_600; // 6h fallback when no interval is configured
+/** Minimum wait after a FAILED attempt before hitting the index again. Without
+ *  this, an OGE outage was retried on EVERY minutely cron tick (last_poll:oge
+ *  only advances on success), hammering the host 60x/hour. */
+export const OGE_FAILURE_BACKOFF_SEC = 600;
 const POLL_SOURCE = 'oge';
 
 /** Known executive filers we ingest. Matching is against the PDF filename.
@@ -194,13 +198,26 @@ async function indexUrl(env: Env): Promise<string> {
   }
 }
 
+/** Parse a configured interval string; >= 60s or the 6h default. */
+function parseIntervalSec(raw: string | undefined): number {
+  const n = parseInt(raw || '', 10);
+  return Number.isFinite(n) && n >= 60 ? n : DEFAULT_POLL_INTERVAL_SEC;
+}
+
+/**
+ * Effective OGE poll interval: Infisical value, else the OGE_POLL_INTERVAL_SEC
+ * env var, else 6h. The catch path previously returned the 6h default WITHOUT
+ * consulting the env var — so any secrets-resolution failure silently ignored
+ * the configured cadence (part of why production drifted to ~6h polls against
+ * a 1h expectation; the other part was that no value was deployed at all —
+ * wrangler.toml now ships OGE_POLL_INTERVAL_SEC explicitly).
+ */
 async function pollIntervalSec(env: Env): Promise<number> {
   try {
     const raw = (await resolveSecret(env, 'OGE_POLL_INTERVAL_SEC')).value ?? env.OGE_POLL_INTERVAL_SEC;
-    const n = parseInt(raw || '', 10);
-    return Number.isFinite(n) && n >= 60 ? n : DEFAULT_POLL_INTERVAL_SEC;
+    return parseIntervalSec(raw);
   } catch {
-    return DEFAULT_POLL_INTERVAL_SEC;
+    return parseIntervalSec(env.OGE_POLL_INTERVAL_SEC);
   }
 }
 
@@ -233,6 +250,16 @@ export async function pollOgeExecutive(
   if (!opts.force) {
     const last = await getLastPollAt(env, POLL_SOURCE);
     if (last && now.getTime() - last.getTime() < (await pollIntervalSec(env)) * 1000) return null;
+    // FAILURE BACKOFF (mirrors the House/Senate pattern in runWatcher): an
+    // attempt newer than the last success means the previous poll failed
+    // somewhere between fetch and persist; wait out the backoff window instead
+    // of retrying on every minutely tick.
+    const lastAttempt = await getLastAttemptAt(env, POLL_SOURCE);
+    const lastAttemptFailed = lastAttempt && (!last || last.getTime() < lastAttempt.getTime());
+    if (lastAttemptFailed && now.getTime() - lastAttempt.getTime() < OGE_FAILURE_BACKOFF_SEC * 1000) {
+      return null;
+    }
+    await setLastAttemptAt(env, POLL_SOURCE, now);
   }
   // Checkpoint is written by the caller (pollExecutive) only after
   // persistence succeeds, matching the House/Senate ordering — a failed
