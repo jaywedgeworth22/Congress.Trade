@@ -270,6 +270,17 @@ DISCLOSURE_LATENCY_PROVIDERS = "fmp,quiver,unusual_whales"
 # subscriptions by default (explicit chamber opt-in only). All OGE_* knobs are
 # Infisical-tunable.
 OGE_WATCH_ENABLED = "true"
+# OGE index poll cadence. Deployed explicitly (previously unset, so the code's
+# 6h fallback governed and polls drifted to ~6h against a 1h expectation).
+OGE_POLL_INTERVAL_SEC = "3600"
+# Senate eFD discovery lookback: 7-day base window; the daily deep sweep and
+# outage catch-up widen it to SENATE_MAX_LOOKBACK_DAYS (bump temporarily via
+# Infisical for a one-off deeper recovery sweep — hard-capped at 365).
+SENATE_LOOKBACK_DAYS = "7"
+SENATE_MAX_LOOKBACK_DAYS = "30"
+# For the first N days of January, also sweep the prior-year House index
+# (late-December filings can appear there after the year rolls over).
+HOUSE_PRIOR_YEAR_OVERLAP_DAYS = "14"
 # Public-API anti-scraping guard (src/security/botDefense.ts): blocks scraper/
 # AI-crawler user agents and applies per-IP request + daily row budgets on the
 # public data endpoints. Infisical can override SCRAPE_GUARD_ENABLED to "false"
