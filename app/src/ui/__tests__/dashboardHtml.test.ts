@@ -565,8 +565,11 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('var REREAD_MODELS = BENCHMARK_CATALOG;');
     expect(DASHBOARD_HTML).not.toContain("{ provider: 'gemini', model: 'gemini-3.5-flash' }");
     // Injected JSON carries the corrected DEFAULT_CANDIDATES + LlamaParse set.
-    expect(DASHBOARD_HTML).toContain('{"provider":"gemini","model":"gemini-3.5-flash"}');
-    expect(DASHBOARD_HTML).toContain('{"provider":"openai","model":"gpt-5.6-terra"}');
+    expect(DASHBOARD_HTML).not.toContain('{"provider":"gemini","model":"gemini-3.5-flash"}');
+    expect(DASHBOARD_HTML).not.toContain('{"provider":"openai","model":"gpt-5.6-terra"}');
+    expect(DASHBOARD_HTML).not.toContain('{"provider":"openrouter","model":"openrouter/auto"}');
+    expect(DASHBOARD_HTML).not.toContain('{"provider":"openrouter","model":"openai/gpt-5.6-terra-pro"}');
+    expect(DASHBOARD_HTML).not.toContain('{"provider":"openrouter","model":"openai/gpt-5.6-sol"}');
     expect(DASHBOARD_HTML).toContain('{"provider":"openrouter","model":"deepseek/deepseek-v4-pro"}');
     expect(DASHBOARD_HTML).toContain('{"provider":"openrouter","model":"deepseek/deepseek-v4-flash"}');
     expect(DASHBOARD_HTML).toContain('{"provider":"openrouter","model":"google/gemini-3.5-flash"}');
