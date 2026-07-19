@@ -5,6 +5,7 @@ import SwiftData
 final class CongressTradeStore: ObservableObject {
     @Published private(set) var bootstrap: BootstrapResponse?
     @Published private(set) var feed: ClientFeedResponse?
+    @Published private(set) var latencySummary: LatencySummary?
     @Published private(set) var subscriptions: [Subscription] = []
     @Published private(set) var commands: [ClientCommand] = []
     @Published private(set) var watchlist: [String] = []
@@ -22,6 +23,13 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var lastSuccessfulRefresh: Date?
     @Published private(set) var isOffline = false
     @Published private(set) var hasStoredSessionToken = false
+    @Published var viewLimit: Int = 50 {
+        didSet {
+            if oldValue != viewLimit {
+                Task { await refresh() }
+            }
+        }
+    }
     /// Canonical chamber chip selection. Drives both the visible chips and
     /// the `chamber=` feed request — see `chamberQueryValue`. CT-AUD-010.
     @Published private(set) var selectedChambers: Set<ChamberFilter> = CongressTradeStore.initialChambers
@@ -40,9 +48,9 @@ final class CongressTradeStore: ObservableObject {
     /// during a sync never leaves the newly selected filter unsynced.
     private var refreshQueued = false
 
-    private static let cacheLimit = 500
+    private var cacheLimit: Int { max(500, viewLimit * 2) }
     /// Rows requested per feed page during catch-up sync.
-    private static let pageLimit = 50
+    private var pageLimit: Int { viewLimit }
     /// Hard bound on pages fetched in a single `refresh()` catch-up loop, so a
     /// large backlog can't turn one pull-to-refresh into an unbounded crawl.
     private static let maxCatchUpPages = 20
@@ -138,6 +146,14 @@ final class CongressTradeStore: ObservableObject {
         }
     }
 
+    func refreshLatencySummary() async {
+        do {
+            latencySummary = try await api.latencySummary()
+        } catch {
+            print("Failed to fetch latency summary: \(error)")
+        }
+    }
+
     private struct FeedSyncResult {
         let lastResponse: ClientFeedResponse?
         let notice: String?
@@ -163,7 +179,7 @@ final class CongressTradeStore: ObservableObject {
             // Cold start for this exact filter: bounded newest-page snapshot,
             // not a full historical backfill.
             let response = try await fetchPageWithRetry(
-                FeedQuery(limit: Self.pageLimit, since: nil, chamber: chamberParam, order: "desc")
+                FeedQuery(limit: pageLimit, since: nil, chamber: chamberParam, order: "desc")
             )
             try persist(response)
             cursorStore.setCursor(response.cursor, for: filterKey)
@@ -175,7 +191,7 @@ final class CongressTradeStore: ObservableObject {
         var pages = 0
         while pages < Self.maxCatchUpPages {
             let response = try await fetchPageWithRetry(
-                FeedQuery(limit: Self.pageLimit, since: cursor, chamber: chamberParam, order: "asc")
+                FeedQuery(limit: pageLimit, since: cursor, chamber: chamberParam, order: "asc")
             )
             try persist(response)
             pages += 1
@@ -195,7 +211,7 @@ final class CongressTradeStore: ObservableObject {
         }
         return FeedSyncResult(
             lastResponse: lastResponse,
-            notice: "Caught up on the latest \(pages * Self.pageLimit) trades. Pull to refresh again to keep catching up."
+            notice: "Caught up on the latest \(pages * pageLimit) trades. Pull to refresh again to keep catching up."
         )
     }
 
@@ -292,7 +308,7 @@ final class CongressTradeStore: ObservableObject {
 
     private func trimCache(in context: ModelContext) throws {
         var descriptor = FetchDescriptor<ClientTrade>(sortBy: [SortDescriptor(\.cursor, order: .reverse)])
-        descriptor.fetchOffset = Self.cacheLimit
+        descriptor.fetchOffset = cacheLimit
         for trade in try context.fetch(descriptor) {
             context.delete(trade)
         }
