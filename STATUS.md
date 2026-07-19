@@ -1,9 +1,16 @@
 # Current Handoff
 
-Last updated: 2026-07-18
+Last updated: 2026-07-19
 
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
+
+## 2026-07-19 — Native iOS Enhancements (ANTIGRAVITY)
+
+- Designed and integrated P0/P1 native iOS features: politician portrait fallbacks, stock ticker logos fetched against dynamic origin with theme support, default executive disclosures selection, cache integrity controls, and custom light/dark/system appearance settings.
+- PR #619 has successfully passed all hosted CI and security gates, and has been squashed and merged to `main` (`046a4c0`).
+- Verification: Clean Xcode simulator build succeeded, and backend typecheck + full test suite passed cleanly. Manual verification confirmed visible logos/portraits and color scheme synchronization.
+
 
 ## 2026-07-18 — Public dashboard render recovery (CODEX)
 
