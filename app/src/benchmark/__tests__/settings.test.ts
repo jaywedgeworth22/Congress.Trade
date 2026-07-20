@@ -10,6 +10,8 @@ import {
   saveBenchmarkRoleSettings,
   validateBenchmarkLineup,
   validateBenchmarkRoles,
+  benchmarkModelCatalog,
+  benchmarkSelectableCatalog,
 } from '../settings';
 
 const OLD = {
@@ -380,5 +382,37 @@ describe('benchmark primary/failover role settings', () => {
     });
     expect(state.AGREEMENT_HOUSE_MODEL_A).toBeUndefined();
     expect(state.AGREEMENT_HOUSE_MODEL_B).toBeUndefined();
+  });
+});
+
+describe('benchmark catalogs', () => {
+  it('correctly filters selectable catalog and retains all in model catalog', () => {
+    const selectable = benchmarkSelectableCatalog();
+    const full = benchmarkModelCatalog();
+
+    // Selectable catalog must not contain direct providers
+    const directSelectable = selectable.filter(
+      (m: any) => ['openai', 'gemini', 'anthropic', 'xai', 'mistral'].includes(m.provider)
+    );
+    expect(directSelectable).toEqual([]);
+
+    // Selectable catalog must not contain openrouter/auto
+    const autoSelectable = selectable.filter(
+      (m: any) => m.provider === 'openrouter' && m.model === 'openrouter/auto'
+    );
+    expect(autoSelectable).toEqual([]);
+
+    // Selectable catalog must not contain terra-pro or sol
+    const highCostSelectable = selectable.filter(
+      (m: any) => m.provider === 'openrouter' && ['openai/gpt-5.6-terra-pro', 'openai/gpt-5.6-sol'].includes(m.model)
+    );
+    expect(highCostSelectable).toEqual([]);
+
+    // Full catalog must contain them for replayability
+    expect(full.some((m: any) => m.provider === 'openai' && m.model === 'gpt-5.6-terra')).toBe(true);
+    expect(full.some((m: any) => m.provider === 'gemini' && m.model === 'gemini-3.5-flash')).toBe(true);
+    expect(full.some((m: any) => m.provider === 'openrouter' && m.model === 'openrouter/auto')).toBe(true);
+    expect(full.some((m: any) => m.provider === 'openrouter' && m.model === 'openai/gpt-5.6-terra-pro')).toBe(true);
+    expect(full.some((m: any) => m.provider === 'openrouter' && m.model === 'openai/gpt-5.6-sol')).toBe(true);
   });
 });
