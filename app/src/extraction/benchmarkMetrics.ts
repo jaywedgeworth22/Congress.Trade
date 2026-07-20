@@ -77,6 +77,43 @@ export type BenchmarkRate = TokenRate | PageRate;
  */
 export const STANDARD_BENCHMARK_RATE_CARD = [
   {
+    provider: "openrouter",
+    models: ["openai/gpt-5.6-terra"],
+    meter: "tokens",
+    inputUsdPerMillion: 2.5,
+    cachedInputUsdPerMillion: 2.5,
+    outputUsdPerMillion: 15,
+    version: "openrouter-dummy",
+    effectiveDate: "2026-07-20",
+    sourceUrl: "dummy",
+    note: "dummy"
+  },
+  {
+    provider: "openrouter",
+    models: ["openai/gpt-5.6-luna"],
+    meter: "tokens",
+    inputUsdPerMillion: 1,
+    cachedInputUsdPerMillion: 1,
+    outputUsdPerMillion: 2,
+    version: "openrouter-dummy",
+    effectiveDate: "2026-07-20",
+    sourceUrl: "dummy",
+    note: "dummy"
+  },
+  {
+    provider: "openrouter",
+    models: ["anthropic/claude-opus-4.8"],
+    meter: "tokens",
+    inputUsdPerMillion: 1,
+    cachedInputUsdPerMillion: 1,
+    outputUsdPerMillion: 2,
+    version: "openrouter-dummy",
+    effectiveDate: "2026-07-20",
+    sourceUrl: "dummy",
+    note: "dummy"
+  },
+
+  {
     provider: 'openrouter',
     models: ['qwen/qwen-2.5-vl-72b-instruct:free', 'google/gemini-2.0-flash-thinking-exp:free'],
     meter: 'tokens',

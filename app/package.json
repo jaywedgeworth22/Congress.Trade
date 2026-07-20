@@ -21,8 +21,10 @@
     "postdeploy": "if [ -n \"$SENTRY_AUTH_TOKEN\" ]; then npm run sentry:sourcemaps || echo '::warning::sentry sourcemaps upload failed (non-fatal); the Worker deploy already succeeded'; else echo '::warning::SENTRY_AUTH_TOKEN not set; skipping sentry sourcemaps upload'; fi"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1090.0",
     "@google/genai": "^2.12.0",
     "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#904ea96ac237b775c54c8e4bb29df0d1a40da125",
+    "@libsql/client": "^0.17.4",
     "@sentry/cloudflare": "^10.66.0",
     "cheerio": "^1.2.0",
     "fflate": "^0.8.3",
