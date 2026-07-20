@@ -1787,8 +1787,10 @@ describe('outbound-call inventory enforcement', () => {
       const relative = decodeURIComponent(file.pathname.slice(srcRoot.pathname.length));
       // These are browser-side, same-origin API calls embedded in the dashboard.
       if (relative === 'ui/dashboardHtml.ts') continue;
-      // Local deno entrypoint calls the exported worker fetch
-      if (relative === 'deno/main.ts') continue;
+      // This is an internal read-back to the monitor itself, not a billable third-party provider call.
+      if (relative === 'shared/monitorBudgetGate.ts') continue;
+      // Deno shims call worker.fetch which is not a third-party outbound call
+      if (relative.startsWith('deno/')) continue;
       const source = readFileSync(file as any, 'utf8') as string;
       violations.push(...rawFetchViolations(relative, source));
     }
