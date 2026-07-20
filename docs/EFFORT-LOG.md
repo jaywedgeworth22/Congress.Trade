@@ -131,6 +131,32 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   health-gate bypass; schema-drift audit) for the fix and follow-up.
 
 ## Completed
+- **[Congress.Trade][CLAUDE] Dashboard truth + a11y + $9 pricing consistency — COMPLETED 2026-07-19, PR #654 (squash auto-merge armed).**
+  Verified the 8-item app-review backlog against current `main` (branch had 47 uncommitted lines
+  already fixing several items) and finished the rest in `dashboardHtml.ts` + `legalHtml.ts`:
+  (1) Consensus Moves "— · ~$40K" dangling fragment — already fixed on the branch (conditional
+  range render). (2) "1 Democrats" pluralization — already fixed via `pluralCount()`. (3) duplicated
+  "Past 3 Months ▾ · Past 3 Months" timeframe label — already fixed (`stampWindowChips()` now only
+  clears stale `.tf-chip`s; the per-panel `<select>` is the single label). (4) "Healthcare" vs
+  "Health Care" sectors — already fixed (`canonSector()` merge in `loadTrSectorFlow`). (5) inert
+  "Status" pill — NEW: `#livePill` now carries a real status value ("Connecting…" → "Live" →
+  "Updated" flash, was previously always the literal word "Status") plus `role="status"
+  aria-live="polite"`. (6) "ranked by estimated volume" label vs order — already fixed alongside
+  (4) (`rows.sort` by `estVolumeUsd`). (7) $9/mo·$90/yr canonical pricing — dashboard modal/gate-note
+  were already correct; `legalHtml.ts` ToS §3 still said $15.00/mo·$140.00/yr, fixed. (8) a11y — NEW:
+  keyboard tabindex+role+Enter/Space activation on the 5 ticker-leaderboard sort `<th>`s and the
+  dynamic feed-table sort headers (+ `aria-sort`, `:focus-visible` outline); a shared Tab focus-trap
+  + focus-restore for the drawer and login/pricing modals (Escape already worked); a global
+  `prefers-reduced-motion` block for the drawer-slide/dialog-pop/row-stagger/tick-bump animations
+  (Trends-chart motion was already covered); `memberAvatarHtml()` now sets a real `alt` (the
+  politician's name) instead of `alt=""` since the cluster-card face strip has no adjacent name
+  text. Added string-presence + a few behavioral (`new Function`-executed) tests for every item in
+  `dashboardHtml.test.ts` plus a new `legalHtml.test.ts`. Gates: typecheck clean; full suite
+  151/152 files green (the 1 failing file, `reviewResolutionD1.test.ts`, is unrelated
+  Miniflare/D1 transactional test timing out under heavy concurrent-agent CPU load on this shared
+  box — confirmed pre-existing/environmental by re-running it in isolation, still flaky, and it
+  touches none of the files this PR changes; `dashboardHtml.test.ts` + `legalHtml.test.ts` alone:
+  100/100 green).
 - **iOS Native Backend Auth & Member Performance (AG) — COMPLETED 2026-07-19.** Added support for redirecting to `congresstrade://auth?token=...` on login when `?client=ios` is present. Implemented S&P 500 relative performance metric on the `/api/client/v1/member/:id` endpoint using existing `aggregateMemberPerformance`. Tests ran, PR pending.
 - **Follow-ups batch: brand archive + Zilla wordmark + exec filer enrichment + workerd diagnostics
   + ship.sh parse smoke; shared v1.8.0 executive chamber (CLAUDE, M) — 2026-07-15,
