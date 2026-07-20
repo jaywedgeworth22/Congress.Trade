@@ -28,7 +28,10 @@
     "dist/"
   ],
   "scripts": {
-    "test": "vitest run"
+    "lint:package": "publint",
+    "pack:dry": "npm pack --dry-run",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
     "zod": "^4.4.3"
