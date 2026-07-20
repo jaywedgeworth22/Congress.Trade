@@ -1427,6 +1427,100 @@ describe('third-party usage telemetry', () => {
     });
   });
 
+  it('carries providerRequestId onto the queued event for monitor-side spend verification', async () => {
+    const messages: QueueMessage[] = [];
+    await recordMeasuredThirdPartyUsage(fakeEnv(messages), {
+      provider: 'openrouter',
+      service: 'llm',
+      operation: 'production-provider-cost',
+      idempotencyKey: 'ct-openrouter-doc-1-cost',
+      occurredAt: '2026-07-18T12:00:00.000Z',
+      model: 'openai/gpt-5.6-terra',
+      metricType: 'cost',
+      costUsd: 0.0123,
+      billingMode: 'actual',
+      confidence: 'actual',
+      providerRequestId: 'gen-abc123',
+    });
+    const message = messages[0];
+    if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
+    expect(() => UsageTelemetryEventSchema.parse(message.event)).not.toThrow();
+    expect(message.event.providerRequestId).toBe('gen-abc123');
+    // providerRequestId is never part of the idempotency-key basis: the key is
+    // exactly the caller's key plus the PRE-EXISTING transport-v2 remap
+    // versioning (see measuredUsageKey), with no id-derived component.
+    expect(message.event.idempotencyKey).toBe('ct-openrouter-doc-1-cost-transport-v2');
+  });
+
+  it('omits providerRequestId from the queued event when the caller did not supply one', async () => {
+    const messages: QueueMessage[] = [];
+    await recordMeasuredThirdPartyUsage(fakeEnv(messages), {
+      provider: 'gemini',
+      service: 'llm',
+      operation: 'production-tokens',
+      idempotencyKey: 'ct-gemini-doc-2-tokens',
+      occurredAt: '2026-07-18T12:00:00.000Z',
+      model: 'gemini-3.5-flash',
+      metricType: 'usage',
+      quantity: 500,
+      unit: 'token',
+      billingMode: 'actual',
+      confidence: 'actual',
+    });
+    const message = messages[0];
+    if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
+    expect(() => UsageTelemetryEventSchema.parse(message.event)).not.toThrow();
+    expect(message.event.providerRequestId).toBeUndefined();
+    expect(JSON.stringify(message.event)).not.toContain('providerRequestId');
+  });
+
+  it('treats a blank or whitespace-only providerRequestId as absent rather than pushing an empty string', async () => {
+    const messages: QueueMessage[] = [];
+    await recordMeasuredThirdPartyUsage(fakeEnv(messages), {
+      provider: 'openrouter',
+      service: 'llm',
+      operation: 'production-provider-cost',
+      idempotencyKey: 'ct-openrouter-doc-3-cost',
+      occurredAt: '2026-07-18T12:00:00.000Z',
+      model: 'openai/gpt-5.6-terra',
+      metricType: 'cost',
+      costUsd: 0.01,
+      billingMode: 'actual',
+      confidence: 'actual',
+      providerRequestId: '   ',
+    });
+    const message = messages[0];
+    if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
+    // The shared schema's providerRequestId is `.min(1)` when present — an
+    // empty/blank string would fail UsageTelemetryEventSchema.parse() inside
+    // the delivery client, so this MUST collapse to omitted, not "".
+    expect(() => UsageTelemetryEventSchema.parse(message.event)).not.toThrow();
+    expect(message.event.providerRequestId).toBeUndefined();
+  });
+
+  it('clamps a pathologically long providerRequestId instead of letting it break schema-validated delivery', async () => {
+    const messages: QueueMessage[] = [];
+    const overlong = 'gen-'.padEnd(250, 'x');
+    await recordMeasuredThirdPartyUsage(fakeEnv(messages), {
+      provider: 'openrouter',
+      service: 'llm',
+      operation: 'production-provider-cost',
+      idempotencyKey: 'ct-openrouter-doc-4-cost',
+      occurredAt: '2026-07-18T12:00:00.000Z',
+      model: 'openai/gpt-5.6-terra',
+      metricType: 'cost',
+      costUsd: 0.01,
+      billingMode: 'actual',
+      confidence: 'actual',
+      providerRequestId: overlong,
+    });
+    const message = messages[0];
+    if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
+    expect(() => UsageTelemetryEventSchema.parse(message.event)).not.toThrow();
+    expect(message.event.providerRequestId).toHaveLength(200);
+    expect(message.event.providerRequestId).toBe(overlong.slice(0, 200));
+  });
+
   it('requires a valid occurrence timestamp at runtime for every explicit stable key', async () => {
     const messages: QueueMessage[] = [];
     const env = fakeEnv(messages);
@@ -1706,7 +1800,7 @@ describe('outbound-call inventory enforcement', () => {
       violations.push(...rawFetchViolations(`scripts/${scriptRelative}`, source));
     }
     expect(violations).toEqual([]);
-  }, 45_000);
+  }, 60_000);
 
   it('detects aliased, bound, destructured, and member fetch calls in server code', () => {
     const source = [

@@ -26,6 +26,8 @@ export interface BenchmarkUsage {
   pagesProcessed?: number;
   /** Exact xAI request charge in ticks (1 USD = 10^10 ticks). */
   costInUsdTicks?: number;
+  /** Provider-reported dollar charge (OpenRouter usage accounting `usage.cost`). */
+  costUsd?: number;
   /** Successful billable attachment_search executions reported by xAI. */
   attachmentSearchCalls?: number;
 }
@@ -441,6 +443,122 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
     sourceUrl: 'https://openrouter.ai/docs/features/multimodal/pdfs',
     note: 'OpenRouter mistral-ocr file-parser plugin price ($2 per 1,000 pages).',
   },
+  // --- Live DEFAULT_CANDIDATES coverage (verified against the OpenRouter
+  // /api/v1/models listing 2026-07-18). Every offered openrouter slug must
+  // resolve a rate (drift gate in benchmarkMetrics.test.ts); openrouter/auto
+  // is the sole documented exemption — its routing is unpredictable, so its
+  // cost is captured from provider-reported usage accounting instead.
+  {
+    provider: 'openrouter',
+    models: ['deepseek/deepseek-v4-pro'],
+    meter: 'tokens',
+    inputUsdPerMillion: 0.435,
+    cachedInputUsdPerMillion: 0.003625,
+    outputUsdPerMillion: 0.87,
+    version: 'openrouter-static-2026-07-18',
+    effectiveDate: '2026-07-18',
+    sourceUrl: 'https://openrouter.ai/docs#models',
+    note: 'OpenRouter DeepSeek V4 Pro pricing; verified against the live /api/v1/models listing 2026-07-18.',
+  },
+  {
+    provider: 'openrouter',
+    models: ['deepseek/deepseek-v4-flash'],
+    meter: 'tokens',
+    inputUsdPerMillion: 0.098,
+    cachedInputUsdPerMillion: 0.0196,
+    outputUsdPerMillion: 0.196,
+    version: 'openrouter-static-2026-07-18',
+    effectiveDate: '2026-07-18',
+    sourceUrl: 'https://openrouter.ai/docs#models',
+    note: 'OpenRouter DeepSeek V4 Flash pricing; verified against the live /api/v1/models listing 2026-07-18.',
+  },
+  {
+    provider: 'openrouter',
+    models: ['qwen/qwen3-vl-30b-a3b-instruct'],
+    meter: 'tokens',
+    inputUsdPerMillion: 0.13,
+    cachedInputUsdPerMillion: 0.13, // no cached-input discount listed; base rate
+    outputUsdPerMillion: 0.52,
+    version: 'openrouter-static-2026-07-18',
+    effectiveDate: '2026-07-18',
+    sourceUrl: 'https://openrouter.ai/docs#models',
+    note: 'OpenRouter Qwen3 VL 30B A3B Instruct pricing; verified against the live /api/v1/models listing 2026-07-18.',
+  },
+  {
+    provider: 'openrouter',
+    models: ['qwen/qwen3-vl-8b-instruct'],
+    meter: 'tokens',
+    inputUsdPerMillion: 0.117,
+    cachedInputUsdPerMillion: 0.117, // no cached-input discount listed; base rate
+    outputUsdPerMillion: 0.455,
+    version: 'openrouter-static-2026-07-18',
+    effectiveDate: '2026-07-18',
+    sourceUrl: 'https://openrouter.ai/docs#models',
+    note: 'OpenRouter Qwen3 VL 8B Instruct pricing; verified against the live /api/v1/models listing 2026-07-18.',
+  },
+  {
+    provider: 'openrouter',
+    models: ['google/gemini-2.5-flash-lite'],
+    meter: 'tokens',
+    inputUsdPerMillion: 0.1,
+    cachedInputUsdPerMillion: 0.01,
+    outputUsdPerMillion: 0.4,
+    version: 'openrouter-static-2026-07-18',
+    effectiveDate: '2026-07-18',
+    sourceUrl: 'https://openrouter.ai/docs#models',
+    note: 'OpenRouter Gemini 2.5 Flash Lite pricing; verified against the live /api/v1/models listing 2026-07-18.',
+  },
+  {
+    provider: 'openrouter',
+    models: ['google/gemini-3.5-flash'],
+    meter: 'tokens',
+    inputUsdPerMillion: 1.5,
+    cachedInputUsdPerMillion: 0.15,
+    outputUsdPerMillion: 9,
+    version: 'openrouter-static-2026-07-18',
+    effectiveDate: '2026-07-18',
+    sourceUrl: 'https://openrouter.ai/docs#models',
+    note: 'OpenRouter passthrough of Gemini 3.5 Flash pricing (matches the direct Google rate row); verified against the live /api/v1/models listing 2026-07-18.',
+  },
+  {
+    provider: 'openrouter',
+    models: ['amazon/nova-lite-v1'],
+    meter: 'tokens',
+    inputUsdPerMillion: 0.06,
+    cachedInputUsdPerMillion: 0.06, // no cached-input discount listed; base rate
+    outputUsdPerMillion: 0.24,
+    version: 'openrouter-static-2026-07-18',
+    effectiveDate: '2026-07-18',
+    sourceUrl: 'https://openrouter.ai/docs#models',
+    note: 'OpenRouter Amazon Nova Lite 1.0 pricing; verified against the live /api/v1/models listing 2026-07-18.',
+  },
+  {
+    provider: 'openrouter',
+    models: ['z-ai/glm-4.6v'],
+    meter: 'tokens',
+    inputUsdPerMillion: 0.3,
+    cachedInputUsdPerMillion: 0.055,
+    outputUsdPerMillion: 0.9,
+    version: 'openrouter-static-2026-07-18',
+    effectiveDate: '2026-07-18',
+    sourceUrl: 'https://openrouter.ai/docs#models',
+    note: 'OpenRouter Z.ai GLM 4.6V pricing; verified against the live /api/v1/models listing 2026-07-18.',
+  },
+  {
+    provider: 'openrouter',
+    models: ['x-ai/grok-4.3'],
+    meter: 'tokens',
+    inputUsdPerMillion: 1.25,
+    cachedInputUsdPerMillion: 0.2,
+    outputUsdPerMillion: 2.5,
+    longContextThresholdTokens: 200_000,
+    longContextInputMultiplier: 2,
+    longContextOutputMultiplier: 2,
+    version: 'openrouter-static-2026-07-18',
+    effectiveDate: '2026-07-18',
+    sourceUrl: 'https://openrouter.ai/docs#models',
+    note: 'OpenRouter Grok 4.3 pricing (2x input/output above 200K prompt tokens); token pricing is complete on this transport — the direct-xAI attachment_search surcharge (which forces provider-reported cost on the xai row) does not apply via OpenRouter. Verified against the live /api/v1/models listing 2026-07-18.',
+  },
   {
     provider: 'llamaparse',
     models: ['fast'],
@@ -506,6 +624,7 @@ export interface BenchmarkCostDetail {
     completionTokens?: number;
     pagesProcessed?: number;
     costInUsdTicks?: number;
+    costUsd?: number;
     attachmentSearchCalls?: number;
   } | null;
   rates: {
@@ -575,6 +694,7 @@ function reportedUsageDetail(usage: BenchmarkUsage | null | undefined): Benchmar
   if (usage.completionTokens != null) detail.completionTokens = usage.completionTokens;
   if (usage.pagesProcessed != null) detail.pagesProcessed = usage.pagesProcessed;
   if (usage.costInUsdTicks != null) detail.costInUsdTicks = usage.costInUsdTicks;
+  if (usage.costUsd != null) detail.costUsd = usage.costUsd;
   if (usage.attachmentSearchCalls != null) detail.attachmentSearchCalls = usage.attachmentSearchCalls;
   return Object.keys(detail).length ? detail : null;
 }
@@ -628,7 +748,9 @@ export function priceBenchmarkUsage(input: PriceBenchmarkUsageInput): BenchmarkC
     ? input.providerReportedCostUsd
     : input.usage?.costInUsdTicks != null
       ? input.usage.costInUsdTicks / 10_000_000_000
-      : null;
+      : input.usage?.costUsd != null
+        ? input.usage.costUsd
+        : null;
   if (providerReportedCostUsd != null) {
     if (!finiteNonNegative(providerReportedCostUsd)) {
       return unknownCost(input, 'invalid_provider_reported_cost');
