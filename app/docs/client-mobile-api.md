@@ -1,6 +1,6 @@
 # Client Mobile API Coordination
 
-Last updated: 2026-07-11
+Last updated: 2026-07-19
 
 This is the working coordination note for the phone-first Next.js/PWA and the
 SwiftUI iPhone app. Keep it aligned with `app/docs/mobile-app-roadmap.md` and
@@ -68,13 +68,23 @@ shared type set but still return `501`.
   default feeds, analytics, or alert deliveries. Clients that want executive
   trades must opt in (e.g. `chamber=house,senate,executive`).
 - Anti-scrape guard (`SCRAPE_GUARD_ENABLED`, `src/security/botDefense.ts`):
-  `feed` shares a per-IP daily served-row budget with `/api/transactions` and
-  can return `429` with `Retry-After` when a caller bulk-walks the corpus.
-  Normal client polling (`since`-cursor, mostly zero new rows) does not
-  meaningfully consume the budget; clients should honor `Retry-After` and back
-  off. Public data endpoints also reject known scraper/AI-crawler user agents
-  with `403` — real browser, `EventSource`, and iOS `CFNetwork`/`URLSession`
-  agents are unaffected.
+  `feed` AND the detail reads below (`trade/:id`, `ticker/:ticker`,
+  `member/:memberIdOrName`) share one per-IP daily served-row budget with
+  `/api/transactions` and can return `429` with `Retry-After` when a caller
+  bulk-walks the corpus. Normal client polling (`since`-cursor, mostly zero new
+  rows) does not meaningfully consume the budget; clients should honor
+  `Retry-After` and back off. Public data endpoints also reject known
+  scraper/AI-crawler user agents with `403` — real browser, `EventSource`, and
+  iOS `CFNetwork`/`URLSession` agents are unaffected.
+- Zero-delta poll responses omit aggregates: when `feed` is called with a
+  `since` cursor and it yields zero new rows (the client's steady state), the
+  response omits `total` (and, on `/api/transactions`, `filingsImportedToday`)
+  instead of recomputing them — full-corpus `COUNT(*)` scans on every idle
+  poll are not worth the D1 read cost when nothing changed. This mirrors what
+  both known clients already do (they gate every read of `total`/`cursor`
+  behind "did I get any new rows back?" and no-op otherwise): treat an
+  absent/non-numeric `total` on a `since`-poll response as "unchanged from
+  your last known value," never as `0`.
 - Public detail reads use the same `ClientTrade` item DTO and feed-style
   envelope metadata:
   - `GET /api/client/v1/trade/:id`
@@ -92,6 +102,24 @@ shared type set but still return `501`.
     render `<img>` against this URL directly; the proxy handles the logo
     provider key and edge caching server-side and 404s on a true miss so the
     client can fall back to a monogram.
+- Each feed item's `transaction.type` (`P`/`S`/`E`) can be `null` for a filing
+  row whose disclosed side didn't parse (malformed/partial source text). This
+  is an honest passthrough, not a silent default to `P` (Purchase): a
+  transaction with no confirmed side must not be misreported as a buy. Ticker
+  and member summary aggregates (`buyCount`/`sellCount`/`exchangeCount`,
+  `estimatedNetFlowUsd`) already exclude a non-matching/`null` `tx_type` from
+  every bucket rather than counting it as one; alert-subscription `sides`
+  filters behave the same way. Clients should render a `null` type as
+  "unknown"/omit the buy-sell badge rather than assuming Purchase.
+- Command idempotency is race-safe end to end: a concurrent duplicate
+  `POST /api/client/v1/commands` with the same `idempotencyKey` never 500s —
+  it replays the winning row (`replayed: true`, `200`) or, in the rare case the
+  winner's row can't be found on re-fetch, returns `409`. A `queued`/`running`
+  command whose owning request died mid-flight (crash/eviction, never reached
+  a terminal status) is NOT replayed forever: once it's sat in that state
+  past `STALE_IN_FLIGHT_COMMAND_TTL_MS` (2 minutes; see `state.ts`), the next
+  request with the same idempotency key reclaims and re-runs the same row
+  instead of returning a status that can never change.
 - Next: analytics summary, alert create/update/pause commands, device
   registration for APNs and web push, rotate secret, test delivery, delivery
   history, and foreground command streaming.
