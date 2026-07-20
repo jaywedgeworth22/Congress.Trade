@@ -25,7 +25,7 @@
  * can never drift from the server-side catalog again.
  */
 
-import { benchmarkModelCatalog } from '../benchmark/settings';
+import { benchmarkSelectableCatalog } from '../benchmark/settings';
 
 export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -3683,12 +3683,12 @@ function statusBadge(status) {
   var c = STATUS_COLORS[s] || '#57606a';
   return '<span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;color:#fff;background:' + c + '">' + esc(s) + '</span>';
 }
-/* Server-injected model catalog: serialized from benchmarkModelCatalog()
+/* Server-injected model catalog: serialized from benchmarkSelectableCatalog()
    (DEFAULT_CANDIDATES + LlamaParse) when this module is built, so every model
    menu in the dashboard — the "Re-read with model…" multi-select, the per-row
    quick-run select, and the Custom Model Selection checkbox grid — derives
    from the ONE backend source of truth instead of a hand-maintained copy. */
-var BENCHMARK_CATALOG = ${JSON.stringify(benchmarkModelCatalog())};
+var BENCHMARK_CATALOG = ${JSON.stringify(benchmarkSelectableCatalog())};
 var REREAD_MODELS = BENCHMARK_CATALOG;
 /* <optgroup> per provider for the "Re-read with model…" multi-select. */
 function rereadModelOptionsHtml() {
@@ -5295,12 +5295,21 @@ function benchmarkCatalogModels() {
 }
 
 function benchmarkManualOptionHtml(selected) {
-  return benchmarkCatalogModels().map(function(model) {
+  var options = benchmarkCatalogModels().map(function(model) {
     var value = benchmarkModelKey(model);
     var suffix = model.configured ? '' : ' (not configured)';
     return '<option value="' + esc(value) + '"' + (value === selected ? ' selected' : '') +
       (model.configured ? '' : ' disabled') + '>' + esc(value + suffix) + '</option>';
-  }).join('');
+  });
+  if (selected) {
+    var hasSelected = benchmarkCatalogModels().some(function(model) {
+      return benchmarkModelKey(model) === selected;
+    });
+    if (!hasSelected) {
+      options.unshift('<option value="' + esc(selected) + '" selected>' + esc(selected + ' (current)') + '</option>');
+    }
+  }
+  return options.join('');
 }
 
 /* ------------------------------------------------------------------------
