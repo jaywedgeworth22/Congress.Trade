@@ -1,5 +1,6 @@
 import type { Env } from '../shared/types';
 import { all, run, type SqlParam } from '../shared/db';
+import { consumeGovernedD1Writes } from '../shared/d1Budget';
 
 export type SqlStatement = [string, SqlParam[]];
 
@@ -103,6 +104,14 @@ export async function flushDeliveryOutbox(
 
   const result: OutboxFlushResult = { claimed: 0, enqueued: 0, failed: 0 };
   for (const row of rows) {
+    // GOVERNOR 2: the outbox fan-out performs 2-3 writes per claimed row. Past
+    // the per-invocation governed-write cap, stop this cycle early — the
+    // remaining rows stay 'pending' and the next scheduled flush drains them,
+    // so a storm degrades to bounded batches instead of an unbounded loop.
+    if (consumeGovernedD1Writes(env, 'delivery-outbox-flush', 1) < 1) {
+      console.warn('flushDeliveryOutbox stopped early: D1 write governor cap reached');
+      break;
+    }
     const leaseUntil = new Date(now.getTime() + LEASE_SECONDS * 1000).toISOString();
     const claim = await run(
       env.DB,
