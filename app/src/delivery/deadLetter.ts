@@ -13,6 +13,7 @@
 import type { Env, QueueMessage } from '../shared/types';
 import { run } from '../shared/db';
 import { notifyAdmin } from '../alerts/notify';
+import { consumeGovernedD1Writes } from '../shared/d1Budget';
 
 async function insertDeadLetterReceipt(
   env: Env,
@@ -64,10 +65,18 @@ export async function recordDeadLetter(
   attempts: number,
   err: unknown,
 ): Promise<void> {
-  try {
-    await insertDeadLetterReceipt(env, queue, msg, attempts, err);
-  } catch (e) {
-    console.warn('recordDeadLetter: D1 insert failed:', (e as Error).message);
+  // GOVERNOR 2: DLQ receipt inserts are a known storm writer (an outage that
+  // dead-letters a whole backlog). This variant is best-effort observability,
+  // so past the per-invocation governed-write cap the D1 insert is skipped —
+  // the throttled admin alert below still fires.
+  if (consumeGovernedD1Writes(env, 'dead-letter', 1) < 1) {
+    console.warn('recordDeadLetter: receipt insert skipped (D1 write governor cap reached)', queue);
+  } else {
+    try {
+      await insertDeadLetterReceipt(env, queue, msg, attempts, err);
+    } catch (e) {
+      console.warn('recordDeadLetter: D1 insert failed:', (e as Error).message);
+    }
   }
   await alertDeadLetter(env, queue, msg, attempts, err);
 }
@@ -75,6 +84,9 @@ export async function recordDeadLetter(
 /**
  * DLQ-consumer variant: the receipt insert is part of durable recovery and
  * therefore rejects on D1 failure. The caller must not ACK until this resolves.
+ * Deliberately NOT gated by the write governor: skipping this insert would
+ * leave the message un-ACKed and force a redelivery loop — the opposite of
+ * storm control. The DLQ consumer's own bounded batch size bounds it instead.
  */
 export async function recordDeadLetterDurable(
   env: Env,
