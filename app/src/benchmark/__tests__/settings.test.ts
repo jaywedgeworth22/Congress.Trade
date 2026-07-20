@@ -12,8 +12,6 @@ import {
   saveBenchmarkRoleSettings,
   validateBenchmarkLineup,
   validateBenchmarkRoles,
-  benchmarkModelCatalog,
-  benchmarkSelectableCatalog,
 } from '../settings';
 
 describe('benchmarkModelCatalog vs benchmarkSelectableCatalog', () => {
