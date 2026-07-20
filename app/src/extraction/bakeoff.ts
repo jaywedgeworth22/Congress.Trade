@@ -40,6 +40,13 @@ import {
   classifyProviderFailure,
   type ProviderFailureStatus,
 } from './providerFailure';
+import { priceBenchmarkUsage } from './benchmarkMetrics';
+import {
+  checkLlmSpendCeiling,
+  llmBudgetHaltMessage,
+  recordLlmSpend,
+} from '../shared/llmSpend';
+import { consumeGovernedD1Writes } from '../shared/d1Budget';
 
 export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral' | 'xai' | 'llamaparse' | 'openrouter';
 
@@ -1114,6 +1121,38 @@ async function doRunLlamaParse(model: string, key: string, bytes: ArrayBuffer, c
   }
 }
 
+/**
+ * GOVERNOR 1 pricing: one attempt's metered dollars. Provider-reported cost
+ * (xAI costInUsdTicks) when available, else the shared benchmark rate card.
+ * Returns null for unpriceable usage — the spend meter never invents numbers.
+ */
+export function candidateSpendUsd(
+  provider: Provider,
+  model: string,
+  resolvedModel: string | undefined,
+  usage: CandidateDocResult['usage'],
+): number | null {
+  if (!usage) return null;
+  const priced = priceBenchmarkUsage({
+    provider,
+    model,
+    resolvedModel: resolvedModel ?? null,
+    invoked: true,
+    usage: {
+      promptTokens: usage.promptTokens,
+      completionTokens: usage.completionTokens,
+      cachedTokens: usage.cachedTokens,
+      cacheWriteTokens: usage.cacheWriteTokens,
+      cacheWriteOneHourTokens: usage.cacheWriteOneHourTokens,
+      serviceTier: usage.serviceTier,
+      pagesProcessed: usage.pagesProcessed,
+      costInUsdTicks: usage.costInUsdTicks,
+      attachmentSearchCalls: usage.attachmentSearchCalls,
+    },
+  });
+  return priced.costUsd;
+}
+
 /** Run one candidate over one document's bytes, timing it and trapping errors. */
 export async function runCandidateOnDoc(
   env: Env,
@@ -1182,6 +1221,28 @@ export async function runCandidateOnDoc(
     }
   }
 
+  // GOVERNOR 1: hard daily USD ceiling, enforced fail-closed at this single
+  // choke point (every extraction/benchmark/bakeoff/agreement provider call
+  // dispatches here) BEFORE any money is spent. Budget halts are terminal for
+  // the attempt — the stable failure code 'llm_budget_exceeded' means callers
+  // must never fail over to another (potentially pricier) model, and the same
+  // ceiling would halt that failover here anyway.
+  const spendGate = await checkLlmSpendCeiling(env, provider);
+  if (!spendGate.allowed) {
+    const error = llmBudgetHaltMessage(spendGate);
+    return {
+      ...base,
+      ok: false,
+      error,
+      failure: classifyProviderFailure(provider, model, error) ?? undefined,
+      latencyMs: 0,
+      rowCount: 0,
+      rowKeys: [],
+      avgConfidence: 0,
+      rows: [],
+    };
+  }
+
   const started = Date.now();
   const occurredAt = new Date(started).toISOString();
   try {
@@ -1247,9 +1308,11 @@ export async function runCandidateOnDoc(
       providerRequestId = anthropic.providerRequestId;
     }
     
-    if (usage) {
-      // Telemetry is pushed via pushExtractionTelemetry in persistExtractionRun.
-    }
+    // GOVERNOR 1: meter this attempt's dollars durably, immediately after the
+    // provider responded (telemetry events are pushed separately via
+    // persistExtractionRun; the spend METER lives here so every caller of this
+    // choke point is accounted for, cached-or-not persisted-or-not).
+    await recordLlmSpend(env, provider, candidateSpendUsd(provider, model, resolvedModel, usage) ?? 0);
     return {
       ...base,
       ok: true,
@@ -1267,11 +1330,10 @@ export async function runCandidateOnDoc(
   } catch (err) {
     const cast = err as ProviderError;
     const error = cast.message.slice(0, 300);
-    
-    if (cast.usage) {
-      // Telemetry is pushed via pushExtractionTelemetry in persistExtractionRun.
-    }
-    
+
+    // Failed attempts with provider-reported usage were still billed — meter them.
+    await recordLlmSpend(env, provider, candidateSpendUsd(provider, model, cast.resolvedModel, cast.usage) ?? 0);
+
     return {
       ...base,
       ok: false,
@@ -1310,6 +1372,14 @@ export async function persistExtractionRun(
 ): Promise<void> {
   // Durable Queue hand-off; failures are fail-soft inside the telemetry module.
   await pushExtractionTelemetry(env, result, kind);
+
+  // GOVERNOR 2: extraction_runs is a known storm writer (large result_json
+  // rows in tight loops). Past the per-invocation governed-write cap, skip the
+  // best-effort reading rather than write without bound.
+  if (consumeGovernedD1Writes(env, 'extraction_runs', 1) < 1) {
+    console.warn('persistExtractionRun deferred: D1 write governor cap reached', result.docId);
+    return;
+  }
 
   try {
     await run(
