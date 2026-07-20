@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildClientRouter } from '../routes';
 import { createSession } from '../../auth/session';
+import { spendRowBudget, DAILY_ROW_BUDGET } from '../../security/botDefense';
 import type { Env, QueueMessage } from '../../shared/types';
 import type { FeedTransactionRow, SubscriptionRow } from '../../delivery/rows';
 import type { CommandRow } from '../state';
@@ -87,7 +88,7 @@ function feedRow(overrides: Partial<FeedTransactionRow> & { __chamber?: string }
   };
 }
 
-function makeEnv(opts: { quotaRace?: boolean } = {}) {
+function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean } = {}) {
   const kv = new Map<string, string>();
   const subscriptions = new Map<string, SubscriptionRow>();
   const commands = new Map<string, CommandRow>();
@@ -95,6 +96,7 @@ function makeEnv(opts: { quotaRace?: boolean } = {}) {
   const filers = new Map<string, FilerRow>();
   const securities = new Map<string, SecurityRow>();
   const feedRows: FeedTransactionRow[] = [];
+  let duplicateRaceTriggered = false;
 
   const filterFeedRows = (sql: string, params: unknown[]) => {
     let rows = [...feedRows];
@@ -277,7 +279,29 @@ function makeEnv(opts: { quotaRace?: boolean } = {}) {
           updated_at: String(updatedAt),
         });
       } else if (/INSERT INTO client_commands/i.test(sql)) {
-        const [id, userId, type, status, idempotencyKey, payload, createdAt, updatedAt] = this.params;
+        const [id, userId, , , idempotencyKey] = this.params;
+        if (opts.duplicateCommandRace && !duplicateRaceTriggered) {
+          // Simulate a peer request's concurrent INSERT for the same
+          // (user_id, idempotency_key) committing first, between our SELECT
+          // (which saw nothing) and this INSERT — the unique index backstop.
+          duplicateRaceTriggered = true;
+          commands.set('cmd_peer_race', {
+            id: 'cmd_peer_race',
+            user_id: String(userId),
+            type: 'update_preferences',
+            status: 'succeeded',
+            idempotency_key: idempotencyKey == null ? null : String(idempotencyKey),
+            payload: '{}',
+            result: JSON.stringify({ preferences: {} }),
+            error: null,
+            created_at: '2026-01-01T00:00:00.000Z',
+            updated_at: '2026-01-01T00:00:01.000Z',
+            started_at: '2026-01-01T00:00:00.000Z',
+            finished_at: '2026-01-01T00:00:01.000Z',
+          });
+          throw new Error('D1_ERROR: UNIQUE constraint failed: client_commands.idempotency_key');
+        }
+        const [, , type, status, , payload, createdAt, updatedAt] = this.params;
         commands.set(String(id), {
           id: String(id),
           user_id: String(userId),
@@ -1016,5 +1040,139 @@ describe('client API routes', () => {
     expect((await res.json()) as { error: string }).toMatchObject({
       error: 'start_checkout is not implemented yet',
     });
+  });
+
+  it('replays the winning row instead of 500ing when a concurrent duplicate command wins the idempotency race', async () => {
+    const { env, commands } = makeEnv({ duplicateCommandRace: true });
+    const app = buildClientRouter();
+    const res = await app.request(
+      'http://localhost/commands',
+      {
+        method: 'POST',
+        headers: { authorization: await bearer(env), 'content-type': 'application/json', 'idempotency-key': 'race-1' },
+        body: JSON.stringify({ type: 'update_preferences', payload: { defaultWindow: 'all' } }),
+      },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { replayed: boolean; command: { id: string; status: string } };
+    expect(body.replayed).toBe(true);
+    expect(body.command.id).toBe('cmd_peer_race');
+    expect(body.command.status).toBe('succeeded');
+    // Only the peer's row exists — our own losing insert never landed.
+    expect(commands.size).toBe(1);
+  });
+
+  it('reclaims and re-runs a stale running command instead of replaying a dead status forever', async () => {
+    const { env, commands } = makeEnv();
+    commands.set('cmd_stale', {
+      id: 'cmd_stale',
+      user_id: 'user_1',
+      type: 'update_preferences',
+      status: 'running',
+      idempotency_key: 'stale-1',
+      payload: JSON.stringify({ defaultWindow: '30d' }),
+      result: null,
+      error: null,
+      created_at: '2020-01-01T00:00:00.000Z',
+      updated_at: '2020-01-01T00:00:00.000Z',
+      started_at: '2020-01-01T00:00:00.000Z',
+      finished_at: null,
+    });
+    const app = buildClientRouter();
+    const res = await app.request(
+      'http://localhost/commands',
+      {
+        method: 'POST',
+        headers: { authorization: await bearer(env), 'content-type': 'application/json', 'idempotency-key': 'stale-1' },
+        body: JSON.stringify({ type: 'update_preferences', payload: { defaultWindow: 'all' } }),
+      },
+      env,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { replayed?: boolean; command: { id: string; status: string } };
+    expect(body.command.id).toBe('cmd_stale');
+    expect(body.command.status).toBe('succeeded');
+    expect(body.replayed).toBeUndefined();
+    // The same row was reused (reclaimed), not duplicated.
+    expect(commands.size).toBe(1);
+  });
+
+  it('replays a genuinely in-flight (recent) running command without re-executing it', async () => {
+    const { env, commands } = makeEnv();
+    const recentTs = new Date().toISOString();
+    commands.set('cmd_inflight', {
+      id: 'cmd_inflight',
+      user_id: 'user_1',
+      type: 'update_preferences',
+      status: 'running',
+      idempotency_key: 'inflight-1',
+      payload: '{}',
+      result: null,
+      error: null,
+      created_at: recentTs,
+      updated_at: recentTs,
+      started_at: recentTs,
+      finished_at: null,
+    });
+    const app = buildClientRouter();
+    const res = await app.request(
+      'http://localhost/commands',
+      {
+        method: 'POST',
+        headers: { authorization: await bearer(env), 'content-type': 'application/json', 'idempotency-key': 'inflight-1' },
+        body: JSON.stringify({ type: 'update_preferences', payload: { defaultWindow: 'all' } }),
+      },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { replayed: boolean; command: { status: string } };
+    expect(body.replayed).toBe(true);
+    expect(body.command.status).toBe('running');
+    expect(commands.size).toBe(1);
+  });
+});
+
+describe('client API detail endpoints: row budget + zero-delta polling', () => {
+  it('applies the shared daily row budget to trade/ticker/member detail reads', async () => {
+    const { env } = makeEnv();
+    // Budget enforcement happens before any DB read in each handler, so an
+    // otherwise-empty DB is enough to prove the gate is wired up.
+    const guardedEnv = { ...env, SCRAPE_GUARD_ENABLED: 'true' } as unknown as Env;
+    const ip = '203.0.113.50';
+    await spendRowBudget(guardedEnv, ip, DAILY_ROW_BUDGET);
+
+    const app = buildClientRouter();
+    const headers = { 'cf-connecting-ip': ip };
+    const trade = await app.request('http://localhost/trade/tx_budget', { headers }, guardedEnv);
+    expect(trade.status).toBe(429);
+    const ticker = await app.request('http://localhost/ticker/AAPL', { headers }, guardedEnv);
+    expect(ticker.status).toBe(429);
+    const member = await app.request('http://localhost/member/P000197', { headers }, guardedEnv);
+    expect(member.status).toBe(429);
+  });
+
+  it('omits total on a zero-delta since-poll instead of paying for a full COUNT(*)', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push(feedRow({ id: 'tx_1', cursor_seq: 5, __chamber: 'house' }));
+    const app = buildClientRouter();
+    // since=100 is past every row's cursor -> zero new rows.
+    const res = await app.request('http://localhost/feed?since=100', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: unknown[]; total?: number; count: number };
+    expect(body.items).toHaveLength(0);
+    expect(body.count).toBe(0);
+    expect(body.total).toBeUndefined();
+  });
+
+  it('still computes total on a since-poll that DOES return new rows', async () => {
+    const { env, feedRows } = makeEnv();
+    feedRows.push(feedRow({ id: 'tx_1', cursor_seq: 5, __chamber: 'house' }));
+    const app = buildClientRouter();
+    const res = await app.request('http://localhost/feed?since=0', {}, env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { items: unknown[]; total?: number };
+    expect(body.items).toHaveLength(1);
+    expect(body.total).toBe(1);
   });
 });
