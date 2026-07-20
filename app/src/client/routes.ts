@@ -7,16 +7,18 @@
  */
 
 import { Hono } from 'hono';
-import type { Env, User, ClientCommandType } from '../shared/types';
+import type { ClientCommand, Env, User, ClientCommandType } from '../shared/types';
 
 import { getCurrentUserFromRequest } from '../auth/session';
 import { entitlementOf } from '../billing/entitlement';
 import { normalizeTickerLogoSymbol } from '../ui/tickerLogos';
 import {
   createCommand,
+  DuplicateCommandError,
   findCommandByIdempotencyKey,
   getCommand,
   getPreferences,
+  isStaleInFlightCommand,
   listCommands,
   updateCommandStatus,
   upsertPreferences,
@@ -111,8 +113,18 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
   r.get('/trade/:id', async (c) => {
     const id = (c.req.param('id') || '').trim();
     if (!id || id.length > 128) return c.json({ error: 'invalid trade id' }, 400);
+    // Same per-IP daily row budget as /feed — a detail endpoint is still a
+    // corpus read and must not be a free side-channel around the pager budget.
+    const ip = clientIp(c.req.raw);
+    const budget = await checkRowBudget(c.env, ip);
+    if (!budget.ok) {
+      return c.json({ error: 'daily feed row budget reached' }, 429, {
+        'Retry-After': String(budget.retryAfterSec),
+      });
+    }
     const item = await getClientTrade(c.env, id);
     if (!item) return c.json({ error: 'trade not found' }, 404);
+    await spendRowBudget(c.env, ip, 1);
     return c.json({
       item,
       items: [item],
@@ -126,6 +138,13 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
   r.get('/ticker/:ticker', async (c) => {
     const ticker = normalizeTickerLogoSymbol(c.req.param('ticker'));
     if (!ticker) return c.json({ error: 'invalid ticker' }, 400);
+    const ip = clientIp(c.req.raw);
+    const budget = await checkRowBudget(c.env, ip);
+    if (!budget.ok) {
+      return c.json({ error: 'daily feed row budget reached' }, 429, {
+        'Retry-After': String(budget.retryAfterSec),
+      });
+    }
     const params: TxQueryParams = {
       ticker,
       limit: detailLimit(c.req.query('limit')),
@@ -137,6 +156,7 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       get<TradeSummaryRow>(c.env.DB, summaryQ.sql, summaryQ.params),
       getSecurityRef(c.env, ticker),
     ]);
+    await spendRowBudget(c.env, ip, list.count);
     return c.json({
       ticker,
       asset: securityRef(ticker, refRow),
@@ -152,6 +172,13 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
     const memberIdOrName = (c.req.param('memberIdOrName') || '').trim();
     if (!memberIdOrName || memberIdOrName.length > 120) {
       return c.json({ error: 'invalid member id or name' }, 400);
+    }
+    const ip = clientIp(c.req.raw);
+    const budget = await checkRowBudget(c.env, ip);
+    if (!budget.ok) {
+      return c.json({ error: 'daily feed row budget reached' }, 429, {
+        'Retry-After': String(budget.retryAfterSec),
+      });
     }
     const resolved = await resolveMember(c.env, memberIdOrName);
     if (!resolved) return c.json({ error: 'member not found' }, 404);
@@ -169,6 +196,7 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       latestSpxClose(c.env),
     ]);
     if (!resolved.profile && list.total === 0) return c.json({ error: 'member not found' }, 404);
+    await spendRowBudget(c.env, ip, list.count);
 
     const perfRows = perfRowsRaw.map((row) => ({
       isOption: num(row.is_option) === 1,
@@ -268,11 +296,41 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       (typeof body.idempotencyKey === 'string' && body.idempotencyKey.trim()) ||
       c.req.header('Idempotency-Key') ||
       null;
-    const replay = await findCommandByIdempotencyKey(c.env, user.id, idempotencyKey);
-    if (replay) return c.json({ command: replay, replayed: true }, 200);
 
-    const command = await createCommand(c.env, { userId: user.id, type, payload, idempotencyKey });
-    await updateCommandStatus(c.env, user.id, command.id, 'running');
+    // Replay by idempotency key. A terminal (succeeded/failed/canceled) row is
+    // always a valid, permanent replay target. A queued/running row is only
+    // replayed while it's plausibly still being executed by whichever request
+    // created it (isStaleInFlightCommand — see state.ts); once it's sat past
+    // that TTL with no terminal status, the owning request is presumed dead
+    // and we fall through to reclaim + re-run the same row below instead of
+    // replaying a status that can never change.
+    const existing = await findCommandByIdempotencyKey(c.env, user.id, idempotencyKey);
+    if (existing && !isStaleInFlightCommand(existing)) {
+      return c.json({ command: existing, replayed: true }, 200);
+    }
+
+    let command: ClientCommand;
+    if (existing) {
+      command = await updateCommandStatus(c.env, user.id, existing.id, 'running');
+    } else {
+      try {
+        command = await createCommand(c.env, { userId: user.id, type, payload, idempotencyKey });
+      } catch (err) {
+        // True concurrent-duplicate race: our lookup above saw nothing, but a
+        // peer request's INSERT for the same (user, idempotencyKey) committed
+        // first and won the unique-index race. Replay its row (or 409 if it
+        // vanished between the failed insert and this re-fetch) instead of
+        // letting the raw D1 constraint violation surface as a 500.
+        if (err instanceof DuplicateCommandError && idempotencyKey) {
+          const won = await findCommandByIdempotencyKey(c.env, user.id, idempotencyKey);
+          if (won) return c.json({ command: won, replayed: true }, 200);
+          return c.json({ error: 'a duplicate command is already in flight; retry shortly' }, 409);
+        }
+        throw err;
+      }
+      command = await updateCommandStatus(c.env, user.id, command.id, 'running');
+    }
+
     try {
       const result = await executeCommand(c.env, user, type, payload);
       const done = await updateCommandStatus(c.env, user.id, command.id, 'succeeded', {
