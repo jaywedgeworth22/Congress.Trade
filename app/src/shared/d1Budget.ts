@@ -32,6 +32,7 @@
 
 import * as Sentry from '@sentry/cloudflare';
 import type { Env } from './types';
+import type { SqlParam } from './db';
 import { resolveSecret } from '../secrets/infisical';
 
 interface RowDelta {
@@ -51,6 +52,9 @@ let pending: RowDelta = { read: 0, written: 0 };
 
 /** Day we last emitted a soft-threshold warning for (once per isolate per day). */
 let warnedDay: string | null = null;
+
+/** Day we last emitted the HARD (100%) written-budget alert for. */
+let hardWarnedDay: string | null = null;
 
 // Reads are cheap ($0.001/M, 25B/mo included ≈ 833M/day free), so this is really
 // an anomaly tripwire for scan storms rather than a dollar cap. Writes are the
@@ -189,6 +193,19 @@ function warnIfOverSoft(
   const overRead = readTotal != null && readTotal >= rB * SOFT_RATIO;
   const overWritten = writtenTotal != null && writtenTotal >= wB * SOFT_RATIO;
   if (!overRead && !overWritten) return;
+  // HARD alert (error severity, once per isolate per day) when the WRITE
+  // dimension — the expensive one — has fully crossed 100% of budget. Distinct
+  // from the 80% soft warning so operators can page on it specifically.
+  if (writtenTotal != null && writtenTotal >= wB && hardWarnedDay !== day) {
+    hardWarnedDay = day;
+    const hardMsg = `D1 daily rows-written budget EXCEEDED: written ${writtenTotal}/${wB}`;
+    console.error(hardMsg);
+    try {
+      Sentry.captureMessage(hardMsg, 'error');
+    } catch {
+      /* best-effort alert */
+    }
+  }
   if (warnedDay === day) return; // at most once per isolate per day
   warnedDay = day;
   const msg =
@@ -208,6 +225,9 @@ function warnIfOverSoft(
  * (via ctx.waitUntil). No-op when nothing is pending; fails open.
  */
 export async function flushD1Budget(env: Env, now = new Date()): Promise<void> {
+  // The flush marks an invocation tail, so the per-invocation write-governor
+  // budget refreshes here regardless of whether any rows are pending.
+  resetD1WriteGovernor();
   const snap = pending;
   if (snap.read === 0 && snap.written === 0) return;
   pending = { read: 0, written: 0 };
@@ -253,4 +273,160 @@ export async function isD1RowBudgetExceeded(env: Env, now = new Date()): Promise
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// GOVERNOR 2 — D1 write governor (owner mandate: "no more D1 write spikes").
+//
+// The daily meter above ALERTS; this section BOUNDS. Known storm writers
+// (ingestion discovery upserts, DLQ receipt inserts, delivery-outbox flush
+// fan-out, extraction_runs persistence) route their write work through a
+// per-invocation soft cap so a runaway loop degrades to bounded batches with
+// quarantine markers instead of unbounded row writes (the $1,153 backfill-loop
+// incident class). The knobs are read from the immutable Worker env — like the
+// usage-telemetry circuit limits — because they gate the hot write path and
+// must be O(1) and always available even mid-incident:
+//
+//   D1_WRITE_OPS_PER_INVOCATION_CAP  governed write ops per invocation
+//                                    (default 2000; resets at each
+//                                    flushD1Budget invocation tail)
+//   D1_WRITE_BATCH_CAP               statements per governed batch before
+//                                    truncation + quarantine (default 200)
+// ---------------------------------------------------------------------------
+
+const DEFAULT_WRITE_OPS_PER_INVOCATION_CAP = 2_000;
+const DEFAULT_WRITE_BATCH_CAP = 200;
+
+/** Per-isolate governed write ops used since the last flushD1Budget reset. */
+let governedWriteOps = 0;
+/** Last time a governor-cap warning was emitted (rate-limited to 1/minute). */
+let governorWarnedAtMs = 0;
+
+function invocationWriteCap(env: Env): number {
+  return intVar(env.D1_WRITE_OPS_PER_INVOCATION_CAP, DEFAULT_WRITE_OPS_PER_INVOCATION_CAP);
+}
+
+function writeBatchCap(env: Env): number {
+  return intVar(env.D1_WRITE_BATCH_CAP, DEFAULT_WRITE_BATCH_CAP);
+}
+
+/** Refresh the per-invocation governed-write budget (called by flushD1Budget). */
+export function resetD1WriteGovernor(): void {
+  governedWriteOps = 0;
+}
+
+function warnGovernorCap(writer: string, requested: number, allowed: number, cap: number): void {
+  const nowMs = Date.now();
+  if (nowMs - governorWarnedAtMs < 60_000) return;
+  governorWarnedAtMs = nowMs;
+  const msg =
+    `D1 write governor cap reached: writer=${writer} requested=${requested} ` +
+    `allowed=${allowed} invocationCap=${cap}`;
+  console.warn(msg);
+  try {
+    Sentry.captureMessage(msg, 'warning');
+  } catch {
+    /* best-effort alert */
+  }
+}
+
+/**
+ * Consume up to `ops` governed write operations from the per-invocation
+ * budget. Returns how many were granted (possibly 0). Synchronous and
+ * allocation-free so single-row storm writers (DLQ receipts, extraction_runs)
+ * can gate cheaply; callers skip/defer the write when the grant is 0.
+ */
+export function consumeGovernedD1Writes(env: Env, writer: string, ops: number): number {
+  if (!(Number.isFinite(ops) && ops > 0)) return 0;
+  const cap = invocationWriteCap(env);
+  const remaining = Math.max(0, cap - governedWriteOps);
+  const allowed = Math.min(Math.floor(ops), remaining);
+  governedWriteOps += allowed;
+  if (allowed < ops) warnGovernorCap(writer, Math.floor(ops), allowed, cap);
+  return allowed;
+}
+
+export interface GovernedBatchResult {
+  results: D1Result[];
+  /** Statements actually executed (head of the input). */
+  executed: number;
+  /** Statements dropped by the governor; a quarantine marker records them. */
+  quarantined: number;
+}
+
+/** Best-effort auditable marker for a truncated governed batch (1 row/event). */
+async function writeQuarantineMarker(
+  env: Env,
+  writer: string,
+  dropped: number,
+  reason: string,
+  now: Date,
+): Promise<void> {
+  const db = (env as Partial<Env>).DB;
+  if (!db || typeof db.prepare !== 'function') return;
+  try {
+    await db
+      .prepare(
+        `INSERT INTO d1_write_quarantine (writer, day, dropped, reason, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .bind(writer, dayStr(now), dropped, reason.slice(0, 300), now.toISOString())
+      .run();
+  } catch {
+    /* pre-migration table or transient failure; the console/Sentry warn stands */
+  }
+}
+
+/**
+ * Execute a write batch under the governor. Batches within both the per-batch
+ * cap and the remaining per-invocation budget run whole; oversized batches are
+ * LOGGED, TRUNCATED to the allowed head, and the remainder is quarantined via
+ * one marker row — never an unbounded write loop. Callers must treat the
+ * dropped tail as deferred work (idempotent INSERT OR IGNORE / upsert
+ * statements re-materialize on the next cycle).
+ */
+export async function governedD1Batch(
+  env: Env,
+  writer: string,
+  statements: Array<[string, SqlParam[]]>,
+  now = new Date(),
+): Promise<GovernedBatchResult> {
+  const db = env.DB;
+  const allowed = Math.min(
+    statements.length,
+    writeBatchCap(env),
+    Math.max(0, invocationWriteCap(env) - governedWriteOps),
+  );
+  governedWriteOps += allowed;
+  const head = statements.slice(0, allowed);
+  const dropped = statements.length - head.length;
+
+  const prepared = head.map(([sql, params]) =>
+    params.length ? db.prepare(sql).bind(...(params as unknown[])) : db.prepare(sql),
+  );
+  let results: D1Result[] = [];
+  if (prepared.length > 0) {
+    if (typeof db.batch === 'function') {
+      results = await db.batch(prepared);
+      for (const r of results ?? []) recordD1Meta(r?.meta);
+    } else {
+      for (const stmt of prepared) {
+        const r = await stmt.run();
+        recordD1Meta(r?.meta);
+        results.push(r);
+      }
+    }
+  }
+
+  if (dropped > 0) {
+    warnGovernorCap(writer, statements.length, head.length, invocationWriteCap(env));
+    await writeQuarantineMarker(
+      env,
+      writer,
+      dropped,
+      `governed batch truncated: executed ${head.length} of ${statements.length}`,
+      now,
+    );
+  }
+  return { results, executed: head.length, quarantined: dropped };
 }

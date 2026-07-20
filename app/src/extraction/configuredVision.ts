@@ -37,6 +37,7 @@ import {
 } from './providerHealth';
 import { getUnderlyingProvider } from '../benchmark/settings';
 import { recordIngestionDecision } from '../shared/ingestionDecisions';
+import { isLlmBudgetHalt } from '../shared/llmSpend';
 import type { Extractor, ExtractorInput, ExtractorResult, ExtractorUsage } from '../extractors/types';
 
 /** Conservative confidence ceiling shared with visionLlm.ts's DEFAULT_CONFIDENCE
@@ -270,6 +271,12 @@ export class ConfiguredVisionExtractor implements Extractor {
         const message = `${effectiveLabel}: ${(error as Error).message}`;
         errors.push(message);
         await recordProviderHealth(this.env, effective, false, (error as Error).message, healthKnobs);
+        // GOVERNOR 1: a budget halt (error-class 'budget') is terminal for the
+        // attempt — never fail over to another (potentially pricier) model.
+        if (isLlmBudgetHalt(error)) {
+          allFailuresWereRateLimits = false;
+          break;
+        }
         if (isProviderRateLimit(error)) await recordProviderBan(this.env, effective.provider);
         else allFailuresWereRateLimits = false;
         continue;
@@ -281,6 +288,14 @@ export class ConfiguredVisionExtractor implements Extractor {
 
       const message = candidateErrorString(effective, result);
       errors.push(message);
+      // GOVERNOR 1: budget halts must not trigger the failover candidate — the
+      // ceiling is global, so the only effect of continuing would be a second
+      // (and on the storm vector, pricier) attempt that the choke point would
+      // reject anyway. Stop the cascade outright.
+      if (result.failure?.code === 'llm_budget_exceeded' || isLlmBudgetHalt(result.error)) {
+        allFailuresWereRateLimits = false;
+        break;
+      }
       if (isProviderRateLimit(result.error)) await recordProviderBan(this.env, effective.provider);
       else allFailuresWereRateLimits = false;
     }
