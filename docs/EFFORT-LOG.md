@@ -1,4 +1,3 @@
-- **Data Normalization (AG) — COMPLETED 2026-07-20.** PR #659 merged and deployed to production. Extracted standard naming and formatting across all 3 chambers, deployed `normalizeCompanyName` and `normalizeTreasurySecurity` to the extraction pipeline.
 # Congress.Trade Effort Log — cross-agent board
 Protocol: /Users/jay/apps/EFFORT-LOG-PROTOCOL.md (canonical). Live board: this file
 (mirror: docs/EFFORT-LOG.md in the repo). As of 2026-07-05.
@@ -11,6 +10,9 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Deployed
+- **Data Normalization (AG) — COMPLETED 2026-07-20.** PR #659 merged and deployed to production. Extracted standard naming and formatting across all 3 chambers, deployed `normalizeCompanyName` and `normalizeTreasurySecurity` to the extraction pipeline.
+- **Delivery/client input hardening, command lifecycle, honest tx_type, detail privacy+budget (CLAUDE) — COMPLETED / MERGED 2026-07-19 via PR #655.** Scope confined to input validation, command lifecycle race safety, query performance, and user privacy leaks.
+- **UI: Clean up dashboard and relax simulation eligibility (AG) — COMPLETED / MERGED 2026-07-19 via PR #640.** Re-centered trends sparklines, adjusted layout proportions, and adjusted latency simulation defaults.
 - **Resource Governors & Hard Caps (AG/CLAUDE, M) — COMPLETED 2026-07-20 via PR #620.** Resolved GitHub Actions CI blockage by running comprehensive local validation (1722 tests passed), merged PR #620, and deployed to production. This enforces D1 write budgets, LLM spend limits, and circuit breakers.
 - **iOS App Assets and Styling (AG) — COMPLETED / MERGED 2026-07-19 via PR #630.**
   - **Fonts**: Imported custom Zilla Slab font (Regular & Bold) into the Xcode project, registered in `.pbxproj` via `INFOPLIST_KEY_UIAppFonts`, and applied globally in SwiftUI via `App.swift`.
