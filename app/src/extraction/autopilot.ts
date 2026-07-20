@@ -67,6 +67,7 @@ import { arbitrationRowKey } from '../extractors/types';
 import { pollBatch, submitBatch, type BatchChamber, type BatchDoc, type BatchProvider } from './batchExtract';
 import { ensureDocClass, DOC_CLASS_ORDER_SQL, type DocClass } from './docClassifier';
 import { recordIngestionDecision } from '../shared/ingestionDecisions';
+import { allProvidersThrottled } from '../shared/monitorBudgetGate';
 
 const MICRO = 1_000_000;
 /** Docs processed per queue-consumer invocation (each doc = 2-3 model reads). */
@@ -886,6 +887,32 @@ export async function handleAutopilotTick(
     }
 
     const trio = resolveModelsWithC(agreementEnv, chamber);
+
+    // Monitor-informed advisory backoff (early, non-blocking — composes
+    // UNDER the hard per-run/per-day $ budget reserved below): when the API
+    // Usage Monitor's cross-app budget-status reports EVERY provider this
+    // doc's trio would call as already at/over its monthly budget, defer the
+    // doc instead of spending on providers with no budget headroom anyway.
+    // Fails open (never defers) when the monitor is disabled/unreachable —
+    // see shared/monitorBudgetGate.ts.
+    if (trio) {
+      const throttle = await allProvidersThrottled(env, [trio.a.provider, trio.b.provider, trio.c.provider]);
+      if (throttle.throttled) {
+        state.docsDeferred += 1;
+        state.outcomes.push({
+          docId: doc.doc_id,
+          outcome: 'deferred',
+          reason: 'provider_budget_throttled',
+          docClass,
+        });
+        state.skipReasons.provider_budget_throttled = (state.skipReasons.provider_budget_throttled ?? 0) + 1;
+        console.log(`autopilot: deferring doc ${doc.doc_id} (${throttle.decision?.reason ?? 'provider budget throttled'})`);
+        const next = await persistRunState(env, runId, revision, state);
+        if (next == null) return; // lost ownership to a concurrent consumer
+        revision = next;
+        continue;
+      }
+    }
 
     // Batch pre-seeding: defer this doc onto the cheaper batch transport when
     // its trio has direct batch-capable models with no cached read yet.
