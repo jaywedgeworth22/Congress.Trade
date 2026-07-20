@@ -76,7 +76,7 @@ export const TOS_HTML = shell(
 
 <h2>3. Subscriptions, billing &amp; trials</h2>
 <ul>
-<li>Premium is offered as an auto-renewing subscription: <strong>$15.00 / month</strong> or <strong>$140.00 / year</strong> (USD), plus any applicable taxes.</li>
+<li>Premium is offered as an auto-renewing subscription: <strong>$9.00 / month</strong> or <strong>$90.00 / year</strong> (USD), plus any applicable taxes.</li>
 <li>New subscriptions may include a free trial (currently 7 days). If you do not cancel before the trial ends, the subscription renews and your payment method is charged.</li>
 <li>Subscriptions <strong>automatically renew</strong> at the end of each billing period until canceled. You authorize recurring charges to your payment method.</li>
 <li>We may change prices or plan features; changes apply to the next billing period after reasonable notice. Continued use after a price change constitutes acceptance.</li>
