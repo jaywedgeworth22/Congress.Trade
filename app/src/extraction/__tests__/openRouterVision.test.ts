@@ -8,7 +8,16 @@ vi.mock('unpdf', () => ({
   getDocumentProxy: unpdfMocks.getDocumentProxy,
 }));
 
-import { OpenRouterVisionExtractor } from '../openRouterVision';
+import {
+  OpenRouterVisionExtractor,
+  OPENROUTER_EXTRACTION_RESPONSE_FORMAT,
+  annotationObjectKey,
+  chooseParserEngine,
+  isEngineOverrideRejection,
+  parseMaxPrice,
+  supportsNativeVision,
+  supportsStructuredOutputs,
+} from '../openRouterVision';
 
 const filing = (): Filing => ({
   docId: 'S-1',
@@ -38,7 +47,7 @@ describe('OpenRouterVisionExtractor', () => {
       ok: true,
       json: async () => ({
         id: 'gen-123',
-        model: 'qwen/qwen-2.5-vl-72b-instruct:free',
+        model: 'google/gemini-3.5-flash',
         choices: [
           {
             message: {
@@ -95,12 +104,74 @@ describe('OpenRouterVisionExtractor', () => {
     ).rejects.toThrow('openRouterVision: API key is not configured');
   });
 
+  it('captures the OpenRouter generation id as providerRequestId on the result', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 'gen-123',
+        model: 'google/gemini-3.5-flash',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env);
+    const result = await ex.extract({
+      filing: filing(),
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    });
+
+    expect(result.providerRequestId).toBe('gen-123');
+  });
+
+  it('omits providerRequestId entirely when the response carries no id', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        model: 'google/gemini-3.5-flash',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env);
+    const result = await ex.extract({
+      filing: filing(),
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    });
+
+    expect(result.providerRequestId).toBeUndefined();
+    expect('providerRequestId' in result && result.providerRequestId !== undefined).toBe(false);
+  });
+
+  it('maps a blank response id to undefined, never an empty string', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: '',
+        model: 'google/gemini-3.5-flash',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env);
+    const result = await ex.extract({
+      filing: filing(),
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    });
+
+    expect(result.providerRequestId).toBeUndefined();
+  });
+
   it('attaches usage to error when parsing fails', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         id: 'gen-123',
-        model: 'qwen/qwen-2.5-vl-72b-instruct:free',
+        model: 'google/gemini-3.5-flash',
         choices: [
           {
             message: {
@@ -128,6 +199,141 @@ describe('OpenRouterVisionExtractor', () => {
     expect(caughtErr).toBeDefined();
     expect(caughtErr?.message).toContain('could not parse model JSON');
     expect(caughtErr?.usage).toMatchObject({ promptTokens: 100, completionTokens: 50 });
+    // The call was billed before the parse failure: the generation id must
+    // survive onto the thrown error for bakeoff.ts's error-path telemetry.
+    expect((caughtErr as Error & { providerRequestId?: string })?.providerRequestId).toBe('gen-123');
+  });
+
+  it('spreads classifier enrichment into the request body with keys flat under trace', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'gen-1',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const enrichedEnv = {
+      OPENROUTER_API_KEY: 'test-key',
+      USAGE_MONITOR_ENVIRONMENT: 'test',
+      CF_VERSION_METADATA: { id: 'abc123def456', tag: 'v42' },
+    } as unknown as Env;
+    const ex = new OpenRouterVisionExtractor(enrichedEnv);
+    await ex.extract({
+      filing: filing(),
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    // Top-level user = deterministic per-doc id; session_id absent (no run id
+    // in scope), never "".
+    expect(body.user).toBe('S-1');
+    expect('session_id' in body).toBe(false);
+    // Classifier keys FLAT under trace — no metadata sub-object anywhere.
+    expect(body.trace).toEqual({
+      sourceApp: 'congress-trade',
+      environment: 'test',
+      service: 'openRouterVision',
+      feature: 'vision-extract-senate',
+      keyRef: 'OPENROUTER_API_KEY',
+      gitSha: 'abc123def456',
+    });
+    expect(body.trace.metadata).toBeUndefined();
+    expect('metadata' in body).toBe(false);
+    // Enrichment must never displace the core request fields.
+    expect(body.model).toBe('google/gemini-3.5-flash');
+    expect(body.messages).toHaveLength(1);
+  });
+
+  it('keeps user deterministic across repeated extractions of the same document', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'gen-1',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env);
+    const bytes = new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer;
+    await ex.extract({ filing: filing(), bytes });
+    await ex.extract({ filing: filing(), bytes });
+
+    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(call[1].body as string));
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0].user).toBe('S-1');
+    expect(bodies[1].user).toBe('S-1');
+    expect(bodies[0].trace).toEqual(bodies[1].trace);
+  });
+
+  it('omits user (never "") when the filing has no docId, keeping trace intact', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'gen-1',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env);
+    // The bake-off harness constructs partial Filing literals; docId may be
+    // missing entirely. `user` must be omitted, not sent as "".
+    await ex.extract({
+      filing: { docKind: 'scanned_pdf', chamber: 'senate' } as unknown as Filing,
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect('user' in body).toBe(false);
+    expect(body.trace).toMatchObject({
+      sourceApp: 'congress-trade',
+      service: 'openRouterVision',
+      feature: 'vision-extract-senate',
+      keyRef: 'OPENROUTER_API_KEY',
+    });
+  });
+
+  it('degrades to an unenriched request when classifier enrichment throws, without failing extraction', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'gen-degraded',
+        choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      }),
+    } as unknown as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // A >80-char gitSha fails the shared builder's STATIC-field validation at
+    // runtime — exactly the class of unexpected error the call site must
+    // degrade on rather than fail the paid extraction call.
+    const badEnv = {
+      OPENROUTER_API_KEY: 'test-key',
+      CF_VERSION_METADATA: { id: 'x'.repeat(100), tag: 'v1' },
+    } as unknown as Env;
+    const ex = new OpenRouterVisionExtractor(badEnv);
+    const result = await ex.extract({
+      filing: filing(),
+      bytes: new TextEncoder().encode('dummy pdf bytes').buffer as ArrayBuffer,
+    });
+
+    // Extraction succeeded; the request went out WITHOUT any enrichment.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect('trace' in body).toBe(false);
+    expect('user' in body).toBe(false);
+    expect('session_id' in body).toBe(false);
+    expect(result.extractor).toBe('openRouterVision');
+    expect(result.providerRequestId).toBe('gen-degraded');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('classifier enrichment failed'),
+      expect.any(String),
+    );
+    warn.mockRestore();
   });
 
   it('propagates page count for mistral-ocr model', async () => {
@@ -156,5 +362,266 @@ describe('OpenRouterVisionExtractor', () => {
 
     expect(result.usage).toMatchObject({ promptTokens: 100, completionTokens: 50, pagesProcessed: 5 });
     expect((result as any).pageCount).toBe(5);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OpenRouter feature adoption (annotation reuse, engine routing, structured
+// outputs, provider prefs, usage accounting)
+// ---------------------------------------------------------------------------
+
+function okPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    ok: true,
+    json: async () => ({
+      id: 'gen-1',
+      model: 'served/model-slug',
+      provider: 'TestProvider',
+      choices: [{ message: { content: JSON.stringify({ transactions: [] }) } }],
+      usage: { prompt_tokens: 10, completion_tokens: 5 },
+      ...overrides,
+    }),
+  } as unknown as Response;
+}
+
+function lastRequestBody(fetchMock: ReturnType<typeof vi.fn>, call = 0): Record<string, any> {
+  return JSON.parse(String(fetchMock.mock.calls[call][1].body));
+}
+
+describe('supportsNativeVision', () => {
+  it('matches the current anthropic/claude-* catalog slugs', () => {
+    expect(supportsNativeVision('anthropic/claude-sonnet-5')).toBe(true);
+    expect(supportsNativeVision('anthropic/claude-haiku-4.5')).toBe(true);
+    expect(supportsNativeVision('anthropic/claude-3-opus')).toBe(true);
+  });
+  it('rejects models without native PDF file input', () => {
+    expect(supportsNativeVision('amazon/nova-lite-v1')).toBe(false);
+    expect(supportsNativeVision('z-ai/glm-4.6v')).toBe(false);
+    expect(supportsNativeVision('qwen/qwen3-vl-8b-instruct')).toBe(false);
+  });
+});
+
+describe('supportsStructuredOutputs', () => {
+  it('allows vendors verified to list structured_outputs', () => {
+    for (const model of [
+      'openai/gpt-5.6-terra', 'anthropic/claude-sonnet-5', 'google/gemini-3.5-flash',
+      'deepseek/deepseek-v4-flash', 'qwen/qwen3-vl-8b-instruct', 'x-ai/grok-4.3',
+    ]) expect(supportsStructuredOutputs(model), model).toBe(true);
+  });
+  it('keeps unverified vendors and special routes on the prompt-JSON fallback', () => {
+    for (const model of [
+      'amazon/nova-lite-v1', 'z-ai/glm-4.6v', 'mistral/mistral-ocr-latest', 'openrouter/auto',
+    ]) expect(supportsStructuredOutputs(model), model).toBe(false);
+  });
+});
+
+describe('chooseParserEngine', () => {
+  it('routes typed documents to the free cloudflare-ai engine, even for native models', () => {
+    expect(chooseParserEngine({ model: 'anthropic/claude-sonnet-5', docClass: 'typed' })).toBe('cloudflare-ai');
+    expect(chooseParserEngine({ model: 'amazon/nova-lite-v1', docKind: 'text_pdf' })).toBe('cloudflare-ai');
+  });
+  it('prefers doc_class over doc_kind when both are present', () => {
+    expect(chooseParserEngine({ model: 'amazon/nova-lite-v1', docClass: 'typed', docKind: 'scanned_pdf' })).toBe('cloudflare-ai');
+    expect(chooseParserEngine({ model: 'amazon/nova-lite-v1', docClass: 'hard_scan', docKind: 'text_pdf' })).toBe('mistral-ocr');
+  });
+  it('lets native-vision models read scans natively and routes the rest to mistral-ocr', () => {
+    expect(chooseParserEngine({ model: 'anthropic/claude-sonnet-5', docKind: 'scanned_pdf' })).toBeNull();
+    expect(chooseParserEngine({ model: 'amazon/nova-lite-v1', docKind: 'scanned_pdf' })).toBe('mistral-ocr');
+  });
+  it('honors the engine knobs', () => {
+    expect(chooseParserEngine({ model: 'amazon/nova-lite-v1', docClass: 'typed', textEngine: 'mistral-ocr' })).toBe('mistral-ocr');
+    expect(chooseParserEngine({ model: 'amazon/nova-lite-v1', docKind: 'scanned_pdf', scanEngine: 'cloudflare-ai' })).toBe('cloudflare-ai');
+  });
+});
+
+describe('parseMaxPrice / isEngineOverrideRejection', () => {
+  it('parses valid max-price JSON and rejects junk', () => {
+    expect(parseMaxPrice('{"prompt":5,"completion":20}')).toEqual({ prompt: 5, completion: 20 });
+    expect(parseMaxPrice('not json')).toBeNull();
+    expect(parseMaxPrice('{"prompt":"high"}')).toBeNull();
+    expect(parseMaxPrice(undefined)).toBeNull();
+  });
+  it('classifies engine-override rejections as 4xx mentioning the plugin', () => {
+    expect(isEngineOverrideRejection(404, 'file-parser engine override not allowed')).toBe(true);
+    expect(isEngineOverrideRejection(400, 'invalid plugin configuration')).toBe(true);
+    expect(isEngineOverrideRejection(500, 'engine exploded')).toBe(false);
+    expect(isEngineOverrideRejection(429, 'rate limited')).toBe(false);
+  });
+});
+
+describe('OpenRouterVisionExtractor OpenRouter features', () => {
+  it('sends strict json_schema + require_parameters + usage accounting for structured-output models', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(okPayload());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env, { model: 'anthropic/claude-sonnet-5' });
+    await ex.extract({ filing: filing(), bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
+
+    const body = lastRequestBody(fetchMock);
+    expect(body.response_format).toEqual(OPENROUTER_EXTRACTION_RESPONSE_FORMAT);
+    expect(body.response_format.json_schema.strict).toBe(true);
+    expect(body.provider).toEqual({ require_parameters: true });
+    expect(body.usage).toEqual({ include: true });
+    // Native-vision model on a scan: no file-parser plugin, healing stays on.
+    expect(body.plugins).toEqual([{ id: 'response-healing' }]);
+  });
+
+  it('falls back to prompt-JSON json_object for models without structured outputs', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(okPayload());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env, { model: 'amazon/nova-lite-v1' });
+    await ex.extract({ filing: filing(), bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
+
+    const body = lastRequestBody(fetchMock);
+    expect(body.response_format).toEqual({ type: 'json_object' });
+    expect(body.provider).toBeUndefined();
+    // Non-native model on a scan: mistral-ocr file-parser engine attached.
+    expect(body.plugins).toEqual([
+      { id: 'response-healing' },
+      { id: 'file-parser', pdf: { engine: 'mistral-ocr' } },
+    ]);
+  });
+
+  it('routes typed documents (doc_class) to the free cloudflare-ai engine', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(okPayload());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env, { model: 'anthropic/claude-sonnet-5' });
+    const typedFiling = { ...filing(), docClass: 'typed' } as unknown as Filing;
+    await ex.extract({ filing: typedFiling, bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
+
+    const body = lastRequestBody(fetchMock);
+    expect(body.plugins).toEqual([
+      { id: 'response-healing' },
+      { id: 'file-parser', pdf: { engine: 'cloudflare-ai' } },
+    ]);
+  });
+
+  it('falls back to doc_kind (text_pdf) for the free engine when doc_class is absent', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(okPayload());
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Non-native model + text_pdf doc_kind, no doc_class: the typed-document
+    // routing must still land on the free engine via the doc_kind fallback,
+    // not on the non-native scanned-document mistral-ocr path.
+    const ex = new OpenRouterVisionExtractor(env, { model: 'amazon/nova-lite-v1' });
+    const textFiling = { ...filing(), docKind: 'text_pdf' } as Filing;
+    await ex.extract({ filing: textFiling, bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
+
+    const body = lastRequestBody(fetchMock);
+    expect(body.plugins).toEqual([
+      { id: 'response-healing' },
+      { id: 'file-parser', pdf: { engine: 'cloudflare-ai' } },
+    ]);
+  });
+
+  it('applies the OPENROUTER_MAX_PRICE ceiling knob to provider preferences', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(okPayload());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pricedEnv = { ...env, OPENROUTER_MAX_PRICE: '{"prompt":5,"completion":20}' } as unknown as Env;
+    const ex = new OpenRouterVisionExtractor(pricedEnv, { model: 'anthropic/claude-sonnet-5' });
+    await ex.extract({ filing: filing(), bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
+
+    const body = lastRequestBody(fetchMock);
+    expect(body.provider).toEqual({ require_parameters: true, max_price: { prompt: 5, completion: 20 } });
+  });
+
+  it('degrades to default engine selection when the request-level engine is rejected', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        text: async () => '{"error":{"message":"file-parser engine override not allowed"}}',
+      } as unknown as Response)
+      .mockResolvedValueOnce(okPayload());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env, { model: 'amazon/nova-lite-v1' });
+    const result = await ex.extract({ filing: filing(), bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(lastRequestBody(fetchMock, 0).plugins).toContainEqual({ id: 'file-parser', pdf: { engine: 'mistral-ocr' } });
+    expect(lastRequestBody(fetchMock, 1).plugins).toEqual([{ id: 'response-healing' }]);
+    expect(result.transactions).toEqual([]);
+  });
+
+  it('reuses stored file annotations and skips the parser plugin', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(okPayload());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const storedAnnotations = [{ type: 'file', file: { filename: 'document.pdf', content: 'parsed' } }];
+    const put = vi.fn();
+    const annotatedEnv = {
+      ...env,
+      RAW_FILES: {
+        get: async (key: string) =>
+          key === annotationObjectKey('S-1')
+            ? { text: async () => JSON.stringify(storedAnnotations) }
+            : null,
+        put,
+      },
+    } as unknown as Env;
+
+    const ex = new OpenRouterVisionExtractor(annotatedEnv, { model: 'amazon/nova-lite-v1' });
+    await ex.extract({ filing: filing(), bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
+
+    const body = lastRequestBody(fetchMock);
+    // Reuse shape: user(file) -> assistant(annotations) -> user(prompt).
+    expect(body.messages).toHaveLength(3);
+    expect(body.messages[1].role).toBe('assistant');
+    expect(body.messages[1].annotations).toEqual(storedAnnotations);
+    // The parse is skipped via annotations — no file-parser engine attached.
+    expect(body.plugins).toEqual([{ id: 'response-healing' }]);
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it('persists first-read annotations for later reuse', async () => {
+    const responseAnnotations = [{ type: 'file', file: { filename: 'document.pdf', content: 'parsed' } }];
+    const fetchMock = vi.fn().mockResolvedValueOnce(okPayload({
+      choices: [{ message: { content: JSON.stringify({ transactions: [] }), annotations: responseAnnotations } }],
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const put = vi.fn(async (_key: string, _value: string, _opts?: unknown) => undefined);
+    const annotatedEnv = {
+      ...env,
+      RAW_FILES: { get: async () => null, put },
+    } as unknown as Env;
+
+    const ex = new OpenRouterVisionExtractor(annotatedEnv, { model: 'amazon/nova-lite-v1' });
+    await ex.extract({ filing: filing(), bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
+
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(put.mock.calls[0][0]).toBe(annotationObjectKey('S-1'));
+    expect(JSON.parse(String(put.mock.calls[0][1]))).toEqual(responseAnnotations);
+  });
+
+  it('captures provider-reported cost, cached tokens, and the served model id', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(okPayload({
+      id: 'gen-9',
+      model: 'google/gemini-3.5-flash-20260519',
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 50,
+        cost: 0.0123,
+        prompt_tokens_details: { cached_tokens: 40 },
+      },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ex = new OpenRouterVisionExtractor(env, { model: 'google/gemini-3.5-flash' });
+    const result = await ex.extract({ filing: filing(), bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
+
+    expect(result.usage).toMatchObject({
+      promptTokens: 100,
+      completionTokens: 50,
+      cachedTokens: 40,
+      costUsd: 0.0123,
+    });
+    expect(result.modelVersion).toBe('google/gemini-3.5-flash-20260519');
+    expect(result.providerRequestId).toBe('gen-9');
   });
 });

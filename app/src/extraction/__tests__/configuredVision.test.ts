@@ -239,8 +239,8 @@ describe('ConfiguredVisionExtractor', () => {
     } as unknown as Env;
     // The substitute (not the banned primary) is what gets invoked.
     mocks.runCandidateOnDoc.mockResolvedValueOnce(okResult({
-      provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct',
-      resolvedModel: 'qwen/qwen-2.5-72b-instruct',
+      provider: 'openrouter', model: 'amazon/nova-lite-v1',
+      resolvedModel: 'amazon/nova-lite-v1',
     }));
     const legacy = legacyExtractor(LEGACY_RESULT);
     const extractor = new ConfiguredVisionExtractor(env, legacy);
@@ -250,9 +250,9 @@ describe('ConfiguredVisionExtractor', () => {
     expect(mocks.runCandidateOnDoc).toHaveBeenCalledTimes(1);
     // Cheapest rate-card-priced offered candidate outside the configured slots.
     expect(mocks.runCandidateOnDoc.mock.calls[0][1]).toEqual(
-      { provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' },
+      { provider: 'openrouter', model: 'amazon/nova-lite-v1' },
     );
-    expect(result.extractor).toBe('configured(openrouter:qwen/qwen-2.5-72b-instruct)');
+    expect(result.extractor).toBe('configured(openrouter:amazon/nova-lite-v1)');
     expect(JSON.parse(result.raw)).toMatchObject({ overlayFor: 'openai:gpt-5.6-terra' });
     // The substitution left an ingestion_decisions audit row.
     expect(decisions).toHaveLength(1);
@@ -260,7 +260,7 @@ describe('ConfiguredVisionExtractor', () => {
     const payload = JSON.parse(String(decisions[0][6])) as Record<string, unknown>;
     expect(payload).toMatchObject({
       configured: 'openai:gpt-5.6-terra',
-      substitute: 'openrouter:qwen/qwen-2.5-72b-instruct',
+      substitute: 'openrouter:amazon/nova-lite-v1',
       reason: 'model_breaker_open',
       costFlagged: false,
     });

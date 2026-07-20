@@ -18,9 +18,17 @@ async function recordResultMeasurement(
   suffix: string,
   measurement: ResultMeasurement,
 ): Promise<void> {
+  // Thread the provider's own call/generation id (when the candidate
+  // extractor captured one) onto every pushed measurement dimension, so the
+  // monitor can verify reported cost against the provider's own record. Kept
+  // separate from the idempotency-key derivation below — this only adds a
+  // field on the outgoing event, it does not change what identifies it.
+  const withProvenance: ResultMeasurement = result.providerRequestId
+    ? { ...measurement, providerRequestId: result.providerRequestId }
+    : measurement;
   if (result.providerRequestId && result.occurredAt) {
     await recordMeasuredThirdPartyUsage(env, {
-      ...measurement,
+      ...withProvenance,
       idempotencyKey: await stableMeasuredUsageIdempotencyKey(
         'provider-result',
         suffix,
@@ -33,7 +41,7 @@ async function recordResultMeasurement(
   }
   await recordMeasuredThirdPartyUsage(
     env,
-    result.occurredAt ? { ...measurement, occurredAt: result.occurredAt } : measurement,
+    result.occurredAt ? { ...withProvenance, occurredAt: result.occurredAt } : withProvenance,
   );
 }
 
@@ -50,12 +58,16 @@ export async function pushExtractionTelemetry(
   const usage = result.usage;
   if (!usage) return;
   const costInUsdTicks = usage.costInUsdTicks;
-  if (
-    typeof costInUsdTicks === 'number'
-    && Number.isFinite(costInUsdTicks)
-    && costInUsdTicks >= 0
-  ) {
-    const costUsd = costInUsdTicks / 10_000_000_000;
+  // Provider-native charge: xAI reports exact ticks; OpenRouter usage
+  // accounting reports the charged dollars directly (usage.cost → costUsd).
+  const providerNativeCostUsd =
+    typeof costInUsdTicks === 'number' && Number.isFinite(costInUsdTicks) && costInUsdTicks >= 0
+      ? costInUsdTicks / 10_000_000_000
+      : typeof usage.costUsd === 'number' && Number.isFinite(usage.costUsd) && usage.costUsd >= 0
+        ? usage.costUsd
+        : null;
+  if (providerNativeCostUsd != null) {
+    const costUsd = providerNativeCostUsd;
     const measuredCost = {
       provider: result.provider,
       service: 'llm',
@@ -68,7 +80,7 @@ export async function pushExtractionTelemetry(
       billingMode: 'actual' as const,
       confidence: 'actual' as const,
       metadata: {
-        costInUsdTicks,
+        ...(costInUsdTicks == null ? {} : { costInUsdTicks }),
         success: result.ok,
         latencyMs: result.latencyMs,
         ...(usage.attachmentSearchCalls == null

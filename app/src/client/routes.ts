@@ -48,7 +48,10 @@ import {
 import { commandType, executeCommand, normalizePreferencePatch, persistedCommandResult } from './commands';
 import { checkRowBudget, spendRowBudget } from '../security/botDefense';
 import { clientIp } from '../shared/rateLimit';
-import { get } from '../shared/db';
+import { get, all } from '../shared/db';
+import { buildMemberPerformanceQuery } from '../analytics/builders';
+import { aggregateMemberPerformance } from '../analytics/compute';
+import { latestSpxClose } from '../prices/service';
 import type { TradeSummaryRow } from './types';
 import type { TxQueryParams } from '../delivery/rows';
 
@@ -158,17 +161,30 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       order: asOrder(c.req.query('order')) ?? 'desc',
     };
     const summaryQ = memberSummarySql(resolved.id);
-    const [list, summaryRow] = await Promise.all([
+    const perfQ = buildMemberPerformanceQuery(resolved.id, { window: 'all' });
+    const [list, summaryRow, perfRowsRaw, currentSpx] = await Promise.all([
       readClientTradeList(c.env, params),
       get<TradeSummaryRow>(c.env.DB, summaryQ.sql, summaryQ.params),
+      all<Record<string, unknown>>(c.env.DB, perfQ.sql, perfQ.params),
+      latestSpxClose(c.env),
     ]);
     if (!resolved.profile && list.total === 0) return c.json({ error: 'member not found' }, 404);
+
+    const perfRows = perfRowsRaw.map((row) => ({
+      isOption: num(row.is_option) === 1,
+      priceAtTrade: row.price_at_trade == null ? null : num(row.price_at_trade),
+      spxAtTrade: row.spx_at_trade == null ? null : num(row.spx_at_trade),
+      currentPrice: row.current_price == null ? null : num(row.current_price),
+    }));
+    const performance = aggregateMemberPerformance(perfRows, currentSpx);
+
     return c.json({
       member: memberProfile(resolved.profile, resolved.id),
       summary: {
         ...baseSummary(summaryRow),
         uniqueTickers: num(summaryRow?.unique_tickers),
         uniqueAssets: num(summaryRow?.unique_assets),
+        performance,
       },
       ...list,
     });
