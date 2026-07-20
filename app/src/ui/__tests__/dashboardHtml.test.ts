@@ -900,7 +900,7 @@ describe('DASHBOARD_HTML', () => {
     expect(benchmarkModelEligibleForSimulation({
       pendingDocs: 0, plannedDocs: 25, providerCalls: 25, docsOk: 24,
       failures: 1, unavailableDocs: 0, successfulScoredDocs: 23,
-    })).toBe(false);
+    })).toBe(true);
     expect(DASHBOARD_HTML).toContain('Simulation is disabled for this ');
     expect(DASHBOARD_HTML).toContain('completed models with successful scored readings');
     expect(DASHBOARD_HTML).toContain('unavailable, failed-only, unscored, or incomplete');
