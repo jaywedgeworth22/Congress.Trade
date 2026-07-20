@@ -29,6 +29,13 @@ import { resolveSecret } from '../secrets/infisical';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget';
 import { notifyAdmin } from '../alerts/notify';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import {
+  checkTargetCircuit,
+  parkDelivery,
+  recordTargetFailure,
+  recordTargetSuccess,
+  targetKeyForUrl,
+} from './targetCircuit';
 
 /** Max delivery attempts before we give up (initial try + retries). */
 const MAX_ATTEMPTS = 5;
@@ -283,6 +290,21 @@ async function deliverToSubscription(
     return;
   }
 
+  // GOVERNOR 3: per-target circuit breaker. A target that keeps failing (peer
+  // outage, dead endpoint, auth rot) opens its circuit; while open — or past
+  // its daily failed-attempt cap — this delivery PARKS durably and returns
+  // WITHOUT throwing, so the queue never retry-storms the target. Parked rows
+  // are re-dispatched by the scheduled flushParkedDeliveries once the circuit
+  // probe succeeds. No delivery attempt is consumed by parking.
+  const targetKey = targetKeyForUrl(sub.targetUrl);
+  if (targetKey) {
+    const gate = await checkTargetCircuit(env, targetKey);
+    if (!gate.allowed) {
+      await parkDelivery(env, sub.id, tx.id, gate.reason);
+      return;
+    }
+  }
+
   const claim = await claimDelivery(env, sub.id, tx.id);
   if (claim.outcome === 'delivered') return;
   if (claim.outcome === 'busy') {
@@ -347,8 +369,12 @@ async function deliverToSubscription(
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     await recordDelivery(env, claim.id, claim.token, true, attempt, null);
+    // 2xx auto-closes the target circuit (probe success releases the parked backlog).
+    if (targetKey) await recordTargetSuccess(env, targetKey);
   } catch (err) {
     const lastError = err instanceof Error ? err.message : String(err);
+    // Count the failed attempt against the target's circuit + daily cap.
+    if (targetKey) await recordTargetFailure(env, targetKey, lastError);
     try {
       await recordDelivery(env, claim.id, claim.token, false, attempt, lastError);
     } catch (recordErr) {
