@@ -312,7 +312,7 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
 
     let command: ClientCommand;
     let executionType = type;
-    let executionPayload = payload;
+    let executionPayload: unknown = payload;
     if (existing) {
       const reclaimed = await reclaimStaleInFlightCommand(c.env, user.id, existing.id);
       if (!reclaimed) {
