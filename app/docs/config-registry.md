@@ -59,7 +59,8 @@ safe only while a strong client secret exists.
 ### Integrations
 `APP_B_IMPORT_URL`, `APP_B_INGEST_TOKEN`, `USAGE_MONITOR_ENABLED`,
 `USAGE_MONITOR_INGEST_URL`, `USAGE_MONITOR_INGEST_TOKEN`,
-`USAGE_MONITOR_ENVIRONMENT`²
+`USAGE_MONITOR_ENVIRONMENT`², `USAGE_MONITOR_READ_TOKEN` (optional; read-only
+budget-status polling, see Tunables & flags below)
 
 ### Tunables & flags
 - Budgets/pacers: `FMP_DAILY_CALL_CAP`, `FMP_MAX_PER_MINUTE`,
@@ -134,6 +135,28 @@ safe only while a strong client secret exists.
   - `AUTOPILOT_BATCH_PRESEED` — pre-seed cascade reads through the cheaper
     direct-provider batch APIs where the chamber trio supports it (default
     off; a no-op for all-OpenRouter trios)
+- Monitor-informed budget throttle (`src/shared/monitorBudgetGate.ts`; a
+  read-side self-throttle feedback loop — polls the API Usage Monitor's
+  cross-app `GET /api/budget-status` so the backlog autopilot backs off a
+  provider the monitor already reports at/over budget. Advisory ONLY: it
+  composes under the autopilot's own `AUTOPILOT_DAILY_USD_BUDGET` above and
+  never touches the essential real-time per-filing ingestion path. FAILS OPEN
+  on any error/timeout/misconfiguration — never throttles when it can't get a
+  clean answer):
+  - `USAGE_MONITOR_READ_TOKEN` — dedicated read token for `GET
+    /api/budget-status`; falls back to `USAGE_MONITOR_INGEST_TOKEN` when unset
+    (mirrors the monitor's own `USAGE_READ_TOKEN`\|\|`USAGE_INGEST_TOKEN`
+    convention)
+  - `USAGE_MONITOR_BUDGET_THROTTLE_ENABLED` — master on/off switch (default
+    on whenever `USAGE_MONITOR_INGEST_URL`/token are configured)
+  - `USAGE_MONITOR_BUDGET_THROTTLE_THRESHOLD` — fraction of monthly budget
+    (0-1) at/above which a provider counts as throttled (default `1.0`, i.e.
+    the monitor's own `exceeded` status; lower to back off earlier, e.g.
+    `0.9`)
+  - `USAGE_MONITOR_BUDGET_STATUS_CACHE_TTL_MS` — in-isolate cache TTL for the
+    polled response (default `120000` = 2min)
+  - `USAGE_MONITOR_BUDGET_STATUS_TIMEOUT_MS` — bounded request deadline for
+    the poll itself (default `5000`, hard cap `15000`)
 - Document classifier (`src/extraction/docClassifier.ts`; assigns
   `filings.doc_class` ∈ typed | clean_scan | hard_scan | empty | corrupt —
   deterministic signals first, ONE ~free enum-constrained OpenRouter call
