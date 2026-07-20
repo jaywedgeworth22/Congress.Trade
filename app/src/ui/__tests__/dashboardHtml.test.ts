@@ -585,7 +585,6 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('var BENCHMARK_CATALOG = [');
     expect(DASHBOARD_HTML).toContain('var REREAD_MODELS = BENCHMARK_CATALOG;');
     expect(DASHBOARD_HTML).not.toContain("{ provider: 'gemini', model: 'gemini-3.5-flash' }");
-
     const match = DASHBOARD_HTML.match(/var BENCHMARK_CATALOG = (\[[\s\S]*?\]);/);
     expect(match).not.toBeNull();
     const catalog = JSON.parse(match![1]) as Array<{ provider: string; model: string }>;
@@ -610,7 +609,6 @@ describe('DASHBOARD_HTML', () => {
     expect(keys).toContain('openrouter:google/gemini-3.5-flash');
     expect(keys).toContain('openrouter:anthropic/claude-opus-4.8');
     expect(keys).toContain('llamaparse:fast');
-
     // Dead-on-OpenRouter slugs and the retired GPT-4o family never render.
     expect(DASHBOARD_HTML).not.toContain('gpt-4o');
     expect(DASHBOARD_HTML).not.toContain('google/gemini-pro-1.5');
