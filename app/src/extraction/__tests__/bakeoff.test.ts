@@ -472,6 +472,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     expect(properties.txType.type).toEqual(['string', 'null']);
   });
 
+
   it('routes all GPT-5.6 tiers through OpenRouter (no direct openai entries)', () => {
     const directOpenAiModels = DEFAULT_CANDIDATES
       .filter((entry) => entry.provider === 'openai')
@@ -512,6 +513,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       'google/gemini-3.5-flash',
       'qwen/qwen-2.5-72b-instruct',
     ]);
+
     // Slugs confirmed absent from the live OpenRouter models API must never
     // reappear — every benchmark cell for a dead slug can only fail.
     const deadSlugs = [
