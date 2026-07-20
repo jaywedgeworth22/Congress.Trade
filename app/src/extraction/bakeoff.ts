@@ -103,11 +103,10 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   // direct route; the direct entry lives in LEGACY_CANDIDATES for decode only.
   { provider: 'openrouter', model: 'mistral/mistral-ocr-latest' },
   { provider: 'openrouter', model: 'openai/gpt-5.6-terra' },
-  { provider: 'openrouter', model: 'openai/gpt-5.6-terra-pro' },
   { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
-  { provider: 'openrouter', model: 'openai/gpt-5.6-sol' },
   { provider: 'openrouter', model: 'anthropic/claude-sonnet-5' },
   { provider: 'openrouter', model: 'anthropic/claude-haiku-4.5' },
+  { provider: 'openrouter', model: 'anthropic/claude-opus-4.8' },
   { provider: 'openrouter', model: 'x-ai/grok-4.3' },
   { provider: 'openrouter', model: 'deepseek/deepseek-v4-pro' },
   { provider: 'openrouter', model: 'deepseek/deepseek-v4-flash' },
@@ -118,7 +117,23 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'openrouter', model: 'z-ai/glm-4.6v' },
   { provider: 'openrouter', model: 'google/gemini-3.5-flash' },
   { provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' },
+];
+
+/**
+ * Known-good routes kept catalog-valid (decode/replay + one-line re-enable)
+ * but intentionally NOT offered in the benchmark UI and NOT part of the
+ * default bake-off lineup.
+ */
+export const NON_OFFERED_CANDIDATES: BakeoffCandidate[] = [
+  // Routing is unpredictable; owner will trial it separately, not alongside
+  // fixed-model benchmarking. Already rejected for live A–E slots by
+  // isOpenRouterAuto() and by CODEX PR #556's dry-run guard.
   { provider: 'openrouter', model: 'openrouter/auto' },
+  // Vision extraction/OCR tasks typically do not benefit from higher-cost
+  // reasoning models. Removed to prevent routine benchmark waste, but kept
+  // in catalog for targeted or historical runs.
+  { provider: 'openrouter', model: 'openai/gpt-5.6-terra-pro' },
+  { provider: 'openrouter', model: 'openai/gpt-5.6-sol' },
 ];
 
 /**
