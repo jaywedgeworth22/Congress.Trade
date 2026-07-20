@@ -120,15 +120,19 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' },
 ];
 
-/** Known-good routes kept catalog-valid (decode/replay + one-line re-enable)
- *  but intentionally NOT offered in the benchmark UI and NOT part of the
- *  default bake-off lineup. */
+/**
+ * Known-good routes kept catalog-valid (decode/replay + one-line re-enable)
+ * but intentionally NOT offered in the benchmark UI and NOT part of the
+ * default bake-off lineup.
+ */
 export const NON_OFFERED_CANDIDATES: BakeoffCandidate[] = [
   // Routing is unpredictable; owner will trial it separately, not alongside
   // fixed-model benchmarking. Already rejected for live A–E slots by
   // isOpenRouterAuto() and by CODEX PR #556's dry-run guard.
   { provider: 'openrouter', model: 'openrouter/auto' },
-  // High-effort/high-cost models removed from the routine offered list.
+  // Vision extraction/OCR tasks typically do not benefit from higher-cost
+  // reasoning models. Removed to prevent routine benchmark waste, but kept
+  // in catalog for targeted or historical runs.
   { provider: 'openrouter', model: 'openai/gpt-5.6-terra-pro' },
   { provider: 'openrouter', model: 'openai/gpt-5.6-sol' },
 ];
