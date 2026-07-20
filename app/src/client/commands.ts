@@ -73,7 +73,17 @@ export function persistedCommandResult(type: ClientCommandType, result: unknown)
   };
 }
 
-export async function executeCommand(env: Env, user: User, type: ClientCommandType, payload: unknown): Promise<unknown> {
+function subscriptionIdForCommand(commandId: string | undefined): string | undefined {
+  return commandId?.startsWith('cmd_') ? `sub_${commandId.slice(4)}` : undefined;
+}
+
+export async function executeCommand(
+  env: Env,
+  user: User,
+  type: ClientCommandType,
+  payload: unknown,
+  opts: { commandId?: string } = {},
+): Promise<unknown> {
   const input = (payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}) as Record<string, unknown>;
   if (type === 'update_preferences') {
     return { preferences: await upsertPreferences(env, user.id, normalizePreferencePatch(input)) };
@@ -98,6 +108,7 @@ export async function executeCommand(env: Env, user: User, type: ClientCommandTy
     try {
       await assertSubscriptionQuota(env, clientId, { creating: true });
       const sub = await createSubscription(env, {
+        id: subscriptionIdForCommand(opts.commandId),
         clientId,
         delivery,
         targetUrl: delivery === 'webhook' ? targetUrl : null,
