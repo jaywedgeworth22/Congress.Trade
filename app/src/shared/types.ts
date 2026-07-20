@@ -441,6 +441,13 @@ export interface ThirdPartyUsageTelemetryEvent {
   confidence: 'actual' | 'estimated' | 'manual';
   occurredAt: string;
   metadata?: Record<string, string | number | boolean | null>;
+  /**
+   * Provider-side call/generation id (e.g. OpenRouter's `id` on a completions
+   * response). Optional in the shared `UsageTelemetryEventSchema`; lets the
+   * monitor verify reported cost against the provider's own record. Never
+   * part of the idempotency-key basis.
+   */
+  providerRequestId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -473,10 +480,16 @@ export interface Env {
   MISTRAL_API_KEY?: string;
   /** xAI API key — Grok (Files API → grok-4.3) candidate in the extractor bake-off. */
   XAI_API_KEY?: string;
-  /** OpenRouter API key — for arbitrary open-weights vision model candidates. */
+  /** OpenRouter API key — the unified transport for ALL live LLM extraction. */
   OPENROUTER_API_KEY?: string;
-  /** OpenRouter model override (defaults to 'qwen/qwen-2.5-vl-72b-instruct:free'). */
+  /** OpenRouter model override (defaults to 'google/gemini-3.5-flash'). */
   OPENROUTER_MODEL?: string;
+  /** file-parser engine for typed/text PDFs (default 'cloudflare-ai' — free). */
+  OPENROUTER_PDF_ENGINE_TEXT?: string;
+  /** file-parser engine for scanned PDFs on non-native-vision models (default 'mistral-ocr'). */
+  OPENROUTER_PDF_ENGINE_SCANNED?: string;
+  /** Optional per-request provider price ceiling, JSON like {"prompt":5,"completion":20} (USD/M tokens). */
+  OPENROUTER_MAX_PRICE?: string;
   /** LlamaIndex Cloud API key — LlamaParse OCR + structured extraction candidate. */
   /** Additional market/enrichment provider keys. */
   MASSIVE_API_KEY?: string;
@@ -625,6 +638,42 @@ export interface Env {
   USAGE_TELEMETRY_FALLBACK_TTL_DAYS?: string;
   /** Max legacy D1 fallback rows read per flush cycle during the one-time drain (default 100, hard cap 500). */
   USAGE_TELEMETRY_D1_DRAIN_LIMIT?: string;
+
+  /**
+   * --- Hard resource governors (owner mandate 2026-07-18) ---
+   * Governor 1: daily LLM USD ceilings (shared/llmSpend.ts; Infisical-tunable).
+   * Enforced fail-closed inside the provider-call choke point.
+   */
+  /** Global daily LLM spend ceiling in USD (default 10). */
+  LLM_DAILY_USD_CEILING?: string;
+  /** Optional per-provider daily USD sub-ceilings; unset = global-only. */
+  LLM_DAILY_USD_CEILING_OPENROUTER?: string;
+  LLM_DAILY_USD_CEILING_GEMINI?: string;
+  LLM_DAILY_USD_CEILING_OPENAI?: string;
+  LLM_DAILY_USD_CEILING_ANTHROPIC?: string;
+  LLM_DAILY_USD_CEILING_MISTRAL?: string;
+  LLM_DAILY_USD_CEILING_XAI?: string;
+  LLM_DAILY_USD_CEILING_LLAMAPARSE?: string;
+  /**
+   * Governor 2: D1 write governor (shared/d1Budget.ts). Env-only like the
+   * usage-telemetry circuit limits: read synchronously on the hot write path.
+   */
+  /** Governed write operations allowed per invocation (default 2000). */
+  D1_WRITE_OPS_PER_INVOCATION_CAP?: string;
+  /** Statements per governed batch before truncation + quarantine (default 200). */
+  D1_WRITE_BATCH_CAP?: string;
+  /**
+   * Governor 3: per-target outbound circuit breaker
+   * (delivery/targetCircuit.ts). Env-only, same rationale as above.
+   */
+  /** Consecutive failures before a target's circuit opens (default 5). */
+  DELIVERY_TARGET_FAILURE_THRESHOLD?: string;
+  /** Failed attempts allowed per target per UTC day (default 50). */
+  DELIVERY_TARGET_DAILY_ATTEMPT_CAP?: string;
+  /** First open-circuit window in seconds; doubles per failure, capped at 3600 (default 60). */
+  DELIVERY_TARGET_BASE_BACKOFF_SEC?: string;
+  /** Parked deliveries allowed per subscription before overflow quarantine (default 500). */
+  DELIVERY_TARGET_PARKED_CAP?: string;
   /** Admin + scoped import bearer tokens. */
   ADMIN_TOKEN?: string;
   /** Admin email allowlist for site-session admin access and Cloudflare Access. */

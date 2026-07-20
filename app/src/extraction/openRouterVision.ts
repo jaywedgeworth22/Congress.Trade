@@ -2,13 +2,41 @@
  * src/extraction/openRouterVision.ts
  * OWNER: extraction agent
  *
- * OpenRouter / OpenAI-compatible Vision extractor for scanned-image PDFs.
+ * OpenRouter / OpenAI-compatible Vision extractor for PDF disclosure documents.
+ *
+ * OpenRouter-feature adoption (https://openrouter.ai/docs/guides/overview/multimodal/pdfs):
+ *   - FILE-ANNOTATION REUSE: the first successful OpenRouter read of a document
+ *     returns `choices[0].message.annotations` describing the parsed PDF. We
+ *     persist those annotations to R2 (keyed by doc id) and send them back on
+ *     every later OpenRouter call for the same document (agreement-trio members
+ *     2/3, cascade retries, operator reprocess), which makes OpenRouter skip
+ *     the PDF parse — the parse fee is paid ONCE per document instead of once
+ *     per model read.
+ *   - ENGINE ROUTING: the file-parser plugin engine is chosen from the
+ *     document's classification — typed/text PDFs use the FREE `cloudflare-ai`
+ *     markdown engine (the deprecated `pdf-text` engine redirects here), scans
+ *     use `mistral-ocr` ($2/1k pages), and native-vision models read scans
+ *     directly (billed as input tokens). Both knobs are overridable.
+ *   - STRUCTURED OUTPUTS: models verified to support `structured_outputs` get
+ *     a strict `json_schema` response_format (plus provider
+ *     `require_parameters` so requests never route to providers that ignore
+ *     response_format); everything else keeps the prompt-JSON + `json_object`
+ *     fallback. The `response-healing` plugin stays on as backup either way.
+ *   - USAGE ACCOUNTING: `usage: { include: true }` returns the actual charged
+ *     cost per request; it is captured (with cached-token detail and the served
+ *     model id) into the extractor usage so extraction_runs/telemetry record
+ *     provider-reported dollars instead of only rate-card estimates.
  */
 
 import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types';
 import type { Env, Filing, ParsedTx } from '../shared/types';
 import { getDocumentProxy } from 'unpdf';
 import { resolveSecret } from '../secrets/infisical';
+import { environmentName } from '../shared/thirdPartyTelemetry';
+import {
+  openrouterRequestEnrichment,
+  type OpenRouterRequestEnrichment,
+} from '@jaywedgeworth22/congress-trading-shared';
 import {
   buildExtractionPrompt,
   loadExtractionPromptContext,
@@ -18,14 +46,30 @@ import {
   arrayBufferToBase64,
 } from './visionLlm';
 
-const DEFAULT_MODEL = 'qwen/qwen-2.5-vl-72b-instruct:free';
+/** Live default (verified against the OpenRouter catalog 2026-07-18); the
+ *  former default `qwen/qwen-2.5-vl-72b-instruct:free` is no longer listed. */
+const DEFAULT_MODEL = 'google/gemini-3.5-flash';
 const DEFAULT_CONFIDENCE = 0.6;
 const MAX_TOKENS = 8000;
 
+/** file-parser engine for typed/text PDFs (FREE markdown conversion). */
+const DEFAULT_TEXT_ENGINE = 'cloudflare-ai';
+/** file-parser engine for scanned PDFs read by non-native-vision models. */
+const DEFAULT_SCAN_ENGINE = 'mistral-ocr';
+
 interface OpenAIChatPayload {
+  /** OpenRouter's generation id for this response (e.g. "gen-..."), used as
+   *  providerRequestId for monitor-side spend verification. */
+  id?: string;
+  /** Served model slug (may differ from the requested alias). */
+  model?: string;
+  /** Upstream provider name that actually served the request. */
+  provider?: string;
   choices?: Array<{
     message?: {
       content?: string;
+      /** File annotations from OpenRouter's PDF parser (reusable). */
+      annotations?: unknown[];
     };
     finish_reason?: string;
   }>;
@@ -33,6 +77,10 @@ interface OpenAIChatPayload {
     prompt_tokens?: number;
     completion_tokens?: number;
     total_tokens?: number;
+    /** Actual charged cost in USD credits (present with usage.include=true). */
+    cost?: number;
+    cost_details?: { upstream_inference_cost?: number | null } | null;
+    prompt_tokens_details?: { cached_tokens?: number } | null;
   };
 }
 
@@ -47,13 +95,185 @@ export interface OpenRouterVisionOptions {
 
 
 /** Returns true for models that accept a PDF as a `type: 'file'` attachment natively. */
-function supportsNativeVision(model: string): boolean {
+export function supportsNativeVision(model: string): boolean {
   const m = model.toLowerCase();
   if (m.includes('gpt-4o')) return true;
   if (m.includes('gpt-5')) return true;
-  if (m.includes('claude-3') || m.includes('claude-4') || m.includes('claude-5')) return true;
+  // Anthropic slugs on OpenRouter are generation-suffixed family names
+  // (anthropic/claude-sonnet-5, anthropic/claude-haiku-4.5, ...) — the old
+  // claude-3/4/5 substring test missed every current slug and fell back to a
+  // paid mistral-ocr parse for models that read PDFs natively.
+  if (/claude-(?:\d|sonnet|haiku|opus)/.test(m)) return true;
   if (m.includes('gemini-1.5') || m.includes('gemini-2') || m.includes('gemini-3')) return true;
+  // x-ai/grok-4.3 lists `file` input modality on the live catalog (2026-07-18).
+  if (/grok-4/.test(m)) return true;
   return false;
+}
+
+/**
+ * Models verified (live /api/v1/models `supported_parameters`, 2026-07-18) to
+ * support `structured_outputs` via OpenRouter. Slug-vendor allowlist rather
+ * than per-model so new same-vendor generations inherit the behavior; vendors
+ * whose listings lack `structured_outputs` (amazon/nova*, z-ai/glm*) and the
+ * unpredictable `openrouter/auto` router stay on the prompt-JSON fallback.
+ */
+export function supportsStructuredOutputs(model: string): boolean {
+  const m = model.trim().toLowerCase();
+  if (m.includes('mistral-ocr')) return false; // OCR endpoint, not a chat model
+  const slash = m.indexOf('/');
+  if (slash <= 0) return false;
+  const vendor = m.slice(0, slash);
+  return ['openai', 'anthropic', 'google', 'deepseek', 'qwen', 'x-ai'].includes(vendor);
+}
+
+/**
+ * Strict JSON schema for the extraction reply (same row shape as
+ * `MISTRAL_ANNOTATION_SCHEMA` in bakeoff.ts — kept as a separate literal to
+ * avoid an import cycle; `parseModelJson` unwraps the `transactions` wrapper).
+ */
+export const OPENROUTER_EXTRACTION_RESPONSE_FORMAT = {
+  type: 'json_schema',
+  json_schema: {
+    name: 'extraction',
+    strict: true,
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        transactions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              txDate: { type: ['string', 'null'] },
+              owner: { type: ['string', 'null'] },
+              assetName: { type: ['string', 'null'] },
+              ticker: { type: ['string', 'null'] },
+              assetType: { type: ['string', 'null'] },
+              assetTypeName: { type: ['string', 'null'] },
+              txType: { type: ['string', 'null'] },
+              amountRange: { type: ['string', 'null'] },
+              isOption: { type: ['boolean', 'null'] },
+              capGainsOver200: { type: ['boolean', 'null'] },
+              filingStatus: { type: ['string', 'null'] },
+              subholding: { type: ['string', 'null'] },
+              location: { type: ['string', 'null'] },
+              description: { type: ['string', 'null'] },
+              supplementalText: { type: ['string', 'null'] },
+              confidence: { type: 'number', minimum: 0, maximum: 1 },
+            },
+            required: [
+              'assetName',
+              'ticker',
+              'assetType',
+              'assetTypeName',
+              'txType',
+              'amountRange',
+              'txDate',
+              'owner',
+              'isOption',
+              'capGainsOver200',
+              'filingStatus',
+              'subholding',
+              'location',
+              'description',
+              'supplementalText',
+              'confidence',
+            ],
+          },
+        },
+      },
+      required: ['transactions'],
+    },
+  },
+} as const;
+
+/**
+ * Pick the file-parser engine for one request. Preference order for the
+ * document signal: `doc_class` (per-filing classification from the extraction
+ * autopilot: typed | clean_scan | hard_scan | empty | corrupt) when present,
+ * else `doc_kind` (text_pdf | scanned_pdf). Returns `null` when no plugin
+ * should be attached (native-vision model reading a scan natively).
+ */
+export function chooseParserEngine(input: {
+  model: string;
+  docClass?: string | null;
+  docKind?: string | null;
+  textEngine?: string;
+  scanEngine?: string;
+}): string | null {
+  const textEngine = input.textEngine?.trim() || DEFAULT_TEXT_ENGINE;
+  const scanEngine = input.scanEngine?.trim() || DEFAULT_SCAN_ENGINE;
+  const docClass = input.docClass?.trim().toLowerCase();
+  const docKind = input.docKind?.trim().toLowerCase();
+  const isTyped = docClass ? docClass === 'typed' : docKind === 'text_pdf';
+  // Typed documents: the FREE markdown engine beats native token-billed page
+  // parsing for every model, so attach it even for native-vision models.
+  if (isTyped) return textEngine;
+  // Scans (clean_scan / hard_scan / scanned_pdf / unknown): native-vision
+  // models read the PDF directly; everything else needs the OCR engine.
+  return supportsNativeVision(input.model) ? null : scanEngine;
+}
+
+/** R2 object key holding a document's reusable OpenRouter file annotations. */
+export function annotationObjectKey(docId: string): string {
+  return `openrouter/annotations/${docId}.json`;
+}
+
+/** Best-effort load of persisted annotations; any failure reads as "none". */
+async function loadStoredAnnotations(env: Env, docId: string): Promise<unknown[] | null> {
+  try {
+    const bucket = (env as { RAW_FILES?: R2Bucket }).RAW_FILES;
+    if (!bucket?.get) return null;
+    const obj = await bucket.get(annotationObjectKey(docId));
+    if (!obj) return null;
+    const parsed: unknown = JSON.parse(await obj.text());
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Best-effort persist; extraction never fails because the cache write did. */
+async function storeAnnotations(env: Env, docId: string, annotations: unknown[]): Promise<void> {
+  try {
+    const bucket = (env as { RAW_FILES?: R2Bucket }).RAW_FILES;
+    if (!bucket?.put) return;
+    await bucket.put(annotationObjectKey(docId), JSON.stringify(annotations), {
+      httpMetadata: { contentType: 'application/json' },
+    });
+  } catch (err) {
+    console.warn(`openRouterVision: annotation cache write failed for ${docId}: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * True when a non-OK OpenRouter reply looks like a rejected request-level
+ * plugin/engine override (the account has "Prevent overrides" enabled in the
+ * OpenRouter dashboard). The caller degrades to OpenRouter's default engine
+ * selection (native → mistral-ocr) instead of failing the read.
+ */
+export function isEngineOverrideRejection(status: number, detail: string): boolean {
+  if (status < 400 || status >= 500) return false;
+  return /\b(engine|plugin|file-parser|override)\b/i.test(detail);
+}
+
+/** Parse the OPENROUTER_MAX_PRICE knob: JSON like {"prompt":5,"completion":20}
+ *  (USD per million tokens, matching OpenRouter provider max_price units). */
+export function parseMaxPrice(raw: string | undefined): Record<string, number> | null {
+  if (!raw?.trim()) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, number> = {};
+    for (const key of ['prompt', 'completion', 'image', 'request'] as const) {
+      const value = parsed[key];
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 0) out[key] = value;
+    }
+    return Object.keys(out).length ? out : null;
+  } catch {
+    return null;
+  }
 }
 
 export class OpenRouterVisionExtractor implements Extractor {
@@ -89,12 +309,72 @@ export class OpenRouterVisionExtractor implements Extractor {
     }
   }
 
+  /** Live-tunable knob: Infisical first, env fallback, then default. */
+  private async resolveKnob(name: keyof Env & string, fallback: string): Promise<string> {
+    try {
+      const resolved = (await resolveSecret(this.env, name)).value;
+      if (resolved) return resolved;
+    } catch {
+      /* fall through to env */
+    }
+    return (this.env[name] as string | undefined) || fallback;
+  }
+
+  /**
+   * Usage-compliance classifier metadata for the OpenRouter request: a stable
+   * `trace` object (sourceApp/environment/service/feature/keyRef/gitSha) plus
+   * a deterministic per-document `user` id, per
+   * DESIGN-usage-compliance-classifier.md §2. Built once per extraction call
+   * (not per fetchWithRetry attempt) so `user` stays byte-identical across
+   * retries of the same document.
+   *
+   * Best-effort by design: the shared builder fails fast on an invalid STATIC
+   * field (a programming error), but that must never take down a paid
+   * extraction call. Any error here — expected or not — degrades to sending
+   * the OpenRouter request WITHOUT enrichment; the extraction itself proceeds
+   * unaffected.
+   */
+  private buildClassifierEnrichment(input: ExtractorInput): OpenRouterRequestEnrichment | undefined {
+    try {
+      return openrouterRequestEnrichment({
+        sourceApp: 'congress-trade',
+        environment: environmentName(this.env),
+        service: this.name,
+        feature: input.filing.chamber ? `vision-extract-${input.filing.chamber}` : undefined,
+        keyRef: this.apiKeyName,
+        gitSha: this.env.CF_VERSION_METADATA?.id || this.env.CF_VERSION_METADATA?.tag || undefined,
+        // Deterministic per-doc id, stable across fetchWithRetry's retries of
+        // this same call. Never "" — an unpopulated docId (e.g. a caller that
+        // constructs a partial Filing, as the bake-off harness does for
+        // non-OpenRouter candidates) must OMIT `user`, not send a blank one.
+        user: input.filing.docId || undefined,
+        // No run/session id is in scope at this call site today.
+        sessionId: undefined,
+      });
+    } catch (err) {
+      console.warn(
+        `${this.name}: classifier enrichment failed; sending OpenRouter request without it:`,
+        (err as Error).message,
+      );
+      return undefined;
+    }
+  }
+
   async extract(input: ExtractorInput): Promise<ExtractorResult> {
     const key = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKeyName)).value;
     if (!key) throw new Error(`${this.name}: API key is not configured`);
     if (!input.bytes) throw new Error(`${this.name}: no bytes provided on ExtractorInput`);
 
     const model = await this.resolveModel();
+    const docId = input.filing.docId || null;
+    // doc_class is being added by the extraction-autopilot lane; read it
+    // structurally so this routing works the moment the column ships without
+    // coupling to that lane's type change.
+    const docClass = (input.filing as Filing & { docClass?: string | null }).docClass ?? null;
+
+    // Computed once per extraction call — never per retry — so `user` stays
+    // deterministic across fetchWithRetry's internal attempts.
+    const classifierEnrichment = this.buildClassifierEnrichment(input);
 
     let pagesProcessed: number | undefined = undefined;
     if (model.toLowerCase().includes('mistral-ocr')) {
@@ -113,6 +393,10 @@ export class OpenRouterVisionExtractor implements Extractor {
 
     let totalPromptTokens = 0;
     let totalCompletionTokens = 0;
+    let totalCachedTokens = 0;
+    let providerCostUsd: number | undefined;
+    let resolvedModel = model;
+    let providerRequestId: string | undefined;
     let combinedRaw = '';
     let allRows: ParsedTx[] = [];
 
@@ -126,44 +410,70 @@ export class OpenRouterVisionExtractor implements Extractor {
         fileData = `data:application/pdf;base64,${arrayBufferToBase64(input.bytes)}`;
       }
 
-      const callOpenRouter = async (): Promise<OpenAIChatPayload> => {
-        // Mistral OCR via OpenRouter requires image_url with the document URL
-        // (or base64 data URI) — NOT the file-parser plugin approach.
-        const isMistralOcr = model.includes('mistral-ocr');
-        let messageContent: unknown[];
+      // Mistral OCR via OpenRouter requires image_url with the document URL
+      // (or base64 data URI) — NOT the file-parser plugin approach.
+      const isMistralOcr = model.includes('mistral-ocr');
+      const structured = !isMistralOcr && supportsStructuredOutputs(model);
+      const maxPrice = parseMaxPrice(await this.resolveKnob('OPENROUTER_MAX_PRICE', ''));
+
+      // Reuse persisted file annotations so OpenRouter skips re-parsing fees
+      // for later reads of the same document (trio members 2/3, retries).
+      const storedAnnotations = !isMistralOcr && docId
+        ? await loadStoredAnnotations(this.env, docId)
+        : null;
+
+      const engine = isMistralOcr || storedAnnotations
+        ? null
+        : chooseParserEngine({
+            model,
+            docClass,
+            docKind: input.filing.docKind,
+            textEngine: await this.resolveKnob('OPENROUTER_PDF_ENGINE_TEXT', DEFAULT_TEXT_ENGINE),
+            scanEngine: await this.resolveKnob('OPENROUTER_PDF_ENGINE_SCANNED', DEFAULT_SCAN_ENGINE),
+          });
+
+      const buildMessages = (): unknown[] => {
         if (isMistralOcr) {
           // Per OpenRouter docs: Mistral OCR accepts `image_url` pointing to the PDF.
-          messageContent = [
+          return [
             {
-              type: 'text',
-              text: `${promptToUse}\nReturn ONLY the JSON array.`,
+              role: 'user',
+              content: [
+                { type: 'text', text: `${promptToUse}\nReturn ONLY the JSON array.` },
+                { type: 'image_url', image_url: { url: fileData } },
+              ],
             },
-            {
-              type: 'image_url',
-              image_url: { url: fileData },
-            },
-          ];
-        } else {
-          messageContent = [
-            {
-              type: 'file',
-              file: {
-                filename: 'document.pdf',
-                file_data: fileData,
-              },
-            },
-            { type: 'text', text: `${promptToUse}\nReturn ONLY the JSON array.` },
           ];
         }
+        const fileBlock = {
+          type: 'file',
+          file: { filename: 'document.pdf', file_data: fileData },
+        };
+        const promptBlock = { type: 'text', text: `${promptToUse}\nReturn ONLY the JSON array.` };
+        if (storedAnnotations) {
+          // Annotation-reuse shape from the OpenRouter PDF docs: the original
+          // user message (file re-sent for hash dedup), the assistant message
+          // carrying the parser's annotations, then the actual ask.
+          return [
+            { role: 'user', content: [{ type: 'text', text: 'Document attached.' }, fileBlock] },
+            { role: 'assistant', content: 'Document parsed.', annotations: storedAnnotations },
+            { role: 'user', content: [promptBlock] },
+          ];
+        }
+        return [{ role: 'user', content: [fileBlock, promptBlock] }];
+      };
 
-        const plugins = isMistralOcr
-          ? [{ id: 'response-healing' }]
-          : [
-              { id: 'response-healing' },
-              ...(supportsNativeVision(model)
-                ? []
-                : [{ id: 'file-parser', pdf: { engine: 'mistral-ocr' } }]),
-            ];
+      const callOpenRouter = async (
+        includeEngine: boolean,
+      ): Promise<{ payload: OpenAIChatPayload } | { rejection: string; status: number }> => {
+        const plugins = [
+          { id: 'response-healing' },
+          ...(includeEngine && engine ? [{ id: 'file-parser', pdf: { engine } }] : []),
+        ];
+        const provider = {
+          ...(structured ? { require_parameters: true } : {}),
+          ...(maxPrice ? { max_price: maxPrice } : {}),
+        };
 
         const res = await fetchWithRetry(
           'https://openrouter.ai/api/v1/chat/completions',
@@ -178,19 +488,22 @@ export class OpenRouterVisionExtractor implements Extractor {
             body: JSON.stringify({
               model,
               max_tokens: MAX_TOKENS,
-              response_format: { type: 'json_object' },
+              response_format: structured
+                ? OPENROUTER_EXTRACTION_RESPONSE_FORMAT
+                : { type: 'json_object' },
+              usage: { include: true },
+              ...(Object.keys(provider).length ? { provider } : {}),
               plugins,
-              messages: [
-                {
-                  role: 'user',
-                  content: messageContent,
-                },
-              ],
+              messages: buildMessages(),
+              // Usage-compliance classifier metadata (top-level user/session_id
+              // + flat trace object) — undefined when enrichment degraded, in
+              // which case this spreads nothing.
+              ...classifierEnrichment,
             }),
             signal: AbortSignal.timeout(120_000),
           },
           this.name,
-          { model }
+          { model, spendGuard: { env: this.env, provider: 'openrouter' } }
         );
 
         if (!res.ok) {
@@ -200,18 +513,68 @@ export class OpenRouterVisionExtractor implements Extractor {
           } catch {
             /* ignore */
           }
+          if (includeEngine && engine && isEngineOverrideRejection(res.status, detail)) {
+            return { rejection: detail, status: res.status };
+          }
           throw new Error(`${this.name}: OpenRouter API ${res.status} ${res.statusText} ${detail}`);
         }
 
-        return (await res.json()) as OpenAIChatPayload;
+        return { payload: (await res.json()) as OpenAIChatPayload };
       };
 
-      const payload = await callOpenRouter();
-      
+      let call = await callOpenRouter(true);
+      let degradedEngine = false;
+      if ('rejection' in call) {
+        // Account-level "Prevent overrides" (or an engine the account can't
+        // request) rejected the request-level engine. Degrade to OpenRouter's
+        // default selection (native → mistral-ocr) rather than failing.
+        console.warn(
+          `${this.name}: request-level engine '${engine}' rejected (${call.status}); retrying with default engine selection`,
+        );
+        degradedEngine = true;
+        const retried = await callOpenRouter(false);
+        if ('rejection' in retried) {
+          throw new Error(`${this.name}: OpenRouter API ${retried.status} ${retried.rejection}`);
+        }
+        call = retried;
+      }
+      const { payload } = call;
+
+      // Generation id for monitor-side spend verification. Never an empty
+      // string — `payload.id` is either a real id or omitted entirely.
+      providerRequestId = payload.id || undefined;
       totalPromptTokens = payload.usage?.prompt_tokens ?? 0;
       totalCompletionTokens = payload.usage?.completion_tokens ?? 0;
+      totalCachedTokens = payload.usage?.prompt_tokens_details?.cached_tokens ?? 0;
+      if (typeof payload.usage?.cost === 'number' && Number.isFinite(payload.usage.cost) && payload.usage.cost >= 0) {
+        providerCostUsd = payload.usage.cost;
+      }
+      if (payload.model) resolvedModel = payload.model;
+      if (payload.id) providerRequestId = payload.id;
 
-      const text = payload.choices?.[0]?.message?.content ?? '';
+      const message = payload.choices?.[0]?.message;
+      const text = message?.content ?? '';
+
+      // Persist first-read annotations so every later read skips parsing fees.
+      const responseAnnotations = message?.annotations;
+      if (!isMistralOcr && docId && !storedAnnotations && Array.isArray(responseAnnotations) && responseAnnotations.length > 0) {
+        await storeAnnotations(this.env, docId, responseAnnotations);
+      }
+
+      // Structured log of which parse path actually served this read.
+      console.log(JSON.stringify({
+        event: 'openrouter_pdf_read',
+        docId,
+        model,
+        servedModel: payload.model ?? null,
+        servedProvider: payload.provider ?? null,
+        requestedEngine: isMistralOcr ? 'mistral-ocr(image_url)' : engine ?? 'native-or-default',
+        degradedEngine,
+        annotationsReused: Boolean(storedAnnotations),
+        annotationsReturned: Array.isArray(responseAnnotations) ? responseAnnotations.length : 0,
+        structuredOutput: structured,
+        costUsd: providerCostUsd ?? null,
+      }));
 
       if (!text) {
         throw new Error(`${this.name}: OpenRouter returned no text block`);
@@ -229,14 +592,19 @@ export class OpenRouterVisionExtractor implements Extractor {
       allRows = parsedRows.map(toParsedTx);
     } catch (err) {
       const usage =
-        totalPromptTokens > 0 || totalCompletionTokens > 0 || pagesProcessed != null
+        totalPromptTokens > 0 || totalCompletionTokens > 0 || pagesProcessed != null || providerCostUsd != null
           ? {
               promptTokens: totalPromptTokens,
               completionTokens: totalCompletionTokens,
+              ...(totalCachedTokens > 0 ? { cachedTokens: totalCachedTokens } : {}),
               ...(pagesProcessed != null ? { pagesProcessed } : {}),
+              ...(providerCostUsd != null ? { costUsd: providerCostUsd } : {}),
             }
           : undefined;
-      throw Object.assign(err as Error, { usage });
+      // Attach the generation id even on a post-response failure (e.g. JSON
+      // parse error) — the call was already billed and a downstream consumer
+      // (bakeoff.ts's error path) reads providerRequestId off the thrown error.
+      throw Object.assign(err as Error, { usage, resolvedModel, providerRequestId });
     }
 
     const docConfidence =
@@ -245,11 +613,13 @@ export class OpenRouterVisionExtractor implements Extractor {
         : DEFAULT_CONFIDENCE;
 
     const usage =
-      totalPromptTokens > 0 || totalCompletionTokens > 0 || pagesProcessed != null
+      totalPromptTokens > 0 || totalCompletionTokens > 0 || pagesProcessed != null || providerCostUsd != null
         ? {
             promptTokens: totalPromptTokens,
             completionTokens: totalCompletionTokens,
+            ...(totalCachedTokens > 0 ? { cachedTokens: totalCachedTokens } : {}),
             ...(pagesProcessed != null ? { pagesProcessed } : {}),
+            ...(providerCostUsd != null ? { costUsd: providerCostUsd } : {}),
           }
         : undefined;
 
@@ -258,7 +628,8 @@ export class OpenRouterVisionExtractor implements Extractor {
       confidence: docConfidence,
       raw: combinedRaw,
       extractor: this.name,
-      modelVersion: model,
+      modelVersion: resolvedModel,
+      providerRequestId,
       usage,
       pageCount: pagesProcessed,
     };

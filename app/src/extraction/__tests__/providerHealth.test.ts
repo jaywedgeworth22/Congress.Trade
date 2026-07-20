@@ -214,10 +214,10 @@ describe('selectOverlaySubstitute', () => {
       { excludeLabels: ['openai:gpt-5.6-terra', 'anthropic:claude-sonnet-5'], deps },
     );
     // Cheapest offered candidate with a rate-card entry:
-    // openrouter:qwen/qwen-2.5-72b-instruct at (8K*0.35 + 2K*0.4)/1M ≈ $0.0036.
+    // openrouter:amazon/nova-lite-v1 at (8K*0.06 + 2K*0.24)/1M = $0.00096.
     expect(substitute).not.toBeNull();
-    expect(substitute!.candidate).toEqual({ provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' });
-    expect(substitute!.nominalCostUsd).toBeCloseTo(0.0036, 6);
+    expect(substitute!.candidate).toEqual({ provider: 'openrouter', model: 'amazon/nova-lite-v1' });
+    expect(substitute!.nominalCostUsd).toBeCloseTo(0.00096, 6);
     // Far cheaper than the configured slot → not cost-flagged.
     expect(substitute!.configuredCostUsd).toBeCloseTo(0.05, 6);
     expect(substitute!.flagged).toBe(false);

@@ -113,6 +113,36 @@ final class ClientTrade: Decodable, Identifiable {
     }
 }
 
+struct ClientMemberResponse: Decodable {
+    let member: ClientTrade.Member
+    let summary: MemberSummary
+    let items: [ClientTrade]
+    
+    struct MemberSummary: Decodable {
+        let totalTrades: Int?
+        let buyCount: Int?
+        let sellCount: Int?
+        let exchangeCount: Int?
+        let estimatedVolumeUsd: Double?
+        let estimatedNetFlowUsd: Double?
+        let firstTrade: String?
+        let lastTrade: String?
+        let uniqueTickers: Int?
+        let uniqueAssets: Int?
+        let performance: MemberPerformance?
+    }
+    
+    struct MemberPerformance: Decodable {
+        let tradeCount: Int
+        let scoredCount: Int
+        let winRate: Double?
+        let medianReturn: Double?
+        let medianExcess: Double?
+        let avgReturn: Double?
+        let avgExcess: Double?
+    }
+}
+
 struct SubscriptionListResponse: Decodable {
     let subscriptions: [Subscription]
 }
