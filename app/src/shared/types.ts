@@ -518,6 +518,18 @@ export interface Env {
   AGREEMENT_BIG_DOC_PAGE_THRESHOLD?: string;
   /** Raw-byte threshold for the big-doc tier-2 start heuristic (default 2097152 = 2MB). */
   AGREEMENT_BIG_DOC_BYTES_THRESHOLD?: string;
+  /**
+   * When 'true' (default), the agreement cascade's 7 free-text material fields
+   * (assetName, assetType, assetTypeName, subholding, location, description,
+   * supplementalText) compare through a canonical form (casefold, punctuation
+   * stripped, company suffixes canonicalized) instead of byte/case equality,
+   * so two vendors that both correctly read the same disclosed text don't
+   * disagree merely over casing or punctuation. The 9 strict/enum fields
+   * (ticker, amounts, tx_type, tx_date, owner, is_option, cap_gains_over_200,
+   * filing_status) always require exact value equality regardless of this
+   * flag. Set 'false' to restore byte-strict comparison on every tier.
+   */
+  AGREEMENT_TEXT_NORMALIZATION?: string;
   /** Financial Modeling Prep key — enables asset enrichment + price/performance. */
   FMP_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */

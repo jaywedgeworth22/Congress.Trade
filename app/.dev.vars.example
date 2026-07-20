@@ -78,6 +78,11 @@ AGREEMENT_DAILY_LLM_BUDGET="300"
 AGREEMENT_BIG_DOC_START_TIER2="true"
 AGREEMENT_BIG_DOC_PAGE_THRESHOLD="10"
 AGREEMENT_BIG_DOC_BYTES_THRESHOLD="2097152"
+# Free-text material fields (assetName, assetType, assetTypeName, subholding,
+# location, description, supplementalText) compare through a canonical
+# (casefold/punctuation-stripped/company-suffix-normalized) form instead of
+# byte equality; set "false" to restore byte-strict comparison on every tier.
+AGREEMENT_TEXT_NORMALIZATION="true"
 
 # Financial Modeling Prep — enables asset enrichment (sector, market cap, country,
 # exchange) and, later, price + performance-vs-S&P. Without it, the SEC-EDGAR

@@ -89,7 +89,13 @@ budget-status polling, see Tunables & flags below)
   `AGREEMENT_EXEC_MODEL_A/B/C`,
   `AGREEMENT_AUTOPUBLISH_LIMIT`, `AGREEMENT_MAX_ATTEMPTS`,
   `AGREEMENT_DAILY_LLM_BUDGET`, `AGREEMENT_BIG_DOC_START_TIER2`,
-  `AGREEMENT_BIG_DOC_PAGE_THRESHOLD`, `AGREEMENT_BIG_DOC_BYTES_THRESHOLD`
+  `AGREEMENT_BIG_DOC_PAGE_THRESHOLD`, `AGREEMENT_BIG_DOC_BYTES_THRESHOLD`,
+  `AGREEMENT_TEXT_NORMALIZATION` (default `true`; the cascade's 7 free-text
+  material fields — assetName, assetType, assetTypeName, subholding,
+  location, description, supplementalText — compare through a canonical
+  casefold/punctuation-stripped/company-suffix-normalized form instead of
+  byte equality, so cross-vendor formatting drift no longer blocks agreement;
+  set `false` to restore byte-strict comparison on every cascade tier)
 - Provider-health routing + runtime overlay (`src/extraction/providerHealth.ts`;
   billing/auth failures open a per-`provider:model` circuit breaker and the
   live extractor substitutes the cheapest healthy catalog candidate at
