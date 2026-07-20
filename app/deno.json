@@ -1,8 +1,0 @@
-{
-  "nodeModulesDir": "auto",
-  "compilerOptions": {
-    "strict": true,
-    "lib": ["deno.ns", "deno.unstable", "dom", "esnext"]
-  },
-  "unstable": ["kv"]
-}
