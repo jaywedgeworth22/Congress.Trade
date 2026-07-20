@@ -265,3 +265,30 @@ export async function updateCommandStatus(
   if (!command) throw new Error('command not found');
   return command;
 }
+
+export async function reclaimStaleInFlightCommand(
+  env: Env,
+  userId: string,
+  id: string,
+  nowMs = Date.now(),
+): Promise<ClientCommand | null> {
+  const now = new Date(nowMs).toISOString();
+  const staleBefore = new Date(nowMs - STALE_IN_FLIGHT_COMMAND_TTL_MS).toISOString();
+  const res = await run(
+    env.DB,
+    `UPDATE client_commands
+        SET status = 'running',
+            error = NULL,
+            updated_at = ?,
+            started_at = ?
+      WHERE id = ?
+        AND user_id = ?
+        AND status IN ('queued', 'running')
+        AND COALESCE(started_at, created_at) < ?`,
+    [now, now, id, userId, staleBefore],
+  );
+  if ((res.meta?.changes ?? 0) !== 1) return null;
+  const command = await getCommand(env, userId, id);
+  if (!command) throw new Error('command not found after stale reclaim');
+  return command;
+}
