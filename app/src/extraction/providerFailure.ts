@@ -19,7 +19,12 @@ export type ProviderFailureCode =
   | 'provider_authentication_failed'
   | 'model_access_denied'
   | 'provider_credits_depleted'
-  | 'provider_usage_limit';
+  | 'provider_usage_limit'
+  /** Error-class 'budget': the app's own daily LLM USD ceiling halted the
+   *  call BEFORE spending (shared/llmSpend.ts). Terminal for the attempt and
+   *  never a failover trigger — the whole point is that no pricier model may
+   *  be invoked once the ceiling is reached. */
+  | 'llm_budget_exceeded';
 
 export type ProviderFailureScope = 'provider' | 'model';
 
@@ -81,6 +86,17 @@ export function classifyProviderFailure(
   const message = (error ?? '').trim();
   if (!message) return null;
   const lower = message.toLowerCase();
+
+  // Matches LLM_BUDGET_ERROR_MARKER in shared/llmSpend.ts (kept literal here
+  // so this module stays dependency-free for the benchmark decode path).
+  if (lower.includes('llm daily usd budget exceeded')) {
+    return {
+      code: 'llm_budget_exceeded',
+      scope: 'provider',
+      retryable: false,
+      message: `${provider} calls are halted: the daily LLM USD budget is exhausted.`,
+    };
+  }
 
   if (lower.includes('api key not configured')) {
     return {

@@ -1,6 +1,6 @@
 # Config Registry — Infisical as the Single Source of Truth
 
-Last updated: 2026-07-11
+Last updated: 2026-07-18
 
 Every configuration key and knob the Worker reads is routed through the
 Infisical runtime resolver (`src/secrets/infisical.ts`) unless listed under
@@ -148,6 +148,19 @@ safe only while a strong client secret exists.
   `IMPORT_MAX_INSIDER`, `IMPORT_MAX_SHORT_VOLUME`
 - Local-dev escape hatch: `ADMIN_OPEN_IN_DEV` (still requires a
   non-production environment to take effect)
+- **Resource governor — LLM USD ceilings** (`shared/llmSpend.ts`; owner
+  mandate 2026-07-18 "no more spend spikes ever"): `LLM_DAILY_USD_CEILING`
+  (global daily LLM spend ceiling in USD, default `10`; enforced fail-closed
+  inside the provider-call choke point — `runCandidateOnDoc` +
+  `fetchWithRetry` — with error-class `budget`, terminal for the attempt,
+  never a failover trigger) and optional per-provider sub-ceilings
+  `LLM_DAILY_USD_CEILING_OPENROUTER`, `LLM_DAILY_USD_CEILING_GEMINI`,
+  `LLM_DAILY_USD_CEILING_OPENAI`, `LLM_DAILY_USD_CEILING_ANTHROPIC`,
+  `LLM_DAILY_USD_CEILING_MISTRAL`, `LLM_DAILY_USD_CEILING_XAI`,
+  `LLM_DAILY_USD_CEILING_LLAMAPARSE` (unset = governed by the global only).
+  Metered dollars persist per day/provider in the D1 `llm_spend` table
+  (migration 0049) and surface in `GET /diagnostics` under
+  `resourceGovernors.llmSpend`.
 
 ² `USAGE_MONITOR_ENVIRONMENT` is Infisical-tunable on its async read paths
 (admin-open check, usage telemetry); the sync local-webhook-target gate in
@@ -160,6 +173,9 @@ path, never active in production).
 |---|---|
 | `INFISICAL_BASE_URL`, `INFISICAL_ENV`, `INFISICAL_CACHE_TTL_SECONDS`, `INFISICAL_ALLOW_ENV_FALLBACK`, `INFISICAL_APP_*`, `INFISICAL_SHARED_*` | Resolver bootstrap — cannot resolve themselves |
 | `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_TRACES_SAMPLE_RATE` | Read synchronously in the `Sentry.withSentry` init factory before any `await` is possible |
+| `USAGE_TELEMETRY_CIRCUIT_*`, `USAGE_TELEMETRY_FALLBACK_*`, `USAGE_TELEMETRY_D1_DRAIN_LIMIT`, `USAGE_TELEMETRY_DELIVERY_TIMEOUT_MS` | Operational safety limits read synchronously on the telemetry hot path; must stay available while KV/D1/Infisical are the thing degraded |
+| `D1_WRITE_OPS_PER_INVOCATION_CAP` (default 2000), `D1_WRITE_BATCH_CAP` (default 200) | Resource governor 2 (`shared/d1Budget.ts` write governor): gate the hot D1 write path synchronously — per-invocation soft cap with batch truncation + `d1_write_quarantine` markers at the known storm writers (ingestion discovery, DLQ receipts, delivery-outbox flush, extraction_runs) |
+| `DELIVERY_TARGET_FAILURE_THRESHOLD` (default 5), `DELIVERY_TARGET_DAILY_ATTEMPT_CAP` (default 50 failed attempts/target/day), `DELIVERY_TARGET_BASE_BACKOFF_SEC` (default 60, doubling, capped at 1 probe/hour), `DELIVERY_TARGET_PARKED_CAP` (default 500 parked/subscription before quarantine + alert) | Resource governor 3 (`delivery/targetCircuit.ts`): per-target outbound circuit breaker for webhook + peer-app deliveries; must stay readable mid-incident |
 
 For local development, `scripts/cloud-setup.sh` maps the canonical
 `INFISICAL_CT_CLIENT_ID` / `INFISICAL_CT_CLIENT_SECRET` inputs to the runtime
