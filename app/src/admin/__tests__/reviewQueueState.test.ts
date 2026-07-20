@@ -129,6 +129,7 @@ describe('review queue autonomous configuration', () => {
       'AGREEMENT_BIG_DOC_START_TIER2',
       'AGREEMENT_BIG_DOC_PAGE_THRESHOLD',
       'AGREEMENT_BIG_DOC_BYTES_THRESHOLD',
+      'AGREEMENT_TEXT_NORMALIZATION',
     ];
 
     for (const key of keys) expect(setting(devExample, key)).toBe(setting(wrangler, key));
