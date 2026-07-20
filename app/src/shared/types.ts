@@ -441,6 +441,13 @@ export interface ThirdPartyUsageTelemetryEvent {
   confidence: 'actual' | 'estimated' | 'manual';
   occurredAt: string;
   metadata?: Record<string, string | number | boolean | null>;
+  /**
+   * Provider-side call/generation id (e.g. OpenRouter's `id` on a completions
+   * response). Optional in the shared `UsageTelemetryEventSchema`; lets the
+   * monitor verify reported cost against the provider's own record. Never
+   * part of the idempotency-key basis.
+   */
+  providerRequestId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -473,10 +480,16 @@ export interface Env {
   MISTRAL_API_KEY?: string;
   /** xAI API key — Grok (Files API → grok-4.3) candidate in the extractor bake-off. */
   XAI_API_KEY?: string;
-  /** OpenRouter API key — for arbitrary open-weights vision model candidates. */
+  /** OpenRouter API key — the unified transport for ALL live LLM extraction. */
   OPENROUTER_API_KEY?: string;
-  /** OpenRouter model override (defaults to 'qwen/qwen-2.5-vl-72b-instruct:free'). */
+  /** OpenRouter model override (defaults to 'google/gemini-3.5-flash'). */
   OPENROUTER_MODEL?: string;
+  /** file-parser engine for typed/text PDFs (default 'cloudflare-ai' — free). */
+  OPENROUTER_PDF_ENGINE_TEXT?: string;
+  /** file-parser engine for scanned PDFs on non-native-vision models (default 'mistral-ocr'). */
+  OPENROUTER_PDF_ENGINE_SCANNED?: string;
+  /** Optional per-request provider price ceiling, JSON like {"prompt":5,"completion":20} (USD/M tokens). */
+  OPENROUTER_MAX_PRICE?: string;
   /** LlamaIndex Cloud API key — LlamaParse OCR + structured extraction candidate. */
   /** Additional market/enrichment provider keys. */
   MASSIVE_API_KEY?: string;

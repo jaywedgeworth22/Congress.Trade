@@ -5,6 +5,7 @@ import {
   summarizeBenchmarkCosts,
   summarizeBenchmarkLatency,
 } from '../benchmarkMetrics';
+import { DEFAULT_CANDIDATES } from '../bakeoff';
 
 describe('priceBenchmarkUsage', () => {
   it('prices measured OpenAI usage and applies the cached-input rate only to cached tokens', () => {
@@ -283,6 +284,77 @@ describe('priceBenchmarkUsage', () => {
     expect(priceBenchmarkUsage({
       provider: 'openai', model: 'gpt-4o', invoked: true,
     }).costDetail.unknownReason).toBe('usage_not_reported');
+  });
+});
+
+describe('DEFAULT_CANDIDATES rate-card drift gate', () => {
+  // Every OFFERED extraction slug must be priceable from the rate card so
+  // benchmark/telemetry cost coverage never silently degrades when the lineup
+  // changes. `openrouter/auto` is the sole documented exemption: its routing
+  // is unpredictable, so its cost is captured from OpenRouter's
+  // provider-reported usage accounting (usage.cost -> usage.costUsd) instead.
+  const PAGE_METER_MODELS = new Set(['mistral/mistral-ocr-latest']);
+
+  it('prices every offered candidate except openrouter/auto', () => {
+    for (const candidate of DEFAULT_CANDIDATES) {
+      const usage = PAGE_METER_MODELS.has(candidate.model)
+        ? { pagesProcessed: 10 }
+        : { promptTokens: 1_000, completionTokens: 100 };
+      const result = priceBenchmarkUsage({
+        provider: candidate.provider,
+        model: candidate.model,
+        invoked: true,
+        usage,
+      });
+      if (candidate.model === 'openrouter/auto') {
+        expect(result.costDetail.unknownReason, candidate.model).toBe('rate_not_configured');
+        continue;
+      }
+      expect(result.costSource, `${candidate.provider}:${candidate.model}`).toBe('usage_priced');
+      expect(result.costUsd, `${candidate.provider}:${candidate.model}`).not.toBeNull();
+    }
+  });
+
+  it('prices the newly added live OpenRouter slugs at their listed rates', () => {
+    const usage = { promptTokens: 1_000_000, completionTokens: 1_000_000 };
+    expect(priceBenchmarkUsage({
+      provider: 'openrouter', model: 'deepseek/deepseek-v4-flash', invoked: true, usage,
+    }).costUsd).toBeCloseTo(0.098 + 0.196, 6);
+    expect(priceBenchmarkUsage({
+      provider: 'openrouter', model: 'google/gemini-2.5-flash-lite', invoked: true, usage,
+    }).costUsd).toBeCloseTo(0.1 + 0.4, 6);
+    expect(priceBenchmarkUsage({
+      provider: 'openrouter', model: 'amazon/nova-lite-v1', invoked: true, usage,
+    }).costUsd).toBeCloseTo(0.06 + 0.24, 6);
+    expect(priceBenchmarkUsage({
+      provider: 'openrouter', model: 'z-ai/glm-4.6v', invoked: true, usage,
+    }).costUsd).toBeCloseTo(0.3 + 0.9, 6);
+  });
+
+  it('applies the Grok 4.3 long-context multiplier above 200K prompt tokens', () => {
+    const below = priceBenchmarkUsage({
+      provider: 'openrouter', model: 'x-ai/grok-4.3', invoked: true,
+      usage: { promptTokens: 100_000, completionTokens: 1_000 },
+    });
+    const above = priceBenchmarkUsage({
+      provider: 'openrouter', model: 'x-ai/grok-4.3', invoked: true,
+      usage: { promptTokens: 300_000, completionTokens: 1_000 },
+    });
+    expect(below.costUsd).toBeCloseTo((100_000 * 1.25 + 1_000 * 2.5) / 1_000_000, 8);
+    expect(above.costUsd).toBeCloseTo((300_000 * 1.25 * 2 + 1_000 * 2.5 * 2) / 1_000_000, 8);
+    expect(above.costDetail.rates?.longContextApplied).toBe(true);
+  });
+
+  it('prefers OpenRouter provider-reported usage.costUsd over rate-card pricing', () => {
+    const result = priceBenchmarkUsage({
+      provider: 'openrouter',
+      model: 'openrouter/auto',
+      invoked: true,
+      usage: { promptTokens: 1_000, completionTokens: 100, costUsd: 0.0123 },
+    });
+    expect(result.costSource).toBe('provider_reported');
+    expect(result.costUsd).toBeCloseTo(0.0123, 10);
+    expect(result.costDetail.billedUsage).toMatchObject({ costUsd: 0.0123 });
   });
 });
 

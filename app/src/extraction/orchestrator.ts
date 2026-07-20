@@ -78,8 +78,19 @@ function isProviderRateLimit(err: unknown): boolean {
   return /\b(429|402|too many requests|quota exceeded|rate[- ]?limit|payment required)\b/i.test(message);
 }
 
-function providerForModel(model: string | undefined): string {
+export function providerForModel(model: string | undefined): string {
   const normalized = model?.trim().toLowerCase() ?? '';
+  // OpenRouter slugs are 'vendor/model' — attribute usage to the UNDERLYING
+  // vendor so cost/usage reporting stays comparable across transports.
+  const slash = normalized.indexOf('/');
+  if (slash > 0) {
+    const vendor = normalized.slice(0, slash);
+    if (vendor === 'google') return 'gemini';
+    if (vendor === 'x-ai') return 'xai';
+    if (vendor === 'mistralai') return 'mistral';
+    if (vendor === 'openrouter') return 'openrouter'; // e.g. openrouter/auto
+    return vendor; // openai, anthropic, deepseek, qwen, amazon, z-ai, mistral, ...
+  }
   if (normalized.startsWith('gemini')) return 'gemini';
   if (/^(gpt-|chatgpt-|o\d)/.test(normalized)) return 'openai';
   if (normalized.startsWith('claude')) return 'anthropic';
@@ -116,6 +127,9 @@ async function reportExtractorUsage(env: Env, runs: ExtractorModelRun[]): Promis
       provider: providerForModel(modelRun.modelVersion),
       model: modelRun.modelVersion ?? 'unknown',
       component: 'orchestrator',
+      // `|| undefined` so a blank id from an upstream extractor can never
+      // reach the wire as "" (the shared schema rejects empty strings).
+      providerRequestId: modelRun.providerRequestId || undefined,
       ...modelRun.usage,
     });
   }
