@@ -16,6 +16,7 @@ import {
   PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS,
   RELIABILITY_SCHEMA_STATEMENTS,
   RETENTION_INDEX_SCHEMA_STATEMENTS,
+  RESOURCE_GOVERNOR_SCHEMA_STATEMENTS,
   REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
   STRIPE_EVENT_SCHEMA_STATEMENTS,
   USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
@@ -199,6 +200,7 @@ describe('admin migration bootstrap', () => {
       ...RETENTION_INDEX_SCHEMA_STATEMENTS,
       ...AUTOPILOT_SCHEMA_STATEMENTS,
       ...DOC_CLASS_SCHEMA_STATEMENTS,
+      ...RESOURCE_GOVERNOR_SCHEMA_STATEMENTS,
     ]);
   });
 
@@ -217,6 +219,17 @@ describe('admin migration bootstrap', () => {
     expect(sql).toContain('autopilot_budget');
     expect(DOC_CLASS_SCHEMA_STATEMENTS.join('\n'))
       .toContain('ALTER TABLE filings ADD COLUMN doc_class TEXT');
+  });
+
+  it('includes the resource governor schema (0051)', () => {
+    const sql = RESOURCE_GOVERNOR_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('llm_spend');
+    expect(sql).toContain('PRIMARY KEY (day, provider)');
+    expect(sql).toContain('d1_write_quarantine');
+    expect(sql).toContain('idx_d1_write_quarantine_day');
+    expect(sql).toContain('delivery_target_circuit');
+    expect(sql).toContain('consecutive_failures');
+    expect(sql).toContain('failures_today');
   });
 
   it('includes the singleton usage telemetry half-open lease schema (0046)', () => {
