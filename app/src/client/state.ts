@@ -149,6 +149,47 @@ export async function listCommands(env: Env, userId: string, limit = 20): Promis
   return rows.map(mapCommand);
 }
 
+/**
+ * Thrown by {@link createCommand} when its INSERT loses a race to a
+ * concurrent duplicate request for the same `(user_id, idempotency_key)` —
+ * the DB-enforced backstop behind `idx_client_commands_user_idempotency`
+ * (migration 0009). The caller already looked up the idempotency key and saw
+ * nothing (or it wouldn't have reached createCommand at all), so this only
+ * fires in the narrow window between that lookup and this INSERT. Callers
+ * should re-fetch by idempotency key and replay the winner's row instead of
+ * letting the raw D1 constraint error surface as an unhandled 500.
+ */
+export class DuplicateCommandError extends Error {}
+
+/**
+ * A `queued`/`running` command is presumed dead — not genuinely in-flight —
+ * once it has sat past this window with no terminal status. Workers request
+ * handlers can be evicted or crash between `createCommand`/`updateCommandStatus
+ * ('running')` and the terminal `updateCommandStatus` call (isolate eviction,
+ * an uncaught exception outside the executeCommand try/catch, a wall-clock
+ * limit); without a recovery path, a retry with the same idempotency key
+ * would replay that dead status forever. All currently-implemented command
+ * types (preference/subscription writes) complete in a single fast D1
+ * round-trip, so this window is deliberately generous relative to any
+ * legitimate in-flight duration.
+ */
+export const STALE_IN_FLIGHT_COMMAND_TTL_MS = 2 * 60 * 1000;
+
+/**
+ * True when `command` is `queued`/`running` but has sat that way past
+ * {@link STALE_IN_FLIGHT_COMMAND_TTL_MS} — i.e. the request that owns it is
+ * presumed dead rather than genuinely still executing. Terminal statuses
+ * (`succeeded`/`failed`/`canceled`) are never stale; they're a legitimate,
+ * permanent replay target.
+ */
+export function isStaleInFlightCommand(command: ClientCommand, now = Date.now()): boolean {
+  if (command.status !== 'queued' && command.status !== 'running') return false;
+  const reference = command.startedAt ?? command.createdAt;
+  const startedMs = reference ? Date.parse(reference) : NaN;
+  if (!Number.isFinite(startedMs)) return false;
+  return now - startedMs > STALE_IN_FLIGHT_COMMAND_TTL_MS;
+}
+
 export async function createCommand(
   env: Env,
   input: {
@@ -160,22 +201,30 @@ export async function createCommand(
 ): Promise<ClientCommand> {
   const now = new Date().toISOString();
   const id = prefixedId('cmd');
-  await run(
-    env.DB,
-    `INSERT INTO client_commands
-       (id, user_id, type, status, idempotency_key, payload, result, error, created_at, updated_at, started_at, finished_at)
-     VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL)`,
-    [
-      id,
-      input.userId,
-      input.type,
-      'queued',
-      input.idempotencyKey ?? null,
-      JSON.stringify(input.payload ?? {}),
-      now,
-      now,
-    ],
-  );
+  try {
+    await run(
+      env.DB,
+      `INSERT INTO client_commands
+         (id, user_id, type, status, idempotency_key, payload, result, error, created_at, updated_at, started_at, finished_at)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL)`,
+      [
+        id,
+        input.userId,
+        input.type,
+        'queued',
+        input.idempotencyKey ?? null,
+        JSON.stringify(input.payload ?? {}),
+        now,
+        now,
+      ],
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (input.idempotencyKey && /UNIQUE constraint failed:\s*client_commands\.idempotency_key/i.test(message)) {
+      throw new DuplicateCommandError('a command with this idempotency key already exists');
+    }
+    throw err;
+  }
   const command = await getCommand(env, input.userId, id);
   if (!command) throw new Error('command insert failed');
   return command;
