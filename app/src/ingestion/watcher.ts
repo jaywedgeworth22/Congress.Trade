@@ -28,6 +28,7 @@ import { recordDisclosureLatencyCandidate, storageMissing } from './fmpDisclosur
 import { enqueueIngestionOutboxNow, ingestionOutboxInsertForDoc } from './outbox';
 import { resolveSecret } from '../secrets/infisical';
 import { pollOgeExecutive } from './ogeSource';
+import { consumeGovernedD1Writes } from '../shared/d1Budget';
 
 /** Env shape (read defensively — Env is the frozen foundation contract). */
 type EnvWithFlags = Env & { HOUSE_LIVE_SEARCH_ENABLED?: string };
@@ -161,6 +162,15 @@ export async function insertFilingIfNew(
   f: DiscoveredFiling,
   nowIso: string,
 ): Promise<boolean> {
+  // GOVERNOR 2: discovery upserts are a known storm writer (a source that
+  // suddenly returns thousands of "new" rows, or a crawler loop). Past the
+  // per-invocation governed-write cap this discovery is DEFERRED, not written:
+  // the doc is rediscovered on the next poll, so nothing is lost — the storm
+  // just degrades to bounded batches per invocation.
+  if (consumeGovernedD1Writes(env, 'ingestion-discovery', 1) < 1) {
+    console.warn('insertFilingIfNew deferred: D1 write governor cap reached', f.docId);
+    return false;
+  }
   if (f.filerId && f.filerName) {
     if (f.party || f.photoUrl) {
       // Sources that curate party/portrait metadata (the OGE executive index)

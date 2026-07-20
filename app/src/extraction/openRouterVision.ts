@@ -503,7 +503,7 @@ export class OpenRouterVisionExtractor implements Extractor {
             signal: AbortSignal.timeout(120_000),
           },
           this.name,
-          { model }
+          { model, spendGuard: { env: this.env, provider: 'openrouter' } }
         );
 
         if (!res.ok) {
