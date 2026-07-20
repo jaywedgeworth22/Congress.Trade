@@ -97,6 +97,14 @@ export interface AutopilotKnobs {
   preseedEnabled: boolean;
   /** Fraction of doc_class='empty' docs left in review for a human spot-check. */
   emptySpotcheckRate: number;
+  /**
+   * Default-off. When true, a tick with no normally-eligible doc (attempts <
+   * cap) falls back to ONE doc that already exhausted its attempt cap under
+   * `reason='agreement_cascade_unresolved'` (a genuine model disagreement,
+   * never a hard-fail/corrupt/suppressed doc) and has never been legacy-
+   * replayed. See selectLegacyReplayDoc for the exactly-once reset guard.
+   */
+  legacyReplayEnabled: boolean;
 }
 
 interface AutopilotSecretEnv {
@@ -109,6 +117,7 @@ interface AutopilotSecretEnv {
   AUTOPILOT_MIN_INTERVAL_MINUTES?: string;
   AUTOPILOT_BATCH_PRESEED?: string;
   DOC_CLASS_EMPTY_SPOTCHECK_RATE?: string;
+  AUTOPILOT_LEGACY_REPLAY_ENABLED?: string;
 }
 
 function positiveNumber(raw: string | undefined, fallback: number): number {
@@ -134,6 +143,7 @@ export async function resolveAutopilotKnobs(env: Env): Promise<AutopilotKnobs> {
       'AUTOPILOT_MIN_INTERVAL_MINUTES',
       'AUTOPILOT_BATCH_PRESEED',
       'DOC_CLASS_EMPTY_SPOTCHECK_RATE',
+      'AUTOPILOT_LEGACY_REPLAY_ENABLED',
     ])) as AutopilotSecretEnv;
   } catch {
     // Resolver outage: fail closed (disabled) rather than run unconfigured.
@@ -146,6 +156,7 @@ export async function resolveAutopilotKnobs(env: Env): Promise<AutopilotKnobs> {
       minIntervalMinutes: 60,
       preseedEnabled: false,
       emptySpotcheckRate: 0.1,
+      legacyReplayEnabled: false,
     };
   }
   return {
@@ -160,6 +171,7 @@ export async function resolveAutopilotKnobs(env: Env): Promise<AutopilotKnobs> {
     minIntervalMinutes: positiveNumber(secrets.AUTOPILOT_MIN_INTERVAL_MINUTES, 60),
     preseedEnabled: secrets.AUTOPILOT_BATCH_PRESEED === 'true',
     emptySpotcheckRate: Math.min(positiveNumber(secrets.DOC_CLASS_EMPTY_SPOTCHECK_RATE, 0.1), 1),
+    legacyReplayEnabled: secrets.AUTOPILOT_LEGACY_REPLAY_ENABLED === 'true',
   };
 }
 
@@ -434,19 +446,89 @@ const ELIGIBLE_PREDICATES = `
         AND t.deprecated_at IS NULL
    )`;
 
+/**
+ * Predicates for a doc that already exhausted its normal attempt cap via a
+ * genuine model disagreement (never a hard-fail/corrupt/quarantine reason,
+ * never suppressed) and has not yet been given its one-time legacy-replay
+ * reset. `reason = 'agreement_cascade_unresolved'` is the exact terminal
+ * label leaveInReviewHighPriority writes on a cascade that ran out of
+ * attempts without reaching unanimity/majority — the only reason this path
+ * targets, so a doc flagged for a different, more deliberate cause (e.g. a
+ * future hard-fail classification) is never swept in here.
+ */
+const LEGACY_REPLAY_PREDICATES = `
+       rq.resolved = 0
+   AND rq.agreement_suppressed_at IS NULL
+   AND rq.agreement_legacy_replay_at IS NULL
+   AND COALESCE(rq.agreement_attempts, 0) >= ?
+   AND rq.reason = 'agreement_cascade_unresolved'
+   AND (rq.agreement_claim_token IS NULL OR rq.agreement_claimed_at IS NULL OR rq.agreement_claimed_at <= ?)
+   AND f.raw_object_key IS NOT NULL
+   AND NOT EXISTS (
+     SELECT 1 FROM transactions t
+      WHERE t.doc_id = rq.doc_id AND t.source IN ('primary', 'manual')
+        AND t.deprecated_at IS NULL
+   )`;
+
+/**
+ * Atomically reset ONE exhausted, not-yet-replayed doc back to a fresh
+ * attempt budget (attempts=0, tier cleared, any stale schedule/lease
+ * cleared) and stamp `agreement_legacy_replay_at` in the SAME guarded
+ * UPDATE, so a concurrent selector can never grant a second grace reset to
+ * the same doc (the WHERE clause re-checks `agreement_legacy_replay_at IS
+ * NULL`, matching the CAS pattern acquireAgreementLease/reserveLlmBudget
+ * use elsewhere in this cascade). Returns the doc once the reset lands; the
+ * caller then runs it through the EXACT same handleAgreementCheck cascade
+ * (leases, attempt cap, daily LLM budget, publish rules) as any other doc —
+ * this function only ever grants ONE extra full attempt budget, never
+ * bypasses the cascade's own governance.
+ */
+async function selectLegacyReplayDoc(
+  env: Env,
+  attemptCap: number,
+  excludeDocIds: string[],
+  now: Date,
+): Promise<EligibleDoc | null> {
+  const nowIso = now.toISOString();
+  const leaseExpired = new Date(now.getTime() - AGREEMENT_CLAIM_LEASE_MS).toISOString();
+  const candidate = await get<EligibleDoc>(
+    env.DB,
+    `SELECT f.doc_id, f.raw_object_key, f.chamber, f.page_count, f.doc_class
+       FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
+      WHERE ${LEGACY_REPLAY_PREDICATES}
+        AND rq.doc_id NOT IN (SELECT value FROM json_each(?))
+      ORDER BY rq.created_at ASC
+      LIMIT 1`,
+    [attemptCap, leaseExpired, JSON.stringify(excludeDocIds)],
+  );
+  if (!candidate) return null;
+  const reset = await run(
+    env.DB,
+    `UPDATE review_queue
+        SET agreement_attempts = 0, agreement_tier = NULL, agreement_next_attempt_at = NULL,
+            agreement_legacy_replay_at = ?, review_revision = review_revision + 1
+      WHERE doc_id = ? AND resolved = 0 AND agreement_legacy_replay_at IS NULL`,
+    [nowIso, candidate.doc_id],
+  );
+  // Lost the race (another selector reset it first, or it resolved meanwhile):
+  // do not return a doc whose reset didn't actually land.
+  return (reset.meta?.changes ?? 0) > 0 ? candidate : null;
+}
+
 async function selectNextDoc(
   env: Env,
   attemptCap: number,
   excludeDocIds: string[],
   eraStart: string,
   now: Date,
+  legacyReplayEnabled = false,
 ): Promise<EligibleDoc | null> {
   const nowIso = now.toISOString();
   const leaseExpired = new Date(now.getTime() - AGREEMENT_CLAIM_LEASE_MS).toISOString();
   // Ordering: doc_class first (typed/clean/empty are the cheapest to resolve,
   // hard scans and quarantine candidates last), then current-era-first, then
   // oldest review item. Cheapest wins.
-  return get<EligibleDoc>(
+  const primary = await get<EligibleDoc>(
     env.DB,
     `SELECT f.doc_id, f.raw_object_key, f.chamber, f.page_count, f.doc_class
        FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
@@ -458,9 +540,25 @@ async function selectNextDoc(
       LIMIT 1`,
     [attemptCap, nowIso, leaseExpired, JSON.stringify(excludeDocIds), eraStart],
   );
+  if (primary) return primary;
+  // Only reached once the normal (attempts < cap) pool is empty, and only
+  // when the operator opted in — this never displaces a normally-eligible
+  // doc, it only fills an otherwise-idle tick slot.
+  if (!legacyReplayEnabled) return null;
+  return selectLegacyReplayDoc(env, attemptCap, excludeDocIds, now);
 }
 
-/** Unresolved-with-raw-bytes backlog size (trigger + status reporting). */
+/**
+ * Unresolved-with-raw-bytes backlog size (trigger + status reporting).
+ * Mirrors ELIGIBLE_PREDICATES' resolvability gate (suppressed/raw-bytes) but
+ * deliberately does NOT filter on `agreement_attempts < cap`: a doc that
+ * exhausted its cap is still real, unprocessed backlog (it will get a
+ * legacy-replay grace shot when that's enabled, or stay a visible terminal
+ * count when it's not) — undercounting it here is what previously made every
+ * autopilot run report a stable `backlog_before` while `docs_attempted`
+ * stayed 0 and every run "completed" as `backlog_drained`, silently masking
+ * a permanently-stuck backlog instead of surfacing it honestly.
+ */
 export async function countEligibleBacklog(env: Env): Promise<number | null> {
   try {
     const row = await get<{ n: number }>(
@@ -714,7 +812,7 @@ export async function handleAutopilotTick(
 
     let doc: EligibleDoc | null;
     try {
-      doc = await selectNextDoc(env, attemptCap, seenDocIds, eraStart, new Date());
+      doc = await selectNextDoc(env, attemptCap, seenDocIds, eraStart, new Date(), knobs.legacyReplayEnabled);
     } catch (err) {
       console.warn('autopilot: doc selection failed:', (err as Error).message);
       await finalize('halted', 'selector_failed');
@@ -1150,6 +1248,7 @@ export async function getAutopilotStatus(env: Env, now = new Date()): Promise<{
       minIntervalMinutes: knobs.minIntervalMinutes,
       preseedEnabled: knobs.preseedEnabled,
       emptySpotcheckRate: knobs.emptySpotcheckRate,
+      legacyReplayEnabled: knobs.legacyReplayEnabled,
     },
     backlog: await countEligibleBacklog(env),
     today: {
