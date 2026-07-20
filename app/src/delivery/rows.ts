@@ -133,7 +133,14 @@ export function mapTransaction(row: TransactionRow): Transaction {
     assetTypeName: row.asset_type_name ?? null,
     assetTypeCategory: assetType.category,
     assetTypeCategoryLabel: assetType.categoryLabel,
-    txType: (row.tx_type as TxType) ?? 'P',
+    // Honest passthrough: a filing row with no disclosed side (row.tx_type
+    // NULL — malformed/partial source text) is surfaced as null, never
+    // silently defaulted to 'P' (Purchase). Downstream aggregates already
+    // treat a non-matching tx_type as "not counted" (see tickerSummarySql/
+    // memberSummarySql's `tx_type = 'P'`/'S'/'E' CASE expressions and
+    // subscriptions.ts's `sides` filter), so a null side is naturally
+    // excluded from buy/sell/exchange counts rather than misreported as a buy.
+    txType: row.tx_type as TxType,
     amountMin: row.amount_min,
     amountMax: row.amount_max,
     estValue: row.est_value ?? null,
@@ -228,6 +235,36 @@ export function mapFiling(row: FilingRow): Filing {
     sourceUpdatedAt: row.source_updated_at,
     error: row.error,
   };
+}
+
+/** Public-safe projection of {@link Filing} for unauthenticated responses. */
+export type PublicFiling = Omit<Filing, 'rawObjectKey' | 'extractor' | 'modelVersion' | 'error'>;
+
+/**
+ * Strip internal infrastructure detail from a Filing before it reaches an
+ * anonymous caller (the public `GET /filings/:docId` REST endpoint): the R2
+ * object key of the raw fetched document (`rawObjectKey`), the extractor/model
+ * slug that produced the result (`extractor`, `modelVersion`), and any raw
+ * provider/parsing error text (`error`) are internal operational detail, not
+ * something a public API response should hand out. `mapFiling` itself stays
+ * full-fidelity for internal callers (admin routes, the agreement/normalizer
+ * recompute path) — this is a projection applied only at the public edge.
+ */
+export function toPublicFiling(filing: Filing): PublicFiling {
+  const { rawObjectKey: _rawObjectKey, extractor: _extractor, modelVersion: _modelVersion, error: _error, ...pub } = filing;
+  return pub;
+}
+
+/**
+ * Escape SQLite LIKE metacharacters (`%`, `_`, and the escape character
+ * itself) in user-supplied text before it is wrapped in wildcards and bound
+ * to a `LIKE ? ESCAPE '\'` clause. Without this, a search term containing a
+ * literal `%` or `_` silently broadens the match (e.g. a member search for
+ * `A_Smith` would match `AxSmith` too) instead of the literal substring the
+ * caller typed. Pair every use with `ESCAPE '\'` in the SQL.
+ */
+export function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -366,8 +403,8 @@ function buildTxFilters(
     params.push(p.member);
   }
   if (p.memberName) {
-    where.push('LOWER(COALESCE(fl.full_name, t.filer_id, \'\')) LIKE ?');
-    params.push(`%${p.memberName.toLowerCase()}%`);
+    where.push('LOWER(COALESCE(fl.full_name, t.filer_id, \'\')) LIKE ? ESCAPE \'\\\'');
+    params.push(`%${escapeLikePattern(p.memberName.toLowerCase())}%`);
   }
   if (p.type) {
     where.push('t.tx_type = ?');
@@ -428,7 +465,12 @@ function buildTxFilters(
 export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
   const { where, params } = buildTxFilters(p, true);
 
-  let limit = Number.isFinite(p.limit) ? Number(p.limit) : DEFAULT_TX_LIMIT;
+  // LIMIT/OFFSET are interpolated directly into the SQL text below (D1/SQLite
+  // has no bound-parameter form for them), so a fractional value here isn't
+  // just cosmetic — it can produce invalid SQL (e.g. `LIMIT 50.5`) and a 500.
+  // Floor BEFORE the <=0/>MAX clamp so e.g. `?limit=0.5` clamps to the
+  // default instead of slipping through as a truthy-but-fractional 0.5.
+  let limit = Number.isFinite(p.limit) ? Math.floor(Number(p.limit)) : DEFAULT_TX_LIMIT;
   if (limit <= 0) limit = DEFAULT_TX_LIMIT;
   if (limit > MAX_TX_LIMIT) limit = MAX_TX_LIMIT;
   let offset = Number.isFinite(p.offset) ? Math.floor(Number(p.offset)) : 0;
@@ -509,7 +551,7 @@ export function buildTransactionsExportQuery(
   maxRows = MAX_EXPORT_ROWS,
 ): BuiltQuery {
   const { where, params } = buildTxFilters(p, false);
-  let limit = Number.isFinite(maxRows) ? Number(maxRows) : MAX_EXPORT_ROWS;
+  let limit = Number.isFinite(maxRows) ? Math.floor(Number(maxRows)) : MAX_EXPORT_ROWS;
   if (limit <= 0 || limit > MAX_EXPORT_ROWS) limit = MAX_EXPORT_ROWS;
   const sql =
     `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, fl.party AS __party, ` +
