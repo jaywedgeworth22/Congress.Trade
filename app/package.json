@@ -23,6 +23,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1091.0",
     "@google/genai": "^2.12.0",
+    "@jaywedgeworth22/congress-trading-shared": "https://raw.githubusercontent.com/jaywedgeworth22/Congress.Trade/antigravity/deno-turso-migration/app/vendor/congress-trading-shared/jaywedgeworth22-congress-trading-shared-1.11.1.tgz",
     "@libsql/client": "^0.17.4",
     "@sentry/cloudflare": "^10.66.0",
     "cheerio": "^1.2.0",
@@ -37,7 +38,6 @@
     "@cloudflare/vitest-pool-workers": "^0.18.6",
     "@cloudflare/workers-types": "^5.20260719.1",
     "@fontsource/zilla-slab": "^5.2.8",
-    "@jaywedgeworth22/congress-trading-shared": "file:./vendor/congress-trading-shared",
     "@sentry/cli": "^3.6.0",
     "@types/node": "26.1.1",
     "@typescript-eslint/eslint-plugin": "^8.64.0",
