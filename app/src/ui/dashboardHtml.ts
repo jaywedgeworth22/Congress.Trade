@@ -173,6 +173,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   tr.row:hover td { background: var(--panel-2); }
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   th.sortable:hover { color: var(--text); }
+  th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   th.sortable .arr { opacity: .18; font-size: 10px; margin-left: 4px; color:var(--text-dim); }
   th.sortable.active { color: var(--text); }
   th.sortable.active .arr { opacity: 1; color: var(--accent); }
@@ -760,7 +761,22 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   tr.row:nth-child(8), .feed-card:nth-child(8) { animation-delay: 0.40s; }
   tr.row:nth-child(9), .feed-card:nth-child(9) { animation-delay: 0.45s; }
   tr.row:nth-child(10), .feed-card:nth-child(10) { animation-delay: 0.50s; }
-  
+  /* These entrance/pop animations (row stagger, drawer slide-up, dialog pop,
+     ticking-number bump) are purely decorative flourish, not functional
+     feedback — honor the OS-level motion opt-out and skip them outright
+     rather than just shortening them. !important because the drawer-slide
+     rule is re-declared inside later mobile breakpoints (same selector, same
+     specificity) — without it, source order would let those re-enable the
+     animation for reduced-motion users on narrow viewports. */
+  @media (prefers-reduced-motion: reduce) {
+    tr.row, .feed-card,
+    .drawer.open .drawer-panel,
+    dialog.search-panel[open],
+    .tick-animate .tick-num {
+      animation: none !important;
+    }
+  }
+
   /* ---- Speed vs data providers (provider scorecard grid) ---- */
   .speed-head { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
   .speed-head h3 { margin:0; }
@@ -1426,7 +1442,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <body>
 <header class="top">
   <div class="brand">Congress<span class="dot">.</span>Trade</div>
-  <span class="pill off" id="livePill">Status</span>
+  <span class="pill off" id="livePill" role="status" aria-live="polite" title="Live feed connection status">Connecting&hellip;</span>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
@@ -1590,11 +1606,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <thead>
               <tr>
                 <th style="width:32px"></th>
-                <th class="sortable" style="min-width: 140px;" onclick="setTickerSort('trades')">Asset</th>
-                <th class="sortable" onclick="setTickerSort('trades')">Trades <span class="sort-icon" data-sort="trades"></span></th>
-                <th class="sortable r" onclick="setTickerSort('members')">Politicians <span class="sort-icon" data-sort="members"></span></th>
-                <th class="sortable r est" onclick="setTickerSort('volume')">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
-                <th class="sortable r" onclick="setTickerSort('netflow')">Net $ Flow <span class="sort-icon" data-sort="netflow"></span></th>
+                <th class="sortable" style="min-width: 140px;" tabindex="0" role="button" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Asset</th>
+                <th class="sortable" tabindex="0" role="button" onclick="setTickerSort('trades')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('trades');}">Trades <span class="sort-icon" data-sort="trades"></span></th>
+                <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('members')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('members');}">Politicians <span class="sort-icon" data-sort="members"></span></th>
+                <th class="sortable r est" tabindex="0" role="button" onclick="setTickerSort('volume')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('volume');}">Est. Volume <span class="sort-icon" data-sort="volume"></span></th>
+                <th class="sortable r" tabindex="0" role="button" onclick="setTickerSort('netflow')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setTickerSort('netflow');}">Net $ Flow <span class="sort-icon" data-sort="netflow"></span></th>
               </tr>
             </thead>
             <tbody id="trTickers"></tbody>
@@ -1784,7 +1800,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
       <p class="note">API HOOK: GET/POST <code>/api/admin/subscriptions</code></p>
       <div class="row-flex" style="margin-top:20px;justify-content:center" data-premium-cue="alerts">
-        <span class="gate-note">Alert Delivery is included in Premium &middot; $15/mo or $140/yr &middot; 7-day free trial
+        <span class="gate-note">Alert Delivery is included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial
           <button class="btn sm" onclick="openPricing('alerts')">Start Free Trial</button></span>
       </div>
     </div>
@@ -2478,10 +2494,14 @@ function initials(name) {
 }
 /* Build the politician avatar: an initials chip with the headshot overlaid when a
    photoUrl is present. A broken/missing image removes itself (this.remove()),
-   revealing the initials underneath — mirrors the ticker-logo onerror pattern. */
+   revealing the initials underneath — mirrors the ticker-logo onerror pattern.
+   Unlike the ticker logo (decorative next to a visible ticker string), this
+   photo is sometimes the ONLY identifier on screen (e.g. the cluster-card face
+   strip has no adjacent name text), so it always gets a real alt with the
+   politician's name rather than alt="". */
 function memberAvatarHtml(name, photoUrl) {
   var img = photoUrl
-    ? '<img src="' + esc(photoUrl) + '" alt="" loading="lazy" decoding="async" onerror="this.remove()" />'
+    ? '<img src="' + esc(photoUrl) + '" alt="' + esc(name || '') + '" loading="lazy" decoding="async" onerror="this.remove()" />'
     : '';
   return '<span class="avatar">' + esc(initials(name)) + img + '</span>';
 }
@@ -2736,10 +2756,22 @@ function renderFeedHeader() {
     var cls = (c.sort ? 'sortable ' : '') + 'c-' + c.id;
     var ds = c.sort ? ' data-sort="' + c.sort + '"' : '';
     var tip = c.tip ? ' title="' + esc(c.tip) + '"' : '';
-    return '<th class="' + cls + '" data-col="' + c.id + '"' + ds + tip + '>' + esc(c.label) + (c.sort ? '<span class="arr"></span>' : '') + '</th>';
+    var sortAttrs = c.sort ? ' tabindex="0" role="button" aria-sort="none"' : '';
+    return '<th class="' + cls + '" data-col="' + c.id + '"' + ds + tip + sortAttrs + '>' + esc(c.label) + (c.sort ? '<span class="arr"></span>' : '') + '</th>';
   }).join('');
   var ths = head.querySelectorAll('th.sortable');
-  for (var i = 0; i < ths.length; i++) { (function (th) { th.onclick = function () { setSort(th.dataset.sort); }; })(ths[i]); }
+  for (var i = 0; i < ths.length; i++) {
+    (function (th) {
+      th.onclick = function () { setSort(th.dataset.sort); };
+      // Sort headers are keyboard-focusable (tabindex+role=button above); Enter/Space
+      // activates them the same as a click, matching the feed-card keyboard pattern.
+      th.onkeydown = function (e) {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        setSort(th.dataset.sort);
+      };
+    })(ths[i]);
+  }
   // Re-init the resizable columns for the new header.
   var table = el('feedTable'); if (table) { table.classList.remove('resizable'); table.style.width = ''; }
   colResizeInit = false;
@@ -3045,8 +3077,13 @@ function updateSortIndicators() {
   var ths = document.querySelectorAll('#feedHead th.sortable');
   for (var i = 0; i < ths.length; i++) {
     var th = ths[i], arr = th.querySelector('.arr');
-    if (th.dataset.sort === sortKey) { th.classList.add('active'); arr.textContent = sortDir > 0 ? '▲' : '▼'; }
-    else { th.classList.remove('active'); arr.textContent = '↕'; }
+    if (th.dataset.sort === sortKey) {
+      th.classList.add('active'); arr.textContent = sortDir > 0 ? '▲' : '▼';
+      th.setAttribute('aria-sort', sortDir > 0 ? 'ascending' : 'descending');
+    } else {
+      th.classList.remove('active'); arr.textContent = '↕';
+      th.setAttribute('aria-sort', 'none');
+    }
   }
   syncMobileSortControl();
 }
@@ -3327,18 +3364,22 @@ function fetchUpdates() {
    on it: the /api/stream?subscription=dashboard endpoint isn't available on the
    public site (webhooks/SSE are a future paid feature). If the EventSource
    errors or closes we tear it down (no infinite "reconnecting…") and fall back
-   to a calm 30s poll of /api/transactions using the cursor. */
-function setLivePill(cls, text) { var p = el('livePill'); p.className = 'pill ' + cls; p.textContent = text || 'Status'; }
+   to a calm 30s poll of /api/transactions using the cursor.
+   The #livePill text is a genuine status value (not its own label) so it
+   never sits inert: "Connecting…" until the stream/poll first starts, "Live"
+   once it's actively watching for updates, and a brief "Updated" flash when
+   new rows arrive. role=status + aria-live announce those transitions. */
+function setLivePill(cls, text) { var p = el('livePill'); p.className = 'pill ' + cls; p.textContent = text || 'Live'; }
 
 /* Periodic polling fallback. API HOOK: GET /api/transactions?since=<cursor>. */
 function startPolling() {
   if (pollTimer) return;          // already polling
-  setLivePill('live', 'Status');  // calm state
+  setLivePill('live', 'Live');  // calm state
   pollTimer = setInterval(function () {
     fetchUpdates().then(function (n) {
       if (n > 0) {
         setLivePill('live', 'Updated');
-        setTimeout(function () { if (pollTimer) setLivePill('live', 'Status'); }, 1800);
+        setTimeout(function () { if (pollTimer) setLivePill('live', 'Live'); }, 1800);
       }
     });
   }, POLL_INTERVAL_MS);
@@ -3353,7 +3394,7 @@ function startStream() {
   if (typeof EventSource === 'undefined') { startPolling(); return; }
   try {
     es = new EventSource('/api/stream?subscription=dashboard');
-    es.onopen = function () { setLivePill('live', 'Status'); };
+    es.onopen = function () { setLivePill('live', 'Live'); };
     // Canonical cross-app event is congress.trade carrying { trades: [...] }
     // (see congress-trading-shared and src/delivery/sse.ts formatTradeEvent).
     es.addEventListener('congress.trade', function (e) {
@@ -3380,7 +3421,7 @@ function startStream() {
           setFeedKpis();
           renderFeed();
           setLivePill('live', 'Updated');
-          setTimeout(function () { if (es && es.readyState === 1) setLivePill('live', 'Status'); }, 1800);
+          setTimeout(function () { if (es && es.readyState === 1) setLivePill('live', 'Live'); }, 1800);
         }
       } catch (err) { /* ignore malformed frame */ }
     });
@@ -6350,18 +6391,20 @@ function trParams() {
 }
 var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'all': 'All Time' };
 function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
-/* Stamp the active timeframe onto every analytics section header (.tf-h) in one
-   central pass, so each panel clearly states which window it reflects. Runs at
+/* Every analytics section header (.tf-h) already carries its OWN per-panel
+   <select class="tr-window-select"> showing the active timeframe (e.g. "Past
+   3 Months \u25BE"). This pass used to also append a ".tf-chip" repeating the same
+   label as plain text, producing a visible duplicate ("Past 3 Months \u25BE \u00B7 Past
+   3 Months"). The select is the single source of truth for the label now, so
+   this just clears out any stale chip a header may still be carrying (e.g.
+   from before a re-render) rather than re-adding the redundant text. Runs at
    the top of loadTrends(), which fires on Refresh and on any window change. */
 function stampWindowChips() {
-  var label = windowLabel(getTrWindow());
   var heads = document.querySelectorAll('#view-trends h3.tf-h');
   for (var i = 0; i < heads.length; i++) {
-    var h = heads[i], chip = h.querySelector('.tf-chip');
-    if (!chip) { chip = document.createElement('span'); chip.className = 'tf-chip'; h.appendChild(chip); }
-    chip.textContent = ' \u00B7 ' + label;
+    var chip = heads[i].querySelector('.tf-chip');
+    if (chip) chip.parentNode.removeChild(chip);
   }
-  
 }
 function aGet(path) {
   return fetch('/api/analytics/' + path).then(function (r) {
@@ -6394,6 +6437,8 @@ function splitBar(buys, sells) {
     '<span class="seg sell" style="width:' + sp + '%"></span></span>' +
     '<small>' + buys + 'B / ' + sells + 'S</small></span>';
 }
+/* "1 Democrat" / "2 Democrats" — pluralize a count + noun for party breakdowns. */
+function pluralCount(n, noun) { n = Number(n || 0); return n + ' ' + noun + (n === 1 ? '' : 's'); }
 function pdot(b) { return b ? '<span class="pdot ' + esc(b) + '"></span>' : ''; }
 function attrTip(tip) { return tip ? ' title="' + esc(tip) + '" data-tip="' + esc(tip) + '"' : ''; }
 /* "politician(s)" — spelled out for consistency with the Politicians KPI. */
@@ -6684,12 +6729,41 @@ function flowRowHtml(label, r, maxVol, title) {
       ' • ' + esc(breadth) + ' • net ' + netHtml(r.estNetFlowUsd) + '</div></div>';
 }
 
+/* Some sector strings vary by provider/vintage for the same real GICS sector
+   (e.g. FMP's "Healthcare" vs. an older SEC-EDGAR-derived "Health Care").
+   Canonicalize at this display layer so they merge into one bar instead of
+   showing as two separate, smaller "sectors". */
+var SECTOR_CANON = { 'Health Care': 'Healthcare' };
+function canonSector(s) { return SECTOR_CANON[s] || s; }
 function loadTrSectorFlow() {
   var box = el('trSectorFlow');
   box.innerHTML = skBars(5);
   aGet('sector-flow?' + trParams() + '&limit=12').then(function (d) {
     var rows = (d.sectors || []).filter(function (r) { return r.sector && r.sector !== 'Unknown'; });
     if (!rows.length) { box.innerHTML = '<div class="note">No sector-classified trades in this window yet (security reference data fills in as enrichment runs).</div>'; return; }
+    var merged = {}, order = [];
+    rows.forEach(function (r) {
+      var key = canonSector(r.sector);
+      if (!merged[key]) {
+        merged[key] = { sector: key, estVolumeUsd: 0, estNetFlowUsd: 0, buyCount: 0, sellCount: 0, uniqueMembers: 0, uniqueTickers: 0 };
+        order.push(key);
+      }
+      var m = merged[key];
+      m.estVolumeUsd += Number(r.estVolumeUsd || 0);
+      m.estNetFlowUsd += Number(r.estNetFlowUsd || 0);
+      m.buyCount += Number(r.buyCount || 0);
+      m.sellCount += Number(r.sellCount || 0);
+      // uniqueMembers/uniqueTickers are already deduped counts from the API;
+      // take the max across merged aliases as a conservative (not double-
+      // counted) estimate rather than summing possibly-overlapping sets.
+      m.uniqueMembers = Math.max(m.uniqueMembers, Number(r.uniqueMembers || 0));
+      m.uniqueTickers = Math.max(m.uniqueTickers, Number(r.uniqueTickers || 0));
+    });
+    rows = order.map(function (k) { return merged[k]; });
+    // The section sub-header claims "ranked by estimated volume" — sort here
+    // so the rendered order always matches that claim regardless of how the
+    // backend ordered its rows (it currently ranks by trade_count).
+    rows.sort(function (a, b) { return b.estVolumeUsd - a.estVolumeUsd; });
     var max = 1; rows.forEach(function (r) { max = Math.max(max, r.estVolumeUsd); });
     box.innerHTML = rows.map(function (r) { return flowRowHtml(r.sector, r, max); }).join('');
   }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
@@ -6812,15 +6886,17 @@ function loadTrClusters() {
     box.innerHTML = cs.map(function (c) {
       var faces = (c.topMembers || []).slice(0, 5).map(function (m) { return memberAvatarHtml(m.fullName, m.photoUrl); }).join('');
       var dir = c.txType === 'P' ? 'BOUGHT' : 'SOLD';
-      var parties = c.parties.D + ' Democrats, ' + c.parties.R + ' Republicans' + (c.parties.O ? ', ' + c.parties.O + ' Other' : '');
+      var parties = pluralCount(c.parties.D, 'Democrat') + ', ' + pluralCount(c.parties.R, 'Republican') + (c.parties.O ? ', ' + pluralCount(c.parties.O, 'Other') : '');
       var bip = c.isBipartisan ? ' <span class="muted">· bipartisan</span>' : '';
-      var range = compactDateText(c.minDate) + (c.minDate === c.maxDate ? '' : ' → ' + compactDateText(c.maxDate));
-      return '<div class="ccard clickable" data-ticker="' + esc(c.ticker) + '">' +
+      // minDate can be absent on malformed/partial rows; drop the leading
+      // "— · " fragment rather than rendering a dangling dash next to the $ estimate.
+      var range = c.minDate ? (compactDateText(c.minDate) + (c.minDate === c.maxDate ? '' : ' → ' + compactDateText(c.maxDate))) : '';
+      return '<div class="ccard clickable" tabindex="0" role="button" aria-label="View trades for ' + esc(c.ticker) + '" data-ticker="' + esc(c.ticker) + '">' +
         '<div class="chead">' + tickerLogoHtml(c.ticker, c.name) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
         '<div><strong>' + c.memberCount + '</strong> ' + (c.memberCount === 1 ? 'politician' : 'politicians') + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
         '<div class="muted" style="margin-top:2px">' + esc(parties) + '</div>' +
-        '<div class="muted" style="margin-top:2px">' + esc(range) + ' · ' + estUsd(c.estVolumeUsd) + '</div>' +
+        '<div class="muted" style="margin-top:2px">' + (range ? esc(range) + ' · ' : '') + estUsd(c.estVolumeUsd) + '</div>' +
         '<div class="faces">' + faces + '</div></div>';
     }).join('');
   }).catch(function (e) { box.innerHTML = '<div class="chip">Could not load: ' + esc(e.message) + '</div>'; });
@@ -6957,18 +7033,76 @@ function loadTrLag() {
   });
 }
 
+/* ============================ FOCUS TRAP ============================ */
+/* Shared keyboard focus trap for the drawer + the login/pricing modals: while
+   one is open, Tab/Shift+Tab cycle only through its own focusable elements
+   (never escaping to the dimmed page behind it), and closing restores focus
+   to whatever triggered the open — the standard modal-dialog pattern (WCAG
+   2.4.3). Escape already closes these overlays (see the document keydown
+   handler near the bottom of this script); this only adds the Tab cycling
+   and focus restore half of the pattern. */
+var focusTrapReturnEl = null;
+function focusableEls(container) {
+  if (!container) return [];
+  var sel = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  return Array.prototype.slice.call(container.querySelectorAll(sel)).filter(function (n) {
+    return !!(n.offsetWidth || n.offsetHeight || n.getClientRects().length);
+  });
+}
+function trapFocusIn(container) {
+  focusTrapReturnEl = document.activeElement;
+  var els = focusableEls(container);
+  if (els.length) els[0].focus(); else if (container) container.focus();
+}
+function releaseFocusTrap() {
+  var toRestore = focusTrapReturnEl;
+  focusTrapReturnEl = null;
+  if (toRestore && typeof toRestore.focus === 'function' && document.contains(toRestore)) {
+    try { toRestore.focus(); } catch (e) {}
+  }
+}
+/* The currently open drawer/modal's content container, or null if none is open. */
+function openOverlayContainer() {
+  var drawer = el('detailDrawer');
+  if (drawer && drawer.classList.contains('open')) return document.querySelector('#detailDrawer .drawer-panel');
+  var openModal = document.querySelector('.overlay.open .modal');
+  return openModal || null;
+}
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Tab') return;
+  var container = openOverlayContainer();
+  if (!container) return;
+  var els = focusableEls(container);
+  if (!els.length) { e.preventDefault(); return; }
+  var first = els[0], last = els[els.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  else if (!container.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+});
+
 /* ============================ DETAIL DRAWERS ============================ */
 /* One reusable right-side drawer, filled per type: trade / asset / politician.
    Tier-1/2 (company profile, price, performance) are KEY-GATED and shown as a
    quiet note until a market-data key is configured. */
 function openDrawer(html) {
   closePanels();
+  // Drill-in navigation (trade -> asset -> member, etc.) calls openDrawer()
+  // again while it's already open; only capture the pre-drawer focus target
+  // on the FIRST open of a session, so closing after several drill-ins
+  // restores focus to the original trigger, not a since-replaced inner link.
+  var wasOpen = el('detailDrawer').classList.contains('open');
   el('detailDrawerBody').innerHTML = html;
   el('detailDrawer').classList.add('open');
   var p = document.querySelector('#detailDrawer .drawer-panel');
   if (p) p.scrollTop = 0;
+  if (wasOpen) { var els = focusableEls(p); if (els.length) els[0].focus(); }
+  else trapFocusIn(p);
 }
-function closeDrawer() { el('detailDrawer').classList.remove('open'); }
+function closeDrawer() {
+  var wasOpen = el('detailDrawer').classList.contains('open');
+  el('detailDrawer').classList.remove('open');
+  if (wasOpen) releaseFocusTrap();
+}
 var PERF_GATE = '<div class="tier-gate-note">📈 Price &amp; performance vs the S&amp;P 500 will appear here once a market-data API key is configured.</div>';
 var PROFILE_GATE = '<div class="tier-gate-note">🏢 Company details (sector, market cap, country, exchange) will appear here once a market-data API key is configured.</div>';
 var OPTION_PERF_NOTE = '<div class="tier-gate-note">Performance isn\\'t shown for options — the return depends on strike, expiry, and exercise, which the filing doesn\\'t disclose.</div>';
@@ -7459,8 +7593,18 @@ document.addEventListener('click', function (e) {
 });
 
 /* ---- login modal ---- */
-function openLogin() { el('loginOverlay').classList.add('open'); el('loginMsg').textContent = ''; var i = el('magicEmail'); if (i) setTimeout(function () { i.focus(); }, 50); }
-function closeLogin() { el('loginOverlay').classList.remove('open'); }
+function openLogin() {
+  focusTrapReturnEl = document.activeElement;
+  el('loginOverlay').classList.add('open');
+  el('loginMsg').textContent = '';
+  var i = el('magicEmail');
+  if (i) setTimeout(function () { i.focus(); }, 50);
+}
+function closeLogin() {
+  var wasOpen = el('loginOverlay').classList.contains('open');
+  el('loginOverlay').classList.remove('open');
+  if (wasOpen) releaseFocusTrap();
+}
 function loginGoogle() { window.location.href = '/auth/google/start'; }
 function sendMagicLink() {
   var email = (el('magicEmail').value || '').trim();
@@ -7509,6 +7653,7 @@ function pricingCopy(intent) {
   };
 }
 function openPricing(intent) {
+  focusTrapReturnEl = document.activeElement;
   closeAcctMenu();
   pricingIntent = intent || 'default';
   var copy = pricingCopy(pricingIntent);
@@ -7531,8 +7676,15 @@ function openPricing(intent) {
   }
   el('pricingMsg').textContent = available ? '' : 'Premium checkout is not available yet.';
   el('pricingOverlay').classList.add('open');
+  var pricingModal = document.querySelector('#pricingOverlay .modal');
+  var pricingFocusable = focusableEls(pricingModal);
+  if (pricingFocusable.length) pricingFocusable[0].focus();
 }
-function closePricing() { el('pricingOverlay').classList.remove('open'); }
+function closePricing() {
+  var wasOpen = el('pricingOverlay').classList.contains('open');
+  el('pricingOverlay').classList.remove('open');
+  if (wasOpen) releaseFocusTrap();
+}
 function selectPlan(p) {
   if (selectedPlan !== ((p === 'annual') ? 'annual' : 'monthly')) checkoutRequestId = null;
   selectedPlan = (p === 'annual') ? 'annual' : 'monthly';

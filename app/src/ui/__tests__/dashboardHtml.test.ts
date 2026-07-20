@@ -1682,3 +1682,173 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
     expect(sandbox.getAlerts()).toHaveLength(1);
   });
 });
+
+describe('dashboard truth + a11y fixes (app review backlog)', () => {
+  // Small standalone-function extractor shared by the pure-function tests
+  // below (pluralCount / canonSector have no DOM or outer-scope deps).
+  function extractFn(html: string, name: string): string {
+    const marker = 'function ' + name + '(';
+    const start = html.indexOf(marker);
+    if (start < 0) throw new Error('function not found in DASHBOARD_HTML: ' + name);
+    const braceStart = html.indexOf('{', start);
+    let depth = 0;
+    let i = braceStart;
+    for (; i < html.length; i++) {
+      if (html[i] === '{') depth++;
+      else if (html[i] === '}') {
+        depth--;
+        if (depth === 0) {
+          i++;
+          break;
+        }
+      }
+    }
+    return html.slice(start, i);
+  }
+
+  // ---- 1. Consensus Moves "— · ~$40K" dangling fragment -------------------
+  it('drops the leading date-range fragment on cluster cards when minDate is missing, instead of a dangling dash', () => {
+    expect(DASHBOARD_HTML).toContain(
+      "var range = c.minDate ? (compactDateText(c.minDate) + (c.minDate === c.maxDate ? '' : ' → ' + compactDateText(c.maxDate))) : '';",
+    );
+    expect(DASHBOARD_HTML).toContain(
+      "'<div class=\"muted\" style=\"margin-top:2px\">' + (range ? esc(range) + ' · ' : '') + estUsd(c.estVolumeUsd) + '</div>'",
+    );
+  });
+
+  // ---- 2. "1 Democrats" pluralization --------------------------------------
+  it('pluralizes party counts correctly (1 Democrat, not 1 Democrats)', () => {
+    const src = extractFn(DASHBOARD_HTML, 'pluralCount') + '\nreturn pluralCount;';
+    // eslint-disable-next-line no-new-func -- executing the real shipped source
+    const pluralCount = new Function(src)() as (n: number, noun: string) => string;
+    expect(pluralCount(1, 'Democrat')).toBe('1 Democrat');
+    expect(pluralCount(2, 'Democrat')).toBe('2 Democrats');
+    expect(pluralCount(0, 'Republican')).toBe('0 Republicans');
+    expect(pluralCount(1, 'Other')).toBe('1 Other');
+  });
+
+  it('builds cluster-card party breakdowns from pluralCount instead of hardcoded plurals', () => {
+    expect(DASHBOARD_HTML).toContain(
+      "var parties = pluralCount(c.parties.D, 'Democrat') + ', ' + pluralCount(c.parties.R, 'Republican') + (c.parties.O ? ', ' + pluralCount(c.parties.O, 'Other') : '');",
+    );
+    expect(DASHBOARD_HTML).not.toContain("c.parties.D + ' Democrats, ' + c.parties.R + ' Republicans'");
+  });
+
+  // ---- 3. Duplicated "Past 3 Months ▾ · Past 3 Months" timeframe label -----
+  it('renders the analytics timeframe once (the per-panel <select>), no appended .tf-chip duplicate', () => {
+    // The old implementation appended a second textual label; the fix only
+    // clears out any stale chip left over from before this fix shipped.
+    expect(DASHBOARD_HTML).not.toContain("chip.textContent = ' \\u00B7 ' + label");
+    expect(DASHBOARD_HTML).not.toContain("chip.textContent = ' · ' + label");
+    expect(DASHBOARD_HTML).toContain('function stampWindowChips() {');
+    expect(DASHBOARD_HTML).toContain("var chip = heads[i].querySelector('.tf-chip');");
+    expect(DASHBOARD_HTML).toContain('if (chip) chip.parentNode.removeChild(chip);');
+  });
+
+  // ---- 4. "Healthcare" vs "Health Care" sector canonicalization ------------
+  it('canonicalizes sector-name aliases at the display layer', () => {
+    const src = extractFn(DASHBOARD_HTML, 'canonSector');
+    const varMatch = DASHBOARD_HTML.match(/var SECTOR_CANON = \{[^}]*\};/);
+    if (!varMatch) throw new Error('SECTOR_CANON not found in DASHBOARD_HTML');
+    // eslint-disable-next-line no-new-func -- executing the real shipped source
+    const canonSector = new Function(varMatch[0] + '\n' + src + '\nreturn canonSector;')() as (s: string) => string;
+    expect(canonSector('Health Care')).toBe('Healthcare');
+    expect(canonSector('Healthcare')).toBe('Healthcare');
+    expect(canonSector('Energy')).toBe('Energy'); // untouched passthrough
+  });
+
+  it('merges canonicalized sector rows and sorts sector-flow output by estimated volume, matching its own "ranked by" label', () => {
+    expect(DASHBOARD_HTML).toContain('ranked by estimated volume');
+    expect(DASHBOARD_HTML).toContain('var key = canonSector(r.sector);');
+    expect(DASHBOARD_HTML).toContain('rows.sort(function (a, b) { return b.estVolumeUsd - a.estVolumeUsd; });');
+  });
+
+  // ---- 5. Inert "Status" pill ----------------------------------------------
+  it('gives the live-feed pill a real status value + a11y wiring instead of an inert placeholder', () => {
+    // The pill used to always show the literal word "Status" (its own label,
+    // never a value). It's now a genuine status: Connecting… -> Live -> Updated.
+    expect(DASHBOARD_HTML).toContain(
+      '<span class="pill off" id="livePill" role="status" aria-live="polite" title="Live feed connection status">Connecting&hellip;</span>',
+    );
+    expect(DASHBOARD_HTML).not.toContain('id="livePill">Status<');
+    expect(DASHBOARD_HTML).toContain("function setLivePill(cls, text) { var p = el('livePill'); p.className = 'pill ' + cls; p.textContent = text || 'Live'; }");
+    expect(DASHBOARD_HTML).not.toContain("text || 'Status'");
+  });
+
+  // ---- 6. "ranked by estimated volume" label vs actual sort order ----------
+  // (covered above alongside the sector canonicalization fix, since both land
+  // in the same loadTrSectorFlow() change.)
+
+  // ---- 7. Canonical Premium pricing = $9/mo · $90/yr -----------------------
+  it('shows $9/mo and $90/yr consistently across the dashboard pricing surfaces (alerts gate note + pricing modal)', () => {
+    expect(DASHBOARD_HTML).toContain('Alert Delivery is included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial');
+    expect(DASHBOARD_HTML).toContain('$9<span class="per">/mo</span>');
+    expect(DASHBOARD_HTML).toContain('$90<span class="per">/yr</span>');
+    expect(DASHBOARD_HTML).not.toContain('$15/mo');
+    expect(DASHBOARD_HTML).not.toContain('$140/yr');
+  });
+
+  // ---- 8a. Keyboard-focusable + Enter-activatable drill-down rows ----------
+  it('makes Consensus Moves (cluster) cards keyboard-focusable and Enter-activatable', () => {
+    expect(DASHBOARD_HTML).toContain(
+      '<div class="ccard clickable" tabindex="0" role="button" aria-label="View trades for \' + esc(c.ticker) + \'" data-ticker="\' + esc(c.ticker) + \'">',
+    );
+  });
+
+  // ---- 8b. Keyboard-operable sort headers ----------------------------------
+  it('makes the "What Congress Is Trading" ticker leaderboard sort headers keyboard-operable', () => {
+    for (const sortKey of ['trades', 'members', 'volume', 'netflow']) {
+      expect(DASHBOARD_HTML).toContain(
+        `event.preventDefault();setTickerSort('${sortKey}');}`,
+      );
+    }
+    expect(DASHBOARD_HTML.match(/class="sortable[^"]*" (?:style="[^"]*" )?tabindex="0" role="button"/g)?.length).toBeGreaterThanOrEqual(5);
+  });
+
+  it('makes the main Trades feed table sort headers keyboard-operable with aria-sort', () => {
+    expect(DASHBOARD_HTML).toContain("var sortAttrs = c.sort ? ' tabindex=\"0\" role=\"button\" aria-sort=\"none\"' : '';");
+    expect(DASHBOARD_HTML).toContain('th.onkeydown = function (e) {');
+    expect(DASHBOARD_HTML).toContain("th.setAttribute('aria-sort', sortDir > 0 ? 'ascending' : 'descending');");
+    expect(DASHBOARD_HTML).toContain("th.setAttribute('aria-sort', 'none');");
+    expect(DASHBOARD_HTML).toContain('th.sortable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }');
+  });
+
+  // ---- 8c. Focus trap + Escape in drawer/modals ----------------------------
+  it('implements a shared Tab focus trap + focus-restore for the drawer and the login/pricing modals', () => {
+    expect(DASHBOARD_HTML).toContain('function focusableEls(container)');
+    expect(DASHBOARD_HTML).toContain('function trapFocusIn(container)');
+    expect(DASHBOARD_HTML).toContain('function releaseFocusTrap()');
+    expect(DASHBOARD_HTML).toContain('function openOverlayContainer()');
+    // Escape already closed these overlays; this asserts that behavior is intact.
+    expect(DASHBOARD_HTML).toContain("if (e.key === 'Escape') { closePanels(); closeDrawer(); closeLogin(); closePricing(); }");
+    // Each open*() captures the pre-open focus target so close*() can restore it.
+    expect(DASHBOARD_HTML).toContain('focusTrapReturnEl = document.activeElement;');
+    expect(DASHBOARD_HTML).toContain('if (wasOpen) releaseFocusTrap();');
+  });
+
+  // ---- 8d. prefers-reduced-motion ------------------------------------------
+  it('honors prefers-reduced-motion for entrance/pop animations outside the already-covered Trends charts', () => {
+    expect(DASHBOARD_HTML).toContain('@media (prefers-reduced-motion: reduce) {');
+    expect(DASHBOARD_HTML).toContain('.drawer.open .drawer-panel,');
+    expect(DASHBOARD_HTML).toContain('dialog.search-panel[open],');
+    expect(DASHBOARD_HTML).toContain('.tick-animate .tick-num {');
+    expect(DASHBOARD_HTML).toContain('animation: none !important;');
+  });
+
+  // ---- 8e. alt text on politician images ------------------------------------
+  it('gives politician avatar photos a real alt (the name), not alt=""', () => {
+    const src = [
+      extractFn(DASHBOARD_HTML, 'esc'),
+      extractFn(DASHBOARD_HTML, 'initials'),
+      extractFn(DASHBOARD_HTML, 'memberAvatarHtml'),
+      'return memberAvatarHtml;',
+    ].join('\n');
+    // eslint-disable-next-line no-new-func -- executing the real shipped source
+    const memberAvatarHtml = new Function(src)() as (name: string, photoUrl: string) => string;
+    const html = memberAvatarHtml('Nancy Pelosi', 'https://example.com/photo.jpg');
+    expect(html).toContain('alt="Nancy Pelosi"');
+    expect(html).not.toContain('alt=""');
+    // No photo -> no <img> at all (initials chip only); nothing to assert on alt.
+    expect(memberAvatarHtml('Nancy Pelosi', '')).not.toContain('<img');
+  });
+});
