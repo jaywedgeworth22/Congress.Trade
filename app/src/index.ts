@@ -52,6 +52,7 @@ import {
   flushDeliveryOutbox,
   reconnectDeadLetteredOutbox,
 } from './delivery/outbox';
+import { flushParkedDeliveries } from './delivery/targetCircuit';
 import {
   completeIngestionOutbox,
   flushIngestionOutbox,
@@ -457,6 +458,16 @@ const requestAndScheduledWorker = Sentry.withSentry(
           flushIngestionOutbox(env, { limit: 100 }),
         ).catch((err) =>
           Sentry.captureException(err, { tags: { cron: 'ingestion-outbox' } }),
+        ),
+      );
+      // GOVERNOR 3: re-dispatch deliveries parked behind per-target circuit
+      // breakers — full release when the target's circuit closed, one hourly
+      // probe candidate while it is recovering.
+      track(
+        Sentry.withMonitor('parked-deliveries-cron', () =>
+          flushParkedDeliveries(env, { limit: 50 }),
+        ).catch((err) =>
+          Sentry.captureException(err, { tags: { cron: 'parked-deliveries' } }),
         ),
       );
       track(
