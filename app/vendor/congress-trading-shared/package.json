@@ -28,12 +28,7 @@
     "dist/"
   ],
   "scripts": {
-    "build": "node -r ./tsup-preload.cjs node_modules/tsup/dist/cli-default.js src/index.ts --format cjs,esm --dts --clean",
-    "lint:package": "publint",
-    "pack:dry": "npm pack --dry-run",
-    "prepare": "npm run build",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "test": "vitest run"
   },
   "peerDependencies": {
     "zod": "^4.4.3"
