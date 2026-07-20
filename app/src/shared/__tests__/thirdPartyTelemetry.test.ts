@@ -1787,6 +1787,8 @@ describe('outbound-call inventory enforcement', () => {
       const relative = decodeURIComponent(file.pathname.slice(srcRoot.pathname.length));
       // These are browser-side, same-origin API calls embedded in the dashboard.
       if (relative === 'ui/dashboardHtml.ts') continue;
+      // Deno shims call worker.fetch which is not a third-party outbound call
+      if (relative.startsWith('deno/')) continue;
       const source = readFileSync(file as any, 'utf8') as string;
       violations.push(...rawFetchViolations(relative, source));
     }
