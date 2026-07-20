@@ -46,6 +46,20 @@
  * (src/ui/dashboardHtml.ts) both filter on source === 'primary', and TxSource is
  * the closed union 'primary' | 'seed_dataset' | 'manual'. Distinguishability
  * comes from the ingestion_decisions audit row instead.
+ *
+ * "Unanimous"/"majority" above means MATERIAL agreement, not byte agreement.
+ * The 9 strict/enum fields (ticker, amount_min, amount_max, tx_type, tx_date,
+ * owner, is_option, cap_gains_over_200, filing_status) always require exact
+ * value equality. The 7 free-text fields (assetName, assetType, assetTypeName,
+ * subholding, location, description, supplementalText) compare through a
+ * canonical form (casefold, punctuation stripped, company suffixes
+ * canonicalized via the existing cleanAssetString helper) so two vendors that
+ * both correctly read "First Data Corp." don't disagree merely over casing or
+ * punctuation — the single largest cause of the cascade's production
+ * 0-publish rate before this normalization (324/324 cascade_unresolved over a
+ * 6h sample). Gated by AGREEMENT_TEXT_NORMALIZATION (default on; 'false'
+ * restores byte-strict comparison on every tier). See materialRowFingerprint,
+ * buildMajorityRows, and resolveAgreedRows below for the mechanics.
  */
 
 import type { Env, ParsedTx, Transaction } from '../shared/types';
@@ -64,6 +78,7 @@ import {
   HARD_FAILURE_FLAGS,
   MAX_PUBLISH_TRANSACTIONS_PER_FILING,
 } from './normalizer';
+import { cleanAssetString } from './nameNormalizer';
 import { mapFiling, type FilingRow } from '../delivery/rows';
 import { recordIngestionDecision } from '../shared/ingestionDecisions';
 import { buildConsensusRows, type AmountBracket, type ConsensusResult } from './consensus';
@@ -130,6 +145,50 @@ function canonicalText(value: string | null | undefined): string {
 }
 
 /**
+ * Canonical comparison form for FREE-TEXT material fields (assetName,
+ * assetType, assetTypeName, subholding, location, description,
+ * supplementalText) — used instead of {@link canonicalText} when
+ * AGREEMENT_TEXT_NORMALIZATION is enabled (default; see resolveAgreementEnv).
+ *
+ * Two independent vision reads of the SAME filing routinely transcribe the
+ * same disclosed text with different casing or punctuation ("First Data
+ * Corp." vs "FIRST DATA CORP" vs "First Data, Corp.") even when both vendors
+ * read it correctly. This standardizes casing/punctuation of the SAME
+ * abbreviation (via cleanAssetString: "corp"/"CORP"/"Corp" all -> "Corp.")
+ * — it does NOT expand or equate distinct spellings ("Corp" and
+ * "Corporation" still compare unequal; that would need a synonym dictionary,
+ * which is exactly the "new normalizer" this PR was told not to invent).
+ * Byte-strict comparison of that free text (canonicalText only
+ * trims/uppercases/collapses whitespace) was the single largest cause of the
+ * cascade's 0-publish rate in production (324/324 cascade_unresolved over a
+ * 6h sample) — every tier required identical text across ~16 fields,
+ * including these 7.
+ *
+ * NOT applied to the 9 strict/enum fields (ticker, amount_min, amount_max,
+ * tx_type, tx_date, owner, is_option, cap_gains_over_200, filing_status) —
+ * those keep byte/value equality via canonicalText/direct comparison, always,
+ * regardless of this flag; loosening them risks conflating two different
+ * facts disclosed by the filer.
+ *
+ * Order matters: cleanAssetString (the EXISTING extraction-side helper,
+ * src/extraction/nameNormalizer.ts — already applied to assetName at persist
+ * time in normalizer.ts's buildTransaction; no new normalizer invented here)
+ * needs intact casing/punctuation to recognize "INC"/"Inc."/"llc" and to
+ * strip "(NYSE)"-style exchange suffixes and "/DE/" state-of-incorporation
+ * codes; only THEN do we casefold and strip remaining punctuation (including
+ * trailing periods/commas). `ticker` is passed only for the assetName field,
+ * mirroring cleanAssetString's own ticker-equals-name shortcut.
+ */
+function canonicalAgreementText(value: string | null | undefined, ticker?: string | null): string {
+  const cleaned = cleanAssetString(value ?? '', ticker ?? null);
+  return cleaned
+    .toLowerCase()
+    .replace(/[.,;:'"()[\]{}/\\_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * True only for a real calendar date in the model contract's YYYY-MM-DD form.
  * Date.parse alone is deliberately not used because it normalizes impossible
  * dates (for example 2026-02-31) instead of rejecting them.
@@ -150,26 +209,37 @@ function isValidTransactionDate(value: string | null | undefined): value is stri
  * disclosed by the filer. Every other publishable filing-row detail is part of
  * the comparison so agreement cannot hide a different owner, bracket, asset
  * classification, option/capital-gain flag, or structured row detail.
+ *
+ * The 9 strict/enum fields (ticker, txDate, txType, amountMin, amountMax,
+ * owner, isOption, capGainsOver200, filingStatus) ALWAYS go through
+ * canonicalText only, regardless of `normalizeText` — no loosening there. The
+ * 7 free-text fields (assetName, assetType, assetTypeName, subholding,
+ * location, description, supplementalText) go through canonicalAgreementText
+ * when `normalizeText` is true (AGREEMENT_TEXT_NORMALIZATION default-on; see
+ * resolveAgreementEnv), else canonicalText — the exact legacy byte-strict
+ * comparison, restored verbatim by the kill switch.
  */
-function materialRowFingerprint(tx: ParsedTx): string | null {
+function materialRowFingerprint(tx: ParsedTx, normalizeText: boolean): string | null {
   if (!isValidTransactionDate(tx.txDate)) return null;
+  const text = (value: string | null | undefined, ticker: string | null = null): string =>
+    normalizeText ? canonicalAgreementText(value, ticker) : canonicalText(value);
   return JSON.stringify([
     canonicalText(tx.ticker),
-    canonicalText(tx.assetName),
+    text(tx.assetName, tx.ticker),
     tx.txDate,
     canonicalText(tx.txType),
     tx.amountMin,
     tx.amountMax,
     canonicalText(tx.owner),
-    canonicalText(tx.assetType),
-    canonicalText(tx.assetTypeName),
+    text(tx.assetType),
+    text(tx.assetTypeName),
     tx.isOption === true,
     tx.capGainsOver200 === true,
     canonicalText(tx.filingStatus),
-    canonicalText(tx.subholding),
-    canonicalText(tx.location),
-    canonicalText(tx.description),
-    canonicalText(tx.supplementalText),
+    text(tx.subholding),
+    text(tx.location),
+    text(tx.description),
+    text(tx.supplementalText),
   ]);
 }
 
@@ -177,16 +247,80 @@ function materialRowFingerprint(tx: ParsedTx): string | null {
  * True when two successful reads carry the identical material-row MULTISET.
  * Sorting fingerprints makes row order irrelevant while retaining duplicate
  * multiplicity (two identical disclosed lots never compare equal to one).
+ *
+ * `normalizeText` (default true) gates whether the 7 free-text fields compare
+ * through canonicalAgreementText (material agreement) or canonicalText (byte
+ * agreement, the pre-fix behavior) — see materialRowFingerprint. Defaulting to
+ * true here matters for the one caller outside this module that invokes
+ * sameRowSet directly (admin/routes.ts's benchmark-lineup cascade simulator),
+ * which has no live AGREEMENT_TEXT_NORMALIZATION env to resolve; every call
+ * site WITHIN this file resolves the live flag and passes it explicitly.
  */
-export function sameRowSet(a: CandidateDocResult, b: CandidateDocResult): boolean {
+export function sameRowSet(
+  a: CandidateDocResult,
+  b: CandidateDocResult,
+  normalizeText = true,
+): boolean {
   if (!a.ok || !b.ok || a.rows.length === 0) return false;
   if (a.rows.length !== b.rows.length) return false;
-  const ka = a.rows.map(materialRowFingerprint);
-  const kb = b.rows.map(materialRowFingerprint);
+  const ka = a.rows.map((tx) => materialRowFingerprint(tx, normalizeText));
+  const kb = b.rows.map((tx) => materialRowFingerprint(tx, normalizeText));
   if (ka.some((k) => k === null) || kb.some((k) => k === null)) return false;
   const sortedA = (ka as string[]).sort();
   const sortedB = (kb as string[]).sort();
   return sortedA.every((key, index) => key === sortedB[index]);
+}
+
+/**
+ * Resolve the PUBLISHED row content across 2–3 reads already confirmed to
+ * materially agree (sameRowSet true pairwise). Byte-strict mode
+ * (`normalizeText` false) is EXACTLY today's shortcut — the first read's own
+ * rows verbatim, since byte-strict agreement means the rows really are
+ * identical already; the kill switch touches nothing here.
+ *
+ * Once near-miss text can agree (`normalizeText` true), two agreeing rows can
+ * still carry different raw text ("First Data Corp." vs "FIRST DATA
+ * CORPORATION"), so this groups each read's rows by materialRowFingerprint —
+ * preserving duplicate-lot occurrence order, the same idea consensus.ts uses
+ * for repeated ticker/date/type keys — and, for each matched occurrence,
+ * publishes the WHOLE row from whichever model had the higher per-row
+ * confidence, ties broken by slot order (a before b before c). Confidence is
+ * a per-row scalar, so preferring it is naturally a whole-row choice: it never
+ * mixes assetName from one model with description from another, keeping a
+ * published row internally coherent.
+ */
+function resolveAgreedRows(reads: CandidateDocResult[], normalizeText: boolean): ParsedTx[] {
+  if (!normalizeText) return reads[0]?.rows ?? [];
+  const grouped = reads.map((r) => {
+    const byFingerprint = new Map<string, ParsedTx[]>();
+    for (const tx of r.rows) {
+      const fp = materialRowFingerprint(tx, true) ?? '';
+      const bucket = byFingerprint.get(fp);
+      if (bucket) bucket.push(tx);
+      else byFingerprint.set(fp, [tx]);
+    }
+    return byFingerprint;
+  });
+  const allFingerprints = new Set<string>();
+  for (const byFingerprint of grouped) for (const fp of byFingerprint.keys()) allFingerprints.add(fp);
+
+  const resolved: ParsedTx[] = [];
+  for (const fp of [...allFingerprints].sort()) {
+    const maxOccurrences = Math.max(...grouped.map((m) => m.get(fp)?.length ?? 0));
+    for (let occurrence = 0; occurrence < maxOccurrences; occurrence += 1) {
+      const candidates: Array<{ tx: ParsedTx; order: number }> = [];
+      grouped.forEach((byFingerprint, order) => {
+        const tx = byFingerprint.get(fp)?.[occurrence];
+        if (tx) candidates.push({ tx, order });
+      });
+      if (candidates.length === 0) continue;
+      const winner = [...candidates].sort(
+        (x, y) => (y.tx.confidence ?? 0) - (x.tx.confidence ?? 0) || x.order - y.order,
+      )[0];
+      resolved.push(winner.tx);
+    }
+  }
+  return resolved;
 }
 
 /**
@@ -627,6 +761,12 @@ export async function processAgreementDoc(
   const loaded = await loadDocBytes(env, docId, rawObjectKey);
   if ('skip' in loaded) return loaded.skip;
 
+  // Live-toggleable text-field agreement normalization (default on). Resolved
+  // here (not just threaded from handleAgreementCheck) so the operator
+  // /agreement-reprocess endpoint and the admin benchmark dry-run route — both
+  // of which call this function directly — pick up the current value too.
+  const normalizeText = (await resolveAgreementEnv(env)).AGREEMENT_TEXT_NORMALIZATION !== 'false';
+
   // Group this doc's candidate reads under one batch id so they're
   // recognizable as one agreement pass in the extraction_runs dashboard.
   const runBatchId = uuid();
@@ -658,7 +798,8 @@ export async function processAgreementDoc(
     return { docId, outcome: 'skipped', tier: audit?.tier, reason: 'model_read_failed' };
   }
 
-  const agree = sameRowSet(rA, rB) && (!rC || (sameRowSet(rA, rC) && sameRowSet(rB, rC)));
+  const agree = sameRowSet(rA, rB, normalizeText)
+    && (!rC || (sameRowSet(rA, rC, normalizeText) && sameRowSet(rB, rC, normalizeText)));
   if (!agree) {
     return {
       docId,
@@ -674,7 +815,8 @@ export async function processAgreementDoc(
   const frow = await loadFilingRow(env, docId);
   if (!frow) return { docId, outcome: 'skipped', reason: 'filing row missing' };
 
-  return finalizePublish(env, frow, docId, rA.rows, dryRun, {
+  const agreedReads = rC ? [rA, rB, rC] : [rA, rB];
+  return finalizePublish(env, frow, docId, resolveAgreedRows(agreedReads, normalizeText), dryRun, {
     tier: audit?.tier ?? (models.c ? 2 : 1),
     models: modelLabels(models),
     claimToken: audit?.claimToken,
@@ -710,10 +852,22 @@ interface MajorityBuild {
  * at least two of the three models, and every publishable field must itself
  * receive at least two votes. A duplicate arbitration key is ambiguous to align
  * across models, so tier 3 rejects it instead of collapsing a disclosed lot.
+ *
+ * Fields vote through the SAME comparator as materialRowFingerprint (shared
+ * per constraint: one comparator for both the unanimous tiers and this
+ * majority resolve): the 4 strict/enum fields still handled here (ticker,
+ * txType, owner, filingStatus — the rest of the 9 strict fields are voted as
+ * txDate/amount/isOption/capGainsOver200 special cases below) stay on
+ * canonicalText; the 7 free-text fields vote through canonicalAgreementText
+ * when `normalizeText` is true. When the winning bloc's members carry
+ * byte-different-but-normalize-equal text, the published value is the
+ * CONTRIBUTING row with the higher per-row confidence, ties broken by slot
+ * order (a before b before c) — never an arbitrary "first seen" pick.
  */
 function buildMajorityRows(
   reads: CandidateDocResult[],
   totalModels: number,
+  normalizeText: boolean,
 ): MajorityBuild {
   type MaterialField =
     | 'ticker'
@@ -736,6 +890,11 @@ function buildMajorityRows(
     'assetTypeName', 'isOption', 'capGainsOver200', 'filingStatus', 'subholding',
     'location', 'description', 'supplementalText',
   ];
+  // The 4 remaining strict/enum fields voted through this generic path (the
+  // other 5 strict fields — txDate, amountMin/amountMax, isOption,
+  // capGainsOver200 — are special-cased below); these ALWAYS stay on
+  // canonicalText regardless of `normalizeText`, matching materialRowFingerprint.
+  const STRICT_TEXT_FIELDS = new Set<MaterialField>(['ticker', 'txType', 'owner', 'filingStatus']);
   const valueFor = (tx: ParsedTx, field: MaterialField): unknown => {
     if (field === 'amount') return { amountMin: tx.amountMin, amountMax: tx.amountMax };
     return tx[field];
@@ -744,7 +903,11 @@ function buildMajorityRows(
     if (field === 'amount') return JSON.stringify([tx.amountMin, tx.amountMax]);
     if (field === 'isOption' || field === 'capGainsOver200') return tx[field] === true ? '1' : '0';
     if (field === 'txDate') return tx.txDate ?? '';
-    return canonicalText(valueFor(tx, field) as string | null | undefined);
+    const raw = valueFor(tx, field) as string | null | undefined;
+    if (normalizeText && !STRICT_TEXT_FIELDS.has(field)) {
+      return canonicalAgreementText(raw, field === 'assetName' ? tx.ticker : null);
+    }
+    return canonicalText(raw);
   };
   const groups = reads.map((read) => {
     const grouped = new Map<string, ParsedTx[]>();
@@ -780,19 +943,28 @@ function buildMajorityRows(
     const base = [...present].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))[0];
     const winners = new Map<MaterialField, unknown>();
     for (const field of fields) {
-      const blocs = new Map<string, { count: number; value: unknown }>();
-      for (const tx of present) {
+      const blocs = new Map<string, { count: number; entries: Array<{ tx: ParsedTx; order: number }> }>();
+      present.forEach((tx, order) => {
         const key = voteKey(tx, field);
         const bloc = blocs.get(key);
-        if (bloc) bloc.count += 1;
-        else blocs.set(key, { count: 1, value: valueFor(tx, field) });
-      }
-      const winner = [...blocs.entries()]
+        if (bloc) { bloc.count += 1; bloc.entries.push({ tx, order }); }
+        else blocs.set(key, { count: 1, entries: [{ tx, order }] });
+      });
+      const winnerBloc = [...blocs.entries()]
         .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))[0]?.[1];
-      if (!winner || winner.count * 2 <= totalModels) {
+      if (!winnerBloc || winnerBloc.count * 2 <= totalModels) {
         return { ok: false, rows: [], reason: `field_disagreement:${rowKey}:${field}` };
       }
-      winners.set(field, winner.value);
+      // Within the winning bloc, publish the CONTRIBUTING row's own reading
+      // with the highest confidence — ties broken by slot order (a<b<c) —
+      // rather than whichever model happened to be first in `present`. Only
+      // matters when normalizeText let byte-different raw text into the same
+      // bloc; with a single contributor (or identical raw text) this is a
+      // no-op.
+      const winnerEntry = [...winnerBloc.entries].sort(
+        (x, y) => (y.tx.confidence ?? 0) - (x.tx.confidence ?? 0) || x.order - y.order,
+      )[0];
+      winners.set(field, valueFor(winnerEntry.tx, field));
     }
     const amount = winners.get('amount') as AmountBracket;
     built.push({
@@ -928,6 +1100,10 @@ export async function processAgreementCascadeTier2(
   const loaded = await loadDocBytes(env, docId, rawObjectKey);
   if ('skip' in loaded) return loaded.skip;
 
+  // Live-toggleable text-field agreement normalization (default on) — see the
+  // matching comment in processAgreementDoc.
+  const normalizeText = (await resolveAgreementEnv(env)).AGREEMENT_TEXT_NORMALIZATION !== 'false';
+
   const lineup = [models.a, models.b, models.c];
   const lineupError = duplicateLineupReason(lineup);
   if (lineupError) return { docId, outcome: 'skipped', reason: lineupError };
@@ -953,9 +1129,9 @@ export async function processAgreementCascadeTier2(
 
   // 3-way unanimity → publish exactly as the original agreement path (tier 2).
   const unanimous = rA.ok && rB.ok && rC.ok
-    && sameRowSet(rA, rB) && sameRowSet(rA, rC) && sameRowSet(rB, rC);
+    && sameRowSet(rA, rB, normalizeText) && sameRowSet(rA, rC, normalizeText) && sameRowSet(rB, rC, normalizeText);
   if (unanimous) {
-    return finalizePublish(env, frow, docId, rA.rows, dryRun, {
+    return finalizePublish(env, frow, docId, resolveAgreedRows([rA, rB, rC], normalizeText), dryRun, {
       tier: 2, models: labels, unanimous: true, claimToken, reviewRevision: operatorReviewRevision,
     });
   }
@@ -973,7 +1149,7 @@ export async function processAgreementCascadeTier2(
     { model: labels.b, rows: rB.rows },
     { model: labels.c, rows: rC.rows },
   ]);
-  const majority = buildMajorityRows(reads, 3);
+  const majority = buildMajorityRows(reads, 3, normalizeText);
   const votes = voteSummary(consensus, 3);
   if (!majority.ok) {
     if (dryRun) return { docId, outcome: 'review_flagged', tier: 3, reason: majority.reason };
@@ -1030,6 +1206,8 @@ export interface AgreementEnv {
   AGREEMENT_BIG_DOC_PAGE_THRESHOLD?: string;
   AGREEMENT_BIG_DOC_BYTES_THRESHOLD?: string;
   AGREEMENT_DAILY_LLM_BUDGET?: string;
+  /** Kill switch for the free-text agreement comparator (default on; 'false' restores byte-strict). */
+  AGREEMENT_TEXT_NORMALIZATION?: string;
 }
 
 /**
@@ -1056,6 +1234,7 @@ export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
     'AGREEMENT_BIG_DOC_PAGE_THRESHOLD',
     'AGREEMENT_BIG_DOC_BYTES_THRESHOLD',
     'AGREEMENT_DAILY_LLM_BUDGET',
+    'AGREEMENT_TEXT_NORMALIZATION',
   ])) as AgreementEnv;
 }
 
