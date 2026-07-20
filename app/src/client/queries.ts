@@ -3,6 +3,7 @@ import { all, first, get } from '../shared/db';
 import {
   buildTransactionsCountQuery,
   buildTransactionsQuery,
+  escapeLikePattern,
   mapSubscription,
 } from '../delivery/rows';
 import type { SubscriptionRow, TxQueryParams } from '../delivery/rows';
@@ -79,6 +80,20 @@ export async function readClientTradeList(env: Env, params: TxQueryParams): Prom
   const rows = await all<ClientTradeRow>(env.DB, built.sql, built.params);
   const items = rows.map(clientTradeFromRow);
   const maxCursor = items.reduce((m, t) => (t.cursor > m ? t.cursor : m), params.since ?? 0);
+
+  // Zero-delta incremental poll: a `?since=` cursor that comes back with no
+  // new rows is the steady-state case for both known clients (the dashboard's
+  // fetchUpdates() and the PWA's poll() both bail out — `if (!txs.length)
+  // return` / `if (delta.items.length > 0)` — before ever reading `total` on
+  // an empty delta). Skip the full unindexed COUNT(*) scan entirely rather
+  // than paying D1 read cost for a number no conforming client observes.
+  // `total` is omitted here (not falsely reported as 0) so a future consumer
+  // that reads it on every poll can tell "not computed this round" apart from
+  // "actually zero".
+  if (params.since !== undefined && items.length === 0) {
+    return { items, cursor: maxCursor, count: 0, limit: built.limit };
+  }
+
   const countQuery = buildTransactionsCountQuery(params);
   const countRow = await first<{ total: number | string | null }>(env.DB, countQuery.sql, countQuery.params);
   return {
@@ -113,8 +128,8 @@ export async function resolveMember(env: Env, value: string): Promise<ResolvedMe
   if (byId) return { id: byId.bioguide_id, profile: byId };
   const byName = await get<MemberProfileRow>(
     env.DB,
-    'SELECT bioguide_id, chamber, full_name, party, state, district, committees, photo_url FROM filers WHERE LOWER(full_name) = LOWER(?) OR LOWER(full_name) LIKE ? ORDER BY CASE WHEN LOWER(full_name) = LOWER(?) THEN 0 ELSE 1 END, full_name LIMIT 1',
-    [term, `%${term.toLowerCase()}%`, term],
+    "SELECT bioguide_id, chamber, full_name, party, state, district, committees, photo_url FROM filers WHERE LOWER(full_name) = LOWER(?) OR LOWER(full_name) LIKE ? ESCAPE '\\' ORDER BY CASE WHEN LOWER(full_name) = LOWER(?) THEN 0 ELSE 1 END, full_name LIMIT 1",
+    [term, `%${escapeLikePattern(term.toLowerCase())}%`, term],
   );
   if (byName) return { id: byName.bioguide_id, profile: byName };
   if (/^[A-Za-z0-9_-]{1,64}$/.test(term)) return { id: term, profile: null };
