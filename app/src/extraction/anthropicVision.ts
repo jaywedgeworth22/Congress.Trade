@@ -20,6 +20,8 @@ import {
   fetchWithRetry,
   arrayBufferToBase64,
 } from './visionLlm';
+import { recordLlmSpend } from '../shared/llmSpend';
+import { candidateSpendUsd } from './bakeoff';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const DEFAULT_CONFIDENCE = 0.6;
@@ -224,6 +226,9 @@ export class AnthropicVisionExtractor implements Extractor {
         totalPromptTokens > 0 || totalCompletionTokens > 0
           ? { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens }
           : undefined;
+      if (usage) {
+        await recordLlmSpend(this.env, 'anthropic', candidateSpendUsd('anthropic', model, model, usage) ?? 0);
+      }
       throw Object.assign(err as Error, { usage });
     }
 
@@ -236,6 +241,10 @@ export class AnthropicVisionExtractor implements Extractor {
       totalPromptTokens > 0 || totalCompletionTokens > 0
         ? { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens }
         : undefined;
+
+    if (usage) {
+      await recordLlmSpend(this.env, 'anthropic', candidateSpendUsd('anthropic', model, model, usage) ?? 0);
+    }
 
     return {
       transactions: allRows,

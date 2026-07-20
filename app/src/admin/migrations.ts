@@ -313,9 +313,9 @@ export const DOC_CLASS_SCHEMA_STATEMENTS = [
 ] as const;
 
 /**
- * 0049_resource_governors.sql — hard resource governors: daily LLM USD meter,
+ * 0051_resource_governors.sql — hard resource governors: daily LLM USD meter,
  * governed-write quarantine markers, per-target outbound circuit state. Keep
- * in exact lockstep with migrations/0049_resource_governors.sql.
+ * in exact lockstep with migrations/0051_resource_governors.sql.
  */
 export const RESOURCE_GOVERNOR_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS llm_spend (

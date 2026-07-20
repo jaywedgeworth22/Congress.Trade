@@ -215,11 +215,12 @@ export async function recordTargetFailure(
     let row = await readCircuitRow(env, targetKey);
     const nextFailures = (row?.consecutive_failures ?? 0) + 1;
     const threshold = failureThreshold(env);
+    const base = baseBackoffSec(env);
     const openUntil = nextFailures >= threshold
       ? new Date(
           now.getTime() + Math.min(
             TARGET_PROBE_INTERVAL_SEC,
-            baseBackoffSec(env) * 2 ** (nextFailures - threshold),
+            base * 2 ** (nextFailures - threshold),
           ) * 1000,
         ).toISOString()
       : null;
@@ -231,10 +232,19 @@ export async function recordTargetFailure(
        ON CONFLICT(target_key) DO UPDATE SET
          consecutive_failures = delivery_target_circuit.consecutive_failures + 1,
          open_until = CASE
-           WHEN excluded.open_until IS NULL THEN delivery_target_circuit.open_until
-           WHEN delivery_target_circuit.open_until IS NULL THEN excluded.open_until
-           WHEN delivery_target_circuit.open_until < excluded.open_until THEN excluded.open_until
-           ELSE delivery_target_circuit.open_until
+           WHEN (delivery_target_circuit.consecutive_failures + 1) >= ? THEN
+             strftime('%Y-%m-%dT%H:%M:%SZ', datetime(?, '+' || CAST(MIN(?,
+               ? * CASE (delivery_target_circuit.consecutive_failures + 1 - ?)
+                 WHEN 0 THEN 1
+                 WHEN 1 THEN 2
+                 WHEN 2 THEN 4
+                 WHEN 3 THEN 8
+                 WHEN 4 THEN 16
+                 WHEN 5 THEN 32
+                 ELSE 64
+               END
+             ) AS TEXT) || ' seconds'))
+           ELSE NULL
          END,
          failures_today = CASE
            WHEN delivery_target_circuit.failures_day = excluded.failures_day
@@ -244,7 +254,18 @@ export async function recordTargetFailure(
          failures_day = excluded.failures_day,
          last_error = excluded.last_error,
          updated_at = excluded.updated_at`,
-      [targetKey, openUntil, day, error.slice(0, 300), nowIso],
+      [
+        targetKey,
+        openUntil,
+        day,
+        error.slice(0, 300),
+        nowIso,
+        threshold,
+        nowIso,
+        TARGET_PROBE_INTERVAL_SEC,
+        base,
+        threshold,
+      ],
     );
     row = await readCircuitRow(env, targetKey);
     return {
@@ -289,10 +310,7 @@ export async function parkDelivery(
             OR deliveries.lease_until IS NULL
             OR deliveries.lease_until <= excluded.updated_at)`,
     [prefixedId('dlv'), subscriptionId, txId, note, nowIso],
-  ).catch((err) => {
-    console.warn('parkDelivery failed', subscriptionId, txId, (err as Error).message);
-    return null;
-  });
+  );
   if (!parked || (parked.meta?.changes ?? 0) === 0) return 'skipped';
 
   // Queue-depth cap: a target that stays dead must not grow an unbounded

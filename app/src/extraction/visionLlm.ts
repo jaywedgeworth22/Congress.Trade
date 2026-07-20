@@ -24,8 +24,9 @@ import { PDFDocument } from 'pdf-lib';
 import { resolveSecret } from '../secrets/infisical';
 import { get } from '../shared/db';
 import { trackedFetch } from '../shared/thirdPartyTelemetry';
-import { assertLlmSpendWithinCeiling } from '../shared/llmSpend';
+import { assertLlmSpendWithinCeiling, recordLlmSpend } from '../shared/llmSpend';
 import { GoogleGenAI } from '@google/genai';
+import { candidateSpendUsd } from './bakeoff';
 
 /**
  * Per-isolate sliding-window request throttle for the Gemini free/low tiers.
@@ -281,16 +282,18 @@ let keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKe
         // provider usage to every later failure path (HTTP, JSON decode,
         // response validation, or row mapping), not only model-JSON failures.
         const failure = error instanceof Error ? error : new Error(String(error));
+        const usage = totalPromptTokens + totalCompletionTokens + totalCachedTokens > 0
+          ? {
+              promptTokens: totalPromptTokens,
+              completionTokens: totalCompletionTokens,
+              cachedTokens: totalCachedTokens,
+            }
+          : undefined;
+        if (usage) {
+          await recordLlmSpend(this.env, 'gemini', candidateSpendUsd('gemini', model, resolvedModel, usage) ?? 0);
+        }
         throw Object.assign(failure, {
-          ...(totalPromptTokens + totalCompletionTokens + totalCachedTokens > 0
-            ? {
-                usage: {
-                  promptTokens: totalPromptTokens,
-                  completionTokens: totalCompletionTokens,
-                  cachedTokens: totalCachedTokens,
-                },
-              }
-            : {}),
+          ...(usage ? { usage } : {}),
           resolvedModel,
           providerRequestId,
         });
@@ -309,6 +312,10 @@ let keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKe
           cachedTokens: totalCachedTokens,
         }
       : undefined;
+
+    if (usage) {
+      await recordLlmSpend(this.env, 'gemini', candidateSpendUsd('gemini', model, resolvedModel, usage) ?? 0);
+    }
 
     return {
       transactions: allRows,
