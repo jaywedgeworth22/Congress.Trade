@@ -31,6 +31,7 @@ import {
   mapFiling,
   mapTransaction,
   mapFeedTransaction,
+  toPublicFiling,
   type FilingRow,
   type TransactionRow,
   type FeedTransactionRow,
@@ -283,14 +284,28 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       (m, t) => (t.cursorSeq > m ? t.cursorSeq : m),
       params.since ?? 0,
     );
-    // Total = ALL rows matching the same ticker/member/type/chamber filters,
-    // ignoring the cursor backstop (so the UI can show "showing X of N").
-    const countQuery = buildTransactionsCountQuery(params);
-    const countRow = await first<{ total: number }>(c.env.DB, countQuery.sql, countQuery.params);
-    const total = countRow?.total ?? transactions.length;
-    const today = new Date().toISOString().slice(0, 10);
-    const todayQuery = buildTransactionsTodayFilingsQuery(params, today);
-    const todayRow = await first<{ total: number }>(c.env.DB, todayQuery.sql, todayQuery.params);
+    // Zero-delta incremental poll: a `?since=` cursor with no new rows is the
+    // dashboard's steady state (its fetchUpdates() bails out on an empty
+    // delta before ever reading `total`/`filingsImportedToday`), so skip the
+    // full unindexed COUNT(*) scan AND the today-filings aggregate entirely
+    // rather than paying D1 read cost every ~poll interval for numbers nobody
+    // reads. Both fields are omitted (not falsely reported as 0) so a
+    // reconciliation consumer that DOES want a fresh total on every poll can
+    // tell "not computed this round" apart from "actually zero".
+    const isIncrementalNoOp = params.since !== undefined && transactions.length === 0;
+    let total: number | undefined;
+    let filingsImportedToday: number | undefined;
+    if (!isIncrementalNoOp) {
+      // Total = ALL rows matching the same ticker/member/type/chamber filters,
+      // ignoring the cursor backstop (so the UI can show "showing X of N").
+      const countQuery = buildTransactionsCountQuery(params);
+      const countRow = await first<{ total: number }>(c.env.DB, countQuery.sql, countQuery.params);
+      total = countRow?.total ?? transactions.length;
+      const today = new Date().toISOString().slice(0, 10);
+      const todayQuery = buildTransactionsTodayFilingsQuery(params, today);
+      const todayRow = await first<{ total: number }>(c.env.DB, todayQuery.sql, todayQuery.params);
+      filingsImportedToday = todayRow?.total ?? 0;
+    }
     // Count served rows against the caller's daily budget. Incremental polls
     // (the dashboard's steady state) return zero rows and skip the KV write.
     await spendRowBudget(c.env, ip, transactions.length);
@@ -299,7 +314,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       cursor: maxCursor,
       count: transactions.length,
       total,
-      filingsImportedToday: todayRow?.total ?? 0,
+      filingsImportedToday,
       limit: built.limit,
       offset: built.offset,
     });
@@ -309,8 +324,12 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // Public/free full-history CSV download. Honors the same ticker/member/
   // type/chamber filters as the feed.
   r.get('/export/transactions.csv', async (c) => {
-    // Even for premium users, a full-history CSV is a heavy D1 scan; cap per IP
-    // so it can't be scripted into unbounded read/CPU cost. Fails open if KV down.
+    // No premium/auth gate here (see #558 — "remove all column gating and CSV
+    // export premium limits"; the old gate used cookie-only getCurrentUser(),
+    // which would have wrongly rejected bearer-only native clients had it
+    // stayed). A full-history CSV is still a heavy D1 scan regardless of who's
+    // asking; cap per IP so it can't be scripted into unbounded read/CPU cost.
+    // Fails open if KV down.
     const exRl = await rateLimit(c.env, 'export-ip', clientIp(c.req.raw), 30, 600);
     if (!exRl.ok) {
       return c.json({ error: 'too many export requests' }, 429, {
@@ -393,6 +412,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   );
 
   // --- GET /filings/:docId ------------------------------------------------
+  // Detail endpoint on the same public corpus as /transactions: applies the
+  // same per-IP daily row budget (a filing detail can carry many transaction
+  // rows) and never hands back internal fields — see toPublicFiling.
   r.get('/filings/:docId', async (c) => {
     const docId = c.req.param('docId');
     const filingRow = await get<FilingRow>(
@@ -402,13 +424,24 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     );
     if (!filingRow) return c.json({ error: 'filing not found' }, 404);
 
+    const ip = clientIp(c.req.raw);
+    const budget = await checkRowBudget(c.env, ip);
+    if (!budget.ok) {
+      return c.json(
+        { error: 'daily feed row budget reached', hint: 'Use the Premium CSV export for bulk access.' },
+        429,
+        { 'Retry-After': String(budget.retryAfterSec) },
+      );
+    }
+
     const txRows = await all<TransactionRow>(
       c.env.DB,
       'SELECT * FROM transactions WHERE doc_id = ? ORDER BY cursor_seq ASC',
       [docId],
     );
+    await spendRowBudget(c.env, ip, txRows.length);
     return c.json({
-      filing: mapFiling(filingRow),
+      filing: toPublicFiling(mapFiling(filingRow)),
       transactions: txRows.map(mapTransaction),
     });
   });
