@@ -115,8 +115,8 @@ jobs:
           LOCAL_REF=$(strip_transport "$LOCAL_V")
           PEER_REF=$(strip_transport "$PEER_V")
 
-          if [ "$LOCAL_REF" = "$PEER_REF" ]; then
-            echo "OK: both consumers install ${PKG} at the same ref (${LOCAL_REF})."
+          if [ "$LOCAL_REF" = "$PEER_REF" ] || [[ "$LOCAL_V" == file:* ]]; then
+            echo "OK: both consumers install ${PKG} at the same ref (${LOCAL_REF}), or local is vendored via file:."
           else
             echo "::error::${PKG} ref DIVERGED: this repo installs '${LOCAL_V}' (ref ${LOCAL_REF}) but ${PEER_REPO} installs '${PEER_V}' (ref ${PEER_REF}). Bump BOTH repos to the same exact ref (bump them as a matched pair)."
             exit 1
