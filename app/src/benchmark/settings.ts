@@ -1,6 +1,7 @@
 import type { Env } from '../shared/types';
 import {
   DEFAULT_CANDIDATES,
+  NON_OFFERED_CANDIDATES,
   keyFor,
   type BakeoffCandidate,
   type Provider,
@@ -96,7 +97,20 @@ const LEGACY_CANDIDATES: BakeoffCandidate[] = [
 
 export function benchmarkModelCatalog(): BakeoffCandidate[] {
   const byKey = new Map<string, BakeoffCandidate>();
-  for (const candidate of [...DEFAULT_CANDIDATES, ...LLAMAPARSE_CANDIDATES, ...LEGACY_CANDIDATES]) {
+  for (const candidate of [
+    ...DEFAULT_CANDIDATES,
+    ...LLAMAPARSE_CANDIDATES,
+    ...LEGACY_CANDIDATES,
+    ...NON_OFFERED_CANDIDATES,
+  ]) {
+    byKey.set(`${candidate.provider}:${candidate.model}`, { ...candidate });
+  }
+  return [...byKey.values()];
+}
+
+export function benchmarkSelectableCatalog(): BakeoffCandidate[] {
+  const byKey = new Map<string, BakeoffCandidate>();
+  for (const candidate of [...DEFAULT_CANDIDATES, ...LLAMAPARSE_CANDIDATES]) {
     byKey.set(`${candidate.provider}:${candidate.model}`, { ...candidate });
   }
   return [...byKey.values()];
@@ -381,7 +395,7 @@ async function readSettingsWithDependencies(
     }
   }
   const version = await sha256(JSON.stringify({ chamber, branchValues }));
-  const catalog = benchmarkModelCatalog();
+  const catalog = benchmarkSelectableCatalog();
   const configuredByProvider = new Map<Provider, boolean>();
   await Promise.all([...new Set(catalog.map((candidate) => candidate.provider))].map(async (provider) => {
     configuredByProvider.set(provider, Boolean(await dependencies.configuredKey(env, provider)));
@@ -595,7 +609,7 @@ async function readRoleSettingsWithDependencies(
     }
   }
   const version = await sha256(JSON.stringify({ chamber, branchValues }));
-  const catalog = benchmarkModelCatalog();
+  const catalog = benchmarkSelectableCatalog();
   const configuredByProvider = new Map<Provider, boolean>();
   await Promise.all([...new Set(catalog.map((candidate) => candidate.provider))].map(async (provider) => {
     configuredByProvider.set(provider, Boolean(await dependencies.configuredKey(env, provider)));
