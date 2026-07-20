@@ -10,6 +10,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Deployed
+- **Resource Governors & Hard Caps (AG/CLAUDE, M) — COMPLETED 2026-07-20 via PR #620.** Resolved GitHub Actions CI blockage by running comprehensive local validation (1722 tests passed), merged PR #620, and deployed to production. This enforces D1 write budgets, LLM spend limits, and circuit breakers.
 - **iOS App Assets and Styling (AG) — COMPLETED / MERGED 2026-07-19 via PR #630.**
   - **Fonts**: Imported custom Zilla Slab font (Regular & Bold) into the Xcode project, registered in `.pbxproj` via `INFOPLIST_KEY_UIAppFonts`, and applied globally in SwiftUI via `App.swift`.
   - **App Icon**: Updated `AppIcon.appiconset` with the new custom logo resized to standard 1024x1024 resolution.
