@@ -39,6 +39,18 @@ describe('buildTransactionsExportQuery', () => {
   it('clamps an oversized maxRows back to the cap', () => {
     expect(buildTransactionsExportQuery({}, 10_000_000).limit).toBe(MAX_EXPORT_ROWS);
   });
+
+  it('floors a fractional maxRows instead of embedding it verbatim (would be invalid SQL)', () => {
+    const q = buildTransactionsExportQuery({}, 500.7);
+    expect(q.limit).toBe(500);
+    expect(q.sql).toContain('LIMIT 500');
+    expect(q.sql).not.toContain('500.7');
+  });
+
+  it('treats a non-finite maxRows (NaN/Infinity) as absent, falling back to MAX_EXPORT_ROWS', () => {
+    expect(buildTransactionsExportQuery({}, NaN).limit).toBe(MAX_EXPORT_ROWS);
+    expect(buildTransactionsExportQuery({}, Infinity).limit).toBe(MAX_EXPORT_ROWS);
+  });
 });
 
 /** Fake env: anonymous (no session cookie) => getCurrentUser resolves to null. */
