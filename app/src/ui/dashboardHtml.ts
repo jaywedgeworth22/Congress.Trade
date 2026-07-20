@@ -802,11 +802,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-header { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
   .sp-name { font-size:13px; font-weight:700; color:var(--text); letter-spacing:0.1px; }
   .sp-badge {
-    font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px;
-    white-space:nowrap; flex-shrink:0;
+    display:inline-block; font-size:10px; font-weight:700; padding:2px 7px;
+    border-radius:99px; text-transform:uppercase; letter-spacing:.5px; white-space:nowrap;
   }
   .sp-badge.ahead { background:color-mix(in srgb,var(--good) 18%,transparent); color:var(--good); border:1px solid color-mix(in srgb,var(--good) 40%,transparent); }
-  .sp-badge.tied { background:color-mix(in srgb,var(--warn) 18%,transparent); color:var(--warn); border:1px solid color-mix(in srgb,var(--warn) 40%,transparent); }
   .sp-badge.behind { background:color-mix(in srgb,var(--rival) 15%,transparent); color:var(--rival); border:1px solid color-mix(in srgb,var(--rival) 35%,transparent); }
   .sp-badge.gathering { background:color-mix(in srgb,var(--text-dim) 12%,transparent); color:var(--text-dim); border:1px solid color-mix(in srgb,var(--border) 80%,transparent); }
   .sp-badge.tied { background:color-mix(in srgb,var(--text-dim) 18%,transparent); color:var(--text); border:1px solid color-mix(in srgb,var(--border) 60%,transparent); }
@@ -1979,7 +1978,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <div class="section speed-proof" id="trLatencySection" style="margin-top:24px; padding:0 16px;">
     <div class="speed-head">
       <div>
-        <h3 style="margin:0">We publish first &mdash; here&rsquo;s the data <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
+        <h3 style="margin:0">Provider speed scorecard <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
       </div>
       <span class="note" id="speedUpdated" style="white-space:nowrap"></span>
     </div>
@@ -5245,10 +5244,6 @@ function benchmarkModelPresentation(run, model, persisted) {
 function benchmarkModelEligibleForSimulation(model) {
   return Boolean(model)
     && model.pendingDocs === 0
-    && model.providerCalls === model.plannedDocs
-    && model.docsOk === model.plannedDocs
-    && model.failures === 0
-    && model.unavailableDocs === 0
     && model.successfulScoredDocs > 0;
 }
 
@@ -6593,7 +6588,7 @@ function speedUpdatedText() {
   var d = LATENCY.data; if (!d || !d.generatedAt) return '';
   var t = Date.parse(d.generatedAt); if (!isFinite(t)) return '';
   var mins = Math.max(0, Math.round((Date.now() - t) / 60000));
-  var txt = 'LIVE ⚡ updated ' + (mins < 1 ? 'just now' : mins + ' min ago');
+  var txt = 'LIVE updated ' + (mins < 1 ? 'just now' : mins + ' min ago');
   if (mins > 30) txt += ' · data may be stale';
   return txt;
 }
@@ -6611,13 +6606,13 @@ function spCardHtml(p) {
   /* Header: provider name + outcome badge */
   var badgeCls, badgeTxt;
   if (!hasStats) {
-    badgeCls = 'sp-badge gathering'; badgeTxt = '📊 Gathering data';
+    badgeCls = 'sp-badge gathering'; badgeTxt = 'Gathering data';
   } else if (ahead) {
-    badgeCls = 'sp-badge ahead'; badgeTxt = '⚡ Ahead';
+    badgeCls = 'sp-badge ahead'; badgeTxt = 'Ahead';
   } else if (tied) {
-    badgeCls = 'sp-badge tied'; badgeTxt = '⚖️ Tied';
+    badgeCls = 'sp-badge tied'; badgeTxt = 'Tied';
   } else {
-    badgeCls = 'sp-badge behind'; badgeTxt = '▼ Behind';
+    badgeCls = 'sp-badge behind'; badgeTxt = 'Behind';
   }
   var header = '<div class="sp-header"><span class="sp-name">' + esc(p.label) + '</span>' +
     '<span class="' + badgeCls + '">' + badgeTxt + '</span></div>';
