@@ -20,7 +20,7 @@
  *     party stays NULL rather than being treated as Independent.
  */
 
-import { WINDOW_PRESETS as SHARED_WINDOW_PRESETS } from '../../vendor/congress-trading-shared/dist/index.mjs';
+import { WINDOW_PRESETS as SHARED_WINDOW_PRESETS } from '@jaywedgeworth22/congress-trading-shared';
 import type { Chamber, TxType } from '../shared/types';
 import type { SqlParam } from '../shared/db';
 
