@@ -1,0 +1,43 @@
+name: Deploy Deno
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/src/deno/**'
+      - 'app/deno.json'
+      - 'app/package.json'
+      - 'app/package-lock.json'
+  schedule:
+    - cron: '0 * * * *' # Run once an hour
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-deno
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install Dependencies
+        working-directory: ./app
+        run: deno install
+
+      - name: Deploy to Deno Deploy
+        uses: denoland/deployctl@v1
+        with:
+          project: congress-trade # <-- CHANGE THIS IF YOUR DENO PROJECT NAME IS DIFFERENT
+          entrypoint: src/deno/main.ts
+          root: app
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_ORG_TOKEN }}
