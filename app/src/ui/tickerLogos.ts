@@ -19,7 +19,7 @@
  * only the *framing* client-side (glass "tile" vs bare "transparent" vs "off").
  */
 
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 const TICKER_LOGO_BASE_URL =
   'https://raw.githubusercontent.com/davidepalazzo/ticker-logos/main/ticker_icons';

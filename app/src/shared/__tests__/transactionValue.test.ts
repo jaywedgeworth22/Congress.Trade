@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { estimateTransactionValue } from '../transactionValue';
+import { estimateTransactionValue } from '../transactionValue.ts';
 
 describe('estimateTransactionValue', () => {
   it('matches the materialized est_value migration for every null case', () => {

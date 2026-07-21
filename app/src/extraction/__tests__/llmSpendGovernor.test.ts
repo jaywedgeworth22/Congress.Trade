@@ -10,12 +10,12 @@
  * HTTP requests happen in either case.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Env } from '../../shared/types';
-import { candidateSpendUsd, runCandidateOnDoc, type BakeoffCandidate } from '../bakeoff';
-import { ConfiguredVisionExtractor } from '../configuredVision';
-import { classifyProviderFailure } from '../providerFailure';
-import { LLM_BUDGET_ERROR_MARKER } from '../../shared/llmSpend';
-import type { Extractor } from '../../extractors/types';
+import type { Env } from '../../shared/types.ts';
+import { candidateSpendUsd, runCandidateOnDoc, type BakeoffCandidate } from '../bakeoff.ts';
+import { ConfiguredVisionExtractor } from '../configuredVision.ts';
+import { classifyProviderFailure } from '../providerFailure.ts';
+import { LLM_BUDGET_ERROR_MARKER } from '../../shared/llmSpend.ts';
+import type { Extractor } from '../../extractors/types.ts';
 
 /** Env whose llm_spend meter reports `spentUsd` for today under 'openrouter'. */
 function spendEnv(spentUsd: number, vars: Record<string, string> = {}): Env {

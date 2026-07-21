@@ -13,18 +13,18 @@
  * for that message.
  */
 
-import type { Env, Filing, DocKind, Chamber, ParsedTx } from '../shared/types';
-import { get, run } from '../shared/db';
+import type { Env, Filing, DocKind, Chamber, ParsedTx } from '../shared/types.ts';
+import { get, run } from '../shared/db.ts';
 import {
   buildExtractorPipeline,
   type ExtractorModelRun,
   type ExtractorResult,
   type ExtractorUsage,
-} from '../extractors/types';
-import { normalize } from './normalizer';
-import { enqueueAgreementCheck } from './agreement';
-import { ensureDocClass } from './docClassifier';
-import { reportAiUsage } from '../shared/telemetry';
+} from '../extractors/types.ts';
+import { normalize } from './normalizer.ts';
+import { enqueueAgreementCheck } from './agreement.ts';
+import { ensureDocClass } from './docClassifier.ts';
+import { reportAiUsage } from '../shared/telemetry.ts';
 
 interface FilingRow {
   doc_id: string;

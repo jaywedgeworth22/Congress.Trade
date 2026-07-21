@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { issueMagicToken, consumeMagicToken, magicLinkEmail } from '../magic';
-import type { Env } from '../../shared/types';
+import { issueMagicToken, consumeMagicToken, magicLinkEmail } from '../magic.ts';
+import type { Env } from '../../shared/types.ts';
 
 function fakeEnv() {
   const m = new Map<string, string>();

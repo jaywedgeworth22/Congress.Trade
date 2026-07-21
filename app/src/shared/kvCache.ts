@@ -5,7 +5,7 @@
  * every request. Plain TTL (not stale-while-revalidate); a miss or any KV error
  * just recomputes, so it can never break a request.
  */
-import type { Env } from './types';
+import type { Env } from './types.ts';
 
 /** Stable cache key from an endpoint name + the resolved params object. */
 export function cacheKey(name: string, obj: Record<string, unknown>): string {

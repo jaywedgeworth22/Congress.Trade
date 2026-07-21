@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Env } from '../../shared/types';
-import { buildAdminRouter } from '../routes';
+import type { Env } from '../../shared/types.ts';
+import { buildAdminRouter } from '../routes.ts';
 
 const AUTH = { Authorization: 'Bearer test-admin' };
 

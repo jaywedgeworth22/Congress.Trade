@@ -4,8 +4,8 @@ import {
   runRetentionSweep,
   RETENTION_POLICIES,
   RETENTION_DELETE_BATCH,
-} from '../jobs';
-import type { Env } from '../shared/types';
+} from '../jobs.ts';
+import type { Env } from '../shared/types.ts';
 
 let mf: Miniflare;
 let db: D1Database;
