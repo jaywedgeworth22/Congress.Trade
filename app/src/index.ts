@@ -563,7 +563,7 @@ const queueWorker = Sentry.withSentry(
      * Queue consumer. Routes by the bound queue name to the ingest/delivery
      * handlers. Messages are ack'd individually; failures retry per wrangler.toml.
      */
-    async queue(batch, env: Env, _ctx: ExecutionContext): Promise<void> {
+    async queue(batch: MessageBatch<QueueMessage>, env: Env, _ctx: ExecutionContext): Promise<void> {
       return withThirdPartyTelemetry(env, async () => {
       const isDeadLetterQueue = batch.queue.endsWith('-dlq');
       if (isDeadLetterQueue) {
