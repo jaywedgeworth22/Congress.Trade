@@ -18,11 +18,11 @@
 
 import { extractText, getDocumentProxy } from 'unpdf';
 
-import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types';
-import type { Filing, Owner, ParsedTx, TxType } from '../shared/types';
-import { HOUSE_ASSET_TYPE_NAMES, houseAssetTypeCodePattern } from '../shared/assetTypes';
-import { parseAmountRange } from './amounts';
-import { detectOption } from './senateHtml';
+import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types.ts';
+import type { Filing, Owner, ParsedTx, TxType } from '../shared/types.ts';
+import { HOUSE_ASSET_TYPE_NAMES, houseAssetTypeCodePattern } from '../shared/assetTypes.ts';
+import { parseAmountRange } from './amounts.ts';
+import { detectOption } from './senateHtml.ts';
 
 /** Base confidence for a clean tabular text parse. */
 const BASE_CONFIDENCE = 0.9;

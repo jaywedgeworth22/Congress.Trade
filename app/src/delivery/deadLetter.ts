@@ -10,10 +10,10 @@
  * Main-queue logging remains best-effort. The dedicated DLQ consumer uses the
  * strict variant and does not ACK until both receipt and recovery are durable.
  */
-import type { Env, QueueMessage } from '../shared/types';
-import { run } from '../shared/db';
-import { notifyAdmin } from '../alerts/notify';
-import { consumeGovernedD1Writes } from '../shared/d1Budget';
+import type { Env, QueueMessage } from '../shared/types.ts';
+import { run } from '../shared/db.ts';
+import { notifyAdmin } from '../alerts/notify.ts';
+import { consumeGovernedD1Writes } from '../shared/d1Budget.ts';
 
 async function insertDeadLetterReceipt(
   env: Env,

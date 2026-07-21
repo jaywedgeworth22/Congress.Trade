@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildGoogleAuthUrl, exchangeGoogleCode, fetchGoogleProfile } from '../google';
-import type { Env } from '../../shared/types';
+import { buildGoogleAuthUrl, exchangeGoogleCode, fetchGoogleProfile } from '../google.ts';
+import type { Env } from '../../shared/types.ts';
 
 const env = {
   GOOGLE_OAUTH_CLIENT_ID: 'cid',

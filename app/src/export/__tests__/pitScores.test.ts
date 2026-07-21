@@ -15,7 +15,7 @@ import {
   parsePitScoreQuery,
   pitScoreRowsToNdjson,
   type PriceBar,
-} from '../pitScores';
+} from '../pitScores.ts';
 
 const prices = (rows: Array<[string, number]>): PriceBar[] =>
   rows.map(([date, close]) => ({ date, close }));

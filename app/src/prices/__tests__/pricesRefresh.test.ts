@@ -40,9 +40,9 @@ vi.mock('../fmp', () => ({
   }),
 }));
 
-import type { Env } from '../../shared/types';
-import { runPriceRefresh } from '../service';
-import { openMigratedD1, type SqliteDatabase } from './sqliteD1';
+import type { Env } from '../../shared/types.ts';
+import { runPriceRefresh } from '../service.ts';
+import { openMigratedD1, type SqliteDatabase } from './sqliteD1.ts';
 
 let db: SqliteDatabase;
 let env: Env;

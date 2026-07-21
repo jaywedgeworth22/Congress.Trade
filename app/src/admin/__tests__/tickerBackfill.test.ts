@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { Env } from '../../shared/types';
-import { runTickerBackfill } from '../routes';
+import type { Env } from '../../shared/types.ts';
+import { runTickerBackfill } from '../routes.ts';
 
 describe('runTickerBackfill', () => {
   it('retroactively repairs preferred/depositary share rows collapsed to issuer tickers', async () => {

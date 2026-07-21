@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { notifyAdmin } from '../notify';
-import type { Env } from '../../shared/types';
+import { notifyAdmin } from '../notify.ts';
+import type { Env } from '../../shared/types.ts';
 
 function fakeEnv(over: Record<string, unknown> = {}): { env: Env; kv: Map<string, string> } {
   const kv = new Map<string, string>();

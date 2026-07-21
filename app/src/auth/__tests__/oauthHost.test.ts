@@ -12,9 +12,9 @@ vi.mock('../google', () => ({
   })),
 }));
 
-import { buildAuthRouter } from '../routes';
-import { buildGoogleAuthUrl, exchangeGoogleCode } from '../google';
-import type { Env } from '../../shared/types';
+import { buildAuthRouter } from '../routes.ts';
+import { buildGoogleAuthUrl, exchangeGoogleCode } from '../google.ts';
+import type { Env } from '../../shared/types.ts';
 
 function fakeEnv(): Env {
   const kv = new Map<string, string>();

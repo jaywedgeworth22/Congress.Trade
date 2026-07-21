@@ -17,16 +17,16 @@
  */
 
 import { jsonrepair } from 'jsonrepair';
-import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types';
-import type { Env, Filing, Owner, ParsedTx, TxType } from '../shared/types';
-import { parseAmountRange } from './amounts';
+import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types.ts';
+import type { Env, Filing, Owner, ParsedTx, TxType } from '../shared/types.ts';
+import { parseAmountRange } from './amounts.ts';
 import { PDFDocument } from 'pdf-lib';
-import { resolveSecret } from '../secrets/infisical';
-import { get } from '../shared/db';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
-import { assertLlmSpendWithinCeiling, recordLlmSpend } from '../shared/llmSpend';
+import { resolveSecret } from '../secrets/infisical.ts';
+import { get } from '../shared/db.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { assertLlmSpendWithinCeiling, recordLlmSpend } from '../shared/llmSpend.ts';
 import { GoogleGenAI } from '@google/genai';
-import { candidateSpendUsd } from './bakeoff';
+import { candidateSpendUsd } from './bakeoff.ts';
 
 /**
  * Per-isolate sliding-window request throttle for the Gemini free/low tiers.
