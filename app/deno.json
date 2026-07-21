@@ -17,10 +17,11 @@
     "lib": [
       "deno.window",
       "deno.unstable"
-    ]
+    ],
+    "module": "preserve"
   },
   "imports": {
     "@jaywedgeworth22/congress-trading-shared": "./shared.ts",
-    "zod": "npm:zod@^3.23.8"
+    "zod": "https://deno.land/x/zod@v3.23.8/mod.ts"
   }
 }
