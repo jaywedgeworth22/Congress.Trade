@@ -68,6 +68,14 @@ export function parseSecSubmissions(json: unknown): Partial<SecurityRef> | null 
 /**
  * Build the SEC provider. Lazily loads + caches the ticker→CIK map on first use
  * (one ~10MB fetch, cached for the life of the isolate / `cacheTtl`).
+ *
+ * Only a SUCCESSFUL fetch is cached. A failed fetch (network error, non-OK
+ * response) used to still assign `cikMap = new Map()` — and because a Map
+ * object is truthy even when empty, `if (cikMap) return cikMap;` then kept
+ * returning that permanently-empty map for the rest of the isolate's life,
+ * silently blinding every subsequent EDGAR lookup (every ticker resolves to
+ * "no CIK") until the isolate recycled. Returning a fresh, UNCACHED empty map
+ * on failure instead lets the very next call retry the fetch.
  */
 export function buildSecProvider(fetchImpl: typeof fetch = fetch): EnrichmentProvider {
   let cikMap: Map<string, string> | null = null;
@@ -77,7 +85,8 @@ export function buildSecProvider(fetchImpl: typeof fetch = fetch): EnrichmentPro
       headers: { 'user-agent': UA, accept: 'application/json' },
       cf: { cacheTtl: 86400, cacheEverything: true },
     } as RequestInit, { service: 'security-enrichment', operation: 'fetch-sec-ticker-map' }, fetchImpl);
-    cikMap = res.ok ? parseCompanyTickers(await res.json()) : new Map();
+    if (!res.ok) return new Map(); // do NOT cache — retry the fetch next call
+    cikMap = parseCompanyTickers(await res.json());
     return cikMap;
   }
   return {

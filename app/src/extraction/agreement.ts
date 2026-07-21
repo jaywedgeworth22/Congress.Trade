@@ -77,6 +77,7 @@ import {
   recomputeTransactions,
   HARD_FAILURE_FLAGS,
   MAX_PUBLISH_TRANSACTIONS_PER_FILING,
+  loadResolver,
 } from './normalizer';
 import { cleanAssetString } from './nameNormalizer';
 import { mapFiling, type FilingRow } from '../delivery/rows';
@@ -1120,6 +1121,25 @@ export async function processAgreementCascadeTier2(
   }
   const runBatchId = uuid();
   const reads = await readAndPersist(env, lineup, docId, loaded.bytes, runBatchId);
+
+  // Align rows before consensus checks to prevent spurious field_disagreement
+  // on raw string variants of the same ticker/asset.
+  const resolver = await loadResolver(env);
+  for (const read of reads) {
+    if (read.ok) {
+      for (const tx of read.rows) {
+        const cleaned = cleanAssetString(tx.assetName, tx.ticker);
+        const resolved = resolver(tx.ticker, cleaned);
+        if (resolved) {
+          tx.ticker = resolved;
+        }
+        if (cleaned) {
+          tx.assetName = cleaned;
+        }
+      }
+    }
+  }
+
   const [rA, rB, rC] = reads;
 
   const frow = await loadFilingRow(env, docId);
@@ -1238,7 +1258,11 @@ export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
   ])) as AgreementEnv;
 }
 
-/** Resolve the explicit C/D chamber lineup (tier-1 pair); missing config fails closed. */
+const DEFAULT_MODEL_C = 'openrouter:google/gemini-2.5-flash-lite';
+const DEFAULT_MODEL_D = 'openrouter:deepseek/deepseek-v4-flash';
+const DEFAULT_MODEL_E = 'openrouter:anthropic/claude-haiku-4.5';
+
+/** Resolve the explicit C/D chamber lineup (tier-1 pair); missing config falls back to default cross-vendor lineup. */
 function resolveModels(e: AgreementEnv, chamber: string): AgreementModels | null {
   const modelA = chamber === 'senate'
     ? e.AGREEMENT_SENATE_MODEL_C
@@ -1246,19 +1270,18 @@ function resolveModels(e: AgreementEnv, chamber: string): AgreementModels | null
   const modelB = chamber === 'senate'
     ? e.AGREEMENT_SENATE_MODEL_D
     : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_D : e.AGREEMENT_HOUSE_MODEL_D;
-  const a = parseCandidate(modelA);
-  const b = parseCandidate(modelB);
+  const a = parseCandidate(modelA) || parseCandidate(DEFAULT_MODEL_C);
+  const b = parseCandidate(modelB) || parseCandidate(DEFAULT_MODEL_D);
   return a && b ? { a, b } : null;
 }
 
-/** Resolve the explicit C/D/E lineup for a tier-2+ pass; missing config fails
- *  closed. Exported for the backlog autopilot's per-doc cost estimation. */
+/** Resolve the explicit C/D/E lineup for a tier-2+ pass; missing config falls back to default cross-vendor lineup. Exported for the backlog autopilot's per-doc cost estimation. */
 export function resolveModelsWithC(e: AgreementEnv, chamber: string): AgreementModelsC | null {
   const ab = resolveModels(e, chamber);
   const modelC = chamber === 'senate'
     ? e.AGREEMENT_SENATE_MODEL_E
     : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_E : e.AGREEMENT_HOUSE_MODEL_E;
-  const c = parseCandidate(modelC);
+  const c = parseCandidate(modelC) || parseCandidate(DEFAULT_MODEL_E);
   return ab && c ? { ...ab, c } : null;
 }
 

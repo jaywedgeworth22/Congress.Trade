@@ -13,7 +13,7 @@
 
 import type { Env } from './shared/types';
 import { run } from './shared/db';
-import { runEnrichment } from './enrichment/service';
+import { runEnrichment, getDailyUsed, DEFAULT_DAILY_CAP } from './enrichment/service';
 import { runPriceRefresh } from './prices/service';
 import { hasFmpTierFailure } from './shared/fmpStatus';
 import { notifyAdmin } from './alerts/notify';
@@ -62,6 +62,48 @@ export const RETENTION_POLICIES: readonly RetentionPolicy[] = [
 export const RETENTION_DELETE_BATCH = 500;
 /** Batches per table per daily run: caps one pass at 10k rows/table. */
 export const RETENTION_MAX_BATCHES_PER_TABLE = 20;
+
+// --- Price-refresh budget floor vs enrichment ------------------------------
+// runEnrichment and runPriceRefresh share one daily FMP call counter (see
+// getDailyUsed/addDailyUsed in enrichment/service.ts). Enrichment runs FIRST
+// each day, and `remainingBudget` has no ceiling of its own beyond the day's
+// cap — so a large enrichment backlog (a long tail of newly-traded tickers
+// missing sector/market-cap) can legitimately consume the ENTIRE remaining
+// budget, leaving runPriceRefresh with 0. Prices then silently stop updating
+// for the rest of the day while enrichment happily keeps backfilling company
+// profiles. Reserving a floor here — by capping enrichment's own `max` opt —
+// guarantees price refresh always gets at least a slice of today's budget.
+
+/** Fraction of the day's FMP cap reserved for price refresh before enrichment
+ *  is allowed to spend the rest. 20% is deliberately generous: on the
+ *  configured paid-tier cap (FMP_DAILY_CALL_CAP, e.g. 5000) the reserved floor
+ *  is far more than price refresh's typical daily need (one SPX call + a
+ *  bounded backlog), while on the free-tier DEFAULT_DAILY_CAP fallback (230)
+ *  it still leaves enrichment a workable ~184-call share. */
+export const PRICE_REFRESH_BUDGET_FLOOR_FRACTION = 0.2;
+
+/**
+ * How many more FMP calls enrichment may spend this run, so at least
+ * PRICE_REFRESH_BUDGET_FLOOR_FRACTION of today's remaining cap survives for
+ * runPriceRefresh right after it. Returns `undefined` (no cap — prior
+ * behavior) when no FMP key is configured: without a key, enrichment's
+ * SEC-only pass and price refresh (if it even has a usable provider) don't
+ * actually share the FMP budget, so there is no contention to guard against,
+ * and capping it here would just needlessly shrink the free/keyless scan
+ * limit (see runEnrichment's own `hasFmp ? fmpBudget : ... : 200` default).
+ */
+async function enrichmentBudgetFloorMax(
+  env: Env,
+  fmpApiKey: string | undefined,
+  fmpDailyCallCap: string | undefined,
+): Promise<number | undefined> {
+  if (!fmpApiKey) return undefined;
+  const cap = parseInt(fmpDailyCallCap || '', 10) || DEFAULT_DAILY_CAP;
+  const usedBefore = await getDailyUsed(env);
+  const remainingToday = Math.max(0, cap - usedBefore);
+  const priceRefreshFloor = Math.min(remainingToday, Math.ceil(cap * PRICE_REFRESH_BUDGET_FLOOR_FRACTION));
+  return Math.max(0, remainingToday - priceRefreshFloor);
+}
 
 /**
  * Delete expired rows from the operational tables above. Best-effort: a
@@ -130,6 +172,8 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     'USAGE_MONITOR_INGEST_TOKEN',
     'USAGE_MONITOR_ENVIRONMENT',
     'PRICE_PROVIDER',
+    'FMP_API_KEY',
+    'FMP_DAILY_CALL_CAP',
   ]);
   // Paid FMP tiers are rate-limited per MINUTE (Starter ~300/min), not per day —
   // so pace calls to use that headroom without tripping 429s. Configurable via
@@ -139,9 +183,13 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   // SEC EDGAR has its own, separate fair-access pacer (not the FMP budget above)
   // — configurable via EDGAR_MAX_PER_MINUTE, unset = no pacing.
   const edgarMaxPerMinute = parseInt(secrets.EDGAR_MAX_PER_MINUTE || '', 10) || undefined;
+  // Reserve a slice of today's shared FMP budget for price refresh before
+  // enrichment (which runs first) is allowed to spend the rest — see
+  // enrichmentBudgetFloorMax above.
+  const enrichmentMax = await enrichmentBudgetFloorMax(env, secrets.FMP_API_KEY, secrets.FMP_DAILY_CALL_CAP);
 
   try {
-    const r = await runEnrichment(env, { maxPerMinute, edgarMaxPerMinute });
+    const r = await runEnrichment(env, { maxPerMinute, edgarMaxPerMinute, max: enrichmentMax });
     hadFmpKey = hadFmpKey || r.hasFmpKey;
     fmpDailyCap = r.dailyCap;
     enrichmentFmpCalls = r.fmpCalls;
