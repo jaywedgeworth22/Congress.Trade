@@ -9,7 +9,7 @@
  * deterministic so they unit-test without network or DB.
  */
 
-import { marketCapBucket as sharedMarketCapBucket } from '@jaywedgeworth22/congress-trading-shared';
+import { marketCapBucket as sharedMarketCapBucket } from '../../vendor/congress-trading-shared/dist/index.mjs';
 import { normalizeCompanyName } from '../shared/companyName';
 import type { MktCapBucket, SecurityRef } from './types';
 
