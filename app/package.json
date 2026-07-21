@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --outdir dist --upload-source-maps --var SENTRY_RELEASE:$(sentry-cli releases propose-version)",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.cf.json --noEmit",
     "test": "vitest run",
     "lint": "eslint src/",
     "coverage": "vitest run --coverage",
