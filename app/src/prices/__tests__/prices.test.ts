@@ -5,8 +5,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { pctChange, computePerformance, nearestClose, type Close } from '../compute';
-import { parseEodHistory } from '../fmp';
+import { pctChange, computePerformance, nearestClose, type Close } from '../compute.ts';
+import { parseEodHistory } from '../fmp.ts';
 
 describe('pctChange', () => {
   it('is the fractional change, or null for bad input', () => {

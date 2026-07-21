@@ -14,14 +14,14 @@
  *     verbatim (HTML or PDF bytes); the classifier decides the DocKind.
  */
 
-import type { Env } from '../shared/types';
-import { get, run } from '../shared/db';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import type { Env } from '../shared/types.ts';
+import { get, run } from '../shared/db.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import {
   SENATE_SESSION_KV_KEY,
   establishSenateSession,
   looksLikeSenateAgreementWall,
-} from './senateSource';
+} from './senateSource.ts';
 
 const UA = 'congress-feed/0.1 (+https://congress.trade)';
 

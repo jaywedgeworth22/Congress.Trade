@@ -7,8 +7,8 @@
  * lives in D1 (poll_config) and is cached in CONFIG_KV for hot reads/writes.
  */
 
-import type { Env, PollConfig, PollWindow } from './types';
-import { get, run, parseJson, fromBool, toBool } from './db';
+import type { Env, PollConfig, PollWindow } from './types.ts';
+import { get, run, parseJson, fromBool, toBool } from './db.ts';
 
 // ---------------------------------------------------------------------------
 // Defaults

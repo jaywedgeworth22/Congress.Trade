@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   runHouseHistoricalBackfill,
   type HouseBackfillOptions,
-} from '../houseCrawler';
-import type { HouseFiling } from '../../ingestion/houseSource';
-import type { Env, QueueMessage } from '../../shared/types';
+} from '../houseCrawler.ts';
+import type { HouseFiling } from '../../ingestion/houseSource.ts';
+import type { Env, QueueMessage } from '../../shared/types.ts';
 
 // ---------------------------------------------------------------------------
 // Test doubles — no network, no real D1/queue.

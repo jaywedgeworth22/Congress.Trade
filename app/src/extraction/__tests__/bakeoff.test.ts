@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   computeConsensusAgreement,
   DEFAULT_CANDIDATES,
@@ -20,8 +20,8 @@ import {
   summarizeModels,
   type BakeoffCandidate,
   type CandidateDocResult,
-} from '../bakeoff';
-import { EXECUTIVE_SYSTEM_PROMPT, arrayBufferToBase64 } from '../visionLlm';
+} from '../bakeoff.ts';
+import { EXECUTIVE_SYSTEM_PROMPT, arrayBufferToBase64 } from '../visionLlm.ts';
 
 /** A minimal, genuinely-parseable PDF for tests that reach Anthropic's
  *  pre-validation (validatePdfForAnthropic loads it with pdf-lib). Because

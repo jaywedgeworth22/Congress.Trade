@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('./d1Budget', () => ({ recordD1Meta: vi.fn() }));
 
-import { batchPrepared, first } from './db';
-import { recordD1Meta } from './d1Budget';
+import { batchPrepared, first } from './db.ts';
+import { recordD1Meta } from './d1Budget.ts';
 
 describe('batchPrepared', () => {
   it('records D1 row metadata for every prepared-statement result', async () => {

@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { generateBatchJobs, resolveBatchJobs } from '../batchCron';
-import type { Env } from '../../shared/types';
-import * as batchExtract from '../batchExtract';
-import * as db from '../../shared/db';
+import { generateBatchJobs, resolveBatchJobs } from '../batchCron.ts';
+import type { Env } from '../../shared/types.ts';
+import * as batchExtract from '../batchExtract.ts';
+import * as db from '../../shared/db.ts';
 
 vi.mock('../../shared/db', () => ({
   all: vi.fn(),

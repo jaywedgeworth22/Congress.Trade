@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
-import { processAgreementDoc, type AgreementModels } from '../agreement';
+import { processAgreementDoc, type AgreementModels } from '../agreement.ts';
 
 /** A genuinely-parseable PDF: the Anthropic candidate pre-validates bytes
  *  with pdf-lib (normalizePdfForAnthropic) before any provider call. */

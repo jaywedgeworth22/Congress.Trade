@@ -7,10 +7,10 @@
  * thin Workers-native `fetch` (no SDK), matching the rest of the codebase.
  */
 
-import { marketCapBucket } from './compute';
-import { assertFmpTierOk } from '../shared/fmpStatus';
-import type { EnrichmentProvider, SecurityRef } from './types';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import { marketCapBucket } from './compute.ts';
+import { assertFmpTierOk } from '../shared/fmpStatus.ts';
+import type { EnrichmentProvider, SecurityRef } from './types.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 function str(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;

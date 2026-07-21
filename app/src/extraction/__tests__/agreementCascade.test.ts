@@ -4,7 +4,7 @@ import {
   handleAgreementCheck,
   processAgreementCascadeTier2,
   type AgreementModelsC,
-} from '../agreement';
+} from '../agreement.ts';
 
 /** A genuinely-parseable PDF: the Anthropic candidate pre-validates bytes
  *  with pdf-lib (normalizePdfForAnthropic) before any provider call. */

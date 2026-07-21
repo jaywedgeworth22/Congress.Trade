@@ -7,13 +7,13 @@
  * until the invocation-tail reset.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Env } from '../types';
-import type { SqlParam } from '../db';
+import type { Env } from '../types.ts';
+import type { SqlParam } from '../db.ts';
 import {
   consumeGovernedD1Writes,
   governedD1Batch,
   resetD1WriteGovernor,
-} from '../d1Budget';
+} from '../d1Budget.ts';
 
 interface Executed {
   sql: string;
