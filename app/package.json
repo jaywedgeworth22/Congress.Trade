@@ -33,7 +33,7 @@
     "@sentry/cloudflare": "^10.66.0",
     "cheerio": "^1.2.0",
     "fflate": "^0.8.3",
-    "hono": "^4.12.31",
+    "hono": "^4.4.7",
     "jsonrepair": "^3.15.0",
     "node-html-parser": "^9.0.0",
     "pdf-lib": "^1.17.1",
