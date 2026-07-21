@@ -30,7 +30,7 @@ import {
   resolveTickerDeterministic,
 } from './tickerNormalize';
 import { cleanAssetString } from './nameNormalizer';
-import { resolveContinuousTicker } from '@jaywedgeworth22/congress-trading-shared';
+import { resolveContinuousTicker } from '../../vendor/congress-trading-shared/dist/index.mjs';
 import { flushDeliveryOutbox } from '../delivery/outbox';
 
 /**

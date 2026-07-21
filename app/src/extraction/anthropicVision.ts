@@ -11,7 +11,7 @@ import { resolveSecret } from '../secrets/infisical';
 import {
   SYSTEM_PROMPT,
   EXECUTIVE_SYSTEM_PROMPT,
-  parseAnthropicModelJson,
+  parseTruncationAwareJson,
   markSalvaged,
   validatePdfForAnthropic,
   resavePdfForAnthropic,
@@ -213,14 +213,14 @@ export class AnthropicVisionExtractor implements Extractor {
       let parsedRows;
       let salvaged: boolean;
       try {
-        const parsed = parseAnthropicModelJson(text, payload.stop_reason);
+        const parsed = parseTruncationAwareJson(text, payload.stop_reason === 'max_tokens');
         parsedRows = parsed.rows;
         salvaged = parsed.salvaged;
       } catch (err) {
         throw new Error(`${this.name}: could not parse model JSON: ${(err as Error).message}`);
       }
 
-      allRows = parsedRows.map(toParsedTx).map((tx) => (salvaged ? markSalvaged(tx) : tx));
+      allRows = parsedRows.map(toParsedTx).map((tx: ParsedTx) => (salvaged ? markSalvaged(tx) : tx));
     } catch (err) {
       const usage =
         totalPromptTokens > 0 || totalCompletionTokens > 0
