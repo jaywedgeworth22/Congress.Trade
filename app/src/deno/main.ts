@@ -2,9 +2,15 @@
 import { createClient } from 'npm:@libsql/client/web';
 import { S3Client } from 'npm:@aws-sdk/client-s3';
 import { D1DatabaseShim, KVNamespaceShim, QueueShim, R2BucketShim } from './shims.ts';
-import worker from '../index.ts';
-import type { Env } from '../shared/types.ts';
+import app from '../app.ts';
+import type { Env, QueueMessage } from '../shared/types.ts';
 import { resolveSecret, refreshSecrets } from '../secrets/infisical.ts';
+import { handleIngestMessage, handleDeliveryMessage, handleDeadLetterMessage } from '../queueHandlers.ts';
+import { flushD1Budget } from '../shared/d1Budget.ts';
+import { maybeRunDailyJobs } from '../jobs.ts';
+import { isTerminalUsageTelemetryDeliveryError, persistUsageTelemetryFallback } from '../shared/thirdPartyTelemetry.ts';
+import { completeDeliveryOutbox } from '../delivery/outbox.ts';
+import { completeIngestionOutbox } from '../ingestion/outbox.ts';
 
 // 1. Initialize KV Shims first because Infisical needs CONFIG_KV for caching
 const kv = await Deno.openKv();
@@ -66,6 +72,53 @@ function buildEnv(): Env {
   return env;
 }
 
+// Start Queue Listener
+kv.listenQueue(async (msg: any) => {
+  const env = buildEnv();
+  const queueName = msg.queue || 'ingest'; // Fallback
+  
+  const isDeadLetterQueue = queueName.endsWith('-dlq');
+  const isDelivery = queueName.includes('delivery');
+  
+  const dummyMessage = {
+    body: msg.body,
+    attempts: 1,
+    ack: () => {},
+    retry: () => {
+      console.error("Retry not fully implemented in Deno queue shim yet");
+    }
+  };
+  
+  try {
+    if (isDeadLetterQueue) {
+      await handleDeadLetterMessage(env, queueName, dummyMessage.body as QueueMessage, dummyMessage.attempts);
+    } else if (isDelivery) {
+      const shouldComplete = await handleDeliveryMessage(env, dummyMessage.body as QueueMessage);
+      if (shouldComplete && (dummyMessage.body as QueueMessage).type === 'delivery.dispatch') {
+        await completeDeliveryOutbox(env, (dummyMessage.body as any).txId);
+      }
+    } else {
+      await handleIngestMessage(env, dummyMessage.body as QueueMessage, dummyMessage.attempts);
+      if ((dummyMessage.body as QueueMessage).type === 'filing.new') {
+        await completeIngestionOutbox(env, (dummyMessage.body as any).docId);
+      }
+    }
+    dummyMessage.ack();
+  } catch (err) {
+    console.error(`Queue ${queueName} message failed:`, err);
+    dummyMessage.retry();
+  }
+  
+  await flushD1Budget(env);
+});
+
+// Start Cron Tasks
+Deno.cron("Worker scheduled tasks", "* * * * *", async () => {
+  const env = buildEnv();
+  await maybeRunDailyJobs(env);
+  await flushD1Budget(env);
+});
+
 // Dummy context to satisfy Cloudflare signature
 const dummyCtx = {
   waitUntil: (promise: Promise<any>) => {
@@ -74,34 +127,8 @@ const dummyCtx = {
   passThroughOnException: () => {},
 };
 
-// Start Queue Listener
-kv.listenQueue(async (msg: any) => {
-  const env = buildEnv();
-  const queueName = msg.queue || 'ingest'; // Fallback
-  const batch = {
-    queue: queueName,
-    messages: [
-      {
-        body: msg.body,
-        attempts: 1,
-        ack: () => {},
-        retry: () => {
-          console.error("Retry not fully implemented in Deno queue shim yet");
-        }
-      }
-    ]
-  };
-  await worker.queue(batch as any, env, dummyCtx as any);
-});
-
-// Start Cron Tasks
-Deno.cron("Worker scheduled tasks", "* * * * *", async () => {
-  const env = buildEnv();
-  await worker.scheduled({} as any, env, dummyCtx as any);
-});
-
 // Start HTTP Server
 Deno.serve(async (req) => {
   const env = buildEnv();
-  return worker.fetch(req, env, dummyCtx as any);
+  return app.fetch(req, env, dummyCtx as any);
 });
