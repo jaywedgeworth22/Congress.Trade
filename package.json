@@ -1,6 +1,5 @@
 {
   "dependencies": {
-    "@jaywedgeworth22/congress-trading-shared": "file:./app/vendor/congress-trading-shared",
     "@sentry/cloudflare": "^10.63.0"
   },
   "allowScripts": {}
