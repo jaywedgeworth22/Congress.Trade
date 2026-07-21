@@ -144,7 +144,7 @@ export class R2BucketShim {
         body: bodyStream,
         async arrayBuffer() {
           const arr = await response.Body?.transformToByteArray();
-          return arr ? arr.buffer : new ArrayBuffer(0);
+          return (arr ? arr.buffer : new ArrayBuffer(0)) as ArrayBuffer;
         },
         async text() {
           return await response.Body?.transformToString() ?? '';
