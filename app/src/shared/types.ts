@@ -1,4 +1,4 @@
-/// <reference types="npm:@cloudflare/workers-types" />
+/// <reference types="@cloudflare/workers-types" />
 /**
  * src/shared/types.ts
  *

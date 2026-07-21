@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { isIsoDate } from "./utils";
-import { CONGRESS_EVENT_TYPES } from "./constants";
+import { isIsoDate } from "./utils.ts";
+import { CONGRESS_EVENT_TYPES } from "./constants.ts";
 
-const nullAsUndefined = <T extends z.ZodType>(schema: T) =>
+const nullAsUndefined = <T extends z.ZodTypeAny>(schema: T): z.ZodEffects<z.ZodOptional<T>, T["_output"] | undefined, any> =>
   z.preprocess((value) => value === null ? undefined : value, schema.optional());
 
 // ---- Chamber / Party / Owner ----
