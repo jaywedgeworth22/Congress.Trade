@@ -1,9 +1,0 @@
-{
-  "imports": {
-    "@jaywedgeworth22/congress-trading-shared": "./vendor/congress-trading-shared/dist/index.mjs"
-  },
-  "unstable": ["sloppy-imports"],
-  "compilerOptions": {
-    "lib": ["esnext", "dom", "deno.ns"]
-  }
-}
