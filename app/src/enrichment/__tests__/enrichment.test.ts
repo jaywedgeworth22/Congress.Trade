@@ -6,9 +6,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { marketCapBucket, sicToSector, remainingBudget, mergeRefs } from '../compute';
-import { parseFmpProfile } from '../fmp';
-import { parseCompanyTickers, parseSecSubmissions, padCik, buildSecProvider } from '../sec';
+import { marketCapBucket, sicToSector, remainingBudget, mergeRefs } from '../compute.ts';
+import { parseFmpProfile } from '../fmp.ts';
+import { parseCompanyTickers, parseSecSubmissions, padCik, buildSecProvider } from '../sec.ts';
 import {
   enrichmentNeededSql,
   hasConfiguredKeyedEnrichmentProvider,
@@ -16,9 +16,9 @@ import {
   parseTransientRetryMarker,
   transientRetryEligible,
   nextTransientRetryMarker,
-} from '../service';
-import { __resetSharedEdgarPacerForTests } from '../../shared/pace';
-import { openMigratedD1 } from '../../prices/__tests__/sqliteD1';
+} from '../service.ts';
+import { __resetSharedEdgarPacerForTests } from '../../shared/pace.ts';
+import { openMigratedD1 } from '../../prices/__tests__/sqliteD1.ts';
 
 describe('marketCapBucket', () => {
   it('buckets by the standard thresholds', () => {

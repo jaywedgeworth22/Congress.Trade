@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   acquireBenchmarkSettingsLease,
   assertBenchmarkSettingsLease,
@@ -12,7 +12,7 @@ import {
   persistBenchmarkSelectionAudit,
   releaseBenchmarkSettingsLease,
   reserveBenchmarkCalls,
-} from '../routes';
+} from '../routes.ts';
 
 const AUTH = {
   authorization: 'Bearer admin-secret',

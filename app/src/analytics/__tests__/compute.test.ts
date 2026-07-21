@@ -22,7 +22,7 @@ import {
   type LagRow,
   type MemberPerfRow,
   type PriceBar,
-} from '../compute';
+} from '../compute.ts';
 
 describe('bracketMidpoint', () => {
   it('returns the midpoint of a closed bracket', () => {

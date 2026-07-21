@@ -5,7 +5,7 @@
  * cross-app sharing): SQL range building and securities_ref row mapping.
  */
 import { describe, it, expect } from 'vitest';
-import { priceRangeQuery, mapSecurityRef } from '../rest';
+import { priceRangeQuery, mapSecurityRef } from '../rest.ts';
 
 describe('priceRangeQuery', () => {
   it('price_eod without bounds caps at the LATEST 1000 rows, re-sorted ascending', () => {

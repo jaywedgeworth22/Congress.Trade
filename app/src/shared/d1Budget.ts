@@ -30,10 +30,9 @@
  * (migration 0044) + caching, not here.
  */
 
-import * as Sentry from '@sentry/cloudflare';
-import type { Env } from './types';
-import type { SqlParam } from './db';
-import { resolveSecret } from '../secrets/infisical';
+import type { Env } from './types.ts';
+import type { SqlParam } from './db.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
 
 interface RowDelta {
   read: number;
@@ -200,11 +199,6 @@ function warnIfOverSoft(
     hardWarnedDay = day;
     const hardMsg = `D1 daily rows-written budget EXCEEDED: written ${writtenTotal}/${wB}`;
     console.error(hardMsg);
-    try {
-      Sentry.captureMessage(hardMsg, 'error');
-    } catch {
-      /* best-effort alert */
-    }
   }
   if (warnedDay === day) return; // at most once per isolate per day
   warnedDay = day;
@@ -212,11 +206,6 @@ function warnIfOverSoft(
     `D1 daily row budget >= ${SOFT_RATIO * 100}% soft threshold: ` +
     `read ${readTotal ?? '?'}/${rB}, written ${writtenTotal ?? '?'}/${wB}`;
   console.warn(msg);
-  try {
-    Sentry.captureMessage(msg, 'warning');
-  } catch {
-    /* best-effort alert */
-  }
 }
 
 /**
@@ -323,11 +312,6 @@ function warnGovernorCap(writer: string, requested: number, allowed: number, cap
     `D1 write governor cap reached: writer=${writer} requested=${requested} ` +
     `allowed=${allowed} invocationCap=${cap}`;
   console.warn(msg);
-  try {
-    Sentry.captureMessage(msg, 'warning');
-  } catch {
-    /* best-effort alert */
-  }
 }
 
 /**

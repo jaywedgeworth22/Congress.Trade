@@ -1,15 +1,15 @@
-import type { Env, User, ClientCommandType, Subscription } from '../shared/types';
-import { isPremiumUser } from '../billing/entitlement';
+import type { Env, User, ClientCommandType, Subscription } from '../shared/types.ts';
+import { isPremiumUser } from '../billing/entitlement.ts';
 import {
   assertSubscriptionQuota,
   createSubscription,
   SubscriptionQuotaError,
   updateSubscription,
   webhookTargetLengthError,
-} from '../delivery/subscriptions';
-import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget';
-import { rateLimit } from '../shared/rateLimit';
-import { upsertPreferences } from './state';
+} from '../delivery/subscriptions.ts';
+import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget.ts';
+import { rateLimit } from '../shared/rateLimit.ts';
+import { upsertPreferences } from './state.ts';
 import {
   asDelivery,
   ClientInputError,
@@ -17,8 +17,8 @@ import {
   publicSubscription,
   arrayOfStrings,
   clientIdForUser,
-} from './utils';
-import { getOwnedSubscription } from './queries';
+} from './utils.ts';
+import { getOwnedSubscription } from './queries.ts';
 
 export function commandType(value: unknown): ClientCommandType {
   const type = String(value || '');

@@ -12,7 +12,7 @@
  * succeeds (which returns it to `active`).
  */
 
-import type { Entitlement, User } from '../shared/types';
+import type { Entitlement, User } from '../shared/types.ts';
 
 /** Stripe subscription statuses that grant premium access. */
 export const PREMIUM_STATUSES: ReadonlySet<string> = new Set(['trialing', 'active']);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkReadiness } from '../readiness';
+import { checkReadiness } from '../readiness.ts';
 
 function dbMissing(fragment?: string): D1Database {
   return { prepare(sql: string) { return {

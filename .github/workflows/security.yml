@@ -10,12 +10,12 @@ on:
 
 jobs:
   gitleaks:
-    # Do not schedule fork PRs on the persistent self-hosted runner. The
-    # in-job bot gate below remains defense in depth for same-repo bot actors.
+    # Self-hosted CI with automatic hosted fallback. Dependabot forced to hosted
+    # runners for security. See ci.yml for the full rationale/runbook.
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 10
     permissions:
       contents: read
