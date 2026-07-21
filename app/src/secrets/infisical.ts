@@ -8,8 +8,8 @@
  * written to D1, R2, logs, or diagnostics.
  */
 
-import type { Env } from '../shared/types';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import type { Env } from '../shared/types.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 export type SourceName = 'app' | 'shared';
 

@@ -1,3 +1,4 @@
+/// <reference lib="deno.unstable" />
 import { Client, InStatement } from '@libsql/client';
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
@@ -144,7 +145,7 @@ export class R2BucketShim {
         body: bodyStream,
         async arrayBuffer() {
           const arr = await response.Body?.transformToByteArray();
-          return arr ? arr.buffer : new ArrayBuffer(0);
+          return (arr ? arr.buffer : new ArrayBuffer(0)) as ArrayBuffer;
         },
         async text() {
           return await response.Body?.transformToString() ?? '';

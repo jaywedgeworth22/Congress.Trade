@@ -16,9 +16,9 @@
  *   - tiingo     : name, exchange (free tier has no sector/market cap/CIK)
  */
 
-import { marketCapBucket, sicToSector } from './compute';
-import type { EnrichmentProvider, SecurityRef } from './types';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import { marketCapBucket, sicToSector } from './compute.ts';
+import type { EnrichmentProvider, SecurityRef } from './types.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 const UA = { 'user-agent': 'congress.trade/0.1 (+https://congress.trade)', accept: 'application/json' };
 const str = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v : null);

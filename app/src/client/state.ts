@@ -11,9 +11,9 @@ import type {
   ClientCommandType,
   ClientPreferences,
   Env,
-} from '../shared/types';
-import { all, get, parseJson, run } from '../shared/db';
-import { prefixedId } from '../shared/ids';
+} from '../shared/types.ts';
+import { all, get, parseJson, run } from '../shared/db.ts';
+import { prefixedId } from '../shared/ids.ts';
 
 interface PreferencesRow {
   user_id: string;

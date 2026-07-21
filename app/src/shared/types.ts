@@ -1,3 +1,4 @@
+/// <reference types="@cloudflare/workers-types" />
 /**
  * src/shared/types.ts
  *
@@ -6,7 +7,7 @@
  * as the source of truth — downstream agents implement against these shapes.
  */
 
-import type { AssetTypeCategory } from './assetTypes';
+import type { AssetTypeCategory } from './assetTypes.ts';
 import type {
   Chamber,
   Owner,
@@ -461,6 +462,10 @@ export interface Env {
   INGEST_QUEUE: Queue<QueueMessage>;
   DELIVERY_QUEUE: Queue<QueueMessage>;
   CONFIG_KV: KVNamespace;
+
+  // Turso Database Credentials (resolved via Infisical)
+  TURSO_DATABASE_URL?: string;
+  TURSO_AUTH_TOKEN?: string;
 
   // --- Secrets (wrangler secret put / .dev.vars) ---
   /** Vision/text LLM key (e.g. Gemini) for scanned-PDF extraction. */

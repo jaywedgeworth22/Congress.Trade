@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseTiingoPrices, buildTiingoPriceClient } from '../tiingo';
+import { parseTiingoPrices, buildTiingoPriceClient } from '../tiingo.ts';
 
 const fetchWith = (status: number, body: unknown = '') =>
   (async () =>

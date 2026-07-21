@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   telemetryFallback: vi.fn(async () => ({ listed: 0, delivered: 0, failed: 0 })),
 }));
 
-vi.mock('@sentry/cloudflare', () => ({
+vi.mock('#sentry', () => ({
   withSentry: (_opts: unknown, handler: unknown) => handler,
   withMonitor: (_slug: string, callback: () => unknown) => Promise.resolve().then(callback),
   captureException: vi.fn(), setTags: vi.fn(),
@@ -39,8 +39,8 @@ vi.mock('../thirdPartyTelemetry', async (importOriginal) => ({
   flushUsageTelemetryFallback: mocks.telemetryFallback,
 }));
 
-import worker from '../../index';
-import type { Env } from '../types';
+import worker from '../../index.ts';
+import type { Env } from '../types.ts';
 
 describe('scheduled maintenance isolation', () => {
   it('registers outbox maintenance even when watcher configuration fails', async () => {

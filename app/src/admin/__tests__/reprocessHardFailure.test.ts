@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Env, Filing, ParsedTx } from '../../shared/types';
+import type { Env, Filing, ParsedTx } from '../../shared/types.ts';
 
 const mocks = vi.hoisted(() => ({
   extractParsed: vi.fn(),
@@ -22,7 +22,7 @@ vi.mock('../../extraction/normalizer', async () => {
   };
 });
 
-import { buildAdminRouter } from '../routes';
+import { buildAdminRouter } from '../routes.ts';
 
 const app = buildAdminRouter();
 

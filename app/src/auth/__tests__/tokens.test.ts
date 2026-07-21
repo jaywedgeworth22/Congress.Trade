@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { constantTimeEqual, randomToken, sha256Hex } from '../tokens';
+import { constantTimeEqual, randomToken, sha256Hex } from '../tokens.ts';
 
 describe('randomToken', () => {
   it('returns lowercase hex of the requested byte length and is unique', () => {
