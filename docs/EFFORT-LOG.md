@@ -8,7 +8,6 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 `claude/board-nextwave-c2` so the next Effort Issues Sync run closes #149-#154 and re-labels
 #155/#161.
 ## Deployed
-- **[Congress.Trade][AG] CI Runner Migration to ubuntu-latest (branch `agent/antigravity-ci-fix`) — COMPLETED 2026-07-21.** Replaced failing self-hosted runner `congress-ci` and `congress-deploy` with `ubuntu-latest` across all CI workflows to unblock 9 pending PRs. The Mac self-hosted runner environment was corrupted after Hetzner failure.
 - **Resource Governors & Hard Caps (AG/CLAUDE, M) — COMPLETED 2026-07-20 via PR #620.** Resolved GitHub Actions CI blockage by running comprehensive local validation (1722 tests passed), merged PR #620, and deployed to production. This enforces D1 write budgets, LLM spend limits, and circuit breakers.
 - **iOS App Assets and Styling (AG) — COMPLETED / MERGED 2026-07-19 via PR #630.**
   - **Fonts**: Imported custom Zilla Slab font (Regular & Bold) into the Xcode project, registered in `.pbxproj` via `INFOPLIST_KEY_UIAppFonts`, and applied globally in SwiftUI via `App.swift`.
