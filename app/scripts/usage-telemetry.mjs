@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   API_USAGE_MONITOR_INGEST_PATH,
   createUsageTelemetryClient,
-} from '@jaywedgeworth22/congress-trading-shared';
+} from '../vendor/congress-trading-shared/dist/index.mjs';
 
 const DISABLED = /^(0|false|no|off)$/i;
 const SAFE_TAG = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
