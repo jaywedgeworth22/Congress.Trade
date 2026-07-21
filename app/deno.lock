@@ -1,16 +1,19 @@
 {
   "version": "5",
   "specifiers": {
+    "npm:@aws-sdk/client-s3@*": "3.1090.0",
     "npm:@aws-sdk/client-s3@^3.1090.0": "3.1090.0",
     "npm:@cloudflare/vitest-pool-workers@~0.18.6": "0.18.6_@vitest+runner@4.1.10_@vitest+snapshot@4.1.10_vitest@4.1.10__@opentelemetry+api@1.9.1__@types+node@26.1.1__@vitest+coverage-v8@4.1.10__vite@8.1.5___@types+node@26.1.1___esbuild@0.28.1__esbuild@0.28.1_@cloudflare+workers-types@5.20260719.1_@opentelemetry+api@1.9.1_@types+node@26.1.1_@vitest+coverage-v8@4.1.10__vitest@4.1.10__@opentelemetry+api@1.9.1__@types+node@26.1.1__vite@8.1.5___@types+node@26.1.1___esbuild@0.28.1_vite@8.1.5__@types+node@26.1.1__esbuild@0.28.1",
     "npm:@cloudflare/workers-types@^5.20260719.1": "5.20260719.1",
+    "npm:@fontsource/zilla-slab@^5.3.0": "5.3.0",
     "npm:@google/genai@^2.12.0": "2.12.0",
+    "npm:@libsql/client@*": "0.17.4",
     "npm:@libsql/client@~0.17.4": "0.17.4",
     "npm:@sentry/cli@^3.6.0": "3.6.0",
     "npm:@sentry/cloudflare@^10.66.0": "10.66.0_@cloudflare+workers-types@5.20260719.1_@opentelemetry+core@2.9.0__@opentelemetry+api@1.9.1",
     "npm:@types/node@26.1.1": "26.1.1",
-    "npm:@typescript-eslint/eslint-plugin@^8.64.0": "8.64.0_@typescript-eslint+parser@8.64.0__eslint@10.7.0__typescript@6.0.3_eslint@10.7.0_typescript@6.0.3",
-    "npm:@typescript-eslint/parser@^8.62.1": "8.64.0_eslint@10.7.0_typescript@6.0.3",
+    "npm:@typescript-eslint/eslint-plugin@^8.64.0": "8.64.0_@typescript-eslint+parser@8.64.0__eslint@10.7.0__typescript@5.9.3_eslint@10.7.0_typescript@5.9.3",
+    "npm:@typescript-eslint/parser@^8.62.1": "8.64.0_eslint@10.7.0_typescript@5.9.3",
     "npm:@vitest/coverage-v8@4.1.10": "4.1.10_vitest@4.1.10_@opentelemetry+api@1.9.1_@types+node@26.1.1_vite@8.1.5__@types+node@26.1.1__esbuild@0.28.1",
     "npm:cheerio@^1.2.0": "1.2.0",
     "npm:eslint@^10.7.0": "10.7.0",
@@ -19,6 +22,7 @@
     "npm:jsonrepair@^3.15.0": "3.15.0",
     "npm:node-html-parser@9": "9.0.0",
     "npm:pdf-lib@^1.17.1": "1.17.1",
+    "npm:typescript@^5.6.3": "5.9.3",
     "npm:unpdf@^1.6.2": "1.6.2",
     "npm:vitest@4.1.10": "4.1.10_@opentelemetry+api@1.9.1_@types+node@26.1.1_@vitest+coverage-v8@4.1.10_vite@8.1.5__@types+node@26.1.1__esbuild@0.28.1_esbuild@0.28.1",
     "npm:wrangler@^4.110.0": "4.112.0_@cloudflare+workers-types@5.20260719.1",
@@ -346,12 +350,6 @@
     },
     "@emnapi/runtime@1.11.1": {
       "integrity": "sha512-vgj7R3y3Wgx24IQaGPA/R6YFXLHVMOZ0uVEyIQPaWs+rd1AzfEMXlAC22FYwO1XkKR6NPsq7mUandH8oIRdZFw==",
-      "dependencies": [
-        "tslib@2.8.1"
-      ]
-    },
-    "@emnapi/runtime@1.11.2": {
-      "integrity": "sha512-kyOl3X0DuTiT1h2ft8r2fYO8JYtU9a9Xis/zBSiGArNaagCOWx90N1k2wxp18czFDH+OgcWGb5ZP/XMt3dcyPA==",
       "dependencies": [
         "tslib@2.8.1"
       ]
@@ -704,7 +702,7 @@
     "@img/sharp-wasm32@0.34.5": {
       "integrity": "sha512-OdWTEiVkY2PHwqkbBI8frFxQQFekHaSSkUIJkwzclWZe64O1X4UlUjqqqLaPbUpMOQk6FBu/HtlGXNblIs0huw==",
       "dependencies": [
-        "@emnapi/runtime@1.11.2"
+        "@emnapi/runtime"
       ],
       "cpu": ["wasm32"]
     },
@@ -822,7 +820,7 @@
       "integrity": "sha512-ZLv/JdUfkvOy9eCnnBaGfiO+XimbjebAeO+MRQqD/B+FR1tnRN0tpKSJHRbE8sFfS6aqsXZ67TQjfwfsxULVbg==",
       "dependencies": [
         "@emnapi/core",
-        "@emnapi/runtime@1.11.1",
+        "@emnapi/runtime",
         "@tybys/wasm-util"
       ]
     },
@@ -1010,7 +1008,7 @@
       "integrity": "sha512-VbQGPX2b4r48TAMIM2cjgluIM1HYutm4pcTEJsle7iEP7sB1dFqtPLBVbdLAZCxy1txCcPxf4QFf4v8uvltPqA==",
       "dependencies": [
         "@emnapi/core",
-        "@emnapi/runtime@1.11.1",
+        "@emnapi/runtime",
         "@napi-rs/wasm-runtime"
       ],
       "cpu": ["wasm32"]
@@ -1257,7 +1255,7 @@
         "@types/node"
       ]
     },
-    "@typescript-eslint/eslint-plugin@8.64.0_@typescript-eslint+parser@8.64.0__eslint@10.7.0__typescript@6.0.3_eslint@10.7.0_typescript@6.0.3": {
+    "@typescript-eslint/eslint-plugin@8.64.0_@typescript-eslint+parser@8.64.0__eslint@10.7.0__typescript@5.9.3_eslint@10.7.0_typescript@5.9.3": {
       "integrity": "sha512-CGvQPBxN3wZLu6Rz2kFUpZeoCm78xUic92ck39KPePkO1NPOwjCqdQnm5Q87tpWw9vcBvW8XLrDXjH9PWYtJ3Q==",
       "dependencies": [
         "@eslint-community/regexpp",
@@ -1273,7 +1271,7 @@
         "typescript"
       ]
     },
-    "@typescript-eslint/parser@8.64.0_eslint@10.7.0_typescript@6.0.3": {
+    "@typescript-eslint/parser@8.64.0_eslint@10.7.0_typescript@5.9.3": {
       "integrity": "sha512-KA0OshtlcCCXmbfqyZkM5pV3/WNraJf7DkJRLpyrmwPtud57H5BDX7C3k0LPSPxpprfRL+cJDGabF10mvNCoCw==",
       "dependencies": [
         "@typescript-eslint/scope-manager",
@@ -1285,7 +1283,7 @@
         "typescript"
       ]
     },
-    "@typescript-eslint/project-service@8.64.0_typescript@6.0.3": {
+    "@typescript-eslint/project-service@8.64.0_typescript@5.9.3": {
       "integrity": "sha512-tk4WpOJ6IEbGrVHaNmM0YRrwAD3exZlIK3iadQNAxh4YKk6jvUQ4ecq18n+v7+meh+cJ3j+D8nbk8sRKhlwLQg==",
       "dependencies": [
         "@typescript-eslint/tsconfig-utils",
@@ -1301,13 +1299,13 @@
         "@typescript-eslint/visitor-keys"
       ]
     },
-    "@typescript-eslint/tsconfig-utils@8.64.0_typescript@6.0.3": {
+    "@typescript-eslint/tsconfig-utils@8.64.0_typescript@5.9.3": {
       "integrity": "sha512-2yo8rRNKuzbVWQp5kslhANqZ2uDAeROQHBRZNPu8JDsHmeFNj/XJJhX/FhNUWmkHHvoNsKa6+tHJiig87EzsQw==",
       "dependencies": [
         "typescript"
       ]
     },
-    "@typescript-eslint/type-utils@8.64.0_eslint@10.7.0_typescript@6.0.3": {
+    "@typescript-eslint/type-utils@8.64.0_eslint@10.7.0_typescript@5.9.3": {
       "integrity": "sha512-XWG4Fmmv/6SvyS9nH8jWrKs6terwJvE8cyRt1CzYYqzp9OrPhCT4cMc/f7C6RZCwG+qMmiffJS1/qJP8G1URtg==",
       "dependencies": [
         "@typescript-eslint/types",
@@ -1322,7 +1320,7 @@
     "@typescript-eslint/types@8.64.0": {
       "integrity": "sha512-qjhfuTfLXjA4IOzXvz0rTjT01BqEiIgPoUeMwiEjnaHKJMTNo8rH5pYW1a2L/0Dnux2fPC85AeyJoWaGa8WxTA=="
     },
-    "@typescript-eslint/typescript-estree@8.64.0_typescript@6.0.3": {
+    "@typescript-eslint/typescript-estree@8.64.0_typescript@5.9.3": {
       "integrity": "sha512-Pztpsn1aCE1oWDvDEfUk31nngvvF7vUB5SwHFEaZIFpvw7WJtqUHHL4plBZDA9HfWJJjL13BdG0YrJInTUvoVA==",
       "dependencies": [
         "@typescript-eslint/project-service",
@@ -1337,7 +1335,7 @@
         "typescript"
       ]
     },
-    "@typescript-eslint/utils@8.64.0_eslint@10.7.0_typescript@6.0.3": {
+    "@typescript-eslint/utils@8.64.0_eslint@10.7.0_typescript@5.9.3": {
       "integrity": "sha512-aJUGVB3+U0htrrCjoA8qukw8cm8fNCGAxK/tVoS70k8aeb7DETKeFozRiVFIwEeN9WJLsjaP3ph8I60tY2XZoQ==",
       "dependencies": [
         "@eslint-community/eslint-utils",
@@ -2421,7 +2419,7 @@
     "tinyrainbow@3.1.0": {
       "integrity": "sha512-Bf+ILmBgretUrdJxzXM0SgXLZ3XfiaUuOj/IKQHuTXip+05Xn+uyEYdVg0kYDipTBcLrCVyUzAPz7QmArb0mmw=="
     },
-    "ts-api-utils@2.5.0_typescript@6.0.3": {
+    "ts-api-utils@2.5.0_typescript@5.9.3": {
       "integrity": "sha512-OJ/ibxhPlqrMM0UiNHJ/0CKQkoKF243/AEmplt3qpRgkW8VG7IfOS41h7V8TjITqdByHzrjcS/2si+y4lIh8NA==",
       "dependencies": [
         "typescript"
@@ -2439,8 +2437,8 @@
         "prelude-ls"
       ]
     },
-    "typescript@6.0.3": {
-      "integrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==",
+    "typescript@5.9.3": {
+      "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
       "bin": true
     },
     "undici-types@8.3.0": {
@@ -2631,21 +2629,6 @@
     "https://deno.land/x/zod@v3.23.8/types.ts": "1b172c90782b1eaa837100ebb6abd726d79d6c1ec336350c8e851e0fd706bf5c"
   },
   "workspace": {
-    "dependencies": [
-      "npm:@aws-sdk/client-s3@^3.1090.0",
-      "npm:@cloudflare/workers-types@^4.20240718.0",
-      "npm:@google/genai@^2.12.0",
-      "npm:@libsql/client@~0.17.4",
-      "npm:@sentry/cloudflare@^10.66.0",
-      "npm:cheerio@^1.2.0",
-      "npm:fflate@~0.8.3",
-      "npm:hono@^4.12.31",
-      "npm:jsonrepair@^3.15.0",
-      "npm:node-html-parser@9",
-      "npm:pdf-lib@^1.17.1",
-      "npm:unpdf@^1.6.2",
-      "npm:zod@^3.23.8"
-    ],
     "packageJson": {
       "dependencies": [
         "npm:@aws-sdk/client-s3@^3.1090.0",
