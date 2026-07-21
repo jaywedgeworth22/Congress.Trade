@@ -34,9 +34,12 @@ final class CongressTradeStore: ObservableObject {
     /// the `chamber=` feed request — see `chamberQueryValue`. CT-AUD-010.
     @Published private(set) var selectedChambers: Set<ChamberFilter> = CongressTradeStore.initialChambers
 
+    @Published var isLoadingMore = false
+    
     var modelContext: ModelContext?
 
-    private let api: CongressTradeAPIClient
+    internal let api: CongressTradeAPIClient
+    private let tokenStore = KeychainTokenStore()
     private let cursorStore: SyncCursorStore
     private let sleeper: (Double) async -> Void
     private var pendingWatchlistMutation: PendingWatchlistMutation?
