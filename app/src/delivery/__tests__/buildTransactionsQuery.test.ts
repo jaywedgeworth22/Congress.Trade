@@ -11,11 +11,16 @@ import {
   buildTransactionsCountQuery,
   buildTransactionsTodayFilingsQuery,
   mapFeedTransaction,
+  mapTransaction,
+  toPublicFiling,
+  escapeLikePattern,
   DEFAULT_TX_LIMIT,
   MAX_TX_LIMIT,
   type TxQueryParams,
   type FeedTransactionRow,
+  type TransactionRow,
 } from '../rows';
+import type { Filing } from '../../shared/types';
 
 describe('buildTransactionsQuery', () => {
   it('always filters cursor_seq > since (defaulting since to 0) and orders by cursor ASC', () => {
@@ -46,7 +51,15 @@ describe('buildTransactionsQuery', () => {
   it('filters by fuzzy politician name server-side', () => {
     const q = buildTransactionsQuery({ memberName: 'Pelo' });
     expect(q.sql).toContain("LOWER(COALESCE(fl.full_name, t.filer_id, '')) LIKE ?");
+    expect(q.sql).toContain("ESCAPE '\\'");
     expect(q.params).toEqual([0, '%pelo%']);
+  });
+
+  it('escapes LIKE metacharacters in memberName so they are matched literally', () => {
+    const q = buildTransactionsQuery({ memberName: 'A_B%C' });
+    // A literal '_' must not act as a single-char wildcard, and a literal '%'
+    // must not act as a multi-char wildcard.
+    expect(q.params).toEqual([0, '%a\\_b\\%c%']);
   });
 
   it('filters by tx type', () => {
@@ -149,6 +162,30 @@ describe('buildTransactionsQuery', () => {
     const q = buildTransactionsQuery({ limit: 10_000 });
     expect(q.limit).toBe(MAX_TX_LIMIT);
     expect(q.sql).toContain(`LIMIT ${MAX_TX_LIMIT}`);
+  });
+
+  it('floors a fractional limit instead of embedding it verbatim (would be invalid SQL)', () => {
+    const q = buildTransactionsQuery({ limit: 50.9 });
+    expect(q.limit).toBe(50);
+    expect(q.sql).toContain('LIMIT 50');
+    expect(q.sql).not.toContain('50.9');
+  });
+
+  it('floors BEFORE clamping so a fractional value under 1 falls back to the default, not 0', () => {
+    const q = buildTransactionsQuery({ limit: 0.5 });
+    expect(q.limit).toBe(DEFAULT_TX_LIMIT);
+  });
+
+  it('floors a fractional offset instead of embedding it verbatim', () => {
+    const q = buildTransactionsQuery({ limit: 25, offset: 10.7 });
+    expect(q.offset).toBe(10);
+    expect(q.sql).toContain('OFFSET 10');
+    expect(q.sql).not.toContain('10.7');
+  });
+
+  it('treats a non-finite limit (NaN/Infinity) as absent, not as literal SQL text', () => {
+    expect(buildTransactionsQuery({ limit: NaN }).limit).toBe(DEFAULT_TX_LIMIT);
+    expect(buildTransactionsQuery({ limit: Infinity }).limit).toBe(DEFAULT_TX_LIMIT);
   });
 
   it('defaults to oldest-first (ORDER BY cursor_seq ASC) when order is omitted', () => {
@@ -304,5 +341,112 @@ describe('mapFeedTransaction', () => {
     expect(tx.fullName).toBeNull();
     expect(tx.state).toBeNull();
     expect(tx.photoUrl).toBeNull();
+  });
+
+  it('surfaces a NULL tx_type honestly as null, never silently defaulted to P (Purchase)', () => {
+    const tx = mapFeedTransaction(feedRow({ tx_type: null }));
+    expect(tx.txType).toBeNull();
+  });
+});
+
+describe('mapTransaction: honest tx_type passthrough', () => {
+  function txRow(over: Partial<TransactionRow> = {}): TransactionRow {
+    return {
+      id: 't1',
+      doc_id: 'H-1',
+      filer_id: 'P000197',
+      tx_date: '2024-01-02',
+      owner: 'self',
+      asset_name: 'Acme',
+      ticker: 'ACME',
+      asset_type: 'stock',
+      tx_type: 'P',
+      amount_min: 1001,
+      amount_max: 15000,
+      is_option: 0,
+      cap_gains_over_200: 0,
+      raw_text: '',
+      confidence: 0.9,
+      source: 'primary',
+      created_at: '2024-01-03T00:00:00Z',
+      cursor_seq: 5,
+      est_value: null,
+      ...over,
+    };
+  }
+
+  it('passes a disclosed side through unchanged', () => {
+    expect(mapTransaction(txRow({ tx_type: 'S' })).txType).toBe('S');
+  });
+
+  it('passes a NULL tx_type through as null rather than defaulting to P', () => {
+    expect(mapTransaction(txRow({ tx_type: null })).txType).toBeNull();
+  });
+});
+
+describe('escapeLikePattern', () => {
+  it('backslash-escapes %, _, and a literal backslash', () => {
+    expect(escapeLikePattern('a_b%c')).toBe('a\\_b\\%c');
+    expect(escapeLikePattern('C:\\path')).toBe('C:\\\\path');
+  });
+
+  it('leaves ordinary text unchanged', () => {
+    expect(escapeLikePattern('Pelosi')).toBe('Pelosi');
+  });
+});
+
+describe('toPublicFiling', () => {
+  const fullFiling: Filing = {
+    docId: 'H-2026-1',
+    chamber: 'house',
+    filerId: 'P000197',
+    filingType: 'P',
+    filedDate: '2026-06-19',
+    sourceUrl: 'https://disclosures-clerk.house.gov/doc.pdf',
+    rawObjectKey: 'raw/2026/H-2026-1.pdf',
+    ingestStatus: 'extracted',
+    docKind: 'text_pdf',
+    extractor: 'openrouter-vision',
+    modelVersion: 'anthropic/claude-sonnet-5',
+    confidence: 0.92,
+    firstSeenAt: '2026-06-20T00:00:00.000Z',
+    sourceUpdatedAt: null,
+    error: null,
+  };
+
+  it('strips the R2 object key, extractor/model slug, and raw error text', () => {
+    const pub = toPublicFiling(fullFiling);
+    expect(pub).not.toHaveProperty('rawObjectKey');
+    expect(pub).not.toHaveProperty('extractor');
+    expect(pub).not.toHaveProperty('modelVersion');
+    expect(pub).not.toHaveProperty('error');
+    expect(JSON.stringify(pub)).not.toContain('openrouter-vision');
+    expect(JSON.stringify(pub)).not.toContain('claude-sonnet-5');
+    expect(JSON.stringify(pub)).not.toContain('raw/2026');
+  });
+
+  it('keeps every non-internal field intact', () => {
+    const pub = toPublicFiling(fullFiling);
+    expect(pub).toMatchObject({
+      docId: 'H-2026-1',
+      chamber: 'house',
+      filerId: 'P000197',
+      filingType: 'P',
+      filedDate: '2026-06-19',
+      sourceUrl: 'https://disclosures-clerk.house.gov/doc.pdf',
+      ingestStatus: 'extracted',
+      docKind: 'text_pdf',
+      confidence: 0.92,
+      firstSeenAt: '2026-06-20T00:00:00.000Z',
+    });
+  });
+
+  it('still strips a populated raw error/model slug (a failed extraction is still internal detail)', () => {
+    const pub = toPublicFiling({
+      ...fullFiling,
+      error: 'provider timeout after 3 retries: connect ECONNREFUSED 10.0.0.1:443',
+    });
+    expect(JSON.stringify(pub)).not.toContain('ECONNREFUSED');
+    expect(JSON.stringify(pub)).not.toContain('10.0.0.1');
   });
 });
