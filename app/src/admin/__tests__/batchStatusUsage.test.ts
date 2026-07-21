@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildAdminRouter } from '../routes';
-import { stableMeasuredUsageIdempotencyKey } from '../../shared/thirdPartyTelemetry';
+import { buildAdminRouter } from '../routes.ts';
+import { stableMeasuredUsageIdempotencyKey } from '../../shared/thirdPartyTelemetry.ts';
 
 const AUTH = { Authorization: 'Bearer test-admin' };
 

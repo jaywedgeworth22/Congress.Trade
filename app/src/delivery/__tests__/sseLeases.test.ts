@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   acquireSseLease,
   createSseBackpressureStream,
@@ -9,8 +9,8 @@ import {
   releaseSseLease,
   SSE_LEASE_MS,
   SseSlowReaderError,
-} from '../sse';
-import type { Subscription } from '../../shared/types';
+} from '../sse.ts';
+import type { Subscription } from '../../shared/types.ts';
 
 const sub = {
   id: 'sub_1', client_id: 'client_1', delivery: 'sse', target_url: null,

@@ -1,5 +1,5 @@
-import type { Env } from './types';
-import { recordMeasuredThirdPartyUsage } from './thirdPartyTelemetry';
+import type { Env } from './types.ts';
+import { recordMeasuredThirdPartyUsage } from './thirdPartyTelemetry.ts';
 
 export interface AiUsageParams {
   provider: string;

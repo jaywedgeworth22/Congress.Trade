@@ -4,8 +4,8 @@
  * Thin, dependency-free conveniences around the D1 prepared-statement API.
  */
 
-import type { Env } from './types';
-import { recordD1Meta } from './d1Budget';
+import type { Env } from './types.ts';
+import { recordD1Meta } from './d1Budget.ts';
 
 export type SqlParam = string | number | boolean | null | ArrayBuffer;
 

@@ -9,8 +9,8 @@
  * src/shared/brackets.ts when possible.
  */
 
-import { matchBracket, nearestBracket, STOCK_ACT_BRACKETS } from '../shared/brackets';
-import type { AmountBracket } from '../shared/brackets';
+import { matchBracket, nearestBracket, STOCK_ACT_BRACKETS } from '../shared/brackets.ts';
+import type { AmountBracket } from '../shared/brackets.ts';
 
 export interface AmountRange {
   /** Lower bound in whole USD, or null when unparseable. */
@@ -75,7 +75,7 @@ export function parseAmountRange(raw: string): AmountRange {
   // Single value present — try to find the bracket whose min matches.
   const single = parseDollar(text);
   if (single !== null) {
-    const byMin = STOCK_ACT_BRACKETS.find((b) => b.min === single);
+    const byMin = STOCK_ACT_BRACKETS.find((b: AmountBracket) => b.min === single);
     if (byMin) return { min: byMin.min, max: byMin.max, exact: true };
     const snapped = snapToBracket(single, single);
     if (snapped) return { min: snapped.min, max: snapped.max, exact: true };

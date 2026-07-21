@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 // Worker production code intentionally omits Node typings; this test validates
 // checked-in SQL/config artifacts under Vitest's Node runtime.
 import { existsSync, readFileSync } from 'node:fs';
-import { buildAdminRouter } from '../routes';
+import { buildAdminRouter } from '../routes.ts';
 
 const app = buildAdminRouter();
 const testModuleUrl = (import.meta as ImportMeta & { readonly url: string }).url;

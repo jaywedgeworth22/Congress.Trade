@@ -1,7 +1,7 @@
-import { Env, Filing, Chamber } from '../shared/types';
-import { all, run, get } from '../shared/db';
-import { submitBatch, pollBatch, BatchDoc } from './batchExtract';
-import { normalize } from './normalizer';
+import { Env, Filing, Chamber } from '../shared/types.ts';
+import { all, run, get } from '../shared/db.ts';
+import { submitBatch, pollBatch, BatchDoc } from './batchExtract.ts';
+import { normalize } from './normalizer.ts';
 
 const MAX_BATCH_SIZE = 1000;
 
