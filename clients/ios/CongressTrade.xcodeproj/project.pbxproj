@@ -17,6 +17,7 @@
 		5A1000010000000000000005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5A1000010000000000000015 /* Assets.xcassets */; };
 		5A2000010000000000000001 /* CongressTradeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A2000010000000000000011 /* CongressTradeTests.swift */; };
 		82C7B94377C5B67C4AC86A35 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = A818AF84BA5C2B7444CA9B87 /* Components.swift */; };
+		9CDCA9446C95EB22EBF95E7D /* PoliticianDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56597C8F55B7C2A205D5D929 /* PoliticianDetailView.swift */; };
 		D1A2B3C4D5E6F7A8B9C0D1E3 /* TrendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A2B3C4D5E6F7A8B9C0D1E2 /* TrendsView.swift */; };
 		D97BA8AD8D1DEC8739A64139 /* TradeDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAE8298BB5DA3E0CAA6DE8AF /* TradeDetailView.swift */; };
 		F1163B5C8A0355331FEBA19F /* FeedDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E27BB7081F81F5E987131893 /* FeedDashboardView.swift */; };
@@ -34,6 +35,7 @@
 
 /* Begin PBXFileReference section */
 		2C19828CDAFE62F809DF6C27 /* App.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		56597C8F55B7C2A205D5D929 /* PoliticianDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CongressTrade/Views/Feed/PoliticianDetailView.swift; sourceTree = SOURCE_ROOT; };
 		5A1000010000000000000010 /* CongressTrade.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CongressTrade.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A1000010000000000000012 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		5A1000010000000000000013 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -157,6 +159,7 @@
 			children = (
 				E27BB7081F81F5E987131893 /* FeedDashboardView.swift */,
 				EAE8298BB5DA3E0CAA6DE8AF /* TradeDetailView.swift */,
+				56597C8F55B7C2A205D5D929 /* PoliticianDetailView.swift */,
 			);
 			name = Feed;
 			sourceTree = "<group>";
@@ -275,6 +278,7 @@
 				4E2DC30504B92FAA5811BAFB /* DeliveryView.swift in Sources */,
 				46330F4471E179775BED47C5 /* SettingsView.swift in Sources */,
 				82C7B94377C5B67C4AC86A35 /* Components.swift in Sources */,
+				9CDCA9446C95EB22EBF95E7D /* PoliticianDetailView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
