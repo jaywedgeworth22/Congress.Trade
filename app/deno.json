@@ -1,9 +1,10 @@
 {
+  "unstable": ["kv", "cron", "sloppy-imports"],
   "tasks": {
-    "start": "deno run --allow-net --allow-env --allow-read src/deno/main.ts"
+    "start": "deno run --unstable-kv --unstable-cron --allow-net --allow-env --allow-read src/deno/main.ts"
   },
   "compilerOptions": {
     "strict": true,
-    "lib": ["deno.window"]
+    "lib": ["deno.window", "deno.unstable"]
   }
 }

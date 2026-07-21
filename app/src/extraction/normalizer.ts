@@ -512,7 +512,7 @@ function buildResolver(rows: SecRow[]): TickerResolver {
 
   return (ticker, assetName) => {
     const t = (ticker || '').trim().toUpperCase();
-    const preferred = resolvePreferredTickerFromAssetName(assetName, (issuerName) => {
+    const preferred = resolvePreferredTickerFromAssetName(assetName, (issuerName: string) => {
       const key = issuerName.trim().toLowerCase();
       return byAlias.get(key) ?? byName.get(key) ?? byTicker.get(key.toUpperCase()) ?? null;
     });
@@ -534,7 +534,7 @@ function buildResolver(rows: SecRow[]): TickerResolver {
     // stale→current aliases (probed against the master), then syntactic
     // acceptance of a well-formed symbol the master doesn't list yet. This is
     // what clears the dominant `unresolved_ticker` review-queue reason.
-    return resolveTickerDeterministic(t, (sym) => (byTicker.has(sym) ? byTicker.get(sym)! : null));
+    return resolveTickerDeterministic(t, (sym: string) => (byTicker.has(sym) ? byTicker.get(sym)! : null));
   };
 }
 
