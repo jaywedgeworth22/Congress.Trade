@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   ping:
-    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Set up Node for health-response validation
