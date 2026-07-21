@@ -200,7 +200,7 @@ export async function dispatchWebhook(
   // initial fanout message, not on paginated continuations or targeted retries).
   if (!msg.subscriptionId && !msg.afterSubscriptionId && typeof BroadcastChannel !== 'undefined') {
     try {
-      const channel = new BroadcastChannel('congress.trade.live');
+      const channel = new (BroadcastChannel as any)('congress.trade.live');
       channel.postMessage({
         type: 'NEW_TRANSACTION',
         transaction: tx,
