@@ -38,13 +38,13 @@ import {
   PriceSeriesSchema,
   SecurityRefInputSchema,
   ShortVolumeRowSchema,
-} from '../../vendor/congress-trading-shared/dist/index.mjs';
-import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
-import { all, batch, batchPrepared, chunkArray, first, get, run, type SqlParam } from '../shared/db';
-import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
-import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
-import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config';
-import { uuid } from '../shared/ids';
+} from '@jaywedgeworth22/congress-trading-shared';
+import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types.ts';
+import { all, batch, batchPrepared, chunkArray, first, get, run, type SqlParam } from '../shared/db.ts';
+import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes.ts';
+import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions.ts';
+import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config.ts';
+import { uuid } from '../shared/ids.ts';
 import {
   assertSubscriptionQuota,
   createSubscription,
@@ -951,7 +951,7 @@ function validateReviewEdits(
         return { error: `edits[${index}].${field} must be a boolean` };
       }
     }
-    edits.push({ ...e, ticker: ticker || null, assetName, txDate, owner, txType });
+    edits.push({ ...e, ticker: ticker || null, assetName, txDate, owner: owner as any, txType });
   }
   return { edits };
 }
@@ -7994,7 +7994,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     if (rows.length === 0) return c.json({ ok: true, cleaned: 0, done: true });
 
     let cleaned = 0;
-    const { cleanAssetString } = await import('../extraction/nameNormalizer');
+    const { cleanAssetString } = await import('../extraction/nameNormalizer.ts');
 
     // Run sequentially to avoid D1 limits on concurrent batches
     for (const row of rows) {
@@ -8065,7 +8065,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       if (targetError) return c.json({ error: targetError }, 400);
     }
     const validatedFilters = validateSubscriptionFilters(body.filters);
-    if (!validatedFilters.ok) return c.json({ error: validatedFilters.error }, 400);
+    if (!validatedFilters.ok) return c.json({ error: (validatedFilters as any).error }, 400);
     const secretError = subscriptionSecretError(body.secret);
     if (secretError) return c.json({ error: secretError }, 400);
     const secret = typeof body.secret === 'string' ? body.secret : undefined;

@@ -106,7 +106,7 @@ export function arrayOfStrings(value: unknown, opts: { upper?: boolean } = {}): 
 
 export function normalizeFilters(value: unknown): SubscriptionFilters {
   const result = validateSubscriptionFilters(value);
-  if (!result.ok) throw new ClientInputError(result.error);
+  if (!result.ok) throw new ClientInputError((result as any).error);
   return result.filters;
 }
 

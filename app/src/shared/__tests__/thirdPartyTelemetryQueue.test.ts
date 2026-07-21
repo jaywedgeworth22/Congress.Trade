@@ -36,7 +36,7 @@ vi.mock('#sentry', () => ({
 }));
 
 vi.mock('../thirdPartyTelemetry', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../thirdPartyTelemetry')>()),
+  ...(await importOriginal<typeof import('../thirdPartyTelemetry.ts')>()),
   deliverUsageTelemetryEvent: mocks.deliver,
 }));
 
