@@ -1,24 +1,6 @@
 {
   "dependencies": {
-    "@jaywedgeworth22/congress-trading-shared": "file:./app/vendor/congress-trading-shared",
     "@sentry/cloudflare": "^10.63.0"
   },
-  "allowScripts": {
-    "github:jaywedgeworth22/congress-trading-shared#v1.11.1": true,
-    "@jaywedgeworth22/congress-trading-shared": "true",
-    "github:jaywedgeworth22/congress-trading-shared#v1": [
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      []
-    ]
-  }
+  "allowScripts": {}
 }
