@@ -9,12 +9,12 @@ import {
   isIsoDate,
   daysBetween,
   mergeRefs,
-} from "../utils";
+} from "../utils.ts";
 import {
   TICKER_ALIASES,
   TICKER_RENAMES,
   TICKER_ACQUISITIONS,
-} from "../constants";
+} from "../constants.ts";
 
 // =============================================================================
 // normalizeTicker

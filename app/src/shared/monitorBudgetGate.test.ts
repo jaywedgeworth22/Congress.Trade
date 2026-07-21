@@ -15,7 +15,7 @@ async function loadGate(secretValues: Record<string, string | undefined>) {
     Object.fromEntries(keys.map((key) => [key, secretValues[key]])),
   );
   vi.doMock('../secrets/infisical', () => ({ resolveSecrets }));
-  const mod = await import('./monitorBudgetGate');
+  const mod = await import('./monitorBudgetGate.ts');
   mod.__resetMonitorBudgetGateCacheForTests();
   return { ...mod, resolveSecrets };
 }
