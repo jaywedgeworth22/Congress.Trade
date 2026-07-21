@@ -22,12 +22,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "allowImportingTsExtensions": true,
-    "paths": {
-      "@jaywedgeworth22/congress-trading-shared": [
-        "./vendor/congress-trading-shared/dist/index.d.ts"
-      ]
-    }
+    "allowImportingTsExtensions": true
+
   },
   "include": [
     "src/**/*.ts"

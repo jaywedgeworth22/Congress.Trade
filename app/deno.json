@@ -5,7 +5,6 @@
   ],
   "exclude": [
     "node_modules",
-    "vendor",
     "src/__tests__",
     "**/*.test.ts"
   ],

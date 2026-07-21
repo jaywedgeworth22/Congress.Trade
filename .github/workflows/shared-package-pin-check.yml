@@ -114,7 +114,7 @@ jobs:
           }
           is_local_install() {
             case "$1" in
-              file:*|./*|../*) return 0 ;;
+              file:*|./*|../*|vendor/*) return 0 ;;
               *) return 1 ;;
             esac
           }
