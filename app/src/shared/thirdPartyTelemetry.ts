@@ -18,8 +18,8 @@ import {
   createUsageTelemetryClient,
   UsageTelemetryEventSchema,
 } from '@jaywedgeworth22/congress-trading-shared';
-import { resolveSecrets } from '../secrets/infisical';
-import type { Env, ThirdPartyUsageTelemetryEvent } from './types';
+import { resolveSecrets } from '../secrets/infisical.ts';
+import type { Env, ThirdPartyUsageTelemetryEvent } from './types.ts';
 
 interface TelemetryContext {
   env: Env;
