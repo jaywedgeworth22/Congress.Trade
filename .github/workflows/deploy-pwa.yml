@@ -17,7 +17,7 @@ jobs:
   deploy:
     # Cloudflare credentials and the Pages deployment must stay on the
     # allowlisted Coolify deploy runner, alongside the Worker deployment.
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, congress-deploy]
     permissions:
       contents: read
       deployments: write

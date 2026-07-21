@@ -553,6 +553,7 @@ export default function Dashboard() {
               <div>
                 <input id="delivery-stream-url" readOnly value={oneTimeDelivery.streamUrl} onFocus={(event) => event.currentTarget.select()} />
                 <button type="button" onClick={() => void copyCredential('SSE URL', oneTimeDelivery.streamUrl!)}>Copy</button>
+              </div>
             </div>
           ) : null}
         </section>
@@ -636,6 +637,7 @@ export default function Dashboard() {
                     {watchlistTickers.map((ticker) => (
                       <span key={ticker} className="filter-badge">{ticker}</span>
                     ))}
+                  </div>
                 ) : null}
                 <p className="delivery-scope-helper">{deliveryScopeHelperText(watchlistTickers)}</p>
               </div>
