@@ -9,8 +9,8 @@ import {
   getSafeRedirectUrl,
   setSessionCookie,
   clearSessionCookie,
-} from '../session';
-import type { Env } from '../../shared/types';
+} from '../session.ts';
+import type { Env } from '../../shared/types.ts';
 
 function fakeEnv(user?: { id: string }) {
   const kv = new Map<string, string>();

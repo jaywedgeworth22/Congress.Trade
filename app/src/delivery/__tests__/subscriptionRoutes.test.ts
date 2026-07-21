@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { buildRestRouter } from '../rest';
-import type { Env } from '../../shared/types';
-import type { SubscriptionRow } from '../rows';
+import { buildRestRouter } from '../rest.ts';
+import type { Env } from '../../shared/types.ts';
+import type { SubscriptionRow } from '../rows.ts';
 
 function makeEnv(
   seed: SubscriptionRow[] = [],

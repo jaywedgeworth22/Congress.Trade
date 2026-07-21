@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAnalyticsRouter } from '../routes';
+import { buildAnalyticsRouter } from '../routes.ts';
 
 const app = buildAnalyticsRouter();
 

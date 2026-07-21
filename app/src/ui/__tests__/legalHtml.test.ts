@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { TOS_HTML, PRIVACY_HTML } from '../legalHtml';
+import { TOS_HTML, PRIVACY_HTML } from '../legalHtml.ts';
 
 describe('legalHtml pricing copy', () => {
   it('states the canonical $9/mo · $90/yr Premium price in the Terms of Service', () => {

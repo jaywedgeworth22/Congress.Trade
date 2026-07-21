@@ -12,8 +12,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { signWebhookPayload } from '../webhook';
-import type { Env } from '../../shared/types';
+import { signWebhookPayload } from '../webhook.ts';
+import type { Env } from '../../shared/types.ts';
 
 /** Minimal Env stand-in carrying only the signing key the function reads. */
 function envWith(signingKey?: string): Env {

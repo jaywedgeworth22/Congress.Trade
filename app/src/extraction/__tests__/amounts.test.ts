@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { parseAmountRange } from '../amounts';
-import { isValidBracket } from '../../shared/brackets';
+import { parseAmountRange } from '../amounts.ts';
+import { isValidBracket } from '../../shared/brackets.ts';
 
 describe('parseAmountRange -> canonical bracket', () => {
   it('parses a standard hyphen range', () => {

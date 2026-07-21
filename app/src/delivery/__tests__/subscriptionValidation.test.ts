@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateSubscriptionFilters } from '../subscriptions';
+import { validateSubscriptionFilters } from '../subscriptions.ts';
 
 describe('subscription filter validation', () => {
   it('normalizes bounded filters', () => {

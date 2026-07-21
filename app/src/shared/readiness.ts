@@ -1,4 +1,4 @@
-import { get } from './db';
+import { get } from './db.ts';
 
 export interface ReadinessResult {
   ok: boolean;

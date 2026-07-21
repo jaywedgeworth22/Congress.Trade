@@ -5,7 +5,7 @@
  * other admin route — and must not weaken the existing ADMIN_TOKEN gate.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { buildAdminRouter } from '../routes';
+import { buildAdminRouter } from '../routes.ts';
 
 const app = buildAdminRouter();
 

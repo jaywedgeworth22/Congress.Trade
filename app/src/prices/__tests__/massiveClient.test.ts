@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseMassiveAggs, buildMassivePriceClient } from '../massive';
+import { parseMassiveAggs, buildMassivePriceClient } from '../massive.ts';
 
 const fetchWith = (status: number, body: unknown = '') =>
   (async () =>

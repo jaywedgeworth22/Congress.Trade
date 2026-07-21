@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 
 const mocks = vi.hoisted(() => ({
   fetchHouseIndex: vi.fn(),
@@ -21,7 +21,7 @@ vi.mock('../ogeSource', () => ({
   pollOgeExecutive: mocks.pollOgeExecutive,
 }));
 
-import { computeSenateLookbackDays, inHousePriorYearWindow, runWatcher } from '../watcher';
+import { computeSenateLookbackDays, inHousePriorYearWindow, runWatcher } from '../watcher.ts';
 
 function housePtr(docId: string, overrides: Partial<Record<'filingDate' | 'first' | 'last' | 'stateDst', string>> = {}) {
   return {
