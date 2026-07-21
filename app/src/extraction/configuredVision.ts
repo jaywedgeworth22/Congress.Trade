@@ -71,7 +71,9 @@ export async function resolvePrimaryFailoverModels(env: Env, chamber: string): P
   ])) as PrimaryFailoverEnv;
   const primaryKey = chamber === 'senate'
     ? e.AGREEMENT_SENATE_MODEL_A
-    : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_A : e.AGREEMENT_HOUSE_MODEL_A;
+    : chamber === 'executive'
+      ? (e.AGREEMENT_EXEC_MODEL_A || 'openrouter:x-ai/grok-4.5')
+      : e.AGREEMENT_HOUSE_MODEL_A;
   const failoverKey = chamber === 'senate'
     ? e.AGREEMENT_SENATE_MODEL_B
     : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_B : e.AGREEMENT_HOUSE_MODEL_B;
