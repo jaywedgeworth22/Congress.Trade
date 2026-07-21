@@ -2631,6 +2631,21 @@
     "https://deno.land/x/zod@v3.23.8/types.ts": "1b172c90782b1eaa837100ebb6abd726d79d6c1ec336350c8e851e0fd706bf5c"
   },
   "workspace": {
+    "dependencies": [
+      "npm:@aws-sdk/client-s3@^3.1090.0",
+      "npm:@cloudflare/workers-types@^4.20240718.0",
+      "npm:@google/genai@^2.12.0",
+      "npm:@libsql/client@~0.17.4",
+      "npm:@sentry/cloudflare@^10.66.0",
+      "npm:cheerio@^1.2.0",
+      "npm:fflate@~0.8.3",
+      "npm:hono@^4.12.31",
+      "npm:jsonrepair@^3.15.0",
+      "npm:node-html-parser@9",
+      "npm:pdf-lib@^1.17.1",
+      "npm:unpdf@^1.6.2",
+      "npm:zod@^3.23.8"
+    ],
     "packageJson": {
       "dependencies": [
         "npm:@aws-sdk/client-s3@^3.1090.0",
