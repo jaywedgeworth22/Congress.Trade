@@ -28,9 +28,6 @@
     "lib": [
       "deno.window",
       "deno.unstable"
-    ],
-    "types": [
-      "./app/node_modules/@cloudflare/workers-types/index.d.ts"
     ]
   }
 }
