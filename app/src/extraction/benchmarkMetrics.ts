@@ -100,18 +100,6 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
     sourceUrl: "dummy",
     note: "dummy"
   },
-  {
-    provider: "openrouter",
-    models: ["anthropic/claude-opus-4.8"],
-    meter: "tokens",
-    inputUsdPerMillion: 1,
-    cachedInputUsdPerMillion: 1,
-    outputUsdPerMillion: 2,
-    version: "openrouter-dummy",
-    effectiveDate: "2026-07-20",
-    sourceUrl: "dummy",
-    note: "dummy"
-  },
 
   {
     provider: 'openrouter',
