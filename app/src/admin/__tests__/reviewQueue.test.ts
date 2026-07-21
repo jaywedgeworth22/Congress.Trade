@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildAdminRouter } from '../routes';
-import { transactionRowKey } from '../../extraction/normalizer';
+import { buildAdminRouter } from '../routes.ts';
+import { transactionRowKey } from '../../extraction/normalizer.ts';
 
 const app = buildAdminRouter();
 

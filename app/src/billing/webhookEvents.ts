@@ -5,8 +5,8 @@
  * fails, release the unprocessed claim so Stripe retry can repair state.
  */
 
-import type { Env } from '../shared/types';
-import { get, run } from '../shared/db';
+import type { Env } from '../shared/types.ts';
+import { get, run } from '../shared/db.ts';
 
 const DEFAULT_CLAIM_LEASE_SECONDS = 60;
 

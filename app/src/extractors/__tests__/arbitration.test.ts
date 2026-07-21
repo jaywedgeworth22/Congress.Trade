@@ -7,8 +7,8 @@ import {
   mergeResults,
   type Extractor,
   type ExtractorResult,
-} from '../types';
-import type { Env, Filing, ParsedTx } from '../../shared/types';
+} from '../types.ts';
+import type { Env, Filing, ParsedTx } from '../../shared/types.ts';
 
 function tx(over: Partial<ParsedTx> = {}): ParsedTx {
   return {
