@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import {
   runHouseHistoricalBackfill,
   type HouseBackfillOptions,
 } from '../houseCrawler.ts';
 import type { HouseFiling } from '../../ingestion/houseSource.ts';
 import type { Env, QueueMessage } from '../../shared/types.ts';
+import { resetD1WriteGovernor } from '../../shared/d1Budget.ts';
 
 // ---------------------------------------------------------------------------
 // Test doubles — no network, no real D1/queue.
@@ -32,7 +33,7 @@ function filing(year: number, docId: string, filingType: string): HouseFiling {
  * new) UNLESS the doc_id has been seen before in this run — mirroring real
  * INSERT OR IGNORE de-duplication so we can assert idempotency.
  */
-function fakeEnv(): { env: Env; sent: QueueMessage[]; seen: Set<string>; writes: unknown[][] } {
+function fakeEnv(vars: Record<string, string> = {}): { env: Env; sent: QueueMessage[]; seen: Set<string>; writes: unknown[][] } {
   const sent: QueueMessage[] = [];
   const seen = new Set<string>();
   const writes: unknown[][] = [];
@@ -97,6 +98,7 @@ function fakeEnv(): { env: Env; sent: QueueMessage[]; seen: Set<string>; writes:
         return Promise.resolve();
       },
     },
+    ...vars,
   } as unknown as Env;
 
   return { env, sent, seen, writes };
@@ -108,6 +110,9 @@ function indexImpl(byYear: Record<number, HouseFiling[]>): HouseBackfillOptions[
 }
 
 // ---------------------------------------------------------------------------
+
+beforeEach(() => resetD1WriteGovernor());
+afterEach(() => resetD1WriteGovernor());
 
 describe('runHouseHistoricalBackfill', () => {
   it('iterates the inclusive year range and only enqueues PTRs (FilingType P)', async () => {
@@ -212,6 +217,28 @@ describe('runHouseHistoricalBackfill', () => {
       'H-2014-2',
     ]);
     expect(Array.from(seen)).toEqual(['H-2014-1', 'H-2014-2']);
+  });
+
+  it('stops on D1 write-governor deferral without marking deferred filings as duplicates', async () => {
+    const { env, sent, seen } = fakeEnv({ D1_WRITE_OPS_PER_INVOCATION_CAP: '1' });
+    const data: Record<number, HouseFiling[]> = {
+      2014: [filing(2014, '1', 'P'), filing(2014, '2', 'P')],
+    };
+    const fetchIndexImpl = indexImpl(data);
+
+    const first = await runHouseHistoricalBackfill(env, {
+      fromYear: 2014,
+      toYear: 2014,
+      fetchIndexImpl,
+    });
+
+    expect(first.enqueued).toBe(1);
+    expect(first.skipped).toBe(0);
+    expect(first.errors).toEqual([
+      '2014: D1 write governor deferred at H-2014-2; rerun backfill to continue',
+    ]);
+    expect(Array.from(seen)).toEqual(['H-2014-1']);
+    expect(sent.map((m) => (m.type === 'filing.new' ? m.docId : ''))).toEqual(['H-2014-1']);
   });
 
   it('does not write or enqueue in dryRun', async () => {
