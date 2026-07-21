@@ -19,7 +19,7 @@ vi.mock('../../extraction/orchestrator', () => ({
 }));
 
 vi.mock('../fetcher', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../fetcher')>()),
+  ...(await importOriginal<typeof import('../fetcher.ts')>()),
   fetchFiling: mocks.fetchFiling,
 }));
 

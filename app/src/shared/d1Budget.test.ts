@@ -44,7 +44,7 @@ async function loadBudget(values: Record<string, string | undefined>) {
     source: values[key] ? 'infisical' : 'missing',
   }));
   vi.doMock('../secrets/infisical', () => ({ resolveSecret }));
-  return { ...(await import('./d1Budget')), resolveSecret };
+  return { ...(await import('./d1Budget.ts')), resolveSecret };
 }
 
 afterEach(() => {
