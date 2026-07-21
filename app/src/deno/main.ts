@@ -1,3 +1,4 @@
+/// <reference types="npm:@cloudflare/workers-types" />
 /// <reference lib="deno.unstable" />
 import { createClient } from 'npm:@libsql/client/web';
 import { S3Client } from 'npm:@aws-sdk/client-s3';
