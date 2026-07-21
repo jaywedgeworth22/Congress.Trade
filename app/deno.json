@@ -2,6 +2,7 @@
   "unstable": [
     "kv",
     "cron",
+    "sloppy-imports",
     "sloppy-imports"
   ],
   "exclude": [
