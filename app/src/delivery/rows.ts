@@ -70,6 +70,7 @@ export interface FeedTransactionRow extends TransactionRow {
   filing_filed_date: string | null;
   filing_first_seen_at: string | null;
   filing_source_url?: string | null;
+  filing_raw_object_key?: string | null;
   // Cross-referenced asset reference data (securities_ref); null until enriched,
   // optional so callers/tests that build a feed row needn't supply them.
   ref_company_name?: string | null;
@@ -193,6 +194,7 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     filedDate: row.filing_filed_date,
     firstSeenAt: row.filing_first_seen_at,
     sourceUrl: row.filing_source_url ?? undefined,
+    pdfUrl: row.filing_raw_object_key ? `/api/documents/${row.doc_id}/pdf` : undefined,
     refCompanyName: row.ref_company_name,
     refSector: row.ref_sector,
     refMarketCap: row.ref_market_cap,
@@ -252,6 +254,7 @@ export type PublicFiling = Omit<Filing, 'rawObjectKey' | 'extractor' | 'modelVer
  */
 export function toPublicFiling(filing: Filing): PublicFiling {
   const { rawObjectKey: _rawObjectKey, extractor: _extractor, modelVersion: _modelVersion, error: _error, ...pub } = filing;
+  if (filing.rawObjectKey) pub.pdfUrl = `/api/documents/${filing.docId}/pdf`;
   return pub;
 }
 
@@ -495,7 +498,7 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
     'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
     'fl.photo_url AS filer_photo_url, ' +
     REF_SELECT +
-    'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url ' +
+    'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url, f.raw_object_key AS filing_raw_object_key ' +
     TX_FROM_JOINS +
     `WHERE ${where.join(' AND ')} ` +
     `ORDER BY ${orderClause} ` +
