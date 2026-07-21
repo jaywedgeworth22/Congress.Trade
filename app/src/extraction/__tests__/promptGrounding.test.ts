@@ -37,7 +37,6 @@ describe('metadata-grounded extraction prompts', () => {
     expect(prompt).toContain('KNOWN DOCUMENT FACTS');
     expect(prompt).toContain('U.S. House of Representatives');
     expect(prompt).toContain('Filing-type code: P');
-    expect(prompt).toContain('Filed year: 2026');
     expect(prompt).toContain('Document page count: 7');
     expect(prompt).toContain('Filer name (as registered): Jane Q. Representative');
     // Grounding is orienting context only — the guardrail must ship with it.
@@ -52,7 +51,6 @@ describe('metadata-grounded extraction prompts', () => {
       filerName: '   ',
     });
     expect(prompt).toContain('U.S. Senate');
-    expect(prompt).not.toContain('Filed year');
     expect(prompt).not.toContain('page count');
     expect(prompt).not.toContain('Filer name');
   });

@@ -30,6 +30,7 @@ export type ClientTrade = {
     filedDate: string | null;
     firstSeenAt: string | null;
     sourceUrl: string | null;
+    pdfUrl: string | null;
   };
   confidence: number;
   source: 'primary' | 'seed_dataset';
