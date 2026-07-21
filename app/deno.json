@@ -1,4 +1,5 @@
 {
+  "nodeModulesDir": "auto",
   "unstable": [
     "kv",
     "cron"
