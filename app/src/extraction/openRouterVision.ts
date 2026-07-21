@@ -40,10 +40,11 @@ import {
 import {
   buildExtractionPrompt,
   loadExtractionPromptContext,
-  parseModelJson,
+  parseTruncationAwareJson,
   toParsedTx,
   fetchWithRetry,
   arrayBufferToBase64,
+  markSalvaged,
 } from './visionLlm';
 
 /** Live default (verified against the OpenRouter catalog 2026-07-18); the
@@ -583,13 +584,17 @@ export class OpenRouterVisionExtractor implements Extractor {
       combinedRaw = text;
 
       let parsedRows;
+      let salvaged = false;
+      const finishReason = payload.choices?.[0]?.finish_reason;
       try {
-        parsedRows = parseModelJson(text);
+        const result = parseTruncationAwareJson(text, finishReason === 'length');
+        parsedRows = result.rows;
+        salvaged = result.salvaged;
       } catch (err) {
         throw new Error(`${this.name}: could not parse model JSON: ${(err as Error).message}`);
       }
 
-      allRows = parsedRows.map(toParsedTx);
+      allRows = parsedRows.map(toParsedTx).map((tx: ParsedTx) => (salvaged ? markSalvaged(tx) : tx));
     } catch (err) {
       const usage =
         totalPromptTokens > 0 || totalCompletionTokens > 0 || pagesProcessed != null || providerCostUsd != null
