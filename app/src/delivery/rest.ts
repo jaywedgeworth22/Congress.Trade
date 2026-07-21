@@ -446,6 +446,35 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
+  // --- GET /documents/:docId/pdf ------------------------------------------
+  // Serves the raw PDF (if we fetched it) directly from R2, bypassing rate
+  // limits/walls on original sources.
+  r.get('/documents/:docId/pdf', async (c) => {
+    const docId = c.req.param('docId');
+    const filingRow = await get<FilingRow>(
+      c.env.DB,
+      'SELECT raw_object_key FROM filings WHERE doc_id = ?',
+      [docId],
+    );
+    if (!filingRow || !filingRow.raw_object_key) {
+      return c.json({ error: 'document not found or not fetched' }, 404);
+    }
+    const obj = await c.env.RAW_FILES.get(filingRow.raw_object_key);
+    if (!obj) {
+      return c.json({ error: 'document not found in storage' }, 404);
+    }
+    
+    // We expect PDFs, but let's be safe and use the stored content type if available,
+    // or fallback to application/pdf.
+    const contentType = obj.httpMetadata?.contentType || 'application/pdf';
+    return new Response(obj.body, {
+      headers: {
+        'content-type': contentType,
+        'content-disposition': 'inline', // Attempt to display in browser instead of auto-download
+      },
+    });
+  });
+
   // --- Market cache reads (cross-app sharing, reverse direction) ----------
   // App A is the always-on system of record; these public, read-only endpoints
   // let a sibling app reuse the FMP-derived data App A has already pulled
