@@ -1,5 +1,5 @@
 /// <reference lib="deno.unstable" />
-import { createClient } from '@libsql/client';
+import { createClient } from '@libsql/client/web';
 import { S3Client } from '@aws-sdk/client-s3';
 import { D1DatabaseShim, KVNamespaceShim, QueueShim, R2BucketShim } from './shims.ts';
 import worker from '../index.ts';
