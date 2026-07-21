@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   ping:
-    runs-on: [self-hosted, congress-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Set up Node for health-response validation
