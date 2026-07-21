@@ -108,6 +108,10 @@ export function benchmarkModelCatalog(): BakeoffCandidate[] {
   return [...byKey.values()];
 }
 
+/** Models OFFERED in the benchmark UI: the default bake-off lineup plus the
+ *  LlamaParse tiers. Excludes direct-provider LEGACY entries (decode-only —
+ *  no API key) and NON_OFFERED routes. Validation still uses the full
+ *  benchmarkModelCatalog(). */
 export function benchmarkSelectableCatalog(): BakeoffCandidate[] {
   const byKey = new Map<string, BakeoffCandidate>();
   for (const candidate of [...DEFAULT_CANDIDATES, ...LLAMAPARSE_CANDIDATES]) {
