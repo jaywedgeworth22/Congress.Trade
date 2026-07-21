@@ -5,7 +5,4 @@
   "dependencies": {
     "@sentry/cloudflare": "^10.63.0"
   },
-  "allowScripts": {
-    "github:jaywedgeworth22/congress-trading-shared#v1.11.1": true
-  }
 }
