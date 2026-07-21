@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   DeliveryRetryError,
   WEBHOOK_FANOUT_CONCURRENCY,
   WEBHOOK_SUBSCRIPTION_PAGE_SIZE,
   dispatchWebhook,
   visitActiveWebhookSubscriptionPage,
-} from '../webhook';
-import type { SubscriptionRow } from '../rows';
+} from '../webhook.ts';
+import type { SubscriptionRow } from '../rows.ts';
 
 function subscription(id: number): SubscriptionRow {
   return {

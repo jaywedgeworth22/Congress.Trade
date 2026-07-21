@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { sameRowSet } from '../agreement';
-import { arbitrationRowKey } from '../../extractors/types';
-import type { CandidateDocResult } from '../bakeoff';
-import type { ParsedTx } from '../../shared/types';
+import { sameRowSet } from '../agreement.ts';
+import { arbitrationRowKey } from '../../extractors/types.ts';
+import type { CandidateDocResult } from '../bakeoff.ts';
+import type { ParsedTx } from '../../shared/types.ts';
 
 /**
  * Direct, no-I/O tests for the agreement-cascade fingerprint's text-field

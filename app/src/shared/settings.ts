@@ -7,7 +7,7 @@
  * the dashboard never fails on a settings read.
  */
 
-import type { Env } from './types';
+import type { Env } from './types.ts';
 
 export type LogoDisplay = 'tile' | 'transparent' | 'off';
 

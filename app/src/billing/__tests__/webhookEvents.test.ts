@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   claimStripeWebhookEvent,
   markStripeWebhookEventProcessed,
   releaseStripeWebhookEvent,
-} from '../webhookEvents';
+} from '../webhookEvents.ts';
 
 interface EventRow {
   eventType: string;

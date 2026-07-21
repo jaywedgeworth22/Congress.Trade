@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Env } from '../../shared/types';
-import type { MeasuredThirdPartyUsage } from '../../shared/thirdPartyTelemetry';
-import type { CandidateDocResult } from '../bakeoff';
+import type { Env } from '../../shared/types.ts';
+import type { MeasuredThirdPartyUsage } from '../../shared/thirdPartyTelemetry.ts';
+import type { CandidateDocResult } from '../bakeoff.ts';
 
 const mocks = vi.hoisted(() => ({
   recordMeasuredThirdPartyUsage: vi.fn<
@@ -14,8 +14,8 @@ vi.mock('../../shared/thirdPartyTelemetry', async (importOriginal) => ({
   recordMeasuredThirdPartyUsage: mocks.recordMeasuredThirdPartyUsage,
 }));
 
-import { stableMeasuredUsageIdempotencyKey } from '../../shared/thirdPartyTelemetry';
-import { pushExtractionTelemetry } from '../telemetry';
+import { stableMeasuredUsageIdempotencyKey } from '../../shared/thirdPartyTelemetry.ts';
+import { pushExtractionTelemetry } from '../telemetry.ts';
 
 describe('extraction measured telemetry', () => {
   beforeEach(() => mocks.recordMeasuredThirdPartyUsage.mockClear());

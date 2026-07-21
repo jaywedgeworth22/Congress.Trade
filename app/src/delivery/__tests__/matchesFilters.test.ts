@@ -7,8 +7,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { matchesFilters, matchesFiltersWithChamber, matchesFiltersWithContext } from '../subscriptions';
-import type { SubscriptionFilters, Transaction } from '../../shared/types';
+import { matchesFilters, matchesFiltersWithChamber, matchesFiltersWithContext } from '../subscriptions.ts';
+import type { SubscriptionFilters, Transaction } from '../../shared/types.ts';
 
 /** Build a Transaction fixture with sensible defaults, overridable per-test. */
 function tx(overrides: Partial<Transaction> = {}): Transaction {

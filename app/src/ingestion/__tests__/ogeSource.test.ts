@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ogeDocId, ogeFiledDateFromName, parseOgeIndex, pollOgeExecutive } from '../ogeSource';
+import { ogeDocId, ogeFiledDateFromName, parseOgeIndex, pollOgeExecutive } from '../ogeSource.ts';
 
 /** Anchor markup lifted from the LIVE OGE President/VP index view (Domino
  *  renders single-quoted hrefs with raw spaces in filenames). */

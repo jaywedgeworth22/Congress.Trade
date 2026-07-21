@@ -5,8 +5,8 @@ import {
   MAX_SUBSCRIPTIONS_PER_USER,
   SubscriptionQuotaError,
   updateSubscription,
-} from '../subscriptions';
-import type { Env } from '../../shared/types';
+} from '../subscriptions.ts';
+import type { Env } from '../../shared/types.ts';
 
 function envWithCounts(total: number, active: number): Env {
   return { DB: { prepare: () => ({

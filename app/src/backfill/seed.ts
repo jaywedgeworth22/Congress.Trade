@@ -24,14 +24,14 @@
  * never clobbers an existing (possibly primary) row with the same identity.
  */
 
-import type { Chamber, Owner, Transaction, TxType, Env } from '../shared/types';
-import { batch } from '../shared/db';
-import { nearestBracket } from '../shared/brackets';
-import { sanitizeAssetName } from '../shared/text';
-import { estimateTransactionValue } from '../shared/transactionValue';
-import { scoreFields, loadResolver, type TickerResolver } from '../extraction/normalizer';
-import { resolveSecret } from '../secrets/infisical';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import type { Chamber, Owner, Transaction, TxType, Env } from '../shared/types.ts';
+import { batch } from '../shared/db.ts';
+import { nearestBracket } from '../shared/brackets.ts';
+import { sanitizeAssetName } from '../shared/text.ts';
+import { estimateTransactionValue } from '../shared/transactionValue.ts';
+import { scoreFields, loadResolver, type TickerResolver } from '../extraction/normalizer.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 // ---------------------------------------------------------------------------
 // Seed source URLs (centralized). Flag any uncertain ones here.
