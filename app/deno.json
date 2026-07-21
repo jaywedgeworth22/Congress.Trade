@@ -18,7 +18,6 @@
       "deno.window",
       "deno.unstable"
     ],
-    "module": "preserve"
   },
   "imports": {
     "@jaywedgeworth22/congress-trading-shared": "./shared.ts",
