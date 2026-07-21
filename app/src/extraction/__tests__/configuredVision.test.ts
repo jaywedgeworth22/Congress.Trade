@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../bakeoff', async () => {
-  const actual = await vi.importActual<typeof import('../bakeoff')>('../bakeoff');
+  const actual = await vi.importActual<typeof import('../bakeoff.ts')>('../bakeoff');
   return {
     ...actual,
     runCandidateOnDoc: mocks.runCandidateOnDoc,

@@ -35,7 +35,7 @@ vi.mock('../../extraction/agreement', () => ({
   handleAgreementCheck: vi.fn(async () => {}),
 }));
 vi.mock('../thirdPartyTelemetry', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../thirdPartyTelemetry')>()),
+  ...(await importOriginal<typeof import('../thirdPartyTelemetry.ts')>()),
   flushUsageTelemetryFallback: mocks.telemetryFallback,
 }));
 
