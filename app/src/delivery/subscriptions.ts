@@ -195,13 +195,13 @@ export function generateSecret(): string {
 export async function createSubscription(
   env: Env,
   input: Omit<Subscription, 'id' | 'cursor' | 'active' | 'createdAt'> &
-    Partial<Pick<Subscription, 'cursor' | 'active'>>,
+    Partial<Pick<Subscription, 'id' | 'cursor' | 'active'>>,
 ): Promise<Subscription> {
   const suppliedSecretError = input.secret == null ? null : subscriptionSecretError(input.secret);
   if (suppliedSecretError) throw new Error(suppliedSecretError);
   const targetLengthError = webhookTargetLengthError(input.targetUrl ?? null);
   if (targetLengthError) throw new Error(targetLengthError);
-  const id = prefixedId('sub');
+  const id = input.id ?? prefixedId('sub');
   const createdAt = new Date().toISOString();
   const cursor = input.cursor ?? 0;
   const active = input.active ?? true;
@@ -219,7 +219,8 @@ export async function createSubscription(
     createdAt,
   };
 
-  await runSubscriptionWrite(
+  try {
+    await runSubscriptionWrite(
       env,
       `INSERT INTO subscriptions (${SELECT_COLS})
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -235,6 +236,14 @@ export async function createSubscription(
         sub.createdAt,
       ],
     );
+  } catch (err) {
+    if (!input.id || !/UNIQUE constraint failed:\s*subscriptions\.id/i.test(err instanceof Error ? err.message : String(err))) {
+      throw err;
+    }
+    const existing = await getSubscription(env, input.id);
+    if (existing?.clientId === input.clientId) return existing;
+    throw err;
+  }
 
   return sub;
 }
