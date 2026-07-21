@@ -161,10 +161,138 @@ describe('runPriceRefresh — successful fetch bookkeeping', () => {
     const row = srRow('GONE');
     // Marked unavailable (TTL-bounded) so it stops being re-selected + re-fetched
     // every day, even though the fetch was non-empty. latest_price_date/current
-    // price still reflect the last real close.
-    expect(row?.price_unavailable).toBe(1);
+    // price still reflect the last real close. Stalled-listing uses its own
+    // stage value (3 = PRICE_UNAVAILABLE_STALLED), distinct from the two
+    // not-found stages (1/2) — same 30-day recheck cadence, but a different
+    // status so a reader can tell "confirmed empty" apart from "stopped
+    // trading" without re-deriving it from latest_price_date.
+    expect(row?.price_unavailable).toBe(3);
     expect(row?.latest_price_date).toBe('2020-01-15');
     expect(row?.current_price).toBe(50);
+  });
+});
+
+describe('runPriceRefresh — two-stage not-found backoff (7d then 30d)', () => {
+  it('marks the FIRST empty-history result as stage 1 (not stage 2/stalled)', async () => {
+    seedTrade('t6', 'DEAD1', '2026-01-05');
+    await runPriceRefresh(env, { max: 10 });
+    expect(srRow('DEAD1')?.price_unavailable).toBe(1);
+  });
+
+  it('escalates to stage 2 on a SECOND consecutive empty-history result', async () => {
+    seedTrade('t7', 'DEAD2', '2026-01-05');
+    // Pre-seed a first-stage miss whose 7-day recheck has already elapsed, so
+    // this ticker is selected again this run.
+    db.prepare(
+      `INSERT INTO securities_ref (ticker, price_unavailable, price_checked_at)
+       VALUES ('DEAD2', 1, '2000-01-01T00:00:00Z')`,
+    ).run();
+
+    await runPriceRefresh(env, { max: 10 });
+
+    expect(srRow('DEAD2')?.price_unavailable).toBe(2); // escalated 1 → 2
+  });
+
+  it('restarts at stage 1 for a ticker that was previously priced (not mid not-found streak)', async () => {
+    seedTrade('t8', 'FLIP', '2026-01-05');
+    // Was successfully priced before (price_unavailable=0), now goes empty.
+    db.prepare(
+      `INSERT INTO securities_ref (ticker, price_unavailable, price_checked_at, latest_price_date)
+       VALUES ('FLIP', 0, '2026-07-01T00:00:00Z', '2026-07-01')`,
+    ).run();
+
+    await runPriceRefresh(env, { max: 10 });
+
+    expect(srRow('FLIP')?.price_unavailable).toBe(1); // restarts at stage 1, not 2
+  });
+});
+
+describe('runPriceRefresh — abort on auth/plan/rate-limit (401/402/403/429)', () => {
+  it('aborts the whole run when the SPX fetch hits a fatal provider error, never attempting any ticker', async () => {
+    seedTrade('t9', 'AAA', '2026-01-05');
+    seedTrade('t10', 'BBB', '2026-01-06');
+    h.errors.add('SPY'); // spxHistory throws FMP_HTTP_429 (fatal — see FATAL_PRICE_PROVIDER_ERROR)
+
+    const res = await runPriceRefresh(env, { max: 10 });
+
+    expect(res.aborted).toBe(true);
+    expect(res.errors.some((e) => e.startsWith('spx:'))).toBe(true);
+    expect(h.eodCalls.some((c) => c.symbol === 'AAA' || c.symbol === 'BBB')).toBe(false);
+    // Nothing was written for either un-attempted ticker.
+    expect(srRow('AAA')).toBeUndefined();
+    expect(srRow('BBB')).toBeUndefined();
+  });
+
+  it('aborts mid-loop on a fatal per-ticker error, leaving tickers not yet reached completely untouched', async () => {
+    seedTrade('t11', 'FIRSTOK', '2026-01-05'); // oldest-traded → attempted first
+    seedTrade('t12', 'FATAL', '2026-01-06');
+    seedTrade('t13', 'NEVERREACHED', '2026-01-07'); // newest-traded → after FATAL
+    h.responses.set('FIRSTOK', [{ date: '2026-07-11', close: 100 }]);
+    h.errors.add('FATAL'); // eodHistory throws FMP_HTTP_429 for this ticker
+
+    const res = await runPriceRefresh(env, { max: 10 });
+
+    expect(res.aborted).toBe(true);
+    expect(res.errors.some((e) => e.includes('FATAL'))).toBe(true);
+    // Processed before the fatal error: succeeded normally.
+    expect(srRow('FIRSTOK')?.current_price).toBe(100);
+    // Never reached (oldest-first order puts it after FATAL): no negative-cache
+    // write, no partial state — completely untouched for the next run.
+    expect(h.eodCalls.some((c) => c.symbol === 'NEVERREACHED')).toBe(false);
+    expect(srRow('NEVERREACHED')).toBeUndefined();
+  });
+});
+
+describe('runPriceRefresh — accurate meter counting (an attempt counts even when it throws)', () => {
+  it('counts a thrown per-ticker fetch attempt against fmpCalls, same as a successful one', async () => {
+    seedTrade('t14', 'FATAL2', '2026-01-05');
+    h.errors.add('FATAL2');
+
+    const res = await runPriceRefresh(env, { max: 10 });
+
+    // 1 attempt for SPX (succeeds, empty response) + 1 attempt for FATAL2 (throws) = 2.
+    expect(res.fmpCalls).toBe(2);
+    expect(res.aborted).toBe(true);
+  });
+
+  it('counts the SPX attempt itself even when SPX throws before any ticker is reached', async () => {
+    seedTrade('t15', 'AAA2', '2026-01-05');
+    h.errors.add('SPY');
+
+    const res = await runPriceRefresh(env, { max: 10 });
+
+    expect(res.fmpCalls).toBe(1); // the SPX attempt only; the ticker loop never ran
+    expect(res.aborted).toBe(true);
+  });
+});
+
+describe('runPriceRefresh — SPX anchor preservation when spx_eod coverage is incomplete', () => {
+  it('preserves a previously-computed spx_at_trade/spx_at_filing instead of nulling them out', async () => {
+    seedTrade('tx-anchor', 'ANCH', '2020-01-05');
+    // Cached price history already covers the trade date (a normal, previously-
+    // enriched ticker) — the ticker's OWN price side recomputes to the SAME value.
+    db.prepare("INSERT INTO price_eod (ticker, date, close) VALUES ('ANCH', '2020-01-03', 40)").run();
+    // A prior run had already computed SPX anchors for this trade.
+    db.prepare(
+      `INSERT INTO tx_performance (tx_id, price_at_trade, spx_at_trade, price_at_filing, spx_at_filing, computed_at)
+       VALUES ('tx-anchor', 40, 999, 40, 888, '2020-01-01T00:00:00Z')`,
+    ).run();
+    // This run: the ticker's OWN fetch succeeds (a fresh, unrelated close)...
+    h.responses.set('ANCH', [{ date: '2026-07-11', close: 55 }]);
+    // ...but SPX comes back empty this run (h.responses has nothing for 'SPY'),
+    // so spx_eod stays completely empty — the spx_at_trade/spx_at_filing
+    // subqueries resolve NULL regardless of this ticker's own success.
+
+    await runPriceRefresh(env, { max: 10 });
+
+    const row = db
+      .prepare(
+        'SELECT price_at_trade, spx_at_trade, price_at_filing, spx_at_filing FROM tx_performance WHERE tx_id = ?',
+      )
+      .get('tx-anchor');
+    expect(row?.price_at_trade).toBe(40); // ticker's own anchor recomputed (unaffected by the SPX gap)
+    expect(row?.spx_at_trade).toBe(999); // preserved, NOT nulled by this run's incomplete spx_eod
+    expect(row?.spx_at_filing).toBe(888); // preserved, NOT nulled
   });
 });
 

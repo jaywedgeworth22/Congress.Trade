@@ -27,12 +27,17 @@ interface MockState {
   openRuns: Array<{ id: string; status: string; updated_at: string }>;
   runRow: Record<string, unknown> | null;
   docs: EligibleDocRow[];
+  /** Docs findable ONLY by the legacy-replay fallback query (never the primary one). */
+  legacyReplayDocs: EligibleDocRow[];
+  /** Set false to simulate a concurrent selector winning the reset race first. */
+  legacyReplayResetLands: boolean;
   readsByDoc: Record<string, Array<{ provider: string; model: string; ok: number; error: string | null; usage_json: string | null }>>;
   backlogCount: number;
   budget: Map<string, number>;
   runUpdates: Array<{ sql: string; params: unknown[] }>;
   runInserts: unknown[][];
   reviewUpdates: Array<{ sql: string; params: unknown[] }>;
+  legacyReplayResets: Array<{ docId: string; params: unknown[] }>;
   decisions: unknown[][];
   selectionSqls: string[];
 }
@@ -42,12 +47,15 @@ function makeState(over: Partial<MockState> = {}): MockState {
     openRuns: [],
     runRow: null,
     docs: [],
+    legacyReplayDocs: [],
+    legacyReplayResetLands: true,
     readsByDoc: {},
     backlogCount: 0,
     budget: new Map(),
     runUpdates: [],
     runInserts: [],
     reviewUpdates: [],
+    legacyReplayResets: [],
     decisions: [],
     selectionSqls: [],
     ...over,
@@ -106,8 +114,13 @@ function makeEnv(state: MockState, envVars: Record<string, unknown> = {}): {
           }
           if (/SELECT f\.doc_id, f\.raw_object_key, f\.chamber, f\.page_count/i.test(sql)) {
             state.selectionSqls.push(sql);
-            const excluded = new Set(JSON.parse(String(this.params[3])) as string[]);
-            return (state.docs.find((doc) => !excluded.has(doc.doc_id)) as T) ?? null;
+            // Legacy-replay predicates use ">= ?" on agreement_attempts and query
+            // a distinct pool; the primary predicates use "< ?" against `docs`.
+            const isLegacyReplay = /agreement_attempts,\s*0\)\s*>=/i.test(sql);
+            const excludedIdx = isLegacyReplay ? 2 : 3;
+            const excluded = new Set(JSON.parse(String(this.params[excludedIdx])) as string[]);
+            const pool = isLegacyReplay ? state.legacyReplayDocs : state.docs;
+            return (pool.find((doc) => !excluded.has(doc.doc_id)) as T) ?? null;
           }
           if (/SELECT spend_microusd FROM autopilot_budget/i.test(sql)) {
             const day = String(this.params[0]);
@@ -184,6 +197,11 @@ function makeEnv(state: MockState, envVars: Record<string, unknown> = {}): {
           }
           if (/UPDATE review_queue/i.test(sql)) {
             state.reviewUpdates.push({ sql, params: this.params });
+            if (/agreement_legacy_replay_at = \?/.test(sql) && /agreement_attempts = 0/.test(sql)) {
+              const docId = String(this.params[1]);
+              state.legacyReplayResets.push({ docId, params: this.params });
+              return { success: true, meta: { changes: state.legacyReplayResetLands ? 1 : 0 } };
+            }
             return { success: true, meta: { changes: 1 } };
           }
           if (/INSERT INTO ingestion_decisions/i.test(sql)) {
@@ -424,6 +442,89 @@ describe('handleAutopilotTick — doc_class consumers', () => {
     });
     expect(classify).toHaveBeenCalledWith(env, 'H-1', 'raw/H-1.pdf');
     expect(check).not.toHaveBeenCalled(); // classified empty → resolved, not extracted
+  });
+});
+
+describe('handleAutopilotTick — legacy-replay fallback (exhausted-attempt backlog)', () => {
+  it('is a no-op by default: an idle tick with only exhausted docs still reports backlog_drained untouched', async () => {
+    const state = makeState({
+      runRow: runRow(),
+      docs: [],
+      legacyReplayDocs: [doc('E-1')],
+    });
+    const { env } = makeEnv(state); // AUTOPILOT_LEGACY_REPLAY_ENABLED unset -> default off
+    const check = vi.fn();
+    await handleAutopilotTick(env, 'run-1', { check: check as never });
+
+    expect(check).not.toHaveBeenCalled();
+    expect(state.legacyReplayResets).toHaveLength(0);
+    const final = finalUpdate(state);
+    expect(final!.params[9]).toBe('completed');
+    expect(final!.params[10]).toBe('backlog_drained'); // byte-identical to pre-existing behavior
+  });
+
+  it('when enabled, falls back to an exhausted doc only once the normal pool is empty, resets it, and runs the SAME cascade', async () => {
+    const state = makeState({
+      runRow: runRow(),
+      docs: [],
+      legacyReplayDocs: [doc('E-1')],
+    });
+    const { env } = makeEnv(state, { AUTOPILOT_LEGACY_REPLAY_ENABLED: 'true' });
+    const check = vi.fn(async () => ({ docId: 'E-1', outcome: 'published', inserted: 2 }) as AgreementDocResult);
+    await handleAutopilotTick(env, 'run-1', { check: check as never });
+
+    // The reset landed before the cascade ran, and reset the exact fields the
+    // cascade's own attempt-cap lease depends on.
+    expect(state.legacyReplayResets).toHaveLength(1);
+    expect(state.legacyReplayResets[0].docId).toBe('E-1');
+    const resetSql = state.reviewUpdates.find((u) => /agreement_legacy_replay_at = \?/.test(u.sql))!.sql;
+    expect(resetSql).toContain('agreement_attempts = 0');
+    expect(resetSql).toContain('agreement_tier = NULL');
+    expect(resetSql).toContain('agreement_legacy_replay_at IS NULL'); // exactly-once guard
+
+    // Reset happened strictly BEFORE the cascade call for the same doc.
+    const resetIndex = state.reviewUpdates.findIndex((u) => /agreement_legacy_replay_at = \?/.test(u.sql));
+    expect(resetIndex).toBeGreaterThanOrEqual(0);
+    expect(check).toHaveBeenCalledWith(env, 'E-1', 'raw/E-1.pdf');
+  });
+
+  it('never displaces a normally-eligible doc: the legacy pool is only consulted once the primary pool is empty', async () => {
+    const state = makeState({
+      runRow: runRow(),
+      docs: [doc('H-1')], // normally eligible (attempts < cap)
+      legacyReplayDocs: [doc('E-1')], // exhausted, replay-eligible
+    });
+    // DOCS_PER_TICK is 3, so without this cap the tick would correctly exhaust
+    // the single primary doc in slot 1 and fall through to the legacy pool for
+    // slots 2-3 (there being nothing else eligible) — that IS the intended
+    // fallback behavior, not what this test isolates. Capping at 1 doc keeps
+    // the assertion to exactly what it claims: primary strictly wins when both
+    // pools have a candidate for the SAME slot.
+    const { env } = makeEnv(state, { AUTOPILOT_LEGACY_REPLAY_ENABLED: 'true', AUTOPILOT_MAX_DOCS_PER_RUN: '1' });
+    const check = vi.fn(async () => ({ docId: 'H-1', outcome: 'published', inserted: 1 }) as AgreementDocResult);
+    await handleAutopilotTick(env, 'run-1', { check: check as never });
+
+    expect(state.legacyReplayResets).toHaveLength(0);
+    expect(check).toHaveBeenCalledWith(env, 'H-1', 'raw/H-1.pdf');
+    expect(check).not.toHaveBeenCalledWith(env, 'E-1', expect.anything());
+  });
+
+  it('loses the reset race cleanly: a concurrent selector already replayed the doc, so this tick treats the pool as empty', async () => {
+    const state = makeState({
+      runRow: runRow(),
+      docs: [],
+      legacyReplayDocs: [doc('E-1')],
+      legacyReplayResetLands: false, // simulate a lost CAS (another run already reset+stamped it)
+    });
+    const { env } = makeEnv(state, { AUTOPILOT_LEGACY_REPLAY_ENABLED: 'true' });
+    const check = vi.fn();
+    await handleAutopilotTick(env, 'run-1', { check: check as never });
+
+    expect(state.legacyReplayResets).toHaveLength(1); // the attempt was made...
+    expect(check).not.toHaveBeenCalled(); // ...but never granted a second grace reset
+    const final = finalUpdate(state);
+    expect(final!.params[9]).toBe('completed');
+    expect(final!.params[10]).toBe('backlog_drained');
   });
 });
 
