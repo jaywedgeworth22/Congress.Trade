@@ -25,6 +25,7 @@
     "@google/genai": "^2.12.0",
     "@jaywedgeworth22/congress-trading-shared": "file:./vendor/congress-trading-shared",
     "@libsql/client": "^0.17.4",
+    "zod": "^4.4.3",
     "@sentry/cloudflare": "^10.66.0",
     "cheerio": "^1.2.0",
     "fflate": "^0.8.3",
