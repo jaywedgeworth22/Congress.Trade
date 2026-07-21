@@ -6602,9 +6602,9 @@ function spCardHtml(p) {
   } else if (ahead) {
     badgeCls = 'sp-badge ahead'; badgeTxt = 'Ahead';
   } else if (tied) {
-    badgeCls = 'sp-badge tied'; badgeTxt = 'Tied';
+    badgeCls = 'sp-badge tied'; badgeTxt = 'Tied ↔';
   } else {
-    badgeCls = 'sp-badge behind'; badgeTxt = 'Behind';
+    badgeCls = 'sp-badge behind'; badgeTxt = 'Behind ↓';
   }
   var header = '<div class="sp-header"><span class="sp-name">' + esc(p.label) + '</span>' +
     '<span class="' + badgeCls + '">' + badgeTxt + '</span></div>';
@@ -6636,7 +6636,7 @@ function spCardHtml(p) {
     var sign = isPos ? '+' : '';
     var p90Txt = p.p90LeadSec != null ? '<div style="font-size:11px;color:var(--text-dim);margin-top:3px">P90: ' + fmtLead(p.p90LeadSec) + '</div>' : '';
     leadHtml = '<div class="sp-lead">' +
-      '<div class="' + numCls + '">' + sign + fmtLead(med) + '</div>' +
+      '<div class="' + numCls + '">' + sign + fmtLead(Math.abs(med)) + '</div>' +
       '<div class="sp-lead-label">typical lead<br>vs. their feed' + p90Txt + '</div>' +
       '</div>';
   }
@@ -7129,7 +7129,8 @@ function perfLineHtml(d, txType) {
 function kvRow(k, v) { return '<dt>' + esc(k) + '</dt><dd>' + v + '</dd>'; }
 function actionBadge(type) {
   var label = typeName[type] || type || 'Unknown';
-  return '<span class="tag ' + esc(type || '') + '" title="' + esc(label) + '">' + esc(label) + '</span>';
+  var arrow = type === 'P' ? ' ↗' : type === 'S' ? ' ↘' : type === 'E' ? ' ↔' : '';
+  return '<span class="tag ' + esc(type || '') + '" title="' + esc(label) + '">' + esc(label) + arrow + '</span>';
 }
 function amountText(min, max) {
   if (min == null && max == null) return '—';
@@ -7249,10 +7250,10 @@ function miniTradeDateHtml(t) {
   if (t.txDate && pub) {
     var ms = new Date(pub).getTime() - new Date(t.txDate).getTime();
     if (!isNaN(ms) && ms >= 0) {
-      sub += ' (+' + Math.round(ms / 86400000) + 'd)';
+      sub = 'Filed ' + Math.round(ms / 86400000) + ' days later';
     }
   }
-  return '<div class="mini-date"><span>Traded ' + esc(traded) + '</span><span class="subline">' + esc(sub) + '</span></div>';
+  return '<div class="mini-date"><span>' + esc(traded) + '</span><span class="subline">' + esc(sub) + '</span></div>';
 }
 function miniTradeDateOnlyHtml(t) {
   return '<div class="mini-date"><span>' + esc(dateText(t.txDate)) + '</span></div>';

@@ -2,10 +2,10 @@
 import { createClient } from 'npm:@libsql/client/web';
 import { S3Client } from 'npm:@aws-sdk/client-s3';
 import { D1DatabaseShim, KVNamespaceShim, QueueShim, R2BucketShim } from './shims.ts';
-import app from '../app.ts';
+import app from '../index.ts';
 import type { Env, QueueMessage } from '../shared/types.ts';
 import { resolveSecret, refreshSecrets } from '../secrets/infisical.ts';
-import { handleIngestMessage, handleDeliveryMessage, handleDeadLetterMessage } from '../queueHandlers.ts';
+import { handleIngestMessage, handleDeliveryMessage, handleDeadLetterMessage } from '../index.ts';
 import { flushD1Budget } from '../shared/d1Budget.ts';
 import { maybeRunDailyJobs } from '../jobs.ts';
 import { isTerminalUsageTelemetryDeliveryError, persistUsageTelemetryFallback } from '../shared/thirdPartyTelemetry.ts';
