@@ -40,7 +40,7 @@ permissions:
 
 jobs:
   sync:
-    runs-on: [self-hosted, congress-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
