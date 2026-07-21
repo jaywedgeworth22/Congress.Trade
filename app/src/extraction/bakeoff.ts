@@ -86,13 +86,14 @@ export interface CandidateInvocation {
  *
  * `mistral/mistral-ocr-latest` is NOT a listed OpenRouter chat model — the
  * OpenRouter vision adapter (openRouterVision.ts) special-cases it as the
- * mistral-ocr file-parser plugin, so it MUST stay this exact slug. Every other
- * openrouter slug was verified LIVE against the OpenRouter models API (2026-07-16
- * for the pre-existing set; terra-pro and claude-haiku-4.5 verified 2026-07-17).
- * Note claude-haiku-4.5 uses a DOT — `anthropic/claude-haiku-4-5` (dash) does not
- * exist on OpenRouter. Slugs confirmed absent from the live API (gemini-pro-1.5 /
- * flash-1.5 / 2.0-flash-thinking-exp, claude-3.5/3.7 family, mistral-large-2411,
- * grok-2-vision-1212, qwen-2.5-vl-72b:free, qwen-max, yi-large, kimi-chat,
+ * mistral-ocr file-parser plugin, so it MUST stay this exact slug. Every other openrouter slug was verified LIVE
+ * against the OpenRouter models API (2026-07-16 for the pre-existing set; claude-haiku-4.5
+ * verified 2026-07-17, anthropic/claude-opus-4.8 verified 2026-07-19).
+ * openrouter/auto and the higher-tier GPT-5.6 models (terra-pro, sol) were moved to
+ * NON_OFFERED_CANDIDATES. Note claude-haiku-4.5 uses a DOT — `anthropic/claude-haiku-4-5`
+ * (dash) does not exist on OpenRouter. Slugs confirmed absent from the live API
+ * (gemini-pro-1.5 / flash-1.5 / 2.0-flash-thinking-exp, claude-3.5/3.7 family,
+ * mistral-large-2411, grok-2-vision-1212, qwen-2.5-vl-72b:free, qwen-max, yi-large, kimi-chat,
  * minimax-hep-lite, deepseek-chat/-coder) must never reappear — every benchmark
  * cell for a dead slug can only fail. `google/gemini-3.5-flash` is the OR-transport
  * route around the blocked direct Gemini key.
