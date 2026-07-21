@@ -3039,10 +3039,14 @@ function addColResizer(th) {
 /* ---- sorting ---- */
 function sortVal(r, key) {
   if (key === 'asset') return (r.ticker || r.asset || '');
-  if (key === 'published') return publishedRaw(r);
   if (key === 'lag') { var d = lagDays(r); return d == null ? -Infinity : d; }
-  var v = r[key];
+  var v = key === 'published' ? publishedRaw(r) : r[key];
   if (NUMERIC_SORT[key]) return (v == null ? -Infinity : Number(v));
+  if (key === 'txdate' || key === 'traded' || key === 'filed' || key === 'imported' || key === 'published') {
+    if (!v) return sortDir > 0 ? '\uFFFF' : '';
+    var today = new Date().toISOString().slice(0, 10);
+    return v > today ? today : String(v).toLowerCase();
+  }
   return (v == null ? '' : String(v)).toLowerCase();
 }
 function sortRows(rows) {
@@ -3346,7 +3350,7 @@ function fetchUpdates() {
           seenDocs[r.docId] = true;
         }
       });
-      TRADES = txs.concat(TRADES).slice(0, feedPageSize);
+      TRADES = sortRows(txs.concat(TRADES)).slice(0, feedPageSize);
       if (typeof data.cursor === 'number' && data.cursor > cursor) cursor = data.cursor;
       if (totalRows) totalRows += txs.length;
       setFeedKpis();
@@ -3409,7 +3413,7 @@ function startStream() {
           var alreadyDoc = TRADES.some(function (r) { return r.docId && r.docId === row.docId; });
           if ((row.imported || '').slice(0, 10) === today && row.docId && !alreadyDoc) filingsImportedToday += 1;
           TRADES.unshift(row);
-          TRADES = TRADES.slice(0, feedPageSize);
+          TRADES = sortRows(TRADES).slice(0, feedPageSize);
           if (totalRows) totalRows += 1;
           changed = true;
         }
