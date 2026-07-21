@@ -112,7 +112,7 @@ export async function shareWithPeer(
   if (targetKey) {
     const gate = await checkTargetCircuit(env, targetKey);
     if (!gate.allowed) {
-      return { sent: false, reason: `peer target circuit ${gate.reason}` };
+      return { sent: false, reason: `peer target circuit ${(gate as any).reason}` };
     }
   }
 
