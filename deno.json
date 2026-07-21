@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "lib": ["esnext", "dom", "deno.ns"]
+  },
+  "imports": {
+    "#sentry": "./app/src/deno/sentryDummy.ts",
+    "@jaywedgeworth22/congress-trading-shared": "./app/vendor/congress-trading-shared/src/index.ts",
+    "zod": "https://deno.land/x/zod@v3.23.8/mod.ts"
+  }
+}
