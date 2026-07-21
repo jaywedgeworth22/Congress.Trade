@@ -19,7 +19,7 @@
  *   exactly-once if it crashes after POST but before recording success.
  */
 
-import { createCongressEvent } from '../../vendor/congress-trading-shared/dist/index.mjs';
+import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, Subscription, Transaction } from '../shared/types';
 import { all, get, run } from '../shared/db';
 import { prefixedId } from '../shared/ids';

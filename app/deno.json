@@ -1,7 +1,8 @@
 {
   "unstable": [
     "kv",
-    "cron"
+    "cron",
+    "sloppy-imports"
   ],
   "exclude": [
     "node_modules",
