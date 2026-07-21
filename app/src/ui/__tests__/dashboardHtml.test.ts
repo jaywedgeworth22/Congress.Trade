@@ -21,6 +21,25 @@ function scriptBlocks(html: string): string[] {
   return blocks;
 }
 
+/** Extracts just the named top-level functions (each matched independently to
+ *  its own closing brace) rather than a wide template span, so unrelated
+ *  top-level statements between them are never executed. */
+function loadDashboardFunctions(names: string[]): string[] {
+  return names.map((name) => {
+    const match = DASHBOARD_HTML.match(new RegExp(`function ${name}\\([^)]*\\) \\{[\\s\\S]*?\\n\\}`));
+    if (!match) throw new Error(`${name} was not found in DASHBOARD_HTML`);
+    return match[0];
+  });
+}
+
+function loadBenchmarkManualOptionHtml(state: { settings: { catalog: Array<Record<string, unknown>> } }) {
+  const sources = loadDashboardFunctions([
+    'esc', 'benchmarkModelKey', 'benchmarkCatalogModels', 'benchmarkManualOptionHtml',
+  ]);
+  const factory = new Function('benchmarkState', sources.join('\n\n') + '\nreturn benchmarkManualOptionHtml;');
+  return factory(state) as (selected: string) => string;
+}
+
 function loadBenchmarkPresentationHelpers() {
   const match = DASHBOARD_HTML.match(
     /function benchmarkResultIsComplete\(result\) \{[\s\S]*?\n\}\n\nfunction normalizedBenchmarkLineup/,
@@ -558,22 +577,38 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('viewReadings(docId); // refresh this doc\'s runs display with the new reading(s)');
   });
 
-  it('derives every model menu from the ONE server-injected benchmark catalog', () => {
-    // The catalog is serialized from benchmarkModelCatalog() at module load —
-    // no hand-maintained duplicate lists remain in the template.
+  it('derives every model menu from the ONE server-injected benchmark catalog, offered-only (no unconfigured direct providers)', () => {
+    // The catalog is serialized from benchmarkSelectableCatalog() at module
+    // load — no hand-maintained duplicate lists remain in the template, and
+    // direct-provider LEGACY_CANDIDATES entries (Jay holds no API key for any
+    // of them) never reach the checkbox grid, re-read menu, or quick-run select.
     expect(DASHBOARD_HTML).toContain('var BENCHMARK_CATALOG = [');
     expect(DASHBOARD_HTML).toContain('var REREAD_MODELS = BENCHMARK_CATALOG;');
     expect(DASHBOARD_HTML).not.toContain("{ provider: 'gemini', model: 'gemini-3.5-flash' }");
-    // Injected JSON carries the corrected DEFAULT_CANDIDATES + LlamaParse set.
-    expect(DASHBOARD_HTML).not.toContain('{"provider":"gemini","model":"gemini-3.5-flash"}');
-    expect(DASHBOARD_HTML).not.toContain('{"provider":"openai","model":"gpt-5.6-terra"}');
-    expect(DASHBOARD_HTML).not.toContain('{"provider":"openrouter","model":"openrouter/auto"}');
-    expect(DASHBOARD_HTML).not.toContain('{"provider":"openrouter","model":"openai/gpt-5.6-terra-pro"}');
-    expect(DASHBOARD_HTML).not.toContain('{"provider":"openrouter","model":"openai/gpt-5.6-sol"}');
-    expect(DASHBOARD_HTML).toContain('{"provider":"openrouter","model":"deepseek/deepseek-v4-pro"}');
-    expect(DASHBOARD_HTML).toContain('{"provider":"openrouter","model":"deepseek/deepseek-v4-flash"}');
-    expect(DASHBOARD_HTML).toContain('{"provider":"openrouter","model":"google/gemini-3.5-flash"}');
-    expect(DASHBOARD_HTML).toContain('{"provider":"llamaparse","model":"fast"}');
+    const match = DASHBOARD_HTML.match(/var BENCHMARK_CATALOG = (\[[\s\S]*?\]);/);
+    expect(match).not.toBeNull();
+    const catalog = JSON.parse(match![1]) as Array<{ provider: string; model: string }>;
+    const keys = catalog.map((m) => `${m.provider}:${m.model}`);
+
+    // No direct-provider entry (LEGACY_CANDIDATES) reaches the offered UI —
+    // those exist only for decode/replay of historical extraction_runs.
+    const directProviders = ['gemini', 'openai', 'anthropic', 'mistral', 'xai'];
+    expect(catalog.filter((m) => directProviders.includes(m.provider))).toEqual([]);
+
+    // openrouter/auto and the higher-tier GPT-5.6 models are catalog-valid
+    // (NON_OFFERED_CANDIDATES) but intentionally not offered here.
+    expect(keys).not.toContain('openrouter:openrouter/auto');
+    expect(keys).not.toContain('openrouter:openai/gpt-5.6-terra-pro');
+    expect(keys).not.toContain('openrouter:openai/gpt-5.6-sol');
+
+    // The routine OpenRouter lineup, including the newly added Opus 4.8, is present.
+    expect(keys).toContain('openrouter:mistral/mistral-ocr-latest');
+    expect(keys).toContain('openrouter:openai/gpt-5.6-terra');
+    expect(keys).toContain('openrouter:deepseek/deepseek-v4-pro');
+    expect(keys).toContain('openrouter:deepseek/deepseek-v4-flash');
+    expect(keys).toContain('openrouter:google/gemini-3.5-flash');
+    expect(keys).toContain('openrouter:anthropic/claude-opus-4.8');
+    expect(keys).toContain('llamaparse:fast');
     // Dead-on-OpenRouter slugs and the retired GPT-4o family never render.
     expect(DASHBOARD_HTML).not.toContain('gpt-4o');
     expect(DASHBOARD_HTML).not.toContain('google/gemini-pro-1.5');
@@ -589,6 +624,31 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function benchmarkModelCheckboxesHtml() {\n  return REREAD_MODELS.map(');
     expect(DASHBOARD_HTML).toContain("return '<option value=\"\">-- Choose Model --</option>' + REREAD_MODELS.map(");
     expect(DASHBOARD_HTML).toContain('customModels = REREAD_MODELS.map(');
+  });
+
+  it('benchmarkManualOptionHtml surfaces a slot pinned outside the offered catalog instead of silently reselecting', () => {
+    const catalog = [
+      { provider: 'openrouter', model: 'openai/gpt-5.6-terra', configured: true },
+      { provider: 'openrouter', model: 'openai/gpt-5.6-luna', configured: true },
+    ];
+    const benchmarkManualOptionHtml = loadBenchmarkManualOptionHtml({ settings: { catalog } });
+
+    // Saved value present in the offered catalog: no synthetic option, exactly
+    // the one matching <option> is selected.
+    const inCatalog = benchmarkManualOptionHtml('openrouter:openai/gpt-5.6-terra');
+    expect(inCatalog).not.toContain('not in offered list');
+    expect((inCatalog.match(/ selected/g) || []).length).toBe(1);
+
+    // Saved value pinned OUTSIDE the offered catalog (e.g. a targeted Sol run,
+    // or a since-demoted NON_OFFERED_CANDIDATES model): must surface as an
+    // explicit selected synthetic option instead of silently falling through
+    // to the browser's default first-option selection, which would let an
+    // unrelated "Save all five slots" click quietly overwrite the live value.
+    const outOfCatalog = benchmarkManualOptionHtml('openrouter:openai/gpt-5.6-sol');
+    expect(outOfCatalog).toContain(
+      '<option value="openrouter:openai/gpt-5.6-sol" selected>openrouter:openai/gpt-5.6-sol (current — not in offered list)</option>',
+    );
+    expect((outOfCatalog.match(/ selected/g) || []).length).toBe(1);
   });
 
   it('renders ONE unified per-chamber Model slots (A–E) panel with a single save flow', () => {
