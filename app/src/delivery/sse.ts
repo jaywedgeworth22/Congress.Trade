@@ -52,7 +52,7 @@ import { all, get, run } from '../shared/db';
 import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows';
 import { matchesFiltersWithContext, subscriptionOwnerEntitled } from './subscriptions';
 import { constantTimeEqual } from '../auth/tokens';
-import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
+import { createCongressEvent } from '../../vendor/congress-trading-shared/dist/index.mjs';
 import { prefixedId } from '../shared/ids';
 import { rateLimit } from '../shared/rateLimit';
 import { flushD1Budget } from '../shared/d1Budget';
