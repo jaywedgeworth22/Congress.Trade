@@ -21,8 +21,9 @@
     "postdeploy": "if [ -n \"$SENTRY_AUTH_TOKEN\" ]; then npm run sentry:sourcemaps || echo '::warning::sentry sourcemaps upload failed (non-fatal); the Worker deploy already succeeded'; else echo '::warning::SENTRY_AUTH_TOKEN not set; skipping sentry sourcemaps upload'; fi"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1091.0",
+    "@aws-sdk/client-s3": "^3.1090.0",
     "@google/genai": "^2.12.0",
+    "@jaywedgeworth22/congress-trading-shared": "file:../vendor/congress-trading-shared",
     "@libsql/client": "^0.17.4",
     "@sentry/cloudflare": "^10.66.0",
     "cheerio": "^1.2.0",
@@ -31,10 +32,7 @@
     "jsonrepair": "^3.15.0",
     "node-html-parser": "^9.0.0",
     "pdf-lib": "^1.17.1",
-    "unpdf": "^1.6.2",
-    "xss": "^1.0.14",
-    "@jaywedgeworth22/congress-trading-shared": "file:./vendor/congress-trading-shared",
-    "zod": "3.23.8"
+    "unpdf": "^1.6.2"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.6",
@@ -55,7 +53,5 @@
       "@cloudflare/workers-types": "$@cloudflare/workers-types"
     }
   },
-  "allowScripts": {
-    "file:./vendor/congress-trading-shared": true
-  }
+  "allowScripts": {}
 }
