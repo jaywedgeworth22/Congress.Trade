@@ -8,13 +8,13 @@
  * forward labels may use later price data but are separated under `labels`.
  */
 
-import type { Env, TxType } from '../shared/types';
-import { all, type SqlParam, parseJson } from '../shared/db';
-import { bracketMidpoint, netSentiment, round } from '../analytics/compute';
-import { committeeConflict } from '../analytics/conflicts';
-import { TICKER_RENAMES, classifyTickerAlias } from '../../vendor/congress-trading-shared/dist/index.mjs';
-import { pctChange } from '../prices/compute';
-import { canonicalizeAssetType } from '../shared/assetTypes';
+import type { Env, TxType } from '../shared/types.ts';
+import { all, type SqlParam, parseJson } from '../shared/db.ts';
+import { bracketMidpoint, netSentiment, round } from '../analytics/compute.ts';
+import { committeeConflict } from '../analytics/conflicts.ts';
+import { TICKER_RENAMES, classifyTickerAlias } from '@jaywedgeworth22/congress-trading-shared';
+import { pctChange } from '../prices/compute.ts';
+import { canonicalizeAssetType } from '../shared/assetTypes.ts';
 
 export const PIT_SCORE_VERSION = 'congress-pit-v2';
 export const TICKER_MAP_VERSION = 'ticker-normalize-v1';
@@ -326,7 +326,7 @@ export function parsePitScoreQuery(q: Record<string, string | undefined>): PitSc
   if (minConf !== undefined && (minConf < 0 || minConf > 1)) return { error: 'minConf must be between 0 and 1', status: 400 };
   const cursor = parseCursor(q.cursor);
   if (cursor && 'error' in cursor) return cursor;
-  return { from, to, ticker, cursor, limit, format, placebo, source, minConf };
+  return { from, to, ticker, cursor, limit, format, placebo, source, minConf } as any;
 }
 
 function parameterManifest(): Record<string, unknown> {
