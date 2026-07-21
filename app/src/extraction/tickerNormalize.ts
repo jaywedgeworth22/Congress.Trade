@@ -42,4 +42,4 @@ export {
   isWellFormedTicker,
   resolveTickerDeterministic,
   resolveContinuousTicker,
-} from '@jaywedgeworth22/congress-trading-shared';
+} from '../../vendor/congress-trading-shared/src/index.ts';

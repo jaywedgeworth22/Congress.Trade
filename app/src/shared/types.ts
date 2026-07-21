@@ -7,12 +7,7 @@
  */
 
 import type { AssetTypeCategory } from './assetTypes';
-import type {
-  Chamber,
-  Owner,
-  TxType,
-  ClientTrade,
-} from '@jaywedgeworth22/congress-trading-shared';
+import { type AssetType, type Chamber, type Owner, type TradeEvent, type TxType } from "../../vendor/congress-trading-shared/src/index";
 
 /**
  * App-wide chamber union: `house | senate | executive`. As of shared package

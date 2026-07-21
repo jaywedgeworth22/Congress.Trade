@@ -16,9 +16,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "paths": {
-      "@jaywedgeworth22/congress-trading-shared": ["./vendor/congress-trading-shared/src/index.ts"]
-    }
+    "allowImportingTsExtensions": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", ".wrangler", "src/deno/**/*.ts"]

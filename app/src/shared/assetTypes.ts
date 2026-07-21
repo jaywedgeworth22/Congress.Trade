@@ -6,7 +6,7 @@
  * labels can roll up together without erasing provenance.
  */
 
-import type { AssetTypeCategory } from '@jaywedgeworth22/congress-trading-shared';
+import type { AssetTypeCategory } from '../../vendor/congress-trading-shared/src/index.ts';
 export type { AssetTypeCategory };
 
 export type AssetTypeSource = 'house_code' | 'label' | 'option_flag' | 'missing' | 'unknown';

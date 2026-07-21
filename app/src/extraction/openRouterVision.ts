@@ -36,7 +36,7 @@ import { environmentName } from '../shared/thirdPartyTelemetry';
 import {
   openrouterRequestEnrichment,
   type OpenRouterRequestEnrichment,
-} from '@jaywedgeworth22/congress-trading-shared';
+} from '../../vendor/congress-trading-shared/src/index.ts';
 import {
   buildExtractionPrompt,
   loadExtractionPromptContext,

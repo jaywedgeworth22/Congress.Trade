@@ -12,7 +12,7 @@
 import {
   bracketMidpoint as sharedBracketMidpoint,
   LAG_BUCKETS as SHARED_LAG_BUCKETS,
-} from '@jaywedgeworth22/congress-trading-shared';
+} from '../../vendor/congress-trading-shared/src/index.ts';
 import { computePerformance } from '../prices/compute';
 
 /**
