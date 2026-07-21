@@ -4,7 +4,7 @@ import {
   VisionLlmExtractor,
   fetchWithRetry,
   salvageTruncatedTransactions,
-  parseAnthropicModelJson,
+  parseTruncationAwareJson,
   markSalvaged,
   validatePdfForAnthropic,
   resavePdfForAnthropic,
@@ -325,16 +325,16 @@ describe('salvageTruncatedTransactions', () => {
   });
 });
 
-describe('parseAnthropicModelJson', () => {
+describe('parseTruncationAwareJson', () => {
   it('parses complete JSON normally regardless of stop_reason', () => {
     const text = '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"}]';
-    expect(parseAnthropicModelJson(text, 'end_turn')).toEqual({ rows: JSON.parse(text), salvaged: false });
-    expect(parseAnthropicModelJson(text, 'max_tokens')).toEqual({ rows: JSON.parse(text), salvaged: false });
+    expect(parseTruncationAwareJson(text, false)).toEqual({ rows: JSON.parse(text), salvaged: false });
+    expect(parseTruncationAwareJson(text, true)).toEqual({ rows: JSON.parse(text), salvaged: false });
   });
 
   it('salvages complete leading rows when stop_reason is max_tokens and the JSON is truncated', () => {
     const text = '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Micro';
-    const result = parseAnthropicModelJson(text, 'max_tokens');
+    const result = parseTruncationAwareJson(text, true);
     expect(result.salvaged).toBe(true);
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0].ticker).toBe('AAPL');
@@ -342,13 +342,13 @@ describe('parseAnthropicModelJson', () => {
 
   it('still throws on truncated JSON when stop_reason is not max_tokens (genuine parse failure)', () => {
     const text = '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Micro';
-    expect(() => parseAnthropicModelJson(text, 'end_turn')).toThrow();
-    expect(() => parseAnthropicModelJson(text, undefined)).toThrow();
+    expect(() => parseTruncationAwareJson(text, false)).toThrow();
+    expect(() => parseTruncationAwareJson(text, false)).toThrow();
   });
 
   it('throws when stop_reason is max_tokens but salvage recovers nothing (cut off before any row)', () => {
     const text = '[{"ticker":"AAPL","assetName":"Apple Inc.';
-    expect(() => parseAnthropicModelJson(text, 'max_tokens')).toThrow();
+    expect(() => parseTruncationAwareJson(text, true)).toThrow();
   });
 });
 

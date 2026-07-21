@@ -28,6 +28,7 @@ vi.mock('../secrets/infisical', () => ({
 vi.mock('../enrichment/service', () => ({
   getDailyUsed: mocks.getDailyUsed,
   runEnrichment: mocks.runEnrichment,
+  DEFAULT_DAILY_CAP: 230,
 }));
 vi.mock('../prices/service', () => ({
   runPriceRefresh: mocks.runPriceRefresh,
@@ -51,7 +52,7 @@ vi.mock('../admin/routes', () => ({
 vi.mock('../export/snapshot', () => ({
   runBulkSnapshot: mocks.runBulkSnapshot,
 }));
-vi.mock('@jaywedgeworth22/congress-trading-shared', () => ({
+vi.mock('../../vendor/congress-trading-shared/dist/index.mjs', () => ({
   createUsageTelemetryClient: mocks.createUsageTelemetryClient,
 }));
 vi.mock('../shared/d1Budget', () => ({
@@ -233,5 +234,63 @@ describe('maybeRunDailyJobs secret resolution', () => {
     expect(mocks.runPriceRefresh).not.toHaveBeenCalled();
     expect(mocks.runBulkSnapshot).not.toHaveBeenCalled();
     expect(mocks.isD1RowBudgetExceeded).toHaveBeenCalledTimes(2);
+  });
+
+  describe('price-refresh budget floor vs enrichment', () => {
+    // enrichment and price refresh share one daily FMP call counter; enrichment
+    // runs first and (absent a cap) would happily spend the entire remaining
+    // budget, leaving price refresh with 0. jobs.ts must reserve a floor by
+    // capping enrichment's own `max` opt before calling it.
+    it('caps enrichment max to reserve 20% of the daily cap for price refresh, when an FMP key is configured', async () => {
+      const env = fakeEnv();
+      mocks.resolveSecrets.mockResolvedValue({
+        FMP_API_KEY: 'test-key',
+        FMP_DAILY_CALL_CAP: '1000',
+      });
+      mocks.getDailyUsed.mockResolvedValue(100);
+
+      await maybeRunDailyJobs(env, new Date('2026-07-10T00:00:00Z'));
+
+      // cap=1000, used=100 -> remaining=900; floor=ceil(1000*0.2)=200;
+      // enrichment max = 900 - 200 = 700.
+      expect(mocks.runEnrichment).toHaveBeenCalledWith(env, expect.objectContaining({ max: 700 }));
+    });
+
+    it('does not cap enrichment max when no FMP key is configured (no shared-budget contention to guard)', async () => {
+      const env = fakeEnv();
+      mocks.resolveSecrets.mockResolvedValue({ FMP_DAILY_CALL_CAP: '1000' }); // no FMP_API_KEY
+      mocks.getDailyUsed.mockResolvedValue(100);
+
+      await maybeRunDailyJobs(env, new Date('2026-07-10T00:00:00Z'));
+
+      expect(mocks.runEnrichment).toHaveBeenCalledWith(env, expect.objectContaining({ max: undefined }));
+      expect(mocks.getDailyUsed).not.toHaveBeenCalled();
+    });
+
+    it('falls back to DEFAULT_DAILY_CAP (230) when FMP_DAILY_CALL_CAP is unset', async () => {
+      const env = fakeEnv();
+      mocks.resolveSecrets.mockResolvedValue({ FMP_API_KEY: 'test-key' });
+      mocks.getDailyUsed.mockResolvedValue(0);
+
+      await maybeRunDailyJobs(env, new Date('2026-07-10T00:00:00Z'));
+
+      // cap=230 (default), used=0 -> remaining=230; floor=ceil(230*0.2)=46;
+      // enrichment max = 230 - 46 = 184.
+      expect(mocks.runEnrichment).toHaveBeenCalledWith(env, expect.objectContaining({ max: 184 }));
+    });
+
+    it('never reserves more than what remains today (floor clamped, never negative max)', async () => {
+      const env = fakeEnv();
+      mocks.resolveSecrets.mockResolvedValue({
+        FMP_API_KEY: 'test-key',
+        FMP_DAILY_CALL_CAP: '1000',
+      });
+      // Only 50 calls left today — less than the 20% (200) floor would otherwise be.
+      mocks.getDailyUsed.mockResolvedValue(950);
+
+      await maybeRunDailyJobs(env, new Date('2026-07-10T00:00:00Z'));
+
+      expect(mocks.runEnrichment).toHaveBeenCalledWith(env, expect.objectContaining({ max: 0 }));
+    });
   });
 });
