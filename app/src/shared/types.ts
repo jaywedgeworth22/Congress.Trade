@@ -463,6 +463,10 @@ export interface Env {
   DELIVERY_QUEUE: Queue<QueueMessage>;
   CONFIG_KV: KVNamespace;
 
+  // Turso Database Credentials (resolved via Infisical)
+  TURSO_DATABASE_URL?: string;
+  TURSO_AUTH_TOKEN?: string;
+
   // --- Secrets (wrangler secret put / .dev.vars) ---
   /** Vision/text LLM key (e.g. Gemini) for scanned-PDF extraction. */
   GEMINI_API_KEY?: string;
