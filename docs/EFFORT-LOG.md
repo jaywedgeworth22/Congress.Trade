@@ -9,10 +9,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 `claude/board-nextwave-c2` so the next Effort Issues Sync run closes #149-#154 and re-labels
 #155/#161.
 
-## In Progress
-- **[Congress.Trade][CURSOR] Critical bug automation: D1 write-governor backfill deferral — IN PROGRESS 2026-07-21.** Branch `cursor/critical-bug-management-f0a3`; fixing the House historical backfill path so D1 write-governor deferrals are not reported as duplicate filings. Planned gates: `cd app && npm run typecheck && npm test`.
-
 ## Deployed
+- **[Congress.Trade][CURSOR] Critical bug automation: D1 write-governor backfill deferral — COMPLETED 2026-07-21 via branch `cursor/critical-bug-management-f0a3`.** Fixed the House historical backfill path so D1 write-governor deferrals are reported as retryable work instead of duplicate filings. Gates: focused `npm test -- src/backfill/__tests__/houseCrawler.test.ts` (8/8), `npm run typecheck`, and full `npm test` (159 files / 1,775 tests) passed. No migration, production deploy, or remote D1 action performed.
 - **Resource Governors & Hard Caps (AG/CLAUDE, M) — COMPLETED 2026-07-20 via PR #620.** Resolved GitHub Actions CI blockage by running comprehensive local validation (1722 tests passed), merged PR #620, and deployed to production. This enforces D1 write budgets, LLM spend limits, and circuit breakers.
 - **iOS App Assets and Styling (AG) — COMPLETED / MERGED 2026-07-19 via PR #630.**
   - **Fonts**: Imported custom Zilla Slab font (Regular & Bold) into the Xcode project, registered in `.pbxproj` via `INFOPLIST_KEY_UIAppFonts`, and applied globally in SwiftUI via `App.swift`.
