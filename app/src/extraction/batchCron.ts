@@ -32,7 +32,7 @@ function rowToFiling(r: FilingRow): Filing {
     filedDate: r.filed_date ?? '',
     sourceUrl: r.source_url ?? '',
     rawObjectKey: r.raw_object_key ?? '',
-    ingestStatus: (r.ingest_status as Filing['ingestStatus']) ?? 'pending',
+    ingestStatus: (r.ingest_status as Filing['ingestStatus']) ?? 'new',
     docKind: (r.doc_kind as Filing['docKind']) ?? 'unknown',
     extractor: r.extractor ?? null,
     modelVersion: r.model_version ?? null,
