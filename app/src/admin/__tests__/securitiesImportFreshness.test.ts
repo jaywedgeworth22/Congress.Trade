@@ -11,9 +11,9 @@
  * maintenance alone would miss.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildAdminRouter } from '../routes';
-import { selectTickersNeedingPrices } from '../../prices/service';
-import { openMigratedD1, type SqliteDatabase } from '../../prices/__tests__/sqliteD1';
+import { buildAdminRouter } from '../routes.ts';
+import { selectTickersNeedingPrices } from '../../prices/service.ts';
+import { openMigratedD1, type SqliteDatabase } from '../../prices/__tests__/sqliteD1.ts';
 
 const app = buildAdminRouter();
 const AUTH_ENV = { ADMIN_TOKEN: 'admin-secret', INGEST_TOKEN: 'ingest-secret' };

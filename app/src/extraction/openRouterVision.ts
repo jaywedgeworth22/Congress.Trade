@@ -28,11 +28,11 @@
  *     provider-reported dollars instead of only rate-card estimates.
  */
 
-import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types';
-import type { Env, Filing, ParsedTx } from '../shared/types';
+import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types.ts';
+import type { Env, Filing, ParsedTx } from '../shared/types.ts';
 import { getDocumentProxy } from 'unpdf';
-import { resolveSecret } from '../secrets/infisical';
-import { environmentName } from '../shared/thirdPartyTelemetry';
+import { resolveSecret } from '../secrets/infisical.ts';
+import { environmentName } from '../shared/thirdPartyTelemetry.ts';
 import {
   openrouterRequestEnrichment,
   type OpenRouterRequestEnrichment,

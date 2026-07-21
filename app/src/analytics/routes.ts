@@ -18,10 +18,10 @@
  */
 
 import { Hono } from 'hono';
-import type { Env } from '../shared/types';
-import { all, first, get, parseJson } from '../shared/db';
-import { cached, cacheKey } from '../shared/kvCache';
-import { assetTypeCategoryLabel, isAssetTypeCategory } from '../shared/assetTypes';
+import type { Env } from '../shared/types.ts';
+import { all, first, get, parseJson } from '../shared/db.ts';
+import { cached, cacheKey } from '../shared/kvCache.ts';
+import { assetTypeCategoryLabel, isAssetTypeCategory } from '../shared/assetTypes.ts';
 import {
   asChambers,
   asPartyBucket,
@@ -32,7 +32,7 @@ import {
   type CommonFilters,
   type Granularity,
   type Window,
-} from './sql';
+} from './sql.ts';
 import {
   asMemberSort,
   asTickerSort,
@@ -63,7 +63,7 @@ import {
   buildTickerTopTradersQuery,
   buildTrendingQuery,
   buildVolumeOverTimeQuery,
-} from './builders';
+} from './builders.ts';
 import {
   aggregateMemberPerformance,
   aggregateTickerBacktest,
@@ -77,11 +77,11 @@ import {
   topPerGroup,
   type LagRow,
   type PriceBar,
-} from './compute';
-import { committeeConflict } from './conflicts';
-import { computePerformance } from '../prices/compute';
-import { latestSpxClose } from '../prices/service';
-import { getDisclosureLatencySummary } from '../ingestion/fmpDisclosureLatency';
+} from './compute.ts';
+import { committeeConflict } from './conflicts.ts';
+import { computePerformance } from '../prices/compute.ts';
+import { latestSpxClose } from '../prices/service.ts';
+import { getDisclosureLatencySummary } from '../ingestion/fmpDisclosureLatency.ts';
 
 const TICKER_PARAM_RE = /^[A-Z0-9._^-]{1,20}$/;
 

@@ -22,7 +22,7 @@
  *   Cross-isolate precision still requires the Durable Object migration —
  *   deliberately out of scope here.
  */
-import type { Env } from './types';
+import type { Env } from './types.ts';
 
 export interface RateLimitResult {
   ok: boolean;

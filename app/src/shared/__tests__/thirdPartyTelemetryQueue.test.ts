@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   }>,
 }));
 
-vi.mock('@sentry/cloudflare', () => ({
+vi.mock('#sentry', () => ({
   withSentry: (
     options: (env: Record<string, unknown>) => {
       tracesSampleRate: number;
@@ -40,8 +40,8 @@ vi.mock('../thirdPartyTelemetry', async (importOriginal) => ({
   deliverUsageTelemetryEvent: mocks.deliver,
 }));
 
-import worker from '../../index';
-import type { Env, QueueMessage, ThirdPartyUsageTelemetryEvent } from '../types';
+import worker from '../../index.ts';
+import type { Env, QueueMessage, ThirdPartyUsageTelemetryEvent } from '../types.ts';
 
 afterEach(() => {
   vi.unstubAllGlobals();

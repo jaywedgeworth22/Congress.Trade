@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Env, Filing } from '../../shared/types';
+import type { Env, Filing } from '../../shared/types.ts';
 
 const unpdfMocks = vi.hoisted(() => ({
   getDocumentProxy: vi.fn().mockResolvedValue({ numPages: 5 }),
@@ -17,7 +17,7 @@ import {
   parseMaxPrice,
   supportsNativeVision,
   supportsStructuredOutputs,
-} from '../openRouterVision';
+} from '../openRouterVision.ts';
 
 const filing = (): Filing => ({
   docId: 'S-1',

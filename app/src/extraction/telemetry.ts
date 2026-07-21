@@ -1,11 +1,11 @@
-import type { Env } from '../shared/types';
+import type { Env } from '../shared/types.ts';
 import {
   recordMeasuredThirdPartyUsage,
   stableMeasuredUsageIdempotencyKey,
   type MeasuredThirdPartyUsage,
-} from '../shared/thirdPartyTelemetry';
-import type { CandidateDocResult, ExtractionRunKind } from './bakeoff';
-import { priceBenchmarkUsage } from './benchmarkMetrics';
+} from '../shared/thirdPartyTelemetry.ts';
+import type { CandidateDocResult, ExtractionRunKind } from './bakeoff.ts';
+import { priceBenchmarkUsage } from './benchmarkMetrics.ts';
 
 type ResultMeasurement = Omit<
   Extract<MeasuredThirdPartyUsage, { idempotencyKey?: undefined }>,

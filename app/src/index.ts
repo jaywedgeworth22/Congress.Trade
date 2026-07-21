@@ -16,48 +16,48 @@
  */
 
 import { Hono } from 'hono';
-import * as Sentry from '@sentry/cloudflare';
-import type { Env, QueueMessage } from './shared/types';
+import * as Sentry from '#sentry';
+import type { Env, QueueMessage } from './shared/types.ts';
 
 // Stage handlers owned by their feature modules.
-import { runWatcher } from './ingestion/watcher';
-import { classifyTransientIngestError, fetchFiling, IngestRetryError } from './ingestion/fetcher';
-import { classifyFiling } from './ingestion/classifier';
-import { extractAndNormalize } from './extraction/orchestrator';
-import { DeliveryRetryError, dispatchWebhook } from './delivery/webhook';
-import { recordDeadLetterDurable } from './delivery/deadLetter';
-import { buildRestRouter } from './delivery/rest';
-import { buildAdminRouter } from './admin/routes';
-import { buildAnalyticsRouter } from './analytics/routes';
-import { buildAuthRouter } from './auth/routes';
-import { buildBillingRouter } from './billing/routes';
-import { buildClientRouter } from './client/routes';
-import { buildExportRouter } from './export/routes';
-import { buildUiRouter } from './ui/routes';
-import { maybeRunDailyJobs } from './jobs';
-import { flushD1Budget } from './shared/d1Budget';
-import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement';
+import { runWatcher } from './ingestion/watcher.ts';
+import { classifyTransientIngestError, fetchFiling, IngestRetryError } from './ingestion/fetcher.ts';
+import { classifyFiling } from './ingestion/classifier.ts';
+import { extractAndNormalize } from './extraction/orchestrator.ts';
+import { DeliveryRetryError, dispatchWebhook } from './delivery/webhook.ts';
+import { recordDeadLetterDurable } from './delivery/deadLetter.ts';
+import { buildRestRouter } from './delivery/rest.ts';
+import { buildAdminRouter } from './admin/routes.ts';
+import { buildAnalyticsRouter } from './analytics/routes.ts';
+import { buildAuthRouter } from './auth/routes.ts';
+import { buildBillingRouter } from './billing/routes.ts';
+import { buildClientRouter } from './client/routes.ts';
+import { buildExportRouter } from './export/routes.ts';
+import { buildUiRouter } from './ui/routes.ts';
+import { maybeRunDailyJobs } from './jobs.ts';
+import { flushD1Budget } from './shared/d1Budget.ts';
+import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement.ts';
 import {
   handleAutopilotTick,
   markAutopilotRunHalted,
   maybeStartBacklogAutopilot,
-} from './extraction/autopilot';
-import { refreshSecrets } from './secrets/infisical';
-import { runDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency';
-import { buildDetectionRouter } from './ingestion/detectionRoutes';
-import { browserSecurityHeadersMiddleware } from './security/headers';
-import { publicApiGuard } from './security/botDefense';
+} from './extraction/autopilot.ts';
+import { refreshSecrets } from './secrets/infisical.ts';
+import { runDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency.ts';
+import { buildDetectionRouter } from './ingestion/detectionRoutes.ts';
+import { browserSecurityHeadersMiddleware } from './security/headers.ts';
+import { publicApiGuard } from './security/botDefense.ts';
 import {
   completeDeliveryOutbox,
   flushDeliveryOutbox,
   reconnectDeadLetteredOutbox,
-} from './delivery/outbox';
-import { flushParkedDeliveries } from './delivery/targetCircuit';
+} from './delivery/outbox.ts';
+import { flushParkedDeliveries } from './delivery/targetCircuit.ts';
 import {
   completeIngestionOutbox,
   flushIngestionOutbox,
   reconnectDeadLetteredIngestionOutbox,
-} from './ingestion/outbox';
+} from './ingestion/outbox.ts';
 import {
   deliverUsageTelemetryEvent,
   flushUsageTelemetryFallback,
@@ -66,7 +66,7 @@ import {
   persistUsageTelemetryFallback,
   trackedFetch,
   withThirdPartyTelemetry,
-} from './shared/thirdPartyTelemetry';
+} from './shared/thirdPartyTelemetry.ts';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -449,14 +449,14 @@ const requestAndScheduledWorker = Sentry.withSentry(
       track(
         Sentry.withMonitor('delivery-outbox-cron', () =>
           flushDeliveryOutbox(env, { limit: 100 }),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'delivery-outbox' } }),
         ),
       );
       track(
         Sentry.withMonitor('ingestion-outbox-cron', () =>
           flushIngestionOutbox(env, { limit: 100 }),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'ingestion-outbox' } }),
         ),
       );
@@ -466,20 +466,20 @@ const requestAndScheduledWorker = Sentry.withSentry(
       track(
         Sentry.withMonitor('parked-deliveries-cron', () =>
           flushParkedDeliveries(env, { limit: 50 }),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'parked-deliveries' } }),
         ),
       );
       track(
         flushUsageTelemetryFallback(env, { limit: 25 })
-          .then((result) => {
+          .then((result: any) => {
             if (result.failed > 0) {
               // console.log is intentionally outside the Sentry warn/error log
               // integration: receiver outages must not create new envelopes.
               console.log('usage telemetry fallback remains pending', result);
             }
           })
-          .catch((err) => {
+          .catch((err: unknown) => {
             console.log('usage telemetry fallback drain unavailable', {
               errorType: err instanceof Error ? err.name : 'unknown',
             });
@@ -488,21 +488,21 @@ const requestAndScheduledWorker = Sentry.withSentry(
       track(
         Sentry.withMonitor('secrets-refresh-cron', () =>
           refreshSecrets(env),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'secrets-refresh' } }),
         ),
       );
       track(
         Sentry.withMonitor('disclosure-latency-cron', () =>
           runDisclosureLatencyProbe(env),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'disclosure-latency' } }),
         ),
       );
       track(
         Sentry.withMonitor('daily-jobs-cron', () =>
           maybeRunDailyJobs(env),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'daily-jobs' } }),
         ),
       );
@@ -512,7 +512,7 @@ const requestAndScheduledWorker = Sentry.withSentry(
       track(
         Sentry.withMonitor('backlog-autopilot-cron', () =>
           maybeStartBacklogAutopilot(env),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'backlog-autopilot' } }),
         ),
       );
@@ -526,7 +526,7 @@ const requestAndScheduledWorker = Sentry.withSentry(
             maxRuntime: 2,
             timezone: 'UTC',
           },
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'agreement-autopublish' } }),
         ),
       );
@@ -542,7 +542,7 @@ const requestAndScheduledWorker = Sentry.withSentry(
             maxRuntime: 5,
             timezone: 'UTC',
           },
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'watcher' } }),
         ),
       );
@@ -563,15 +563,16 @@ const queueWorker = Sentry.withSentry(
      * Queue consumer. Routes by the bound queue name to the ingest/delivery
      * handlers. Messages are ack'd individually; failures retry per wrangler.toml.
      */
-    async queue(batch, env: Env, _ctx: ExecutionContext): Promise<void> {
+    async queue(batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext): Promise<void> {
+      const typedBatch = batch as unknown as MessageBatch<QueueMessage>;
       return withThirdPartyTelemetry(env, async () => {
-      const isDeadLetterQueue = batch.queue.endsWith('-dlq');
+      const isDeadLetterQueue = typedBatch.queue.endsWith('-dlq');
       if (isDeadLetterQueue) {
-        for (const message of batch.messages) {
+        for (const message of typedBatch.messages) {
           try {
             await handleDeadLetterMessage(
               env,
-              batch.queue,
+              typedBatch.queue,
               message.body as QueueMessage,
               message.attempts,
             );
@@ -597,7 +598,7 @@ const queueWorker = Sentry.withSentry(
               }
             } else {
               Sentry.captureException(err as Error, {
-                tags: { queue: batch.queue, recovery: 'dead-letter' },
+                tags: { queue: typedBatch.queue, recovery: 'dead-letter' },
               });
             }
             message.retry({ delaySeconds: 60 });
@@ -610,8 +611,8 @@ const queueWorker = Sentry.withSentry(
         return;
       }
 
-      const isDelivery = batch.queue.includes('delivery');
-      for (const message of batch.messages) {
+      const isDelivery = typedBatch.queue.includes('delivery');
+      for (const message of typedBatch.messages) {
         try {
           const msg = message.body as QueueMessage;
           Sentry.setTags({
@@ -659,10 +660,10 @@ const queueWorker = Sentry.withSentry(
               continue;
             }
           } else {
-            console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
+            console.error(`queue ${typedBatch.queue} message failed:`, (err as Error).message);
             // console.error above is only a breadcrumb/log; the retry swallows the
             // throw, so without this the failure would never create a Sentry Issue.
-            Sentry.captureException(err as Error, { tags: { queue: batch.queue, messageType } });
+            Sentry.captureException(err as Error, { tags: { queue: typedBatch.queue, messageType } });
           }
           if (err instanceof DeliveryRetryError || err instanceof IngestRetryError) {
             message.retry({ delaySeconds: err.delaySeconds });
