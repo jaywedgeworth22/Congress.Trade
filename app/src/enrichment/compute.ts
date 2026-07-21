@@ -10,8 +10,8 @@
  */
 
 import { marketCapBucket as sharedMarketCapBucket } from '@jaywedgeworth22/congress-trading-shared';
-import { normalizeCompanyName } from '../shared/companyName';
-import type { MktCapBucket, SecurityRef } from './types';
+import { normalizeCompanyName } from '../shared/companyName.ts';
+import type { MktCapBucket, SecurityRef } from './types.ts';
 
 /** Bucket a USD market cap into the standard size tiers. null for missing/≤0. */
 export function marketCapBucket(n: number | null | undefined): MktCapBucket | null {

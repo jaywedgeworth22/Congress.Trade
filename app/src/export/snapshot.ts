@@ -32,8 +32,8 @@
  * short-volume streams flow App B → App A, so echoing them back is out of scope.
  */
 
-import type { Env } from '../shared/types';
-import { all, type SqlParam } from '../shared/db';
+import type { Env } from '../shared/types.ts';
+import { all, type SqlParam } from '../shared/db.ts';
 import type { SnapshotManifest, SnapshotTableInfo } from '@jaywedgeworth22/congress-trading-shared';
 
 /**

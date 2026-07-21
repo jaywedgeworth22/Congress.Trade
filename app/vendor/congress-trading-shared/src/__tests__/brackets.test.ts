@@ -4,7 +4,7 @@ import {
   matchBracket,
   isValidBracket,
   nearestBracket,
-} from "../brackets";
+} from "../brackets.ts";
 
 describe("STOCK Act brackets helpers", () => {
   it("defines the canonical 10 brackets in ascending order", () => {

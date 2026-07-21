@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { CongressTradeClient, normalizeSecurityRef } from "../client";
-import { SecurityRefSchema } from "../schemas";
+import { CongressTradeClient, normalizeSecurityRef } from "../client.ts";
+import { SecurityRefSchema } from "../schemas.ts";
 
 function mockClient(fetchFn: typeof fetch) {
   return new CongressTradeClient({
@@ -555,7 +555,7 @@ describe("CongressTradeClient", () => {
   });
 });
 
-import { SseParser } from "../client";
+import { SseParser } from "../client.ts";
 
 describe("SseParser", () => {
   it("ignores heartbeat/comment lines", () => {

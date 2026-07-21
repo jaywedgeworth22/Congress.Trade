@@ -21,8 +21,8 @@
  */
 
 import { WINDOW_PRESETS as SHARED_WINDOW_PRESETS } from '@jaywedgeworth22/congress-trading-shared';
-import type { Chamber, TxType } from '../shared/types';
-import type { SqlParam } from '../shared/db';
+import type { Chamber, TxType } from '../shared/types.ts';
+import type { SqlParam } from '../shared/db.ts';
 
 // ---------------------------------------------------------------------------
 // Enumerations + validators (closed sets → safe to interpolate as literals)

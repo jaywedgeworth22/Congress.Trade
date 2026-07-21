@@ -11,7 +11,7 @@ import {
   DEFAULT_TRANSACTIONS_LIMIT,
   MAX_REFS_BATCH,
   APP_B_ORIGIN_TAG,
-} from "../constants";
+} from "../constants.ts";
 
 // =============================================================================
 // TICKER_ALIASES
