@@ -23,7 +23,6 @@
     "isolatedModules": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "baseUrl": ".",
     "paths": {
       "@jaywedgeworth22/congress-trading-shared": ["./vendor/congress-trading-shared/src/index.ts"]
     },
