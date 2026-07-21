@@ -1,5 +1,4 @@
 {
-  "nodeModulesDir": "auto",
   "imports": {
     "#sentry": "./src/deno/sentryDummy.ts",
     "@jaywedgeworth22/congress-trading-shared": "./vendor/congress-trading-shared/src/index.ts",
