@@ -308,3 +308,6 @@ SENTRY_ENVIRONMENT = "production"
 # wrangler.preview.example.toml by scripts/provision-preview.sh locally or by
 # .github/workflows/deploy-staging.yml in CI. Keep production-only routes and
 # cron triggers in this file.
+
+[alias]
+"@jaywedgeworth22/congress-trading-shared" = "./vendor/congress-trading-shared/src/index.ts"
