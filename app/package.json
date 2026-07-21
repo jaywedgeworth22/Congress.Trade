@@ -23,6 +23,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1090.0",
     "@google/genai": "^2.12.0",
+
     "@libsql/client": "^0.17.4",
     "@sentry/cloudflare": "^10.66.0",
     "cheerio": "^1.2.0",
@@ -51,8 +52,5 @@
     "@sentry/cloudflare": {
       "@cloudflare/workers-types": "$@cloudflare/workers-types"
     }
-  },
-  "allowScripts": {
-    "github:jaywedgeworth22/congress-trading-shared#904ea96ac237b775c54c8e4bb29df0d1a40da125": true
   }
 }
