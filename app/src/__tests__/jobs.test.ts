@@ -61,7 +61,7 @@ vi.mock('../shared/d1Budget', () => ({
 // Only `run` is stubbed (retention sweep DELETEs); everything else stays real
 // so transitive importers of shared/db keep their actual helpers.
 vi.mock('../shared/db', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../shared/db')>()),
+  ...(await importOriginal<typeof import('../shared/db.ts')>()),
   run: mocks.dbRun,
 }));
 

@@ -4,11 +4,11 @@ import {
   deriveUsageTelemetryIdempotencyKey,
   UsageTelemetryEventSchema,
   type UsageTelemetryEventInput,
-} from "../usageTelemetry";
+} from "../usageTelemetry.ts";
 import {
   CongressTransactionSchema,
   SecurityRefSchema,
-} from "../schemas";
+} from "../schemas.ts";
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------

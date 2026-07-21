@@ -1,10 +1,10 @@
-import type { MktCapBucket, TickerAliasResolution } from "./types";
+import type { MktCapBucket, TickerAliasResolution } from "./types.ts";
 import {
   MKT_CAP_THRESHOLDS,
   TICKER_ALIASES,
   TICKER_RENAMES,
   TICKER_ACQUISITIONS,
-} from "./constants";
+} from "./constants.ts";
 
 // ---- Ticker normalization ----
 

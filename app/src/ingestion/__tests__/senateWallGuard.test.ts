@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../senateSource', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../senateSource')>();
+  const actual = await importOriginal<typeof import('../senateSource.ts')>();
   return { ...actual, establishSenateSession: mocks.establishSenateSession };
 });
 

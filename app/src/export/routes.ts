@@ -35,8 +35,8 @@ import {
   snapshotObjectKey,
   SNAPSHOT_TABLES,
   type SnapshotTableName,
-} from './snapshot';
-import type { SnapshotManifest } from '../../vendor/congress-trading-shared/dist/index.mjs';
+} from './snapshot.ts';
+import type { SnapshotManifest } from '@jaywedgeworth22/congress-trading-shared';
 import {
   buildPitScoreExport,
   parsePitScoreQuery,
