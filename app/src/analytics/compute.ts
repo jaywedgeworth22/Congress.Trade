@@ -12,8 +12,8 @@
 import {
   bracketMidpoint as sharedBracketMidpoint,
   LAG_BUCKETS as SHARED_LAG_BUCKETS,
-} from '../../vendor/congress-trading-shared/dist/index.mjs';
-import { computePerformance } from '../prices/compute';
+} from '@jaywedgeworth22/congress-trading-shared';
+import { computePerformance } from '../prices/compute.ts';
 
 /**
  * Estimated dollar value of one STOCK Act bracket. Mirror of
