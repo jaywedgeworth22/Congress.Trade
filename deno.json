@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "@jaywedgeworth22/congress-trading-shared": "./app/vendor/congress-trading-shared/dist/index.mjs"
+  },
+  "unstable": ["sloppy-imports"]
+}
