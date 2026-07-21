@@ -422,8 +422,7 @@ export function buildExtractionPrompt(context: ExtractionPromptContext = {}): st
   if (chamber) facts.push(chamber);
   const filingType = context.filingType?.trim();
   if (filingType) facts.push(`Filing-type code: ${filingType.slice(0, 24)}`);
-  const filedYear = context.filedDate?.match(/^(\d{4})-/)?.[1];
-  if (filedYear) facts.push(`Filed year: ${filedYear} (transaction dates should not be after the filing date)`);
+
   if (typeof context.pageCount === 'number' && Number.isFinite(context.pageCount) && context.pageCount > 0) {
     facts.push(`Document page count: ${Math.round(context.pageCount)}`);
   }
