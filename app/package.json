@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "src/deno/main.ts",
   "description": "Cloudflare Workers service ingesting US congressional STOCK Act stock-trade disclosures (House + Senate) and pushing structured trade events to clients.",
   "scripts": {
     "dev": "wrangler dev",
