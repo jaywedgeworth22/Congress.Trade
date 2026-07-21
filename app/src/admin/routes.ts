@@ -57,11 +57,11 @@ import {
   subscriptionSecretError,
   validateSubscriptionFilters,
   webhookTargetLengthError,
-} from '../delivery/subscriptions';
-import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget';
-import { runSeedBackfillFromEnv } from '../backfill/seed';
-import { runHouseHistoricalBackfill } from '../backfill/houseCrawler';
-import { extractParsed } from '../extraction/orchestrator';
+} from '../delivery/subscriptions.ts';
+import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget.ts';
+import { runSeedBackfillFromEnv } from '../backfill/seed.ts';
+import { runHouseHistoricalBackfill } from '../backfill/houseCrawler.ts';
+import { extractParsed } from '../extraction/orchestrator.ts';
 import {
   normalize,
   recomputeTransactions,
@@ -70,18 +70,18 @@ import {
   CONFIDENCE_THRESHOLD,
   HARD_FAILURE_FLAGS,
   hasHardFailureFlags,
-} from '../extraction/normalizer';
-import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionLlm';
-import { duplicateLineupReason, enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement';
-import { acknowledgeAutopilotHalt, getAutopilotStatus } from '../extraction/autopilot';
-import { providerHealthDiagnostics } from '../extraction/providerHealth';
-import { mapFiling } from '../delivery/rows';
-import { verifyAccessJwt, certsUrl } from './access';
-import { adminRuntimeConfig } from './identity';
-import { getLogoDisplay, setLogoDisplay } from '../shared/settings';
-import { normalizeCompanyName } from '../shared/companyName';
-import { constantTimeEqual } from '../auth/tokens';
-import { getCurrentUser } from '../auth/session';
+} from '../extraction/normalizer.ts';
+import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionLlm.ts';
+import { duplicateLineupReason, enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement.ts';
+import { acknowledgeAutopilotHalt, getAutopilotStatus } from '../extraction/autopilot.ts';
+import { providerHealthDiagnostics } from '../extraction/providerHealth.ts';
+import { mapFiling } from '../delivery/rows.ts';
+import { verifyAccessJwt, certsUrl } from './access.ts';
+import { adminRuntimeConfig } from './identity.ts';
+import { getLogoDisplay, setLogoDisplay } from '../shared/settings.ts';
+import { normalizeCompanyName } from '../shared/companyName.ts';
+import { constantTimeEqual } from '../auth/tokens.ts';
+import { getCurrentUser } from '../auth/session.ts';
 import {
   DEFAULT_CANDIDATES,
   EXTRACTION_SCHEMA_VERSION,
@@ -92,7 +92,7 @@ import {
   type BakeoffCandidate,
   type CandidateDocResult,
   type Provider,
-} from '../extraction/bakeoff';
+} from '../extraction/bakeoff.ts';
 import {
   isBatchProvider,
   normalizeBatchChamber,
@@ -101,32 +101,32 @@ import {
   BatchTerminalPayloadError,
   type BatchDoc,
   type BatchUsage,
-} from '../extraction/batchExtract';
-import { buildConsensusRows, type ConsensusRun } from '../extraction/consensus';
+} from '../extraction/batchExtract.ts';
+import { buildConsensusRows, type ConsensusRun } from '../extraction/consensus.ts';
 import {
   runEnrichment,
   getDailyUsed,
   prepareImportSecurityRef,
   enrichmentNeededSql,
   hasConfiguredKeyedEnrichmentProvider,
-} from '../enrichment/service';
-import { mergeRefs } from '../enrichment/compute';
-import type { SecurityRef } from '../enrichment/types';
+} from '../enrichment/service.ts';
+import { mergeRefs } from '../enrichment/compute.ts';
+import type { SecurityRef } from '../enrichment/types.ts';
 import {
   runPriceRefresh,
   priceUnavailableCutoffIso,
   priceUnavailableFirstRecheckCutoffIso,
   PRICE_UNAVAILABLE_NOT_FOUND_FIRST,
-} from '../prices/service';
-import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets, updateSecret } from '../secrets/infisical';
-import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
-import { pollExecutive } from '../ingestion/watcher';
-import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox';
-import { estimateTransactionValue } from '../shared/transactionValue';
-import { isValidBracket } from '../shared/brackets';
-import { flushDeliveryOutbox } from '../delivery/outbox';
-import { readTargetCircuits } from '../delivery/targetCircuit';
-import { inspectLlmSpend } from '../shared/llmSpend';
+} from '../prices/service.ts';
+import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets, updateSecret } from '../secrets/infisical.ts';
+import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency.ts';
+import { pollExecutive } from '../ingestion/watcher.ts';
+import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox.ts';
+import { estimateTransactionValue } from '../shared/transactionValue.ts';
+import { isValidBracket } from '../shared/brackets.ts';
+import { flushDeliveryOutbox } from '../delivery/outbox.ts';
+import { readTargetCircuits } from '../delivery/targetCircuit.ts';
+import { inspectLlmSpend } from '../shared/llmSpend.ts';
 import {
   beginBenchmarkRun,
   claimBenchmarkMeasurement,
@@ -150,12 +150,12 @@ import {
   type BenchmarkModelRef,
   type BenchmarkRunDetail,
   type BenchmarkSelectedLineup,
-} from '../benchmark/persistence';
+} from '../benchmark/persistence.ts';
 import {
   checkOpenAiModelAccess,
   openAiModelAccessDecision,
   OPENAI_BENCHMARK_ACCESS_MODELS,
-} from '../benchmark/providerAccess';
+} from '../benchmark/providerAccess.ts';
 import {
   BenchmarkSettingsConflictError,
   BenchmarkSettingsValidationError,
@@ -170,13 +170,13 @@ import {
   validateBenchmarkLineup,
   validateBenchmarkModel,
   validateBenchmarkRoles,
-} from '../benchmark/settings';
+} from '../benchmark/settings.ts';
 import {
   priceBenchmarkUsage,
   simulateCascadeDocumentMetrics,
   summarizeBenchmarkLatency,
-} from '../extraction/benchmarkMetrics';
-import { BENCHMARK_SCORING_PROFILE, compareBenchmarkRows } from '../benchmark/scoring';
+} from '../extraction/benchmarkMetrics.ts';
+import { BENCHMARK_SCORING_PROFILE, compareBenchmarkRows } from '../benchmark/scoring.ts';
 import {
   benchmarkCanaryTarget,
   findProviderFailureBlock,
@@ -184,20 +184,20 @@ import {
   type ProviderFailureBlock,
   type ProviderFailureSource,
   type ProviderFailureStatus,
-} from '../extraction/providerFailure';
-import { pushExtractionTelemetry } from '../extraction/telemetry';
+} from '../extraction/providerFailure.ts';
+import { pushExtractionTelemetry } from '../extraction/telemetry.ts';
 import {
   inspectUsageTelemetryFallback,
   recordMeasuredThirdPartyUsage,
   stableMeasuredUsageIdempotencyKey,
   trackedFetch,
-} from '../shared/thirdPartyTelemetry';
+} from '../shared/thirdPartyTelemetry.ts';
 import {
   BASE_SCHEMA_STATEMENTS,
   DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS,
   POST_0024_SCHEMA_STATEMENTS,
-} from './migrations';
-import { getQualityCrosscheck } from '../analytics/quality';
+} from './migrations.ts';
+import { getQualityCrosscheck } from '../analytics/quality.ts';
 
 // Optional secrets/vars; not declared on Env (frozen). Read defensively.
 type EnvWithAdmin = Env & {

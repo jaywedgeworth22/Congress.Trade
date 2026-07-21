@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
-import { shareWithPeer } from '../outbound';
-import type { Env } from '../../shared/types';
-import type { SecurityRef } from '../../enrichment/types';
+import { shareWithPeer } from '../outbound.ts';
+import type { Env } from '../../shared/types.ts';
+import type { SecurityRef } from '../../enrichment/types.ts';
 
 const ref = (ticker: string): SecurityRef => ({
   ticker, companyName: ticker + ' Inc', sector: 'Technology', industry: null, assetClass: 'equity',

@@ -14,10 +14,10 @@
  *   3. Rotate-secret persists the new secret durably.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildAdminRouter } from '../routes';
-import { visitActiveWebhookSubscriptionPage } from '../../delivery/webhook';
-import { openMigratedD1, type SqliteDatabase } from '../../prices/__tests__/sqliteD1';
-import type { Env, Subscription } from '../../shared/types';
+import { buildAdminRouter } from '../routes.ts';
+import { visitActiveWebhookSubscriptionPage } from '../../delivery/webhook.ts';
+import { openMigratedD1, type SqliteDatabase } from '../../prices/__tests__/sqliteD1.ts';
+import type { Env, Subscription } from '../../shared/types.ts';
 
 const app = buildAdminRouter();
 

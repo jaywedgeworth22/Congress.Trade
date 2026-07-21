@@ -1,11 +1,11 @@
-import type { Env } from '../shared/types';
+import type { Env } from '../shared/types.ts';
 import {
   DEFAULT_CANDIDATES,
   NON_OFFERED_CANDIDATES,
   keyFor,
   type BakeoffCandidate,
   type Provider,
-} from '../extraction/bakeoff';
+} from '../extraction/bakeoff.ts';
 import {
   deleteSecret,
   readSourceSecrets,
@@ -13,12 +13,12 @@ import {
   resolveSecrets,
   updateSecret,
   type SecretMutationOptions,
-} from '../secrets/infisical';
+} from '../secrets/infisical.ts';
 import type {
   BenchmarkChamber,
   BenchmarkModelRef,
   BenchmarkSelectedLineup,
-} from './persistence';
+} from './persistence.ts';
 
 type LineupSlot = 'a' | 'b' | 'c';
 type RoleSlot = 'primary' | 'failover';

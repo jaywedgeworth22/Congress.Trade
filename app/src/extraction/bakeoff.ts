@@ -15,8 +15,8 @@
  * helpers (summarizeModels / computeConsensusAgreement) are unit-tested.
  */
 
-import type { Env, ParsedTx } from '../shared/types';
-import { arbitrationRowKey } from '../extractors/types';
+import type { Env, ParsedTx } from '../shared/types.ts';
+import { arbitrationRowKey } from '../extractors/types.ts';
 import {
   SYSTEM_PROMPT,
   EXECUTIVE_SYSTEM_PROMPT,
@@ -29,24 +29,24 @@ import {
   toParsedTx,
   arrayBufferToBase64,
   VisionLlmExtractor,
-} from './visionLlm';
-import { resolveSecret } from '../secrets/infisical';
-import { run } from '../shared/db';
-import { uuid } from '../shared/ids';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
-import { pushExtractionTelemetry } from './telemetry';
-import { OpenRouterVisionExtractor } from './openRouterVision';
+} from './visionLlm.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
+import { run } from '../shared/db.ts';
+import { uuid } from '../shared/ids.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { pushExtractionTelemetry } from './telemetry.ts';
+import { OpenRouterVisionExtractor } from './openRouterVision.ts';
 import {
   classifyProviderFailure,
   type ProviderFailureStatus,
-} from './providerFailure';
-import { priceBenchmarkUsage } from './benchmarkMetrics';
+} from './providerFailure.ts';
+import { priceBenchmarkUsage } from './benchmarkMetrics.ts';
 import {
   checkLlmSpendCeiling,
   llmBudgetHaltMessage,
   recordLlmSpend,
-} from '../shared/llmSpend';
-import { consumeGovernedD1Writes } from '../shared/d1Budget';
+} from '../shared/llmSpend.ts';
+import { consumeGovernedD1Writes } from '../shared/d1Budget.ts';
 
 export type Provider = 'gemini' | 'openai' | 'anthropic' | 'mistral' | 'xai' | 'llamaparse' | 'openrouter';
 

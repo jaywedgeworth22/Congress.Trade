@@ -5,10 +5,10 @@
  * id_token locally, which keeps the flow dependency-free.
  */
 
-import type { Env } from '../shared/types';
-import type { GoogleProfile } from './users';
-import { resolveSecrets } from '../secrets/infisical';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import type { Env } from '../shared/types.ts';
+import type { GoogleProfile } from './users.ts';
+import { resolveSecrets } from '../secrets/infisical.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';

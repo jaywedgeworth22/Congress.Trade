@@ -1,4 +1,4 @@
-import type { FeedTransactionRow } from '../delivery/rows';
+import type { FeedTransactionRow } from '../delivery/rows.ts';
 
 export type ClientTradeRow = FeedTransactionRow & {
   __chamber?: string | null;
@@ -7,7 +7,7 @@ export type ClientTradeRow = FeedTransactionRow & {
 };
 
 export type ClientTradeListEnvelope = {
-  items: import('../shared/types').ClientTrade[];
+  items: import('../shared/types.ts').ClientTrade[];
   cursor: number;
   count: number;
   /**
