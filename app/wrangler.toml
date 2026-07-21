@@ -221,6 +221,10 @@ AGREEMENT_DAILY_LLM_BUDGET = "300"
 AGREEMENT_BIG_DOC_START_TIER2 = "true"
 AGREEMENT_BIG_DOC_PAGE_THRESHOLD = "10"
 AGREEMENT_BIG_DOC_BYTES_THRESHOLD = "2097152"
+# Free-text material fields compare through a canonical (casefold/punctuation-
+# stripped/company-suffix-normalized) form instead of byte equality; set
+# "false" to restore byte-strict comparison on every cascade tier.
+AGREEMENT_TEXT_NORMALIZATION = "true"
 # Paid-plan import guardrails. These are deliberately below platform maximums:
 # large enough to avoid tiny cross-app chunks, still bounded against runaway
 # JSON parse/DB-batch cost. Lower these vars for a lean/free-compatible profile.
