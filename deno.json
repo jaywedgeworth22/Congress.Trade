@@ -1,4 +1,7 @@
 {
+  "tasks": {
+    "start": "deno run --allow-net --allow-env --allow-read app/src/deno/main.ts"
+  },
   "compilerOptions": {
     "lib": ["esnext", "dom", "deno.ns"]
   },
