@@ -6,13 +6,13 @@
  * as the source of truth — downstream agents implement against these shapes.
  */
 
-import type { AssetTypeCategory } from './assetTypes';
+import type { AssetTypeCategory } from './assetTypes.ts';
 import type {
   Chamber,
   Owner,
   TxType,
   ClientTrade,
-} from '../../vendor/congress-trading-shared/src/index.ts';
+} from '../../vendor/congress-trading-shared/dist/index.mjs';
 
 /**
  * App-wide chamber union: `house | senate | executive`. As of shared package

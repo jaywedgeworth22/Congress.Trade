@@ -6,8 +6,8 @@
  * fills against the Extractor interface below.
  */
 
-import type { Env, Filing, ParsedTx } from '../shared/types';
-import { resolveSecret } from '../secrets/infisical';
+import type { Env, Filing, ParsedTx } from '../shared/types.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
 
 // ---------------------------------------------------------------------------
 // Arbitration merge helpers (pure, unit-testable)
@@ -436,11 +436,11 @@ export function buildExtractorPipeline(env: Env): Extractor[] {
 // Re-exported concrete extractor stub classes (implemented by extraction agent)
 // ---------------------------------------------------------------------------
 
-import { SenateHtmlExtractor } from '../extraction/senateHtml';
-import { TextPdfExtractor } from '../extraction/textPdf';
-import { VisionLlmExtractor } from '../extraction/visionLlm';
-import { AnthropicVisionExtractor } from '../extraction/anthropicVision';
-import { ConfiguredVisionExtractor } from '../extraction/configuredVision';
+import { SenateHtmlExtractor } from '../extraction/senateHtml.ts';
+import { TextPdfExtractor } from '../extraction/textPdf.ts';
+import { VisionLlmExtractor } from '../extraction/visionLlm.ts';
+import { AnthropicVisionExtractor } from '../extraction/anthropicVision.ts';
+import { ConfiguredVisionExtractor } from '../extraction/configuredVision.ts';
 
 export {
   SenateHtmlExtractor, TextPdfExtractor, VisionLlmExtractor, AnthropicVisionExtractor,

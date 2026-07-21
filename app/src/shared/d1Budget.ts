@@ -31,9 +31,9 @@
  */
 
 import * as Sentry from '@sentry/cloudflare';
-import type { Env } from './types';
-import type { SqlParam } from './db';
-import { resolveSecret } from '../secrets/infisical';
+import type { Env } from './types.ts';
+import type { SqlParam } from './db.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
 
 interface RowDelta {
   read: number;

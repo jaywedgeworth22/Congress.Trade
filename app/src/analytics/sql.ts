@@ -20,9 +20,9 @@
  *     party stays NULL rather than being treated as Independent.
  */
 
-import { WINDOW_PRESETS as SHARED_WINDOW_PRESETS } from '../../vendor/congress-trading-shared/src/index.ts';
-import type { Chamber, TxType } from '../shared/types';
-import type { SqlParam } from '../shared/db';
+import { WINDOW_PRESETS as SHARED_WINDOW_PRESETS } from '../../vendor/congress-trading-shared/dist/index.mjs';
+import type { Chamber, TxType } from '../shared/types.ts';
+import type { SqlParam } from '../shared/db.ts';
 
 // ---------------------------------------------------------------------------
 // Enumerations + validators (closed sets → safe to interpolate as literals)

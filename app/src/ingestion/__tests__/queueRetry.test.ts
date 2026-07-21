@@ -23,8 +23,8 @@ vi.mock('../fetcher', async (importOriginal) => ({
   fetchFiling: mocks.fetchFiling,
 }));
 
-import worker from '../../index';
-import type { Env, QueueMessage } from '../../shared/types';
+import worker from '../../index.ts';
+import type { Env, QueueMessage } from '../../shared/types.ts';
 
 describe('ingest queue delayed retry policy', () => {
   it('completes only filing.new durably before ACK', async () => {

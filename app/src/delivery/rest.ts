@@ -19,10 +19,10 @@
  */
 
 import { Hono, type Context } from 'hono';
-import { MAX_REFS_BATCH } from '../../vendor/congress-trading-shared/src/index.ts';
-import type { Chamber, Env, Subscription, TxType } from '../shared/types';
-import { all, first, get } from '../shared/db';
-import { cached } from '../shared/kvCache';
+import { MAX_REFS_BATCH } from '../../vendor/congress-trading-shared/dist/index.mjs';
+import type { Chamber, Env, Subscription, TxType } from '../shared/types.ts';
+import { all, first, get } from '../shared/db.ts';
+import { cached } from '../shared/kvCache.ts';
 import {
   buildTransactionsQuery,
   buildTransactionsCountQuery,
@@ -36,10 +36,10 @@ import {
   type TransactionRow,
   type FeedTransactionRow,
   type TxQueryParams,
-} from './rows';
-import { getCurrentUserFromRequest } from '../auth/session';
-import { isPremiumUser } from '../billing/entitlement';
-import { getUserById } from '../auth/users';
+} from './rows.ts';
+import { getCurrentUserFromRequest } from '../auth/session.ts';
+import { isPremiumUser } from '../billing/entitlement.ts';
+import { getUserById } from '../auth/users.ts';
 import {
   createSubscription,
   getSubscription,
@@ -49,15 +49,15 @@ import {
   SubscriptionQuotaError,
   subscriptionSecretError,
   webhookTargetLengthError,
-} from './subscriptions';
-import { openSseStream } from './sse';
-import { handleTickerLogoRequest } from '../ui/tickerLogos';
-import { resolveSecret } from '../secrets/infisical';
-import { constantTimeEqual } from '../auth/tokens';
-import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget';
-import { rateLimit, clientIp } from '../shared/rateLimit';
-import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../security/botDefense';
-import { checkReadiness } from '../shared/readiness';
+} from './subscriptions.ts';
+import { openSseStream } from './sse.ts';
+import { handleTickerLogoRequest } from '../ui/tickerLogos.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
+import { constantTimeEqual } from '../auth/tokens.ts';
+import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget.ts';
+import { rateLimit, clientIp } from '../shared/rateLimit.ts';
+import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
+import { checkReadiness } from '../shared/readiness.ts';
 
 function parseIntOrUndef(v: string | undefined): number | undefined {
   if (v === undefined || v === '') return undefined;

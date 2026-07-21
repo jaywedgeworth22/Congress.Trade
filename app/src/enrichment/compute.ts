@@ -9,9 +9,9 @@
  * deterministic so they unit-test without network or DB.
  */
 
-import { marketCapBucket as sharedMarketCapBucket } from '../../vendor/congress-trading-shared/src/index.ts';
-import { normalizeCompanyName } from '../shared/companyName';
-import type { MktCapBucket, SecurityRef } from './types';
+import { marketCapBucket as sharedMarketCapBucket } from '../../vendor/congress-trading-shared/dist/index.mjs';
+import { normalizeCompanyName } from '../shared/companyName.ts';
+import type { MktCapBucket, SecurityRef } from './types.ts';
 
 /** Bucket a USD market cap into the standard size tiers. null for missing/≤0. */
 export function marketCapBucket(n: number | null | undefined): MktCapBucket | null {

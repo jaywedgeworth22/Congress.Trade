@@ -1,3 +1,4 @@
+/// <reference lib="deno.unstable" />
 import { Client, InStatement } from '@libsql/client';
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 

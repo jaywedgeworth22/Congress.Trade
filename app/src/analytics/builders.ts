@@ -14,8 +14,8 @@
  * for LIMIT) to keep param ordering simple.
  */
 
-import type { SqlParam } from '../shared/db';
-import { canonicalAssetTypeCategorySql } from '../shared/assetTypes';
+import type { SqlParam } from '../shared/db.ts';
+import { canonicalAssetTypeCategorySql } from '../shared/assetTypes.ts';
 import {
   ANALYTICS_FROM_JOINS,
   ANALYTICS_FROM_JOINS_SECURITIES,
@@ -33,7 +33,7 @@ import {
   type CommonFilters,
   type Granularity,
   type Window,
-} from './sql';
+} from './sql.ts';
 
 export interface BuiltQuery {
   sql: string;

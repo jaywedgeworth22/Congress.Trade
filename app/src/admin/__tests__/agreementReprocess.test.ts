@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
-import { buildAdminRouter } from '../routes';
+import { buildAdminRouter } from '../routes.ts';
 
 /** A genuinely-parseable PDF: the Anthropic candidate pre-validates bytes
  *  with pdf-lib (normalizePdfForAnthropic) before any provider call. */

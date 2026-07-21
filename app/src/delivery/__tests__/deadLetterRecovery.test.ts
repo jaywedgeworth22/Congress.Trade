@@ -7,8 +7,8 @@ vi.mock('@sentry/cloudflare', () => ({
   consoleLoggingIntegration: vi.fn(() => ({})),
 }));
 
-import worker from '../../index';
-import type { Env, QueueMessage } from '../../shared/types';
+import worker from '../../index.ts';
+import type { Env, QueueMessage } from '../../shared/types.ts';
 
 function queueMessage(body: QueueMessage, attempts = 1) {
   return { body, attempts, ack: vi.fn(), retry: vi.fn() };

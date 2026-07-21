@@ -62,8 +62,8 @@
  * buildMajorityRows, and resolveAgreedRows below for the mechanics.
  */
 
-import type { Env, ParsedTx, Transaction } from '../shared/types';
-import { all, batch, fromBool, get, run } from '../shared/db';
+import type { Env, ParsedTx, Transaction } from '../shared/types.ts';
+import { all, batch, fromBool, get, run } from '../shared/db.ts';
 import {
   runCandidateOnDoc,
   persistExtractionRun,
@@ -71,23 +71,23 @@ import {
   type BakeoffCandidate,
   type CandidateDocResult,
   type CandidateInvocation,
-} from './bakeoff';
-import { arbitrationRowKey } from '../extractors/types';
+} from './bakeoff.ts';
+import { arbitrationRowKey } from '../extractors/types.ts';
 import {
   recomputeTransactions,
   HARD_FAILURE_FLAGS,
   MAX_PUBLISH_TRANSACTIONS_PER_FILING,
-} from './normalizer';
-import { cleanAssetString } from './nameNormalizer';
-import { mapFiling, type FilingRow } from '../delivery/rows';
-import { recordIngestionDecision } from '../shared/ingestionDecisions';
-import { buildConsensusRows, type AmountBracket, type ConsensusResult } from './consensus';
-import { uuid } from '../shared/ids';
-import { estimateTransactionValue } from '../shared/transactionValue';
-import { flushDeliveryOutbox } from '../delivery/outbox';
-import { resolveSecrets } from '../secrets/infisical';
-import { getUnderlyingProvider } from '../benchmark/settings';
-import { recordProviderHealth } from './providerHealth';
+} from './normalizer.ts';
+import { cleanAssetString } from './nameNormalizer.ts';
+import { mapFiling, type FilingRow } from '../delivery/rows.ts';
+import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
+import { buildConsensusRows, type AmountBracket, type ConsensusResult } from './consensus.ts';
+import { uuid } from '../shared/ids.ts';
+import { estimateTransactionValue } from '../shared/transactionValue.ts';
+import { flushDeliveryOutbox } from '../delivery/outbox.ts';
+import { resolveSecrets } from '../secrets/infisical.ts';
+import { getUnderlyingProvider } from '../benchmark/settings.ts';
+import { recordProviderHealth } from './providerHealth.ts';
 
 export interface AgreementModels {
   a: BakeoffCandidate;

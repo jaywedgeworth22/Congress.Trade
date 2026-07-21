@@ -28,15 +28,15 @@
  *     provider-reported dollars instead of only rate-card estimates.
  */
 
-import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types';
-import type { Env, Filing, ParsedTx } from '../shared/types';
+import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types.ts';
+import type { Env, Filing, ParsedTx } from '../shared/types.ts';
 import { getDocumentProxy } from 'unpdf';
-import { resolveSecret } from '../secrets/infisical';
-import { environmentName } from '../shared/thirdPartyTelemetry';
+import { resolveSecret } from '../secrets/infisical.ts';
+import { environmentName } from '../shared/thirdPartyTelemetry.ts';
 import {
   openrouterRequestEnrichment,
   type OpenRouterRequestEnrichment,
-} from '../../vendor/congress-trading-shared/src/index.ts';
+} from '../../vendor/congress-trading-shared/dist/index.mjs';
 import {
   buildExtractionPrompt,
   loadExtractionPromptContext,
@@ -45,7 +45,7 @@ import {
   fetchWithRetry,
   arrayBufferToBase64,
   markSalvaged,
-} from './visionLlm';
+} from './visionLlm.ts';
 
 /** Live default (verified against the OpenRouter catalog 2026-07-18); the
  *  former default `qwen/qwen-2.5-vl-72b-instruct:free` is no longer listed. */

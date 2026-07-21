@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
-import { UsageTelemetryEventSchema } from '../../../vendor/congress-trading-shared/src/index.ts';
-import type { Env, QueueMessage, ThirdPartyUsageTelemetryEvent } from '../types';
+import { UsageTelemetryEventSchema } from '../../../vendor/congress-trading-shared/dist/index.mjs';
+import type { Env, QueueMessage, ThirdPartyUsageTelemetryEvent } from '../types.ts';
 import {
   deliverUsageTelemetryEvent,
   enqueueUsageTelemetryEvent,
@@ -17,7 +17,7 @@ import {
   type MeasuredThirdPartyUsage,
   withThirdPartyTelemetry,
   withoutThirdPartyTelemetry,
-} from '../thirdPartyTelemetry';
+} from '../thirdPartyTelemetry.ts';
 
 const testModuleUrl = (import.meta as ImportMeta & { readonly url: string }).url;
 

@@ -9,8 +9,8 @@
  * src/shared/brackets.ts when possible.
  */
 
-import { matchBracket, nearestBracket, STOCK_ACT_BRACKETS } from '../shared/brackets';
-import type { AmountBracket } from '../shared/brackets';
+import { matchBracket, nearestBracket, STOCK_ACT_BRACKETS } from '../shared/brackets.ts';
+import type { AmountBracket } from '../shared/brackets.ts';
 
 export interface AmountRange {
   /** Lower bound in whole USD, or null when unparseable. */

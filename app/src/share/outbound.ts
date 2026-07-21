@@ -20,17 +20,17 @@ import {
   type PriceClose,
   type PriceSeries,
   type SecurityRefInput,
-} from '../../vendor/congress-trading-shared/src/index.ts';
-import type { SecurityRef } from '../enrichment/types';
-import { resolveSecrets } from '../secrets/infisical';
-import type { Env } from '../shared/types';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+} from '../../vendor/congress-trading-shared/dist/index.mjs';
+import type { SecurityRef } from '../enrichment/types.ts';
+import { resolveSecrets } from '../secrets/infisical.ts';
+import type { Env } from '../shared/types.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import {
   checkTargetCircuit,
   recordTargetFailure,
   recordTargetSuccess,
   targetKeyForUrl,
-} from '../delivery/targetCircuit';
+} from '../delivery/targetCircuit.ts';
 
 type PeerEnv = Env & { APP_B_IMPORT_URL?: string; APP_B_INGEST_TOKEN?: string };
 

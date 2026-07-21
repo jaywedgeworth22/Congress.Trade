@@ -47,15 +47,15 @@
  * per-connection D1 poll loop with one shared Durable Object fanout per feed.
  */
 
-import type { Env, Subscription, Transaction } from '../shared/types';
-import { all, get, run } from '../shared/db';
-import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows';
-import { matchesFiltersWithContext, subscriptionOwnerEntitled } from './subscriptions';
-import { constantTimeEqual } from '../auth/tokens';
-import { createCongressEvent } from '../../vendor/congress-trading-shared/src/index.ts';
-import { prefixedId } from '../shared/ids';
-import { rateLimit } from '../shared/rateLimit';
-import { flushD1Budget } from '../shared/d1Budget';
+import type { Env, Subscription, Transaction } from '../shared/types.ts';
+import { all, get, run } from '../shared/db.ts';
+import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows.ts';
+import { matchesFiltersWithContext, subscriptionOwnerEntitled } from './subscriptions.ts';
+import { constantTimeEqual } from '../auth/tokens.ts';
+import { createCongressEvent } from '../../vendor/congress-trading-shared/dist/index.mjs';
+import { prefixedId } from '../shared/ids.ts';
+import { rateLimit } from '../shared/rateLimit.ts';
+import { flushD1Budget } from '../shared/d1Budget.ts';
 
 /** How often to poll D1 for new rows. */
 const POLL_INTERVAL_MS = 5_000;

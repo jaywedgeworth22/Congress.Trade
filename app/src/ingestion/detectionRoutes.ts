@@ -13,11 +13,11 @@
  * bearer secret as the securities import).
  */
 import { Hono } from 'hono';
-import type { Env } from '../shared/types';
-import { resolveSecret } from '../secrets/infisical';
-import { constantTimeEqual } from '../auth/tokens';
-import { recordDisclosureLatencyCandidate } from './fmpDisclosureLatency';
-import type { DiscoveredFiling } from './watcher';
+import type { Env } from '../shared/types.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
+import { constantTimeEqual } from '../auth/tokens.ts';
+import { recordDisclosureLatencyCandidate } from './fmpDisclosureLatency.ts';
+import type { DiscoveredFiling } from './watcher.ts';
 
 export function buildDetectionRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();

@@ -39,8 +39,8 @@ vi.mock('../thirdPartyTelemetry', async (importOriginal) => ({
   flushUsageTelemetryFallback: mocks.telemetryFallback,
 }));
 
-import worker from '../../index';
-import type { Env } from '../types';
+import worker from '../../index.ts';
+import type { Env } from '../types.ts';
 
 describe('scheduled maintenance isolation', () => {
   it('registers outbox maintenance even when watcher configuration fails', async () => {

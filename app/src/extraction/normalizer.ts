@@ -18,20 +18,20 @@
  * after running buildExtractorPipeline(env).
  */
 
-import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../shared/types';
-import { all, batch, fromBool, get, parseJson } from '../shared/db';
-import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets';
-import { canonicalizeAssetType } from '../shared/assetTypes';
-import { uuid } from '../shared/ids';
-import { estimateTransactionValue } from '../shared/transactionValue';
+import type { Env, Filing, Owner, ParsedTx, Transaction, TxType } from '../shared/types.ts';
+import { all, batch, fromBool, get, parseJson } from '../shared/db.ts';
+import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets.ts';
+import { canonicalizeAssetType } from '../shared/assetTypes.ts';
+import { uuid } from '../shared/ids.ts';
+import { estimateTransactionValue } from '../shared/transactionValue.ts';
 import {
   isPlaceholderTicker,
   resolvePreferredTickerFromAssetName,
   resolveTickerDeterministic,
-} from './tickerNormalize';
-import { cleanAssetString } from './nameNormalizer';
-import { resolveContinuousTicker } from '../../vendor/congress-trading-shared/src/index.ts';
-import { flushDeliveryOutbox } from '../delivery/outbox';
+} from './tickerNormalize.ts';
+import { cleanAssetString } from './nameNormalizer.ts';
+import { resolveContinuousTicker } from '../../vendor/congress-trading-shared/dist/index.mjs';
+import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 
 /**
  * Per-tx confidence at or above this threshold is trusted for auto-publish. If a

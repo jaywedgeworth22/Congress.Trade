@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { looksLikePdf, looksLikeHtml, classifyPdfBytes, decideDocKind } from '../classifier';
+import { looksLikePdf, looksLikeHtml, classifyPdfBytes, decideDocKind } from '../classifier.ts';
 
 const enc = (s: string) => new TextEncoder().encode(s);
 

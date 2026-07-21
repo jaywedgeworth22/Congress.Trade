@@ -18,10 +18,10 @@ import type {
   Transaction,
   TxSource,
   TxType,
-} from '../shared/types';
-import { parseJson, toBool } from '../shared/db';
-import { canonicalizeAssetType } from '../shared/assetTypes';
-import { normalizeCompanyName } from '../shared/companyName';
+} from '../shared/types.ts';
+import { parseJson, toBool } from '../shared/db.ts';
+import { canonicalizeAssetType } from '../shared/assetTypes.ts';
+import { normalizeCompanyName } from '../shared/companyName.ts';
 
 
 // ---------------------------------------------------------------------------

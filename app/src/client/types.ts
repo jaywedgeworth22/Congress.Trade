@@ -1,4 +1,4 @@
-import type { FeedTransactionRow } from '../delivery/rows';
+import type { FeedTransactionRow } from '../delivery/rows.ts';
 
 export type ClientTradeRow = FeedTransactionRow & {
   __chamber?: string | null;
