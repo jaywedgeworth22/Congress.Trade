@@ -518,6 +518,18 @@ export interface Env {
   AGREEMENT_BIG_DOC_PAGE_THRESHOLD?: string;
   /** Raw-byte threshold for the big-doc tier-2 start heuristic (default 2097152 = 2MB). */
   AGREEMENT_BIG_DOC_BYTES_THRESHOLD?: string;
+  /**
+   * When 'true' (default), the agreement cascade's 7 free-text material fields
+   * (assetName, assetType, assetTypeName, subholding, location, description,
+   * supplementalText) compare through a canonical form (casefold, punctuation
+   * stripped, company suffixes canonicalized) instead of byte/case equality,
+   * so two vendors that both correctly read the same disclosed text don't
+   * disagree merely over casing or punctuation. The 9 strict/enum fields
+   * (ticker, amounts, tx_type, tx_date, owner, is_option, cap_gains_over_200,
+   * filing_status) always require exact value equality regardless of this
+   * flag. Set 'false' to restore byte-strict comparison on every tier.
+   */
+  AGREEMENT_TEXT_NORMALIZATION?: string;
   /** Financial Modeling Prep key — enables asset enrichment + price/performance. */
   FMP_API_KEY?: string;
   /** Daily FMP call budget (stringified int); defaults to 230 when unset. */
@@ -615,6 +627,25 @@ export interface Env {
   USAGE_MONITOR_INGEST_URL?: string;
   USAGE_MONITOR_INGEST_TOKEN?: string;
   USAGE_MONITOR_ENVIRONMENT?: string;
+  /**
+   * Read-side self-throttle feedback loop (see shared/monitorBudgetGate.ts):
+   * CT polls the monitor's cross-app `GET /api/budget-status` so discretionary
+   * spend (currently just the backlog autopilot) can back off a provider the
+   * monitor already reports at/over budget, instead of learning about it only
+   * after CT's own local budget/receipt data catches up. Advisory only — it
+   * composes UNDER any hard, CT-local resource governor and fails OPEN
+   * (never throttles) when unreachable or unconfigured.
+   */
+  /** Dedicated read token for `GET /api/budget-status`; falls back to USAGE_MONITOR_INGEST_TOKEN (a token that can push can also read), mirroring the monitor's own USAGE_READ_TOKEN||USAGE_INGEST_TOKEN convention. */
+  USAGE_MONITOR_READ_TOKEN?: string;
+  /** Master on/off switch for the self-throttle (default enabled whenever the monitor is configured). Set to a falsy value to disable. */
+  USAGE_MONITOR_BUDGET_THROTTLE_ENABLED?: string;
+  /** Fraction of monthly budget (0-1) at/above which a provider is treated as throttled (default 1.0 — i.e. the monitor's own "exceeded" status). Lower it to back off earlier, e.g. "0.9". */
+  USAGE_MONITOR_BUDGET_THROTTLE_THRESHOLD?: string;
+  /** In-isolate cache TTL in ms for the polled budget-status response (default 120000 = 2min). */
+  USAGE_MONITOR_BUDGET_STATUS_CACHE_TTL_MS?: string;
+  /** Bounded request deadline in ms for the budget-status poll itself (default 5000, hard cap 15000). */
+  USAGE_MONITOR_BUDGET_STATUS_TIMEOUT_MS?: string;
   /**
    * Usage telemetry delivery circuit breaker + R2 outbox limits (see
    * shared/thirdPartyTelemetry.ts). All are env-overridable; every one has a
