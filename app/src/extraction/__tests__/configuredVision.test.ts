@@ -110,17 +110,20 @@ describe('resolvePrimaryFailoverModels', () => {
     expect(failover).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5' });
   });
 
-  it('returns nulls for an unconfigured chamber', async () => {
+  it('returns default Grok 4.5 for an unconfigured chamber', async () => {
     const { primary, failover } = await resolvePrimaryFailoverModels({} as Env, 'senate');
-    expect(primary).toBeNull();
+    expect(primary).toEqual({ provider: 'openrouter', model: 'x-ai/grok-4.5' });
     expect(failover).toBeNull();
   });
 });
 
 describe('ConfiguredVisionExtractor', () => {
   it('delegates entirely to legacy when no primary is configured', async () => {
+    const env = {
+      AGREEMENT_HOUSE_MODEL_A: 'invalid:model',
+    } as unknown as Env;
     const legacy = legacyExtractor(LEGACY_RESULT);
-    const extractor = new ConfiguredVisionExtractor({} as Env, legacy);
+    const extractor = new ConfiguredVisionExtractor(env, legacy);
     const result = await extractor.extract(input());
     expect(result).toBe(LEGACY_RESULT);
     expect(legacy.extract).toHaveBeenCalledTimes(1);
