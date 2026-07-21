@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 
 // No pre-existing orchestrator test file to extend (only admin/reprocessHardFailure.test.ts,
 // which mocks the orchestrator module entirely rather than exercising it) — this file is new,
@@ -23,7 +23,7 @@ vi.mock('../../shared/telemetry', () => ({
   reportAiUsage: mocks.reportAiUsage,
 }));
 
-import { extractParsed } from '../orchestrator';
+import { extractParsed } from '../orchestrator.ts';
 
 const FILING_ROW = {
   doc_id: 'H-1',

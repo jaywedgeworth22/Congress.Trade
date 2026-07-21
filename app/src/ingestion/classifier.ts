@@ -29,8 +29,8 @@
  * vision extractor is the safe fallback for ambiguous PDFs.
  */
 
-import type { Env, DocKind } from '../shared/types';
-import { get, run } from '../shared/db';
+import type { Env, DocKind } from '../shared/types.ts';
+import { get, run } from '../shared/db.ts';
 
 interface FilingRow {
   doc_id: string;

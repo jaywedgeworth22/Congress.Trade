@@ -11,9 +11,9 @@ import {
   runSeedBackfill,
   runSeedBackfillFromEnv,
   type RawWatcherRecord,
-} from '../seed';
-import type { Env } from '../../shared/types';
-import type { TickerResolver } from '../../extraction/normalizer';
+} from '../seed.ts';
+import type { Env } from '../../shared/types.ts';
+import type { TickerResolver } from '../../extraction/normalizer.ts';
 
 // A resolver that treats every supplied ticker as known (resolves to itself),
 // simulating a securities_master hit so clean rows aren't ticker-penalized.

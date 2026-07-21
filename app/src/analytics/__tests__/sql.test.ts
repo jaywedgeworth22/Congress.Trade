@@ -21,7 +21,7 @@ import {
   isWindow,
   whereSql,
   windowToOffset,
-} from '../sql';
+} from '../sql.ts';
 
 describe('validators', () => {
   it('asWindow accepts preset + custom <N>d windows and falls back otherwise', () => {

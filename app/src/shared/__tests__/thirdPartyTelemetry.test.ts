@@ -17,7 +17,7 @@ import {
   type MeasuredThirdPartyUsage,
   withThirdPartyTelemetry,
   withoutThirdPartyTelemetry,
-} from '../thirdPartyTelemetry';
+} from '../thirdPartyTelemetry.ts';
 
 const testModuleUrl = (import.meta as ImportMeta & { readonly url: string }).url;
 

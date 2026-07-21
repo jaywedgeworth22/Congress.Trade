@@ -8,7 +8,7 @@
  * daily failed-attempt cap is the hard backstop.
  */
 import { describe, expect, it, vi } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   DEFAULT_TARGET_DAILY_ATTEMPT_CAP,
   DEFAULT_TARGET_FAILURE_THRESHOLD,
@@ -19,8 +19,8 @@ import {
   recordTargetFailure,
   recordTargetSuccess,
   targetKeyForUrl,
-} from '../targetCircuit';
-import { dispatchWebhook, DeliveryRetryError } from '../webhook';
+} from '../targetCircuit.ts';
+import { dispatchWebhook, DeliveryRetryError } from '../webhook.ts';
 
 interface CircuitState {
   target_key: string;
