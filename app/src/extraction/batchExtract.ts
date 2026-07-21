@@ -26,7 +26,7 @@ import {
   SYSTEM_PROMPT,
   EXECUTIVE_SYSTEM_PROMPT,
   parseModelJson,
-  parseAnthropicModelJson,
+  parseTruncationAwareJson,
   markSalvaged,
   toParsedTx,
   arrayBufferToBase64,
@@ -494,7 +494,7 @@ async function submitAnthropic(env: Env, model: string, docs: BatchDoc[]): Promi
  * provider reports `stop_reason: 'max_tokens'` (output truncated) and the
  * text fails to parse whole, bounded salvage recovers the complete leading
  * transaction rows instead of failing the whole read (see
- * `parseAnthropicModelJson` in visionLlm.ts).
+ * `parseTruncationAwareJson` in visionLlm.ts).
  */
 export function decodeAnthropicLine(line: unknown): BatchDocResult {
   const l = line as {
@@ -524,8 +524,8 @@ export function decodeAnthropicLine(line: unknown): BatchDocResult {
   }
   try {
     const text = (l.result.message.content ?? []).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('').trim();
-    const { rows: modelRows, salvaged } = parseAnthropicModelJson(text, l.result.message.stop_reason);
-    const rows = modelRows.map(toParsedTx).map((tx) => (salvaged ? markSalvaged(tx) : tx));
+    const { rows: modelRows, salvaged } = parseTruncationAwareJson(text, l.result.message.stop_reason === 'max_tokens');
+    const rows = modelRows.map(toParsedTx).map((tx: ParsedTx) => (salvaged ? markSalvaged(tx) : tx));
     return { docId, ok: true, rows, usage };
   } catch (err) {
     return { docId, ok: false, error: (err as Error).message.slice(0, 300), rows: [], usage };
@@ -686,7 +686,7 @@ export function decodeOpenAiLine(line: unknown): BatchDocResult {
         status?: unknown;
         incomplete_details?: { reason?: unknown } | null;
         error?: unknown;
-        choices?: Array<{ message?: { content?: string } }>;
+        choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
         output_text?: unknown;
         output?: Array<{ content?: Array<{ text?: string; refusal?: string }> }>;
         usage?: {
@@ -706,13 +706,21 @@ export function decodeOpenAiLine(line: unknown): BatchDocResult {
   const rawResponseStatus = body?.status;
   const responseStatus = typeof rawResponseStatus === 'string' ? rawResponseStatus : undefined;
   const responseStatusInvalid = rawResponseStatus != null && responseStatus == null;
-  const responseLifecycleError = responseStatusInvalid
-    ? 'invalid response lifecycle status'
-    : responseStatus && responseStatus !== 'completed'
-      ? `response ${responseStatus}${typeof body?.incomplete_details?.reason === 'string'
-        ? `: ${body.incomplete_details.reason}`
-        : ''}`
-      : undefined;
+  
+  let isTruncated = false;
+  let responseLifecycleError: string | undefined;
+  if (responseStatusInvalid) {
+    responseLifecycleError = 'invalid response lifecycle status';
+  } else if (responseStatus === 'incomplete' && body?.incomplete_details?.reason === 'max_output_tokens') {
+    isTruncated = true;
+  } else if (responseStatus && responseStatus !== 'completed') {
+    responseLifecycleError = `response ${responseStatus}${typeof body?.incomplete_details?.reason === 'string'
+      ? `: ${body.incomplete_details.reason}`
+      : ''}`;
+  } else if (!responseStatus && body?.choices?.[0]?.finish_reason === 'length') {
+    isTruncated = true;
+  }
+
   const refusal = (body?.output ?? [])
     .flatMap((item) => item.content ?? [])
     .map((item) => item.refusal?.trim())
@@ -751,7 +759,8 @@ export function decodeOpenAiLine(line: unknown): BatchDocResult {
     return { docId, ok: false, error, rows: [], usage, resolvedModel };
   }
   try {
-    return { docId, ok: true, rows: parseModelJson(content).map(toParsedTx), usage, resolvedModel };
+    const { rows: modelRows, salvaged } = parseTruncationAwareJson(content, isTruncated);
+    return { docId, ok: true, rows: modelRows.map(toParsedTx).map((tx: ParsedTx) => (salvaged ? markSalvaged(tx) : tx)), usage, resolvedModel };
   } catch (err) {
     return { docId, ok: false, error: (err as Error).message.slice(0, 300), rows: [], usage, resolvedModel };
   }
