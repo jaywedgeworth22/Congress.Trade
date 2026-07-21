@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --outdir dist --upload-source-maps --var SENTRY_RELEASE:$(sentry-cli releases propose-version)",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "deno check src/deno/main.ts",
     "test": "vitest run",
     "lint": "eslint src/",
     "coverage": "vitest run --coverage",
@@ -43,7 +43,6 @@
     "@typescript-eslint/parser": "^8.62.1",
     "@vitest/coverage-v8": "4.1.10",
     "eslint": "^10.7.0",
-    "typescript": "^6.0.3",
     "vitest": "4.1.10",
     "wrangler": "^4.110.0"
   },
