@@ -2,7 +2,7 @@
   "unstable": [
     "kv",
     "cron",
-    "sloppy-imports"
+    
   ],
   "tasks": {
     "start": "deno run --unstable-kv --unstable-cron --allow-net --allow-env --allow-read src/deno/main.ts"
@@ -15,6 +15,6 @@
     ]
   },
   "imports": {
-    "@jaywedgeworth22/congress-trading-shared": "./vendor/congress-trading-shared/dist/index.mjs"
+    "@jaywedgeworth22/congress-trading-shared": "./shared.ts"
   }
 }
