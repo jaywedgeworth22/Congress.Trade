@@ -196,6 +196,22 @@ export async function dispatchWebhook(
     marketCapBucket: refRow?.market_cap_bucket ?? null,
   };
 
+  // Broadcast the transaction to any live SSE streams exactly once (on the
+  // initial fanout message, not on paginated continuations or targeted retries).
+  if (!msg.subscriptionId && !msg.afterSubscriptionId && typeof BroadcastChannel !== 'undefined') {
+    try {
+      const channel = new (BroadcastChannel as any)('congress.trade.live');
+      channel.postMessage({
+        type: 'NEW_TRANSACTION',
+        transaction: tx,
+        context: ctx,
+      });
+      channel.close();
+    } catch (err) {
+      console.warn('dispatchWebhook: broadcast failed', (err as Error).message);
+    }
+  }
+
   const visit = async (sub: Subscription): Promise<void> => {
     if (!sub.targetUrl) return;
     if (!matchesFiltersWithContext(tx, sub.filters, ctx)) return;
