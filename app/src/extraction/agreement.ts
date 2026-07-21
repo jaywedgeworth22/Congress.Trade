@@ -77,6 +77,7 @@ import {
   recomputeTransactions,
   HARD_FAILURE_FLAGS,
   MAX_PUBLISH_TRANSACTIONS_PER_FILING,
+  loadResolver,
 } from './normalizer.ts';
 import { cleanAssetString } from './nameNormalizer.ts';
 import { mapFiling, type FilingRow } from '../delivery/rows.ts';
@@ -1120,6 +1121,25 @@ export async function processAgreementCascadeTier2(
   }
   const runBatchId = uuid();
   const reads = await readAndPersist(env, lineup, docId, loaded.bytes, runBatchId);
+
+  // Align rows before consensus checks to prevent spurious field_disagreement
+  // on raw string variants of the same ticker/asset.
+  const resolver = await loadResolver(env);
+  for (const read of reads) {
+    if (read.ok) {
+      for (const tx of read.rows) {
+        const cleaned = cleanAssetString(tx.assetName, tx.ticker);
+        const resolved = resolver(tx.ticker, cleaned);
+        if (resolved) {
+          tx.ticker = resolved;
+        }
+        if (cleaned) {
+          tx.assetName = cleaned;
+        }
+      }
+    }
+  }
+
   const [rA, rB, rC] = reads;
 
   const frow = await loadFilingRow(env, docId);
