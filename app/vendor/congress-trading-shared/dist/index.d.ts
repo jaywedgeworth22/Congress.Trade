@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import { z } from 'npm:zod';
 
 declare const IsoDateSchema: z.ZodString;
 declare const ChamberSchema: z.ZodEnum<{
