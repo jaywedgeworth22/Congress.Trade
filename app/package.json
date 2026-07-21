@@ -59,7 +59,4 @@
       "@cloudflare/workers-types": "$@cloudflare/workers-types"
     }
   },
-  "allowScripts": {
-    "github:jaywedgeworth22/congress-trading-shared#v1.11.1": true
-  }
 }
