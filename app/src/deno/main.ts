@@ -1,4 +1,5 @@
 /// <reference lib="deno.unstable" />
+/// <reference types="@cloudflare/workers-types" />
 import { createClient } from 'npm:@libsql/client/web';
 import { S3Client } from 'npm:@aws-sdk/client-s3';
 import { D1DatabaseShim, KVNamespaceShim, QueueShim, R2BucketShim } from './shims.ts';
