@@ -36,8 +36,8 @@
  *                                       unset = governed by the global only
  */
 
-import type { Env } from './types';
-import { resolveSecret } from '../secrets/infisical';
+import type { Env } from './types.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
 
 /** Stable marker embedded in every budget-halt error message. Provider-failure
  * classification and the no-failover break key off this exact string, so it

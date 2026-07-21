@@ -4,7 +4,7 @@ import {
   classifyProviderFailure,
   findProviderFailureBlock,
   modelsAffectedByProviderFailure,
-} from '../providerFailure';
+} from '../providerFailure.ts';
 
 describe('benchmark provider failure classification', () => {
   it('classifies current project/model access errors without retaining identifiers', () => {

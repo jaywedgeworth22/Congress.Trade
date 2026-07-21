@@ -30,9 +30,9 @@
  * monitor.
  */
 
-import { resolveSecrets } from '../secrets/infisical';
-import { normalizeUsageMonitorBaseUrl } from './thirdPartyTelemetry';
-import type { Env } from './types';
+import { resolveSecrets } from '../secrets/infisical.ts';
+import { normalizeUsageMonitorBaseUrl } from './thirdPartyTelemetry.ts';
+import type { Env } from './types.ts';
 
 const BUDGET_STATUS_PATH = '/api/budget-status';
 

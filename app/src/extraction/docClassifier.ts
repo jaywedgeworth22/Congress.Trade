@@ -28,13 +28,13 @@
  * the autopilot, and doc_class as a receipt/attribution dimension.
  */
 
-import type { Env } from '../shared/types';
-import { get, run } from '../shared/db';
+import type { Env } from '../shared/types.ts';
+import { get, run } from '../shared/db.ts';
 import { PDFDocument } from 'pdf-lib';
-import { resolveSecrets } from '../secrets/infisical';
-import { keyFor } from './bakeoff';
-import { looksLikePdf } from '../ingestion/classifier';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import { resolveSecrets } from '../secrets/infisical.ts';
+import { keyFor } from './bakeoff.ts';
+import { looksLikePdf } from '../ingestion/classifier.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 export type DocClass = 'typed' | 'clean_scan' | 'hard_scan' | 'empty' | 'corrupt';
 

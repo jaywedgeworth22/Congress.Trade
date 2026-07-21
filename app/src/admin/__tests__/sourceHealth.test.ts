@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildAdminRouter } from '../routes';
-import type { Env, PollConfig } from '../../shared/types';
+import { buildAdminRouter } from '../routes.ts';
+import type { Env, PollConfig } from '../../shared/types.ts';
 
 describe('source health status', () => {
   it('bounds history per source and gives errors precedence over staleness', async () => {

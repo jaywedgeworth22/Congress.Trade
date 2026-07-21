@@ -47,10 +47,10 @@
  * a no-op there — hence "where supported".
  */
 
-import type { Env } from '../shared/types';
-import { all, get, run } from '../shared/db';
-import { uuid } from '../shared/ids';
-import { resolveSecrets } from '../secrets/infisical';
+import type { Env } from '../shared/types.ts';
+import { all, get, run } from '../shared/db.ts';
+import { uuid } from '../shared/ids.ts';
+import { resolveSecrets } from '../secrets/infisical.ts';
 import {
   AGREEMENT_CLAIM_LEASE_MS,
   handleAgreementCheck,
@@ -59,15 +59,15 @@ import {
   resolveModelsWithC,
   type AgreementDocResult,
   type AgreementModelsC,
-} from './agreement';
-import { classifyProviderErrorClass, type ProviderErrorClass } from './providerHealth';
-import { estimateNominalReadCostUsd, priceBenchmarkUsage } from './benchmarkMetrics';
-import { meanConfidence, persistExtractionRun, type CandidateDocResult, type Provider } from './bakeoff';
-import { arbitrationRowKey } from '../extractors/types';
-import { pollBatch, submitBatch, type BatchChamber, type BatchDoc, type BatchProvider } from './batchExtract';
-import { ensureDocClass, DOC_CLASS_ORDER_SQL, type DocClass } from './docClassifier';
-import { recordIngestionDecision } from '../shared/ingestionDecisions';
-import { allProvidersThrottled } from '../shared/monitorBudgetGate';
+} from './agreement.ts';
+import { classifyProviderErrorClass, type ProviderErrorClass } from './providerHealth.ts';
+import { estimateNominalReadCostUsd, priceBenchmarkUsage } from './benchmarkMetrics.ts';
+import { meanConfidence, persistExtractionRun, type CandidateDocResult, type Provider } from './bakeoff.ts';
+import { arbitrationRowKey } from '../extractors/types.ts';
+import { pollBatch, submitBatch, type BatchChamber, type BatchDoc, type BatchProvider } from './batchExtract.ts';
+import { ensureDocClass, DOC_CLASS_ORDER_SQL, type DocClass } from './docClassifier.ts';
+import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
+import { allProvidersThrottled } from '../shared/monitorBudgetGate.ts';
 
 const MICRO = 1_000_000;
 /** Docs processed per queue-consumer invocation (each doc = 2-3 model reads). */

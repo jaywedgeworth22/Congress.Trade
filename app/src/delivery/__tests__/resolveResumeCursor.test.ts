@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { resolveResumeCursor } from '../rest';
+import { resolveResumeCursor } from '../rest.ts';
 
 describe('resolveResumeCursor', () => {
   it('returns undefined when neither source is provided', () => {

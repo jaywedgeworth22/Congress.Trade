@@ -19,8 +19,8 @@ import {
   type TxQueryParams,
   type FeedTransactionRow,
   type TransactionRow,
-} from '../rows';
-import type { Filing } from '../../shared/types';
+} from '../rows.ts';
+import type { Filing } from '../../shared/types.ts';
 
 describe('buildTransactionsQuery', () => {
   it('always filters cursor_seq > since (defaulting since to 0) and orders by cursor ASC', () => {

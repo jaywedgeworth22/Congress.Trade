@@ -23,8 +23,8 @@
  */
 
 import { unzipSync } from 'fflate';
-import { BROWSER_HEADERS, CookieJar, delay } from './senateSource';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import { BROWSER_HEADERS, CookieJar, delay } from './senateSource.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 /** A single filing row parsed out of the House yearly index XML. */
 export interface HouseFiling {
