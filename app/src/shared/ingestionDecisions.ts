@@ -1,5 +1,5 @@
-import { all, parseJson, run, type SqlParam } from './db';
-import { uuid } from './ids';
+import { all, parseJson, run, type SqlParam } from './db.ts';
+import { uuid } from './ids.ts';
 
 export type IngestionDecisionAction =
   | 'auto_published'

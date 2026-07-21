@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Env } from './types';
+import type { Env } from './types.ts';
 
 /**
  * shared/monitorBudgetGate.ts: the read-side self-throttle feedback loop.

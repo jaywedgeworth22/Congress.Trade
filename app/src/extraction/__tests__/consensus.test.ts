@@ -4,8 +4,8 @@ import {
   type AmountBracket,
   type ConsensusFieldName,
   type ConsensusRun,
-} from '../consensus';
-import type { ParsedTx } from '../../shared/types';
+} from '../consensus.ts';
+import type { ParsedTx } from '../../shared/types.ts';
 
 /** Build a ParsedTx with sensible defaults, overridable per-field. */
 function tx(over: Partial<ParsedTx> = {}): ParsedTx {

@@ -11,7 +11,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { parse } from 'node-html-parser';
-import { DASHBOARD_HTML } from '../dashboardHtml';
+import { DASHBOARD_HTML } from '../dashboardHtml.ts';
 
 function scriptBlocks(html: string): string[] {
   const blocks: string[] = [];

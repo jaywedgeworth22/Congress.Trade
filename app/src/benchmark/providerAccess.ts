@@ -1,10 +1,10 @@
-import type { Env } from '../shared/types';
-import { resolveSecret } from '../secrets/infisical';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import type { Env } from '../shared/types.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import {
   classifyProviderFailure,
   type ProviderFailureStatus,
-} from '../extraction/providerFailure';
+} from '../extraction/providerFailure.ts';
 
 /**
  * Curated OpenAI models worth probing for disclosure-document benchmarks.

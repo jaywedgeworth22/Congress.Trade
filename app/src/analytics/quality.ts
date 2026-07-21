@@ -6,9 +6,9 @@
  * discrepancies (missed trades, extra extractions, ticker/detail mismatches).
  */
 
-import type { Env } from '../shared/types';
-import { all } from '../shared/db';
-import { matchDisclosureCandidate } from '../ingestion/fmpDisclosureLatency';
+import type { Env } from '../shared/types.ts';
+import { all } from '../shared/db.ts';
+import { matchDisclosureCandidate } from '../ingestion/fmpDisclosureLatency.ts';
 
 interface CandidateRow {
   doc_id: string;

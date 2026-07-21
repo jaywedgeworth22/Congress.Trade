@@ -17,22 +17,18 @@ permissions:
 jobs:
   build:
     name: typecheck + test
-    # Fork and Dependabot code must not execute on the persistent Coolify
-    # runner. Dependabot updates stay blocked until CI is disposable/ephemeral.
+    # Self-hosted CI with automatic hosted fallback. Set CT_CI_RUNNER repo
+    # variable to 'congress-ci' for owned runner, clear/delete for hosted.
+    # Dependabot forced to hosted runners for security.
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 20
     defaults:
       run:
         working-directory: app
     steps:
-      - name: Block dependency-bot code on the persistent runner
-        if: github.actor == 'dependabot[bot]'
-        run: |
-          echo "::error::Dependabot PRs require disposable CI; update on a trusted human branch."
-          exit 1
 
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -72,17 +68,12 @@ jobs:
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 20
     defaults:
       run:
         working-directory: clients/pwa
     steps:
-      - name: Block dependency-bot code on the persistent runner
-        if: github.actor == 'dependabot[bot]'
-        run: |
-          echo "::error::Dependabot PRs require disposable CI; update on a trusted human branch."
-          exit 1
 
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 

@@ -3,7 +3,7 @@ import {
   BENCHMARK_SCORING_PROFILE,
   compareBenchmarkRows,
   scorePersistedBenchmarkResult,
-} from '../scoring';
+} from '../scoring.ts';
 
 function row(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
