@@ -22,6 +22,8 @@ Full protocol: `/Users/jay/apps/AGENT-SYNC.md` (canonical - read it before your 
 - **Chunking**: Break large tasks into smaller, reviewable chunks (like discrete PRs or commits), even if executing them back-to-back. No more giant monolithic batches.
 - **Socialize First**: For cross-app changes (like API SDKs or UX overhauls), socialize the design in #agent-sync before executing.
 - **Never Say "Can Be Viewed Locally"**: NEVER tell the user that a task is finished and that it "can be viewed locally" (unless explicitly told to build local-only). Work is NOT finished until it is merged to `main` and fully deployed to production. Saying a task is done when it is only runnable locally leads to duplicate work and confusion. Always merge and run the production deployment script (`bash app/scripts/ship.sh`) as part of completing the task.
+- **CI Runner Policy (Banned Local Mac Runner)**: All CI workflows MUST run on the dedicated Coolify self-hosted runners (`coolify-hetzner-congress` / `congress-ci` on Coolify, `socratic-ci`). NEVER start, spawn, re-enable, or configure local Mac self-hosted runners (`trading-live-mac-ci`, `trading-live-mac`, `actions-runner`). Local Mac runners are strictly prohibited and permanently banned across all agents and automated scripts.
+
 
 At session start in any repo, run one agent-sync poll pass:
 `AGENT_TAG=<YOUR-TAG> /usr/bin/python3 /Users/jay/apps/agent-sync-poll.py`
