@@ -149,19 +149,23 @@ function houseDiscovery(f: { pipelineDocId: string; sourceUrl: string; filingDat
 }
 
 /**
- * INSERT OR IGNORE one discovered filing as a 'new' row. Returns true iff the
- * row was GENUINELY new — D1's `meta.changes` > 0 means a row was actually
- * written (we'd never seen this doc_id), with no read-back race.
+ * INSERT OR IGNORE one discovered filing as a 'new' row. Returns `inserted`
+ * iff the row was GENUINELY new — D1's `meta.changes` > 0 means a row was
+ * actually written (we'd never seen this doc_id), with no read-back race.
+ * `deferred` means the D1 write governor denied this invocation, so callers
+ * must not treat the filing as an already-seen duplicate.
  *
  * This is the single source of truth for the filings-row write, shared by the
  * cron watcher (below) and the historical House backfill crawler
  * (src/backfill/houseCrawler.ts) so the INSERT column list never drifts.
  */
+export type InsertFilingResult = 'inserted' | 'duplicate' | 'deferred';
+
 export async function insertFilingIfNew(
   env: Env,
   f: DiscoveredFiling,
   nowIso: string,
-): Promise<boolean> {
+): Promise<InsertFilingResult> {
   // GOVERNOR 2: discovery upserts are a known storm writer (a source that
   // suddenly returns thousands of "new" rows, or a crawler loop). Past the
   // per-invocation governed-write cap this discovery is DEFERRED, not written:
@@ -169,7 +173,7 @@ export async function insertFilingIfNew(
   // just degrades to bounded batches per invocation.
   if (consumeGovernedD1Writes(env, 'ingestion-discovery', 1) < 1) {
     console.warn('insertFilingIfNew deferred: D1 write governor cap reached', f.docId);
-    return false;
+    return 'deferred';
   }
   if (f.filerId && f.filerName) {
     if (f.party || f.photoUrl) {
@@ -248,7 +252,7 @@ export async function insertFilingIfNew(
       f.docId,
     ]);
   }
-  return (res.meta?.changes ?? 0) > 0;
+  return (res.meta?.changes ?? 0) > 0 ? 'inserted' : 'duplicate';
 }
 
 /** Enqueue the canonical filing.new INGEST_QUEUE message for a discovered filing. */
@@ -267,7 +271,8 @@ async function persistAndEnqueue(
 ): Promise<number> {
   let newCount = 0;
   for (const f of filings) {
-    if (await insertFilingIfNew(env, f, nowIso)) {
+    const insertResult = await insertFilingIfNew(env, f, nowIso);
+    if (insertResult === 'inserted') {
       await recordDisclosureLatencyCandidate(env, f, nowIso);
       await enqueueFilingNew(env, f);
       newCount += 1;
