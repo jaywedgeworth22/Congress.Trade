@@ -730,7 +730,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     }
 
     const validatedFilters = validateSubscriptionFilters(body.filters);
-    if (!validatedFilters.ok) return c.json({ error: validatedFilters.error }, 400);
+    if (!validatedFilters.ok) return c.json({ error: (validatedFilters as any).error }, 400);
     const secretError = subscriptionSecretError(body.secret);
     if (secretError) return c.json({ error: secretError }, 400);
     const secret = typeof body.secret === 'string' ? body.secret : undefined;
@@ -799,7 +799,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const patch: Parameters<typeof updateSubscription>[2] = {};
     if (body.filters !== undefined) {
       const validatedFilters = validateSubscriptionFilters(body.filters);
-      if (!validatedFilters.ok) return c.json({ error: validatedFilters.error }, 400);
+      if (!validatedFilters.ok) return c.json({ error: (validatedFilters as any).error }, 400);
       patch.filters = validatedFilters.filters;
     }
     if (typeof body.targetUrl === 'string' || body.targetUrl === null) {

@@ -326,7 +326,7 @@ export function parsePitScoreQuery(q: Record<string, string | undefined>): PitSc
   if (minConf !== undefined && (minConf < 0 || minConf > 1)) return { error: 'minConf must be between 0 and 1', status: 400 };
   const cursor = parseCursor(q.cursor);
   if (cursor && 'error' in cursor) return cursor;
-  return { from, to, ticker, cursor, limit, format, placebo, source, minConf };
+  return { from, to, ticker, cursor, limit, format, placebo, source, minConf } as any;
 }
 
 function parameterManifest(): Record<string, unknown> {
