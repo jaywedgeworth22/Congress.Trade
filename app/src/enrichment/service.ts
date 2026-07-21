@@ -29,7 +29,9 @@ import { getSharedFmpPacer, getSharedEdgarPacer } from '../shared/pace';
 import type { EnrichmentProvider, SecurityRef } from './types';
 import { resolveSecrets } from '../secrets/infisical';
 
-const DEFAULT_DAILY_CAP = 230;
+/** Exported so jobs.ts can reserve a price-refresh budget floor against the
+ *  same default the FMP daily-call-cap parsing falls back to here. */
+export const DEFAULT_DAILY_CAP = 230;
 
 type EnvX = Env & {
   FMP_API_KEY?: string;
@@ -69,6 +71,61 @@ function missingDisplayCriticalSql(alias: string): string {
 }
 
 /**
+ * Marker written to `securities_ref.enrichment_error` for a TRANSIENT failure
+ * (a provider threw — network error, 5xx, or an FMP/tier 401/402/403/429 —
+ * never a clean "no data" result). `enriched_at` stays NULL for these, so the
+ * ticker remains selectable by the base `enrichmentNeededSql` predicate (which
+ * only tests `enriched_at`); only a DETERMINISTIC no-data outcome (every
+ * provider returned null without throwing) tombstones a ticker permanently via
+ * `upsertEmpty`. The marker itself provides attempt-aging: each consecutive
+ * transient miss doubles the backoff (capped), so a sustained outage or a
+ * broken key/rate-limit doesn't get hammered every single cron tick while
+ * still recovering automatically once the provider is healthy again.
+ */
+const TRANSIENT_RETRY_PREFIX = 'transient-retry:';
+const TRANSIENT_RETRY_BASE_BACKOFF_MS = 60 * 60 * 1000; // 1 hour
+const TRANSIENT_RETRY_MAX_BACKOFF_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+export interface TransientRetryState {
+  /** Consecutive transient-failure count (never reset except by a success). */
+  attempts: number;
+  /** Epoch ms before which another attempt should not be made. */
+  nextEligibleAt: number;
+}
+
+/** Parse a transient-retry marker out of `enrichment_error`. Null for anything
+ *  else (a real tombstone message, or the field is empty/absent). */
+export function parseTransientRetryMarker(raw: string | null | undefined): TransientRetryState | null {
+  if (!raw || !raw.startsWith(TRANSIENT_RETRY_PREFIX)) return null;
+  const rest = raw.slice(TRANSIENT_RETRY_PREFIX.length);
+  const sep = rest.indexOf(':');
+  if (sep < 0) return null;
+  const attempts = parseInt(rest.slice(0, sep), 10);
+  const nextEligibleAt = Date.parse(rest.slice(sep + 1));
+  if (!Number.isFinite(attempts) || attempts <= 0 || !Number.isFinite(nextEligibleAt)) return null;
+  return { attempts, nextEligibleAt };
+}
+
+/** Whether a ticker carrying this `enrichment_error` value is due for another
+ *  attempt yet (no marker at all — never failed transiently — is eligible). */
+export function transientRetryEligible(raw: string | null | undefined, now = Date.now()): boolean {
+  const state = parseTransientRetryMarker(raw);
+  return !state || now >= state.nextEligibleAt;
+}
+
+/** The next marker to persist after another transient miss: attempts + 1,
+ *  backoff doubling from the base up to the cap. */
+export function nextTransientRetryMarker(raw: string | null | undefined, now = Date.now()): string {
+  const prior = parseTransientRetryMarker(raw);
+  const attempts = (prior?.attempts ?? 0) + 1;
+  const backoffMs = Math.min(
+    TRANSIENT_RETRY_MAX_BACKOFF_MS,
+    TRANSIENT_RETRY_BASE_BACKOFF_MS * 2 ** (attempts - 1),
+  );
+  return `${TRANSIENT_RETRY_PREFIX}${attempts}:${new Date(now + backoffMs).toISOString()}`;
+}
+
+/**
  * SQL predicate for tickers still worth enriching. With no keyed provider, one
  * SEC/EDGAR pass is enough; EDGAR cannot fill country or market cap. Once a
  * keyed provider exists, retry EDGAR/imported rows that are still missing
@@ -83,7 +140,8 @@ export function enrichmentNeededSql(alias = 'sr', retryIncompleteWithKeyedProvid
           OR ${alias}.enriched_at IS NULL
           OR (${missingDisplayCriticalSql(alias)}
               AND NOT ${keyedSourceTriedSql(alias)}
-              AND (${alias}.enrichment_error IS NULL OR ${alias}.enrichment_error = '')))`;
+              AND (${alias}.enrichment_error IS NULL OR ${alias}.enrichment_error = ''
+                   OR ${alias}.enrichment_error LIKE '${TRANSIENT_RETRY_PREFIX}%')))`;
 }
 
 /**
@@ -183,16 +241,23 @@ export async function addDailyUsed(env: Env, n: number): Promise<number> {
   return next;
 }
 
+/** A ticker selected for enrichment, plus its current `enrichment_error` (used
+ *  to honor a still-pending transient-retry backoff before spending a call). */
+export interface EnrichCandidate {
+  ticker: string;
+  enrichmentError: string | null;
+}
+
 /** Distinct tickers that still need enrichment, newest-traded first. */
 export async function selectTickersToEnrich(
   env: Env,
   limit: number,
   retryIncompleteWithKeyedProvider = false,
-): Promise<string[]> {
+): Promise<EnrichCandidate[]> {
   if (limit <= 0) return [];
-  const rows = await all<{ ticker: string }>(
+  const rows = await all<{ ticker: string; enrichment_error: string | null }>(
     env.DB,
-    `SELECT t.ticker AS ticker
+    `SELECT t.ticker AS ticker, MAX(sr.enrichment_error) AS enrichment_error
        FROM transactions t
        LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
       WHERE t.ticker IS NOT NULL AND t.ticker <> ''
@@ -202,7 +267,7 @@ export async function selectTickersToEnrich(
       LIMIT ?`,
     [limit],
   );
-  return rows.map((r) => r.ticker);
+  return rows.map((r) => ({ ticker: r.ticker, enrichmentError: r.enrichment_error ?? null }));
 }
 
 export interface EnrichResult {
@@ -272,7 +337,7 @@ export async function runEnrichment(
   // because Tiingo's source marker is excluded from keyedSourceTriedSql,
   // making the rows appear perpetually "not yet tried by a keyed provider."
   const hasKeyedProvider = chain.some((e) => KEYED_PROVIDER_SOURCE_MARKERS.includes(e.name));
-  const tickers = await selectTickersToEnrich(env, selectLimit, hasKeyedProvider);
+  const candidates = await selectTickersToEnrich(env, selectLimit, hasKeyedProvider);
   // Shared per-isolate FMP pacer, so a concurrent price refresh or disclosure
   // probe can't blow the per-minute cap by pacing only its own calls. Fall back
   // to FMP_MAX_PER_MINUTE when a caller (e.g. an admin endpoint whose body omits
@@ -288,12 +353,26 @@ export async function runEnrichment(
     opts.edgarMaxPerMinute ?? (parseInt(envx.EDGAR_MAX_PER_MINUTE || '', 10) || undefined);
   const edgarPace = getSharedEdgarPacer(edgarMaxPerMinute);
   let fmpCalls = 0;
+  const runStartedAt = Date.now();
 
-  for (const ticker of tickers) {
+  for (const candidate of candidates) {
+    // Honor a still-pending transient-retry backoff (see TRANSIENT_RETRY_PREFIX
+    // above) without spending a scan/provider call on it this run — it will be
+    // reselected once eligible, by the same base predicate (enriched_at stays
+    // NULL for these), on this or a later run.
+    if (!transientRetryEligible(candidate.enrichmentError, runStartedAt)) continue;
+    const ticker = candidate.ticker;
     result.scanned++;
     // Quality-ranked chain (best first). Each provider fills only what better
     // ones missed; we stop early once the display-critical fields are covered.
     const collected: Array<Partial<SecurityRef>> = [];
+    // True once ANY provider in the chain THROWS (network error, 5xx, or an
+    // FMP tier failure) while resolving this ticker. That is categorically
+    // different from every provider cleanly returning null: a thrown error
+    // means we don't actually know whether the ticker has data, so it must
+    // not be tombstoned — only a clean, exception-free "nothing found" from
+    // every provider is a deterministic no-data outcome.
+    let hadTransientError = false;
     for (const entry of chain) {
       if (entry.budgeted && fmpCalls >= fmpBudget) continue; // out of FMP budget
       try {
@@ -306,6 +385,7 @@ export async function runEnrichment(
         if (ref) collected.push(ref);
       } catch (e) {
         if (entry.budgeted) fmpCalls++; // a failed call still consumes quota
+        hadTransientError = true;
         result.errors.push(ticker + ' ' + entry.name + ': ' + (e as Error).message);
       }
       if (isCovered(collected)) break; // display-critical fields satisfied
@@ -313,9 +393,20 @@ export async function runEnrichment(
 
     if (collected.length === 0) {
       result.failures++;
-      // Tombstone (set enriched_at so we stop retrying) only when a keyed
-      // provider was actually consulted; a key-less SEC-only miss stays eligible.
-      if (!dryRun && hasKeyedProvider) await upsertEmpty(env, ticker, 'no provider data');
+      if (!dryRun) {
+        if (hadTransientError) {
+          // Transient (retryable) failure: never tombstone. Persist an
+          // attempt-aged backoff marker so this run's provider outage/rate
+          // limit doesn't get hammered again next cron tick, while keeping
+          // the ticker selectable (enriched_at stays untouched/NULL).
+          await markTransientEnrichmentFailure(env, ticker, candidate.enrichmentError, runStartedAt);
+        } else if (hasKeyedProvider) {
+          // Deterministic no-data (every provider ran cleanly and found
+          // nothing): tombstone only when a keyed provider was actually
+          // consulted; a key-less SEC-only miss stays eligible.
+          await upsertEmpty(env, ticker, 'no provider data');
+        }
+      }
       continue;
     }
     // mergeRefs is last-wins; the chain is best-first, so reverse so the best
@@ -460,5 +551,27 @@ async function upsertEmpty(env: Env, ticker: string, err: string): Promise<void>
     `INSERT INTO securities_ref (ticker, enriched_at, enrichment_error) VALUES (?,?,?)
      ON CONFLICT(ticker) DO UPDATE SET enriched_at=excluded.enriched_at, enrichment_error=excluded.enrichment_error`,
     [ticker, new Date().toISOString(), err],
+  );
+}
+
+/**
+ * Persist a transient-retry backoff marker for a ticker that hit a retryable
+ * failure this run. Deliberately does NOT touch `enriched_at` (unlike
+ * upsertEmpty) — leaving it untouched/NULL keeps the ticker selectable by the
+ * base enrichmentNeededSql predicate, so it is retried (once eligible) rather
+ * than permanently tombstoned.
+ */
+async function markTransientEnrichmentFailure(
+  env: Env,
+  ticker: string,
+  priorEnrichmentError: string | null,
+  now: number,
+): Promise<void> {
+  const marker = nextTransientRetryMarker(priorEnrichmentError, now);
+  await run(
+    env.DB,
+    `INSERT INTO securities_ref (ticker, enrichment_error) VALUES (?, ?)
+     ON CONFLICT(ticker) DO UPDATE SET enrichment_error = excluded.enrichment_error`,
+    [ticker, marker],
   );
 }
