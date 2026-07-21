@@ -563,15 +563,16 @@ const queueWorker = Sentry.withSentry(
      * Queue consumer. Routes by the bound queue name to the ingest/delivery
      * handlers. Messages are ack'd individually; failures retry per wrangler.toml.
      */
-    async queue(batch: MessageBatch<QueueMessage>, env: Env, _ctx: ExecutionContext): Promise<void> {
+    async queue(batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext): Promise<void> {
+      const typedBatch = batch as unknown as MessageBatch<QueueMessage>;
       return withThirdPartyTelemetry(env, async () => {
-      const isDeadLetterQueue = batch.queue.endsWith('-dlq');
+      const isDeadLetterQueue = typedBatch.queue.endsWith('-dlq');
       if (isDeadLetterQueue) {
-        for (const message of batch.messages) {
+        for (const message of typedBatch.messages) {
           try {
             await handleDeadLetterMessage(
               env,
-              batch.queue,
+              typedBatch.queue,
               message.body as QueueMessage,
               message.attempts,
             );
@@ -597,7 +598,7 @@ const queueWorker = Sentry.withSentry(
               }
             } else {
               Sentry.captureException(err as Error, {
-                tags: { queue: batch.queue, recovery: 'dead-letter' },
+                tags: { queue: typedBatch.queue, recovery: 'dead-letter' },
               });
             }
             message.retry({ delaySeconds: 60 });
@@ -610,8 +611,8 @@ const queueWorker = Sentry.withSentry(
         return;
       }
 
-      const isDelivery = batch.queue.includes('delivery');
-      for (const message of batch.messages) {
+      const isDelivery = typedBatch.queue.includes('delivery');
+      for (const message of typedBatch.messages) {
         try {
           const msg = message.body as QueueMessage;
           Sentry.setTags({
@@ -659,10 +660,10 @@ const queueWorker = Sentry.withSentry(
               continue;
             }
           } else {
-            console.error(`queue ${batch.queue} message failed:`, (err as Error).message);
+            console.error(`queue ${typedBatch.queue} message failed:`, (err as Error).message);
             // console.error above is only a breadcrumb/log; the retry swallows the
             // throw, so without this the failure would never create a Sentry Issue.
-            Sentry.captureException(err as Error, { tags: { queue: batch.queue, messageType } });
+            Sentry.captureException(err as Error, { tags: { queue: typedBatch.queue, messageType } });
           }
           if (err instanceof DeliveryRetryError || err instanceof IngestRetryError) {
             message.retry({ delaySeconds: err.delaySeconds });
