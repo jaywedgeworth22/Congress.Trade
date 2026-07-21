@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@sentry/cloudflare', () => ({
+vi.mock('#sentry', () => ({
   withSentry: (_opts: unknown, handler: unknown) => handler,
   setTags: vi.fn(), captureException: vi.fn(),
   withMonitor: (_slug: string, callback: () => unknown) => callback(),
 }));
 
-import worker from '../../index';
-import { DeliveryRetryError, dispatchWebhook } from '../webhook';
-import type { Env, QueueMessage } from '../../shared/types';
+import worker from '../../index.ts';
+import { DeliveryRetryError, dispatchWebhook } from '../webhook.ts';
+import type { Env, QueueMessage } from '../../shared/types.ts';
 
 const txRow = {
   id: 'tx_1', doc_id: 'doc_1', filer_id: 'bio_1', tx_date: '2026-06-20', owner: 'self',

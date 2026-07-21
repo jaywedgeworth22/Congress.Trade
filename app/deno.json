@@ -1,0 +1,27 @@
+{
+  "unstable": [
+    "kv",
+    "cron"
+  ],
+  "exclude": [
+    "node_modules",
+    "src/__tests__",
+    "**/*.test.ts"
+  ],
+  "tasks": {
+    "start": "deno run --unstable-kv --unstable-cron --unstable-ffi --allow-ffi --allow-net --allow-env --allow-read src/deno/main.ts"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true,
+    "lib": [
+      "deno.window",
+      "deno.unstable"
+    ]
+  },
+  "imports": {
+    "#sentry": "./src/deno/sentryDummy.ts",
+    "@jaywedgeworth22/congress-trading-shared": "./shared.ts",
+    "zod": "https://deno.land/x/zod@v3.23.8/mod.ts"
+  }
+}

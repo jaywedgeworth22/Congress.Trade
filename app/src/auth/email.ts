@@ -4,9 +4,9 @@
  * providers is a one-module change. Requires RESEND_API_KEY + EMAIL_FROM.
  */
 
-import type { Env } from '../shared/types';
-import { resolveSecrets } from '../secrets/infisical';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import type { Env } from '../shared/types.ts';
+import { resolveSecrets } from '../secrets/infisical.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 export interface EmailMessage {
   to: string;

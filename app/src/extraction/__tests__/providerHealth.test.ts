@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { Env } from '../../shared/types';
-import type { BakeoffCandidate } from '../bakeoff';
+import type { Env } from '../../shared/types.ts';
+import type { BakeoffCandidate } from '../bakeoff.ts';
 import {
   classifyProviderErrorClass,
   healthWindowKey,
@@ -13,7 +13,7 @@ import {
   summarizeHealthWindow,
   DEFAULT_HEALTH_THRESHOLDS,
   type ProviderHealthWindow,
-} from '../providerHealth';
+} from '../providerHealth.ts';
 
 // ---------------------------------------------------------------------------
 // Error classification

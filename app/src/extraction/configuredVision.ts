@@ -18,27 +18,27 @@
  * opted a chamber into explicit model control.
  */
 
-import type { Env, Filing } from '../shared/types';
-import { IngestRetryError } from '../ingestion/fetcher';
-import { resolveSecrets } from '../secrets/infisical';
+import type { Env, Filing } from '../shared/types.ts';
+import { IngestRetryError } from '../ingestion/fetcher.ts';
+import { resolveSecrets } from '../secrets/infisical.ts';
 import {
   runCandidateOnDoc,
   upgradeRetiredDisclosureCandidate,
   type BakeoffCandidate,
   type CandidateDocResult,
-} from './bakeoff';
-import { parseCandidate } from './agreement';
+} from './bakeoff.ts';
+import { parseCandidate } from './agreement.ts';
 import {
   providerModelBanRetryAfter,
   recordProviderHealth,
   resolveProviderHealthKnobs,
   selectOverlaySubstitute,
   type OverlaySubstitute,
-} from './providerHealth';
-import { getUnderlyingProvider } from '../benchmark/settings';
-import { recordIngestionDecision } from '../shared/ingestionDecisions';
-import { isLlmBudgetHalt } from '../shared/llmSpend';
-import type { Extractor, ExtractorInput, ExtractorResult, ExtractorUsage } from '../extractors/types';
+} from './providerHealth.ts';
+import { getUnderlyingProvider } from '../benchmark/settings.ts';
+import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
+import { isLlmBudgetHalt } from '../shared/llmSpend.ts';
+import type { Extractor, ExtractorInput, ExtractorResult, ExtractorUsage } from '../extractors/types.ts';
 
 /** Conservative confidence ceiling shared with visionLlm.ts's DEFAULT_CONFIDENCE
  *  convention — most scanned docs should still lean toward human review rather

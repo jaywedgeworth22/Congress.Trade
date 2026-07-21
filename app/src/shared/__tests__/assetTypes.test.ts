@@ -4,7 +4,7 @@ import {
   canonicalAssetTypeCategorySql,
   canonicalizeAssetType,
   houseAssetTypeCodePattern,
-} from '../assetTypes';
+} from '../assetTypes.ts';
 
 describe('canonicalizeAssetType', () => {
   it('maps House codes and Senate labels into the same public equity category', () => {
