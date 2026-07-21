@@ -729,23 +729,21 @@ export function salvageTruncatedTransactions(text: string): ModelTx[] {
 }
 
 /** Result of a truncation-aware parse: rows plus whether salvage kicked in. */
-export interface AnthropicParseResult {
+export interface TruncationAwareParseResult {
   rows: ModelTx[];
   /** True when the full JSON failed to parse and rows were recovered via salvage. */
   salvaged: boolean;
 }
+export type AnthropicParseResult = TruncationAwareParseResult;
 
 /**
- * Parse an Anthropic response, falling back to bounded salvage when the
- * provider reports `stop_reason: 'max_tokens'` (output truncated) AND the
- * full text fails to parse as JSON. A non-truncation parse failure still
- * throws — salvage only fires when we know why the JSON is incomplete, and
- * only when it can recover at least one complete row.
+ * Attempts to parse LLM JSON output. If the text fails to parse AND the provider
+ * indicated a truncation reason, attempts to salvage the valid leading rows.
  */
-export function parseAnthropicModelJson(
+export function parseTruncationAwareJson(
   text: string,
-  stopReason: string | null | undefined,
-): AnthropicParseResult {
+  isProviderTruncated: boolean = false,
+): TruncationAwareParseResult {
   let cleaned = text.trim();
   cleaned = cleaned.replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
 
@@ -759,9 +757,9 @@ export function parseAnthropicModelJson(
       }
     }
   } catch (err) {
-    const isTruncated = !cleaned.endsWith(']') && !cleaned.endsWith('}');
-    if (isTruncated) {
-      if (stopReason === 'max_tokens') {
+    const isActuallyTruncated = !cleaned.endsWith(']') && !cleaned.endsWith('}');
+    if (isActuallyTruncated) {
+      if (isProviderTruncated) {
         const salvaged = salvageTruncatedTransactions(text);
         if (salvaged.length > 0) return { rows: salvaged, salvaged: true };
         throw new Error('visionLlm: truncated output (max_tokens) could not be salvaged');
@@ -771,6 +769,9 @@ export function parseAnthropicModelJson(
   }
   return { rows: parseModelJson(text), salvaged: false };
 }
+
+export const parseAnthropicModelJson = (text: string, stopReason?: string | null) => 
+  parseTruncationAwareJson(text, stopReason === 'max_tokens');
 
 /** Append the salvaged-output provenance marker without duplicating it. */
 export function markSalvaged(tx: ParsedTx): ParsedTx {
