@@ -6,8 +6,8 @@ import {
   persistTransactions,
   TransactionPublishLimitError,
   transactionRowKey,
-} from '../normalizer';
-import type { Env, Filing, ParsedTx } from '../../shared/types';
+} from '../normalizer.ts';
+import type { Env, Filing, ParsedTx } from '../../shared/types.ts';
 
 // ---------------------------------------------------------------------------
 // Minimal in-memory D1 + Queue fakes. We only need to satisfy the prepared-

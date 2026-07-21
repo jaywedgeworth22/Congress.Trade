@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   buildExtractionPrompt,
   loadExtractionPromptContext,
   EXTRACTION_PROMPT_VERSION,
   SYSTEM_PROMPT,
   EXECUTIVE_SYSTEM_PROMPT,
-} from '../visionLlm';
+} from '../visionLlm.ts';
 
 describe('metadata-grounded extraction prompts', () => {
   it('bumped the prompt version for the grounding change', () => {

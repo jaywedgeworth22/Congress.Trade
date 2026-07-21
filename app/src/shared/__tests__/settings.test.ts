@@ -4,8 +4,8 @@ import {
   getLogoDisplay,
   setLogoDisplay,
   DEFAULT_LOGO_DISPLAY,
-} from '../settings';
-import type { Env } from '../types';
+} from '../settings.ts';
+import type { Env } from '../types.ts';
 
 // Minimal KV stub backed by a Map.
 function fakeEnv(initial?: Record<string, string>): Env {

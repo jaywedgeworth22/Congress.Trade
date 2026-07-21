@@ -6,8 +6,8 @@
  * D1 rather than emulating query results.
  */
 import { describe, expect, it } from 'vitest';
-import { resolveMember } from '../queries';
-import type { Env } from '../../shared/types';
+import { resolveMember } from '../queries.ts';
+import type { Env } from '../../shared/types.ts';
 
 interface RecordedCall {
   sql: string;

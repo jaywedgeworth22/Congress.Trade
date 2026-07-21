@@ -19,7 +19,7 @@ vi.mock('../senateSource', async (importOriginal) => {
   return { ...actual, establishSenateSession: mocks.establishSenateSession };
 });
 
-import { fetchFiling, isSenateAgreementWallBytes, IngestRetryError } from '../fetcher';
+import { fetchFiling, isSenateAgreementWallBytes, IngestRetryError } from '../fetcher.ts';
 
 const WALL_HTML =
   '<!doctype html><html><body><form id="agreement_form" method="post">' +

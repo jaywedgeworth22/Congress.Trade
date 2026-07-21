@@ -1,6 +1,6 @@
-import type { Env } from '../shared/types';
-import { resolveSecret } from '../secrets/infisical';
-import { parseEmailAllowlist } from './access';
+import type { Env } from '../shared/types.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
+import { parseEmailAllowlist } from './access.ts';
 
 export interface AdminRuntimeConfig {
   allow: Set<string>;
