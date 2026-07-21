@@ -211,7 +211,7 @@ export async function verifyAccessJwt(token: string, opts: VerifyOptions): Promi
   const valid = await crypto.subtle.verify(
     'RSASSA-PKCS1-v1_5',
     key,
-    decoded.signature,
+    decoded.signature as any,
     new TextEncoder().encode(decoded.signingInput),
   );
   if (!valid) return { ok: false, reason: 'bad signature' };

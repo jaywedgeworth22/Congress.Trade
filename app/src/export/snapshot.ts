@@ -34,7 +34,7 @@
 
 import type { Env } from '../shared/types';
 import { all, type SqlParam } from '../shared/db';
-import type { SnapshotManifest, SnapshotTableInfo } from '@jaywedgeworth22/congress-trading-shared';
+import type { SnapshotManifest, SnapshotTableInfo } from '../../vendor/congress-trading-shared/dist/index.mjs';
 
 /**
  * Tables included in the snapshot. `keyCols` is each table's unique key in sort
