@@ -226,6 +226,21 @@ describe('priceBenchmarkUsage', () => {
     });
   });
 
+  it('prices OpenRouter claude-opus-4.8 at the verified listed rate', () => {
+    const result = priceBenchmarkUsage({
+      provider: 'openrouter',
+      model: 'anthropic/claude-opus-4.8',
+      invoked: true,
+      usage: { promptTokens: 1_000_000, completionTokens: 1_000_000 },
+    });
+    expect(result.costSource).toBe('usage_priced');
+    expect(result.costUsd).toBeCloseTo(30, 10);
+    expect(result.costDetail).toMatchObject({
+      rateCardVersion: 'openrouter-static-2026-07-19',
+      rates: { inputUsdPerMillion: 5, outputUsdPerMillion: 25 },
+    });
+  });
+
   it('prices OpenRouter Mistral structured OCR from provider-reported pages', () => {
     const result = priceBenchmarkUsage({
       provider: 'openrouter',
