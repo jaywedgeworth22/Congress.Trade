@@ -301,7 +301,12 @@ export default function Dashboard() {
       <header className="topbar" id="account">
         <div>
           <p className="eyebrow">Live Control Surface</p>
-          <h1>Congress.Trade</h1>
+          <img 
+            src="/congress-trade-logo.png" 
+            alt="Congress.Trade" 
+            className="h-10 w-auto" 
+            style={{ maxWidth: '320px' }}
+          />
         </div>
         <button
           className="icon-button"
@@ -534,7 +539,7 @@ export default function Dashboard() {
             </div>
             <button type="button" className="dismiss-button" onClick={() => setOneTimeDelivery(null)}>Dismiss</button>
           </div>
-          <p>The secret is kept only in this page&apos;s memory and cannot be retrieved after dismissal or reload.</p>
+          <p>The secret is kept only in this page's memory and cannot be retrieved after dismissal or reload.</p>
           <div className="secret-row">
             <label htmlFor="delivery-secret">Secret</label>
             <div>
@@ -548,7 +553,6 @@ export default function Dashboard() {
               <div>
                 <input id="delivery-stream-url" readOnly value={oneTimeDelivery.streamUrl} onFocus={(event) => event.currentTarget.select()} />
                 <button type="button" onClick={() => void copyCredential('SSE URL', oneTimeDelivery.streamUrl!)}>Copy</button>
-              </div>
             </div>
           ) : null}
         </section>
@@ -632,7 +636,6 @@ export default function Dashboard() {
                     {watchlistTickers.map((ticker) => (
                       <span key={ticker} className="filter-badge">{ticker}</span>
                     ))}
-                  </div>
                 ) : null}
                 <p className="delivery-scope-helper">{deliveryScopeHelperText(watchlistTickers)}</p>
               </div>
