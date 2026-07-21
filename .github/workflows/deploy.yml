@@ -23,7 +23,7 @@ jobs:
       github.event.inputs.confirm == 'deploy-production' &&
       github.ref == 'refs/heads/main'
     environment: production
-    runs-on: [self-hosted, congress-deploy]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -69,7 +69,7 @@ jobs:
   verify:
     needs: deploy
     environment: production
-    runs-on: [self-hosted, congress-deploy]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
