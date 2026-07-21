@@ -1,4 +1,4 @@
-import { BENCHMARK_SCHEMA_STATEMENTS } from '../benchmark/schema';
+import { BENCHMARK_SCHEMA_STATEMENTS } from '../benchmark/schema.ts';
 
 /** Base schema needed before the incremental, idempotent admin migration list. */
 export const BASE_SCHEMA_STATEMENTS = [

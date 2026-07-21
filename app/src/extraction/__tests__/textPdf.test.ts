@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Filing } from '../../shared/types';
+import type { Filing } from '../../shared/types.ts';
 
 // Mock unpdf so the page-count test doesn't need a real PDF fixture — it only
 // needs to prove TextPdfExtractor reads pdf.numPages off the same document
@@ -14,7 +14,7 @@ vi.mock('unpdf', () => ({
   extractText: unpdfMocks.extractText,
 }));
 
-import { parseHousePtrText, TextPdfExtractor } from '../textPdf';
+import { parseHousePtrText, TextPdfExtractor } from '../textPdf.ts';
 
 function textPdfFiling(): Filing {
   return {

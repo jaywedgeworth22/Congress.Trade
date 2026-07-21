@@ -5,7 +5,7 @@ import {
   __resetSharedFmpPacerForTests,
   getSharedEdgarPacer,
   __resetSharedEdgarPacerForTests,
-} from '../pace';
+} from '../pace.ts';
 
 describe('createPacer', () => {
   it('is a no-op when no cap is given (never sleeps)', async () => {

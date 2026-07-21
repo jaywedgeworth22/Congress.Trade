@@ -7,9 +7,9 @@ import {
   normalizeDate,
   detectOption,
   detectCapGains,
-} from '../senateHtml';
-import type { ExtractorInput } from '../../extractors/types';
-import type { Filing } from '../../shared/types';
+} from '../senateHtml.ts';
+import type { ExtractorInput } from '../../extractors/types.ts';
+import type { Filing } from '../../shared/types.ts';
 
 const filing = (over: Partial<Filing> = {}): Filing => ({
   docId: 'doc1',

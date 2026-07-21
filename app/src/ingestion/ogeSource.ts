@@ -23,11 +23,11 @@
  *    educational framing, mirroring its House/Senate STOCK Act posture.
  */
 
-import type { Env } from '../shared/types';
-import { resolveSecret } from '../secrets/infisical';
-import { getLastAttemptAt, getLastPollAt, setLastAttemptAt } from '../shared/config';
-import type { DiscoveredFiling } from './watcher';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import type { Env } from '../shared/types.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
+import { getLastAttemptAt, getLastPollAt, setLastAttemptAt } from '../shared/config.ts';
+import type { DiscoveredFiling } from './watcher.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 export const OGE_DEFAULT_INDEX_URL =
   'https://extapps2.oge.gov/201/Presiden.nsf/President%20and%20Vice%20President%20Index?OpenView&ExpandView&Count=500';

@@ -1,12 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   acknowledgeAutopilotHalt,
   currentEraStart,
   handleAutopilotTick,
   maybeStartBacklogAutopilot,
-} from '../autopilot';
-import type { AgreementDocResult } from '../agreement';
+} from '../autopilot.ts';
+import type { AgreementDocResult } from '../agreement.ts';
 
 /**
  * Backlog autopilot: cron gate + queue-driven drain over the SAME cascade

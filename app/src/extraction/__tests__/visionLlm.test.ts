@@ -9,8 +9,8 @@ import {
   validatePdfForAnthropic,
   resavePdfForAnthropic,
   isAnthropicInvalidPdfError,
-} from '../visionLlm';
-import type { Env, Filing, ParsedTx } from '../../shared/types';
+} from '../visionLlm.ts';
+import type { Env, Filing, ParsedTx } from '../../shared/types.ts';
 
 const filing = (): Filing => ({
   docId: 'doc1',

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { buildAuthRouter } from '../routes';
-import { ANONYMOUS_ENTITLEMENT } from '../../billing/entitlement';
-import type { Env } from '../../shared/types';
+import { buildAuthRouter } from '../routes.ts';
+import { ANONYMOUS_ENTITLEMENT } from '../../billing/entitlement.ts';
+import type { Env } from '../../shared/types.ts';
 
 const BILLING_READY = {
   STRIPE_SECRET_KEY: 'sk_test',

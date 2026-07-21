@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   deleteSecret,
   readSourceSecrets,
   refreshSecrets,
   resolveSecret,
   updateSecret,
-} from '../infisical';
+} from '../infisical.ts';
 
 function env(extra: Partial<Env> = {}): Env {
   return {

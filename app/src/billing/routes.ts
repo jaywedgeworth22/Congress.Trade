@@ -15,10 +15,10 @@
 
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { BillingPlan, Env } from '../shared/types';
-import { getCurrentUser } from '../auth/session';
-import { getUserById } from '../auth/users';
-import { entitlementOf } from './entitlement';
+import type { BillingPlan, Env } from '../shared/types.ts';
+import { getCurrentUser } from '../auth/session.ts';
+import { getUserById } from '../auth/users.ts';
+import { entitlementOf } from './entitlement.ts';
 import {
   billingCapabilitiesAsync,
   checkoutConfiguredAsync,
@@ -27,19 +27,19 @@ import {
   createCheckoutSession,
   createBillingPortalSession,
   verifyStripeSignature,
-} from './stripe';
-import { resolveSecret, resolveSecrets } from '../secrets/infisical';
+} from './stripe.ts';
+import { resolveSecret, resolveSecrets } from '../secrets/infisical.ts';
 import {
   linkCustomerToUser,
   parseSubscription,
   applySubscription,
   endSubscription,
-} from './subscription';
+} from './subscription.ts';
 import {
   claimStripeWebhookEvent,
   markStripeWebhookEventProcessed,
   releaseStripeWebhookEvent,
-} from './webhookEvents';
+} from './webhookEvents.ts';
 
 const DEFAULT_TRIAL_DAYS = 7;
 const REQUEST_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
