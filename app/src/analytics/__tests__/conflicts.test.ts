@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { committeeConflict, oversightSectors, COMMITTEE_SECTOR_RULES } from '../conflicts';
+import { committeeConflict, oversightSectors, COMMITTEE_SECTOR_RULES } from '../conflicts.ts';
 
 describe('committeeConflict', () => {
   it('flags a politician on a committee that oversees the traded sector', () => {

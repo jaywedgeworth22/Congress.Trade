@@ -7,7 +7,7 @@ import {
   parseTiingoTicker,
   buildMassiveProvider,
   buildTiingoProvider,
-} from '../providers';
+} from '../providers.ts';
 
 const fetchWith = (status: number, body: unknown = '') =>
   (async () =>

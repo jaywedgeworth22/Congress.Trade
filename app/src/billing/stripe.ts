@@ -10,9 +10,9 @@
  * requires the secret key so existing customers can always manage/cancel.
  */
 
-import type { Env } from '../shared/types';
-import { resolveSecret, resolveSecrets } from '../secrets/infisical';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import type { Env } from '../shared/types.ts';
+import { resolveSecret, resolveSecrets } from '../secrets/infisical.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
 // Pin an API version so server-side behaviour/field shapes are stable.

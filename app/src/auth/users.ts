@@ -6,9 +6,9 @@
  * identity only.
  */
 
-import type { Env, User } from '../shared/types';
-import { get, run } from '../shared/db';
-import { uuid } from '../shared/ids';
+import type { Env, User } from '../shared/types.ts';
+import { get, run } from '../shared/db.ts';
+import { uuid } from '../shared/ids.ts';
 
 interface UserRow {
   id: string;

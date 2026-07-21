@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildAdminRouter } from '../routes';
-import type { ParsedTx } from '../../shared/types';
+import { buildAdminRouter } from '../routes.ts';
+import type { ParsedTx } from '../../shared/types.ts';
 
 /**
  * GET /review/:docId/extractions — consensus block.

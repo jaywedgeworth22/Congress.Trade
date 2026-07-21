@@ -40,17 +40,17 @@
  * delays a trip by one observation.
  */
 
-import type { Env } from '../shared/types';
-import { resolveSecrets } from '../secrets/infisical';
+import type { Env } from '../shared/types.ts';
+import { resolveSecrets } from '../secrets/infisical.ts';
 import {
   DEFAULT_CANDIDATES,
   isRetiredDisclosureCandidate,
   keyFor,
   type BakeoffCandidate,
   type Provider,
-} from './bakeoff';
-import { getUnderlyingProvider, isOpenRouterAuto } from '../benchmark/settings';
-import { estimateNominalReadCostUsd } from './benchmarkMetrics';
+} from './bakeoff.ts';
+import { getUnderlyingProvider, isOpenRouterAuto } from '../benchmark/settings.ts';
+import { estimateNominalReadCostUsd } from './benchmarkMetrics.ts';
 
 export type ProviderErrorClass = 'billing' | 'auth' | 'quota' | 'parse' | 'timeout' | 'other';
 

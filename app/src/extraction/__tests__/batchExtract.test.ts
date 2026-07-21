@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import type { Env, QueueMessage } from '../../shared/types';
-import { withThirdPartyTelemetry } from '../../shared/thirdPartyTelemetry';
+import type { Env, QueueMessage } from '../../shared/types.ts';
+import { withThirdPartyTelemetry } from '../../shared/thirdPartyTelemetry.ts';
 import {
   batchPrompt,
   decodeAnthropicLine,
@@ -16,8 +16,8 @@ import {
   pollBatch,
   submitBatch,
   type BatchDoc,
-} from '../batchExtract';
-import { EXECUTIVE_SYSTEM_PROMPT, SYSTEM_PROMPT, arrayBufferToBase64 } from '../visionLlm';
+} from '../batchExtract.ts';
+import { EXECUTIVE_SYSTEM_PROMPT, SYSTEM_PROMPT, arrayBufferToBase64 } from '../visionLlm.ts';
 
 afterEach(() => {
   vi.useRealTimers();

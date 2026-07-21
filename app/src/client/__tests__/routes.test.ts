@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildClientRouter } from '../routes';
-import { createSession } from '../../auth/session';
-import { spendRowBudget, DAILY_ROW_BUDGET } from '../../security/botDefense';
-import type { Env, QueueMessage } from '../../shared/types';
-import type { FeedTransactionRow, SubscriptionRow } from '../../delivery/rows';
-import type { CommandRow } from '../state';
+import { buildClientRouter } from '../routes.ts';
+import { createSession } from '../../auth/session.ts';
+import { spendRowBudget, DAILY_ROW_BUDGET } from '../../security/botDefense.ts';
+import type { Env, QueueMessage } from '../../shared/types.ts';
+import type { FeedTransactionRow, SubscriptionRow } from '../../delivery/rows.ts';
+import type { CommandRow } from '../state.ts';
 
 type PrefRow = {
   user_id: string;

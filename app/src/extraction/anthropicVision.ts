@@ -5,9 +5,9 @@
  * Anthropic Vision extractor for scanned-image PDFs (docKind 'scanned_pdf').
  */
 
-import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types';
-import type { Env, Filing, ParsedTx } from '../shared/types';
-import { resolveSecret } from '../secrets/infisical';
+import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types.ts';
+import type { Env, Filing, ParsedTx } from '../shared/types.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
 import {
   SYSTEM_PROMPT,
   EXECUTIVE_SYSTEM_PROMPT,
@@ -19,9 +19,9 @@ import {
   toParsedTx,
   fetchWithRetry,
   arrayBufferToBase64,
-} from './visionLlm';
-import { recordLlmSpend } from '../shared/llmSpend';
-import { candidateSpendUsd } from './bakeoff';
+} from './visionLlm.ts';
+import { recordLlmSpend } from '../shared/llmSpend.ts';
+import { candidateSpendUsd } from './bakeoff.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const DEFAULT_CONFIDENCE = 0.6;
