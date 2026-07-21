@@ -1,9 +1,9 @@
-import { all, batch, get, parseJson, run } from '../shared/db';
-import { uuid } from '../shared/ids';
+import { all, batch, get, parseJson, run } from '../shared/db.ts';
+import { uuid } from '../shared/ids.ts';
 import {
   BENCHMARK_SCORING_PROFILE,
   scorePersistedBenchmarkResult,
-} from './scoring';
+} from './scoring.ts';
 
 export const BENCHMARK_CHAMBERS = ['house', 'senate', 'executive'] as const;
 export type BenchmarkChamber = (typeof BENCHMARK_CHAMBERS)[number];

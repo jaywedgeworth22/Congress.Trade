@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   BenchmarkSettingsConflictError,
   BenchmarkSettingsValidationError,
@@ -12,7 +12,7 @@ import {
   saveBenchmarkRoleSettings,
   validateBenchmarkLineup,
   validateBenchmarkRoles,
-} from '../settings';
+} from '../settings.ts';
 
 describe('benchmarkModelCatalog vs benchmarkSelectableCatalog', () => {
   it('keeps NON_OFFERED_CANDIDATES valid for save/decode while excluding them from the offered UI catalog', () => {

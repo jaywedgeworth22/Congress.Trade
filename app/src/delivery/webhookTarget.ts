@@ -1,4 +1,4 @@
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 interface LocalEnv {
   ADMIN_OPEN_IN_DEV?: string;

@@ -5,8 +5,8 @@ import {
   DELIVERY_TARGETED_ID_LIMIT,
   flushDeliveryOutbox,
   reconnectDeadLetteredOutbox,
-} from '../outbox';
-import type { Env } from '../../shared/types';
+} from '../outbox.ts';
+import type { Env } from '../../shared/types.ts';
 
 function makeEnv(sendFails = false) {
   const row = { tx_id: 'tx_1', status: 'pending', attempts: 0, dead_letter_cycles: 0, available_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z', last_error: null as string | null };

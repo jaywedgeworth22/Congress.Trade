@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   blockedUserAgent,
   checkRowBudget,
@@ -8,7 +8,7 @@ import {
   publicApiGuard,
   DAILY_ROW_BUDGET,
   PUBLIC_API_LIMIT,
-} from '../botDefense';
+} from '../botDefense.ts';
 
 /** Map-backed KV fake so rate-limit counters actually count. */
 function fakeKv() {

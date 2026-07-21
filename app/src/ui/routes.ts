@@ -12,10 +12,10 @@
  */
 
 import { Hono } from 'hono';
-import type { Env } from '../shared/types';
-import { DASHBOARD_HTML } from './dashboardHtml';
-import { TOS_HTML, PRIVACY_HTML } from './legalHtml';
-import { getLogoDisplay } from '../shared/settings';
+import type { Env } from '../shared/types.ts';
+import { DASHBOARD_HTML } from './dashboardHtml.ts';
+import { TOS_HTML, PRIVACY_HTML } from './legalHtml.ts';
+import { getLogoDisplay } from '../shared/settings.ts';
 
 /**
  * Render the dashboard, injecting the admin-controlled site-wide settings the

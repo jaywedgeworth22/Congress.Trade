@@ -9,9 +9,9 @@
  * descriptive User-Agent per SEC policy.
  */
 
-import { sicToSector } from './compute';
-import type { EnrichmentProvider, SecurityRef } from './types';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import { sicToSector } from './compute.ts';
+import type { EnrichmentProvider, SecurityRef } from './types.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 const UA = 'congress.trade admin@congress.trade';
 
