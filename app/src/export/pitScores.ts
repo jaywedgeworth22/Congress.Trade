@@ -12,7 +12,7 @@ import type { Env, TxType } from '../shared/types';
 import { all, type SqlParam, parseJson } from '../shared/db';
 import { bracketMidpoint, netSentiment, round } from '../analytics/compute';
 import { committeeConflict } from '../analytics/conflicts';
-import { TICKER_RENAMES, classifyTickerAlias } from '@jaywedgeworth22/congress-trading-shared';
+import { TICKER_RENAMES, classifyTickerAlias } from '../../vendor/congress-trading-shared/dist/index.mjs';
 import { pctChange } from '../prices/compute';
 import { canonicalizeAssetType } from '../shared/assetTypes';
 

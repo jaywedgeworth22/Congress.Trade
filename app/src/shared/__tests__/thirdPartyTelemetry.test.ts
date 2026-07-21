@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
-import { UsageTelemetryEventSchema } from '@jaywedgeworth22/congress-trading-shared';
+import { UsageTelemetryEventSchema } from '../../../vendor/congress-trading-shared/dist/index.mjs';
 import type { Env, QueueMessage, ThirdPartyUsageTelemetryEvent } from '../types';
 import {
   deliverUsageTelemetryEvent,
