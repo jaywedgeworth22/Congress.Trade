@@ -5,8 +5,8 @@ import {
   telemetryEventClassifier,
   CallClassifierContextSchema,
   type CallClassifierContext,
-} from "../callClassifier";
-import { UsageTelemetryEventSchema } from "../usageTelemetry";
+} from "../callClassifier.ts";
+import { UsageTelemetryEventSchema } from "../usageTelemetry.ts";
 
 const fullCtx: CallClassifierContext = {
   sourceApp: "congress-trade",

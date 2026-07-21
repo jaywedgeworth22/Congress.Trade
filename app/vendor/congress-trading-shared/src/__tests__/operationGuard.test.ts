@@ -6,7 +6,7 @@ import {
   OperationGuardRateLimitedSchema,
   OperationGuardInFlightSchema,
   OperationGuardRejectionSchema
-} from "../operationGuard";
+} from "../operationGuard.ts";
 
 describe("operationGuard", () => {
   describe("buildRateLimitedRejection", () => {

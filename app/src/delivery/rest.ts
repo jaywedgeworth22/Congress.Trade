@@ -19,10 +19,10 @@
  */
 
 import { Hono, type Context } from 'hono';
-import { MAX_REFS_BATCH } from '../../vendor/congress-trading-shared/dist/index.mjs';
-import type { Chamber, Env, Subscription, TxType } from '../shared/types';
-import { all, first, get } from '../shared/db';
-import { cached } from '../shared/kvCache';
+import { MAX_REFS_BATCH } from '@jaywedgeworth22/congress-trading-shared';
+import type { Chamber, Env, Subscription, TxType } from '../shared/types.ts';
+import { all, first, get } from '../shared/db.ts';
+import { cached } from '../shared/kvCache.ts';
 import {
   buildTransactionsQuery,
   buildTransactionsCountQuery,
@@ -730,7 +730,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     }
 
     const validatedFilters = validateSubscriptionFilters(body.filters);
-    if (!validatedFilters.ok) return c.json({ error: validatedFilters.error }, 400);
+    if (!validatedFilters.ok) return c.json({ error: (validatedFilters as any).error }, 400);
     const secretError = subscriptionSecretError(body.secret);
     if (secretError) return c.json({ error: secretError }, 400);
     const secret = typeof body.secret === 'string' ? body.secret : undefined;
@@ -799,7 +799,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const patch: Parameters<typeof updateSubscription>[2] = {};
     if (body.filters !== undefined) {
       const validatedFilters = validateSubscriptionFilters(body.filters);
-      if (!validatedFilters.ok) return c.json({ error: validatedFilters.error }, 400);
+      if (!validatedFilters.ok) return c.json({ error: (validatedFilters as any).error }, 400);
       patch.filters = validatedFilters.filters;
     }
     if (typeof body.targetUrl === 'string' || body.targetUrl === null) {
