@@ -52,7 +52,7 @@ import { all, get, run } from '../shared/db';
 import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows';
 import { matchesFiltersWithContext, subscriptionOwnerEntitled } from './subscriptions';
 import { constantTimeEqual } from '../auth/tokens';
-import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
+import { createCongressEvent } from '../../vendor/congress-trading-shared/dist/index.mjs';
 import { prefixedId } from '../shared/ids';
 import { rateLimit } from '../shared/rateLimit';
 import { flushD1Budget } from '../shared/d1Budget';
@@ -319,27 +319,21 @@ export async function openSseStream(
       try {
         while (pendingPayloads.length > 0 && !closed) {
           const payload = pendingPayloads.shift();
-          if (payload.transactions && Array.isArray(payload.transactions) && payload.transactions.length > 0) {
-            const minIncomingCursor = Math.min(...payload.transactions.map((tx: any) => tx.cursor_seq ?? Infinity));
+          if (payload.transaction) {
+            const minIncomingCursor = payload.transaction.cursorSeq ?? Infinity;
             if (minIncomingCursor > cursor + 1) {
               // Gap detected: fall back to Turso DB to catch up safely
               cursor = await drainSseBacklog(env, sub, cursor, send);
               await flushD1Budget(env);
             } else {
               // No gap: push directly from memory, bypassing the database
-              for (const row of payload.transactions) {
-                const tx = mapFeedTransaction(row);
-                if (tx.cursorSeq > cursor) {
-                  const ctx = {
-                    chamber: row.__chamber ?? null,
-                    sector: row.__sector ?? null,
-                    marketCapBucket: row.__bucket ?? null,
-                  };
-                  if (matchesFiltersWithContext(tx, sub.filters, ctx)) {
-                    await send(formatTradeEvent(tx));
-                  }
-                  cursor = Math.max(cursor, tx.cursorSeq);
+              const tx = payload.transaction;
+              if (tx.cursorSeq > cursor) {
+                const ctx = payload.context || { chamber: null, sector: null, marketCapBucket: null };
+                if (matchesFiltersWithContext(tx, sub.filters, ctx)) {
+                  await send(formatTradeEvent(tx));
                 }
+                cursor = Math.max(cursor, tx.cursorSeq);
               }
             }
           }
@@ -354,7 +348,7 @@ export async function openSseStream(
     if (typeof BroadcastChannel !== 'undefined') {
       channel = new (BroadcastChannel as any)('congress.trade.live');
       channel.addEventListener('message', (event: any) => {
-        if (event.data?.type === 'NEW_TRANSACTIONS') {
+        if (event.data?.type === 'NEW_TRANSACTION') {
           pendingPayloads.push(event.data);
           void processIncoming();
         }
@@ -362,19 +356,23 @@ export async function openSseStream(
     }
 
     // Keep-alive loop + hard deadline checker
+    let lastActiveCheck = Date.now();
     while (!closed) {
       const remainingBeforeSleep = deadlineAt - Date.now();
       if (remainingBeforeSleep <= reconnectGraceMs) break;
       await sleep(Math.min(pollIntervalMs, remainingBeforeSleep - reconnectGraceMs));
       if (closed || Date.now() >= deadlineAt - reconnectGraceMs) break;
 
-      const activeCheck = await get<{ active: number }>(
-        env.DB,
-        'SELECT active FROM subscriptions WHERE id = ?',
-        [sub.id],
-      );
-      if (!activeCheck || !activeCheck.active) {
-        break;
+      if (Date.now() - lastActiveCheck > 60_000) {
+        const activeCheck = await get<{ active: number }>(
+          env.DB,
+          'SELECT active FROM subscriptions WHERE id = ?',
+          [sub.id],
+        );
+        if (!activeCheck || !activeCheck.active) {
+          break;
+        }
+        lastActiveCheck = Date.now();
       }
 
       // Idle tick — heartbeat so intermediaries keep the socket open.

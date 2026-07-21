@@ -473,23 +473,25 @@ describe('decodeOpenAiLine', () => {
     expect(r.rows[0]).toMatchObject({ ticker: 'MSFT', txType: 'S' });
   });
 
-  it('rejects incomplete Responses output even when it contains parseable text', () => {
+  it('salvages complete leading rows (and marks them) when Responses output is truncated', () => {
     const r = decodeOpenAiLine({
       custom_id: 'H-incomplete',
       response: { status_code: 200, body: {
         model: 'gpt-5.6-terra',
         status: 'incomplete',
         incomplete_details: { reason: 'max_output_tokens' },
-        output_text: '{"transactions":[]}',
+        output: [{ content: [{ text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Micro' }] }],
         usage: { input_tokens: 500, output_tokens: 8_000 },
       } },
     });
     expect(r).toMatchObject({
       docId: 'H-incomplete',
-      ok: false,
-      error: 'response incomplete: max_output_tokens',
+      ok: true,
       usage: { promptTokens: 500, completionTokens: 8_000 },
     });
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0].ticker).toBe('AAPL');
+    expect(r.rows[0].extractionWarnings).toContain('salvaged_truncated_output');
   });
 
   it('rejects a Responses refusal while retaining usage', () => {

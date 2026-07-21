@@ -1,9 +1,9 @@
 {
   "dependencies": {
-    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#904ea96ac237b775c54c8e4bb29df0d1a40da125",
+    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#v1.11.1",
     "@sentry/cloudflare": "^10.63.0"
   },
   "allowScripts": {
-    "github:jaywedgeworth22/congress-trading-shared#904ea96ac237b775c54c8e4bb29df0d1a40da125": true
+    "github:jaywedgeworth22/congress-trading-shared#v1.11.1": true
   }
 }
