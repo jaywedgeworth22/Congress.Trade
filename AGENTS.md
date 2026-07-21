@@ -14,6 +14,9 @@ Full protocol: `/Users/jay/apps/AGENT-SYNC.md` (canonical - read it before your 
 
 ## Execution Workflow
 
+- **CI/CD Runners Policy**: We are strictly supposed to use multiple self-hosted runners setup on Coolify (e.g., Hetzner hosts). The local Mac runner MUST NOT be used for CI/CD. It is permanently banned from opening or running jobs. All GitHub Actions workflows MUST target the Coolify runners (using `runs-on: self-hosted` or specific Coolify labels). NEVER start or rely on the local Mac runner for PR checks.
+
+
 - **Always Tagged**: Always explicitly identify as AG or Antigravity in Slack messages and commits to avoid "untagged" ghost work.
 - **Pre-Coding Reservations**: Reserve work on the live shared effort board before writing a single line of code, ensuring the rest of the fleet sees the claims.
 - **Chunking**: Break large tasks into smaller, reviewable chunks (like discrete PRs or commits), even if executing them back-to-back. No more giant monolithic batches.

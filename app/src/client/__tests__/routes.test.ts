@@ -88,7 +88,7 @@ function feedRow(overrides: Partial<FeedTransactionRow> & { __chamber?: string }
   };
 }
 
-function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean } = {}) {
+function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; staleReclaimLostRace?: boolean } = {}) {
   const kv = new Map<string, string>();
   const subscriptions = new Map<string, SubscriptionRow>();
   const commands = new Map<string, CommandRow>();
@@ -316,6 +316,29 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean } =
           started_at: null,
           finished_at: null,
         });
+      } else if (/UPDATE client_commands/i.test(sql) && /status IN \('queued', 'running'\)/i.test(sql)) {
+        const [updatedAt, startedAt, id, userId, staleBefore] = this.params;
+        const row = commands.get(String(id));
+        if (
+          row &&
+          row.user_id === userId &&
+          (row.status === 'queued' || row.status === 'running') &&
+          String(row.started_at ?? row.created_at) < String(staleBefore)
+        ) {
+          if (opts.staleReclaimLostRace) {
+            row.status = 'succeeded';
+            row.result = JSON.stringify({ preferences: { defaultWindow: 'peer' } });
+            row.updated_at = String(updatedAt);
+            row.finished_at = String(updatedAt);
+            return { success: true, meta: { changes: 0 } };
+          }
+          row.status = 'running';
+          row.error = null;
+          row.updated_at = String(updatedAt);
+          row.started_at = String(startedAt);
+          return { success: true, meta: { changes: 1 } };
+        }
+        return { success: true, meta: { changes: 0 } };
       } else if (/UPDATE client_commands/i.test(sql)) {
         const [status, result, error, updatedAt, runningStatus, startedAt, finishedAt, id, userId] = this.params;
         const row = commands.get(String(id));
@@ -329,6 +352,9 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean } =
         }
       } else if (/INSERT INTO subscriptions/i.test(sql)) {
         const [id, clientId, delivery, targetUrl, secret, filters, cursor, active, createdAt] = this.params;
+        if (subscriptions.has(String(id))) {
+          throw new Error('D1_ERROR: UNIQUE constraint failed: subscriptions.id');
+        }
         subscriptions.set(String(id), {
           id: String(id),
           client_id: String(clientId),
@@ -1096,6 +1122,91 @@ describe('client API routes', () => {
     expect(body.replayed).toBeUndefined();
     // The same row was reused (reclaimed), not duplicated.
     expect(commands.size).toBe(1);
+  });
+
+  it('replays the winner when a concurrent retry already reclaimed a stale command', async () => {
+    const { env, commands, preferences } = makeEnv({ staleReclaimLostRace: true });
+    commands.set('cmd_stale_lost', {
+      id: 'cmd_stale_lost',
+      user_id: 'user_1',
+      type: 'update_preferences',
+      status: 'running',
+      idempotency_key: 'stale-lost-1',
+      payload: JSON.stringify({ defaultWindow: '30d' }),
+      result: null,
+      error: null,
+      created_at: '2020-01-01T00:00:00.000Z',
+      updated_at: '2020-01-01T00:00:00.000Z',
+      started_at: '2020-01-01T00:00:00.000Z',
+      finished_at: null,
+    });
+    const app = buildClientRouter();
+    const res = await app.request(
+      'http://localhost/commands',
+      {
+        method: 'POST',
+        headers: { authorization: await bearer(env), 'content-type': 'application/json', 'idempotency-key': 'stale-lost-1' },
+        body: JSON.stringify({ type: 'update_preferences', payload: { defaultWindow: 'all' } }),
+      },
+      env,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { replayed: boolean; command: { id: string; status: string } };
+    expect(body.replayed).toBe(true);
+    expect(body.command.id).toBe('cmd_stale_lost');
+    expect(body.command.status).toBe('succeeded');
+    expect(preferences.size).toBe(0);
+  });
+
+  it('replays an already-created subscription when a stale command is retried after side effects landed', async () => {
+    const { env, commands, subscriptions } = makeEnv();
+    commands.set('cmd_recover_sub', {
+      id: 'cmd_recover_sub',
+      user_id: 'user_1',
+      type: 'create_subscription',
+      status: 'running',
+      idempotency_key: 'sub-stale-1',
+      payload: JSON.stringify({ delivery: 'sse', filters: { tickers: ['AAPL'] } }),
+      result: null,
+      error: null,
+      created_at: '2020-01-01T00:00:00.000Z',
+      updated_at: '2020-01-01T00:00:00.000Z',
+      started_at: '2020-01-01T00:00:00.000Z',
+      finished_at: null,
+    });
+    subscriptions.set('sub_recover_sub', {
+      id: 'sub_recover_sub',
+      client_id: 'user:user_1',
+      delivery: 'sse',
+      target_url: null,
+      secret: 'whsec_existing',
+      filters: JSON.stringify({ tickers: ['AAPL'] }),
+      cursor: 0,
+      active: 1,
+      created_at: '2020-01-01T00:00:05.000Z',
+    });
+    const app = buildClientRouter();
+    const res = await app.request(
+      'http://localhost/commands',
+      {
+        method: 'POST',
+        headers: { authorization: await bearer(env), 'content-type': 'application/json', 'idempotency-key': 'sub-stale-1' },
+        body: JSON.stringify({ type: 'create_subscription', payload: { delivery: 'sse', filters: { tickers: ['MSFT'] } } }),
+      },
+      env,
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      result: { subscription: { id: string; secret?: string; filters: { tickers?: string[] } } };
+      command: { status: string; result: { subscription: { hasSecret: boolean; secret?: string } } };
+    };
+    expect(body.result.subscription.id).toBe('sub_recover_sub');
+    expect(body.result.subscription.secret).toBe('whsec_existing');
+    expect(body.result.subscription.filters.tickers).toEqual(['AAPL']);
+    expect(body.command.status).toBe('succeeded');
+    expect(body.command.result.subscription.hasSecret).toBe(true);
+    expect(body.command.result.subscription.secret).toBeUndefined();
+    expect(subscriptions.size).toBe(1);
   });
 
   it('replays a genuinely in-flight (recent) running command without re-executing it', async () => {
