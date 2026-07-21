@@ -7,7 +7,7 @@ export type ClientTradeRow = FeedTransactionRow & {
 };
 
 export type ClientTradeListEnvelope = {
-  items: import('../shared/types').ClientTrade[];
+  items: import('../shared/types.ts').ClientTrade[];
   cursor: number;
   count: number;
   /**

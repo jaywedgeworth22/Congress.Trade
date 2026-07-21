@@ -16,9 +16,9 @@
 export type {
   MktCapBucket,
   SecurityRef,
-} from '../../vendor/congress-trading-shared/dist/index.mjs';
+} from '@jaywedgeworth22/congress-trading-shared';
 
-import type { SecurityRef } from '../../vendor/congress-trading-shared/dist/index.mjs';
+import type { SecurityRef } from '@jaywedgeworth22/congress-trading-shared';
 
 /**
  * A single enrichment source. `fetchRef` returns the fields it can resolve for a

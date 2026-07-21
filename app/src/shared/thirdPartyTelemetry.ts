@@ -17,7 +17,7 @@ import {
   API_USAGE_MONITOR_INGEST_PATH,
   createUsageTelemetryClient,
   UsageTelemetryEventSchema,
-} from '../../vendor/congress-trading-shared/dist/index.mjs';
+} from '@jaywedgeworth22/congress-trading-shared';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import type { Env, ThirdPartyUsageTelemetryEvent } from './types.ts';
 

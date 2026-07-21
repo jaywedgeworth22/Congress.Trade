@@ -1,8 +1,13 @@
 {
   "unstable": [
     "kv",
-    "cron",
-    
+    "cron"
+  ],
+  "exclude": [
+    "node_modules",
+    "vendor",
+    "src/__tests__",
+    "**/*.test.ts"
   ],
   "tasks": {
     "start": "deno run --unstable-kv --unstable-cron --allow-net --allow-env --allow-read src/deno/main.ts"

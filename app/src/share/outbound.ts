@@ -20,7 +20,7 @@ import {
   type PriceClose,
   type PriceSeries,
   type SecurityRefInput,
-} from '../../vendor/congress-trading-shared/dist/index.mjs';
+} from '@jaywedgeworth22/congress-trading-shared';
 import type { SecurityRef } from '../enrichment/types.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import type { Env } from '../shared/types.ts';

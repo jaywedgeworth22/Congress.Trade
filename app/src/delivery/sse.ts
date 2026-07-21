@@ -52,7 +52,7 @@ import { all, get, run } from '../shared/db.ts';
 import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows.ts';
 import { matchesFiltersWithContext, subscriptionOwnerEntitled } from './subscriptions.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
-import { createCongressEvent } from '../../vendor/congress-trading-shared/dist/index.mjs';
+import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
 import { prefixedId } from '../shared/ids.ts';
 import { rateLimit } from '../shared/rateLimit.ts';
 import { flushD1Budget } from '../shared/d1Budget.ts';

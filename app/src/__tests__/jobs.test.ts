@@ -52,7 +52,7 @@ vi.mock('../admin/routes', () => ({
 vi.mock('../export/snapshot', () => ({
   runBulkSnapshot: mocks.runBulkSnapshot,
 }));
-vi.mock('../../vendor/congress-trading-shared/dist/index.mjs', () => ({
+vi.mock('@jaywedgeworth22/congress-trading-shared', () => ({
   createUsageTelemetryClient: mocks.createUsageTelemetryClient,
 }));
 vi.mock('../shared/d1Budget', () => ({
