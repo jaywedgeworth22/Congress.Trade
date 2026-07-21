@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   }),
 }));
 
-vi.mock('@sentry/cloudflare', () => ({
+vi.mock('#sentry', () => ({
   withSentry: (_opts: unknown, handler: unknown) => handler,
   setTags: vi.fn(), captureException: vi.fn(),
   withMonitor: (_slug: string, callback: () => unknown) => callback(),

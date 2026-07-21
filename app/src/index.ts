@@ -16,7 +16,7 @@
  */
 
 import { Hono } from 'hono';
-import * as Sentry from '@sentry/cloudflare';
+import * as Sentry from '#sentry';
 import type { Env, QueueMessage } from './shared/types.ts';
 
 // Stage handlers owned by their feature modules.

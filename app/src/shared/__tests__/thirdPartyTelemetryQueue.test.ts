@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   }>,
 }));
 
-vi.mock('@sentry/cloudflare', () => ({
+vi.mock('#sentry', () => ({
   withSentry: (
     options: (env: Record<string, unknown>) => {
       tracesSampleRate: number;

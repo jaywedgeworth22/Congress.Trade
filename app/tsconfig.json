@@ -25,8 +25,7 @@
     "allowImportingTsExtensions": true,
     "paths": {
       "@jaywedgeworth22/congress-trading-shared": ["./vendor/congress-trading-shared/src/index.ts"]
-    },
-    "ignoreDeprecations": "6.0"
+    }
   },
   "include": [
     "src/**/*.ts"

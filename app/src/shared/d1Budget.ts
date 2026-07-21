@@ -30,7 +30,7 @@
  * (migration 0044) + caching, not here.
  */
 
-import * as Sentry from '@sentry/cloudflare';
+import * as Sentry from '#sentry';
 import type { Env } from './types.ts';
 import type { SqlParam } from './db.ts';
 import { resolveSecret } from '../secrets/infisical.ts';

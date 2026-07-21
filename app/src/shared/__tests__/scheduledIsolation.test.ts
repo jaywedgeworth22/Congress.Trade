@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   telemetryFallback: vi.fn(async () => ({ listed: 0, delivered: 0, failed: 0 })),
 }));
 
-vi.mock('@sentry/cloudflare', () => ({
+vi.mock('#sentry', () => ({
   withSentry: (_opts: unknown, handler: unknown) => handler,
   withMonitor: (_slug: string, callback: () => unknown) => Promise.resolve().then(callback),
   captureException: vi.fn(), setTags: vi.fn(),

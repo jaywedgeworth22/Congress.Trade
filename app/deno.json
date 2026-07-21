@@ -20,7 +20,7 @@
     ]
   },
   "imports": {
-    "@sentry/cloudflare": "./src/deno/sentryDummy.ts",
+    "#sentry": "./src/deno/sentryDummy.ts",
     "@jaywedgeworth22/congress-trading-shared": "./shared.ts",
     "zod": "https://deno.land/x/zod@v3.23.8/mod.ts"
   }

@@ -20,6 +20,9 @@
     "sentry:sourcemaps": "_SENTRY_RELEASE=$(sentry-cli releases propose-version) && sentry-cli releases new $_SENTRY_RELEASE --org=jays-services --project=congress-trade && sentry-cli sourcemaps upload --org=jays-services --project=congress-trade --release=$_SENTRY_RELEASE --strip-prefix 'dist/..' dist",
     "postdeploy": "if [ -n \"$SENTRY_AUTH_TOKEN\" ]; then npm run sentry:sourcemaps || echo '::warning::sentry sourcemaps upload failed (non-fatal); the Worker deploy already succeeded'; else echo '::warning::SENTRY_AUTH_TOKEN not set; skipping sentry sourcemaps upload'; fi"
   },
+  "imports": {
+    "#sentry": "@sentry/cloudflare"
+  },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1090.0",
     "@google/genai": "^2.12.0",
