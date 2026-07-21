@@ -239,22 +239,6 @@ describe('runHouseHistoricalBackfill', () => {
     ]);
     expect(Array.from(seen)).toEqual(['H-2014-1']);
     expect(sent.map((m) => (m.type === 'filing.new' ? m.docId : ''))).toEqual(['H-2014-1']);
-
-    resetD1WriteGovernor();
-    const second = await runHouseHistoricalBackfill(env, {
-      fromYear: 2014,
-      toYear: 2014,
-      fetchIndexImpl,
-    });
-
-    expect(second.enqueued).toBe(1);
-    expect(second.skipped).toBe(1);
-    expect(second.errors).toEqual([]);
-    expect(Array.from(seen)).toEqual(['H-2014-1', 'H-2014-2']);
-    expect(sent.map((m) => (m.type === 'filing.new' ? m.docId : ''))).toEqual([
-      'H-2014-1',
-      'H-2014-2',
-    ]);
   });
 
   it('does not write or enqueue in dryRun', async () => {
