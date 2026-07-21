@@ -433,7 +433,7 @@ export function buildLateFilersQuery(p: CommonFilters & { limit?: number }): Bui
     ...where,
   ];
   const sql =
-    'SELECT t.filer_id AS filer_id, fl.full_name AS full_name, fl.party AS party, ' +
+    'SELECT t.filer_id AS filer_id, fl.full_name AS full_name, fl.party AS party, fl.state AS state, ' +
     `${CHAMBER_EXPR} AS chamber, fl.photo_url AS photo_url, ` +
     `AVG(${lag}) AS avg_lag_days, MAX(${lag}) AS max_lag_days, ` +
     `SUM(CASE WHEN ${lag} > 45 THEN 1 ELSE 0 END) AS late_count, ` +

@@ -38,7 +38,7 @@ import {
   PriceSeriesSchema,
   SecurityRefInputSchema,
   ShortVolumeRowSchema,
-} from '@jaywedgeworth22/congress-trading-shared';
+} from '../../vendor/congress-trading-shared/dist/index.mjs';
 import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
 import { all, batch, batchPrepared, chunkArray, first, get, run, type SqlParam } from '../shared/db';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
@@ -112,7 +112,12 @@ import {
 } from '../enrichment/service';
 import { mergeRefs } from '../enrichment/compute';
 import type { SecurityRef } from '../enrichment/types';
-import { runPriceRefresh, priceUnavailableCutoffIso } from '../prices/service';
+import {
+  runPriceRefresh,
+  priceUnavailableCutoffIso,
+  priceUnavailableFirstRecheckCutoffIso,
+  PRICE_UNAVAILABLE_NOT_FOUND_FIRST,
+} from '../prices/service';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets, updateSecret } from '../secrets/infisical';
 import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency';
 import { pollExecutive } from '../ingestion/watcher';
@@ -8326,6 +8331,13 @@ async function marketCoverage(env: Env): Promise<MarketCoverage> {
  *      before discarding them; NOT EXISTS index-seeks and stops at the first row.
  *   2. excluding tickers marked `price_unavailable` within the re-check TTL, which
  *      the price refresh sets when the EOD history API returns empty for them.
+ *      Mirrors `selectTickersNeedingPrices`'s own two-stage CASE: a FIRST
+ *      consecutive not-found result (`price_unavailable = 1`) uses the shorter
+ *      7-day cutoff, while a second-or-later miss or a stalled listing (2 or 3)
+ *      uses the slower 30-day cutoff — else this count would over-report
+ *      "pending" for rows the price-refresh selector has already excluded,
+ *      making `done:true` unreachable again for exactly the tickers this two-
+ *      stage backoff targets.
  */
 export async function marketPending(env: Env): Promise<{ enrich: number; prices: number }> {
   const retryIncomplete = await hasConfiguredKeyedEnrichmentProvider(env);
@@ -8346,12 +8358,15 @@ export async function marketPending(env: Env): Promise<{ enrich: number; prices:
        WHERE t.ticker IS NOT NULL AND t.ticker <> '' AND t.tx_date IS NOT NULL
          AND NOT EXISTS (SELECT 1 FROM price_eod pe WHERE pe.ticker = t.ticker)
          AND NOT (
-           COALESCE(sr.price_unavailable, 0) = 1
+           COALESCE(sr.price_unavailable, 0) <> 0
            AND sr.price_checked_at IS NOT NULL
-           AND sr.price_checked_at >= ?
+           AND sr.price_checked_at >= CASE
+                 WHEN sr.price_unavailable = ${PRICE_UNAVAILABLE_NOT_FOUND_FIRST} THEN ?
+                 ELSE ?
+               END
          )
        GROUP BY t.ticker)`,
-    [priceUnavailableCutoffIso()],
+    [priceUnavailableFirstRecheckCutoffIso(), priceUnavailableCutoffIso()],
   );
   return { enrich: e?.n ?? 0, prices: p?.n ?? 0 };
 }
