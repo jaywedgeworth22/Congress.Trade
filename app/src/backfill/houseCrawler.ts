@@ -156,10 +156,17 @@ export async function runHouseHistoricalBackfill(
 
       const nowIso = new Date().toISOString();
       // Shared INSERT OR IGNORE + meta.changes "genuinely new" gate (watcher.ts).
-      const isNew = await insertFilingIfNew(env, discoveredFiling, nowIso);
+      const insertResult = await insertFilingIfNew(env, discoveredFiling, nowIso);
+
+      // A governor deferral is not a duplicate. Stop this invocation so the
+      // operator can rerun the idempotent backfill after the write budget resets.
+      if (insertResult === 'deferred') {
+        result.errors.push(`${year}: D1 write governor deferred at ${discoveredFiling.docId}; rerun backfill to continue`);
+        return result;
+      }
 
       // Skip the enqueue when not new (dup).
-      if (!isNew) {
+      if (insertResult === 'duplicate') {
         result.skipped += 1;
         continue;
       }
