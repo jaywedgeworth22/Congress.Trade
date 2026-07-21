@@ -147,7 +147,7 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
 mountApiRouters(app);
 
 // --- INGEST queue routing -----------------------------------------------------
-async function handleIngestMessage(env: Env, msg: QueueMessage, queueAttempt = 1): Promise<void> {
+export async function handleIngestMessage(env: Env, msg: QueueMessage, queueAttempt = 1): Promise<void> {
   switch (msg.type) {
     case 'filing.new':
       await fetchFiling(env, msg.docId, queueAttempt);
@@ -194,7 +194,7 @@ async function handleIngestMessage(env: Env, msg: QueueMessage, queueAttempt = 1
 }
 
 // --- DELIVERY queue routing ---------------------------------------------------
-async function handleDeliveryMessage(env: Env, msg: QueueMessage): Promise<boolean> {
+export async function handleDeliveryMessage(env: Env, msg: QueueMessage): Promise<boolean> {
   switch (msg.type) {
     case 'delivery.dispatch': {
       const result = await dispatchWebhook(env, msg);
@@ -207,7 +207,7 @@ async function handleDeliveryMessage(env: Env, msg: QueueMessage): Promise<boole
 }
 
 /** Authoritative terminal recovery path for the configured Queue DLQs. */
-async function handleDeadLetterMessage(
+export async function handleDeadLetterMessage(
   env: Env,
   queue: string,
   msg: QueueMessage,

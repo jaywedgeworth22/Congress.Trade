@@ -38,7 +38,7 @@ import {
   PriceSeriesSchema,
   SecurityRefInputSchema,
   ShortVolumeRowSchema,
-} from '../../vendor/congress-trading-shared/dist/index.mjs';
+} from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
 import { all, batch, batchPrepared, chunkArray, first, get, run, type SqlParam } from '../shared/db';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
