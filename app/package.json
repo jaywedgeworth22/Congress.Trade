@@ -58,5 +58,5 @@
     "@sentry/cloudflare": {
       "@cloudflare/workers-types": "$@cloudflare/workers-types"
     }
-  },
+  }
 }
