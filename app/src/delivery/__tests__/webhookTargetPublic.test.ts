@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../webhookTarget';
+import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../webhookTarget.ts';
 
 function dnsFetch(a: string[] = [], aaaa: string[] = []) {
   return vi.fn(async (input: RequestInfo | URL) => {

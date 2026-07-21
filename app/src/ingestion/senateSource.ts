@@ -33,7 +33,7 @@
  * report id, build sourceUrl, and compute pipeline docId `S-{reportId}`.
  */
 
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import * as cheerio from 'cheerio';
 
 const SENATE_BASE = 'https://efdsearch.senate.gov';

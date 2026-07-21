@@ -2,9 +2,9 @@
 // parity check in Node.
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { persistTransactions } from '../../extraction/normalizer';
-import { checkReadiness } from '../../shared/readiness';
-import type { Env, Transaction } from '../../shared/types';
+import { persistTransactions } from '../../extraction/normalizer.ts';
+import { checkReadiness } from '../../shared/readiness.ts';
+import type { Env, Transaction } from '../../shared/types.ts';
 import {
   AUTOPILOT_SCHEMA_STATEMENTS,
   BASE_SCHEMA_STATEMENTS,
@@ -21,13 +21,13 @@ import {
   STRIPE_EVENT_SCHEMA_STATEMENTS,
   USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
   SUBSCRIPTION_QUOTA_ACTIVE_ONLY_SCHEMA_STATEMENTS,
-} from '../migrations';
-import { BENCHMARK_SCHEMA_STATEMENTS } from '../../benchmark/schema';
+} from '../migrations.ts';
+import { BENCHMARK_SCHEMA_STATEMENTS } from '../../benchmark/schema.ts';
 import {
   beginBenchmarkRun,
   claimBenchmarkMeasurement,
   failBenchmarkRun,
-} from '../../benchmark/persistence';
+} from '../../benchmark/persistence.ts';
 
 interface SqliteRunResult {
   changes: number | bigint;

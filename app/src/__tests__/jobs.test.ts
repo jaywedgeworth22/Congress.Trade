@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Env } from '../shared/types';
+import type { Env } from '../shared/types.ts';
 
 // Every collaborator maybeRunDailyJobs calls out to is mocked so this test is
 // purely about how the daily-jobs entry point resolves + wires
@@ -71,7 +71,7 @@ import {
   RETENTION_POLICIES,
   RETENTION_DELETE_BATCH,
   RETENTION_MAX_BATCHES_PER_TABLE,
-} from '../jobs';
+} from '../jobs.ts';
 
 function fakeEnv(): Env {
   const kv = new Map<string, string>();

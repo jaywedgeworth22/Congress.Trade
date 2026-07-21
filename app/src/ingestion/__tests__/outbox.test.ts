@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   completeIngestionOutbox,
   flushIngestionOutbox,
   INGESTION_ENQUEUED_STALE_MS,
   reconnectDeadLetteredIngestionOutbox,
   requeueFailedIngestionOutbox,
-} from '../outbox';
+} from '../outbox.ts';
 
 function makeEnv(sendFails = false) {
   const row = {

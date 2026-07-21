@@ -2,10 +2,10 @@ import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import {
   runHouseHistoricalBackfill,
   type HouseBackfillOptions,
-} from '../houseCrawler';
-import type { HouseFiling } from '../../ingestion/houseSource';
-import type { Env, QueueMessage } from '../../shared/types';
-import { resetD1WriteGovernor } from '../../shared/d1Budget';
+} from '../houseCrawler.ts';
+import type { HouseFiling } from '../../ingestion/houseSource.ts';
+import type { Env, QueueMessage } from '../../shared/types.ts';
+import { resetD1WriteGovernor } from '../../shared/d1Budget.ts';
 
 // ---------------------------------------------------------------------------
 // Test doubles — no network, no real D1/queue.

@@ -25,10 +25,10 @@
  * the whole range) never double-enqueues an already-seen PTR.
  */
 
-import type { Env } from '../shared/types';
-import { fetchHouseIndex, type HouseFiling } from '../ingestion/houseSource';
-import { insertFilingIfNew, enqueueFilingNew, type DiscoveredFiling } from '../ingestion/watcher';
-import { cleanFilerName } from '../extraction/nameNormalizer';
+import type { Env } from '../shared/types.ts';
+import { fetchHouseIndex, type HouseFiling } from '../ingestion/houseSource.ts';
+import { insertFilingIfNew, enqueueFilingNew, type DiscoveredFiling } from '../ingestion/watcher.ts';
+import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 
 // ---------------------------------------------------------------------------
 // Public contract (mirrors the *BackfillOptions/*BackfillResult conventions in

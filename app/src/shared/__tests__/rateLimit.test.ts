@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { rateLimit, clientIp, resetMemoryRateLimitForTests } from '../rateLimit';
-import type { Env } from '../types';
+import { rateLimit, clientIp, resetMemoryRateLimitForTests } from '../rateLimit.ts';
+import type { Env } from '../types.ts';
 
 function fakeEnv(): Env {
   const store = new Map<string, string>();

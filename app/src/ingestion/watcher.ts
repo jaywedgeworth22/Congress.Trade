@@ -12,8 +12,8 @@
  * parse, anti-bot) must NOT block the other, and the failure is logged.
  */
 
-import type { Chamber, Env } from '../shared/types';
-import { batch, run } from '../shared/db';
+import type { Chamber, Env } from '../shared/types.ts';
+import { batch, run } from '../shared/db.ts';
 import {
   getConfig,
   getLastAttemptAt,
@@ -21,14 +21,14 @@ import {
   setLastAttemptAt,
   setLastPollAt,
   shouldPollNow,
-} from '../shared/config';
-import { fetchHouseIndex, pollHouseLiveSearch } from './houseSource';
-import { fetchSenatePtrFilings } from './senateSource';
-import { recordDisclosureLatencyCandidate, storageMissing } from './fmpDisclosureLatency';
-import { enqueueIngestionOutboxNow, ingestionOutboxInsertForDoc } from './outbox';
-import { resolveSecret } from '../secrets/infisical';
-import { pollOgeExecutive } from './ogeSource';
-import { consumeGovernedD1Writes } from '../shared/d1Budget';
+} from '../shared/config.ts';
+import { fetchHouseIndex, pollHouseLiveSearch } from './houseSource.ts';
+import { fetchSenatePtrFilings } from './senateSource.ts';
+import { recordDisclosureLatencyCandidate, storageMissing } from './fmpDisclosureLatency.ts';
+import { enqueueIngestionOutboxNow, ingestionOutboxInsertForDoc } from './outbox.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
+import { pollOgeExecutive } from './ogeSource.ts';
+import { consumeGovernedD1Writes } from '../shared/d1Budget.ts';
 
 /** Env shape (read defensively — Env is the frozen foundation contract). */
 type EnvWithFlags = Env & { HOUSE_LIVE_SEARCH_ENABLED?: string };
