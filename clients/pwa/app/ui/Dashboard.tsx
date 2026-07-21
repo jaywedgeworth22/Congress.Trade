@@ -644,9 +644,9 @@ export default function Dashboard() {
           </>
         ) : null}
         
-        <div style={{ marginTop: '32px', paddingTop: '16px', borderTop: '1px solid var(--border)', fontSize: '12px', color: 'var(--muted)', textAlign: 'center' }}>
-          <a href="/terms-of-service" style={{ color: 'var(--muted)', textDecoration: 'none', marginRight: '12px' }}>Terms of Service</a>
-          <a href="/privacy-policy" style={{ color: 'var(--muted)', textDecoration: 'none' }}>Privacy Policy</a>
+        <div style={{ marginTop: '48px', paddingTop: '8px', borderTop: '1px solid var(--border)', fontSize: '9px', color: 'var(--muted)', textAlign: 'center', opacity: 0.35 }}>
+          <a href="/terms-of-service" style={{ color: 'var(--muted)', textDecoration: 'none', marginRight: '12px', fontSize: '9px' }}>Terms of Service</a>
+          <a href="/privacy-policy" style={{ color: 'var(--muted)', textDecoration: 'none', fontSize: '9px' }}>Privacy Policy</a>
         </div>
       </section>
 
