@@ -10,4 +10,4 @@ export {
   matchBracket,
   isValidBracket,
   nearestBracket,
-} from '../../vendor/congress-trading-shared/dist/index.mjs';
+} from '@jaywedgeworth22/congress-trading-shared';
