@@ -26,6 +26,7 @@ import {
   selectTickersNeedingPrices,
   lastTradingDay,
   priceUnavailableCutoffIso,
+  priceUnavailableFirstRecheckCutoffIso,
 } from '../service';
 import { openMigratedD1, type SqliteDatabase } from './sqliteD1';
 
@@ -47,7 +48,10 @@ function seedTicker(
   sr: {
     enrichedAt?: string | null;
     latestPriceDate?: string | null;
-    priceUnavailable?: 0 | 1;
+    /** 0=priced, 1=not-found stage 1 (7d recheck), 2=not-found stage 2 (30d
+     *  recheck), 3=stalled listing (30d recheck) — see PRICE_UNAVAILABLE_* in
+     *  prices/service.ts. */
+    priceUnavailable?: 0 | 1 | 2 | 3;
     priceCheckedAt?: string | null;
   } = {},
 ): void {
@@ -106,12 +110,36 @@ describe('marketPending — done:true is reachable', () => {
     expect(marketPending.toString()).toContain('NOT EXISTS');
     expect(marketPending.toString()).not.toContain('pe.ticker IS NULL');
   });
+
+  it('excludes stage-2 (escalated) and stalled-listing tickers within their own 30-day TTL, not just stage-1', async () => {
+    // Regression: price_unavailable now has THREE non-zero values (1/2/3 — see
+    // selectTickersNeedingPrices' two-stage backoff). A query that only excluded
+    // `= 1` would over-count these as still "pending", making `done:true`
+    // unreachable again for exactly the escalated/stalled set this backoff targets.
+    const now = new Date().toISOString();
+    seedTicker('STAGE2', { priceUnavailable: 2, priceCheckedAt: now });
+    seedTicker('STALLED', { priceUnavailable: 3, priceCheckedAt: now });
+
+    expect((await marketPending(env)).prices).toBe(0);
+  });
+
+  it('a stage-2 ticker checked between the 7-day and 30-day cutoffs still counts as pending only once truly expired', async () => {
+    // Checked 10 days ago: past the stage-1 (7d) cutoff but still within the
+    // stage-2/stalled (30d) one. A query that (incorrectly) applied the 7-day
+    // cutoff to a price_unavailable=2 row would call this "pending"; the fix
+    // must still exclude it.
+    const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000).toISOString();
+    seedTicker('STAGE2_10D', { priceUnavailable: 2, priceCheckedAt: tenDaysAgo });
+
+    expect((await marketPending(env)).prices).toBe(0);
+  });
 });
 
 describe('selectTickersNeedingPrices — no perpetual re-selection', () => {
   const NOW = new Date('2026-07-14T12:00:00Z'); // Tuesday
   const FRESH_THROUGH = lastTradingDay(NOW); // Monday 2026-07-13
-  const CUTOFF = priceUnavailableCutoffIso(NOW); // 2026-06-14
+  const CUTOFF = priceUnavailableCutoffIso(NOW); // escalated (30-day) cutoff, 2026-06-14
+  const FIRST_CUTOFF = priceUnavailableFirstRecheckCutoffIso(NOW); // stage-1 (7-day) cutoff, 2026-07-07T12:00Z
 
   it('drops fresh (latest_price_date == last trading day), keeps stale/never/expired-unavailable', async () => {
     seedTicker('FRESH', { latestPriceDate: FRESH_THROUGH }); // == Monday → not stale
@@ -119,25 +147,67 @@ describe('selectTickersNeedingPrices — no perpetual re-selection', () => {
     seedTicker('NEVER', { latestPriceDate: null }); // never priced
     seedTicker('DEADRECENT', {
       latestPriceDate: null,
-      priceUnavailable: 1,
-      priceCheckedAt: '2026-07-10T00:00:00Z', // within TTL → excluded
+      priceUnavailable: 1, // stage 1 → 7-day cutoff
+      priceCheckedAt: '2026-07-10T00:00:00Z', // within the 7-day TTL → excluded
     });
     seedTicker('DEADOLD', {
       latestPriceDate: null,
       priceUnavailable: 1,
-      priceCheckedAt: '2026-05-01T00:00:00Z', // before cutoff → retry
+      priceCheckedAt: '2026-05-01T00:00:00Z', // before both cutoffs → retry
     });
 
     const picked = await selectTickersNeedingPrices(env, 50, {
       freshThrough: FRESH_THROUGH,
       unavailableCutoff: CUTOFF,
+      firstUnavailableCutoff: FIRST_CUTOFF,
     });
     expect(new Set(picked)).toEqual(new Set(['STALE', 'NEVER', 'DEADOLD']));
+  });
+
+  it('an escalated (stage 2+) ticker uses the slower 30-day cutoff, not the 7-day one', async () => {
+    seedTicker('STAGE2_RECENT', {
+      latestPriceDate: null,
+      priceUnavailable: 2, // stage 2 → 30-day cutoff, NOT the 7-day one
+      // Past the 7-day mark but still within the 30-day one: proves stage 2
+      // does not fall back to the shorter stage-1 cadence.
+      priceCheckedAt: '2026-07-10T00:00:00Z',
+    });
+    seedTicker('STAGE2_OLD', {
+      latestPriceDate: null,
+      priceUnavailable: 2,
+      priceCheckedAt: '2026-05-01T00:00:00Z', // before the 30-day cutoff → retry
+    });
+    seedTicker('STALLED_RECENT', {
+      latestPriceDate: null,
+      priceUnavailable: 3, // stalled listing → same 30-day cadence as stage 2
+      priceCheckedAt: '2026-07-10T00:00:00Z',
+    });
+
+    const picked = await selectTickersNeedingPrices(env, 50, {
+      freshThrough: FRESH_THROUGH,
+      unavailableCutoff: CUTOFF,
+      firstUnavailableCutoff: FIRST_CUTOFF,
+    });
+    expect(new Set(picked)).toEqual(new Set(['STAGE2_OLD']));
   });
 
   it('with the real clock, a ticker carrying the last trading day is not re-selected', async () => {
     seedTicker('CUR', { latestPriceDate: lastTradingDay() });
     expect(await selectTickersNeedingPrices(env, 50)).toEqual([]);
+  });
+
+  it('returns eligible tickers OLDEST-traded first (cursor_seq ASC), not newest-first', async () => {
+    // cursor_seq is assigned in strict insertion order (see the transactions
+    // trigger in 0001_init.sql), so seeding in this order gives FIRST the
+    // lowest cursor_seq. Newest-first (the pre-fix order) would return these
+    // reversed; oldest-first must return them in insertion order, so a steady
+    // inflow of newly-traded tickers can never perpetually crowd out the tail
+    // of an unpriced backlog.
+    seedTicker('FIRST');
+    seedTicker('SECOND');
+    seedTicker('THIRD');
+
+    expect(await selectTickersNeedingPrices(env, 50)).toEqual(['FIRST', 'SECOND', 'THIRD']);
   });
 });
 

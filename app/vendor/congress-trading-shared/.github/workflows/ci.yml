@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Run weekly on Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    # Self-hosted CI with automatic hosted fallback (fleet runner-offload).
+    # Resolves to the runner label in the repo variable SHARED_CI_RUNNER when it
+    # is set (e.g. shared-ci), otherwise to 'ubuntu-latest'. Dependabot PRs are
+    # forced back to hosted runners: their third-party install/build scripts
+    # must never run beside production containers and a repo-scoped runner PAT
+    # on the shared self-hosted box. While SHARED_CI_RUNNER is unset this
+    # workflow behaves exactly as before (hosted).
+    # Runbook — clearing the variable is an instant, global hosted fallback:
+    #   gh variable set SHARED_CI_RUNNER --repo jaywedgeworth22/congress-trading-shared --body ""
+    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.SHARED_CI_RUNNER) || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test effort issue reconciliation
+        run: python3 -m unittest scripts/test_sync_effort_issues.py
+
+      - name: Run tests
+        run: npm test -- --coverage
+
+      - name: Build
+        run: npm run build
+
+      - name: Validate package exports
+        run: npm run lint:package
+
+      - name: Audit
+        run: npm audit
+
+      - name: Verify dependency signatures
+        run: npm audit signatures
+
+      - name: Package dry run
+        run: npm run pack:dry
+
+      - name: Clean tokenless Git install smoke
+        env:
+          INSTALL_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          INSTALL_REF: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          scratch="$(mktemp -d)"
+          trap 'rm -rf "$scratch"' EXIT
+          mkdir -p "$scratch/home" "$scratch/cache"
+          unset NODE_AUTH_TOKEN NPM_TOKEN GH_PACKAGES_TOKEN GITHUB_TOKEN
+          export HOME="$scratch/home" npm_config_cache="$scratch/cache"
+          npm install --prefix "$scratch" \
+            "git+https://github.com/${INSTALL_REPOSITORY}.git#${INSTALL_REF}"
+
+          cd "$scratch"
+          node -e "const p=require('@jaywedgeworth22/congress-trading-shared'); if(typeof p.createCongressEvent!=='function') process.exit(1)"
+          node --input-type=module -e "import('@jaywedgeworth22/congress-trading-shared').then(p=>{if(typeof p.createCongressEvent!=='function')process.exit(1)})"
+
+          npm install --ignore-scripts zod@^4.4.3
+          node <<'EOF'
+          const path = require('node:path');
+          const root = require('zod/package.json');
+          const shared = require('@jaywedgeworth22/congress-trading-shared');
+          const sharedRoot = path.join(path.dirname(require.resolve('@jaywedgeworth22/congress-trading-shared')), '..');
+          let hasNested = true;
+          try {
+            require(path.join(sharedRoot, 'node_modules/zod/package.json'));
+          } catch (e) {
+            if (e.code === 'MODULE_NOT_FOUND') hasNested = false;
+          }
+          if (hasNested) {
+            console.error('Error: nested zod package still exists, expected peer dependency resolution');
+            process.exit(1);
+          }
+          EOF
+
+          cat > consumer.mts <<'EOF'
+          import { createCongressEvent, type UsageTelemetryEventInput } from '@jaywedgeworth22/congress-trading-shared';
+          const input: UsageTelemetryEventInput = { sourceApp: 'ci', provider: 'ci' };
+          createCongressEvent('ci.smoke', input);
+          EOF
+          cat > consumer.cts <<'EOF'
+          import { createCongressEvent, type UsageTelemetryEventInput } from '@jaywedgeworth22/congress-trading-shared';
+          const input: UsageTelemetryEventInput = { sourceApp: 'ci', provider: 'ci' };
+          createCongressEvent('ci.smoke', input);
+          EOF
+          "$GITHUB_WORKSPACE/node_modules/.bin/tsc" --noEmit --strict \
+            --target ES2022 --module NodeNext --moduleResolution NodeNext consumer.mts consumer.cts
+          "$GITHUB_WORKSPACE/node_modules/.bin/tsc" --noEmit --strict \
+            --target ES2022 --module ESNext --moduleResolution Bundler consumer.mts
