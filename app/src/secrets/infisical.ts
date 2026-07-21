@@ -67,8 +67,21 @@ function cacheTtlSeconds(env: Env): number {
   return Number.isFinite(n) && n > 0 ? Math.min(n, 3600) : DEFAULT_TTL_SECONDS;
 }
 
+const KNOWN_PROJECT_IDS: Record<string, string> = {
+  '0be350b7-598a-4ac8-8497-81dc3c53ec44': 'f61a79de-8d77-4f0b-9361-4b7208598290',
+  'e00e7a66-1236-4a27-bd08-95e4533d749f': '18f563a3-9c88-454c-96eb-28fc9678f3ba',
+};
+
+function resolveProjectId(id: string | undefined): string | undefined {
+  if (!id) return undefined;
+  return KNOWN_PROJECT_IDS[id] || id;
+}
+
 function envName(env: Env): string {
-  return (env.INFISICAL_ENV || DEFAULT_ENV).trim() || DEFAULT_ENV;
+  const val = (env.INFISICAL_ENV || DEFAULT_ENV).trim();
+  if (val === 'production') return 'prod';
+  if (val === 'development') return 'dev';
+  return val || DEFAULT_ENV;
 }
 
 function envFallbackAllowed(env: Env): boolean {
@@ -91,17 +104,20 @@ function kvCacheSecret(env: Env): string | null {
 }
 
 function sourceConfigs(env: Env): SourceConfig[] {
+  const sharedProj = resolveProjectId(env.INFISICAL_SHARED_PROJECT_ID || env.INFISICAL_SHARED_CLIENT_ID) || '18f563a3-9c88-454c-96eb-28fc9678f3ba';
+  const appProj = resolveProjectId(env.INFISICAL_APP_PROJECT_ID || env.INFISICAL_APP_CLIENT_ID) || 'f61a79de-8d77-4f0b-9361-4b7208598290';
+
   return [
     {
       name: 'shared',
-      projectId: env.INFISICAL_SHARED_PROJECT_ID || env.INFISICAL_SHARED_CLIENT_ID,
+      projectId: sharedProj,
       clientId: env.INFISICAL_SHARED_CLIENT_ID,
       clientSecret: env.INFISICAL_SHARED_CLIENT_SECRET,
       secretPath: env.INFISICAL_SHARED_SECRET_PATH || '/',
     },
     {
       name: 'app',
-      projectId: env.INFISICAL_APP_PROJECT_ID || env.INFISICAL_APP_CLIENT_ID,
+      projectId: appProj,
       clientId: env.INFISICAL_APP_CLIENT_ID,
       clientSecret: env.INFISICAL_APP_CLIENT_SECRET,
       secretPath: env.INFISICAL_APP_SECRET_PATH || '/',
