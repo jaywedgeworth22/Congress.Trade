@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import type { Env } from '../../shared/types';
-import { applySubscription, endSubscription } from '../subscription';
+import type { Env } from '../../shared/types.ts';
+import { applySubscription, endSubscription } from '../subscription.ts';
 
 interface SqliteRunResult {
   changes: number | bigint;

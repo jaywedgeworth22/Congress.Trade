@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildFmpPriceClient } from '../fmp';
+import { buildFmpPriceClient } from '../fmp.ts';
 
 const fetchWith = (status: number, body: unknown = '') =>
   (async () =>

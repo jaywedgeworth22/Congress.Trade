@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   fetchFiling,
-} from '../fetcher';
+} from '../fetcher.ts';
 
 function envForFetch() {
   const updates: unknown[][] = [];

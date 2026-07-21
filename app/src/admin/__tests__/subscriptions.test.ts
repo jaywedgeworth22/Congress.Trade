@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildAdminRouter } from '../routes';
-import { signWebhookPayload } from '../../delivery/webhook';
-import type { Env } from '../../shared/types';
-import type { SubscriptionRow } from '../../delivery/rows';
+import { buildAdminRouter } from '../routes.ts';
+import { signWebhookPayload } from '../../delivery/webhook.ts';
+import type { Env } from '../../shared/types.ts';
+import type { SubscriptionRow } from '../../delivery/rows.ts';
 
 function makeEnv(seed: SubscriptionRow[], envOverrides: Record<string, string> = {}) {
   const rows = new Map(seed.map((row) => [row.id, { ...row }]));
