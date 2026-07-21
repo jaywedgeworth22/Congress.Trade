@@ -1,6 +1,11 @@
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  resolve: {
+    alias: {
+      '@jaywedgeworth22/congress-trading-shared': './vendor/congress-trading-shared/src/index.ts',
+    },
+  },
   test: {
     exclude: ['vendor/**', 'node_modules/**'],
     coverage: {
