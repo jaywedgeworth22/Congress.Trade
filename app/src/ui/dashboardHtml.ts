@@ -582,6 +582,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .me-flags { display:flex; align-items:center; gap:6px 10px; flex-wrap:wrap; min-width:0; }
   .me-check { display:inline-flex; align-items:center; gap:4px; color:var(--text-dim); font-size:12px; white-space:nowrap; }
   .me-check input { min-height:0; width:auto; }
+  .me-row.me-row-low-conf { background: color-mix(in srgb, var(--warn) 6%, transparent); border: 1px dashed var(--warn); border-radius: 8px; padding: 4px 6px; }
+  .me-conf-badge { display:inline-block; font-size:11px; padding:2px 6px; border-radius:4px; font-weight:700; font-family:var(--mono); text-align:center; }
+  .me-conf-badge.hi { color:var(--good); background:color-mix(in srgb,var(--good) 12%,transparent); }
+  .me-conf-badge.mid { color:var(--warn); background:color-mix(in srgb,var(--warn) 12%,transparent); }
+  .me-conf-badge.lo { color:var(--sell); background:color-mix(in srgb,var(--sell) 12%,transparent); }
   @media (max-width: 1100px) {
     .me-row { grid-template-columns:repeat(2,minmax(0,1fr)); }
     .me-row .me-asset, .me-row .me-flags { grid-column:1/-1; }
@@ -4110,7 +4115,15 @@ function syncReviewAssetTypeInput(inputEl) {
    review payload, or from any selected model run. Submit stays explicit. */
 function meRowHtml(tx, chamber) {
   tx = normalizeReviewEdit(tx || {}, 'review editor');
-  return '<div class="me-row">' +
+  var isLow = tx.confidence != null && tx.confidence < 0.95;
+  var confClass = tx.confidence == null ? '' : (tx.confidence >= 0.95 ? 'hi' : (tx.confidence >= 0.85 ? 'mid' : 'lo'));
+  var confBadge = '';
+  if (tx.confidence != null) {
+    var pct = (tx.confidence * 100).toFixed(0) + '%';
+    var title = 'Extraction confidence: ' + pct + (isLow ? ' (Below 95% threshold)' : '');
+    confBadge = '<span class="me-conf-badge ' + confClass + '" title="' + esc(title) + '">' + pct + '</span>';
+  }
+  return '<div class="me-row' + (isLow ? ' me-row-low-conf' : '') + '">' +
     '<input class="me-ticker" placeholder="Symbol" maxlength="12" value="' + valueAttr(tx.ticker || '') + '" /> ' +
     '<select class="me-type"><option value=""' + selectedOption('', tx.txType || '') + '>Transaction type</option><option value="P"' + selectedOption('P', tx.txType) + '>Purchase</option><option value="S"' + selectedOption('S', tx.txType) + '>Sale</option><option value="E"' + selectedOption('E', tx.txType) + '>Exchange</option></select> ' +
     amountBracketSelectHtml(tx) +
@@ -4121,6 +4134,7 @@ function meRowHtml(tx, chamber) {
     '<span class="me-flags">' +
       '<label class="me-check" title="Marks this row as an options contract rather than a plain equity/security transaction."><input class="me-option" type="checkbox"' + checkedAttr(tx.isOption || tx.assetType === 'OP') + ' /> Option Contract</label>' +
       '<label class="me-check" title="Filer marked capital gains greater than $200 for this transaction."><input class="me-cap" type="checkbox"' + checkedAttr(tx.capGainsOver200) + ' /> Cap Gains &gt;$200</label>' +
+      confBadge +
     '</span>' +
     '<input class="me-asset-type-name" type="hidden" value="' + valueAttr(tx.assetTypeName || '') + '" />' +
     '<input class="me-filing-status" type="hidden" value="' + valueAttr(tx.filingStatus || '') + '" />' +

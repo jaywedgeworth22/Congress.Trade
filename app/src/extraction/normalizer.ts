@@ -38,7 +38,7 @@ import { flushDeliveryOutbox } from '../delivery/outbox.ts';
  * filing's lowest per-tx confidence falls below it (or any structural validation
  * fails), the whole filing is routed to review instead of being published.
  */
-export const CONFIDENCE_THRESHOLD = 0.85;
+export const CONFIDENCE_THRESHOLD = 0.95;
 export const MAX_PUBLISH_TRANSACTIONS_PER_FILING = 200;
 
 export class TransactionPublishLimitError extends Error {}
