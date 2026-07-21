@@ -7,7 +7,7 @@
  * take extraction down, and spend cannot accrue without the same D1 anyway).
  */
 import { describe, expect, it } from 'vitest';
-import type { Env } from '../types';
+import type { Env } from '../types.ts';
 import {
   DEFAULT_LLM_DAILY_USD_CEILING,
   LlmBudgetExceededError,
@@ -17,7 +17,7 @@ import {
   llmBudgetHaltMessage,
   readLlmSpend,
   recordLlmSpend,
-} from '../llmSpend';
+} from '../llmSpend.ts';
 
 interface SpendRow {
   provider: string;

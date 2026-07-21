@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { upsertUserFromGoogle, upsertUserByEmail } from '../users';
-import type { Env } from '../../shared/types';
+import { upsertUserFromGoogle, upsertUserByEmail } from '../users.ts';
+import type { Env } from '../../shared/types.ts';
 
 interface Row {
   id: string;

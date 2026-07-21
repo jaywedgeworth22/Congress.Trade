@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   checkOpenAiModelAccess,
   clearOpenAiModelAccessCacheForTests,
   OPENAI_BENCHMARK_ACCESS_MODELS,
   openAiModelAccessDecision,
-} from '../providerAccess';
+} from '../providerAccess.ts';
 
 const NOW = Date.parse('2026-07-14T19:00:00.000Z');
 

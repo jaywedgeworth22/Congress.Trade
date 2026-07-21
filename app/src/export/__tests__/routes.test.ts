@@ -9,8 +9,8 @@
  */
 
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { buildExportRouter } from '../routes';
-import { manifestObjectKey, snapshotObjectKey } from '../snapshot';
+import { buildExportRouter } from '../routes.ts';
+import { manifestObjectKey, snapshotObjectKey } from '../snapshot.ts';
 
 const app = buildExportRouter();
 const TOKEN = 'ingest-secret';

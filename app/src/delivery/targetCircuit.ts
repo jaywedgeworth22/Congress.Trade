@@ -36,10 +36,10 @@
  * even while KV/Infisical are themselves degraded.
  */
 
-import type { Env } from '../shared/types';
-import { all, get, run } from '../shared/db';
-import { prefixedId } from '../shared/ids';
-import { notifyAdmin } from '../alerts/notify';
+import type { Env } from '../shared/types.ts';
+import { all, get, run } from '../shared/db.ts';
+import { prefixedId } from '../shared/ids.ts';
+import { notifyAdmin } from '../alerts/notify.ts';
 
 export const DEFAULT_TARGET_FAILURE_THRESHOLD = 5;
 export const DEFAULT_TARGET_DAILY_ATTEMPT_CAP = 50;

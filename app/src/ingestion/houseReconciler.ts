@@ -1,7 +1,7 @@
-import type { Env } from '../shared/types';
-import { fetchHouseIndex } from './houseSource';
-import { run, all } from '../shared/db';
-import { notifyAdmin } from '../alerts/notify';
+import type { Env } from '../shared/types.ts';
+import { fetchHouseIndex } from './houseSource.ts';
+import { run, all } from '../shared/db.ts';
+import { notifyAdmin } from '../alerts/notify.ts';
 
 export async function runHouseReconciler(env: Env, now: Date): Promise<void> {
   const year = Number(
