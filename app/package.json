@@ -33,7 +33,7 @@
     "pdf-lib": "^1.17.1",
     "unpdf": "^1.6.2",
     "zod": "^4.4.3",
-    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#904ea96ac237b775c54c8e4bb29df0d1a40da125"
+    "@jaywedgeworth22/congress-trading-shared": "file:vendor/congress-trading-shared"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.6",
@@ -50,6 +50,6 @@
     "wrangler": "^4.110.0"
   },
   "allowScripts": {
-    "github:jaywedgeworth22/congress-trading-shared#904ea96ac237b775c54c8e4bb29df0d1a40da125": true
+    "file:vendor/congress-trading-shared": true
   }
 }
