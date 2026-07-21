@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
-    "@jaywedgeworth22/congress-trading-shared": "github:jaywedgeworth22/congress-trading-shared#v1.11.1",
     "@sentry/cloudflare": "^10.63.0"
   },
   "allowScripts": {
