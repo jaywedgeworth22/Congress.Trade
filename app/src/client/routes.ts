@@ -20,6 +20,7 @@ import {
   getPreferences,
   isStaleInFlightCommand,
   listCommands,
+  reclaimStaleInFlightCommand,
   updateCommandStatus,
   upsertPreferences,
 } from './state.ts';
@@ -310,8 +311,18 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
     }
 
     let command: ClientCommand;
+    let executionType = type;
+    let executionPayload: unknown = payload;
     if (existing) {
-      command = await updateCommandStatus(c.env, user.id, existing.id, 'running');
+      const reclaimed = await reclaimStaleInFlightCommand(c.env, user.id, existing.id);
+      if (!reclaimed) {
+        const current = await findCommandByIdempotencyKey(c.env, user.id, idempotencyKey);
+        if (current) return c.json({ command: current, replayed: true }, 200);
+        return c.json({ error: 'a duplicate command is already in flight; retry shortly' }, 409);
+      }
+      command = reclaimed;
+      executionType = command.type;
+      executionPayload = command.payload;
     } else {
       try {
         command = await createCommand(c.env, { userId: user.id, type, payload, idempotencyKey });
@@ -332,9 +343,9 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
     }
 
     try {
-      const result = await executeCommand(c.env, user, type, payload);
+      const result = await executeCommand(c.env, user, executionType, executionPayload, { commandId: command.id });
       const done = await updateCommandStatus(c.env, user.id, command.id, 'succeeded', {
-        result: persistedCommandResult(type, result),
+        result: persistedCommandResult(executionType, result),
       });
       return c.json({ command: done, result }, 201);
     } catch (err) {
