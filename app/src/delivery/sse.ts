@@ -308,9 +308,60 @@ export async function openSseStream(
     // an unrelated invocation happens to flush them.
     await flushD1Budget(env);
 
-    // 2) Live poll loop. Stop early enough to enqueue a resumable reconnect
-    // frame, while the outer hard deadline still guarantees termination if a
-    // D1 operation or downstream write stalls.
+    // 2) Live tail via BroadcastChannel push mechanism.
+    let channel: any = null;
+    const pendingPayloads: any[] = [];
+    let isProcessing = false;
+
+    const processIncoming = async () => {
+      if (closed || isProcessing || pendingPayloads.length === 0) return;
+      isProcessing = true;
+      try {
+        while (pendingPayloads.length > 0 && !closed) {
+          const payload = pendingPayloads.shift();
+          if (payload.transactions && Array.isArray(payload.transactions) && payload.transactions.length > 0) {
+            const minIncomingCursor = Math.min(...payload.transactions.map((tx: any) => tx.cursor_seq ?? Infinity));
+            if (minIncomingCursor > cursor + 1) {
+              // Gap detected: fall back to Turso DB to catch up safely
+              cursor = await drainSseBacklog(env, sub, cursor, send);
+              await flushD1Budget(env);
+            } else {
+              // No gap: push directly from memory, bypassing the database
+              for (const row of payload.transactions) {
+                const tx = mapFeedTransaction(row);
+                if (tx.cursorSeq > cursor) {
+                  const ctx = {
+                    chamber: row.__chamber ?? null,
+                    sector: row.__sector ?? null,
+                    marketCapBucket: row.__bucket ?? null,
+                  };
+                  if (matchesFiltersWithContext(tx, sub.filters, ctx)) {
+                    await send(formatTradeEvent(tx));
+                  }
+                  cursor = Math.max(cursor, tx.cursorSeq);
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        if (!isTerminalStreamError(err)) console.error('SSE processIncoming error:', err);
+      } finally {
+        isProcessing = false;
+      }
+    };
+
+    if (typeof BroadcastChannel !== 'undefined') {
+      channel = new (BroadcastChannel as any)('congress.trade.live');
+      channel.addEventListener('message', (event: any) => {
+        if (event.data?.type === 'NEW_TRANSACTIONS') {
+          pendingPayloads.push(event.data);
+          void processIncoming();
+        }
+      });
+    }
+
+    // Keep-alive loop + hard deadline checker
     while (!closed) {
       const remainingBeforeSleep = deadlineAt - Date.now();
       if (remainingBeforeSleep <= reconnectGraceMs) break;
@@ -326,14 +377,11 @@ export async function openSseStream(
         break;
       }
 
-      const before = cursor;
-      cursor = await drainSseBacklog(env, sub, cursor, send);
-      await flushD1Budget(env);
-      if (cursor === before) {
-        // Idle tick — heartbeat so intermediaries keep the socket open.
-        await send(`event: ping\ndata: ${Date.now()}\n\n`);
-      }
+      // Idle tick — heartbeat so intermediaries keep the socket open.
+      await send(`event: ping\ndata: ${Date.now()}\n\n`).catch(() => { closed = true; });
     }
+
+    channel?.close();
 
     if (!closed && Date.now() < deadlineAt) {
       await send(`event: reconnect\ndata: ${JSON.stringify({ since: cursor })}\n\n`);
