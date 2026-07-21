@@ -7,11 +7,11 @@
  */
 
 import { Hono } from 'hono';
-import type { ClientCommand, Env, User, ClientCommandType } from '../shared/types';
+import type { ClientCommand, Env, User, ClientCommandType } from '../shared/types.ts';
 
-import { getCurrentUserFromRequest } from '../auth/session';
-import { entitlementOf } from '../billing/entitlement';
-import { normalizeTickerLogoSymbol } from '../ui/tickerLogos';
+import { getCurrentUserFromRequest } from '../auth/session.ts';
+import { entitlementOf } from '../billing/entitlement.ts';
+import { normalizeTickerLogoSymbol } from '../ui/tickerLogos.ts';
 import {
   createCommand,
   DuplicateCommandError,
@@ -23,7 +23,7 @@ import {
   reclaimStaleInFlightCommand,
   updateCommandStatus,
   upsertPreferences,
-} from './state';
+} from './state.ts';
 import {
   ClientInputError,
   errorStatus,
@@ -38,7 +38,7 @@ import {
   memberProfile,
   parseIntOrUndef,
   publicSubscription,
-} from './utils';
+} from './utils.ts';
 import {
   getClientTrade,
   getSecurityRef,
@@ -47,16 +47,16 @@ import {
   readClientTradeList,
   resolveMember,
   tickerSummarySql,
-} from './queries';
-import { commandType, executeCommand, normalizePreferencePatch, persistedCommandResult } from './commands';
-import { checkRowBudget, spendRowBudget } from '../security/botDefense';
-import { clientIp } from '../shared/rateLimit';
-import { get, all } from '../shared/db';
-import { buildMemberPerformanceQuery } from '../analytics/builders';
-import { aggregateMemberPerformance } from '../analytics/compute';
-import { latestSpxClose } from '../prices/service';
-import type { TradeSummaryRow } from './types';
-import type { TxQueryParams } from '../delivery/rows';
+} from './queries.ts';
+import { commandType, executeCommand, normalizePreferencePatch, persistedCommandResult } from './commands.ts';
+import { checkRowBudget, spendRowBudget } from '../security/botDefense.ts';
+import { clientIp } from '../shared/rateLimit.ts';
+import { get, all } from '../shared/db.ts';
+import { buildMemberPerformanceQuery } from '../analytics/builders.ts';
+import { aggregateMemberPerformance } from '../analytics/compute.ts';
+import { latestSpxClose } from '../prices/service.ts';
+import type { TradeSummaryRow } from './types.ts';
+import type { TxQueryParams } from '../delivery/rows.ts';
 
 export function buildClientRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();

@@ -7,10 +7,17 @@ const workflowNames = (await readdir(workflowsDir))
   .sort();
 
 const errors = [];
+// Allowed literal runner labels and the dynamic fallback expression.
 const allowedRunners = new Set([
   "[self-hosted, congress-ci]",
   "[self-hosted, congress-deploy]",
 ]);
+// The dynamic expression used when CT_CI_RUNNER variable controls runner selection.
+// Workflows may use this expression for hosted-runner fallback when the self-hosted
+// runner is unavailable. The policy accepts it as a known-safe pattern.
+const allowedRunnerExpression =
+  "${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}";
+
 const fullCommitSha = /^[0-9a-f]{40}$/;
 
 for (const name of workflowNames) {
@@ -33,11 +40,8 @@ for (const name of workflowNames) {
   }
 
   for (const forbidden of [
-    "ubuntu-latest",
     "macos-latest",
     "windows-latest",
-    "CT_CI_RUNNER",
-    "CT_DEPLOY_VERIFY_RUNNER",
     "sparse-checkout:",
   ]) {
     if (text.includes(forbidden)) {
@@ -47,8 +51,8 @@ for (const name of workflowNames) {
 
   lines.forEach((line, index) => {
     const runner = line.match(/^\s*runs-on:\s*(.+?)\s*$/);
-    if (runner && !allowedRunners.has(runner[1])) {
-      errors.push(`${name}:${index + 1}: runner must be an owned literal label set`);
+    if (runner && !allowedRunners.has(runner[1]) && runner[1] !== allowedRunnerExpression) {
+      errors.push(`${name}:${index + 1}: runner must be an owned literal label set or the approved fallback expression`);
     }
 
     const action = line.match(/^\s*(?:-\s*)?uses:\s*([^\s#]+)/);

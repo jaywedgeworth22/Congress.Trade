@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { buildAdminRouter } from '../routes';
+import { buildAdminRouter } from '../routes.ts';
 
 const app = buildAdminRouter();
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { formatTradeEvent } from '../sse';
-import type { Transaction } from '../../shared/types';
+import { formatTradeEvent } from '../sse.ts';
+import type { Transaction } from '../../shared/types.ts';
 
 /**
  * Cross-app contract guard. Agentic Trading's stream consumer

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sanitizeAssetName } from '../text';
+import { sanitizeAssetName } from '../text.ts';
 
 describe('sanitizeAssetName', () => {
   it('strips HTML tags and collapses whitespace', () => {

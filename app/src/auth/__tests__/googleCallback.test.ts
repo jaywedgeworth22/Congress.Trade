@@ -15,9 +15,9 @@ vi.mock('../google', () => ({
   fetchGoogleProfile: vi.fn(),
 }));
 
-import { buildAuthRouter } from '../routes';
-import { fetchGoogleProfile } from '../google';
-import type { Env } from '../../shared/types';
+import { buildAuthRouter } from '../routes.ts';
+import { fetchGoogleProfile } from '../google.ts';
+import type { Env } from '../../shared/types.ts';
 
 interface UserRowShape {
   id: string;

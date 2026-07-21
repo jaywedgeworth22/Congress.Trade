@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
-import type { Env } from '../../shared/types';
-import { hasHardFailureFlags, scoreFields } from '../normalizer';
+import type { Env } from '../../shared/types.ts';
+import { hasHardFailureFlags, scoreFields } from '../normalizer.ts';
 import {
   EXTRACTION_PROMPT_VERSION,
   VisionLlmExtractor,
   toParsedTx,
-} from '../visionLlm';
+} from '../visionLlm.ts';
 
 const { mockGenerateContent } = vi.hoisted(() => ({ mockGenerateContent: vi.fn() }));
 

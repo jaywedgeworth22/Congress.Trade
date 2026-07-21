@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { entitlementOf, isPremiumUser, ANONYMOUS_ENTITLEMENT } from '../entitlement';
-import type { User } from '../../shared/types';
+import { entitlementOf, isPremiumUser, ANONYMOUS_ENTITLEMENT } from '../entitlement.ts';
+import type { User } from '../../shared/types.ts';
 
 function user(over: Partial<User> = {}): User {
   return {

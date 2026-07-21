@@ -7,7 +7,7 @@ import {
   houseBulkZipUrl,
   housePtrPdfUrl,
   houseDocId,
-} from '../houseSource';
+} from '../houseSource.ts';
 
 const FIXTURE = `<?xml version="1.0" encoding="utf-8"?>
 <FinancialDisclosure>

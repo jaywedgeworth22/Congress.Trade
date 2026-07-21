@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 
 // Scoped to the provider-ban circuit breaker in extractParsed(): a banned
 // extractor must abort before extract() runs, and a KV read failure must be
@@ -24,7 +24,7 @@ vi.mock('../../shared/telemetry', () => ({
   reportAiUsage: mocks.reportAiUsage,
 }));
 
-import { extractParsed } from '../orchestrator';
+import { extractParsed } from '../orchestrator.ts';
 
 const FILING_ROW = {
   doc_id: 'H-1',

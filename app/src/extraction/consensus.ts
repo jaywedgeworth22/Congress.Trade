@@ -25,8 +25,8 @@
  * are sorted by model id.
  */
 
-import type { ParsedTx } from '../shared/types';
-import { arbitrationRowKey } from '../extractors/types';
+import type { ParsedTx } from '../shared/types.ts';
+import { arbitrationRowKey } from '../extractors/types.ts';
 
 /** One model's reading of the document. */
 export interface ConsensusRun {
