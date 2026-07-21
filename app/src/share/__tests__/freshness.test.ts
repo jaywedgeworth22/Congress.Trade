@@ -11,7 +11,7 @@ import {
   evaluateFreshness,
   FRESHNESS_MAX_AGE_DAYS,
   type FreshnessSnapshot,
-} from '../freshness';
+} from '../freshness.ts';
 
 // Fixed "now": 2026-06-25T00:00:00Z.
 const NOW = Date.parse('2026-06-25T00:00:00Z');

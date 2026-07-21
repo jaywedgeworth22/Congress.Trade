@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   runBulkSnapshot,
   readManifest,
@@ -17,7 +17,7 @@ import {
   snapshotObjectKey,
   SNAPSHOT_TABLES,
   SNAPSHOT_SCHEMA,
-} from '../snapshot';
+} from '../snapshot.ts';
 
 const RUN = 'run-fixed-1';
 const NOW = new Date('2026-06-25T04:01:00.000Z');

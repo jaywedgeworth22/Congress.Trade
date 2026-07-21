@@ -8,9 +8,9 @@
  * require an entitlement most plans lack, while SPY is a plain equity symbol.
  */
 
-import { assertFmpTierOk } from '../shared/fmpStatus';
-import type { Close } from './compute';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import { assertFmpTierOk } from '../shared/fmpStatus.ts';
+import type { Close } from './compute.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 /**
  * Parse an FMP historical-price response into descending [{date, close}].

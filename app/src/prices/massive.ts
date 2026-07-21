@@ -10,9 +10,9 @@
  * Indices entitlement that the Stocks plan lacks.
  */
 
-import type { Close } from './compute';
-import type { PriceClient } from './fmp';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import type { Close } from './compute.ts';
+import type { PriceClient } from './fmp.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 /**
  * Parse a Massive/Polygon daily-aggs response into descending [{date, close}].

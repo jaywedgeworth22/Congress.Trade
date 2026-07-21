@@ -6,8 +6,8 @@ import {
   endSubscription,
   getUserByStripeCustomerId,
   linkCustomerToUser,
-} from '../subscription';
-import type { Env } from '../../shared/types';
+} from '../subscription.ts';
+import type { Env } from '../../shared/types.ts';
 
 interface Row {
   id: string;

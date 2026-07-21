@@ -15,7 +15,7 @@
  * email allowlist trustworthy.
  */
 
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 export interface AccessJwtHeader {
   alg?: string;
