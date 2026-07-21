@@ -21,7 +21,7 @@ import {
   SYSTEM_PROMPT,
   EXECUTIVE_SYSTEM_PROMPT,
   parseModelJson,
-  parseAnthropicModelJson,
+  parseTruncationAwareJson,
   markSalvaged,
   validatePdfForAnthropic,
   resavePdfForAnthropic,
@@ -362,7 +362,7 @@ async function runOpenAi(
     status?: string;
     incomplete_details?: { reason?: string } | null;
     error?: { code?: string; message?: string } | null;
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
     usage?: {
       input_tokens?: number;
       output_tokens?: number;
@@ -398,12 +398,19 @@ async function runOpenAi(
     serviceTier: payload.service_tier,
   };
 
+  let isTruncated = false;
   if (useResponses && payload.status && payload.status !== 'completed') {
     const detail = payload.incomplete_details?.reason ?? payload.error?.message ?? payload.error?.code;
-    throw providerError(
-      new Error(`openai: response ${payload.status}${detail ? `: ${detail}` : ''}`),
-      metadata,
-    );
+    if (payload.status === 'incomplete' && detail === 'max_output_tokens') {
+      isTruncated = true;
+    } else {
+      throw providerError(
+        new Error(`openai: response ${payload.status}${detail ? `: ${detail}` : ''}`),
+        metadata,
+      );
+    }
+  } else if (!useResponses && payload.choices?.[0]?.finish_reason === 'length') {
+    isTruncated = true;
   }
 
   const refusal = useResponses
@@ -426,12 +433,13 @@ async function runOpenAi(
       })()
     : payload.choices?.[0]?.message?.content;
   if (!text) {
-    throw providerError(new Error('openai: empty completion'), metadata);
+    if (isTruncated) { throw providerError(new Error('openai: response incomplete: max_output_tokens'), metadata); } else { throw providerError(new Error('openai: empty completion'), metadata); }
   }
 
   try {
+    const { rows: modelRows, salvaged } = parseTruncationAwareJson(text, isTruncated);
     return {
-      rows: parseModelJson(text).map(toParsedTx),
+      rows: modelRows.map(toParsedTx).map((tx: ParsedTx) => (salvaged ? markSalvaged(tx) : tx)),
       usage: usageInfo,
       resolvedModel: payload.model,
       providerRequestId: payload.id,
@@ -517,7 +525,7 @@ const ANTHROPIC_MAX_TOKENS_RETRY = 16000;
  * 'max_tokens'`), one retry is made with a doubled token budget; if the retry
  * is STILL truncated (or the JSON is truncated and unparseable), a bounded
  * salvage recovers the complete leading transaction rows instead of failing
- * the whole read (see {@link parseAnthropicModelJson}).
+ * the whole read (see {@link parseTruncationAwareJson}).
  */
 async function runAnthropic(
   model: string,
@@ -607,8 +615,8 @@ async function runAnthropic(
   }
 
   try {
-    const { rows: modelRows, salvaged } = parseAnthropicModelJson(text, payload.stop_reason);
-    const rows = modelRows.map(toParsedTx).map((tx) => (salvaged ? markSalvaged(tx) : tx));
+    const { rows: modelRows, salvaged } = parseTruncationAwareJson(text, payload.stop_reason === 'max_tokens');
+    const rows = modelRows.map(toParsedTx).map((tx: ParsedTx) => (salvaged ? markSalvaged(tx) : tx));
     return {
       rows,
       usage: usageInfo,

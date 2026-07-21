@@ -399,6 +399,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
             service_tier: 'default',
             status: 'incomplete',
             incomplete_details: { reason: 'max_output_tokens' },
+            output: [{ content: [{ text: '[{"ticker":"AAPL","assetName":"Apple Inc.","txType":"P","amountRange":"$1,001 - $15,000"},{"ticker":"MSFT","assetName":"Micro' }] }],
             usage: {
               input_tokens: 900,
               output_tokens: 8_000,
@@ -417,8 +418,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     );
 
     expect(result).toMatchObject({
-      ok: false,
-      error: 'openai: response incomplete: max_output_tokens',
+      ok: true,
       resolvedModel: 'gpt-5.6-luna',
       providerRequestId: 'resp_incomplete',
       serviceTier: 'default',
@@ -430,6 +430,9 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
         serviceTier: 'default',
       },
     });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].ticker).toBe('AAPL');
+    expect(result.rows[0].extractionWarnings).toContain('salvaged_truncated_output');
   });
 
   it('rejects Responses refusals while preserving usage', async () => {
