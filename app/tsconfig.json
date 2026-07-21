@@ -22,8 +22,8 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "allowImportingTsExtensions": true
-
+    "allowImportingTsExtensions": true,
+    "baseUrl": "."
   },
   "include": [
     "src/**/*.ts"
