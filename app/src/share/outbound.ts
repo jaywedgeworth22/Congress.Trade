@@ -21,10 +21,10 @@ import {
   type PriceSeries,
   type SecurityRefInput,
 } from '@jaywedgeworth22/congress-trading-shared';
-import type { SecurityRef } from '../enrichment/types';
-import { resolveSecrets } from '../secrets/infisical';
-import type { Env } from '../shared/types';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import type { SecurityRef } from '../enrichment/types.ts';
+import { resolveSecrets } from '../secrets/infisical.ts';
+import type { Env } from '../shared/types.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import {
   checkTargetCircuit,
   recordTargetFailure,
