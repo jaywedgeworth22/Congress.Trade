@@ -94,14 +94,14 @@ function sourceConfigs(env: Env): SourceConfig[] {
   return [
     {
       name: 'shared',
-      projectId: env.INFISICAL_SHARED_PROJECT_ID,
+      projectId: env.INFISICAL_SHARED_PROJECT_ID || env.INFISICAL_SHARED_CLIENT_ID,
       clientId: env.INFISICAL_SHARED_CLIENT_ID,
       clientSecret: env.INFISICAL_SHARED_CLIENT_SECRET,
       secretPath: env.INFISICAL_SHARED_SECRET_PATH || '/',
     },
     {
       name: 'app',
-      projectId: env.INFISICAL_APP_PROJECT_ID,
+      projectId: env.INFISICAL_APP_PROJECT_ID || env.INFISICAL_APP_CLIENT_ID,
       clientId: env.INFISICAL_APP_CLIENT_ID,
       clientSecret: env.INFISICAL_APP_CLIENT_SECRET,
       secretPath: env.INFISICAL_APP_SECRET_PATH || '/',
