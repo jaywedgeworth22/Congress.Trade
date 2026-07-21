@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { isTransientSourceError } from '../watcher';
+import { isTransientSourceError } from '../watcher.ts';
 
 describe('isTransientSourceError', () => {
   it('treats anti-bot 403 and rate-limit 429 as transient', () => {

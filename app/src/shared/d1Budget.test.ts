@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Env } from './types';
+import type { Env } from './types.ts';
 
 function fakeKv(initial: Record<string, string> = {}) {
   const values = new Map(Object.entries(initial));

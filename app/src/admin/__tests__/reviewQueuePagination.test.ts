@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildAdminRouter } from '../routes';
-import { makeReviewQueueTestDb, type ReviewQueueFixtureRow } from './reviewQueueTestDb';
+import { buildAdminRouter } from '../routes.ts';
+import { makeReviewQueueTestDb, type ReviewQueueFixtureRow } from './reviewQueueTestDb.ts';
 
 /**
  * Pagination/filter/chunking coverage for GET /api/admin/review-queue
