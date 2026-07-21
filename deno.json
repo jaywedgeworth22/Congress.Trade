@@ -1,6 +1,7 @@
 {
   "imports": {
-    "@jaywedgeworth22/congress-trading-shared": "./app/vendor/congress-trading-shared/dist/index.js",
+    "@jaywedgeworth22/congress-trading-shared": "./app/vendor/congress-trading-shared/src/index.ts",
     "@sentry/cloudflare": "npm:@sentry/cloudflare@^10.63.0"
-  }
+  },
+  "unstable": ["sloppy-imports"]
 }
