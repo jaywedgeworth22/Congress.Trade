@@ -28,10 +28,10 @@ import {
   isPlaceholderTicker,
   resolvePreferredTickerFromAssetName,
   resolveTickerDeterministic,
-} from './tickerNormalize.ts';
-import { cleanAssetString } from './nameNormalizer.ts';
-import { resolveContinuousTicker } from '@jaywedgeworth22/congress-trading-shared';
-import { flushDeliveryOutbox } from '../delivery/outbox.ts';
+} from './tickerNormalize';
+import { cleanAssetString } from './nameNormalizer';
+import { resolveContinuousTicker } from '../../vendor/congress-trading-shared/dist/index.mjs';
+import { flushDeliveryOutbox } from '../delivery/outbox';
 
 /**
  * Per-tx confidence at or above this threshold is trusted for auto-publish. If a

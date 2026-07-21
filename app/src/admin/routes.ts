@@ -38,13 +38,13 @@ import {
   PriceSeriesSchema,
   SecurityRefInputSchema,
   ShortVolumeRowSchema,
-} from '@jaywedgeworth22/congress-trading-shared';
-import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types.ts';
-import { all, batch, batchPrepared, chunkArray, first, get, run, type SqlParam } from '../shared/db.ts';
-import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes.ts';
-import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions.ts';
-import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config.ts';
-import { uuid } from '../shared/ids.ts';
+} from '../../vendor/congress-trading-shared/dist/index.mjs';
+import type { Env, ParsedTx, PollConfig, PollWindow, TxType, TxSource, Subscription } from '../shared/types';
+import { all, batch, batchPrepared, chunkArray, first, get, run, type SqlParam } from '../shared/db';
+import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes';
+import { listIngestionDecisions, recordIngestionDecision } from '../shared/ingestionDecisions';
+import { activeWindow, effectiveInterval, getConfig, setConfig } from '../shared/config';
+import { uuid } from '../shared/ids';
 import {
   assertSubscriptionQuota,
   createSubscription,

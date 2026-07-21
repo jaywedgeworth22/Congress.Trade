@@ -536,7 +536,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .drawer { position:fixed; inset:0; z-index:60; display:none; }
   .drawer.open { display:block; }
   .drawer-backdrop { position:absolute; inset:0; background:rgba(2,6,18,.55); }
-  .drawer-panel { position:absolute; top:0; right:0; height:100%; width:480px; max-width:92vw; background:var(--panel); border-left:1px solid var(--border); box-shadow:-12px 0 40px rgba(0,0,0,.4); overflow-y:auto; padding:0 22px 20px; }
+  .drawer-panel { position:absolute; top:0; right:0; height:100%; width:480px; max-width:92vw; background:var(--panel); border-left:1px solid var(--border); box-shadow:-12px 0 40px rgba(0,0,0,.4); overflow-y:auto; padding:0 22px 20px; transform: translateX(100%); transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.25s; }
+  .drawer.open .drawer-panel { transform: translateX(0); }
   .drawer-topbar {
     position:sticky; top:0; z-index:4; display:flex; justify-content:flex-end;
     min-height:54px; margin:0 -10px; padding:8px 0 6px 44px;
@@ -632,7 +633,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     .diag-meta { grid-template-columns: repeat(2, auto 1fr); gap: 2px 8px; width: 100%; margin-bottom: 0; }
     .diag-meta span { font-size: 10px; }
     .diag-note { width: 100%; padding-top: 4px; margin-top: 4px; font-size: 10px; }
-    .drawer-panel { width:100%; max-width:100%; bottom:0; top:auto; height:90vh; border-radius:12px 12px 0 0; }
+    .drawer-panel { width:100%; max-width:100%; bottom:0; top:auto; height:90vh; border-radius:12px 12px 0 0; transform: translateY(100%); }
     .drawer.open .drawer-panel { animation: slideUpSpring 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
   }
   @media (max-width:600px){ .drawer-panel { width:100%; max-width:100%; } }
@@ -782,7 +783,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .speed-head h3 { margin:0; }
   .speed-kicker { font-size:11px; font-weight:700; letter-spacing:1.2px; text-transform:uppercase; color:var(--accent); margin-bottom:4px; opacity:0.85; }
   /* Scorecard grid — one card per provider, side by side */
-  .sp-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:16px; margin-top:14px; }
+  .sp-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-top:14px; }
   .sp-card {
     background: color-mix(in srgb, var(--panel-2) 55%, transparent);
     border: 1px solid var(--border);
@@ -821,7 +822,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-lead-num { font-size:30px; font-weight:800; letter-spacing:-0.5px; line-height:1; color:var(--good); font-variant-numeric:tabular-nums; }
   .sp-lead-num.negative { color:var(--rival); }
   .sp-lead-num.neutral { color:var(--text-dim); font-size:20px; }
-  .sp-lead-label { font-size:11.5px; color:var(--text-dim); line-height:1.3; }
+  .sp-lead-label { font-size:11px; color:var(--text-dim); line-height:1.3; }
   /* W/L/T stat row */
   .sp-wlt { display:flex; gap:0; border-top:1px solid color-mix(in srgb,var(--border) 60%,transparent); padding-top:10px; font-family:var(--mono); font-size:12px; }
   .sp-wlt-item { flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; }
@@ -1042,16 +1043,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 #view-trends .section > h3,
 #view-trends .section > .row-flex > h3 {
   position: relative;
-  padding-left: 12px;
-}
-#view-trends .section > h3::before,
-#view-trends .section > .row-flex > h3::before {
-  content: "";
-  position: absolute;
-  left: 0; top: .12em;
-  width: 3px; height: .82em;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--accent) 65%, transparent);
 }
 /* Nested "Lag Distribution" / "Slowest Filers" sub-headers are NOT section
    starters: no tick, dim small-caps cadence so they read as captions. */
@@ -1975,10 +1966,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   </section>
 
   <!-- Provider speed scorecard (filter-independent live latency proof). -->
-  <div class="section speed-proof" id="trLatencySection" style="margin-top:24px; padding:0 16px;">
+  <div class="section speed-proof" id="trLatencySection" style="margin-top:24px; padding:24px 20px;">
     <div class="speed-head">
       <div>
-        <h3 style="margin:0">Provider speed scorecard <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
+        <h3 style="margin:0 0 16px 0">Filing Latency Comparison <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
       </div>
       <span class="note" id="speedUpdated" style="white-space:nowrap"></span>
     </div>
@@ -2118,12 +2109,13 @@ var NAME_SUFFIX = { 'jr': 'Jr', 'jr.': 'Jr', 'sr': 'Sr', 'sr.': 'Sr', 'ii': 'II'
 function fmtName(raw) {
   var s = String(raw == null ? '' : raw).trim();
   if (!s) return '';
-  s = s.replace(/\s*\(\s*Senator\s*\)\s*/gi, '');
+  s = s.replace(/\s*\(\s*Senator\s*\)\s*/gi, ' ');
+  s = s.replace(/\s*\(\s*\)\s*/g, ' ');
   while (s.indexOf('  ') >= 0) s = s.split('  ').join(' ');
   s = s.split(' , ').join(', ');
 
-  // Clean academic/medical titles and (Senator)
-  s = s.replace(/(?:,\s*)?(?:\bMD\b|\bFACS\b|\bPH\.?D\.?(?=\s|$)|\(Senator\))(?:,\s*)?/gi, ' ').trim();
+  // Clean academic/medical titles safely without mangling
+  s = s.replace(/(?:,\s*)?(?:\bMD\b|\bFACS\b|\bPH\.?D\.?)(?=\s|,|$)/gi, '');
   s = s.replace(/[,\s.]+$/, '');
 
   // Flip "Last, First" to "First Last"
@@ -7009,6 +7001,13 @@ function loadTrLag() {
     if (!lf.length) { lbox.innerHTML = stateRow(4, 'Not enough dated filings.'); }
     else lbox.innerHTML = lf.slice(0, 50).map(function (m) {
       var name = fmtName(m.fullName || m.filerId || 'Unknown');
+      var metaStr = '';
+      if (m.chamber || m.state) {
+        var p = [];
+        if (m.chamber) p.push(esc(m.chamber));
+        if (m.state) p.push(esc(m.state));
+        metaStr = ' <span class="muted">· ' + p.join(' · ') + '</span>';
+      }
       var tradeCount = Number(m.tradeCount || 0);
       var avg = Math.round(m.avgLagDays);
       var maxLag = Math.round(m.maxLagDays || 0);
@@ -7020,7 +7019,7 @@ function loadTrLag() {
       var maxTip = 'Max: longest single trade-to-filing delay for this filer in the selected window. ' + basis;
       var lateTip = 'Late: count of this filer\\'s dated trade rows filed more than 45 days after the transaction date. ' + basis;
       return '<tr class="row"><td><div' + memberAttr + '>' + memberAvatarHtml(name, m.photoUrl) + '<div>' +
-        pdot(m.partyBucket) + esc(name) + '</div></div></td>' +
+        pdot(m.party) + esc(name) + metaStr + '</div></div></td>' +
         '<td class="muted"' + attrTip(avgTip) + '>' + avg + 'd avg</td>' +
         '<td class="muted"' + attrTip(maxTip) + '>' + maxLag + 'd max</td>' +
         '<td class="muted"' + attrTip(lateTip) + '>' + late + ' late</td></tr>';
@@ -7246,8 +7245,14 @@ function drawerCompanyTitle(ticker, name) {
 function miniTradeDateHtml(t) {
   var traded = dateText(t.txDate);
   var pub = t.filedDate || t.firstSeenAt || t.createdAt || '';
-  var sub = pub ? 'Published ' + dateText(pub) : 'Published unavailable';
-  return '<div class="mini-date"><span>' + esc(traded) + '</span><span class="subline">' + esc(sub) + '</span></div>';
+  var sub = pub ? 'Filed ' + dateText(pub) : 'Filed unavailable';
+  if (t.txDate && pub) {
+    var ms = new Date(pub).getTime() - new Date(t.txDate).getTime();
+    if (!isNaN(ms) && ms >= 0) {
+      sub += ' (+' + Math.round(ms / 86400000) + 'd)';
+    }
+  }
+  return '<div class="mini-date"><span>Traded ' + esc(traded) + '</span><span class="subline">' + esc(sub) + '</span></div>';
 }
 function miniTradeDateOnlyHtml(t) {
   return '<div class="mini-date"><span>' + esc(dateText(t.txDate)) + '</span></div>';

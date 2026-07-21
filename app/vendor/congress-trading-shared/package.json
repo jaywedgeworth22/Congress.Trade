@@ -31,14 +31,15 @@
     "build": "node -r ./tsup-preload.cjs node_modules/tsup/dist/cli-default.js src/index.ts --format cjs,esm --dts --clean",
     "lint:package": "publint",
     "pack:dry": "npm pack --dry-run",
+    "prepare": "npm run build",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": {
-    "zod": "^3.23.8"
+  "peerDependencies": {
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "zod": "^3.23.8",
+    "zod": "^4.4.3",
     "@types/node": "^20.19.9",
     "@vitest/coverage-v8": "^4.1.10",
     "publint": "^0.3.21",

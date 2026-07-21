@@ -19,16 +19,16 @@
  *   exactly-once if it crashes after POST but before recording success.
  */
 
-import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
-import type { Env, Subscription, Transaction } from '../shared/types.ts';
-import { all, get, run } from '../shared/db.ts';
-import { prefixedId } from '../shared/ids.ts';
-import { mapSubscription, mapTransaction, type SubscriptionRow, type TransactionRow } from './rows.ts';
-import { matchesFiltersWithContext, subscriptionOwnerEntitled, webhookTargetLengthError } from './subscriptions.ts';
-import { resolveSecret } from '../secrets/infisical.ts';
-import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget.ts';
-import { notifyAdmin } from '../alerts/notify.ts';
-import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { createCongressEvent } from '../../vendor/congress-trading-shared/dist/index.mjs';
+import type { Env, Subscription, Transaction } from '../shared/types';
+import { all, get, run } from '../shared/db';
+import { prefixedId } from '../shared/ids';
+import { mapSubscription, mapTransaction, type SubscriptionRow, type TransactionRow } from './rows';
+import { matchesFiltersWithContext, subscriptionOwnerEntitled, webhookTargetLengthError } from './subscriptions';
+import { resolveSecret } from '../secrets/infisical';
+import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget';
+import { notifyAdmin } from '../alerts/notify';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 import {
   checkTargetCircuit,
   parkDelivery,
@@ -195,6 +195,22 @@ export async function dispatchWebhook(
     sector: refRow?.sector ?? null,
     marketCapBucket: refRow?.market_cap_bucket ?? null,
   };
+
+  // Broadcast the transaction to any live SSE streams exactly once (on the
+  // initial fanout message, not on paginated continuations or targeted retries).
+  if (!msg.subscriptionId && !msg.afterSubscriptionId && typeof BroadcastChannel !== 'undefined') {
+    try {
+      const channel = new (BroadcastChannel as any)('congress.trade.live');
+      channel.postMessage({
+        type: 'NEW_TRANSACTION',
+        transaction: tx,
+        context: ctx,
+      });
+      channel.close();
+    } catch (err) {
+      console.warn('dispatchWebhook: broadcast failed', (err as Error).message);
+    }
+  }
 
   const visit = async (sub: Subscription): Promise<void> => {
     if (!sub.targetUrl) return;

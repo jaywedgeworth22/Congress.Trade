@@ -36,7 +36,7 @@ import { environmentName } from '../shared/thirdPartyTelemetry.ts';
 import {
   openrouterRequestEnrichment,
   type OpenRouterRequestEnrichment,
-} from '@jaywedgeworth22/congress-trading-shared';
+} from '../../vendor/congress-trading-shared/dist/index.mjs';
 import {
   buildExtractionPrompt,
   loadExtractionPromptContext,
@@ -45,7 +45,7 @@ import {
   fetchWithRetry,
   arrayBufferToBase64,
   markSalvaged,
-} from './visionLlm.ts';
+} from './visionLlm';
 
 /** Live default (verified against the OpenRouter catalog 2026-07-18); the
  *  former default `qwen/qwen-2.5-vl-72b-instruct:free` is no longer listed. */

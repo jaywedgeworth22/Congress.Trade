@@ -1258,7 +1258,11 @@ export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
   ])) as AgreementEnv;
 }
 
-/** Resolve the explicit C/D chamber lineup (tier-1 pair); missing config fails closed. */
+const DEFAULT_MODEL_C = 'openrouter:google/gemini-2.5-flash-lite';
+const DEFAULT_MODEL_D = 'openrouter:deepseek/deepseek-v4-flash';
+const DEFAULT_MODEL_E = 'openrouter:anthropic/claude-haiku-4.5';
+
+/** Resolve the explicit C/D chamber lineup (tier-1 pair); missing config falls back to default cross-vendor lineup. */
 function resolveModels(e: AgreementEnv, chamber: string): AgreementModels | null {
   const modelA = chamber === 'senate'
     ? e.AGREEMENT_SENATE_MODEL_C
@@ -1266,19 +1270,18 @@ function resolveModels(e: AgreementEnv, chamber: string): AgreementModels | null
   const modelB = chamber === 'senate'
     ? e.AGREEMENT_SENATE_MODEL_D
     : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_D : e.AGREEMENT_HOUSE_MODEL_D;
-  const a = parseCandidate(modelA);
-  const b = parseCandidate(modelB);
+  const a = parseCandidate(modelA) || parseCandidate(DEFAULT_MODEL_C);
+  const b = parseCandidate(modelB) || parseCandidate(DEFAULT_MODEL_D);
   return a && b ? { a, b } : null;
 }
 
-/** Resolve the explicit C/D/E lineup for a tier-2+ pass; missing config fails
- *  closed. Exported for the backlog autopilot's per-doc cost estimation. */
+/** Resolve the explicit C/D/E lineup for a tier-2+ pass; missing config falls back to default cross-vendor lineup. Exported for the backlog autopilot's per-doc cost estimation. */
 export function resolveModelsWithC(e: AgreementEnv, chamber: string): AgreementModelsC | null {
   const ab = resolveModels(e, chamber);
   const modelC = chamber === 'senate'
     ? e.AGREEMENT_SENATE_MODEL_E
     : chamber === 'executive' ? e.AGREEMENT_EXEC_MODEL_E : e.AGREEMENT_HOUSE_MODEL_E;
-  const c = parseCandidate(modelC);
+  const c = parseCandidate(modelC) || parseCandidate(DEFAULT_MODEL_E);
   return ab && c ? { ...ab, c } : null;
 }
 

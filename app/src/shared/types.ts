@@ -13,7 +13,7 @@ import type {
   Owner,
   TxType,
   ClientTrade,
-} from '@jaywedgeworth22/congress-trading-shared';
+} from '../../vendor/congress-trading-shared/dist/index.mjs';
 
 /**
  * App-wide chamber union: `house | senate | executive`. As of shared package

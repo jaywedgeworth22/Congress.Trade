@@ -19,10 +19,10 @@
  */
 
 import { Hono, type Context } from 'hono';
-import { MAX_REFS_BATCH } from '@jaywedgeworth22/congress-trading-shared';
-import type { Chamber, Env, Subscription, TxType } from '../shared/types.ts';
-import { all, first, get } from '../shared/db.ts';
-import { cached } from '../shared/kvCache.ts';
+import { MAX_REFS_BATCH } from '../../vendor/congress-trading-shared/dist/index.mjs';
+import type { Chamber, Env, Subscription, TxType } from '../shared/types';
+import { all, first, get } from '../shared/db';
+import { cached } from '../shared/kvCache';
 import {
   buildTransactionsQuery,
   buildTransactionsCountQuery,
