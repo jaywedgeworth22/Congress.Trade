@@ -6,7 +6,7 @@ on:
 jobs:
   diagnostics:
     name: Diagnose workerd EPIPE on self-hosted runner
-    runs-on: [self-hosted, congress-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout

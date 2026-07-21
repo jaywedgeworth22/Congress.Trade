@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
-import type { Env } from '../../shared/types';
+import type { Env } from '../../shared/types.ts';
 import {
   computeDocClassSignals,
   decideDocClass,
   ensureDocClass,
   type DocClassSignals,
-} from '../docClassifier';
+} from '../docClassifier.ts';
 
 afterEach(() => {
   vi.unstubAllGlobals();

@@ -8,7 +8,7 @@ import {
   verifyAccessJwt,
   _resetJwksCache,
   type AccessJwtPayload,
-} from '../access';
+} from '../access.ts';
 
 const CRYPTO_TEST_TIMEOUT_MS = 15_000;
 

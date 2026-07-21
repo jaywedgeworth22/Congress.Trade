@@ -9,8 +9,8 @@ import {
   createCustomer,
   createCheckoutSession,
   createBillingPortalSession,
-} from '../stripe';
-import type { Env } from '../../shared/types';
+} from '../stripe.ts';
+import type { Env } from '../../shared/types.ts';
 
 /** Recompute the v1 signature the way Stripe does, for the verify tests. */
 async function sign(secret: string, ts: number, body: string): Promise<string> {

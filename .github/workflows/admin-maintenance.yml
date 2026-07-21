@@ -49,7 +49,7 @@ jobs:
     # Self-hosted like deploy.yml: Cloudflare serves GitHub's hosted (Azure)
     # runners a managed bot challenge before requests reach the Worker, so
     # admin curls must come from the same runner ship.sh already uses.
-    runs-on: [self-hosted, congress-deploy]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       BASE_URL: https://congress.trade

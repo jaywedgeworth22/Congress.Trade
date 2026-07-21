@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@sentry/cloudflare', () => ({
+vi.mock('#sentry', () => ({
   withSentry: (_opts: unknown, handler: unknown) => handler,
   setTags: vi.fn(), captureException: vi.fn(),
   withMonitor: (_slug: string, callback: () => unknown) => callback(),
   consoleLoggingIntegration: vi.fn(() => ({})),
 }));
 
-import worker from '../../index';
-import type { Env, QueueMessage } from '../../shared/types';
+import worker from '../../index.ts';
+import type { Env, QueueMessage } from '../../shared/types.ts';
 
 function queueMessage(body: QueueMessage, attempts = 1) {
   return { body, attempts, ack: vi.fn(), retry: vi.fn() };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildAdminRouter } from '../routes';
+import { buildAdminRouter } from '../routes.ts';
 
 describe('POST /analyze', () => {
   it('rejects an invalid present table name without running whole-database ANALYZE', async () => {

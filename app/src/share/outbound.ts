@@ -30,7 +30,7 @@ import {
   recordTargetFailure,
   recordTargetSuccess,
   targetKeyForUrl,
-} from '../delivery/targetCircuit';
+} from '../delivery/targetCircuit.ts';
 
 type PeerEnv = Env & { APP_B_IMPORT_URL?: string; APP_B_INGEST_TOKEN?: string };
 
