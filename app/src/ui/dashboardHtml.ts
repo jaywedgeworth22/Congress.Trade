@@ -3493,7 +3493,7 @@ function decisionReasonText(d) {
 }
 function decisionDocHtml(d) {
   var docId = d.docId || '';
-  var url = safeDocUrl(d.sourceUrl);
+  var url = safeDocUrl(d.pdfUrl || d.sourceUrl);
   if (!url && docId) {
     if (docId.slice(0, 2) === 'S-') url = 'https://efdsearch.senate.gov/search/view/ptr/' + encodeURIComponent(docId.slice(2)) + '/';
     else if (docId.slice(0, 2) === 'H-') {
@@ -3655,7 +3655,7 @@ function safeDocUrl(url) {
 }
 function reviewDocHtml(r) {
   var docId = r.docId || '';
-  var url = safeDocUrl(r.sourceUrl);
+  var url = safeDocUrl(r.pdfUrl || r.sourceUrl);
   if (!url && docId) {
     if (docId.slice(0, 2) === 'S-') url = 'https://efdsearch.senate.gov/search/view/ptr/' + encodeURIComponent(docId.slice(2)) + '/';
     else if (docId.slice(0, 2) === 'H-') {
@@ -7329,7 +7329,7 @@ function openAsset(ticker) {
       return '<tr class="row clickable" data-txid="' + esc(tradeRow.id) + '" title="Open trade details"><td class="muted">' + miniTradeDateHtml(t) + '</td>' +
         '<td>' + actionBadge(t.txType) + '</td>' +
         '<td>' + member + '</td>' +
-        '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.sourceUrl) + '</td></tr>';
+        '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.pdfUrl || t.sourceUrl) + '</td></tr>';
     }).join('');
     openDrawer(
       drawerCompanyTitle(d.ticker, companyName || d.ticker) +
@@ -7384,7 +7384,7 @@ function openMember(filerId) {
         : '<span class="muted">' + esc((t.assetName || '').slice(0, 30)) + '</span>';
       return '<tr class="row clickable" data-txid="' + esc(tradeRow.id) + '" title="Open trade details"><td class="muted">' + miniTradeDateOnlyHtml(t) + '</td>' +
         '<td>' + actionBadge(t.txType) + '</td><td>' + assetCell + '</td>' +
-        '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.sourceUrl) + '</td></tr>';
+        '<td class="est">' + estUsd(t.estValueUsd) + miniSourceLinkHtml(t.pdfUrl || t.sourceUrl) + '</td></tr>';
     }).join('');
     openDrawer(
       '<div class="drawer-member-title">' + memberAvatarHtml(name, p.photoUrl) +

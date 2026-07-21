@@ -897,7 +897,7 @@ function validateReviewEdits(
 ): { edits: ValidatedEditedTx[] } | { error: string } {
   // The live backlog contains filings with more than 200 disclosed lots. Keep
   // those reviewable while still bounding request and D1 work.
-  if (rawEdits.length > 500) return { error: 'edits cannot contain more than 500 rows' };
+  if (rawEdits.length > 2000) return { error: 'edits cannot contain more than 2000 rows' };
   const edits: ValidatedEditedTx[] = [];
   for (const [index, raw] of rawEdits.entries()) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -2050,6 +2050,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         status,
         ingestStatus: row.ingest_status ?? '',
         sourceUrl: row.source_url ?? '',
+        pdfUrl: row.raw_object_key ? `/api/documents/${row.doc_id}/pdf` : undefined,
         rawObjectKey: row.raw_object_key ?? '',
         docKind: row.doc_kind ?? '',
         chamber: row.chamber ?? '',
