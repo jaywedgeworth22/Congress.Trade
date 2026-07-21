@@ -8,9 +8,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { marketCapBucket, sicToSector, remainingBudget, mergeRefs } from '../compute';
 import { parseFmpProfile } from '../fmp';
-import { parseCompanyTickers, parseSecSubmissions, padCik } from '../sec';
-import { enrichmentNeededSql, hasConfiguredKeyedEnrichmentProvider, runEnrichment } from '../service';
+import { parseCompanyTickers, parseSecSubmissions, padCik, buildSecProvider } from '../sec';
+import {
+  enrichmentNeededSql,
+  hasConfiguredKeyedEnrichmentProvider,
+  runEnrichment,
+  parseTransientRetryMarker,
+  transientRetryEligible,
+  nextTransientRetryMarker,
+} from '../service';
 import { __resetSharedEdgarPacerForTests } from '../../shared/pace';
+import { openMigratedD1 } from '../../prices/__tests__/sqliteD1';
 
 describe('marketCapBucket', () => {
   it('buckets by the standard thresholds', () => {
@@ -152,6 +160,79 @@ describe('SEC EDGAR parsers', () => {
 });
 
 /**
+ * Regression coverage: a failed ticker-map fetch (network error or non-OK
+ * response) must NOT be cached, or every subsequent call for the life of the
+ * isolate keeps returning that permanently-empty Map (silently blinding every
+ * EDGAR lookup) instead of retrying on the next call.
+ */
+describe('buildSecProvider — does not cache a failed ticker-map fetch', () => {
+  it('retries the ticker-map fetch on the next call after a non-OK response, instead of reusing a cached empty map', async () => {
+    let mapCalls = 0;
+    // 1st ticker-map fetch 503s; 2nd succeeds. The submissions endpoint always
+    // 404s (irrelevant here — only proves the CIK lookup got that far).
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('company_tickers.json')) {
+        mapCalls++;
+        if (mapCalls === 1) return { ok: false, status: 503, json: async () => ({}) } as unknown as Response;
+        return { ok: true, json: async () => ({ '0': { cik_str: 320193, ticker: 'AAPL' } }) } as unknown as Response;
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as unknown as Response;
+    }) as unknown as typeof fetch;
+    const provider = buildSecProvider(fetchImpl);
+
+    // 1st call: map fetch fails → no CIK resolvable → null, without caching.
+    expect(await provider.fetchRef('AAPL')).toBeNull();
+    expect(mapCalls).toBe(1);
+
+    // 2nd call on the SAME provider instance: if the failure had been cached
+    // (the pre-fix bug), mapCalls would stay at 1 forever. It must retry.
+    await provider.fetchRef('AAPL');
+    expect(mapCalls).toBe(2);
+  });
+});
+
+describe('enrichment transient-retry backoff (attempt-aging, no permanent tombstone)', () => {
+  it('parseTransientRetryMarker is null for a real tombstone message / empty / absent', () => {
+    expect(parseTransientRetryMarker(null)).toBeNull();
+    expect(parseTransientRetryMarker(undefined)).toBeNull();
+    expect(parseTransientRetryMarker('')).toBeNull();
+    expect(parseTransientRetryMarker('no provider data')).toBeNull();
+    expect(parseTransientRetryMarker('garbage:not-a-marker')).toBeNull();
+  });
+
+  it('nextTransientRetryMarker starts at attempt 1 and parses back out', () => {
+    const now = Date.parse('2026-07-01T00:00:00.000Z');
+    const marker = nextTransientRetryMarker(null, now);
+    expect(marker).toMatch(/^transient-retry:1:/);
+    const parsed = parseTransientRetryMarker(marker);
+    expect(parsed?.attempts).toBe(1);
+    // Base backoff is 1 hour.
+    expect(parsed?.nextEligibleAt).toBe(now + 60 * 60 * 1000);
+  });
+
+  it('doubles the backoff on each consecutive attempt, capped at 24h', () => {
+    const now = Date.parse('2026-07-01T00:00:00.000Z');
+    let marker: string | null = null;
+    const expectedHours = [1, 2, 4, 8, 16, 24, 24]; // doubles from 1h, caps at 24h
+    for (const hours of expectedHours) {
+      marker = nextTransientRetryMarker(marker, now);
+      const parsed = parseTransientRetryMarker(marker)!;
+      expect(parsed.nextEligibleAt - now).toBe(hours * 60 * 60 * 1000);
+    }
+  });
+
+  it('transientRetryEligible: no marker is always eligible; a pending backoff is not; an aged-out one is', () => {
+    const now = Date.parse('2026-07-01T12:00:00.000Z');
+    expect(transientRetryEligible(null, now)).toBe(true);
+    expect(transientRetryEligible('no provider data', now)).toBe(true); // not a transient marker at all
+    const marker = nextTransientRetryMarker(null, now); // next eligible = now + 1h
+    expect(transientRetryEligible(marker, now)).toBe(false); // still within backoff
+    expect(transientRetryEligible(marker, now + 60 * 60 * 1000)).toBe(true); // backoff elapsed
+  });
+});
+
+/**
  * Regression coverage for the throttling change: EDGAR calls used to skip
  * pace() entirely ("EDGAR is free + unmetered"). They now await the
  * EDGAR-dedicated pacer, same as every other provider awaits its own gate.
@@ -233,5 +314,137 @@ describe('runEnrichment paces SEC EDGAR calls', () => {
     // 2 EDGAR fetches would finish near-instantly; now the second call is
     // gated behind the pacer's ~100ms min gap from the first.
     expect(elapsed).toBeGreaterThanOrEqual(90);
+  });
+});
+
+/**
+ * Behavioral (real migrated SQLite) coverage for the transient-retry backoff:
+ * a thrown provider error must never permanently tombstone a ticker the way
+ * `upsertEmpty` does (which stamps `enriched_at` and stops future selection);
+ * instead it writes an attempt-aged `transient-retry:` marker into
+ * `enrichment_error` while leaving `enriched_at` untouched/NULL, so the ticker
+ * stays selectable and is retried once its backoff elapses.
+ */
+describe('runEnrichment — transient-retry backoff (real D1)', () => {
+  function fakeKv() {
+    const store = new Map<string, string>();
+    return {
+      async get(k: string) {
+        return store.get(k) ?? null;
+      },
+      async put(k: string, v: string) {
+        store.set(k, v);
+      },
+      async delete(k: string) {
+        store.delete(k);
+      },
+    };
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('does not tombstone a thrown (transient) failure; records an attempt-1 backoff marker, enriched_at stays NULL', async () => {
+    const { db, d1, close } = await openMigratedD1();
+    try {
+      db.prepare(
+        `INSERT INTO transactions (id, ticker, tx_date, source, created_at)
+         VALUES ('tx-1', 'FLAKY', '2026-01-05', 'primary', '2026-01-05T00:00:00Z')`,
+      ).run();
+
+      const fetchImpl = vi.fn(async (url: string) => {
+        if (String(url).includes('company_tickers.json')) {
+          return {
+            ok: true,
+            json: async () => ({ '0': { cik_str: 1, ticker: 'FLAKY' } }),
+          } as unknown as Response;
+        }
+        throw new Error('network blip'); // submissions fetch fails transiently
+      });
+      vi.stubGlobal('fetch', fetchImpl);
+
+      const env = { DB: d1, CONFIG_KV: fakeKv() } as unknown as Parameters<typeof runEnrichment>[0];
+      const result = await runEnrichment(env, { max: 10, edgarMaxPerMinute: 10000 });
+
+      expect(result.scanned).toBe(1);
+      expect(result.enriched).toBe(0);
+      expect(result.failures).toBe(1);
+      expect(result.errors.some((e) => e.includes('FLAKY') && e.includes('edgar'))).toBe(true);
+
+      const row = db
+        .prepare('SELECT enriched_at, enrichment_error FROM securities_ref WHERE ticker = ?')
+        .get('FLAKY');
+      expect(row?.enriched_at).toBeNull(); // NOT tombstoned — stays selectable
+      expect(row?.enrichment_error).toMatch(/^transient-retry:1:/);
+    } finally {
+      close();
+    }
+  });
+
+  it('escalates to attempt 2 (longer backoff) once a prior attempt-1 marker has aged out, and stays eligible across re-selection', async () => {
+    const { db, d1, close } = await openMigratedD1();
+    try {
+      db.prepare(
+        `INSERT INTO transactions (id, ticker, tx_date, source, created_at)
+         VALUES ('tx-1', 'FLAKY', '2026-01-05', 'primary', '2026-01-05T00:00:00Z')`,
+      ).run();
+      // Pre-seed an attempt-1 marker whose backoff already elapsed (long in the past).
+      db.prepare(
+        `INSERT INTO securities_ref (ticker, enrichment_error) VALUES ('FLAKY', 'transient-retry:1:2020-01-01T00:00:00.000Z')`,
+      ).run();
+
+      const fetchImpl = vi.fn(async (url: string) => {
+        if (String(url).includes('company_tickers.json')) {
+          return { ok: true, json: async () => ({ '0': { cik_str: 1, ticker: 'FLAKY' } }) } as unknown as Response;
+        }
+        throw new Error('still flaky');
+      });
+      vi.stubGlobal('fetch', fetchImpl);
+
+      const env = { DB: d1, CONFIG_KV: fakeKv() } as unknown as Parameters<typeof runEnrichment>[0];
+      const result = await runEnrichment(env, { max: 10, edgarMaxPerMinute: 10000 });
+
+      // The aged-out marker did not block re-selection: the ticker was scanned again.
+      expect(result.scanned).toBe(1);
+      const row = db
+        .prepare('SELECT enriched_at, enrichment_error FROM securities_ref WHERE ticker = ?')
+        .get('FLAKY');
+      expect(row?.enriched_at).toBeNull();
+      expect(row?.enrichment_error).toMatch(/^transient-retry:2:/); // escalated from 1 → 2
+    } finally {
+      close();
+    }
+  });
+
+  it('does NOT re-attempt a ticker still within its pending backoff window', async () => {
+    const { db, d1, close } = await openMigratedD1();
+    try {
+      db.prepare(
+        `INSERT INTO transactions (id, ticker, tx_date, source, created_at)
+         VALUES ('tx-1', 'FLAKY', '2026-01-05', 'primary', '2026-01-05T00:00:00Z')`,
+      ).run();
+      // Marker whose backoff is far in the future — must not be re-attempted yet.
+      db.prepare(
+        `INSERT INTO securities_ref (ticker, enrichment_error) VALUES ('FLAKY', 'transient-retry:1:2999-01-01T00:00:00.000Z')`,
+      ).run();
+
+      const fetchImpl = vi.fn(async () => {
+        throw new Error('should not be called for company_tickers.json either, but harmless either way');
+      });
+      vi.stubGlobal('fetch', fetchImpl);
+
+      const env = { DB: d1, CONFIG_KV: fakeKv() } as unknown as Parameters<typeof runEnrichment>[0];
+      const result = await runEnrichment(env, { max: 10, edgarMaxPerMinute: 10000 });
+
+      // Selected by the base SQL predicate (enriched_at IS NULL) but skipped in
+      // the loop before any provider call, since its backoff hasn't elapsed.
+      expect(result.scanned).toBe(0);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      const row = db
+        .prepare('SELECT enrichment_error FROM securities_ref WHERE ticker = ?')
+        .get('FLAKY');
+      expect(row?.enrichment_error).toBe('transient-retry:1:2999-01-01T00:00:00.000Z'); // untouched
+    } finally {
+      close();
+    }
   });
 });

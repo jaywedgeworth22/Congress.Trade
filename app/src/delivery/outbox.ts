@@ -151,6 +151,34 @@ export async function flushDeliveryOutbox(
       result.failed += 1;
     }
   }
+
+  // Broadcast the fresh transactions to all SSE listeners in edge locations to bypass DB reads
+  if (result.claimed > 0 && txIds.length > 0) {
+    try {
+      const freshRows = await all(
+        env.DB,
+        `SELECT t.*, f.chamber AS __chamber, sr.sector AS __sector, sr.market_cap_bucket AS __bucket,
+                fl.full_name AS filer_full_name, fl.state AS filer_state, fl.photo_url AS filer_photo_url
+           FROM transactions t
+           LEFT JOIN filings f ON f.doc_id = t.doc_id
+           LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
+           LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id
+          WHERE t.id IN (${txIds.map(() => '?').join(',')})`,
+        txIds
+      );
+      if (freshRows.length > 0 && typeof BroadcastChannel !== 'undefined') {
+        const channel = new (BroadcastChannel as any)('congress.trade.live');
+        channel.postMessage({
+          type: 'NEW_TRANSACTIONS',
+          transactions: freshRows,
+        });
+        channel.close();
+      }
+    } catch (err) {
+      console.error('BroadcastChannel failed to send fresh transactions:', (err as Error).message);
+    }
+  }
+
   return result;
 }
 
