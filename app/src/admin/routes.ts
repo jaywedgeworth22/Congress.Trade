@@ -951,7 +951,7 @@ function validateReviewEdits(
         return { error: `edits[${index}].${field} must be a boolean` };
       }
     }
-    edits.push({ ...e, ticker: ticker || null, assetName, txDate, owner, txType });
+    edits.push({ ...e, ticker: ticker || null, assetName, txDate, owner: owner as any, txType });
   }
   return { edits };
 }
@@ -8065,7 +8065,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       if (targetError) return c.json({ error: targetError }, 400);
     }
     const validatedFilters = validateSubscriptionFilters(body.filters);
-    if (!validatedFilters.ok) return c.json({ error: validatedFilters.error }, 400);
+    if (!validatedFilters.ok) return c.json({ error: (validatedFilters as any).error }, 400);
     const secretError = subscriptionSecretError(body.secret);
     if (secretError) return c.json({ error: secretError }, 400);
     const secret = typeof body.secret === 'string' ? body.secret : undefined;
