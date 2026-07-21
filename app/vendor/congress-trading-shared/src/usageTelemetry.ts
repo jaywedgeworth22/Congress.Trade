@@ -204,7 +204,7 @@ export function createUsageTelemetryClient(options: UsageTelemetryClientOptions)
         events: await Promise.all(
           parsed.events.map(async (event) => {
             if (event.idempotencyKey) return event;
-            const idempotencyKey = await deriveUsageTelemetryIdempotencyKey(event);
+            const idempotencyKey = await deriveUsageTelemetryIdempotencyKey(event as any);
             return idempotencyKey ? { ...event, idempotencyKey } : event;
           }),
         ),

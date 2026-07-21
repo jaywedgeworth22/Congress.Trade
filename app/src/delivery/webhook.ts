@@ -316,7 +316,7 @@ async function deliverToSubscription(
   if (targetKey) {
     const gate = await checkTargetCircuit(env, targetKey);
     if (!gate.allowed) {
-      await parkDelivery(env, sub.id, tx.id, gate.reason);
+      await parkDelivery(env, sub.id, tx.id, (gate as any).reason);
       return;
     }
   }
