@@ -2644,7 +2644,12 @@
         "npm:vitest@4.1.10",
         "npm:wrangler@^4.110.0",
         "npm:zod@^4.4.3"
-      ]
+      ],
+      "overrides": {
+        "@sentry/cloudflare": {
+          "@cloudflare/workers-types": "$@cloudflare/workers-types"
+        }
+      }
     }
   }
 }
