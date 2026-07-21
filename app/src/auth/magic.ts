@@ -5,8 +5,8 @@
  * single-use semantics (consumed = deleted).
  */
 
-import type { Env } from '../shared/types';
-import { randomToken, sha256Hex } from './tokens';
+import type { Env } from '../shared/types.ts';
+import { randomToken, sha256Hex } from './tokens.ts';
 
 const MAGIC_PREFIX = 'magic:';
 const MAGIC_TTL_SEC = 15 * 60; // 15 minutes

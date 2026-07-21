@@ -15,9 +15,9 @@
  * tests without a database or clock.
  */
 
-import type { Env } from '../shared/types';
-import { get } from '../shared/db';
-import { notifyAdmin } from '../alerts/notify';
+import type { Env } from '../shared/types.ts';
+import { get } from '../shared/db.ts';
+import { notifyAdmin } from '../alerts/notify.ts';
 
 export type FreshnessStream = 'spx' | 'prices' | 'fundamentals';
 

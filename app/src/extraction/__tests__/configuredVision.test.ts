@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Env, Filing } from '../../shared/types';
-import type { Extractor, ExtractorInput, ExtractorResult } from '../../extractors/types';
-import type { CandidateDocResult } from '../bakeoff';
+import type { Env, Filing } from '../../shared/types.ts';
+import type { Extractor, ExtractorInput, ExtractorResult } from '../../extractors/types.ts';
+import type { CandidateDocResult } from '../bakeoff.ts';
 
 const mocks = vi.hoisted(() => ({
   runCandidateOnDoc: vi.fn(),
@@ -15,7 +15,7 @@ vi.mock('../bakeoff', async () => {
   };
 });
 
-import { ConfiguredVisionExtractor, resolvePrimaryFailoverModels } from '../configuredVision';
+import { ConfiguredVisionExtractor, resolvePrimaryFailoverModels } from '../configuredVision.ts';
 
 const filing = (chamber: Filing['chamber'] = 'house'): Filing => ({
   docId: 'H-1',

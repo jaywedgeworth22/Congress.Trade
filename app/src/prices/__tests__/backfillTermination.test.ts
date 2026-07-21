@@ -19,16 +19,16 @@ vi.mock('../../secrets/infisical', async (importOriginal) => ({
   resolveSecrets: vi.fn(async () => ({})),
 }));
 
-import type { Env } from '../../shared/types';
-import { marketPending } from '../../admin/routes';
-import { PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS } from '../../admin/migrations';
+import type { Env } from '../../shared/types.ts';
+import { marketPending } from '../../admin/routes.ts';
+import { PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS } from '../../admin/migrations.ts';
 import {
   selectTickersNeedingPrices,
   lastTradingDay,
   priceUnavailableCutoffIso,
   priceUnavailableFirstRecheckCutoffIso,
-} from '../service';
-import { openMigratedD1, type SqliteDatabase } from './sqliteD1';
+} from '../service.ts';
+import { openMigratedD1, type SqliteDatabase } from './sqliteD1.ts';
 
 let db: SqliteDatabase;
 let env: Env;

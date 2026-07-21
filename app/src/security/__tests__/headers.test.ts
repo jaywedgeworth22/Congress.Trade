@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Hono } from 'hono';
-import { browserSecurityHeaders, browserSecurityHeadersMiddleware } from '../headers';
+import { browserSecurityHeaders, browserSecurityHeadersMiddleware } from '../headers.ts';
 
 describe('browserSecurityHeaders', () => {
   it('sets clickjacking, MIME, referrer, permissions, and CSP defenses', () => {

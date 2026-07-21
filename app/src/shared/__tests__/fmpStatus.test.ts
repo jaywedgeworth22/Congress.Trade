@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertFmpTierOk, hasFmpTierFailure, FMP_TIER_FAIL_STATUSES } from '../fmpStatus';
+import { assertFmpTierOk, hasFmpTierFailure, FMP_TIER_FAIL_STATUSES } from '../fmpStatus.ts';
 
 describe('assertFmpTierOk', () => {
   it('throws a tagged error for key/plan statuses', () => {

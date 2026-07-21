@@ -10,9 +10,9 @@
  * free tier has no S&P 500 index symbol.
  */
 
-import type { Close } from './compute';
-import type { PriceClient } from './fmp';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+import type { Close } from './compute.ts';
+import type { PriceClient } from './fmp.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 /**
  * Parse a Tiingo `/prices` response into descending [{date, close}]. Shape:

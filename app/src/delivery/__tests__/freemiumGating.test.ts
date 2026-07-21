@@ -4,9 +4,9 @@ import {
   buildTransactionsCountQuery,
   buildTransactionsExportQuery,
   MAX_EXPORT_ROWS,
-} from '../rows';
-import { buildRestRouter } from '../rest';
-import type { Env } from '../../shared/types';
+} from '../rows.ts';
+import { buildRestRouter } from '../rest.ts';
+import type { Env } from '../../shared/types.ts';
 
 describe('freemium query gating (filedSince)', () => {
   it('adds the recency clause + bound param to the feed query', () => {

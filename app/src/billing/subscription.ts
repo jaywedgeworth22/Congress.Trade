@@ -6,10 +6,10 @@
  * mapping is unit-testable against an in-memory DB.
  */
 
-import type { BillingPlan, Env, User } from '../shared/types';
-import { batch, get, run } from '../shared/db';
-import { getUserById } from '../auth/users';
-import { resolveSecrets } from '../secrets/infisical';
+import type { BillingPlan, Env, User } from '../shared/types.ts';
+import { batch, get, run } from '../shared/db.ts';
+import { getUserById } from '../auth/users.ts';
+import { resolveSecrets } from '../secrets/infisical.ts';
 
 /** Map a Stripe Price id to our plan cadence, or null if it isn't ours. */
 export function planForPrice(env: Env, priceId: string | null | undefined): BillingPlan | null {

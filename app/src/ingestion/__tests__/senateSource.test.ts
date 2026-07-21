@@ -9,7 +9,7 @@ import {
   establishSenateSession,
   looksLikeSenateAgreementWall,
   SENATE_SESSION_KV_KEY,
-} from '../senateSource';
+} from '../senateSource.ts';
 
 describe('parseCsrfMiddlewareToken', () => {
   it('extracts the hidden token (value after name)', () => {
