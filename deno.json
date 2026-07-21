@@ -29,5 +29,6 @@
       "deno.window",
       "deno.unstable"
     ]
-  }
+  },
+  "nodeModulesDir": "none"
 }
