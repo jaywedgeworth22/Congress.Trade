@@ -16,7 +16,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
-import type { Env, User } from '../shared/types';
+import type { Env, User } from '../shared/types.ts';
 import {
   getCurrentUser,
   createSession,
@@ -25,18 +25,18 @@ import {
   clearSessionCookie,
   getSessionTokensFromRequest,
   getSafeRedirectUrl,
-} from './session';
-import { buildGoogleAuthUrl, exchangeGoogleCode, fetchGoogleProfile } from './google';
-import { upsertUserFromGoogle, upsertUserByEmail } from './users';
-import { issueMagicToken, consumeMagicToken, magicLinkEmail } from './magic';
-import { sendEmail } from './email';
-import { constantTimeEqual, randomToken } from './tokens';
-import { entitlementOf } from '../billing/entitlement';
-import { billingCapabilitiesAsync } from '../billing/stripe';
-import { resolveSecret } from '../secrets/infisical';
-import { isAdminSessionEmail, adminRuntimeConfig } from '../admin/identity';
-import { verifyAccessJwt, certsUrl } from '../admin/access';
-import { rateLimit, clientIp } from '../shared/rateLimit';
+} from './session.ts';
+import { buildGoogleAuthUrl, exchangeGoogleCode, fetchGoogleProfile } from './google.ts';
+import { upsertUserFromGoogle, upsertUserByEmail } from './users.ts';
+import { issueMagicToken, consumeMagicToken, magicLinkEmail } from './magic.ts';
+import { sendEmail } from './email.ts';
+import { constantTimeEqual, randomToken } from './tokens.ts';
+import { entitlementOf } from '../billing/entitlement.ts';
+import { billingCapabilitiesAsync } from '../billing/stripe.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
+import { isAdminSessionEmail, adminRuntimeConfig } from '../admin/identity.ts';
+import { verifyAccessJwt, certsUrl } from '../admin/access.ts';
+import { rateLimit, clientIp } from '../shared/rateLimit.ts';
 
 const OAUTH_STATE_COOKIE = 'ct_oauth_state';
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

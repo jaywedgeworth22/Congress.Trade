@@ -21,7 +21,7 @@
  * decoders are pure and unit-tested; the network plumbing mirrors bakeoff.ts.
  */
 
-import type { Env, ParsedTx } from '../shared/types';
+import type { Env, ParsedTx } from '../shared/types.ts';
 import {
   SYSTEM_PROMPT,
   EXECUTIVE_SYSTEM_PROMPT,
@@ -31,7 +31,7 @@ import {
   toParsedTx,
   arrayBufferToBase64,
   validatePdfForAnthropic,
-} from './visionLlm';
+} from './visionLlm.ts';
 import {
   MISTRAL_ANNOTATION_SCHEMA,
   extractResponsesText,
@@ -39,9 +39,9 @@ import {
   isRetiredDisclosureCandidate,
   openAiDisclosureReasoningEffort,
   parseMistralOcrResponse,
-} from './bakeoff';
-import { resolveSecret } from '../secrets/infisical';
-import { trackedFetch } from '../shared/thirdPartyTelemetry';
+} from './bakeoff.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
 export type BatchProvider = 'anthropic' | 'openai' | 'mistral' | 'xai';
 export type BatchChamber = 'house' | 'senate' | 'executive';

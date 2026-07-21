@@ -19,9 +19,9 @@
 import { parse } from 'node-html-parser';
 import type { HTMLElement } from 'node-html-parser';
 
-import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types';
-import type { Filing, Owner, ParsedTx, TxType } from '../shared/types';
-import { parseAmountRange } from './amounts';
+import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types.ts';
+import type { Filing, Owner, ParsedTx, TxType } from '../shared/types.ts';
+import { parseAmountRange } from './amounts.ts';
 
 /** Confidence assigned to a clean electronic-table parse. */
 const CLEAN_CONFIDENCE = 0.97;

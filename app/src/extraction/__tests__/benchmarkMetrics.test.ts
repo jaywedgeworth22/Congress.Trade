@@ -4,8 +4,8 @@ import {
   simulateCascadeDocumentMetrics,
   summarizeBenchmarkCosts,
   summarizeBenchmarkLatency,
-} from '../benchmarkMetrics';
-import { DEFAULT_CANDIDATES } from '../bakeoff';
+} from '../benchmarkMetrics.ts';
+import { DEFAULT_CANDIDATES } from '../bakeoff.ts';
 
 describe('priceBenchmarkUsage', () => {
   it('prices measured OpenAI usage and applies the cached-input rate only to cached tokens', () => {

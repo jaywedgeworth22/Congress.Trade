@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Miniflare } from 'miniflare';
-import { buildAdminRouter } from '../routes';
-import { DELIVERY_TARGETED_ID_LIMIT, flushDeliveryOutbox } from '../../delivery/outbox';
-import { maybeRunAgreementAutopublish } from '../../extraction/agreement';
-import { normalize } from '../../extraction/normalizer';
-import type { Filing, ParsedTx } from '../../shared/types';
+import { buildAdminRouter } from '../routes.ts';
+import { DELIVERY_TARGETED_ID_LIMIT, flushDeliveryOutbox } from '../../delivery/outbox.ts';
+import { maybeRunAgreementAutopublish } from '../../extraction/agreement.ts';
+import { normalize } from '../../extraction/normalizer.ts';
+import type { Filing, ParsedTx } from '../../shared/types.ts';
 
 const app = buildAdminRouter();
 const AUTH = { Authorization: 'Bearer test-admin', 'content-type': 'application/json' };

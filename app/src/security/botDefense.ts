@@ -31,9 +31,9 @@
  */
 
 import type { MiddlewareHandler } from 'hono';
-import type { Env } from '../shared/types';
-import { rateLimit, clientIp } from '../shared/rateLimit';
-import { resolveSecret } from '../secrets/infisical';
+import type { Env } from '../shared/types.ts';
+import { rateLimit, clientIp } from '../shared/rateLimit.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
 
 /** Requests per IP per window across all guarded public data endpoints. */
 export const PUBLIC_API_LIMIT = 300;

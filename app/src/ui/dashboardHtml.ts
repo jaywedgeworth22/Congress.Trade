@@ -25,7 +25,7 @@
  * can never drift from the server-side catalog again.
  */
 
-import { benchmarkSelectableCatalog } from '../benchmark/settings';
+import { benchmarkSelectableCatalog } from '../benchmark/settings.ts';
 
 export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <html lang="en">

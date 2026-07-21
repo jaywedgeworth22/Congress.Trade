@@ -1,5 +1,5 @@
-import type { Env } from '../shared/types';
-import { all, run, type SqlParam } from '../shared/db';
+import type { Env } from '../shared/types.ts';
+import { all, run, type SqlParam } from '../shared/db.ts';
 
 export type IngestionOutboxStatement = [string, SqlParam[]];
 

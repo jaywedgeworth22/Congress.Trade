@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildTransactionsQuery, buildTransactionsCountQuery } from '../rows';
-import { matchesFiltersWithChamber } from '../subscriptions';
-import { buildCommonFilters, asChambers } from '../../analytics/sql';
-import type { Transaction } from '../../shared/types';
+import { buildTransactionsQuery, buildTransactionsCountQuery } from '../rows.ts';
+import { matchesFiltersWithChamber } from '../subscriptions.ts';
+import { buildCommonFilters, asChambers } from '../../analytics/sql.ts';
+import type { Transaction } from '../../shared/types.ts';
 
 /**
  * "Separate by default" contract for executive (OGE 278-T) rows: they are
