@@ -7,11 +7,11 @@ import {
   parseUnusualWhalesDisclosureRows,
   recordDisclosureLatencyCandidate,
   runDisclosureLatencyProbe,
-} from '../fmpDisclosureLatency';
-import type { DiscoveredFiling } from '../watcher';
-import type { Env } from '../../shared/types';
-import { getDailyUsed } from '../../enrichment/service';
-import { __resetSharedFmpPacerForTests } from '../../shared/pace';
+} from '../fmpDisclosureLatency.ts';
+import type { DiscoveredFiling } from '../watcher.ts';
+import type { Env } from '../../shared/types.ts';
+import { getDailyUsed } from '../../enrichment/service.ts';
+import { __resetSharedFmpPacerForTests } from '../../shared/pace.ts';
 
 describe('parseFmpDisclosureRows', () => {
   it('extracts a House doc token from PTR PDF URLs', () => {

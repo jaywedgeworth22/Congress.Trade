@@ -26,9 +26,9 @@
  */
 
 import { Hono } from 'hono';
-import type { Env } from '../shared/types';
-import { constantTimeEqual } from '../auth/tokens';
-import { resolveSecret, resolveSecrets } from '../secrets/infisical';
+import type { Env } from '../shared/types.ts';
+import { constantTimeEqual } from '../auth/tokens.ts';
+import { resolveSecret, resolveSecrets } from '../secrets/infisical.ts';
 import {
   runBulkSnapshot,
   readManifest,
@@ -43,7 +43,7 @@ import {
   pitScoreRowsToNdjson,
   PIT_PLACEBOS,
   PIT_SCORE_VERSION,
-} from './pitScores';
+} from './pitScores.ts';
 
 /** Env augmented with cross-app sharing config (mirrors admin/share routes). */
 type ExportEnv = Env & { INGEST_TOKEN?: string; APP_B_IMPORT_URL?: string; APP_B_INGEST_TOKEN?: string };

@@ -12,22 +12,22 @@
  * extra backfill" stays within the cap and resumes the next day.
  */
 
-import type { Env } from '../shared/types';
-import { all, run } from '../shared/db';
-import type { SqlParam } from '../shared/db';
-import { mergeRefs, remainingBudget } from './compute';
-import { buildFmpProvider } from './fmp';
-import { buildSecProvider } from './sec';
+import type { Env } from '../shared/types.ts';
+import { all, run } from '../shared/db.ts';
+import type { SqlParam } from '../shared/db.ts';
+import { mergeRefs, remainingBudget } from './compute.ts';
+import { buildFmpProvider } from './fmp.ts';
+import { buildSecProvider } from './sec.ts';
 import {
   buildMassiveProvider,
   buildFinnhubProvider,
   buildTwelveDataProvider,
   buildIntrinioProvider,
   buildTiingoProvider,
-} from './providers';
-import { getSharedFmpPacer, getSharedEdgarPacer } from '../shared/pace';
-import type { EnrichmentProvider, SecurityRef } from './types';
-import { resolveSecrets } from '../secrets/infisical';
+} from './providers.ts';
+import { getSharedFmpPacer, getSharedEdgarPacer } from '../shared/pace.ts';
+import type { EnrichmentProvider, SecurityRef } from './types.ts';
+import { resolveSecrets } from '../secrets/infisical.ts';
 
 /** Exported so jobs.ts can reserve a price-refresh budget floor against the
  *  same default the FMP daily-call-cap parsing falls back to here. */

@@ -35,7 +35,7 @@ import {
   recordTargetFailure,
   recordTargetSuccess,
   targetKeyForUrl,
-} from './targetCircuit';
+} from './targetCircuit.ts';
 
 /** Max delivery attempts before we give up (initial try + retries). */
 const MAX_ATTEMPTS = 5;

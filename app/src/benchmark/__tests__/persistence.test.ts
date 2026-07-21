@@ -14,7 +14,7 @@ import {
   saveUnavailableBenchmarkMeasurementsIfAbsent,
   summarizeBenchmarkMeasurements,
   type BenchmarkRunDetail,
-} from '../persistence';
+} from '../persistence.ts';
 
 interface CapturedStatement {
   sql: string;

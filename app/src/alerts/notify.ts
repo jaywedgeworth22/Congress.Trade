@@ -8,9 +8,9 @@
  * If any are unset, notify() is a logged no-op (callers don't need to care).
  */
 
-import type { Env } from '../shared/types';
-import { sendEmail, emailConfiguredAsync } from '../auth/email';
-import { resolveSecret } from '../secrets/infisical';
+import type { Env } from '../shared/types.ts';
+import { sendEmail, emailConfiguredAsync } from '../auth/email.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
 
 type EnvAlert = Env & { ALERT_EMAIL?: string };
 

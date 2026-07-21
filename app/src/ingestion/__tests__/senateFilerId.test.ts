@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { senateFilerId } from '../watcher';
+import { senateFilerId } from '../watcher.ts';
 
 describe('senateFilerId', () => {
   it('mints a stable, slugged, non-null id from a disclosed name', () => {

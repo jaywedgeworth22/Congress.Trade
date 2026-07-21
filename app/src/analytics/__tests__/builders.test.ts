@@ -36,8 +36,8 @@ import {
   buildTrendingQuery,
   buildVolumeOverTimeQuery,
   momentumOffsets,
-} from '../builders';
-import { BRACKET_MIDPOINT_SQL, granularityFormat } from '../sql';
+} from '../builders.ts';
+import { BRACKET_MIDPOINT_SQL, granularityFormat } from '../sql.ts';
 
 describe('buildSummaryQuery', () => {
   it('aggregates corpus totals and uses the bracket midpoint for $', () => {

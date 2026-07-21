@@ -1232,7 +1232,7 @@ export async function deliverUsageTelemetryEvent(
           baseUrl,
           token,
           requireExplicitIdempotencyKey: true,
-          fetchImpl: async (input, init) => {
+          fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
             const response = await fetchUsageTelemetryReceiver(
               input,
               { ...init, signal: controller.signal },

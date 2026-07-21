@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildDetectionRouter } from '../detectionRoutes';
+import { buildDetectionRouter } from '../detectionRoutes.ts';
 
 const app = buildDetectionRouter();
 // Minimal D1 stand-in: recordDisclosureLatencyCandidate only does INSERTs.
