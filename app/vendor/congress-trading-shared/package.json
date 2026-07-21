@@ -35,10 +35,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "zod": "^4.4.3"
+    "zod": "^3.23.8"
   },
   "devDependencies": {
-    "zod": "^4.4.3",
+    "zod": "^3.23.8",
     "@types/node": "^20.19.9",
     "@vitest/coverage-v8": "^4.1.10",
     "publint": "^0.3.21",
