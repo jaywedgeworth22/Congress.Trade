@@ -449,14 +449,14 @@ const requestAndScheduledWorker = Sentry.withSentry(
       track(
         Sentry.withMonitor('delivery-outbox-cron', () =>
           flushDeliveryOutbox(env, { limit: 100 }),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'delivery-outbox' } }),
         ),
       );
       track(
         Sentry.withMonitor('ingestion-outbox-cron', () =>
           flushIngestionOutbox(env, { limit: 100 }),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'ingestion-outbox' } }),
         ),
       );
@@ -466,20 +466,20 @@ const requestAndScheduledWorker = Sentry.withSentry(
       track(
         Sentry.withMonitor('parked-deliveries-cron', () =>
           flushParkedDeliveries(env, { limit: 50 }),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'parked-deliveries' } }),
         ),
       );
       track(
         flushUsageTelemetryFallback(env, { limit: 25 })
-          .then((result) => {
+          .then((result: any) => {
             if (result.failed > 0) {
               // console.log is intentionally outside the Sentry warn/error log
               // integration: receiver outages must not create new envelopes.
               console.log('usage telemetry fallback remains pending', result);
             }
           })
-          .catch((err) => {
+          .catch((err: unknown) => {
             console.log('usage telemetry fallback drain unavailable', {
               errorType: err instanceof Error ? err.name : 'unknown',
             });
@@ -488,21 +488,21 @@ const requestAndScheduledWorker = Sentry.withSentry(
       track(
         Sentry.withMonitor('secrets-refresh-cron', () =>
           refreshSecrets(env),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'secrets-refresh' } }),
         ),
       );
       track(
         Sentry.withMonitor('disclosure-latency-cron', () =>
           runDisclosureLatencyProbe(env),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'disclosure-latency' } }),
         ),
       );
       track(
         Sentry.withMonitor('daily-jobs-cron', () =>
           maybeRunDailyJobs(env),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'daily-jobs' } }),
         ),
       );
@@ -512,7 +512,7 @@ const requestAndScheduledWorker = Sentry.withSentry(
       track(
         Sentry.withMonitor('backlog-autopilot-cron', () =>
           maybeStartBacklogAutopilot(env),
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'backlog-autopilot' } }),
         ),
       );
@@ -526,7 +526,7 @@ const requestAndScheduledWorker = Sentry.withSentry(
             maxRuntime: 2,
             timezone: 'UTC',
           },
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'agreement-autopublish' } }),
         ),
       );
@@ -542,7 +542,7 @@ const requestAndScheduledWorker = Sentry.withSentry(
             maxRuntime: 5,
             timezone: 'UTC',
           },
-        ).catch((err) =>
+        ).catch((err: unknown) =>
           Sentry.captureException(err, { tags: { cron: 'watcher' } }),
         ),
       );

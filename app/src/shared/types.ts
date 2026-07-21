@@ -12,8 +12,6 @@ import type {
   Owner,
   TxType,
   ClientTrade,
-  AssetType,
-  TradeEvent
 } from '../../vendor/congress-trading-shared/src/index.ts';
 
 /**

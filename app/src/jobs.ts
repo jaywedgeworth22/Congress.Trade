@@ -283,7 +283,7 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
   // written today. Best-effort + bounded; never blocks the cron.
   try {
     const manifest = await runBulkSnapshot(env, day, now);
-    const rows = Object.values(manifest.tables).reduce((s, t) => s + t.rowCount, 0);
+    const rows = Object.values(manifest.tables).reduce((s, t: any) => s + t.rowCount, 0);
     console.log('bulk snapshot written:', day, rows, 'rows');
   } catch (err) {
     console.warn('bulk snapshot failed:', (err as Error).message);
