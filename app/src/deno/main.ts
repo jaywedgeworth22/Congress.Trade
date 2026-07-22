@@ -8,9 +8,10 @@ import { resolveSecret, refreshSecrets } from '../secrets/infisical.ts';
 import { handleIngestMessage, handleDeliveryMessage, handleDeadLetterMessage } from '../index.ts';
 import { flushD1Budget } from '../shared/d1Budget.ts';
 import { maybeRunDailyJobs } from '../jobs.ts';
+import { runWatcher } from '../ingestion/watcher.ts';
 import { isTerminalUsageTelemetryDeliveryError, persistUsageTelemetryFallback } from '../shared/thirdPartyTelemetry.ts';
-import { completeDeliveryOutbox } from '../delivery/outbox.ts';
-import { completeIngestionOutbox } from '../ingestion/outbox.ts';
+import { completeDeliveryOutbox, flushDeliveryOutbox } from '../delivery/outbox.ts';
+import { completeIngestionOutbox, flushIngestionOutbox } from '../ingestion/outbox.ts';
 
 // 1. Initialize KV Shims first because Infisical needs CONFIG_KV for caching
 const kv = await Deno.openKv();
@@ -124,10 +125,34 @@ kv.listenQueue(async (msg: any) => {
   await flushD1Budget(env);
 });
 
-// Start Cron Tasks
+// Start Cron Tasks. Deno Deploy does not run the Cloudflare Worker
+// `scheduled()` entrypoint, so the live filing watcher and durable outbox
+// reconciliations must be wired here explicitly. Without this, Deno serves
+// the API and can execute daily enrichment while discovering no new filings.
 Deno.cron("Worker scheduled tasks", "* * * * *", async () => {
   const env = buildEnv();
-  await maybeRunDailyJobs(env);
+  try {
+    const result = await runWatcher(env, new Date());
+    console.log('Deno watcher completed', result);
+  } catch (err) {
+    // A scheduler tick must not prevent outbox recovery or daily maintenance.
+    console.error('Deno watcher tick failed:', err);
+  }
+  try {
+    await flushIngestionOutbox(env, { limit: 100 });
+  } catch (err) {
+    console.error('Deno ingestion outbox flush failed:', err);
+  }
+  try {
+    await flushDeliveryOutbox(env, { limit: 100 });
+  } catch (err) {
+    console.error('Deno delivery outbox flush failed:', err);
+  }
+  try {
+    await maybeRunDailyJobs(env);
+  } catch (err) {
+    console.error('Deno daily jobs failed:', err);
+  }
   await flushD1Budget(env);
 });
 
