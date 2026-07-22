@@ -7,7 +7,7 @@
   "description": "Cloudflare Workers service ingesting US congressional STOCK Act stock-trade disclosures (House + Senate) and pushing structured trade events to clients.",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy --outdir dist --upload-source-maps --var SENTRY_RELEASE:$(sentry-cli releases propose-version)",
+    "deploy": "export PATH=\"$HOME/.deno/bin:$PATH\"; deployctl deploy --project=congress-trade --entrypoint=src/deno/main.ts --root=.",
     "typecheck": "tsc -p tsconfig.cf.json --noEmit",
     "test": "vitest run",
     "lint": "eslint src/",
