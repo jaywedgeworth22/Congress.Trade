@@ -470,12 +470,6 @@ export interface Env {
   // Turso Database Credentials (resolved via Infisical)
   TURSO_DATABASE_URL?: string;
   TURSO_AUTH_TOKEN?: string;
-  /** Deno/Turso compatibility path for the legacy S3/R2 raw-file store. */
-  AWS_S3_ENDPOINT?: string;
-  AWS_ACCESS_KEY_ID?: string;
-  AWS_SECRET_ACCESS_KEY?: string;
-  AWS_S3_BUCKET_NAME?: string;
-  AWS_REGION?: string;
 
   // S3-compatible raw-document storage used by the Deno runtime.
   AWS_S3_ENDPOINT?: string;
