@@ -82,6 +82,7 @@ import { committeeConflict } from './conflicts.ts';
 import { computePerformance } from '../prices/compute.ts';
 import { latestSpxClose } from '../prices/service.ts';
 import { getDisclosureLatencySummary } from '../ingestion/fmpDisclosureLatency.ts';
+import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 
 const TICKER_PARAM_RE = /^[A-Z0-9._^-]{1,20}$/;
 
@@ -99,6 +100,10 @@ function usd(v: unknown): number {
 }
 function str(v: unknown): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
+}
+function filerName(v: unknown): string | null {
+  const name = str(v);
+  return name ? (cleanFilerName(name) || name) : null;
 }
 function assetTypeCategory(v: unknown) {
   const s = str(v);
@@ -470,7 +475,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         const sellCount = num(row.sell_count);
         return {
           filerId: str(row.filer_id),
-          fullName: str(row.full_name),
+          fullName: filerName(row.full_name),
           party: str(row.party),
           partyBucket: asPartyBucket(row.party) ?? null,
           chamber: str(row.chamber),
@@ -512,7 +517,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         const k = `${str(row.ticker)}:${str(row.tx_type)}`;
         const topMembers = (byKey.get(k) ?? []).map((m) => ({
           filerId: str(m.filer_id),
-          fullName: str(m.full_name),
+          fullName: filerName(m.full_name),
           partyBucket: asPartyBucket(m.party) ?? null,
           photoUrl: str(m.photo_url),
           tradeCount: num(m.trade_count),
@@ -733,7 +738,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         const wins = num(row.wins);
         return {
           filerId: str(row.filer_id),
-          fullName: str(row.full_name),
+          fullName: filerName(row.full_name),
           party: str(row.party),
           partyBucket: asPartyBucket(row.party) ?? null,
           photoUrl: str(row.photo_url),
@@ -776,7 +781,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       }));
       const topLateFilers = lateRows.map((row) => ({
         filerId: str(row.filer_id),
-        fullName: str(row.full_name),
+        fullName: filerName(row.full_name),
         partyBucket: asPartyBucket(row.party) ?? null,
         chamber: str(row.chamber),
         photoUrl: str(row.photo_url),
@@ -867,7 +872,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       const sellCount = num(s.sell_count);
       const mapTrader = (row: Record<string, unknown>) => ({
         filerId: str(row.filer_id),
-        fullName: str(row.full_name),
+        fullName: filerName(row.full_name),
         partyBucket: asPartyBucket(row.party) ?? null,
         photoUrl: str(row.photo_url),
         tradeCount: num(row.trade_count),
@@ -931,7 +936,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
             ),
           ),
           filerId: str(row.filer_id),
-          fullName: str(row.full_name),
+          fullName: filerName(row.full_name),
           partyBucket: asPartyBucket(row.party) ?? null,
           photoUrl: str(row.photo_url),
           filedDate: str(row.filed_date),
@@ -1033,7 +1038,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         filerId,
         profile: profileRow
           ? {
-              fullName: str(profileRow.full_name),
+              fullName: filerName(profileRow.full_name),
               party: str(profileRow.party),
               partyBucket: asPartyBucket(profileRow.party) ?? null,
               chamber: str(profileRow.chamber),
@@ -1150,7 +1155,7 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           txType: str(row.tx_type),
           txDate: str(row.tx_date),
           filerId: str(row.filer_id),
-          memberName: str(row.full_name),
+          memberName: filerName(row.full_name),
           chamber: str(row.chamber),
           partyBucket: asPartyBucket(row.party) ?? null,
           viaCommittees: m.viaCommittees,

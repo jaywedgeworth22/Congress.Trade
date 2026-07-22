@@ -71,9 +71,15 @@ export function cleanFilerName(name: string | null | undefined): string {
   if (!name) return '';
   let str = name.trim();
 
-  // Strip medical and academic titles from the end of the name
-  str = str.replace(/(?:,\s*)?(?:\bMD\b|\bFACS\b|\bPH\.?D\.?(?=\s|$))(?:,\s*)?/gi, ' ');
-  
+  // Strip standalone honorifics and professional titles wherever a source
+  // embedded them in the member's name (for example, "Richard Dean Dr
+  // McCormick" or "Neal Patrick MD, Facs Dunn"). Do not match substrings in
+  // ordinary names such as Drake or Senatorial.
+  str = str.replace(
+    /(?:,\s*)?\b(?:DR|HON|MR|MRS|MS|REP|SEN|MD|FACS|PH\.?D\.?)\b(?:,\s*)?/gi,
+    ' ',
+  );
+
   // Clean up any trailing commas, spaces, or stray periods
   str = str.replace(/[,\s.]+$/, '');
   str = str.replace(/\s{2,}/g, ' ');

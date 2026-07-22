@@ -29,6 +29,7 @@ import { enqueueIngestionOutboxNow, ingestionOutboxInsertForDoc } from './outbox
 import { resolveSecret } from '../secrets/infisical.ts';
 import { pollOgeExecutive } from './ogeSource.ts';
 import { consumeGovernedD1Writes } from '../shared/d1Budget.ts';
+import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 
 /** Env shape (read defensively — Env is the frozen foundation contract). */
 type EnvWithFlags = Env & { HOUSE_LIVE_SEARCH_ENABLED?: string };
@@ -135,7 +136,7 @@ function splitStateDistrict(stateDst: string): { state: string | null; district:
 
 function houseDiscovery(f: { pipelineDocId: string; sourceUrl: string; filingDate: string; first: string; last: string; stateDst: string }): DiscoveredFiling {
   const sd = splitStateDistrict(f.stateDst);
-  const fullName = [f.first, f.last].filter(Boolean).join(' ').trim() || null;
+  const fullName = cleanFilerName([f.first, f.last].filter(Boolean).join(' ')) || null;
   return {
     docId: f.pipelineDocId,
     chamber: 'house',
@@ -175,7 +176,8 @@ export async function insertFilingIfNew(
     console.warn('insertFilingIfNew deferred: D1 write governor cap reached', f.docId);
     return 'deferred';
   }
-  if (f.filerId && f.filerName) {
+  const filerName = cleanFilerName(f.filerName) || null;
+  if (f.filerId && filerName) {
     if (f.party || f.photoUrl) {
       // Sources that curate party/portrait metadata (the OGE executive index)
       // upsert it so pre-existing filer rows — created before the metadata was
@@ -189,14 +191,14 @@ export async function insertFilingIfNew(
            photo_url = COALESCE(excluded.photo_url, photo_url)
          WHERE (excluded.party IS NOT NULL AND (filers.party IS NULL OR filers.party != excluded.party))
             OR (excluded.photo_url IS NOT NULL AND (filers.photo_url IS NULL OR filers.photo_url != excluded.photo_url))`,
-        [f.filerId, f.chamber, f.filerName, f.party ?? null, f.state ?? null, f.district ?? null, f.photoUrl ?? null],
+        [f.filerId, f.chamber, filerName, f.party ?? null, f.state ?? null, f.district ?? null, f.photoUrl ?? null],
       );
     } else {
       await run(
         env.DB,
         `INSERT OR IGNORE INTO filers (bioguide_id, chamber, full_name, party, state, district, committees)
          VALUES (?, ?, ?, NULL, ?, ?, NULL)`,
-        [f.filerId, f.chamber, f.filerName, f.state ?? null, f.district ?? null],
+        [f.filerId, f.chamber, filerName, f.state ?? null, f.district ?? null],
       );
     }
   }
@@ -561,7 +563,7 @@ async function pollSenate(env: Env, now: Date): Promise<number> {
   const since = new Date(now.getTime() - lookbackDays * 86_400_000);
   const filings = await fetchSenatePtrFilings({ now, since, kv: env.CONFIG_KV });
   const discovered: DiscoveredFiling[] = filings.map((f) => {
-    const filerName = f.fullName || [f.first, f.last].filter(Boolean).join(' ').trim() || null;
+    const filerName = cleanFilerName(f.fullName || [f.first, f.last].filter(Boolean).join(' ').trim()) || null;
     return {
       docId: f.pipelineDocId,
       chamber: 'senate' as const,
