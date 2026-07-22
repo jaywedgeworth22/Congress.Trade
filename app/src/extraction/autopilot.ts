@@ -336,7 +336,7 @@ async function reserveAutopilotBudget(
   day: string,
   amountMicro: number,
   capMicro: number,
-): Promise<boolean> {
+): Promise<'created' | 'replay_reserved' | 'replay_settled' | false> {
   const createdAt = new Date().toISOString();
   try {
     const result = await run(
@@ -347,14 +347,15 @@ async function reserveAutopilotBudget(
        VALUES (?, ?, ?, NULL, ?, 'reserved', ?, NULL)`,
       [reservationId, day, amountMicro, capMicro, createdAt],
     );
-    if ((result.meta?.changes ?? 0) > 0) return true;
+    if ((result.meta?.changes ?? 0) > 0) return 'created';
     const existing = await get<{
       day: string;
       reserved_microusd: number;
       cap_microusd: number;
+      status: string;
     }>(
       env.DB,
-      `SELECT day, reserved_microusd, cap_microusd
+      `SELECT day, reserved_microusd, cap_microusd, status
          FROM autopilot_budget_reservations WHERE reservation_id = ?`,
       [reservationId],
     );
@@ -362,7 +363,7 @@ async function reserveAutopilotBudget(
       existing?.day === day
       && Number(existing.reserved_microusd) === amountMicro
       && Number(existing.cap_microusd) === capMicro
-    ) return true;
+    ) return existing.status === 'reserved' ? 'replay_reserved' : 'replay_settled';
     throw new Error('autopilot reservation identity conflict');
   } catch (error) {
     if (/autopilot budget exhausted/i.test((error as Error).message)) return false;
@@ -386,6 +387,35 @@ async function settleAutopilotBudget(
     status,
     createdAt: new Date().toISOString(),
   });
+}
+
+interface OutstandingAutopilotReservation {
+  reservation_id: string;
+  day: string;
+  reserved_microusd: number;
+  actual_microusd: number | null;
+  status: 'reserved' | 'completed' | 'aborted' | 'failed';
+}
+
+async function outstandingAutopilotReservation(
+  env: Env,
+  runId: string,
+  revision: number,
+): Promise<(OutstandingAutopilotReservation & { docId: string }) | null> {
+  const prefix = `autopilot:${runId}:`;
+  const suffix = `:r${revision}`;
+  const row = await get<OutstandingAutopilotReservation>(
+    env.DB,
+    `SELECT reservation_id, day, reserved_microusd, actual_microusd, status
+       FROM autopilot_budget_reservations
+      WHERE reservation_id LIKE ?
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [`${prefix}%${suffix}`],
+  );
+  if (!row?.reservation_id.startsWith(prefix) || !row.reservation_id.endsWith(suffix)) return null;
+  const docId = row.reservation_id.slice(prefix.length, -suffix.length);
+  return docId ? { ...row, docId } : null;
 }
 
 async function todaysSpendMicro(env: Env, day: string): Promise<number> {
@@ -873,6 +903,42 @@ export async function handleAutopilotTick(
       break;
     }
 
+    // A prior worker may have completed provider work (and even published the
+    // document) before dying ahead of autopilot settlement/state persistence.
+    // Reconcile that stable run/revision reservation before selecting anything
+    // else, because the original document may no longer be eligible to select.
+    const outstanding = await outstandingAutopilotReservation(env, runId, revision);
+    if (outstanding) {
+      if (outstanding.status === 'reserved') {
+        await settleAutopilotBudget(
+          env,
+          outstanding.reservation_id,
+          outstanding.day,
+          Number(outstanding.reserved_microusd),
+          Number(outstanding.reserved_microusd),
+          'aborted',
+        );
+      }
+      const recoveredMicro = Number(
+        outstanding.actual_microusd ?? outstanding.reserved_microusd,
+      );
+      if (!seenDocIds.includes(outstanding.docId)) seenDocIds.push(outstanding.docId);
+      state.docsDeferred += 1;
+      state.spendMicro += recoveredMicro;
+      state.outcomes.push({
+        docId: outstanding.docId,
+        outcome: 'deferred',
+        reason: 'budget_reservation_recovered',
+        spendUsd: Math.round((recoveredMicro / MICRO) * 10_000) / 10_000,
+      });
+      state.skipReasons.budget_reservation_recovered
+        = (state.skipReasons.budget_reservation_recovered ?? 0) + 1;
+      const next = await persistRunState(env, runId, revision, state);
+      if (next == null) return;
+      revision = next;
+      continue;
+    }
+
     let doc: EligibleDoc | null;
     try {
       doc = await selectNextDoc(env, attemptCap, seenDocIds, eraStart, new Date(), knobs.legacyReplayEnabled);
@@ -1008,8 +1074,8 @@ export async function handleAutopilotTick(
 
     // Reserve the rate-card estimate BEFORE any model call. Fails closed.
     const estimateMicro = estimateDocCostMicro(trio, doc.page_count);
-    const budgetSettlementId = `autopilot:${runId}:${doc.doc_id}:${uuid()}`;
-    let reserved: boolean;
+    const budgetSettlementId = `autopilot:${runId}:${doc.doc_id}:r${revision}`;
+    let reserved: 'created' | 'replay_reserved' | 'replay_settled' | false;
     try {
       reserved = await reserveAutopilotBudget(
         env,
@@ -1029,6 +1095,35 @@ export async function handleAutopilotTick(
       await finalize('completed', 'budget_exhausted');
       finished = true;
       break;
+    }
+    if (reserved !== 'created') {
+      // Redelivery before run-state persistence must never repeat paid model
+      // calls. Close an ambiguous still-reserved receipt conservatively at the
+      // estimate; terminal receipts are already settled and replay as no-ops.
+      if (reserved === 'replay_reserved') {
+        await settleAutopilotBudget(
+          env,
+          budgetSettlementId,
+          day,
+          estimateMicro,
+          estimateMicro,
+          'aborted',
+        );
+      }
+      state.docsDeferred += 1;
+      state.outcomes.push({
+        docId: doc.doc_id,
+        outcome: 'deferred',
+        reason: 'budget_reservation_replay',
+        spendUsd: Math.round((estimateMicro / MICRO) * 10_000) / 10_000,
+        docClass,
+      });
+      state.skipReasons.budget_reservation_replay
+        = (state.skipReasons.budget_reservation_replay ?? 0) + 1;
+      const next = await persistRunState(env, runId, revision, state);
+      if (next == null) return;
+      revision = next;
+      continue;
     }
 
     // Run the SAME cascade machinery the per-minute cron uses — same leases,
@@ -1403,13 +1498,14 @@ export async function pollAutopilotPreseedBatches(
       if (spentUsd > 0) {
         const chargedMicro = Math.ceil(spentUsd * MICRO);
         const batchReservationId = `autopilot-batch:${job.id}`;
-        await reserveAutopilotBudget(
+        const batchReservation = await reserveAutopilotBudget(
           env,
           batchReservationId,
           day,
           chargedMicro,
           Number.MAX_SAFE_INTEGER,
         );
+        if (!batchReservation) throw new Error('autopilot batch budget reservation failed');
         await settleAutopilotBudget(
           env,
           batchReservationId,
