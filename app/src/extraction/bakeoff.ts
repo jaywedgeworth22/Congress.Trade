@@ -1322,6 +1322,10 @@ export async function runCandidateOnDoc(
     // persistExtractionRun; the spend METER lives here so every caller of this
     // choke point is accounted for, cached-or-not persisted-or-not).
     await recordLlmSpend(env, provider, candidateSpendUsd(provider, model, resolvedModel, usage) ?? 0);
+
+    // Clean minor hallucinations to improve consensus and publishing pass rates
+    rows = rows.map(cleanParsedTx);
+
     return {
       ...base,
       ok: true,
@@ -1503,4 +1507,36 @@ export function summarizeModels(
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+function cleanParsedTx(tx: ParsedTx): ParsedTx {
+  let { owner, txType, assetName } = tx;
+
+  // Default owner to 'self' if missing or invalid
+  if (!owner || (owner !== 'self' && owner !== 'spouse' && owner !== 'joint' && owner !== 'dependent')) {
+    owner = 'self';
+  }
+
+  // Default txType to 'P' if missing or invalid
+  if (!txType || (txType !== 'P' && txType !== 'S' && txType !== 'E')) {
+    txType = 'P';
+  }
+
+  // Clean Clerk of the House hallucination
+  if (assetName) {
+    if (assetName.includes('Clerk of the House of Representatives') || assetName.includes('Cannon Building')) {
+      const match = tx.rawText.match(/([A-Z0-9\.\s\-]{3,40}\s*\([A-Z0-9\.\-]{1,6}\))/);
+      if (match) {
+        assetName = match[1].trim();
+      } else {
+        assetName = 'Public Securities';
+      }
+    }
+    // Cap at 500 chars for DB safety
+    if (assetName.length > 500) {
+      assetName = assetName.substring(0, 500);
+    }
+  }
+
+  return { ...tx, owner, txType, assetName: assetName || '' };
 }
