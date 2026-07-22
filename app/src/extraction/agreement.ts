@@ -91,6 +91,7 @@ import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
 import { buildConsensusRows, type AmountBracket, type ConsensusResult } from './consensus.ts';
 import { uuid } from '../shared/ids.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import { getUnderlyingProvider } from '../benchmark/settings.ts';
@@ -364,19 +365,96 @@ export function duplicateLineupReason(models: BakeoffCandidate[]): string | null
   return new Set(providers).size === providers.length ? null : 'duplicate_provider_lineup';
 }
 
+/** Hard cap for source_url re-fetch when object storage is unavailable (25 MiB). */
+const SOURCE_URL_FALLBACK_MAX_BYTES = 25 * 1024 * 1024;
+
 /**
  * Load the raw doc bytes for a review filing, or a skip result explaining why we
  * can't read it. Shared by the tier executors.
+ *
+ * Prefer RAW_FILES (R2/S3). When the object is missing OR object storage is
+ * entitlement/auth-broken (shim returns null), fall back to a bounded fetch of
+ * filings.source_url so empty×empty reprocess is not permanently blocked.
  */
 export async function loadDocBytes(
   env: Env,
   docId: string,
   rawObjectKey: string | null,
 ): Promise<{ bytes: ArrayBuffer } | { skip: AgreementDocResult }> {
-  if (!rawObjectKey) return { skip: { docId, outcome: 'skipped', reason: 'no raw_object_key' } };
-  const obj = await env.RAW_FILES.get(rawObjectKey);
-  if (!obj) return { skip: { docId, outcome: 'skipped', reason: 'R2 object missing' } };
-  return { bytes: await obj.arrayBuffer() };
+  if (rawObjectKey) {
+    // Unexpected storage throws still propagate so claim release/retry runs.
+    // S3BucketShim converts NotEntitled/AccessDenied/NoSuchKey into null.
+    const obj = await env.RAW_FILES.get(rawObjectKey);
+    if (obj) return { bytes: await obj.arrayBuffer() };
+  }
+
+  // Object storage miss / soft entitlement miss → bounded source_url re-fetch.
+  const filing = await loadFilingRow(env, docId);
+  const sourceUrl = filing?.source_url?.trim() || null;
+  if (!sourceUrl) {
+    return {
+      skip: {
+        docId,
+        outcome: 'skipped',
+        reason: rawObjectKey ? 'R2 object missing and no source_url' : 'no raw_object_key and no source_url',
+      },
+    };
+  }
+
+  try {
+    const res = await trackedFetch(
+      sourceUrl,
+      {
+        redirect: 'follow',
+        headers: { 'User-Agent': 'Congress.Trade/1.0 (+https://congress.trade)' },
+        signal: AbortSignal.timeout(30_000),
+      },
+      {
+        service: 'disclosure-source',
+        operation: 'loadDocBytes.source_url_fallback',
+        dynamicTarget: 'filing-source',
+      },
+      fetch,
+      { envOverride: env },
+    );
+    if (!res.ok) {
+      return {
+        skip: {
+          docId,
+          outcome: 'skipped',
+          reason: `source_url fetch HTTP ${res.status}`,
+        },
+      };
+    }
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength === 0) {
+      return { skip: { docId, outcome: 'skipped', reason: 'source_url empty body' } };
+    }
+    if (buf.byteLength > SOURCE_URL_FALLBACK_MAX_BYTES) {
+      return {
+        skip: {
+          docId,
+          outcome: 'skipped',
+          reason: `source_url body exceeds ${SOURCE_URL_FALLBACK_MAX_BYTES} bytes`,
+        },
+      };
+    }
+    console.warn(
+      'loadDocBytes used source_url fallback:',
+      docId,
+      rawObjectKey ?? '(no key)',
+      `${buf.byteLength}b`,
+    );
+    return { bytes: buf };
+  } catch (err) {
+    return {
+      skip: {
+        docId,
+        outcome: 'skipped',
+        reason: `source_url fetch failed: ${(err as Error).message?.slice(0, 160) || 'error'}`,
+      },
+    };
+  }
 }
 
 /** Fetch the filing row backing a doc (needed by the normalizer + publish path). */
