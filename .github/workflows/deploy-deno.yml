@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths:
+      - 'deno.json'
       - 'app/src/**'
       - 'app/deno.json'
       - 'app/package.json'
