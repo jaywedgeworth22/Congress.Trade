@@ -41,5 +41,12 @@
       "deno.window",
       "deno.unstable"
     ]
-  }
+  },
+  "deploy": {
+    "runtime": {
+      "entrypoint": "src/deno/main.ts",
+      "mode": "dynamic"
+    }
+  },
+  "minimumDependencyAge": 0
 }

@@ -38,11 +38,14 @@
   },
   "nodeModulesDir": "none",
   "lock": false,
-  "unstable": ["sloppy-imports"],
+  "unstable": [
+    "sloppy-imports"
+  ],
   "deploy": {
     "runtime": {
-      "type": "dynamic",
-      "entrypoint": "app/src/deno/main.ts"
+      "entrypoint": "app/src/deno/main.ts",
+      "mode": "dynamic"
     }
-  }
+  },
+  "minimumDependencyAge": 0
 }
