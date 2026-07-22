@@ -7,6 +7,9 @@ updates, and the #160 completion, so the GitHub Issues mirror still showed CURSO
 as open `state:planned` even though all six are done. A mirror-sync commit lands this on
 `claude/board-nextwave-c2` so the next Effort Issues Sync run closes #149-#154 and re-labels
 #155/#161.
+
+- **[Congress.Trade][CODEX] #714 P2 timestamp-sort follow-up — IN PROGRESS 2026-07-22.** Preserve full timestamp precision when clamping genuinely future dates in the dashboard sorter; focused dashboard tests and backend typecheck pass. Follow-up PR pending hosted Coolify checks.
+
 ## Deployed
 - **Deno Deploy & Turso Migration + Trends Timeframe Filter (AG) — COMPLETED / MERGED 2026-07-21 via PR #714, #715, #716.**
   - **Deno Deploy & Turso Target**: Integrated Deno server entrypoints (`src/deno/main.ts`), Deno Hono routing (`src/app.ts`), and Deno queue handlers (`src/queueHandlers.ts`). Updated `package.json` deploy script to use `deployctl` targeting Deno Deploy (`congress-trade`) and Turso database. Deprecated Cloudflare Workers / D1.
