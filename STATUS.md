@@ -5,6 +5,13 @@ Last updated: 2026-07-19
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
 
+## 2026-07-22 — Usage telemetry v2 producer adoption (CODEX)
+
+- Recovery branch `codex/usage-telemetry-v2-recovery-20260722` uses a clean isolated worktree.
+- Usage-Monitor exact main `335723775ef0f8114ee1ca77b4716139018026dc` is committed live on Oracle, so the receiver gate is cleared.
+- Fresh Worker and operator events are strict v2 (`eventId`; batch `producerId`) only. Existing v1 Queue/R2/D1 rows use the shared one-way legacy drain adapter; there is no dual write.
+- Deno Zod is aligned to v4.4.3 in both root/app configs and the exact shared v2.0.0 source/tag commit is vendored with explicit provenance. Exact vendor comparison, Deno typecheck, 73 focused tests, and the full 156-file / 1,774-test suite pass. PR #752 merged as `c800550`; its deploy exposed preceding Dependabot #747's too-fresh AWS SDK range. Follow-up `codex/deno-aws-min-age-hotfix` pins the last aged SDK (`3.1091.0`) without weakening the 24-hour supply-chain gate; exact deploy/install and both root/app Deno checks pass locally.
+
 ## 2026-07-19 — Native iOS Enhancements (ANTIGRAVITY)
 
 - Designed and integrated P0/P1 native iOS features: politician portrait fallbacks, stock ticker logos fetched against dynamic origin with theme support, default executive disclosures selection, cache integrity controls, and custom light/dark/system appearance settings.

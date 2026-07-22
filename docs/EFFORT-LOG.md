@@ -8,6 +8,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 `claude/board-nextwave-c2` so the next Effort Issues Sync run closes #149-#154 and re-labels
 #155/#161.
 
+- **[Congress.Trade][CODEX] Usage telemetry v2 producer adoption (follow-up branch `codex/deno-aws-min-age-hotfix`, worktree `/Users/jay/.codex/worktrees/congress-telemetry-v2-recovery`) — MERGED / DEPLOY-GATE FOLLOW-UP 2026-07-22.** PR #752 merged as `c800550` after exact vendor comparison, Deno typecheck, 73 focused tests, full 156-file / 1,774-test suite, hosted CI/PWA/security, and Deno preview build passed. Fresh events are strict v2 only; pre-existing Queue/R2/D1 v1 rows use the one-way legacy adapter; no dual write or false key attribution. Main deploy exposed preceding Dependabot #747's AWS SDK `3.1092.0` as younger than Deno's 24-hour dependency gate. The follow-up pins aged `3.1091.0` in npm/Deno manifests without weakening the gate and aligns root/app Zod v4; exact `deno install` plus both root/app checks pass locally. Production receipt pending. Rollout: `docs/rollouts/2026-07-22-usage-telemetry-v2-producer.md`.
+
 - **[Congress.Trade][CODEX] #714 P2 timestamp-sort follow-up — IN PROGRESS 2026-07-22.** Preserve full timestamp precision when clamping genuinely future dates in the dashboard sorter; focused dashboard tests and backend typecheck pass. Follow-up PR pending hosted Coolify checks.
 
 ## Deployed

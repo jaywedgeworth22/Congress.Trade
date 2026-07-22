@@ -2,28 +2,7 @@
   "nodeModulesDir": "none",
   "minimumDependencyAge": {
     "age": "PT24H",
-    "exclude": [
-      "npm:@aws-sdk/checksums",
-      "npm:@aws-sdk/client-s3",
-      "npm:@aws-sdk/core",
-      "npm:@aws-sdk/credential-provider-env",
-      "npm:@aws-sdk/credential-provider-http",
-      "npm:@aws-sdk/credential-provider-ini",
-      "npm:@aws-sdk/credential-provider-login",
-      "npm:@aws-sdk/credential-provider-node",
-      "npm:@aws-sdk/credential-provider-process",
-      "npm:@aws-sdk/credential-provider-sso",
-      "npm:@aws-sdk/credential-provider-web-identity",
-      "npm:@aws-sdk/middleware-sdk-s3",
-      "npm:@aws-sdk/nested-clients",
-      "npm:@aws-sdk/token-providers",
-      "npm:@google/genai",
-      "npm:@smithy/core",
-      "npm:@smithy/credential-provider-imds",
-      "npm:@smithy/fetch-http-handler",
-      "npm:@smithy/node-http-handler",
-      "npm:@smithy/signature-v4"
-    ]
+    "exclude": ["npm:@google/genai"]
   },
   "unstable": [
     "sloppy-imports"
@@ -39,11 +18,11 @@
     "node-html-parser": "npm:node-html-parser@^9.0.0",
     "unpdf": "npm:unpdf@^1.6.2",
     "pdf-lib": "npm:pdf-lib@^1.17.1",
-    "zod": "npm:zod@^3.23.8",
+    "zod": "npm:zod@^4.4.3",
     "cheerio": "npm:cheerio@^1.2.0",
     "fflate": "npm:fflate@^0.8.3",
     "jsonrepair": "npm:jsonrepair@^3.15.0",
-    "@aws-sdk/client-s3": "npm:@aws-sdk/client-s3@^3.1092.0",
+    "@aws-sdk/client-s3": "npm:@aws-sdk/client-s3@3.1091.0",
     "@google/genai": "npm:@google/genai@^2.13.0",
     "@libsql/client": "npm:@libsql/client@^0.17.4",
     "@libsql/client/web": "npm:@libsql/client@^0.17.4/web",

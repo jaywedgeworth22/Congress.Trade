@@ -424,18 +424,19 @@ export type QueueMessage =
     };
 
 /**
- * Wire shape accepted by usage.jays.services. Keep this deliberately free of
- * request URLs, headers, query strings, bodies, and response payloads.
+ * Strict v2 event queued by fresh producers. The transport adds the batch-level
+ * `producerId`; v1 rows exist only in the R2/D1 legacy drain. Keep this
+ * deliberately free of request URLs, headers, query strings, bodies, and
+ * response payloads.
  */
 export interface ThirdPartyUsageTelemetryEvent {
-  idempotencyKey: string;
-  sourceApp: 'congress-trade';
+  eventId: string;
   environment: string;
   provider: string;
   service: string;
   project: 'congress-trade';
   label: string;
-  keyRef: string;
+  producerKeyRef?: string;
   billingMode: 'actual' | 'estimated' | 'manual';
   metricType: 'usage' | 'cost' | 'limit';
   quantity?: number;
