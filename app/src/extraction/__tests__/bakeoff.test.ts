@@ -557,7 +557,7 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
       'anthropic/claude-sonnet-5',
       'anthropic/claude-haiku-4.5',
       'anthropic/claude-opus-4.8',
-      'x-ai/grok-4.3',
+      'x-ai/grok-4.5',
       'deepseek/deepseek-v4-pro',
       'deepseek/deepseek-v4-flash',
       'qwen/qwen3-vl-30b-a3b-instruct',
