@@ -60,11 +60,26 @@ const awsSecretAccessKeyRes = await resolveSecret(baseEnv, 'AWS_SECRET_ACCESS_KE
 const awsS3BucketNameRes = await resolveSecret(baseEnv, 'AWS_S3_BUCKET_NAME');
 const awsRegionRes = await resolveSecret(baseEnv, 'AWS_REGION');
 
-const awsS3Endpoint = awsS3EndpointRes.value || Deno.env.get('AWS_S3_ENDPOINT');
-const awsAccessKeyId = awsAccessKeyIdRes.value || Deno.env.get('AWS_ACCESS_KEY_ID') || '';
-const awsSecretAccessKey = awsSecretAccessKeyRes.value || Deno.env.get('AWS_SECRET_ACCESS_KEY') || '';
-const awsS3BucketName = awsS3BucketNameRes.value || Deno.env.get('AWS_S3_BUCKET_NAME') || 'congress-trade';
-const awsRegion = awsRegionRes.value || Deno.env.get('AWS_REGION') || 'us-east-1';
+// Prefer AWS_* Infisical keys; fall back to CF_R2_S3_* names used in operator
+// secret stores so Deno prod can read the same R2 S3 API token without a rename.
+const awsS3Endpoint = awsS3EndpointRes.value
+  || Deno.env.get('AWS_S3_ENDPOINT')
+  || Deno.env.get('CF_R2_S3_ENDPOINT')
+  || Deno.env.get('CF_R2_S3_API')
+  || undefined;
+const awsAccessKeyId = awsAccessKeyIdRes.value
+  || Deno.env.get('AWS_ACCESS_KEY_ID')
+  || Deno.env.get('CF_R2_S3_ACCESS_KEY_ID')
+  || '';
+const awsSecretAccessKey = awsSecretAccessKeyRes.value
+  || Deno.env.get('AWS_SECRET_ACCESS_KEY')
+  || Deno.env.get('CF_R2_S3_SECRET_ACCESS_KEY')
+  || '';
+const awsS3BucketName = awsS3BucketNameRes.value
+  || Deno.env.get('AWS_S3_BUCKET_NAME')
+  || Deno.env.get('CF_R2_BUCKET_NAME')
+  || 'congress-trade';
+const awsRegion = awsRegionRes.value || Deno.env.get('AWS_REGION') || 'auto';
 
 // 4. Initialize S3 (R2) Shim
 const s3Client = new S3Client({
