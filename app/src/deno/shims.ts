@@ -1,5 +1,4 @@
-/// <reference lib="deno.unstable" />
-import { Client, InStatement } from '@libsql/client';
+import type { Client, InStatement } from 'npm:@libsql/client/web';
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
 // --- D1Database Shim ---
