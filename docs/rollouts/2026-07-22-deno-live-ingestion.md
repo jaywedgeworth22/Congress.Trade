@@ -7,6 +7,7 @@ Deno Deploy served the API and ran daily jobs, but its `Deno.cron` handler did n
 ## Files changed
 
 - `app/src/deno/main.ts` — invoke `runWatcher`, `flushIngestionOutbox`, and `flushDeliveryOutbox` from the Deno cron handler; isolate failures so daily maintenance still runs.
+- `.github/workflows/ci.yml` — install Deno on the Coolify CI runner before the app typecheck; the new runner image does not provide a global `deno` binary.
 - `clients/pwa/package.json`, `clients/pwa/package-lock.json` — override Next's transitive `sharp` dependency to the patched 0.35.x line so the hosted high-severity audit gate is clean.
 - `docs/EFFORT-LOG.md` — mirror the in-progress remediation state.
 
