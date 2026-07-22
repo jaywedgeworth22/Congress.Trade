@@ -106,7 +106,7 @@ export function supportsNativeVision(model: string): boolean {
   // paid mistral-ocr parse for models that read PDFs natively.
   if (/claude-(?:\d|sonnet|haiku|opus)/.test(m)) return true;
   if (m.includes('gemini-1.5') || m.includes('gemini-2') || m.includes('gemini-3')) return true;
-  // x-ai/grok-4.3 lists `file` input modality on the live catalog (2026-07-18).
+  // x-ai/grok-4.x lists `file` input modality on the live catalog (2026-07-18).
   if (/grok-4/.test(m)) return true;
   return false;
 }
