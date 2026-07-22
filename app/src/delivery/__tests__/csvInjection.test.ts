@@ -8,8 +8,8 @@
  * while preserving legitimate numeric formatting.
  */
 import { describe, it, expect } from 'vitest';
-import { csvCell, buildRestRouter } from '../rest.ts';
-import type { Env } from '../../shared/types.ts';
+import { csvCell, buildRestRouter } from '../rest';
+import type { Env } from '../../shared/types';
 
 describe('csvCell formula neutralization', () => {
   it('neutralizes formula-leading string cells with a single quote', () => {

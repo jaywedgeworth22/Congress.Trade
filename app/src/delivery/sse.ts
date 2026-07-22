@@ -47,15 +47,14 @@
  * per-connection D1 poll loop with one shared Durable Object fanout per feed.
  */
 
-import type { Env, Subscription, Transaction } from '../shared/types.ts';
-import { all, get, run } from '../shared/db.ts';
-import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows.ts';
-import { matchesFiltersWithContext, subscriptionOwnerEntitled } from './subscriptions.ts';
-import { constantTimeEqual } from '../auth/tokens.ts';
+import type { Env, Subscription, Transaction } from '../shared/types';
+import { all, get, run } from '../shared/db';
+import { mapSubscription, mapFeedTransaction, type SubscriptionRow, type FeedTransactionRow } from './rows';
+import { matchesFiltersWithContext, subscriptionOwnerEntitled } from './subscriptions';
+import { constantTimeEqual } from '../auth/tokens';
 import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
-import { prefixedId } from '../shared/ids.ts';
-import { rateLimit } from '../shared/rateLimit.ts';
-import { flushD1Budget } from '../shared/d1Budget.ts';
+import { prefixedId } from '../shared/ids';
+import { rateLimit } from '../shared/rateLimit';
 
 /** How often to poll D1 for new rows. */
 const POLL_INTERVAL_MS = 5_000;
@@ -302,84 +301,22 @@ export async function openSseStream(
     // source of truth; module globals are isolate-local and cannot safely gate
     // this query in a distributed Worker.
     cursor = await drainSseBacklog(env, sub, cursor, send);
-    // The HTTP handler's waitUntil settles when this Response is created, but
-    // the producer continues querying D1 in the background. Flush those rows
-    // while the stream is alive instead of leaving them in the isolate until
-    // an unrelated invocation happens to flush them.
-    await flushD1Budget(env);
 
-    // 2) Live tail via BroadcastChannel push mechanism.
-    let channel: any = null;
-    const pendingPayloads: any[] = [];
-    let isProcessing = false;
-
-    const processIncoming = async () => {
-      if (closed || isProcessing || pendingPayloads.length === 0) return;
-      isProcessing = true;
-      try {
-        while (pendingPayloads.length > 0 && !closed) {
-          const payload = pendingPayloads.shift();
-          if (payload.transaction) {
-            const minIncomingCursor = payload.transaction.cursorSeq ?? Infinity;
-            if (minIncomingCursor > cursor + 1) {
-              // Gap detected: fall back to Turso DB to catch up safely
-              cursor = await drainSseBacklog(env, sub, cursor, send);
-              await flushD1Budget(env);
-            } else {
-              // No gap: push directly from memory, bypassing the database
-              const tx = payload.transaction;
-              if (tx.cursorSeq > cursor) {
-                const ctx = payload.context || { chamber: null, sector: null, marketCapBucket: null };
-                if (matchesFiltersWithContext(tx, sub.filters, ctx)) {
-                  await send(formatTradeEvent(tx));
-                }
-                cursor = Math.max(cursor, tx.cursorSeq);
-              }
-            }
-          }
-        }
-      } catch (err) {
-        if (!isTerminalStreamError(err)) console.error('SSE processIncoming error:', err);
-      } finally {
-        isProcessing = false;
-      }
-    };
-
-    if (typeof BroadcastChannel !== 'undefined') {
-      channel = new (BroadcastChannel as any)('congress.trade.live');
-      channel.addEventListener('message', (event: any) => {
-        if (event.data?.type === 'NEW_TRANSACTION') {
-          pendingPayloads.push(event.data);
-          void processIncoming();
-        }
-      });
-    }
-
-    // Keep-alive loop + hard deadline checker
-    let lastActiveCheck = Date.now();
+    // 2) Live poll loop. Stop early enough to enqueue a resumable reconnect
+    // frame, while the outer hard deadline still guarantees termination if a
+    // D1 operation or downstream write stalls.
     while (!closed) {
       const remainingBeforeSleep = deadlineAt - Date.now();
       if (remainingBeforeSleep <= reconnectGraceMs) break;
       await sleep(Math.min(pollIntervalMs, remainingBeforeSleep - reconnectGraceMs));
       if (closed || Date.now() >= deadlineAt - reconnectGraceMs) break;
-
-      if (Date.now() - lastActiveCheck > 60_000) {
-        const activeCheck = await get<{ active: number }>(
-          env.DB,
-          'SELECT active FROM subscriptions WHERE id = ?',
-          [sub.id],
-        );
-        if (!activeCheck || !activeCheck.active) {
-          break;
-        }
-        lastActiveCheck = Date.now();
+      const before = cursor;
+      cursor = await drainSseBacklog(env, sub, cursor, send);
+      if (cursor === before) {
+        // Idle tick — heartbeat so intermediaries keep the socket open.
+        await send(`event: ping\ndata: ${Date.now()}\n\n`);
       }
-
-      // Idle tick — heartbeat so intermediaries keep the socket open.
-      await send(`event: ping\ndata: ${Date.now()}\n\n`).catch(() => { closed = true; });
     }
-
-    channel?.close();
 
     if (!closed && Date.now() < deadlineAt) {
       await send(`event: reconnect\ndata: ${JSON.stringify({ since: cursor })}\n\n`);
@@ -415,9 +352,6 @@ export async function openSseStream(
         }
       }
       await releaseSseLease(env, leaseId);
-      // releaseSseLease is also a D1 operation and the producer's final
-      // flush covers it even when the stream ended before another poll tick.
-      await flushD1Budget(env);
     }
   })();
 

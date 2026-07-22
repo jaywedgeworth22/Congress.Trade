@@ -8,10 +8,10 @@
  * row) at webhook dispatch time and at SSE connection time.
  */
 import { describe, expect, it, vi } from 'vitest';
-import type { Env } from '../../shared/types.ts';
-import { dispatchWebhook } from '../webhook.ts';
-import { openSseStream } from '../sse.ts';
-import { subscriptionOwnerEntitled } from '../subscriptions.ts';
+import type { Env } from '../../shared/types';
+import { dispatchWebhook } from '../webhook';
+import { openSseStream } from '../sse';
+import { subscriptionOwnerEntitled } from '../subscriptions';
 
 const txRow = {
   id: 'tx_1', doc_id: 'doc_1', filer_id: 'bio_1', tx_date: '2026-06-20', owner: 'self',

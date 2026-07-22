@@ -12,10 +12,10 @@
 
 import type { Context } from 'hono';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
-import type { Env, User } from '../shared/types.ts';
-import { getUserById } from './users.ts';
-import { randomToken } from './tokens.ts';
-import { resolveSecret } from '../secrets/infisical.ts';
+import type { Env, User } from '../shared/types';
+import { getUserById } from './users';
+import { randomToken } from './tokens';
+import { resolveSecret } from '../secrets/infisical';
 
 export const SESSION_COOKIE = 'ct_session';
 const SESSION_TTL_SEC = 60 * 60 * 24 * 30; // 30 days

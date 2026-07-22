@@ -20,23 +20,22 @@
  */
 
 import { createCongressEvent } from '@jaywedgeworth22/congress-trading-shared';
-import type { Env, Subscription, Transaction } from '../shared/types.ts';
-import type { DurableQueueLeaseContext } from '../deno/durableQueue.ts';
-import { all, get, run } from '../shared/db.ts';
-import { prefixedId } from '../shared/ids.ts';
-import { mapSubscription, mapTransaction, type SubscriptionRow, type TransactionRow } from './rows.ts';
-import { matchesFiltersWithContext, subscriptionOwnerEntitled, webhookTargetLengthError } from './subscriptions.ts';
-import { resolveSecret } from '../secrets/infisical.ts';
-import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget.ts';
-import { notifyAdmin } from '../alerts/notify.ts';
-import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import type { Env, Subscription, Transaction } from '../shared/types';
+import { all, get, run } from '../shared/db';
+import { prefixedId } from '../shared/ids';
+import { mapSubscription, mapTransaction, type SubscriptionRow, type TransactionRow } from './rows';
+import { matchesFiltersWithContext, subscriptionOwnerEntitled, webhookTargetLengthError } from './subscriptions';
+import { resolveSecret } from '../secrets/infisical';
+import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget';
+import { notifyAdmin } from '../alerts/notify';
+import { trackedFetch } from '../shared/thirdPartyTelemetry';
 import {
   checkTargetCircuit,
   parkDelivery,
   recordTargetFailure,
   recordTargetSuccess,
   targetKeyForUrl,
-} from './targetCircuit.ts';
+} from './targetCircuit';
 
 /** Max delivery attempts before we give up (initial try + retries). */
 const MAX_ATTEMPTS = 5;
@@ -156,9 +155,7 @@ function backoffSeconds(attempt: number): number {
 export async function dispatchWebhook(
   env: Env,
   txIdOrMsg: string | DispatchMessage,
-  lease?: DurableQueueLeaseContext,
 ): Promise<DispatchWebhookResult> {
-  await lease?.assertOwned();
   const msg: DispatchMessage =
     typeof txIdOrMsg === 'string' ? { type: 'delivery.dispatch', txId: txIdOrMsg } : txIdOrMsg;
 
@@ -199,26 +196,10 @@ export async function dispatchWebhook(
     marketCapBucket: refRow?.market_cap_bucket ?? null,
   };
 
-  // Broadcast the transaction to any live SSE streams exactly once (on the
-  // initial fanout message, not on paginated continuations or targeted retries).
-  if (!msg.subscriptionId && !msg.afterSubscriptionId && typeof BroadcastChannel !== 'undefined') {
-    try {
-      const channel = new (BroadcastChannel as any)('congress.trade.live');
-      channel.postMessage({
-        type: 'NEW_TRANSACTION',
-        transaction: tx,
-        context: ctx,
-      });
-      channel.close();
-    } catch (err) {
-      console.warn('dispatchWebhook: broadcast failed', (err as Error).message);
-    }
-  }
-
   const visit = async (sub: Subscription): Promise<void> => {
     if (!sub.targetUrl) return;
     if (!matchesFiltersWithContext(tx, sub.filters, ctx)) return;
-    await deliverToSubscription(env, sub, tx, lease);
+    await deliverToSubscription(env, sub, tx);
   };
 
   // Legacy targeted messages remain bounded to one subscription. Normal fanout
@@ -262,7 +243,6 @@ export async function dispatchWebhook(
   // claims make those replays safe, while the tail can never be skipped.
   if (page?.hasMore && page.lastScannedId) {
     try {
-      await lease?.assertOwned();
       await env.DELIVERY_QUEUE.send({
         type: 'delivery.dispatch',
         txId: msg.txId,
@@ -288,9 +268,7 @@ async function deliverToSubscription(
   env: Env,
   sub: Subscription,
   tx: Transaction,
-  lease?: DurableQueueLeaseContext,
 ): Promise<void> {
-  await lease?.assertOwned();
   // A queued fanout can outlive a subscriber opt-out. Re-check immediately
   // before claiming/sending so a message selected moments earlier cannot POST
   // after the durable subscription has been disabled or changed to SSE.
@@ -310,21 +288,6 @@ async function deliverToSubscription(
   if (!(await subscriptionOwnerEntitled(env, sub.clientId))) {
     await markDeliverySkipped(env, sub.id, tx.id);
     return;
-  }
-
-  // GOVERNOR 3: per-target circuit breaker. A target that keeps failing (peer
-  // outage, dead endpoint, auth rot) opens its circuit; while open — or past
-  // its daily failed-attempt cap — this delivery PARKS durably and returns
-  // WITHOUT throwing, so the queue never retry-storms the target. Parked rows
-  // are re-dispatched by the scheduled flushParkedDeliveries once the circuit
-  // probe succeeds. No delivery attempt is consumed by parking.
-  const targetKey = targetKeyForUrl(sub.targetUrl);
-  if (targetKey) {
-    const gate = await checkTargetCircuit(env, targetKey);
-    if (!gate.allowed) {
-      await parkDelivery(env, sub.id, tx.id, (gate as any).reason);
-      return;
-    }
   }
 
   const claim = await claimDelivery(env, sub.id, tx.id);
@@ -363,13 +326,10 @@ async function deliverToSubscription(
     }, WEBHOOK_FETCH_TIMEOUT_MS);
     let res: Response | undefined;
     try {
-      await lease?.assertOwned();
       res = await trackedFetch(sub.targetUrl as string, {
         method: 'POST',
         redirect: 'manual',
-        signal: lease
-          ? AbortSignal.any([controller.signal, lease.signal])
-          : controller.signal,
+        signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
           'X-Signature': `sha256=${signature}`,
@@ -384,9 +344,6 @@ async function deliverToSubscription(
         dynamicTarget: 'subscriber-webhook',
       });
     } catch (err) {
-      if (lease?.signal.aborted) {
-        throw lease.signal.reason ?? new Error('durable queue lease lost');
-      }
       throw new Error(timedOut ? `timeout after ${WEBHOOK_FETCH_TIMEOUT_MS}ms` : ((err as Error).message ?? 'fetch failed'));
     } finally {
       clearTimeout(timeout);
@@ -396,17 +353,9 @@ async function deliverToSubscription(
       await res?.body?.cancel().catch(() => {});
     }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    await lease?.assertOwned();
     await recordDelivery(env, claim.id, claim.token, true, attempt, null);
-    // 2xx auto-closes the target circuit (probe success releases the parked backlog).
-    if (targetKey) await recordTargetSuccess(env, targetKey);
   } catch (err) {
-    if (lease?.signal.aborted) {
-      throw lease.signal.reason ?? new Error('durable queue lease lost');
-    }
     const lastError = err instanceof Error ? err.message : String(err);
-    // Count the failed attempt against the target's circuit + daily cap.
-    if (targetKey) await recordTargetFailure(env, targetKey, lastError);
     try {
       await recordDelivery(env, claim.id, claim.token, false, attempt, lastError);
     } catch (recordErr) {
