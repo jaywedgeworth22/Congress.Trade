@@ -21,6 +21,23 @@ function scriptBlocks(html: string): string[] {
   return blocks;
 }
 
+function loadSortVal() {
+  const match = DASHBOARD_HTML.match(/function sortVal\(r, key\) \{[\s\S]*?\n\}/);
+  if (!match) throw new Error('sortVal was not found in DASHBOARD_HTML');
+  return new Function(
+    'publishedRaw',
+    'lagDays',
+    'NUMERIC_SORT',
+    'sortDir',
+    match[0] + '\nreturn sortVal;',
+  )(
+    () => '',
+    () => null,
+    {},
+    1,
+  ) as (row: Record<string, string>, key: string) => string;
+}
+
 /** Extracts just the named top-level functions (each matched independently to
  *  its own closing brace) rather than a wide template span, so unrelated
  *  top-level statements between them are never executed. */
@@ -85,6 +102,16 @@ describe('DASHBOARD_HTML', () => {
       // new Function compiles (parses) the body without running it — DOM refs OK.
       expect(() => new Function(js)).not.toThrow();
     }
+  });
+
+  it('preserves same-day timestamp precision while clamping future dates', () => {
+    const sortVal = loadSortVal();
+    const today = new Date().toISOString().slice(0, 10);
+    const sameDay = `${today}T15:00:00Z`;
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+    expect(sortVal({ imported: sameDay }, 'imported')).toBe(sameDay.toLowerCase());
+    expect(sortVal({ imported: tomorrow }, 'imported')).toBe(`${today}${tomorrow.slice(10)}`.toLowerCase());
   });
 
   it('keeps every primary view as a direct child of main', () => {
