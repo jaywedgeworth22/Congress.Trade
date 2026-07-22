@@ -158,7 +158,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   }
   input::placeholder { color: var(--text-dim); }
   .grid-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 12px; margin-bottom: 20px; }
-  .card { text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 14px 16px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
+  .card { position: relative; text-align: center; background: color-mix(in srgb, var(--panel) 75%, transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-top-color: color-mix(in srgb, var(--border) 100%, transparent); border-radius: var(--radius); padding: 14px 16px; box-shadow: inset 0 1px 0 hsla(0, 0%, 100%, 0.1), 0 8px 32px rgba(0, 0, 0, 0.2); }
   .card .k { color: var(--text-dim); font-size: 12px; }
   .card .v { font-size: 28px; font-weight: 700; margin-top: 4px; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; line-height: 1.2; }
   .card .v small { font-size: 12px; font-weight: 500; color: var(--text-dim); }
@@ -6477,7 +6477,7 @@ function polCell(n) { n = Number(n || 0); return n + ' <span class="u-full">poli
 	}
 	function kpiInfo(k, v, tip, onClickStr, extraHtml) {
 	  var attr = onClickStr ? ' class="card clickable" onclick="' + esc(onClickStr) + '"' : ' class="card"';
-	  return '<div' + attr + '><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + (extraHtml || '') + '</div></div>';
+	  return '<div' + attr + '><div class="k">' + infoLabel(k, tip) + '</div><div class="v">' + v + '</div>' + (extraHtml || '') + '</div>';
 	}
 function setTickerSort(val) {
   var elSort = el('trTickerSort');
@@ -6499,7 +6499,7 @@ function sparklineHtml(series, metric) {
   } else {
     max = 1; min = 0;
   }
-  return '<div style="display:flex; height:16px; align-items:flex-end; gap:1px; margin-top:12px; opacity:0.8; width:100%">' +
+  return '<div style="position:absolute; bottom:6px; left:12px; right:12px; height:12px; display:flex; align-items:flex-end; gap:1px; opacity:0.8; pointer-events:none">' +
     vals.map(function(v, i) {
       var h, color;
       if (metric === 'netflow') {
