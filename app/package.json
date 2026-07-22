@@ -6,8 +6,8 @@
   "main": "src/deno/main.ts",
   "description": "Cloudflare Workers service ingesting US congressional STOCK Act stock-trade disclosures (House + Senate) and pushing structured trade events to clients.",
   "scripts": {
-    "dev": "deno run --allow-net --allow-env --allow-read src/deno/main.ts",
-    "deploy": "export PATH=\"$HOME/.deno/bin:$PATH\"; deployctl deploy --project=congress-trade --entrypoint=src/deno/main.ts --root=.",
+    "start": "deno run --allow-net --allow-env --allow-read src/deno/main.ts",
+    "deploy": "deno run -A jsr:@deno/deployctl deploy --prod --project=congress-trade --entrypoint=src/deno/main.ts --root=.",
     "typecheck": "deno check src/deno/main.ts",
     "test": "vitest run",
     "lint": "deno lint",
