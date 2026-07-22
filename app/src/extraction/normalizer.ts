@@ -966,8 +966,15 @@ async function routeToReview(
 function reviewReason(flagged: FlaggedTx[], minConfidence: number): string {
   const reasons = new Set<string>();
   for (const f of flagged) for (const flag of f.flags) reasons.add(flag);
-  if (flagged.length === 0) reasons.add('no_transactions_extracted');
-  if (minConfidence < CONFIDENCE_THRESHOLD) reasons.add('low_confidence');
+  // Empty extract is total failure, not a soft "low confidence" park alone.
+  // Keep legacy token for dashboard filters; lead with extract_empty_failure.
+  if (flagged.length === 0) {
+    reasons.add('extract_empty_failure');
+    reasons.add('no_transactions_extracted');
+  }
+  if (flagged.length > 0 && minConfidence < CONFIDENCE_THRESHOLD) {
+    reasons.add('low_confidence');
+  }
   return Array.from(reasons).join(',') || 'needs_review';
 }
 

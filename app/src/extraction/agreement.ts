@@ -19,6 +19,12 @@
  *           dropped, and no hard-fail flag remains. Otherwise the doc stays in
  *           human review, flagged high-priority.
  *
+ * EMPTY×EMPTY is NOT disagreement and NOT soft review: when every successful
+ * agreement read returns zero rows, that is total extraction failure
+ * (`extract_empty_failure`). We mark the filing `error`, keep review
+ * unresolved with reason `extract_empty_failure`, and do NOT escalate tiers
+ * (escalating burns budget on a dead extract).
+ *
  * When a doc trips cheap complexity signals (page_count / raw_bytes over their
  * thresholds) the cascade starts directly at tier 2 (AGREEMENT_BIG_DOC_START_TIER2,
  * default on). Attempts are capped by AGREEMENT_MAX_ATTEMPTS (default 3).
@@ -257,6 +263,17 @@ function materialRowFingerprint(tx: ParsedTx, normalizeText: boolean): string | 
  * which has no live AGREEMENT_TEXT_NORMALIZATION env to resolve; every call
  * site WITHIN this file resolves the live flag and passes it explicitly.
  */
+/**
+ * True when every successful read is empty. Failed reads are NOT empty
+ * extracts — those stay `model_read_failed` / retry. Empty×empty is total
+ * extraction failure (do not escalate; do not soft-park as cascade_unresolved).
+ */
+export function allSuccessfulReadsEmpty(reads: CandidateDocResult[]): boolean {
+  if (reads.length === 0) return false;
+  if (reads.some((r) => !r.ok)) return false;
+  return reads.every((r) => r.rows.length === 0);
+}
+
 export function sameRowSet(
   a: CandidateDocResult,
   b: CandidateDocResult,
@@ -799,6 +816,26 @@ export async function processAgreementDoc(
     return { docId, outcome: 'skipped', tier: audit?.tier, reason: 'model_read_failed' };
   }
 
+  // Empty×empty: every model "succeeded" with zero rows — total extract failure.
+  // Must not look like material disagreement (which escalates) or soft cascade
+  // park. Handled by handleAgreementCheck / leaveInReview via hard-fail flags.
+  const successfulReads = rC ? [rA, rB, rC] : [rA, rB];
+  if (allSuccessfulReadsEmpty(successfulReads)) {
+    return {
+      docId,
+      outcome: 'agree_but_hardfail',
+      tier: audit?.tier ?? (models.c ? 2 : 1),
+      rowCount: 0,
+      flags: ['extract_empty_failure'],
+      reason: 'extract_empty_failure',
+      rows: {
+        [label(models.a)]: 0,
+        [label(models.b)]: 0,
+        ...(models.c ? { [label(models.c)]: 0 } : {}),
+      },
+    };
+  }
+
   const agree = sameRowSet(rA, rB, normalizeText)
     && (!rC || (sameRowSet(rA, rC, normalizeText) && sameRowSet(rB, rC, normalizeText)));
   if (!agree) {
@@ -1005,6 +1042,108 @@ function voteSummary(consensus: ConsensusResult, totalModels: number): unknown {
 }
 
 /**
+ * Total extraction failure: all agreement reads returned zero rows.
+ * Loud, retryable, not a soft "disagreement" park:
+ *   - filings.ingest_status = 'error'
+ *   - review reason = extract_empty_failure (unresolved)
+ *   - decision action = extract_empty_failure
+ */
+export async function markExtractEmptyFailure(
+  env: Env,
+  docId: string,
+  tier: number,
+  models: Record<string, string>,
+  claimToken?: string,
+  detail?: string,
+): Promise<AgreementDocResult> {
+  const nowIso = new Date().toISOString();
+  const errMsg = detail
+    ?? 'extract_empty_failure: all agreement reads returned zero transactions';
+  const payload = {
+    resolvedBy: 'agreement-cascade',
+    priority: 'critical',
+    tier,
+    models,
+    detail: errMsg,
+    transactionCount: 0,
+    transactions: [] as unknown[],
+  };
+
+  let existingRevision: number | null = null;
+  try {
+    const row = await get<{ review_revision: number }>(
+      env.DB,
+      'SELECT review_revision FROM review_queue WHERE doc_id = ?',
+      [docId],
+    );
+    existingRevision = row?.review_revision ?? null;
+  } catch (err) {
+    console.warn('markExtractEmptyFailure failed to read review_revision:', docId, (err as Error).message);
+  }
+
+  try {
+    if (existingRevision !== null) {
+      const reviewSql = claimToken
+        ? `UPDATE review_queue
+              SET reason = ?,
+                  payload = ?,
+                  resolved = 0,
+                  agreement_claim_token = NULL,
+                  agreement_claimed_at = NULL,
+                  review_revision = review_revision + 1
+            WHERE doc_id = ? AND agreement_claim_token = ? AND review_revision = ?`
+        : `UPDATE review_queue
+              SET reason = ?,
+                  payload = ?,
+                  resolved = 0,
+                  agreement_claim_token = NULL,
+                  agreement_claimed_at = NULL,
+                  review_revision = review_revision + 1
+            WHERE doc_id = ? AND review_revision = ?`;
+      const reviewParams = claimToken
+        ? ['extract_empty_failure', JSON.stringify(payload), docId, claimToken, existingRevision]
+        : ['extract_empty_failure', JSON.stringify(payload), docId, existingRevision];
+      await run(env.DB, reviewSql, reviewParams);
+    } else {
+      await run(
+        env.DB,
+        `INSERT OR IGNORE INTO review_queue (doc_id, reason, payload, created_at, resolved)
+         VALUES (?, ?, ?, ?, 0)`,
+        [docId, 'extract_empty_failure', JSON.stringify(payload), nowIso],
+      );
+    }
+
+    await run(
+      env.DB,
+      `UPDATE filings
+          SET ingest_status = 'error',
+              error = ?
+        WHERE doc_id = ? AND ingest_status <> 'persisted'`,
+      [errMsg.slice(0, 500), docId],
+    );
+
+    await recordIngestionDecision(env.DB, {
+      docId,
+      action: 'extract_empty_failure',
+      source: 'agreement',
+      reason: 'extract_empty_failure',
+      payload,
+    });
+  } catch (err) {
+    console.error('markExtractEmptyFailure failed:', docId, (err as Error).message);
+  }
+
+  return {
+    docId,
+    outcome: 'agree_but_hardfail',
+    tier,
+    rowCount: 0,
+    flags: ['extract_empty_failure'],
+    reason: 'extract_empty_failure',
+  };
+}
+
+/**
  * Leave a doc in human review, flagged high-priority, when the cascade could not
  * resolve it. Records the distinguishing ingestion_decisions audit row and
  * annotates the review_queue reason/payload with the cascade context.
@@ -1161,6 +1300,21 @@ export async function processAgreementCascadeTier2(
   // never count an error as "saw nothing" in a false 2/3 publish quorum.
   if (!rA.ok || !rB.ok || !rC.ok) {
     return { docId, outcome: 'skipped', tier: 3, reason: 'model_read_failed' };
+  }
+
+  // Empty×empty×empty: total extract failure (not majority disagreement).
+  if (allSuccessfulReadsEmpty(reads)) {
+    if (dryRun) {
+      return {
+        docId,
+        outcome: 'agree_but_hardfail',
+        tier: 2,
+        rowCount: 0,
+        flags: ['extract_empty_failure'],
+        reason: 'extract_empty_failure',
+      };
+    }
+    return markExtractEmptyFailure(env, docId, 2, labels, claimToken);
   }
 
   // Tier 3 — majority resolve over the three reads (no extra model calls).
@@ -1712,6 +1866,12 @@ export async function handleAgreementCheck(
       );
       if (res.outcome === 'review_flagged') {
         await finishTerminalClaim(env, docId, claimed.token, max);
+      } else if (
+        res.outcome === 'agree_but_hardfail'
+        && (res.flags ?? []).includes('extract_empty_failure')
+      ) {
+        // markExtractEmptyFailure already applied inside tier-2 empty path.
+        await finishTerminalClaim(env, docId, claimed.token, max);
       } else if (res.outcome === 'skipped') {
         if (res.reason === 'review_resolved_or_claim_lost') {
           await releaseAgreementClaim(env, docId, claimed.token);
@@ -1747,10 +1907,19 @@ export async function handleAgreementCheck(
       return { ...res, reason: 'attempt_cap_reached' };
     }
     if (res.outcome === 'agree_but_hardfail') {
-      await leaveInReviewHighPriority(
-        env, docId, 1, modelLabels(tier1Models), null,
-        `hard_fail:${(res.flags ?? []).join(',')}`, claimed.token,
-      );
+      const emptyFail = (res.flags ?? []).includes('extract_empty_failure');
+      if (emptyFail) {
+        // Do not escalate empty×empty and do not soft-label as cascade_unresolved.
+        await markExtractEmptyFailure(
+          env, docId, 1, modelLabels(tier1Models), claimed.token,
+          `hard_fail:${(res.flags ?? []).join(',')}`,
+        );
+      } else {
+        await leaveInReviewHighPriority(
+          env, docId, 1, modelLabels(tier1Models), null,
+          `hard_fail:${(res.flags ?? []).join(',')}`, claimed.token,
+        );
+      }
       await finishTerminalClaim(env, docId, claimed.token, max);
     } else if (res.outcome === 'skipped') {
       if (res.reason === 'review_resolved_or_claim_lost') {
