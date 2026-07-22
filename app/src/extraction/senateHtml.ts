@@ -14,14 +14,24 @@
  * "Cap Gains > $200?" column. We therefore drive parsing from the header row
  * (mapping a column label -> index) rather than fixed positions, and fall back
  * to a positional heuristic when no recognizable header exists.
+ *
+ * Paper PTRs (`/search/view/paper/<uuid>/`) are an HTML viewer whose real content
+ * is multi-page scans on efd-media-public.senate.gov. When the table path yields
+ * zero rows but paper media images are present, we OCR those public page images
+ * via OpenRouter (see senatePaperMedia.ts).
  */
 
 import { parse } from 'node-html-parser';
 import type { HTMLElement } from 'node-html-parser';
 
 import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types.ts';
-import type { Filing, Owner, ParsedTx, TxType } from '../shared/types.ts';
+import type { Env, Filing, Owner, ParsedTx, TxType } from '../shared/types.ts';
 import { parseAmountRange } from './amounts.ts';
+import {
+  extractFromSenatePaperMedia,
+  extractSenatePaperMediaUrls,
+  isSenatePaperViewerHtml,
+} from './senatePaperMedia.ts';
 
 /** Confidence assigned to a clean electronic-table parse. */
 const CLEAN_CONFIDENCE = 0.97;
@@ -30,6 +40,8 @@ const FALLBACK_CONFIDENCE = 0.8;
 
 export class SenateHtmlExtractor implements Extractor {
   readonly name = 'senateHtml';
+
+  constructor(private readonly env?: Env) {}
 
   /** Handles Senate eFD HTML documents. */
   canHandle(f: Filing): boolean {
@@ -44,22 +56,45 @@ export class SenateHtmlExtractor implements Extractor {
 
     const root = parse(html);
     const table = pickTransactionTable(root);
-    if (!table) {
+    if (table) {
+      const { rows, usedHeader } = parseTable(table);
+      if (rows.length > 0) {
+        const baseConfidence = usedHeader ? CLEAN_CONFIDENCE : FALLBACK_CONFIDENCE;
+        return {
+          transactions: rows,
+          confidence: baseConfidence,
+          raw: table.toString(),
+          extractor: this.name,
+        };
+      }
+    }
+
+    // Paper viewer shell: real content is public page-scan images.
+    const mediaUrls = extractSenatePaperMediaUrls(html);
+    if (this.env && mediaUrls.length > 0 && isSenatePaperViewerHtml(html)) {
+      const paper = await extractFromSenatePaperMedia(this.env, mediaUrls, {
+        signal: input.signal,
+      });
       return {
-        transactions: [],
-        confidence: 0.3,
-        raw: html,
-        extractor: this.name,
+        transactions: paper.transactions,
+        confidence: paper.confidence,
+        raw: `paper-media:${mediaUrls.length}`,
+        extractor: 'senatePaperMedia',
+        modelVersion: paper.modelVersion || null,
+        usage: paper.usage
+          ? {
+              promptTokens: paper.usage.promptTokens,
+              completionTokens: paper.usage.completionTokens,
+              costUsd: paper.usage.costUsd,
+            }
+          : undefined,
       };
     }
 
-    const { rows, usedHeader } = parseTable(table);
-    const baseConfidence = usedHeader ? CLEAN_CONFIDENCE : FALLBACK_CONFIDENCE;
-
     return {
-      transactions: rows,
-      confidence: rows.length > 0 ? baseConfidence : 0.3,
-      raw: table.toString(),
+      transactions: [],
+      confidence: 0.3,
+      raw: html,
       extractor: this.name,
     };
   }
