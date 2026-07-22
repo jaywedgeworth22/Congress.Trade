@@ -40,6 +40,7 @@ jobs:
           client-id: ${{ secrets.INFISICAL_CT_CLIENT_ID }}
           client-secret: ${{ secrets.INFISICAL_CT_CLIENT_SECRET }}
           env-slug: prod
+          project-slug: congress-trade-6-erm
 
       - name: Install Dependencies
         working-directory: ./app
