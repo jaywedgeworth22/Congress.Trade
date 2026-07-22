@@ -10,6 +10,7 @@
     "deploy": "deno deploy --app=congress-trade --prod",
     "typecheck": "deno check src/deno/main.ts",
     "test": "vitest run",
+    "coverage": "vitest run --coverage",
     "lint": "deno lint",
     "migrate": "echo 'Run D1 migrations via Turso CLI instead'",
     "deploy:full": "bash scripts/ship.sh",

@@ -15,7 +15,12 @@ export type IngestionDecisionAction =
   /** Autopilot auto-resolved a doc_class='empty' review item (no transactions). */
   | 'auto_resolved_empty'
   /** Autopilot quarantined a doc_class='corrupt' review item (cascade suppressed). */
-  | 'doc_quarantined';
+  | 'doc_quarantined'
+  /**
+   * Agreement/pipeline total extract failure: successful model reads returned
+   * zero rows (empty×empty). Loud hard-fail — not soft cascade_unresolved.
+   */
+  | 'extract_empty_failure';
 
 export type IngestionDecisionSource = 'pipeline' | 'admin' | 'agreement';
 
