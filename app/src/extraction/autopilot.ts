@@ -332,17 +332,42 @@ export async function markAutopilotRunHalted(
 
 async function reserveAutopilotBudget(
   env: Env,
+  reservationId: string,
   day: string,
   amountMicro: number,
   capMicro: number,
 ): Promise<boolean> {
-  await run(env.DB, 'INSERT OR IGNORE INTO autopilot_budget (day, spend_microusd) VALUES (?, 0)', [day]);
-  const result = await run(
-    env.DB,
-    'UPDATE autopilot_budget SET spend_microusd = spend_microusd + ? WHERE day = ? AND spend_microusd + ? <= ?',
-    [amountMicro, day, amountMicro, capMicro],
-  );
-  return (result.meta?.changes ?? 0) > 0;
+  const createdAt = new Date().toISOString();
+  try {
+    const result = await run(
+      env.DB,
+      `INSERT OR IGNORE INTO autopilot_budget_reservations
+         (reservation_id, day, reserved_microusd, actual_microusd,
+          cap_microusd, status, created_at, settled_at)
+       VALUES (?, ?, ?, NULL, ?, 'reserved', ?, NULL)`,
+      [reservationId, day, amountMicro, capMicro, createdAt],
+    );
+    if ((result.meta?.changes ?? 0) > 0) return true;
+    const existing = await get<{
+      day: string;
+      reserved_microusd: number;
+      cap_microusd: number;
+    }>(
+      env.DB,
+      `SELECT day, reserved_microusd, cap_microusd
+         FROM autopilot_budget_reservations WHERE reservation_id = ?`,
+      [reservationId],
+    );
+    if (
+      existing?.day === day
+      && Number(existing.reserved_microusd) === amountMicro
+      && Number(existing.cap_microusd) === capMicro
+    ) return true;
+    throw new Error('autopilot reservation identity conflict');
+  } catch (error) {
+    if (/autopilot budget exhausted/i.test((error as Error).message)) return false;
+    throw error;
+  }
 }
 
 async function settleAutopilotBudget(
@@ -983,9 +1008,16 @@ export async function handleAutopilotTick(
 
     // Reserve the rate-card estimate BEFORE any model call. Fails closed.
     const estimateMicro = estimateDocCostMicro(trio, doc.page_count);
+    const budgetSettlementId = `autopilot:${runId}:${doc.doc_id}:${uuid()}`;
     let reserved: boolean;
     try {
-      reserved = await reserveAutopilotBudget(env, day, estimateMicro, knobs.dailyBudgetMicroUsd);
+      reserved = await reserveAutopilotBudget(
+        env,
+        budgetSettlementId,
+        day,
+        estimateMicro,
+        knobs.dailyBudgetMicroUsd,
+      );
     } catch (err) {
       deps.signal?.throwIfAborted();
       console.warn('autopilot: budget reserve failed (failing closed):', (err as Error).message);
@@ -1003,7 +1035,6 @@ export async function handleAutopilotTick(
     // attempt caps, LLM read budget, and publish safety. One attempt per
     // model per doc within this run; failures are recorded, never retried.
     const docStartIso = new Date().toISOString();
-    const budgetSettlementId = `autopilot:${runId}:${doc.doc_id}:${uuid()}`;
     let res: AgreementDocResult | null = null;
     let thrown: string | null = null;
     let abortError: unknown = null;
@@ -1370,13 +1401,21 @@ export async function pollAutopilotPreseedBatches(
         }
       }
       if (spentUsd > 0) {
-        await run(env.DB, 'INSERT OR IGNORE INTO autopilot_budget (day, spend_microusd) VALUES (?, 0)', [day]);
+        const chargedMicro = Math.ceil(spentUsd * MICRO);
+        const batchReservationId = `autopilot-batch:${job.id}`;
+        await reserveAutopilotBudget(
+          env,
+          batchReservationId,
+          day,
+          chargedMicro,
+          Number.MAX_SAFE_INTEGER,
+        );
         await settleAutopilotBudget(
           env,
-          `autopilot-batch:${job.id}`,
+          batchReservationId,
           day,
-          0,
-          Math.ceil(spentUsd * MICRO),
+          chargedMicro,
+          chargedMicro,
           'completed',
         );
       }

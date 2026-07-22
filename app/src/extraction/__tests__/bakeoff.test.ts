@@ -22,6 +22,7 @@ import {
   type CandidateDocResult,
 } from '../bakeoff.ts';
 import { EXECUTIVE_SYSTEM_PROMPT, arrayBufferToBase64 } from '../visionLlm.ts';
+import { LlmSpendSettlementError } from '../../shared/llmSpend.ts';
 
 /** A minimal, genuinely-parseable PDF for tests that reach Anthropic's
  *  pre-validation (validatePdfForAnthropic loads it with pdf-lib). Because
@@ -353,6 +354,33 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     expect(result).toMatchObject({ ok: false, error: 'lease lost after provider response' });
     expect(meteredUsd).toHaveLength(1);
     expect(meteredUsd[0]).toBeGreaterThan(0);
+  });
+
+  it('rethrows paid-response settlement failure so direct callers cannot continue to another model', async () => {
+    const fetchMock = vi.fn(async () => Response.json({
+      id: 'resp_unsettled',
+      status: 'completed',
+      output_text: okContent,
+      usage: { input_tokens: 500, output_tokens: 40 },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const db = {
+      prepare() {
+        return {
+          bind() { return this; },
+          async first() { return null; },
+          async run() { throw new Error('Turso unavailable'); },
+        };
+      },
+    } as unknown as D1Database;
+
+    await expect(runCandidateOnDoc(
+      { OPENAI_API_KEY: 'sk-openai-test', DB: db } as unknown as Env,
+      candidate,
+      'doc-unsettled',
+      bytes,
+    )).rejects.toBeInstanceOf(LlmSpendSettlementError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('leaves usage undefined when the response omits the usage field (e.g. older models)', async () => {
