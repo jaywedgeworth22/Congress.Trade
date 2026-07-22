@@ -1167,9 +1167,9 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
   // Public speed-vs-providers scoreboard. Serves ONLY the aggregate
   // publicSummary from the disclosure-latency race monitor (no doc ids, filer
   // names, or provider payloads — pinned by the admin summary test), with
-  // fields renamed to a stable public contract. Positive lead seconds mean
-  // Congress.Trade surfaced the disclosure first. KV-cached: the underlying
-  // summary scans up to 5000 candidate rows per compute.
+  // fields renamed to a stable public contract. Timing is explicitly a
+  // matched-overlap measurement; provider-observed and unmatched rows stay in
+  // the public denominator so a Congress.Trade miss cannot become a speed win.
   r.get('/latency-summary', async (c) => {
     const data = await cached(c.env, 'analytics:latency-summary', 900, async () => {
       const { publicSummary } = await getDisclosureLatencySummary(c.env);
@@ -1179,6 +1179,9 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           racedDisclosures: publicSummary.totals.candidates,
           matched: publicSummary.totals.matched,
           pending: publicSummary.totals.pending,
+          providerObserved: publicSummary.totals.providerObserved,
+          maturedProviderObserved: publicSummary.totals.maturedProviderObserved,
+          unmatchedProvider: publicSummary.totals.unmatchedProvider,
           comparableProviders: publicSummary.totals.comparableProviders,
         },
         providers: publicSummary.providers.map((p) => ({
@@ -1186,7 +1189,21 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
           label: p.label,
           candidates: p.candidates,
           matched: p.matched,
-          coveragePct: p.coveragePct,
+          providerObserved: p.providerObserved,
+          maturedProviderObserved: p.maturedProviderObserved,
+          unmatchedProvider: p.unmatchedProvider,
+          pendingProvider: p.pendingProvider,
+          maturedCandidates: p.maturedCandidates,
+          maturedMatched: p.maturedMatched,
+          ctCoveragePct: p.ctCoveragePct,
+          providerCoveragePct: p.providerCoveragePct,
+          // Backward-compatible alias; unlike the former field this is CT's
+          // coverage of the mature provider-observed cohort, not matched/CT
+          // candidates.
+          coveragePct: p.ctCoveragePct,
+          overlapPct: p.overlapPct,
+          comparisonStatus: p.comparisonStatus,
+          comparisonBasis: p.comparisonBasis,
           usFirstCount: p.ctAheadMonitorCount,
           providerFirstCount: p.providerAheadMonitorCount,
           tieCount: p.tieMonitorCount,
