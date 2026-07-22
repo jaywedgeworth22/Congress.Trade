@@ -18,6 +18,7 @@ import {
   RELIABILITY_SCHEMA_STATEMENTS,
   RETENTION_INDEX_SCHEMA_STATEMENTS,
   RESOURCE_GOVERNOR_SCHEMA_STATEMENTS,
+  SPEND_SETTLEMENT_SCHEMA_STATEMENTS,
   REVIEW_AUTONOMY_SCHEMA_STATEMENTS,
   STRIPE_EVENT_SCHEMA_STATEMENTS,
   USAGE_TELEMETRY_PROBE_LEASE_SCHEMA_STATEMENTS,
@@ -203,7 +204,16 @@ describe('admin migration bootstrap', () => {
       ...DOC_CLASS_SCHEMA_STATEMENTS,
       ...RESOURCE_GOVERNOR_SCHEMA_STATEMENTS,
       ...DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS,
+      ...SPEND_SETTLEMENT_SCHEMA_STATEMENTS,
     ]);
+  });
+
+  it('includes immutable LLM and autopilot spend settlements (0053)', () => {
+    const sql = SPEND_SETTLEMENT_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('llm_spend_settlements');
+    expect(sql).toContain('provider_response_id');
+    expect(sql).toContain('autopilot_budget_settlements');
+    expect(sql).toContain('trg_autopilot_budget_settlement');
   });
 
   it('includes the Turso-backed Deno runtime queue schema (0052)', () => {

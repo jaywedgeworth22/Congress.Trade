@@ -1,4 +1,10 @@
 import type { Env, QueueMessage } from "../shared/types.ts";
+import {
+  AUTOPILOT_BUDGET_SETTLEMENT_WRITER,
+  LLM_SPEND_SETTLEMENT_WRITER,
+  createAutopilotBudgetSettlementWriter,
+  createLlmSpendSettlementWriter,
+} from "../shared/llmSpend.ts";
 
 export const DURABLE_QUEUE_MAX_BATCH_SIZE = 100;
 export const DURABLE_QUEUE_DEFAULT_LIMIT = 25;
@@ -635,6 +641,15 @@ function leaseGuardedEnv(
 
   return new Proxy(env, {
     get(target, property, receiver) {
+      // A stale worker is still responsible for accounting for a provider
+      // response that was already billed. Expose only immutable/idempotent
+      // settlement writers over the original DB; never expose the unfenced DB.
+      if (property === LLM_SPEND_SETTLEMENT_WRITER) {
+        return createLlmSpendSettlementWriter(target.DB);
+      }
+      if (property === AUTOPILOT_BUDGET_SETTLEMENT_WRITER) {
+        return createAutopilotBudgetSettlementWriter(target.DB);
+      }
       if (property === "DB") return db;
       if (property === "RAW_FILES") return guardBinding(target.RAW_FILES);
       if (property === "CONFIG_KV") return guardBinding(target.CONFIG_KV);

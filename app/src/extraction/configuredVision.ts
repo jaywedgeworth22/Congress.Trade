@@ -37,7 +37,7 @@ import {
 } from './providerHealth.ts';
 import { getUnderlyingProvider } from '../benchmark/settings.ts';
 import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
-import { isLlmBudgetHalt } from '../shared/llmSpend.ts';
+import { isLlmBudgetHalt, isLlmSpendSettlementFailure } from '../shared/llmSpend.ts';
 import type { Extractor, ExtractorInput, ExtractorResult, ExtractorUsage } from '../extractors/types.ts';
 
 /** Conservative confidence ceiling shared with visionLlm.ts's DEFAULT_CONFIDENCE
@@ -285,7 +285,7 @@ export class ConfiguredVisionExtractor implements Extractor {
         await recordProviderHealth(this.env, effective, false, (error as Error).message, healthKnobs);
         // GOVERNOR 1: a budget halt (error-class 'budget') is terminal for the
         // attempt — never fail over to another (potentially pricier) model.
-        if (isLlmBudgetHalt(error)) {
+        if (isLlmBudgetHalt(error) || isLlmSpendSettlementFailure(error)) {
           allFailuresWereRateLimits = false;
           break;
         }
@@ -304,7 +304,11 @@ export class ConfiguredVisionExtractor implements Extractor {
       // ceiling is global, so the only effect of continuing would be a second
       // (and on the storm vector, pricier) attempt that the choke point would
       // reject anyway. Stop the cascade outright.
-      if (result.failure?.code === 'llm_budget_exceeded' || isLlmBudgetHalt(result.error)) {
+      if (
+        result.failure?.code === 'llm_budget_exceeded'
+        || result.failure?.code === 'llm_spend_settlement_failed'
+        || isLlmBudgetHalt(result.error)
+      ) {
         allFailuresWereRateLimits = false;
         break;
       }
