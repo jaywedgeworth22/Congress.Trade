@@ -1987,7 +1987,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <div class="section speed-proof" id="trLatencySection" style="margin-top:24px; padding:24px 20px;">
     <div class="speed-head">
       <div>
-        <h3 style="margin:0 0 16px 0">Filing Latency Comparison <span class="info-tip" tabindex="0" aria-label="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first." title="Measured continuously by our production probes against each provider's own latest-disclosures API. Positive lead = Congress.Trade surfaced the filing first.">ⓘ</span></h3>
+        <h3 style="margin:0 0 16px 0">Filing Latency Comparison <span class="info-tip" tabindex="0" aria-label="Timing is calculated only for filings observed by both feeds. Provider-observed rows that do not match Congress.Trade remain in the coverage denominator, and no overall speed claim is shown when coverage is limited." title="Timing is calculated only for filings observed by both feeds. Provider-observed rows that do not match Congress.Trade remain in the coverage denominator, and no overall speed claim is shown when coverage is limited.">ⓘ</span></h3>
       </div>
       <span class="note" id="speedUpdated" style="white-space:nowrap"></span>
     </div>
@@ -2004,11 +2004,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="sk sk-line" style="width:40%;height:32px;margin-top:4px"></div>
       </div>
     </div>
-    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades and match them against filings we already ingested, comparing first-seen timestamps. Stats cover the most recent matched filings per provider and update continuously &mdash; wins, losses, and ties alike. Nothing is hand-picked and nothing is frozen. A live measurement, not a promise.</p>
+    <p class="note" style="margin-top:14px">Every few minutes our production probes ask each provider&rsquo;s public API for its latest congressional trades. Timing is reported only for the high-confidence overlap with our feed; provider-observed rows that remain unmatched after a 24-hour grace period are shown separately instead of being treated as Congress.Trade wins. Coverage must be adequate in both directions before an overall speed badge or marketing claim appears. A live measurement, not a promise.</p>
     <details class="speed-table" style="margin-top:8px">
       <summary>Raw data table</summary>
       <div class="table-wrap"><table>
-        <thead><tr><th>Provider</th><th>Matched</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
+        <thead><tr><th>Provider</th><th>Matched / CT candidates</th><th>Mature overlap / provider rows</th><th>CT / provider coverage</th><th>Unmatched provider rows</th><th>Status</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
         <tbody id="speedTableBody"></tbody>
       </table></div>
     </details>
@@ -6572,11 +6572,13 @@ function loadTrends() {
 /* Public aggregate scoreboard from GET /api/analytics/latency-summary.
    Deliberately NOT part of loadTrends(): the data is filter-independent and
    memoized to the server's ~5-minute cache.
-   Honesty rules: every provider always renders; cards show collecting state
-   below SPEED_LANE_MIN_MATCHED; the whole section hides if no data at all. */
+   Honesty rules: timing is only for jointly observed filings; provider-only
+   rows remain visible, and no provider is called "Ahead" until both
+   directional coverage gates pass. */
 var LATENCY = { data: null, at: 0, promise: null };
 var SPEED_LANE_MIN_MATCHED = 5;   /* full scorecard stats */
 var SPEED_BOAST_MIN_MATCHED = 10; /* compact strip + pricing proof line */
+var SPEED_MIN_COVERAGE_PCT = 80;
 
 function fetchLatencySummary() {
   var now = Date.now();
@@ -6600,7 +6602,10 @@ function fmtLead(secs) {
 /* Best-covered provider that boast copy may cite (well-sampled AND favorable). */
 function speedBoastProvider(d) {
   var best = null;
-  (d.providers || []).filter(function (p) { return p.matched >= SPEED_LANE_MIN_MATCHED; })
+  (d.providers || []).filter(function (p) {
+    return p.matched >= SPEED_LANE_MIN_MATCHED && p.comparisonStatus === 'usable' &&
+      Number(p.ctCoveragePct) >= SPEED_MIN_COVERAGE_PCT && Number(p.providerCoveragePct) >= SPEED_MIN_COVERAGE_PCT;
+  })
     .forEach(function (p) { if (!best || p.matched > best.matched) best = p; });
   return best && best.matched >= SPEED_BOAST_MIN_MATCHED && (best.medianLeadSec || 0) > 0 ? best : null;
 }
@@ -6617,7 +6622,9 @@ function refreshSpeedUpdated() {
 }
 /* Build a single provider scorecard card. */
 function spCardHtml(p) {
-  var hasStats = p.matched >= SPEED_LANE_MIN_MATCHED;
+  var hasTiming = p.matched >= SPEED_LANE_MIN_MATCHED;
+  var usable = p.comparisonStatus === 'usable';
+  var hasStats = hasTiming && usable;
   var wins = p.usFirstCount || 0, losses = p.providerFirstCount || 0;
   var ahead = hasStats && wins > losses;
   var tied = hasStats && !ahead && wins === losses;
@@ -6625,8 +6632,10 @@ function spCardHtml(p) {
 
   /* Header: provider name + outcome badge */
   var badgeCls, badgeTxt;
-  if (!hasStats) {
+  if (!hasStats && !hasTiming) {
     badgeCls = 'sp-badge gathering'; badgeTxt = 'Gathering data';
+  } else if (!usable) {
+    badgeCls = 'sp-badge gathering'; badgeTxt = p.comparisonStatus === 'limited' ? 'Coverage limited' : 'Insufficient coverage';
   } else if (ahead) {
     badgeCls = 'sp-badge ahead'; badgeTxt = 'Ahead';
   } else if (tied) {
@@ -6650,12 +6659,13 @@ function spCardHtml(p) {
 
   /* Lead stat */
   var leadHtml = '';
-  if (!hasStats) {
+  if (!hasTiming) {
     var need = SPEED_LANE_MIN_MATCHED - p.matched;
     leadHtml = '<div class="sp-gathering">' +
       (p.matched > 0
-        ? "We've matched <strong>" + p.matched + "</strong> of " + p.candidates + " filings so far — " + need + " more needed for timing estimates."
+        ? "We've matched <strong>" + p.matched + "</strong> of " + p.candidates + " Congress.Trade filings matched so far — " + need + " more needed for timing estimates."
         : "Probes haven't found overlapping disclosures yet. Sample builds automatically.") +
+      (p.unmatchedProvider > 0 ? " <strong>" + p.unmatchedProvider + "</strong> provider-observed rows are not matched to our feed yet." : '') +
       '</div>';
   } else {
     var med = p.medianLeadSec || 0;
@@ -6665,7 +6675,7 @@ function spCardHtml(p) {
     var p90Txt = p.p90LeadSec != null ? '<div style="font-size:11px;color:var(--text-dim);margin-top:3px">P90: ' + fmtLead(p.p90LeadSec) + '</div>' : '';
     leadHtml = '<div class="sp-lead">' +
       '<div class="' + numCls + '">' + sign + fmtLead(Math.abs(med)) + '</div>' +
-      '<div class="sp-lead-label">typical lead<br>vs. their feed' + p90Txt + '</div>' +
+      '<div class="sp-lead-label">matched-cohort timing<br>' + (usable ? 'vs. their feed' : 'coverage limited — no overall speed claim') + p90Txt + '</div>' +
       '</div>';
   }
 
@@ -6677,8 +6687,8 @@ function spCardHtml(p) {
       '<div class="sp-wlt-item"><span class="sp-wlt-val l">' + (p.providerFirstCount || 0) + '</span><span class="sp-wlt-key">Losses</span></div>' +
       '<div class="sp-wlt-item"><span class="sp-wlt-val t">' + (p.tieCount || 0) + '</span><span class="sp-wlt-key">Ties</span></div>' +
       '</div>';
-  } else if (p.matched > 0) {
-    wlt = '<div class="sp-sample">n = ' + p.matched + ' / ' + p.candidates + ' matched so far</div>';
+  } else if (p.matched > 0 || p.providerObserved > 0) {
+    wlt = '<div class="sp-sample">n = ' + p.matched + ' matched · ' + (p.maturedProviderObserved || 0) + ' mature provider rows · ' + (p.unmatchedProvider || 0) + ' unmatched</div>';
   }
 
   return '<div class="' + cardCls + '">' + header + barHtml + leadHtml + wlt + '</div>';
@@ -6697,8 +6707,11 @@ function renderSpeedProof() {
     var tb = el('speedTableBody');
     if (tb) tb.innerHTML = provs.map(function (p) {
       function td(v) { return '<td>' + v + '</td>'; }
-      return '<tr>' + td(esc(p.label)) + td(p.matched + ' / ' + p.candidates) + td(p.usFirstCount || 0) +
-        td(p.providerFirstCount || 0) + td(p.tieCount || 0) +
+      return '<tr>' + td(esc(p.label)) + td(p.matched + ' / ' + p.candidates) +
+        td((p.maturedMatched || 0) + ' / ' + (p.maturedProviderObserved || 0)) +
+        td((p.ctCoveragePct == null ? '—' : p.ctCoveragePct + '%') + ' / ' + (p.providerCoveragePct == null ? '—' : p.providerCoveragePct + '%')) +
+        td(p.unmatchedProvider || 0) + td(p.comparisonStatus || 'insufficient') +
+        td(p.usFirstCount || 0) + td(p.providerFirstCount || 0) + td(p.tieCount || 0) +
         td(p.medianLeadSec != null ? fmtLead(p.medianLeadSec) : '—') +
         td(p.avgLeadSec != null ? fmtLead(p.avgLeadSec) : '—') +
         td(p.p90LeadSec != null ? fmtLead(p.p90LeadSec) : '—') + '</tr>';
