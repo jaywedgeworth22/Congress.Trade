@@ -146,6 +146,21 @@ function makeEnv(state: MockState, envVars: Record<string, unknown> = {}): {
               status: reservation.status,
             } : null) as T | null;
           }
+          if (/FROM autopilot_budget_reservations\s+WHERE reservation_id LIKE \?/i.test(sql)) {
+            const pattern = String(this.params[0]);
+            const [prefix, suffix = ''] = pattern.split('%');
+            const match = Array.from(state.reservations.entries()).find(([reservationId]) =>
+              reservationId.startsWith(prefix) && reservationId.endsWith(suffix));
+            if (!match) return null;
+            const [reservationId, reservation] = match;
+            return {
+              reservation_id: reservationId,
+              day: reservation.day,
+              reserved_microusd: reservation.reserved,
+              actual_microusd: reservation.actual,
+              status: reservation.status,
+            } as T;
+          }
           return null;
         },
         async all<T>(): Promise<{ results: T[] }> {
@@ -346,6 +361,71 @@ describe('handleAutopilotTick — budget meter', () => {
     expect(outcomes).toEqual([
       expect.objectContaining({ docId: 'H-1', outcome: 'published' }),
     ]);
+  });
+
+  it('uses a deterministic reservation on redelivery and never repeats paid model calls', async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const reservationId = 'autopilot:run-1:H-1:r1';
+    const state = makeState({ runRow: runRow(), docs: [doc('H-1')] });
+    state.budget.set(day, 116_000);
+    state.reservations.set(reservationId, {
+      day,
+      reserved: 116_000,
+      cap: 5_000_000,
+      actual: null,
+      status: 'reserved',
+    });
+    const { env } = makeEnv(state, { AUTOPILOT_DAILY_USD_BUDGET: '5' });
+    const check = vi.fn(async (): Promise<AgreementDocResult | null> => (
+      { docId: 'H-1', outcome: 'published', tier: 1, inserted: 1 }
+    ));
+
+    await handleAutopilotTick(env, 'run-1', { check: check as never });
+
+    expect(check).not.toHaveBeenCalled();
+    expect(state.reservations.get(reservationId)).toMatchObject({
+      status: 'aborted',
+      actual: 116_000,
+    });
+    expect(state.budget.get(day)).toBe(116_000);
+    const final = finalUpdate(state);
+    const outcomes = JSON.parse(String(final!.params[6])) as Array<{ reason?: string }>;
+    expect(outcomes).toEqual([
+      expect.objectContaining({ reason: 'budget_reservation_recovered' }),
+    ]);
+  });
+
+  it('reconciles a vanished document reservation before selecting another document', async () => {
+    const day = new Date().toISOString().slice(0, 10);
+    const reservationId = 'autopilot:run-1:H-vanished:r1';
+    const state = makeState({ runRow: runRow(), docs: [doc('H-next')] });
+    state.budget.set(day, 116_000);
+    state.reservations.set(reservationId, {
+      day,
+      reserved: 116_000,
+      cap: 5_000_000,
+      actual: null,
+      status: 'reserved',
+    });
+    const { env } = makeEnv(state, { AUTOPILOT_DAILY_USD_BUDGET: '5' });
+    const check = vi.fn(async (): Promise<AgreementDocResult | null> => {
+      expect(state.reservations.get(reservationId)?.status).toBe('aborted');
+      return { docId: 'H-next', outcome: 'published', tier: 1, inserted: 1 };
+    });
+
+    await handleAutopilotTick(env, 'run-1', { check: check as never });
+
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(state.reservations.get(reservationId)).toMatchObject({
+      status: 'aborted',
+      actual: 116_000,
+    });
+    const final = finalUpdate(state);
+    const outcomes = JSON.parse(String(final!.params[6])) as Array<{ docId: string; reason?: string }>;
+    expect(outcomes[0]).toMatchObject({
+      docId: 'H-vanished',
+      reason: 'budget_reservation_recovered',
+    });
   });
 });
 
