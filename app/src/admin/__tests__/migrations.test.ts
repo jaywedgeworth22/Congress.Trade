@@ -8,6 +8,7 @@ import type { Env, Transaction } from '../../shared/types.ts';
 import {
   AUTOPILOT_SCHEMA_STATEMENTS,
   ACCOUNTING_PROJECTION_SCHEMA_STATEMENTS,
+  ACCOUNTING_PROJECTION_RESYNC_SCHEMA_STATEMENTS,
   BASE_SCHEMA_STATEMENTS,
   D1_BUDGET_SCHEMA_STATEMENTS,
   DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS,
@@ -207,6 +208,7 @@ describe('admin migration bootstrap', () => {
       ...DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS,
       ...SPEND_SETTLEMENT_SCHEMA_STATEMENTS,
       ...ACCOUNTING_PROJECTION_SCHEMA_STATEMENTS,
+      ...ACCOUNTING_PROJECTION_RESYNC_SCHEMA_STATEMENTS,
     ]);
   });
 
@@ -225,6 +227,12 @@ describe('admin migration bootstrap', () => {
     expect(sql).toContain('autopilot_budget_reservations');
     expect(sql).toContain('trg_autopilot_budget_reserve');
     expect(sql).toContain('trg_autopilot_budget_reservation_settle');
+  });
+
+  it('resyncs the projection after trigger installation (0055)', () => {
+    const sql = ACCOUNTING_PROJECTION_RESYNC_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('SUM(usd)');
+    expect(sql).toContain('usd = excluded.usd');
   });
 
   it('includes the Turso-backed Deno runtime queue schema (0052)', () => {
