@@ -4,12 +4,14 @@
  *
  * Provider-latency monitor for congressional disclosures. Candidates are
  * created when Congress.Trade first sees a new filing; provider observations
- * are populated from third-party "latest" endpoints so admins can measure who
- * surfaced the disclosure first.
+ * are populated from third-party "latest" endpoints. The public comparison
+ * is deliberately limited to the intersection of both feeds and publishes
+ * the provider-observed denominator separately, so a Congress.Trade miss
+ * cannot silently turn into a speed win.
  */
 
 import type { Env } from '../shared/types.ts';
-import { all, run, batch } from '../shared/db.ts';
+import { all, run, batch, get } from '../shared/db.ts';
 import type { SqlParam } from '../shared/db.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { notifyAdmin } from '../alerts/notify.ts';
@@ -56,6 +58,7 @@ interface ProviderObservationRow {
   chamber: Chamber;
   provider_key: string;
   first_observed_at: string;
+  last_observed_at: string;
   provider_published_at: string | null;
   source_url: string | null;
   filed_date: string | null;
@@ -116,7 +119,26 @@ export interface DisclosureLatencyProviderMetrics {
   matched: number;
   pending: number;
   errored: number;
-  coveragePct: number;
+  /** Rows observed by the provider during the active monitor window. */
+  providerObserved: number;
+  /** Provider rows old enough that a late Congress.Trade match is no longer pending. */
+  maturedProviderObserved: number;
+  /** Provider rows without a high-confidence Congress.Trade match after the grace period. */
+  unmatchedProvider: number;
+  /** Recent provider rows still inside the late-match grace period. */
+  pendingProvider: number;
+  /** Congress.Trade candidates old enough for a directional coverage estimate. */
+  maturedCandidates: number;
+  /** Jointly observed, high-confidence rows in the matured provider cohort. */
+  maturedMatched: number;
+  /** Congress.Trade coverage of the provider-observed matured cohort. */
+  ctCoveragePct: number | null;
+  /** Provider coverage of the Congress.Trade matured candidate cohort. */
+  providerCoveragePct: number | null;
+  /** Jaccard overlap of the two matured observed cohorts. */
+  overlapPct: number | null;
+  comparisonStatus: 'insufficient' | 'limited' | 'usable';
+  comparisonBasis: 'matched-overlap-only';
   ctAheadMonitorCount: number;
   providerAheadMonitorCount: number;
   tieMonitorCount: number;
@@ -132,6 +154,9 @@ export interface DisclosureLatencyTotals {
   matched: number;
   pending: number;
   errored: number;
+  providerObserved: number;
+  maturedProviderObserved: number;
+  unmatchedProvider: number;
   comparableProviders: number;
   configuredComparableProviders: number;
 }
@@ -205,6 +230,15 @@ async function fmpDailyCap(env: Env): Promise<number> {
   return parseInt(live || '', 10) || FMP_DEFAULT_DAILY_CAP;
 }
 const DIRECT_PROVIDER_IDS: ProviderId[] = ['fmp', 'unusual_whales', 'quiver'];
+
+// The latest endpoints are finite windows, not authoritative historical
+// indexes. Keep the scoreboard scoped to observations active in this window,
+// then allow a full day for our watcher to catch up before calling a row
+// unmatched. These are intentionally conservative public-comparison gates.
+export const LATENCY_SCORE_WINDOW_HOURS = 72;
+export const LATENCY_MATURITY_GRACE_HOURS = 24;
+export const LATENCY_MIN_MATURED_ROWS = 20;
+export const LATENCY_MIN_COVERAGE_PCT = 80;
 
 const PROVIDERS: ProviderDefinition[] = [
   {
@@ -648,6 +682,74 @@ async function fetchQuiverRows(apiKey: string, max: number, fetchImpl: typeof fe
 }
 
 
+function providerOnlyDocId(row: DisclosureProviderRow): string {
+  const key = row.providerKey.replace(/[^a-z0-9_-]+/gi, '-').slice(0, 80) || simpleHash(rowText(row.payload));
+  return `provider-missing-${row.provider}-${row.chamber}-${key}`;
+}
+
+async function routeProviderOnlyObservationsToReview(
+  env: Env,
+  provider: ProviderId,
+  rows: DisclosureProviderRow[],
+  nowIso: string,
+): Promise<void> {
+  for (const row of rows) {
+    if (row.chamber !== 'house' && row.chamber !== 'senate') continue;
+    const docId = providerOnlyDocId(row);
+    const exists = await get<{ doc_id: string }>(
+      env.DB,
+      `SELECT doc_id FROM filings
+        WHERE doc_id = ?
+           OR (? IS NOT NULL AND source_url = ?)
+           OR EXISTS (
+                SELECT 1 FROM disclosure_latency_candidates c
+                 WHERE c.provider = ? AND c.provider_key = ? AND c.status = 'matched'
+                   AND c.doc_id = filings.doc_id
+              )
+        LIMIT 1`,
+      [docId, row.sourceUrl, row.sourceUrl, provider, row.providerKey],
+    );
+    if (exists) continue;
+
+    const payload = JSON.stringify({
+      reason: 'provider_discovered_missing_official',
+      provider,
+      providerKey: row.providerKey,
+      providerPublishedAt: row.providerPublishedAt,
+      filedDate: row.filedDate,
+      filerName: row.filerName,
+      sourceUrl: row.sourceUrl,
+      payload: row.payload,
+    }).slice(0, PAYLOAD_LIMIT);
+
+    await batch(env.DB, [
+      [
+        `INSERT OR IGNORE INTO filings
+           (doc_id, chamber, filer_id, filing_type, filed_date, source_url,
+            raw_object_key, ingest_status, doc_kind, extractor, model_version,
+            confidence, first_seen_at, source_updated_at, error)
+         VALUES (?, ?, NULL, 'P', ?, ?, NULL, 'needs_review', 'unknown', NULL, NULL,
+                 NULL, ?, ?, ?)`,
+        [
+          docId,
+          row.chamber,
+          row.filedDate,
+          row.sourceUrl,
+          nowIso,
+          row.providerPublishedAt,
+          `provider-only:${provider}:${row.providerKey}`,
+        ],
+      ],
+      [
+        `INSERT OR IGNORE INTO review_queue (doc_id, reason, payload, created_at, resolved)
+         VALUES (?, 'provider_discovered_missing_official', ?, ?, 0)`,
+        [docId, payload, nowIso],
+      ],
+    ]);
+  }
+}
+
+
 async function resolveProviderSecret(env: Env, provider: ProviderDefinition): Promise<string | null> {
   for (const name of provider.secretNames) {
     const envx = env as unknown as Record<string, string | undefined>;
@@ -784,7 +886,7 @@ async function loadProviderRows(env: Env, provider: ProviderId, now: Date): Prom
   const cutoff = new Date(now.getTime() - RECENT_PROVIDER_HOURS * 60 * 60 * 1000).toISOString();
   return all<ProviderObservationRow>(
     env.DB,
-    `SELECT provider, chamber, provider_key, first_observed_at, provider_published_at,
+    `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at, provider_published_at,
             source_url, filed_date, filer_name, payload
        FROM disclosure_provider_observations
       WHERE provider = ? AND first_observed_at >= ?
@@ -963,7 +1065,7 @@ async function loadObservationRowsByKeys(
     out.push(
       ...(await all<ProviderObservationRow>(
         env.DB,
-        `SELECT provider, chamber, provider_key, first_observed_at, provider_published_at,
+        `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at, provider_published_at,
                 source_url, filed_date, filer_name, payload
            FROM disclosure_provider_observations
           WHERE provider = ? AND provider_key IN (${placeholders})`,
@@ -1110,6 +1212,21 @@ async function runUnusualWhalesDeepMatch(
   // never inflated to nowIso for a previously observed row.
   const providerRows = await loadObservationRowsByKeys(env, provider.id, Array.from(fetchedKeys));
   const result = await matchAndUpdateCandidates(env, provider, targetCandidates, providerRows, nowIso, errors);
+  await routeProviderOnlyObservationsToReview(
+    env,
+    provider.id,
+    providerRows.map((providerRow) => ({
+      provider: providerRow.provider,
+      chamber: providerRow.chamber,
+      providerKey: providerRow.provider_key,
+      payload: providerRow.payload ? (JSON.parse(providerRow.payload) as Record<string, unknown>) : {},
+      sourceUrl: providerRow.source_url,
+      filedDate: providerRow.filed_date,
+      filerName: providerRow.filer_name,
+      providerPublishedAt: providerRow.provider_published_at,
+    })),
+    nowIso,
+  );
   return { ...result, fetchedRows, errors, examinedDocIds: targetCandidates.map((c) => c.doc_id) };
 }
 
@@ -1223,6 +1340,10 @@ async function runProviderProbe(
       totalPending = examined.size - matchedIds.size;
     }
 
+    if (freshRows.length) {
+      await routeProviderOnlyObservationsToReview(env, provider.id, freshRows, nowIso);
+    }
+
     return { ...base, configured: true, enabled: true, fetchedRows: totalFetchedRows, pending: totalPending, matched: totalMatched, errors };
   } catch (err) {
     if (storageMissing(err)) {
@@ -1323,18 +1444,46 @@ function p90(values: number[]): number | null {
 }
 
 export async function getDisclosureLatencySummary(env: Env, now: Date = new Date()): Promise<DisclosureLatencySummary> {
+  const scoreCutoff = new Date(now.getTime() - LATENCY_SCORE_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
+  const maturityCutoff = new Date(now.getTime() - LATENCY_MATURITY_GRACE_HOURS * 60 * 60 * 1000).toISOString();
   const rows = await all<{
     provider: ProviderId;
     status: string;
+    chamber: Chamber;
+    provider_key: string | null;
+    match_method: string | null;
     congress_first_seen_at: string;
     provider_first_seen_at: string | null;
     provider_published_at: string | null;
+    created_at: string;
+    updated_at: string;
   }>(
     env.DB,
-    `SELECT provider, status, congress_first_seen_at, provider_first_seen_at, provider_published_at
+    `SELECT provider, status, chamber, provider_key, match_method, congress_first_seen_at,
+            provider_first_seen_at, provider_published_at, created_at, updated_at
        FROM disclosure_latency_candidates
+      WHERE updated_at >= ? OR congress_first_seen_at >= ?
       ORDER BY created_at DESC
       LIMIT 5000`,
+    [scoreCutoff, scoreCutoff],
+  ).catch((err) => {
+    if (storageMissing(err)) return [];
+    throw err;
+  });
+
+  // Provider rows are an independent denominator. A latest endpoint can only
+  // prove that it showed us a row; it cannot prove that a missing row was
+  // absent. Rows are therefore called "unmatched" only after the grace period
+  // and are never folded into a Congress.Trade win/loss count.
+  const providerRows = await all<ProviderObservationRow>(
+    env.DB,
+    `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at,
+            provider_published_at, source_url, filed_date, filer_name, payload
+       FROM disclosure_provider_observations
+      WHERE last_observed_at >= ?
+      ORDER BY last_observed_at DESC
+      LIMIT 10000`,
+    [scoreCutoff],
   ).catch((err) => {
     if (storageMissing(err)) return [];
     throw err;
@@ -1343,13 +1492,49 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
   const statuses = await getDisclosureLatencyProviderStatuses(env);
   const providers = PROVIDERS.filter((p) => p.supportsDirectLatest).map((provider) => {
     const mine = rows.filter((row) => row.provider === provider.id);
-    const monitorDeltas = mine
+    const observations = providerRows.filter((row) => row.provider === provider.id);
+    // Date/name fallback matches can be ambiguous when a member has multiple
+    // filings on the same day. Only exact document-token or exact filer/date
+    // matches are eligible for a public timing comparison.
+    const strongMatches = mine.filter(
+      (row) => row.status === 'matched' && (row.match_method === 'doc-token' || row.match_method === 'filer-date'),
+    );
+    const monitorDeltas = strongMatches
       .map((row) => deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at))
       .filter((v): v is number => v != null);
-    const publishedDeltas = mine
+    const publishedDeltas = strongMatches
       .map((row) => deltaSeconds(row.provider_published_at, row.congress_first_seen_at))
       .filter((v): v is number => v != null);
-    const matched = mine.filter((row) => row.status === 'matched').length;
+    const matched = strongMatches.length;
+    const matchedKeys = new Set(
+      strongMatches
+        .filter((row) => row.provider_key)
+        .map((row) => `${row.chamber}:${row.provider_key}`),
+    );
+    const maturedObservations = observations.filter((row) => row.first_observed_at <= maturityCutoff);
+    const maturedCandidates = mine.filter((row) => row.congress_first_seen_at <= maturityCutoff);
+    const maturedMatched = maturedObservations.filter((row) => matchedKeys.has(`${row.chamber}:${row.provider_key}`)).length;
+    const unmatchedProvider = maturedObservations.length - maturedMatched;
+    const pendingProvider = observations.filter(
+      (row) => row.first_observed_at > maturityCutoff && !matchedKeys.has(`${row.chamber}:${row.provider_key}`),
+    ).length;
+    const matchedMaturedCandidates = maturedCandidates.filter(
+      (row) => row.status === 'matched' && (row.match_method === 'doc-token' || row.match_method === 'filer-date'),
+    ).length;
+    const ctCoveragePct = maturedObservations.length
+      ? Math.round((maturedMatched / maturedObservations.length) * 1000) / 10
+      : null;
+    const providerCoveragePct = maturedCandidates.length
+      ? Math.round((matchedMaturedCandidates / maturedCandidates.length) * 1000) / 10
+      : null;
+    const union = maturedObservations.length + maturedCandidates.length - maturedMatched;
+    const overlapPct = union > 0 ? Math.round((maturedMatched / union) * 1000) / 10 : null;
+    const comparisonStatus: DisclosureLatencyProviderMetrics['comparisonStatus'] =
+      maturedObservations.length < LATENCY_MIN_MATURED_ROWS || maturedCandidates.length < LATENCY_MIN_MATURED_ROWS
+        ? 'insufficient'
+        : (ctCoveragePct ?? 0) < LATENCY_MIN_COVERAGE_PCT || (providerCoveragePct ?? 0) < LATENCY_MIN_COVERAGE_PCT
+          ? 'limited'
+          : 'usable';
     return {
       provider: provider.id,
       label: provider.label,
@@ -1357,7 +1542,17 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
       matched,
       pending: mine.filter((row) => row.status === 'pending').length,
       errored: mine.filter((row) => row.status === 'error').length,
-      coveragePct: mine.length ? Math.round((matched / mine.length) * 1000) / 10 : 0,
+      providerObserved: observations.length,
+      maturedProviderObserved: maturedObservations.length,
+      unmatchedProvider,
+      pendingProvider,
+      maturedCandidates: maturedCandidates.length,
+      maturedMatched,
+      ctCoveragePct,
+      providerCoveragePct,
+      overlapPct,
+      comparisonStatus,
+      comparisonBasis: 'matched-overlap-only' as const,
       ctAheadMonitorCount: monitorDeltas.filter((d) => d > 0).length,
       providerAheadMonitorCount: monitorDeltas.filter((d) => d < 0).length,
       tieMonitorCount: monitorDeltas.filter((d) => d === 0).length,
@@ -1370,9 +1565,12 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
   });
   const totals = {
     candidates: rows.length,
-    matched: rows.filter((row) => row.status === 'matched').length,
+    matched: providers.reduce((sum, p) => sum + p.matched, 0),
     pending: rows.filter((row) => row.status === 'pending').length,
     errored: rows.filter((row) => row.status === 'error').length,
+    providerObserved: providerRows.length,
+    maturedProviderObserved: providers.reduce((sum, p) => sum + p.maturedProviderObserved, 0),
+    unmatchedProvider: providers.reduce((sum, p) => sum + p.unmatchedProvider, 0),
     comparableProviders: PROVIDERS.filter((p) => p.supportsDirectLatest).length,
     configuredComparableProviders: statuses.filter((p) => p.supportsDirectLatest && p.configured).length,
   };
