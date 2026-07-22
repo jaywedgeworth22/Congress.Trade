@@ -1,7 +1,7 @@
 /// <reference lib="deno.unstable" />
 import { createClient } from 'npm:@libsql/client/web';
 import { S3Client } from 'npm:@aws-sdk/client-s3';
-import { D1DatabaseShim, KVNamespaceShim, QueueShim, R2BucketShim } from './shims.ts';
+import { D1DatabaseShim, KVNamespaceShim, QueueShim, S3BucketShim } from './shims.ts';
 import app from '../index.ts';
 import type { Env, QueueMessage } from '../shared/types.ts';
 import { resolveSecret, refreshSecrets } from '../secrets/infisical.ts';
@@ -42,8 +42,8 @@ const tursoTokenRes = await resolveSecret(baseEnv, 'TURSO_AUTH_TOKEN');
 const tursoUrl = tursoUrlRes.value || Deno.env.get('TURSO_DATABASE_URL') || '';
 const tursoToken = tursoTokenRes.value || Deno.env.get('TURSO_AUTH_TOKEN') || '';
 
-if (!tursoUrl) {
-  console.warn("WARNING: TURSO_DATABASE_URL is missing after resolving secrets.");
+if (!tursoUrl || tursoUrl.includes('dummy-url')) {
+  console.warn("WARNING: TURSO_DATABASE_URL is missing after resolving secrets. The app is falling back to a dummy URL, which means database connections will fail. Ensure INFISICAL_APP_CLIENT_ID and INFISICAL_APP_CLIENT_SECRET are set in Deno Deploy.");
 }
 
 // 3. Initialize Turso DB Shim
@@ -53,22 +53,22 @@ const libsqlClient = createClient({
 });
 const dbShim = new D1DatabaseShim(libsqlClient);
 
-// 4. Initialize S3 (R2) Shim
+// 4. Initialize S3 Shim
 const s3Client = new S3Client({
-  region: 'auto',
-  endpoint: Deno.env.get('CF_R2_S3_ENDPOINT') || `https://${Deno.env.get('CF_R2_ACCOUNT_ID')}.r2.cloudflarestorage.com`,
+  region: Deno.env.get('AWS_REGION') || 'us-east-1',
+  endpoint: Deno.env.get('AWS_S3_ENDPOINT'),
   credentials: {
-    accessKeyId: Deno.env.get('CF_R2_S3_ACCESS_KEY_ID') || '',
-    secretAccessKey: Deno.env.get('CF_R2_S3_SECRET_ACCESS_KEY') || '',
+    accessKeyId: Deno.env.get('AWS_ACCESS_KEY_ID') || '',
+    secretAccessKey: Deno.env.get('AWS_SECRET_ACCESS_KEY') || '',
   },
 });
-const r2Shim = new R2BucketShim(s3Client, Deno.env.get('R2_BUCKET_NAME') || 'congress-trade');
+const s3Shim = new S3BucketShim(s3Client, Deno.env.get('AWS_S3_BUCKET_NAME') || 'congress-trade');
 
 // Helper to construct the FULL Env object
 function buildEnv(): Env {
   const env = buildBaseEnv();
   env.DB = dbShim as any;
-  env.RAW_FILES = r2Shim as any;
+  env.RAW_FILES = s3Shim as any;
   return env;
 }
 

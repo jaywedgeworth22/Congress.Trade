@@ -9,6 +9,21 @@
  */
 import { readFileSync, readdirSync } from 'node:fs';
 
+export interface D1Result {
+  success: boolean;
+  meta: any;
+  results?: any[];
+}
+export interface D1PreparedStatement {
+  bind(...values: any[]): D1PreparedStatement;
+  first<T = any>(): Promise<T | null>;
+  run(): Promise<D1Result>;
+  all<T = any>(): Promise<{ results: T[] }>;
+}
+export interface D1Database {
+  prepare(query: string): D1PreparedStatement;
+  batch(statements: D1PreparedStatement[]): Promise<D1Result[]>;
+}
 interface SqliteRunResult {
   changes: number | bigint;
 }
