@@ -24,7 +24,10 @@ export type ProviderFailureCode =
    *  call BEFORE spending (shared/llmSpend.ts). Terminal for the attempt and
    *  never a failover trigger — the whole point is that no pricier model may
    *  be invoked once the ceiling is reached. */
-  | 'llm_budget_exceeded';
+  | 'llm_budget_exceeded'
+  /** A paid response could not be durably receipted. Terminal: failover would
+   *  spend again while the hard meter is known incomplete. */
+  | 'llm_spend_settlement_failed';
 
 export type ProviderFailureScope = 'provider' | 'model';
 
@@ -95,6 +98,15 @@ export function classifyProviderFailure(
       scope: 'provider',
       retryable: false,
       message: `${provider} calls are halted: the daily LLM USD budget is exhausted.`,
+    };
+  }
+
+  if (lower.includes('llm spend settlement failed')) {
+    return {
+      code: 'llm_spend_settlement_failed',
+      scope: 'provider',
+      retryable: false,
+      message: `${provider} calls are halted: paid-response accounting is unavailable.`,
     };
   }
 

@@ -7,6 +7,7 @@ import {
   type DurableQueueHandlers,
 } from '../durableQueue.ts';
 import { D1DatabaseShim } from '../shims.ts';
+import { settleLlmSpend } from '../../shared/llmSpend.ts';
 
 const START = new Date('2026-07-22T16:00:00.000Z');
 
@@ -400,6 +401,79 @@ describe('Deno durable queue', () => {
         failed: 0,
       });
       expect(sideEffectCommitted).toBe(false);
+      expect(await harness.rows()).toHaveLength(1);
+    } finally {
+      harness.client.close();
+    }
+  });
+
+  it('persists an idempotent paid-response receipt after lease loss while ordinary DB writes stay fenced', async () => {
+    const harness = await createHarness();
+    try {
+      await harness.client.execute(`
+        CREATE TABLE llm_spend_settlements (
+          settlement_id TEXT PRIMARY KEY,
+          provider TEXT NOT NULL,
+          provider_response_id TEXT,
+          attempt_id TEXT NOT NULL,
+          day TEXT NOT NULL,
+          occurred_at TEXT NOT NULL,
+          requested_model TEXT NOT NULL,
+          resolved_model TEXT,
+          doc_id TEXT,
+          usd REAL NOT NULL,
+          receipt_hash TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      `);
+      await harness.client.execute(`
+        CREATE UNIQUE INDEX idx_llm_spend_settlements_response
+          ON llm_spend_settlements(provider, provider_response_id)
+          WHERE provider_response_id IS NOT NULL
+      `);
+      await harness.ingest.send({ type: 'filing.fetched', docId: 'paid-after-lease' });
+      const handlers = createHandlers({
+        handleIngestMessage: vi.fn(async (guardedEnv) => {
+          await harness.client.execute(`
+            UPDATE deno_runtime_queue
+               SET lease_token = 'replacement-owner',
+                   lease_until = '2026-07-22T16:20:00.000Z'
+             WHERE id = 1
+          `);
+          await settleLlmSpend(guardedEnv, {
+            provider: 'openai',
+            requestedModel: 'gpt-5.6-terra',
+            resolvedModel: 'gpt-5.6-terra-2026-07-01',
+            providerResponseId: 'resp_paid_after_lease',
+            attemptId: 'attempt-paid-after-lease',
+            docId: 'paid-after-lease',
+            usd: 0.0123,
+            occurredAt: '2026-07-22T16:00:01.000Z',
+          });
+          await expect(
+            guardedEnv.DB.prepare(
+              `INSERT INTO deno_runtime_queue
+                 (queue_name, payload, status, attempts, available_at, created_at, updated_at)
+               VALUES ('ingest', '{}', 'pending', 0, ?, ?, ?)`,
+            ).bind(START.toISOString(), START.toISOString(), START.toISOString()).run(),
+          ).rejects.toThrow('durable queue lease is no longer owned');
+        }),
+      });
+
+      await expect(drainDurableQueue(harness.env, 'ingest', handlers, {
+        now: harness.now,
+        limit: 1,
+      })).resolves.toEqual({ claimed: 1, completed: 0, retried: 0, failed: 0 });
+      const receipts = await harness.client.execute(
+        'SELECT provider, provider_response_id, usd FROM llm_spend_settlements',
+      );
+      expect(receipts.rows).toEqual([
+        expect.objectContaining({
+          provider: 'openai',
+          provider_response_id: 'resp_paid_after_lease',
+          usd: 0.0123,
+        }),
+      ]);
       expect(await harness.rows()).toHaveLength(1);
     } finally {
       harness.client.close();

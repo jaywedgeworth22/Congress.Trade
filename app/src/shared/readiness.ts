@@ -67,6 +67,17 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
   ['llm_budget', 'SELECT day, reads FROM llm_budget LIMIT 0'],
   ['d1_budget', 'SELECT day, rows_read, rows_written FROM d1_budget LIMIT 0'],
   ['llm_spend', 'SELECT day, provider, usd FROM llm_spend LIMIT 0'],
+  [
+    'llm_spend_settlements',
+    `SELECT settlement_id, provider, provider_response_id, attempt_id, day,
+            requested_model, resolved_model, usd, receipt_hash
+       FROM llm_spend_settlements LIMIT 0`,
+  ],
+  [
+    'autopilot_budget_settlements',
+    `SELECT settlement_id, day, reserved_microusd, actual_microusd, status
+       FROM autopilot_budget_settlements LIMIT 0`,
+  ],
   ['d1_write_quarantine', 'SELECT id, writer, day, dropped FROM d1_write_quarantine LIMIT 0'],
   [
     'delivery_target_circuit',
