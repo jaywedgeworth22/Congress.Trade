@@ -1,6 +1,6 @@
 /// <reference lib="deno.unstable" />
-import { createClient } from 'npm:@libsql/client/web';
-import { S3Client } from 'npm:@aws-sdk/client-s3';
+import { createClient } from '@libsql/client/web';
+import { S3Client } from '@aws-sdk/client-s3';
 import { D1DatabaseShim, KVNamespaceShim, QueueShim, S3BucketShim } from './shims.ts';
 import app from '../index.ts';
 import type { Env, QueueMessage } from '../shared/types.ts';
