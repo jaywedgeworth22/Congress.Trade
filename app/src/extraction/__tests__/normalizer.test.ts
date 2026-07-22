@@ -256,6 +256,7 @@ describe('normalize', () => {
         expect.stringMatching(/INSERT OR IGNORE INTO delivery_outbox/),
         expect.stringMatching(/ingest_status = 'persisted'/),
         expect.stringMatching(/INSERT OR IGNORE INTO ingestion_decisions/),
+        expect.stringMatching(/deprecated_reason = 'upgraded_by_primary'/),
       ]),
     ]);
   });

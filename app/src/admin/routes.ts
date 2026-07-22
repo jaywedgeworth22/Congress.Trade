@@ -60,6 +60,7 @@ import {
 } from '../delivery/subscriptions.ts';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget.ts';
 import { runSeedBackfillFromEnv } from '../backfill/seed.ts';
+import { runFmpSenateRecovery } from '../backfill/fmpSenateRecovery.ts';
 import { runHouseHistoricalBackfill } from '../backfill/houseCrawler.ts';
 import { runSenateBackfill } from '../backfill/senateCrawler.ts';
 import { extractParsed } from '../extraction/orchestrator.ts';
@@ -4074,6 +4075,49 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ ok: result.errors.length === 0, ...result });
     } catch (err) {
       return c.json({ error: `backfill failed: ${(err as Error).message}` }, 500);
+    }
+  });
+
+  // --- POST /fmp-senate-recovery -----------------------------------------
+  // Import at most five pages (100 rows/page) from FMP's stable Senate feed.
+  // Rows retain their real Senate report id but remain source='seed_dataset'
+  // until the official pipeline upgrades the filing and publishes primary rows.
+  r.post('/fmp-senate-recovery', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const text = await c.req.text();
+      if (text) body = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+
+    const fromPage = body.fromPage ?? 0;
+    const toPage = body.toPage ?? fromPage;
+    const dryRun = body.dryRun ?? false;
+    if (!Number.isInteger(fromPage) || !Number.isInteger(toPage)) {
+      return c.json({ error: 'fromPage and toPage must be integers' }, 400);
+    }
+    if (
+      (fromPage as number) < 0 ||
+      (toPage as number) < (fromPage as number) ||
+      (toPage as number) > 100 ||
+      (toPage as number) - (fromPage as number) + 1 > 5
+    ) {
+      return c.json({ error: 'pages must satisfy 0 <= fromPage <= toPage <= 100 with at most 5 pages per run' }, 400);
+    }
+    if (typeof dryRun !== 'boolean') {
+      return c.json({ error: 'dryRun must be a boolean' }, 400);
+    }
+
+    try {
+      const result = await runFmpSenateRecovery(c.env, {
+        fromPage: fromPage as number,
+        toPage: toPage as number,
+        dryRun,
+      });
+      return c.json(result);
+    } catch (err) {
+      return c.json({ error: `FMP Senate recovery failed: ${(err as Error).message}` }, 500);
     }
   });
 
