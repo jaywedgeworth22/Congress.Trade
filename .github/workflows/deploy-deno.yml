@@ -40,7 +40,6 @@ jobs:
           client-id: ${{ secrets.INFISICAL_CT_CLIENT_ID }}
           client-secret: ${{ secrets.INFISICAL_CT_CLIENT_SECRET }}
           env-slug: prod
-          project-id: f61a79de-8d77-4f0b-9361-4b7208598290
 
       - name: Install Dependencies
         working-directory: ./app
