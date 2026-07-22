@@ -5,6 +5,7 @@ import type { Env, PollConfig } from '../../shared/types.ts';
 describe('source health status', () => {
   it('bounds history per source and gives errors precedence over staleness', async () => {
     const sqlSeen: string[] = [];
+    const paramsSeen: unknown[][] = [];
     const config: PollConfig = {
       schedule: [{ daysOfWeek: [0, 1, 2, 3, 4, 5, 6], startHourET: 0, endHourET: 24, intervalSec: 300 }],
       aggressiveMode: false,
@@ -20,13 +21,18 @@ describe('source health status', () => {
         prepare(sql: string) {
           sqlSeen.push(sql);
           return {
-            params: [] as unknown[], bind(...params: unknown[]) { this.params = params; return this; },
+            params: [] as unknown[], bind(...params: unknown[]) {
+              this.params = params;
+              paramsSeen.push(params);
+              return this;
+            },
             async first<T>() { return null as T | null; },
             async all<T>() {
               if (/FROM ingest_log\s+GROUP BY source/i.test(sql)) {
                 return { results: [
                   { source: 'house', last_polled_at: '2020-01-01T00:00:00.000Z', poll_count: 4, total_new: 2, last_new_at: null },
                   { source: 'senate', last_polled_at: '2020-01-01T00:00:00.000Z', poll_count: 4, total_new: 1, last_new_at: null },
+                  { source: 'oge', last_polled_at: '2020-01-01T00:00:00.000Z', poll_count: 4, total_new: 1, last_new_at: null },
                 ] as T[] };
               }
               if (/ROW_NUMBER\(\) OVER \(PARTITION BY source/i.test(sql)) {
@@ -52,5 +58,6 @@ describe('source health status', () => {
     const ranked = sqlSeen.find((sql) => /ROW_NUMBER/.test(sql)) ?? '';
     expect(ranked).toContain('PARTITION BY source');
     expect(ranked).toContain('WHERE rn <= ?');
+    expect(paramsSeen.some((params) => params[0] === 'executive')).toBe(true);
   });
 });

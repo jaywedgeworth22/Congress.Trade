@@ -73,6 +73,12 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
     `SELECT target_key, consecutive_failures, open_until, failures_day, failures_today
        FROM delivery_target_circuit LIMIT 0`,
   ],
+  [
+    'deno_runtime_queue',
+    `SELECT id, queue_name, dedupe_key, payload, status, attempts, available_at,
+            lease_until, last_error, created_at, updated_at
+       FROM deno_runtime_queue LIMIT 0`,
+  ],
   ['ingestion_decisions', 'SELECT doc_id, action, transaction_ids FROM ingestion_decisions LIMIT 0'],
   ['client_commands', 'SELECT id, user_id, status, idempotency_key FROM client_commands LIMIT 0'],
   ['securities_ref', 'SELECT ticker, sector, market_cap_bucket FROM securities_ref LIMIT 0'],
@@ -160,6 +166,8 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
     'idx_benchmark_results_run_model',
     'idx_benchmark_results_model_run',
     'idx_usage_telemetry_fallback_events_updated',
+    'idx_deno_runtime_queue_ready',
+    'idx_deno_runtime_queue_active_dedupe',
   ].map((name): [string, string, boolean] => [
     name,
     `SELECT name FROM sqlite_master WHERE type = 'index' AND name = '${name}'`,

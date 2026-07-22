@@ -268,9 +268,11 @@ async function persistAndEnqueue(
   env: Env,
   filings: DiscoveredFiling[],
   nowIso: string,
+  opts: { maxNew?: number } = {},
 ): Promise<number> {
   let newCount = 0;
   for (const f of filings) {
+    if (opts.maxNew !== undefined && newCount >= opts.maxNew) break;
     const insertResult = await insertFilingIfNew(env, f, nowIso);
     if (insertResult === 'inserted') {
       await recordDisclosureLatencyCandidate(env, f, nowIso);
@@ -606,12 +608,14 @@ export interface WatcherResult {
 export async function pollExecutive(
   env: Env,
   now: Date,
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; maxFilings?: number; dryRun?: boolean } = {},
 ): Promise<number | null> {
   const nowIso = now.toISOString();
   const filings = await pollOgeExecutive(env, now, fetch, opts);
   if (filings === null) return null;
-  const newCount = await persistAndEnqueue(env, filings, nowIso);
+  const maxFilings = Math.min(Math.max(Math.floor(opts.maxFilings ?? 100), 1), 500);
+  if (opts.dryRun) return Math.min(filings.length, maxFilings);
+  const newCount = await persistAndEnqueue(env, filings, nowIso, { maxNew: maxFilings });
   await setLastPollAt(env, 'oge', now);
   await logPoll(env, 'oge', nowIso, newCount, nowIso);
   return newCount;

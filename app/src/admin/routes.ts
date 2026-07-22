@@ -61,6 +61,7 @@ import {
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget.ts';
 import { runSeedBackfillFromEnv } from '../backfill/seed.ts';
 import { runHouseHistoricalBackfill } from '../backfill/houseCrawler.ts';
+import { runSenateBackfill } from '../backfill/senateCrawler.ts';
 import { extractParsed } from '../extraction/orchestrator.ts';
 import {
   normalize,
@@ -121,6 +122,7 @@ import {
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets, updateSecret } from '../secrets/infisical.ts';
 import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency.ts';
 import { pollExecutive } from '../ingestion/watcher.ts';
+import { verifyRawFilesStorage } from './storageSmoke.ts';
 import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
 import { isValidBracket } from '../shared/brackets.ts';
@@ -2871,7 +2873,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       const lastAttemptAt = latest?.attempted_at ?? row?.last_polled_at ?? null;
       const lastAttemptMs = lastAttemptAt ? Date.parse(lastAttemptAt) : Number.NaN;
       // Executive (OGE 278-T) polls on a ~6h cadence, so it needs a much longer staleness window
-      const sourceStaleAfterSec = source === 'executive' ? 21600 * 3 : staleAfterSec;
+      const sourceStaleAfterSec = source === 'executive' || source === 'oge' ? 21600 * 3 : staleAfterSec;
       const stale = !Number.isFinite(lastAttemptMs)
         || now.getTime() - lastAttemptMs > sourceStaleAfterSec * 1000;
       const status = latest?.outcome === 'failure'
@@ -4075,15 +4077,110 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
   });
 
+  // --- GET /data-recovery/status -----------------------------------------
+  // Secret-safe production receipt for migration/backfill work. Counts are
+  // grouped server-side so operators can prove live-source progress without
+  // downloading the corpus or exposing filing/member payloads.
+  r.get('/data-recovery/status', async (c) => {
+    const [filings, transactions, ingestionOutbox, deliveryOutbox, runtimeQueue, filers, prices] = await Promise.all([
+      all<{ chamber: string; ingest_status: string; count: number }>(
+        c.env.DB,
+        `SELECT chamber, COALESCE(ingest_status, 'unknown') AS ingest_status, COUNT(*) AS count
+           FROM filings GROUP BY chamber, COALESCE(ingest_status, 'unknown')
+           ORDER BY chamber, ingest_status`,
+      ),
+      all<{ chamber: string; source: string; count: number; latest_created_at: string | null; recent_90d: number }>(
+        c.env.DB,
+        `SELECT COALESCE(f.chamber, 'unknown') AS chamber,
+                t.source,
+                COUNT(*) AS count,
+                MAX(t.created_at) AS latest_created_at,
+                SUM(CASE WHEN t.tx_date >= date('now', '-90 days') THEN 1 ELSE 0 END) AS recent_90d
+           FROM transactions t
+           LEFT JOIN filings f ON f.doc_id = t.doc_id
+          GROUP BY COALESCE(f.chamber, 'unknown'), t.source
+          ORDER BY chamber, t.source`,
+      ),
+      all<{ status: string; count: number; oldest_available_at: string | null }>(
+        c.env.DB,
+        `SELECT status, COUNT(*) AS count, MIN(available_at) AS oldest_available_at
+           FROM ingestion_outbox GROUP BY status ORDER BY status`,
+      ),
+      all<{ status: string; count: number; oldest_available_at: string | null }>(
+        c.env.DB,
+        `SELECT status, COUNT(*) AS count, MIN(available_at) AS oldest_available_at
+           FROM delivery_outbox GROUP BY status ORDER BY status`,
+      ),
+      optionalAll<{ queue_name: string; status: string; count: number; oldest_available_at: string | null }>(
+        c.env,
+        `SELECT queue_name, status, COUNT(*) AS count, MIN(available_at) AS oldest_available_at
+           FROM deno_runtime_queue GROUP BY queue_name, status ORDER BY queue_name, status`,
+      ),
+      all<{ total: number; missing_party: number; missing_state: number; missing_photo: number }>(
+        c.env.DB,
+        `SELECT COUNT(*) AS total,
+                COALESCE(SUM(CASE WHEN party IS NULL OR TRIM(party) = '' THEN 1 ELSE 0 END), 0) AS missing_party,
+                COALESCE(SUM(CASE WHEN state IS NULL OR TRIM(state) = '' THEN 1 ELSE 0 END), 0) AS missing_state,
+                COALESCE(SUM(CASE WHEN photo_url IS NULL OR TRIM(photo_url) = '' THEN 1 ELSE 0 END), 0) AS missing_photo
+           FROM filers`,
+      ),
+      all<{ rows: number; tickers: number; latest_date: string | null }>(
+        c.env.DB,
+        `SELECT COUNT(*) AS rows, COUNT(DISTINCT ticker) AS tickers, MAX(date) AS latest_date FROM price_eod`,
+      ),
+    ]);
+    return c.json({
+      ok: true,
+      asOf: new Date().toISOString(),
+      filings,
+      transactions,
+      queues: { ingestionOutbox, deliveryOutbox, runtimeQueue },
+      filers: filers[0] ?? { total: 0, missing_party: 0, missing_state: 0, missing_photo: 0 },
+      prices: prices[0] ?? { rows: 0, tickers: 0, latest_date: null },
+    });
+  });
+
+  // --- POST /storage-smoke ------------------------------------------------
+  // Authenticated, bounded put/get/content/delete proof for the live RAW_FILES
+  // binding. The response deliberately excludes provider errors and object keys.
+  r.post('/storage-smoke', async (c) => {
+    try {
+      return c.json(await verifyRawFilesStorage(c.env.RAW_FILES));
+    } catch (err) {
+      const stage = err && typeof err === 'object' && 'stage' in err
+        ? String((err as { stage: unknown }).stage)
+        : 'unknown';
+      return c.json({ ok: false, error: 'RAW_FILES storage verification failed', stage }, 503);
+    }
+  });
+
   // --- POST /oge-backfill ---------------------------------------------------
   // Force-poll the OGE President/VP index and enqueue any new executive 278-T
   // filings through the normal pipeline (same filing.new message the cron
   // watcher emits). Idempotent: INSERT OR IGNORE means re-runs only pick up
   // genuinely-new filings.
   r.post('/oge-backfill', async (c) => {
+    let body: Record<string, unknown> = {};
     try {
-      const newCount = await pollExecutive(c.env, new Date(), { force: true });
-      return c.json({ ok: true, newFilings: newCount ?? 0 });
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    if (body.maxFilings !== undefined && (typeof body.maxFilings !== 'number' || body.maxFilings <= 0)) {
+      return c.json({ error: 'maxFilings must be a positive number' }, 400);
+    }
+    if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
+      return c.json({ error: 'dryRun must be a boolean' }, 400);
+    }
+    try {
+      const dryRun = body.dryRun === true;
+      const newCount = await pollExecutive(c.env, new Date(), {
+        force: true,
+        maxFilings: typeof body.maxFilings === 'number' ? body.maxFilings : undefined,
+        dryRun,
+      });
+      return c.json({ ok: true, dryRun, candidateFilings: dryRun ? newCount ?? 0 : undefined, newFilings: dryRun ? 0 : newCount ?? 0 });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }
@@ -4117,6 +4214,46 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json(result);
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /senate-backfill ---------------------------------------------
+  // Search official Senate eFD PTR history in explicit date windows and hand
+  // genuinely-new filings to the same durable outbox/queue as the live watcher.
+  r.post('/senate-backfill', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    if (typeof body.fromDate !== 'string' || typeof body.toDate !== 'string') {
+      return c.json({ error: 'fromDate and toDate are required date strings' }, 400);
+    }
+    if (body.maxFilings !== undefined && typeof body.maxFilings !== 'number') {
+      return c.json({ error: 'maxFilings must be a number' }, 400);
+    }
+    if (body.maxSourceQueries !== undefined && typeof body.maxSourceQueries !== 'number') {
+      return c.json({ error: 'maxSourceQueries must be a number' }, 400);
+    }
+    if (body.dryRun !== undefined && typeof body.dryRun !== 'boolean') {
+      return c.json({ error: 'dryRun must be a boolean' }, 400);
+    }
+    try {
+      const result = await runSenateBackfill(c.env, {
+        fromDate: body.fromDate,
+        toDate: body.toDate,
+        maxFilings: body.maxFilings as number | undefined,
+        maxSourceQueries: body.maxSourceQueries as number | undefined,
+        dryRun: body.dryRun === true,
+      });
+      return c.json({
+        ok: result.errors.length === 0 && !result.sourceLimitReached,
+        ...result,
+      });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
     }
   });
 
@@ -8415,6 +8552,7 @@ async function observedAvgInterval(env: Env, source: string): Promise<number | n
  * recent filings. Returns null when there isn't enough dated data.
  */
 async function observedReleasedToSeenLag(env: Env, source: string, sinceIso: string | null): Promise<number | null> {
+  const chamber = source === 'oge' ? 'executive' : source;
   const row = await get<{ avg_sec: number | null }>(
     env.DB,
     `SELECT AVG((julianday(first_seen_at) - julianday(filed_date)) * 86400.0) AS avg_sec
@@ -8429,7 +8567,7 @@ async function observedReleasedToSeenLag(env: Env, source: string, sinceIso: str
           ORDER BY first_seen_at DESC
           LIMIT 200
        )`,
-    [source, sinceIso, sinceIso],
+    [chamber, sinceIso, sinceIso],
   );
   return row && row.avg_sec != null ? Math.round(row.avg_sec) : null;
 }
@@ -8441,6 +8579,7 @@ async function observedReleasedToSeenLag(env: Env, source: string, sinceIso: str
  * is PRECISE. Only live-pipeline rows (source='primary') are meaningful.
  */
 async function observedSeenToImportedLag(env: Env, source: string, sinceIso: string | null): Promise<number | null> {
+  const chamber = source === 'oge' ? 'executive' : source;
   const row = await get<{ avg_sec: number | null }>(
     env.DB,
     `SELECT AVG((julianday(t.created_at) - julianday(f.first_seen_at)) * 86400.0) AS avg_sec
@@ -8452,7 +8591,7 @@ async function observedSeenToImportedLag(env: Env, source: string, sinceIso: str
         AND t.created_at IS NOT NULL
         AND julianday(t.created_at) >= julianday(f.first_seen_at)
         AND (? IS NULL OR f.first_seen_at >= ?)`,
-    [source, sinceIso, sinceIso],
+    [chamber, sinceIso, sinceIso],
   );
   return row && row.avg_sec != null ? Math.round(row.avg_sec) : null;
 }

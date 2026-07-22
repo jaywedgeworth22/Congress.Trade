@@ -9,6 +9,7 @@ import {
   AUTOPILOT_SCHEMA_STATEMENTS,
   BASE_SCHEMA_STATEMENTS,
   D1_BUDGET_SCHEMA_STATEMENTS,
+  DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS,
   DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS,
   DOC_CLASS_SCHEMA_STATEMENTS,
   EST_VALUE_SCHEMA_STATEMENTS,
@@ -201,7 +202,17 @@ describe('admin migration bootstrap', () => {
       ...AUTOPILOT_SCHEMA_STATEMENTS,
       ...DOC_CLASS_SCHEMA_STATEMENTS,
       ...RESOURCE_GOVERNOR_SCHEMA_STATEMENTS,
+      ...DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS,
     ]);
+  });
+
+  it('includes the Turso-backed Deno runtime queue schema (0052)', () => {
+    const sql = DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('deno_runtime_queue');
+    expect(sql).toContain('lease_until');
+    expect(sql).toContain('idx_deno_runtime_queue_ready');
+    expect(sql).toContain('idx_deno_runtime_queue_active_dedupe');
+    expect(sql).toContain("status IN ('pending', 'processing')");
   });
 
   it('indexes retention-sweep timestamp columns so age-only deletes range-scan (0048)', () => {
