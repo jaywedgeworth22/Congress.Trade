@@ -39,5 +39,6 @@ jobs:
           project: congress-trade # <-- CHANGE THIS IF YOUR DENO PROJECT NAME IS DIFFERENT
           entrypoint: src/deno/main.ts
           root: app
+          production: true
         env:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_ORG_TOKEN }}
