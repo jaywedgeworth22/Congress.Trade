@@ -36,6 +36,13 @@ interface MockState {
   readsByDoc: Record<string, Array<{ provider: string; model: string; ok: number; error: string | null; usage_json: string | null }>>;
   backlogCount: number;
   budget: Map<string, number>;
+  reservations: Map<string, {
+    day: string;
+    reserved: number;
+    cap: number;
+    actual: number | null;
+    status: string;
+  }>;
   runUpdates: Array<{ sql: string; params: unknown[] }>;
   runInserts: unknown[][];
   reviewUpdates: Array<{ sql: string; params: unknown[] }>;
@@ -54,6 +61,7 @@ function makeState(over: Partial<MockState> = {}): MockState {
     readsByDoc: {},
     backlogCount: 0,
     budget: new Map(),
+    reservations: new Map(),
     runUpdates: [],
     runInserts: [],
     reviewUpdates: [],
@@ -128,6 +136,16 @@ function makeEnv(state: MockState, envVars: Record<string, unknown> = {}): {
             const day = String(this.params[0]);
             return { spend_microusd: state.budget.get(day) ?? 0 } as T;
           }
+          if (/FROM autopilot_budget_reservations WHERE reservation_id = \?/i.test(sql)) {
+            const reservation = state.reservations.get(String(this.params[0]));
+            return (reservation ? {
+              day: reservation.day,
+              reserved_microusd: reservation.reserved,
+              cap_microusd: reservation.cap,
+              actual_microusd: reservation.actual,
+              status: reservation.status,
+            } : null) as T | null;
+          }
           return null;
         },
         async all<T>(): Promise<{ results: T[] }> {
@@ -144,12 +162,34 @@ function makeEnv(state: MockState, envVars: Record<string, unknown> = {}): {
           return { results: [] as T[] };
         },
         async run() {
-          if (/INSERT OR IGNORE INTO autopilot_budget_settlements/i.test(sql)) {
-            const [, day, reserved, actual] = this.params as [string, string, number, number];
-            state.budget.set(
+          if (/INSERT OR IGNORE INTO autopilot_budget_reservations/i.test(sql)) {
+            const [reservationId, day, reserved, cap] = this.params as [string, string, number, number, string];
+            if (state.reservations.has(reservationId)) {
+              return { success: true, meta: { changes: 0 } };
+            }
+            const current = state.budget.get(day) ?? 0;
+            if (current + reserved > cap) throw new Error('autopilot budget exhausted');
+            state.budget.set(day, current + reserved);
+            state.reservations.set(reservationId, {
               day,
-              Math.max((state.budget.get(day) ?? 0) + actual - reserved, 0),
-            );
+              reserved,
+              cap,
+              actual: null,
+              status: 'reserved',
+            });
+            return { success: true, meta: { changes: 1 } };
+          }
+          if (/UPDATE autopilot_budget_reservations/i.test(sql)) {
+            const [actual, status, , reservationId, day, reserved]
+              = this.params as [number, string, string, string, string, number];
+            const reservation = state.reservations.get(reservationId);
+            if (!reservation || reservation.status !== 'reserved'
+              || reservation.day !== day || reservation.reserved !== reserved) {
+              return { success: true, meta: { changes: 0 } };
+            }
+            state.budget.set(day, Math.max((state.budget.get(day) ?? 0) + actual - reserved, 0));
+            reservation.actual = actual;
+            reservation.status = status;
             return { success: true, meta: { changes: 1 } };
           }
           if (/INSERT INTO autopilot_runs/i.test(sql)) {

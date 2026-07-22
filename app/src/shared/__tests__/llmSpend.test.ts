@@ -49,6 +49,16 @@ function spendEnv(rows: SpendRow[], vars: Record<string, string> = {}): {
     },
     async all() {
       if (failures.reads) throw new Error('D1 unavailable');
+      if (/FROM llm_spend_settlement_totals/i.test(sql)) {
+        const day = String(this.params[0]);
+        const totals = new Map<string, number>();
+        for (const row of settlements.filter((candidate) => candidate.day === day)) {
+          totals.set(row.provider, (totals.get(row.provider) ?? 0) + row.usd);
+        }
+        return {
+          results: Array.from(totals, ([provider, usd]) => ({ provider, usd })),
+        };
+      }
       if (/FROM llm_spend_settlements/i.test(sql)) {
         const day = String(this.params[0]);
         return { results: settlements.filter((r) => r.day === day).map((r) => ({ ...r })) };

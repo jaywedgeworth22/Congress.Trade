@@ -7,6 +7,7 @@ import { checkReadiness } from '../../shared/readiness.ts';
 import type { Env, Transaction } from '../../shared/types.ts';
 import {
   AUTOPILOT_SCHEMA_STATEMENTS,
+  ACCOUNTING_PROJECTION_SCHEMA_STATEMENTS,
   BASE_SCHEMA_STATEMENTS,
   D1_BUDGET_SCHEMA_STATEMENTS,
   DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS,
@@ -205,6 +206,7 @@ describe('admin migration bootstrap', () => {
       ...RESOURCE_GOVERNOR_SCHEMA_STATEMENTS,
       ...DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS,
       ...SPEND_SETTLEMENT_SCHEMA_STATEMENTS,
+      ...ACCOUNTING_PROJECTION_SCHEMA_STATEMENTS,
     ]);
   });
 
@@ -214,6 +216,15 @@ describe('admin migration bootstrap', () => {
     expect(sql).toContain('provider_response_id');
     expect(sql).toContain('autopilot_budget_settlements');
     expect(sql).toContain('trg_autopilot_budget_settlement');
+  });
+
+  it('includes bounded accounting projections and durable reservations (0054)', () => {
+    const sql = ACCOUNTING_PROJECTION_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('llm_spend_settlement_totals');
+    expect(sql).toContain('trg_llm_spend_settlement_projection');
+    expect(sql).toContain('autopilot_budget_reservations');
+    expect(sql).toContain('trg_autopilot_budget_reserve');
+    expect(sql).toContain('trg_autopilot_budget_reservation_settle');
   });
 
   it('includes the Turso-backed Deno runtime queue schema (0052)', () => {

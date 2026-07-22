@@ -1399,11 +1399,15 @@ export async function runCandidateOnDoc(
     };
   } catch (err) {
     const cast = err as ProviderError;
+    // Accounting failure after a paid response is globally terminal. Returning
+    // an ordinary candidate failure lets agreement/admin loops call the next
+    // paid model while the hard meter is known incomplete.
+    if (cast instanceof LlmSpendSettlementError) throw cast;
     const error = cast.message.slice(0, 300);
 
     // Failed attempts with provider-reported usage were still billed. A
     // settlement failure is itself terminal and must not recursively meter.
-    if (!spendSettled && !(cast instanceof LlmSpendSettlementError)) {
+    if (!spendSettled) {
       await settleLlmSpend(env, {
         provider,
         requestedModel: model,
