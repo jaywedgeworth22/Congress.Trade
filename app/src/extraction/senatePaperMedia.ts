@@ -237,6 +237,7 @@ function normalizeOwner(raw: unknown): Owner {
   if (s === 'spouse' || s === 's' || s === '(s)') return 'spouse';
   if (s === 'joint' || s === 'j' || s === '(j)') return 'joint';
   if (s === 'dependent' || s === 'dc' || s === '(dc)') return 'dependent';
-  if (s === 'self') return 'self';
-  return 'unknown';
+  // Owner is a closed enum (self|spouse|joint|dependent). Unspecified/blank PTR
+  // rows match vision extraction: default to self rather than inventing "unknown".
+  return 'self';
 }
