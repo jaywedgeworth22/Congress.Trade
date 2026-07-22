@@ -9,7 +9,7 @@
  */
 
 import type { Env } from '../shared/types.ts';
-import { all, run, batch } from '../shared/db.ts';
+import { all, run, batch, get } from '../shared/db.ts';
 import type { SqlParam } from '../shared/db.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { notifyAdmin } from '../alerts/notify.ts';
@@ -648,6 +648,74 @@ async function fetchQuiverRows(apiKey: string, max: number, fetchImpl: typeof fe
 }
 
 
+function providerOnlyDocId(row: DisclosureProviderRow): string {
+  const key = row.providerKey.replace(/[^a-z0-9_-]+/gi, '-').slice(0, 80) || simpleHash(rowText(row.payload));
+  return `provider-missing-${row.provider}-${row.chamber}-${key}`;
+}
+
+async function routeProviderOnlyObservationsToReview(
+  env: Env,
+  provider: ProviderId,
+  rows: DisclosureProviderRow[],
+  nowIso: string,
+): Promise<void> {
+  for (const row of rows) {
+    if (row.chamber !== 'house' && row.chamber !== 'senate') continue;
+    const docId = providerOnlyDocId(row);
+    const exists = await get<{ doc_id: string }>(
+      env.DB,
+      `SELECT doc_id FROM filings
+        WHERE doc_id = ?
+           OR (? IS NOT NULL AND source_url = ?)
+           OR EXISTS (
+                SELECT 1 FROM disclosure_latency_candidates c
+                 WHERE c.provider = ? AND c.provider_key = ? AND c.status = 'matched'
+                   AND c.doc_id = filings.doc_id
+              )
+        LIMIT 1`,
+      [docId, row.sourceUrl, row.sourceUrl, provider, row.providerKey],
+    );
+    if (exists) continue;
+
+    const payload = JSON.stringify({
+      reason: 'provider_discovered_missing_official',
+      provider,
+      providerKey: row.providerKey,
+      providerPublishedAt: row.providerPublishedAt,
+      filedDate: row.filedDate,
+      filerName: row.filerName,
+      sourceUrl: row.sourceUrl,
+      payload: row.payload,
+    }).slice(0, PAYLOAD_LIMIT);
+
+    await batch(env.DB, [
+      [
+        `INSERT OR IGNORE INTO filings
+           (doc_id, chamber, filer_id, filing_type, filed_date, source_url,
+            raw_object_key, ingest_status, doc_kind, extractor, model_version,
+            confidence, first_seen_at, source_updated_at, error)
+         VALUES (?, ?, NULL, 'P', ?, ?, NULL, 'needs_review', 'unknown', NULL, NULL,
+                 NULL, ?, ?, ?)`,
+        [
+          docId,
+          row.chamber,
+          row.filedDate,
+          row.sourceUrl,
+          nowIso,
+          row.providerPublishedAt,
+          `provider-only:${provider}:${row.providerKey}`,
+        ],
+      ],
+      [
+        `INSERT OR IGNORE INTO review_queue (doc_id, reason, payload, created_at, resolved)
+         VALUES (?, 'provider_discovered_missing_official', ?, ?, 0)`,
+        [docId, payload, nowIso],
+      ],
+    ]);
+  }
+}
+
+
 async function resolveProviderSecret(env: Env, provider: ProviderDefinition): Promise<string | null> {
   for (const name of provider.secretNames) {
     const envx = env as unknown as Record<string, string | undefined>;
@@ -1110,6 +1178,21 @@ async function runUnusualWhalesDeepMatch(
   // never inflated to nowIso for a previously observed row.
   const providerRows = await loadObservationRowsByKeys(env, provider.id, Array.from(fetchedKeys));
   const result = await matchAndUpdateCandidates(env, provider, targetCandidates, providerRows, nowIso, errors);
+  await routeProviderOnlyObservationsToReview(
+    env,
+    provider.id,
+    providerRows.map((providerRow) => ({
+      provider: providerRow.provider,
+      chamber: providerRow.chamber,
+      providerKey: providerRow.provider_key,
+      payload: providerRow.payload ? (JSON.parse(providerRow.payload) as Record<string, unknown>) : {},
+      sourceUrl: providerRow.source_url,
+      filedDate: providerRow.filed_date,
+      filerName: providerRow.filer_name,
+      providerPublishedAt: providerRow.provider_published_at,
+    })),
+    nowIso,
+  );
   return { ...result, fetchedRows, errors, examinedDocIds: targetCandidates.map((c) => c.doc_id) };
 }
 
@@ -1221,6 +1304,10 @@ async function runProviderProbe(
       const examined = new Set([...matched.examinedDocIds, ...deep.examinedDocIds]);
       const matchedIds = new Set([...matched.matchedDocIds, ...deep.matchedDocIds]);
       totalPending = examined.size - matchedIds.size;
+    }
+
+    if (freshRows.length) {
+      await routeProviderOnlyObservationsToReview(env, provider.id, freshRows, nowIso);
     }
 
     return { ...base, configured: true, enabled: true, fetchedRows: totalFetchedRows, pending: totalPending, matched: totalMatched, errors };
