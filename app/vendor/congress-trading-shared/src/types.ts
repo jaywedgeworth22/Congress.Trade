@@ -13,7 +13,7 @@ export type {
   TxType,
   AssetTypeCategory,
   MktCapBucket,
-} from "./schemas.ts";
+} from "./schemas";
 
 // ---- Market data types ----
 
@@ -22,7 +22,7 @@ export type {
   SecurityRef,
   SecurityRefInput,
   PriceSeries,
-} from "./schemas.ts";
+} from "./schemas";
 
 // ---- Transaction types ----
 
@@ -32,7 +32,7 @@ export type {
   TransactionsPage,
   TransactionsQuery,
   BundleResponse,
-} from "./schemas.ts";
+} from "./schemas";
 
 // ---- Enrichment data types ----
 
@@ -43,7 +43,7 @@ export type {
   InsiderReadRow,
   ShortVolumeRow,
   ShortVolumeReadRow,
-} from "./schemas.ts";
+} from "./schemas";
 
 // ---- Analytics types ----
 
@@ -56,19 +56,19 @@ export type {
   BacktestHorizon,
   TickerBacktest,
   CommitteeConflict,
-} from "./schemas.ts";
+} from "./schemas";
 
 // ---- Import/Share payload (App B → App A) ----
 
-export type { SharePayload } from "./schemas.ts";
+export type { SharePayload } from "./schemas";
 
 // ---- Push events (App A → App B) ----
 
-export type { CongressEventType, CongressEvent } from "./schemas.ts";
+export type { CongressEventType, CongressEvent } from "./schemas";
 
 // ---- Snapshot/Export ----
 
-export type { SnapshotTableInfo, SnapshotManifest } from "./schemas.ts";
+export type { SnapshotTableInfo, SnapshotManifest } from "./schemas";
 
 // ---- Client-facing types ----
 
@@ -78,7 +78,7 @@ export type {
   ClientTransaction,
   ClientFiling,
   ClientTrade,
-} from "./schemas.ts";
+} from "./schemas";
 
 // ---- Ticker alias classification ----
 
@@ -101,4 +101,4 @@ export interface TickerAliasResolution {
 
 // ---- Shared constant (consolidated: canonical is in constants.ts) ----
 
-export { APP_B_ORIGIN_TAG as APP_B_ORIGIN, CONGRESS_EVENT_TYPES } from "./constants.ts";
+export { APP_B_ORIGIN_TAG as APP_B_ORIGIN, CONGRESS_EVENT_TYPES } from "./constants";

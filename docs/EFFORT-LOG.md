@@ -8,6 +8,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 `claude/board-nextwave-c2` so the next Effort Issues Sync run closes #149-#154 and re-labels
 #155/#161.
 
+- **[Congress.Trade][CODEX] Usage telemetry v2 producer adoption (branch `codex/usage-telemetry-v2-recovery-20260722`, worktree `/Users/jay/.codex/worktrees/congress-telemetry-v2-recovery`) — LOCALLY VERIFIED; RECEIVER GATE CLEARED 2026-07-22.** Usage-Monitor exact main `335723775ef0f8114ee1ca77b4716139018026dc` is committed live on Oracle. Deno Zod is aligned to v4.4.3; the exact shared v2.0.0 source/tag commit is vendored with provenance; fresh events use strict v2 only and pre-existing Queue/R2/D1 v1 rows drain through the one-way shared legacy adapter. No dual write and no false API-key attribution. Exact vendor comparison, Deno typecheck, 73 focused tests, and the full 156-file / 1,774-test suite pass. PR/deploy receipts pending. Rollout: `docs/rollouts/2026-07-22-usage-telemetry-v2-producer.md`.
+
 - **[Congress.Trade][CODEX] #714 P2 timestamp-sort follow-up — IN PROGRESS 2026-07-22.** Preserve full timestamp precision when clamping genuinely future dates in the dashboard sorter; focused dashboard tests and backend typecheck pass. Follow-up PR pending hosted Coolify checks.
 
 ## Deployed

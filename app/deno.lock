@@ -24,7 +24,6 @@
     "npm:typescript@^5.6.3": "5.9.3",
     "npm:unpdf@^1.6.2": "1.6.2",
     "npm:vitest@^4.1.10": "4.1.10_@opentelemetry+api@1.9.1_@types+node@26.1.1_@vitest+coverage-v8@4.1.10_vite@8.1.5__@types+node@26.1.1__esbuild@0.28.1_esbuild@0.28.1",
-    "npm:zod@^3.23.8": "3.25.76",
     "npm:zod@^4.4.3": "4.4.3"
   },
   "npm": {
@@ -2239,9 +2238,6 @@
     "yocto-queue@0.1.0": {
       "integrity": "sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q=="
     },
-    "zod@3.25.76": {
-      "integrity": "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="
-    },
     "zod@4.4.3": {
       "integrity": "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="
     }
@@ -2275,7 +2271,7 @@
       "npm:node-html-parser@9",
       "npm:pdf-lib@^1.17.1",
       "npm:unpdf@^1.6.2",
-      "npm:zod@^3.23.8"
+      "npm:zod@^4.4.3"
     ],
     "packageJson": {
       "dependencies": [
