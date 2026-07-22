@@ -26,9 +26,40 @@ on:
           - ingest-requeue-failed
           - ingest-retry-errored
           - batch-status
+          - data-status
+          - storage-smoke
+          - official-data-dry-run
+          - official-data-batch
+          - metadata-enrichment
+          - market-backfill
       job_id:
         description: Required UUID-like batch job id when task is batch-status
         required: false
+        type: string
+      from_date:
+        description: Senate backfill start date (YYYY-MM-DD)
+        required: false
+        default: '2012-01-01'
+        type: string
+      to_date:
+        description: Senate backfill end date (YYYY-MM-DD)
+        required: false
+        default: '2026-07-22'
+        type: string
+      from_year:
+        description: House backfill first year
+        required: false
+        default: '2012'
+        type: string
+      to_year:
+        description: House backfill last year
+        required: false
+        default: '2026'
+        type: string
+      max_filings:
+        description: Maximum new official filings per source in this batch (1-500)
+        required: false
+        default: '100'
         type: string
       confirm:
         description: Type run-production-maintenance to confirm
@@ -136,3 +167,106 @@ jobs:
           PY
           echo "HTTP $code"
           [ "$code" = "200" ] || exit 1
+
+      - name: Read production data-recovery status
+        if: inputs.task == 'data-status' || inputs.task == 'official-data-dry-run' || inputs.task == 'official-data-batch'
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/data-status.json -w '%{http_code}' \
+            "$BASE_URL/api/admin/data-recovery/status" \
+            -H "authorization: Bearer $ADMIN_TOKEN")
+          cat /tmp/data-status.json; echo
+          [ "$code" = "200" ] || { echo "HTTP $code"; exit 1; }
+
+      - name: Verify production RAW_FILES put/get/delete
+        if: inputs.task == 'storage-smoke'
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/storage-smoke.json -w '%{http_code}' -X POST \
+            "$BASE_URL/api/admin/storage-smoke" \
+            -H "authorization: Bearer $ADMIN_TOKEN" \
+            -H 'content-type: application/json' -d '{}')
+          cat /tmp/storage-smoke.json; echo
+          [ "$code" = "200" ] || { echo "HTTP $code"; exit 1; }
+
+      - name: Validate official-data batch bounds
+        if: inputs.task == 'official-data-dry-run' || inputs.task == 'official-data-batch'
+        env:
+          FROM_DATE: ${{ inputs.from_date }}
+          TO_DATE: ${{ inputs.to_date }}
+          FROM_YEAR: ${{ inputs.from_year }}
+          TO_YEAR: ${{ inputs.to_year }}
+          MAX_FILINGS: ${{ inputs.max_filings }}
+        run: |
+          set -euo pipefail
+          [[ "$FROM_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+          [[ "$TO_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+          [[ "$FROM_YEAR" =~ ^[0-9]{4}$ ]]
+          [[ "$TO_YEAR" =~ ^[0-9]{4}$ ]]
+          [[ "$MAX_FILINGS" =~ ^[0-9]+$ ]]
+          [ "$FROM_YEAR" -ge 2008 ] && [ "$TO_YEAR" -le 2100 ] && [ "$FROM_YEAR" -le "$TO_YEAR" ]
+          [ "$MAX_FILINGS" -ge 1 ] && [ "$MAX_FILINGS" -le 500 ]
+
+      - name: Run bounded official-source discovery
+        if: inputs.task == 'official-data-dry-run' || inputs.task == 'official-data-batch'
+        env:
+          FROM_DATE: ${{ inputs.from_date }}
+          TO_DATE: ${{ inputs.to_date }}
+          FROM_YEAR: ${{ inputs.from_year }}
+          TO_YEAR: ${{ inputs.to_year }}
+          MAX_FILINGS: ${{ inputs.max_filings }}
+          DRY_RUN: ${{ inputs.task == 'official-data-dry-run' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          call_admin() {
+            local route="$1" body="$2" out="/tmp/${route}.json"
+            local code
+            code=$(curl -sS -o "$out" -w '%{http_code}' -X POST \
+              "$BASE_URL/api/admin/$route" \
+              -H "authorization: Bearer $ADMIN_TOKEN" \
+              -H 'content-type: application/json' -d "$body")
+            echo "== $route"; cat "$out"; echo
+            [ "$code" = "200" ] || { echo "HTTP $code"; exit 1; }
+            python3 - "$out" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              payload = json.load(handle)
+          errors = payload.get("errors")
+          if payload.get("ok") is False or (isinstance(errors, list) and errors):
+              print("::error::official-source recovery reported partial failure")
+              raise SystemExit(1)
+          PY
+          }
+          house_body=$(printf '{"fromYear":%s,"toYear":%s,"maxFilings":%s,"dryRun":%s}' \
+            "$FROM_YEAR" "$TO_YEAR" "$MAX_FILINGS" "$DRY_RUN")
+          senate_body=$(printf '{"fromDate":"%s","toDate":"%s","maxFilings":%s,"dryRun":%s}' \
+            "$FROM_DATE" "$TO_DATE" "$MAX_FILINGS" "$DRY_RUN")
+          oge_body=$(printf '{"maxFilings":%s,"dryRun":%s}' "$MAX_FILINGS" "$DRY_RUN")
+          call_admin house-backfill "$house_body"
+          call_admin senate-backfill "$senate_body"
+          call_admin oge-backfill "$oge_body"
+
+      - name: Fill free member and ticker metadata
+        if: inputs.task == 'metadata-enrichment'
+        run: |
+          set -euo pipefail
+          for spec in 'enrich-photos {}' 'resolve-tickers {"limit":5000}'; do
+            route=${spec%% *}; body=${spec#* }
+            code=$(curl -sS -o "/tmp/${route}.json" -w '%{http_code}' -X POST \
+              "$BASE_URL/api/admin/$route" -H "authorization: Bearer $ADMIN_TOKEN" \
+              -H 'content-type: application/json' -d "$body")
+            echo "== $route"; cat "/tmp/${route}.json"; echo
+            [ "$code" = "200" ] || { echo "HTTP $code"; exit 1; }
+          done
+
+      - name: Run one governed market-data batch
+        if: inputs.task == 'market-backfill'
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/market-backfill.json -w '%{http_code}' -X POST \
+            "$BASE_URL/api/admin/backfill-market" -H "authorization: Bearer $ADMIN_TOKEN" \
+            -H 'content-type: application/json' -d '{"max":40,"maxPerMinute":120}')
+          cat /tmp/market-backfill.json; echo
+          [ "$code" = "200" ] || { echo "HTTP $code"; exit 1; }
