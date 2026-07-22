@@ -52,3 +52,4 @@ jobs:
         env:
           ADMIN_TOKEN: ${{ env.ADMIN_TOKEN || secrets.ADMIN_TOKEN }}
           DENO_DEPLOY_TOKEN: ${{ env.DENO_PAT || env.DENO_ORG_TOKEN }}
+          DEPLOYCTL_ORGANIZATION: congress-trade
