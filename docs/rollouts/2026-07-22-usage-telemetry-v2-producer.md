@@ -18,4 +18,9 @@ New Queue and R2 outbox rows store strict v2 events. Pre-existing v1 Queue/R2/D1
 - `deno check src/deno/main.ts`: pass.
 - Focused v2 producer/legacy drain/operator tests: 3 files / 73 tests pass.
 - Full app suite: 156 files / 1,774 tests pass.
-- Protected PR checks, Deno deployment, exact live revision, and receiver ACK: pending.
+- PR #752 merged as `c800550` after hosted CI/PWA/security and the Deno preview build passed.
+- The first main deploy failed before build because preceding Dependabot #747 selected AWS SDK
+  `3.1092.0`, still inside Deno's 24-hour minimum-age gate. Follow-up branch
+  `codex/deno-aws-min-age-hotfix` exact-pins aged `3.1091.0` across npm/Deno manifests without
+  weakening the gate; `deno install --reload` and root/app Deno checks pass.
+- Corrected main deployment, exact live revision, and receiver ACK: pending.
