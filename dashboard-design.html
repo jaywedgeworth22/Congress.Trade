@@ -147,6 +147,13 @@
     <div class="toolbar">
       <input id="qMember" placeholder="Filter member…" oninput="renderFeed()" />
       <input id="qTicker" placeholder="Ticker…" oninput="renderFeed()" style="width:120px" />
+      <select id="qTime" onchange="renderFeed()" style="font-style: italic; font-weight: normal;">
+        <option value="">All time</option>
+        <option value="1m">Last 1 month</option>
+        <option value="3m" selected>Last 3 months</option>
+        <option value="6m">Last 6 months</option>
+        <option value="1y">Last 1 year</option>
+      </select>
       <select id="qType" onchange="renderFeed()">
         <option value="">All types</option><option value="P">Purchase</option>
         <option value="S">Sale</option><option value="E">Exchange</option>
