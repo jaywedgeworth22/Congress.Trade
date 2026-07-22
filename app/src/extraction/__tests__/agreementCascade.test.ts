@@ -1,10 +1,12 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
 import {
+  allSuccessfulReadsEmpty,
   handleAgreementCheck,
   processAgreementCascadeTier2,
   type AgreementModelsC,
 } from '../agreement.ts';
+import type { CandidateDocResult } from '../bakeoff.ts';
 
 /** A genuinely-parseable PDF: the Anthropic candidate pre-validates bytes
  *  with pdf-lib (normalizePdfForAnthropic) before any provider call. */
@@ -112,6 +114,9 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
           }
           if (/SELECT payload, review_revision FROM review_queue/i.test(sql)) {
             return { payload: null, review_revision: review.revision } as T;
+          }
+          if (/SELECT review_revision FROM review_queue/i.test(sql)) {
+            return { review_revision: review.revision } as T;
           }
           return null as T | null;
         },
@@ -231,6 +236,23 @@ const MODELS_C: AgreementModelsC = {
   c: { provider: 'mistral', model: 'mistral-ocr-latest' },
 };
 
+describe('allSuccessfulReadsEmpty', () => {
+  const emptyOk = { ok: true, rows: [], rowCount: 0 } as unknown as CandidateDocResult;
+  const withRows = {
+    ok: true,
+    rows: [{ ticker: 'AAPL' }],
+    rowCount: 1,
+  } as unknown as CandidateDocResult;
+  const failed = { ok: false, rows: [], rowCount: 0, error: 'x' } as unknown as CandidateDocResult;
+
+  it('is true only when every read ok and empty', () => {
+    expect(allSuccessfulReadsEmpty([emptyOk, emptyOk])).toBe(true);
+    expect(allSuccessfulReadsEmpty([emptyOk, withRows])).toBe(false);
+    expect(allSuccessfulReadsEmpty([emptyOk, failed])).toBe(false);
+    expect(allSuccessfulReadsEmpty([])).toBe(false);
+  });
+});
+
 describe('agreement cascade — tier 1', () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -264,6 +286,27 @@ describe('agreement cascade — tier 1', () => {
     expect(cap.inserted).toHaveLength(0);
     expect(cap.reviewFlags).toHaveLength(1);
     expect(cap.reviewFlags[0].reason).toBe('agreement_cascade_unresolved');
+  });
+
+  it('empty×empty is extract_empty_failure hard fail — no tier-2 escalation', async () => {
+    stub(asJson([]), asJson([]));
+    const { env, cap, review } = makeEnv();
+    const res = await handleAgreementCheck(env, 'H-empty', 'raw/H-empty');
+    expect(res).toMatchObject({
+      outcome: 'agree_but_hardfail',
+      reason: 'extract_empty_failure',
+      flags: expect.arrayContaining(['extract_empty_failure']),
+    });
+    expect(cap.sent).toHaveLength(0); // must NOT escalate
+    expect(cap.inserted).toHaveLength(0);
+    const emptyDecision = cap.decisions.find((d) => d.action === 'extract_empty_failure');
+    expect(emptyDecision).toBeTruthy();
+    expect(emptyDecision?.reason).toBe('extract_empty_failure');
+    // finishTerminalClaim must still match the claim and pin attempts at the cap
+    // (default AGREEMENT_MAX_ATTEMPTS = 3) so autopilot cannot re-burn empty docs.
+    expect(review.claimToken).toBeNull();
+    expect(review.attempts).toBeGreaterThanOrEqual(3);
+    expect(cap.reviewFlags.some((f) => f.reason === 'extract_empty_failure')).toBe(true);
   });
 
   it('a big doc (page_count over threshold) starts directly at tier 2', async () => {

@@ -408,8 +408,10 @@ describe('normalize', () => {
     expect(result.needsReview).toBe(true);
     expect(result.minConfidence).toBe(0);
     expect(cap.reviewRows).toHaveLength(1);
+    expect(String(cap.reviewRows[0][1])).toContain('extract_empty_failure');
     expect(String(cap.reviewRows[0][1])).toContain('no_transactions_extracted');
-    expect(String(cap.reviewRows[0][1])).toContain('low_confidence');
+    // Empty extract is hard failure — do not also tag low_confidence (no rows).
+    expect(String(cap.reviewRows[0][1])).not.toContain('low_confidence');
   });
 
   it('routes header-contaminated asset names to review', async () => {
