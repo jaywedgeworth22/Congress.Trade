@@ -21,7 +21,7 @@ vi.mock('../ogeSource', () => ({
   pollOgeExecutive: mocks.pollOgeExecutive,
 }));
 
-import { computeSenateLookbackDays, inHousePriorYearWindow, runWatcher } from '../watcher.ts';
+import { computeSenateLookbackDays, inHousePriorYearWindow, pollExecutive, runWatcher } from '../watcher.ts';
 
 function housePtr(docId: string, overrides: Partial<Record<'filingDate' | 'first' | 'last' | 'stateDst', string>> = {}) {
   return {
@@ -307,6 +307,42 @@ describe('runWatcher', () => {
 
     expect(result?.executive).toBe('failure');
     expect(kvPuts.map(([key]) => key)).not.toContain('last_poll:oge');
+  });
+
+  it('supports a bounded OGE dry run without writes, queue handoffs, or checkpointing', async () => {
+    const { env, kvPuts, dbRuns, queueSends } = fakeEnv();
+    mocks.pollOgeExecutive.mockResolvedValueOnce([
+      ogeFiling,
+      { ...ogeFiling, docId: 'OGE-2026-0002', sourceUrl: 'https://extapps2.oge.gov/278/0002.pdf' },
+    ]);
+
+    const candidates = await pollExecutive(env, new Date('2026-07-12T15:00:00.000Z'), {
+      force: true,
+      maxFilings: 1,
+      dryRun: true,
+    });
+
+    expect(candidates).toBe(1);
+    expect(dbRuns).toHaveLength(0);
+    expect(queueSends).toHaveLength(0);
+    expect(kvPuts.map(([key]) => key)).not.toContain('last_poll:oge');
+  });
+
+  it('caps genuinely new OGE persistence and queue handoffs', async () => {
+    const { env, kvPuts, queueSends } = fakeEnv();
+    mocks.pollOgeExecutive.mockResolvedValueOnce([
+      ogeFiling,
+      { ...ogeFiling, docId: 'OGE-2026-0002', sourceUrl: 'https://extapps2.oge.gov/278/0002.pdf' },
+    ]);
+
+    const inserted = await pollExecutive(env, new Date('2026-07-12T15:00:00.000Z'), {
+      force: true,
+      maxFilings: 1,
+    });
+
+    expect(inserted).toBe(1);
+    expect(queueSends).toHaveLength(1);
+    expect(kvPuts.map(([key]) => key)).toContain('last_poll:oge');
   });
 
   // --- Senate lookback: daily deep sweep + outage catch-up -----------------
