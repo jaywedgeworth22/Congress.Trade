@@ -8,6 +8,10 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 `claude/board-nextwave-c2` so the next Effort Issues Sync run closes #149-#154 and re-labels
 #155/#161.
 ## Deployed
+- **Deno Deploy & Turso Migration + Trends Timeframe Filter (AG) — COMPLETED / MERGED 2026-07-21 via PR #714, #715, #716.**
+  - **Deno Deploy & Turso Target**: Integrated Deno server entrypoints (`src/deno/main.ts`), Deno Hono routing (`src/app.ts`), and Deno queue handlers (`src/queueHandlers.ts`). Updated `package.json` deploy script to use `deployctl` targeting Deno Deploy (`congress-trade`) and Turso database. Deprecated Cloudflare Workers / D1.
+  - **Top-Level Timeframe Filter**: Added a single top-level Timeframe dropdown (`#trGlobalWindow`) to the Trends view toolbar, defaulting to Past 3 Months (`90d`). Styled section heading timeframes in italics (`<em class="tr-window-label">`).
+  - **CI Runner Policy**: Fixed `check-actions-runner-policy.mjs` error by updating `.github/workflows/auto-update-prs.yml` to target `[self-hosted, congress-ci]` and pinning action to commit SHA.
 - **Resource Governors & Hard Caps (AG/CLAUDE, M) — COMPLETED 2026-07-20 via PR #620.** Resolved GitHub Actions CI blockage by running comprehensive local validation (1722 tests passed), merged PR #620, and deployed to production. This enforces D1 write budgets, LLM spend limits, and circuit breakers.
 - **iOS App Assets and Styling (AG) — COMPLETED / MERGED 2026-07-19 via PR #630.**
   - **Fonts**: Imported custom Zilla Slab font (Regular & Bold) into the Xcode project, registered in `.pbxproj` via `INFOPLIST_KEY_UIAppFonts`, and applied globally in SwiftUI via `App.swift`.
