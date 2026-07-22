@@ -155,7 +155,27 @@ export class S3BucketShim {
         }
       };
     } catch (e: any) {
-      if (e.name === 'NoSuchKey') return null;
+      // Missing object is a normal miss. Entitlement / auth failures are also
+      // treated as misses so callers can fall back to source_url re-fetch
+      // instead of crashing the agreement/extract path (prod R2 NotEntitled).
+      const name = String(e?.name ?? '');
+      const code = String(e?.Code ?? e?.code ?? e?.$metadata?.httpStatusCode ?? '');
+      const msg = String(e?.message ?? e ?? '');
+      if (
+        name === 'NoSuchKey'
+        || name === 'NotFound'
+        || name === 'AccessDenied'
+        || name === 'NotEntitled'
+        || name === 'InvalidAccessKeyId'
+        || name === 'SignatureDoesNotMatch'
+        || code === 'NoSuchKey'
+        || code === 'AccessDenied'
+        || code === 'NotEntitled'
+        || /NotEntitled|Access Denied|not entitled/i.test(msg)
+      ) {
+        console.warn('S3BucketShim.get soft-miss:', key, name || code || msg.slice(0, 120));
+        return null;
+      }
       throw e;
     }
   }
