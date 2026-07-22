@@ -5,6 +5,8 @@ import {
   currentEraStart,
   handleAutopilotTick,
   maybeStartBacklogAutopilot,
+  pollAutopilotPreseedBatches,
+  submitPreseedBatches,
 } from '../autopilot.ts';
 import type { AgreementDocResult } from '../agreement.ts';
 
@@ -602,5 +604,91 @@ describe('acknowledgeAutopilotHalt', () => {
     const state = makeState();
     const { env } = makeEnv(state);
     expect(await acknowledgeAutopilotHalt(env)).toBeNull();
+  });
+});
+
+describe('autopilot batch submission receipts', () => {
+  it('persists a submitting intent before provider work and retains it on lease loss', async () => {
+    const operations: Array<{ sql: string; params: unknown[] }> = [];
+    const env = {
+      RAW_FILES: {
+        get: vi.fn(async () => ({ arrayBuffer: async () => new ArrayBuffer(8) })),
+      },
+      DB: {
+        prepare(sql: string) {
+          return {
+            params: [] as unknown[],
+            bind(...params: unknown[]) { this.params = params; return this; },
+            async run() {
+              operations.push({ sql, params: this.params });
+              return { success: true, meta: { changes: 1 } };
+            },
+          };
+        },
+      },
+    } as unknown as Env;
+    const controller = new AbortController();
+    const submit = vi.fn(async () => {
+      expect(operations[0]?.sql).toContain("'submitting'");
+      controller.abort(new Error('lease lost after provider accepted batch'));
+      return 'provider-batch-accepted';
+    });
+
+    await expect(submitPreseedBatches(
+      env,
+      new Map([['anthropic:claude-sonnet-5', [{ docId: 'H-1', rawObjectKey: 'raw/H-1' }]]]),
+      { skipReasons: {} } as never,
+      'run-1',
+      1,
+      controller.signal,
+      { submit: submit as never, id: () => 'intent-1' },
+    )).rejects.toThrow('lease lost after provider accepted batch');
+
+    expect(submit).toHaveBeenCalledOnce();
+    expect(operations).toHaveLength(1);
+    expect(operations[0].params).toEqual([
+      'autopilot-intent-1',
+      'anthropic',
+      'claude-sonnet-5',
+      '["H-1"]',
+      expect.any(String),
+    ]);
+  });
+
+  it('terminalizes a stale submitting intent as an explicit unknown outcome', async () => {
+    const updates: Array<{ sql: string; params: unknown[] }> = [];
+    const env = {
+      DB: {
+        prepare(sql: string) {
+          return {
+            params: [] as unknown[],
+            bind(...params: unknown[]) { this.params = params; return this; },
+            async all<T>() {
+              return {
+                success: true,
+                results: [{
+                  id: 'autopilot-intent-1',
+                  provider: 'anthropic',
+                  model: 'claude-sonnet-5',
+                  provider_batch_id: null,
+                  status: 'submitting',
+                }] as T[],
+              };
+            },
+            async run() {
+              updates.push({ sql, params: this.params });
+              return { success: true, meta: { changes: 1 } };
+            },
+          };
+        },
+      },
+    } as unknown as Env;
+    const now = new Date('2026-07-22T18:00:00.000Z');
+
+    await pollAutopilotPreseedBatches(env, '2026-07-22', undefined, () => now);
+
+    expect(updates).toHaveLength(1);
+    expect(updates[0].sql).toContain("status = 'submission_unknown'");
+    expect(updates[0].params).toEqual([now.toISOString(), 'autopilot-intent-1']);
   });
 });

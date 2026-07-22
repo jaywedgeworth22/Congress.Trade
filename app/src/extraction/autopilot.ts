@@ -79,6 +79,7 @@ const UNPRICEABLE_READ_COST_USD = 0.05;
 /** Outstanding pre-seed batch jobs polled per tick (bounded work). */
 const PRESEED_POLL_LIMIT = 3;
 const AUTOPILOT_BATCH_ID_PREFIX = 'autopilot-';
+const PRESEED_SUBMISSION_UNKNOWN_AFTER_MS = 15 * 60 * 1000;
 
 const KILL_SWITCH_CLASSES: readonly ProviderErrorClass[] = [
   'billing', 'auth', 'quota', 'parse', 'timeout',
@@ -1121,14 +1122,24 @@ async function missingDirectBatchReads(
   return directModels.filter((model) => !cachedLabels.has(`${model.provider}:${model.model}`));
 }
 
-async function submitPreseedBatches(
+export interface PreseedSubmitDeps {
+  submit?: typeof submitBatch;
+  now?: () => Date;
+  id?: () => string;
+}
+
+export async function submitPreseedBatches(
   env: Env,
   queue: Map<string, Array<{ docId: string; rawObjectKey: string }>>,
   state: RunState,
   runId: string,
   revision: number,
   signal?: AbortSignal,
+  deps: PreseedSubmitDeps = {},
 ): Promise<number | null> {
+  const submit = deps.submit ?? submitBatch;
+  const now = deps.now ?? (() => new Date());
+  const id = deps.id ?? uuid;
   for (const [modelKey, docs] of queue) {
     const [provider, ...modelParts] = modelKey.split(':');
     const model = modelParts.join(':');
@@ -1151,24 +1162,51 @@ async function submitPreseedBatches(
       batchDocs.push({ docId: docRef.docId, chamber, bytes: await obj.arrayBuffer() });
     }
     if (!batchDocs.length) continue;
+    const jobId = `${AUTOPILOT_BATCH_ID_PREFIX}${id()}`;
+    const submittedAt = now().toISOString();
     try {
       signal?.throwIfAborted();
-      const providerBatchId = signal
-        ? await submitBatch(env, provider, model, batchDocs, signal)
-        : await submitBatch(env, provider, model, batchDocs);
-      signal?.throwIfAborted();
+      // Persist intent before the non-transactional provider call. If the
+      // provider accepts work while this worker loses its queue lease, the
+      // durable `submitting` row remains as an explicit unknown outcome for
+      // reconciliation instead of silently orphaning unmetered work.
       await run(
         env.DB,
-        `INSERT INTO batch_jobs (id, provider, model, provider_batch_id, doc_ids, status, submitted_at)
-         VALUES (?, ?, ?, ?, ?, 'submitted', ?)`,
+        `INSERT INTO batch_jobs
+           (id, provider, model, provider_batch_id, doc_ids, status, submitted_at)
+         VALUES (?, ?, ?, NULL, ?, 'submitting', ?)`,
         [
-          `${AUTOPILOT_BATCH_ID_PREFIX}${uuid()}`, provider, model, providerBatchId,
-          JSON.stringify(batchDocs.map((doc) => doc.docId)), new Date().toISOString(),
+          jobId,
+          provider,
+          model,
+          JSON.stringify(batchDocs.map((doc) => doc.docId)),
+          submittedAt,
         ],
       );
+      const providerBatchId = signal
+        ? await submit(env, provider, model, batchDocs, signal)
+        : await submit(env, provider, model, batchDocs);
+      signal?.throwIfAborted();
+      const finalized = await run(
+        env.DB,
+        `UPDATE batch_jobs
+            SET provider_batch_id = ?, status = 'submitted'
+          WHERE id = ? AND status = 'submitting'`,
+        [providerBatchId, jobId],
+      );
+      if ((finalized.meta?.changes ?? 0) !== 1) {
+        throw new Error('autopilot batch submission intent lost before finalization');
+      }
       console.log(`autopilot: pre-seeded ${batchDocs.length} docs via ${modelKey} batch`);
     } catch (err) {
       signal?.throwIfAborted();
+      await run(
+        env.DB,
+        `UPDATE batch_jobs
+            SET status = 'failed', completed_at = ?, error = ?
+          WHERE id = ? AND status = 'submitting'`,
+        [now().toISOString(), (err as Error).message.slice(0, 500), jobId],
+      ).catch(() => undefined);
       state.skipReasons.batch_preseed_submit_failed
         = (state.skipReasons.batch_preseed_submit_failed ?? 0) + 1;
       console.warn(`autopilot: batch pre-seed submit failed for ${modelKey}:`, (err as Error).message);
@@ -1186,21 +1224,45 @@ export async function pollAutopilotPreseedBatches(
   env: Env,
   day: string,
   signal?: AbortSignal,
+  now: () => Date = () => new Date(),
 ): Promise<void> {
-  let jobs: Array<{ id: string; provider: string; model: string; provider_batch_id: string | null }>;
+  let jobs: Array<{
+    id: string;
+    provider: string;
+    model: string;
+    provider_batch_id: string | null;
+    status: string;
+  }>;
   try {
+    const submissionUnknownBefore = new Date(
+      now().getTime() - PRESEED_SUBMISSION_UNKNOWN_AFTER_MS,
+    ).toISOString();
     jobs = await all(
       env.DB,
-      `SELECT id, provider, model, provider_batch_id FROM batch_jobs
-        WHERE id LIKE '${AUTOPILOT_BATCH_ID_PREFIX}%' AND status IN ('submitted', 'running')
+      `SELECT id, provider, model, provider_batch_id, status FROM batch_jobs
+        WHERE id LIKE '${AUTOPILOT_BATCH_ID_PREFIX}%'
+          AND (status IN ('submitted', 'running')
+               OR (status = 'submitting' AND submitted_at <= ?))
         ORDER BY submitted_at ASC LIMIT ?`,
-      [PRESEED_POLL_LIMIT],
+      [submissionUnknownBefore, PRESEED_POLL_LIMIT],
     );
   } catch {
     signal?.throwIfAborted();
     return;
   }
   for (const job of jobs) {
+    if (job.status === 'submitting' && !job.provider_batch_id) {
+      signal?.throwIfAborted();
+      await run(
+        env.DB,
+        `UPDATE batch_jobs
+            SET status = 'submission_unknown', completed_at = ?,
+                error = 'provider submission outcome unknown after queue lease loss'
+          WHERE id = ? AND status = 'submitting'`,
+        [now().toISOString(), job.id],
+      );
+      continue;
+    }
     if (!job.provider_batch_id || !isDirectBatchProvider(job.provider)) continue;
     try {
       signal?.throwIfAborted();
