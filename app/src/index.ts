@@ -157,16 +157,19 @@ export async function handleIngestMessage(
   await lease?.assertOwned();
   switch (msg.type) {
     case 'filing.new':
-      await fetchFiling(env, msg.docId, queueAttempt);
+      if (lease) await fetchFiling(env, msg.docId, queueAttempt, lease);
+      else await fetchFiling(env, msg.docId, queueAttempt);
       return;
     case 'filing.fetched':
-      await classifyFiling(env, msg.docId);
+      if (lease) await classifyFiling(env, msg.docId, lease);
+      else await classifyFiling(env, msg.docId);
       return;
     case 'filing.extracted':
       // Run the extractor pipeline + normalizer for this classified filing.
       // normalize() persists transactions (or routes to review) and enqueues
       // delivery.dispatch for each published row.
-      await extractAndNormalize(env, msg.docId);
+      if (lease) await extractAndNormalize(env, msg.docId, lease);
+      else await extractAndNormalize(env, msg.docId);
       return;
     case 'tx.persisted':
       // Enqueue delivery fan-out for the newly persisted transaction.
@@ -176,12 +179,33 @@ export async function handleIngestMessage(
       // Slow cross-vendor agreement read + auto-publish for one review doc. Runs
       // here (generous per-message duration) rather than in the cron, whose
       // scheduled-handler waitUntil cancels long model work.
-      await handleAgreementCheck(env, msg.docId, msg.rawObjectKey, msg.escalationTier, msg.claimToken);
+      if (lease) {
+        await handleAgreementCheck(
+          env,
+          msg.docId,
+          msg.rawObjectKey,
+          msg.escalationTier,
+          msg.claimToken,
+          lease.signal,
+        );
+      } else {
+        await handleAgreementCheck(
+          env,
+          msg.docId,
+          msg.rawObjectKey,
+          msg.escalationTier,
+          msg.claimToken,
+        );
+      }
       return;
     case 'autopilot.tick':
       // One backlog-autopilot slice (a few docs through the same cascade
       // machinery); the handler re-enqueues itself until the run finishes.
-      await handleAutopilotTick(env, msg.runId);
+      if (lease) {
+        await handleAutopilotTick(env, msg.runId, { signal: lease.signal });
+      } else {
+        await handleAutopilotTick(env, msg.runId);
+      }
       return;
     case 'usage.telemetry':
       // While the circuit breaker is open (receiver known-down), skip the live
@@ -193,7 +217,8 @@ export async function handleIngestMessage(
         await persistUsageTelemetryFallback(env, msg.event, { throwOnFailure: true });
         return;
       }
-      await deliverUsageTelemetryEvent(env, msg.event);
+      if (lease) await deliverUsageTelemetryEvent(env, msg.event, lease.signal);
+      else await deliverUsageTelemetryEvent(env, msg.event);
       return;
     default:
       console.warn('INGEST_QUEUE: unexpected message type', (msg as { type?: string }).type);
@@ -209,7 +234,9 @@ export async function handleDeliveryMessage(
   await lease?.assertOwned();
   switch (msg.type) {
     case 'delivery.dispatch': {
-      const result = await dispatchWebhook(env, msg);
+      const result = lease
+        ? await dispatchWebhook(env, msg, lease)
+        : await dispatchWebhook(env, msg);
       return result.outboxComplete;
     }
     default:
@@ -238,7 +265,8 @@ export async function handleDeadLetterMessage(
       await persistUsageTelemetryFallback(env, msg.event, { throwOnFailure: true });
       return;
     }
-    await deliverUsageTelemetryEvent(env, msg.event);
+    if (lease) await deliverUsageTelemetryEvent(env, msg.event, lease.signal);
+    else await deliverUsageTelemetryEvent(env, msg.event);
     return;
   }
   await recordDeadLetterDurable(env, queue, msg, attempts, recoveryError);

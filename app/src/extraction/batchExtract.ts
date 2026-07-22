@@ -308,8 +308,9 @@ async function uploadPdf(
   key: string,
   bytes: ArrayBuffer,
   purpose: string,
-  options: { expiresAfterSeconds?: number } = {},
+  options: { expiresAfterSeconds?: number; signal?: AbortSignal } = {},
 ): Promise<string> {
+  options.signal?.throwIfAborted();
   const form = new FormData();
   form.append('purpose', purpose);
   if (options.expiresAfterSeconds != null) {
@@ -318,7 +319,7 @@ async function uploadPdf(
   form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'ptr.pdf');
   const res = await trackedFetch(
     url,
-    { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: form },
+    { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: form, signal: options.signal },
     { service: 'llm-batch', operation: 'upload-document' },
   );
   if (!res.ok) throw new Error(`pdf upload ${res.status} ${await safeText(res)}`);
@@ -454,13 +455,14 @@ function anthropicRequest(doc: BatchDoc, model: string): unknown {
   };
 }
 
-async function submitAnthropic(env: Env, model: string, docs: BatchDoc[]): Promise<string> {
+async function submitAnthropic(env: Env, model: string, docs: BatchDoc[], signal?: AbortSignal): Promise<string> {
   // Pre-validate every doc's bytes before spending a provider call — see the
   // section comment above for why this lives here rather than relying on a
   // per-item provider 400.
   const validDocs: BatchDoc[] = [];
   const excluded: AnthropicPrevalidationFailure[] = [];
   for (const doc of docs) {
+    signal?.throwIfAborted();
     try {
       await validatePdfForAnthropic(doc.bytes);
       validDocs.push(doc);
@@ -469,6 +471,7 @@ async function submitAnthropic(env: Env, model: string, docs: BatchDoc[]): Promi
     }
   }
 
+  signal?.throwIfAborted();
   if (validDocs.length === 0) {
     // Every doc failed pre-validation: make zero provider calls. pollAnthropic
     // resolves this id straight from the encoded failures, never contacting
@@ -481,6 +484,7 @@ async function submitAnthropic(env: Env, model: string, docs: BatchDoc[]): Promi
     method: 'POST',
     headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({ requests: validDocs.map((d) => anthropicRequest(d, model)) }),
+    signal,
   }, { service: 'llm-batch', operation: 'create-batch', model });
   if (!res.ok) throw new Error(`anthropic batch create ${res.status} ${await safeText(res)}`);
   const j = (await res.json()) as { id?: string };
@@ -540,7 +544,8 @@ function prevalidationFailureResult(entry: AnthropicPrevalidationFailure): Batch
   return { docId: entry.docId, ok: false, error: entry.error, rows: [] };
 }
 
-async function pollAnthropic(env: Env, providerBatchId: string): Promise<BatchPoll> {
+async function pollAnthropic(env: Env, providerBatchId: string, signal?: AbortSignal): Promise<BatchPoll> {
+  signal?.throwIfAborted();
   const prevalidated = decodePrevalidatedBatchId(providerBatchId);
   const excludedResults = (prevalidated?.excluded ?? []).map(prevalidationFailureResult);
 
@@ -555,7 +560,7 @@ async function pollAnthropic(env: Env, providerBatchId: string): Promise<BatchPo
   const headers = { 'x-api-key': key, 'anthropic-version': '2023-06-01' };
   const res = await trackedFetch(
     `https://api.anthropic.com/v1/messages/batches/${encodeURIComponent(realBatchId)}`,
-    { headers },
+    { headers, signal },
     { service: 'llm-batch', operation: 'poll-batch' },
   );
   if (!res.ok) throw new Error(`anthropic batch get ${res.status} ${await safeText(res)}`);
@@ -577,7 +582,7 @@ async function pollAnthropic(env: Env, providerBatchId: string): Promise<BatchPo
   }
   const rj = await trackedFetch(
     j.results_url,
-    { headers },
+    { headers, signal },
     { service: 'llm-batch', operation: 'fetch-batch-results' },
   );
   if (!rj.ok) throw new Error(`anthropic batch results ${rj.status}`);
@@ -636,13 +641,20 @@ function openaiLine(doc: BatchDoc, fileId: string, model: string): string {
   });
 }
 
-async function uploadJsonl(url: string, key: string, jsonl: string, extra: Record<string, string>): Promise<string> {
+async function uploadJsonl(
+  url: string,
+  key: string,
+  jsonl: string,
+  extra: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<string> {
+  signal?.throwIfAborted();
   const form = new FormData();
   for (const [k, v] of Object.entries(extra)) form.append(k, v);
   form.append('file', new Blob([jsonl], { type: 'application/jsonl' }), 'batch.jsonl');
   const res = await trackedFetch(
     url,
-    { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: form },
+    { method: 'POST', headers: { authorization: `Bearer ${key}` }, body: form, signal },
     { service: 'llm-batch', operation: 'upload-batch-input' },
   );
   if (!res.ok) throw new Error(`file upload ${res.status} ${await safeText(res)}`);
@@ -651,7 +663,8 @@ async function uploadJsonl(url: string, key: string, jsonl: string, extra: Recor
   return j.id;
 }
 
-async function submitOpenAi(env: Env, model: string, docs: BatchDoc[]): Promise<string> {
+async function submitOpenAi(env: Env, model: string, docs: BatchDoc[], signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   const key = await keyFor(env, 'openai');
   const endpoint = model.startsWith('gpt-5.6') ? '/v1/responses' : '/v1/chat/completions';
   // 1) upload each PDF to the Files API (purpose=user_data) → file_id.
@@ -659,15 +672,16 @@ async function submitOpenAi(env: Env, model: string, docs: BatchDoc[]): Promise<
   // under Cloudflare Workers' hard ceiling of 50 concurrent subrequests per invocation
   // (for batch creation and JSONL input uploads).
   const lines: string[] = await pMap(docs, 25, async (d) => {
-    const fileId = await uploadPdf('https://api.openai.com/v1/files', key, d.bytes, 'user_data');
+    const fileId = await uploadPdf('https://api.openai.com/v1/files', key, d.bytes, 'user_data', { signal });
     return openaiLine(d, fileId, model);
   });
   // 2) upload the JSONL of requests (purpose=batch) → input file.
-  const fileId = await uploadJsonl('https://api.openai.com/v1/files', key, lines.join('\n'), { purpose: 'batch' });
+  const fileId = await uploadJsonl('https://api.openai.com/v1/files', key, lines.join('\n'), { purpose: 'batch' }, signal);
   const res = await trackedFetch('https://api.openai.com/v1/batches', {
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify({ input_file_id: fileId, endpoint, completion_window: '24h' }),
+    signal,
   }, { service: 'llm-batch', operation: 'create-batch', model });
   if (!res.ok) throw new Error(`openai batch create ${res.status} ${await safeText(res)}`);
   const j = (await res.json()) as { id?: string };
@@ -766,10 +780,15 @@ export function decodeOpenAiLine(line: unknown): BatchDocResult {
   }
 }
 
-async function fetchOpenAiBatchResults(key: string, outputFileId: string): Promise<BatchDocResult[]> {
+async function fetchOpenAiBatchResults(
+  key: string,
+  outputFileId: string,
+  signal?: AbortSignal,
+): Promise<BatchDocResult[]> {
+  signal?.throwIfAborted();
   const response = await trackedFetch(
     `https://api.openai.com/v1/files/${encodeURIComponent(outputFileId)}/content`,
-    { headers: { authorization: `Bearer ${key}` } },
+    { headers: { authorization: `Bearer ${key}` }, signal },
     { service: 'llm-batch', operation: 'fetch-batch-results' },
   );
   if (!response.ok) throw new Error(`openai batch results ${response.status}`);
@@ -807,11 +826,12 @@ async function fetchOpenAiBatchResults(key: string, outputFileId: string): Promi
   return decoded;
 }
 
-async function pollOpenAi(env: Env, batchId: string): Promise<BatchPoll> {
+async function pollOpenAi(env: Env, batchId: string, signal?: AbortSignal): Promise<BatchPoll> {
+  signal?.throwIfAborted();
   const key = await keyFor(env, 'openai');
   const res = await trackedFetch(
     `https://api.openai.com/v1/batches/${encodeURIComponent(batchId)}`,
-    { headers: { authorization: `Bearer ${key}` } },
+    { headers: { authorization: `Bearer ${key}` }, signal },
     { service: 'llm-batch', operation: 'poll-batch' },
   );
   if (!res.ok) throw new Error(`openai batch get ${res.status} ${await safeText(res)}`);
@@ -844,9 +864,9 @@ async function pollOpenAi(env: Env, batchId: string): Promise<BatchPoll> {
   let outputResults: BatchDocResult[] = [];
   let errorResults: BatchDocResult[] = [];
   try {
-    outputResults = outputFileId ? await fetchOpenAiBatchResults(key, outputFileId) : [];
+    outputResults = outputFileId ? await fetchOpenAiBatchResults(key, outputFileId, signal) : [];
     errorResults = errorFileId && errorFileId !== outputFileId
-      ? await fetchOpenAiBatchResults(key, errorFileId)
+      ? await fetchOpenAiBatchResults(key, errorFileId, signal)
       : [];
   } catch (error) {
     if (error instanceof BatchTerminalPayloadError) {
@@ -897,14 +917,16 @@ function mistralLine(doc: BatchDoc): string {
   });
 }
 
-async function submitMistral(env: Env, model: string, docs: BatchDoc[]): Promise<string> {
+async function submitMistral(env: Env, model: string, docs: BatchDoc[], signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   const key = await keyFor(env, 'mistral');
   const jsonl = docs.map((d) => mistralLine(d)).join('\n');
-  const fileId = await uploadJsonl('https://api.mistral.ai/v1/files', key, jsonl, { purpose: 'batch' });
+  const fileId = await uploadJsonl('https://api.mistral.ai/v1/files', key, jsonl, { purpose: 'batch' }, signal);
   const res = await trackedFetch('https://api.mistral.ai/v1/batch/jobs', {
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify({ input_files: [fileId], model, endpoint: '/v1/ocr' }),
+    signal,
   }, { service: 'llm-batch', operation: 'create-batch', model });
   if (!res.ok) throw new Error(`mistral batch create ${res.status} ${await safeText(res)}`);
   const j = (await res.json()) as { id?: string };
@@ -938,11 +960,12 @@ export function decodeMistralLine(line: unknown): BatchDocResult {
   }
 }
 
-async function pollMistral(env: Env, jobId: string): Promise<BatchPoll> {
+async function pollMistral(env: Env, jobId: string, signal?: AbortSignal): Promise<BatchPoll> {
+  signal?.throwIfAborted();
   const key = await keyFor(env, 'mistral');
   const res = await trackedFetch(
     `https://api.mistral.ai/v1/batch/jobs/${encodeURIComponent(jobId)}`,
-    { headers: { authorization: `Bearer ${key}` } },
+    { headers: { authorization: `Bearer ${key}` }, signal },
     { service: 'llm-batch', operation: 'poll-batch' },
   );
   if (!res.ok) throw new Error(`mistral batch get ${res.status} ${await safeText(res)}`);
@@ -969,7 +992,7 @@ async function pollMistral(env: Env, jobId: string): Promise<BatchPoll> {
   }
   const rj = await trackedFetch(
     `https://api.mistral.ai/v1/files/${j.output_file}/content`,
-    { headers: { authorization: `Bearer ${key}` } },
+    { headers: { authorization: `Bearer ${key}` }, signal },
     { service: 'llm-batch', operation: 'fetch-batch-results' },
   );
   if (!rj.ok) throw new Error(`mistral batch results ${rj.status}`);
@@ -983,7 +1006,8 @@ async function pollMistral(env: Env, jobId: string): Promise<BatchPoll> {
 // state.num_pending; results are paginated. Mirrors the working sync adapter.
 // ---------------------------------------------------------------------------
 
-async function submitXai(env: Env, model: string, docs: BatchDoc[]): Promise<string> {
+async function submitXai(env: Env, model: string, docs: BatchDoc[], signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   const key = await keyFor(env, 'xai');
   // 1) upload each PDF → file id.
   // Concurrency limit of 25 provides 5x throughput while leaving safe headroom
@@ -1000,7 +1024,7 @@ async function submitXai(env: Env, model: string, docs: BatchDoc[]): Promise<str
         'assistants',
         // xAI batch jobs normally finish within 24h. A 48h provider TTL bounds
         // retention when the Worker cannot retain uploaded ids for eager delete.
-        { expiresAfterSeconds: 172_800 },
+        { expiresAfterSeconds: 172_800, signal },
       ),
     };
   });
@@ -1009,6 +1033,7 @@ async function submitXai(env: Env, model: string, docs: BatchDoc[]): Promise<str
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify({ name: 'congress-backlog' }),
+    signal,
   }, { service: 'llm-batch', operation: 'create-batch', model });
   if (!cr.ok) throw new Error(`xai batch create ${cr.status} ${await safeText(cr)}`);
   const cj = (await cr.json()) as { id?: string; batch_id?: string };
@@ -1033,6 +1058,7 @@ async function submitXai(env: Env, model: string, docs: BatchDoc[]): Promise<str
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify({ batch_requests }),
+    signal,
   }, { service: 'llm-batch', operation: 'add-batch-requests', model });
   if (!ar.ok) throw new Error(`xai batch add-requests ${ar.status} ${await safeText(ar)}`);
   return batchId;
@@ -1086,12 +1112,13 @@ export function decodeXaiResult(item: unknown): BatchDocResult {
   }
 }
 
-async function pollXai(env: Env, batchId: string): Promise<BatchPoll> {
+async function pollXai(env: Env, batchId: string, signal?: AbortSignal): Promise<BatchPoll> {
+  signal?.throwIfAborted();
   const key = await keyFor(env, 'xai');
   const headers = { authorization: `Bearer ${key}` };
   const res = await trackedFetch(
     `https://api.x.ai/v1/batches/${encodeURIComponent(batchId)}`,
-    { headers },
+    { headers, signal },
     { service: 'llm-batch', operation: 'poll-batch' },
   );
   if (!res.ok) throw new Error(`xai batch get ${res.status} ${await safeText(res)}`);
@@ -1106,7 +1133,7 @@ async function pollXai(env: Env, batchId: string): Promise<BatchPoll> {
     const url = `https://api.x.ai/v1/batches/${encodeURIComponent(batchId)}/results?limit=100` + (token ? `&pagination_token=${encodeURIComponent(token)}` : '');
     const rr: Response = await trackedFetch(
       url,
-      { headers },
+      { headers, signal },
       { service: 'llm-batch', operation: 'fetch-batch-results' },
     );
     if (!rr.ok) throw new Error(`xai batch results ${rr.status}`);
@@ -1142,20 +1169,33 @@ export function isBatchProvider(v: unknown): v is BatchProvider {
 }
 
 /** Submit a batch; returns the provider's batch/job id to poll later. */
-export function submitBatch(env: Env, provider: BatchProvider, model: string, docs: BatchDoc[]): Promise<string> {
+export function submitBatch(
+  env: Env,
+  provider: BatchProvider,
+  model: string,
+  docs: BatchDoc[],
+  signal?: AbortSignal,
+): Promise<string> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
   if (isRetiredDisclosureCandidate({ provider, model })) {
     return Promise.reject(new Error('GPT-4o is retired for new disclosure extraction'));
   }
-  if (provider === 'anthropic') return submitAnthropic(env, model, docs);
-  if (provider === 'openai') return submitOpenAi(env, model, docs);
-  if (provider === 'xai') return submitXai(env, model, docs);
-  return submitMistral(env, model, docs);
+  if (provider === 'anthropic') return submitAnthropic(env, model, docs, signal);
+  if (provider === 'openai') return submitOpenAi(env, model, docs, signal);
+  if (provider === 'xai') return submitXai(env, model, docs, signal);
+  return submitMistral(env, model, docs, signal);
 }
 
 /** Poll a previously-submitted batch; when done, results carry decoded rows. */
-export function pollBatch(env: Env, provider: BatchProvider, providerBatchId: string): Promise<BatchPoll> {
-  if (provider === 'anthropic') return pollAnthropic(env, providerBatchId);
-  if (provider === 'openai') return pollOpenAi(env, providerBatchId);
-  if (provider === 'xai') return pollXai(env, providerBatchId);
-  return pollMistral(env, providerBatchId);
+export function pollBatch(
+  env: Env,
+  provider: BatchProvider,
+  providerBatchId: string,
+  signal?: AbortSignal,
+): Promise<BatchPoll> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  if (provider === 'anthropic') return pollAnthropic(env, providerBatchId, signal);
+  if (provider === 'openai') return pollOpenAi(env, providerBatchId, signal);
+  if (provider === 'xai') return pollXai(env, providerBatchId, signal);
+  return pollMistral(env, providerBatchId, signal);
 }

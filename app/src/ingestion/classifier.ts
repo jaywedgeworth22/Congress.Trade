@@ -30,6 +30,7 @@
  */
 
 import type { Env, DocKind } from '../shared/types.ts';
+import type { DurableQueueLeaseContext } from '../deno/durableQueue.ts';
 import { get, run } from '../shared/db.ts';
 
 interface FilingRow {
@@ -115,7 +116,12 @@ export function decideDocKind(
  * Classify a fetched filing's raw object into a DocKind, persist it, and
  * enqueue the extraction hand-off message.
  */
-export async function classifyFiling(env: Env, docId: string): Promise<DocKind> {
+export async function classifyFiling(
+  env: Env,
+  docId: string,
+  lease?: DurableQueueLeaseContext,
+): Promise<DocKind> {
+  await lease?.assertOwned();
   const row = await get<FilingRow>(
     env.DB,
     `SELECT doc_id, chamber, source_url, raw_object_key FROM filings WHERE doc_id = ?`,
@@ -127,6 +133,7 @@ export async function classifyFiling(env: Env, docId: string): Promise<DocKind> 
   }
   const key = row.raw_object_key;
   if (!key) {
+    await lease?.assertOwned();
     await run(
       env.DB,
       `UPDATE filings SET ingest_status = 'error', error = ? WHERE doc_id = ?`,
@@ -135,8 +142,10 @@ export async function classifyFiling(env: Env, docId: string): Promise<DocKind> 
     return 'unknown';
   }
 
+  await lease?.assertOwned();
   const obj = await env.RAW_FILES.get(key);
   if (!obj) {
+    await lease?.assertOwned();
     await run(
       env.DB,
       `UPDATE filings SET ingest_status = 'error', error = ? WHERE doc_id = ?`,
@@ -147,8 +156,10 @@ export async function classifyFiling(env: Env, docId: string): Promise<DocKind> 
 
   const contentType = obj.httpMetadata?.contentType ?? '';
   const bytes = new Uint8Array(await obj.arrayBuffer());
+  await lease?.assertOwned();
   const docKind = decideDocKind(bytes, contentType, row.chamber);
 
+  await lease?.assertOwned();
   await run(
     env.DB,
     `UPDATE filings
@@ -159,6 +170,7 @@ export async function classifyFiling(env: Env, docId: string): Promise<DocKind> 
 
   // Hand off to the extraction stage. Per the QueueMessage contract this is the
   // message the extraction step consumes (see src/index.ts routing).
+  await lease?.assertOwned();
   await env.INGEST_QUEUE.send({ type: 'filing.extracted', docId });
 
   return docKind;

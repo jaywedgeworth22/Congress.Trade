@@ -380,15 +380,22 @@ export async function loadDocBytes(
   env: Env,
   docId: string,
   rawObjectKey: string | null,
+  signal?: AbortSignal,
 ): Promise<{ bytes: ArrayBuffer } | { skip: AgreementDocResult }> {
+  signal?.throwIfAborted();
   if (rawObjectKey) {
     // Unexpected storage throws still propagate so claim release/retry runs.
     // S3BucketShim converts NotEntitled/AccessDenied/NoSuchKey into null.
     const obj = await env.RAW_FILES.get(rawObjectKey);
-    if (obj) return { bytes: await obj.arrayBuffer() };
+    if (obj) {
+      const bytes = await obj.arrayBuffer();
+      signal?.throwIfAborted();
+      return { bytes };
+    }
   }
 
   // Object storage miss / soft entitlement miss → bounded source_url re-fetch.
+  signal?.throwIfAborted();
   const filing = await loadFilingRow(env, docId);
   const sourceUrl = filing?.source_url?.trim() || null;
   if (!sourceUrl) {
@@ -407,7 +414,9 @@ export async function loadDocBytes(
       {
         redirect: 'follow',
         headers: { 'User-Agent': 'Congress.Trade/1.0 (+https://congress.trade)' },
-        signal: AbortSignal.timeout(30_000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(30_000)])
+          : AbortSignal.timeout(30_000),
       },
       {
         service: 'disclosure-source',
@@ -447,6 +456,9 @@ export async function loadDocBytes(
     );
     return { bytes: buf };
   } catch (err) {
+    // Lease loss is a takeover signal, not a document-quality skip. Preserve
+    // the abort so the durable queue runner releases/retries the message.
+    signal?.throwIfAborted();
     return {
       skip: {
         docId,
@@ -751,10 +763,20 @@ async function readAndPersist(
   bytes: ArrayBuffer,
   runBatchId: string,
   invocations?: CandidateInvocation[],
+  signal?: AbortSignal,
 ): Promise<CandidateDocResult[]> {
   const reads: CandidateDocResult[] = [];
   for (const [index, m] of models.entries()) {
-    const r = await runCandidateOnDoc(env, m, docId, bytes, invocations?.[index]);
+    signal?.throwIfAborted();
+    const r = await runCandidateOnDoc(
+      env,
+      m,
+      docId,
+      bytes,
+      invocations?.[index],
+      signal,
+    );
+    signal?.throwIfAborted();
     if (!r.cached) {
       await persistExtractionRun(env, r, 'agreement', runBatchId);
       // Feed the per-provider:model rolling health window (billing/auth
@@ -852,9 +874,11 @@ export async function processAgreementDoc(
   rawObjectKey: string | null,
   dryRun: boolean,
   audit?: Partial<CascadeAudit>,
-  options: { invocations?: CandidateInvocation[] } = {},
+  options: { invocations?: CandidateInvocation[]; signal?: AbortSignal } = {},
 ): Promise<AgreementDocResult> {
-  const loaded = await loadDocBytes(env, docId, rawObjectKey);
+  const loaded = options.signal
+    ? await loadDocBytes(env, docId, rawObjectKey, options.signal)
+    : await loadDocBytes(env, docId, rawObjectKey);
   if ('skip' in loaded) return loaded.skip;
 
   // Live-toggleable text-field agreement normalization (default on). Resolved
@@ -887,6 +911,7 @@ export async function processAgreementDoc(
     loaded.bytes,
     runBatchId,
     options.invocations,
+    options.signal,
   );
   const [rA, rB, rC] = [reads[0], reads[1], reads[2] ?? null];
 
@@ -1317,8 +1342,11 @@ export async function processAgreementCascadeTier2(
   rawObjectKey: string | null,
   dryRun: boolean,
   claimToken?: string,
+  signal?: AbortSignal,
 ): Promise<AgreementDocResult> {
-  const loaded = await loadDocBytes(env, docId, rawObjectKey);
+  const loaded = signal
+    ? await loadDocBytes(env, docId, rawObjectKey, signal)
+    : await loadDocBytes(env, docId, rawObjectKey);
   if ('skip' in loaded) return loaded.skip;
 
   // Live-toggleable text-field agreement normalization (default on) — see the
@@ -1340,7 +1368,15 @@ export async function processAgreementCascadeTier2(
     return { docId, outcome: 'skipped', tier: 2, reason: 'review_resolved_or_claim_lost' };
   }
   const runBatchId = uuid();
-  const reads = await readAndPersist(env, lineup, docId, loaded.bytes, runBatchId);
+  const reads = await readAndPersist(
+    env,
+    lineup,
+    docId,
+    loaded.bytes,
+    runBatchId,
+    undefined,
+    signal,
+  );
 
   // Align rows before consensus checks to prevent spurious field_disagreement
   // on raw string variants of the same ticker/asset.
@@ -1883,7 +1919,9 @@ export async function handleAgreementCheck(
   rawObjectKey: string | null,
   escalationTier?: number,
   claimToken?: string,
+  signal?: AbortSignal,
 ): Promise<AgreementDocResult | null> {
+  signal?.throwIfAborted();
   const e = await resolveAgreementEnv(env);
   if (e.AGREEMENT_AUTOPUBLISH_ENABLED !== 'true') return null;
   const max = maxAttempts(e);
@@ -1943,7 +1981,13 @@ export async function handleAgreementCheck(
 
     if (tier >= 2) {
       const res = await processAgreementCascadeTier2(
-        env, models as AgreementModelsC, docId, rawObjectKey, false, claimed.token,
+        env,
+        models as AgreementModelsC,
+        docId,
+        rawObjectKey,
+        false,
+        claimed.token,
+        signal,
       );
       if (res.outcome === 'review_flagged') {
         await finishTerminalClaim(env, docId, claimed.token, max);
@@ -1971,7 +2015,13 @@ export async function handleAgreementCheck(
 
     const tier1Models = models as AgreementModels;
     const res = await processAgreementDoc(
-      env, tier1Models, docId, rawObjectKey, false, { tier: 1, claimToken: claimed.token },
+      env,
+      tier1Models,
+      docId,
+      rawObjectKey,
+      false,
+      { tier: 1, claimToken: claimed.token },
+      { signal },
     );
     if (res.outcome === 'disagree') {
       if (claimed.attempts < max) {
