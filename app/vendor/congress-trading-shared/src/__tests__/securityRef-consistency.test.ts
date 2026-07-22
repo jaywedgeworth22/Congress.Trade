@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SecurityRefSchema, SecurityRefInputSchema } from "../schemas.ts";
+import { SecurityRefSchema, SecurityRefInputSchema } from "../schemas";
 
 /**
  * Guardrail test per AGENTS.md:

@@ -266,7 +266,7 @@ describe('POST /batch-status/:jobId usage accounting', () => {
     expect(usageEvents).toContainEqual(expect.objectContaining({
       type: 'usage.telemetry',
       event: expect.objectContaining({
-        idempotencyKey: expectedKey,
+        eventId: expectedKey,
         provider: 'openai',
         service: 'llm-batch',
         label: 'batch-result-tokens',
@@ -318,7 +318,7 @@ describe('POST /batch-status/:jobId usage accounting', () => {
     expect(usageEvents).toContainEqual(expect.objectContaining({
       type: 'usage.telemetry',
       event: expect.objectContaining({
-        idempotencyKey: expectedKey,
+        eventId: expectedKey,
         label: 'batch-result-tokens',
         occurredAt: getCompletedAt(),
         quantity: 48,
@@ -380,7 +380,7 @@ describe('POST /batch-status/:jobId usage accounting', () => {
     });
     const aggregateEvents = measuredEvents.filter((event) => event.label === 'batch-job-tokens');
     expect(aggregateEvents).toHaveLength(1);
-    expect(new Set(aggregateEvents.map((event) => event.idempotencyKey)).size).toBe(1);
+    expect(new Set(aggregateEvents.map((event) => event.eventId)).size).toBe(1);
     expect(aggregateEvents[0]).toMatchObject({
       provider: 'openai',
       service: 'llm-batch',
@@ -395,7 +395,7 @@ describe('POST /batch-status/:jobId usage accounting', () => {
         success: true,
       },
     });
-    expect(aggregateEvents[0]?.idempotencyKey).toMatch(/^ct-measured-[0-9a-f]{64}$/);
+    expect(aggregateEvents[0]?.eventId).toMatch(/^ct-measured-[0-9a-f]{64}$/);
     expect(measuredEvents.some((event) => event.label === 'batch-result-tokens')).toBe(false);
     const resultSummaryJson = getResultSummaryJson();
     expect(resultSummaryJson).toBeTypeOf('string');
@@ -619,7 +619,7 @@ describe('POST /batch-status/:jobId usage accounting', () => {
       return event?.label === 'batch-result-tokens' ? [event] : [];
     });
     expect(attempts).toHaveLength(1);
-    expect(attempts[0]?.idempotencyKey).toMatch(/^ct-measured-[0-9a-f]{64}$/);
+    expect(attempts[0]?.eventId).toMatch(/^ct-measured-[0-9a-f]{64}$/);
     expect(attempts[0]).toMatchObject({ quantity: 15, unit: 'token' });
   });
 
@@ -991,7 +991,7 @@ describe('POST /batch-status/:jobId usage accounting', () => {
     expect(usageEvents).toContainEqual(expect.objectContaining({
       type: 'usage.telemetry',
       event: expect.objectContaining({
-        idempotencyKey: expectedCostKey,
+        eventId: expectedCostKey,
         provider: 'xai',
         label: 'batch-result-provider-cost',
         occurredAt: getCompletedAt(),
@@ -1006,7 +1006,7 @@ describe('POST /batch-status/:jobId usage accounting', () => {
     expect(usageEvents).toContainEqual(expect.objectContaining({
       type: 'usage.telemetry',
       event: expect.objectContaining({
-        idempotencyKey: expectedAttachmentKey,
+        eventId: expectedAttachmentKey,
         label: 'batch-result-attachment-search',
         occurredAt: getCompletedAt(),
         quantity: 2,
@@ -1086,9 +1086,9 @@ describe('POST /batch-status/:jobId usage accounting', () => {
       const replays = tokenEvents.filter((event) => event.quantity === quantity);
       expect(replays).toHaveLength(1);
       expect(replays[0]?.occurredAt).toBe('2026-07-14T00:01:00.000Z');
-      expect(replays[0]?.idempotencyKey).toMatch(/^ct-measured-[0-9a-f]{64}$/);
+      expect(replays[0]?.eventId).toMatch(/^ct-measured-[0-9a-f]{64}$/);
     }
-    expect(new Set(tokenEvents.map((event) => event.idempotencyKey)).size).toBe(2);
+    expect(new Set(tokenEvents.map((event) => event.eventId)).size).toBe(2);
     expect(tokenEvents.every((event) => event.occurredAt !== '2026-07-13T23:59:00.000Z')).toBe(true);
     const extractionRunIds = getExtractionRunIds();
     expect(extractionRunIds).toHaveLength(2);

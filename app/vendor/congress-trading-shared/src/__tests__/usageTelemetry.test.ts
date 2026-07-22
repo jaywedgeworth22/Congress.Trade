@@ -2,13 +2,16 @@ import { describe, it, expect, vi } from "vitest";
 import {
   createUsageTelemetryClient,
   deriveUsageTelemetryIdempotencyKey,
+  deriveUsageTelemetryV2IdempotencyKey,
   UsageTelemetryEventSchema,
+  UsageTelemetryApiError,
+  UsageTelemetryV2BatchSchema,
   type UsageTelemetryEventInput,
-} from "../usageTelemetry.ts";
+} from "../usageTelemetry";
 import {
   CongressTransactionSchema,
   SecurityRefSchema,
-} from "../schemas.ts";
+} from "../schemas";
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
@@ -109,6 +112,15 @@ describe("deriveUsageTelemetryIdempotencyKey — contract vectors", () => {
     expect(key).toBe(
       "32a0a0b13d5b3edafd460655d6fb9b6d277c2f87c2c4be6460b1bcd2f3d701e0",
     );
+  });
+});
+
+describe("deriveUsageTelemetryV2IdempotencyKey — contract vectors", () => {
+  it("keys only stable producer and event identity", async () => {
+    await expect(deriveUsageTelemetryV2IdempotencyKey({
+      producerId: "socratic-trade",
+      eventId: "event-123",
+    })).resolves.toBe("7c279ae3726c337274cae8be0ce409952c360c2402209090c35ff77f1b061f31");
   });
 });
 
@@ -622,71 +634,113 @@ describe("schema validation", () => {
 });
 
 describe("createUsageTelemetryClient", () => {
-  it("accepts schema input defaults, derives a key, and returns ignored-pruned counts", async () => {
+  it("sends a strict fresh v2 event and returns explicit counts", async () => {
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
-      JSON.stringify({ ok: true, accepted: 1, ignoredPruned: 2 }),
+      JSON.stringify({
+        ok: true,
+        schemaVersion: 2,
+        received: 1,
+        persisted: 1,
+        duplicates: 0,
+        pruned: 0,
+        rejected: 0,
+      }),
       { status: 202, headers: { "content-type": "application/json" } },
     ));
     const client = createUsageTelemetryClient({
       baseUrl: "https://usage.example.test/",
       token: "secret",
+      producerId: "app",
+      producerInstanceId: "worker-a",
       fetchImpl: fetchImpl as typeof fetch,
     });
-    const event: UsageTelemetryEventInput = {
-      sourceApp: "app",
+    const event = {
+      eventId: "event-1",
       provider: "provider",
       occurredAt: "2026-07-11T00:00:00.000Z",
     };
 
-    await expect(client.send([event])).resolves.toEqual({ ok: true, accepted: 1, ignoredPruned: 2 });
+    await expect(client.send([event])).resolves.toMatchObject({
+      ok: true,
+      schemaVersion: 2,
+      received: 1,
+      persisted: 1,
+    });
     expect(fetchImpl).toHaveBeenCalledOnce();
     const [url, init] = fetchImpl.mock.calls[0];
     expect(url).toBe("https://usage.example.test/api/ingest/usage");
-    expect(init?.headers).toEqual({ authorization: "Bearer secret", "content-type": "application/json" });
+    expect(init?.headers).toEqual({
+      authorization: "Bearer secret",
+      "content-type": "application/json",
+      "x-usage-telemetry-version": "2",
+    });
     const body = JSON.parse(String(init?.body));
+    expect(body).toMatchObject({
+      schemaVersion: 2,
+      producerId: "app",
+      producerInstanceId: "worker-a",
+    });
     expect(body.events[0]).toMatchObject({
-      sourceApp: "app",
       provider: "provider",
       billingMode: "estimated",
       metricType: "usage",
       confidence: "estimated",
     });
-    expect(body.events[0].idempotencyKey).toMatch(/^[0-9a-f]{64}$/);
+    expect(body.events[0].eventId).toBe("event-1");
+    expect(body.events[0]).not.toHaveProperty("sourceApp");
+    expect(body.events[0]).not.toHaveProperty("idempotencyKey");
+    expect(UsageTelemetryV2BatchSchema.safeParse(body).success).toBe(true);
   });
 
-  it("preserves an explicit key and can require caller-supplied identities", async () => {
+  it("uses only an explicit durable v1 key while backlog drains and enforces producer identity", async () => {
     const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
-      JSON.stringify({ ok: true, accepted: 1 }),
+      JSON.stringify({ ok: true, schemaVersion: 2, received: 1, persisted: 1, duplicates: 0, pruned: 0, rejected: 0 }),
       { status: 202, headers: { "content-type": "application/json" } },
     ));
     const client = createUsageTelemetryClient({
       baseUrl: "https://usage.example.test",
       token: "secret",
-      requireExplicitIdempotencyKey: true,
+      producerId: "app",
       fetchImpl: fetchImpl as typeof fetch,
     });
     const base = { sourceApp: "app", provider: "provider" } satisfies UsageTelemetryEventInput;
 
-    await expect(client.send([base])).rejects.toThrow("requires an explicit idempotencyKey");
-    await expect(client.send([{ ...base, idempotencyKey: "   " }])).rejects.toThrow();
+    await expect(client.sendLegacyOutbox([base as never])).rejects.toThrow();
+    await expect(client.sendLegacyOutbox([{ ...base, idempotencyKey: "   " }])).rejects.toThrow();
+    await expect(client.sendLegacyOutbox([{
+      ...base,
+      sourceApp: "different-app",
+      idempotencyKey: "stable-call:wrong-producer",
+    }])).rejects.toThrow("sourceApp must match producerId app");
     expect(fetchImpl).not.toHaveBeenCalled();
-    await client.send([{ ...base, idempotencyKey: "stable-call:prompt" }]);
+    await client.sendLegacyOutbox([{ ...base, idempotencyKey: "stable-call:prompt" }]);
     const body = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
-    expect(body.events[0].idempotencyKey).toBe("stable-call:prompt");
+    expect(body.events[0].eventId).toBe("stable-call:prompt");
   });
 
-  it("surfaces HTTP errors and rejects malformed success payloads", async () => {
+  it("surfaces typed retry/backoff errors and rejects malformed success payloads", async () => {
     const failedFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
-      JSON.stringify({ error: "Unauthorized" }),
-      { status: 401, headers: { "content-type": "application/json" } },
+      JSON.stringify({
+        ok: false,
+        schemaVersion: 2,
+        error: { code: "rate_limited", message: "Slow down", retryable: true, retryAfterSeconds: 45 },
+      }),
+      { status: 429, headers: { "content-type": "application/json", "retry-after": "30" } },
     ));
     const failedClient = createUsageTelemetryClient({
       baseUrl: "https://usage.example.test",
       token: "bad",
+      producerId: "app",
       fetchImpl: failedFetch as typeof fetch,
     });
-    await expect(failedClient.send([{ sourceApp: "app", provider: "provider" }]))
-      .rejects.toThrow("Usage telemetry ingest failed: Unauthorized");
+    const failure = failedClient.send([{ provider: "provider", eventId: "event-1" }]);
+    await expect(failure).rejects.toBeInstanceOf(UsageTelemetryApiError);
+    await expect(failure).rejects.toMatchObject({
+      status: 429,
+      code: "rate_limited",
+      retryable: true,
+      retryAfterSeconds: 45,
+    });
 
     const malformedFetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(
       JSON.stringify({ ok: true }),
@@ -695,8 +749,9 @@ describe("createUsageTelemetryClient", () => {
     const malformedClient = createUsageTelemetryClient({
       baseUrl: "https://usage.example.test",
       token: "secret",
+      producerId: "app",
       fetchImpl: malformedFetch as typeof fetch,
     });
-    await expect(malformedClient.send([{ sourceApp: "app", provider: "provider" }])).rejects.toThrow();
+    await expect(malformedClient.send([{ provider: "provider", eventId: "event-2" }])).rejects.toThrow();
   });
 });
