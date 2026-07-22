@@ -124,9 +124,9 @@ export class QueueShim<Message> {
   }
 }
 
-// --- R2Bucket Shim ---
+// --- S3Bucket Shim ---
 
-export class R2BucketShim {
+export class S3BucketShim {
   private s3: S3Client;
   private bucketName: string;
 
