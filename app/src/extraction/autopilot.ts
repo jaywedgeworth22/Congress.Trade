@@ -1238,6 +1238,7 @@ export async function pollAutopilotPreseedBatches(
   signal?: AbortSignal,
   now: () => Date = () => new Date(),
   pollProviders = true,
+  pollImpl: typeof pollBatch = pollBatch,
 ): Promise<void> {
   let jobs: Array<{
     id: string;
@@ -1307,8 +1308,8 @@ export async function pollAutopilotPreseedBatches(
     try {
       signal?.throwIfAborted();
       const poll = signal
-        ? await pollBatch(env, job.provider, job.provider_batch_id, signal)
-        : await pollBatch(env, job.provider, job.provider_batch_id);
+        ? await pollImpl(env, job.provider, job.provider_batch_id, signal)
+        : await pollImpl(env, job.provider, job.provider_batch_id);
       signal?.throwIfAborted();
       if (!poll.done) {
         await run(env.DB, "UPDATE batch_jobs SET status = 'running' WHERE id = ?", [job.id]);

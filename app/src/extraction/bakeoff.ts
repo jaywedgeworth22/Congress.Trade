@@ -1357,8 +1357,11 @@ export async function runCandidateOnDoc(
     // provider responded (telemetry events are pushed separately via
     // persistExtractionRun; the spend METER lives here so every caller of this
     // choke point is accounted for, cached-or-not persisted-or-not).
-    signal?.throwIfAborted();
     await recordLlmSpend(env, provider, candidateSpendUsd(provider, model, resolvedModel, usage) ?? 0);
+    // A lease can expire after the provider has returned billable usage. Honor
+    // cancellation only after that paid side effect is durably metered; the
+    // catch path cannot recover response-local usage from an AbortError.
+    signal?.throwIfAborted();
 
     // Clean minor hallucinations to improve consensus and publishing pass rates
     rows = rows.map(cleanParsedTx);
