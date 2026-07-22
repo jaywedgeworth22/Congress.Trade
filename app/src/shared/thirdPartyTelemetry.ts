@@ -1196,7 +1196,9 @@ async function fetchUsageTelemetryReceiver(
 export async function deliverUsageTelemetryEvent(
   env: Env,
   event: DeliverableUsageTelemetryEvent,
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   let circuitState = await readUsageTelemetryCircuitState(env);
   if (!circuitState) throw new UsageTelemetryCircuitOpenError();
   if (circuitState.openUntil != null && Date.now() < circuitState.openUntil) {
@@ -1261,6 +1263,7 @@ export async function deliverUsageTelemetryEvent(
       );
       let receiverStatus: number | null = null;
       try {
+        signal?.throwIfAborted();
         const client = createUsageTelemetryClient({
           baseUrl,
           token,
@@ -1268,7 +1271,12 @@ export async function deliverUsageTelemetryEvent(
           fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
             const response = await fetchUsageTelemetryReceiver(
               input,
-              { ...init, signal: controller.signal },
+              {
+                ...init,
+                signal: signal
+                  ? AbortSignal.any([controller.signal, signal])
+                  : controller.signal,
+              },
             );
             receiverStatus = response.status;
             return response;
@@ -1280,6 +1288,9 @@ export async function deliverUsageTelemetryEvent(
           await client.sendLegacyOutbox([event]);
         }
       } catch (error) {
+        if (signal?.aborted) {
+          throw signal.reason ?? new Error('durable queue lease lost');
+        }
         if (controller.signal.aborted) throw new UsageTelemetryDeliveryTimeoutError();
         if (receiverStatus != null) {
           const message = error instanceof Error ? error.message : String(error ?? '');
@@ -1293,6 +1304,9 @@ export async function deliverUsageTelemetryEvent(
       }
     });
   } catch (error) {
+    if (signal?.aborted) {
+      throw signal.reason ?? new Error('durable queue lease lost');
+    }
     if (isTerminalUsageTelemetryDeliveryError(error)) {
       const closedPersisted = await recordUsageTelemetryDeliverySuccess(env);
       if (probeLease && closedPersisted) {
@@ -1303,6 +1317,7 @@ export async function deliverUsageTelemetryEvent(
     await recordUsageTelemetryDeliveryFailure(env);
     throw error;
   }
+  signal?.throwIfAborted();
   const closedPersisted = await recordUsageTelemetryDeliverySuccess(env);
   if (probeLease && closedPersisted) {
     await releaseUsageTelemetryHalfOpenProbe(env, probeLease.token);

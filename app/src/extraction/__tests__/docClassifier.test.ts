@@ -209,6 +209,26 @@ describe('ensureDocClass', () => {
     expect(state.persisted).toBe('hard_scan');
   });
 
+  it('propagates lease cancellation through the model tier without persisting a fallback', async () => {
+    const state: DbState = { persisted: null, stored: [], docClassRow: null };
+    const controller = new AbortController();
+    vi.stubGlobal('fetch', vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      controller.abort(new Error('lease lost during classification'));
+      throw controller.signal.reason;
+    }));
+    const env = dbEnv(state, { OPENROUTER_API_KEY: 'test-key' });
+
+    await expect(ensureDocClass(
+      env,
+      'H-abort',
+      await blankPdf(),
+      undefined,
+      { computeSignals: ambiguousSignals, signal: controller.signal },
+    )).rejects.toThrow('lease lost during classification');
+    expect(state.persisted).toBeNull();
+  });
+
   it('falls back to hard_scan (safest: full trio) when the model tier fails', async () => {
     const state: DbState = { persisted: null, stored: [], docClassRow: null };
     vi.stubGlobal('fetch', vi.fn(async () => (

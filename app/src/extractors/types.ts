@@ -197,6 +197,8 @@ export interface ExtractorResult {
 /** Input handed to an extractor. One of bytes/html is typically present. */
 export interface ExtractorInput {
   filing: Filing;
+  /** Queue-lease cancellation propagated to provider transports when present. */
+  signal?: AbortSignal;
   /** Raw bytes (PDF) when applicable. */
   bytes?: ArrayBuffer;
   /** Raw HTML (Senate eFD) when applicable. */
