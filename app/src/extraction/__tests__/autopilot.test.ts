@@ -704,10 +704,16 @@ describe('autopilot batch submission receipts', () => {
     };
     const olderRunningJobs = Array.from({ length: 4 }, (_, index) => ({
       id: `autopilot-running-${index}`,
-      provider: 'openrouter',
-      model: 'model',
+      provider: 'anthropic',
+      model: 'claude-sonnet-5',
       provider_batch_id: `provider-${index}`,
       status: 'running',
+    }));
+    const poll = vi.fn(async () => ({
+      done: false,
+      failed: false,
+      status: 'running',
+      results: [],
     }));
     const env = {
       DB: {
@@ -734,14 +740,24 @@ describe('autopilot batch submission receipts', () => {
     } as unknown as Env;
     const now = new Date('2026-07-22T18:00:00.000Z');
 
-    await pollAutopilotPreseedBatches(env, '2026-07-22', undefined, () => now);
+    await pollAutopilotPreseedBatches(
+      env,
+      '2026-07-22',
+      undefined,
+      () => now,
+      true,
+      poll,
+    );
 
     expect(queries).toHaveLength(2);
     expect(queries[0].sql).toContain("status = 'submitting'");
     expect(queries[1].sql).toContain("status IN ('submitted', 'running')");
-    expect(updates).toHaveLength(1);
-    expect(updates[0].sql).toContain("status = 'submission_unknown'");
-    expect(updates[0].params).toEqual([now.toISOString(), staleIntent.id]);
+    expect(poll).toHaveBeenCalledTimes(olderRunningJobs.length);
+    const unknownUpdates = updates.filter((update) =>
+      update.sql.includes("status = 'submission_unknown'")
+    );
+    expect(unknownUpdates).toHaveLength(1);
+    expect(unknownUpdates[0].params).toEqual([now.toISOString(), staleIntent.id]);
   });
 
   it('records a lost provider response as submission_unknown instead of failed', async () => {
