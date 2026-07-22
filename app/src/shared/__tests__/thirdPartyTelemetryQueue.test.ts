@@ -48,14 +48,12 @@ afterEach(() => {
 });
 
 const event: ThirdPartyUsageTelemetryEvent = {
-  idempotencyKey: 'ct-third-party:test-event',
-  sourceApp: 'congress-trade',
+  eventId: 'ct-third-party:test-event',
   environment: 'test',
   provider: 'openai',
   service: 'llm',
   project: 'congress-trade',
   label: 'extract-document',
-  keyRef: 'ct-third-party:test-event',
   billingMode: 'actual',
   metricType: 'usage',
   quantity: 1,

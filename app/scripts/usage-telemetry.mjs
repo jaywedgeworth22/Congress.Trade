@@ -35,7 +35,7 @@ function configuredUsageSender(env) {
   const client = createUsageTelemetryClient({
     baseUrl,
     token,
-    requireExplicitIdempotencyKey: true,
+    producerId: 'congress-trade',
   });
   return (event) => client.send([event]);
 }
@@ -58,14 +58,12 @@ export async function trackedOperatorFetch(input, init, descriptor, options = {}
 
   const report = async (metadata) => {
     const event = {
-      idempotencyKey,
-      sourceApp: 'congress-trade',
+      eventId: idempotencyKey,
       environment: (env.USAGE_MONITOR_ENVIRONMENT || env.INFISICAL_ENV || 'operator').trim() || 'operator',
       provider,
       service,
       project: 'congress-trade',
       label: operation,
-      keyRef: idempotencyKey,
       billingMode: 'actual',
       metricType: 'usage',
       quantity: 1,

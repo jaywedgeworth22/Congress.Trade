@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createCongressEvent } from "../events.ts";
+import { createCongressEvent } from "../events";
 
 describe("events", () => {
   beforeEach(() => {
