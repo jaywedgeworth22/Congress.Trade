@@ -24,6 +24,7 @@
  */
 
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import type { D1Database, D1Result, D1PreparedStatement } from '../../prices/__tests__/sqliteD1.ts';
 
 /** D1 rejects a statement bound with more than this many parameters. */
 export const D1_BOUND_PARAM_LIMIT = 100;
