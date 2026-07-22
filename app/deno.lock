@@ -1,8 +1,7 @@
 {
   "version": "5",
   "specifiers": {
-    "npm:@aws-sdk/client-s3@*": "3.1090.0",
-    "npm:@aws-sdk/client-s3@^3.1090.0": "3.1090.0",
+    "npm:@aws-sdk/client-s3@3.1091.0": "3.1091.0",
     "npm:@cloudflare/workers-types@^4.20240718.0": "4.20260702.1",
     "npm:@fontsource/zilla-slab@^5.3.0": "5.3.0",
     "npm:@google/genai@^2.13.0": "2.13.0",
@@ -66,8 +65,8 @@
         "tslib@2.8.1"
       ]
     },
-    "@aws-sdk/client-s3@3.1090.0": {
-      "integrity": "sha512-R6GX9cd1jljwzZ8xFmgAI/hHCuX1MobIKBdsymv7WL9SENvO9Vgz9KOR6avTnu0Ao+w1LmxnTe+jqmZXEn7Q/Q==",
+    "@aws-sdk/client-s3@3.1091.0": {
+      "integrity": "sha512-jvXBCWZdPEXACF7TEbLdwLgmrcWvAqSnIJeRbnnFTxLuPRAZtEbujVUU48i7PGnrOoO6Jc6HCw9hRqBECoKSww==",
       "dependencies": [
         "@aws-sdk/checksums",
         "@aws-sdk/core",
@@ -923,39 +922,39 @@
         "@sentry/core"
       ]
     },
-    "@smithy/core@3.29.5": {
-      "integrity": "sha512-i0dk2t5B+CwV/dcJdUHILYkOQF5lof8f44dFCfDWToGCxjT9YQ+CgHqTAvJxzc3+zqQwm2QtVoJ5IqiNar/CnQ==",
+    "@smithy/core@3.29.6": {
+      "integrity": "sha512-TO3w25cdGWBeYqKNDaqH3v4O3jjMPpKwf39YlG5X5xhqWfpOWJbi5gQi1lrllukuwohdhY0TPB8jBEv6UC50Vg==",
       "dependencies": [
         "@smithy/types",
         "tslib@2.8.1"
       ]
     },
-    "@smithy/credential-provider-imds@4.4.10": {
-      "integrity": "sha512-MJenAe4OKRZUo1LdYYFDCsSHxaHvInIU/z52GsheO9vl1/VSySVCr0zkyKD6TFiGkSUaWGxvKZ/70OvgUZR5HQ==",
-      "dependencies": [
-        "@smithy/core",
-        "@smithy/types",
-        "tslib@2.8.1"
-      ]
-    },
-    "@smithy/fetch-http-handler@5.6.7": {
-      "integrity": "sha512-3zpg8yqqyXzoK2TsRDdkqVOj2RDBFfLXwCczOZ5c7TWB4eiaebfSCsbMjDPYB3PJ9ihV62QaeadZ+wLadZtNGA==",
+    "@smithy/credential-provider-imds@4.4.11": {
+      "integrity": "sha512-6CUvZwS0tCcVCrcvh2TpwTXxmAkuY6JGNPeKODYRLjHtUUhFLGS3dNkNdRvT/ttJyqimqnhFMTS2nqp4pDZ7oQ==",
       "dependencies": [
         "@smithy/core",
         "@smithy/types",
         "tslib@2.8.1"
       ]
     },
-    "@smithy/node-http-handler@4.9.7": {
-      "integrity": "sha512-wCU8HCLjAtAVqxxe0j2xff9LcEPw3yjBbg5IdQDIYFnxnPxbxcSLc7rgex7kqm9L/WYOnJEgaWQlfDkZleozMA==",
+    "@smithy/fetch-http-handler@5.6.8": {
+      "integrity": "sha512-AFuLou893FesRZeQcKMh87P9x4PF2/ksPOYLLI1ctW7WJxm55SWInFSHAhaNRBPBmbgZyUcCCDKepBX+1jZBBw==",
       "dependencies": [
         "@smithy/core",
         "@smithy/types",
         "tslib@2.8.1"
       ]
     },
-    "@smithy/signature-v4@5.6.6": {
-      "integrity": "sha512-efP6DN3UTFrzIsGO42/xcabv8jU7+9nwEdphFUH7yL0k010ERyAWaO41KFQIDLcFZLZ8xzIQr4wplFxNzslSGQ==",
+    "@smithy/node-http-handler@4.9.8": {
+      "integrity": "sha512-ArSSIN4t1wLutcIkHzaL6N11J7xpZK7W3T0pFz9cep9zIpEr9x5+lhJRcVUgObGI3OIMbnROq7w8bwzx+Nkf8A==",
+      "dependencies": [
+        "@smithy/core",
+        "@smithy/types",
+        "tslib@2.8.1"
+      ]
+    },
+    "@smithy/signature-v4@5.6.7": {
+      "integrity": "sha512-32PmEsuZV9lz7SZk3gJcm+EfIAoIVu83AJyEzgALpwmSqLvuacdAu0fvCVNMbDbegyk1S0lHUDrMWIfR47Micw==",
       "dependencies": [
         "@smithy/core",
         "@smithy/types",
@@ -2259,7 +2258,7 @@
   },
   "workspace": {
     "dependencies": [
-      "npm:@aws-sdk/client-s3@^3.1090.0",
+      "npm:@aws-sdk/client-s3@3.1091.0",
       "npm:@cloudflare/workers-types@^4.20240718.0",
       "npm:@google/genai@^2.13.0",
       "npm:@libsql/client@~0.17.4",
@@ -2275,7 +2274,7 @@
     ],
     "packageJson": {
       "dependencies": [
-        "npm:@aws-sdk/client-s3@^3.1090.0",
+        "npm:@aws-sdk/client-s3@3.1091.0",
         "npm:@fontsource/zilla-slab@^5.3.0",
         "npm:@google/genai@^2.13.0",
         "npm:@libsql/client@~0.17.4",
