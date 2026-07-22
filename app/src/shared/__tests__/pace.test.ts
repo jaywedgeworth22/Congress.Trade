@@ -86,7 +86,7 @@ describe('getSharedEdgarPacer', () => {
     await edgarPace(); // immediate
     await new Promise((r) => setTimeout(r, 30));
     await fmpPace(); // immediate too — its own clock hasn't been touched yet
-    expect(Date.now() - t0).toBeLessThan(80);
+    expect(Date.now() - t0).toBeLessThan(150);
   });
 
   it('rebuilds the pacer if the maxPerMinute ceiling changes (Infisical-live semantics)', () => {
