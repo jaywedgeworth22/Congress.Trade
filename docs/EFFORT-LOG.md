@@ -784,3 +784,5 @@ Jul 8 18:10 CT)._
 - **2026-07-22T07:30Z GROK2** extract_empty_failure hard-fail: empty×empty agreement no longer soft-parks as agreement_cascade_unresolved / escalates. markExtractEmptyFailure → filings.error + review reason extract_empty_failure (unresolved). Tests green. Turso requeue of 13 non-persisted senate docs.
 
 - **2026-07-22T11:22Z GROK2** PR #748 open (grok/extract-empty-hard-fail-main ← main). Deno prod deploy revision 392qr6p9eb3z live at congress.trade. Reprocess blocked: R2 NotEntitled on Deno (S3 API). Turso review rows already requeued extract_empty_failure. Need R2 entitlement/creds on Deno before extract can re-run.
+
+- **2026-07-22T15:50Z GROK** PR #748 continue: claim-token preserve so finishTerminalClaim caps attempts (Codex P2); CI Deno install + restore `coverage` script (unblocks typecheck+test after Deno migration); then merge + Deno prod deploy. R2 NotEntitled reprocess still open after land.

@@ -290,7 +290,7 @@ describe('agreement cascade — tier 1', () => {
 
   it('empty×empty is extract_empty_failure hard fail — no tier-2 escalation', async () => {
     stub(asJson([]), asJson([]));
-    const { env, cap } = makeEnv();
+    const { env, cap, review } = makeEnv();
     const res = await handleAgreementCheck(env, 'H-empty', 'raw/H-empty');
     expect(res).toMatchObject({
       outcome: 'agree_but_hardfail',
@@ -302,6 +302,11 @@ describe('agreement cascade — tier 1', () => {
     const emptyDecision = cap.decisions.find((d) => d.action === 'extract_empty_failure');
     expect(emptyDecision).toBeTruthy();
     expect(emptyDecision?.reason).toBe('extract_empty_failure');
+    // finishTerminalClaim must still match the claim and pin attempts at the cap
+    // (default AGREEMENT_MAX_ATTEMPTS = 3) so autopilot cannot re-burn empty docs.
+    expect(review.claimToken).toBeNull();
+    expect(review.attempts).toBeGreaterThanOrEqual(3);
+    expect(cap.reviewFlags.some((f) => f.reason === 'extract_empty_failure')).toBe(true);
   });
 
   it('a big doc (page_count over threshold) starts directly at tier 2', async () => {

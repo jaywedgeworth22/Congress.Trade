@@ -1047,6 +1047,11 @@ function voteSummary(consensus: ConsensusResult, totalModels: number): unknown {
  *   - filings.ingest_status = 'error'
  *   - review reason = extract_empty_failure (unresolved)
  *   - decision action = extract_empty_failure
+ *
+ * Preserve agreement_claim_token here so handleAgreementCheck can still call
+ * finishTerminalClaim (WHERE token match) and bump agreement_attempts to the
+ * cap. Clearing the claim first made finishTerminalClaim a no-op, so the next
+ * autopilot scan re-queued empty docs forever and burned more model reads.
  */
 export async function markExtractEmptyFailure(
   env: Env,
@@ -1083,21 +1088,19 @@ export async function markExtractEmptyFailure(
 
   try {
     if (existingRevision !== null) {
+      // Match leaveInReviewHighPriority: update reason/payload only; do NOT clear
+      // the claim token. Terminal claim release is finishTerminalClaim's job.
       const reviewSql = claimToken
         ? `UPDATE review_queue
               SET reason = ?,
                   payload = ?,
                   resolved = 0,
-                  agreement_claim_token = NULL,
-                  agreement_claimed_at = NULL,
                   review_revision = review_revision + 1
             WHERE doc_id = ? AND agreement_claim_token = ? AND review_revision = ?`
         : `UPDATE review_queue
               SET reason = ?,
                   payload = ?,
                   resolved = 0,
-                  agreement_claim_token = NULL,
-                  agreement_claimed_at = NULL,
                   review_revision = review_revision + 1
             WHERE doc_id = ? AND review_revision = ?`;
       const reviewParams = claimToken
