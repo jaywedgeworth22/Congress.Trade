@@ -821,6 +821,24 @@ async function persistNormalizedPublish(
     transitionIndex = 3;
   }
 
+  // A bounded FMP recovery may have populated low-fidelity seed rows under the
+  // same canonical Senate report id.  Keep those rows visible until a complete
+  // primary set is proven and the filing transition succeeds, then retire them
+  // in the same atomic batch so the dashboard never double-counts both copies.
+  statements.push([
+    `UPDATE transactions
+        SET deprecated_at = ?, deprecated_reason = 'upgraded_by_primary'
+      WHERE doc_id = ? AND source = 'seed_dataset' AND deprecated_at IS NULL
+        AND EXISTS (SELECT 1 FROM filings
+          WHERE doc_id = ? AND ingest_status = 'persisted')
+        AND ${exactLiveSet}`,
+    [
+      nowIso, docId, docId,
+      docId, transactions.length,
+      docId, rowKeysJson, transactions.length,
+    ],
+  ]);
+
   let results: D1Result[];
   try {
     results = await batch(env.DB, statements);
