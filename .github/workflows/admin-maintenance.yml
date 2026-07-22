@@ -85,6 +85,10 @@ jobs:
     env:
       BASE_URL: https://congress.trade
       ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+      # Cloudflare's managed challenge rejects bare curl requests before they
+      # reach the authenticated admin API. Keep all maintenance calls aligned
+      # with the browser UA used by app/scripts/ship.sh.
+      BROWSER_UA: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36
     steps:
       # The self-hosted runner's curl predates --fail-with-body, so capture the
       # body and status code separately and fail on non-200 by hand.
@@ -93,7 +97,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "== POST /api/admin/ingest-requeue-failed"
-          code=$(curl -sS -o /tmp/requeue.json -w '%{http_code}' -X POST "$BASE_URL/api/admin/ingest-requeue-failed" \
+          code=$(curl -sS -A "$BROWSER_UA" -o /tmp/requeue.json -w '%{http_code}' -X POST "$BASE_URL/api/admin/ingest-requeue-failed" \
             -H "authorization: Bearer $ADMIN_TOKEN" \
             -H 'content-type: application/json' -d '{}')
           cat /tmp/requeue.json; echo
@@ -104,7 +108,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "== POST /api/admin/ingest-retry-errored"
-          code=$(curl -sS -o /tmp/retry.json -w '%{http_code}' -X POST "$BASE_URL/api/admin/ingest-retry-errored" \
+          code=$(curl -sS -A "$BROWSER_UA" -o /tmp/retry.json -w '%{http_code}' -X POST "$BASE_URL/api/admin/ingest-retry-errored" \
             -H "authorization: Bearer $ADMIN_TOKEN" \
             -H 'content-type: application/json' -d '{"limit": 2000}')
           cat /tmp/retry.json; echo
@@ -124,7 +128,7 @@ jobs:
           chmod 600 "$response_file"
           trap 'rm -f "$response_file"' EXIT
           echo "== POST /api/admin/batch-status/<validated-job-id>"
-          code=$(curl -sS -o "$response_file" -w '%{http_code}' -X POST \
+          code=$(curl -sS -A "$BROWSER_UA" -o "$response_file" -w '%{http_code}' -X POST \
             "$BASE_URL/api/admin/batch-status/$JOB_ID" \
             -H "authorization: Bearer $ADMIN_TOKEN" \
             -H 'content-type: application/json' -d '{}')
@@ -172,7 +176,7 @@ jobs:
         if: inputs.task == 'data-status' || inputs.task == 'official-data-dry-run' || inputs.task == 'official-data-batch'
         run: |
           set -euo pipefail
-          code=$(curl -sS -o /tmp/data-status.json -w '%{http_code}' \
+          code=$(curl -sS -A "$BROWSER_UA" -o /tmp/data-status.json -w '%{http_code}' \
             "$BASE_URL/api/admin/data-recovery/status" \
             -H "authorization: Bearer $ADMIN_TOKEN")
           cat /tmp/data-status.json; echo
@@ -182,7 +186,7 @@ jobs:
         if: inputs.task == 'storage-smoke'
         run: |
           set -euo pipefail
-          code=$(curl -sS -o /tmp/storage-smoke.json -w '%{http_code}' -X POST \
+          code=$(curl -sS -A "$BROWSER_UA" -o /tmp/storage-smoke.json -w '%{http_code}' -X POST \
             "$BASE_URL/api/admin/storage-smoke" \
             -H "authorization: Bearer $ADMIN_TOKEN" \
             -H 'content-type: application/json' -d '{}')
@@ -219,9 +223,10 @@ jobs:
         run: |
           set -euo pipefail
           call_admin() {
-            local route="$1" body="$2" out="/tmp/${route}.json"
+            local route="$1" body="$2"
+            local out="/tmp/${route}.json"
             local code
-            code=$(curl -sS -o "$out" -w '%{http_code}' -X POST \
+            code=$(curl -sS -A "$BROWSER_UA" -o "$out" -w '%{http_code}' -X POST \
               "$BASE_URL/api/admin/$route" \
               -H "authorization: Bearer $ADMIN_TOKEN" \
               -H 'content-type: application/json' -d "$body")
@@ -254,7 +259,7 @@ jobs:
           set -euo pipefail
           for spec in 'enrich-photos {}' 'resolve-tickers {"limit":5000}'; do
             route=${spec%% *}; body=${spec#* }
-            code=$(curl -sS -o "/tmp/${route}.json" -w '%{http_code}' -X POST \
+            code=$(curl -sS -A "$BROWSER_UA" -o "/tmp/${route}.json" -w '%{http_code}' -X POST \
               "$BASE_URL/api/admin/$route" -H "authorization: Bearer $ADMIN_TOKEN" \
               -H 'content-type: application/json' -d "$body")
             echo "== $route"; cat "/tmp/${route}.json"; echo
@@ -265,7 +270,7 @@ jobs:
         if: inputs.task == 'market-backfill'
         run: |
           set -euo pipefail
-          code=$(curl -sS -o /tmp/market-backfill.json -w '%{http_code}' -X POST \
+          code=$(curl -sS -A "$BROWSER_UA" -o /tmp/market-backfill.json -w '%{http_code}' -X POST \
             "$BASE_URL/api/admin/backfill-market" -H "authorization: Bearer $ADMIN_TOKEN" \
             -H 'content-type: application/json' -d '{"max":40,"maxPerMinute":120}')
           cat /tmp/market-backfill.json; echo
