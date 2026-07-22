@@ -34,11 +34,7 @@ jobs:
         run: deno install
 
       - name: Deploy to Deno Deploy
-        uses: denoland/deployctl@7bded90d0d09cd99bbfb513966146315db97618b
-        with:
-          project: congress-trade # <-- CHANGE THIS IF YOUR DENO PROJECT NAME IS DIFFERENT
-          entrypoint: src/deno/main.ts
-          root: app
-          production: true
+        working-directory: ./app
+        run: deno run -A jsr:@deno/deployctl deploy --project=congress-trade --prod src/deno/main.ts
         env:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_ORG_TOKEN }}
