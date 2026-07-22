@@ -345,6 +345,30 @@ export const RESOURCE_GOVERNOR_SCHEMA_STATEMENTS = [
 )`,
 ] as const;
 
+/** 0052_deno_runtime_queue.sql — durable queue for Deno KV Connect runtimes. */
+export const DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS deno_runtime_queue (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     queue_name TEXT NOT NULL,
+     dedupe_key TEXT,
+     payload TEXT NOT NULL,
+     status TEXT NOT NULL DEFAULT 'pending',
+     attempts INTEGER NOT NULL DEFAULT 0,
+     dead_letter_pending INTEGER NOT NULL DEFAULT 0,
+     available_at TEXT NOT NULL,
+     lease_until TEXT,
+     lease_token TEXT,
+     last_error TEXT,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_deno_runtime_queue_ready
+     ON deno_runtime_queue(status, available_at, id)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_deno_runtime_queue_active_dedupe
+     ON deno_runtime_queue(queue_name, dedupe_key)
+     WHERE dedupe_key IS NOT NULL AND status IN ('pending', 'processing')`,
+] as const;
+
 /**
  * tests. Keep this in the same order as file migrations 0029 through 0051.
  */
@@ -390,4 +414,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...DOC_CLASS_SCHEMA_STATEMENTS,
   // 0051_resource_governors.sql
   ...RESOURCE_GOVERNOR_SCHEMA_STATEMENTS,
+  // 0052_deno_runtime_queue.sql
+  ...DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS,
 ] as const;
