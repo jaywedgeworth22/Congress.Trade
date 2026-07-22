@@ -1535,6 +1535,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <!-- ================= TRENDS / ANALYTICS ================= -->
   <section class="view active" id="view-trends" role="tabpanel" aria-labelledby="tab-trends" aria-hidden="false">
     <div class="toolbar">
+      <div class="time-filter-wrap" style="display:inline-flex;align-items:center;gap:6px;">
+        <label class="lbl" for="trGlobalWindow" style="font-size:12px;color:var(--text-dim);">Timeframe</label>
+        <select id="trGlobalWindow" class="tr-window-select" title="Time window">
+          <option value="1d">Past Day</option>
+          <option value="7d">Past Week</option>
+          <option value="30d">Past Month</option>
+          <option value="90d" selected>Past 3 Months</option>
+          <option value="180d">Past 6 Months</option>
+          <option value="365d">Past Year</option>
+          <option value="1825d">Past 5 Years</option>
+          <option value="all">All Time</option>
+        </select>
+      </div>
       <div class="branch-filters" id="trChamber" role="group" aria-label="Filter analytics by branch">
         <div class="branch-seg">
           <button type="button" class="branch-toggle on" data-ch="house" aria-pressed="true" title="House trades — House Clerk PTR filings">H</button>
@@ -1580,7 +1593,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- What Congress is trading + Heating up -->
     <div class="trend-grid-split">
       <div class="section">
-        <h3 class="tf-h">What Congress Is Trading <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
+        <h3 class="tf-h">What Congress Is Trading <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
         <p class="sub">Most-traded assets in the window. Click a row for a deep dive. Bar = buy / sell mix.</p>
         <div class="row-flex" style="margin:-6px 0 12px">
           <label class="lbl">Rank By</label>
@@ -1613,7 +1626,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         </div>
       </div>
       <div class="section">
-        <h3 class="tf-h">Rising Activity <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
+        <h3 class="tf-h">Rising Activity <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
         <p class="sub">Assets whose disclosed trade count rose most vs the prior equal period. A descriptive view of filing activity — not a forecast.</p>
         <div class="row-flex" style="margin:-6px 0 12px">
           <label class="lbl">Asset Type</label>
@@ -1640,7 +1653,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Consensus / cluster buys -->
     <div class="section">
-      <h3 class="tf-h">Consensus Moves <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select> <span class="chip" id="trClusterHint"></span></h3>
+      <h3 class="tf-h">Consensus Moves <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="chip" id="trClusterHint"></span></h3>
       <p class="sub">Assets where several different politicians happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above). Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination. For an all-time view, switch the window selector to “All Time”.</p>
       <div class="cluster-grid" id="trClusters"></div>
     </div>
@@ -1665,12 +1678,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Real GICS sector flow + market-cap size tilt (securities_ref-backed) -->
     <div class="trend-grid2">
       <div class="section">
-        <h3 class="tf-h">Net Flow by Sector <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
+        <h3 class="tf-h">Net Flow by Sector <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
         <p class="sub">Real <strong>GICS sectors</strong> (from enriched security reference data), ranked by estimated volume. Bar = volume; chip shows buy/sell mix, breadth, and signed net $ flow.</p>
         <div id="trSectorFlow"></div>
       </div>
       <div class="section">
-        <h3 class="tf-h">By Market Cap <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
+        <h3 class="tf-h">By Market Cap <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
         <p class="sub">The size tilt — net flow and activity across market-cap buckets (mega → nano). Cap tracks the daily close, so it stays current as price moves.</p>
         <div id="trCapFlow"></div>
       </div>
@@ -1678,7 +1691,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
     <div class="section">
-      <h3>Top Performers <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select> <span class="info-tip" tabindex="0" aria-label="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out." title="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
+      <h3>Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out." title="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
       <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade became <em>public</em>, shown as an <strong>annualized</strong> relative return <strong>(0% means equal to the S&amp;P)</strong>. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
       <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
     </div>
@@ -1686,18 +1699,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Politicians + Party -->
     <div class="trend-members-grid">
       <div class="section">
-        <h3 class="tf-h">Most Active Politicians <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
+        <h3 class="tf-h">Most Active Politicians <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
         <p class="sub">Who is trading the most in the window.</p>
         <div class="table-wrap"><table><tbody id="trMembers"></tbody></table></div>
       </div>
       <div class="trend-side-stack">
         <div class="section">
-          <h3 class="tf-h">By Party <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
+          <h3 class="tf-h">By Party <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
           <p class="sub">Buy / sell mix and estimated net flow per party (where party is known).</p>
           <div id="trParties"></div>
         </div>
         <div class="section">
-          <h3 class="tf-h">By Asset Type <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
+          <h3 class="tf-h">By Asset Type <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
           <p class="sub">Share of estimated volume by instrument type.</p>
           <div id="trSectors"></div>
         </div>
@@ -1706,7 +1719,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Disclosure timeliness -->
     <div class="section">
-      <h3>Disclosure Timeliness <select class="tr-window-select bare-select" title="Time window"><option value="1d">Past Day</option><option value="7d">Past Week</option><option value="30d">Past Month</option><option value="90d" selected>Past 3 Months</option><option value="180d">Past 6 Months</option><option value="365d">Past Year</option><option value="1825d">Past 5 Years</option><option value="all">All Time</option></select></h3>
+      <h3>Disclosure Timeliness <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
       <p class="sub">Days from trade to filing. The STOCK Act sets a 45-day deadline; this is a data-quality + accountability lens.</p>
       <div class="grid-cards" id="trLagKpis"></div>
       <div class="trend-grid2 timeliness-grid">
@@ -6395,20 +6408,16 @@ function trParams() {
 }
 var TR_WINDOW_LABELS = { '1d': 'Past Day', '7d': 'Past Week', '30d': 'Past Month', '90d': 'Past 3 Months', '180d': 'Past 6 Months', '365d': 'Past Year', '1825d': 'Past 5 Years', 'all': 'All Time' };
 function windowLabel(v) { return TR_WINDOW_LABELS[v] || v; }
-/* Every analytics section header (.tf-h) already carries its OWN per-panel
-   <select class="tr-window-select"> showing the active timeframe (e.g. "Past
-   3 Months \u25BE"). This pass used to also append a ".tf-chip" repeating the same
-   label as plain text, producing a visible duplicate ("Past 3 Months \u25BE \u00B7 Past
-   3 Months"). The select is the single source of truth for the label now, so
-   this just clears out any stale chip a header may still be carrying (e.g.
-   from before a re-render) rather than re-adding the redundant text. Runs at
-   the top of loadTrends(), which fires on Refresh and on any window change. */
+/* The single top-level dropdown box (#trGlobalWindow / .tr-window-select) is
+   the single control for timeframe filtering. Section headers display the
+   active timeframe setting as italic text (.tr-window-label). This function
+   updates all .tr-window-label elements to match the selected timeframe. */
 function stampWindowChips() {
-  var heads = document.querySelectorAll('#view-trends h3.tf-h');
-  for (var i = 0; i < heads.length; i++) {
-    var chip = heads[i].querySelector('.tf-chip');
-    if (chip) chip.parentNode.removeChild(chip);
-  }
+  var val = getTrWindow();
+  var lblText = windowLabel(val);
+  document.querySelectorAll('.tr-window-label').forEach(function(el) {
+    el.textContent = lblText;
+  });
 }
 function aGet(path) {
   return fetch('/api/analytics/' + path).then(function (r) {
