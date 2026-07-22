@@ -47,7 +47,8 @@ export class TransactionPublishLimitError extends Error {}
 // validation check is soft-failed. Each is in (0,1]; they compound.
 const PENALTY_UNRESOLVED_TICKER = 0.85; // asset/ticker could not be resolved
 const PENALTY_INVALID_BRACKET = 0.6; //   amount range is not a canonical bracket
-const PENALTY_FUTURE_TX_DATE = 0.7; //    tx_date after the filing's filed_date
+const PENALTY_FUTURE_TX_DATE = 0.7; //    tx_date after the filing's filed_date or today
+const PENALTY_MISSING_TX_DATE = 0.7; //   tx_date is missing entirely
 const PENALTY_BAD_TX_TYPE = 0.5; //       tx_type not in {P,S,E}
 const PENALTY_BAD_ASSET_NAME = 0.4; //    parsed asset contains PTR header chrome
 
@@ -83,6 +84,7 @@ export const HARD_FAILURE_FLAGS = [
   'unreadable_is_option',
   'unreadable_cap_gains',
   'future_tx_date',
+  'missing_tx_date',
 ];
 const HARD_FAILURE_FLAG_SET = new Set<string>(HARD_FAILURE_FLAGS);
 
@@ -459,8 +461,15 @@ export function scoreFields(
     txType = 'P';
   }
 
-  // --- tx_date sanity: must be <= filed_date -------------------------------
-  if (fields.txDate && filedDate && fields.txDate > filedDate) {
+  // --- tx_date sanity: must be <= filed_date and <= today -------------------
+  const today = new Date().toISOString().slice(0, 10);
+  if (!fields.txDate) {
+    flags.push('missing_tx_date');
+    confidence *= PENALTY_MISSING_TX_DATE;
+  } else if (fields.txDate > today) {
+    flags.push('future_tx_date');
+    confidence *= PENALTY_FUTURE_TX_DATE;
+  } else if (filedDate && fields.txDate > filedDate) {
     flags.push('future_tx_date');
     confidence *= PENALTY_FUTURE_TX_DATE;
   }
