@@ -11,6 +11,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 - **[Congress.Trade][CODEX] #714 P2 timestamp-sort follow-up — IN PROGRESS 2026-07-22.** Preserve full timestamp precision when clamping genuinely future dates in the dashboard sorter; focused dashboard tests and backend typecheck pass. Follow-up PR pending hosted Coolify checks.
 
 ## Deployed
+- **KPI Strip Card Alignment (AG) — COMPLETED / MERGED 2026-07-21.** Positioned sparklines absolutely at the bottom of the Net Flow and Buy Pressure cards and moved extra content outside `.v` in `dashboardHtml.ts`, vertically centering main figures (`+$16.4M` and `53% buys`) to match the first 4 snapshot cards.
 - **Deno Deploy & Turso Migration + Trends Timeframe Filter (AG) — COMPLETED / MERGED 2026-07-21 via PR #714, #715, #716.**
   - **Deno Deploy & Turso Target**: Integrated Deno server entrypoints (`src/deno/main.ts`), Deno Hono routing (`src/app.ts`), and Deno queue handlers (`src/queueHandlers.ts`). Updated `package.json` deploy script to use `deployctl` targeting Deno Deploy (`congress-trade`) and Turso database. Deprecated Cloudflare Workers / D1.
   - **Top-Level Timeframe Filter**: Added a single top-level Timeframe dropdown (`#trGlobalWindow`) to the Trends view toolbar, defaulting to Past 3 Months (`90d`). Styled section heading timeframes in italics (`<em class="tr-window-label">`).
