@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { API_PATHS, DEFAULT_CONGRESS_TRADE_BASE_URL, MAX_REFS_BATCH } from "./constants";
 import type {
   BundleResponse,

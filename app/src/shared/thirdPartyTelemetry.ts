@@ -16,8 +16,10 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   API_USAGE_MONITOR_INGEST_PATH,
   createUsageTelemetryClient,
-  UsageTelemetryEventSchema,
+  LegacyUsageTelemetryOutboxEventSchema,
+  UsageTelemetryV2EventSchema,
 } from '@jaywedgeworth22/congress-trading-shared';
+import type { LegacyUsageTelemetryOutboxEventInput } from '@jaywedgeworth22/congress-trading-shared';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import type { Env, ThirdPartyUsageTelemetryEvent } from './types.ts';
 
@@ -47,6 +49,24 @@ const USAGE_TELEMETRY_OUTBOX_COUNT_KV_KEY = 'usage_telemetry_outbox_count';
  *  poison/undeliverable row can't wedge the oldest-first drain. Small on purpose:
  *  the table is legacy and is only ever drained while the receiver is healthy. */
 const USAGE_TELEMETRY_D1_MAX_ROW_ATTEMPTS = 5;
+
+type LegacyThirdPartyUsageTelemetryEvent = LegacyUsageTelemetryOutboxEventInput & {
+  idempotencyKey: string;
+  sourceApp: 'congress-trade';
+};
+type DeliverableUsageTelemetryEvent =
+  | ThirdPartyUsageTelemetryEvent
+  | LegacyThirdPartyUsageTelemetryEvent;
+
+function isV2UsageTelemetryEvent(
+  event: DeliverableUsageTelemetryEvent,
+): event is ThirdPartyUsageTelemetryEvent {
+  return 'eventId' in event && typeof event.eventId === 'string';
+}
+
+function usageTelemetryEventIdentity(event: DeliverableUsageTelemetryEvent): string {
+  return isV2UsageTelemetryEvent(event) ? event.eventId : event.idempotencyKey;
+}
 
 export interface UsageTelemetryFallbackHealth {
   available: boolean;
@@ -384,14 +404,12 @@ function baseEvent(
     ? stableTag(input.idempotencyKey, 'ct-third-party')
     : eventId('ct-third-party');
   return {
-    idempotencyKey,
-    sourceApp: 'congress-trade',
+    eventId: idempotencyKey,
     environment: environmentName(env),
     provider: stableTag(input.provider, 'external-api'),
     service,
     project: 'congress-trade',
     label: operation,
-    keyRef: idempotencyKey,
     billingMode: input.billingMode,
     metricType: input.metricType,
     confidence: input.confidence,
@@ -421,25 +439,40 @@ export async function enqueueUsageTelemetryEvent(
 }
 
 function usageTelemetryFallbackKey(event: ThirdPartyUsageTelemetryEvent): string {
-  return `${USAGE_TELEMETRY_FALLBACK_PREFIX}${encodeURIComponent(event.idempotencyKey)}.json`;
+  return `${USAGE_TELEMETRY_FALLBACK_PREFIX}${encodeURIComponent(event.eventId)}.json`;
 }
 
-function parseUsageTelemetryFallback(raw: string): ThirdPartyUsageTelemetryEvent {
-  const parsed = UsageTelemetryEventSchema.parse(JSON.parse(raw));
+function parseUsageTelemetryFallback(raw: string): DeliverableUsageTelemetryEvent {
+  const input = JSON.parse(raw);
+  const v2 = UsageTelemetryV2EventSchema.safeParse(input);
+  if (v2.success) {
+    const parsed = v2.data;
+    if (
+      parsed.project !== 'congress-trade'
+      || !parsed.environment
+      || !parsed.service
+      || !parsed.label
+      || !parsed.occurredAt
+      || !['usage', 'cost', 'limit'].includes(parsed.metricType)
+    ) {
+      throw new Error('fallback telemetry event is not a Congress.Trade event');
+    }
+    return parsed as ThirdPartyUsageTelemetryEvent;
+  }
+
+  const parsed = LegacyUsageTelemetryOutboxEventSchema.parse(input);
   if (
-    !parsed.idempotencyKey
-    || parsed.sourceApp !== 'congress-trade'
+    parsed.sourceApp !== 'congress-trade'
     || parsed.project !== 'congress-trade'
     || !parsed.environment
     || !parsed.service
     || !parsed.label
-    || !parsed.keyRef
     || !parsed.occurredAt
     || !['usage', 'cost', 'limit'].includes(parsed.metricType)
   ) {
     throw new Error('fallback telemetry event is not a Congress.Trade event');
   }
-  return parsed as unknown as ThirdPartyUsageTelemetryEvent;
+  return parsed as LegacyThirdPartyUsageTelemetryEvent;
 }
 
 function usageTelemetryErrorType(error: unknown): string {
@@ -1162,7 +1195,7 @@ async function fetchUsageTelemetryReceiver(
  */
 export async function deliverUsageTelemetryEvent(
   env: Env,
-  event: ThirdPartyUsageTelemetryEvent,
+  event: DeliverableUsageTelemetryEvent,
 ): Promise<void> {
   let circuitState = await readUsageTelemetryCircuitState(env);
   if (!circuitState) throw new UsageTelemetryCircuitOpenError();
@@ -1231,7 +1264,7 @@ export async function deliverUsageTelemetryEvent(
         const client = createUsageTelemetryClient({
           baseUrl,
           token,
-          requireExplicitIdempotencyKey: true,
+          producerId: 'congress-trade',
           fetchImpl: async (input: RequestInfo | URL, init?: RequestInit) => {
             const response = await fetchUsageTelemetryReceiver(
               input,
@@ -1241,7 +1274,11 @@ export async function deliverUsageTelemetryEvent(
             return response;
           },
         });
-        await client.send([event]);
+        if (isV2UsageTelemetryEvent(event)) {
+          await client.send([event]);
+        } else {
+          await client.sendLegacyOutbox([event]);
+        }
       } catch (error) {
         if (controller.signal.aborted) throw new UsageTelemetryDeliveryTimeoutError();
         if (receiverStatus != null) {
@@ -1334,7 +1371,7 @@ export async function flushUsageTelemetryFallback(
       const body = await storage?.get(object.key);
       if (!body) continue;
       const raw = await body.text();
-      let event: ThirdPartyUsageTelemetryEvent | null = null;
+      let event: DeliverableUsageTelemetryEvent | null = null;
       try {
         event = parseUsageTelemetryFallback(raw);
         await deliverUsageTelemetryEvent(env, event);
@@ -1346,7 +1383,7 @@ export async function flushUsageTelemetryFallback(
         // rejections and malformed payloads are quarantined before deletion so
         // poison R2 objects cannot monopolize the bounded list forever without
         // first preserving the exact bytes for operator inspection.
-        const quarantineIdentity = event?.idempotencyKey ?? object.key;
+        const quarantineIdentity = event ? usageTelemetryEventIdentity(event) : object.key;
         const quarantineReason = event == null ? 'malformed' : 'terminal_receiver_rejection';
         if (event == null || isTerminalUsageTelemetryDeliveryError(error)) {
           const quarantined = await writeUsageTelemetryQuarantine(
@@ -1391,7 +1428,7 @@ export async function flushUsageTelemetryFallback(
         .all<{ idempotency_key: string; event_json: string; attempts: number }>();
       const results = rows.results ?? [];
       for (const row of results) {
-        let event: ThirdPartyUsageTelemetryEvent | null = null;
+        let event: DeliverableUsageTelemetryEvent | null = null;
         try {
           event = parseUsageTelemetryFallback(row.event_json);
         } catch {

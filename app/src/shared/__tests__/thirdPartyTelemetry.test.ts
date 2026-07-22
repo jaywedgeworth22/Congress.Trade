@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import ts from 'typescript';
-import { UsageTelemetryEventSchema } from '@jaywedgeworth22/congress-trading-shared';
+import { UsageTelemetryV2EventSchema } from '@jaywedgeworth22/congress-trading-shared';
 import type { Env, QueueMessage, ThirdPartyUsageTelemetryEvent } from '../types.ts';
 import {
   deliverUsageTelemetryEvent,
@@ -27,14 +27,12 @@ afterEach(() => {
 });
 
 const deliveryEvent: ThirdPartyUsageTelemetryEvent = {
-  idempotencyKey: 'ct-third-party:delivery-test',
-  sourceApp: 'congress-trade',
+  eventId: 'ct-third-party:delivery-test',
   environment: 'test',
   provider: 'openai',
   service: 'llm',
   project: 'congress-trade',
   label: 'extract-document',
-  keyRef: 'ct-third-party:delivery-test',
   billingMode: 'actual',
   metricType: 'usage',
   quantity: 1,
@@ -42,6 +40,14 @@ const deliveryEvent: ThirdPartyUsageTelemetryEvent = {
   requests: 1,
   confidence: 'actual',
   occurredAt: '2026-07-13T12:00:00.000Z',
+};
+
+const legacyDeliveryEvent = {
+  ...deliveryEvent,
+  eventId: undefined,
+  idempotencyKey: deliveryEvent.eventId,
+  sourceApp: 'congress-trade' as const,
+  keyRef: deliveryEvent.eventId,
 };
 
 function fakeEnv(messages: QueueMessage[]): Env {
@@ -263,7 +269,7 @@ describe('third-party usage telemetry', () => {
     const message = messages[0];
     expect(message.type).toBe('usage.telemetry');
     if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
-    expect(() => UsageTelemetryEventSchema.parse(message.event)).not.toThrow();
+    expect(() => UsageTelemetryV2EventSchema.parse(message.event)).not.toThrow();
     expect(message.event).toMatchObject({
       provider: 'openai',
       service: 'llm',
@@ -323,9 +329,11 @@ describe('third-party usage telemetry', () => {
     ['legacy full endpoint', 'https://usage.jays.services/api/ingest/usage/'],
   ])('sends to exactly one canonical ingest path from a %s config', async (_label, configuredUrl) => {
     const requestedUrls: string[] = [];
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const requestedBodies: unknown[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       requestedUrls.push(typeof input === 'string' ? input : input.toString());
-      return new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+      requestedBodies.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ ok: true, schemaVersion: 2, received: 1, persisted: 1, duplicates: 0, pruned: 0, rejected: 0 }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
@@ -340,6 +348,12 @@ describe('third-party usage telemetry', () => {
     await deliverUsageTelemetryEvent(env, deliveryEvent);
 
     expect(requestedUrls).toEqual(['https://usage.jays.services/api/ingest/usage']);
+    expect(requestedBodies).toEqual([{
+      schemaVersion: 2,
+      producerId: 'congress-trade',
+      events: [deliveryEvent],
+    }]);
+    expect(JSON.stringify(requestedBodies)).not.toMatch(/sourceApp|idempotencyKey|keyRef/);
   });
 
   it('persists the exact idempotent event to the R2 fallback when Queue hand-off fails', async () => {
@@ -362,7 +376,7 @@ describe('third-party usage telemetry', () => {
     const requestedUrls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       requestedUrls.push(typeof input === 'string' ? input : input.toString());
-      return new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+      return new Response(JSON.stringify({ ok: true, schemaVersion: 2, received: 1, persisted: 1, duplicates: 0, pruned: 0, rejected: 0 }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
@@ -441,7 +455,7 @@ describe('third-party usage telemetry', () => {
     const fallback = fallbackBucket({ [key]: JSON.stringify(deliveryEvent) });
     let receiverAvailable = false;
     vi.stubGlobal('fetch', vi.fn(async () => receiverAvailable
-      ? new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+      ? new Response(JSON.stringify({ ok: true, schemaVersion: 2, received: 1, persisted: 1, duplicates: 0, pruned: 0, rejected: 0 }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         })
@@ -471,10 +485,10 @@ describe('third-party usage telemetry', () => {
   });
 
   it('retains legacy D1 fallback rows unchanged on a transient failure, then deletes on success', async () => {
-    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
+    const fallback = fallbackD1({ [legacyDeliveryEvent.idempotencyKey]: JSON.stringify(legacyDeliveryEvent) });
     let receiverAvailable = false;
     vi.stubGlobal('fetch', vi.fn(async () => receiverAvailable
-      ? new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+      ? new Response(JSON.stringify({ ok: true, schemaVersion: 2, received: 1, persisted: 1, duplicates: 0, pruned: 0, rejected: 0 }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         })
@@ -494,32 +508,32 @@ describe('third-party usage telemetry', () => {
       listed: 1, delivered: 0, failed: 1, expired: 0, skipped: false,
     });
     // Receiver failures retain the valid row unchanged for a later retry.
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
-    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+    expect(fallback.rows.get(legacyDeliveryEvent.idempotencyKey)?.attempts).toBe(0);
+    expect(fallback.rows.has(legacyDeliveryEvent.idempotencyKey)).toBe(true);
 
     receiverAvailable = true;
     expect(await flushUsageTelemetryFallback(env)).toEqual({
       listed: 1, delivered: 1, failed: 0, expired: 0, skipped: false,
     });
-    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(false);
+    expect(fallback.rows.has(legacyDeliveryEvent.idempotencyKey)).toBe(false);
   });
 
   it('bounds deterministic receiver rejections so one valid legacy D1 row cannot poison the drain forever', async () => {
-    const goodEvent = { ...deliveryEvent, idempotencyKey: 'ct-third-party:terminal-row-follower' };
+    const goodEvent = { ...legacyDeliveryEvent, idempotencyKey: 'ct-third-party:terminal-row-follower' };
     const fallback = fallbackD1({
-      [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent),
+      [legacyDeliveryEvent.idempotencyKey]: JSON.stringify(legacyDeliveryEvent),
       [goodEvent.idempotencyKey]: JSON.stringify(goodEvent),
     });
     const quarantine = fallbackBucket();
     const { kv } = fakeConfigKv();
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const parsed = JSON.parse(String(init?.body)) as { events: ThirdPartyUsageTelemetryEvent[] };
-      return parsed.events[0]?.idempotencyKey === deliveryEvent.idempotencyKey
+      return parsed.events[0]?.eventId === legacyDeliveryEvent.idempotencyKey
         ? new Response(JSON.stringify({ error: 'idempotency conflict' }), {
             status: 409,
             headers: { 'content-type': 'application/json' },
           })
-        : new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+        : new Response(JSON.stringify({ ok: true, schemaVersion: 2, received: 1, persisted: 1, duplicates: 0, pruned: 0, rejected: 0 }), {
             status: 200,
             headers: { 'content-type': 'application/json' },
           });
@@ -536,22 +550,22 @@ describe('third-party usage telemetry', () => {
 
     expect(await flushUsageTelemetryFallback(env)).toMatchObject({ delivered: 1, failed: 1 });
     expect(fallback.rows.has(goodEvent.idempotencyKey)).toBe(false);
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(1);
+    expect(fallback.rows.get(legacyDeliveryEvent.idempotencyKey)?.attempts).toBe(1);
     expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
     for (let attempts = 2; attempts < 5; attempts += 1) {
       expect(await flushUsageTelemetryFallback(env)).toMatchObject({ delivered: 0, failed: 1 });
-      expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(attempts);
+      expect(fallback.rows.get(legacyDeliveryEvent.idempotencyKey)?.attempts).toBe(attempts);
       expect(await isUsageTelemetryCircuitOpen(env)).toBe(false);
     }
     expect(await flushUsageTelemetryFallback(env)).toMatchObject({ delivered: 0, failed: 1 });
-    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(false);
+    expect(fallback.rows.has(legacyDeliveryEvent.idempotencyKey)).toBe(false);
     expect(quarantine.objects.has(
       '_ops/usage-telemetry-quarantine/ct-third-party%3Adelivery-test.json',
     )).toBe(true);
   });
 
   it('retains a terminal legacy D1 row when R2 quarantine persistence fails', async () => {
-    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
+    const fallback = fallbackD1({ [legacyDeliveryEvent.idempotencyKey]: JSON.stringify(legacyDeliveryEvent) });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'invalid payload' }), {
       status: 400,
       headers: { 'content-type': 'application/json' },
@@ -568,12 +582,12 @@ describe('third-party usage telemetry', () => {
     } as unknown as Env;
 
     for (let i = 0; i < 6; i += 1) await flushUsageTelemetryFallback(env);
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(4);
-    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+    expect(fallback.rows.get(legacyDeliveryEvent.idempotencyKey)?.attempts).toBe(4);
+    expect(fallback.rows.has(legacyDeliveryEvent.idempotencyKey)).toBe(true);
   });
 
   it('quarantines a terminal R2 outbox object instead of replaying it forever', async () => {
-    const poisonEvent = { ...deliveryEvent, idempotencyKey: 'ct-third-party:terminal-r2' };
+    const poisonEvent = { ...legacyDeliveryEvent, idempotencyKey: 'ct-third-party:terminal-r2' };
     const outboxKey = '_ops/usage-telemetry/ct-third-party%3Aterminal-r2.json';
     const fallback = fallbackBucket({ [outboxKey]: JSON.stringify(poisonEvent) });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'idempotency conflict' }), {
@@ -656,7 +670,7 @@ describe('third-party usage telemetry', () => {
   });
 
   it('never ages out a valid legacy D1 row on transient receiver failures', async () => {
-    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
+    const fallback = fallbackD1({ [legacyDeliveryEvent.idempotencyKey]: JSON.stringify(legacyDeliveryEvent) });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'rate limited' }), {
       status: 429,
       headers: { 'content-type': 'application/json' },
@@ -670,12 +684,12 @@ describe('third-party usage telemetry', () => {
     } as unknown as Env;
 
     for (let i = 0; i < 7; i += 1) await flushUsageTelemetryFallback(env);
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
-    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+    expect(fallback.rows.get(legacyDeliveryEvent.idempotencyKey)?.attempts).toBe(0);
+    expect(fallback.rows.has(legacyDeliveryEvent.idempotencyKey)).toBe(true);
   });
 
   it('treats a malformed successful receiver response as transient for legacy D1 retention', async () => {
-    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
+    const fallback = fallbackD1({ [legacyDeliveryEvent.idempotencyKey]: JSON.stringify(legacyDeliveryEvent) });
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"unexpected":true}', {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -689,12 +703,12 @@ describe('third-party usage telemetry', () => {
     } as unknown as Env;
 
     for (let i = 0; i < 6; i += 1) await flushUsageTelemetryFallback(env);
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
-    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+    expect(fallback.rows.get(legacyDeliveryEvent.idempotencyKey)?.attempts).toBe(0);
+    expect(fallback.rows.has(legacyDeliveryEvent.idempotencyKey)).toBe(true);
   });
 
   it('retains global receiver authentication failures and opens the outage circuit', async () => {
-    const fallback = fallbackD1({ [deliveryEvent.idempotencyKey]: JSON.stringify(deliveryEvent) });
+    const fallback = fallbackD1({ [legacyDeliveryEvent.idempotencyKey]: JSON.stringify(legacyDeliveryEvent) });
     const { kv } = fakeConfigKv();
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
@@ -711,20 +725,20 @@ describe('third-party usage telemetry', () => {
     } as unknown as Env;
 
     await flushUsageTelemetryFallback(env);
-    expect(fallback.rows.get(deliveryEvent.idempotencyKey)?.attempts).toBe(0);
-    expect(fallback.rows.has(deliveryEvent.idempotencyKey)).toBe(true);
+    expect(fallback.rows.get(legacyDeliveryEvent.idempotencyKey)?.attempts).toBe(0);
+    expect(fallback.rows.has(legacyDeliveryEvent.idempotencyKey)).toBe(true);
     expect(await isUsageTelemetryCircuitOpen(env)).toBe(true);
   });
 
   it('does not let one poison legacy D1 row wedge the drain: quarantines it after a bounded budget while rows behind it still deliver', async () => {
     // Oldest row is permanently unparseable (poison); a good row sits behind it.
     const poisonKey = 'ct-third-party:poison-legacy-row';
-    const goodEvent = { ...deliveryEvent, idempotencyKey: 'ct-third-party:good-legacy-row' };
+    const goodEvent = { ...legacyDeliveryEvent, idempotencyKey: 'ct-third-party:good-legacy-row' };
     const fallback = fallbackD1({
       [poisonKey]: 'not-valid-json{',
       [goodEvent.idempotencyKey]: JSON.stringify(goodEvent),
     });
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, schemaVersion: 2, received: 1, persisted: 1, duplicates: 0, pruned: 0, rejected: 0 }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     })));
@@ -774,8 +788,8 @@ describe('third-party usage telemetry', () => {
   it('discards R2 outbox objects older than USAGE_TELEMETRY_FALLBACK_TTL_DAYS without attempting delivery', async () => {
     const staleKey = '_ops/usage-telemetry/stale-event.json';
     const freshKey = '_ops/usage-telemetry/fresh-event.json';
-    const staleEvent = { ...deliveryEvent, idempotencyKey: 'ct-third-party:stale-event' };
-    const freshEvent = { ...deliveryEvent, idempotencyKey: 'ct-third-party:fresh-event' };
+    const staleEvent = { ...legacyDeliveryEvent, idempotencyKey: 'ct-third-party:stale-event' };
+    const freshEvent = { ...legacyDeliveryEvent, idempotencyKey: 'ct-third-party:fresh-event' };
     const now = new Date('2026-07-17T00:00:00.000Z');
     const fallback = fallbackBucket(
       { [staleKey]: JSON.stringify(staleEvent), [freshKey]: JSON.stringify(freshEvent) },
@@ -784,7 +798,7 @@ describe('third-party usage telemetry', () => {
         [freshKey]: new Date(now.getTime() - 1 * 24 * 60 * 60 * 1000),
       },
     );
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, schemaVersion: 2, received: 1, persisted: 1, duplicates: 0, pruned: 0, rejected: 0 }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }));
@@ -889,7 +903,7 @@ describe('third-party usage telemetry', () => {
   it('half-open probe: a successful delivery once the backoff window elapses fully closes the circuit again', async () => {
     let receiverAvailable = false;
     const fetchMock = vi.fn(async () => (receiverAvailable
-      ? new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+      ? new Response(JSON.stringify({ ok: true, schemaVersion: 2, received: 1, persisted: 1, duplicates: 0, pruned: 0, rejected: 0 }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         })
@@ -965,7 +979,7 @@ describe('third-party usage telemetry', () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(await isUsageTelemetryCircuitOpen(env)).toBe(true);
 
-    resolveReceiver(new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+    resolveReceiver(new Response(JSON.stringify({ ok: true, schemaVersion: 2, received: 1, persisted: 1, duplicates: 0, pruned: 0, rejected: 0 }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }));
@@ -1005,7 +1019,7 @@ describe('third-party usage telemetry', () => {
         });
       }
       if (url.includes('usage.jays.services')) {
-        return new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+        return new Response(JSON.stringify({ ok: true, schemaVersion: 2, received: 1, persisted: 1, duplicates: 0, pruned: 0, rejected: 0 }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         });
@@ -1067,7 +1081,7 @@ describe('third-party usage telemetry', () => {
       .rejects.toThrow(UsageTelemetryCircuitOpenError);
     expect(fetchMock).toHaveBeenCalledOnce();
 
-    resolveReceiver(new Response(JSON.stringify({ ok: true, accepted: 1 }), {
+    resolveReceiver(new Response(JSON.stringify({ ok: true, schemaVersion: 2, received: 1, persisted: 1, duplicates: 0, pruned: 0, rejected: 0 }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
     }));
@@ -1388,7 +1402,7 @@ describe('third-party usage telemetry', () => {
     });
     const message = messages[0];
     if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
-    expect(message.event.idempotencyKey).toBe('ct-batch-run-123-cost');
+    expect(message.event.eventId).toBe('ct-batch-run-123-cost');
     expect(message.event.costUsd).toBe(0.0123);
     expect(message.event.metadata).toMatchObject({
       model: 'gpt-4o',
@@ -1421,7 +1435,7 @@ describe('third-party usage telemetry', () => {
     const message = messages[0];
     if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
     expect(message.event).toMatchObject({
-      idempotencyKey: 'ct-openrouter-run-123-cost-transport-v2',
+      eventId: 'ct-openrouter-run-123-cost-transport-v2',
       provider: 'openai',
       metadata: { model: 'gpt-5.6-terra', transport: 'openrouter' },
     });
@@ -1444,12 +1458,12 @@ describe('third-party usage telemetry', () => {
     });
     const message = messages[0];
     if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
-    expect(() => UsageTelemetryEventSchema.parse(message.event)).not.toThrow();
+    expect(() => UsageTelemetryV2EventSchema.parse(message.event)).not.toThrow();
     expect(message.event.providerRequestId).toBe('gen-abc123');
     // providerRequestId is never part of the idempotency-key basis: the key is
     // exactly the caller's key plus the PRE-EXISTING transport-v2 remap
     // versioning (see measuredUsageKey), with no id-derived component.
-    expect(message.event.idempotencyKey).toBe('ct-openrouter-doc-1-cost-transport-v2');
+    expect(message.event.eventId).toBe('ct-openrouter-doc-1-cost-transport-v2');
   });
 
   it('omits providerRequestId from the queued event when the caller did not supply one', async () => {
@@ -1469,7 +1483,7 @@ describe('third-party usage telemetry', () => {
     });
     const message = messages[0];
     if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
-    expect(() => UsageTelemetryEventSchema.parse(message.event)).not.toThrow();
+    expect(() => UsageTelemetryV2EventSchema.parse(message.event)).not.toThrow();
     expect(message.event.providerRequestId).toBeUndefined();
     expect(JSON.stringify(message.event)).not.toContain('providerRequestId');
   });
@@ -1492,9 +1506,9 @@ describe('third-party usage telemetry', () => {
     const message = messages[0];
     if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
     // The shared schema's providerRequestId is `.min(1)` when present — an
-    // empty/blank string would fail UsageTelemetryEventSchema.parse() inside
+    // empty/blank string would fail UsageTelemetryV2EventSchema.parse() inside
     // the delivery client, so this MUST collapse to omitted, not "".
-    expect(() => UsageTelemetryEventSchema.parse(message.event)).not.toThrow();
+    expect(() => UsageTelemetryV2EventSchema.parse(message.event)).not.toThrow();
     expect(message.event.providerRequestId).toBeUndefined();
   });
 
@@ -1516,7 +1530,7 @@ describe('third-party usage telemetry', () => {
     });
     const message = messages[0];
     if (message.type !== 'usage.telemetry') throw new Error('unexpected message');
-    expect(() => UsageTelemetryEventSchema.parse(message.event)).not.toThrow();
+    expect(() => UsageTelemetryV2EventSchema.parse(message.event)).not.toThrow();
     expect(message.event.providerRequestId).toHaveLength(200);
     expect(message.event.providerRequestId).toBe(overlong.slice(0, 200));
   });
@@ -1610,7 +1624,7 @@ describe('third-party usage telemetry', () => {
         'provider-result', dimension.suffix, 'xai', 'response-123',
       );
       expect(message.event).toMatchObject({
-        idempotencyKey: expectedKey,
+        eventId: expectedKey,
         occurredAt: occurrence,
         quantity: dimension.quantity,
         ...(dimension.costUsd == null ? {} : { costUsd: dimension.costUsd }),

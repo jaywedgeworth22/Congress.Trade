@@ -41,7 +41,7 @@ import {
   AmountBracketSchema,
   parseArray,
   parseSafe,
-} from "../schemas.ts";
+} from "../schemas";
 
 // =============================================================================
 // IoDateSchema

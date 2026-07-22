@@ -1,5 +1,5 @@
-import type { CongressEvent, CongressEventType } from "./types.ts";
-import { CongressEventSchema } from "./schemas.ts";
+import type { CongressEvent, CongressEventType } from "./types";
+import { CongressEventSchema } from "./schemas";
 
 /**
  * Creates a standardized CongressEvent object.

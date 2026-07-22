@@ -2,6 +2,18 @@
 
 Shared TypeScript contracts for the Congress.Trade and Socratic Trade cross-app integration.
 
+## Usage telemetry v2
+
+`createUsageTelemetryClient.send` sends only strict v2 events. Configure a stable `producerId` and
+give every logical event an explicit stable `eventId`; fresh calls have no legacy five-field identity
+fallback. Only `sendLegacyOutbox` accepts already-persisted v1 rows: it requires their existing
+`idempotencyKey`, rejects a `sourceApp` that differs from the configured producer, and promotes the
+key to v2 `eventId`. The monitor derives persistence identity solely from `producerId + eventId`.
+
+Use opaque `producerKeyRef`, `providerConnectionRef`, and `billingAccountRef` values for attribution;
+never send API-key secrets. Successful responses report explicit received/persisted/duplicate/
+pruned/rejected counts. `UsageTelemetryApiError` exposes typed retryability and server backoff.
+
 This package owns the types, Zod schemas, API path constants, and small utilities that both apps can use for:
 
 - App B -> App A securities imports: `refs`, `prices`, `spx`, `insider`, `shortVolume`, `fundamentals`, `analyst`.
