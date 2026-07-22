@@ -53,27 +53,28 @@ const libsqlClient = createClient({
 });
 const dbShim = new D1DatabaseShim(libsqlClient);
 
-const cfR2S3EndpointRes = await resolveSecret(baseEnv, 'CF_R2_S3_ENDPOINT');
-const cfR2AccountIdRes = await resolveSecret(baseEnv, 'CF_R2_ACCOUNT_ID');
-const cfR2S3AccessKeyIdRes = await resolveSecret(baseEnv, 'CF_R2_S3_ACCESS_KEY_ID');
-const cfR2S3SecretAccessKeyRes = await resolveSecret(baseEnv, 'CF_R2_S3_SECRET_ACCESS_KEY');
-const r2BucketNameRes = await resolveSecret(baseEnv, 'R2_BUCKET_NAME');
+const awsS3EndpointRes = await resolveSecret(baseEnv, 'AWS_S3_ENDPOINT');
+const awsAccessKeyIdRes = await resolveSecret(baseEnv, 'AWS_ACCESS_KEY_ID');
+const awsSecretAccessKeyRes = await resolveSecret(baseEnv, 'AWS_SECRET_ACCESS_KEY');
+const awsS3BucketNameRes = await resolveSecret(baseEnv, 'AWS_S3_BUCKET_NAME');
+const awsRegionRes = await resolveSecret(baseEnv, 'AWS_REGION');
 
-const cfR2S3Endpoint = cfR2S3EndpointRes.value || Deno.env.get('CF_R2_S3_ENDPOINT') || `https://${cfR2AccountIdRes.value || Deno.env.get('CF_R2_ACCOUNT_ID')}.r2.cloudflarestorage.com`;
-const cfR2S3AccessKeyId = cfR2S3AccessKeyIdRes.value || Deno.env.get('CF_R2_S3_ACCESS_KEY_ID') || '';
-const cfR2S3SecretAccessKey = cfR2S3SecretAccessKeyRes.value || Deno.env.get('CF_R2_S3_SECRET_ACCESS_KEY') || '';
-const r2BucketName = r2BucketNameRes.value || Deno.env.get('R2_BUCKET_NAME') || 'congress-trade';
+const awsS3Endpoint = awsS3EndpointRes.value || Deno.env.get('AWS_S3_ENDPOINT');
+const awsAccessKeyId = awsAccessKeyIdRes.value || Deno.env.get('AWS_ACCESS_KEY_ID') || '';
+const awsSecretAccessKey = awsSecretAccessKeyRes.value || Deno.env.get('AWS_SECRET_ACCESS_KEY') || '';
+const awsS3BucketName = awsS3BucketNameRes.value || Deno.env.get('AWS_S3_BUCKET_NAME') || 'congress-trade';
+const awsRegion = awsRegionRes.value || Deno.env.get('AWS_REGION') || 'us-east-1';
 
 // 4. Initialize S3 (R2) Shim
 const s3Client = new S3Client({
-  region: 'auto',
-  endpoint: cfR2S3Endpoint,
+  region: awsRegion,
+  endpoint: awsS3Endpoint,
   credentials: {
-    accessKeyId: cfR2S3AccessKeyId,
-    secretAccessKey: cfR2S3SecretAccessKey,
+    accessKeyId: awsAccessKeyId,
+    secretAccessKey: awsSecretAccessKey,
   },
 });
-const s3Shim = new S3BucketShim(s3Client, r2BucketName);
+const s3Shim = new S3BucketShim(s3Client, awsS3BucketName);
 
 // Helper to construct the FULL Env object
 function buildEnv(): Env {
