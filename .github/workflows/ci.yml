@@ -47,6 +47,7 @@ jobs:
         with:
           node-version: 22
 
+      # package.json typecheck is `deno check`; Coolify runners do not ship Deno.
       - name: Install Deno CLI
         run: npm install --global deno@2.9.3
 

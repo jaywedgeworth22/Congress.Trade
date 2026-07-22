@@ -33,6 +33,7 @@
     ]
   },
   "nodeModulesDir": "none",
+  "lock": false,
   "unstable": ["sloppy-imports"],
   "deploy": {
     "runtime": {
