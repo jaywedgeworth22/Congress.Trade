@@ -1,4 +1,5 @@
 import type { Env, QueueMessage } from './shared/types.ts';
+import type { DurableQueueLeaseContext } from './deno/durableQueue.ts';
 import { fetchFiling } from './ingestion/fetcher.ts';
 import { classifyFiling } from './ingestion/classifier.ts';
 import { extractAndNormalize } from './extraction/orchestrator.ts';
@@ -14,7 +15,13 @@ import { persistUsageTelemetryFallback } from './shared/thirdPartyTelemetry.ts';
 import { completeDeliveryOutbox } from './delivery/outbox.ts';
 import { completeIngestionOutbox } from './ingestion/outbox.ts';
 
-export async function handleIngestMessage(env: Env, msg: QueueMessage, queueAttempt = 1): Promise<void> {
+export async function handleIngestMessage(
+  env: Env,
+  msg: QueueMessage,
+  queueAttempt = 1,
+  lease?: DurableQueueLeaseContext,
+): Promise<void> {
+  await lease?.assertOwned();
   switch (msg.type) {
     case 'filing.new':
       await fetchFiling(env, msg.docId, queueAttempt);
@@ -46,7 +53,12 @@ export async function handleIngestMessage(env: Env, msg: QueueMessage, queueAtte
   }
 }
 
-export async function handleDeliveryMessage(env: Env, msg: QueueMessage): Promise<boolean> {
+export async function handleDeliveryMessage(
+  env: Env,
+  msg: QueueMessage,
+  lease?: DurableQueueLeaseContext,
+): Promise<boolean> {
+  await lease?.assertOwned();
   switch (msg.type) {
     case 'delivery.dispatch': {
       const result = await dispatchWebhook(env, msg);
@@ -63,7 +75,9 @@ export async function handleDeadLetterMessage(
   queue: string,
   msg: QueueMessage,
   attempts: number,
+  lease?: DurableQueueLeaseContext,
 ): Promise<void> {
+  await lease?.assertOwned();
   const recoveryError = new Error(`consumer retry budget exhausted; received by ${queue}`);
   if (msg.type === 'usage.telemetry') {
     if (await isUsageTelemetryCircuitOpen(env)) {
@@ -87,4 +101,22 @@ export async function handleDeadLetterMessage(
     if (msg.type !== 'filing.new') throw new Error('ingest DLQ message has no doc_id');
     await completeIngestionOutbox(env, msg.docId);
   }
+}
+
+export async function handleCorruptDeadLetterMessage(
+  env: Env,
+  queue: string,
+  msg: unknown,
+  attempts: number,
+  error: string,
+  lease?: DurableQueueLeaseContext,
+): Promise<void> {
+  await lease?.assertOwned();
+  await recordDeadLetterDurable(
+    env,
+    queue,
+    msg,
+    attempts,
+    new Error(`invalid durable queue payload: ${error}`),
+  );
 }
