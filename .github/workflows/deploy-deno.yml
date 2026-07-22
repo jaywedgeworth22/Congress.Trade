@@ -51,3 +51,4 @@ jobs:
         run: bash scripts/ship.sh
         env:
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_ORG_TOKEN }}
