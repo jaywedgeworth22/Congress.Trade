@@ -13,7 +13,7 @@
  */
 
 import type { Chamber, Env } from '../shared/types.ts';
-import { batch, run } from '../shared/db.ts';
+import { all, batch, run } from '../shared/db.ts';
 import {
   getConfig,
   getLastAttemptAt,
@@ -213,6 +213,49 @@ export async function insertFilingIfNew(
     ],
     ingestionOutboxInsertForDoc(f.docId, nowIso),
   ]);
+  // FMP history recovery deliberately uses the canonical Senate report id so
+  // analytics can attribute rows to a real filing.  Do not let that
+  // low-fidelity placeholder block the official source when it later becomes
+  // reachable: atomically reopen only the narrowly-tagged provider seed.  The
+  // outbox statement above has already created the durable fetch hand-off.
+  let upgradedProviderSeed = false;
+  if ((res.meta?.changes ?? 0) === 0) {
+    const [providerSeed] = await all<{ doc_id: string }>(
+      env.DB,
+      `SELECT doc_id FROM filings
+        WHERE doc_id = ?
+          AND ingest_status = 'provider_seeded'
+          AND extractor = 'fmp-senate-latest'
+          AND raw_object_key IS NULL
+        LIMIT 1`,
+      [f.docId],
+    );
+    if (providerSeed) {
+      const upgrade = await run(
+        env.DB,
+        `UPDATE filings
+          SET chamber = ?,
+              filer_id = COALESCE(?, filer_id),
+              filed_date = COALESCE(?, filed_date),
+              source_url = ?,
+              raw_object_key = NULL,
+              ingest_status = 'new',
+              doc_kind = 'unknown',
+              extractor = NULL,
+              model_version = NULL,
+              confidence = NULL,
+              first_seen_at = ?,
+              source_updated_at = NULL,
+              error = NULL
+        WHERE doc_id = ?
+          AND ingest_status = 'provider_seeded'
+          AND extractor = 'fmp-senate-latest'
+          AND raw_object_key IS NULL`,
+        [f.chamber, f.filerId ?? null, filedDate, f.sourceUrl, nowIso, f.docId],
+      );
+      upgradedProviderSeed = (upgrade.meta?.changes ?? 0) > 0;
+    }
+  }
   // Backfill filed_date when a later, richer discovery of the same doc supplies
   // one. A House PTR first seen via the intraday live search carries no
   // FilingDate (the live-search HTML omits it -> filed_date NULL); the daily bulk
@@ -252,7 +295,7 @@ export async function insertFilingIfNew(
       f.docId,
     ]);
   }
-  return (res.meta?.changes ?? 0) > 0 ? 'inserted' : 'duplicate';
+  return (res.meta?.changes ?? 0) > 0 || upgradedProviderSeed ? 'inserted' : 'duplicate';
 }
 
 /** Enqueue the canonical filing.new INGEST_QUEUE message for a discovered filing. */
