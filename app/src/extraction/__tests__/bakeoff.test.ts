@@ -303,6 +303,58 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
     expect(result.usage).toEqual({ promptTokens: 500, completionTokens: 40, cachedTokens: 100 });
   });
 
+  it('meters billable usage before honoring a post-response lease abort', async () => {
+    const controller = new AbortController();
+    const meteredUsd: number[] = [];
+    const db = {
+      prepare(sql: string) {
+        return {
+          params: [] as unknown[],
+          bind(...params: unknown[]) { this.params = params; return this; },
+          async first() { return null; },
+          async all() { return { results: [] }; },
+          async run() {
+            if (/INSERT INTO llm_spend/i.test(sql)) {
+              meteredUsd.push(Number(this.params[2]));
+            }
+            return { success: true, meta: { changes: 1 } };
+          },
+        };
+      },
+    } as unknown as D1Database;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ({
+          ok: true,
+          json: async () => {
+            controller.abort(new Error('lease lost after provider response'));
+            return {
+              id: 'resp_paid_then_aborted',
+              model: 'gpt-5.6-terra',
+              status: 'completed',
+              output_text: okContent,
+              usage: { input_tokens: 500, output_tokens: 40 },
+            };
+          },
+        }) as unknown as Response,
+      ),
+    );
+
+    const result = await runCandidateOnDoc(
+      { OPENAI_API_KEY: 'sk-openai-test', DB: db } as unknown as Env,
+      candidate,
+      'doc-paid-abort',
+      bytes,
+      undefined,
+      controller.signal,
+    );
+
+    expect(result).toMatchObject({ ok: false, error: 'lease lost after provider response' });
+    expect(meteredUsd).toHaveLength(1);
+    expect(meteredUsd[0]).toBeGreaterThan(0);
+  });
+
   it('leaves usage undefined when the response omits the usage field (e.g. older models)', async () => {
     vi.stubGlobal(
       'fetch',
