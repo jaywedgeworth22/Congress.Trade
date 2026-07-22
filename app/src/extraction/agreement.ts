@@ -91,6 +91,7 @@ import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
 import { buildConsensusRows, type AmountBracket, type ConsensusResult } from './consensus.ts';
 import { uuid } from '../shared/ids.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import { getUnderlyingProvider } from '../benchmark/settings.ts';
@@ -381,15 +382,13 @@ export async function loadDocBytes(
   rawObjectKey: string | null,
 ): Promise<{ bytes: ArrayBuffer } | { skip: AgreementDocResult }> {
   if (rawObjectKey) {
-    try {
-      const obj = await env.RAW_FILES.get(rawObjectKey);
-      if (obj) return { bytes: await obj.arrayBuffer() };
-    } catch (err) {
-      console.warn('loadDocBytes RAW_FILES.get failed:', docId, rawObjectKey, (err as Error).message);
-    }
+    // Unexpected storage throws still propagate so claim release/retry runs.
+    // S3BucketShim converts NotEntitled/AccessDenied/NoSuchKey into null.
+    const obj = await env.RAW_FILES.get(rawObjectKey);
+    if (obj) return { bytes: await obj.arrayBuffer() };
   }
 
-  // Object storage miss / unavailable → bounded source_url re-fetch.
+  // Object storage miss / soft entitlement miss → bounded source_url re-fetch.
   const filing = await loadFilingRow(env, docId);
   const sourceUrl = filing?.source_url?.trim() || null;
   if (!sourceUrl) {
@@ -403,11 +402,21 @@ export async function loadDocBytes(
   }
 
   try {
-    const res = await fetch(sourceUrl, {
-      redirect: 'follow',
-      headers: { 'User-Agent': 'Congress.Trade/1.0 (+https://congress.trade)' },
-      signal: AbortSignal.timeout(30_000),
-    });
+    const res = await trackedFetch(
+      sourceUrl,
+      {
+        redirect: 'follow',
+        headers: { 'User-Agent': 'Congress.Trade/1.0 (+https://congress.trade)' },
+        signal: AbortSignal.timeout(30_000),
+      },
+      {
+        service: 'disclosure-source',
+        operation: 'loadDocBytes.source_url_fallback',
+        dynamicTarget: 'filing-source',
+      },
+      fetch,
+      { envOverride: env },
+    );
     if (!res.ok) {
       return {
         skip: {
