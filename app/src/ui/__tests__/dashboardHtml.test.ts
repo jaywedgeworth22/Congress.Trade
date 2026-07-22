@@ -1794,15 +1794,11 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     expect(DASHBOARD_HTML).not.toContain("c.parties.D + ' Democrats, ' + c.parties.R + ' Republicans'");
   });
 
-  // ---- 3. Duplicated "Past 3 Months ▾ · Past 3 Months" timeframe label -----
-  it('renders the analytics timeframe once (the per-panel <select>), no appended .tf-chip duplicate', () => {
-    // The old implementation appended a second textual label; the fix only
-    // clears out any stale chip left over from before this fix shipped.
-    expect(DASHBOARD_HTML).not.toContain("chip.textContent = ' \\u00B7 ' + label");
-    expect(DASHBOARD_HTML).not.toContain("chip.textContent = ' · ' + label");
+  // ---- 3. Timeframe label rendering -----
+  it('renders the single time filter dropdown at top and section headers with .tr-window-label text', () => {
+    expect(DASHBOARD_HTML).toContain('id="trGlobalWindow"');
     expect(DASHBOARD_HTML).toContain('function stampWindowChips() {');
-    expect(DASHBOARD_HTML).toContain("var chip = heads[i].querySelector('.tf-chip');");
-    expect(DASHBOARD_HTML).toContain('if (chip) chip.parentNode.removeChild(chip);');
+    expect(DASHBOARD_HTML).toContain('.tr-window-label');
   });
 
   // ---- 4. "Healthcare" vs "Health Care" sector canonicalization ------------
