@@ -685,10 +685,65 @@ describe('autopilot batch submission receipts', () => {
     } as unknown as Env;
     const now = new Date('2026-07-22T18:00:00.000Z');
 
-    await pollAutopilotPreseedBatches(env, '2026-07-22', undefined, () => now);
+    await pollAutopilotPreseedBatches(env, '2026-07-22', undefined, () => now, false);
 
     expect(updates).toHaveLength(1);
     expect(updates[0].sql).toContain("status = 'submission_unknown'");
     expect(updates[0].params).toEqual([now.toISOString(), 'autopilot-intent-1']);
+  });
+
+  it('records a lost provider response as submission_unknown instead of failed', async () => {
+    const operations: Array<{ sql: string; params: unknown[] }> = [];
+    const env = {
+      RAW_FILES: {
+        get: vi.fn(async () => ({ arrayBuffer: async () => new ArrayBuffer(8) })),
+      },
+      DB: {
+        prepare(sql: string) {
+          return {
+            params: [] as unknown[],
+            bind(...params: unknown[]) { this.params = params; return this; },
+            async run() {
+              operations.push({ sql, params: this.params });
+              return { success: true, meta: { changes: 1 } };
+            },
+          };
+        },
+      },
+    } as unknown as Env;
+    const state = {
+      docsAttempted: 0,
+      docsPublished: 0,
+      docsDeferred: 0,
+      spendMicro: 0,
+      errorClassCounts: {},
+      sampleErrors: {},
+      outcomes: [],
+      skipReasons: {},
+    };
+
+    await submitPreseedBatches(
+      env,
+      new Map([['anthropic:claude-sonnet-5', [{ docId: 'H-2', rawObjectKey: 'raw/H-2' }]]]),
+      state,
+      'run-1',
+      1,
+      undefined,
+      {
+        submit: vi.fn(async () => { throw new TypeError('socket reset after request write'); }),
+        id: () => 'intent-2',
+        now: () => new Date('2026-07-22T18:00:00.000Z'),
+      },
+    );
+
+    const terminalized = operations.find((operation) =>
+      operation.sql.includes("status = 'submission_unknown'"));
+    expect(terminalized).toBeDefined();
+    expect(terminalized?.params).toEqual([
+      '2026-07-22T18:00:00.000Z',
+      'provider submission outcome unknown: socket reset after request write',
+      'autopilot-intent-2',
+    ]);
+    expect(operations.some((operation) => operation.sql.includes("status = 'failed'"))).toBe(false);
   });
 });

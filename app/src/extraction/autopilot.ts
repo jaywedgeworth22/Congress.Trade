@@ -798,12 +798,18 @@ export async function handleAutopilotTick(
   const day = budgetDay(now);
   const eraStart = currentEraStart(now);
 
-  if (knobs.preseedEnabled) {
-    await pollAutopilotPreseedBatches(env, day, deps.signal).catch((err) => {
-      deps.signal?.throwIfAborted();
-      console.warn('autopilot: preseed poll failed:', (err as Error).message);
-    });
-  }
+  // Reconcile stale submission intents even when operators disable new
+  // pre-seeding. Provider polling remains gated by the live feature flag.
+  await pollAutopilotPreseedBatches(
+    env,
+    day,
+    deps.signal,
+    () => new Date(),
+    knobs.preseedEnabled,
+  ).catch((err) => {
+    deps.signal?.throwIfAborted();
+    console.warn('autopilot: preseed reconciliation failed:', (err as Error).message);
+  });
 
   const agreementEnv = await resolveAgreementEnv(env);
   const attemptCap = maxAttempts(agreementEnv);
@@ -1203,9 +1209,13 @@ export async function submitPreseedBatches(
       await run(
         env.DB,
         `UPDATE batch_jobs
-            SET status = 'failed', completed_at = ?, error = ?
+            SET status = 'submission_unknown', completed_at = ?, error = ?
           WHERE id = ? AND status = 'submitting'`,
-        [now().toISOString(), (err as Error).message.slice(0, 500), jobId],
+        [
+          now().toISOString(),
+          `provider submission outcome unknown: ${(err as Error).message}`.slice(0, 500),
+          jobId,
+        ],
       ).catch(() => undefined);
       state.skipReasons.batch_preseed_submit_failed
         = (state.skipReasons.batch_preseed_submit_failed ?? 0) + 1;
@@ -1225,6 +1235,7 @@ export async function pollAutopilotPreseedBatches(
   day: string,
   signal?: AbortSignal,
   now: () => Date = () => new Date(),
+  pollProviders = true,
 ): Promise<void> {
   let jobs: Array<{
     id: string;
@@ -1237,12 +1248,14 @@ export async function pollAutopilotPreseedBatches(
     const submissionUnknownBefore = new Date(
       now().getTime() - PRESEED_SUBMISSION_UNKNOWN_AFTER_MS,
     ).toISOString();
+    const eligibleStatuses = pollProviders
+      ? "(status IN ('submitted', 'running') OR (status = 'submitting' AND submitted_at <= ?))"
+      : "(status = 'submitting' AND submitted_at <= ?)";
     jobs = await all(
       env.DB,
       `SELECT id, provider, model, provider_batch_id, status FROM batch_jobs
         WHERE id LIKE '${AUTOPILOT_BATCH_ID_PREFIX}%'
-          AND (status IN ('submitted', 'running')
-               OR (status = 'submitting' AND submitted_at <= ?))
+          AND ${eligibleStatuses}
         ORDER BY submitted_at ASC LIMIT ?`,
       [submissionUnknownBefore, PRESEED_POLL_LIMIT],
     );
