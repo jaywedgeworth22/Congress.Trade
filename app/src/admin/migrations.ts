@@ -473,8 +473,19 @@ export const ACCOUNTING_PROJECTION_SCHEMA_STATEMENTS = [
    END`,
 ] as const;
 
+/** 0055_accounting_projection_resync.sql — closes backfill/trigger race. */
+export const ACCOUNTING_PROJECTION_RESYNC_SCHEMA_STATEMENTS = [
+  `INSERT INTO llm_spend_settlement_totals (day, provider, usd, updated_at)
+   SELECT day, provider, SUM(usd), MAX(created_at)
+     FROM llm_spend_settlements
+    GROUP BY day, provider
+   ON CONFLICT(day, provider) DO UPDATE SET
+     usd = excluded.usd,
+     updated_at = excluded.updated_at`,
+] as const;
+
 /**
- * tests. Keep this in the same order as file migrations 0029 through 0054.
+ * tests. Keep this in the same order as file migrations 0029 through 0055.
  */
 export const POST_0024_SCHEMA_STATEMENTS = [
   // 0025_extraction_runs_usage.sql
@@ -524,4 +535,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...SPEND_SETTLEMENT_SCHEMA_STATEMENTS,
   // 0054_accounting_projections.sql
   ...ACCOUNTING_PROJECTION_SCHEMA_STATEMENTS,
+  // 0055_accounting_projection_resync.sql
+  ...ACCOUNTING_PROJECTION_RESYNC_SCHEMA_STATEMENTS,
 ] as const;
