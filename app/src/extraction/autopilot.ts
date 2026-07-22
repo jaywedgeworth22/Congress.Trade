@@ -68,6 +68,7 @@ import { pollBatch, submitBatch, type BatchChamber, type BatchDoc, type BatchPro
 import { ensureDocClass, DOC_CLASS_ORDER_SQL, type DocClass } from './docClassifier.ts';
 import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
 import { allProvidersThrottled } from '../shared/monitorBudgetGate.ts';
+import { settleAutopilotBudgetReceipt } from '../shared/llmSpend.ts';
 
 const MICRO = 1_000_000;
 /** Docs processed per queue-consumer invocation (each doc = 2-3 model reads). */
@@ -344,17 +345,22 @@ async function reserveAutopilotBudget(
   return (result.meta?.changes ?? 0) > 0;
 }
 
-async function settleAutopilotBudget(env: Env, day: string, deltaMicro: number): Promise<void> {
-  if (deltaMicro === 0) return;
-  try {
-    await run(
-      env.DB,
-      'UPDATE autopilot_budget SET spend_microusd = MAX(spend_microusd + ?, 0) WHERE day = ?',
-      [deltaMicro, day],
-    );
-  } catch (err) {
-    console.warn('autopilot: budget settle failed:', (err as Error).message);
-  }
+async function settleAutopilotBudget(
+  env: Env,
+  settlementId: string,
+  day: string,
+  reservedMicro: number,
+  actualMicro: number,
+  status: 'completed' | 'aborted' | 'failed',
+): Promise<void> {
+  await settleAutopilotBudgetReceipt(env, {
+    settlementId,
+    day,
+    reservedMicroUsd: reservedMicro,
+    actualMicroUsd: actualMicro,
+    status,
+    createdAt: new Date().toISOString(),
+  });
 }
 
 async function todaysSpendMicro(env: Env, day: string): Promise<number> {
@@ -997,8 +1003,10 @@ export async function handleAutopilotTick(
     // attempt caps, LLM read budget, and publish safety. One attempt per
     // model per doc within this run; failures are recorded, never retried.
     const docStartIso = new Date().toISOString();
+    const budgetSettlementId = `autopilot:${runId}:${doc.doc_id}:${uuid()}`;
     let res: AgreementDocResult | null = null;
     let thrown: string | null = null;
+    let abortError: unknown = null;
     try {
       deps.signal?.throwIfAborted();
       res = deps.signal
@@ -1013,14 +1021,25 @@ export async function handleAutopilotTick(
         : await check(env, doc.doc_id, doc.raw_object_key);
       deps.signal?.throwIfAborted();
     } catch (err) {
-      deps.signal?.throwIfAborted();
-      thrown = (err as Error).message ?? String(err);
+      if (deps.signal?.aborted) abortError = err;
+      else thrown = (err as Error).message ?? String(err);
     }
 
-    // Settle the reservation to priced actual usage, then classify failures.
-    const reads = await loadDocReads(env, doc.doc_id, docStartIso);
-    const actualMicro = priceDocReadsMicro(reads, doc.page_count);
-    await settleAutopilotBudget(env, day, actualMicro - estimateMicro);
+    // Settle exactly once through the lease-independent accounting capability.
+    // When ownership disappears before extraction_runs can be read, retain the
+    // conservative estimate as the paid-attempt receipt instead of leaking or
+    // refunding a provider call whose response may already have arrived.
+    const reads = abortError ? [] : await loadDocReads(env, doc.doc_id, docStartIso);
+    const actualMicro = abortError ? estimateMicro : priceDocReadsMicro(reads, doc.page_count);
+    await settleAutopilotBudget(
+      env,
+      budgetSettlementId,
+      day,
+      estimateMicro,
+      actualMicro,
+      abortError ? 'aborted' : thrown ? 'failed' : 'completed',
+    );
+    if (abortError) throw abortError;
     state.spendMicro += actualMicro;
     for (const read of reads) {
       if (read.ok) continue;
@@ -1352,7 +1371,14 @@ export async function pollAutopilotPreseedBatches(
       }
       if (spentUsd > 0) {
         await run(env.DB, 'INSERT OR IGNORE INTO autopilot_budget (day, spend_microusd) VALUES (?, 0)', [day]);
-        await settleAutopilotBudget(env, day, Math.ceil(spentUsd * MICRO));
+        await settleAutopilotBudget(
+          env,
+          `autopilot-batch:${job.id}`,
+          day,
+          0,
+          Math.ceil(spentUsd * MICRO),
+          'completed',
+        );
       }
       await run(
         env.DB,

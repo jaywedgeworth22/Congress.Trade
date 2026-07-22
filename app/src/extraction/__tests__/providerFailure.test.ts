@@ -47,6 +47,19 @@ describe('benchmark provider failure classification', () => {
     expect(classifyProviderFailure('openai', 'gpt-5.6-terra', 'openai: parse error')).toBeNull();
     expect(classifyProviderFailure('xai', 'grok-4.3', 'xai 503 temporarily unavailable')).toBeNull();
   });
+
+  it('classifies paid-response settlement failure as terminal provider accounting', () => {
+    expect(classifyProviderFailure(
+      'openai',
+      'gpt-5.6-terra',
+      'llm spend settlement failed: Turso unavailable',
+    )).toEqual({
+      code: 'llm_spend_settlement_failed',
+      scope: 'provider',
+      retryable: false,
+      message: 'openai calls are halted: paid-response accounting is unavailable.',
+    });
+  });
 });
 
 describe('benchmark provider circuit planning', () => {

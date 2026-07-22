@@ -20,7 +20,7 @@ import {
   fetchWithRetry,
   arrayBufferToBase64,
 } from './visionLlm.ts';
-import { recordLlmSpend } from '../shared/llmSpend.ts';
+import { settleLlmSpend } from '../shared/llmSpend.ts';
 import { candidateSpendUsd } from './bakeoff.ts';
 
 const DEFAULT_MODEL = 'claude-sonnet-5';
@@ -85,6 +85,8 @@ export class AnthropicVisionExtractor implements Extractor {
     if (!input.bytes) throw new Error(`${this.name}: no bytes provided on ExtractorInput`);
 
     const model = await this.resolveModel();
+    const accountingAttemptId = crypto.randomUUID();
+    const accountingOccurredAt = new Date().toISOString();
     const promptToUse = input.filing.chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
 
     let totalPromptTokens = 0;
@@ -229,7 +231,15 @@ export class AnthropicVisionExtractor implements Extractor {
           ? { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens }
           : undefined;
       if (usage) {
-        await recordLlmSpend(this.env, 'anthropic', candidateSpendUsd('anthropic', model, model, usage) ?? 0);
+        await settleLlmSpend(this.env, {
+          provider: 'anthropic',
+          requestedModel: model,
+          resolvedModel: model,
+          attemptId: accountingAttemptId,
+          docId: input.filing.docId,
+          usd: candidateSpendUsd('anthropic', model, model, usage) ?? 0,
+          occurredAt: accountingOccurredAt,
+        });
       }
       throw Object.assign(err as Error, { usage });
     }
@@ -245,7 +255,15 @@ export class AnthropicVisionExtractor implements Extractor {
         : undefined;
 
     if (usage) {
-      await recordLlmSpend(this.env, 'anthropic', candidateSpendUsd('anthropic', model, model, usage) ?? 0);
+      await settleLlmSpend(this.env, {
+        provider: 'anthropic',
+        requestedModel: model,
+        resolvedModel: model,
+        attemptId: accountingAttemptId,
+        docId: input.filing.docId,
+        usd: candidateSpendUsd('anthropic', model, model, usage) ?? 0,
+        occurredAt: accountingOccurredAt,
+      });
     }
 
     return {

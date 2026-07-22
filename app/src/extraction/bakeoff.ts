@@ -44,7 +44,8 @@ import { priceBenchmarkUsage } from './benchmarkMetrics.ts';
 import {
   checkLlmSpendCeiling,
   llmBudgetHaltMessage,
-  recordLlmSpend,
+  LlmSpendSettlementError,
+  settleLlmSpend,
 } from '../shared/llmSpend.ts';
 import { consumeGovernedD1Writes } from '../shared/d1Budget.ts';
 
@@ -1288,6 +1289,8 @@ export async function runCandidateOnDoc(
 
   const started = Date.now();
   const occurredAt = new Date(started).toISOString();
+  const accountingAttemptId = uuid();
+  let spendSettled = false;
   try {
     let rows: ParsedTx[];
     let usage: CandidateDocResult['usage'];
@@ -1298,7 +1301,11 @@ export async function runCandidateOnDoc(
     if (provider === 'gemini') {
       // docId is included so the metadata-grounded prompt can fill filing
       // facts (form type / filed year / page count / filer name) from D1.
-      const result = await new VisionLlmExtractor(env, { model, apiKey: key }).extract({
+      const result = await new VisionLlmExtractor(env, {
+        model,
+        apiKey: key,
+        meterExternally: true,
+      }).extract({
         filing: { docId, docKind: 'scanned_pdf', chamber } as never,
         bytes,
         signal,
@@ -1357,7 +1364,17 @@ export async function runCandidateOnDoc(
     // provider responded (telemetry events are pushed separately via
     // persistExtractionRun; the spend METER lives here so every caller of this
     // choke point is accounted for, cached-or-not persisted-or-not).
-    await recordLlmSpend(env, provider, candidateSpendUsd(provider, model, resolvedModel, usage) ?? 0);
+    await settleLlmSpend(env, {
+      provider,
+      requestedModel: model,
+      resolvedModel,
+      providerResponseId: providerRequestId,
+      attemptId: accountingAttemptId,
+      docId,
+      usd: candidateSpendUsd(provider, model, resolvedModel, usage) ?? 0,
+      occurredAt,
+    });
+    spendSettled = true;
     // A lease can expire after the provider has returned billable usage. Honor
     // cancellation only after that paid side effect is durably metered; the
     // catch path cannot recover response-local usage from an AbortError.
@@ -1384,8 +1401,20 @@ export async function runCandidateOnDoc(
     const cast = err as ProviderError;
     const error = cast.message.slice(0, 300);
 
-    // Failed attempts with provider-reported usage were still billed — meter them.
-    await recordLlmSpend(env, provider, candidateSpendUsd(provider, model, cast.resolvedModel, cast.usage) ?? 0);
+    // Failed attempts with provider-reported usage were still billed. A
+    // settlement failure is itself terminal and must not recursively meter.
+    if (!spendSettled && !(cast instanceof LlmSpendSettlementError)) {
+      await settleLlmSpend(env, {
+        provider,
+        requestedModel: model,
+        resolvedModel: cast.resolvedModel,
+        providerResponseId: cast.providerRequestId,
+        attemptId: accountingAttemptId,
+        docId,
+        usd: candidateSpendUsd(provider, model, cast.resolvedModel, cast.usage) ?? 0,
+        occurredAt,
+      });
+    }
 
     return {
       ...base,
