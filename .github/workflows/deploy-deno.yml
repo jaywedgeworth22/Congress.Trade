@@ -35,6 +35,6 @@ jobs:
 
       - name: Deploy to Deno Deploy
         working-directory: ./app
-        run: deno run -A jsr:@deno/deployctl deploy --project=congress-trade --prod src/deno/main.ts
+        run: deno run -A jsr:@deno/deployctl deploy --token=$DENO_DEPLOY_TOKEN --project=congress-trade --prod src/deno/main.ts
         env:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_ORG_TOKEN }}
