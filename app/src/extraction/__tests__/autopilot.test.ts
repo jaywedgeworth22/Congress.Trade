@@ -144,6 +144,14 @@ function makeEnv(state: MockState, envVars: Record<string, unknown> = {}): {
           return { results: [] as T[] };
         },
         async run() {
+          if (/INSERT OR IGNORE INTO autopilot_budget_settlements/i.test(sql)) {
+            const [, day, reserved, actual] = this.params as [string, string, number, number];
+            state.budget.set(
+              day,
+              Math.max((state.budget.get(day) ?? 0) + actual - reserved, 0),
+            );
+            return { success: true, meta: { changes: 1 } };
+          }
           if (/INSERT INTO autopilot_runs/i.test(sql)) {
             state.runInserts.push(this.params);
             return { success: true, meta: { changes: 1 } };

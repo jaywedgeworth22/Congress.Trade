@@ -16,7 +16,8 @@ import {
   isLlmBudgetHalt,
   llmBudgetHaltMessage,
   readLlmSpend,
-  recordLlmSpend,
+  LlmSpendSettlementError,
+  settleLlmSpend,
 } from '../llmSpend.ts';
 
 interface SpendRow {
@@ -24,13 +25,22 @@ interface SpendRow {
   usd: number;
 }
 
+interface SettlementRow extends SpendRow {
+  settlementId: string;
+  providerResponseId: string | null;
+  receiptHash: string;
+  day: string;
+}
+
 /** In-memory llm_spend table keyed by day, mimicking the atomic upsert. */
 function spendEnv(rows: SpendRow[], vars: Record<string, string> = {}): {
   env: Env;
   rows: SpendRow[];
+  settlements: SettlementRow[];
   failures: { reads: boolean; writes: boolean };
 } {
   const failures = { reads: false, writes: false };
+  const settlements: SettlementRow[] = [];
   const prepare = (sql: string) => ({
     params: [] as unknown[],
     bind(...params: unknown[]) {
@@ -39,25 +49,43 @@ function spendEnv(rows: SpendRow[], vars: Record<string, string> = {}): {
     },
     async all() {
       if (failures.reads) throw new Error('D1 unavailable');
-      if (/FROM llm_spend/i.test(sql)) return { results: rows.map((r) => ({ ...r })) };
+      if (/FROM llm_spend_settlements/i.test(sql)) {
+        const day = String(this.params[0]);
+        return { results: settlements.filter((r) => r.day === day).map((r) => ({ ...r })) };
+      }
+      if (/FROM llm_spend\s+WHERE/i.test(sql)) return { results: rows.map((r) => ({ ...r })) };
       return { results: [] };
     },
     async run() {
       if (failures.writes) throw new Error('D1 unavailable');
-      if (/INSERT INTO llm_spend/i.test(sql)) {
-        const [, provider, usd] = this.params as [string, string, number, string];
-        const existing = rows.find((r) => r.provider === provider);
-        if (existing) existing.usd += usd;
-        else rows.push({ provider, usd });
+      if (/INSERT OR IGNORE INTO llm_spend_settlements/i.test(sql)) {
+        const [settlementId, provider, providerResponseId, , day, , , , , usd, receiptHash]
+          = this.params as [string, string, string | null, string, string, string, string, string | null, string | null, number, string, string];
+        const existing = settlements.find((row) =>
+          row.settlementId === settlementId
+          || (providerResponseId !== null
+            && row.provider === provider
+            && row.providerResponseId === providerResponseId));
+        if (existing) return { success: true, meta: { changes: 0 } };
+        settlements.push({ settlementId, provider, providerResponseId, day, usd, receiptHash });
       }
       return { success: true, meta: { changes: 1 } };
     },
     async first() {
+      if (/SELECT receipt_hash FROM llm_spend_settlements/i.test(sql)) {
+        const [settlementId, providerResponseId, provider] = this.params as [string, string | null, string, string | null];
+        const existing = settlements.find((row) =>
+          row.settlementId === settlementId
+          || (providerResponseId !== null
+            && row.provider === provider
+            && row.providerResponseId === providerResponseId));
+        return existing ? { receipt_hash: existing.receiptHash } : null;
+      }
       return null;
     },
   });
   const env = { DB: { prepare } as unknown as D1Database, ...vars } as unknown as Env;
-  return { env, rows, failures };
+  return { env, rows, settlements, failures };
 }
 
 describe('checkLlmSpendCeiling', () => {
@@ -140,25 +168,71 @@ describe('assertLlmSpendWithinCeiling + error class', () => {
   });
 });
 
-describe('recordLlmSpend / readLlmSpend', () => {
-  it('accumulates per-provider dollars atomically and reads them back', async () => {
-    const { env } = spendEnv([]);
-    await recordLlmSpend(env, 'openrouter', 0.25);
-    await recordLlmSpend(env, 'openrouter', 0.5);
-    await recordLlmSpend(env, 'anthropic', 1);
+describe('settleLlmSpend / readLlmSpend', () => {
+  const receipt = (
+    attemptId: string,
+    usd: number,
+    over: Partial<Parameters<typeof settleLlmSpend>[1]> = {},
+  ): Parameters<typeof settleLlmSpend>[1] => ({
+    provider: 'openrouter',
+    requestedModel: 'openai/gpt-5.6-terra',
+    attemptId,
+    usd,
+    occurredAt: '2026-07-22T12:00:00.000Z',
+    ...over,
+  });
+
+  it('accumulates immutable receipts on top of the legacy baseline', async () => {
+    const { env } = spendEnv([{ provider: 'openrouter', usd: 0.25 }]);
+    await settleLlmSpend(env, receipt('attempt-1', 0.5));
+    await settleLlmSpend(env, receipt('attempt-2', 1, {
+      provider: 'anthropic',
+      requestedModel: 'claude-sonnet-5',
+    }));
     const spend = await readLlmSpend(env);
     expect(spend?.totalUsd).toBeCloseTo(1.75);
     expect(spend?.perProvider.openrouter).toBeCloseTo(0.75);
     expect(spend?.perProvider.anthropic).toBeCloseTo(1);
   });
 
-  it('ignores non-positive and non-finite amounts and never throws on meter failure', async () => {
-    const { env, rows, failures } = spendEnv([]);
-    await recordLlmSpend(env, 'openrouter', 0);
-    await recordLlmSpend(env, 'openrouter', -1);
-    await recordLlmSpend(env, 'openrouter', Number.NaN);
-    expect(rows).toHaveLength(0);
+  it('treats an identical provider-response replay as a no-op', async () => {
+    const { env, settlements } = spendEnv([]);
+    const input = receipt('attempt-a', 0.5, { providerResponseId: 'resp-1' });
+    await expect(settleLlmSpend(env, input)).resolves.toBe('inserted');
+    await expect(settleLlmSpend(env, { ...input, attemptId: 'worker-replay-attempt' }))
+      .resolves.toBe('duplicate');
+    expect(settlements).toHaveLength(1);
+  });
+
+  it('rejects a provider-response replay with conflicting accounting data', async () => {
+    const { env } = spendEnv([]);
+    await settleLlmSpend(env, receipt('attempt-a', 0.5, { providerResponseId: 'resp-1' }));
+    await expect(settleLlmSpend(
+      env,
+      receipt('attempt-b', 0.75, { providerResponseId: 'resp-1' }),
+    )).rejects.toBeInstanceOf(LlmSpendSettlementError);
+  });
+
+  it('keeps the original occurrence day when a receipt is replayed after midnight', async () => {
+    const { env } = spendEnv([]);
+    const input = receipt('midnight-attempt', 0.5, {
+      providerResponseId: 'resp-midnight',
+      occurredAt: '2026-07-21T23:59:59.000Z',
+    });
+    await settleLlmSpend(env, input);
+    await settleLlmSpend(env, input);
+    expect((await readLlmSpend(env, new Date('2026-07-21T23:59:59.500Z')))?.totalUsd).toBe(0.5);
+    expect((await readLlmSpend(env, new Date('2026-07-22T00:00:01.000Z')))?.totalUsd).toBe(0);
+  });
+
+  it('ignores invalid amounts and surfaces durable-write failure', async () => {
+    const { env, settlements, failures } = spendEnv([]);
+    await expect(settleLlmSpend(env, receipt('zero', 0))).resolves.toBe('ignored');
+    await expect(settleLlmSpend(env, receipt('negative', -1))).resolves.toBe('ignored');
+    await expect(settleLlmSpend(env, receipt('nan', Number.NaN))).resolves.toBe('ignored');
+    expect(settlements).toHaveLength(0);
     failures.writes = true;
-    await expect(recordLlmSpend(env, 'openrouter', 1)).resolves.toBeUndefined();
+    await expect(settleLlmSpend(env, receipt('failed', 1)))
+      .rejects.toBeInstanceOf(LlmSpendSettlementError);
   });
 });

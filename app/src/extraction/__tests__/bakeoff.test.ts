@@ -314,8 +314,8 @@ describe('runCandidateOnDoc (openai): token usage capture', () => {
           async first() { return null; },
           async all() { return { results: [] }; },
           async run() {
-            if (/INSERT INTO llm_spend/i.test(sql)) {
-              meteredUsd.push(Number(this.params[2]));
+            if (/INSERT OR IGNORE INTO llm_spend_settlements/i.test(sql)) {
+              meteredUsd.push(Number(this.params[9]));
             }
             return { success: true, meta: { changes: 1 } };
           },
@@ -972,8 +972,9 @@ describe('runCandidateOnDoc extraction cache', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
     const first = vi.fn(async () => ({ result_json: JSON.stringify([cachedRow]) }));
+    const run = vi.fn(async () => ({ success: true, meta: { changes: 1 } }));
     const env = {
-      DB: { prepare: vi.fn(() => ({ bind: vi.fn(() => ({ first })) })) },
+      DB: { prepare: vi.fn(() => ({ bind: vi.fn(() => ({ first, run })) })) },
     } as unknown as Env;
 
     const result = await runCandidateOnDoc(
