@@ -3058,7 +3058,8 @@ function sortVal(r, key) {
   if (key === 'txdate' || key === 'traded' || key === 'filed' || key === 'imported' || key === 'published') {
     if (!v) return sortDir > 0 ? '\uFFFF' : '';
     var today = new Date().toISOString().slice(0, 10);
-    return v > today ? today : String(v).toLowerCase();
+    var dateValue = String(v).toLowerCase();
+    return dateValue.slice(0, 10) > today ? today + dateValue.slice(10) : dateValue;
   }
   return (v == null ? '' : String(v)).toLowerCase();
 }
