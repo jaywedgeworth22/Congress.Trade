@@ -405,7 +405,7 @@ describe('supportsStructuredOutputs', () => {
   it('allows vendors verified to list structured_outputs', () => {
     for (const model of [
       'openai/gpt-5.6-terra', 'anthropic/claude-sonnet-5', 'google/gemini-3.5-flash',
-      'deepseek/deepseek-v4-flash', 'qwen/qwen3-vl-8b-instruct', 'x-ai/grok-4.3',
+      'deepseek/deepseek-v4-flash', 'qwen/qwen3-vl-8b-instruct', 'x-ai/grok-4.5',
     ]) expect(supportsStructuredOutputs(model), model).toBe(true);
   });
   it('keeps unverified vendors and special routes on the prompt-JSON fallback', () => {

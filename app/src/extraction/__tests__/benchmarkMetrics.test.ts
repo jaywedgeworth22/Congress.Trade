@@ -360,6 +360,20 @@ describe('DEFAULT_CANDIDATES rate-card drift gate', () => {
     expect(above.costDetail.rates?.longContextApplied).toBe(true);
   });
 
+  it('prices Grok 4.5 at OpenRouter $2/$6 rates (not the Grok 4.3 card)', () => {
+    const below = priceBenchmarkUsage({
+      provider: 'openrouter', model: 'x-ai/grok-4.5', invoked: true,
+      usage: { promptTokens: 100_000, completionTokens: 1_000 },
+    });
+    const above = priceBenchmarkUsage({
+      provider: 'openrouter', model: 'x-ai/grok-4.5', invoked: true,
+      usage: { promptTokens: 300_000, completionTokens: 1_000 },
+    });
+    expect(below.costUsd).toBeCloseTo((100_000 * 2 + 1_000 * 6) / 1_000_000, 8);
+    expect(above.costUsd).toBeCloseTo((300_000 * 2 * 2 + 1_000 * 6 * 2) / 1_000_000, 8);
+    expect(above.costDetail.rates?.longContextApplied).toBe(true);
+  });
+
   it('prefers OpenRouter provider-reported usage.costUsd over rate-card pricing', () => {
     const result = priceBenchmarkUsage({
       provider: 'openrouter',
