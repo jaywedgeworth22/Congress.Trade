@@ -17,6 +17,8 @@ jobs:
   ping:
     runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 5
+    env:
+      BROWSER_UA: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36
     steps:
       - name: Set up Node for health-response validation
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -30,7 +32,7 @@ jobs:
           HTTP_CODE="000"
           STATUS="fail"
           REASON="curl failed"
-          if HTTP_CODE="$(curl -sS --connect-timeout 10 --max-time 30 -o "$BODY" -w "%{http_code}" https://congress.trade/api/health)"; then
+          if HTTP_CODE="$(curl -sS -A "$BROWSER_UA" --connect-timeout 10 --max-time 30 -o "$BODY" -w "%{http_code}" https://congress.trade/api/health)"; then
             if [ "$HTTP_CODE" != "200" ]; then
               REASON="unexpected HTTP status"
             elif REASON="$(node - "$BODY" <<'NODE'
@@ -87,14 +89,46 @@ jobs:
             printf 'Reason: %s\n\n' "$HEALTH_REASON"
             printf 'Body:\n%s\n' "$HEALTH_BODY"
           } > "$body_file"
-          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --label incident --search "congress.trade health" --json number -q '.[0].number')"
-          if [ -n "$existing" ]; then
-            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" \
-              --body-file "$body_file"
-          else
-            gh issue create \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "$title" \
-              --label "incident" \
-              --body-file "$body_file"
-          fi
+          ISSUE_TITLE="$title" ISSUE_BODY="$(cat "$body_file")" node --input-type=module <<'NODE'
+          const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
+          const headers = {
+            accept: 'application/vnd.github+json',
+            authorization: `Bearer ${process.env.GH_TOKEN}`,
+            'content-type': 'application/json',
+            'user-agent': 'congress-trade-uptime-monitor',
+            'x-github-api-version': '2022-11-28',
+          };
+
+          async function request(path, options = {}) {
+            const response = await fetch(`https://api.github.com${path}`, {
+              ...options,
+              headers,
+            });
+            if (!response.ok) {
+              throw new Error(`GitHub API ${options.method || 'GET'} ${path} failed: HTTP ${response.status}`);
+            }
+            return response.status === 204 ? null : response.json();
+          }
+
+          const issues = await request(
+            `/repos/${owner}/${repo}/issues?state=open&labels=incident&per_page=100`,
+          );
+          const existing = issues.find((issue) =>
+            !issue.pull_request && issue.title.includes('congress.trade health')
+          );
+          if (existing) {
+            await request(`/repos/${owner}/${repo}/issues/${existing.number}/comments`, {
+              method: 'POST',
+              body: JSON.stringify({ body: process.env.ISSUE_BODY }),
+            });
+          } else {
+            await request(`/repos/${owner}/${repo}/issues`, {
+              method: 'POST',
+              body: JSON.stringify({
+                title: process.env.ISSUE_TITLE,
+                body: process.env.ISSUE_BODY,
+                labels: ['incident'],
+              }),
+            });
+          }
+          NODE
