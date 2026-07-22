@@ -402,7 +402,7 @@ export class HousePdfExtractor implements Extractor {
  * different model keyed by ARBITRATION_API_KEY — cross-checks every scanned doc.
  */
 export function buildExtractorPipeline(env: Env): Extractor[] {
-  const senateHtml = new SenateHtmlExtractor();
+  const senateHtml = new SenateHtmlExtractor(env);
   const textPdf = new TextPdfExtractor();
   
   const geminiVision = new VisionLlmExtractor(env);

@@ -791,3 +791,4 @@ Jul 8 18:10 CT)._
 - **2026-07-22T15:50Z GROK** PR #748 continue: claim-token preserve so finishTerminalClaim caps attempts (Codex P2); CI Deno install + restore `coverage` script (unblocks typecheck+test after Deno migration); then merge + Deno prod deploy. R2 NotEntitled reprocess still open after land.
 - **2026-07-22T15:55Z GROK** R2 reprocess unblock follow-up: S3 NotEntitled soft-miss + source_url fallback in loadDocBytes; CF_R2_S3_* env aliases in deno main.
 - **2026-07-22T20:15Z GROK** Catalog: offered OpenRouter Grok slug `x-ai/grok-4.3` → `x-ai/grok-4.5` (rate card keeps both; legacy direct xai:grok-4.3 unchanged). Aligns with live Infisical senate primary.
+- **2026-07-22T21:40Z GROK** Senate paper PTR recovery: Blumenthal `S-3a4c5095` — page scans at efd-media-public (5 GIFs) OCR via Grok 4.5 → **46 primary txs** persisted; review resolved. Code: senatePaperMedia fallback when HTML shell has filingImage media (PR pending).
