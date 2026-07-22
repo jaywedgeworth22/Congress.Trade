@@ -24,17 +24,30 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Setup Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
         with:
           deno-version: v2.x
 
+      - name: Fetch Secrets from Infisical
+        uses: Infisical/secrets-action@v1.0.8
+        with:
+          client-id: ${{ secrets.INFISICAL_CT_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_CT_CLIENT_SECRET }}
+          env-slug: prod
+          project-id: f61a79de-8d77-4f0b-9361-4b7208598290
+
       - name: Install Dependencies
         working-directory: ./app
         run: deno install
 
-      - name: Deploy to Deno Deploy
+      - name: Deploy to Deno Deploy and verify
         working-directory: ./app
-        run: deno run -A jsr:@deno/deployctl deploy --token=$DENO_DEPLOY_TOKEN --project=congress-trade --prod src/deno/main.ts
+        run: bash scripts/ship.sh
         env:
-          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_ORG_TOKEN }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
