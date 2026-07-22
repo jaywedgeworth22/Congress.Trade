@@ -571,7 +571,7 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
   },
   {
     provider: 'openrouter',
-    models: ['x-ai/grok-4.3'],
+    models: ['x-ai/grok-4.5', 'x-ai/grok-4.3'],
     meter: 'tokens',
     inputUsdPerMillion: 1.25,
     cachedInputUsdPerMillion: 0.2,
@@ -582,7 +582,7 @@ export const STANDARD_BENCHMARK_RATE_CARD = [
     version: 'openrouter-static-2026-07-18',
     effectiveDate: '2026-07-18',
     sourceUrl: 'https://openrouter.ai/docs#models',
-    note: 'OpenRouter Grok 4.3 pricing (2x input/output above 200K prompt tokens); token pricing is complete on this transport — the direct-xAI attachment_search surcharge (which forces provider-reported cost on the xai row) does not apply via OpenRouter. Verified against the live /api/v1/models listing 2026-07-18.',
+    note: 'OpenRouter Grok 4.5/4.3 pricing (2x input/output above 200K prompt tokens); token pricing is complete on this transport — the direct-xAI attachment_search surcharge (which forces provider-reported cost on the xai row) does not apply via OpenRouter. Verified against the live /api/v1/models listing 2026-07-18.',
   },
   {
     provider: 'llamaparse',

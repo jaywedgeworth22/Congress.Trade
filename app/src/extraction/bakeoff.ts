@@ -108,7 +108,7 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'openrouter', model: 'anthropic/claude-sonnet-5' },
   { provider: 'openrouter', model: 'anthropic/claude-haiku-4.5' },
   { provider: 'openrouter', model: 'anthropic/claude-opus-4.8' },
-  { provider: 'openrouter', model: 'x-ai/grok-4.3' },
+  { provider: 'openrouter', model: 'x-ai/grok-4.5' },
   { provider: 'openrouter', model: 'deepseek/deepseek-v4-pro' },
   { provider: 'openrouter', model: 'deepseek/deepseek-v4-flash' },
   { provider: 'openrouter', model: 'qwen/qwen3-vl-30b-a3b-instruct' },
