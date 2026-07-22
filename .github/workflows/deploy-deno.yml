@@ -25,7 +25,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 22
 
@@ -35,7 +35,7 @@ jobs:
           deno-version: v2.x
 
       - name: Fetch Secrets from Infisical
-        uses: Infisical/secrets-action@v1.0.8
+        uses: Infisical/secrets-action@6eef259f83b6b4255f9b31e46eba87af4b595c89
         with:
           client-id: ${{ secrets.INFISICAL_CT_CLIENT_ID }}
           client-secret: ${{ secrets.INFISICAL_CT_CLIENT_SECRET }}
