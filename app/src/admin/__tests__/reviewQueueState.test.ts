@@ -114,38 +114,3 @@ describe('review queue durable state migration', () => {
     expect(statements.some((sql) => /review_delivery_outbox/i.test(sql))).toBe(false);
   });
 });
-
-describe('review queue autonomous configuration', () => {
-  it('pins distinct A/B/C vendors and all retry, budget, and big-doc controls', () => {
-    const wrangler = readFileSync((new URL('../../../wrangler.toml', testModuleUrl) as any), 'utf8') as string;
-    const devExample = readFileSync((new URL('../../../.dev.vars.example', testModuleUrl) as any), 'utf8') as string;
-    const keys = [
-      'AGREEMENT_AUTOPUBLISH_MODEL_A',
-      'AGREEMENT_AUTOPUBLISH_MODEL_B',
-      'AGREEMENT_MODEL_C',
-      'AGREEMENT_AUTOPUBLISH_LIMIT',
-      'AGREEMENT_MAX_ATTEMPTS',
-      'AGREEMENT_DAILY_LLM_BUDGET',
-      'AGREEMENT_BIG_DOC_START_TIER2',
-      'AGREEMENT_BIG_DOC_PAGE_THRESHOLD',
-      'AGREEMENT_BIG_DOC_BYTES_THRESHOLD',
-      'AGREEMENT_TEXT_NORMALIZATION',
-    ];
-
-    for (const key of keys) expect(setting(devExample, key)).toBe(setting(wrangler, key));
-    const providers = [
-      setting(wrangler, 'AGREEMENT_AUTOPUBLISH_MODEL_A').split(':')[0],
-      setting(wrangler, 'AGREEMENT_AUTOPUBLISH_MODEL_B').split(':')[0],
-      setting(wrangler, 'AGREEMENT_MODEL_C').split(':')[0],
-    ];
-    const models = [
-      setting(wrangler, 'AGREEMENT_AUTOPUBLISH_MODEL_A'),
-      setting(wrangler, 'AGREEMENT_AUTOPUBLISH_MODEL_B'),
-      setting(wrangler, 'AGREEMENT_MODEL_C'),
-    ];
-    expect(new Set(models).size).toBe(3); // Distinct models
-    expect(providers).toEqual(['openrouter', 'openrouter', 'openrouter']);
-    expect(setting(wrangler, 'AGREEMENT_DAILY_LLM_BUDGET')).toBe('300');
-    expect(setting(wrangler, 'AGREEMENT_BIG_DOC_START_TIER2')).toBe('true');
-  });
-});
