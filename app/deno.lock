@@ -5,7 +5,7 @@
     "npm:@aws-sdk/client-s3@^3.1090.0": "3.1090.0",
     "npm:@cloudflare/workers-types@^4.20240718.0": "4.20260702.1",
     "npm:@fontsource/zilla-slab@^5.3.0": "5.3.0",
-    "npm:@google/genai@^2.12.0": "2.12.0",
+    "npm:@google/genai@^2.13.0": "2.13.0",
     "npm:@libsql/client@*": "0.17.4",
     "npm:@libsql/client@~0.17.4": "0.17.4",
     "npm:@sentry/cli@^3.6.0": "3.6.0",
@@ -475,8 +475,8 @@
     "@fontsource/zilla-slab@5.3.0": {
       "integrity": "sha512-xbdDx5OESJDQqp3GIp4pjBgI+qpcg4AxnHLN15ekfJbG+ZYaOXg3uBjDpYlkuPQpey91afxHBNaqZgzluJ2FWA=="
     },
-    "@google/genai@2.12.0": {
-      "integrity": "sha512-LUr972DZosqPUhf9Mb3CIVu/B99woD3QW6ZJV1T9aNgxaoimAZARmo+IyyDsxIL+zouFiYSdA4hzfEWXc9oNIQ==",
+    "@google/genai@2.13.0": {
+      "integrity": "sha512-GM7C8Kaomvjz05x5JEO6+l3d/pciL9LxAG9dUjJLD7nTPZ9X0Cfsf2Z7eET6UjgWyUmxXCHtYnQoQ77F9+ZIOQ==",
       "dependencies": [
         "google-auth-library",
         "p-retry",
@@ -2265,7 +2265,7 @@
     "dependencies": [
       "npm:@aws-sdk/client-s3@^3.1090.0",
       "npm:@cloudflare/workers-types@^4.20240718.0",
-      "npm:@google/genai@^2.12.0",
+      "npm:@google/genai@^2.13.0",
       "npm:@libsql/client@~0.17.4",
       "npm:@sentry/cloudflare@^10.66.0",
       "npm:cheerio@^1.2.0",
@@ -2281,7 +2281,7 @@
       "dependencies": [
         "npm:@aws-sdk/client-s3@^3.1090.0",
         "npm:@fontsource/zilla-slab@^5.3.0",
-        "npm:@google/genai@^2.12.0",
+        "npm:@google/genai@^2.13.0",
         "npm:@libsql/client@~0.17.4",
         "npm:@sentry/cli@^3.6.0",
         "npm:@types/node@26.1.1",
