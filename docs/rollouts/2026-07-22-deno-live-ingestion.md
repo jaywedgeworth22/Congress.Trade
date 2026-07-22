@@ -10,6 +10,7 @@ Deno Deploy served the API and ran daily jobs, but its `Deno.cron` handler did n
 - `app/src/shared/types.ts` — declare the S3-compatible Deno runtime secret keys so `resolveSecret` remains type-safe under real Deno checking.
 - `.github/workflows/ci.yml`, `.github/workflows/deploy-deno.yml` — install pinned Deno 2.9.3 from npm on the Coolify runners before typecheck/deploy. The runner images provide neither Deno nor `unzip`, which the official setup action requires.
 - `deno.json` — provide the repository-root Deno Git integration with an app-relative entrypoint while inheriting the runnable app's import map; the Coolify deployment continues to publish from `app/`.
+- `app/deno.json`, `app/deno.lock`, `deno.json` — align the Google GenAI requirement and lock at 2.13.0, retaining Deno 2.9's 24-hour dependency-age gate while narrowly exempting this reviewed package so the production runner can install the just-published locked release.
 - `app/package.json` — restore the `coverage` script consumed by the hosted backend CI gate.
 - `clients/pwa/package.json`, `clients/pwa/package-lock.json` — override Next's transitive `sharp` dependency to the patched 0.35.x line so the hosted high-severity audit gate is clean.
 - `docs/EFFORT-LOG.md` — mirror the in-progress remediation state.
@@ -23,6 +24,7 @@ Deno Deploy served the API and ran daily jobs, but its `Deno.cron` handler did n
 - Full `npm test` — 155 files / 1,768 tests total; 1,767 passed and one pre-existing `src/shared/monitorBudgetGate.test.ts` timeout failed under the concurrent multi-agent host.
 - Coolify-hosted PR checks passed for backend typecheck/tests/coverage, PWA typecheck/tests/build, and gitleaks.
 - Deno Deploy app config remains `src/deno/main.ts` for Coolify's `app/` upload root; the repository-root Git integration receives `app/src/deno/main.ts` from source-controlled deploy config. No admin backfill or remote migration had been run at this stage.
+- `deno install --frozen --reload` passed against the updated lock with the targeted dependency-age exemption.
 
 ## Follow-ups
 
