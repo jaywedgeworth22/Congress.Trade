@@ -24,14 +24,32 @@ export interface DurableQueueHandlers {
     env: Env,
     message: QueueMessage,
     attempts: number,
+    lease: DurableQueueLeaseContext,
   ): Promise<void>;
-  handleDeliveryMessage(env: Env, message: QueueMessage): Promise<boolean>;
+  handleDeliveryMessage(
+    env: Env,
+    message: QueueMessage,
+    lease: DurableQueueLeaseContext,
+  ): Promise<boolean>;
   handleDeadLetterMessage(
     env: Env,
     queueName: string,
     message: QueueMessage,
     attempts: number,
+    lease: DurableQueueLeaseContext,
   ): Promise<void>;
+  handleCorruptDeadLetterMessage(
+    env: Env,
+    queueName: string,
+    message: unknown,
+    attempts: number,
+    error: string,
+    lease: DurableQueueLeaseContext,
+  ): Promise<void>;
+  isTerminalDeadLetterError(
+    message: QueueMessage,
+    error: unknown,
+  ): boolean;
   completeIngestionOutbox(env: Env, docId: string): Promise<unknown>;
   completeDeliveryOutbox(env: Env, txId: string): Promise<unknown>;
 }
@@ -49,6 +67,19 @@ export interface DurableQueueDrainResult {
   completed: number;
   retried: number;
   failed: number;
+}
+
+export interface DurableQueueLeaseContext {
+  readonly signal: AbortSignal;
+  assertOwned(): Promise<void>;
+  renew(): Promise<void>;
+}
+
+export class DurableQueueLeaseLostError extends Error {
+  constructor(message = "durable queue lease is no longer owned") {
+    super(message);
+    this.name = "DurableQueueLeaseLostError";
+  }
 }
 
 interface DurableQueueRow {
@@ -114,7 +145,17 @@ function normalizedDelaySeconds(delaySeconds: number | undefined): number {
   return Math.floor(delaySeconds);
 }
 
-function retryDelayMs(attempts: number): number {
+function retryDelayMs(attempts: number, error?: unknown): number {
+  if (error && typeof error === "object") {
+    const delaySeconds = (error as { delaySeconds?: unknown }).delaySeconds;
+    if (
+      typeof delaySeconds === "number" &&
+      Number.isFinite(delaySeconds) &&
+      delaySeconds >= 0
+    ) {
+      return Math.floor(delaySeconds * 1_000);
+    }
+  }
   const exponent = Math.max(0, attempts - 1);
   return Math.min(
     DURABLE_QUEUE_RETRY_MAX_MS,
@@ -270,6 +311,7 @@ export class DurableQueueAdapter<Message> {
     const valuesSql: string[] = [];
     const bindings: unknown[] = [];
     for (const message of messages) {
+      assertCanonicalQueueMessage(this.queueName, message.body);
       const delaySeconds = normalizedDelaySeconds(message.delaySeconds);
       const availableAt = new Date(createdAt.getTime() + delaySeconds * 1_000)
         .toISOString();
@@ -356,6 +398,104 @@ async function transitionClaim(
   return rows.length === 1;
 }
 
+class ClaimedLeaseContext implements DurableQueueLeaseContext {
+  readonly signal: AbortSignal;
+  private readonly abortController = new AbortController();
+  private lostError: Error | null = null;
+
+  constructor(
+    private readonly db: D1Database,
+    private readonly row: DurableQueueRow,
+    private readonly leaseMs: number,
+    private readonly now: () => Date,
+  ) {
+    this.signal = this.abortController.signal;
+  }
+
+  private markLost(error: unknown): never {
+    const normalized = error instanceof DurableQueueLeaseLostError
+      ? error
+      : new DurableQueueLeaseLostError(errorText(error));
+    this.lostError = normalized;
+    this.abortController.abort(normalized);
+    throw normalized;
+  }
+
+  async assertOwned(): Promise<void> {
+    if (this.lostError) throw this.lostError;
+    const current = this.now().toISOString();
+    try {
+      const rows = await allOrThrow<{ id: number | string }>(
+        this.db.prepare(`
+          SELECT id
+          FROM deno_runtime_queue
+          WHERE id = ? AND status = 'processing' AND lease_token = ?
+            AND lease_until IS NOT NULL AND lease_until > ?
+          LIMIT 1
+        `).bind(this.row.id, this.row.lease_token, current),
+        `verify durable queue lease ${this.row.id}`,
+      );
+      if (rows.length !== 1) this.markLost(new DurableQueueLeaseLostError());
+    } catch (error) {
+      this.markLost(error);
+    }
+  }
+
+  async renew(): Promise<void> {
+    if (this.lostError) throw this.lostError;
+    const current = this.now();
+    const currentIso = current.toISOString();
+    const leaseUntil = new Date(current.getTime() + this.leaseMs).toISOString();
+    try {
+      const rows = await allOrThrow<{ id: number | string }>(
+        this.db.prepare(`
+          UPDATE deno_runtime_queue
+          SET lease_until = ?, updated_at = ?
+          WHERE id = ? AND status = 'processing' AND lease_token = ?
+            AND lease_until IS NOT NULL AND lease_until > ?
+          RETURNING id
+        `).bind(
+          leaseUntil,
+          currentIso,
+          this.row.id,
+          this.row.lease_token,
+          currentIso,
+        ),
+        `renew durable queue lease ${this.row.id}`,
+      );
+      if (rows.length !== 1) this.markLost(new DurableQueueLeaseLostError());
+    } catch (error) {
+      this.markLost(error);
+    }
+  }
+}
+
+function startLeaseHeartbeat(
+  lease: ClaimedLeaseContext,
+  leaseMs: number,
+): () => Promise<void> {
+  let stopped = false;
+  let active: Promise<void> | null = null;
+  const intervalMs = Math.max(1_000, Math.floor(leaseMs / 3));
+  const timer = setInterval(() => {
+    if (stopped || active) return;
+    active = lease.renew()
+      .catch(() => {
+        // renew() records lease loss and aborts the signal. The foreground
+        // ownership check turns it into the queue retry/terminal transition.
+      })
+      .finally(() => {
+        active = null;
+      });
+  }, intervalMs);
+
+  return async () => {
+    stopped = true;
+    clearInterval(timer);
+    await active;
+  };
+}
+
 async function completeClaim(
   db: D1Database,
   row: DurableQueueRow,
@@ -367,8 +507,8 @@ async function completeClaim(
     `UPDATE deno_runtime_queue
      SET status = 'completed', lease_until = NULL, lease_token = NULL,
          last_error = NULL, updated_at = ?
-     WHERE id = ? AND status = 'processing' AND lease_token = ?`,
-    [now.toISOString()],
+     WHERE lease_until > ? AND id = ? AND status = 'processing' AND lease_token = ?`,
+    [now.toISOString(), now.toISOString()],
     `complete durable queue message ${row.id}`,
   );
 }
@@ -380,7 +520,7 @@ async function retryClaim(
   error: unknown,
 ): Promise<boolean> {
   const attempts = Number(row.attempts);
-  const availableAt = new Date(now.getTime() + retryDelayMs(attempts))
+  const availableAt = new Date(now.getTime() + retryDelayMs(attempts, error))
     .toISOString();
   return await transitionClaim(
     db,
@@ -388,8 +528,8 @@ async function retryClaim(
     `UPDATE deno_runtime_queue
      SET status = 'pending', available_at = ?, lease_until = NULL, lease_token = NULL,
          last_error = ?, updated_at = ?
-     WHERE id = ? AND status = 'processing' AND lease_token = ?`,
-    [availableAt, errorText(error), now.toISOString()],
+     WHERE lease_until > ? AND id = ? AND status = 'processing' AND lease_token = ?`,
+    [availableAt, errorText(error), now.toISOString(), now.toISOString()],
     `retry durable queue message ${row.id}`,
   );
 }
@@ -401,7 +541,7 @@ async function retryDeadLetterClaim(
   error: unknown,
 ): Promise<boolean> {
   const availableAt = new Date(
-    now.getTime() + retryDelayMs(Number(row.attempts)),
+    now.getTime() + retryDelayMs(Number(row.attempts), error),
   ).toISOString();
   return await transitionClaim(
     db,
@@ -409,8 +549,8 @@ async function retryDeadLetterClaim(
     `UPDATE deno_runtime_queue
      SET status = 'pending', dead_letter_pending = 1, available_at = ?,
          lease_until = NULL, lease_token = NULL, last_error = ?, updated_at = ?
-     WHERE id = ? AND status = 'processing' AND lease_token = ?`,
-    [availableAt, errorText(error), now.toISOString()],
+     WHERE lease_until > ? AND id = ? AND status = 'processing' AND lease_token = ?`,
+    [availableAt, errorText(error), now.toISOString(), now.toISOString()],
     `retry durable dead-letter receipt ${row.id}`,
   );
 }
@@ -427,8 +567,8 @@ async function failClaim(
     `UPDATE deno_runtime_queue
      SET status = 'failed', dead_letter_pending = 0,
          lease_until = NULL, lease_token = NULL, last_error = ?, updated_at = ?
-     WHERE id = ? AND status = 'processing' AND lease_token = ?`,
-    [errorText(error), now.toISOString()],
+     WHERE lease_until > ? AND id = ? AND status = 'processing' AND lease_token = ?`,
+    [errorText(error), now.toISOString(), now.toISOString()],
     `fail durable queue message ${row.id}`,
   );
 }
@@ -439,16 +579,23 @@ async function dispatchMessage(
   message: QueueMessage,
   attempts: number,
   handlers: DurableQueueHandlers,
+  lease: DurableQueueLeaseContext,
 ): Promise<void> {
   if (queueName === "delivery") {
-    const shouldComplete = await handlers.handleDeliveryMessage(env, message);
+    const shouldComplete = await handlers.handleDeliveryMessage(
+      env,
+      message,
+      lease,
+    );
+    await lease.assertOwned();
     if (shouldComplete && message.type === "delivery.dispatch") {
       await handlers.completeDeliveryOutbox(env, message.txId);
     }
     return;
   }
 
-  await handlers.handleIngestMessage(env, message, attempts);
+  await handlers.handleIngestMessage(env, message, attempts, lease);
+  await lease.assertOwned();
   if (message.type === "filing.new") {
     await handlers.completeIngestionOutbox(env, message.docId);
   }
@@ -499,16 +646,47 @@ export async function drainDurableQueue(
     for (const row of rows) {
       const attempts = Number(row.attempts);
       let parsed: unknown;
+      let canonicalMessage: QueueMessage | null = null;
+      const lease = new ClaimedLeaseContext(env.DB, row, leaseMs, now);
+      let stopHeartbeat: () => Promise<void> = async () => {};
+      try {
+        // Rows are claimed in batches and handled serially. Renew before any
+        // handler starts so a row that expired while waiting cannot do work.
+        await lease.renew();
+        stopHeartbeat = startLeaseHeartbeat(lease, leaseMs);
+      } catch {
+        continue;
+      }
       if (Number(row.dead_letter_pending) === 1) {
         try {
           parsed = JSON.parse(row.payload);
-          assertCanonicalQueueMessage(queueName, parsed);
-          await handlers.handleDeadLetterMessage(
-            env,
-            `${queueName}-dlq`,
-            parsed,
-            attempts,
-          );
+          try {
+            assertCanonicalQueueMessage(queueName, parsed);
+            canonicalMessage = parsed;
+          } catch {
+            canonicalMessage = null;
+          }
+          await lease.assertOwned();
+          if (canonicalMessage) {
+            await handlers.handleDeadLetterMessage(
+              env,
+              `${queueName}-dlq`,
+              canonicalMessage,
+              attempts,
+              lease,
+            );
+          } else {
+            await handlers.handleCorruptDeadLetterMessage(
+              env,
+              `${queueName}-dlq`,
+              parsed,
+              attempts,
+              row.last_error || "invalid durable queue message",
+              lease,
+            );
+          }
+          await lease.assertOwned();
+          await stopHeartbeat();
           if (
             await failClaim(
               env.DB,
@@ -520,6 +698,26 @@ export async function drainDurableQueue(
             result.failed += 1;
           }
         } catch (deadLetterError) {
+          await stopHeartbeat();
+          if (
+            canonicalMessage &&
+            handlers.isTerminalDeadLetterError(
+              canonicalMessage,
+              deadLetterError,
+            )
+          ) {
+            if (
+              await failClaim(
+                env.DB,
+                row,
+                now(),
+                deadLetterError,
+              )
+            ) {
+              result.failed += 1;
+            }
+            continue;
+          }
           if (
             await retryDeadLetterClaim(
               env.DB,
@@ -536,41 +734,84 @@ export async function drainDurableQueue(
       try {
         parsed = JSON.parse(row.payload);
         assertCanonicalQueueMessage(queueName, parsed);
-        await dispatchMessage(env, queueName, parsed, attempts, handlers);
+        canonicalMessage = parsed;
+        await lease.assertOwned();
+        await dispatchMessage(
+          env,
+          queueName,
+          canonicalMessage,
+          attempts,
+          handlers,
+          lease,
+        );
+        await lease.assertOwned();
+        await stopHeartbeat();
         if (await completeClaim(env.DB, row, now())) result.completed += 1;
       } catch (error) {
         if (attempts < maxAttempts) {
+          await stopHeartbeat();
           if (await retryClaim(env.DB, row, now(), error)) result.retried += 1;
           continue;
         }
 
-        if (parsed && typeof parsed === "object") {
-          try {
-            assertCanonicalQueueMessage(queueName, parsed);
+        try {
+          if (canonicalMessage) {
             await handlers.handleDeadLetterMessage(
               env,
               `${queueName}-dlq`,
-              parsed,
+              canonicalMessage,
               attempts,
+              lease,
             );
-          } catch (deadLetterError) {
-            const terminalError = new Error(
-              `${errorText(error)}; dead-letter recovery failed: ${
-                errorText(deadLetterError)
-              }`,
+          } else {
+            await handlers.handleCorruptDeadLetterMessage(
+              env,
+              `${queueName}-dlq`,
+              parsed === undefined ? row.payload : parsed,
+              attempts,
+              errorText(error),
+              lease,
             );
+          }
+          await lease.assertOwned();
+          await stopHeartbeat();
+        } catch (deadLetterError) {
+          await stopHeartbeat();
+          if (
+            canonicalMessage &&
+            handlers.isTerminalDeadLetterError(
+              canonicalMessage,
+              deadLetterError,
+            )
+          ) {
             if (
-              await retryDeadLetterClaim(
+              await failClaim(
                 env.DB,
                 row,
                 now(),
-                terminalError,
+                deadLetterError,
               )
             ) {
-              result.retried += 1;
+              result.failed += 1;
             }
             continue;
           }
+          const terminalError = new Error(
+            `${errorText(error)}; dead-letter recovery failed: ${
+              errorText(deadLetterError)
+            }`,
+          );
+          if (
+            await retryDeadLetterClaim(
+              env.DB,
+              row,
+              now(),
+              terminalError,
+            )
+          ) {
+            result.retried += 1;
+          }
+          continue;
         }
         if (await failClaim(env.DB, row, now(), error)) {
           result.failed += 1;

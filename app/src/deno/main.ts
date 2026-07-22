@@ -6,8 +6,14 @@ import { DurableQueueAdapter, drainDurableQueues, type DurableQueueHandlers } fr
 import app from '../index.ts';
 import type { Env, QueueMessage } from '../shared/types.ts';
 import { resolveSecret, refreshSecrets } from '../secrets/infisical.ts';
-import { handleIngestMessage, handleDeliveryMessage, handleDeadLetterMessage } from '../index.ts';
+import {
+  handleCorruptDeadLetterMessage,
+  handleDeadLetterMessage,
+  handleDeliveryMessage,
+  handleIngestMessage,
+} from '../index.ts';
 import { flushD1Budget } from '../shared/d1Budget.ts';
+import { isTerminalUsageTelemetryDeliveryError } from '../shared/thirdPartyTelemetry.ts';
 import { maybeRunDailyJobs } from '../jobs.ts';
 import { runWatcher } from '../ingestion/watcher.ts';
 import { completeDeliveryOutbox, flushDeliveryOutbox } from '../delivery/outbox.ts';
@@ -115,6 +121,10 @@ const durableQueueHandlers: DurableQueueHandlers = {
   handleIngestMessage,
   handleDeliveryMessage,
   handleDeadLetterMessage,
+  handleCorruptDeadLetterMessage,
+  isTerminalDeadLetterError: (message, error) =>
+    message.type === 'usage.telemetry'
+    && isTerminalUsageTelemetryDeliveryError(error),
   completeIngestionOutbox,
   completeDeliveryOutbox,
 };

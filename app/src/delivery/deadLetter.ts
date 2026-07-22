@@ -18,11 +18,11 @@ import { consumeGovernedD1Writes } from '../shared/d1Budget.ts';
 async function insertDeadLetterReceipt(
   env: Env,
   queue: string,
-  msg: QueueMessage,
+  msg: unknown,
   attempts: number,
   err: unknown,
 ): Promise<void> {
-  const m = msg as { type?: string; docId?: string; txId?: string };
+  const m = (msg && typeof msg === 'object' ? msg : {}) as { type?: string; docId?: string; txId?: string };
   const error = err instanceof Error ? err.message : String(err);
 
   await run(
@@ -36,11 +36,11 @@ async function insertDeadLetterReceipt(
 async function alertDeadLetter(
   env: Env,
   queue: string,
-  msg: QueueMessage,
+  msg: unknown,
   attempts: number,
   err: unknown,
 ): Promise<void> {
-  const m = msg as { type?: string; docId?: string; txId?: string };
+  const m = (msg && typeof msg === 'object' ? msg : {}) as { type?: string; docId?: string; txId?: string };
   const error = err instanceof Error ? err.message : String(err);
 
   try {
@@ -91,7 +91,7 @@ export async function recordDeadLetter(
 export async function recordDeadLetterDurable(
   env: Env,
   queue: string,
-  msg: QueueMessage,
+  msg: unknown,
   attempts: number,
   err: unknown,
 ): Promise<void> {

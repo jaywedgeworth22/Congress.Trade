@@ -18,6 +18,7 @@
 import { Hono } from 'hono';
 import * as Sentry from '#sentry';
 import type { Env, QueueMessage } from './shared/types.ts';
+import type { DurableQueueLeaseContext } from './deno/durableQueue.ts';
 
 // Stage handlers owned by their feature modules.
 import { runWatcher } from './ingestion/watcher.ts';
@@ -147,7 +148,13 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
 mountApiRouters(app);
 
 // --- INGEST queue routing -----------------------------------------------------
-export async function handleIngestMessage(env: Env, msg: QueueMessage, queueAttempt = 1): Promise<void> {
+export async function handleIngestMessage(
+  env: Env,
+  msg: QueueMessage,
+  queueAttempt = 1,
+  lease?: DurableQueueLeaseContext,
+): Promise<void> {
+  await lease?.assertOwned();
   switch (msg.type) {
     case 'filing.new':
       await fetchFiling(env, msg.docId, queueAttempt);
@@ -194,7 +201,12 @@ export async function handleIngestMessage(env: Env, msg: QueueMessage, queueAtte
 }
 
 // --- DELIVERY queue routing ---------------------------------------------------
-export async function handleDeliveryMessage(env: Env, msg: QueueMessage): Promise<boolean> {
+export async function handleDeliveryMessage(
+  env: Env,
+  msg: QueueMessage,
+  lease?: DurableQueueLeaseContext,
+): Promise<boolean> {
+  await lease?.assertOwned();
   switch (msg.type) {
     case 'delivery.dispatch': {
       const result = await dispatchWebhook(env, msg);
@@ -212,7 +224,9 @@ export async function handleDeadLetterMessage(
   queue: string,
   msg: QueueMessage,
   attempts: number,
+  lease?: DurableQueueLeaseContext,
 ): Promise<void> {
+  await lease?.assertOwned();
   const recoveryError = new Error(`consumer retry budget exhausted; received by ${queue}`);
   if (msg.type === 'usage.telemetry') {
     // The ingest DLQ has a much larger retry budget (up to 100 retries), which
@@ -258,6 +272,25 @@ export async function handleDeadLetterMessage(
     console.warn(`ingestion outbox missing for ${msg.docId}`);
     return;
   }
+}
+
+/** Durable receipt for legacy/corrupt payloads that cannot drive outbox recovery. */
+export async function handleCorruptDeadLetterMessage(
+  env: Env,
+  queue: string,
+  msg: unknown,
+  attempts: number,
+  error: string,
+  lease?: DurableQueueLeaseContext,
+): Promise<void> {
+  await lease?.assertOwned();
+  await recordDeadLetterDurable(
+    env,
+    queue,
+    msg,
+    attempts,
+    new Error(`invalid durable queue payload: ${error}`),
+  );
 }
 
 const SENTRY_FILTERED_VALUE = '[Filtered]';

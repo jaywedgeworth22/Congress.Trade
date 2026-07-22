@@ -61,6 +61,8 @@ function createHandlers(overrides: Partial<DurableQueueHandlers> = {}): DurableQ
     handleIngestMessage: vi.fn(async () => {}),
     handleDeliveryMessage: vi.fn(async () => true),
     handleDeadLetterMessage: vi.fn(async () => {}),
+    handleCorruptDeadLetterMessage: vi.fn(async () => {}),
+    isTerminalDeadLetterError: vi.fn(() => false),
     completeIngestionOutbox: vi.fn(async () => 'completed'),
     completeDeliveryOutbox: vi.fn(async () => 'completed'),
     ...overrides,
@@ -142,7 +144,15 @@ describe('Deno durable queue', () => {
 
       await expect(drainDurableQueue(harness.env, 'ingest', handlers, { now: harness.now }))
         .resolves.toEqual({ claimed: 1, completed: 1, retried: 0, failed: 0 });
-      expect(handlers.handleIngestMessage).toHaveBeenCalledWith(harness.env, message, 1);
+      expect(handlers.handleIngestMessage).toHaveBeenCalledWith(
+        harness.env,
+        message,
+        1,
+        expect.objectContaining({
+          assertOwned: expect.any(Function),
+          renew: expect.any(Function),
+        }),
+      );
       expect(handlers.completeIngestionOutbox).toHaveBeenCalledWith(harness.env, 'doc-success');
       expect((await harness.rows())[0]).toMatchObject({ status: 'completed', attempts: 1, lease_until: null });
     } finally {
@@ -180,6 +190,28 @@ describe('Deno durable queue', () => {
     }
   });
 
+  it('honors finite handler-requested retry delays', async () => {
+    const harness = await createHarness();
+    try {
+      await harness.ingest.send({ type: 'filing.fetched', docId: 'retry-after' });
+      const handlers = createHandlers({
+        handleIngestMessage: vi.fn(async () => {
+          throw Object.assign(new Error('rate limited'), { delaySeconds: 123 });
+        }),
+      });
+
+      expect(await drainDurableQueue(harness.env, 'ingest', handlers, {
+        now: harness.now,
+      })).toEqual({ claimed: 1, completed: 0, retried: 1, failed: 0 });
+      expect((await harness.rows())[0]).toMatchObject({
+        status: 'pending',
+        available_at: '2026-07-22T16:02:03.000Z',
+      });
+    } finally {
+      harness.client.close();
+    }
+  });
+
   it('reclaims an expired processing lease without touching a live lease', async () => {
     const harness = await createHarness();
     try {
@@ -207,6 +239,7 @@ describe('Deno durable queue', () => {
         harness.env,
         { type: 'filing.fetched', docId: 'stale' },
         2,
+        expect.any(Object),
       );
       expect(await harness.rows()).toEqual([
         expect.objectContaining({ status: 'completed', attempts: 2, lease_until: null }),
@@ -301,6 +334,53 @@ describe('Deno durable queue', () => {
     }
   });
 
+  it('fences handler side effects after lease ownership is lost', async () => {
+    const harness = await createHarness();
+    try {
+      await harness.ingest.send({ type: 'filing.fetched', docId: 'fenced-worker' });
+      let releaseHandler!: () => void;
+      const handlerBlocked = new Promise<void>((resolve) => {
+        releaseHandler = resolve;
+      });
+      let handlerStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        handlerStarted = resolve;
+      });
+      const sideEffect = vi.fn();
+      const handlers = createHandlers({
+        handleIngestMessage: vi.fn(async (_env, _message, _attempts, lease) => {
+          handlerStarted();
+          await handlerBlocked;
+          await lease.assertOwned();
+          sideEffect();
+        }),
+      });
+
+      const drain = drainDurableQueue(harness.env, 'ingest', handlers, {
+        now: harness.now,
+        limit: 1,
+      });
+      await started;
+      await harness.client.execute(`
+        UPDATE deno_runtime_queue
+           SET lease_token = 'replacement-owner',
+               lease_until = '2026-07-22T16:20:00.000Z'
+         WHERE id = 1
+      `);
+      releaseHandler();
+
+      await expect(drain).resolves.toEqual({
+        claimed: 1,
+        completed: 0,
+        retried: 0,
+        failed: 0,
+      });
+      expect(sideEffect).not.toHaveBeenCalled();
+    } finally {
+      harness.client.close();
+    }
+  });
+
   it('completes delivery outboxes only after successful canonical dispatch', async () => {
     const harness = await createHarness();
     try {
@@ -352,6 +432,7 @@ describe('Deno durable queue', () => {
         'ingest-dlq',
         { type: 'filing.fetched', docId: 'doc-poison' },
         1,
+        expect.any(Object),
       );
       expect((await harness.rows())[0]).toMatchObject({
         status: 'failed',
@@ -400,6 +481,97 @@ describe('Deno durable queue', () => {
         status: 'failed',
         dead_letter_pending: 0,
         attempts: 2,
+      });
+    } finally {
+      harness.client.close();
+    }
+  });
+
+  it('terminalizes deterministic telemetry DLQ rejects without re-pending', async () => {
+    const harness = await createHarness();
+    try {
+      const telemetry = {
+        type: 'usage.telemetry',
+        event: { idempotencyKey: 'terminal-event' },
+      } as QueueMessage;
+      await harness.ingest.send(telemetry);
+      const terminal = Object.assign(new Error('invalid payload'), { status: 400 });
+      const deadLetter = vi.fn(async () => {
+        throw terminal;
+      });
+      const handlers = createHandlers({
+        handleIngestMessage: vi.fn(async () => {
+          throw new Error('primary delivery failed');
+        }),
+        handleDeadLetterMessage: deadLetter,
+        isTerminalDeadLetterError: vi.fn((_message, error) => error === terminal),
+      });
+
+      expect(await drainDurableQueue(harness.env, 'ingest', handlers, {
+        now: harness.now,
+        maxAttempts: 1,
+      })).toEqual({ claimed: 1, completed: 0, retried: 0, failed: 1 });
+      expect(deadLetter).toHaveBeenCalledOnce();
+      expect((await harness.rows())[0]).toMatchObject({
+        status: 'failed',
+        dead_letter_pending: 0,
+        last_error: 'invalid payload',
+      });
+    } finally {
+      harness.client.close();
+    }
+  });
+
+  it('rejects malformed producer messages before persistence', async () => {
+    const harness = await createHarness();
+    try {
+      await expect(harness.ingest.send({ type: 'filing.fetched' } as QueueMessage))
+        .rejects.toThrow('docId is required');
+      await expect(harness.delivery.send({
+        type: 'filing.fetched',
+        docId: 'wrong-queue',
+      } as QueueMessage)).rejects.toThrow('invalid delivery queue message type');
+      expect(await harness.rows()).toHaveLength(0);
+    } finally {
+      harness.client.close();
+    }
+  });
+
+  it('durably receipts and terminalizes corrupt legacy messages', async () => {
+    const harness = await createHarness();
+    try {
+      await harness.client.execute({
+        sql: `INSERT INTO deno_runtime_queue
+          (queue_name, payload, status, attempts, dead_letter_pending,
+           available_at, created_at, updated_at)
+          VALUES ('ingest', ?, 'pending', 0, 0, ?, ?, ?)`,
+        args: [
+          JSON.stringify({ type: 'filing.fetched' }),
+          START.toISOString(),
+          START.toISOString(),
+          START.toISOString(),
+        ],
+      });
+      const corruptReceipt = vi.fn(async () => {});
+      const handlers = createHandlers({
+        handleCorruptDeadLetterMessage: corruptReceipt,
+      });
+
+      expect(await drainDurableQueue(harness.env, 'ingest', handlers, {
+        now: harness.now,
+        maxAttempts: 1,
+      })).toEqual({ claimed: 1, completed: 0, retried: 0, failed: 1 });
+      expect(corruptReceipt).toHaveBeenCalledWith(
+        harness.env,
+        'ingest-dlq',
+        { type: 'filing.fetched' },
+        1,
+        expect.stringContaining('docId is required'),
+        expect.any(Object),
+      );
+      expect((await harness.rows())[0]).toMatchObject({
+        status: 'failed',
+        dead_letter_pending: 0,
       });
     } finally {
       harness.client.close();
