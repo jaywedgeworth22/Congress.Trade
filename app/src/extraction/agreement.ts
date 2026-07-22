@@ -351,7 +351,7 @@ function resolveAgreedRows(reads: CandidateDocResult[], normalizeText: boolean):
  * raw field wrongly rejects any trio with 2+ OpenRouter models as
  * `duplicate_provider_lineup` and fails the cascade closed — which is why
  * all-OpenRouter trios never publish. getUnderlyingProvider maps e.g.
- * openrouter:google/gemini-3.5-flash → gemini, openrouter:x-ai/grok-4.3 → xai,
+ * openrouter:google/gemini-3.5-flash → gemini, openrouter:x-ai/grok-4.5 → xai,
  * openrouter:openai/gpt-5.6-terra → openai, and passes direct providers (and
  * llamaparse) through unchanged. The model-label distinctness check
  * (duplicate_model_lineup) is unaffected. Canonical copy of getUnderlyingProvider
