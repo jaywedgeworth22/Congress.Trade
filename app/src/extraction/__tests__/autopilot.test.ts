@@ -692,6 +692,58 @@ describe('autopilot batch submission receipts', () => {
     expect(updates[0].params).toEqual([now.toISOString(), 'autopilot-intent-1']);
   });
 
+  it('reconciles stale submission intents even when older provider jobs fill the poll quota', async () => {
+    const queries: Array<{ sql: string; params: unknown[] }> = [];
+    const updates: Array<{ sql: string; params: unknown[] }> = [];
+    const staleIntent = {
+      id: 'autopilot-stale-intent',
+      provider: 'anthropic',
+      model: 'claude-sonnet-5',
+      provider_batch_id: null,
+      status: 'submitting',
+    };
+    const olderRunningJobs = Array.from({ length: 4 }, (_, index) => ({
+      id: `autopilot-running-${index}`,
+      provider: 'openrouter',
+      model: 'model',
+      provider_batch_id: `provider-${index}`,
+      status: 'running',
+    }));
+    const env = {
+      DB: {
+        prepare(sql: string) {
+          return {
+            params: [] as unknown[],
+            bind(...params: unknown[]) { this.params = params; return this; },
+            async all<T>() {
+              queries.push({ sql, params: this.params });
+              return {
+                success: true,
+                results: (sql.includes("status = 'submitting'")
+                  ? [staleIntent]
+                  : olderRunningJobs) as T[],
+              };
+            },
+            async run() {
+              updates.push({ sql, params: this.params });
+              return { success: true, meta: { changes: 1 } };
+            },
+          };
+        },
+      },
+    } as unknown as Env;
+    const now = new Date('2026-07-22T18:00:00.000Z');
+
+    await pollAutopilotPreseedBatches(env, '2026-07-22', undefined, () => now);
+
+    expect(queries).toHaveLength(2);
+    expect(queries[0].sql).toContain("status = 'submitting'");
+    expect(queries[1].sql).toContain("status IN ('submitted', 'running')");
+    expect(updates).toHaveLength(1);
+    expect(updates[0].sql).toContain("status = 'submission_unknown'");
+    expect(updates[0].params).toEqual([now.toISOString(), staleIntent.id]);
+  });
+
   it('records a lost provider response as submission_unknown instead of failed', async () => {
     const operations: Array<{ sql: string; params: unknown[] }> = [];
     const env = {

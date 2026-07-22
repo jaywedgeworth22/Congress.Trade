@@ -78,6 +78,8 @@ const STALLED_RUN_MS = 30 * 60 * 1000;
 const UNPRICEABLE_READ_COST_USD = 0.05;
 /** Outstanding pre-seed batch jobs polled per tick (bounded work). */
 const PRESEED_POLL_LIMIT = 3;
+/** Stale submission intents reconciled per tick independently of provider polling. */
+const PRESEED_SUBMISSION_RECONCILE_LIMIT = 25;
 const AUTOPILOT_BATCH_ID_PREFIX = 'autopilot-';
 const PRESEED_SUBMISSION_UNKNOWN_AFTER_MS = 15 * 60 * 1000;
 
@@ -1248,17 +1250,42 @@ export async function pollAutopilotPreseedBatches(
     const submissionUnknownBefore = new Date(
       now().getTime() - PRESEED_SUBMISSION_UNKNOWN_AFTER_MS,
     ).toISOString();
-    const eligibleStatuses = pollProviders
-      ? "(status IN ('submitted', 'running') OR (status = 'submitting' AND submitted_at <= ?))"
-      : "(status = 'submitting' AND submitted_at <= ?)";
-    jobs = await all(
+    // Reconcile abandoned submission intents under their own quota. Mixing
+    // these rows into the provider-poll query lets a few older running jobs
+    // consume PRESEED_POLL_LIMIT forever and starve an unknown paid side
+    // effect from ever becoming explicit.
+    const staleSubmissions = await all<{
+      id: string;
+      provider: string;
+      model: string;
+      provider_batch_id: string | null;
+      status: string;
+    }>(
       env.DB,
       `SELECT id, provider, model, provider_batch_id, status FROM batch_jobs
         WHERE id LIKE '${AUTOPILOT_BATCH_ID_PREFIX}%'
-          AND ${eligibleStatuses}
+          AND status = 'submitting'
+          AND submitted_at <= ?
         ORDER BY submitted_at ASC LIMIT ?`,
-      [submissionUnknownBefore, PRESEED_POLL_LIMIT],
+      [submissionUnknownBefore, PRESEED_SUBMISSION_RECONCILE_LIMIT],
     );
+    const providerJobs = pollProviders
+      ? await all<{
+        id: string;
+        provider: string;
+        model: string;
+        provider_batch_id: string | null;
+        status: string;
+      }>(
+        env.DB,
+        `SELECT id, provider, model, provider_batch_id, status FROM batch_jobs
+          WHERE id LIKE '${AUTOPILOT_BATCH_ID_PREFIX}%'
+            AND status IN ('submitted', 'running')
+          ORDER BY submitted_at ASC LIMIT ?`,
+        [PRESEED_POLL_LIMIT],
+      )
+      : [];
+    jobs = [...staleSubmissions, ...providerJobs];
   } catch {
     signal?.throwIfAborted();
     return;
