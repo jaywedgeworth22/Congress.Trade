@@ -208,8 +208,10 @@ export async function classifyDocClassWithModel(
   env: Env,
   bytes: ArrayBuffer,
   knobs: DocClassifierKnobs,
+  signal?: AbortSignal,
 ): Promise<DocClass | null> {
   try {
+    signal?.throwIfAborted();
     const key = await keyFor(env, 'openrouter');
     if (!key) return null;
     const res = await trackedFetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -251,7 +253,9 @@ export async function classifyDocClassWithModel(
           ],
         }],
       }),
-      signal: AbortSignal.timeout(60_000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(60_000)])
+        : AbortSignal.timeout(60_000),
     }, { service: 'llm', operation: 'classify-document', model: knobs.model });
     if (!res.ok) {
       console.warn(`doc classifier: OpenRouter ${res.status}`);
@@ -263,6 +267,7 @@ export async function classifyDocClassWithModel(
     const text = payload.choices?.[0]?.message?.content ?? '';
     return text ? parseDocClassReply(text) : null;
   } catch (err) {
+    signal?.throwIfAborted();
     console.warn('doc classifier: model call failed:', (err as Error).message);
     return null;
   }
@@ -282,6 +287,8 @@ export interface EnsureDocClassDeps {
   computeSignals?: typeof computeDocClassSignals;
   /** Injectable for tests; defaults to classifyDocClassWithModel. */
   classifyModel?: typeof classifyDocClassWithModel;
+  /** Abort classification and persistence when the durable queue lease is lost. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -299,6 +306,8 @@ export async function ensureDocClass(
 ): Promise<DocClassResult> {
   const computeSignals = deps.computeSignals ?? computeDocClassSignals;
   const classifyModel = deps.classifyModel ?? classifyDocClassWithModel;
+  const signal = deps.signal;
+  signal?.throwIfAborted();
   try {
     const row = await get<{ doc_class: string | null; doc_kind: string | null }>(
       env.DB,
@@ -310,21 +319,28 @@ export async function ensureDocClass(
     }
     if (!docKindHint && row?.doc_kind) docKindHint = row.doc_kind;
   } catch {
+    signal?.throwIfAborted();
     // doc_class column not migrated yet — classify without the cache.
   }
 
   let docClass: DocClass | null = null;
   let source: DocClassResult['source'] = 'deterministic';
   try {
+    signal?.throwIfAborted();
     const signals = await computeSignals(bytes, docKindHint);
+    signal?.throwIfAborted();
     docClass = decideDocClass(signals);
   } catch (err) {
+    signal?.throwIfAborted();
     console.warn('doc classifier: signal computation failed:', docId, (err as Error).message);
   }
   if (!docClass) {
     const knobs = await resolveDocClassifierKnobs(env);
     if (knobs.enabled) {
-      docClass = await classifyModel(env, bytes, knobs);
+      docClass = signal
+        ? await classifyModel(env, bytes, knobs, signal)
+        : await classifyModel(env, bytes, knobs);
+      signal?.throwIfAborted();
       source = 'model';
     }
   }
@@ -333,8 +349,10 @@ export async function ensureDocClass(
     source = 'fallback';
   }
   try {
+    signal?.throwIfAborted();
     await run(env.DB, 'UPDATE filings SET doc_class = ? WHERE doc_id = ?', [docClass, docId]);
   } catch {
+    signal?.throwIfAborted();
     // Pre-migration DB: the classification still informs this invocation.
   }
   return { docClass, source };

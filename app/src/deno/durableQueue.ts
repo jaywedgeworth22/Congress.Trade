@@ -285,7 +285,21 @@ export class DurableQueueAdapter<Message> {
     private readonly db: D1Database,
     private readonly queueName: DurableQueueName,
     private readonly now: () => Date = () => new Date(),
+    private readonly beforePersist?: () => Promise<void>,
   ) {}
+
+  /** Return an equivalent producer that revalidates ownership at its write boundary. */
+  withWriteGuard(guard: () => Promise<void>): DurableQueueAdapter<Message> {
+    return new DurableQueueAdapter(
+      this.db,
+      this.queueName,
+      this.now,
+      async () => {
+        await this.beforePersist?.();
+        await guard();
+      },
+    );
+  }
 
   async send(
     message: Message,
@@ -330,6 +344,10 @@ export class DurableQueueAdapter<Message> {
       );
     }
 
+    // `send()` delegates here and `sendBatch()` can be called directly. Check
+    // at the final persistence boundary so construction time cannot outlive
+    // the queue message lease unnoticed.
+    await this.beforePersist?.();
     await runOrThrow(
       this.db.prepare(`
         INSERT OR IGNORE INTO deno_runtime_queue
@@ -496,6 +514,151 @@ function startLeaseHeartbeat(
   };
 }
 
+/**
+ * Bind the claimed lease to every durable binding used by a handler. This is
+ * the enforcement layer for stage implementations that do not know about the
+ * Deno queue adapter: a stale worker cannot write/read Turso, R2/KV, or enqueue
+ * another message after another worker has reclaimed the row.
+ */
+function leaseGuardedEnv(
+  env: Env,
+  lease: DurableQueueLeaseContext,
+): Env {
+  const statementTargets = new WeakMap<object, object>();
+
+  const guardStatement = (statement: object): object => {
+    const proxy = new Proxy(statement as Record<PropertyKey, unknown>, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (property === "bind" && typeof value === "function") {
+          return (...args: unknown[]) =>
+            guardStatement(value.apply(target, args) as object);
+        }
+        if (typeof value === "function") {
+          return async (...args: unknown[]) => {
+            await lease.assertOwned();
+            return await value.apply(target, args);
+          };
+        }
+        return value;
+      },
+    });
+    statementTargets.set(proxy, statement);
+    return proxy;
+  };
+
+  const db = new Proxy(env.DB as unknown as Record<PropertyKey, unknown>, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (property === "prepare" && typeof value === "function") {
+        return (sql: string) => guardStatement(value.call(target, sql));
+      }
+      if (property === "batch" && typeof value === "function") {
+        return async (statements: object[]) => {
+          await lease.assertOwned();
+          return await value.call(
+            target,
+            statements.map((statement) => statementTargets.get(statement) ?? statement),
+          );
+        };
+      }
+      if (typeof value === "function") {
+        return async (...args: unknown[]) => {
+          await lease.assertOwned();
+          return await value.apply(target, args);
+        };
+      }
+      return value;
+    },
+  }) as unknown as D1Database;
+
+  const guardedStreams = new WeakMap<object, object>();
+  const guardReadableStream = <T>(stream: ReadableStream<T>): ReadableStream<T> => {
+    const cached = guardedStreams.get(stream);
+    if (cached) return cached as ReadableStream<T>;
+    const guardReader = (reader: ReadableStreamDefaultReader<T>) => new Proxy(reader, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (typeof value !== "function") return value;
+        if (property === "releaseLock") return (...args: unknown[]) => value.apply(target, args);
+        return async (...args: unknown[]) => {
+          await lease.assertOwned();
+          const result = await value.apply(target, args);
+          await lease.assertOwned();
+          return result;
+        };
+      },
+    });
+    const guarded = new Proxy(stream, {
+      get(target, property) {
+        const value = Reflect.get(target, property, target);
+        if (property === "getReader" && typeof value === "function") {
+          return (...args: unknown[]) => guardReader(value.apply(target, args));
+        }
+        if (typeof value !== "function") return value;
+        return async (...args: unknown[]) => {
+          await lease.assertOwned();
+          const result = await value.apply(target, args);
+          await lease.assertOwned();
+          return result;
+        };
+      },
+    }) as ReadableStream<T>;
+    guardedStreams.set(stream, guarded);
+    return guarded;
+  };
+
+  const guardBinding = <T extends object>(binding: T | undefined): T | undefined => {
+    if (!binding) return undefined;
+    return new Proxy(binding as Record<PropertyKey, unknown>, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (property === "body" && value instanceof ReadableStream) {
+          return guardReadableStream(value);
+        }
+        if (typeof value !== "function") return value;
+        return async (...args: unknown[]) => {
+          await lease.assertOwned();
+          const result = await value.apply(target, args);
+          await lease.assertOwned();
+          if (
+            (property === "createMultipartUpload" || property === "get") &&
+            result && typeof result === "object"
+          ) {
+            return guardBinding(result as object);
+          }
+          return result;
+        };
+      },
+    }) as T;
+  };
+
+  return new Proxy(env, {
+    get(target, property, receiver) {
+      if (property === "DB") return db;
+      if (property === "RAW_FILES") return guardBinding(target.RAW_FILES);
+      if (property === "CONFIG_KV") return guardBinding(target.CONFIG_KV);
+      if (property === "INGEST_QUEUE") {
+        const queue = target.INGEST_QUEUE;
+        return guardBinding(
+          queue instanceof DurableQueueAdapter
+            ? queue.withWriteGuard(() => lease.assertOwned())
+            : queue,
+        );
+      }
+      if (property === "DELIVERY_QUEUE") {
+        const queue = target.DELIVERY_QUEUE;
+        return guardBinding(
+          queue instanceof DurableQueueAdapter
+            ? queue.withWriteGuard(() => lease.assertOwned())
+            : queue,
+        );
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
 async function completeClaim(
   db: D1Database,
   row: DurableQueueRow,
@@ -648,6 +811,7 @@ export async function drainDurableQueue(
       let parsed: unknown;
       let canonicalMessage: QueueMessage | null = null;
       const lease = new ClaimedLeaseContext(env.DB, row, leaseMs, now);
+      const guardedEnv = leaseGuardedEnv(env, lease);
       let stopHeartbeat: () => Promise<void> = async () => {};
       try {
         // Rows are claimed in batches and handled serially. Renew before any
@@ -659,17 +823,25 @@ export async function drainDurableQueue(
       }
       if (Number(row.dead_letter_pending) === 1) {
         try {
-          parsed = JSON.parse(row.payload);
           try {
-            assertCanonicalQueueMessage(queueName, parsed);
-            canonicalMessage = parsed;
+            parsed = JSON.parse(row.payload);
+            try {
+              assertCanonicalQueueMessage(queueName, parsed);
+              canonicalMessage = parsed;
+            } catch {
+              canonicalMessage = null;
+            }
           } catch {
+            // Preserve malformed JSON as the raw string. This branch is a
+            // resumed durable receipt, so parsing must never bypass the raw
+            // corrupt-message handler and create an infinite retry loop.
+            parsed = row.payload;
             canonicalMessage = null;
           }
           await lease.assertOwned();
           if (canonicalMessage) {
             await handlers.handleDeadLetterMessage(
-              env,
+              guardedEnv,
               `${queueName}-dlq`,
               canonicalMessage,
               attempts,
@@ -677,7 +849,7 @@ export async function drainDurableQueue(
             );
           } else {
             await handlers.handleCorruptDeadLetterMessage(
-              env,
+              guardedEnv,
               `${queueName}-dlq`,
               parsed,
               attempts,
@@ -737,7 +909,9 @@ export async function drainDurableQueue(
         canonicalMessage = parsed;
         await lease.assertOwned();
         await dispatchMessage(
-          env,
+          // Handlers see lease-fenced durable bindings. The original DB is
+          // retained only by the adapter's own claim-transition code.
+          guardedEnv,
           queueName,
           canonicalMessage,
           attempts,
@@ -748,6 +922,16 @@ export async function drainDurableQueue(
         await stopHeartbeat();
         if (await completeClaim(env.DB, row, now())) result.completed += 1;
       } catch (error) {
+        if (
+          canonicalMessage &&
+          handlers.isTerminalDeadLetterError(canonicalMessage, error)
+        ) {
+          await stopHeartbeat();
+          if (await failClaim(env.DB, row, now(), error)) {
+            result.failed += 1;
+          }
+          continue;
+        }
         if (attempts < maxAttempts) {
           await stopHeartbeat();
           if (await retryClaim(env.DB, row, now(), error)) result.retried += 1;
@@ -757,7 +941,7 @@ export async function drainDurableQueue(
         try {
           if (canonicalMessage) {
             await handlers.handleDeadLetterMessage(
-              env,
+              guardedEnv,
               `${queueName}-dlq`,
               canonicalMessage,
               attempts,
@@ -765,7 +949,7 @@ export async function drainDurableQueue(
             );
           } else {
             await handlers.handleCorruptDeadLetterMessage(
-              env,
+              guardedEnv,
               `${queueName}-dlq`,
               parsed === undefined ? row.payload : parsed,
               attempts,

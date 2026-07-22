@@ -15,6 +15,7 @@
  */
 
 import type { Env } from '../shared/types.ts';
+import type { DurableQueueLeaseContext } from '../deno/durableQueue.ts';
 import { get, run } from '../shared/db.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import {
@@ -140,8 +141,14 @@ export function isSenateAgreementWallBytes(bytes: Uint8Array): boolean {
 }
 
 /** Mark a filing as errored (does not throw). */
-async function markError(env: Env, docId: string, message: string): Promise<void> {
+async function markError(
+  env: Env,
+  docId: string,
+  message: string,
+  lease?: DurableQueueLeaseContext,
+): Promise<void> {
   try {
+    await lease?.assertOwned();
     await run(
       env.DB,
       `UPDATE filings SET ingest_status = 'error', error = ? WHERE doc_id = ?`,
@@ -155,7 +162,13 @@ async function markError(env: Env, docId: string, message: string): Promise<void
 /**
  * Fetch + persist the raw bytes for a filing, then advance the pipeline.
  */
-export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Promise<void> {
+export async function fetchFiling(
+  env: Env,
+  docId: string,
+  queueAttempt = 1,
+  lease?: DurableQueueLeaseContext,
+): Promise<void> {
+  await lease?.assertOwned();
   const row = await get<FilingRow>(
     env.DB,
     `SELECT doc_id, chamber, source_url, ingest_status FROM filings WHERE doc_id = ?`,
@@ -167,7 +180,7 @@ export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Pr
   }
   const sourceUrl = row.source_url;
   if (!sourceUrl) {
-    await markError(env, docId, 'fetcher: missing source_url');
+    await markError(env, docId, 'fetcher: missing source_url', lease);
     return;
   }
 
@@ -194,11 +207,12 @@ export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Pr
     const res = await trackedFetch(sourceUrl, {
       headers,
       redirect: 'follow',
+      signal: lease?.signal,
     }, { service: 'filing-ingestion', operation: 'fetch-filing-document', dynamicTarget: 'filing-source' });
     if (!res.ok) {
       const message = `fetcher: source ${sourceUrl} -> HTTP ${res.status}`;
       await res.body?.cancel().catch(() => {});
-      await markError(env, docId, message);
+      await markError(env, docId, message, lease);
       if (isRetryableFilingHttpStatus(res.status)) {
         throw new IngestRetryError(
           message,
@@ -233,11 +247,12 @@ export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Pr
       const retry = await trackedFetch(sourceUrl, {
         headers: { ...headers, cookie: session.cookieHeader },
         redirect: 'follow',
+        signal: lease?.signal,
       }, { service: 'filing-ingestion', operation: 'fetch-filing-document', dynamicTarget: 'filing-source' });
       if (!retry.ok || !retry.body) {
         await retry.body?.cancel().catch(() => {});
         const message = `fetcher: senate agreement wall for ${sourceUrl}; refetch -> HTTP ${retry.status}`;
-        await markError(env, docId, message);
+        await markError(env, docId, message, lease);
         throw new IngestRetryError(message, ingestBackoffSeconds(queueAttempt));
       }
       const retryBytes = await bufferFilingBody(retry.body);
@@ -246,15 +261,17 @@ export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Pr
         // cached session so the next attempt re-negotiates from scratch.
         if (env.CONFIG_KV) await env.CONFIG_KV.delete(SENATE_SESSION_KV_KEY).catch(() => {});
         const message = `fetcher: senate agreement wall persisted after session refresh for ${sourceUrl}`;
-        await markError(env, docId, message);
+        await markError(env, docId, message, lease);
         throw new IngestRetryError(message, ingestBackoffSeconds(queueAttempt));
       }
       rawBytes = retryBytes;
       contentType = retry.headers.get('content-type') ?? contentType;
     }
+    await lease?.assertOwned();
     await env.RAW_FILES.put(key, rawBytes, {
       httpMetadata: { contentType: contentType || 'application/octet-stream' },
     });
+    await lease?.assertOwned();
     await run(
       env.DB,
       `UPDATE filings
@@ -263,15 +280,16 @@ export async function fetchFiling(env: Env, docId: string, queueAttempt = 1): Pr
       [key, docId],
     );
 
+    await lease?.assertOwned();
     await env.INGEST_QUEUE.send({ type: 'filing.fetched', docId });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (err instanceof FilingTooLargeError || /filing exceeds \d+ byte limit/i.test(message)) {
-      await markError(env, docId, `fetcher: ${message}`);
+      await markError(env, docId, `fetcher: ${message}`, lease);
       return;
     }
     if (err instanceof IngestRetryError) throw err;
-    await markError(env, docId, `fetcher: ${message}`);
+    await markError(env, docId, `fetcher: ${message}`, lease);
     // Network, R2, D1, and queue failures are transient unless explicitly
     // classified above; carry an explicit delay into the queue consumer.
     throw new IngestRetryError(`fetcher: ${message}`, ingestBackoffSeconds(queueAttempt));

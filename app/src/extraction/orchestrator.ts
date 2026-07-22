@@ -14,6 +14,7 @@
  */
 
 import type { Env, Filing, DocKind, Chamber, ParsedTx } from '../shared/types.ts';
+import type { DurableQueueLeaseContext } from '../deno/durableQueue.ts';
 import { get, run } from '../shared/db.ts';
 import {
   buildExtractorPipeline,
@@ -65,7 +66,13 @@ function rowToFiling(r: FilingRow): Filing {
   };
 }
 
-async function markError(env: Env, docId: string, message: string): Promise<void> {
+async function markError(
+  env: Env,
+  docId: string,
+  message: string,
+  lease?: DurableQueueLeaseContext,
+): Promise<void> {
+  await lease?.assertOwned();
   await run(
     env.DB,
     "UPDATE filings SET ingest_status = 'error', error = ? WHERE doc_id = ?",
@@ -143,10 +150,16 @@ async function reportExtractorUsage(env: Env, runs: ExtractorModelRun[]): Promis
  * filing whose docKind has no matching extractor is routed to review rather
  * than retried forever.
  */
-export async function extractAndNormalize(env: Env, docId: string): Promise<void> {
-  const extracted = await extractParsed(env, docId);
+export async function extractAndNormalize(
+  env: Env,
+  docId: string,
+  lease?: DurableQueueLeaseContext,
+): Promise<void> {
+  await lease?.assertOwned();
+  const extracted = await extractParsed(env, docId, lease);
   if (!extracted) return; // missing row / raw object: already recorded as error.
 
+  await lease?.assertOwned();
   const result = await normalize(env, extracted.filing, extracted.transactions, {
     extractor: extracted.extractor,
     modelVersion: extracted.modelVersion ?? null,
@@ -157,6 +170,7 @@ export async function extractAndNormalize(env: Env, docId: string): Promise<void
   // the backstop). Best-effort — a failure here must not fail the extraction.
   if (result.needsReview) {
     try {
+      await lease?.assertOwned();
       await enqueueAgreementCheck(env, extracted.filing.docId, extracted.filing.rawObjectKey);
     } catch (err) {
       console.warn('inline agreement enqueue failed:', docId, (err as Error).message);
@@ -181,7 +195,12 @@ export interface ExtractedFiling {
  * reprocess path, which re-extracts from the already-stored R2 raw — so it never
  * re-fetches from the source — then recomputes confidence in place.
  */
-export async function extractParsed(env: Env, docId: string): Promise<ExtractedFiling | null> {
+export async function extractParsed(
+  env: Env,
+  docId: string,
+  lease?: DurableQueueLeaseContext,
+): Promise<ExtractedFiling | null> {
+  await lease?.assertOwned();
   const row = await get<FilingRow>(
     env.DB,
     `SELECT doc_id, chamber, filer_id, filing_type, filed_date, source_url,
@@ -198,17 +217,19 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
   const filing = rowToFiling(row);
 
   if (!filing.rawObjectKey) {
-    await markError(env, docId, 'orchestrator: missing raw_object_key');
+    await markError(env, docId, 'orchestrator: missing raw_object_key', lease);
     return null;
   }
 
+  await lease?.assertOwned();
   const obj = await env.RAW_FILES.get(filing.rawObjectKey);
   if (!obj) {
-    await markError(env, docId, `orchestrator: R2 object ${filing.rawObjectKey} not found`);
+    await markError(env, docId, `orchestrator: R2 object ${filing.rawObjectKey} not found`, lease);
     return null;
   }
 
   const bytes = await obj.arrayBuffer();
+  await lease?.assertOwned();
 
   // Complexity signal for cascade tiering: raw byte length. Recorded as soon as
   // bytes are in hand (independent of whether extraction later succeeds).
@@ -216,6 +237,7 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
   try {
     await run(env.DB, 'UPDATE filings SET raw_bytes = ? WHERE doc_id = ?', [bytes.byteLength, docId]);
   } catch (err) {
+    lease?.signal.throwIfAborted();
     console.warn('orchestrator: failed to record raw_bytes:', docId, (err as Error).message);
   }
 
@@ -225,8 +247,16 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
   // cascade tiering, autopilot ordering, and per-class handling. Best-effort —
   // never fails or delays extraction on error.
   try {
-    await ensureDocClass(env, docId, bytes, filing.docKind);
+    await lease?.assertOwned();
+    await ensureDocClass(
+      env,
+      docId,
+      bytes,
+      filing.docKind,
+      lease ? { signal: lease.signal } : {},
+    );
   } catch (err) {
+    lease?.signal.throwIfAborted();
     console.warn('orchestrator: doc classification failed:', docId, (err as Error).message);
   }
 
@@ -272,13 +302,15 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
   }
   if (checkBreaker && isBanned) {
     const message = `orchestrator: ${breakerName} provider rate limit circuit breaker is open (banned due to recent 429/402). Reprocess this filing later.`;
-    await markError(env, docId, message);
+    await markError(env, docId, message, lease);
     throw new Error(message);
   }
 
   let result;
   try {
-    result = await extractor.extract({ filing, bytes, html });
+    await lease?.assertOwned();
+    result = await extractor.extract({ filing, bytes, html, signal: lease?.signal });
+    await lease?.assertOwned();
   } catch (err) {
     const cast = err as Error & {
       usage?: ExtractorUsage;
@@ -288,13 +320,14 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
     };
     // Await every durable Queue hand-off even on failed arbitration/parses;
     // those provider calls were already billed before the error was thrown.
+    await lease?.assertOwned();
     await reportExtractorUsage(env, telemetryModelRuns(cast, extractor.name));
 
     const detail = (err as Error).message;
     const message = isProviderRateLimit(err)
       ? `orchestrator: ${extractor.name} temporarily unavailable: provider quota/rate limit. Reprocess this filing later.`
       : `orchestrator: ${extractor.name} failed: ${detail}`;
-    await markError(env, docId, message);
+    await markError(env, docId, message, lease);
 
     if (isProviderRateLimit(err) && env.CONFIG_KV && !configuredVisionOwnsBreaker) {
       try {
@@ -312,6 +345,7 @@ export async function extractParsed(env: Env, docId: string): Promise<ExtractedF
     throw err;
   }
 
+  await lease?.assertOwned();
   await reportExtractorUsage(env, telemetryModelRuns(result, result.extractor));
 
   // Complexity signal for cascade tiering: page count, when the extractor

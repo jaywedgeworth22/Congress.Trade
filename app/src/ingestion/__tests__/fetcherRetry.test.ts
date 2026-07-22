@@ -40,6 +40,29 @@ describe('fetcherRetry', () => {
     });
   });
 
+  it('propagates the durable queue lease signal to the source request', async () => {
+    const { env } = envForFetch();
+    const fetchMock = vi.fn(async () => new Response('small filing', {
+      status: 200,
+      headers: { 'content-type': 'application/pdf', 'content-length': '12' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const controller = new AbortController();
+    const lease = {
+      signal: controller.signal,
+      assertOwned: vi.fn(async () => {}),
+      renew: vi.fn(async () => {}),
+    };
+
+    await fetchFiling(env, 'doc_1', 1, lease);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://test/doc.pdf',
+      expect.objectContaining({ signal: controller.signal }),
+    );
+    expect(lease.assertOwned).toHaveBeenCalled();
+  });
+
   it('enforces size limit while buffering streaming bodies', async () => {
     const { env, put, send } = envForFetch();
     // Use a ReadableStream without a Content-Length to bypass the initial check

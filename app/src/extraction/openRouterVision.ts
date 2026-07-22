@@ -501,7 +501,9 @@ export class OpenRouterVisionExtractor implements Extractor {
               // which case this spreads nothing.
               ...classifierEnrichment,
             }),
-            signal: AbortSignal.timeout(600_000),
+            signal: input.signal
+              ? AbortSignal.any([input.signal, AbortSignal.timeout(600_000)])
+              : AbortSignal.timeout(600_000),
           },
           this.name,
           { model, spendGuard: { env: this.env, provider: 'openrouter' } }
