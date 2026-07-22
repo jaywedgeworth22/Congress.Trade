@@ -7,7 +7,7 @@ import {
   resolvePreferredTickerFromAssetName,
   resolveTickerDeterministic,
   stripPreferredSeries,
-} from "../utils.ts";
+} from "../utils";
 
 // A tiny stand-in for the securities_master index used by the real resolver.
 const MASTER = new Set(["T", "JPM", "RF", "AVGO", "META", "XYZ", "BRK-B", "GEHC", "AAPL"]);
