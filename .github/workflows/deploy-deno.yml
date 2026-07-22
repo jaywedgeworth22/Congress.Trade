@@ -5,6 +5,7 @@ on:
     branches:
       - main
     paths:
+      - 'deno.json'
       - 'app/src/**'
       - 'app/deno.json'
       - 'app/package.json'
@@ -29,10 +30,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: Setup Deno
-        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
-        with:
-          deno-version: v2.x
+      - name: Install Deno CLI
+        run: npm install --global deno@2.9.3
 
       - name: Fetch Secrets from Infisical
         uses: Infisical/secrets-action@6eef259f83b6b4255f9b31e46eba87af4b595c89
