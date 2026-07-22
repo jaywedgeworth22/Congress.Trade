@@ -1,6 +1,5 @@
 // @ts-nocheck
-
-import { API_PATHS, DEFAULT_CONGRESS_TRADE_BASE_URL, MAX_REFS_BATCH } from "./constants.ts";
+import { API_PATHS, DEFAULT_CONGRESS_TRADE_BASE_URL, MAX_REFS_BATCH } from "./constants";
 import type {
   BundleResponse,
   TransactionsPage,
@@ -19,7 +18,7 @@ import type {
   ConvictionTicker,
   TickerBacktest,
   CommitteeConflict,
-} from "./types.ts";
+} from "./types";
 import {
   AnalystRowSchema,
   BundleResponseSchema,
@@ -39,7 +38,7 @@ import {
   TickerLeaderSchema,
   TransactionsQuerySchema,
   TransactionsPageSchema,
-} from "./schemas.ts";
+} from "./schemas";
 import { z } from "zod";
 
 const RawRefEnvelopeSchema = z.object({ ref: z.unknown().nullable() });
