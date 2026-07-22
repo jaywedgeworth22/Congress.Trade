@@ -228,6 +228,7 @@ let keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKe
                 },
               ],
               config: {
+                abortSignal: input.signal,
                 temperature: 0,
                 responseMimeType: 'application/json',
                 responseSchema: RESPONSE_SCHEMA as any,

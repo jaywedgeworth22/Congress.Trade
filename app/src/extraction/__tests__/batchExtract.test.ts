@@ -38,6 +38,45 @@ describe('isBatchProvider', () => {
   });
 });
 
+describe('batch lease cancellation', () => {
+  it('propagates the lease signal to submit and poll provider requests', async () => {
+    const controller = new AbortController();
+    const resultsUrl = 'https://api.anthropic.com/v1/messages/batches/batch-signal/results';
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.signal).toBe(controller.signal);
+      const url = String(input);
+      if (url.endsWith('/v1/messages/batches')) return Response.json({ id: 'batch-signal' });
+      if (url.endsWith('/v1/messages/batches/batch-signal')) {
+        return Response.json({ processing_status: 'ended', results_url: resultsUrl });
+      }
+      if (url === resultsUrl) return new Response('');
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { ANTHROPIC_API_KEY: 'test-key' } as unknown as Env;
+    const bytes = new TextEncoder().encode('%PDF-1.4 fake').buffer as ArrayBuffer;
+
+    await expect(submitBatch(env, 'anthropic', 'claude-sonnet-5', [
+      { docId: 'H-signal', chamber: 'house', bytes },
+    ], controller.signal)).resolves.toBe('batch-signal');
+    await expect(pollBatch(env, 'anthropic', 'batch-signal', controller.signal))
+      .resolves.toMatchObject({ done: true, status: 'ended' });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('starts no provider request after the lease signal is aborted', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('lease lost'));
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const env = { ANTHROPIC_API_KEY: 'test-key' } as unknown as Env;
+
+    await expect(pollBatch(env, 'anthropic', 'batch-aborted', controller.signal))
+      .rejects.toThrow('lease lost');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('batch chamber prompts', () => {
   it('uses the Executive OGE prompt for Executive filings and congressional prompt otherwise', () => {
     expect(normalizeBatchChamber('executive', 'unknown')).toBe('executive');
