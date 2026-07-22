@@ -207,6 +207,7 @@ export class ConfiguredVisionExtractor implements Extractor {
     let blockedRetryAfter = 0;
 
     for (const [slotIndex, candidate] of candidates.entries()) {
+      input.signal?.throwIfAborted();
       const label = candidateLabel(candidate);
       const retryAfter = await providerBanRetryAfter(this.env, candidate.provider);
       const modelRetryAfter = await providerModelBanRetryAfter(this.env, candidate);
@@ -267,7 +268,17 @@ export class ConfiguredVisionExtractor implements Extractor {
       const effectiveLabel = candidateLabel(effective);
       let result: CandidateDocResult;
       try {
-        result = await runCandidateOnDoc(this.env, effective, docId, bytes);
+        result = input.signal
+          ? await runCandidateOnDoc(
+              this.env,
+              effective,
+              docId,
+              bytes,
+              undefined,
+              input.signal,
+            )
+          : await runCandidateOnDoc(this.env, effective, docId, bytes);
+        input.signal?.throwIfAborted();
       } catch (error) {
         const message = `${effectiveLabel}: ${(error as Error).message}`;
         errors.push(message);

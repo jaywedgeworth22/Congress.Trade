@@ -298,11 +298,17 @@ export function extractResponsesText(payload: unknown, provider = 'responses'): 
  * shape remains for non-retired compatibility models; GPT-4o is rejected before
  * this adapter can make a provider request.
  */
+function providerSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
 async function runOpenAi(
   model: string,
   key: string,
   bytes: ArrayBuffer,
   chamber: string,
+  signal?: AbortSignal,
 ): Promise<ProviderResult> {
   const dataUrl = `data:application/pdf;base64,${arrayBufferToBase64(bytes)}`;
   const prompt = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
@@ -353,7 +359,7 @@ async function runOpenAi(
     method: 'POST',
     headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(120_000),
+    signal: providerSignal(120_000, signal),
   }, { service: 'llm', operation: 'extract-document', model });
   if (!res.ok) throw new Error(`openai ${res.status} ${await safeText(res)}`);
   const payload = (await res.json()) as {
@@ -533,6 +539,7 @@ async function runAnthropic(
   key: string,
   bytes: ArrayBuffer,
   chamber: string,
+  signal?: AbortSignal,
 ): Promise<ProviderResult> {
   const prompt = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
   await validatePdfForAnthropic(bytes);
@@ -561,7 +568,7 @@ async function runAnthropic(
           },
         ],
       }),
-      signal: AbortSignal.timeout(120_000),
+      signal: providerSignal(120_000, signal),
     }, { service: 'llm', operation: 'extract-document', model });
     if (!res.ok) throw new Error(`anthropic ${res.status} ${await safeText(res)}`);
     return (await res.json()) as AnthropicMessagesPayload;
@@ -722,7 +729,12 @@ export function parseMistralOcrResponse(payload: unknown): ParsedTx[] {
  * a base64 PDF as a `document_url` and returns a doc-wide structured annotation
  * when `document_annotation_format` is supplied.
  */
-async function runMistral(model: string, key: string, bytes: ArrayBuffer): Promise<ProviderResult> {
+async function runMistral(
+  model: string,
+  key: string,
+  bytes: ArrayBuffer,
+  signal?: AbortSignal,
+): Promise<ProviderResult> {
   const dataUrl = `data:application/pdf;base64,${arrayBufferToBase64(bytes)}`;
   const res = await trackedFetch('https://api.mistral.ai/v1/ocr', {
     method: 'POST',
@@ -733,7 +745,7 @@ async function runMistral(model: string, key: string, bytes: ArrayBuffer): Promi
       document_annotation_format: { type: 'json_schema', json_schema: MISTRAL_ANNOTATION_SCHEMA },
       include_image_base64: false,
     }),
-    signal: AbortSignal.timeout(120_000),
+    signal: providerSignal(120_000, signal),
   }, { service: 'ocr', operation: 'extract-document', model });
   if (!res.ok) throw new Error(`mistral ${res.status} ${await safeText(res)}`);
   const payload = (await res.json()) as {
@@ -781,6 +793,7 @@ async function runXai(
   key: string,
   bytes: ArrayBuffer,
   chamber: string,
+  signal?: AbortSignal,
 ): Promise<ProviderResult> {
   const prompt = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
   let uploadedId: string | null = null;
@@ -795,7 +808,7 @@ async function runXai(
       method: 'POST',
       headers: { authorization: `Bearer ${key}` },
       body: form,
-      signal: AbortSignal.timeout(120_000),
+      signal: providerSignal(120_000, signal),
     }, { service: 'llm', operation: 'upload-document', model });
     if (!up.ok) throw new Error(`xai upload ${up.status} ${await safeText(up)}`);
     const uploaded = (await up.json()) as { id?: string };
@@ -818,7 +831,7 @@ async function runXai(
           },
         ],
       }),
-      signal: AbortSignal.timeout(120_000),
+      signal: providerSignal(120_000, signal),
     }, { service: 'llm', operation: 'extract-document', model });
     if (!res.ok) throw new Error(`xai ${res.status} ${await safeText(res)}`);
     const payload = (await res.json()) as {
@@ -989,14 +1002,21 @@ export function extractProviderReportedPageCount(payload: unknown): number | und
  * format we need. Poll interval is 2 s; hard timeout is 90 s (well inside the
  * Worker's cpu_ms=300_000 ceiling since poll time is I/O, not CPU).
  */
-async function runLlamaParse(model: string, keyString: string, bytes: ArrayBuffer, chamber: string): Promise<ProviderResult> {
+async function runLlamaParse(
+  model: string,
+  keyString: string,
+  bytes: ArrayBuffer,
+  chamber: string,
+  signal?: AbortSignal,
+): Promise<ProviderResult> {
   const keys = keyString.split(',').map(k => k.trim()).filter(Boolean);
   if (!keys.length) throw new Error('llamaparse: no keys provided');
   let lastError: Error | null = null;
 
   for (const k of keys) {
     try {
-      return await doRunLlamaParse(model, k, bytes, chamber);
+      signal?.throwIfAborted();
+      return await doRunLlamaParse(model, k, bytes, chamber, signal);
     } catch (e) {
       const error = e as ProviderError;
       lastError = error;
@@ -1038,7 +1058,11 @@ export async function fetchLlamaParseResult(
   jobId: string,
   key: string,
   model: string,
-  opts: { attempts?: number; sleep?: (ms: number) => Promise<void> } = {},
+  opts: {
+    attempts?: number;
+    sleep?: (ms: number) => Promise<void>;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<Response> {
   const attempts = opts.attempts ?? 3;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -1046,7 +1070,7 @@ export async function fetchLlamaParseResult(
   const headers = { Authorization: `Bearer ${key}` };
   let res = await trackedFetch(
     url,
-    { headers, signal: AbortSignal.timeout(120_000) },
+    { headers, signal: providerSignal(120_000, opts.signal) },
     { service: 'ocr', operation: 'fetch-document-result', model },
   );
   for (let attempt = 1; attempt < attempts && res.status === 404; attempt++) {
@@ -1056,16 +1080,23 @@ export async function fetchLlamaParseResult(
       /* ignore */
     }
     await sleep(500 * attempt);
+    opts.signal?.throwIfAborted();
     res = await trackedFetch(
       url,
-      { headers, signal: AbortSignal.timeout(120_000) },
+      { headers, signal: providerSignal(120_000, opts.signal) },
       { service: 'ocr', operation: 'fetch-document-result-retry', model },
     );
   }
   return res;
 }
 
-async function doRunLlamaParse(model: string, key: string, bytes: ArrayBuffer, chamber: string): Promise<ProviderResult> {
+async function doRunLlamaParse(
+  model: string,
+  key: string,
+  bytes: ArrayBuffer,
+  chamber: string,
+  signal?: AbortSignal,
+): Promise<ProviderResult> {
   const form = new FormData();
   form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'ptr.pdf');
   const promptToUse = chamber === 'executive' ? EXECUTIVE_SYSTEM_PROMPT : SYSTEM_PROMPT;
@@ -1079,7 +1110,7 @@ async function doRunLlamaParse(model: string, key: string, bytes: ArrayBuffer, c
     method: 'POST',
     headers: { Authorization: `Bearer ${key}` },
     body: form,
-    signal: AbortSignal.timeout(120_000),
+    signal: providerSignal(120_000, signal),
   }, { service: 'ocr', operation: 'upload-document', model });
   if (!up.ok) throw new Error(`llamaparse upload ${up.status} ${await safeText(up)}`);
   const uploaded = (await up.json()) as { id?: string };
@@ -1090,10 +1121,11 @@ async function doRunLlamaParse(model: string, key: string, bytes: ArrayBuffer, c
     // 2) Poll for completion (up to 90 s; each sleep is pure I/O wait).
     let succeeded = false;
     for (let i = 0; i < 45; i++) {
+      signal?.throwIfAborted();
       await new Promise<void>((resolve) => setTimeout(resolve, 2000));
       const st = await trackedFetch(`${LLAMAPARSE_BASE}/job/${uploaded.id}`, {
         headers: { Authorization: `Bearer ${key}` },
-        signal: AbortSignal.timeout(120_000),
+        signal: providerSignal(120_000, signal),
       }, { service: 'ocr', operation: 'poll-document-job', model });
       if (!st.ok) continue; // transient; keep polling
       const statusPayload = (await st.json()) as { status?: string };
@@ -1107,7 +1139,7 @@ async function doRunLlamaParse(model: string, key: string, bytes: ArrayBuffer, c
     // 3) Fetch markdown result. The job's SUCCESS status can be visible
     // before the result object is readable (eventual consistency); retry a
     // couple of times on 404 before failing an otherwise-successful parse.
-    const res = await fetchLlamaParseResult(uploaded.id, key, model);
+    const res = await fetchLlamaParseResult(uploaded.id, key, model, { signal });
     if (!res.ok) throw new Error(`llamaparse result ${res.status} ${await safeText(res)}`);
     const resultPayload = (await res.json()) as { markdown?: string };
     const { markdown } = resultPayload;
@@ -1169,7 +1201,9 @@ export async function runCandidateOnDoc(
   docId: string,
   bytes: ArrayBuffer,
   invocation?: CandidateInvocation,
+  signal?: AbortSignal,
 ): Promise<CandidateDocResult> {
+  signal?.throwIfAborted();
   const { provider, model } = candidate;
   const base = { provider, model, docId };
   if (isRetiredDisclosureCandidate(candidate)) {
@@ -1267,32 +1301,33 @@ export async function runCandidateOnDoc(
       const result = await new VisionLlmExtractor(env, { model, apiKey: key }).extract({
         filing: { docId, docKind: 'scanned_pdf', chamber } as never,
         bytes,
+        signal,
       });
       rows = result.transactions;
       usage = result.usage;
       resolvedModel = result.modelVersion;
       providerRequestId = result.providerRequestId;
     } else if (provider === 'openai') {
-      const openai = await runOpenAi(model, key, bytes, chamber);
+      const openai = await runOpenAi(model, key, bytes, chamber, signal);
       rows = openai.rows;
       usage = openai.usage;
       resolvedModel = openai.resolvedModel;
       providerRequestId = openai.providerRequestId;
       serviceTier = openai.serviceTier;
     } else if (provider === 'mistral') {
-      const mistral = await runMistral(model, key, bytes);
+      const mistral = await runMistral(model, key, bytes, signal);
       rows = mistral.rows;
       usage = mistral.usage;
       resolvedModel = mistral.resolvedModel;
       providerRequestId = mistral.providerRequestId;
     } else if (provider === 'xai') {
-      const xai = await runXai(model, key, bytes, chamber);
+      const xai = await runXai(model, key, bytes, chamber, signal);
       rows = xai.rows;
       usage = xai.usage;
       resolvedModel = xai.resolvedModel;
       providerRequestId = xai.providerRequestId;
     } else if (provider === 'llamaparse') {
-      const lp = await runLlamaParse(model, key, bytes, chamber);
+      const lp = await runLlamaParse(model, key, bytes, chamber, signal);
       rows = lp.rows;
       usage = lp.usage;
       resolvedModel = lp.resolvedModel;
@@ -1304,13 +1339,14 @@ export async function runCandidateOnDoc(
       const result = await new OpenRouterVisionExtractor(env, { model, apiKey: key }).extract({
         filing: { docId, docKind: 'scanned_pdf', chamber } as never,
         bytes,
+        signal,
       });
       rows = result.transactions;
       usage = result.usage;
       resolvedModel = result.modelVersion;
       providerRequestId = result.providerRequestId;
     } else {
-      const anthropic = await runAnthropic(model, key, bytes, chamber);
+      const anthropic = await runAnthropic(model, key, bytes, chamber, signal);
       rows = anthropic.rows;
       usage = anthropic.usage;
       resolvedModel = anthropic.resolvedModel;
@@ -1321,6 +1357,7 @@ export async function runCandidateOnDoc(
     // provider responded (telemetry events are pushed separately via
     // persistExtractionRun; the spend METER lives here so every caller of this
     // choke point is accounted for, cached-or-not persisted-or-not).
+    signal?.throwIfAborted();
     await recordLlmSpend(env, provider, candidateSpendUsd(provider, model, resolvedModel, usage) ?? 0);
 
     // Clean minor hallucinations to improve consensus and publishing pass rates

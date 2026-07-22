@@ -686,19 +686,38 @@ export interface AutopilotTickDeps {
   /** Injectable for tests; defaults to the real cascade entry point. */
   check?: typeof handleAgreementCheck;
   /** Injectable for tests; defaults to R2-bytes + ensureDocClass. */
-  classify?: (env: Env, docId: string, rawObjectKey: string) => Promise<DocClass | null>;
+  classify?: (
+    env: Env,
+    docId: string,
+    rawObjectKey: string,
+    signal?: AbortSignal,
+  ) => Promise<DocClass | null>;
   /** Injectable for tests; defaults to Math.random (empty spot-check sampling). */
   random?: () => number;
+  /** Abort work immediately when the owning durable queue lease is lost. */
+  signal?: AbortSignal;
 }
 
 /** Default classification path: load raw bytes and run the two-tier classifier. */
-async function classifyFromR2(env: Env, docId: string, rawObjectKey: string): Promise<DocClass | null> {
+async function classifyFromR2(
+  env: Env,
+  docId: string,
+  rawObjectKey: string,
+  signal?: AbortSignal,
+): Promise<DocClass | null> {
   try {
+    signal?.throwIfAborted();
     const obj = await env.RAW_FILES.get(rawObjectKey);
     if (!obj) return null;
-    const result = await ensureDocClass(env, docId, await obj.arrayBuffer());
+    const bytes = await obj.arrayBuffer();
+    signal?.throwIfAborted();
+    const result = signal
+      ? await ensureDocClass(env, docId, bytes, undefined, { signal })
+      : await ensureDocClass(env, docId, bytes);
+    signal?.throwIfAborted();
     return result.docClass;
   } catch (err) {
+    signal?.throwIfAborted();
     console.warn('autopilot: doc classification failed:', docId, (err as Error).message);
     return null;
   }
@@ -759,6 +778,7 @@ export async function handleAutopilotTick(
   deps: AutopilotTickDeps = {},
   now = new Date(),
 ): Promise<void> {
+  deps.signal?.throwIfAborted();
   const check = deps.check ?? handleAgreementCheck;
   const classify = deps.classify ?? classifyFromR2;
   const random = deps.random ?? Math.random;
@@ -767,6 +787,7 @@ export async function handleAutopilotTick(
   try {
     row = await get<AutopilotRunRow>(env.DB, 'SELECT * FROM autopilot_runs WHERE id = ?', [runId]);
   } catch {
+    deps.signal?.throwIfAborted();
     return;
   }
   if (!row || row.status !== 'running') return; // stale/duplicate tick
@@ -777,7 +798,8 @@ export async function handleAutopilotTick(
   const eraStart = currentEraStart(now);
 
   if (knobs.preseedEnabled) {
-    await pollAutopilotPreseedBatches(env, day).catch((err) => {
+    await pollAutopilotPreseedBatches(env, day, deps.signal).catch((err) => {
+      deps.signal?.throwIfAborted();
       console.warn('autopilot: preseed poll failed:', (err as Error).message);
     });
   }
@@ -834,13 +856,19 @@ export async function handleAutopilotTick(
     let docClass = doc.doc_class && (['typed', 'clean_scan', 'hard_scan', 'empty', 'corrupt'] as const)
       .includes(doc.doc_class as DocClass) ? doc.doc_class as DocClass : null;
     if (!docClass && doc.raw_object_key) {
-      docClass = await classify(env, doc.doc_id, doc.raw_object_key);
+      docClass = deps.signal
+        ? await classify(env, doc.doc_id, doc.raw_object_key, deps.signal)
+        : await classify(env, doc.doc_id, doc.raw_object_key);
+      deps.signal?.throwIfAborted();
     }
 
     // corrupt → quarantine immediately: suppress the cascade so no model
     // spend ever lands on an unreadable document; humans keep the review item.
     if (docClass === 'corrupt') {
-      const quarantined = await quarantineCorruptDoc(env, doc.doc_id).catch(() => false);
+      const quarantined = await quarantineCorruptDoc(env, doc.doc_id).catch(() => {
+        deps.signal?.throwIfAborted();
+        return false;
+      });
       state.docsDeferred += 1;
       state.outcomes.push({
         docId: doc.doc_id,
@@ -865,7 +893,10 @@ export async function handleAutopilotTick(
         });
         state.skipReasons.empty_spot_check = (state.skipReasons.empty_spot_check ?? 0) + 1;
       } else {
-        const resolved = await resolveEmptyDoc(env, doc.doc_id, new Date()).catch(() => false);
+        const resolved = await resolveEmptyDoc(env, doc.doc_id, new Date()).catch(() => {
+          deps.signal?.throwIfAborted();
+          return false;
+        });
         if (resolved) {
           state.docsAttempted += 1;
           state.outcomes.push({
@@ -941,6 +972,7 @@ export async function handleAutopilotTick(
     try {
       reserved = await reserveAutopilotBudget(env, day, estimateMicro, knobs.dailyBudgetMicroUsd);
     } catch (err) {
+      deps.signal?.throwIfAborted();
       console.warn('autopilot: budget reserve failed (failing closed):', (err as Error).message);
       await finalize('halted', 'budget_unavailable');
       finished = true;
@@ -959,8 +991,20 @@ export async function handleAutopilotTick(
     let res: AgreementDocResult | null = null;
     let thrown: string | null = null;
     try {
-      res = await check(env, doc.doc_id, doc.raw_object_key);
+      deps.signal?.throwIfAborted();
+      res = deps.signal
+        ? await check(
+            env,
+            doc.doc_id,
+            doc.raw_object_key,
+            undefined,
+            undefined,
+            deps.signal,
+          )
+        : await check(env, doc.doc_id, doc.raw_object_key);
+      deps.signal?.throwIfAborted();
     } catch (err) {
+      deps.signal?.throwIfAborted();
       thrown = (err as Error).message ?? String(err);
     }
 
@@ -1019,15 +1063,26 @@ export async function handleAutopilotTick(
   // Submit any collected pre-seed batches (skipped after an error halt: a
   // halted run must stop spending immediately).
   if (preseedQueue.size && !haltedByErrors) {
-    await submitPreseedBatches(env, preseedQueue, state, runId, revision)
+    await submitPreseedBatches(
+      env,
+      preseedQueue,
+      state,
+      runId,
+      revision,
+      deps.signal,
+    )
       .then((next) => { if (next != null) revision = next; })
-      .catch((err) => console.warn('autopilot: preseed submit failed:', (err as Error).message));
+      .catch((err) => {
+        deps.signal?.throwIfAborted();
+        console.warn('autopilot: preseed submit failed:', (err as Error).message);
+      });
   }
 
   if (!finished) {
     try {
       await env.INGEST_QUEUE.send({ type: 'autopilot.tick', runId });
     } catch (err) {
+      deps.signal?.throwIfAborted();
       console.warn('autopilot: continuation enqueue failed:', runId, (err as Error).message);
       await markAutopilotRunHalted(env, runId, 'tick_enqueue_failed');
     }
@@ -1072,6 +1127,7 @@ async function submitPreseedBatches(
   state: RunState,
   runId: string,
   revision: number,
+  signal?: AbortSignal,
 ): Promise<number | null> {
   for (const [modelKey, docs] of queue) {
     const [provider, ...modelParts] = modelKey.split(':');
@@ -1082,7 +1138,13 @@ async function submitPreseedBatches(
     for (const docRef of docs) {
       if (seen.has(docRef.docId)) continue;
       seen.add(docRef.docId);
-      const obj = await env.RAW_FILES.get(docRef.rawObjectKey).catch(() => null);
+      let obj: Awaited<ReturnType<Env['RAW_FILES']['get']>> | null;
+      try {
+        obj = await env.RAW_FILES.get(docRef.rawObjectKey);
+      } catch {
+        signal?.throwIfAborted();
+        obj = null;
+      }
       if (!obj) continue;
       const chamber: BatchChamber = docRef.docId.startsWith('E-')
         ? 'executive' : docRef.docId.startsWith('S-') ? 'senate' : 'house';
@@ -1090,7 +1152,11 @@ async function submitPreseedBatches(
     }
     if (!batchDocs.length) continue;
     try {
-      const providerBatchId = await submitBatch(env, provider, model, batchDocs);
+      signal?.throwIfAborted();
+      const providerBatchId = signal
+        ? await submitBatch(env, provider, model, batchDocs, signal)
+        : await submitBatch(env, provider, model, batchDocs);
+      signal?.throwIfAborted();
       await run(
         env.DB,
         `INSERT INTO batch_jobs (id, provider, model, provider_batch_id, doc_ids, status, submitted_at)
@@ -1102,6 +1168,7 @@ async function submitPreseedBatches(
       );
       console.log(`autopilot: pre-seeded ${batchDocs.length} docs via ${modelKey} batch`);
     } catch (err) {
+      signal?.throwIfAborted();
       state.skipReasons.batch_preseed_submit_failed
         = (state.skipReasons.batch_preseed_submit_failed ?? 0) + 1;
       console.warn(`autopilot: batch pre-seed submit failed for ${modelKey}:`, (err as Error).message);
@@ -1115,7 +1182,11 @@ async function submitPreseedBatches(
  * into extraction_runs (kind='batch') so the cascade's read cache reuses them,
  * and meter the priced batch spend into the day's autopilot budget.
  */
-export async function pollAutopilotPreseedBatches(env: Env, day: string): Promise<void> {
+export async function pollAutopilotPreseedBatches(
+  env: Env,
+  day: string,
+  signal?: AbortSignal,
+): Promise<void> {
   let jobs: Array<{ id: string; provider: string; model: string; provider_batch_id: string | null }>;
   try {
     jobs = await all(
@@ -1126,12 +1197,17 @@ export async function pollAutopilotPreseedBatches(env: Env, day: string): Promis
       [PRESEED_POLL_LIMIT],
     );
   } catch {
+    signal?.throwIfAborted();
     return;
   }
   for (const job of jobs) {
     if (!job.provider_batch_id || !isDirectBatchProvider(job.provider)) continue;
     try {
-      const poll = await pollBatch(env, job.provider, job.provider_batch_id);
+      signal?.throwIfAborted();
+      const poll = signal
+        ? await pollBatch(env, job.provider, job.provider_batch_id, signal)
+        : await pollBatch(env, job.provider, job.provider_batch_id);
+      signal?.throwIfAborted();
       if (!poll.done) {
         await run(env.DB, "UPDATE batch_jobs SET status = 'running' WHERE id = ?", [job.id]);
         continue;
@@ -1191,6 +1267,7 @@ export async function pollAutopilotPreseedBatches(env: Env, day: string): Promis
       );
       console.log(`autopilot: pre-seed batch ${job.id} completed (${poll.results.length} docs)`);
     } catch (err) {
+      signal?.throwIfAborted();
       console.warn(`autopilot: pre-seed poll failed for ${job.id}:`, (err as Error).message);
     }
   }

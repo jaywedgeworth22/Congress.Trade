@@ -133,7 +133,9 @@ export class AnthropicVisionExtractor implements Extractor {
                 },
               ],
             }),
-            signal: AbortSignal.timeout(600_000),
+            signal: input.signal
+              ? AbortSignal.any([input.signal, AbortSignal.timeout(600_000)])
+              : AbortSignal.timeout(600_000),
           },
           this.name,
           { model, spendGuard: { env: this.env, provider: 'anthropic' } }
