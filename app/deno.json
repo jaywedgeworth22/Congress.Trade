@@ -1,10 +1,5 @@
 {
   "nodeModulesDir": "none",
-  "unstable": [
-    "kv",
-    "cron",
-    "sloppy-imports"
-  ],
   "tasks": {
     "start": "deno run --unstable-kv --unstable-cron --unstable-ffi --allow-ffi --allow-net --allow-env --allow-read src/deno/main.ts"
   },
