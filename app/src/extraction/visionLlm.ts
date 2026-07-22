@@ -24,7 +24,7 @@ import { PDFDocument } from 'pdf-lib';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { get } from '../shared/db.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
-import { assertLlmSpendWithinCeiling, recordLlmSpend } from '../shared/llmSpend.ts';
+import { assertLlmSpendWithinCeiling, settleLlmSpend } from '../shared/llmSpend.ts';
 import { GoogleGenAI } from '@google/genai';
 import { candidateSpendUsd } from './bakeoff.ts';
 
@@ -86,6 +86,8 @@ export interface VisionLlmOptions {
   defaultModel?: string;
   /** Override extractor name (so arbitration can tell the two apart). */
   name?: string;
+  /** The caller owns paid-response settlement (used by runCandidateOnDoc). */
+  meterExternally?: boolean;
 }
 
 export class VisionLlmExtractor implements Extractor {
@@ -95,6 +97,7 @@ export class VisionLlmExtractor implements Extractor {
   private readonly defaultModel: string;
   private readonly apiKeyOverride?: string;
   private readonly apiKeyName: keyof Env & string;
+  private readonly meterExternally: boolean;
 
   constructor(
     private readonly env: Env,
@@ -106,6 +109,7 @@ export class VisionLlmExtractor implements Extractor {
     this.defaultModel = options.defaultModel ?? DEFAULT_MODEL;
     this.apiKeyOverride = options.apiKey;
     this.apiKeyName = options.apiKeyName ?? 'GEMINI_API_KEY';
+    this.meterExternally = options.meterExternally ?? false;
   }
 
   canHandle(f: Filing): boolean {
@@ -139,6 +143,8 @@ let keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKe
     if (!input.bytes) throw new Error(`${this.name}: no bytes provided on ExtractorInput`);
 
     const model = await this.resolveModel();
+    const accountingAttemptId = crypto.randomUUID();
+    const accountingOccurredAt = new Date().toISOString();
 
     // Check if we need to chunk (only for scanned_pdf which is all this extractor handles)
     let chunks: ArrayBuffer[] = [input.bytes];
@@ -290,8 +296,17 @@ let keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKe
               cachedTokens: totalCachedTokens,
             }
           : undefined;
-        if (usage) {
-          await recordLlmSpend(this.env, 'gemini', candidateSpendUsd('gemini', model, resolvedModel, usage) ?? 0);
+        if (usage && !this.meterExternally) {
+          await settleLlmSpend(this.env, {
+            provider: 'gemini',
+            requestedModel: model,
+            resolvedModel,
+            providerResponseId: chunks.length === 1 ? providerRequestId : null,
+            attemptId: accountingAttemptId,
+            docId: input.filing.docId,
+            usd: candidateSpendUsd('gemini', model, resolvedModel, usage) ?? 0,
+            occurredAt: accountingOccurredAt,
+          });
         }
         throw Object.assign(failure, {
           ...(usage ? { usage } : {}),
@@ -314,8 +329,17 @@ let keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKe
         }
       : undefined;
 
-    if (usage) {
-      await recordLlmSpend(this.env, 'gemini', candidateSpendUsd('gemini', model, resolvedModel, usage) ?? 0);
+    if (usage && !this.meterExternally) {
+      await settleLlmSpend(this.env, {
+        provider: 'gemini',
+        requestedModel: model,
+        resolvedModel,
+        providerResponseId: chunks.length === 1 ? providerRequestId : null,
+        attemptId: accountingAttemptId,
+        docId: input.filing.docId,
+        usd: candidateSpendUsd('gemini', model, resolvedModel, usage) ?? 0,
+        occurredAt: accountingOccurredAt,
+      });
     }
 
     return {

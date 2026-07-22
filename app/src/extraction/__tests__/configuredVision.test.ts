@@ -181,6 +181,26 @@ describe('ConfiguredVisionExtractor', () => {
     expect(result.modelVersion).toBe('gpt-5.6-terra-2026');
   });
 
+  it('never spends on failover when paid-response settlement failed', async () => {
+    const env = {
+      AGREEMENT_HOUSE_MODEL_A: 'mistral:mistral-ocr-latest',
+      AGREEMENT_HOUSE_MODEL_B: 'openai:gpt-5.6-terra',
+    } as unknown as Env;
+    mocks.runCandidateOnDoc.mockResolvedValueOnce(failResult({
+      error: 'llm spend settlement failed: Turso unavailable',
+      failure: {
+        code: 'llm_spend_settlement_failed',
+        scope: 'provider',
+        retryable: false,
+        message: 'paid-response accounting is unavailable',
+      },
+    }));
+    const extractor = new ConfiguredVisionExtractor(env, legacyExtractor(LEGACY_RESULT));
+
+    await expect(extractor.extract(input())).rejects.toThrow(/settlement failed/);
+    expect(mocks.runCandidateOnDoc).toHaveBeenCalledTimes(1);
+  });
+
   it('throws with both stable error strings when primary and failover both fail', async () => {
     const env = {
       AGREEMENT_HOUSE_MODEL_A: 'mistral:mistral-ocr-latest',
