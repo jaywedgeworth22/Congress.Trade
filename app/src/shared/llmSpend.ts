@@ -173,8 +173,8 @@ class SettlementIntegrityError extends Error {
   }
 }
 
-function missingSettlementTable(error: unknown): boolean {
-  return /no such table:\s*(?:llm_spend_settlements|autopilot_budget_settlements)/i
+function missingSettlementProjection(error: unknown): boolean {
+  return /no such table:\s*llm_spend_settlement_totals/i
     .test(error instanceof Error ? error.message : String(error));
 }
 
@@ -190,40 +190,26 @@ interface StoredLlmSettlement {
 export function createLlmSpendSettlementWriter(db: D1Database): LlmSpendSettlementWriter {
   return {
     async write(receipt) {
-      let inserted: D1Result;
-      try {
-        inserted = await db.prepare(
-          `INSERT OR IGNORE INTO llm_spend_settlements
+      const inserted = await db.prepare(
+        `INSERT OR IGNORE INTO llm_spend_settlements
            (settlement_id, provider, provider_response_id, attempt_id, day,
             occurred_at, requested_model, resolved_model, doc_id, usd,
             receipt_hash, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(
-          receipt.settlementId,
-          receipt.provider,
-          receipt.providerResponseId,
-          receipt.attemptId,
-          receipt.day,
-          receipt.occurredAt,
-          receipt.requestedModel,
-          receipt.resolvedModel,
-          receipt.docId,
-          receipt.usd,
-          receipt.receiptHash,
-          receipt.createdAt,
-        ).run();
-      } catch (error) {
-        if (!missingSettlementTable(error)) throw error;
-        // Rolling-deploy bridge only. Once migration 0053 exists, every new
-        // charge uses the immutable ledger and this path becomes unreachable.
-        await db.prepare(
-          `INSERT INTO llm_spend (day, provider, usd, updated_at) VALUES (?, ?, ?, ?)
-           ON CONFLICT(day, provider) DO UPDATE SET
-             usd = usd + excluded.usd,
-             updated_at = excluded.updated_at`,
-        ).bind(receipt.day, receipt.provider, receipt.usd, receipt.createdAt).run();
-        return 'inserted';
-      }
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(
+        receipt.settlementId,
+        receipt.provider,
+        receipt.providerResponseId,
+        receipt.attemptId,
+        receipt.day,
+        receipt.occurredAt,
+        receipt.requestedModel,
+        receipt.resolvedModel,
+        receipt.docId,
+        receipt.usd,
+        receipt.receiptHash,
+        receipt.createdAt,
+      ).run();
       if ((inserted.meta?.changes ?? 0) > 0) return 'inserted';
 
       const existing = await db.prepare(
@@ -258,36 +244,25 @@ export function createAutopilotBudgetSettlementWriter(
 ): AutopilotBudgetSettlementWriter {
   return {
     async write(receipt) {
-      let inserted: D1Result;
-      try {
-        inserted = await db.prepare(
-          `INSERT OR IGNORE INTO autopilot_budget_settlements
-           (settlement_id, day, reserved_microusd, actual_microusd, status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`,
-        ).bind(
-          receipt.settlementId,
-          receipt.day,
-          receipt.reservedMicroUsd,
-          receipt.actualMicroUsd,
-          receipt.status,
-          receipt.createdAt,
-        ).run();
-      } catch (error) {
-        if (!missingSettlementTable(error)) throw error;
-        const delta = receipt.actualMicroUsd - receipt.reservedMicroUsd;
-        if (delta !== 0) {
-          await db.prepare(
-            'UPDATE autopilot_budget SET spend_microusd = MAX(spend_microusd + ?, 0) WHERE day = ?',
-          ).bind(delta, receipt.day).run();
-        }
-        return 'inserted';
-      }
-      if ((inserted.meta?.changes ?? 0) > 0) return 'inserted';
+      const settled = await db.prepare(
+        `UPDATE autopilot_budget_reservations
+            SET actual_microusd = ?, status = ?, settled_at = ?
+          WHERE reservation_id = ? AND day = ? AND reserved_microusd = ?
+            AND status = 'reserved'`,
+      ).bind(
+        receipt.actualMicroUsd,
+        receipt.status,
+        receipt.createdAt,
+        receipt.settlementId,
+        receipt.day,
+        receipt.reservedMicroUsd,
+      ).run();
+      if ((settled.meta?.changes ?? 0) > 0) return 'inserted';
       const existing = await db.prepare(
         `SELECT day, reserved_microusd, actual_microusd, status
-           FROM autopilot_budget_settlements WHERE settlement_id = ?`,
+           FROM autopilot_budget_reservations WHERE reservation_id = ?`,
       ).bind(receipt.settlementId).first<StoredAutopilotSettlement>();
-      if (!existing) throw new Error('budget settlement insert was ignored without an existing receipt');
+      if (!existing) throw new Error('autopilot reservation is missing');
       if (
         existing.day !== receipt.day
         || Number(existing.reserved_microusd) !== receipt.reservedMicroUsd
@@ -332,13 +307,22 @@ export async function readLlmSpend(env: Env, now = new Date()): Promise<LlmSpend
     let settlements: { results?: Array<{ provider: string; usd: number }> } = { results: [] };
     try {
       settlements = await db
-        .prepare('SELECT provider, usd FROM llm_spend_settlements WHERE day = ?')
+        .prepare('SELECT provider, usd FROM llm_spend_settlement_totals WHERE day = ?')
         .bind(dayStr(now))
         .all<{ provider: string; usd: number }>();
     } catch (error) {
-      // Rolling deploy compatibility: the old aggregate remains authoritative
-      // until POST /api/admin/migrate creates the immutable ledger.
-      if (!missingSettlementTable(error)) return null;
+      if (!missingSettlementProjection(error)) return null;
+      // Rolling-deploy compatibility only: migration 0054 immediately creates
+      // the bounded projection. Until then, preserve exact ceiling semantics
+      // by reading the immutable ledger; never fall back to additive writes.
+      try {
+        settlements = await db
+          .prepare('SELECT provider, usd FROM llm_spend_settlements WHERE day = ?')
+          .bind(dayStr(now))
+          .all<{ provider: string; usd: number }>();
+      } catch {
+        return null;
+      }
     }
     const perProvider: Record<string, number> = {};
     let totalUsd = 0;
