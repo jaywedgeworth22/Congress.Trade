@@ -34,11 +34,15 @@
   },
   "minimumDependencyAge": {
     "age": "PT24H",
-    "exclude": ["npm:@google/genai"]
+    "exclude": [
+      "npm:@google/genai"
+    ]
   },
   "nodeModulesDir": "none",
   "lock": false,
-  "unstable": ["sloppy-imports"],
+  "unstable": [
+    "sloppy-imports"
+  ],
   "deploy": {
     "runtime": {
       "type": "dynamic",
