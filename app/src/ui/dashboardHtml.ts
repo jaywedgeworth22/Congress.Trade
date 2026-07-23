@@ -2127,14 +2127,15 @@ var NAME_SUFFIX = { 'jr': 'Jr', 'jr.': 'Jr', 'sr': 'Sr', 'sr.': 'Sr', 'ii': 'II'
 function fmtName(raw) {
   var s = String(raw == null ? '' : raw).trim();
   if (!s) return '';
-  s = s.replace(/\s*\(\s*Senator\s*\)\s*/gi, ' ');
-  s = s.replace(/\s*\(\s*\)\s*/g, ' ');
+  s = s.replace(/\\s*\\(\\s*Senator\\s*\\)\\s*/gi, ' ');
+  s = s.replace(/\\s*\\(\\s*\\)\\s*/g, ' ');
   while (s.indexOf('  ') >= 0) s = s.split('  ').join(' ');
   s = s.split(' , ').join(', ');
 
   // Clean academic/medical titles safely without mangling
-  s = s.replace(/(?:,\s*)?(?:\bMD\b|\bFACS\b|\bPH\.?D\.?)(?=\s|,|$)/gi, '');
-  s = s.replace(/[,\s.]+$/, '');
+  s = s.replace(/(?:,\\s*)?\\b(?:DR|HON|MR|MRS|MS|REP|SEN|MD|FACS|PH\\.?D\\.?)\\b(?:,\\s*)?/gi, ' ');
+  while (s.indexOf('  ') >= 0) s = s.split('  ').join(' ');
+  s = s.replace(/[,\\s.]+$/, '');
 
   // Flip "Last, First" to "First Last"
   if (s.indexOf(',') >= 0) {

@@ -1934,4 +1934,17 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
     // No photo -> no <img> at all (initials chip only); nothing to assert on alt.
     expect(memberAvatarHtml('Nancy Pelosi', '')).not.toContain('<img');
   });
+
+  it('does not inject spaces while formatting names from the inline template', () => {
+    const src = [
+      'var NAME_SUFFIX = { jr: \'Jr\', \'jr.\': \'Jr\', sr: \'Sr\', \'sr.\': \'Sr\', ii: \'II\', iii: \'III\', iv: \'IV\' };',
+      extractFn(DASHBOARD_HTML, 'fmtName'),
+      'return fmtName;',
+    ].join('\n');
+    // eslint-disable-next-line no-new-func -- executing the real shipped source
+    const fmtName = new Function(src)() as (raw: string) => string;
+    expect(fmtName('Jared Moskowitz')).toBe('Jared Moskowitz');
+    expect(fmtName('Richard Dean Dr McCormick')).toBe('Richard Dean McCormick');
+    expect(fmtName('Dunn, Neal Patrick MD, FACS')).toBe('Neal Patrick Dunn');
+  });
 });
