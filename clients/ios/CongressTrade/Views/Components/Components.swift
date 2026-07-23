@@ -63,17 +63,18 @@ struct StatusPill: View {
     let text: String
     let color: Color
     var icon: String? = nil
+    var compact: Bool = false
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: compact ? 2 : 4) {
             if let icon {
                 Image(systemName: icon)
             }
             Text(text)
         }
-        .font(.caption.weight(.bold))
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .font(compact ? .caption2.weight(.bold) : .caption.weight(.bold))
+        .padding(.horizontal, compact ? 7 : 10)
+        .padding(.vertical, compact ? 3 : 6)
         .foregroundStyle(color)
         .background(color.opacity(0.15), in: Capsule())
         .overlay(Capsule().stroke(color.opacity(0.3), lineWidth: 1))
@@ -83,14 +84,19 @@ struct StatusPill: View {
 struct AssetMark: View {
     let symbol: String
     var isTicker: Bool = true
+    var size: CGFloat = 48
 
     private var logoURL: URL? {
         guard isTicker else { return nil }
         guard let encodedSymbol = symbol.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else {
             return nil
         }
-        let base = CongressTradeAPIClient.defaultBaseURL
-        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+        // Logos are served at site origin, not under /api/client/v1.
+        let origin = CongressTradeAPIClient.defaultBaseURL
+            .deletingLastPathComponent() // v1
+            .deletingLastPathComponent() // client
+            .deletingLastPathComponent() // api
+        guard var components = URLComponents(url: origin, resolvingAgainstBaseURL: false) else {
             return nil
         }
         components.path = "/api/logos/ticker"
@@ -109,11 +115,11 @@ struct AssetMark: View {
                     image
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .padding(6)
-                        .frame(width: 48, height: 48)
-                        .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
+                        .padding(size * 0.12)
+                        .frame(width: size, height: size)
+                        .background(Color.white, in: RoundedRectangle(cornerRadius: size * 0.22))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 12)
+                            RoundedRectangle(cornerRadius: size * 0.22)
                                 .stroke(AppTheme.borderColor, lineWidth: 1)
                         )
                 default:
@@ -127,18 +133,35 @@ struct AssetMark: View {
 
     private var fallbackMark: some View {
         Text(String(symbol.prefix(4)).uppercased())
-            .font(.caption.weight(.heavy).monospaced())
-            .frame(width: 48, height: 48)
+            .font(.system(size: max(9, size * 0.28), weight: .heavy, design: .monospaced))
+            .frame(width: size, height: size)
             .foregroundStyle(.white)
             .background(
                 AppTheme.primaryGradient,
-                in: RoundedRectangle(cornerRadius: 12)
+                in: RoundedRectangle(cornerRadius: size * 0.22)
             )
-            .shadow(color: .blue.opacity(0.4), radius: 6, x: 0, y: 3)
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: size * 0.22)
                     .stroke(Color.white.opacity(0.2), lineWidth: 1)
             )
+    }
+}
+
+/// Compact money/count formatting shared by Trends KPIs.
+enum CompactFormat {
+    static func usd(_ value: Double?) -> String {
+        guard let value else { return "—" }
+        let absV = abs(value)
+        let sign = value < 0 ? "-" : ""
+        if absV >= 1_000_000_000 { return "\(sign)$\(String(format: "%.1f", absV / 1_000_000_000))B" }
+        if absV >= 1_000_000 { return "\(sign)$\(String(format: "%.1f", absV / 1_000_000))M" }
+        if absV >= 1_000 { return "\(sign)$\(String(format: "%.0f", absV / 1_000))k" }
+        return "\(sign)$\(String(format: "%.0f", absV))"
+    }
+
+    static func count(_ value: Int?) -> String {
+        guard let value else { return "—" }
+        return value.formatted(.number.grouping(.automatic))
     }
 }
 

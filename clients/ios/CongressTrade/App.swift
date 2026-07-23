@@ -33,7 +33,7 @@ struct MainTabView: View {
         TabView {
             FeedDashboardView()
                 .tabItem {
-                    Label("Feed", systemImage: "list.bullet.rectangle")
+                    Label("Trades", systemImage: "list.bullet.rectangle")
                 }
 
             TrendsView()
@@ -43,7 +43,7 @@ struct MainTabView: View {
 
             DeliveryView()
                 .tabItem {
-                    Label("Delivery", systemImage: "antenna.radiowaves.left.and.right")
+                    Label("Alerts", systemImage: "bell.badge")
                 }
 
             SettingsView()
