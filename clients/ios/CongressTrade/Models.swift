@@ -202,6 +202,15 @@ enum ChamberFilter: String, CaseIterable, Codable, Hashable, Identifiable {
         case .executive: return "Executive"
         }
     }
+
+    /// Website-parity single-letter chips (H / S / P).
+    var shortLabel: String {
+        switch self {
+        case .house: return "H"
+        case .senate: return "S"
+        case .executive: return "P"
+        }
+    }
 }
 
 struct ClientCommandResponse<ResultPayload: Decodable>: Decodable {
