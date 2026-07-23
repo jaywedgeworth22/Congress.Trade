@@ -510,13 +510,7 @@ function rowKeyFromFields(provider: ProviderId, payload: Record<string, unknown>
 }
 
 export function parseFmpDisclosureRows(chamber: Chamber, json: unknown): FmpDisclosureRow[] {
-  return extractRows(json)
-    .filter((payload) => {
-      const type = (fieldString(payload, ['assetType', 'type', 'asset_type']) || '').toLowerCase();
-      if (type.includes('etf') || type.includes('bond') || type.includes('fund') || type.includes('note') || type.includes('bill')) return false;
-      return true;
-    })
-    .map((payload) => {
+  return extractRows(json).map((payload) => {
     const sourceUrl = firstUrl(payload);
     const text = rowText(payload);
     const docToken = providerKeyFromUrl(sourceUrl) ?? fieldString(payload, ['docId', 'documentId', 'reportId', 'disclosureId', 'disclosure_id']);
@@ -558,10 +552,10 @@ export function parseUnusualWhalesDisclosureRows(json: unknown): DisclosureProvi
   });
 }
 
-export function parseQuiverDisclosureRows(chamber: Chamber, json: unknown): DisclosureProviderRow[] {
+export function parseQuiverDisclosureRows(chamber: Chamber, json: unknown, defaultFilerName?: string): DisclosureProviderRow[] {
   return extractRows(json).map((payload) => {
     const filedDate = normalizeDate(fieldString(payload, ['Filed', 'ReportDate', 'report_date', 'filed_date']));
-    const filerName = fieldString(payload, ['Representative', 'Senator', 'Name', 'representative', 'senator', 'name']);
+    const filerName = fieldString(payload, ['Representative', 'Senator', 'Name', 'representative', 'senator', 'name']) || defaultFilerName || '';
     return {
       provider: 'quiver',
       chamber: normalizeChamber(fieldString(payload, ['Chamber', 'House', 'house']), chamber),
@@ -643,10 +637,11 @@ async function fetchFmpRows(
     } catch (err) {
       const status = /HTTP_(\d+)/.exec((err as Error).message)?.[1];
       if (status) assertFmpTierOk(Number(status));
+      if (chamber === 'executive' && status === '404') return [];
       throw err;
     }
   };
-  return (await Promise.all([fetchOne('house'), fetchOne('senate')])).flat();
+  return (await Promise.all([fetchOne('house'), fetchOne('senate'), fetchOne('executive')])).flat();
 }
 
 function unusualWhalesHeaders(apiKey: string): Record<string, string> {
@@ -679,13 +674,19 @@ async function fetchUnusualWhalesRowsForDate(
 
 async function fetchQuiverRows(apiKey: string, max: number, fetchImpl: typeof fetch): Promise<DisclosureProviderRow[]> {
   const headers = { authorization: `Token ${apiKey}`, 'Accept': 'application/json' };
-  const [house, senate] = await Promise.all([
-    fetchJson('https://api.quiverquant.com/beta/live/housetrading?options=true', headers, fetchImpl),
-    fetchJson('https://api.quiverquant.com/beta/live/senatetrading?options=true', headers, fetchImpl),
+  const [house, senate, trump] = await Promise.all([
+    fetchJson('https://api.quiverquant.com/beta/live/housetrading?options=true', headers, fetchImpl).catch(() => []),
+    fetchJson('https://api.quiverquant.com/beta/live/senatetrading?options=true', headers, fetchImpl).catch(() => []),
+    fetchJson('https://api.quiverquant.com/beta/bulk/trumpstocktrades', headers, fetchImpl).catch(() => []),
   ]);
   const houseSliced = Array.isArray(house) ? house.slice(0, max) : house;
   const senateSliced = Array.isArray(senate) ? senate.slice(0, max) : senate;
-  return [...parseQuiverDisclosureRows('house', houseSliced), ...parseQuiverDisclosureRows('senate', senateSliced)];
+  const trumpSliced = Array.isArray(trump) ? trump.slice(0, max) : trump;
+  return [
+    ...parseQuiverDisclosureRows('house', houseSliced),
+    ...parseQuiverDisclosureRows('senate', senateSliced),
+    ...parseQuiverDisclosureRows('executive', trumpSliced, 'Donald Trump')
+  ];
 }
 
 
