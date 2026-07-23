@@ -44,7 +44,9 @@ final class CongressTradeStore: ObservableObject {
     }
     /// Canonical chamber chip selection. Drives both the visible chips and
     /// the `chamber=` feed request — see `chamberQueryValue`. CT-AUD-010.
-    @Published private(set) var selectedChambers: Set<ChamberFilter> = CongressTradeStore.initialChambers
+    /// Empty set = no chamber filter (all branches). Mirrors the website HSP chips
+    /// where nothing selected means all. Non-empty = filter to that subset.
+    @Published private(set) var selectedChambers: Set<ChamberFilter> = []
     /// Time window for the feed + trends (website default = Past 3 Months).
     @Published private(set) var selectedTimeRange: TimeRange = .ninetyDays
 
@@ -112,7 +114,8 @@ final class CongressTradeStore: ObservableObject {
     /// Selects the chamber chips and immediately resyncs against that
     /// selection's own request. Never allows an empty selection.
     func setChamberSelection(_ chambers: Set<ChamberFilter>) async {
-        selectedChambers = chambers.isEmpty ? Self.initialChambers : chambers
+        // Allow empty = all branches (website parity with unselected H/S/P).
+        selectedChambers = chambers
         await refresh()
     }
 
@@ -268,10 +271,10 @@ final class CongressTradeStore: ObservableObject {
     /// The `chamber=` query value for a selection, or `nil` to omit the
     /// parameter entirely when the selection matches the backend's true default.
     private static func chamberQueryValue(for chambers: Set<ChamberFilter>) -> String? {
-        let normalized = chambers.isEmpty ? initialChambers : chambers
-        let backendDefault: Set<ChamberFilter> = [.house, .senate]
-        if normalized == backendDefault { return nil }
-        return normalized.map(\.rawValue).sorted().joined(separator: ",")
+        // Empty (or all three) = omit chamber= so unresolved-chamber rows stay in view.
+        let all = Set(ChamberFilter.allCases)
+        if chambers.isEmpty || chambers == all { return nil }
+        return chambers.map(\.rawValue).sorted().joined(separator: ",")
     }
 
     private func trimCache(in context: ModelContext) throws {
