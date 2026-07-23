@@ -209,63 +209,22 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(store.selectedChambers, [.house, .senate, .executive])
     }
 
-    // MARK: - Feed catch-up sync (CT-AUD-009)
+    // MARK: - Feed snapshot load (newest-first window, not multi-page crawl)
 
     @MainActor
-    func testCatchUpLoopPagesForwardUntilAShortPageSignalsExhaustion() async throws {
+    func testRefreshLoadsSingleNewestFirstSnapshotWithTradeDateSortAndDefaultWindow() async throws {
         let cursorStore = InMemorySyncCursorStore()
-        cursorStore.setCursor(100, for: "house,senate")
         var feedCallCount = 0
+        var feedURL: URL?
         MockURLProtocol.handler = { request in
             if request.url?.path.hasSuffix("/bootstrap") == true {
                 return Self.response(for: request, json: Self.bootstrapJSON)
             }
             feedCallCount += 1
-            switch feedCallCount {
-            case 1:
-                return Self.response(for: request, json: Self.feedJSON(
-                    items: (1...50).map { Self.tradeJSON(id: "a\($0)", cursor: 100 + $0) },
-                    cursor: 150, count: 50, total: 500, limit: 50
-                ))
-            case 2:
-                return Self.response(for: request, json: Self.feedJSON(
-                    items: (1...50).map { Self.tradeJSON(id: "b\($0)", cursor: 150 + $0) },
-                    cursor: 200, count: 50, total: 500, limit: 50
-                ))
-            default:
-                return Self.response(for: request, json: Self.feedJSON(
-                    items: (1...10).map { Self.tradeJSON(id: "c\($0)", cursor: 200 + $0) },
-                    cursor: 210, count: 10, total: 500, limit: 50
-                ))
-            }
-        }
-
-        let store = CongressTradeStore(
-            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
-            cursorStore: cursorStore,
-            sleeper: { _ in }
-        )
-        await store.setChamberSelection([.house, .senate])
-
-        XCTAssertEqual(feedCallCount, 3, "Should keep paging while pages are full, stopping only once a short page signals exhaustion")
-        XCTAssertEqual(cursorStore.cursor(for: "house,senate"), 210)
-        XCTAssertNil(store.feedNotice)
-    }
-
-    @MainActor
-    func testCatchUpLoopStopsAtTheBoundedPageCapAndSurfacesANotice() async throws {
-        let cursorStore = InMemorySyncCursorStore()
-        cursorStore.setCursor(1000, for: "house,senate")
-        var feedCallCount = 0
-        MockURLProtocol.handler = { request in
-            if request.url?.path.hasSuffix("/bootstrap") == true {
-                return Self.response(for: request, json: Self.bootstrapJSON)
-            }
-            feedCallCount += 1
-            let base = 1000 + (feedCallCount - 1) * 50
+            feedURL = request.url
             return Self.response(for: request, json: Self.feedJSON(
-                items: (1...50).map { Self.tradeJSON(id: "p\(feedCallCount)_\($0)", cursor: base + $0) },
-                cursor: base + 50, count: 50, total: 100_000, limit: 50
+                items: (1...10).map { Self.tradeJSON(id: "a\($0)", cursor: 100 + $0) },
+                cursor: 110, count: 10, total: 718, limit: 100
             ))
         }
 
@@ -274,10 +233,43 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: cursorStore,
             sleeper: { _ in }
         )
+        XCTAssertEqual(store.selectedTimeRange, .ninetyDays)
         await store.setChamberSelection([.house, .senate])
 
-        XCTAssertEqual(feedCallCount, 20, "A very large backlog must not turn one refresh into an unbounded crawl")
-        XCTAssertEqual(store.feedNotice, "Caught up on the latest 1000 trades. Pull to refresh again to keep catching up.")
+        XCTAssertEqual(feedCallCount, 1, "Visible feed is one newest-first snapshot, not a multi-page historical crawl")
+        XCTAssertEqual(store.tradeTotal, 718, "Trades KPI must use API total, never max cursor_seq")
+        XCTAssertEqual(store.feed?.cursor, 110)
+        XCTAssertNil(store.feedNotice)
+
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        let items = components.queryItems ?? []
+        XCTAssertEqual(items.first(where: { $0.name == "order" })?.value, "desc")
+        XCTAssertEqual(items.first(where: { $0.name == "sort" })?.value, "tx_date")
+        XCTAssertNotNil(items.first(where: { $0.name == "from" })?.value, "Default 90d window must send from=")
+        // Cursor watermark is keyed by chamber+range.
+        XCTAssertEqual(cursorStore.cursor(for: "house,senate|90d"), 110)
+    }
+
+    @MainActor
+    func testTimeRangeAllOmitsFromParameter() async throws {
+        var feedURL: URL?
+        MockURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/bootstrap") == true {
+                return Self.response(for: request, json: Self.bootstrapJSON)
+            }
+            feedURL = request.url
+            return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 100))
+        }
+
+        let store = CongressTradeStore(
+            api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
+            cursorStore: InMemorySyncCursorStore(),
+            sleeper: { _ in }
+        )
+        await store.setTimeRange(.all)
+
+        let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
+        XCTAssertNil(components.queryItems?.first(where: { $0.name == "from" }))
     }
 
     @MainActor
