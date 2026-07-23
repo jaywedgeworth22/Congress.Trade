@@ -1522,28 +1522,13 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     const maturedObservations = observations.filter((row) => row.first_observed_at <= maturityCutoff);
     const maturedCandidates = mine.filter((row) => row.congress_first_seen_at <= maturityCutoff);
 
-    // Group observations into documents by chamber + filerName + filedDate
-    const totalProviderDocs = new Set(
-      observations.map((row) => `${row.chamber}:${lastName(row.filer_name)}:${row.filed_date}`)
-    ).size;
-    const uniqueProviderDocs = new Set(
-      maturedObservations.map((row) => `${row.chamber}:${lastName(row.filer_name)}:${row.filed_date}`)
-    );
-    const matchedProviderDocs = new Set(
-      maturedObservations
-        .filter((row) => matchedKeys.has(`${row.chamber}:${row.provider_key}`))
-        .map((row) => `${row.chamber}:${lastName(row.filer_name)}:${row.filed_date}`)
-    );
-
-    const maturedMatched = matchedProviderDocs.size;
-    const maturedProviderObserved = uniqueProviderDocs.size;
+    const maturedMatched = maturedObservations.filter((row) => matchedKeys.has(`${row.chamber}:${row.provider_key}`)).length;
+    const maturedProviderObserved = maturedObservations.length;
     const unmatchedProvider = maturedProviderObserved - maturedMatched;
 
-    const pendingProvider = new Set(
-      observations
-        .filter((row) => row.first_observed_at > maturityCutoff && !matchedKeys.has(`${row.chamber}:${row.provider_key}`))
-        .map((row) => `${row.chamber}:${lastName(row.filer_name)}:${row.filed_date}`)
-    ).size;
+    const pendingProvider = observations.filter(
+      (row) => row.first_observed_at > maturityCutoff && !matchedKeys.has(`${row.chamber}:${row.provider_key}`)
+    ).length;
 
     const matchedMaturedCandidates = maturedCandidates.filter(
       (row) => row.status === 'matched' && (row.match_method === 'doc-token' || row.match_method === 'filer-date'),
@@ -1569,7 +1554,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
       matched,
       pending: mine.filter((row) => row.status === 'pending').length,
       errored: mine.filter((row) => row.status === 'error').length,
-      providerObserved: totalProviderDocs,
+      providerObserved: observations.length,
       maturedProviderObserved,
       unmatchedProvider,
       pendingProvider,
