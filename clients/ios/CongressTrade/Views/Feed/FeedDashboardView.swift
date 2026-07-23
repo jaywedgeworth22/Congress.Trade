@@ -26,7 +26,7 @@ struct FeedDashboardView: View {
     var filteredTrades: [ClientTrade] {
         let needle = appliedSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let chambers = store.selectedChambers
-        let matchesDefaultSelection = chambers == CongressTradeStore.defaultChambers
+        let filteringChambers = !chambers.isEmpty
         let fromISO = store.selectedTimeRange.fromDateISO
 
         return sortedCached.filter { trade in
@@ -35,10 +35,13 @@ struct FeedDashboardView: View {
                 if !tx.isEmpty, tx < fromISO { return false }
             }
 
-            if let raw = trade.member.chamber?.lowercased(), let chamber = ChamberFilter(rawValue: raw) {
-                if !chambers.contains(chamber) { return false }
-            } else if !matchesDefaultSelection {
-                return false
+            if filteringChambers {
+                if let raw = trade.member.chamber?.lowercased(), let chamber = ChamberFilter(rawValue: raw) {
+                    if !chambers.contains(chamber) { return false }
+                } else {
+                    // Unresolved chamber drops out only when a filter is active.
+                    return false
+                }
             }
 
             if !needle.isEmpty {
@@ -60,7 +63,7 @@ struct FeedDashboardView: View {
                         HStack(spacing: 8) {
                             ForEach(ChamberFilter.allCases) { chamber in
                                 FilterChip(
-                                    title: chamber.label,
+                                    title: chamber.shortLabel,
                                     isSelected: store.selectedChambers.contains(chamber)
                                 ) {
                                     toggleChamber(chamber)
@@ -125,16 +128,6 @@ struct FeedDashboardView: View {
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
                 }
-                ToolbarItem(placement: AppToolbarPlacement.trailing) {
-                    Button {
-                        Task { await store.refresh() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .fontWeight(.semibold)
-                    }
-                    .accessibilityLabel("Refresh")
-                    .disabled(store.isRefreshing)
-                }
             }
             .refreshable { await store.refresh() }
             .overlay {
@@ -147,6 +140,9 @@ struct FeedDashboardView: View {
             }
             .sheet(item: $selectedTrade) { trade in
                 TradeDetailView(trade: trade)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+                    .presentationCornerRadius(18)
             }
             .sheet(isPresented: Binding<Bool>(
                 get: { selectedPoliticianId != nil },
@@ -154,6 +150,9 @@ struct FeedDashboardView: View {
             )) {
                 if let memberId = selectedPoliticianId {
                     PoliticianDetailView(memberId: memberId, memberName: selectedPoliticianName ?? "Politician")
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                        .presentationCornerRadius(18)
                 }
             }
             .onChange(of: searchText) { _, newValue in
@@ -218,8 +217,6 @@ struct FeedControlBar: View {
                 }
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "calendar")
-                        .font(.caption.weight(.semibold))
                     Text(store.selectedTimeRange.label)
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
@@ -232,7 +229,7 @@ struct FeedControlBar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
             }
-            .accessibilityLabel("Time range")
+            .accessibilityLabel("Time window")
 
             MetricTile(
                 title: "Trades",
@@ -343,13 +340,14 @@ struct TradeCard: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color(uiColor: .secondarySystemBackground).opacity(0.55), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(AppTheme.borderColor.opacity(0.6), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(AppTheme.borderColor.opacity(0.55), lineWidth: 1)
         )
+        .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
     }
 
     private var assetTitle: String {
