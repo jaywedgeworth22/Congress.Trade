@@ -241,6 +241,45 @@ describe('priceBenchmarkUsage', () => {
     });
   });
 
+  it('prices OpenRouter gpt-5.6-terra/luna at OpenAI passthrough rates (no dummy underpricing)', () => {
+    const usage = { promptTokens: 1_000_000, cachedTokens: 200_000, completionTokens: 1_000_000 };
+    const terra = priceBenchmarkUsage({
+      provider: 'openrouter',
+      model: 'openai/gpt-5.6-terra',
+      invoked: true,
+      usage,
+    });
+    // uncached 800k * $2.5 + cached 200k * $0.25 + 1M * $15 = 2 + 0.05 + 15 = 17.05
+    expect(terra.costSource).toBe('usage_priced');
+    expect(terra.costUsd).toBeCloseTo(17.05, 10);
+    expect(terra.costDetail).toMatchObject({
+      rateCardVersion: 'openrouter-static-2026-07-23',
+      rates: { inputUsdPerMillion: 2.5, cachedInputUsdPerMillion: 0.25, outputUsdPerMillion: 15 },
+    });
+
+    const luna = priceBenchmarkUsage({
+      provider: 'openrouter',
+      model: 'openai/gpt-5.6-luna',
+      invoked: true,
+      usage,
+    });
+    // uncached 800k * $1 + cached 200k * $0.1 + 1M * $6 = 0.8 + 0.02 + 6 = 6.82
+    expect(luna.costSource).toBe('usage_priced');
+    expect(luna.costUsd).toBeCloseTo(6.82, 10);
+    expect(luna.costDetail).toMatchObject({
+      rateCardVersion: 'openrouter-static-2026-07-23',
+      rates: { inputUsdPerMillion: 1, cachedInputUsdPerMillion: 0.1, outputUsdPerMillion: 6 },
+    });
+  });
+
+  it('rejects any remaining openrouter-dummy rate-card rows', async () => {
+    const { STANDARD_BENCHMARK_RATE_CARD } = await import('../benchmarkMetrics.ts');
+    const dummies = STANDARD_BENCHMARK_RATE_CARD.filter((row) =>
+      String(row.version ?? '').includes('dummy') || String(row.sourceUrl ?? '') === 'dummy',
+    );
+    expect(dummies).toEqual([]);
+  });
+
   it('prices OpenRouter Mistral structured OCR from provider-reported pages', () => {
     const result = priceBenchmarkUsage({
       provider: 'openrouter',

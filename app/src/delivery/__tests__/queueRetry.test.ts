@@ -6,6 +6,7 @@ vi.mock('#sentry', () => ({
   withMonitor: (_slug: string, callback: () => unknown) => callback(),
 }));
 
+import * as Sentry from '#sentry';
 import worker from '../../index.ts';
 import { DeliveryRetryError, dispatchWebhook } from '../webhook.ts';
 import type { Env, QueueMessage } from '../../shared/types.ts';
@@ -182,6 +183,7 @@ describe('native delivery retry and leases', () => {
   it('uses native delayed retry and durable HTTP attempt count', async () => {
     const { env, delivery } = fakeEnv();
     const http = publicDnsAndTarget(503); vi.stubGlobal('fetch', http.fetchMock);
+    vi.mocked(Sentry.captureException).mockClear();
     const { ack, retry } = await queueOnce(env);
     expect(http.targetCalls()).toBe(1);
     expect(http.targetCancels()).toBe(1);
@@ -189,6 +191,8 @@ describe('native delivery retry and leases', () => {
     expect(retry).toHaveBeenCalledWith({ delaySeconds: expect.any(Number) });
     expect(ack).not.toHaveBeenCalled();
     expect(env.DELIVERY_QUEUE.send).not.toHaveBeenCalled();
+    // Expected DeliveryRetryError must not create a Sentry Issue (CONGRESS-TRADE-J).
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
   it('does not consume an HTTP attempt while a crash lease is busy, then reclaims it stale', async () => {
