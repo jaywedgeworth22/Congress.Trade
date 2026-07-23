@@ -45,6 +45,10 @@ struct FeedQuery: Equatable {
     var type: String?
     var from: String?
     var to: String?
+    /// Backend sort key: `tx_date` | `published` | cursor (default). Prefer
+    /// `tx_date` for the consumer feed so seed imports of old filings don't
+    /// float to the top just because they got a high cursor_seq.
+    var sort: String?
     var order: String?
 
     var queryItems: [URLQueryItem] {
@@ -56,6 +60,7 @@ struct FeedQuery: Equatable {
         if let type, !type.isEmpty { items.append(URLQueryItem(name: "type", value: type)) }
         if let from, !from.isEmpty { items.append(URLQueryItem(name: "from", value: from)) }
         if let to, !to.isEmpty { items.append(URLQueryItem(name: "to", value: to)) }
+        if let sort, !sort.isEmpty { items.append(URLQueryItem(name: "sort", value: sort)) }
         if let order, !order.isEmpty { items.append(URLQueryItem(name: "order", value: order)) }
         return items
     }
@@ -133,8 +138,46 @@ final class CongressTradeAPIClient {
     }
 
     func latencySummary() async throws -> LatencySummary {
-        let url = originURL.appendingPathComponent("api/analytics/latency-summary")
-        return try await request(url)
+        try await analyticsGet("latency-summary")
+    }
+
+    func analyticsSummary(window: String) async throws -> AnalyticsSummary {
+        try await analyticsGet("summary", query: [URLQueryItem(name: "window", value: window)])
+    }
+
+    func tickerLeaderboard(window: String, rankBy: String = "volume") async throws -> TickerLeaderboardResponse {
+        try await analyticsGet(
+            "ticker-leaderboard",
+            query: [
+                URLQueryItem(name: "window", value: window),
+                URLQueryItem(name: "rankBy", value: rankBy),
+            ]
+        )
+    }
+
+    func volumeOverTime(window: String) async throws -> VolumeOverTimeResponse {
+        try await analyticsGet("volume-over-time", query: [URLQueryItem(name: "window", value: window)])
+    }
+
+    func sectorFlow(window: String) async throws -> SectorFlowResponse {
+        try await analyticsGet("sector-flow", query: [URLQueryItem(name: "window", value: window)])
+    }
+
+    func memberLeaderboard(window: String) async throws -> MemberLeaderboardResponse {
+        try await analyticsGet("member-leaderboard", query: [URLQueryItem(name: "window", value: window)])
+    }
+
+    func clusterBuys(window: String) async throws -> ClusterBuysResponse {
+        try await analyticsGet("cluster-buys", query: [URLQueryItem(name: "window", value: window)])
+    }
+
+    private func analyticsGet<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
+        var components = URLComponents(
+            url: originURL.appendingPathComponent("api/analytics/\(path)"),
+            resolvingAgainstBaseURL: false
+        )!
+        if !query.isEmpty { components.queryItems = query }
+        return try await request(components.url!)
     }
 
     func commands(limit: Int = 20) async throws -> CommandListResponse {
