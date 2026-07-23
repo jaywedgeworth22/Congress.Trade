@@ -832,13 +832,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-bar-fill.behind { background: linear-gradient(90deg, var(--rival) 0%, color-mix(in srgb,var(--rival) 65%,var(--text-dim)) 100%); }
   .sp-bar-fill.tied { background: linear-gradient(90deg, var(--warn) 0%, color-mix(in srgb,var(--warn) 65%,var(--text-dim)) 100%); }
   /* Lead stat */
-  .sp-lead { display:flex; align-items:baseline; gap:6px; }
+  .sp-lead { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px; }
   .sp-lead-num { font-size:30px; font-weight:800; letter-spacing:-0.5px; line-height:1; color:var(--good); font-variant-numeric:tabular-nums; }
   .sp-lead-num.negative { color:var(--rival); }
   .sp-lead-num.neutral { color:var(--text-dim); font-size:20px; }
   .sp-lead-label { font-size:11px; color:var(--text-dim); line-height:1.3; }
   /* W/L/T stat row */
-  .sp-wlt { display:flex; gap:0; border-top:1px solid color-mix(in srgb,var(--border) 60%,transparent); padding-top:10px; font-family:var(--mono); font-size:12px; }
+  .sp-wlt { display:flex; gap:0; border-top:1px solid color-mix(in srgb,var(--border) 60%,transparent); padding-top:10px; font-size:12px; }
   .sp-wlt-item { flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; }
   .sp-wlt-item + .sp-wlt-item { border-left:1px solid color-mix(in srgb,var(--border) 50%,transparent); }
   .sp-wlt-val { font-size:17px; font-weight:700; font-variant-numeric:tabular-nums; }
@@ -847,7 +847,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-wlt-val.t { color:var(--text-dim); }
   .sp-wlt-key { font-size:9.5px; text-transform:uppercase; letter-spacing:0.8px; color:var(--text-dim); opacity:0.7; }
   /* n= sample chip */
-  .sp-sample { font-size:10.5px; color:var(--text-dim); font-family:var(--mono); }
+  .sp-sample { font-size:10.5px; color:var(--text-dim); line-height:1.3; }
   /* Empty / gathering state */
   .sp-gathering { font-size:12px; color:var(--text-dim); line-height:1.5; padding:4px 0; }
   /* Old race-lane kept for compat with table view */
@@ -2011,7 +2011,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <details class="speed-table" style="margin-top:8px">
       <summary>Raw data table</summary>
       <div class="table-wrap"><table>
-        <thead><tr><th>Provider</th><th>Matched / CT candidates</th><th>Mature overlap / provider rows</th><th>CT / provider coverage</th><th>Unmatched provider rows</th><th>Status</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
+        <thead><tr><th>Provider</th><th>Matched /<br>CT rows</th><th>Mature overlap /<br>rows</th><th>CT /<br>provider coverage</th><th>Unmatched<br>provider rows</th><th>Status</th><th>We first</th><th>They first</th><th>Ties</th><th>Typical lead</th><th>Avg</th><th>P90</th></tr></thead>
         <tbody id="speedTableBody"></tbody>
       </table></div>
     </details>
@@ -6713,7 +6713,7 @@ function spCardHtml(p) {
       '<div class="sp-wlt-item"><span class="sp-wlt-val t">' + (p.tieCount || 0) + '</span><span class="sp-wlt-key">Ties</span></div>' +
       '</div>';
   } else if (p.matched > 0 || p.providerObserved > 0) {
-    wlt = '<div class="sp-sample">n = ' + p.matched + ' matched · ' + (p.maturedProviderObserved || 0) + ' mature provider rows · ' + (p.unmatchedProvider || 0) + ' unmatched</div>';
+    wlt = '<div class="sp-sample">n = ' + p.matched + ' matched · ' + (p.maturedProviderObserved || 0) + ' rows · ' + (p.unmatchedProvider || 0) + ' unmatched</div>';
   }
 
   return '<div class="' + cardCls + '">' + header + barHtml + leadHtml + wlt + '</div>';
