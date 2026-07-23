@@ -89,8 +89,8 @@ function fairnessEnv() {
     last_observed_at: old,
     provider_published_at: null,
     source_url: null,
-    filed_date: null,
-    filer_name: null,
+    filed_date: `2026-06-${(i + 1).toString().padStart(2, '0')}`,
+    filer_name: `Pelosi ${i}`,
     payload: null,
   }));
   return {
