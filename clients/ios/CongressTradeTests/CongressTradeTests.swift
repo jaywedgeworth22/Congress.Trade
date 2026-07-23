@@ -146,7 +146,8 @@ final class CongressTradeTests: XCTestCase {
             cursorStore: InMemorySyncCursorStore(),
             sleeper: { _ in }
         )
-        XCTAssertEqual(store.selectedChambers, [.house, .senate, .executive])
+        // Empty selection = website-style "no HSP chips selected" (all branches).
+        XCTAssertEqual(store.selectedChambers, [])
 
         var feedURL: URL?
         MockURLProtocol.handler = { request in
@@ -157,12 +158,13 @@ final class CongressTradeTests: XCTestCase {
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
-        await store.setChamberSelection([.house, .senate])
+        // Empty selection omits chamber= so unresolved-chamber rows stay in view.
+        await store.setChamberSelection([])
 
         let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
         XCTAssertNil(
             components.queryItems?.first(where: { $0.name == "chamber" }),
-            "Default selection must omit chamber= entirely so unresolved-chamber rows stay in view, matching the backend's absent-chamber default"
+            "Empty (all) selection must omit chamber= entirely so unresolved-chamber rows stay in view"
         )
     }
 
@@ -182,16 +184,16 @@ final class CongressTradeTests: XCTestCase {
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
-        // Selecting the chips in an arbitrary order must not change the wire value.
-        await store.setChamberSelection([.executive, .house, .senate])
+        // Selecting a proper subset (not all three) must send a sorted CSV.
+        await store.setChamberSelection([.executive, .house])
 
         let components = try XCTUnwrap(URLComponents(url: XCTUnwrap(feedURL), resolvingAgainstBaseURL: false))
         let chamberValue = components.queryItems?.first(where: { $0.name == "chamber" })?.value
-        XCTAssertEqual(chamberValue, "executive,house,senate")
+        XCTAssertEqual(chamberValue, "executive,house")
     }
 
     @MainActor
-    func testDeselectingTheLastChamberChipResetsToTheDefault() async throws {
+    func testDeselectingTheLastChamberChipMeansAllBranches() async throws {
         let store = CongressTradeStore(
             api: CongressTradeAPIClient(baseURL: Self.baseURL, tokenStore: MemoryTokenStore(token: nil), session: makeSession()),
             cursorStore: InMemorySyncCursorStore(),
@@ -204,9 +206,11 @@ final class CongressTradeTests: XCTestCase {
             return Self.response(for: request, json: Self.feedJSON(items: [], cursor: 0, count: 0, total: 0, limit: 50))
         }
 
+        await store.setChamberSelection([.house])
         await store.setChamberSelection([])
 
-        XCTAssertEqual(store.selectedChambers, [.house, .senate, .executive])
+        // Empty stays empty (= all branches), matching website party-chip UX.
+        XCTAssertEqual(store.selectedChambers, [])
     }
 
     // MARK: - Feed snapshot load (newest-first window, not multi-page crawl)

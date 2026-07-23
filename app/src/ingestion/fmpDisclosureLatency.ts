@@ -22,7 +22,7 @@ import { getDailyUsed, addDailyUsed } from '../enrichment/service.ts';
 import type { DiscoveredFiling } from './watcher.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
-type Chamber = 'house' | 'senate';
+type Chamber = 'house' | 'senate' | 'executive';
 type ProviderId = 'fmp' | 'unusual_whales' | 'quiver' | 'finnhub' | 'ainvest' | 'capitol_trades';
 
 type EnvWithWatch = Env & {
@@ -479,6 +479,7 @@ function lastName(name: string | null): string | null {
 
 function normalizeChamber(raw: string | null, fallback: Chamber): Chamber {
   const s = (raw ?? '').toLowerCase();
+  if (s.includes('executive') || s.includes('president') || s.includes('whitehouse')) return 'executive';
   if (s.includes('senate') || s.includes('senator')) return 'senate';
   if (s.includes('house') || s.includes('representative') || s.includes('representatives')) return 'house';
   return fallback;
@@ -509,7 +510,13 @@ function rowKeyFromFields(provider: ProviderId, payload: Record<string, unknown>
 }
 
 export function parseFmpDisclosureRows(chamber: Chamber, json: unknown): FmpDisclosureRow[] {
-  return extractRows(json).map((payload) => {
+  return extractRows(json)
+    .filter((payload) => {
+      const type = (fieldString(payload, ['assetType', 'type', 'asset_type']) || '').toLowerCase();
+      if (type.includes('etf') || type.includes('bond') || type.includes('fund') || type.includes('note') || type.includes('bill')) return false;
+      return true;
+    })
+    .map((payload) => {
     const sourceUrl = firstUrl(payload);
     const text = rowText(payload);
     const docToken = providerKeyFromUrl(sourceUrl) ?? fieldString(payload, ['docId', 'documentId', 'reportId', 'disclosureId', 'disclosure_id']);
@@ -1513,24 +1520,43 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     );
     const maturedObservations = observations.filter((row) => row.first_observed_at <= maturityCutoff);
     const maturedCandidates = mine.filter((row) => row.congress_first_seen_at <= maturityCutoff);
-    const maturedMatched = maturedObservations.filter((row) => matchedKeys.has(`${row.chamber}:${row.provider_key}`)).length;
-    const unmatchedProvider = maturedObservations.length - maturedMatched;
-    const pendingProvider = observations.filter(
-      (row) => row.first_observed_at > maturityCutoff && !matchedKeys.has(`${row.chamber}:${row.provider_key}`),
-    ).length;
+
+    // Group observations into documents by chamber + filerName + filedDate
+    const totalProviderDocs = new Set(
+      observations.map((row) => `${row.chamber}:${lastName(row.filer_name)}:${row.filed_date}`)
+    ).size;
+    const uniqueProviderDocs = new Set(
+      maturedObservations.map((row) => `${row.chamber}:${lastName(row.filer_name)}:${row.filed_date}`)
+    );
+    const matchedProviderDocs = new Set(
+      maturedObservations
+        .filter((row) => matchedKeys.has(`${row.chamber}:${row.provider_key}`))
+        .map((row) => `${row.chamber}:${lastName(row.filer_name)}:${row.filed_date}`)
+    );
+
+    const maturedMatched = matchedProviderDocs.size;
+    const maturedProviderObserved = uniqueProviderDocs.size;
+    const unmatchedProvider = maturedProviderObserved - maturedMatched;
+
+    const pendingProvider = new Set(
+      observations
+        .filter((row) => row.first_observed_at > maturityCutoff && !matchedKeys.has(`${row.chamber}:${row.provider_key}`))
+        .map((row) => `${row.chamber}:${lastName(row.filer_name)}:${row.filed_date}`)
+    ).size;
+
     const matchedMaturedCandidates = maturedCandidates.filter(
       (row) => row.status === 'matched' && (row.match_method === 'doc-token' || row.match_method === 'filer-date'),
     ).length;
-    const ctCoveragePct = maturedObservations.length
-      ? Math.round((maturedMatched / maturedObservations.length) * 1000) / 10
+    const ctCoveragePct = maturedProviderObserved
+      ? Math.round((maturedMatched / maturedProviderObserved) * 1000) / 10
       : null;
     const providerCoveragePct = maturedCandidates.length
       ? Math.round((matchedMaturedCandidates / maturedCandidates.length) * 1000) / 10
       : null;
-    const union = maturedObservations.length + maturedCandidates.length - maturedMatched;
+    const union = maturedProviderObserved + maturedCandidates.length - maturedMatched;
     const overlapPct = union > 0 ? Math.round((maturedMatched / union) * 1000) / 10 : null;
     const comparisonStatus: DisclosureLatencyProviderMetrics['comparisonStatus'] =
-      maturedObservations.length < LATENCY_MIN_MATURED_ROWS || maturedCandidates.length < LATENCY_MIN_MATURED_ROWS
+      maturedProviderObserved < LATENCY_MIN_MATURED_ROWS || maturedCandidates.length < LATENCY_MIN_MATURED_ROWS
         ? 'insufficient'
         : (ctCoveragePct ?? 0) < LATENCY_MIN_COVERAGE_PCT || (providerCoveragePct ?? 0) < LATENCY_MIN_COVERAGE_PCT
           ? 'limited'
@@ -1542,8 +1568,8 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
       matched,
       pending: mine.filter((row) => row.status === 'pending').length,
       errored: mine.filter((row) => row.status === 'error').length,
-      providerObserved: observations.length,
-      maturedProviderObserved: maturedObservations.length,
+      providerObserved: totalProviderDocs,
+      maturedProviderObserved,
       unmatchedProvider,
       pendingProvider,
       maturedCandidates: maturedCandidates.length,
