@@ -5,7 +5,18 @@ import SwiftData
 final class CongressTradeStore: ObservableObject {
     @Published private(set) var bootstrap: BootstrapResponse?
     @Published private(set) var feed: ClientFeedResponse?
+    /// Authoritative trade count for the active filters (from the feed API's COUNT(*)).
+    /// Never use cursor_seq as a "trades" KPI — sequences can exceed live rows.
+    @Published private(set) var tradeTotal: Int = 0
     @Published private(set) var latencySummary: LatencySummary?
+    @Published private(set) var analyticsSummary: AnalyticsSummary?
+    @Published private(set) var tickerLeaderboard: [TickerLeaderboardItem] = []
+    @Published private(set) var volumeSeries: [VolumeOverTimePoint] = []
+    @Published private(set) var sectorFlow: [SectorFlowItem] = []
+    @Published private(set) var memberLeaderboard: [MemberLeaderboardItem] = []
+    @Published private(set) var clusterBuys: [ClusterBuyItem] = []
+    @Published private(set) var isLoadingTrends = false
+    @Published private(set) var trendsNotice: String?
     @Published private(set) var subscriptions: [Subscription] = []
     @Published private(set) var commands: [ClientCommand] = []
     @Published private(set) var watchlist: [String] = []
@@ -23,7 +34,8 @@ final class CongressTradeStore: ObservableObject {
     @Published private(set) var lastSuccessfulRefresh: Date?
     @Published private(set) var isOffline = false
     @Published private(set) var hasStoredSessionToken = false
-    @Published var viewLimit: Int = 50 {
+    /// Page size for the visible feed snapshot (newest first). Not a multi-page crawl.
+    @Published var viewLimit: Int = 100 {
         didSet {
             if oldValue != viewLimit {
                 Task { await refresh() }
@@ -33,9 +45,11 @@ final class CongressTradeStore: ObservableObject {
     /// Canonical chamber chip selection. Drives both the visible chips and
     /// the `chamber=` feed request — see `chamberQueryValue`. CT-AUD-010.
     @Published private(set) var selectedChambers: Set<ChamberFilter> = CongressTradeStore.initialChambers
+    /// Time window for the feed + trends (website default = Past 3 Months).
+    @Published private(set) var selectedTimeRange: TimeRange = .ninetyDays
 
     @Published var isLoadingMore = false
-    
+
     var modelContext: ModelContext?
 
     internal let api: CongressTradeAPIClient
@@ -47,16 +61,13 @@ final class CongressTradeStore: ObservableObject {
     private var pendingSubscriptionMutations: [String: PendingSubscriptionMutation] = [:]
     /// Set when a `refresh()` is requested while one is already running (e.g. the
     /// user toggles chambers mid catch-up). The in-flight refresh re-runs once
-    /// against the latest `selectedChambers` when it finishes, so a chip change
-    /// during a sync never leaves the newly selected filter unsynced.
+    /// against the latest selection when it finishes.
     private var refreshQueued = false
 
-    private var cacheLimit: Int { max(500, viewLimit * 2) }
-    /// Rows requested per feed page during catch-up sync.
-    private var pageLimit: Int { viewLimit }
-    /// Hard bound on pages fetched in a single `refresh()` catch-up loop, so a
-    /// large backlog can't turn one pull-to-refresh into an unbounded crawl.
-    private static let maxCatchUpPages = 20
+    /// Soft cap on local cache rows (newest by trade date). Avoids multi-thousand
+    /// seed crawls while still supporting offline read-back of the last window.
+    private var cacheLimit: Int { max(400, viewLimit * 3) }
+    private var pageLimit: Int { min(max(viewLimit, 50), 200) }
     /// Attempts (including the first) for a single page fetch before giving up.
     private static let maxAttemptsPerPage = 3
     /// The backend's true default view when `chamber` is omitted entirely:
@@ -83,6 +94,10 @@ final class CongressTradeStore: ObservableObject {
         bootstrap?.auth.user != nil
     }
 
+    var signedInUser: User? {
+        bootstrap?.auth.user
+    }
+
     var entitlementLabel: String {
         bootstrap?.auth.entitlement.premium == true ? "Premium" : "Free"
     }
@@ -95,18 +110,19 @@ final class CongressTradeStore: ObservableObject {
     }
 
     /// Selects the chamber chips and immediately resyncs against that
-    /// selection's own request/cursor. Never allows an empty selection (that
-    /// would be indistinguishable from "no filter chosen yet"); an attempt to
-    /// deselect the last chip resets to the documented default instead.
+    /// selection's own request. Never allows an empty selection.
     func setChamberSelection(_ chambers: Set<ChamberFilter>) async {
         selectedChambers = chambers.isEmpty ? Self.initialChambers : chambers
         await refresh()
     }
 
+    func setTimeRange(_ range: TimeRange) async {
+        guard range != selectedTimeRange else { return }
+        selectedTimeRange = range
+        await refresh()
+    }
+
     func refresh() async {
-        // A refresh requested while one is in flight (a chip toggle during a
-        // catch-up loop) is captured here and replayed against the latest
-        // selection when the current pass ends, rather than silently dropped.
         guard !isRefreshing else {
             refreshQueued = true
             return
@@ -114,19 +130,32 @@ final class CongressTradeStore: ObservableObject {
         isRefreshing = true
         feedNotice = nil
         let chambers = selectedChambers
-        let filterKey = Self.chamberFilterKey(for: chambers)
         let chamberParam = Self.chamberQueryValue(for: chambers)
+        let from = selectedTimeRange.fromDateISO
         do {
             async let bootstrapTask = api.bootstrap()
-            let sync = try await syncFeed(filterKey: filterKey, chamberParam: chamberParam)
-
+            // Single newest-first snapshot for the visible window — not a
+            // multi-page historical crawl. Users change the window dropdown
+            // if they want a longer range; the list they see is the list we load.
+            let response = try await fetchPageWithRetry(
+                FeedQuery(
+                    limit: pageLimit,
+                    since: nil,
+                    chamber: chamberParam,
+                    from: from,
+                    sort: "tx_date",
+                    order: "desc"
+                )
+            )
+            try replaceCache(with: response)
+            feed = response
+            tradeTotal = response.total
             bootstrap = try await bootstrapTask
-            if let latest = sync.lastResponse {
-                feed = latest
-            }
             lastSuccessfulRefresh = Date()
             isOffline = false
-            feedNotice = sync.notice
+            // Forward watermark only (for optional background catch-up of brand-new rows).
+            let filterKey = Self.syncFilterKey(chambers: chambers, range: selectedTimeRange)
+            cursorStore.setCursor(response.cursor, for: filterKey)
             if signedIn {
                 await refreshSignedInState()
             } else {
@@ -141,81 +170,43 @@ final class CongressTradeStore: ObservableObject {
                 : error.localizedDescription
         }
         isRefreshing = false
-        // Replay a coalesced request against the now-current selection (a single
-        // re-run collapses any number of chip toggles that arrived mid-refresh).
         if refreshQueued {
             refreshQueued = false
             await refresh()
         }
     }
 
-    func refreshLatencySummary() async {
+    func refreshTrends() async {
+        isLoadingTrends = true
+        trendsNotice = nil
+        let window = selectedTimeRange == .all ? "all" : selectedTimeRange.rawValue
+        // All-time analytics is expensive and some endpoints expect a window;
+        // map "all" to a long window for scoreboard parity.
+        let analyticsWindow = selectedTimeRange == .all ? "1825d" : window
         do {
-            latencySummary = try await api.latencySummary()
+            async let summaryTask = api.analyticsSummary(window: analyticsWindow)
+            async let tickersTask = api.tickerLeaderboard(window: analyticsWindow, rankBy: "volume")
+            async let volumeTask = api.volumeOverTime(window: analyticsWindow)
+            async let sectorsTask = api.sectorFlow(window: analyticsWindow)
+            async let membersTask = api.memberLeaderboard(window: analyticsWindow)
+            async let clustersTask = api.clusterBuys(window: analyticsWindow)
+            async let latencyTask = api.latencySummary()
+
+            analyticsSummary = try await summaryTask
+            tickerLeaderboard = try await tickersTask.tickers
+            volumeSeries = try await volumeTask.series
+            sectorFlow = try await sectorsTask.sectors
+            memberLeaderboard = try await membersTask.members
+            clusterBuys = try await clustersTask.clusters
+            latencySummary = try await latencyTask
         } catch {
-            print("Failed to fetch latency summary: \(error)")
+            trendsNotice = error.localizedDescription
         }
+        isLoadingTrends = false
     }
 
-    private struct FeedSyncResult {
-        let lastResponse: ClientFeedResponse?
-        let notice: String?
-    }
-
-    /// Runs the catch-up loop for one filter: resumes from that filter's own
-    /// persisted cursor (falling back to whatever's already cached locally on
-    /// first run after this feature ships, then a fresh newest-page snapshot
-    /// for a brand new install), paginates forward until a page comes back
-    /// short of a full page (exhausted) or the bounded page cap is hit, and
-    /// retries transient failures with backoff in between. CT-AUD-009.
-    private func syncFeed(filterKey: String, chamberParam: String?) async throws -> FeedSyncResult {
-        // Only the default (house+senate) filter may resume from the pre-existing
-        // local cache: rows cached before per-filter cursors shipped are that
-        // default view, so their max cursor is a valid resume point for it alone.
-        // Any OTHER filter that has never been synced must cold-start from a fresh
-        // newest-page snapshot — seeding it from the default view's watermark
-        // would skip every matching row at or below that unrelated cursor.
-        let isDefaultFilter = filterKey == Self.chamberFilterKey(for: Self.defaultChambers)
-        let resumeCursor = cursorStore.cursor(for: filterKey)
-            ?? (isDefaultFilter && !cacheHasExecutiveTrades() ? fetchMaxLocalCursor() : nil)
-        guard let startingCursor = resumeCursor else {
-            // Cold start for this exact filter: bounded newest-page snapshot,
-            // not a full historical backfill.
-            let response = try await fetchPageWithRetry(
-                FeedQuery(limit: pageLimit, since: nil, chamber: chamberParam, order: "desc")
-            )
-            try persist(response)
-            cursorStore.setCursor(response.cursor, for: filterKey)
-            return FeedSyncResult(lastResponse: response, notice: nil)
-        }
-
-        var cursor = startingCursor
-        var lastResponse: ClientFeedResponse?
-        var pages = 0
-        while pages < Self.maxCatchUpPages {
-            let response = try await fetchPageWithRetry(
-                FeedQuery(limit: pageLimit, since: cursor, chamber: chamberParam, order: "asc")
-            )
-            try persist(response)
-            pages += 1
-            lastResponse = response
-            if response.count > 0 {
-                cursor = max(cursor, response.cursor)
-                cursorStore.setCursor(cursor, for: filterKey)
-            }
-            // A short page (fewer rows than requested) is the exhaustion
-            // signal: the backend already excludes deprecated/retracted rows
-            // from this count (`t.deprecated_at IS NULL` is applied before
-            // LIMIT), so "short page" reliably means "caught up", not
-            // "some rows were skipped".
-            if response.count < response.limit {
-                return FeedSyncResult(lastResponse: lastResponse, notice: nil)
-            }
-        }
-        return FeedSyncResult(
-            lastResponse: lastResponse,
-            notice: "Caught up on the latest \(pages * pageLimit) trades. Pull to refresh again to keep catching up."
-        )
+    func refreshLatencySummary() async {
+        await refreshTrends()
     }
 
     private func fetchPageWithRetry(_ query: FeedQuery) async throws -> ClientFeedResponse {
@@ -233,8 +224,14 @@ final class CongressTradeStore: ObservableObject {
         }
     }
 
-    private func persist(_ response: ClientFeedResponse) throws {
+    /// Replace the local cache with the snapshot we just fetched so the list
+    /// matches the active window/sort instead of mixing in stale all-time rows.
+    private func replaceCache(with response: ClientFeedResponse) throws {
         guard let context = modelContext else { return }
+        let existing = try context.fetch(FetchDescriptor<ClientTrade>())
+        for trade in existing {
+            context.delete(trade)
+        }
         for item in response.items {
             context.insert(item)
         }
@@ -244,8 +241,6 @@ final class CongressTradeStore: ObservableObject {
 
     /// Confirms a cached trade is still live; removes it locally and returns
     /// `true` if the server reports it retracted (404 on `GET /trade/:id`).
-    /// Best-effort: network errors leave the cached copy untouched rather
-    /// than risk dropping a still-valid row on a flaky connection.
     @discardableResult
     func reconcileIfDeprecated(_ trade: ClientTrade) async -> Bool {
         do {
@@ -262,18 +257,16 @@ final class CongressTradeStore: ObservableObject {
         }
     }
 
-    private static func chamberFilterKey(for chambers: Set<ChamberFilter>) -> String {
-        let normalized = chambers.isEmpty ? initialChambers : chambers
-        return normalized.map(\.rawValue).sorted().joined(separator: ",")
+    private static func syncFilterKey(chambers: Set<ChamberFilter>, range: TimeRange) -> String {
+        let chamberKey = (chambers.isEmpty ? initialChambers : chambers)
+            .map(\.rawValue)
+            .sorted()
+            .joined(separator: ",")
+        return "\(chamberKey)|\(range.rawValue)"
     }
 
     /// The `chamber=` query value for a selection, or `nil` to omit the
-    /// parameter entirely when the selection matches the backend's true
-    /// default. Omitting (rather than spelling out "house,senate") matters:
-    /// the backend's absent-chamber default also keeps rows whose chamber
-    /// could not be resolved, while an explicit `chamber=house,senate` would
-    /// narrow to just those two and drop unresolved rows. See
-    /// `app/src/delivery/rows.ts` `buildTxFilters`.
+    /// parameter entirely when the selection matches the backend's true default.
     private static func chamberQueryValue(for chambers: Set<ChamberFilter>) -> String? {
         let normalized = chambers.isEmpty ? initialChambers : chambers
         let backendDefault: Set<ChamberFilter> = [.house, .senate]
@@ -281,36 +274,13 @@ final class CongressTradeStore: ObservableObject {
         return normalized.map(\.rawValue).sorted().joined(separator: ",")
     }
 
-    private func fetchMaxLocalCursor() -> Int? {
-        guard let context = modelContext else { return nil }
-        var descriptor = FetchDescriptor<ClientTrade>()
-        descriptor.sortBy = [SortDescriptor(\.cursor, order: .reverse)]
-        descriptor.fetchLimit = 1
-        do {
-            let results = try context.fetch(descriptor)
-            return results.first?.cursor
-        } catch {
-            return nil
-        }
-    }
-
-    private func cacheHasExecutiveTrades() -> Bool {
-        // If we have ever synced the non-default all-three filter, the cache is no longer the pure legacy default.
-        if cursorStore.cursor(for: Self.chamberFilterKey(for: Self.initialChambers)) != nil {
-            return true
-        }
-        guard let context = modelContext else { return false }
-        let descriptor = FetchDescriptor<ClientTrade>()
-        do {
-            let trades = try context.fetch(descriptor)
-            return trades.contains { $0.member.chamber?.lowercased() == "executive" }
-        } catch {
-            return false
-        }
-    }
-
     private func trimCache(in context: ModelContext) throws {
-        var descriptor = FetchDescriptor<ClientTrade>(sortBy: [SortDescriptor(\.cursor, order: .reverse)])
+        // After replaceCache the store holds one windowed snapshot; cursor-desc
+        // is a fine eviction order (newest inserts keep). Display sort is by
+        // trade date in the view layer.
+        var descriptor = FetchDescriptor<ClientTrade>(
+            sortBy: [SortDescriptor(\.cursor, order: .reverse)]
+        )
         descriptor.fetchOffset = cacheLimit
         for trade in try context.fetch(descriptor) {
             context.delete(trade)
@@ -412,9 +382,6 @@ final class CongressTradeStore: ObservableObject {
         isCreatingDelivery = false
     }
 
-    /// Drops the one-time delivery secret from app state. Called when the
-    /// credential sheet disappears so the value doesn't linger in memory any
-    /// longer than the user is actively viewing it. CT-AUD-023.
     func clearPendingDeliveryCredential() {
         pendingDeliveryCredential = nil
     }
@@ -459,13 +426,13 @@ final class CongressTradeStore: ObservableObject {
         do {
             try api.tokenStore.save(trimmed)
             hasStoredSessionToken = true
-            watchlistNotice = "Session token saved to Keychain."
+            watchlistNotice = "Signed in."
             Task {
                 await refresh()
             }
             return true
         } catch {
-            watchlistNotice = "Failed to save token: \(error.localizedDescription)"
+            watchlistNotice = "Failed to save session: \(error.localizedDescription)"
             return false
         }
     }
@@ -482,10 +449,17 @@ final class CongressTradeStore: ObservableObject {
             subscriptions = []
             commands = []
             watchlist = []
-            watchlistNotice = "Signed out and revoked the server session."
+            watchlistNotice = "Signed out."
             await refresh()
         } catch {
-            watchlistNotice = "Sign-out failed; the token remains in Keychain so you can retry revocation: \(error.localizedDescription)"
+            // Still clear local token so the UI doesn't stay half-signed-in.
+            try? api.tokenStore.clear()
+            hasStoredSessionToken = false
+            bootstrap = nil
+            subscriptions = []
+            commands = []
+            watchlist = []
+            watchlistNotice = "Signed out locally. Server revoke may have failed: \(error.localizedDescription)"
         }
         isLoggingOut = false
     }

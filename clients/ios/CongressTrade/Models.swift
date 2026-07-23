@@ -374,3 +374,150 @@ struct LatencySummary: Decodable {
         let comparableProviders: Int
     }
 }
+
+/// Consumer time windows matching the website's Trends/Trades selector
+/// (`app/src/ui/dashboardHtml.ts` TR_WINDOW_LABELS / default `90d`).
+enum TimeRange: String, CaseIterable, Identifiable, Codable {
+    case sevenDays = "7d"
+    case thirtyDays = "30d"
+    case ninetyDays = "90d"
+    case sixMonths = "180d"
+    case oneYear = "365d"
+    case all = "all"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .sevenDays: return "Past Week"
+        case .thirtyDays: return "Past Month"
+        case .ninetyDays: return "Past 3 Months"
+        case .sixMonths: return "Past 6 Months"
+        case .oneYear: return "Past Year"
+        case .all: return "All Time"
+        }
+    }
+
+    /// ISO `yyyy-MM-dd` lower bound for `?from=` on the feed, or `nil` for all-time.
+    var fromDateISO: String? {
+        guard self != .all else { return nil }
+        let days: Int
+        switch self {
+        case .sevenDays: days = 7
+        case .thirtyDays: days = 30
+        case .ninetyDays: days = 90
+        case .sixMonths: days = 180
+        case .oneYear: days = 365
+        case .all: return nil
+        }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        guard let date = cal.date(byAdding: .day, value: -days, to: Date()) else { return nil }
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+}
+
+struct AnalyticsSummary: Decodable {
+    let totalTrades: Int?
+    let uniqueMembers: Int?
+    let uniqueTickers: Int?
+    let buyCount: Int?
+    let sellCount: Int?
+    let exchangeCount: Int?
+    let estimatedVolumeUsd: Double?
+    let estimatedNetFlowUsd: Double?
+    let optionCount: Int?
+    let resolvedTickerPct: Double?
+    let netSentiment: Double?
+    let asOf: String?
+}
+
+struct TickerLeaderboardResponse: Decodable {
+    let tickers: [TickerLeaderboardItem]
+    let count: Int?
+}
+
+struct TickerLeaderboardItem: Decodable, Identifiable {
+    var id: String { ticker }
+    let ticker: String
+    let name: String?
+    let tradeCount: Int
+    let buyCount: Int?
+    let sellCount: Int?
+    let memberCount: Int?
+    let estVolumeUsd: Double?
+    let estNetFlowUsd: Double?
+}
+
+struct VolumeOverTimeResponse: Decodable {
+    let series: [VolumeOverTimePoint]
+    let granularity: String?
+    let count: Int?
+}
+
+struct VolumeOverTimePoint: Decodable, Identifiable {
+    var id: String { period }
+    let period: String
+    let buys: Int
+    let sells: Int
+    let estBuyVolUsd: Double?
+    let estSellVolUsd: Double?
+}
+
+struct SectorFlowResponse: Decodable {
+    let sectors: [SectorFlowItem]
+    let count: Int?
+}
+
+struct SectorFlowItem: Decodable, Identifiable {
+    var id: String { sector }
+    let sector: String
+    let tradeCount: Int?
+    let buyCount: Int?
+    let sellCount: Int?
+    let estVolumeUsd: Double?
+    let estNetFlowUsd: Double?
+    let uniqueMembers: Int?
+    let uniqueTickers: Int?
+}
+
+struct MemberLeaderboardResponse: Decodable {
+    let members: [MemberLeaderboardItem]
+    let count: Int?
+}
+
+struct MemberLeaderboardItem: Decodable, Identifiable {
+    var id: String { filerId }
+    let filerId: String
+    let fullName: String?
+    let party: String?
+    let chamber: String?
+    let state: String?
+    let tradeCount: Int?
+    let buyCount: Int?
+    let sellCount: Int?
+    let estVolumeUsd: Double?
+    let estNetFlowUsd: Double?
+}
+
+struct ClusterBuysResponse: Decodable {
+    let clusters: [ClusterBuyItem]
+    let count: Int?
+}
+
+struct ClusterBuyItem: Decodable, Identifiable {
+    var id: String { "\(ticker)-\(txType)-\(firstSeen ?? "")" }
+    let ticker: String
+    let name: String?
+    let txType: String
+    let memberCount: Int
+    let tradeCount: Int?
+    let estVolumeUsd: Double?
+    let firstSeen: String?
+    let lastSeen: String?
+}
