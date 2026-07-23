@@ -34,7 +34,9 @@
   },
   "minimumDependencyAge": {
     "age": "PT24H",
-    "exclude": ["npm:@google/genai"]
+    "exclude": [
+      "npm:@google/genai"
+    ]
   },
   "nodeModulesDir": "none",
   "lock": false,
@@ -43,9 +45,8 @@
   ],
   "deploy": {
     "runtime": {
-      "entrypoint": "app/src/deno/main.ts",
-      "mode": "dynamic"
+      "type": "dynamic",
+      "entrypoint": "app/src/deno/main.ts"
     }
-  },
-  "minimumDependencyAge": 0
+  }
 }

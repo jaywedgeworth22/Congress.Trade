@@ -1,9 +1,5 @@
 {
   "nodeModulesDir": "none",
-  "minimumDependencyAge": {
-    "age": "PT24H",
-    "exclude": ["npm:@google/genai"]
-  },
   "unstable": [
     "sloppy-imports"
   ],
@@ -42,11 +38,10 @@
       "deno.unstable"
     ]
   },
-  "deploy": {
-    "runtime": {
-      "entrypoint": "src/deno/main.ts",
-      "mode": "dynamic"
-    }
-  },
-  "minimumDependencyAge": 0
+  "minimumDependencyAge": {
+    "age": "PT24H",
+    "exclude": [
+      "npm:@google/genai"
+    ]
+  }
 }
