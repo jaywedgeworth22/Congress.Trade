@@ -334,6 +334,11 @@ describe('mapFeedTransaction', () => {
     expect((tx as typeof tx & { estValue: number | null }).estValue).toBe(8000.5);
   });
 
+  it('canonicalizes malformed stored filer names at the API boundary', () => {
+    const tx = mapFeedTransaction(feedRow({ filer_full_name: 'Richard Dean Dr McCormick' }));
+    expect(tx.fullName).toBe('Richard Dean McCormick');
+  });
+
   it('tolerates an unresolved filer (nulls pass through, never throws)', () => {
     const tx = mapFeedTransaction(
       feedRow({ filer_full_name: null, filer_state: null, filer_photo_url: null }),

@@ -22,6 +22,7 @@ import type {
 import { parseJson, toBool } from '../shared/db.ts';
 import { canonicalizeAssetType } from '../shared/assetTypes.ts';
 import { normalizeCompanyName } from '../shared/companyName.ts';
+import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 
 
 // ---------------------------------------------------------------------------
@@ -188,7 +189,7 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
 
   return {
     ...transaction,
-    fullName: row.filer_full_name,
+    fullName: row.filer_full_name ? (cleanFilerName(row.filer_full_name) || row.filer_full_name) : null,
     state: row.filer_state,
     photoUrl: row.filer_photo_url,
     filedDate: row.filing_filed_date,
