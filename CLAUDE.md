@@ -40,12 +40,13 @@ Key reminders:
 - When another agent resolves your PR through an integration branch, treat that
   PR as superseded after the integration PR lands; do not reopen the same work
   on the old branch without first checking current `main`.
-- Do not deploy, push, provision Cloudflare resources, or apply remote D1
-  migrations unless Jay explicitly asks.
-- Do not run production backfills, queue drains, production ingestion crawlers,
-  `npm run deploy`, `npm run deploy:full`, `scripts/ship.sh`,
-  `scripts/provision.sh`, or remote Wrangler D1 commands without explicit
-  production intent.
+- **Always commit + land finished work** (owner preference): commit → push
+  branch → open/update PR → merge when CI green. Do not leave finished work
+  only local. Canonical: `/Users/jay/apps/AGENT-SYNC.md`.
+- Still require production intent for: remote D1/schema traps, production
+  backfills, queue drains, production ingestion crawlers, `scripts/provision.sh`,
+  and any force-push / data wipe. For finished safe app code, follow PR →
+  `main` → `bash app/scripts/ship.sh` (do not park it).
 - If you add a migration, add the SQL under `app/migrations/`, update
   `POST /api/admin/migrate` in `app/src/admin/routes.ts`, and note the
   migration in the PR body.
