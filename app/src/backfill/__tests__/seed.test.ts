@@ -74,6 +74,7 @@ describe('mapRecordToTransaction', () => {
     expect(tx.source).toBe('seed_dataset');
     expect(tx.ticker).toBe('NVDA');
     expect(tx.assetName).toBe('NVIDIA Corporation');
+    expect(tx.assetTypeName).toBe('Stock');
     expect(tx.txType).toBe('P');
     expect(tx.owner).toBe('spouse');
     expect(tx.txDate).toBe('2026-06-04');
@@ -85,6 +86,30 @@ describe('mapRecordToTransaction', () => {
     // Same rubric as the live normalizer: clean seed row = SEED_BASE_CONFIDENCE,
     // no penalties (ticker resolves, amount canonical, valid type/date).
     expect(tx.confidence).toBe(0.95);
+  });
+
+  it('keeps seed asset details out of the main asset name', () => {
+    const tx = mapRecordToTransaction(
+      {
+        senator: 'Jane A. Smith',
+        ticker: 'AIG',
+        asset_description:
+          'American International Group, Inc. <div class="text-muted">Option Type: Put <br><em>Strike price:</em> $50.00 <br> <em>Expires:</em> 05/15/2020 </div>',
+        asset_type: 'Stock Option',
+        type: 'Purchase',
+        transaction_date: '05/01/2020',
+        amount: '$15,001 - $50,000',
+      },
+      'senate',
+      '2026-06-20T00:00:00.000Z',
+      resolveAll,
+    );
+    expect(tx).not.toBeNull();
+    expect(tx?.assetName).toBe('American International Group, Inc.');
+    expect(tx?.assetTypeName).toBe('Stock Option');
+    expect(tx?.isOption).toBe(true);
+    expect(tx?.description).toBe('Option Type: Put Strike price: $50.00 Expires: 05/15/2020');
+    expect(tx?.supplementalText).toBe('Option Type: Put Strike price: $50.00 Expires: 05/15/2020');
   });
 
   it('returns null when there is no asset and no ticker', () => {
