@@ -40,6 +40,7 @@ import {
 import { getCurrentUserFromRequest } from '../auth/session.ts';
 import { isPremiumUser } from '../billing/entitlement.ts';
 import { getUserById } from '../auth/users.ts';
+import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import {
   createSubscription,
   getSubscription,
@@ -713,7 +714,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       );
       const members = rows.map((row) => ({
         filerId: row.filer_id,
-        fullName: row.full_name,
+        fullName: row.full_name ? (cleanFilerName(row.full_name) || row.full_name) : null,
         chamber: row.chamber,
         party: row.party,
         state: row.state,
