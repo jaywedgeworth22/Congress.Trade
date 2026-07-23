@@ -22,7 +22,7 @@ import { getDailyUsed, addDailyUsed } from '../enrichment/service.ts';
 import type { DiscoveredFiling } from './watcher.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 
-type Chamber = 'house' | 'senate';
+type Chamber = 'house' | 'senate' | 'executive';
 type ProviderId = 'fmp' | 'unusual_whales' | 'quiver' | 'finnhub' | 'ainvest' | 'capitol_trades';
 
 type EnvWithWatch = Env & {
@@ -220,7 +220,7 @@ const FMP_DEFAULT_DAILY_CAP = 230;
  * at used = cap-1 it would otherwise pass and leave the counter at cap+1;
  * reserving the batch matches enrichment's per-call hard non-overshoot guarantee.
  */
-const FMP_LATEST_CALLS_PER_RUN = 2;
+const FMP_LATEST_CALLS_PER_RUN = 3;
 
 /** The shared FMP daily call cap (same env var enrichment/prices read).
  *  Resolved through the secret resolver so operators can tune
@@ -479,6 +479,7 @@ function lastName(name: string | null): string | null {
 
 function normalizeChamber(raw: string | null, fallback: Chamber): Chamber {
   const s = (raw ?? '').toLowerCase();
+  if (s.includes('executive') || s.includes('president') || s.includes('whitehouse')) return 'executive';
   if (s.includes('senate') || s.includes('senator')) return 'senate';
   if (s.includes('house') || s.includes('representative') || s.includes('representatives')) return 'house';
   return fallback;
@@ -551,10 +552,10 @@ export function parseUnusualWhalesDisclosureRows(json: unknown): DisclosureProvi
   });
 }
 
-export function parseQuiverDisclosureRows(chamber: Chamber, json: unknown): DisclosureProviderRow[] {
+export function parseQuiverDisclosureRows(chamber: Chamber, json: unknown, defaultFilerName?: string): DisclosureProviderRow[] {
   return extractRows(json).map((payload) => {
     const filedDate = normalizeDate(fieldString(payload, ['Filed', 'ReportDate', 'report_date', 'filed_date']));
-    const filerName = fieldString(payload, ['Representative', 'Senator', 'Name', 'representative', 'senator', 'name']);
+    const filerName = fieldString(payload, ['Representative', 'Senator', 'Name', 'representative', 'senator', 'name']) || defaultFilerName || '';
     return {
       provider: 'quiver',
       chamber: normalizeChamber(fieldString(payload, ['Chamber', 'House', 'house']), chamber),
@@ -636,10 +637,11 @@ async function fetchFmpRows(
     } catch (err) {
       const status = /HTTP_(\d+)/.exec((err as Error).message)?.[1];
       if (status) assertFmpTierOk(Number(status));
+      if (chamber === 'executive' && status === '404') return [];
       throw err;
     }
   };
-  return (await Promise.all([fetchOne('house'), fetchOne('senate')])).flat();
+  return (await Promise.all([fetchOne('house'), fetchOne('senate'), fetchOne('executive')])).flat();
 }
 
 function unusualWhalesHeaders(apiKey: string): Record<string, string> {
@@ -672,13 +674,19 @@ async function fetchUnusualWhalesRowsForDate(
 
 async function fetchQuiverRows(apiKey: string, max: number, fetchImpl: typeof fetch): Promise<DisclosureProviderRow[]> {
   const headers = { authorization: `Token ${apiKey}`, 'Accept': 'application/json' };
-  const [house, senate] = await Promise.all([
-    fetchJson('https://api.quiverquant.com/beta/live/housetrading?options=true', headers, fetchImpl),
-    fetchJson('https://api.quiverquant.com/beta/live/senatetrading?options=true', headers, fetchImpl),
+  const [house, senate, trump] = await Promise.all([
+    fetchJson('https://api.quiverquant.com/beta/live/housetrading?options=true', headers, fetchImpl).catch(() => []),
+    fetchJson('https://api.quiverquant.com/beta/live/senatetrading?options=true', headers, fetchImpl).catch(() => []),
+    fetchJson('https://api.quiverquant.com/beta/bulk/trumpstocktrades', headers, fetchImpl).catch(() => []),
   ]);
   const houseSliced = Array.isArray(house) ? house.slice(0, max) : house;
   const senateSliced = Array.isArray(senate) ? senate.slice(0, max) : senate;
-  return [...parseQuiverDisclosureRows('house', houseSliced), ...parseQuiverDisclosureRows('senate', senateSliced)];
+  const trumpSliced = Array.isArray(trump) ? trump.slice(0, max) : trump;
+  return [
+    ...parseQuiverDisclosureRows('house', houseSliced),
+    ...parseQuiverDisclosureRows('senate', senateSliced),
+    ...parseQuiverDisclosureRows('executive', trumpSliced, 'Donald Trump')
+  ];
 }
 
 
@@ -1513,24 +1521,43 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     );
     const maturedObservations = observations.filter((row) => row.first_observed_at <= maturityCutoff);
     const maturedCandidates = mine.filter((row) => row.congress_first_seen_at <= maturityCutoff);
-    const maturedMatched = maturedObservations.filter((row) => matchedKeys.has(`${row.chamber}:${row.provider_key}`)).length;
-    const unmatchedProvider = maturedObservations.length - maturedMatched;
-    const pendingProvider = observations.filter(
-      (row) => row.first_observed_at > maturityCutoff && !matchedKeys.has(`${row.chamber}:${row.provider_key}`),
-    ).length;
+
+    // Group observations into documents by chamber + filerName + filedDate
+    const totalProviderDocs = new Set(
+      observations.map((row) => `${row.chamber}:${lastName(row.filer_name)}:${row.filed_date}`)
+    ).size;
+    const uniqueProviderDocs = new Set(
+      maturedObservations.map((row) => `${row.chamber}:${lastName(row.filer_name)}:${row.filed_date}`)
+    );
+    const matchedProviderDocs = new Set(
+      maturedObservations
+        .filter((row) => matchedKeys.has(`${row.chamber}:${row.provider_key}`))
+        .map((row) => `${row.chamber}:${lastName(row.filer_name)}:${row.filed_date}`)
+    );
+
+    const maturedMatched = matchedProviderDocs.size;
+    const maturedProviderObserved = uniqueProviderDocs.size;
+    const unmatchedProvider = maturedProviderObserved - maturedMatched;
+
+    const pendingProvider = new Set(
+      observations
+        .filter((row) => row.first_observed_at > maturityCutoff && !matchedKeys.has(`${row.chamber}:${row.provider_key}`))
+        .map((row) => `${row.chamber}:${lastName(row.filer_name)}:${row.filed_date}`)
+    ).size;
+
     const matchedMaturedCandidates = maturedCandidates.filter(
       (row) => row.status === 'matched' && (row.match_method === 'doc-token' || row.match_method === 'filer-date'),
     ).length;
-    const ctCoveragePct = maturedObservations.length
-      ? Math.round((maturedMatched / maturedObservations.length) * 1000) / 10
+    const ctCoveragePct = maturedProviderObserved
+      ? Math.round((maturedMatched / maturedProviderObserved) * 1000) / 10
       : null;
     const providerCoveragePct = maturedCandidates.length
       ? Math.round((matchedMaturedCandidates / maturedCandidates.length) * 1000) / 10
       : null;
-    const union = maturedObservations.length + maturedCandidates.length - maturedMatched;
+    const union = maturedProviderObserved + maturedCandidates.length - maturedMatched;
     const overlapPct = union > 0 ? Math.round((maturedMatched / union) * 1000) / 10 : null;
     const comparisonStatus: DisclosureLatencyProviderMetrics['comparisonStatus'] =
-      maturedObservations.length < LATENCY_MIN_MATURED_ROWS || maturedCandidates.length < LATENCY_MIN_MATURED_ROWS
+      maturedProviderObserved < LATENCY_MIN_MATURED_ROWS || maturedCandidates.length < LATENCY_MIN_MATURED_ROWS
         ? 'insufficient'
         : (ctCoveragePct ?? 0) < LATENCY_MIN_COVERAGE_PCT || (providerCoveragePct ?? 0) < LATENCY_MIN_COVERAGE_PCT
           ? 'limited'
@@ -1542,8 +1569,8 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
       matched,
       pending: mine.filter((row) => row.status === 'pending').length,
       errored: mine.filter((row) => row.status === 'error').length,
-      providerObserved: observations.length,
-      maturedProviderObserved: maturedObservations.length,
+      providerObserved: totalProviderDocs,
+      maturedProviderObserved,
       unmatchedProvider,
       pendingProvider,
       maturedCandidates: maturedCandidates.length,
