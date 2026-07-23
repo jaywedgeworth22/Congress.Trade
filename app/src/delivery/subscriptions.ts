@@ -7,12 +7,12 @@
  * (politicians/tickers/chambers/amount range/sides/sectors/market-cap buckets).
  */
 
-import type { Env, Subscription, SubscriptionFilters, Transaction } from '../shared/types';
-import { all, get, run } from '../shared/db';
-import { prefixedId } from '../shared/ids';
-import { mapSubscription, type SubscriptionRow } from './rows';
-import { getUserById } from '../auth/users';
-import { isPremiumUser } from '../billing/entitlement';
+import type { Env, Subscription, SubscriptionFilters, Transaction } from '../shared/types.ts';
+import { all, first, get, run } from '../shared/db.ts';
+import { prefixedId } from '../shared/ids.ts';
+import { mapSubscription, type SubscriptionRow } from './rows.ts';
+import { getUserById } from '../auth/users.ts';
+import { isPremiumUser } from '../billing/entitlement.ts';
 
 const SELECT_COLS =
   'id, client_id, delivery, target_url, secret, filters, cursor, active, created_at';
@@ -21,6 +21,8 @@ export const MAX_SUBSCRIPTIONS_PER_USER = 20;
 export const MAX_ACTIVE_SUBSCRIPTIONS_PER_USER = 10;
 export const MAX_SUBSCRIPTION_SECRET_LENGTH = 256;
 export const MAX_WEBHOOK_TARGET_URL_LENGTH = 2048;
+/** Stricter floor for an operator-supplied secret rotated in after an incident. */
+export const MIN_ROTATED_SUBSCRIPTION_SECRET_LENGTH = 32;
 
 export class SubscriptionQuotaError extends Error {}
 
@@ -49,6 +51,25 @@ export function subscriptionSecretError(value: unknown): string | null {
   if (value.length < 16 || value.length > MAX_SUBSCRIPTION_SECRET_LENGTH) {
     return `secret must be 16-${MAX_SUBSCRIPTION_SECRET_LENGTH} characters`;
   }
+  return null;
+}
+
+/**
+ * Validate a caller-supplied secret for POST .../rotate-secret. Rotation is
+ * explicitly about replacing a production-facing HMAC key after an incident
+ * (e.g. CT-AUD-003), so it holds a higher bar than creation's 16-char floor:
+ * at least 32 characters, and no embedded whitespace (a common copy/paste
+ * artifact that would silently break signature verification).
+ */
+export function rotateSubscriptionSecretError(value: unknown): string | null {
+  if (typeof value !== 'string') return 'secret must be a string';
+  if (
+    value.length < MIN_ROTATED_SUBSCRIPTION_SECRET_LENGTH ||
+    value.length > MAX_SUBSCRIPTION_SECRET_LENGTH
+  ) {
+    return `secret must be ${MIN_ROTATED_SUBSCRIPTION_SECRET_LENGTH}-${MAX_SUBSCRIPTION_SECRET_LENGTH} characters`;
+  }
+  if (/\s/.test(value)) return 'secret must not contain whitespace';
   return null;
 }
 
@@ -84,17 +105,26 @@ async function runSubscriptionWrite(
   }
 }
 
-/** Durable D1-backed quota preflight; migration triggers are the race-safe backstop. */
+/**
+ * Durable D1-backed quota preflight; migration triggers are the race-safe
+ * backstop (see trg_subscriptions_total_quota in migrations/0047_subscription_quota_active_only.sql).
+ *
+ * `total` deliberately counts ACTIVE rows only, not every lifetime row. There
+ * is no hard-delete path for a subscription (only deactivate), so counting
+ * deactivated rows here would permanently lock an account out of creating new
+ * subscriptions once it accumulated 20 lifetime rows — the "lifetime
+ * subscription lockout" bug. Deactivating an old subscription now reliably
+ * frees its slot.
+ */
 export async function assertSubscriptionQuota(
   env: Env,
   clientId: string,
   opts: { creating?: boolean; activating?: boolean } = {},
 ): Promise<void> {
-  const row = await get<{ total: number; active: number }>(
+  const row = await first<{ total: number; active: number }>(
     env.DB,
-    `SELECT COUNT(*) AS total,
-            COALESCE(SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END), 0) AS active
-       FROM subscriptions WHERE client_id = ?`,
+    `SELECT COUNT(*) AS total, COUNT(*) AS active
+       FROM subscriptions WHERE client_id = ? AND active = 1`,
     [clientId],
   );
   if (opts.creating && (row?.total ?? 0) >= MAX_SUBSCRIPTIONS_PER_USER) {
@@ -165,13 +195,13 @@ export function generateSecret(): string {
 export async function createSubscription(
   env: Env,
   input: Omit<Subscription, 'id' | 'cursor' | 'active' | 'createdAt'> &
-    Partial<Pick<Subscription, 'cursor' | 'active'>>,
+    Partial<Pick<Subscription, 'id' | 'cursor' | 'active'>>,
 ): Promise<Subscription> {
   const suppliedSecretError = input.secret == null ? null : subscriptionSecretError(input.secret);
   if (suppliedSecretError) throw new Error(suppliedSecretError);
   const targetLengthError = webhookTargetLengthError(input.targetUrl ?? null);
   if (targetLengthError) throw new Error(targetLengthError);
-  const id = prefixedId('sub');
+  const id = input.id ?? prefixedId('sub');
   const createdAt = new Date().toISOString();
   const cursor = input.cursor ?? 0;
   const active = input.active ?? true;
@@ -189,7 +219,8 @@ export async function createSubscription(
     createdAt,
   };
 
-  await runSubscriptionWrite(
+  try {
+    await runSubscriptionWrite(
       env,
       `INSERT INTO subscriptions (${SELECT_COLS})
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -205,6 +236,14 @@ export async function createSubscription(
         sub.createdAt,
       ],
     );
+  } catch (err) {
+    if (!input.id || !/UNIQUE constraint failed:\s*subscriptions\.id/i.test(err instanceof Error ? err.message : String(err))) {
+      throw err;
+    }
+    const existing = await getSubscription(env, input.id);
+    if (existing?.clientId === input.clientId) return existing;
+    throw err;
+  }
 
   return sub;
 }
@@ -279,6 +318,44 @@ export async function updateSubscription(
   const updated = await getSubscription(env, id);
   if (!updated) throw new Error(`subscription not found: ${id}`);
   return updated;
+}
+
+export interface RotateSubscriptionSecretResult {
+  subscription: Subscription;
+  /** True when the secret was server-generated (only then is it safe to echo). */
+  generated: boolean;
+}
+
+/**
+ * Rotate a subscription's signing secret with zero secret exposure on the
+ * caller-supplied path. If `secret` is omitted, generates a fresh one (same
+ * entropy as creation) and returns it once for display; a caller-supplied
+ * secret is validated (see {@link rotateSubscriptionSecretError}) but never
+ * echoed back or logged.
+ */
+export async function rotateSubscriptionSecret(
+  env: Env,
+  id: string,
+  secret?: string,
+): Promise<RotateSubscriptionSecretResult> {
+  const generated = secret === undefined;
+  if (!generated) {
+    const err = rotateSubscriptionSecretError(secret);
+    if (err) throw new Error(err);
+  }
+  const nextSecret = generated ? generateSecret() : (secret as string);
+  const subscription = await updateSubscription(env, id, { secret: nextSecret });
+  return { subscription, generated };
+}
+
+/**
+ * Deactivate a subscription: excludes it from delivery fanout (webhook/SSE
+ * dispatch already filter on `active = 1`) and frees its slot against the
+ * creation quota (see {@link assertSubscriptionQuota}). Idempotent — safe to
+ * call on an already-inactive subscription.
+ */
+export async function deactivateSubscription(env: Env, id: string): Promise<Subscription> {
+  return updateSubscription(env, id, { active: false });
 }
 
 /**

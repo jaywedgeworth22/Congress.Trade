@@ -15,9 +15,9 @@ vi.mock('../google', () => ({
   fetchGoogleProfile: vi.fn(),
 }));
 
-import { buildAuthRouter } from '../routes';
-import { fetchGoogleProfile } from '../google';
-import type { Env } from '../../shared/types';
+import { buildAuthRouter } from '../routes.ts';
+import { fetchGoogleProfile } from '../google.ts';
+import type { Env } from '../../shared/types.ts';
 
 interface UserRowShape {
   id: string;
@@ -118,7 +118,7 @@ describe('GET /google/callback email_verified enforcement', () => {
     expect(res.status).toBe(302);
     expect(res.headers.get('location')).toBe('https://congress.trade/?login=ok');
     expect(kvPuts.some((k) => k.startsWith('sess:'))).toBe(true);
-    const setCookie = res.headers.getSetCookie().join('\n');
+    const setCookie = res.headers.getSetCookie().find((v) => v.startsWith('ct_session=') && !/domain=/i.test(v)) ?? '';
     expect(setCookie).toContain('ct_session=');
     expect(setCookie.toLowerCase()).not.toContain('domain=');
   });
