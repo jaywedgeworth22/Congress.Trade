@@ -227,7 +227,10 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('class="branch-filters" id="qChamber"');
     expect(DASHBOARD_HTML).toContain('class="branch-filters" id="trChamber"');
     expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*aria-pressed="false"/);
-    expect(DASHBOARD_HTML).toMatch(/data-ch="house"[^>]*aria-pressed="true"/);
+    // H/S/P default unselected (like party chips): nothing on = all branches.
+    expect(DASHBOARD_HTML).toMatch(/data-ch="house"[^>]*aria-pressed="false"/);
+    expect(DASHBOARD_HTML).toMatch(/data-ch="senate"[^>]*aria-pressed="false"/);
+    expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*aria-pressed="false"/);
     // The executive toggle reads P (President), analogous to H and S — and each
     // letter carries the owner-specified hover text.
     expect(DASHBOARD_HTML).toMatch(/data-ch="executive"[^>]*title="Executive Branch trades — OGE Form 278-T">P</);
@@ -240,13 +243,16 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("initBranchInfo('qChamber')");
     expect(DASHBOARD_HTML).toContain("initBranchInfo('trChamber')");
     expect(DASHBOARD_HTML).toContain("window.matchMedia('(hover: hover)').matches");
-    // Default (House+Senate) sends NO chamber param; selections send a CSV.
-    expect(DASHBOARD_HTML).toContain("var CHAMBER_DEFAULT = ['house', 'senate']");
+    // No selection = all chambers (no param); partial selection sends a CSV.
+    expect(DASHBOARD_HTML).toContain("var CHAMBER_ALL = ['house', 'senate', 'executive']");
     expect(DASHBOARD_HTML).toContain('function chamberParam(');
-    expect(DASHBOARD_HTML).toContain("initChamberChips('qChamber', 'feed-chambers-v1'");
-    expect(DASHBOARD_HTML).toContain("initChamberChips('trChamber', 'trends-chambers-v1'");
-    // At least one branch always stays selected.
-    expect(DASHBOARD_HTML).toContain('chipSel(groupId).length <= 1) return');
+    expect(DASHBOARD_HTML).toContain("initChamberChips('qChamber', 'feed-chambers-v2'");
+    expect(DASHBOARD_HTML).toContain("initChamberChips('trChamber', 'trends-chambers-v2'");
+    // HSP sits on the same row as party chips; no redundant Timeframe label / Refresh.
+    expect(DASHBOARD_HTML).toContain('class="trends-filter-row"');
+    expect(DASHBOARD_HTML).not.toContain('>Timeframe</label>');
+    expect(DASHBOARD_HTML).not.toContain('↻ Refresh');
+    expect(DASHBOARD_HTML).toContain('class="brand-logo"');
   });
 
   it('renders the honest speed-vs-providers scoreboard on Trends', () => {
