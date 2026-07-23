@@ -220,7 +220,7 @@ const FMP_DEFAULT_DAILY_CAP = 230;
  * at used = cap-1 it would otherwise pass and leave the counter at cap+1;
  * reserving the batch matches enrichment's per-call hard non-overshoot guarantee.
  */
-const FMP_LATEST_CALLS_PER_RUN = 2;
+const FMP_LATEST_CALLS_PER_RUN = 3;
 
 /** The shared FMP daily call cap (same env var enrichment/prices read).
  *  Resolved through the secret resolver so operators can tune
