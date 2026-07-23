@@ -247,7 +247,7 @@ describe('recordDisclosureLatencyCandidate chamber guard', () => {
 describe('runDisclosureLatencyProbe FMP budget accounting', () => {
   beforeEach(() => __resetSharedFmpPacerForTests());
 
-  it('increments the SAME daily FMP counter enrichment uses (2 calls: house + senate)', async () => {
+  it('increments the SAME daily FMP counter enrichment uses (3 calls: house + senate + executive)', async () => {
     const kv = fakeKv();
     const env = {
       FMP_API_KEY: 'test-key',
@@ -264,15 +264,15 @@ describe('runDisclosureLatencyProbe FMP budget accounting', () => {
       providers: ['fmp'],
     });
 
-    // Two FMP HTTP requests fired (house-latest + senate-latest)...
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    // ...and both were billed to the shared enrichment counter.
-    expect(await getDailyUsed(env)).toBe(2);
-    expect(kv.store.get(dayCounterKey())).toBe('2');
+    // Three FMP HTTP requests fired (house-latest + senate-latest + executive-latest)...
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    // ...and all were billed to the shared enrichment counter.
+    expect(await getDailyUsed(env)).toBe(3);
+    expect(kv.store.get(dayCounterKey())).toBe('3');
     expect(result.errors).toEqual([]);
   });
 
-  it('reserves room for the full house+senate batch (skips at cap-1, no overshoot)', async () => {
+  it('reserves room for the full house+senate+executive batch (skips at cap-1, no overshoot)', async () => {
     const kv = fakeKv({ [dayCounterKey()]: '999' });
     const env = {
       FMP_API_KEY: 'test-key',
@@ -288,7 +288,7 @@ describe('runDisclosureLatencyProbe FMP budget accounting', () => {
       providers: ['fmp'],
     });
 
-    // Firing both calls would land the counter at 1001; the batch is skipped so
+    // Firing all calls would land the counter at 1002; the batch is skipped so
     // it never exceeds the cap and the counter stays untouched.
     expect(fetchImpl).not.toHaveBeenCalled();
     expect(await getDailyUsed(env)).toBe(999);
