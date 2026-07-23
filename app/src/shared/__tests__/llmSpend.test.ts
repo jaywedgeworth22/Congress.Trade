@@ -193,13 +193,16 @@ describe('settleLlmSpend / readLlmSpend', () => {
   });
 
   it('accumulates immutable receipts on top of the legacy baseline', async () => {
+    // Freeze the calendar day so receipt.occurredAt and readLlmSpend(now) match
+    // after UTC midnight — otherwise a real-clock day roll fails the assertion.
+    const now = new Date('2026-07-22T18:00:00.000Z');
     const { env } = spendEnv([{ provider: 'openrouter', usd: 0.25 }]);
     await settleLlmSpend(env, receipt('attempt-1', 0.5));
     await settleLlmSpend(env, receipt('attempt-2', 1, {
       provider: 'anthropic',
       requestedModel: 'claude-sonnet-5',
     }));
-    const spend = await readLlmSpend(env);
+    const spend = await readLlmSpend(env, now);
     expect(spend?.totalUsd).toBeCloseTo(1.75);
     expect(spend?.perProvider.openrouter).toBeCloseTo(0.75);
     expect(spend?.perProvider.anthropic).toBeCloseTo(1);
