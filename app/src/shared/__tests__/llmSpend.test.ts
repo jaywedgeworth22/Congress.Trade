@@ -193,14 +193,9 @@ describe('settleLlmSpend / readLlmSpend', () => {
   });
 
   it('accumulates immutable receipts on top of the legacy baseline', async () => {
-<<<<<<< HEAD
-    // Pin the clock to the receipt helper's occurredAt day (2026-07-22). After
-    // that calendar day, default readLlmSpend(now=new Date()) only sees the
-    // legacy baseline and would under-report the immutable ledger.
-=======
-    // Freeze the calendar day so receipt.occurredAt and readLlmSpend(now) match
-    // after UTC midnight — otherwise a real-clock day roll fails the assertion.
->>>>>>> 8fdd66c (fix(test): freeze llmSpend baseline day; land residual security-bundle UI)
+// Pin the clock to the receipt helper's occurredAt day (2026-07-22). After
+// that calendar day, default readLlmSpend(now=new Date()) only sees the
+// legacy baseline and would under-report the immutable ledger.
     const now = new Date('2026-07-22T18:00:00.000Z');
     const { env } = spendEnv([{ provider: 'openrouter', usd: 0.25 }]);
     await settleLlmSpend(env, receipt('attempt-1', 0.5));
