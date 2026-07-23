@@ -68,8 +68,15 @@ Effort logs are standardized across all apps: protocol at
 - Do not edit another agent's branch unless asked.
 - Treat a dirty worktree as owned by the agent that created those edits. Do not
   reformat, revert, stage, or "clean up" files outside your assigned slice.
-- Do not push, deploy, apply remote migrations, or run production scripts unless
-  the user explicitly asks.
+- **Always commit + land finished work** (owner preference, all platforms —
+  canonical `/Users/jay/apps/AGENT-SYNC.md`): after each coherent finished unit,
+  commit → push your branch → open/update a PR → merge when CI is green. Do not
+  leave finished work only in a dirty tree or as an unpushed local commit — that
+  is how peer agents re-do the same slice. Solo developer: velocity over holding.
+- Still pause (confirm first) for truly destructive ops: force-push, shared
+  history rewrite, prod data wipe, secret revoke. Production schema/backfill and
+  remote migration traps in this file still apply; ship finished app code via the
+  normal PR → `main` → `bash app/scripts/ship.sh` path.
 - To resolve another agent's PR, use a separate integration branch unless the
   user explicitly asks you to take over that branch. Merge or cherry-pick the
   PR intentionally, run verification, and leave a clear PR comment/closeout.
