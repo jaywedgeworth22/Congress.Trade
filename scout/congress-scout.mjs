@@ -271,11 +271,22 @@ async function maybePost(d, ts) {
         detectedAt: ts,
         filerName: d.name || undefined,
         filedDate: d.filedDate || undefined,
+        // Default server-side is ingest-when-link-present; send explicitly so
+        // pure latency runs can set CT_INGEST_LATENCY_ONLY=1 without code edits.
+        ingest: process.env.CT_INGEST_LATENCY_ONLY === '1' ? false : true,
       }),
     });
     if (!res.ok) {
       warn('ct-post', new Error(`HTTP ${res.status}`));
       return false;
+    }
+    try {
+      const body = await res.json();
+      if (body && (body.insert || body.enqueued != null)) {
+        log('POSTED', d.key, `insert=${body.insert ?? '?'}`, `enqueued=${body.enqueued ?? '?'}`);
+      }
+    } catch {
+      /* response body optional */
     }
     return true;
   } catch (e) {
