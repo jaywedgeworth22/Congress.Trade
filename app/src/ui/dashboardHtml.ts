@@ -7153,17 +7153,22 @@ function openDrawer(html) {
   // again while it's already open; only capture the pre-drawer focus target
   // on the FIRST open of a session, so closing after several drill-ins
   // restores focus to the original trigger, not a since-replaced inner link.
-  var wasOpen = el('detailDrawer').classList.contains('open');
+  var drawer = el('detailDrawer');
+  var wasOpen = drawer.classList.contains('open');
   el('detailDrawerBody').innerHTML = html;
-  el('detailDrawer').classList.add('open');
   var p = document.querySelector('#detailDrawer .drawer-panel');
+  // Start off-screen, then open on the next frame so CSS transitions/animations
+  // actually run (display:none → block alone does not interpolate transform).
   if (p) {
     p.scrollTop = 0;
-    // Re-fire the slide-in on every open (incl. company/politician drill-ins)
-    // without the old spring overshoot.
+    p.style.transition = 'none';
     p.style.animation = 'none';
-    // force reflow so the next animation starts from the off-screen pose
+    p.style.transform = '';
+  }
+  drawer.classList.add('open');
+  if (p) {
     void p.offsetWidth;
+    p.style.transition = '';
     p.style.animation = '';
   }
   if (wasOpen) { var els = focusableEls(p); if (els.length) els[0].focus(); }
