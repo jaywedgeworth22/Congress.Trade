@@ -103,6 +103,13 @@ export function providerForModel(model: string | undefined): string {
   if (normalized.startsWith('claude')) return 'anthropic';
   if (normalized.startsWith('grok')) return 'xai';
   if (normalized.includes('mistral')) return 'mistral';
+  // OpenRouter model slugs use a provider/model naming convention
+  // (e.g. qwen/qwen-2.5-vl-72b-instruct:free). Direct-provider model
+  // strings never contain a '/', so a slash is a reliable indicator of
+  // an OpenRouter-transported model. This ensures usage-monitor
+  // dimensions correctly attribute OpenRouter consumption to its
+  // billing transport rather than recording it as 'unknown'.
+  if (normalized.includes('/')) return 'openrouter';
   return 'unknown';
 }
 
