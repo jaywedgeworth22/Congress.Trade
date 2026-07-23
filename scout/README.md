@@ -87,12 +87,33 @@ Saver → "Prevent sleep" — or a Raspberry Pi works identically.)
 | `HOUSE_PROBE_WINDOW` | `25` | docIds probed ahead of the known max |
 | `STATE_FILE` / `LEADS_FILE` | `./scout-state.json` / `./scout-leads.jsonl` | persistence |
 | `CT_INGEST_URL` / `CT_INGEST_TOKEN` | — | optional: POST each detection to the app |
+| `CT_INGEST_LATENCY_ONLY` | unset | set `1` to stamp latency only (no filings insert/enqueue) |
 
-## Feeding the app (later)
+## Feeding the app (official residential ingest)
 
-Set `CT_INGEST_URL` (+ token) to POST `{source, docKey, link, detectedAt}` to a
-Worker endpoint so detections + the measured lead land in the app's admin. Until
-that endpoint exists, the scout is fully self-contained.
+Point the scout at production:
+
+```bash
+export CT_INGEST_URL=https://congress.trade/api/ingest/detection
+export CT_INGEST_TOKEN="..."   # Worker INGEST_TOKEN (Infisical / secret handoff; never commit)
+export FMP_API_KEY="..."       # optional; only needed for the FMP race measurement
+node scout/congress-scout.mjs --once
+```
+
+Each non-baseline detection POSTs `{source, docKey, link, detectedAt, filerName?,
+filedDate?, ingest:true}` with `Authorization: Bearer $CT_INGEST_TOKEN`. The
+Worker (INGEST_TOKEN-gated) then:
+
+1. `INSERT OR IGNORE` into `filings` + durable `ingestion_outbox` (same path as
+   the live watcher / `senate-backfill`)
+2. Enqueues `filing.new` for genuinely-new rows
+3. Records a disclosure-latency candidate for the FMP race board
+
+This is **not** a GitHub Actions runner. Senate eFD is Imperva-gated from
+Coolify/datacenter IPs; the scout must stay on residential egress. Secrets stay
+in env / LaunchAgent plist / `chmod 600` files — never in the repo.
+
+Set `CT_INGEST_LATENCY_ONLY=1` for pure measurement (no insert/enqueue).
 
 ## Note found while building this (RESOLVED)
 
