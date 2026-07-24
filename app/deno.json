@@ -43,5 +43,10 @@
     "exclude": [
       "npm:@google/genai"
     ]
+  },
+  "deploy": {
+    "org": "congress-trade",
+    "app": "congress-trade"
   }
 }
+
