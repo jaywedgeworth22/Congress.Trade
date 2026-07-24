@@ -421,9 +421,7 @@ function buildTxFilters(
     where.push(`${CHAMBER_EXPR} = ?`);
     params.push(p.chamber);
   } else {
-    // Default view = congressional. Executive rows appear only on explicit
-    // request; NULL-chamber rows (unresolved filers) stay visible.
-    where.push(`(${CHAMBER_EXPR} IS NULL OR ${CHAMBER_EXPR} <> 'executive')`);
+    // Default view = all chambers. Executive rows are no longer excluded by default.
   }
   if (Number.isFinite(p.minAmount)) {
     where.push('t.amount_min >= ?');

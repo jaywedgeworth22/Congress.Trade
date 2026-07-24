@@ -134,9 +134,6 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
     } else if (/COALESCE\(fl\.chamber, f\.chamber\) = \?/i.test(sql)) {
       const chamber = String(params[i++]);
       rows = rows.filter((row) => (row as FeedTransactionRow & { __chamber?: string }).__chamber === chamber);
-    } else if (/COALESCE\(fl\.chamber, f\.chamber\) <> 'executive'/i.test(sql)) {
-      // Parameter-less default: the congressional view excludes executive rows.
-      rows = rows.filter((row) => (row as FeedTransactionRow & { __chamber?: string }).__chamber !== 'executive');
     }
     if (/t\.amount_min >= \?/i.test(sql)) {
       const minAmount = Number(params[i++]);
