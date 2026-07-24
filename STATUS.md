@@ -1,3 +1,7 @@
+## 2026-07-24 — Fix executive latency candidate test (CURSOR)
+
+Main CI red after `5264fe9` allowed executive filings in latency candidates but left the skip test asserting the old behavior. Updated the test to expect INSERT. Branch `cursor/fix-exec-latency-test-14e5`.
+
 # Current Handoff
 
 Last updated: 2026-07-24 (CURSOR)
