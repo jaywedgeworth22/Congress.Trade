@@ -494,6 +494,12 @@ export const QUERY_OPTIMIZATIONS_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_delivery_outbox_enqueued ON delivery_outbox (status, updated_at)',
 ] as const;
 
+export const PERFORMANCE_INDEXES_SCHEMA_STATEMENTS = [
+  'CREATE INDEX IF NOT EXISTS idx_price_eod_ticker_date_asc ON price_eod (ticker ASC, date ASC)',
+  'CREATE INDEX IF NOT EXISTS idx_transactions_date_cursor_desc ON transactions (tx_date DESC, cursor_seq DESC) WHERE deprecated_at IS NULL',
+  'CREATE INDEX IF NOT EXISTS idx_transactions_cursor_asc ON transactions (cursor_seq ASC) WHERE deprecated_at IS NULL'
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
   // 0025_extraction_runs_usage.sql
   'ALTER TABLE extraction_runs ADD COLUMN usage_json TEXT',
@@ -546,4 +552,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...ACCOUNTING_PROJECTION_RESYNC_SCHEMA_STATEMENTS,
   // 0056_query_optimizations.sql
   ...QUERY_OPTIMIZATIONS_SCHEMA_STATEMENTS,
+  // 0057_performance_indexes.sql
+  ...PERFORMANCE_INDEXES_SCHEMA_STATEMENTS,
 ] as const;
