@@ -1302,7 +1302,7 @@ describe('DASHBOARD_HTML', () => {
   it('gives AAPL a themeable glyph logo and reconstructs House filing links', () => {
     expect(DASHBOARD_HTML).toContain('CUSTOM_GLYPH');
     expect(DASHBOARD_HTML).toContain('function reconstructFilingUrl(');
-    expect(DASHBOARD_HTML).toContain('public_disc/ptr-pdfs/');
+    expect(DASHBOARD_HTML).toContain('/api/client/v1/documents/');
   });
 
   it('labels every analytics section with its timeframe', () => {
