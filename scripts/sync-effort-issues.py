@@ -25,11 +25,17 @@ Before Implementation" vs "Planned / Reserved", with or without emoji). We
 classify each section heading by keyword rather than exact match:
 
   - "planned" / "reserved"        -> bucket "planned"
-  - "in progress"                 -> bucket "in-progress"
-  - "completed"                   -> bucket "completed"
+  - "in progress" / "active"      -> bucket "in-progress"
+  - "completed" / "closed" /
+    "archive" / "historical" /
+    "recently completed"          -> bucket "completed"
   - "deployed"                    -> bucket "deployed"
   - anything else (Deployed intro text, "Changelog", etc. that isn't one of
     the four state buckets) is ignored for issue purposes.
+
+Closed/archive keywords are matched *before* "in progress" so headings like
+"Recently closed (…IN PROGRESS…)" or "Historical archive (closed)" do not
+re-open already-finished rows as live work.
 
 Within a recognized section, a top-level bullet (`- ` or `* ` at column 0,
 optionally prefixed with an emoji) starts a new item. Any following lines
@@ -72,12 +78,11 @@ Reconciliation
     made beyond the initial list. Existing issues are only updated when
     something actually changed.
   - Never deletes issues. An item that disappears from the board (row
-    removed/merged into another) leaves its mirrored issue in place,
-    untouched, with whatever state it last had — a human can close it
-    manually if desired. This script does not guess intent for vanished
-    rows.
-  - Hand-made issues without the `effort-key` marker are ignored entirely
-    (never edited, never closed, never relabeled).
+    removed/reworded) leaves a key-orphaned mirrored issue. When the current
+    board still matches at least half of existing mirrored keys, open orphans
+    are retired (closed + `state:orphaned`). Closed completed/deployed
+    orphans are left as historical receipts. Hand-made issues without the
+    `effort-key` marker are ignored entirely.
 
 Auth
 ----
@@ -151,6 +156,11 @@ STATE_LABELS = {
 }
 OPEN_BUCKETS = {"planned", "in-progress"}
 CLOSED_BUCKETS = {"completed", "deployed"}
+# Safety gate: only retire orphans when the current board still matches at
+# least this fraction of already-mirrored keys. Prevents a truncated/corrupt
+# board parse from mass-closing the mirror.
+ORPHAN_RETIREMENT_MIN_EXISTING_KEY_COVERAGE = 0.5
+ORPHANED_LABEL = "state:orphaned"
 
 LABEL_DEFS = {
     MIRROR_LABEL: ("5319e7", "Mirrored from the repo's effort board (docs/EFFORT-LOG.md) — read-only, do not edit here"),
@@ -158,6 +168,7 @@ LABEL_DEFS = {
     "state:in-progress": ("fbca04", "Effort board state: In Progress"),
     "state:completed": ("0e8a16", "Effort board state: Completed (merged to main)"),
     "state:deployed": ("0e8a16", "Effort board state: Deployed (released to production)"),
+    ORPHANED_LABEL: ("6e7781", "Effort board row removed or reworded; issue retired from the mirror"),
 }
 
 MARKER_RE = re.compile(r"<!--\s*effort-key:\s*([0-9a-f]{40})\s*-->")
@@ -169,10 +180,19 @@ MARKER_RE = re.compile(r"<!--\s*effort-key:\s*([0-9a-f]{40})\s*-->")
 BULLET_RE = re.compile(r"^[-*]\s+(.*)$")
 
 # Section heading classification keywords, checked in this order.
+# Closed/archive tokens MUST precede "in progress": boards often keep a
+# "Recently closed (…IN PROGRESS…)" or "Historical In Progress archive"
+# section for chronology, and those rows must stay closed in the Issues mirror.
 SECTION_KEYWORDS = [
     ("deployed", "deployed"),
     ("completed", "completed"),
+    ("recently closed", "completed"),
+    ("recently completed", "completed"),
+    ("historical", "completed"),
+    ("archive", "completed"),
+    ("closed", "completed"),
     ("in progress", "in-progress"),
+    ("active", "in-progress"),
     ("planned", "planned"),
     ("reserved", "planned"),
 ]
@@ -453,7 +473,15 @@ def issue_label_names(issue: dict) -> set[str]:
 
 
 def reconcile(items: list[BoardItem], client: GitHubClient, repo: str, ref: str, assignee: str | None) -> dict:
-    stats = {"created": 0, "updated": 0, "unchanged": 0, "reopened": 0, "closed": 0, "partial": None}
+    stats = {
+        "created": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "reopened": 0,
+        "closed": 0,
+        "orphaned": 0,
+        "partial": None,
+    }
 
     by_key: dict[str, dict] = {}
     seen_keys: set[str] = set()
@@ -466,19 +494,63 @@ def reconcile(items: list[BoardItem], client: GitHubClient, repo: str, ref: str,
             if key:
                 by_key[key] = issue
         _reconcile_items(items, client, repo, ref, assignee, by_key, seen_keys, stats)
+        matched_existing = len(set(by_key) & seen_keys)
+        existing_coverage = matched_existing / len(by_key) if by_key else 1.0
+        if items and existing_coverage >= ORPHAN_RETIREMENT_MIN_EXISTING_KEY_COVERAGE:
+            _reconcile_orphans(client, by_key, seen_keys, stats)
+        elif by_key:
+            print(
+                "warning: current board matches only "
+                f"{matched_existing}/{len(by_key)} existing mirrored key(s) "
+                f"({existing_coverage:.1%}); skipping orphan retirement below the "
+                f"{ORPHAN_RETIREMENT_MIN_EXISTING_KEY_COVERAGE:.0%} safety threshold"
+            )
     except RateLimitBudgetExhausted as e:
         stats["partial"] = str(e)
-        # Skip the orphan report: items not yet processed this run would look
-        # like orphans and produce a misleading note.
         return stats
 
-    orphaned = [k for k in by_key if k not in seen_keys]
-    if orphaned:
-        print(f"note: {len(orphaned)} previously-mirrored issue(s) no longer match a board row "
-              f"(row removed/reworded) — left untouched: "
-              f"{', '.join('#' + str(by_key[k]['number']) for k in orphaned)}")
-
     return stats
+
+
+def _reconcile_orphans(
+    client: GitHubClient,
+    by_key: dict[str, dict],
+    seen_keys: set[str],
+    stats: dict,
+) -> None:
+    orphaned = sorted(
+        (issue for key, issue in by_key.items() if key not in seen_keys),
+        key=lambda issue: int(issue["number"]),
+    )
+    for issue in orphaned:
+        number = int(issue["number"])
+        current_labels = issue_label_names(issue)
+        current_state_labels = {label for label in current_labels if label.startswith("state:")}
+
+        # Preserve closed release/history receipts exactly as recorded.
+        if issue.get("state") == "closed" and current_state_labels & {
+            STATE_LABELS["completed"],
+            STATE_LABELS["deployed"],
+        }:
+            continue
+
+        preserved = {
+            label for label in current_labels
+            if label != MIRROR_LABEL and not label.startswith("state:")
+        }
+        target_labels = sorted({MIRROR_LABEL, ORPHANED_LABEL, *preserved})
+        fields: dict = {}
+        if current_labels != set(target_labels):
+            fields["labels"] = target_labels
+        if issue.get("state") != "closed":
+            fields["state"] = "closed"
+            stats["closed"] += 1
+
+        if fields:
+            client.update_issue(number, fields)
+            print(f"retired orphaned effort issue #{number} ({', '.join(fields.keys())})")
+            stats["updated"] += 1
+            stats["orphaned"] += 1
 
 
 def _reconcile_items(
@@ -589,7 +661,8 @@ def main() -> int:
     stats = reconcile(items, client, repo, ref, assignee)
     summary = (
         f"created={stats['created']} updated={stats['updated']} "
-        f"unchanged={stats['unchanged']} reopened={stats['reopened']} closed={stats['closed']}"
+        f"unchanged={stats['unchanged']} reopened={stats['reopened']} "
+        f"closed={stats['closed']} orphaned={stats.get('orphaned', 0)}"
     )
     if stats["partial"]:
         print(f"PARTIAL SYNC — rate-limit retry budget exhausted: {stats['partial']}")

@@ -1,9 +1,14 @@
 # Current Handoff
 
-Last updated: 2026-07-23 (CURSOR)
+Last updated: 2026-07-24 (CURSOR)
 
-This repo is worked by multiple agents. `AGENTS.md` is the policy source of
-truth; this file is the short operational snapshot for the current integration.
+## 2026-07-24 — Effort-board hygiene + Issues mirror classifier (CURSOR)
+
+- Root cause: `scripts/sync-effort-issues.py` classified `## Recently closed (…IN PROGRESS…)` and
+  historical `## In Progress` as live in-progress, reopening ~100 finished effort-board Issues.
+- Fix: closed/archive/historical keywords win over "in progress"; board headings renamed; stale
+  Planned rows verified on main moved to Completed. Active board is CODEX Deno ops + owner-gated only.
+- Branch `cursor/effort-board-hygiene-d376`.
 
 ## 2026-07-23 — Effort-board reconcile + leftover money/Sentry hotfixes (CURSOR)
 
