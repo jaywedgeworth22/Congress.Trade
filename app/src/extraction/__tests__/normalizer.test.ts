@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   normalize,
   CONFIDENCE_THRESHOLD,
@@ -6,8 +6,13 @@ import {
   persistTransactions,
   TransactionPublishLimitError,
   transactionRowKey,
+  clearResolverCache,
 } from '../normalizer.ts';
 import type { Env, Filing, ParsedTx } from '../../shared/types.ts';
+
+beforeEach(() => {
+  clearResolverCache();
+});
 
 // ---------------------------------------------------------------------------
 // Minimal in-memory D1 + Queue fakes. We only need to satisfy the prepared-
@@ -451,5 +456,22 @@ describe('normalize', () => {
     expect(cap.insertedTx).toHaveLength(0);
     expect(String(cap.reviewRows[0][1])).toContain('unreadable_is_option');
     expect(String(cap.reviewRows[0][1])).toContain('unreadable_cap_gains');
+  });
+
+  it('reuses the in-process securities_master resolver across calls until cleared', async () => {
+    const { env } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    const warm = await normalize(env, filing({ docId: 'doc-warm' }), [tx({ ticker: 'AAPL' })]);
+    expect(warm.needsReview).toBe(false);
+
+    // Empty master would force review without the TTL cache.
+    const empty = makeEnv([]);
+    const cached = await normalize(empty.env, filing({ docId: 'doc-cached' }), [tx({ ticker: 'AAPL' })]);
+    expect(cached.needsReview).toBe(false);
+    expect(empty.cap.insertedTx).toHaveLength(1);
+
+    clearResolverCache();
+    const cold = await normalize(empty.env, filing({ docId: 'doc-cold' }), [tx({ ticker: 'AAPL' })]);
+    expect(cold.needsReview).toBe(true);
+    expect(empty.cap.insertedTx).toHaveLength(1);
   });
 });

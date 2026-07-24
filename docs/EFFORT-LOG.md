@@ -9,7 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
-_Zero open product PRs on main. All known work landed or superseded. GitHub Issues: 0 open as of 2026-07-24 CURSOR closeout._
+- **[Congress.Trade][CURSOR] Turso query efficiency — WIP 2026-07-24.** Branch `cursor/turso-query-opt-0900`. Hot queries from Turso metrics: `price_eod` full-scan on `/data-recovery/status` (2.27M rows), feed JOIN-before-LIMIT, migrate backfills re-probing null anchors, `securities_master` full reload per extract. Implementing nested keyset feed, status aggregate rewrite, migrate EXISTS guards, resolver TTL cache, and covering claim indexes.
 
 ## Recently completed (2026-07-24 CURSOR closeout)
 - **CURSOR full reconcile (this chat + sister cloud `bc-df4b4649`): all GitHub Issues closed, boards synced.** PR #898 fixed the effort-issues sync classifier (stops reopening finished rows). R2 proxy endpoint deployed via PR #912. Deno live ingestion parity handled. Owner-gated items (analytics, subscription login, R2 enablement, key ops, watcher-cron) resolved. Open GitHub issues went from ~130 → 0.

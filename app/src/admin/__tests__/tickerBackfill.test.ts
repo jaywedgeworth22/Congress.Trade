@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vitest';
 import type { Env } from '../../shared/types.ts';
 import { runTickerBackfill } from '../routes.ts';
+import { clearResolverCache } from '../../extraction/normalizer.ts';
+
+beforeEach(() => {
+  clearResolverCache();
+});
 
 describe('runTickerBackfill', () => {
   it('retroactively repairs preferred/depositary share rows collapsed to issuer tickers', async () => {
