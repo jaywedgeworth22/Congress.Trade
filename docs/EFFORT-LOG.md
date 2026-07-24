@@ -9,21 +9,14 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
-<<<<<<< HEAD
 - **[Congress.Trade][CURSOR] Owner-decisions wave — IN PROGRESS 2026-07-24.** Branch `cursor/owner-decisions-wave-d376`. Delivery tab rename + gated UX (signed-in Premium); AGENTS decisions recorded; Stripe live already `checkoutConfigured:true`; R2 storage-smoke green. Remaining in this PR: gates green + land. Follow-ups: pin-check redesign (vendor era), Turso perf beyond #907/#911, Executive agreement reprocess (Jay spend OK needed).
 - **[Congress.Trade][CURSOR←CODEX] Deno live parity / official-source recovery — IN PROGRESS 2026-07-24 (CURSOR takeover authorized).** R2 verified; Deno cron owns watcher. Remaining: House/Executive live parity (exec review backlog), bounded official-source recovery without unapproved spend spikes.
 
 ## Recently completed (verified merged on main; GitHub issues cleaned 2026-07-23)
+- **CURSOR full reconcile (sister cloud `bc-df4b4649`): Issues/boards synced 2026-07-24.** PR #898 classifier fix + PR #912 R2 proxy. Note: Planned owner-decision Issues (#156–#159 etc.) reopened from Planned section until this wave lands closes.
 - **[Congress.Trade][CURSOR] Owner decisions closed 2026-07-24:** analytics remain public (#158); Delivery requires signed-in Premium (#157, tab stays visible/gated); Stripe Wave 4 live (#159 ops); R2 ok; Sentry CONGRESS-TRADE-1 + CONGRESS-TRADE-19 resolved; PR #898 merged.
-- **[Congress.Trade][CURSOR] Effort-board hygiene + sync classifier fix — MERGED PR #898 2026-07-24.**
+- **[Congress.Trade][CURSOR] Effort-board hygiene + sync classifier fix — MERGED PR #898 2026-07-24.** Branch `cursor/effort-board-hygiene-d376`. Fixed heading classifier + orphan retirement.
 - **CURSOR 2026-07-23: GitHub Issues cleanup — all 110 stale `effort-board` issues closed.** The `effort-issues-sync.yml` workflow mirrored effort-log rows to issues but never auto-closed them after completion. Closed issues #227–#858 in this session. All known product code is landed on `main`; zero open product PRs at reconcile time.
-=======
-_Zero open product PRs on main. All known work landed or superseded. GitHub Issues: 0 open as of 2026-07-24 CURSOR closeout._
-
-## Recently completed (2026-07-24 CURSOR closeout)
-- **CURSOR full reconcile (this chat + sister cloud `bc-df4b4649`): all GitHub Issues closed, boards synced.** PR #898 fixed the effort-issues sync classifier (stops reopening finished rows). R2 proxy endpoint deployed via PR #912. Deno live ingestion parity handled. Owner-gated items (analytics, subscription login, R2 enablement, key ops, watcher-cron) resolved. Open GitHub issues went from ~130 → 0.
-- **[Congress.Trade][CURSOR] Effort-board hygiene + sync classifier fix — MERGED PR #898 2026-07-24.** Branch `cursor/effort-board-hygiene-d376`. Fixed heading classifier + orphan retirement; open effort-board Issues cut from ~130 → 10 real leftovers (CODEX Deno ops, owner-gated, planned owner decisions). Now all 0.
->>>>>>> origin/main
 - **[Congress.Trade][AG] Resolve PR conflicts & land PR #862 — MERGED & DEPLOYED 2026-07-23.** Undrafted, merged PR #862 to `main`, and deployed to production via `ship.sh`. Reconciled OpenRouter rates (`terra`/`luna`), silenced expected webhook retry Sentry noise, and updated effort log. Live `/api/health` verified (`ok:true, db:true, schema:true`).
 - **[Congress.Trade][CURSOR] OpenRouter terra/luna rate-card dummy underpricing + webhook retry Sentry noise + board reconcile — MERGED & DEPLOYED PR #862 2026-07-23.** Branch `cursor/resolve-in-progress-ba51`. Same class of bug as merged #674: leftover `openrouter-dummy` rows for `openai/gpt-5.6-terra` / `openai/gpt-5.6-luna` shadowed verified OpenAI passthrough rates (luna output $2 vs $6). Also skip Sentry.captureException for expected `DeliveryRetryError`/`IngestRetryError` (CONGRESS-TRADE-J storm). Effort-log stale OPEN/IN PROGRESS rows closed after verifying merges on main. Gates: `deno check` clean; focused 44/44; full suite 165 files / 1,865 tests.
 - **[Congress.Trade][AG] Consolidate Enrichment, Market Prices, and Benchmark Catalog improvements — MERGED 2026-07-23.** PR #851. Branch: `antigravity/grok-consolidation-enrichment-benchmark`.
