@@ -102,15 +102,18 @@ export async function flushIngestionOutbox(
   const idClause = docIds.length ? ` AND doc_id IN (${docIds.map(() => '?').join(',')})` : '';
   const rows = await all<IngestionOutboxRow>(
     env.DB,
-    `SELECT doc_id, chamber, source_url, status, attempts, dead_letter_cycles, available_at
-       FROM ingestion_outbox
-      WHERE (
-        (status IN ('pending', 'sending') AND available_at <= ?)
-        OR (status = 'enqueued' AND updated_at <= ?)
-      )${idClause}
-      ORDER BY available_at ASC
-      LIMIT ${limit}`,
-    [nowIso, staleEnqueuedBefore, ...docIds],
+    `SELECT doc_id, chamber, source_url, status, attempts, dead_letter_cycles, available_at FROM (
+       SELECT doc_id, chamber, source_url, status, attempts, dead_letter_cycles, available_at
+         FROM ingestion_outbox
+        WHERE status IN ('pending', 'sending') AND available_at <= ?${idClause}
+       UNION ALL
+       SELECT doc_id, chamber, source_url, status, attempts, dead_letter_cycles, available_at
+         FROM ingestion_outbox
+        WHERE status = 'enqueued' AND updated_at <= ?${idClause}
+     )
+     ORDER BY available_at ASC
+     LIMIT ${limit}`,
+    [nowIso, ...docIds, staleEnqueuedBefore, ...docIds],
   );
   const result: IngestionOutboxFlushResult = { claimed: 0, enqueued: 0, failed: 0 };
   for (const row of rows) {

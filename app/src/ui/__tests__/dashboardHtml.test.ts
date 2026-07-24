@@ -266,7 +266,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('var SPEED_LANE_MIN_MATCHED = 5');
     expect(DASHBOARD_HTML).toContain("Probes haven't found overlapping disclosures yet.");
     expect(DASHBOARD_HTML).toContain('<span class="sp-wlt-key">Losses</span>');
-    expect(DASHBOARD_HTML).toContain('matched so far');
+    expect(DASHBOARD_HTML).toContain('matched · ');
     expect(DASHBOARD_HTML).toContain('A live measurement, not a promise');
     expect(DASHBOARD_HTML).toContain('trademarks of their respective owners');
     // Every comparable provider rides the same honesty rails — no name-based

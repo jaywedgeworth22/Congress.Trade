@@ -386,20 +386,20 @@ async function claimMessages(
           lease_token = ?,
           updated_at = ?
       WHERE id IN (
-        SELECT id
-        FROM deno_runtime_queue
-        WHERE queue_name = ?
-          AND (
-            (status = 'pending' AND available_at <= ?)
-            OR (status = 'processing' AND lease_until IS NOT NULL AND lease_until <= ?)
-          )
+        SELECT id FROM (
+          SELECT id, available_at FROM deno_runtime_queue
+          WHERE queue_name = ? AND status = 'pending' AND available_at <= ?
+          UNION ALL
+          SELECT id, available_at FROM deno_runtime_queue
+          WHERE queue_name = ? AND status = 'processing' AND lease_until <= ?
+        )
         ORDER BY available_at ASC, id ASC
         LIMIT ?
       )
       RETURNING id, queue_name, payload, status, attempts, available_at,
                 dead_letter_pending, lease_until, lease_token, last_error,
                 created_at, updated_at
-    `).bind(leaseUntil, leaseToken, nowIso, queueName, nowIso, nowIso, limit),
+    `).bind(leaseUntil, leaseToken, nowIso, queueName, nowIso, queueName, nowIso, limit),
     `claim ${queueName} queue messages`,
   );
 }

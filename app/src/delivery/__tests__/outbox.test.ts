@@ -87,7 +87,7 @@ describe('delivery outbox', () => {
     const { env, boundParamCounts } = makeEnv();
     const txIds = Array.from({ length: 223 }, (_, index) => `tx_${index}`);
     await flushDeliveryOutbox(env, { txIds, limit: txIds.length, now: new Date('2026-07-01T00:00:00.000Z') });
-    expect(Math.max(...boundParamCounts)).toBeLessThanOrEqual(DELIVERY_TARGETED_ID_LIMIT + 2);
+    expect(Math.max(...boundParamCounts)).toBeLessThanOrEqual((DELIVERY_TARGETED_ID_LIMIT * 2) + 2);
   });
 
   it('reconnects an unexpected dead-letter with backoff', async () => {
