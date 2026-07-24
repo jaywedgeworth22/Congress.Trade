@@ -3521,13 +3521,11 @@ function decisionReasonText(d) {
 }
 function decisionDocHtml(d) {
   var docId = d.docId || '';
-  var url = safeDocUrl(d.pdfUrl || d.sourceUrl);
-  if (!url && docId) {
-    if (docId.slice(0, 2) === 'S-') url = 'https://efdsearch.senate.gov/search/view/ptr/' + encodeURIComponent(docId.slice(2)) + '/';
-    else if (docId.slice(0, 2) === 'H-') {
-      var parts = docId.split('-');
-      if (parts.length >= 3) url = 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/' + encodeURIComponent(parts[1]) + '/' + encodeURIComponent(parts[2]) + '.pdf';
-    }
+  var url = '';
+  if (docId.slice(0, 2) === 'S-' || docId.slice(0, 2) === 'H-') {
+    url = '/api/client/v1/documents/' + encodeURIComponent(docId) + '/pdf';
+  } else {
+    url = safeDocUrl(d.pdfUrl || d.sourceUrl);
   }
   if (!url) return '<span class="tkr">' + esc(docId) + '</span>';
   return '<a class="tkr" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="Open source filing">' + esc(docId) + '</a>';
@@ -3683,13 +3681,11 @@ function safeDocUrl(url) {
 }
 function reviewDocHtml(r) {
   var docId = r.docId || '';
-  var url = safeDocUrl(r.pdfUrl || r.sourceUrl);
-  if (!url && docId) {
-    if (docId.slice(0, 2) === 'S-') url = 'https://efdsearch.senate.gov/search/view/ptr/' + encodeURIComponent(docId.slice(2)) + '/';
-    else if (docId.slice(0, 2) === 'H-') {
-      var parts = docId.split('-');
-      if (parts.length >= 3) url = 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/' + encodeURIComponent(parts[1]) + '/' + encodeURIComponent(parts[2]) + '.pdf';
-    }
+  var url = '';
+  if (docId.slice(0, 2) === 'S-' || docId.slice(0, 2) === 'H-') {
+    url = '/api/client/v1/documents/' + encodeURIComponent(docId) + '/pdf';
+  } else {
+    url = safeDocUrl(r.pdfUrl || r.sourceUrl);
   }
   var idHtml = '<span class="tkr">' + esc(docId) + '</span>';
   if (!url) return idHtml;
@@ -7549,7 +7545,8 @@ function openTrade(row) {
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         var sEl = el('tradeSource'); if (!sEl) return;
-        var url = (d && d.filing && d.filing.sourceUrl) || reconstructFilingUrl(row.docId);
+        var reconstructed = reconstructFilingUrl(row.docId);
+        var url = reconstructed || (d && d.filing && d.filing.sourceUrl);
         sEl.innerHTML = url
           ? '<a class="source-link" href="' + esc(url) + '" target="_blank" rel="noopener">🔗 View source filing</a>'
           : '<div class="tier-gate-note" style="margin-top:9px">Source document not stored for this row (historic import).</div>';
@@ -7561,17 +7558,13 @@ function openTrade(row) {
       });
   }
 }
-/* Rebuild a House PTR PDF link from its docId (H-YYYY-NNNN) when the stored
-   source_url is missing — covers historic/seed House rows that predate URL capture.
-   House PTRs live at disclosures-clerk.house.gov/public_disc/ptr-pdfs/YYYY/NNNN.pdf. */
+/* Rebuild a local proxy link to our R2 bucket from its docId (H-YYYY-NNNN or S-NNNN) */
 function reconstructFilingUrl(docId) {
   var s = String(docId || '');
-  if (s.slice(0, 2) === 'S-') {
-    return 'https://efdsearch.senate.gov/search/view/ptr/' + encodeURIComponent(s.slice(2)) + '/';
+  if (s.slice(0, 2) === 'S-' || s.slice(0, 2) === 'H-') {
+    return '/api/client/v1/documents/' + encodeURIComponent(s) + '/pdf';
   }
-  var m = /^H-(\\d{4})-(\\d+)$/.exec(s);
-  if (!m) return '';
-  return 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/' + m[1] + '/' + m[2] + '.pdf';
+  return '';
 }
 
 /* ============================ ACCOUNT (auth + billing) ============================ */
