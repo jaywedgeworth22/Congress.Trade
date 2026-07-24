@@ -1669,7 +1669,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <button type="button" data-w="365d" onclick="setTrTimeWin('365d')">1Y</button>
           <button type="button" data-w="1095d" onclick="setTrTimeWin('1095d')">3Y</button>
           <button type="button" data-w="1825d" onclick="setTrTimeWin('1825d')">5Y</button>
-          <button type="button" data-w="3650d" onclick="setTrTimeWin('3650d')">10Y</button>
           <button type="button" data-w="all" class="on" onclick="setTrTimeWin('all')">Max</button>
         </div>
       </div>
