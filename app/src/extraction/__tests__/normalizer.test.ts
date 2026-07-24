@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   normalize,
   CONFIDENCE_THRESHOLD,
@@ -6,8 +6,13 @@ import {
   persistTransactions,
   TransactionPublishLimitError,
   transactionRowKey,
+  clearResolverCache,
 } from '../normalizer.ts';
 import type { Env, Filing, ParsedTx } from '../../shared/types.ts';
+
+beforeEach(() => {
+  clearResolverCache();
+});
 
 // ---------------------------------------------------------------------------
 // Minimal in-memory D1 + Queue fakes. We only need to satisfy the prepared-
@@ -23,6 +28,7 @@ interface Captured {
   enqueued: Array<{ type: string; txId: string }>;
   batches: string[][];
   auditRows: unknown[][];
+  masterReads: number;
 }
 
 function makeEnv(
@@ -37,6 +43,7 @@ function makeEnv(
     enqueued: [],
     batches: [],
     auditRows: [],
+    masterReads: 0,
   };
   const insertedByRowKey = new Map<string, Record<string, unknown>>();
   const outboxSeen = new Set<string>();
@@ -52,6 +59,7 @@ function makeEnv(
       },
       async all<T>() {
         if (/FROM securities_master/i.test(sql)) {
+          cap.masterReads += 1;
           return { results: securities as unknown as T[] };
         }
         return { results: [] as T[] };
@@ -451,5 +459,19 @@ describe('normalize', () => {
     expect(cap.insertedTx).toHaveLength(0);
     expect(String(cap.reviewRows[0][1])).toContain('unreadable_is_option');
     expect(String(cap.reviewRows[0][1])).toContain('unreadable_cap_gains');
+  });
+
+  it('reuses the in-process securities_master resolver across calls until cleared', async () => {
+    const first = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    await normalize(first.env, filing({ docId: 'doc-warm' }), [tx({ ticker: 'AAPL' })]);
+    expect(first.cap.masterReads).toBe(1);
+
+    const second = makeEnv([{ ticker: 'MSFT', name: 'Microsoft', aliases: '[]' }]);
+    await normalize(second.env, filing({ docId: 'doc-cached' }), [tx({ ticker: 'AAPL' })]);
+    expect(second.cap.masterReads).toBe(0);
+
+    clearResolverCache();
+    await normalize(second.env, filing({ docId: 'doc-cold' }), [tx({ ticker: 'AAPL' })]);
+    expect(second.cap.masterReads).toBe(1);
   });
 });

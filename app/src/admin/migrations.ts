@@ -183,11 +183,15 @@ export const PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS = [
   'ALTER TABLE securities_ref ADD COLUMN price_checked_at TEXT',
   'ALTER TABLE securities_ref ADD COLUMN latest_price_date TEXT',
   'CREATE INDEX IF NOT EXISTS idx_secref_latest_price_date ON securities_ref (latest_price_date)',
+  // EXISTS guard: tickers with no price_eod rows would otherwise re-run a
+  // correlated MAX on every /migrate and rewrite NULL→NULL forever (~544
+  // un-priceable symbols). Skip them once priced tickers are seeded.
   `UPDATE securities_ref
    SET latest_price_date = (
      SELECT MAX(pe.date) FROM price_eod pe WHERE pe.ticker = securities_ref.ticker
    )
- WHERE latest_price_date IS NULL`,
+ WHERE latest_price_date IS NULL
+   AND EXISTS (SELECT 1 FROM price_eod pe WHERE pe.ticker = securities_ref.ticker)`,
   `UPDATE securities_ref
    SET current_price = (
          SELECT pe.close FROM price_eod pe
@@ -500,6 +504,42 @@ export const PERFORMANCE_INDEXES_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_transactions_cursor_asc ON transactions (cursor_seq ASC) WHERE deprecated_at IS NULL'
 ] as const;
 
+/**
+ * 0058_turso_query_efficiency.sql — claim-order covering indexes + migrate
+ * backfill partial indexes so replayed /migrate UPDATEs stop scanning the
+ * full transactions/securities_ref tables after anchors are filled. Also
+ * seeds a singleton price_eod_stats row so admin status receipts never
+ * COUNT(*) the ~2.3M-row price cache.
+ */
+export const TURSO_QUERY_EFFICIENCY_SCHEMA_STATEMENTS = [
+  // Prefer id-covering claim indexes; drop the narrower 0056 twins once the
+  // replacements exist (IF EXISTS keeps replay safe on fresh DBs).
+  'CREATE INDEX IF NOT EXISTS idx_deno_runtime_queue_pending_id ON deno_runtime_queue (queue_name, status, available_at, id)',
+  'CREATE INDEX IF NOT EXISTS idx_deno_runtime_queue_processing_id ON deno_runtime_queue (queue_name, status, lease_until, id)',
+  'DROP INDEX IF EXISTS idx_deno_runtime_queue_pending',
+  'DROP INDEX IF EXISTS idx_deno_runtime_queue_processing',
+  // Migrate backfill probes (disclosure anchors + latest_price_date seed).
+  `CREATE INDEX IF NOT EXISTS idx_tx_missing_disclosure_anchors
+     ON transactions (doc_id)
+     WHERE first_seen_at IS NULL OR filed_date IS NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_secref_missing_latest_price_date
+     ON securities_ref (ticker)
+     WHERE latest_price_date IS NULL`,
+  `CREATE TABLE IF NOT EXISTS price_eod_stats (
+     id INTEGER PRIMARY KEY CHECK (id = 1),
+     row_count INTEGER NOT NULL DEFAULT 0,
+     updated_at TEXT NOT NULL
+   )`,
+  `INSERT OR IGNORE INTO price_eod_stats (id, row_count, updated_at)
+     VALUES (1, 0, '1970-01-01T00:00:00.000Z')`,
+  // One-shot seed: COUNT(*) only while row_count is still 0. After the first
+  // successful seed, WHERE fails and SQLite does not evaluate the subquery.
+  `UPDATE price_eod_stats
+      SET row_count = (SELECT COUNT(*) FROM price_eod),
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE id = 1 AND row_count = 0`,
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
   // 0025_extraction_runs_usage.sql
   'ALTER TABLE extraction_runs ADD COLUMN usage_json TEXT',
@@ -554,4 +594,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...QUERY_OPTIMIZATIONS_SCHEMA_STATEMENTS,
   // 0057_performance_indexes.sql
   ...PERFORMANCE_INDEXES_SCHEMA_STATEMENTS,
+  // 0058_turso_query_efficiency.sql
+  ...TURSO_QUERY_EFFICIENCY_SCHEMA_STATEMENTS,
 ] as const;

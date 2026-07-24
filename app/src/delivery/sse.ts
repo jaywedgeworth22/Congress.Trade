@@ -492,13 +492,15 @@ export async function drainSseBacklog(
               sr.sector AS __sector, sr.market_cap_bucket AS __bucket,
               fl.full_name AS filer_full_name, fl.state AS filer_state,
               fl.photo_url AS filer_photo_url
-         FROM transactions t INDEXED BY idx_tx_cursor
+         FROM (
+           SELECT t.* FROM transactions t INDEXED BY idx_tx_cursor
+            WHERE t.cursor_seq > ? AND t.deprecated_at IS NULL
+            ORDER BY t.cursor_seq ASC
+            LIMIT ?
+         ) t
          LEFT JOIN filings f ON f.doc_id = t.doc_id
          LEFT JOIN securities_ref sr ON sr.ticker = t.ticker
-         LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id
-        WHERE t.cursor_seq > ? AND t.deprecated_at IS NULL
-        ORDER BY t.cursor_seq ASC
-        LIMIT ?`,
+         LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id`,
       [hwm, PAGE_SIZE],
     );
     if (rows.length === 0) break;
