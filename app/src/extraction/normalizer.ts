@@ -23,6 +23,7 @@ import { all, batch, fromBool, get, parseJson } from '../shared/db.ts';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets.ts';
 import { canonicalizeAssetType } from '../shared/assetTypes.ts';
 import { uuid } from '../shared/ids.ts';
+import { recordTradeLatencyCandidates } from '../ingestion/tradeLatency.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
 import {
   isPlaceholderTicker,
@@ -912,7 +913,11 @@ export async function persistTransactions(env: Env, transactions: Transaction[])
     `SELECT id FROM transactions WHERE id IN (SELECT value FROM json_each(?))`,
     [proposedIdsJson],
   );
-  return inserted.map((row) => row.id);
+  const insertedIds = inserted.map((row) => row.id);
+  if (insertedIds.length > 0) {
+    await recordTradeLatencyCandidates(env, transactions.filter(t => insertedIds.includes(t.id)), new Date().toISOString());
+  }
+  return insertedIds;
 }
 
 /** Atomically persist review state, metadata, and its idempotent audit receipt. */

@@ -13,7 +13,7 @@ vi.mock('../watcher.ts', async (importOriginal) => {
 });
 
 const recordDisclosureLatencyCandidate = vi.fn(async () => undefined);
-vi.mock('../fmpDisclosureLatency.ts', () => ({
+vi.mock('../tradeLatency.ts', () => ({
   recordDisclosureLatencyCandidate: (...args: unknown[]) => recordDisclosureLatencyCandidate(...args),
 }));
 
