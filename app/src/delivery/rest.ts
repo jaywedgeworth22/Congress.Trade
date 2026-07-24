@@ -454,14 +454,28 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const docId = c.req.param('docId');
     const filingRow = await get<FilingRow>(
       c.env.DB,
-      'SELECT raw_object_key FROM filings WHERE doc_id = ?',
+      'SELECT raw_object_key, source_url FROM filings WHERE doc_id = ?',
       [docId],
     );
+
+    let fallbackUrl = filingRow?.source_url;
+    if (!fallbackUrl) {
+      const s = String(docId || '');
+      if (s.startsWith('S-')) {
+        fallbackUrl = 'https://efdsearch.senate.gov/search/view/ptr/' + encodeURIComponent(s.slice(2)) + '/';
+      } else {
+        const m = /^H-(\d{4})-(\d+)$/.exec(s);
+        if (m) fallbackUrl = 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/' + m[1] + '/' + m[2] + '.pdf';
+      }
+    }
+
     if (!filingRow || !filingRow.raw_object_key) {
+      if (fallbackUrl) return c.redirect(fallbackUrl, 302);
       return c.json({ error: 'document not found or not fetched' }, 404);
     }
     const obj = await c.env.RAW_FILES.get(filingRow.raw_object_key);
     if (!obj) {
+      if (fallbackUrl) return c.redirect(fallbackUrl, 302);
       return c.json({ error: 'document not found in storage' }, 404);
     }
     
