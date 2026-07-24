@@ -18,6 +18,8 @@ import { getSharedFmpPacer } from '../shared/pace.ts';
 import { buildFmpPriceClient, type PriceClient } from './fmp.ts';
 import { buildMassivePriceClient } from './massive.ts';
 import { buildTiingoPriceClient } from './tiingo.ts';
+import { buildPeerPriceClient } from './peer.ts';
+import { buildFallbackPriceClient } from './fallback.ts';
 import type { Close } from './compute.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
 
@@ -73,6 +75,7 @@ type EnvX = Env & {
   FMP_DAILY_CALL_CAP?: string;
   MASSIVE_API_KEY?: string;
   TIINGO_API_KEY?: string;
+  APP_B_IMPORT_URL?: string;
   /** Which provider supplies price history: 'fmp' (default), 'massive', or 'tiingo'. */
   PRICE_PROVIDER?: string;
 };
@@ -93,16 +96,30 @@ interface PricePlan {
  */
 function pricePlan(env: EnvX): PricePlan | null {
   const provider = (env.PRICE_PROVIDER || 'fmp').trim().toLowerCase();
+  let baseClient: PriceClient | null = null;
+  let budgeted = false;
+
   if (provider === 'massive' && env.MASSIVE_API_KEY) {
-    return { client: buildMassivePriceClient(env.MASSIVE_API_KEY), fmpBudgeted: false };
+    baseClient = buildMassivePriceClient(env.MASSIVE_API_KEY);
+  } else if (provider === 'tiingo' && env.TIINGO_API_KEY) {
+    baseClient = buildTiingoPriceClient(env.TIINGO_API_KEY);
+  } else if (env.FMP_API_KEY) {
+    baseClient = buildFmpPriceClient(env.FMP_API_KEY);
+    budgeted = true;
+  } else if (env.MASSIVE_API_KEY) {
+    baseClient = buildMassivePriceClient(env.MASSIVE_API_KEY);
+  } else if (env.TIINGO_API_KEY) {
+    baseClient = buildTiingoPriceClient(env.TIINGO_API_KEY);
   }
-  if (provider === 'tiingo' && env.TIINGO_API_KEY) {
-    return { client: buildTiingoPriceClient(env.TIINGO_API_KEY), fmpBudgeted: false };
+
+  if (!baseClient) return null;
+
+  if (env.APP_B_IMPORT_URL) {
+    const peerClient = buildPeerPriceClient(env.APP_B_IMPORT_URL);
+    baseClient = buildFallbackPriceClient(peerClient, baseClient);
   }
-  if (env.FMP_API_KEY) return { client: buildFmpPriceClient(env.FMP_API_KEY), fmpBudgeted: true };
-  if (env.MASSIVE_API_KEY) return { client: buildMassivePriceClient(env.MASSIVE_API_KEY), fmpBudgeted: false };
-  if (env.TIINGO_API_KEY) return { client: buildTiingoPriceClient(env.TIINGO_API_KEY), fmpBudgeted: false };
-  return null;
+
+  return { client: baseClient, fmpBudgeted: budgeted };
 }
 
 /**
