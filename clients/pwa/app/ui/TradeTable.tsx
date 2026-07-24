@@ -245,6 +245,15 @@ export function TradeTable({ items, columns, hiddenCols }: TradeTableProps) {
         return item.member.chamber || <span className="muted">—</span>;
       case 'source':
         return item.source === 'primary' ? 'Live' : 'Seed';
+      case 'docs':
+        if (item.filing.sourceUrl) {
+          return (
+            <a href={item.filing.sourceUrl} target="_blank" rel="noopener noreferrer" className="doc-link" title="View Original PDF">
+              📄 PDF
+            </a>
+          );
+        }
+        return <span className="muted">—</span>;
       default:
         return '—';
     }
