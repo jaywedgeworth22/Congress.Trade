@@ -17,6 +17,7 @@ function fakeDb() {
             return {
               results: [
                 {
+                  trade_hash: 'test_hash_123',
                   doc_id: 'H-2026-20012345',
                   provider: 'fmp',
                   chamber: 'house',
