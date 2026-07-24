@@ -7,7 +7,7 @@
   "description": "Cloudflare Workers service ingesting US congressional STOCK Act stock-trade disclosures (House + Senate) and pushing structured trade events to clients.",
   "scripts": {
     "start": "deno run --allow-net --allow-env --allow-read src/deno/main.ts",
-    "deploy": "deno deploy --app=congress-trade --prod",
+    "deploy": "deno deploy --org=congress-trade --app=congress-trade --prod --non-interactive",
     "typecheck": "deno check src/deno/main.ts",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
