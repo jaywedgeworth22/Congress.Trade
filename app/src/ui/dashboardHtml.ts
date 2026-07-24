@@ -836,7 +836,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-lead-num { font-size:30px; font-weight:800; letter-spacing:-0.5px; line-height:1; color:var(--good); font-variant-numeric:tabular-nums; }
   .sp-lead-num.negative { color:var(--rival); }
   .sp-lead-num.neutral { color:var(--text-dim); font-size:20px; }
-  .sp-lead-label { font-size:11px; color:var(--text-dim); line-height:1.3; }
+  .sp-lead-label { font-size:11px; color:var(--text-dim); line-height:1.3; text-wrap:pretty; overflow-wrap:break-word; word-break:break-word; }
   /* W/L/T stat row */
   .sp-wlt { display:flex; gap:0; border-top:1px solid color-mix(in srgb,var(--border) 60%,transparent); padding-top:10px; font-size:12px; }
   .sp-wlt-item { flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; }
@@ -849,7 +849,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* n= sample chip */
   .sp-sample { font-size:10.5px; color:var(--text-dim); line-height:1.3; }
   /* Empty / gathering state */
-  .sp-gathering { font-size:12px; color:var(--text-dim); line-height:1.5; padding:4px 0; }
+  .sp-gathering { font-size:12px; color:var(--text-dim); line-height:1.5; padding:4px 0; text-wrap:pretty; overflow-wrap:break-word; word-break:break-word; }
   /* Old race-lane kept for compat with table view */
   .speed-fineprint { font-size:10.5px; }
   .speed-table summary { cursor:pointer; font-size:12px; color:var(--text-dim); padding:6px 0; }
