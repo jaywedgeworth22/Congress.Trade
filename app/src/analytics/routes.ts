@@ -81,7 +81,7 @@ import {
 import { committeeConflict } from './conflicts.ts';
 import { computePerformance } from '../prices/compute.ts';
 import { latestSpxClose } from '../prices/service.ts';
-import { getDisclosureLatencySummary } from '../ingestion/fmpDisclosureLatency.ts';
+import { getDisclosureLatencySummary } from '../ingestion/tradeLatency.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 
 const TICKER_PARAM_RE = /^[A-Z0-9._^-]{1,20}$/;

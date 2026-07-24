@@ -121,7 +121,7 @@ import {
   PRICE_UNAVAILABLE_NOT_FOUND_FIRST,
 } from '../prices/service.ts';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets, updateSecret } from '../secrets/infisical.ts';
-import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency.ts';
+import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/tradeLatency.ts';
 import { pollExecutive } from '../ingestion/watcher.ts';
 import { verifyRawFilesStorage } from './storageSmoke.ts';
 import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox.ts';
@@ -7542,9 +7542,49 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
       // 0029-0039 — canonical value, reliability, Stripe, review, and benchmark tail.
       ...POST_0024_SCHEMA_STATEMENTS,
-      `UPDATE disclosure_latency_candidates
-       SET filed_date = (SELECT filed_date FROM filings WHERE filings.doc_id = disclosure_latency_candidates.doc_id)
-       WHERE (filed_date IS NULL OR filed_date = '') AND EXISTS (SELECT 1 FROM filings WHERE filings.doc_id = disclosure_latency_candidates.doc_id AND filings.filed_date IS NOT NULL)`,
+      // 0025_trade_latency_watch.sql — Trade-based Congress.Trade-vs-competitor disclosure race monitor.
+      `CREATE TABLE IF NOT EXISTS trade_latency_candidates (
+         trade_hash TEXT NOT NULL,
+         doc_id TEXT NOT NULL,
+         provider TEXT NOT NULL DEFAULT 'fmp',
+         chamber TEXT NOT NULL,
+         filed_date TEXT,
+         filer_name TEXT,
+         ticker TEXT,
+         tx_date TEXT,
+         tx_type TEXT,
+         congress_first_seen_at TEXT NOT NULL,
+         provider_key TEXT,
+         provider_first_seen_at TEXT,
+         match_method TEXT,
+         status TEXT NOT NULL DEFAULT 'pending',
+         attempts INTEGER NOT NULL DEFAULT 0,
+         last_checked_at TEXT,
+         error TEXT,
+         payload TEXT,
+         created_at TEXT NOT NULL,
+         updated_at TEXT NOT NULL,
+         PRIMARY KEY (trade_hash, provider)
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_trade_latency_candidates_status
+         ON trade_latency_candidates (provider, status, created_at DESC)`,
+      `CREATE TABLE IF NOT EXISTS trade_provider_observations (
+         provider TEXT NOT NULL,
+         chamber TEXT NOT NULL,
+         provider_key TEXT NOT NULL,
+         trade_hash TEXT NOT NULL,
+         first_observed_at TEXT NOT NULL,
+         last_observed_at TEXT NOT NULL,
+         source_url TEXT,
+         filed_date TEXT,
+         filer_name TEXT,
+         payload TEXT,
+         PRIMARY KEY (provider, chamber, provider_key, trade_hash)
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_trade_provider_seen
+         ON trade_provider_observations (provider, chamber, first_observed_at DESC)`,
+      `DROP TABLE IF EXISTS disclosure_latency_candidates`,
+      `DROP TABLE IF EXISTS disclosure_provider_observations`,
       // 0045_d1_budget.sql — atomic D1 usage counters.
       `CREATE TABLE IF NOT EXISTS d1_budget (
          day          TEXT PRIMARY KEY,
@@ -8239,6 +8279,105 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // Operator provisioning keeps explicit integration client ids; end-user
   // routes derive ownership from the authenticated account instead.
   r.post('/subscriptions', async (c) => {
+
+  // --- POST /backfill-fmp-dumps ---------------------------------------------
+  r.post('/backfill-fmp-dumps', async (c) => {
+    let body: any = {};
+    try { body = await c.req.json(); } catch {}
+    const { chamber, data } = body;
+    if (!chamber || !Array.isArray(data)) return c.json({ error: 'invalid payload' }, 400);
+
+    let inserted = 0;
+    for (const item of data) {
+      try {
+        const payload = JSON.stringify(item);
+        const doc_id = item.doc_id || item.link || 'fmp_unknown';
+        
+        await c.env.DB.prepare(`
+          INSERT INTO disclosure_provider_observations
+          (provider, chamber, provider_key, first_observed_at, last_observed_at, source_url, filed_date, filer_name, payload)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(provider, chamber, provider_key) DO UPDATE SET
+            last_observed_at = excluded.last_observed_at,
+            payload = excluded.payload
+        `).bind(
+          'fmp',
+          chamber,
+          item.link || doc_id,
+          new Date().toISOString(),
+          new Date().toISOString(),
+          item.link || null,
+          item.disclosureDate || item.filed_date || null,
+          (item.firstName || '') + ' ' + (item.lastName || ''),
+          payload
+        ).run();
+        inserted++;
+      } catch (e) {
+        console.error('Failed to insert FMP observation:', e);
+      }
+    }
+    return c.json({ ok: true, inserted });
+  });
+
+  // --- POST /backfill-massive-tickers ---------------------------------------
+  r.post('/backfill-massive-tickers', async (c) => {
+    let data: any[] = [];
+    try { data = await c.req.json(); } catch {}
+    if (!Array.isArray(data)) return c.json({ error: 'invalid payload' }, 400);
+
+    let inserted = 0;
+    for (const item of data) {
+      try {
+        await c.env.DB.prepare(`
+          INSERT INTO securities_ref (ticker, company_name)
+          VALUES (?, ?)
+          ON CONFLICT(ticker) DO UPDATE SET company_name = excluded.company_name
+        `).bind(
+          item.ticker,
+          item.name
+        ).run();
+        inserted++;
+      } catch (e) {
+        console.error('Failed to insert massive ticker:', e);
+      }
+    }
+    return c.json({ ok: true, inserted });
+  });
+
+  // --- POST /backfill-observations ------------------------------------------
+  r.post('/backfill-observations', async (c) => {
+    let data: any[] = [];
+    try { data = await c.req.json(); } catch {}
+    if (!Array.isArray(data)) return c.json({ error: 'invalid payload' }, 400);
+
+    let inserted = 0;
+    for (const item of data) {
+      try {
+        await c.env.DB.prepare(`
+          INSERT INTO disclosure_provider_observations
+          (provider, chamber, provider_key, first_observed_at, last_observed_at, source_url, filed_date, filer_name, payload)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(provider, chamber, provider_key) DO UPDATE SET
+            last_observed_at = excluded.last_observed_at,
+            payload = excluded.payload
+        `).bind(
+          item.provider,
+          item.chamber,
+          item.provider_key,
+          item.first_observed_at || new Date().toISOString(),
+          item.last_observed_at || new Date().toISOString(),
+          item.source_url || null,
+          item.filed_date || null,
+          item.filer_name || null,
+          item.payload ? JSON.stringify(item.payload) : null
+        ).run();
+        inserted++;
+      } catch (e) {
+        console.error('Failed to insert observation:', e);
+      }
+    }
+    return c.json({ ok: true, inserted });
+  });
     let body: Record<string, unknown>;
     try {
       body = (await c.req.json()) as Record<string, unknown>;
