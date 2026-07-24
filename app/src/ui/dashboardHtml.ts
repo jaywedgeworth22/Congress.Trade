@@ -832,7 +832,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .sp-bar-fill.behind { background: linear-gradient(90deg, var(--rival) 0%, color-mix(in srgb,var(--rival) 65%,var(--text-dim)) 100%); }
   .sp-bar-fill.tied { background: linear-gradient(90deg, var(--warn) 0%, color-mix(in srgb,var(--warn) 65%,var(--text-dim)) 100%); }
   /* Lead stat */
-  .sp-lead { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px; }
+  .sp-lead { display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
   .sp-lead-num { font-size:30px; font-weight:800; letter-spacing:-0.5px; line-height:1; color:var(--good); font-variant-numeric:tabular-nums; }
   .sp-lead-num.negative { color:var(--rival); }
   .sp-lead-num.neutral { color:var(--text-dim); font-size:20px; }
