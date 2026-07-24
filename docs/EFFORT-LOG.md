@@ -9,10 +9,11 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **[Congress.Trade][CURSOR] Effort-board hygiene + sync classifier fix — PR #898 OPEN 2026-07-24.** Branch `cursor/effort-board-hygiene-d376`. Fixed heading classifier + orphan retirement; open effort-board Issues cut from ~130 → 10 real leftovers (CODEX Deno ops, owner-gated, planned owner decisions). Resolved Sentry CONGRESS-TRADE-J. Gates: sync unit tests + `npm run typecheck` + 165/1865 tests.
 - **[Congress.Trade][CODEX] Restore Deno live ingestion and data-completeness path — IN PROGRESS 2026-07-22 (ops/parity remain).** Runtime recovery PRs merged; Coolify runners online; Garage smoke green. Remaining: bounded official-source recovery, enrichment, live House/Executive parity verification, safe worktree cleanup. Keep dirty CODEX worktrees untouched.
 - **Owner-gated (not agent-landable without Jay):** analytics premium-only decision; public subscription creation requiring login; R2 enablement (Sentry CONGRESS-TRADE-19); OpenRouter/Mistral key ops; watcher-cron check-in (CONGRESS-TRADE-1).
 
-## Recently closed (were stale OPEN/IN PROGRESS — verified merged on main; GitHub issues cleaned 2026-07-23)
+## Recently completed (verified merged on main; GitHub issues cleaned 2026-07-23)
 - **CURSOR 2026-07-23: GitHub Issues cleanup — all 110 stale `effort-board` issues closed.** The `effort-issues-sync.yml` workflow mirrored effort-log rows to issues but never auto-closed them after completion. Closed issues #227–#858 in this session. All known product code is landed on `main`; zero open product PRs at reconcile time.
 - **[Congress.Trade][AG] Resolve PR conflicts & land PR #862 — MERGED & DEPLOYED 2026-07-23.** Undrafted, merged PR #862 to `main`, and deployed to production via `ship.sh`. Reconciled OpenRouter rates (`terra`/`luna`), silenced expected webhook retry Sentry noise, and updated effort log. Live `/api/health` verified (`ok:true, db:true, schema:true`).
 - **[Congress.Trade][CURSOR] OpenRouter terra/luna rate-card dummy underpricing + webhook retry Sentry noise + board reconcile — MERGED & DEPLOYED PR #862 2026-07-23.** Branch `cursor/resolve-in-progress-ba51`. Same class of bug as merged #674: leftover `openrouter-dummy` rows for `openai/gpt-5.6-terra` / `openai/gpt-5.6-luna` shadowed verified OpenAI passthrough rates (luna output $2 vs $6). Also skip Sentry.captureException for expected `DeliveryRetryError`/`IngestRetryError` (CONGRESS-TRADE-J storm). Effort-log stale OPEN/IN PROGRESS rows closed after verifying merges on main. Gates: `deno check` clean; focused 44/44; full suite 165 files / 1,865 tests.
@@ -404,8 +405,55 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 - **PWA post-merge review follow-ups (CODEX) — COMPLETED / MERGED via PR #599 2026-07-18.** Branch `codex/pwa-post-merge-followups` rebased onto exact `origin/main`; profile response fields now match the public client API, including null-safe count/volume formatting. Arbitrary dynamic `[ticker]` and `[slug]` routes were incompatible with the configured static export, so search now links to encoded `/asset?ticker=...` and `/politician?slug=...` pages that resolve identifiers client-side under Suspense without build-time live-data enumeration. Cloudflare Wrangler also exposed an invalid merged `_routes.json`; the required explicit `exclude` array and regression coverage are included. PWA typecheck, 7 files / 31 tests, production static export, exported-page assertions, and diff check pass. Wrangler Pages 4.112.0 compiles the Functions bundle, serves encoded asset/politician URLs as HTTP 200, and redirects `/asset.html` to `/asset` with 308.
 - **Current-main iOS improvement roadmap (CODEX + expert reviewer, S) — COMPLETED / MERGED 2026-07-13 via PR #383 (`83cc5094`).** The code-backed roadmap covers truthful Executive filtering, lossless forward/older sync and tombstones, recoverable command retries, production auth, App Review commerce/privacy, push alerts, scoped state, trace-backed performance budgets, accessibility, observability, CI/TestFlight, and AG overlap sequencing. Generic simulator build, build-for-testing, and Release generic-device build passed; hosted CI/PWA/Security passed. Runtime tests/Instruments remain explicitly pending because no iOS Simulator runtime is installed on this Mac. Docs-only; no SwiftUI or production runtime mutation.
 - **[MONET] Diagnosed prod webhook-delivery 401 wall + Review Queue triage (troubleshoot-issues-3c86a2 session, 2026-07-17) — COMPLETED / FIXED (Socratic.Trade PR #1704).** Owner-requested triage on repeating `HTTP 401` webhook delivery failures. Root-caused to `congress.trade` signing `X-Signature: sha256=<hex>` while receiver-side (Socratic.Trade) expected bare hex with no prefix. Fix landed in Socratic.Trade (PR #1704; green gates: lint 0/tsc clean/build clean). Review Queue item `H-2026-20035003` verified as expected validator quarantine; no code change required in `congress.trade`.
-## In Progress
-- **[Congress.Trade][CURSOR] Fix executive latency candidate test (branch `cursor/fix-exec-latency-test-14e5`) — IN PROGRESS.** Aligns test with `5264fe9` allow-executive behavior that broke main CI.
+
+- **CURSOR 2026-07-24: Planned-section closeouts moved here** — bullets below were COMPLETED/MERGED under Planned but stayed open in the Issues mirror; relocated so sync closes them.
+- **Fix the production deploy health gate blocked by Cloudflare managed challenge (CURSOR, M) — COMPLETED 2026-07-06; COMMITTED 2026-07-08 via PR #237 (`cursor/rollouts-health-gate`).**
+  All 3 recent Deploy runs 403'd on `/api/health` from GH runners (challenge page, `cType`
+  `'managed'`); add a WAF skip/custom rule or secret-header bypass for `/api/health` (or fall back
+  to the `workers.dev` hostname), then rerun Deploy end-to-end. Why now: the browser-UA workaround
+  merged 7/2 (`e320b1a`) demonstrably failed on the 7/3 run — a UA string cannot pass a managed
+  challenge from datacenter IPs; until fixed, `ship.sh` exits before `POST /api/admin/migrate`, so
+  every CI deploy leaves prod schema unverified and Wave-4 go-live (which needs migrations) cannot
+  ship confidently.
+- **De-crash and de-challenge the Uptime Monitor workflow (CURSOR, S) — COMPLETED 2026-07-06.** `uptime-monitor.yml` does
+  a bare curl (no UA/bypass) so it fetches challenge HTML, then writes that body to
+  `GITHUB_OUTPUT` with a static `EOF` heredoc that crashes ("Matching delimiter not found"); use a
+  random delimiter + truncate/sanitize the body + apply the same health-check bypass as deploy. Why
+  now: every scheduled run today is red for the wrong reason — the monitor can't distinguish "site
+  down" from "monitor broken", which defeats its purpose and trains everyone to ignore red runs.
+- **Land cursor/assigned-tasks: commit, rebase onto main, drop already-merged hunks (CURSOR, M) — COMPLETED 2026-07-06.**
+  The branch is uncommitted in `/Users/jay/Code/Congress.Trade` on base `892b45e` (7 merges
+  behind); its task 7 (tokenless dep: `app/.npmrc` delete, `package.json` switch) and parts of the
+  CI cleanup duplicate merged PRs #139/#140 — commit, merge origin/main, drop redundant hunks, keep
+  the still-missing `PEER_REPO` fix (main still says `agentic-trading`), re-verify, open PR. Why
+  now: the board marks this Completed but there is no landing row; the genuinely-new work (ESLint
+  bootstrap, vitest config, PEER_REPO fix, tsconfig.ingestcheck removal) is stranded, and the dirty
+  primary checkout blocks anyone else using that worktree.
+- **Adopt the docs/rollouts/ note convention in Congress.Trade AGENTS.md (CURSOR, S) — COMPLETED 2026-07-06; COMMITTED 2026-07-08 via PR #237 (`cursor/rollouts-health-gate`).** Add the
+  Socratic.Trade-style `docs/rollouts/YYYY-MM-DD-slug.md` convention (summary/why/files/
+  verification/follow-ups) to AGENTS.md and seed the directory; STATUS.md stays the snapshot. Why
+  now: this repo's only paper trail is a single overwritten STATUS.md — the #139 tokenless-dep
+  work explicitly noted it had nowhere durable to record its proof; with 5 agent lanes and a
+  go-live approaching, chronological decision records are the cheapest coordination insurance and
+  match the fleet standard.
+- **Merge shared ag/client-and-ticker + release v1.3.1 so app PRs can pin a tag not a branch (AG, M) — COMPLETED 2026-07-11** — The shared repo's ag/client-and-ticker (commit 81b2fd3: CongressTradeClient + ticker rename/acquisition split) is unmerged and absent from v1.3.0. Every Congress.Trade PR #182-#187 fails check-pin because it must pin the branch. Merge the shared branch to shared main, cut v1.3.1, then repin app/package.json (and Socratic.Trade's peer) to that tag as a matched pair so check-pin goes green.
+- **Consolidate AG's six overlapping PRs #182-#187 into one stacked/sequenced landing plan (AG, L) — COMPLETED 2026-07-11.** — The six AG branches each re-include the same 231-line senateSource rewrite + tickerNormalize + eslint/vitest config, so parallel merges will conflict. Pick a single base branch, rebase the unique deltas (dashboardHtml, fmpDisclosureLatency, shared/types dedup, D1-batch/queue perf, senate KV caching) on top of it in order, and close the redundant duplicates — after the shared v1.3.1 tag exists so check-pin can pass.
+- **Remove stray patch.py scratch script from antigravity/performance-queues (#186) before it lands (AG, S) — COMPLETED 2026-07-11.** — PR #186 accidentally commits patch.py, a 47-line Python string-patcher for webhook.ts. Delete it so a dev-only artifact does not ship into the repo.
+- **Rescue CURSOR stash into a committed, pushed branch + PR (CURSOR, M) — MERGED 2026-07-08 via PR #211 (`ef732f3`).** PR #211 (`cursor/assigned-tasks-v2`). Stash@{1} rescued from base 892b45e onto current origin/main. Dropped already-merged hunks from #139/#140. Genuine work committed: tsconfig strict flags, tsconfig.ingestcheck deletion, ESLint deps + scripts, lockfile-based pin-check, AGENTS.md dedup, unused-code removal across 8 files, dashboard CSS cleanup. Gates: typecheck 0 errors, lint 0 errors, 672 tests pass.
+- **Add manual queue reprocess button to admin dashboard (AG, S) — COMPLETED 2026-07-06.** Added a UI widget to `dashboardHtml.ts` to trigger `POST /api/admin/reprocess` directly from the admin panel.
+
+- **CURSOR 2026-07-24: stale Planned rows verified already on main** — Senate scraper hardening, UI/UX batch, Architecture/shared `createCongressEvent`, and `sentry-ci-report.yml` were still under Planned; relocated after verifying code/workflows on main.
+- **Senate Scraper Hardening (AG, M) — 2026-07-05.** Overcome WAF IP blocks via residential scout proxying, implement content-based field extraction for DataTables, and cache session handshakes in KV. — COMPLETED / ON MAIN (board hygiene 2026-07-24).
+- **UI/UX Improvements (AG, M) — 2026-07-05.** Fix mobile tab grid spacing, hide mobile columns button, consolidate search/filters + add Max $, fix theme toggle labels, group pagination controls, sticky-lock columns, and add charts to Trends. — COMPLETED / ON MAIN (board hygiene 2026-07-24).
+- **Architecture & Shared Dependency (AG, M) — 2026-07-05.** Use `createCongressEvent` from shared package, promote duplicate types to `schemas.ts`, upgrade Socratic.Trade to validate HMAC `X-Signature`, and replace SSE D1-polling with a push mechanism. — COMPLETED / ON MAIN (board hygiene 2026-07-24).
+_2026-07-04 backlog exhaustiveness pass (CLAUDE, owner-directed). Tags: CURSOR = Cursor background
+agents (DeepSeek v4 Pro), CODEX = Codex, AG = Antigravity/Gemini, CLAUDE = Claude Code. Assignments
+are reservations, not locks — re-negotiate in #agent-sync._
+- **Sentry CI failure reporter (CLAUDE, S)** — copy the additive `sentry-ci-report.yml` fleet — COMPLETED / ON MAIN (board hygiene 2026-07-24).
+  standard from Socratic.Trade per AGENT-SYNC.md observability rules. **MONET (Claude seat) claimed
+  2026-07-05 → see In Progress; implemented + verified locally on `monet/sentry-ci-report`, awaiting
+  owner push/PR.**
+## Historical archive (closed — chronology only; prefer Active above)
 - **[Congress.Trade][CURSOR] Resolve stale In Progress + terra/luna rate-card + webhook Sentry noise — PR #862 OPEN 2026-07-23.** Branch `cursor/resolve-in-progress-ba51`. Gates: typecheck + 165/1,865 tests. See Active section at top of this file.
 - **[Congress.Trade][CODEX] Restore Deno live ingestion and data-completeness path — IN PROGRESS 2026-07-22.** Runtime recovery PRs #754/#756/#757 are merged and deployed from exact `main`; Coolify-hosted CI/deploy runners online; Garage smoke passes. Remaining: bounded official-source recovery, enrichment, House/Executive parity verification, safe worktree cleanup. Keep dirty root/CODEX worktrees untouched.
 - _(Historical In Progress rows from 2026-07-12…2026-07-22 below were left for chronology; many are long since merged. Prefer the Active section at the top of this file as the live board.)_
@@ -675,16 +723,6 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
   [AG -> AG].
 ## Planned / Reserved
 - **Post-Codex Activation: PWA/iOS deploy targets, billing config, ingestion and queue drain (AG, XL) — 2026-07-11.** Take over execution from Codex, define production hosting for PWA/iOS, configure billing portal, and execute backlog ingestion/backfill.
-- **Senate Scraper Hardening (AG, M) — 2026-07-05.** Overcome WAF IP blocks via residential scout proxying, implement content-based field extraction for DataTables, and cache session handshakes in KV.
-- **UI/UX Improvements (AG, M) — 2026-07-05.** Fix mobile tab grid spacing, hide mobile columns button, consolidate search/filters + add Max $, fix theme toggle labels, group pagination controls, sticky-lock columns, and add charts to Trends.
-- **Architecture & Shared Dependency (AG, M) — 2026-07-05.** Use `createCongressEvent` from shared package, promote duplicate types to `schemas.ts`, upgrade Socratic.Trade to validate HMAC `X-Signature`, and replace SSE D1-polling with a push mechanism.
-_2026-07-04 backlog exhaustiveness pass (CLAUDE, owner-directed). Tags: CURSOR = Cursor background
-agents (DeepSeek v4 Pro), CODEX = Codex, AG = Antigravity/Gemini, CLAUDE = Claude Code. Assignments
-are reservations, not locks — re-negotiate in #agent-sync._
-- **Sentry CI failure reporter (CLAUDE, S)** — copy the additive `sentry-ci-report.yml` fleet
-  standard from Socratic.Trade per AGENT-SYNC.md observability rules. **MONET (Claude seat) claimed
-  2026-07-05 → see In Progress; implemented + verified locally on `monet/sentry-ci-report`, awaiting
-  owner push/PR.**
 - **Promote shared-package-pin-check to a required check (unassigned, S)** — deferred in the
   workflow's own header until shared-pkg bumps always land as matched pairs.
 - **Owner decision: should public subscription creation require login? (unassigned, M)** —
@@ -703,56 +741,21 @@ looks dead — both 2026-07-04 reservations show zero activity; if AG stays sile
 reassign per the rows below. OWNER is the true bottleneck: land the cursor branch, push two MONET
 branches, tag v1.3.0, set `STRIPE_*`/`SENTRY_FLEET_DSN` secrets, decide the Cloudflare health-check
 bypass, and adjudicate the two open product decisions above._
-- **Fix the production deploy health gate blocked by Cloudflare managed challenge (CURSOR, M) — COMPLETED 2026-07-06; COMMITTED 2026-07-08 via PR #237 (`cursor/rollouts-health-gate`).**
-  All 3 recent Deploy runs 403'd on `/api/health` from GH runners (challenge page, `cType`
-  `'managed'`); add a WAF skip/custom rule or secret-header bypass for `/api/health` (or fall back
-  to the `workers.dev` hostname), then rerun Deploy end-to-end. Why now: the browser-UA workaround
-  merged 7/2 (`e320b1a`) demonstrably failed on the 7/3 run — a UA string cannot pass a managed
-  challenge from datacenter IPs; until fixed, `ship.sh` exits before `POST /api/admin/migrate`, so
-  every CI deploy leaves prod schema unverified and Wave-4 go-live (which needs migrations) cannot
-  ship confidently.
-- **De-crash and de-challenge the Uptime Monitor workflow (CURSOR, S) — COMPLETED 2026-07-06.** `uptime-monitor.yml` does
-  a bare curl (no UA/bypass) so it fetches challenge HTML, then writes that body to
-  `GITHUB_OUTPUT` with a static `EOF` heredoc that crashes ("Matching delimiter not found"); use a
-  random delimiter + truncate/sanitize the body + apply the same health-check bypass as deploy. Why
-  now: every scheduled run today is red for the wrong reason — the monitor can't distinguish "site
-  down" from "monitor broken", which defeats its purpose and trains everyone to ignore red runs.
 - **Audit production schema drift from the three failed Deploy runs (OWNER, S)** — Confirm whether
   `POST /api/admin/migrate` ever ran after the 6/30, 7/2, 7/3 Worker uploads (deploy exits before
   migrate on health failure); if behind, run the guarded `ship.sh` migrate path from the Mac. Why
   now: prod is running version `eafb0a16` deployed 7/3 but the pipeline never reached the migrate
   step in any recent run; if any of those merges included migrations (e.g. 0009_client_api.sql era
   or later), prod code and schema may be silently divergent.
-- **Land cursor/assigned-tasks: commit, rebase onto main, drop already-merged hunks (CURSOR, M) — COMPLETED 2026-07-06.**
-  The branch is uncommitted in `/Users/jay/Code/Congress.Trade` on base `892b45e` (7 merges
-  behind); its task 7 (tokenless dep: `app/.npmrc` delete, `package.json` switch) and parts of the
-  CI cleanup duplicate merged PRs #139/#140 — commit, merge origin/main, drop redundant hunks, keep
-  the still-missing `PEER_REPO` fix (main still says `agentic-trading`), re-verify, open PR. Why
-  now: the board marks this Completed but there is no landing row; the genuinely-new work (ESLint
-  bootstrap, vitest config, PEER_REPO fix, tsconfig.ingestcheck removal) is stranded, and the dirty
-  primary checkout blocks anyone else using that worktree.
-- **Adopt the docs/rollouts/ note convention in Congress.Trade AGENTS.md (CURSOR, S) — COMPLETED 2026-07-06; COMMITTED 2026-07-08 via PR #237 (`cursor/rollouts-health-gate`).** Add the
-  Socratic.Trade-style `docs/rollouts/YYYY-MM-DD-slug.md` convention (summary/why/files/
-  verification/follow-ups) to AGENTS.md and seed the directory; STATUS.md stays the snapshot. Why
-  now: this repo's only paper trail is a single overwritten STATUS.md — the #139 tokenless-dep
-  work explicitly noted it had nowhere durable to record its proof; with 5 agent lanes and a
-  go-live approaching, chronological decision records are the cheapest coordination insurance and
-  match the fleet standard.
 - **De-duplicate effort-issues sync when a row's first line changes (CLAUDE, S)** —
-  `scripts/sync-effort-issues.py` keys issues on the row title line, so editing a row (e.g.
-  appending "IN PROGRESS 2026-07-04") minted a second issue — #161 duplicates #146 for the same
-  effort; match on a stable slug or fuzzy-prefix and close superseded twins. Why now: fresh
-  concrete failure visible on the board today; CLAUDE owns this fleet-standard script (just
-  hardened it in #162/#694) so the fix propagates to all four repos.
+  Partial: 2026-07-24 CURSOR fixed heading misclassification (`Recently closed`/`Historical archive`
+  no longer reopen as in-progress). Remaining: stable slug / fuzzy-prefix match so title edits
+  do not mint duplicate issues (#161 vs #146 class). Fleet-standard script lives in this repo
+  and congress-trading-shared.
 ### 2026-07-05 audit cycle-3
 _Added by CLAUDE audit-c3 pass. Tags: CURSOR / CODEX / AG / MONET / CLAUDE / OWNER. Assignments are
 reservations, not locks — re-negotiate in #agent-sync. NEVER assign to CODEX (quota-capped to
 Jul 8 18:10 CT)._
-- **Merge shared ag/client-and-ticker + release v1.3.1 so app PRs can pin a tag not a branch (AG, M) — COMPLETED 2026-07-11** — The shared repo's ag/client-and-ticker (commit 81b2fd3: CongressTradeClient + ticker rename/acquisition split) is unmerged and absent from v1.3.0. Every Congress.Trade PR #182-#187 fails check-pin because it must pin the branch. Merge the shared branch to shared main, cut v1.3.1, then repin app/package.json (and Socratic.Trade's peer) to that tag as a matched pair so check-pin goes green.
-- **Consolidate AG's six overlapping PRs #182-#187 into one stacked/sequenced landing plan (AG, L) — COMPLETED 2026-07-11.** — The six AG branches each re-include the same 231-line senateSource rewrite + tickerNormalize + eslint/vitest config, so parallel merges will conflict. Pick a single base branch, rebase the unique deltas (dashboardHtml, fmpDisclosureLatency, shared/types dedup, D1-batch/queue perf, senate KV caching) on top of it in order, and close the redundant duplicates — after the shared v1.3.1 tag exists so check-pin can pass.
-- **Remove stray patch.py scratch script from antigravity/performance-queues (#186) before it lands (AG, S) — COMPLETED 2026-07-11.** — PR #186 accidentally commits patch.py, a 47-line Python string-patcher for webhook.ts. Delete it so a dev-only artifact does not ship into the repo.
-- **Rescue CURSOR stash into a committed, pushed branch + PR (CURSOR, M) — MERGED 2026-07-08 via PR #211 (`ef732f3`).** PR #211 (`cursor/assigned-tasks-v2`). Stash@{1} rescued from base 892b45e onto current origin/main. Dropped already-merged hunks from #139/#140. Genuine work committed: tsconfig strict flags, tsconfig.ingestcheck deletion, ESLint deps + scripts, lockfile-based pin-check, AGENTS.md dedup, unused-code removal across 8 files, dashboard CSS cleanup. Gates: typecheck 0 errors, lint 0 errors, 672 tests pass.
-- **Add manual queue reprocess button to admin dashboard (AG, S) — COMPLETED 2026-07-06.** Added a UI widget to `dashboardHtml.ts` to trigger `POST /api/admin/reprocess` directly from the admin panel.
 ## Changelog of this log
 - 2026-07-08 — CURSOR: PR #211 merged; PR #237 opened (rollouts convention + deploy health gate workers.dev fallback, previously stranded in stash@{1}).
 - 2026-07-06 — CURSOR: rescued stash@{1} → PR #211; fixed uptime-monitor.yml crash + CF challenge bypass; adopted rollouts convention; created Wave-4 smoke script; fixed deploy health gate (workers.dev fallback); noted patch.py on AG's PR #186.
