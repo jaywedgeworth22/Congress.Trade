@@ -424,12 +424,6 @@ export function matchesFiltersWithContext(
   if (!matchesFilters(tx, filters)) return false;
   if (filters.chambers && filters.chambers.length > 0) {
     if (!ctx.chamber || !filters.chambers.includes(ctx.chamber as never)) return false;
-  } else if (ctx.chamber === 'executive') {
-    // Default delivery = congressional. Executive (OGE 278-T) rows are pushed
-    // only to subscriptions that explicitly include 'executive' in their
-    // chambers filter — a subscriber set up before executive tracking existed
-    // must not suddenly receive a 3,000-row presidential filing.
-    return false;
   }
   if (filters.sectors && filters.sectors.length > 0) {
     if (!ctx.sector || !filters.sectors.includes(ctx.sector)) return false;

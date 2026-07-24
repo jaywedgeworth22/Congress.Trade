@@ -263,9 +263,9 @@ describe('runWatcher', () => {
 
     expect(result.executive).toBe('success');
     expect(kvPuts.map(([key]) => key)).toContain('last_poll:oge');
-    // Executive filings must NOT create disclosure-latency candidates (those
-    // providers only publish house/senate rows and would sit permanently pending).
-    expect(dbRuns.filter((run) => /INSERT INTO disclosure_latency_candidates/i.test(run.sql))).toHaveLength(0);
+    // Executive filings are tracked just like House and Senate filings
+    // because third-party APIs (like FMP and Quiver) support them.
+    expect(dbRuns.filter((run) => /INSERT INTO disclosure_latency_candidates/i.test(run.sql))).toHaveLength(3);
   });
 
   it('upserts executive filer party + portrait so existing rows refresh on every poll', async () => {

@@ -704,20 +704,20 @@ async function routeProviderOnlyObservationsToReview(
   for (const row of rows) {
     if (row.chamber !== 'house' && row.chamber !== 'senate') continue;
     const docId = providerOnlyDocId(row);
-    const exists = await get<{ doc_id: string }>(
+    const exists1 = await get<{ doc_id: string }>(env.DB, `SELECT doc_id FROM filings WHERE doc_id = ? LIMIT 1`, [docId]);
+    if (exists1) continue;
+
+    if (row.sourceUrl) {
+      const exists2 = await get<{ doc_id: string }>(env.DB, `SELECT doc_id FROM filings WHERE source_url = ? LIMIT 1`, [row.sourceUrl]);
+      if (exists2) continue;
+    }
+
+    const exists3 = await get<{ doc_id: string }>(
       env.DB,
-      `SELECT doc_id FROM filings
-        WHERE doc_id = ?
-           OR (? IS NOT NULL AND source_url = ?)
-           OR EXISTS (
-                SELECT 1 FROM disclosure_latency_candidates c
-                 WHERE c.provider = ? AND c.provider_key = ? AND c.status = 'matched'
-                   AND c.doc_id = filings.doc_id
-              )
-        LIMIT 1`,
-      [docId, row.sourceUrl, row.sourceUrl, provider, row.providerKey],
+      `SELECT doc_id FROM disclosure_latency_candidates WHERE provider = ? AND provider_key = ? AND status = 'matched' LIMIT 1`,
+      [provider, row.providerKey]
     );
-    if (exists) continue;
+    if (exists3) continue;
 
     const payload = JSON.stringify({
       reason: 'provider_discovered_missing_official',
@@ -791,10 +791,6 @@ export async function recordDisclosureLatencyCandidate(
   filing: DiscoveredFiling,
   nowIso: string,
 ): Promise<void> {
-  // Executive filings are skipped because major third-party APIs (FMP, UW, Quiver)
-  // only cover House and Senate. Recording them would create permanently pending
-  // rows that needlessly consume the daily scan cap.
-  if (filing.chamber === 'executive') return;
 
   for (const provider of DIRECT_PROVIDER_IDS) {
     try {
