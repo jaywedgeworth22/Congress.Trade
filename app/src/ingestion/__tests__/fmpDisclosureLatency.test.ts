@@ -237,10 +237,12 @@ describe('recordDisclosureLatencyCandidate chamber guard', () => {
     expect(prepared.some((s) => /INSERT INTO disclosure_latency_candidates/i.test(s))).toBe(true);
   });
 
-  it('skips executive filings entirely (would otherwise sit permanently pending)', async () => {
+  it('writes candidate rows for executive filings (OGE coverage benchmark)', async () => {
+    // 2026-07-23: executive filings are intentionally included so provider
+    // coverage can be measured against OGE (see fmpDisclosureLatency.ts).
     const { env, prepared } = trackingEnv();
     await recordDisclosureLatencyCandidate(env, filing('executive'), '2026-06-02T00:00:00Z');
-    expect(prepared.some((s) => /disclosure_latency_candidates/i.test(s))).toBe(false);
+    expect(prepared.some((s) => /INSERT INTO disclosure_latency_candidates/i.test(s))).toBe(true);
   });
 });
 
