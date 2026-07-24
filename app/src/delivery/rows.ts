@@ -452,6 +452,21 @@ function buildTxFilters(
 }
 
 /**
+ * True when the feed WHERE/ORDER only touch `transactions` columns (plus the
+ * always-on deprecated_at filter). In that case we can keyset+LIMIT first and
+ * join filers/filings/securities_ref afterwards — Turso was reading ~20k+ rows
+ * per LIMIT 50 poll when the joins ran before the limit.
+ */
+function canNestTransactionKeyset(p: TxQueryParams): boolean {
+  if (p.memberName) return false;
+  if (p.chamber) return false;
+  if (p.chambers && p.chambers.length) return false;
+  if (p.filedSince) return false;
+  if (p.sort === 'published') return false;
+  return true;
+}
+
+/**
  * Build the parameterized SQL for `GET /transactions`. Orders by cursor_seq
  * ASC by default (so callers can use the max returned cursor to page forward),
  * or DESC when `order: 'desc'` for a newest-first snapshot; always returns only
@@ -492,17 +507,40 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
       ? `t.cursor_seq ${direction}`
       : `${orderExpr} ${direction}, t.cursor_seq ${direction}`;
 
-  const sql =
+  const selectList =
     `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, fl.party AS __party, ` +
     'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
     'fl.photo_url AS filer_photo_url, ' +
     REF_SELECT +
-    'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url, f.raw_object_key AS filing_raw_object_key ' +
+    'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url, f.raw_object_key AS filing_raw_object_key ';
+
+  const limitClause =
+    `LIMIT ${limit}` + (offset > 0 ? ` OFFSET ${offset}` : '');
+
+  // Nested keyset: apply WHERE/ORDER/LIMIT on transactions alone, then join
+  // enrichment tables. Same result set; far fewer Turso rows read on the hot
+  // unfiltered cursor poll path.
+  if (canNestTransactionKeyset(p)) {
+    const sql =
+      selectList +
+      'FROM (' +
+      'SELECT t.* FROM transactions t ' +
+      `WHERE ${where.join(' AND ')} ` +
+      `ORDER BY ${orderClause} ` +
+      limitClause +
+      ') t ' +
+      'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
+      'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
+      'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker';
+    return { sql, params, limit, offset };
+  }
+
+  const sql =
+    selectList +
     TX_FROM_JOINS +
     `WHERE ${where.join(' AND ')} ` +
     `ORDER BY ${orderClause} ` +
-    `LIMIT ${limit}` +
-    (offset > 0 ? ` OFFSET ${offset}` : '');
+    limitClause;
 
   return { sql, params, limit, offset };
 }

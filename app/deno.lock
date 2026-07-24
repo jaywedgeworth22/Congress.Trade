@@ -2204,7 +2204,7 @@
     ],
     "packageJson": {
       "dependencies": [
-        "npm:@aws-sdk/client-s3@3.1093.0",
+        "npm:@aws-sdk/client-s3@3.1094.0",
         "npm:@fontsource/zilla-slab@^5.3.0",
         "npm:@google/genai@^2.13.0",
         "npm:@libsql/client@~0.17.4",

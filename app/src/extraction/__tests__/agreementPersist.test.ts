@@ -1,6 +1,11 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
 import { processAgreementDoc, type AgreementModels } from '../agreement.ts';
+import { clearResolverCache } from '../normalizer.ts';
+
+beforeEach(() => {
+  clearResolverCache();
+});
 
 /** A genuinely-parseable PDF: the Anthropic candidate pre-validates bytes
  *  with pdf-lib (normalizePdfForAnthropic) before any provider call. */
