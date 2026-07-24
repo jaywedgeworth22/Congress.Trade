@@ -1,6 +1,11 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
 import { buildAdminRouter } from '../routes.ts';
+import { clearResolverCache } from '../../extraction/normalizer.ts';
+
+beforeEach(() => {
+  clearResolverCache();
+});
 
 /** A genuinely-parseable PDF: the Anthropic candidate pre-validates bytes
  *  with pdf-lib (normalizePdfForAnthropic) before any provider call. */

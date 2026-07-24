@@ -11,6 +11,7 @@ import {
   ACCOUNTING_PROJECTION_RESYNC_SCHEMA_STATEMENTS,
   QUERY_OPTIMIZATIONS_SCHEMA_STATEMENTS,
   PERFORMANCE_INDEXES_SCHEMA_STATEMENTS,
+  TURSO_QUERY_EFFICIENCY_SCHEMA_STATEMENTS,
   BASE_SCHEMA_STATEMENTS,
   D1_BUDGET_SCHEMA_STATEMENTS,
   DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS,
@@ -213,6 +214,7 @@ describe('admin migration bootstrap', () => {
       ...ACCOUNTING_PROJECTION_RESYNC_SCHEMA_STATEMENTS,
       ...QUERY_OPTIMIZATIONS_SCHEMA_STATEMENTS,
       ...PERFORMANCE_INDEXES_SCHEMA_STATEMENTS,
+      ...TURSO_QUERY_EFFICIENCY_SCHEMA_STATEMENTS,
     ]);
   });
 
@@ -299,6 +301,17 @@ describe('admin migration bootstrap', () => {
     expect(sql).toContain('latest_price_date TEXT');
     expect(sql).toContain('idx_secref_latest_price_date');
     expect(sql).toContain('SELECT MAX(pe.date) FROM price_eod');
+    expect(sql).toContain('AND EXISTS (SELECT 1 FROM price_eod pe WHERE pe.ticker = securities_ref.ticker)');
+  });
+
+  it('covers Turso claim ORDER BY and migrate backfill probes (0058)', () => {
+    const sql = TURSO_QUERY_EFFICIENCY_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('idx_deno_runtime_queue_pending_id');
+    expect(sql).toContain('idx_deno_runtime_queue_processing_id');
+    expect(sql).toContain('idx_tx_missing_disclosure_anchors');
+    expect(sql).toContain('idx_secref_missing_latest_price_date');
+    expect(sql).toContain('price_eod_stats');
+    expect(sql).toContain('WHERE id = 1 AND row_count = 0');
   });
 
   it('includes the review autonomy schema mirrored by migrations 0033-0037', () => {

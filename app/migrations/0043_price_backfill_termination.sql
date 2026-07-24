@@ -28,7 +28,8 @@ UPDATE securities_ref
    SET latest_price_date = (
      SELECT MAX(pe.date) FROM price_eod pe WHERE pe.ticker = securities_ref.ticker
    )
- WHERE latest_price_date IS NULL;
+ WHERE latest_price_date IS NULL
+   AND EXISTS (SELECT 1 FROM price_eod pe WHERE pe.ticker = securities_ref.ticker);
 
 -- Also seed current_price/current_price_date from the latest cached close for any
 -- row that has cached closes but no live anchor (e.g. closes-only imports accepted

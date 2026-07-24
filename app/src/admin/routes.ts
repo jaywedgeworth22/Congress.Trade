@@ -4168,9 +4168,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
                 COALESCE(SUM(CASE WHEN photo_url IS NULL OR TRIM(photo_url) = '' THEN 1 ELSE 0 END), 0) AS missing_photo
            FROM filers`,
       ),
-      all<{ rows: number; tickers: number; latest_date: string | null }>(
+      all<{ rows: number | null; tickers: number; latest_date: string | null }>(
         c.env.DB,
-        `SELECT COUNT(*) AS rows, COUNT(DISTINCT ticker) AS tickers, MAX(date) AS latest_date FROM price_eod`,
+        // Never full-scan price_eod (~2.3M rows). Tickers + freshness come from
+        // the maintained securities_ref.latest_price_date index; exact row
+        // count is served from the singleton price_eod_stats (seeded once by
+        // migrate 0058, cheap to read thereafter).
+        `SELECT
+            (SELECT row_count FROM price_eod_stats WHERE id = 1) AS rows,
+            COALESCE((
+              SELECT COUNT(*) FROM securities_ref WHERE latest_price_date IS NOT NULL
+            ), 0) AS tickers,
+            (SELECT MAX(latest_price_date) FROM securities_ref) AS latest_date`,
       ),
     ]);
     return c.json({

@@ -29,6 +29,9 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain('ORDER BY t.cursor_seq ASC');
     expect(q.params).toEqual([0]);
     expect(q.limit).toBe(DEFAULT_TX_LIMIT);
+    // Hot path nests keyset+LIMIT before enrichment joins.
+    expect(q.sql).toContain('SELECT t.* FROM transactions t');
+    expect(q.sql).toMatch(/\) t LEFT JOIN filers/);
   });
 
   it('uses the supplied since cursor as the first bound param', () => {
@@ -70,13 +73,26 @@ describe('buildTransactionsQuery', () => {
 
   it('resolves chamber via the filers table (authoritative for seed data)', () => {
     const q = buildTransactionsQuery({ chamber: 'senate' });
-    // filers is the authoritative chamber source; seed trades have a filers
-    // row but no filings row. We still LEFT JOIN filings and COALESCE so live
-    // rows resolve when filer meta is missing.
+    // Chamber filters need the join BEFORE limit, so this path stays flat.
     expect(q.sql).toContain('LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id');
     expect(q.sql).toContain('LEFT JOIN filings f ON f.doc_id = t.doc_id');
     expect(q.sql).toContain('COALESCE(fl.chamber, f.chamber) = ?');
     expect(q.params).toEqual([0, 'senate']);
+    expect(q.sql).not.toContain('SELECT t.* FROM transactions t');
+  });
+
+  it('nests keyset before joins for ticker-only filters', () => {
+    const q = buildTransactionsQuery({ since: 9, ticker: 'aapl', limit: 25 });
+    expect(q.sql).toContain('SELECT t.* FROM transactions t');
+    expect(q.sql).toContain('t.ticker = ?');
+    expect(q.sql).toMatch(/LIMIT 25\) t LEFT JOIN filers/);
+    expect(q.params).toEqual([9, 'AAPL']);
+  });
+
+  it('keeps flat joins when memberName requires filers', () => {
+    const q = buildTransactionsQuery({ memberName: 'Pelo' });
+    expect(q.sql).toContain("LOWER(COALESCE(fl.full_name, t.filer_id, '')) LIKE ?");
+    expect(q.sql).not.toMatch(/FROM \(SELECT t\.\* FROM transactions t/);
   });
 
   it('selects the resolved chamber + politician name alongside t.*', () => {

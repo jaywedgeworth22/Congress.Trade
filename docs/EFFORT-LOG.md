@@ -9,9 +9,10 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
-_Zero open product PRs on main. All known work landed or superseded. GitHub Issues: 0 open as of 2026-07-24 CURSOR closeout._
+_None. Turso query-efficiency slice on `cursor/turso-query-opt-0900` (PR #919) — gates green, awaiting merge/deploy._
 
 ## Recently completed (2026-07-24 CURSOR closeout)
+- **[Congress.Trade][CURSOR] Turso query efficiency — PR #919 OPEN 2026-07-24.** Branch `cursor/turso-query-opt-0900`. Cut hot-path rows-read: data-recovery status no longer full-scans `price_eod` (~2.3M); nested keyset feed/SSE; securities_master TTL cache; migrate EXISTS + partial indexes; claim ORDER BY covering indexes. Gates: `deno check` clean; full suite 165 files / 1,869 tests. Rollout: `docs/rollouts/2026-07-24-turso-query-efficiency.md`.
 - **CURSOR full reconcile (this chat + sister cloud `bc-df4b4649`): all GitHub Issues closed, boards synced.** PR #898 fixed the effort-issues sync classifier (stops reopening finished rows). R2 proxy endpoint deployed via PR #912. Deno live ingestion parity handled. Owner-gated items (analytics, subscription login, R2 enablement, key ops, watcher-cron) resolved. Open GitHub issues went from ~130 → 0.
 - **[Congress.Trade][CURSOR] Effort-board hygiene + sync classifier fix — MERGED PR #898 2026-07-24.** Branch `cursor/effort-board-hygiene-d376`. Fixed heading classifier + orphan retirement; open effort-board Issues cut from ~130 → 10 real leftovers (CODEX Deno ops, owner-gated, planned owner decisions). Now all 0.
 - **[Congress.Trade][AG] Resolve PR conflicts & land PR #862 — MERGED & DEPLOYED 2026-07-23.** Undrafted, merged PR #862 to `main`, and deployed to production via `ship.sh`. Reconciled OpenRouter rates (`terra`/`luna`), silenced expected webhook retry Sentry noise, and updated effort log. Live `/api/health` verified (`ok:true, db:true, schema:true`).
