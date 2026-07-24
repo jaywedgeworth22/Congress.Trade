@@ -2933,6 +2933,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const where = provider ? 'WHERE provider = ?' : '';
     const params: SqlParam[] = provider ? [provider, limit] : [limit];
     const rows = await optionalAll<{
+      trade_hash: string;
       doc_id: string;
       provider: string;
       chamber: string;
@@ -2952,17 +2953,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       updated_at: string;
     }>(
       c.env,
-      `SELECT doc_id, provider, chamber, source_url, filed_date, filer_name,
+      `SELECT trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name,
               congress_first_seen_at, provider_key, provider_first_seen_at, provider_published_at,
               match_method, status, attempts, last_checked_at, error,
               created_at, updated_at
-         FROM disclosure_latency_candidates
+         FROM trade_latency_candidates
         ${where}
         ORDER BY created_at DESC
         LIMIT ?`,
       params,
     );
     const items = rows.map((row) => ({
+      tradeHash: row.trade_hash,
       docId: row.doc_id,
       provider: row.provider,
       chamber: row.chamber,
@@ -7542,57 +7544,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
       // 0029-0039 — canonical value, reliability, Stripe, review, and benchmark tail.
       ...POST_0024_SCHEMA_STATEMENTS,
-      // 0045_d1_budget.sql — atomic D1 usage counters.
-      `CREATE TABLE IF NOT EXISTS d1_budget (
-         day          TEXT PRIMARY KEY,
-         rows_read    INTEGER NOT NULL DEFAULT 0,
-         rows_written INTEGER NOT NULL DEFAULT 0
-       )`,
-      // 0059_trade_latency_watch.sql — Trade-based Congress.Trade-vs-competitor disclosure race monitor.
-      `CREATE TABLE IF NOT EXISTS trade_latency_candidates (
-         trade_hash TEXT NOT NULL,
-         doc_id TEXT NOT NULL,
-         provider TEXT NOT NULL DEFAULT 'fmp',
-         chamber TEXT NOT NULL,
-         filed_date TEXT,
-         filer_name TEXT,
-         ticker TEXT,
-         tx_date TEXT,
-         tx_type TEXT,
-         congress_first_seen_at TEXT NOT NULL,
-         provider_key TEXT,
-         provider_first_seen_at TEXT,
-         provider_published_at TEXT,
-         match_method TEXT,
-         status TEXT NOT NULL DEFAULT 'pending',
-         attempts INTEGER NOT NULL DEFAULT 0,
-         last_checked_at TEXT,
-         error TEXT,
-         payload TEXT,
-         created_at TEXT NOT NULL,
-         updated_at TEXT NOT NULL,
-         PRIMARY KEY (trade_hash, provider)
-       )`,
-      `CREATE INDEX IF NOT EXISTS idx_trade_latency_candidates_status
-         ON trade_latency_candidates (provider, status, created_at DESC)`,
-      `CREATE TABLE IF NOT EXISTS trade_provider_observations (
-         provider TEXT NOT NULL,
-         chamber TEXT NOT NULL,
-         provider_key TEXT NOT NULL,
-         trade_hash TEXT NOT NULL,
-         first_observed_at TEXT NOT NULL,
-         last_observed_at TEXT NOT NULL,
-         provider_published_at TEXT,
-         source_url TEXT,
-         filed_date TEXT,
-         filer_name TEXT,
-         payload TEXT,
-         PRIMARY KEY (provider, chamber, provider_key, trade_hash)
-       )`,
-      `CREATE INDEX IF NOT EXISTS idx_trade_provider_seen
-         ON trade_provider_observations (provider, chamber, first_observed_at DESC)`,
-      `DROP TABLE IF EXISTS disclosure_latency_candidates`,
-      `DROP TABLE IF EXISTS disclosure_provider_observations`
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
