@@ -9,7 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
-- **[Congress.Trade][CURSOR] Owner-decisions wave — IN PROGRESS 2026-07-24.** Branch `cursor/owner-decisions-wave-d376`. Delivery tab rename + gated UX (signed-in Premium); AGENTS decisions recorded; Stripe live already `checkoutConfigured:true`; R2 storage-smoke green. Remaining in this PR: gates green + land. Follow-ups: pin-check redesign (vendor era), Turso perf beyond #907/#911, Executive agreement reprocess (Jay spend OK needed).
+- **[Congress.Trade][CURSOR] Owner-decisions wave — IN PROGRESS 2026-07-24.** Branch `cursor/owner-decisions-wave-d376` / **PR #915 CI green** (typecheck+test, PWA, gitleaks, shared vendor pin). Delivery gated UX landed; pin-check redesigned+passing. Awaiting merge. Follow-ups after merge: promote pin-check to required branch protection; Executive agreement reprocess only with Jay spend OK.
 - **[Congress.Trade][CURSOR←CODEX] Deno live parity / official-source recovery — IN PROGRESS 2026-07-24 (CURSOR takeover authorized).** R2 verified; Deno cron owns watcher. Remaining: House/Executive live parity (exec review backlog), bounded official-source recovery without unapproved spend spikes.
 
 ## Recently completed (verified merged on main; GitHub issues cleaned 2026-07-23)
