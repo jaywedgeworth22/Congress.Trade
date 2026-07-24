@@ -8352,10 +8352,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     for (const item of data) {
       try {
         await c.env.DB.prepare(`
-          INSERT INTO disclosure_provider_observations
-          (provider, chamber, provider_key, first_observed_at, last_observed_at, source_url, filed_date, filer_name, payload)
+          INSERT INTO trade_provider_observations
+          (provider, chamber, trade_hash, first_observed_at, last_observed_at, source_url, filed_date, filer_name, payload)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(provider, chamber, provider_key) DO UPDATE SET
+          ON CONFLICT(provider, chamber, trade_hash) DO UPDATE SET
             last_observed_at = excluded.last_observed_at,
             payload = excluded.payload
         `).bind(
