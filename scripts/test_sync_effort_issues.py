@@ -65,5 +65,46 @@ class ParseBoardBucketTests(unittest.TestCase):
         self.assertEqual(by_bucket["planned"], ["Owner decision: analytics premium-only?"])
 
 
+class OrphanRetirementTests(unittest.TestCase):
+    def test_open_orphan_is_closed_and_labelled(self) -> None:
+        current = sync.BoardItem("planned", "Current live planned row")
+        orphan_key = "a" * 40
+        orphan = {
+            "number": 9,
+            "title": "stale",
+            "body": f"body\n<!-- effort-key: {orphan_key} -->",
+            "state": "open",
+            "labels": [{"name": sync.MIRROR_LABEL}, {"name": "state:planned"}],
+        }
+        live = {
+            "number": 1,
+            "title": current.title,
+            "body": sync.build_body(current, "o/r", "sha"),
+            "state": "open",
+            "labels": [{"name": label} for label in sync.desired_labels("planned")],
+        }
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.issues = [live, orphan]
+                self.updates: list[tuple[int, dict]] = []
+
+            def list_all_issues(self):
+                return self.issues
+
+            def create_issue(self, *args, **kwargs):
+                raise AssertionError("should not create")
+
+            def update_issue(self, number: int, fields: dict) -> None:
+                self.updates.append((number, fields))
+
+        client = FakeClient()
+        stats = sync.reconcile([current], client, "o/r", "sha", None)
+        orphan_update = next(fields for number, fields in client.updates if number == 9)
+        self.assertEqual(orphan_update["state"], "closed")
+        self.assertIn(sync.ORPHANED_LABEL, orphan_update["labels"])
+        self.assertEqual(stats["orphaned"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

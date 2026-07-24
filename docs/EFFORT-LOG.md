@@ -9,7 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
-- **[Congress.Trade][CURSOR] Effort-board hygiene + sync classifier fix — IN PROGRESS 2026-07-24.** Branch `cursor/effort-board-hygiene-d376`. Fix `sync-effort-issues.py` misclassifying `Recently closed (…IN PROGRESS…)` and historical `## In Progress` as open; archive stale board rows; close GitHub issue mirrors; leave owner-gated + CODEX Deno parity untouched.
+- **[Congress.Trade][CURSOR] Effort-board hygiene + sync classifier fix — PR #898 OPEN 2026-07-24.** Branch `cursor/effort-board-hygiene-d376`. Fixed heading classifier + orphan retirement; open effort-board Issues cut from ~130 → 10 real leftovers (CODEX Deno ops, owner-gated, planned owner decisions). Resolved Sentry CONGRESS-TRADE-J. Gates: sync unit tests + `npm run typecheck` + 165/1865 tests.
 - **[Congress.Trade][CODEX] Restore Deno live ingestion and data-completeness path — IN PROGRESS 2026-07-22 (ops/parity remain).** Runtime recovery PRs merged; Coolify runners online; Garage smoke green. Remaining: bounded official-source recovery, enrichment, live House/Executive parity verification, safe worktree cleanup. Keep dirty CODEX worktrees untouched.
 - **Owner-gated (not agent-landable without Jay):** analytics premium-only decision; public subscription creation requiring login; R2 enablement (Sentry CONGRESS-TRADE-19); OpenRouter/Mistral key ops; watcher-cron check-in (CONGRESS-TRADE-1).
 
