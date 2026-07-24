@@ -28,6 +28,7 @@ interface Captured {
   enqueued: Array<{ type: string; txId: string }>;
   batches: string[][];
   auditRows: unknown[][];
+  masterReads: number;
 }
 
 function makeEnv(
@@ -42,6 +43,7 @@ function makeEnv(
     enqueued: [],
     batches: [],
     auditRows: [],
+    masterReads: 0,
   };
   const insertedByRowKey = new Map<string, Record<string, unknown>>();
   const outboxSeen = new Set<string>();
@@ -57,6 +59,7 @@ function makeEnv(
       },
       async all<T>() {
         if (/FROM securities_master/i.test(sql)) {
+          cap.masterReads += 1;
           return { results: securities as unknown as T[] };
         }
         return { results: [] as T[] };
@@ -459,19 +462,16 @@ describe('normalize', () => {
   });
 
   it('reuses the in-process securities_master resolver across calls until cleared', async () => {
-    const { env } = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
-    const warm = await normalize(env, filing({ docId: 'doc-warm' }), [tx({ ticker: 'AAPL' })]);
-    expect(warm.needsReview).toBe(false);
+    const first = makeEnv([{ ticker: 'AAPL', name: 'Apple Inc.', aliases: '[]' }]);
+    await normalize(first.env, filing({ docId: 'doc-warm' }), [tx({ ticker: 'AAPL' })]);
+    expect(first.cap.masterReads).toBe(1);
 
-    // Empty master would force review without the TTL cache.
-    const empty = makeEnv([]);
-    const cached = await normalize(empty.env, filing({ docId: 'doc-cached' }), [tx({ ticker: 'AAPL' })]);
-    expect(cached.needsReview).toBe(false);
-    expect(empty.cap.insertedTx).toHaveLength(1);
+    const second = makeEnv([{ ticker: 'MSFT', name: 'Microsoft', aliases: '[]' }]);
+    await normalize(second.env, filing({ docId: 'doc-cached' }), [tx({ ticker: 'AAPL' })]);
+    expect(second.cap.masterReads).toBe(0);
 
     clearResolverCache();
-    const cold = await normalize(empty.env, filing({ docId: 'doc-cold' }), [tx({ ticker: 'AAPL' })]);
-    expect(cold.needsReview).toBe(true);
-    expect(empty.cap.insertedTx).toHaveLength(1);
+    await normalize(second.env, filing({ docId: 'doc-cold' }), [tx({ ticker: 'AAPL' })]);
+    expect(second.cap.masterReads).toBe(1);
   });
 });
