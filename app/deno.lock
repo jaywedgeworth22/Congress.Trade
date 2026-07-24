@@ -7,7 +7,6 @@
     "npm:@google/genai@^2.13.0": "2.13.0",
     "npm:@libsql/client@*": "0.17.4",
     "npm:@libsql/client@~0.17.4": "0.17.4",
-    "npm:@sentry/cli@^3.6.0": "3.6.0",
     "npm:@sentry/cloudflare@^10.66.0": "10.66.0_@cloudflare+workers-types@4.20260702.1",
     "npm:@types/node@26.1.1": "26.1.1",
     "npm:@typescript-eslint/eslint-plugin@^8.64.0": "8.64.0_@typescript-eslint+parser@8.64.0__eslint@10.7.0__typescript@5.9.3_eslint@10.7.0_typescript@5.9.3",
@@ -787,66 +786,6 @@
     "@rolldown/pluginutils@1.0.1": {
       "integrity": "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw=="
     },
-    "@sentry/cli-darwin@3.6.0": {
-      "integrity": "sha512-C2SWHKaEP8NoYkLDr5jwrzklTwlJkzPIx7lu2LZrwBuHG/sNhWdili0ED2mD86b6Q90hlcMtuBm5IHUwcZ6FTQ==",
-      "os": ["darwin"]
-    },
-    "@sentry/cli-linux-arm64@3.6.0": {
-      "integrity": "sha512-Rc+DB8vuTDpwqY2BxIPnooYk2ZDYQytF+n4nfi6pZZsJtr3SFFe+3wIWVmCVqxiHkaISb33+iJIDxOOqhkSNbQ==",
-      "os": ["linux", "freebsd", "android"],
-      "cpu": ["arm64"]
-    },
-    "@sentry/cli-linux-arm@3.6.0": {
-      "integrity": "sha512-S9xsDZTvybOGbrqqZ7DvF7JCNKp4cakDWJ4LdvQX+z82cHQSoLkYOXkA3EafDfWV9BGIRMIXitMMiSsV2PMU4g==",
-      "os": ["linux", "freebsd", "android"],
-      "cpu": ["arm"]
-    },
-    "@sentry/cli-linux-i686@3.6.0": {
-      "integrity": "sha512-PQ7+ctNmWtHgmbKa+rJheHU7D9GHJXafgWYfVW6gt7R0Ag9LxiDVYLGjrL4G/i7AGFNgudXFaLkGKNX7HUjc+g==",
-      "os": ["linux", "freebsd", "android"],
-      "cpu": ["x86", "ia32"]
-    },
-    "@sentry/cli-linux-x64@3.6.0": {
-      "integrity": "sha512-c+7xNg5BAaPE8N2Q6pg3Q/kt97JSaskuQIjRxHaFuDbCkJvww4VozY6mW5NUMJaW48rEs3mahWKamTLqJsO3wQ==",
-      "os": ["linux", "freebsd", "android"],
-      "cpu": ["x64"]
-    },
-    "@sentry/cli-win32-arm64@3.6.0": {
-      "integrity": "sha512-zhZ7YyGreHSKZ92Mwb9h4cEyL0I/eND7W6XIUXUW0BCCmxFOMc71vlQpUw8gijHIsFDbv8c8a6VOSkeRuwbSwQ==",
-      "os": ["win32"],
-      "cpu": ["arm64"]
-    },
-    "@sentry/cli-win32-i686@3.6.0": {
-      "integrity": "sha512-JaxzVDdyetrPBp8NHh2yNAYdDk79ROXqfAfjQwG5z6V764MMMrf2WrhQ7EwoKXOPtBLm/drbOcYgaxHuDZKGRw==",
-      "os": ["win32"],
-      "cpu": ["x86", "ia32"]
-    },
-    "@sentry/cli-win32-x64@3.6.0": {
-      "integrity": "sha512-LW0078VlxaUeVMMLA15A1zhkvZ5vby/lwthtBXPoBSDdTcgbTE4D4gQXM9vEapV28SvCO3fVIek3pbtrkaeDMw==",
-      "os": ["win32"],
-      "cpu": ["x64"]
-    },
-    "@sentry/cli@3.6.0": {
-      "integrity": "sha512-79XC8o59G/i3VqmnoQD74a/QD/422eQQlUqiPd3sEvcYCxnaZialRVAsxuNEFd6sx4aVGpqt775MMDT9cV/lMg==",
-      "dependencies": [
-        "progress",
-        "proxy-from-env",
-        "undici@6.27.0",
-        "which"
-      ],
-      "optionalDependencies": [
-        "@sentry/cli-darwin",
-        "@sentry/cli-linux-arm",
-        "@sentry/cli-linux-arm64",
-        "@sentry/cli-linux-i686",
-        "@sentry/cli-linux-x64",
-        "@sentry/cli-win32-arm64",
-        "@sentry/cli-win32-i686",
-        "@sentry/cli-win32-x64"
-      ],
-      "scripts": true,
-      "bin": true
-    },
     "@sentry/cloudflare@10.66.0_@cloudflare+workers-types@4.20260702.1": {
       "integrity": "sha512-QYEZQsR09OO/0nfyZP4J56JG8zNO5PCPon7TM96fjjbKIbshpbUcr73XmUhHh3h1Kv0Ic/M5LWBm9eV6H5Cmmw==",
       "dependencies": [
@@ -1267,7 +1206,7 @@
         "parse5",
         "parse5-htmlparser2-tree-adapter",
         "parse5-parser-stream",
-        "undici@7.28.0",
+        "undici",
         "whatwg-mimetype"
       ]
     },
@@ -1983,9 +1922,6 @@
     "prelude-ls@1.2.1": {
       "integrity": "sha512-vkcDPrRZo1QZLbn5RLGPpg/WmIQ65qoWWhcGKf/b5eplkkarX0m9z8ppCat4mlOqUsWpyNuYgO3VRyrYHSzX5g=="
     },
-    "progress@2.0.3": {
-      "integrity": "sha512-7PiHtLll5LdnKIMw100I+8xJXR5gW2QwWYkT6iJva0bXitZKa/XMrSbdmg3r2Xnaidz9Qumd0VPaMrZlF9V9sA=="
-    },
     "promise-limit@2.7.0": {
       "integrity": "sha512-7nJ6v5lnJsXwGprnGXga4wx6d1POjvi5Qmf1ivTRxTjH4Z/9Czja/UCMLVmB9N93GeWOU93XaFaEt6jbuoagNw=="
     },
@@ -2005,9 +1941,6 @@
         "long"
       ],
       "scripts": true
-    },
-    "proxy-from-env@1.1.0": {
-      "integrity": "sha512-D+zkORCbA9f1tdWRK0RaCR3GPv50cMxcrz4X8k5LTSUD1Dkw47mKJEZQNunItRTkWwgtaUSo1RVFRIG9ZXiFYg=="
     },
     "punycode@2.3.1": {
       "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg=="
@@ -2130,9 +2063,6 @@
     },
     "undici-types@8.3.0": {
       "integrity": "sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ=="
-    },
-    "undici@6.27.0": {
-      "integrity": "sha512-YmfV3YnEDzXRC5lZ2jWtWWHKGUm1zIt8AhesR1tens+HTNv+YZlN/dp6G727LOvMJ8xjP9Be7Y2Sdr96LDm+pg=="
     },
     "undici@7.28.0": {
       "integrity": "sha512-cRZYrTDwWznlnRiPjggAGxZXanty6M8RV1ff8Wm4LWXBp7/IG8v5DnOm74DtUBp9OONpK75YlPnIjQqX0dBDtA=="
@@ -2274,11 +2204,11 @@
     ],
     "packageJson": {
       "dependencies": [
-        "npm:@aws-sdk/client-s3@3.1091.0",
+        "npm:@aws-sdk/client-s3@3.1093.0",
         "npm:@fontsource/zilla-slab@^5.3.0",
         "npm:@google/genai@^2.13.0",
         "npm:@libsql/client@~0.17.4",
-        "npm:@sentry/cli@^3.6.0",
+        "npm:@sentry/cli@^3.6.2",
         "npm:@types/node@26.1.1",
         "npm:@typescript-eslint/eslint-plugin@^8.64.0",
         "npm:@typescript-eslint/parser@^8.62.1",
