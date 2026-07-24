@@ -237,7 +237,7 @@ describe('enrichment transient-retry backoff (attempt-aging, no permanent tombst
  * pace() entirely ("EDGAR is free + unmetered"). They now await the
  * EDGAR-dedicated pacer, same as every other provider awaits its own gate.
  * Minimal D1/KV fakes (mirrors the pattern in
- * ingestion/__tests__/fmpDisclosureLatency.test.ts) let this exercise the real
+ * ingestion/__tests__/tradeLatency.test.ts) let this exercise the real
  * runEnrichment provider loop instead of only the pacer unit in isolation.
  */
 describe('runEnrichment paces SEC EDGAR calls', () => {

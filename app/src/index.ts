@@ -44,7 +44,7 @@ import {
   maybeStartBacklogAutopilot,
 } from './extraction/autopilot.ts';
 import { refreshSecrets } from './secrets/infisical.ts';
-import { runDisclosureLatencyProbe } from './ingestion/fmpDisclosureLatency.ts';
+import { runDisclosureLatencyProbe } from './ingestion/tradeLatency.ts';
 import { buildDetectionRouter } from './ingestion/detectionRoutes.ts';
 import { browserSecurityHeadersMiddleware } from './security/headers.ts';
 import { publicApiGuard } from './security/botDefense.ts';
