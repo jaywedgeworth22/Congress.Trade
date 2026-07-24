@@ -104,6 +104,12 @@ export function SpeedScorecard() {
           <p className="eyebrow" style={{ color: 'var(--muted)', marginTop: '4px' }}>
             {timeAgoText}
           </p>
+          <div className="latency-disclaimer">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+            <p>
+              <strong>Note:</strong> Competitor volumes reflect individual transactions, while our latency metrics track full documents (filings). Our quality crosschecks show Congress.Trade typically extracts more trades per document than these providers.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -208,8 +214,30 @@ export function SpeedScorecard() {
         .speed-scorecard-header {
           display: flex;
           justify-content: space-between;
-          align-items: flex-end;
+          align-items: flex-start;
           margin-bottom: 16px;
+        }
+        .latency-disclaimer {
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+          margin-top: 12px;
+          padding: 10px 14px;
+          background: rgba(255, 255, 255, 0.03);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 8px;
+          font-size: 12px;
+          color: var(--muted);
+          line-height: 1.4;
+          max-width: 600px;
+        }
+        .latency-disclaimer svg {
+          flex-shrink: 0;
+          margin-top: 2px;
+          color: rgba(255, 255, 255, 0.5);
+        }
+        .latency-disclaimer strong {
+          color: var(--text);
         }
         .scorecard-grid {
           display: grid;
