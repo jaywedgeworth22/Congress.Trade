@@ -280,7 +280,7 @@ export async function insertFilingIfNew(
     try {
       await run(
         env.DB,
-        'UPDATE disclosure_latency_candidates SET filed_date = ? WHERE doc_id = ? AND filed_date IS NULL',
+        'UPDATE disclosure_latency_candidates SET filed_date = ? WHERE doc_id = ? AND (filed_date IS NULL OR filed_date = "")',
         [filedDate, f.docId],
       );
     } catch (err) {

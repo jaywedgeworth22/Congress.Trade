@@ -7533,6 +7533,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
       // 0029-0039 — canonical value, reliability, Stripe, review, and benchmark tail.
       ...POST_0024_SCHEMA_STATEMENTS,
+      `UPDATE disclosure_latency_candidates
+       SET filed_date = (SELECT filed_date FROM filings WHERE filings.doc_id = disclosure_latency_candidates.doc_id)
+       WHERE (filed_date IS NULL OR filed_date = '') AND EXISTS (SELECT 1 FROM filings WHERE filings.doc_id = disclosure_latency_candidates.doc_id AND filings.filed_date IS NOT NULL)`
     ];
     const applied: string[] = [];
     const skipped: string[] = [];

@@ -803,6 +803,7 @@ export async function recordDisclosureLatencyCandidate(
             congress_first_seen_at, status, attempts, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
          ON CONFLICT(doc_id, provider) DO UPDATE SET
+           filed_date = CASE WHEN filed_date = '' THEN excluded.filed_date ELSE filed_date END,
            congress_first_seen_at = MIN(congress_first_seen_at, excluded.congress_first_seen_at),
            updated_at = excluded.updated_at`,
         [
