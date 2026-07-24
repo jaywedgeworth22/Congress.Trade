@@ -1,9 +1,20 @@
 # Current Handoff
 
-Last updated: 2026-07-19
+Last updated: 2026-07-23 (CURSOR)
 
 This repo is worked by multiple agents. `AGENTS.md` is the policy source of
 truth; this file is the short operational snapshot for the current integration.
+
+## 2026-07-23 — Effort-board reconcile + leftover money/Sentry hotfixes (CURSOR)
+
+- `docs/EFFORT-LOG.md` Active section now matches GitHub: PRs #670/#674/#774/#775/#776/#781/#849/#854
+  and related agent rows are closed; zero open product PRs at reconcile time.
+- Branch `cursor/resolve-in-progress-ba51` replaces remaining OpenRouter `openrouter-dummy`
+  terra/luna rate-card rows with verified OpenAI passthrough rates and stops capturing expected
+  `DeliveryRetryError`/`IngestRetryError` as Sentry Issues (CONGRESS-TRADE-J).
+- Still owner/ops: Deno live House/Executive parity (CODEX), R2 enablement (CONGRESS-TRADE-19),
+  watcher-cron check-in (CONGRESS-TRADE-1), OpenRouter/Mistral key limits, product decisions on
+  analytics gating / public subscription login.
 
 ## 2026-07-22 — Usage telemetry v2 producer adoption (CODEX)
 

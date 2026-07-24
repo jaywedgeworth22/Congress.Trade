@@ -722,9 +722,15 @@ const queueWorker = Sentry.withSentry(
             }
           } else {
             console.error(`queue ${typedBatch.queue} message failed:`, (err as Error).message);
-            // console.error above is only a breadcrumb/log; the retry swallows the
-            // throw, so without this the failure would never create a Sentry Issue.
-            Sentry.captureException(err as Error, { tags: { queue: typedBatch.queue, messageType } });
+            // Expected queue retries are control flow (at-least-once delivery /
+            // transient ingest). Capturing them creates Sentry storms such as
+            // CONGRESS-TRADE-J ("webhook delivery target(s) require retry").
+            // Reserve Issues for unexpected failures only.
+            if (!(err instanceof DeliveryRetryError) && !(err instanceof IngestRetryError)) {
+              Sentry.captureException(err as Error, {
+                tags: { queue: typedBatch.queue, messageType },
+              });
+            }
           }
           if (err instanceof DeliveryRetryError || err instanceof IngestRetryError) {
             message.retry({ delaySeconds: err.delaySeconds });
