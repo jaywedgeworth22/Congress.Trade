@@ -11,7 +11,8 @@
  *                 EventSource('/api/stream?subscription=<id>')
  *   Review        GET /api/admin/review-queue
  *                 POST /api/admin/review/:docId  {decision}
- *   Subscriptions GET/POST /api/admin/subscriptions
+ *   Delivery      GET /api/client/v1/subscriptions
+ *                 POST /api/client/v1/commands {type:'create_subscription'}
  *   Admin cadence GET/PUT /api/admin/poll-config
  *   Source health GET /api/admin/sources/health
  *
@@ -1445,7 +1446,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
     <button data-view="feed" data-mobile="Trades" data-icon="▦" id="tab-feed" role="tab" aria-selected="false" aria-controls="view-feed">Trades</button>
     <button data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" hidden>Review Queue <span id="reviewCount"></span></button>
-    <button data-view="subs" data-mobile="Alerts" data-icon="↗" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Alerts</button>
+    <button data-view="subs" data-mobile="Delivery" data-icon="↗" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</button>
     <button data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" hidden>Admin · Cadence</button>
   </nav>
   <div id="acct" class="acct"></div>
@@ -1765,14 +1766,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
   </section>
 
-  <!-- ================= ALERTS (public education + admin management) ================= -->
+  <!-- ================= DELIVERY (public education + account-owned management) ================= -->
   <section class="view" id="view-subs" role="tabpanel" aria-labelledby="tab-subs" aria-hidden="true">
     <!-- Public marketing/education: how the two paid delivery methods work.
-         Visible to everyone, including signed-out visitors; the functionality
-         itself stays behind Premium. -->
+         Visible to everyone, including signed-out visitors; creating a delivery
+         requires a signed-in Premium account. -->
     <div class="section" id="subsMarketing">
       <h3>Get the Filing First</h3>
-      <p class="sub">The dashboard is the same for everyone &mdash; and it&rsquo;s free. Premium decides who gets told first: the moment our scout ingests a new filing, Premium pushes it to you instead of waiting for you to check the site. Two delivery methods, both included:</p>
+      <p class="sub">The dashboard and analytics stay free for everyone. Premium Delivery pushes a filing to you the moment our scout ingests it — instead of waiting for you to check the site. Two methods, both included:</p>
       <div class="speed-mini" id="alertsSpeedMini"></div>
       <div class="delivery-grid">
         <div class="delivery-card">
@@ -1786,29 +1787,30 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <p class="note">If webhooks are us calling you, the stream is you leaving the line open.</p>
         </div>
       </div>
-      <p class="note" style="text-align:center">The live dashboard and analytics stay free for everyone; delivery is the Premium part. A live measurement, not a promise &mdash; past speed doesn&rsquo;t guarantee future speed.</p>
+      <p class="note" style="text-align:center">Trends, Trades, and analytics stay free. Delivery (webhook / SSE) is the Premium part. Past speed doesn&rsquo;t guarantee future speed.</p>
     </div>
     <div class="section" id="subsManage">
-      <h3>Developer Alert Delivery</h3>
-      <p class="sub">Manage signed webhook or SSE alert deliveries for downstream apps. Secrets are shown once at creation; webhook consumers dedupe on <code>docId</code>.</p>
-      <table>
-        <thead><tr><th>Client</th><th>Channel</th><th>Target</th><th>Filters</th><th>Status</th></tr></thead>
+      <h3>Delivery</h3>
+      <p class="sub" id="subsManageSub">Create signed webhook or SSE deliveries for your account. Secrets are shown once at creation; webhook consumers dedupe on <code>docId</code>.</p>
+      <div id="subsGate" class="note" role="status" aria-live="polite" style="margin:12px 0;padding:12px;border:1px solid var(--border, #ddd);border-radius:8px">
+        Sign in with Google to manage Delivery. Creating a delivery also requires Premium.
+      </div>
+      <table id="subsTable">
+        <thead><tr><th>Channel</th><th>Target</th><th>Filters</th><th>Status</th></tr></thead>
         <tbody id="subsBody">
-          <tr class="row"><td colspan="5" class="state">Available with Premium. Subscribe below to create a target.</td></tr>
+          <tr class="row"><td colspan="4" class="state">Sign in to see your deliveries.</td></tr>
         </tbody>
       </table>
-      <div class="row-flex" style="margin-top:14px">
-        <input id="newClientId" placeholder="clientId" style="width:160px" />
-        <select id="newDelivery">
+      <div class="row-flex" id="subsCreateRow" style="margin-top:14px">
+        <select id="newDelivery" disabled>
           <option value="sse">SSE</option><option value="webhook">webhook</option>
         </select>
-        <input id="newTarget" placeholder="target URL (webhook only)" style="width:240px" />
-        <button class="btn sm" onclick="createSubscription()">+ New delivery</button>
+        <input id="newTarget" placeholder="target URL (webhook only)" style="width:240px" disabled />
+        <button class="btn sm" id="subsCreateBtn" onclick="createSubscription()" disabled>+ New delivery</button>
         <div id="subsMsg" class="note subs-msg" aria-live="polite"></div>
       </div>
-      <p class="note">API HOOK: GET/POST <code>/api/admin/subscriptions</code></p>
       <div class="row-flex" style="margin-top:20px;justify-content:center" data-premium-cue="alerts">
-        <span class="gate-note">Alert Delivery is included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial
+        <span class="gate-note">Delivery is included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial
           <button class="btn sm" onclick="openPricing('alerts')">Start Free Trial</button></span>
       </div>
     </div>
@@ -4377,19 +4379,60 @@ function meSubmit(docId) {
     });
 }
 
-/* ============================ SUBSCRIPTIONS ============================ */
+/* ============================ SUBSCRIPTIONS / DELIVERY ============================ */
+function updateDeliveryGate() {
+  var gate = el('subsGate');
+  var createBtn = el('subsCreateBtn');
+  var deliverySel = el('newDelivery');
+  var target = el('newTarget');
+  var body = el('subsBody');
+  var signedIn = !!(ME.user && ME.user.id);
+  var premium = isPremium();
+  var canCreate = signedIn && premium;
+  if (deliverySel) deliverySel.disabled = !canCreate;
+  if (target) target.disabled = !canCreate;
+  if (createBtn) createBtn.disabled = !canCreate;
+  if (!gate) return;
+  if (!signedIn) {
+    gate.style.display = '';
+    gate.innerHTML = 'Sign in with Google to use Delivery. Creating a webhook or SSE target requires a signed-in Premium account. '
+      + '<button class="btn sm" onclick="openLogin()">Sign In</button>';
+    if (body) body.innerHTML = stateRow(4, 'Sign in to see your deliveries.');
+    return;
+  }
+  if (!premium) {
+    gate.style.display = '';
+    gate.innerHTML = 'You are signed in, but Delivery stays deactivated until Premium is active. Trends and analytics remain free. '
+      + (checkoutConfigured()
+        ? '<button class="btn sm" onclick="openPricing(&quot;alerts&quot;)">Start Free Trial</button>'
+        : '<span class="muted">Billing is not configured yet.</span>');
+    if (body) body.innerHTML = stateRow(4, 'Premium required to create Delivery targets.');
+    return;
+  }
+  gate.style.display = 'none';
+  gate.textContent = '';
+}
+
 function loadSubs() {
-  // API HOOK: GET /api/admin/subscriptions
-  return fetch('/api/admin/subscriptions', { headers: adminHeaders() })
-    .then(okOrThrow)
+  updateDeliveryGate();
+  if (!(ME.user && ME.user.id)) return Promise.resolve();
+  if (!isPremium()) return Promise.resolve();
+  // Account-owned list: GET /api/client/v1/subscriptions (session cookie).
+  return fetch('/api/client/v1/subscriptions', { headers: { accept: 'application/json' }, credentials: 'same-origin' })
+    .then(function (r) {
+      if (r.status === 401) throw new Error('Sign in required.');
+      if (!r.ok) return r.json().then(function (j) { throw new Error((j && j.error) || ('HTTP ' + r.status)); });
+      return r.json();
+    })
     .then(function (data) { renderSubs(data.subscriptions || []); })
     .catch(function (e) {
-      el('subsBody').innerHTML = stateRow(5, isAuthError(e) ? ADMIN_MOVED_MSG : ('Could not load subscriptions: ' + e.message));
+      el('subsBody').innerHTML = stateRow(4, 'Could not load deliveries: ' + e.message);
     });
 }
 function renderSubs(subs) {
   var body = el('subsBody');
-  if (subs.length === 0) { body.innerHTML = stateRow(5, 'No alert deliveries yet. Create one below.'); return; }
+  if (!body) return;
+  if (subs.length === 0) { body.innerHTML = stateRow(4, 'No deliveries yet. Create one below.'); return; }
   body.innerHTML = subs.map(function (s) {
     var f = s.filters || {};
     var parts = [];
@@ -4397,7 +4440,6 @@ function renderSubs(subs) {
     if (f.minAmount) parts.push('≥ ' + fmt(f.minAmount));
     if (f.tickers && f.tickers.length) parts.push(f.tickers.join(','));
     return '<tr class="row">' +
-      '<td>' + esc(s.clientId) + '</td>' +
       '<td>' + esc(s.delivery) + '</td>' +
       '<td class="muted">' + esc(s.targetUrl || (s.delivery === 'sse' ? '/api/stream' : '—')) + '</td>' +
       '<td class="muted">' + esc(parts.join(' · ')) + '</td>' +
@@ -4406,42 +4448,65 @@ function renderSubs(subs) {
   }).join('');
 }
 function createSubscription() {
-  // API HOOK: POST /api/admin/subscriptions
-  var clientId = el('newClientId').value.trim();
+  updateDeliveryGate();
+  if (!(ME.user && ME.user.id)) { el('subsMsg').textContent = 'Sign in required.'; return; }
+  if (!isPremium()) { el('subsMsg').textContent = 'Premium required to create Delivery.'; openPricing('alerts'); return; }
   var delivery = el('newDelivery').value;
   var targetUrl = el('newTarget').value.trim();
-  if (!clientId) { el('subsMsg').textContent = 'clientId is required.'; return; }
   if (delivery === 'webhook' && !targetUrl) { el('subsMsg').textContent = 'webhook needs a target URL.'; return; }
   el('subsMsg').textContent = 'Creating…';
-  fetch('/api/admin/subscriptions', {
-    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify({ clientId: clientId, delivery: delivery, targetUrl: targetUrl || null, filters: {} })
+  var idem = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-' + Date.now());
+  fetch('/api/client/v1/commands', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json', accept: 'application/json', 'Idempotency-Key': idem },
+    body: JSON.stringify({
+      type: 'create_subscription',
+      idempotencyKey: idem,
+      payload: { delivery: delivery, targetUrl: targetUrl || null, filters: {} }
+    })
   })
     .then(function (r) {
-      if (r.status === 401 || r.status === 403) { var ae = new Error(ADMIN_MOVED_MSG); ae.isAuth = true; throw ae; }
-      if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || ('HTTP ' + r.status)); });
-      return r.json();
+      return r.json().then(function (j) {
+        if (!r.ok) {
+          var err = new Error((j && j.error) || ('HTTP ' + r.status));
+          err.status = r.status;
+          throw err;
+        }
+        return j;
+      });
     })
     .then(function (data) {
-      if (data && data.secret) {
-        var stream = data.streamUrl || '';
+      var result = (data && data.command && data.command.result) || data.result || data;
+      var sub = (result && result.subscription) || (data && data.subscription) || null;
+      if (sub && sub.secret) {
+        var stream = sub.streamUrl || '';
         el('subsMsg').innerHTML =
           '<div class="secret-panel">' +
             '<strong>Created. Save this secret now; it will not be shown again.</strong>' +
-            '<div><span class="muted">Secret</span><code class="secret-value">' + esc(data.secret) + '</code></div>' +
+            '<div><span class="muted">Secret</span><code class="secret-value">' + esc(sub.secret) + '</code></div>' +
             (stream ? '<div><span class="muted">SSE URL</span><code class="secret-value">' + esc(stream) + '</code></div>' : '') +
             '<div class="secret-actions">' +
-              '<button class="btn ghost sm" data-copy="' + esc(data.secret) + '" onclick="copyFromData(this)">Copy secret</button>' +
+              '<button class="btn ghost sm" data-copy="' + esc(sub.secret) + '" onclick="copyFromData(this)">Copy secret</button>' +
               (stream ? '<button class="btn ghost sm" data-copy="' + esc(stream) + '" onclick="copyFromData(this)">Copy SSE URL</button>' : '') +
             '</div>' +
           '</div>';
+      } else if (data && data.command && data.command.status === 'failed') {
+        el('subsMsg').textContent = 'Failed: ' + ((data.command.error) || 'command failed');
       } else {
         el('subsMsg').textContent = 'Created.';
       }
-      el('newClientId').value = ''; el('newTarget').value = '';
+      if (el('newTarget')) el('newTarget').value = '';
       loadSubs();
     })
-    .catch(function (e) { el('subsMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
+    .catch(function (e) {
+      if (e && e.status === 402) {
+        el('subsMsg').textContent = 'Premium required.';
+        openPricing('alerts');
+        return;
+      }
+      el('subsMsg').textContent = 'Failed: ' + e.message;
+    });
 }
 
 /* ============================ ADMIN AUTH ============================ */
@@ -7620,6 +7685,7 @@ function loadMe() {
       renderAccount();
       applyAdminVisibility();
       updatePremiumCues();
+      updateDeliveryGate();
       hiddenCols = hiddenCols.filter(function (id) {
         return availableCols().some(function (c) { return c.id === id; });
       });
@@ -7627,7 +7693,7 @@ function loadMe() {
       renderColChooser();
       renderFeed();
     })
-    .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; renderAccount(); applyAdminVisibility(); updatePremiumCues(); });
+    .catch(function () { ME.admin = { allowed: false }; ME.billing = { checkoutConfigured: false, portalConfigured: false, hasCustomer: false }; renderAccount(); applyAdminVisibility(); updatePremiumCues(); updateDeliveryGate(); });
 }
 
 function renderAccount() {
@@ -7941,9 +8007,8 @@ document.querySelectorAll('nav.tabs button').forEach(function (b) {
     if (b.dataset.view === 'trends') loadTrends();
     if (b.dataset.view === 'review') loadReview();
     if (b.dataset.view === 'subs') {
-      // Management data is admin-gated; anon/free visitors get the public
-      // education view plus the (favorable-only) speed strip.
-      if (canUseAdmin()) loadSubs();
+      updateDeliveryGate();
+      loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
     if (b.dataset.view === 'admin') { initAdminToken(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); }
@@ -8249,7 +8314,8 @@ loadMe().then(function () {
     if (initialView === 'feed') window.scrollTo({ top: 0, behavior: 'auto' });
     if (initialView === 'review' && canUseAdmin()) loadReview();
     if (initialView === 'subs') {
-      if (canUseAdmin()) loadSubs();
+      updateDeliveryGate();
+      loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
     if (initialView === 'admin') { initAdminToken(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); }

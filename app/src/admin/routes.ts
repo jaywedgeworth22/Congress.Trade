@@ -4401,7 +4401,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   //     deliver it (first-time delivery, which is correct) and mark its
   //     review_queue row resolved. If it still fails, it's left in review.
   // Body (all optional):
-  //   { chamber?: 'house'|'senate', limit?: number, dryRun?: boolean }
+  //   { chamber?: 'house'|'senate'|'executive', limit?: number, dryRun?: boolean }
   r.post('/reprocess', async (c) => {
     let body: Record<string, unknown> = {};
     try {
@@ -4412,8 +4412,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
 
     const chamber = body.chamber === undefined ? 'house' : body.chamber;
-    if (chamber !== 'house' && chamber !== 'senate') {
-      return c.json({ error: "chamber must be 'house' or 'senate'" }, 400);
+    if (chamber !== 'house' && chamber !== 'senate' && chamber !== 'executive') {
+      return c.json({ error: "chamber must be 'house', 'senate', or 'executive'" }, 400);
     }
     const dryRun = body.dryRun === true;
     let limit = typeof body.limit === 'number' && body.limit > 0 ? Math.floor(body.limit) : 500;
