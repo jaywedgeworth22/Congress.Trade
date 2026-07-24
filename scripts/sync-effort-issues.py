@@ -25,11 +25,17 @@ Before Implementation" vs "Planned / Reserved", with or without emoji). We
 classify each section heading by keyword rather than exact match:
 
   - "planned" / "reserved"        -> bucket "planned"
-  - "in progress"                 -> bucket "in-progress"
-  - "completed"                   -> bucket "completed"
+  - "in progress" / "active"      -> bucket "in-progress"
+  - "completed" / "closed" /
+    "archive" / "historical" /
+    "recently completed"          -> bucket "completed"
   - "deployed"                    -> bucket "deployed"
   - anything else (Deployed intro text, "Changelog", etc. that isn't one of
     the four state buckets) is ignored for issue purposes.
+
+Closed/archive keywords are matched *before* "in progress" so headings like
+"Recently closed (…IN PROGRESS…)" or "Historical archive (closed)" do not
+re-open already-finished rows as live work.
 
 Within a recognized section, a top-level bullet (`- ` or `* ` at column 0,
 optionally prefixed with an emoji) starts a new item. Any following lines
@@ -169,10 +175,19 @@ MARKER_RE = re.compile(r"<!--\s*effort-key:\s*([0-9a-f]{40})\s*-->")
 BULLET_RE = re.compile(r"^[-*]\s+(.*)$")
 
 # Section heading classification keywords, checked in this order.
+# Closed/archive tokens MUST precede "in progress": boards often keep a
+# "Recently closed (…IN PROGRESS…)" or "Historical In Progress archive"
+# section for chronology, and those rows must stay closed in the Issues mirror.
 SECTION_KEYWORDS = [
     ("deployed", "deployed"),
     ("completed", "completed"),
+    ("recently closed", "completed"),
+    ("recently completed", "completed"),
+    ("historical", "completed"),
+    ("archive", "completed"),
+    ("closed", "completed"),
     ("in progress", "in-progress"),
+    ("active", "in-progress"),
     ("planned", "planned"),
     ("reserved", "planned"),
 ]
