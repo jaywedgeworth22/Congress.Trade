@@ -5,17 +5,15 @@ import { buildCommonFilters, asChambers } from '../../analytics/sql.ts';
 import type { Transaction } from '../../shared/types.ts';
 
 /**
- * "Separate by default" contract for executive (OGE 278-T) rows: they are
- * EXCLUDED from the feed, analytics, and subscription delivery unless a
- * caller explicitly opts in — a single 3,000-row presidential filing must
- * never swamp the congressional views or surprise existing subscribers.
+ * Executive (OGE 278-T) rows are now INCLUDED in the feed, analytics, and 
+ * subscription delivery by default, to ensure that executive trades are
+ * discoverable and surfaced alongside congressional trades.
  */
 
-describe('feed default excludes executive', () => {
-  it('adds the executive-exclusion clause when no chamber filter is set', () => {
+describe('feed default includes executive', () => {
+  it('does NOT add the executive-exclusion clause when no chamber filter is set', () => {
     const q = buildTransactionsQuery({ limit: 10 });
-    expect(q.sql).toContain("COALESCE(fl.chamber, f.chamber) <> 'executive'");
-    expect(q.sql).toContain('COALESCE(fl.chamber, f.chamber) IS NULL OR');
+    expect(q.sql).not.toContain("COALESCE(fl.chamber, f.chamber) <> 'executive'");
   });
 
   it('uses IN(...) for an explicit multi-chamber selection (no default clause)', () => {
@@ -28,7 +26,7 @@ describe('feed default excludes executive', () => {
 
   it('keeps the count query consistent with the feed', () => {
     const q = buildTransactionsCountQuery({});
-    expect(q.sql).toContain("<> 'executive'");
+    expect(q.sql).not.toContain("<> 'executive'");
   });
 
   it('single-chamber equality still works (back-compat)', () => {
@@ -38,10 +36,10 @@ describe('feed default excludes executive', () => {
   });
 });
 
-describe('analytics default excludes executive', () => {
-  it('default filters carry the exclusion clause', () => {
+describe('analytics default includes executive', () => {
+  it('default filters DO NOT carry the exclusion clause', () => {
     const { where } = buildCommonFilters({ window: '90d' });
-    expect(where.join(' AND ')).toContain("<> 'executive'");
+    expect(where.join(' AND ')).not.toContain("<> 'executive'");
   });
 
   it('explicit chambers list replaces the default clause', () => {
@@ -61,13 +59,13 @@ describe('analytics default excludes executive', () => {
   });
 });
 
-describe('subscription delivery default excludes executive', () => {
+describe('subscription delivery default includes executive', () => {
   const tx = { id: 't1', ticker: 'NVDA', txType: 'P', amountMin: 1001, amountMax: 15000 } as unknown as Transaction;
 
-  it('a subscription with NO chambers filter never receives executive rows', () => {
+  it('a subscription with NO chambers filter receives executive rows', () => {
     expect(matchesFiltersWithChamber(tx, {}, 'house')).toBe(true);
     expect(matchesFiltersWithChamber(tx, {}, null)).toBe(true);
-    expect(matchesFiltersWithChamber(tx, {}, 'executive')).toBe(false);
+    expect(matchesFiltersWithChamber(tx, {}, 'executive')).toBe(true);
   });
 
   it('an explicit chambers filter including executive receives them', () => {
@@ -75,3 +73,4 @@ describe('subscription delivery default excludes executive', () => {
     expect(matchesFiltersWithChamber(tx, { chambers: ['house'] as never }, 'executive')).toBe(false);
   });
 });
+

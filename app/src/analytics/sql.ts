@@ -234,9 +234,7 @@ export function buildCommonFilters(p: CommonFilters): { where: string[]; params:
     where.push(`${CHAMBER_EXPR} = ?`);
     params.push(p.chamber);
   } else {
-    // Default view = congressional. Executive (OGE 278-T) rows appear only on
-    // explicit request; NULL-chamber rows (unresolved filers) stay visible.
-    where.push(`(${CHAMBER_EXPR} IS NULL OR ${CHAMBER_EXPR} <> 'executive')`);
+    // Default view = all chambers. We no longer exclude executive filings by default.
   }
   if (p.party) {
     where.push(`${PARTY_BUCKET_SQL} = ?`);
