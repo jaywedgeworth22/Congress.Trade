@@ -791,7 +791,11 @@ export async function recordDisclosureLatencyCandidate(
   filing: DiscoveredFiling,
   nowIso: string,
 ): Promise<void> {
-  // We now explicitly include executive (OGE) filings to benchmark provider coverage.
+  // Executive filings are skipped because major third-party APIs (FMP, UW, Quiver)
+  // only cover House and Senate. Recording them would create permanently pending
+  // rows that needlessly consume the daily scan cap.
+  if (filing.chamber === 'executive') return;
+
   for (const provider of DIRECT_PROVIDER_IDS) {
     try {
       await run(
