@@ -80,7 +80,7 @@ describe('rateLimit auth-bucket same-isolate hardening', () => {
   it('leaves non-auth buckets on pure KV behavior (fail open on stale reads)', async () => {
     const env = staleKvEnv();
     const results = await Promise.all(
-      Array.from({ length: 5 }, () => rateLimit(env, 'pub-api', '1.2.3.4', 3, 60)),
+      Array.from({ length: 5 }, () => rateLimit(env, 'dummy-bucket', '1.2.3.4', 3, 60)),
     );
     expect(results.every((r) => r.ok)).toBe(true);
   });

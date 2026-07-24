@@ -165,10 +165,16 @@ export async function rateLimit(
   // semantics are preserved for everything else: memory only ever blocks when
   // this isolate itself has demonstrably admitted `limit` requests already.
   if (
-    MEMORY_HARDENED_BUCKETS.has(bucket)
+    (MEMORY_HARDENED_BUCKETS.has(bucket) || bucket === 'pub-api')
     && !memoryAdmit(bucket, identifier, limit, windowSec, now, windowStart)
   ) {
     return { ok: false, remaining: 0, retryAfterSec };
+  }
+
+  // To save Deno KV write quota on highly-polled public feeds, pub-api is
+  // exclusively enforced in-memory per-isolate.
+  if (bucket === 'pub-api') {
+    return { ok: true, remaining: limit - 1, retryAfterSec: 0 };
   }
 
   const key = `rl:${bucket}:${await hashIdentifier(identifier)}:${windowStart}`;

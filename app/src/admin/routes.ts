@@ -7535,7 +7535,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       ...POST_0024_SCHEMA_STATEMENTS,
       `UPDATE disclosure_latency_candidates
        SET filed_date = (SELECT filed_date FROM filings WHERE filings.doc_id = disclosure_latency_candidates.doc_id)
-       WHERE (filed_date IS NULL OR filed_date = '') AND EXISTS (SELECT 1 FROM filings WHERE filings.doc_id = disclosure_latency_candidates.doc_id AND filings.filed_date IS NOT NULL)`
+       WHERE (filed_date IS NULL OR filed_date = '') AND EXISTS (SELECT 1 FROM filings WHERE filings.doc_id = disclosure_latency_candidates.doc_id AND filings.filed_date IS NOT NULL)`,
+      // 0045_d1_budget.sql — atomic D1 usage counters.
+      `CREATE TABLE IF NOT EXISTS d1_budget (
+         day          TEXT PRIMARY KEY,
+         rows_read    INTEGER NOT NULL DEFAULT 0,
+         rows_written INTEGER NOT NULL DEFAULT 0
+       )`
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
