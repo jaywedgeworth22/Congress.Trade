@@ -79,6 +79,23 @@ export function cleanFilerName(name: string | null | undefined): string {
     /(?:,\s*)?\b(?:DR|HON|MR|MRS|MS|REP|SEN|MD|FACS|PH\.?D\.?)\b(?:,\s*)?/gi,
     ' ',
   );
+  
+  // Strip "(Senator)" or ", Senator"
+  str = str.replace(/\s*\(Senator\)\s*/gi, ' ');
+  str = str.replace(/,\s*Senator\b/gi, ' ');
+
+  // If it's formatted as "Last, First" (e.g. "Boozman, John" or "McCormick, David H.")
+  if (/^[A-Za-z\-]+,\s*[A-Za-z\s.\-]+$/.test(str)) {
+    const parts = str.split(',');
+    str = parts[1].trim() + ' ' + parts[0].trim();
+  }
+
+  // Title case if the string is primarily ALL CAPS.
+  const upperCount = (str.match(/[A-Z]/g) || []).length;
+  const lowerCount = (str.match(/[a-z]/g) || []).length;
+  if (upperCount > 0 && upperCount > lowerCount * 2) {
+    str = str.toLowerCase().replace(/(^|\s|-|\.)\w/g, (c) => c.toUpperCase());
+  }
 
   // Clean up any trailing commas, spaces, or stray periods
   str = str.replace(/[,\s.]+$/, '');
