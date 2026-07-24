@@ -617,6 +617,16 @@ export function matchDisclosureCandidate(
   if (candidate.trade_hash === row.tradeHash) {
     return { providerKey: row.providerKey, matchMethod: 'trade-hash' };
   }
+
+  const cParts = candidate.trade_hash.split('_');
+  const rParts = row.tradeHash.split('_');
+  // Hash format: lastName_ticker_txDate_type
+  if (cParts.length >= 4 && rParts.length >= 4) {
+    if (cParts[0] === rParts[0] && cParts[2] === rParts[2] && cParts[3] === rParts[3]) {
+      return { providerKey: row.providerKey, matchMethod: 'fuzzy-no-ticker' };
+    }
+  }
+
   return null;
 }
 
@@ -1537,7 +1547,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     // filings on the same day. Only exact document-token or exact filer/date
     // matches are eligible for a public timing comparison.
     const strongMatches = mine.filter(
-      (row) => row.status === 'matched' && (row.match_method === 'doc-token' || row.match_method === 'filer-date'),
+      (row) => row.status === 'matched' && (row.match_method === 'trade-hash' || row.match_method === 'fuzzy-no-ticker'),
     );
     const monitorDeltas = strongMatches
       .map((row) => deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at))
@@ -1563,7 +1573,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     ).length;
 
     const matchedMaturedCandidates = maturedCandidates.filter(
-      (row) => row.status === 'matched' && (row.match_method === 'doc-token' || row.match_method === 'filer-date'),
+      (row) => row.status === 'matched' && (row.match_method === 'trade-hash' || row.match_method === 'fuzzy-no-ticker'),
     ).length;
     const ctCoveragePct = maturedProviderObserved
       ? Math.round((maturedMatched / maturedProviderObserved) * 1000) / 10
