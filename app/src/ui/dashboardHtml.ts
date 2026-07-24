@@ -1547,7 +1547,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <option value="180d">Past 6 Months</option>
           <option value="365d">Past Year</option>
           <option value="1825d">Past 5 Years</option>
-          <option value="all">All Time</option>
         </select>
       </div>
       <div class="trends-filter-row">
@@ -1657,7 +1656,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <!-- Consensus / cluster buys -->
     <div class="section">
       <h3 class="tf-h">Consensus Moves <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="chip" id="trClusterHint"></span></h3>
-      <p class="sub">Assets where several different politicians happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above). Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination. For an all-time view, switch the window selector to “All Time”.</p>
+      <p class="sub">Assets where several different politicians happened to trade the <strong>same direction</strong> <strong>within the selected window</strong> (shown in the heading above). Shown as an educational observation of public filings — not a recommendation, and not evidence of coordination.</p>
       <div class="cluster-grid" id="trClusters"></div>
     </div>
 
@@ -1668,8 +1667,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <div class="seg" id="trTimeWin" role="group" aria-label="Chart time range">
           <button type="button" data-w="365d" onclick="setTrTimeWin('365d')">1Y</button>
           <button type="button" data-w="1095d" onclick="setTrTimeWin('1095d')">3Y</button>
-          <button type="button" data-w="1825d" onclick="setTrTimeWin('1825d')">5Y</button>
-          <button type="button" data-w="all" class="on" onclick="setTrTimeWin('all')">Max</button>
+          <button type="button" data-w="1825d" class="on" onclick="setTrTimeWin('1825d')">5Y</button>
         </div>
       </div>
       <p class="sub">Trade counts bucketed by period (own time range, independent of the page window). The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.</p>
@@ -6962,10 +6960,10 @@ function loadTrClusters() {
   }).catch(function (e) { box.innerHTML = '<div class="chip">Could not load: ' + esc(e.message) + '</div>'; });
 }
 
-/* This chart has its OWN time range (1Y/3Y/5Y/10Y/Max), independent of the page
+/* This chart has its OWN time range (1Y/3Y/5Y), independent of the page
    window — a multi-year shape is the point, while the page may be on "Past Month".
    chamber/party/source stay shared via trParams(); only the window is overridden. */
-var trTimeWindow = 'all';
+var trTimeWindow = '1825d';
 function trTimeParams() { return trParams().replace(/window=[^&]*/, 'window=' + encodeURIComponent(trTimeWindow)); }
 function setTrTimeWin(w) {
   trTimeWindow = w;
