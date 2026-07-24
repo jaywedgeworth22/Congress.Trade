@@ -28,6 +28,7 @@ export const ALL_COLUMNS: ColumnDef[] = [
   { id: 'owner', label: 'Owner', def: false, tip: 'Beneficial owner code reported on the filing.', sort: 'owner' },
   { id: 'chamber', label: 'Chamber', def: false, tip: 'House or Senate source chamber.', sort: 'chamber' },
   { id: 'source', label: 'Source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', sort: 'source' },
+  { id: 'docs', label: 'Docs', def: true, tip: 'Original PDF filing or source document.', sort: null },
 ];
 
 const COL_HIDDEN_KEY = 'feed-cols-hidden-v3';
