@@ -13,6 +13,7 @@
     "npm:@typescript-eslint/parser@^8.62.1": "8.64.0_eslint@10.7.0_typescript@5.9.3",
     "npm:@vitest/coverage-v8@4.1.10": "4.1.10_vitest@4.1.10_@opentelemetry+api@1.9.1_@types+node@26.1.1_vite@8.1.5__@types+node@26.1.1__esbuild@0.28.1",
     "npm:cheerio@^1.2.0": "1.2.0",
+    "npm:dotenv@*": "17.4.2",
     "npm:eslint@^10.7.0": "10.7.0",
     "npm:fflate@~0.8.3": "0.8.3",
     "npm:hono@^4.12.31": "4.12.31",
@@ -1279,6 +1280,9 @@
         "domelementtype",
         "domhandler"
       ]
+    },
+    "dotenv@17.4.2": {
+      "integrity": "sha512-nI4U3TottKAcAD9LLud4Cb7b2QztQMUEfHbvhTH09bqXTxnSie8WnjPALV/WMCrJZ6UV/qHJ6L03OqO3LcdYZw=="
     },
     "ecdsa-sig-formatter@1.0.11": {
       "integrity": "sha512-nagl3RYrbNv6kQkeJIpt6NJZy8twLB/2vtz6yN9Z4vRKHN4/QZJIEbqohALSgwKdnksuY3k5Addp5lg8sVoVcQ==",
