@@ -6688,9 +6688,14 @@ function spCardHtml(p) {
     var need = SPEED_LANE_MIN_MATCHED - p.matched;
     leadHtml = '<div class="sp-gathering">' +
       (p.matched > 0
-        ? "We've matched <strong>" + p.matched + "</strong> of " + p.candidates + " Congress.Trade filings matched so far — " + need + " more needed for timing estimates."
+        ? "We've matched <strong>" + p.matched + "</strong> of " + p.candidates + " Congress.Trade filings so far — " + need + " more needed for timing estimates."
         : "Probes haven't found overlapping disclosures yet. Sample builds automatically.") +
       (p.unmatchedProvider > 0 ? " <strong>" + p.unmatchedProvider + "</strong> provider-observed rows are not matched to our feed yet." : '') +
+      '</div>';
+  } else if (!usable) {
+    leadHtml = '<div class="sp-gathering">' +
+      "We've matched <strong>" + p.matched + "</strong> overlapping filings, but coverage is too limited for a reliable speed claim. " +
+      (p.unmatchedProvider > 0 ? "<strong>" + p.unmatchedProvider + "</strong> provider-observed rows remain unmatched." : '') +
       '</div>';
   } else {
     var med = p.medianLeadSec || 0;
@@ -6700,7 +6705,7 @@ function spCardHtml(p) {
     var p90Txt = p.p90LeadSec != null ? '<div style="font-size:11px;color:var(--text-dim);margin-top:3px">P90: ' + fmtLead(p.p90LeadSec) + '</div>' : '';
     leadHtml = '<div class="sp-lead">' +
       '<div class="' + numCls + '">' + sign + fmtLead(Math.abs(med)) + '</div>' +
-      '<div class="sp-lead-label">matched-cohort timing<br>' + (usable ? 'vs. their feed' : 'coverage limited — no overall speed claim') + p90Txt + '</div>' +
+      '<div class="sp-lead-label">matched-cohort timing vs. their feed' + p90Txt + '</div>' +
       '</div>';
   }
 
