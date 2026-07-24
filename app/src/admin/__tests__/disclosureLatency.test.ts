@@ -13,7 +13,7 @@ function fakeDb() {
           return this;
         },
         async all<T>() {
-          if (/FROM disclosure_latency_candidates/i.test(sql)) {
+          if (/FROM trade_latency_candidates/i.test(sql)) {
             return {
               results: [
                 {

@@ -7542,7 +7542,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
       // 0029-0039 — canonical value, reliability, Stripe, review, and benchmark tail.
       ...POST_0024_SCHEMA_STATEMENTS,
-      // 0025_trade_latency_watch.sql — Trade-based Congress.Trade-vs-competitor disclosure race monitor.
+      // 0045_d1_budget.sql — atomic D1 usage counters.
+      `CREATE TABLE IF NOT EXISTS d1_budget (
+         day          TEXT PRIMARY KEY,
+         rows_read    INTEGER NOT NULL DEFAULT 0,
+         rows_written INTEGER NOT NULL DEFAULT 0
+       )`,
+      // 0059_trade_latency_watch.sql — Trade-based Congress.Trade-vs-competitor disclosure race monitor.
       `CREATE TABLE IF NOT EXISTS trade_latency_candidates (
          trade_hash TEXT NOT NULL,
          doc_id TEXT NOT NULL,
@@ -7556,6 +7562,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          congress_first_seen_at TEXT NOT NULL,
          provider_key TEXT,
          provider_first_seen_at TEXT,
+         provider_published_at TEXT,
          match_method TEXT,
          status TEXT NOT NULL DEFAULT 'pending',
          attempts INTEGER NOT NULL DEFAULT 0,
@@ -7575,6 +7582,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          trade_hash TEXT NOT NULL,
          first_observed_at TEXT NOT NULL,
          last_observed_at TEXT NOT NULL,
+         provider_published_at TEXT,
          source_url TEXT,
          filed_date TEXT,
          filer_name TEXT,
@@ -7584,13 +7592,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       `CREATE INDEX IF NOT EXISTS idx_trade_provider_seen
          ON trade_provider_observations (provider, chamber, first_observed_at DESC)`,
       `DROP TABLE IF EXISTS disclosure_latency_candidates`,
-      `DROP TABLE IF EXISTS disclosure_provider_observations`,
-      // 0045_d1_budget.sql — atomic D1 usage counters.
-      `CREATE TABLE IF NOT EXISTS d1_budget (
-         day          TEXT PRIMARY KEY,
-         rows_read    INTEGER NOT NULL DEFAULT 0,
-         rows_written INTEGER NOT NULL DEFAULT 0
-       )`
+      `DROP TABLE IF EXISTS disclosure_provider_observations`
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -8276,10 +8278,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     return c.json({ ok: true, scanned: rows.length, updated });
   });
 
-  // Operator provisioning keeps explicit integration client ids; end-user
-  // routes derive ownership from the authenticated account instead.
-  r.post('/subscriptions', async (c) => {
-
   // --- POST /backfill-fmp-dumps ---------------------------------------------
   r.post('/backfill-fmp-dumps', async (c) => {
     let body: any = {};
@@ -8378,6 +8376,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
     return c.json({ ok: true, inserted });
   });
+
+  // Operator provisioning keeps explicit integration client ids; end-user
+  // routes derive ownership from the authenticated account instead.
+  r.post('/subscriptions', async (c) => {
     let body: Record<string, unknown>;
     try {
       body = (await c.req.json()) as Record<string, unknown>;
