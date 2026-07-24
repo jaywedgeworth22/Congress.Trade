@@ -26,7 +26,7 @@ function fakeDb() {
                   congress_first_seen_at: '2026-06-29T14:00:00.000Z',
                   provider_first_seen_at: '2026-06-29T15:30:00.000Z',
                   provider_published_at: null,
-                  match_method: 'doc-token',
+                  match_method: 'trade-hash',
                 },
                 {
                   provider: 'fmp',
@@ -34,7 +34,7 @@ function fakeDb() {
                   congress_first_seen_at: '2026-06-29T10:00:00.000Z',
                   provider_first_seen_at: '2026-06-29T10:30:00.000Z',
                   provider_published_at: null,
-                  match_method: 'filer-date',
+                  match_method: 'fuzzy-no-ticker',
                 },
                 {
                   provider: 'unusual_whales',
@@ -74,7 +74,7 @@ function fairnessEnv() {
     status: i < 10 ? 'matched' : 'pending',
     chamber: 'house',
     provider_key: i < 10 ? `fmp-key-${i}` : null,
-    match_method: i < 10 ? 'doc-token' : null,
+    match_method: i < 10 ? 'trade-hash' : null,
     congress_first_seen_at: old,
     provider_first_seen_at: old,
     provider_published_at: null,
