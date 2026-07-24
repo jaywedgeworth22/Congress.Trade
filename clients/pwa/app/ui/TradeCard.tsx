@@ -42,6 +42,16 @@ export function TradeCard({ item }: { item: ClientTrade }) {
           </dd>
         </div>
         <div><dt>Source</dt><dd>{item.source === 'primary' ? 'Live' : 'Historical'}</dd></div>
+        {item.filing.sourceUrl && (
+          <div>
+            <dt>Docs</dt>
+            <dd>
+              <a href={item.filing.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                📄 View PDF
+              </a>
+            </dd>
+          </div>
+        )}
       </dl>
     </article>
   );
