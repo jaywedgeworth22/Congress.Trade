@@ -8,12 +8,13 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 `claude/board-nextwave-c2` so the next Effort Issues Sync run closes #149-#154 and re-labels
 #155/#161.
 
-## Active / In Progress (reconciled 2026-07-23 CURSOR)
-- **[Congress.Trade][CURSOR] OpenRouter terra/luna rate-card dummy underpricing + webhook retry Sentry noise + board reconcile — PR #862 OPEN 2026-07-23.** Branch `cursor/resolve-in-progress-ba51`. Same class of bug as merged #674: leftover `openrouter-dummy` rows for `openai/gpt-5.6-terra` / `openai/gpt-5.6-luna` shadowed verified OpenAI passthrough rates (luna output $2 vs $6). Also skip Sentry.captureException for expected `DeliveryRetryError`/`IngestRetryError` (CONGRESS-TRADE-J storm). Effort-log stale OPEN/IN PROGRESS rows closed after verifying merges on main. Gates: `deno check` clean; focused 44/44; full suite 165 files / 1,865 tests.
+## Active / In Progress
 - **[Congress.Trade][CODEX] Restore Deno live ingestion and data-completeness path — IN PROGRESS 2026-07-22 (ops/parity remain).** Runtime recovery PRs merged; Coolify runners online; Garage smoke green. Remaining: bounded official-source recovery, enrichment, live House/Executive parity verification, safe worktree cleanup. Keep dirty CODEX worktrees untouched.
 - **Owner-gated (not agent-landable without Jay):** analytics premium-only decision; public subscription creation requiring login; Monet/deploy-split superseded by `deploy-deno.yml`; R2 enablement (Sentry CONGRESS-TRADE-19); OpenRouter/Mistral key ops; watcher-cron check-in (CONGRESS-TRADE-1).
 
-## Recently closed (were stale OPEN/IN PROGRESS — verified merged on main 2026-07-23 CURSOR)
+## Recently closed (were stale OPEN/IN PROGRESS — verified merged on main 2026-07-23)
+- **[Congress.Trade][AG] Resolve PR conflicts & land PR #862 — MERGED & DEPLOYED 2026-07-23.** Undrafted, merged PR #862 to `main`, and deployed to production via `ship.sh`. Reconciled OpenRouter rates (`terra`/`luna`), silenced expected webhook retry Sentry noise, and updated effort log. Live `/api/health` verified (`ok:true, db:true, schema:true`).
+- **[Congress.Trade][CURSOR] OpenRouter terra/luna rate-card dummy underpricing + webhook retry Sentry noise + board reconcile — MERGED & DEPLOYED PR #862 2026-07-23.** Branch `cursor/resolve-in-progress-ba51`. Same class of bug as merged #674: leftover `openrouter-dummy` rows for `openai/gpt-5.6-terra` / `openai/gpt-5.6-luna` shadowed verified OpenAI passthrough rates (luna output $2 vs $6). Also skip Sentry.captureException for expected `DeliveryRetryError`/`IngestRetryError` (CONGRESS-TRADE-J storm). Effort-log stale OPEN/IN PROGRESS rows closed after verifying merges on main. Gates: `deno check` clean; focused 44/44; full suite 165 files / 1,865 tests.
 - **[Congress.Trade][AG] Consolidate Enrichment, Market Prices, and Benchmark Catalog improvements — MERGED 2026-07-23.** PR #851. Branch: `antigravity/grok-consolidation-enrichment-benchmark`.
 - **[Congress.Trade][CODEX] Usage telemetry v2 producer adoption — MERGED PR #752 (`c800550`); AWS min-age hotfix follow-up landed.** Rollout: `docs/rollouts/2026-07-22-usage-telemetry-v2-producer.md`.
 - **[Congress.Trade][CODEX] #714 P2 timestamp-sort follow-up — MERGED via #775 integration.** Future-date clamp preserves full timestamp precision (dashboardHtml tests on main).
