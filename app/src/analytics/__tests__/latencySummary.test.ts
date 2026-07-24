@@ -17,7 +17,7 @@ function fakeDb() {
           return this;
         },
         async all<T>() {
-          if (/FROM disclosure_latency_candidates/i.test(sql)) {
+          if (/FROM trade_latency_candidates/i.test(sql)) {
             return {
               results: [
                 {
@@ -101,8 +101,8 @@ function fairnessEnv() {
             return this;
           },
           async all<T>() {
-            if (/FROM disclosure_latency_candidates/i.test(sql)) return { results: candidates as T[] };
-            if (/FROM disclosure_provider_observations/i.test(sql)) return { results: observations as T[] };
+            if (/FROM trade_latency_candidates/i.test(sql)) return { results: candidates as T[] };
+            if (/FROM trade_provider_observations/i.test(sql)) return { results: observations as T[] };
             return { results: [] as T[] };
           },
           async first<T>() {
@@ -183,7 +183,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
               return this;
             },
             async all() {
-              throw new Error('no such table: disclosure_latency_candidates');
+              throw new Error('no such table: trade_latency_candidates');
             },
             async first() {
               return null;
