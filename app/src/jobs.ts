@@ -12,7 +12,7 @@
  */
 
 import type { Env } from './shared/types.ts';
-import { run } from './shared/db.ts';
+import { run, all } from './shared/db.ts';
 import { runEnrichment, getDailyUsed, DEFAULT_DAILY_CAP } from './enrichment/service.ts';
 import { runPriceRefresh } from './prices/service.ts';
 import { hasFmpTierFailure } from './shared/fmpStatus.ts';
@@ -133,6 +133,64 @@ export async function runRetentionSweep(env: Env, now = new Date()): Promise<Rec
     deleted[policy.table] = total;
   }
   return deleted;
+}
+
+/**
+ * Delete filings, transactions, and corresponding R2 PDFs that are older than 5 years.
+ * We rely on 'filed_date' from filings table.
+ */
+export async function runFilingRetentionSweep(env: Env, now = new Date()): Promise<number> {
+  const fiveYearsAgo = new Date(now.getTime() - 5 * 365 * 86_400_000);
+  const cutoff = fiveYearsAgo.toISOString().slice(0, 10); // 'YYYY-MM-DD'
+  
+  let totalDeleted = 0;
+  try {
+    for (let batch = 0; batch < RETENTION_MAX_BATCHES_PER_TABLE; batch++) {
+      const rows = await all<{ doc_id: string; raw_object_key: string | null }>(
+        env.DB,
+        `SELECT doc_id, raw_object_key FROM filings WHERE filed_date < ? LIMIT ?`,
+        [cutoff, RETENTION_DELETE_BATCH]
+      );
+      
+      if (rows.length === 0) break;
+      
+      for (const row of rows) {
+        if (row.raw_object_key) {
+          try {
+            await env.RAW_FILES.delete(row.raw_object_key);
+          } catch (e) {
+            console.warn(`Failed to delete raw file ${row.raw_object_key} from R2`, e);
+          }
+        }
+      }
+      
+      const docIds = rows.map(r => r.doc_id);
+      const placeholders = docIds.map(() => '?').join(',');
+      
+      await run(
+        env.DB,
+        `DELETE FROM tx_cursor_seq WHERE tx_id IN (SELECT id FROM transactions WHERE doc_id IN (${placeholders}))`,
+        docIds
+      );
+      
+      await run(
+        env.DB,
+        `DELETE FROM transactions WHERE doc_id IN (${placeholders})`,
+        docIds
+      );
+      
+      await run(
+        env.DB,
+        `DELETE FROM filings WHERE doc_id IN (${placeholders})`,
+        docIds
+      );
+      
+      totalDeleted += rows.length;
+    }
+  } catch (err) {
+    console.warn('filing retention sweep failed:', (err as Error).message);
+  }
+  return totalDeleted;
 }
 
 export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<void> {
@@ -320,5 +378,15 @@ export async function maybeRunDailyJobs(env: Env, now = new Date()): Promise<voi
     if (total > 0) console.log('retention sweep deleted rows:', JSON.stringify(swept));
   } catch (err) {
     console.warn('retention sweep failed:', (err as Error).message);
+  }
+
+  // 5-Year Data Retention Sweep
+  try {
+    const deletedFilings = await runFilingRetentionSweep(env, now);
+    if (deletedFilings > 0) {
+      console.log('5-year filing retention sweep deleted old filings:', deletedFilings);
+    }
+  } catch (err) {
+    console.warn('5-year filing retention sweep failed:', (err as Error).message);
   }
 }
