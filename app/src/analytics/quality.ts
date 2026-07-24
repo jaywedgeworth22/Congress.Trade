@@ -8,7 +8,7 @@
 
 import type { Env } from '../shared/types.ts';
 import { all } from '../shared/db.ts';
-import { matchDisclosureCandidate } from '../ingestion/fmpDisclosureLatency.ts';
+import { matchDisclosureCandidate, generateTradeHash } from '../ingestion/tradeLatency.ts';
 
 interface CandidateRow {
   doc_id: string;
@@ -21,6 +21,7 @@ interface CandidateRow {
 }
 
 interface ObservationRow {
+  trade_hash: string;
   provider: string;
   chamber: string;
   provider_key: string;
@@ -106,7 +107,7 @@ export async function getQualityCrosscheck(env: Env): Promise<QualityCrosscheckR
   const candidates = await all<CandidateRow>(
     env.DB,
     `SELECT doc_id, provider, chamber, source_url, filed_date, filer_name, provider_key
-       FROM disclosure_latency_candidates
+       FROM trade_latency_candidates
       WHERE status = 'matched'`
   );
 
@@ -119,7 +120,7 @@ export async function getQualityCrosscheck(env: Env): Promise<QualityCrosscheckR
   const observations = await all<ObservationRow>(
     env.DB,
     `SELECT provider, chamber, provider_key, first_observed_at, provider_published_at, source_url, filed_date, filer_name, payload
-       FROM disclosure_provider_observations
+       FROM trade_provider_observations
       WHERE provider IN ('fmp', 'quiver', 'unusual_whales')`
   );
 
@@ -150,13 +151,14 @@ export async function getQualityCrosscheck(env: Env): Promise<QualityCrosscheckR
           provider: o.provider as any,
           chamber: o.chamber as 'house' | 'senate',
           providerKey: o.provider_key,
+          tradeHash: o.trade_hash,
           payload: JSON.parse(o.payload || '{}'),
           sourceUrl: o.source_url,
           filedDate: o.filed_date,
           filerName: o.filer_name,
           providerPublishedAt: o.provider_published_at,
         };
-        const m = matchDisclosureCandidate(candidate as any, parsed);
+        const m = matchDisclosureCandidate(candidate as any, parsed as any);
         return m !== null;
       });
 

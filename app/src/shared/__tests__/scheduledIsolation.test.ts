@@ -29,7 +29,7 @@ vi.mock('../../secrets/infisical', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../secrets/infisical')>()),
   refreshSecrets: vi.fn(async () => {}),
 }));
-vi.mock('../../ingestion/fmpDisclosureLatency', () => ({ runDisclosureLatencyProbe: vi.fn(async () => {}) }));
+vi.mock('../../ingestion/tradeLatency', () => ({ runDisclosureLatencyProbe: vi.fn(async () => {}) }));
 vi.mock('../../extraction/agreement', () => ({
   maybeRunAgreementAutopublish: vi.fn(async () => {}),
   handleAgreementCheck: vi.fn(async () => {}),
