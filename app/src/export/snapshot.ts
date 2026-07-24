@@ -118,19 +118,9 @@ export function manifestObjectKey(date: string): string {
  */
 function keysetAfter(keyCols: readonly string[], cursor: SqlParam[] | null): { clause: string; params: SqlParam[] } {
   if (!cursor) return { clause: '', params: [] };
-  const ors: string[] = [];
-  const params: SqlParam[] = [];
-  for (let i = 0; i < keyCols.length; i++) {
-    const ands: string[] = [];
-    for (let j = 0; j < i; j++) {
-      ands.push(`${keyCols[j]} = ?`);
-      params.push(cursor[j]);
-    }
-    ands.push(`${keyCols[i]} > ?`);
-    params.push(cursor[i]);
-    ors.push(`(${ands.join(' AND ')})`);
-  }
-  return { clause: `WHERE ${ors.join(' OR ')} `, params };
+  const cols = keyCols.join(', ');
+  const placeholders = cursor.map(() => '?').join(', ');
+  return { clause: `WHERE (${cols}) > (${placeholders}) `, params: [...cursor] };
 }
 
 /**
