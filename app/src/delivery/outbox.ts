@@ -33,7 +33,7 @@ const MAX_LIMIT = 500;
  * Callers may supply larger sets; the durable minute reconciler drains the
  * remainder without an IN clause.
  */
-export const DELIVERY_TARGETED_ID_LIMIT = 80;
+export const DELIVERY_TARGETED_ID_LIMIT = 40;
 const LEASE_SECONDS = 60;
 const MAX_DEAD_LETTER_CYCLES = 5;
 /** Finite fallback when a Queue message and every DLQ recovery attempt vanish. */
@@ -91,15 +91,18 @@ export async function flushDeliveryOutbox(
   const idClause = txIds.length ? ` AND tx_id IN (${txIds.map(() => '?').join(',')})` : '';
   const rows = await all<OutboxRow>(
     env.DB,
-    `SELECT tx_id, status, attempts, dead_letter_cycles, available_at
-       FROM delivery_outbox
-      WHERE (
-        (status IN ('pending', 'sending') AND available_at <= ?)
-        OR (status = 'enqueued' AND updated_at <= ?)
-      )${idClause}
-      ORDER BY available_at ASC
-      LIMIT ${limit}`,
-    [nowIso, staleEnqueuedBefore, ...txIds],
+    `SELECT tx_id, status, attempts, dead_letter_cycles, available_at FROM (
+       SELECT tx_id, status, attempts, dead_letter_cycles, available_at
+         FROM delivery_outbox
+        WHERE status IN ('pending', 'sending') AND available_at <= ?${idClause}
+       UNION ALL
+       SELECT tx_id, status, attempts, dead_letter_cycles, available_at
+         FROM delivery_outbox
+        WHERE status = 'enqueued' AND updated_at <= ?${idClause}
+     )
+     ORDER BY available_at ASC
+     LIMIT ${limit}`,
+    [nowIso, ...txIds, staleEnqueuedBefore, ...txIds],
   );
 
   const result: OutboxFlushResult = { claimed: 0, enqueued: 0, failed: 0 };

@@ -487,6 +487,13 @@ export const ACCOUNTING_PROJECTION_RESYNC_SCHEMA_STATEMENTS = [
 /**
  * tests. Keep this in the same order as file migrations 0029 through 0055.
  */
+export const QUERY_OPTIMIZATIONS_SCHEMA_STATEMENTS = [
+  'CREATE INDEX IF NOT EXISTS idx_deno_runtime_queue_pending ON deno_runtime_queue (queue_name, status, available_at)',
+  'CREATE INDEX IF NOT EXISTS idx_deno_runtime_queue_processing ON deno_runtime_queue (queue_name, status, lease_until)',
+  'CREATE INDEX IF NOT EXISTS idx_ingestion_outbox_enqueued ON ingestion_outbox (status, updated_at)',
+  'CREATE INDEX IF NOT EXISTS idx_delivery_outbox_enqueued ON delivery_outbox (status, updated_at)',
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
   // 0025_extraction_runs_usage.sql
   'ALTER TABLE extraction_runs ADD COLUMN usage_json TEXT',
@@ -537,4 +544,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...ACCOUNTING_PROJECTION_SCHEMA_STATEMENTS,
   // 0055_accounting_projection_resync.sql
   ...ACCOUNTING_PROJECTION_RESYNC_SCHEMA_STATEMENTS,
+  // 0056_query_optimizations.sql
+  ...QUERY_OPTIMIZATIONS_SCHEMA_STATEMENTS,
 ] as const;
