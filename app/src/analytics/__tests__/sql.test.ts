@@ -153,7 +153,7 @@ describe('buildCommonFilters', () => {
       tickerNotNull: true,
       txTypes: ['P', 'S'],
     });
-    expect(where).toContain("(t.ticker IS NOT NULL AND t.ticker <> '')");
+    expect(where).toContain("(t.ticker IS NOT NULL AND t.ticker <> '' AND t.ticker NOT IN ('NONE', '--', 'N/A', 'NA', 'NULL', '—'))");
     expect(where.some((w) => w.includes('t.tx_type IN (?, ?)'))).toBe(true);
     expect(params).toEqual(['P', 'S']);
   });
