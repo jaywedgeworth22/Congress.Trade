@@ -2127,6 +2127,12 @@ var NAME_SUFFIX = { 'jr': 'Jr', 'jr.': 'Jr', 'sr': 'Sr', 'sr.': 'Sr', 'ii': 'II'
 function fmtName(raw) {
   var s = String(raw == null ? '' : raw).trim();
   if (!s) return '';
+  if (s.toUpperCase().startsWith('MANUAL-')) {
+    s = s.substring(7);
+    if (s === s.toUpperCase()) {
+      s = s.split(' ').map(function(w) { return w.charAt(0) + w.slice(1).toLowerCase(); }).join(' ');
+    }
+  }
   s = s.replace(/\\s*\\(\\s*Senator\\s*\\)\\s*/gi, ' ');
   s = s.replace(/\\s*\\(\\s*\\)\\s*/g, ' ');
   while (s.indexOf('  ') >= 0) s = s.split('  ').join(' ');
@@ -7068,7 +7074,7 @@ function loadTrLag() {
       var metaStr = '';
       if (m.chamber || m.state) {
         var p = [];
-        if (m.chamber) p.push(esc(m.chamber));
+        if (m.chamber) p.push(esc(chamberLabel(m.chamber)));
         if (m.state) p.push(esc(m.state));
         metaStr = ' <span class="muted">· ' + p.join(' · ') + '</span>';
       }
