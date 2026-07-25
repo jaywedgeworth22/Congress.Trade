@@ -4414,6 +4414,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   //     review_queue row resolved. If it still fails, it's left in review.
   // Body (all optional):
   //   { chamber?: 'house'|'senate', limit?: number, dryRun?: boolean }
+
+  r.get('/debug-extract/:id', async (c) => {
+    try {
+      const extracted = await extractParsed(c.env, c.req.param('id'));
+      return c.json(extracted);
+    } catch (e) {
+      return c.json({ error: (e as Error).message });
+    }
+  });
+
   r.post('/reprocess', async (c) => {
     let body: Record<string, unknown> = {};
     try {
@@ -4470,7 +4480,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         continue;
       }
       if (!extracted || extracted.transactions.length === 0) {
-        summary.skippedNoExtract += 1;
+        summary.skippedNoExtract += 1; summary.errors.push(`${doc_id}: no extract, extractor=${extracted?.extractor}, txCount=${extracted?.transactions?.length}`);
         continue;
       }
 
