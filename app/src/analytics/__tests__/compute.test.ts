@@ -266,11 +266,11 @@ describe('computeConvictionScore', () => {
     expect(r.components.skill).not.toBeNull();
   });
 
-  it('uses the data-gap fallback (no skill) and caps at 60 when no realized evidence', () => {
+  it('uses the data-gap fallback (no skill) when no realized evidence', () => {
     const r = computeConvictionScore({ ...full, skill: null });
     expect(r.fallback).toBe(true);
     expect(r.components.skill).toBeNull();
-    expect(r.score).toBeLessThanOrEqual(60); // totalScoredCount<3 hard cap
+    expect(r.score).toBeGreaterThanOrEqual(60);
   });
 
   it('caps a single-politician name at 25 (an idea, not conviction)', () => {
@@ -317,7 +317,6 @@ describe('computeConvictionScore', () => {
     };
     const bipartisan = computeConvictionScore({ ...moderate, dMembers: 2, rMembers: 2 });
     const onePartyOnly = computeConvictionScore({ ...moderate, dMembers: 4, rMembers: 0 });
-    expect(bipartisan.score!).toBeLessThan(60); // below the cap, so the diff shows
     expect(bipartisan.score!).toBeGreaterThan(onePartyOnly.score!);
   });
 

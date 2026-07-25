@@ -361,18 +361,18 @@ let keyString = this.apiKeyOverride ?? (await resolveSecret(this.env, this.apiKe
 /** Stable identifier for the extraction instructions sent to vision models.
  *  BUMP DISCIPLINE: any change to SYSTEM_PROMPT / EXECUTIVE_SYSTEM_PROMPT /
  *  buildExtractionPrompt's grounding block requires a new version string. */
-export const EXTRACTION_PROMPT_VERSION = 'stock-act-ptr-v3-grounded';
+export const EXTRACTION_PROMPT_VERSION = 'stock-act-ptr-v4-grounded';
 
 export const SYSTEM_PROMPT = `You are a meticulous data-extraction engine for U.S. congressional STOCK Act
 Periodic Transaction Reports (PTRs). The attached document is a scanned PTR.
 Extract EVERY disclosed transaction row. For each transaction return:
-- txDate: the transaction date in YYYY-MM-DD (use the transaction/trade date, not the notification date). null if illegible.
+- txDate: the transaction date in YYYY-MM-DD (use the EXACT transaction/trade date column, NOT the notification date. Do not guess). null if illegible.
 - owner: one of "self","spouse","joint","dependent" (map SP->spouse, DC->dependent, JT->joint, blank/self->self).
 - assetName: the security/asset name as written. null if illegible.
-- ticker: the stock ticker symbol in UPPERCASE if shown, else null.
+- ticker: the stock ticker symbol in UPPERCASE. Look VERY CAREFULLY in the asset description column, often in parentheses like (AAPL) or a standalone column. Do not miss the ticker if it is visible. null only if it is truly missing.
 - assetType: short asset-type code/label if shown (e.g. "ST","OP","Stock","Option"), else null.
 - assetTypeName: expanded asset-type name if the document or code is clear, else null.
-- txType: one of "P" (Purchase), "S" (Sale), "E" (Exchange). null if illegible.
+- txType: one of "P" (Purchase), "S" (Sale), "E" (Exchange). Map "Sale (Full)", "Sale (Partial)" or "S (partial)" to "S". Pay extremely close attention to the Transaction Type column; do not hallucinate "P" if it says "S" or "Sale". null if illegible.
 - amountRange: the disclosed amount bracket exactly as printed, e.g. "$1,001 - $15,000" or "$50,000,001 +".
 - isOption: true if the holding is an option/call/put/warrant.
 - capGainsOver200: true only if a ">$200" capital-gains box/flag is checked.
@@ -387,13 +387,13 @@ Return ONLY the structured JSON array. Do not guess values you cannot read; use 
 export const EXECUTIVE_SYSTEM_PROMPT = `You are a meticulous data-extraction engine for U.S. Executive Branch OGE Form 278-T Periodic Transaction Reports.
 The attached document is a scanned OGE Form 278-T.
 Extract EVERY disclosed transaction row. For each transaction return:
-- txDate: the transaction date in YYYY-MM-DD (use the "Transaction Date", NOT the "Notification Date"). null if illegible.
+- txDate: the transaction date in YYYY-MM-DD (use the EXACT "Transaction Date", NOT the "Notification Date". Do not guess). null if illegible.
 - owner: one of "self","spouse","joint","dependent" (if unspecified or blank, use "self").
 - assetName: the security/asset name as written (often under "Description"). null if illegible.
-- ticker: the stock ticker symbol in UPPERCASE if shown, else null.
+- ticker: the stock ticker symbol in UPPERCASE. Look VERY CAREFULLY in the asset description column, often in parentheses like (AAPL) or a standalone column. Do not miss the ticker if it is visible. null only if it is truly missing.
 - assetType: short asset-type code/label if shown (e.g. "Stock", "Option"), else null.
 - assetTypeName: expanded asset-type name if the document or code is clear, else null.
-- txType: one of "P" (Purchase), "S" (Sale), "E" (Exchange). Map "Purchase" to "P", "Sale" to "S", "Exchange" to "E". null if illegible.
+- txType: one of "P" (Purchase), "S" (Sale), "E" (Exchange). Map "Purchase" to "P", "Sale" or "Sale (Partial)" to "S", "Exchange" to "E". Pay extremely close attention to the Transaction Type column; do not hallucinate "P" if it says "S" or "Sale". null if illegible.
 - amountRange: the disclosed amount bracket exactly as printed, e.g. "$1,001 - $15,000" or "$15,001 - $50,000".
 - isOption: true if the holding is an option/call/put/warrant.
 - capGainsOver200: false (rarely applicable on OGE forms).

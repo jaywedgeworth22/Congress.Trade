@@ -22,8 +22,9 @@ import { completeIngestionOutbox, flushIngestionOutbox } from '../ingestion/outb
 // 1. Initialize the KV namespace used for configuration and Infisical caching.
 // Deno KV Connect does not support queues, so queue bindings are attached only
 // after the Turso database has been resolved below.
+let tursoDbShim: D1DatabaseShim | null = null;
 const kv = await Deno.openKv();
-const configKvShim = new KVNamespaceShim(kv, 'config');
+const configKvShim = new KVNamespaceShim(kv, 'config', () => tursoDbShim);
 
 function buildEnvironmentValues(): Record<string, string | undefined> {
   const envObj: any = {};
@@ -59,6 +60,7 @@ const libsqlClient = createClient({
   authToken: tursoToken,
 });
 const dbShim = new D1DatabaseShim(libsqlClient);
+tursoDbShim = dbShim;
 const durableQueueDb = dbShim as unknown as D1Database;
 const ingestQueueShim = new DurableQueueAdapter<QueueMessage>(durableQueueDb, 'ingest');
 const deliveryQueueShim = new DurableQueueAdapter<QueueMessage>(durableQueueDb, 'delivery');

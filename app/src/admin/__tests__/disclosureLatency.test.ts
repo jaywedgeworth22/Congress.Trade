@@ -28,7 +28,7 @@ function fakeDb() {
                   provider_key: '20012345',
                   provider_first_seen_at: '2026-06-29T14:03:30.000Z',
                   provider_published_at: '2026-06-29T14:02:00.000Z',
-                  match_method: 'doc-token',
+                  match_method: 'trade-hash',
                   status: 'matched',
                   attempts: 2,
                   last_checked_at: '2026-06-29T14:03:30.000Z',
