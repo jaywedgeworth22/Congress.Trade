@@ -3,6 +3,7 @@ import type { ClientTrade } from '../../lib/contracts';
 import type { ColumnDef } from '../../lib/columns';
 import {
   formatAmount,
+  formatChamber,
   formatEstimatedValue,
   formatShortDate,
   reportingLagDays,
@@ -198,7 +199,7 @@ export function TradeTable({ items, columns, hiddenCols }: TradeTableProps) {
           <div className="member-cell">
             <div className="member-name">{item.member.name || 'Unknown'}</div>
             <div className="member-meta">
-              {[item.member.chamber, item.member.state].filter(Boolean).join(' · ')}
+              {[formatChamber(item.member.chamber), item.member.state].filter(Boolean).join(' · ')}
             </div>
           </div>
         );
@@ -242,7 +243,7 @@ export function TradeTable({ items, columns, hiddenCols }: TradeTableProps) {
       case 'owner':
         return item.transaction.owner || <span className="muted">—</span>;
       case 'chamber':
-        return item.member.chamber || <span className="muted">—</span>;
+        return formatChamber(item.member.chamber) || <span className="muted">—</span>;
       case 'source':
         return item.source === 'primary' ? 'Live' : 'Seed';
       case 'docs':

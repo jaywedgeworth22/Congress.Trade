@@ -2,6 +2,7 @@ import type { ClientTrade } from '../../lib/contracts';
 import {
   complianceInfo,
   formatAmount,
+  formatChamber,
   formatEstimatedValue,
   formatShortDate,
   reportingLagDays,
@@ -26,7 +27,7 @@ export function TradeCard({ item }: { item: ClientTrade }) {
         </span>
       </div>
       <div className="trade-member">
-        <small>{[item.member.chamber, item.member.state].filter(Boolean).join(' · ') || 'Congress'}</small>
+        <small>{[formatChamber(item.member.chamber), item.member.state].filter(Boolean).join(' · ') || 'Congress'}</small>
       </div>
       <dl className="trade-grid">
         <div><dt>Amount</dt><dd>{formatAmount(item.transaction.amountMin, item.transaction.amountMax)}</dd></div>
