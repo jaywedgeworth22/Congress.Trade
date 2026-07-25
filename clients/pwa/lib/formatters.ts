@@ -59,3 +59,12 @@ export function complianceInfo(days: number | null): { text: string; className: 
   if (days <= 45) return { text: `${days} days`, className: 'compliance-yellow' };
   return { text: `${days} days`, className: 'compliance-red' };
 }
+
+export function formatChamber(c: string | null | undefined): string {
+  if (!c) return '';
+  const s = c.trim().toLowerCase();
+  if (s === 'house' || s === 'h') return 'House';
+  if (s === 'senate' || s === 's') return 'Senate';
+  if (s === 'executive' || s === 'oge' || s === 'exec') return 'Exec';
+  return c.charAt(0).toUpperCase() + c.slice(1);
+}
