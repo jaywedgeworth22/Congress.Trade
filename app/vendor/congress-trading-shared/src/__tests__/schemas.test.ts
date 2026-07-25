@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 import {
   IsoDateSchema,
+  IsoDateTimeSchema,
   ChamberSchema,
   PartyBucketSchema,
   OwnerSchema,
@@ -74,6 +75,24 @@ describe("IsoDateSchema", () => {
     expect(IsoDateSchema.safeParse("24-01-15").success).toBe(false);
     expect(IsoDateSchema.safeParse("2024/01/15").success).toBe(false);
     expect(IsoDateSchema.safeParse("2024-1-5").success).toBe(false);
+  });
+});
+
+// =============================================================================
+// IsoDateTimeSchema
+// =============================================================================
+
+describe("IsoDateTimeSchema", () => {
+  it("accepts valid ISO 8601 UTC date-time strings", () => {
+    expect(IsoDateTimeSchema.safeParse("2026-07-22T14:30:00Z").success).toBe(true);
+    expect(IsoDateTimeSchema.safeParse("2026-07-22T14:30:00.000Z").success).toBe(true);
+  });
+
+  it("rejects non-ISO date-time formats", () => {
+    expect(IsoDateTimeSchema.safeParse("2026-07-22 14:30:00").success).toBe(false);
+    expect(IsoDateTimeSchema.safeParse("2026-07-22").success).toBe(false);
+    expect(IsoDateTimeSchema.safeParse("invalid-datetime").success).toBe(false);
+    expect(IsoDateTimeSchema.safeParse(12345).success).toBe(false);
   });
 });
 
@@ -842,7 +861,25 @@ describe("SharePayloadSchema", () => {
         { ticker: "AAPL", date: "2024-01-15", ratio: 0.3, elevated: false },
       ],
       fundamentals: [{ ticker: "AAPL", date: "2024-01-15", peRatio: 30 }],
-      analyst: [{ ticker: "AAPL", date: "2024-01-15", rating: "Buy" }],
+      analyst: [{ ticker: "AAPL", date: "2024-01-15", rating: "Buy", source: "fmp", asOfTimestamp: "2026-07-24T16:34:08Z" }],
+      trades: [
+        {
+          docId: "H-2026-20024100",
+          chamber: "house",
+          source: "house_clerk",
+          sourceUrl: "https://disclosures-clerk.house.gov/public_disc/ptr-pdf/2026/20024100.pdf",
+          filerName: "Nancy Pelosi",
+          ticker: "NVDA",
+          txType: "P",
+          transactionDate: "2026-07-15",
+          transactionTimestamp: "2026-07-15T00:00:00Z",
+          disclosureDate: "2026-07-22",
+          disclosureTimestamp: "2026-07-22T14:30:00Z",
+          extractedTimestamp: "2026-07-22T14:31:05Z",
+          amountMin: 1000001,
+          amountMax: 5000000,
+        },
+      ],
       origin: "app-b",
     });
     expect(result.success).toBe(true);
