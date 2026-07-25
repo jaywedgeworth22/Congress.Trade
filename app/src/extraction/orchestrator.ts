@@ -23,6 +23,7 @@ import {
   type ExtractorUsage,
 } from '../extractors/types.ts';
 import { normalize } from './normalizer.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { enqueueAgreementCheck } from './agreement.ts';
 import { ensureDocClass } from './docClassifier.ts';
 import { reportAiUsage } from '../shared/telemetry.ts';
@@ -238,9 +239,13 @@ export async function extractParsed(
   if (!obj) {
     if (filing.sourceUrl) {
       console.warn(`orchestrator: R2 object not found, falling back to source_url: ${filing.sourceUrl}`);
-      const res = await fetch(filing.sourceUrl, {
+      const res = await trackedFetch(filing.sourceUrl, {
         headers: { 'User-Agent': 'Congress.Trade/1.0 (+https://congress.trade)' }
-      });
+      }, {
+        service: 'disclosure-source',
+        operation: 'loaddocbytes.source_url_fallback',
+        dynamicTarget: 'filing-source'
+      }, fetch, { envOverride: env });
       if (!res.ok) {
         await markError(env, docId, `orchestrator: R2 object not found and fetch failed: HTTP ${res.status}`, lease);
         return null;

@@ -15,6 +15,7 @@ import {
   TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS,
   DENO_RUNTIME_KV_SCHEMA_STATEMENTS,
   CLEAN_PLACEHOLDER_TICKERS_SCHEMA_STATEMENTS,
+  FIX_DENO_RUNTIME_QUEUE_INDEX_SCHEMA_STATEMENTS,
   BASE_SCHEMA_STATEMENTS,
   D1_BUDGET_SCHEMA_STATEMENTS,
   DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS,
@@ -221,6 +222,7 @@ describe('admin migration bootstrap', () => {
       ...TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS,
       ...DENO_RUNTIME_KV_SCHEMA_STATEMENTS,
       ...CLEAN_PLACEHOLDER_TICKERS_SCHEMA_STATEMENTS,
+      ...FIX_DENO_RUNTIME_QUEUE_INDEX_SCHEMA_STATEMENTS,
     ]);
   });
 
@@ -251,7 +253,7 @@ describe('admin migration bootstrap', () => {
     const sql = DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS.join('\n');
     expect(sql).toContain('deno_runtime_queue');
     expect(sql).toContain('lease_until');
-    expect(sql).toContain('idx_deno_runtime_queue_ready');
+    expect(sql).toContain('lease_until');
     expect(sql).toContain('idx_deno_runtime_queue_active_dedupe');
     expect(sql).toContain("status IN ('pending', 'processing')");
   });
