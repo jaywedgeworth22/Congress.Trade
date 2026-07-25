@@ -1347,10 +1347,10 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain("metric === 'dollars'");
   });
 
-  it('fits the buys/sells time chart to the phone width without horizontal scroll', () => {
-    expect(DASHBOARD_HTML).toContain('#view-trends .tchart { overflow-x: hidden');
-    expect(DASHBOARD_HTML).toContain('#view-trends .tcol { min-width: 0');
-    expect(DASHBOARD_HTML).toContain('max(2px, calc(50% - 0.5px))');
+  it('fits the buys/sells time chart to the card width without horizontal scroll', () => {
+    expect(DASHBOARD_HTML).toContain('.tchart { display:flex; align-items:flex-end; gap:2px; height:180px; overflow-x:hidden;');
+    expect(DASHBOARD_HTML).toContain('.tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:1 1 0; min-width:0;');
+    expect(DASHBOARD_HTML).toContain('width:max(2px, calc(50% - 1px))');
   });
 
   it('keeps Trends section headings flush with card padding (no orphaned accent indent)', () => {
@@ -1362,10 +1362,13 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('#view-trends .trend-grid2 > div > h3');
   });
 
-  it('stacks buys/win and trades/buy-sell so politician names keep room on mobile', () => {
-    expect(DASHBOARD_HTML).toContain('class="stack-stats');
-    expect(DASHBOARD_HTML).toContain(".stack-stats > span { display:block");
-    expect(DASHBOARD_HTML).toContain("'% win</span></td>'");
+  it('stacks buys/win and trades/buy-sell under politician names for mobile room', () => {
+    expect(DASHBOARD_HTML).toContain('class="stack-under"');
+    expect(DASHBOARD_HTML).toContain('class="member-meta"');
+    expect(DASHBOARD_HTML).toContain('class="name-line"');
+    expect(DASHBOARD_HTML).toContain('.stack-under {');
+    expect(DASHBOARD_HTML).toContain('#view-trends .member-cell > .member-meta');
+    expect(DASHBOARD_HTML).toContain("'% win</span></div>'");
     expect(DASHBOARD_HTML).toContain("' trades</span><span class=\"stack-split\">'");
   });
 

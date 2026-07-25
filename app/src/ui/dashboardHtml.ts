@@ -470,19 +470,49 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .mini-trade-stat { display:inline-grid; grid-template-columns:3ch 1ch minmax(5.5ch, auto); gap:6px; align-items:center; justify-content:end; }
   .mini-trade-stat .dot { text-align:center; opacity:.65; }
   /* time chart (CSS columns, no chart lib)
-     Columns flex to fill the container so the chart spans the full width; when
-     there are too many buckets to fit on desktop, each keeps a min width and
-     the chart scrolls. On phones, columns shrink to fit the viewport width. */
-  .tchart { display:flex; align-items:flex-end; gap:3px; height:180px; overflow-x:auto; padding-top:6px; width:100%; max-width:100%; box-sizing:border-box; }
-  .tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:1 1 0; min-width:20px; transition: opacity 0.15s; outline: none; cursor: pointer; }
+     Columns always flex to the container width so the chart fits the card
+     (including phone screens) without horizontal scrolling. */
+  .tchart { display:flex; align-items:flex-end; gap:2px; height:180px; overflow-x:hidden; padding-top:6px; width:100%; max-width:100%; box-sizing:border-box; }
+  .tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:1 1 0; min-width:0; transition: opacity 0.15s; outline: none; cursor: pointer; }
   .tcol:hover, .tcol:focus-visible { opacity: 0.8; }
-  .tbars { display:flex; align-items:flex-end; justify-content:center; gap:3px; height:150px; width:100%; }
+  .tbars { display:flex; align-items:flex-end; justify-content:center; gap:2px; height:150px; width:100%; }
+  .tbars i { display:block; width:max(2px, calc(50% - 1px)); max-width:9px; border-radius:2px 2px 0 0; min-height:0; }
   .tchart-head { display:flex; justify-content:space-between; align-items:flex-end; gap:10px; flex-wrap:wrap; }
   .tchart-controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  /* Stacked metric cells: buys/win and trades/buy-sell — frees width for names. */
-  .stack-stats { text-align:right; vertical-align:middle; }
-  .stack-stats > span { display:block; line-height:1.35; white-space:nowrap; }
-  .stack-stats .stack-split { margin-top:2px; }
+  /* Stacked metrics under the politician name — frees the side column so
+     names are not ellipsized on phones. .member-meta overrides the default
+     nowrap/ellipsis on .member-cell > div so the stack can actually wrap. */
+  #view-trends .member-cell { align-items: flex-start; }
+  #view-trends .member-cell > .member-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    min-width: 0;
+    flex: 1 1 auto;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+  #view-trends .member-cell .name-line {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .stack-under {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.35;
+  }
+  .stack-under > span { white-space: nowrap; }
+  .stack-under .split-wrap { display: inline-flex; }
+  .stack-under .split { display: none; }
   
   .chart-tooltip {
     position: absolute; pointer-events: none; z-index: 100;
@@ -498,7 +528,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .chart-tooltip-row { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
   .chart-tooltip-lbl { color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
   .chart-tooltip-val { font-variant-numeric: tabular-nums; font-weight: 500; }
-  .tbars i { display:block; width:9px; border-radius:2px 2px 0 0; min-height:0; }
   .tbars i.buy { background: var(--buy); } .tbars i.sell { background: var(--sell); }
   .tlbl { font-size:9px; color: var(--text-dim); font-family: var(--mono); white-space:nowrap; }
   .legend { display:flex; gap:14px; font-size:12px; color: var(--text-dim); margin-bottom:6px; }
@@ -953,17 +982,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        fit without horizontal scroll. */
     #view-trends .split { display: none; }
     #view-trends .split-wrap { gap: 0; }
-    /* Buys vs Sells chart: shrink columns to the phone width (no horizontal scroll). */
-    #view-trends .tchart { overflow-x: hidden; gap: 1px; height: 160px; }
-    #view-trends .tcol { min-width: 0; flex: 1 1 0; gap: 2px; }
+    /* Buys vs Sells chart: tighter bars/labels on phones. */
+    #view-trends .tchart { gap: 1px; height: 160px; }
+    #view-trends .tcol { gap: 2px; }
     #view-trends .tbars { gap: 1px; height: 130px; }
-    #view-trends .tbars i { width: max(2px, calc(50% - 0.5px)); max-width: 5px; }
+    #view-trends .tbars i { max-width: 5px; }
     #view-trends .tlbl { font-size: 8px; max-width: 100%; overflow: hidden; }
     #view-trends .tchart-head { flex-direction: column; align-items: stretch; gap: 8px; }
     #view-trends .tchart-controls { justify-content: flex-start; }
     #view-trends #trTimeMetric.seg button,
     #view-trends #trTimeWin.seg button { padding: 5px 7px; font-size: 11px; }
-    #view-trends .stack-stats { font-size: 11px; }
+    #view-trends .stack-under { font-size: 11px; }
     #view-trends .asset-cell .muted { display: none; }
     #view-trends td:has(.asset-cell) { width: auto; max-width: none; }
     #view-trends .u-full { display: none; }
@@ -6908,20 +6937,21 @@ function pctSigned(n) {
 }
 function loadTrPerformers() {
   var body = el('trPerformers');
-  body.innerHTML = skRows(4, 6);
+  body.innerHTML = skRows(3, 6);
   aGet('member-performance?' + trParams() + '&limit=15').then(function (d) {
     var rows = d.members || [];
-    if (!rows.length) { body.innerHTML = stateRow(4, 'Not enough priced, filing-anchored buys to rank yet — this fills in as the price cache backfills.'); return; }
+    if (!rows.length) { body.innerHTML = stateRow(3, 'Not enough priced, filing-anchored buys to rank yet — this fills in as the price cache backfills.'); return; }
     body.innerHTML = rows.map(function (r, i) {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.partyBucket) +
-          esc(name) + '</div></div></td>' +
-        '<td class="stack-stats muted"><span>' + r.tradeCount + ' buys</span><span>' + Math.round(100 * (r.winRate || 0)) + '% win</span></td>' +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) +
+          '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) + esc(name) + '</span>' +
+          '<div class="stack-under"><span>' + r.tradeCount + ' buys</span><span>' + Math.round(100 * (r.winRate || 0)) + '% win</span></div>' +
+          '</div></div></td>' +
         '<td title="Annualized relative performance vs S&amp;P 500; 0% means matched the S&amp;P, +3% means about 3 percentage points better per year.">' + pctSigned(r.avgAnnualizedExcessReturn != null ? r.avgAnnualizedExcessReturn : r.avgExcessReturn) + '</td></tr>';
     }).join('');
-  }).catch(function (e) { body.innerHTML = stateRow(4, 'Could not load: ' + e.message); });
+  }).catch(function (e) { body.innerHTML = stateRow(3, 'Could not load: ' + e.message); });
 }
 
 function loadTrSummary() {
@@ -7064,21 +7094,23 @@ function loadTrTime() {
 
 function loadTrMembers() {
   var body = el('trMembers');
-  body.innerHTML = skRows(4, 6);
+  body.innerHTML = skRows(3, 6);
   aGet('member-leaderboard?' + trParams() + '&limit=15').then(function (d) {
     var rows = d.members || [];
-    if (!rows.length) { body.innerHTML = stateRow(4, 'No politician activity in this window.'); return; }
+    if (!rows.length) { body.innerHTML = stateRow(3, 'No politician activity in this window.'); return; }
     body.innerHTML = rows.map(function (r, i) {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
       var metaBits = [chamberLabel(r.chamber), r.state].filter(Boolean).join(' · ');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.partyBucket) +
-          esc(name) + (metaBits ? ' <span class="muted">· ' + esc(metaBits) + '</span>' : '') + '</div></div></td>' +
-        '<td class="stack-stats"><span class="muted">' + r.tradeCount + ' trades</span><span class="stack-split">' + splitBar(r.buyCount, r.sellCount) + '</span></td>' +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) +
+          '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) +
+          esc(name) + (metaBits ? ' <span class="muted">· ' + esc(metaBits) + '</span>' : '') + '</span>' +
+          '<div class="stack-under"><span>' + r.tradeCount + ' trades</span><span class="stack-split">' + splitBar(r.buyCount, r.sellCount) + '</span></div>' +
+          '</div></div></td>' +
         '<td class="est">' + estUsd(r.estVolumeUsd) + '</td></tr>';
     }).join('');
-  }).catch(function (e) { body.innerHTML = stateRow(4, 'Could not load: ' + e.message); });
+  }).catch(function (e) { body.innerHTML = stateRow(3, 'Could not load: ' + e.message); });
 }
 
 function loadTrParties() {
