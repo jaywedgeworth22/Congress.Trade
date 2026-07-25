@@ -294,11 +294,21 @@ function buildTransaction(
   nowIso: string,
   rowIndex: number,
 ): FlaggedTx {
-  const cleanedAssetName = cleanAssetString(p.assetName, p.ticker);
+  const placeholders = new Set(['NONE', '--', 'N/A', 'NA', 'NULL', '—']);
+  let rawTicker = p.ticker;
+  if (rawTicker && placeholders.has(rawTicker.toUpperCase())) {
+    rawTicker = null;
+  }
+  let rawAssetName = p.assetName;
+  if (rawAssetName && placeholders.has(rawAssetName.toUpperCase())) {
+    rawAssetName = null;
+  }
+
+  const cleanedAssetName = cleanAssetString(rawAssetName, rawTicker);
   const s = scoreFields(
     p.confidence,
     {
-      ticker: p.ticker,
+      ticker: rawTicker,
       assetName: cleanedAssetName,
       amountMin: p.amountMin,
       amountMax: p.amountMax,

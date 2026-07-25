@@ -597,7 +597,13 @@ export const DENO_RUNTIME_KV_SCHEMA_STATEMENTS = [
   )`,
 ] as const;
 
+export const CLEAN_PLACEHOLDER_TICKERS_SCHEMA_STATEMENTS = [
+  `UPDATE transactions SET ticker = NULL WHERE ticker IN ('NONE', '--', 'N/A', 'NA', 'NULL', '—')`,
+  `UPDATE transactions SET asset_name = '(unknown)' WHERE asset_name IN ('NONE', 'None', 'none', '--', 'N/A', 'NA', 'NULL', '—', '')`,
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
+
   // 0025_extraction_runs_usage.sql
   'ALTER TABLE extraction_runs ADD COLUMN usage_json TEXT',
   ...EST_VALUE_SCHEMA_STATEMENTS,
@@ -657,4 +663,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS,
   // 0060_deno_runtime_kv.sql
   ...DENO_RUNTIME_KV_SCHEMA_STATEMENTS,
+  // 0061_clean_placeholder_tickers.sql
+  ...CLEAN_PLACEHOLDER_TICKERS_SCHEMA_STATEMENTS,
 ] as const;
