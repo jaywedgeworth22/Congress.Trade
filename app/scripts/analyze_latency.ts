@@ -1,4 +1,6 @@
 import { parse } from "https://deno.land/std/datetime/mod.ts";
+import { load } from "https://deno.land/std@0.224.0/dotenv/mod.ts";
+import { createClient } from "npm:@libsql/client";
 
 const dataDir = new URL("../../data/hoarded", import.meta.url).pathname;
 
@@ -7,28 +9,24 @@ async function getOfficialTrades(days = 14): Promise<any[]> {
   cutoffDate.setDate(cutoffDate.getDate() - days);
   const cutoffStr = cutoffDate.toISOString().split('T')[0];
 
-  const trades = [];
-  let nextUrl = "https://congress.trade/api/transactions?limit=100";
-  
-  while (nextUrl) {
-    console.log(`Fetching ${nextUrl}...`);
-    const res = await fetch(nextUrl);
-    if (!res.ok) throw new Error(`API failed: ${res.status}`);
-    const json = await res.json();
-    
-    for (const trade of json.data) {
-      if (trade.filed_date >= cutoffStr) {
-        trades.push(trade);
-      }
-    }
-    
-    if (json.data.length > 0 && json.data[json.data.length - 1].filed_date < cutoffStr) {
-      break;
-    }
-    
-    nextUrl = json.meta?.next_url ? `https://congress.trade${json.meta.next_url}` : null;
-  }
-  return trades;
+  const env = await load({ envPath: "/Users/jay/Code/Congress.Trade/app/.prod.vars" });
+  const client = createClient({
+    url: env.TURSO_DATABASE_URL || env.TURSO_URL || "", 
+    authToken: env.TURSO_AUTH_TOKEN || ""
+  });
+
+  const res = await client.execute({
+    sql: `
+      SELECT t.id, t.doc_id, fi.chamber, fi.filed_date, COALESCE(f.full_name, t.filer_id) as filer_name, t.tx_date, t.tx_type, t.ticker
+      FROM transactions t
+      JOIN filings fi ON t.doc_id = fi.doc_id
+      LEFT JOIN filers f ON t.filer_id = f.bioguide_id
+      WHERE t.source = 'primary' AND fi.filed_date >= ?
+    `,
+    args: [cutoffStr]
+  });
+
+  return res.rows;
 }
 
 async function loadHoardedData() {
@@ -40,7 +38,6 @@ async function loadHoardedData() {
 }
 
 function normalizeName(name: string) {
-  // Very basic normalization for clustering
   return name.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
