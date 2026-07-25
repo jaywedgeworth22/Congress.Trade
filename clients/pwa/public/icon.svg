@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Congress.Trade">
+  <rect width="128" height="128" rx="24" fill="#08111f"/>
+  <circle cx="64" cy="64" r="42" fill="#13213a" stroke="#3c82f6" stroke-width="6"/>
+  <path d="M34 75h60v11H34zM44 55h12v20H44zM58 43h12v32H58zM72 51h12v24H72z" fill="#f8fafc"/>
+  <path d="M31 39h66l-33-19z" fill="#34d399"/>
+</svg>
