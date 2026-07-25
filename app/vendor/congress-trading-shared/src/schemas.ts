@@ -11,6 +11,11 @@ export const IsoDateSchema = z.string().refine(isIsoDate, {
   message: "Expected a valid YYYY-MM-DD date",
 });
 
+export const IsoDateTimeSchema = z.string().datetime({
+  message: "Expected a valid ISO 8601 UTC date-time string (e.g., 2026-07-22T14:30:00Z)",
+});
+export type IsoDateTime = z.infer<typeof IsoDateTimeSchema>;
+
 // "executive" covers OGE Form 278-T presidential/VP filers — the
 // executive-branch analogue of congressional STOCK Act disclosures.
 export const ChamberSchema = z.enum(["house", "senate", "executive"]);
@@ -218,8 +223,33 @@ export const AnalystRowSchema = z.object({
   analystCount: nullAsUndefined(z.number()),
   source: nullAsUndefined(z.string()),
   updatedAt: z.string().optional(),
+  asOfTimestamp: nullAsUndefined(z.string()),
 });
 export type AnalystRow = z.infer<typeof AnalystRowSchema>;
+
+export const TradeEventRowSchema = z.object({
+  docId: z.string(),
+  chamber: ChamberSchema,
+  source: z.string(),
+  sourceUrl: nullAsUndefined(z.string()),
+  filerName: z.string(),
+  filerId: nullAsUndefined(z.string()),
+  party: nullAsUndefined(z.string()),
+  state: nullAsUndefined(z.string()),
+  district: nullAsUndefined(z.string()),
+  ticker: z.string(),
+  assetType: nullAsUndefined(z.string()),
+  assetDescription: nullAsUndefined(z.string()),
+  txType: z.string(),
+  transactionDate: IsoDateSchema,
+  transactionTimestamp: nullAsUndefined(z.string()),
+  disclosureDate: nullAsUndefined(IsoDateSchema),
+  disclosureTimestamp: nullAsUndefined(z.string()),
+  extractedTimestamp: nullAsUndefined(z.string()),
+  amountMin: nullAsUndefined(z.number()),
+  amountMax: nullAsUndefined(z.number()),
+});
+export type TradeEventRow = z.infer<typeof TradeEventRowSchema>;
 
 export const InsiderRowSchema = z.object({
   ticker: z.string(),
@@ -273,6 +303,7 @@ export const SharePayloadSchema = z.object({
   shortVolume: z.array(ShortVolumeRowSchema).optional(),
   fundamentals: z.array(FundamentalRowSchema).optional(),
   analyst: z.array(AnalystRowSchema).optional(),
+  trades: z.array(TradeEventRowSchema).optional(),
   origin: z.string().optional(),
 });
 export type SharePayload = z.infer<typeof SharePayloadSchema>;
