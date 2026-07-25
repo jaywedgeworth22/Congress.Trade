@@ -3117,15 +3117,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   // so free-tier Deploy only serves HTTP. ADMIN_TOKEN or ADMIN_MAINTENANCE_TOKEN.
   r.post('/runtime-tick', async (c) => {
     const envx = c.env as Env & Record<string, string | undefined>;
-    const profile = resolveDenoCostProfile({
-      DENO_COST_PROFILE: envx.DENO_COST_PROFILE,
-      DENO_CRON_SCHEDULE: envx.DENO_CRON_SCHEDULE,
-      DENO_DRAIN_LIMIT: envx.DENO_DRAIN_LIMIT,
-      DENO_DRAIN_CLAIM_SIZE: envx.DENO_DRAIN_CLAIM_SIZE,
-      DENO_OUTBOX_LIMIT: envx.DENO_OUTBOX_LIMIT,
-      DENO_DISABLE_INTERNAL_CRON: envx.DENO_DISABLE_INTERNAL_CRON,
-      DENO_FORCE_FULL_TICK: envx.DENO_FORCE_FULL_TICK,
-    });
+    // Prefer Deploy-safe CT_* names (DENO_* prefixes are rejected by Deno Deploy).
+    const profile = resolveDenoCostProfile(envx);
     const result = await runScheduledTick(
       c.env,
       createRuntimeQueueHandlers(),
