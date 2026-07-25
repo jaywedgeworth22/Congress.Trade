@@ -128,6 +128,9 @@ import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
 import { isValidBracket } from '../shared/brackets.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
+import { resolveDenoCostProfile } from '../deno/costProfile.ts';
+import { createRuntimeQueueHandlers } from '../deno/runtimeHandlers.ts';
+import { runScheduledTick } from '../deno/scheduledTick.ts';
 import { readTargetCircuits } from '../delivery/targetCircuit.ts';
 import { inspectLlmSpend } from '../shared/llmSpend.ts';
 import {
@@ -234,7 +237,14 @@ type EnvWithAdmin = Env & {
 /** The ONLY admin paths ADMIN_MAINTENANCE_TOKEN unlocks. Keep this list to
  * idempotent, non-destructive recovery operations — never migrations, review
  * resolution, config writes, or anything that changes published data. */
-const MAINTENANCE_PATH_SUFFIXES = ['/ingest-requeue-failed', '/ingest-retry-errored'];
+const MAINTENANCE_PATH_SUFFIXES = [
+  '/ingest-requeue-failed',
+  '/ingest-retry-errored',
+  // External free-tier scheduler (Coolify/cron) may drive the same tick body as
+  // Deno.cron without holding full ADMIN_TOKEN. Worst case if leaked: someone
+  // advances the normal watcher/outbox/queue path (already idempotent / leased).
+  '/runtime-tick',
+];
 
 const LATENCY_RESET_KEY = 'admin:source_health:latency_reset_at';
 
@@ -3099,6 +3109,32 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       bootstrap: BOOTSTRAP.map((key) => ({ key, configured: Boolean(envx[key]) })),
       note: 'Sources only, never values. infisical = live-editable there (wins over env); env = wrangler var / Worker secret fallback.',
     });
+  });
+
+  // --- POST /runtime-tick -------------------------------------------------
+  // Drive one watcher + outbox + durable-queue tick from outside Deno Deploy
+  // (Coolify cron / GitHub Actions). Used with DENO_DISABLE_INTERNAL_CRON=true
+  // so free-tier Deploy only serves HTTP. ADMIN_TOKEN or ADMIN_MAINTENANCE_TOKEN.
+  r.post('/runtime-tick', async (c) => {
+    const envx = c.env as Env & Record<string, string | undefined>;
+    const profile = resolveDenoCostProfile({
+      DENO_COST_PROFILE: envx.DENO_COST_PROFILE,
+      DENO_CRON_SCHEDULE: envx.DENO_CRON_SCHEDULE,
+      DENO_DRAIN_LIMIT: envx.DENO_DRAIN_LIMIT,
+      DENO_DRAIN_CLAIM_SIZE: envx.DENO_DRAIN_CLAIM_SIZE,
+      DENO_OUTBOX_LIMIT: envx.DENO_OUTBOX_LIMIT,
+      DENO_DISABLE_INTERNAL_CRON: envx.DENO_DISABLE_INTERNAL_CRON,
+      DENO_FORCE_FULL_TICK: envx.DENO_FORCE_FULL_TICK,
+    });
+    const result = await runScheduledTick(
+      c.env,
+      createRuntimeQueueHandlers(),
+      profile,
+    );
+    return c.json({
+      ok: result.errors.length === 0,
+      ...result,
+    }, result.errors.length === 0 ? 200 : 207);
   });
 
   // --- GET /diagnostics ---------------------------------------------------
