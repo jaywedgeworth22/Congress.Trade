@@ -183,12 +183,12 @@ npm run dev      # local worker + cron + queues
 npm run deploy   # wrangler deploy
 ```
 The Deno Deploy cron is cost-profiled (default **`free`**: every 5 minutes,
-small queue claims, idle short-circuit). Set `DENO_COST_PROFILE=paid` only while
-on Pro if you need every-minute ticks. The watcher still self-gates via
-`shouldPollNow` against `poll_config`, so source-poll cadence changes (admin
-panel) take effect on the next tick without a redeploy. See
-`docs/rollouts/2026-07-25-deno-deploy-cost-min.md` for free-tier survival knobs
-and the optional Coolify-driven `POST /api/admin/runtime-tick` path.
+small queue claims, idle short-circuit). Set `CT_COST_PROFILE=paid` only while
+on Pro if you need every-minute ticks (use `CT_*` names — Deno rejects custom
+`DENO_*` env keys). Confirm with `GET /api/health` → `costProfile`. The watcher
+still self-gates via `shouldPollNow` against `poll_config`. See
+`docs/rollouts/2026-07-25-deno-deploy-cost-min.md` for free-tier knobs, the
+deploy daily-cap, and optional Coolify-driven `POST /api/admin/runtime-tick`.
 
 ## Endpoint reference
 Public API (`/api`):
