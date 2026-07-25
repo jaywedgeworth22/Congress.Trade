@@ -10,7 +10,7 @@ import {
 
 describe('metadata-grounded extraction prompts', () => {
   it('bumped the prompt version for the grounding change', () => {
-    expect(EXTRACTION_PROMPT_VERSION).toBe('stock-act-ptr-v3-grounded');
+    expect(EXTRACTION_PROMPT_VERSION).toBe('stock-act-ptr-v4-grounded');
     expect(EXTRACTION_PROMPT_VERSION).not.toBe('stock-act-ptr-v2');
   });
 
