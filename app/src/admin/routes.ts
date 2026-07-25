@@ -7327,6 +7327,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
+  // --- POST /debug-sql -----------------------------------------------------
+  // Development ONLY tool for running arbitrary sql queries to debug state
+  r.post('/debug-sql', async (c) => {
+    const { query, params = [] } = (await c.req.json().catch(() => ({}))) as { query?: string; params?: any[] };
+    if (!query) {
+      return c.json({ error: 'query is required' }, 400);
+    }
+    
+    try {
+      const results = await all(c.env.DB, query, params);
+      return c.json({ ok: true, results });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
   // --- POST /migrate ------------------------------------------------------
   // Apply schema changes via the Worker's D1 binding (sidesteps the wrangler
   // CLI's --remote D1 auth issues). Idempotent: "duplicate column" is treated
