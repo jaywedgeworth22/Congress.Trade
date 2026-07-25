@@ -229,13 +229,29 @@ export async function extractParsed(
   }
 
   await lease?.assertOwned();
-  const obj = await env.RAW_FILES.get(filing.rawObjectKey);
+  let obj = await env.RAW_FILES.get(filing.rawObjectKey);
+  let bytes: ArrayBuffer;
   if (!obj) {
-    await markError(env, docId, `orchestrator: R2 object ${filing.rawObjectKey} not found`, lease);
-    return null;
+    if (filing.sourceUrl) {
+      console.warn(`orchestrator: R2 object not found, falling back to source_url: ${filing.sourceUrl}`);
+      const res = await fetch(filing.sourceUrl, {
+        headers: { 'User-Agent': 'Congress.Trade/1.0 (+https://congress.trade)' }
+      });
+      if (!res.ok) {
+        await markError(env, docId, `orchestrator: R2 object not found and fetch failed: HTTP ${res.status}`, lease);
+        return null;
+      }
+      bytes = await res.arrayBuffer();
+      // Cache it back to R2 for future runs
+      await env.RAW_FILES.put(filing.rawObjectKey, bytes);
+    } else {
+      await markError(env, docId, `orchestrator: R2 object ${filing.rawObjectKey} not found and no source_url`, lease);
+      return null;
+    }
+  } else {
+    bytes = await obj.arrayBuffer();
   }
 
-  const bytes = await obj.arrayBuffer();
   await lease?.assertOwned();
 
   // Complexity signal for cascade tiering: raw byte length. Recorded as soon as
