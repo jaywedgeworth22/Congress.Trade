@@ -4429,6 +4429,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
   });
 
+  r.get('/debug-members', async (c) => {
+    const members = await c.env.DB.prepare("SELECT id, name, chamber FROM members WHERE name LIKE '%Manual%' OR name LIKE '%manual%' LIMIT 10").all();
+    return c.json(members.results);
+  });
+
   r.post('/reprocess', async (c) => {
     let body: Record<string, unknown> = {};
     try {
