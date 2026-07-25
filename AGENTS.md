@@ -262,14 +262,6 @@ Durable, non-obvious notes for running/testing locally (all from `app/`):
 
 Client apps (peer clients of the backend, not separate products):
 
-- `clients/pwa` is a Next.js client. Deps are a separate install (`npm ci` in
-  `clients/pwa`); typecheck with `npm run typecheck`, dev with `npm run dev`.
-  It calls the backend at `${NEXT_PUBLIC_API_BASE_URL}/api/client/v1/*` and the
-  backend sends NO CORS headers, so it is designed to run SAME-ORIGIN with the
-  backend (leave `NEXT_PUBLIC_API_BASE_URL` blank → relative `/api/...`). Pointing
-  it cross-origin at `http://localhost:8787` fails in the browser with CORS. For
-  local dev with live data, front both behind one origin (a reverse proxy routing
-  `/api/*`→8787 and everything else→Next) and keep the base URL blank.
 - `clients/ios` is a SwiftUI app requiring Xcode/macOS; it cannot be built or run
   in this Linux cloud environment.
 
