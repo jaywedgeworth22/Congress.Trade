@@ -4417,7 +4417,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
   r.get('/debug-extract/:id', async (c) => {
     try {
-      const extracted = await extractParsed(c.env, c.req.param('id'));
+      const filing = await loadFilingRow(c.env, c.req.param("id"));
+      if (!filing) return c.json({ error: "no filing" });
+      if (!filing.rawObjectKey) return c.json({ error: "no rawObjectKey", filing });
+      const obj = await c.env.RAW_FILES.get(filing.rawObjectKey);
+      if (!obj) return c.json({ error: "no r2 object", filing });
+      const extracted = await extractParsed(c.env, c.req.param("id"));
       return c.json(extracted);
     } catch (e) {
       return c.json({ error: (e as Error).message });
