@@ -1,19 +1,23 @@
 /**
  * Deno Deploy cost profile.
  *
- * Free-tier quotas (Deno Deploy Free, 2026) are tight for a always-on ingestion
- * worker: ~1M requests, 20GB egress, 450k KV reads / 300k KV writes, and on
- * non-Classic runtimes 15h CPU / 350 GB-h memory. We burned a full month in ~4
- * days largely because the Deno cron fired every minute and each tick could
- * claim + process heavy extraction work.
+ * Free-tier quotas (Deno Deploy Free, 2026) are tight for an always-on ingestion
+ * worker: ~1M requests, 20GB egress, 450k KV reads / 300k KV writes, and on the
+ * current (non-Classic) product 15h CPU / 350 GB-h memory. We burned a full
+ * month in ~4 days largely because the Deno cron fired every minute and each
+ * tick could claim + process heavy extraction work.
+ *
+ * NOTE: Deno Deploy forbids custom env var names starting with `DENO_`. Use the
+ * `CT_*` names below (Congress.Trade). Legacy `DENO_*` names are still read for
+ * local tests only; they cannot be set on Deploy.
  *
  * Profiles trade discovery/queue latency for billable wall-clock. Set via
- * `DENO_COST_PROFILE=free|balanced|paid` (default: free). Optional overrides:
- *   DENO_CRON_SCHEDULE       — crontab expression for Deno.cron
- *   DENO_DRAIN_LIMIT         — max durable-queue messages completed per tick
- *   DENO_DRAIN_CLAIM_SIZE    — messages claimed per SQL batch
- *   DENO_OUTBOX_LIMIT        — max outbox rows flushed per tick (each outbox)
- *   DENO_DISABLE_INTERNAL_CRON=true — skip Deno.cron; drive ticks externally
+ * `CT_COST_PROFILE=free|balanced|paid` (default: free). Optional overrides:
+ *   CT_CRON_SCHEDULE           — crontab expression for Deno.cron
+ *   CT_DRAIN_LIMIT             — max durable-queue messages completed per tick
+ *   CT_DRAIN_CLAIM_SIZE        — messages claimed per SQL batch
+ *   CT_OUTBOX_LIMIT            — max outbox rows flushed per tick (each outbox)
+ *   CT_DISABLE_INTERNAL_CRON=true — skip Deno.cron; drive ticks externally
  *     (e.g. Coolify/GitHub Actions calling POST /api/admin/runtime-tick)
  */
 
@@ -90,8 +94,8 @@ function truthy(raw: string | undefined): boolean {
 
 /**
  * Resolve the active cost profile from environment values (Deno.env or Env).
- * Defaults to **free** so production survives after the Aug 1 quota reset
- * without requiring a config change; set DENO_COST_PROFILE=paid while on Pro.
+ * Defaults to **free**. Prefer CT_* names (Deploy-safe). Legacy DENO_* aliases
+ * are accepted for local tests only.
  */
 export function resolveDenoCostProfile(
   env: Record<string, string | undefined> | { get?: (k: string) => string | undefined } = {},
@@ -103,15 +107,51 @@ export function resolveDenoCostProfile(
     return (env as Record<string, string | undefined>)[key];
   };
 
-  const base = PROFILES[parseProfileName(read('DENO_COST_PROFILE'))];
-  const cronOverride = read('DENO_CRON_SCHEDULE')?.trim();
+  // Prefer Deploy-safe CT_* keys; fall back to legacy DENO_* for local tests.
+  const pick = (...keys: string[]): string | undefined => {
+    for (const key of keys) {
+      const v = read(key);
+      if (v !== undefined && v !== '') return v;
+    }
+    return undefined;
+  };
+
+  const base = PROFILES[parseProfileName(pick('CT_COST_PROFILE', 'DENO_COST_PROFILE'))];
+  const cronOverride = pick('CT_CRON_SCHEDULE', 'DENO_CRON_SCHEDULE')?.trim();
   return {
     ...base,
     cronSchedule: cronOverride && cronOverride.length > 0 ? cronOverride : base.cronSchedule,
-    drainLimit: parsePositiveInt(read('DENO_DRAIN_LIMIT'), base.drainLimit, 100),
-    drainClaimSize: parsePositiveInt(read('DENO_DRAIN_CLAIM_SIZE'), base.drainClaimSize, 25),
-    outboxLimit: parsePositiveInt(read('DENO_OUTBOX_LIMIT'), base.outboxLimit, 200),
-    disableInternalCron: truthy(read('DENO_DISABLE_INTERNAL_CRON')),
-    idleShortCircuit: !truthy(read('DENO_FORCE_FULL_TICK')),
+    drainLimit: parsePositiveInt(
+      pick('CT_DRAIN_LIMIT', 'DENO_DRAIN_LIMIT'),
+      base.drainLimit,
+      100,
+    ),
+    drainClaimSize: parsePositiveInt(
+      pick('CT_DRAIN_CLAIM_SIZE', 'DENO_DRAIN_CLAIM_SIZE'),
+      base.drainClaimSize,
+      25,
+    ),
+    outboxLimit: parsePositiveInt(
+      pick('CT_OUTBOX_LIMIT', 'DENO_OUTBOX_LIMIT'),
+      base.outboxLimit,
+      200,
+    ),
+    disableInternalCron: truthy(
+      pick('CT_DISABLE_INTERNAL_CRON', 'DENO_DISABLE_INTERNAL_CRON'),
+    ),
+    idleShortCircuit: !truthy(pick('CT_FORCE_FULL_TICK', 'DENO_FORCE_FULL_TICK')),
+  };
+}
+
+/** Public-safe summary for /api/health and admin diagnostics (no secrets). */
+export function costProfilePublicSummary(profile: DenoCostProfile): Record<string, unknown> {
+  return {
+    name: profile.name,
+    cronSchedule: profile.cronSchedule,
+    drainLimit: profile.drainLimit,
+    drainClaimSize: profile.drainClaimSize,
+    outboxLimit: profile.outboxLimit,
+    disableInternalCron: profile.disableInternalCron,
+    idleShortCircuit: profile.idleShortCircuit,
   };
 }
