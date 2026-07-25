@@ -27,21 +27,33 @@ This rollout adds a **cost profile** (default **`free`**) that:
 
 | Variable | Purpose | Free default |
 | --- | --- | --- |
-| `DENO_COST_PROFILE` | `free` \| `balanced` \| `paid` | `free` |
-| `DENO_CRON_SCHEDULE` | Override crontab | `*/5 * * * *` |
-| `DENO_DRAIN_LIMIT` | Max messages per queue per tick | `3` |
-| `DENO_DRAIN_CLAIM_SIZE` | Claim batch size | `1` |
-| `DENO_OUTBOX_LIMIT` | Outbox rows per flush | `20` |
-| `DENO_DISABLE_INTERNAL_CRON` | Skip `Deno.cron`; use external tick | unset |
-| `DENO_FORCE_FULL_TICK` | Disable idle short-circuit | unset |
+| `CT_COST_PROFILE` | `free` \| `balanced` \| `paid` | `free` |
+| `CT_CRON_SCHEDULE` | Override crontab | `*/5 * * * *` |
+| `CT_DRAIN_LIMIT` | Max messages per queue per tick | `3` |
+| `CT_DRAIN_CLAIM_SIZE` | Claim batch size | `1` |
+| `CT_OUTBOX_LIMIT` | Outbox rows per flush | `20` |
+| `CT_DISABLE_INTERNAL_CRON` | Skip `Deno.cron`; use external tick | unset |
+| `CT_FORCE_FULL_TICK` | Disable idle short-circuit | unset |
 
-While still on **Pro this month**, you may set `DENO_COST_PROFILE=paid` (or
-`balanced`) for lower latency. **Before Aug 1**, set `DENO_COST_PROFILE=free`
-(or leave unset — free is the code default).
+**Naming:** Deno Deploy rejects custom env keys starting with `DENO_`. Use
+`CT_*` only. Legacy `DENO_*` aliases still work in local tests.
+
+While still on **Pro this month**, you may set `CT_COST_PROFILE=paid` (or
+`balanced`) for lower latency. Free is the code default and should be set live
+as `CT_COST_PROFILE=free`.
+
+Verify live: `GET /api/health` includes `costProfile.name` (`"free"`).
+
+### Deploy frequency cap
+
+`.github/workflows/deploy-deno.yml` no longer runs hourly (was 24 deploys/day).
+It deploys on main path changes, optional daily safety net, and enforces a
+default **8 successful deploys/UTC day** (`vars.DEPLOY_MAX_PER_DAY`). Manual
+`workflow_dispatch` with `force=true` bypasses the cap.
 
 ### Optional: move background work off Deno entirely
 
-1. Set `DENO_DISABLE_INTERNAL_CRON=true` on the Deno app.
+1. Set `CT_DISABLE_INTERNAL_CRON=true` on the Deno app.
 2. On Coolify (or Actions), every 5 minutes:
 
 ```bash

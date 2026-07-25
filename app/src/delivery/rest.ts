@@ -59,6 +59,7 @@ import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webho
 import { rateLimit, clientIp } from '../shared/rateLimit.ts';
 import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
 import { checkReadiness } from '../shared/readiness.ts';
+import { costProfilePublicSummary, resolveDenoCostProfile } from '../deno/costProfile.ts';
 
 function parseIntOrUndef(v: string | undefined): number | undefined {
   if (v === undefined || v === '') return undefined;
@@ -203,9 +204,16 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
 
   // --- GET /health --------------------------------------------------------
   // Deployment readiness: D1 must be reachable and the required schema current.
+  // Also reports the active cost profile (public, no secrets) so free-tier
+  // ops can confirm CT_COST_PROFILE without an admin token.
   r.get('/health', async (c) => {
     const readiness = await checkReadiness(c.env.DB);
-    return c.json({ ...readiness, time: new Date().toISOString() }, readiness.ok ? 200 : 503);
+    const envx = c.env as Env & Record<string, string | undefined>;
+    const costProfile = costProfilePublicSummary(resolveDenoCostProfile(envx));
+    return c.json(
+      { ...readiness, costProfile, time: new Date().toISOString() },
+      readiness.ok ? 200 : 503,
+    );
   });
 
   // --- GET /transactions --------------------------------------------------
