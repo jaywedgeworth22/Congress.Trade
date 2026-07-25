@@ -18,6 +18,13 @@ function normalizeParty(party: string | null): string | null {
 
 // These are the groups identified in filers_analysis.md
 const duplicateGroups = [
+
+  ["senate-a-mitchell-jr-mcconnell", "senate-mcconnell-a-mitchell-jr-senator"],
+  ["senate-bernardo-moreno", "senate-moreno-bernardo-senator"],
+  ["senate-david-h-mccormick", "senate-mccormick-david-h-senator"],
+  ["senate-john-r-curtis", "senate-curtis-john-r-senator"],
+  ["house-fl02-neal-patrick-dunn", "house-fl02-neal-patrick-md-facs-dunn"],
+
   ["senate-adam-b-schiff", "house-ca28-adam-b-schiff"],
   ["house-wv03-carol-devine-miller", "house-wv01-carol-devine-miller"],
   ["house-nc09-dan-daniel-bishop", "house-nc08-dan-daniel-bishop"],
@@ -76,6 +83,34 @@ async function run() {
         updates.push("UPDATE filers SET party = ? WHERE bioguide_id = ?");
         args.push([p, f.bioguide_id]);
       }
+    }
+  }
+
+
+  // Automatically discover manual filers that exactly match a canonical filer's full_name
+  const manualMatches = await client.execute(`
+    SELECT m.bioguide_id as manual_id, c.bioguide_id as canonical_id, c.full_name
+    FROM filers m
+    JOIN filers c ON m.full_name = c.full_name 
+      AND c.bioguide_id NOT LIKE 'MANUAL-%' 
+      AND c.bioguide_id != m.bioguide_id
+    WHERE m.bioguide_id LIKE 'MANUAL-%'
+  `);
+  
+  for (const row of manualMatches.rows) {
+    const canonical = row.canonical_id as string;
+    const manual = row.manual_id as string;
+    
+    // Check if we already have this in duplicateGroups, if not, add it
+    let found = false;
+    for (const group of duplicateGroups) {
+      if (group[0] === canonical && group.includes(manual)) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      duplicateGroups.push([canonical, manual]);
     }
   }
 
