@@ -9,7 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
-- **[Congress.Trade][CURSOR] Mobile Trends chart + top-performers layout — IN PROGRESS 2026-07-25.** Branch `cursor/mobile-analytics-layout-c8c9`. Fit Buys vs Sells chart to phone width; add # trades / $ toggle; fix orphaned section-heading indent; stack buys/wins and trades/buy-sell on Top Performers / Most Active for name room on mobile.
+- **[Congress.Trade][CURSOR] Mobile Trends chart + top-performers layout — PR READY 2026-07-25.** Branch `cursor/mobile-analytics-layout-c8c9`. Fit Buys vs Sells chart to phone width; add # Trades / $ toggle; flush section headings (remove orphaned 11px accent indent); stack buys/win + trades/buy-sell for name room. Gates: `npm run typecheck` + `npm test` 167/167 (1865) green.
 
 - **[Congress.Trade][GROK] Free-tier live + deploy daily cap — MERGED PR #952 2026-07-25.** `CT_COST_PROFILE=free` set on Deno Deploy (DENO_* env keys rejected by platform). Health reports `costProfile`. Deploy workflow: no more hourly schedule; max 8 deploys/UTC day (`vars.DEPLOY_MAX_PER_DAY`); force via workflow_dispatch.
 - **[Congress.Trade][GROK] Minimize Deno Deploy usage for free-tier survival (Aug 1) — MERGED PR #949 2026-07-25.** Branch `grok/deno-deploy-cost-min` → main `8f0ad14`. Default `DENO_COST_PROFILE=free` (cron `*/5`, drain 3/claim 1, idle short-circuit); `POST /api/admin/runtime-tick` for Coolify-driven ticks; rollout `docs/rollouts/2026-07-25-deno-deploy-cost-min.md`. Gates: typecheck + vitest green; CI typecheck+test + gitleaks green. Follow-up: set profile free (default) before Aug 1; optional Coolify cron for HTTP-only Deno.
