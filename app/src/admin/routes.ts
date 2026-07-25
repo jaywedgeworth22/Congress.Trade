@@ -4431,7 +4431,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
 
   r.get('/debug-members', async (c) => {
     try {
-      const members = await all(c.env.DB, "SELECT id, name, chamber FROM filers WHERE name LIKE '%Manual%' OR name LIKE '%manual%' LIMIT 10", []);
+      const members = await all(c.env.DB, "SELECT bioguide_id, full_name, chamber FROM filers WHERE full_name LIKE '%Manual%' OR full_name LIKE '%manual%' LIMIT 10", []);
       return c.json(members);
     } catch (e) {
       return c.json({ error: (e as Error).message });
