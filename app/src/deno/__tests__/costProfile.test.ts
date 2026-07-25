@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveDenoCostProfile } from '../costProfile.ts';
+import { costProfilePublicSummary, resolveDenoCostProfile } from '../costProfile.ts';
 
 describe('resolveDenoCostProfile', () => {
   it('defaults to free (Aug free-tier survival)', () => {
@@ -13,27 +13,35 @@ describe('resolveDenoCostProfile', () => {
     expect(p.idleShortCircuit).toBe(true);
   });
 
+  it('prefers Deploy-safe CT_* names over legacy DENO_*', () => {
+    const p = resolveDenoCostProfile({
+      CT_COST_PROFILE: 'free',
+      DENO_COST_PROFILE: 'paid',
+    });
+    expect(p.name).toBe('free');
+  });
+
   it('maps pro/full aliases to paid', () => {
-    expect(resolveDenoCostProfile({ DENO_COST_PROFILE: 'pro' }).name).toBe('paid');
-    expect(resolveDenoCostProfile({ DENO_COST_PROFILE: 'full' }).cronSchedule).toBe('* * * * *');
+    expect(resolveDenoCostProfile({ CT_COST_PROFILE: 'pro' }).name).toBe('paid');
+    expect(resolveDenoCostProfile({ CT_COST_PROFILE: 'full' }).cronSchedule).toBe('* * * * *');
   });
 
   it('honors balanced profile', () => {
-    const p = resolveDenoCostProfile({ DENO_COST_PROFILE: 'balanced' });
+    const p = resolveDenoCostProfile({ CT_COST_PROFILE: 'balanced' });
     expect(p.name).toBe('balanced');
     expect(p.cronSchedule).toBe('*/2 * * * *');
     expect(p.drainLimit).toBe(8);
   });
 
-  it('allows per-knob overrides', () => {
+  it('allows per-knob overrides via CT_*', () => {
     const p = resolveDenoCostProfile({
-      DENO_COST_PROFILE: 'free',
-      DENO_CRON_SCHEDULE: '*/10 * * * *',
-      DENO_DRAIN_LIMIT: '7',
-      DENO_DRAIN_CLAIM_SIZE: '2',
-      DENO_OUTBOX_LIMIT: '15',
-      DENO_DISABLE_INTERNAL_CRON: 'true',
-      DENO_FORCE_FULL_TICK: '1',
+      CT_COST_PROFILE: 'free',
+      CT_CRON_SCHEDULE: '*/10 * * * *',
+      CT_DRAIN_LIMIT: '7',
+      CT_DRAIN_CLAIM_SIZE: '2',
+      CT_OUTBOX_LIMIT: '15',
+      CT_DISABLE_INTERNAL_CRON: 'true',
+      CT_FORCE_FULL_TICK: '1',
     });
     expect(p.cronSchedule).toBe('*/10 * * * *');
     expect(p.drainLimit).toBe(7);
@@ -43,15 +51,25 @@ describe('resolveDenoCostProfile', () => {
     expect(p.idleShortCircuit).toBe(false);
   });
 
+  it('still accepts legacy DENO_* for local tests', () => {
+    const p = resolveDenoCostProfile({ DENO_COST_PROFILE: 'paid' });
+    expect(p.name).toBe('paid');
+    expect(p.cronSchedule).toBe('* * * * *');
+  });
+
   it('clamps absurd overrides', () => {
     const p = resolveDenoCostProfile({
-      DENO_DRAIN_LIMIT: '9999',
-      DENO_DRAIN_CLAIM_SIZE: '0',
-      DENO_OUTBOX_LIMIT: '-3',
+      CT_DRAIN_LIMIT: '9999',
+      CT_DRAIN_CLAIM_SIZE: '0',
+      CT_OUTBOX_LIMIT: '-3',
     });
     expect(p.drainLimit).toBe(100);
-    // invalid claim size falls back to profile default
     expect(p.drainClaimSize).toBe(1);
     expect(p.outboxLimit).toBe(20);
+  });
+
+  it('exposes a public summary without secrets', () => {
+    const s = costProfilePublicSummary(resolveDenoCostProfile({ CT_COST_PROFILE: 'free' }));
+    expect(s).toMatchObject({ name: 'free', cronSchedule: '*/5 * * * *', drainLimit: 3 });
   });
 });
