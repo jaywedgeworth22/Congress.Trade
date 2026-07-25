@@ -199,6 +199,7 @@ import {
   BASE_SCHEMA_STATEMENTS,
   DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS,
   POST_0024_SCHEMA_STATEMENTS,
+  CLEAN_PLACEHOLDER_TICKERS_SCHEMA_STATEMENTS,
 } from './migrations.ts';
 import { getQualityCrosscheck } from '../analytics/quality.ts';
 
