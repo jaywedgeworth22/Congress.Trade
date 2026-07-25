@@ -586,6 +586,17 @@ export const TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS = [
   `DROP TABLE IF EXISTS disclosure_latency_candidates`,
   `DROP TABLE IF EXISTS disclosure_provider_observations`,
 ] as const;
+
+export const DENO_RUNTIME_KV_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS deno_runtime_kv (
+    namespace TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT,
+    expires_at INTEGER,
+    PRIMARY KEY (namespace, key)
+  )`,
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
   // 0025_extraction_runs_usage.sql
   'ALTER TABLE extraction_runs ADD COLUMN usage_json TEXT',
@@ -644,4 +655,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...TURSO_QUERY_EFFICIENCY_SCHEMA_STATEMENTS,
   // 0059_trade_latency_watch.sql
   ...TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS,
+  // 0060_deno_runtime_kv.sql
+  ...DENO_RUNTIME_KV_SCHEMA_STATEMENTS,
 ] as const;
