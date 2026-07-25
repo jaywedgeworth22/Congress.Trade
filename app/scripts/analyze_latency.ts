@@ -70,7 +70,7 @@ async function run() {
   // Create clusters for UW
   const uwClusters = new Map<string, any[]>();
   for (const t of uwTrades) {
-    const key = `${normalizeName(t.politician || t.representative || '')}_${t.filed_date || t.disclosure_date}`;
+    const key = `${normalizeName(t.name || t.politician || t.representative || '')}_${t.filed_at_date || t.filed_date || t.disclosure_date}`;
     if (!uwClusters.has(key)) uwClusters.set(key, []);
     uwClusters.get(key)!.push(t);
   }
@@ -78,7 +78,7 @@ async function run() {
   // Create clusters for QQ
   const qqClusters = new Map<string, any[]>();
   for (const t of qqTrades) {
-    const key = `${normalizeName(t.Representative || '')}_${t.ReportDate || ''}`;
+    const key = `${normalizeName(t.Name || t.Representative || '')}_${t.Filed || t.ReportDate || ''}`;
     if (!qqClusters.has(key)) qqClusters.set(key, []);
     qqClusters.get(key)!.push(t);
   }
