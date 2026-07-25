@@ -9,6 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **[Congress.Trade][AG] Latency comparison trade-by-trade rewrite — MERGED & DEPLOYED PR #933 2026-07-24.** Rewrote latency tracking to be deterministic based on trade hash instead of disclosure document ID. Validated logic, ran CI, deployed to Deno production.
 - **[Congress.Trade][GROK] Eagle brand logo + fly-in splash (web + iOS) — IN PROGRESS 2026-07-24.** Branch `grok/eagle-logo-install`. Installs owner SuperGrok Imagine eagle+money-bag assets into iOS AppIcon/BrandLogo, PWA icons, dashboard brand mark; loading splash flies eagle into header mark (website + iOS). Gates: typecheck + dashboardHtml tests green.
 _GitHub Issues: 0 open product PRs as of prior closeout; this is an ops/billing outage, not a code PR._
 
@@ -837,3 +838,13 @@ Jul 8 18:10 CT)._
 - **Deno deploy config closeout (CODEX, 2026-07-22).** Corrected Deno Deploy runtime config to use `runtime.mode` and made the app deploy script non-interactive/JSON for CI deploy runners; local verification performed with Deno 2.9.3.
 - **2026-07-22** - `[Congress.Trade]`: Consolidation Audit of Grok Branches (AG, S) — COMPLETED 2026-07-22. Verified and audited unmerged grok branches (`grok/merge-main-pr665-b`, `grok/merge-main-pr664-b`, `grok/x-pr675`, `grok/close-pr639`). Confirmed all unique features (BroadcastChannel SSE delivery, bounded legacy-replay grace, ticker resolution alignment, iOS PoliticianDetailView & store) are already fully merged into `main` (PRs #665, #664, #675, #639). Full build and test suite verified clean (`npm run typecheck` and `npm test` 100% passing). Branch `antigravity/grok-consolidation-sse-agreement-ios`.
 - **2026-07-23** - `[Congress.Trade]`: Turso query optimization (AG) — COMPLETED. Converted Deno queue polling queries to use UNION ALL instead of OR clauses to allow SQLite to utilize specific indexes for each status branch. This resolves the Turso usage spike caused by full table/index scans on polling queries. All tests pass, PR #907 merged.
+- **2026-07-24** - `[Congress.Trade]`: Filer Deduplication, Data Hoarding, & Infrastructure Cleanup (AG) — COMPLETED. 
+  - Standardized filer names and parties across Turso database, merging duplicates (114 queries executed).
+  - Implemented Quiver Quant and Unusual Whales hoarding scripts (`hoard_quiver_quant.ts`, `hoard_unusual_whales.ts`) using efficient keyset pagination, bypassing API limits with local fallback JSONs, and streaming directly to `trade_provider_observations` table via the `backfill-observations` endpoint.
+  - Corrected `backfill-observations` endpoint to insert into `trade_provider_observations` (resolving 502/404 errors caused by previous dropped table migration) and pushed changes to production.
+  - Verified that raw data is successfully fetched and preserved locally due to lack of R2 enablement on the `admin@congress.trade` account (the user will need to explicitly enable R2 in the Cloudflare dashboard to move raw data out of the compute container).
+  - Removed old Cloudflare resources from `jaywedgeworth22@gmail.com` (deleted all queues, unlinked queue consumers, deleted `congress-trade` and `congress-trade-preview` workers, and verified no active KV namespaces remained).
+- **2026-07-24** - `[Congress.Trade]`: R2 Hoarding Upload (AG) — COMPLETED.
+  - Successfully fetched new Cloudflare R2 AWS S3 credentials from Infisical (configured by owner on new `admin@congress.trade` account).
+  - Executed a bulk upload script that pushed all locally cached Quiver Quant (`qq_bulk_congresstrading.json`, `qq_bulk_trumpstocktrades.json`) and Unusual Whales (`uw_recent_trades.json`, `uw_late_reports.json`, `uw_politicians.json`) historical JSON files (totalling ~850MB) to the `congress-trade-bucket`.
+  - Confirmed raw provider dumps are now durably archived on R2 under `competitors/quiverquant/` and `competitors/unusualwhales/`.
