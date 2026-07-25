@@ -206,6 +206,7 @@ export async function extractParsed(
   env: Env,
   docId: string,
   lease?: DurableQueueLeaseContext,
+  options?: { forceVision?: boolean }
 ): Promise<ExtractedFiling | null> {
   await lease?.assertOwned();
   const row = await get<FilingRow>(
@@ -222,6 +223,9 @@ export async function extractParsed(
   }
 
   const filing = rowToFiling(row);
+  if (options?.forceVision) {
+    filing.docKind = 'scanned_pdf';
+  }
 
   if (!filing.rawObjectKey) {
     await markError(env, docId, 'orchestrator: missing raw_object_key', lease);
