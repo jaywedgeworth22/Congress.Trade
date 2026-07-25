@@ -46,7 +46,49 @@ describe('shareWithPeer', () => {
       spy as unknown as typeof fetch,
     );
     expect(spy).toHaveBeenCalledOnce();
-    expect(res).toEqual({ sent: true, status: 200, counts: { refs: 1, prices: 1, spx: 1 } });
+    expect(res).toEqual({ sent: true, status: 200, counts: { refs: 1, prices: 1, spx: 1, trades: 0 } });
+  });
+
+  it('POSTs trade events with source provenance and ISO 8601 timestamps', async () => {
+    const tradePayload = {
+      trades: [
+        {
+          docId: 'H-2026-20024100',
+          chamber: 'house' as const,
+          source: 'house_clerk',
+          sourceUrl: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdf/2026/20024100.pdf',
+          filerName: 'Nancy Pelosi',
+          ticker: 'NVDA',
+          txType: 'P',
+          transactionDate: '2026-07-15',
+          transactionTimestamp: '2026-07-15T00:00:00Z',
+          disclosureDate: '2026-07-22',
+          disclosureTimestamp: '2026-07-22T14:30:00Z',
+          extractedTimestamp: '2026-07-22T14:31:05Z',
+          amountMin: 1000001,
+          amountMax: 5000000,
+        },
+      ],
+    };
+    const spy = vi.fn(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string);
+      expect(body.trades[0]).toMatchObject({
+        docId: 'H-2026-20024100',
+        chamber: 'house',
+        source: 'house_clerk',
+        sourceUrl: 'https://disclosures-clerk.house.gov/public_disc/ptr-pdf/2026/20024100.pdf',
+        ticker: 'NVDA',
+        disclosureTimestamp: '2026-07-22T14:30:00Z',
+      });
+      return new Response('{"ok":true}', { status: 200 });
+    });
+    const res = await shareWithPeer(
+      env({ APP_B_IMPORT_URL: 'https://b/import', APP_B_INGEST_TOKEN: 'tok' }),
+      tradePayload,
+      spy as unknown as typeof fetch,
+    );
+    expect(spy).toHaveBeenCalledOnce();
+    expect(res).toEqual({ sent: true, status: 200, counts: { refs: 0, prices: 0, spx: 0, trades: 1 } });
   });
 
   it('rejects invalid shared payloads before POSTing', async () => {
