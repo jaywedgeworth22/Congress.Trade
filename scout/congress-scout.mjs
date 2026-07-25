@@ -13,20 +13,17 @@
  *     they appear — House Clerk (intraday live search + PDF-URL frontier probe)
  *     and Senate eFD (the 3-step CSRF/agreement/DataTables flow) — and stamps
  *     `our_detected_at`. This is DETECTION ONLY (existence + link), not parsing.
- *   - Polls FMP (house-latest + senate-latest) and stamps `fmp_first_seen_at`
- *     the first time FMP surfaces each filing.
- *   - Joins the two by the filing's doc key and logs the lead:
- *       lead = fmp_first_seen_at − our_detected_at   (positive = we were first).
- *   - Only filings that FIRST APPEAR while the scout is running count as a real
- *     race ("live"); everything present at startup is flagged "baseline".
+ *   - Polls FMP (house-latest, senate-latest, executive-latest), QQ, and UW and stamps `fmp_first_seen_at`
+ *     (and qq_first_seen_at, uw_first_seen_at) the first time they surface each filing.
+ *   - Joins FMP by the filing's doc key and logs the lead. (QQ and UW are saved to state for offline analysis).
  *
  * RUN:
- *   FMP_API_KEY=xxx node scout/congress-scout.mjs            # loop
- *   FMP_API_KEY=xxx node scout/congress-scout.mjs --once     # one cycle (test)
- *   node scout/congress-scout.mjs --once                     # detection only (no FMP key)
+ *   FMP_API_KEY=xxx QQ_API_KEY=xxx UW_API_KEY=xxx node scout/congress-scout.mjs
  *
- * ENV (all optional except FMP_API_KEY for the race):
- *   FMP_API_KEY           FMP key; without it the FMP side is skipped.
+ * ENV:
+ *   FMP_API_KEY           FMP key
+ *   QQ_API_KEY            Quiver Quant key
+ *   UW_API_KEY            Unusual Whales key
  *   POLL_INTERVAL_SEC     default 45
  *   SOURCES               "house,senate" (default), or a subset
  *   HOUSE_FRONTIER        "1" (default) probe PDF frontier; "0" to disable
@@ -45,6 +42,8 @@ dns.setDefaultResultOrder('ipv4first');
 const ARGV = new Set(process.argv.slice(2));
 const ONCE = ARGV.has('--once');
 const FMP_KEY = process.env.FMP_API_KEY || '';
+const QQ_KEY = process.env.QQ_API_KEY || '';
+const UW_KEY = process.env.UW_API_KEY || '';
 const INTERVAL_MS = (Number(process.env.POLL_INTERVAL_SEC) || 45) * 1000;
 const SOURCES = new Set((process.env.SOURCES || 'house,senate').split(',').map((s) => s.trim()));
 const FRONTIER = (process.env.HOUSE_FRONTIER ?? '1') !== '0';
@@ -237,19 +236,46 @@ async function detectHouseFrontier(state) {
 // --- FMP (the competitor we're timing against) ------------------------------
 async function pollFmp() {
   const out = [];
-  for (const ch of ['house', 'senate']) {
+  for (const ch of ['house', 'senate', 'executive']) {
     const url = `https://financialmodelingprep.com/stable/${ch}-latest?page=0&limit=100&apikey=${encodeURIComponent(FMP_KEY)}`;
     const r = await fetch(url, { headers: { accept: 'application/json' } });
     if (!r.ok) throw new Error(`${ch}-latest HTTP ${r.status}`);
     const json = await r.json();
-    // FMP sometimes wraps the array as {data: [...]} and Senate rows can carry
-    // the source link under `url` instead of `link` (see the repo's own FMP
-    // parser + fixtures: app/src/ingestion/__tests__/fmpDisclosureLatency.test.ts).
     const rows = Array.isArray(json) ? json : Array.isArray(json?.data) ? json.data : [];
     for (const row of rows) {
       const key = keyFromLink(row?.link || row?.url || '');
       if (key) out.push({ key });
     }
+  }
+  return out;
+}
+
+// --- QQ ---------------------------------------------------------------------
+async function pollQQ() {
+  const out = [];
+  const url = `https://api.quiverquant.com/beta/live/congresstrading?version=V2`;
+  const r = await fetch(url, { headers: { "Authorization": `Token ${QQ_KEY}` } });
+  if (!r.ok) throw new Error(`QQ HTTP ${r.status}`);
+  const json = await r.json();
+  const rows = Array.isArray(json) ? json : [];
+  for (const t of rows) {
+    const key = `${t.Name || t.Representative || ''}_${t.Filed || t.ReportDate || ''}_${t.Ticker || ''}_${t.TransactionDate || ''}`.replace(/[^a-zA-Z0-9_]/g, '');
+    out.push({ key });
+  }
+  return out;
+}
+
+// --- UW ---------------------------------------------------------------------
+async function pollUW() {
+  const out = [];
+  const url = `https://api.unusualwhales.com/api/congress/recent-trades`;
+  const r = await fetch(url, { headers: { "Authorization": `Bearer ${UW_KEY}` } });
+  if (!r.ok) throw new Error(`UW HTTP ${r.status}`);
+  const json = await r.json();
+  const rows = Array.isArray(json?.data) ? json.data : Array.isArray(json) ? json : [];
+  for (const t of rows) {
+    const key = `${t.name || t.politician || t.representative || ''}_${t.filed_at_date || t.filed_date || t.disclosure_date || ''}_${t.ticker || ''}_${t.transaction_date || ''}`.replace(/[^a-zA-Z0-9_]/g, '');
+    out.push({ key });
   }
   return out;
 }
@@ -297,7 +323,7 @@ async function maybePost(d, ts) {
 
 // --- state ------------------------------------------------------------------
 function loadState() {
-  const fresh = { startedAt: nowIso(), baselineEstablishedAt: null, ourSeen: {}, posted: {}, fmpSeen: {}, leadsLogged: {}, houseMaxDocId: 0 };
+  const fresh = { startedAt: nowIso(), baselineEstablishedAt: null, ourSeen: {}, posted: {}, fmpSeen: {}, qqSeen: {}, uwSeen: {}, leadsLogged: {}, houseMaxDocId: 0 };
   if (existsSync(STATE_FILE)) {
     try {
       // Merge onto `fresh` so a state file saved before these fields existed
@@ -326,6 +352,14 @@ async function cycle(state) {
   if (FMP_KEY) {
     try { for (const f of await pollFmp()) if (!state.fmpSeen[f.key]) state.fmpSeen[f.key] = { at: nowIso() }; }
     catch (e) { warn('fmp', e); }
+  }
+  if (QQ_KEY) {
+    try { for (const q of await pollQQ()) if (!state.qqSeen[q.key]) state.qqSeen[q.key] = { at: nowIso() }; }
+    catch (e) { warn('qq', e); }
+  }
+  if (UW_KEY) {
+    try { for (const u of await pollUW()) if (!state.uwSeen[u.key]) state.uwSeen[u.key] = { at: nowIso() }; }
+    catch (e) { warn('uw', e); }
   }
 
   const detections = [];
@@ -392,7 +426,7 @@ function summarize(state) {
 // --- main -------------------------------------------------------------------
 (async () => {
   const state = loadState();
-  log(`scout start — sources=${[...SOURCES].join('+')} interval=${INTERVAL_MS / 1000}s frontier=${FRONTIER} fmp=${FMP_KEY ? 'on' : 'OFF (detection-only)'}`);
+  log(`scout start — sources=${[...SOURCES].join('+')} interval=${INTERVAL_MS / 1000}s frontier=${FRONTIER} fmp=${FMP_KEY ? 'on' : 'OFF'} qq=${QQ_KEY ? 'on' : 'OFF'} uw=${UW_KEY ? 'on' : 'OFF'}`);
   if (ONCE) { await cycle(state); return; }
   for (;;) { await cycle(state).catch((e) => warn('cycle', e)); await sleep(INTERVAL_MS); }
 })();
