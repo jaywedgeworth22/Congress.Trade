@@ -52,18 +52,12 @@ struct TrendsView: View {
             .toolbar {
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {
                     Menu {
-                        ForEach(TimeRange.allCases) { range in
-                            Button {
-                                Task {
-                                    await store.setTimeRange(range)
-                                    await store.refreshTrends()
-                                }
-                            } label: {
-                                if range == store.selectedTimeRange {
-                                    Label(range.label, systemImage: "checkmark")
-                                } else {
-                                    Text(range.label)
-                                }
+                        Picker("Timeframe", selection: Binding(
+                            get: { store.selectedTimeRange },
+                            set: { newValue in Task { await store.setTimeRange(newValue); await store.refreshTrends() } }
+                        )) {
+                            ForEach(TimeRange.allCases) { range in
+                                Text(range.label).tag(range)
                             }
                         }
                     } label: {
