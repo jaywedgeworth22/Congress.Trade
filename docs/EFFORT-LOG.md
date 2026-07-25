@@ -9,6 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **[Congress.Trade][GROK] Minimize Deno Deploy usage for free-tier survival (Aug 1) — IN PROGRESS 2026-07-25.** Branch `grok/deno-deploy-cost-min`. Cut cron GB-hours: adaptive/lean cost profile, idle short-circuit, smaller queue claims, optional Coolify-driven runtime tick so Deno can be HTTP-only. Target: free-tier after Aug billing reset.
 - **[Congress.Trade][AG] Latency comparison trade-by-trade rewrite — MERGED & DEPLOYED PR #933 2026-07-24.** Rewrote latency tracking to be deterministic based on trade hash instead of disclosure document ID. Validated logic, ran CI, deployed to Deno production.
 - **[Congress.Trade][GROK] Eagle brand logo + fly-in splash (web + iOS) — IN PROGRESS 2026-07-24.** Branch `grok/eagle-logo-install`. Installs owner SuperGrok Imagine eagle+money-bag assets into iOS AppIcon/BrandLogo, PWA icons, dashboard brand mark; loading splash flies eagle into header mark (website + iOS). Gates: typecheck + dashboardHtml tests green.
 _GitHub Issues: 0 open product PRs as of prior closeout; this is an ops/billing outage, not a code PR._
