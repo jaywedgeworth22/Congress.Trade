@@ -52,7 +52,13 @@ async function loadHoardedData() {
   
   let trumpTrades: any[] = [];
   try {
-    trumpTrades = JSON.parse(await Deno.readTextFile(`${dataDir}/trump_trades.json`));
+    const raw = await Deno.readTextFile(`${dataDir}/trump_trades.json`);
+    try {
+      trumpTrades = JSON.parse(raw);
+    } catch {
+      // Try stream of objects
+      trumpTrades = JSON.parse("[" + raw.replace(/\}\s*\{/g, "},{") + "]");
+    }
   } catch (e) {
     console.warn("Could not load trump_trades.json");
   }
@@ -131,10 +137,11 @@ async function run() {
     const docId = `COMPETITOR-${tradeHash}`;
 
     // Reconstruct a transaction
+    const filerId = lastName.toUpperCase() === 'TRUMP' ? 'EXEC-DJT' : `MANUAL-${lastName.toUpperCase()}`;
     novelTrades.push({
       id: `${docId}-${tradeHash}`,
       docId,
-      filerId: `MANUAL-${lastName.toUpperCase()}`,
+      filerId,
       txDate: date,
       owner: null,
       assetName: tk, // We don't have good asset names for all
@@ -163,24 +170,34 @@ async function run() {
     novelSet.add(exactKey);
   }
 
+  // Before looping over competitors, create a set of seen filers to add if missing
+  const filersToAdd = new Map<string, { id: string, name: string, chamber: string }>();
+
+  function processTradeWithFiler(provider: string, rawName: string, chamber: 'house' | 'senate' | 'executive', ticker: string, date: string, typeStr: string, rawObj: any) {
+    const lastName = extractLastName(rawName);
+    const filerId = lastName.toUpperCase() === 'TRUMP' ? 'EXEC-DJT' : `MANUAL-${lastName.toUpperCase()}`;
+    filersToAdd.set(filerId, { id: filerId, name: rawName, chamber });
+    processTrade(provider, rawName, chamber, ticker, date, typeStr, rawObj);
+  }
+
   // unusual whales
   for (const t of uwTrades) {
     const name = t.name || t.reporter || t.politician_name;
     if (name) {
-      processTrade('uw', name, t.party?.toLowerCase() === 'democrat' ? 'house' : 'senate', t.ticker, t.transaction_date, t.txn_type || t.type || t.transaction_type || 'buy', t);
+      processTradeWithFiler('uw', name, t.member_type || 'house', t.ticker, t.transaction_date, t.txn_type || t.type || t.transaction_type || 'buy', t);
     }
   }
 
   // quiver
   for (const t of qqTrades) {
     if (t.Representative) {
-      processTrade('quiver', t.Representative, t.House === 'House' ? 'house' : 'senate', t.Ticker, t.TransactionDate, t.Transaction, t);
+      processTradeWithFiler('quiver', t.Representative, t.House === 'House' ? 'house' : 'senate', t.Ticker, t.TransactionDate, t.Transaction, t);
     }
   }
 
   // FMP
-  for (const t of fmpHouse) processTrade('fmp', `${t.firstName} ${t.lastName}`, 'house', t.symbol, t.transactionDate, t.type, t);
-  for (const t of fmpSenate) processTrade('fmp', `${t.firstName} ${t.lastName}`, 'senate', t.symbol, t.transactionDate, t.type, t);
+  for (const t of fmpHouse) processTradeWithFiler('fmp', `${t.firstName} ${t.lastName}`, 'house', t.symbol, t.transactionDate, t.type, t);
+  for (const t of fmpSenate) processTradeWithFiler('fmp', `${t.firstName} ${t.lastName}`, 'senate', t.symbol, t.transactionDate, t.type, t);
   
   // Trump trades
   for (const t of trumpTrades) {
@@ -189,11 +206,20 @@ async function run() {
     const date = t.TransactionDate || (t.traded ? t.traded.split(' ')[0] : null);
     const typeStr = t.Transaction || t.transaction;
     if (date && ticker) {
-      processTrade('quiver_trump', name, 'executive', ticker, date, typeStr, t);
+      processTradeWithFiler('quiver_trump', name, 'executive', ticker, date, typeStr, t);
     }
   }
   
   console.log(`Found ${novelTrades.length} novel trades across all competitor datasets.`);
+
+  console.log("Inserting required filers...");
+  for (const f of filersToAdd.values()) {
+    await env.DB.prepare(
+      `INSERT INTO filers (bioguide_id, full_name, chamber) 
+       VALUES (?, ?, ?)
+       ON CONFLICT (bioguide_id) DO NOTHING`
+    ).bind(f.id, f.name, f.chamber).run();
+  }
 
   // Batch insert
   const CHUNK_SIZE = 100;

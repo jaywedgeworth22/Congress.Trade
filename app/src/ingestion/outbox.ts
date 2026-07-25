@@ -1,11 +1,11 @@
-import type { Env } from '../shared/types.ts';
+import type { Env, Chamber } from '../shared/types.ts';
 import { all, run, type SqlParam } from '../shared/db.ts';
 
 export type IngestionOutboxStatement = [string, SqlParam[]];
 
 interface IngestionOutboxRow {
   doc_id: string;
-  chamber: 'house' | 'senate';
+  chamber: Chamber;
   source_url: string;
   status: string;
   attempts: number;
