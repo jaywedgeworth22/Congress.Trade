@@ -128,6 +128,20 @@ struct FeedDashboardView: View {
                 ToolbarItem(placement: .principal) {
                     BrandTitle()
                 }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Picker("Timeframe", selection: Binding(
+                            get: { store.selectedTimeRange },
+                            set: { newValue in Task { await store.setTimeRange(newValue) } }
+                        )) {
+                            ForEach(TimeRange.allCases) { range in
+                                Text(range.label).tag(range)
+                            }
+                        }
+                    } label: {
+                        Label(store.selectedTimeRange.label, systemImage: "calendar")
+                    }
+                }
             }
             .refreshable { await store.refresh() }
             .overlay {
@@ -202,34 +216,7 @@ struct FeedControlBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            // Time range (website default = Past 3 Months)
-            Menu {
-                ForEach(TimeRange.allCases) { range in
-                    Button {
-                        Task { await store.setTimeRange(range) }
-                    } label: {
-                        if range == store.selectedTimeRange {
-                            Label(range.label, systemImage: "checkmark")
-                        } else {
-                            Text(range.label)
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Text(store.selectedTimeRange.label)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-            }
-            .accessibilityLabel("Time window")
+            Spacer()
 
             MetricTile(
                 title: "Trades",
