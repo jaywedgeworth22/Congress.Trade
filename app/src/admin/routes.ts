@@ -4432,14 +4432,20 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     if (limit > 2000) limit = 2000;
 
     // Filings for this chamber that we can re-extract (have a raw R2 object).
-    const filings = await all<{ doc_id: string }>(
-      c.env.DB,
-      `SELECT doc_id FROM filings
-        WHERE chamber = ? AND raw_object_key IS NOT NULL
-        ORDER BY first_seen_at DESC
-        LIMIT ?`,
-      [chamber, limit],
-    );
+    let filings: Array<{ doc_id: string }>;
+    if (Array.isArray(body.docIds) && body.docIds.length > 0) {
+      const ids = body.docIds.filter((x): x is string => typeof x === 'string').slice(0, limit);
+      filings = ids.map(id => ({ doc_id: id }));
+    } else {
+      filings = await all<{ doc_id: string }>(
+        c.env.DB,
+        `SELECT doc_id FROM filings
+          WHERE chamber = ? AND raw_object_key IS NOT NULL
+          ORDER BY first_seen_at DESC
+          LIMIT ?`,
+        [chamber, limit],
+      );
+    }
 
     const summary = {
       chamber,
