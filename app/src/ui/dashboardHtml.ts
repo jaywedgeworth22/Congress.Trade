@@ -2162,6 +2162,25 @@ function fmtName(raw) {
   while (head.charAt(head.length - 1) === ',' || head.charAt(head.length - 1) === ' ') head = head.slice(0, -1);
   return head ? head + ', ' + suf : suf;
 }
+
+/* Format a company name for display, converting ALL CAPS to Title Case
+   and normalizing common suffixes (INC, LLC, ETF, etc). */
+function fmtCompany(raw) {
+  var s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  if (s === s.toUpperCase() || s === s.toLowerCase()) {
+    s = s.replace(/\w\S*/g, function(txt) {
+      return txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase();
+    });
+  }
+  s = s.replace(/\b(Llc|Inc|Corp|Etf|Lp|Plc|Us|Usa|Sa|Ag|Nv|Bv)\b/gi, function(match) {
+    return match.toUpperCase();
+  });
+  s = s.replace(/\b(And|Of|The|In|For|A|An|To|On)\b/gi, function(match) {
+    return match.toLowerCase();
+  });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 /* "House"/"Senate" are proper nouns here — always capitalize the chamber. */
 function chamberLabel(c) {
   var s = String(c == null ? '' : c).trim().toLowerCase();
@@ -2593,6 +2612,7 @@ function assetCellHtml(r) {
   // the ticker again (e.g. "FB" with no name) — uses the enriched ref company name.
   var nm = r.asset;
   if ((!nm || nm === r.ticker) && r.refCompanyName) nm = r.refCompanyName;
+  nm = fmtCompany(nm);
   if (!r.ticker && !nm) {
     return '<div class="asset-cell" title="Historical scanned filing needs official source backfill"><span class="muted">Unparsed Historical Filing</span></div>';
   }
@@ -6908,8 +6928,8 @@ function loadTrTickers() {
     body.innerHTML = rows.map(function (r, i) {
       return '<tr class="row clickable" data-ticker="' + esc(r.ticker) + '">' +
         '<td class="rank">' + (i + 1) + '</td>' +
-        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' +
-          esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(r.name) + '</span>' : '') + '</div></div></td>' +
+        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' +
+          esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
         '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
         '<td class="muted">' + polCell(r.memberCount) + '</td>' +
         '<td class="est">' + estUsd(r.estVolumeUsd) + '</td>' +
@@ -6928,7 +6948,7 @@ function loadTrTrending() {
     if (!rows.length) { body.innerHTML = stateRow(4, 'Not enough history to rank momentum.'); return; }
     body.innerHTML = rows.map(function (r) {
       return '<tr class="row clickable" data-ticker="' + esc(r.ticker) + '">' +
-        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' + esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(r.name) + '</span>' : '') + '</div></div></td>' +
+        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' + esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
         '<td class="muted">' + r.priorCount + ' → ' + r.recentCount + '</td>' +
         '<td class="net pos">▲ ' + r.deltaCount + '</td>' +
         '<td class="muted">' + polCell(r.recentMembers) + '</td></tr>';
@@ -6952,7 +6972,7 @@ function loadTrClusters() {
       // "— · " fragment rather than rendering a dangling dash next to the $ estimate.
       var range = c.minDate ? (compactDateText(c.minDate) + (c.minDate === c.maxDate ? '' : ' → ' + compactDateText(c.maxDate))) : '';
       return '<div class="ccard clickable" tabindex="0" role="button" aria-label="View trades for ' + esc(c.ticker) + '" data-ticker="' + esc(c.ticker) + '">' +
-        '<div class="chead">' + tickerLogoHtml(c.ticker, c.name) + '<span class="big">' + esc(c.ticker) +
+        '<div class="chead">' + tickerLogoHtml(c.ticker, fmtCompany(c.name)) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
         '<div><strong>' + c.memberCount + '</strong> ' + (c.memberCount === 1 ? 'politician' : 'politicians') + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
         '<div class="muted" style="margin-top:2px">' + esc(parties) + '</div>' +
@@ -7319,7 +7339,7 @@ function companySectionHtml(ref) {
 function drawerCompanyTitle(ticker, name) {
   // This is the drawer FOR this ticker — the title is not clickable (it would
   // just reopen the same drawer). Ticker and name are separated by a dot.
-  var label = name || ticker || 'Company';
+  var label = fmtCompany(name || ticker || 'Company');
   var sameAsTicker = label === ticker;
   return '<div class="drawer-company-title">' + tickerLogoHtml(ticker, label) + '<div><h2 class="drawer-title-line">' +
     (ticker ? '<span class="tkr">' + esc(ticker) + '</span>' : '') +

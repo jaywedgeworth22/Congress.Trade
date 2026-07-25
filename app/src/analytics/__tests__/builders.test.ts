@@ -52,7 +52,7 @@ describe('buildSummaryQuery', () => {
 describe('buildTickerLeaderboardQuery', () => {
   it('excludes null tickers, groups by ticker, and joins the securities master', () => {
     const q = buildTickerLeaderboardQuery({ window: 'all' });
-    expect(q.sql).toContain("(t.ticker IS NOT NULL AND t.ticker <> '')");
+    expect(q.sql).toContain("(t.ticker IS NOT NULL AND t.ticker <> '' AND t.ticker NOT IN ('NONE', '--', 'N/A', 'NA', 'NULL', '—'))");
     expect(q.sql).toContain('GROUP BY t.ticker');
     expect(q.sql).toContain('LEFT JOIN securities_master sm');
     expect(q.sql).toContain('ORDER BY trade_count DESC');
@@ -301,7 +301,7 @@ describe('politician deep-dive builders', () => {
   });
   it('top tickers exclude null tickers and group by ticker', () => {
     const q = buildMemberTopTickersQuery('P000197', { window: '365d' });
-    expect(q.sql).toContain("(t.ticker IS NOT NULL AND t.ticker <> '')");
+    expect(q.sql).toContain("(t.ticker IS NOT NULL AND t.ticker <> '' AND t.ticker NOT IN ('NONE', '--', 'N/A', 'NA', 'NULL', '—'))");
     expect(q.sql).toContain('GROUP BY t.ticker');
     expect(q.params).toEqual(['P000197', '-365 days']);
   });
