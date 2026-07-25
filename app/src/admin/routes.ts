@@ -4443,6 +4443,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: "chamber must be 'house' or 'senate'" }, 400);
     }
     const dryRun = body.dryRun === true;
+    const forceVision = body.forceVision === true;
     let limit = typeof body.limit === 'number' && body.limit > 0 ? Math.floor(body.limit) : 500;
     if (limit > 2000) limit = 2000;
 
@@ -4465,6 +4466,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const summary = {
       chamber,
       dryRun,
+      forceVision,
       filingsScanned: 0,
       rowsUpdatedInPlace: 0, // already-in-feed rows whose confidence changed
       filingsPromoted: 0, //    review -> feed (now clears the bar)
@@ -4479,7 +4481,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       summary.filingsScanned += 1;
       let extracted;
       try {
-        extracted = await extractParsed(c.env, doc_id);
+        extracted = await extractParsed(c.env, doc_id, undefined, { forceVision });
       } catch (err) {
         summary.errors.push(`${doc_id}: extract failed: ${(err as Error).message}`);
         continue;
