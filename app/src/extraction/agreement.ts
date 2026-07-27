@@ -1529,8 +1529,8 @@ export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
   ])) as AgreementEnv;
 }
 
-const DEFAULT_MODEL_C = 'openrouter:google/gemini-2.5-flash-lite';
-const DEFAULT_MODEL_D = 'openrouter:deepseek/deepseek-v4-flash';
+const DEFAULT_MODEL_C = 'openrouter:x-ai/grok-4.5';
+const DEFAULT_MODEL_D = 'openrouter:google/gemini-3.5-flash';
 const DEFAULT_MODEL_E = 'openrouter:anthropic/claude-haiku-4.5';
 
 /** Resolve the explicit C/D chamber lineup (tier-1 pair); missing config falls back to default cross-vendor lineup. */
