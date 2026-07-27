@@ -248,6 +248,10 @@ export interface FetchSenatePtrFilingsOptions {
   politeDelayMs?: number;
   /** KV namespace for caching the Senate eFD session (Strategy B) */
   kv?: any;
+  /** Optional Hetzner/microservice relay URL (e.g. http://hetzner-host:8788). */
+  relayUrl?: string;
+  /** Optional proxy URL for routing Senate requests. */
+  proxyUrl?: string;
 }
 
 /** KV key holding the cached, agreement-accepted eFD session. Shared with the
@@ -263,7 +267,7 @@ export interface SenateSession {
 /**
  * Run the eFD landing + agreement-acceptance handshake and return a usable
  * session (cookie header + CSRF token). When `kv` is provided the session is
- * cached for 24h under SENATE_SESSION_KV_KEY so the discovery poll and the
+ * cached for 24 hours under SENATE_SESSION_KV_KEY so the discovery poll and the
  * filing fetcher share one session instead of re-negotiating (or, worse,
  * fetching report pages sessionless and receiving the agreement wall).
  */
@@ -362,6 +366,27 @@ export async function fetchSenatePtrFilings(
   const pageSize = boundedPositiveInt(opts.pageSize, SENATE_PAGE_SIZE, SENATE_PAGE_SIZE);
   const maxPages = boundedPositiveInt(opts.maxPages, SENATE_MAX_PAGES, SENATE_MAX_PAGES);
   const politeDelayMs = boundedNonNegativeInt(opts.politeDelayMs, POLITE_DELAY_MS);
+
+  const relayUrl = opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_URL : undefined);
+  if (relayUrl) {
+    const res = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-ptr`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify({
+        submitted_start_date: formatSenateDate(since),
+        submitted_end_date: formatSenateDate(now),
+        pageSize,
+      }),
+    }, { service: 'filing-discovery', operation: 'search-senate-filings-relay' }, fetchImpl);
+
+    if (!res.ok) throw new Error(`senate relay POST /fetch-ptr -> HTTP ${res.status}`);
+    const json = (await res.json()) as { data?: unknown };
+    const rows = Array.isArray(json.data) ? (json.data as string[][]) : [];
+    return parseSenateRows(rows);
+  }
 
   let session: SenateSession | null = null;
 

@@ -9,6 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **[Congress.Trade][AG] Zero-Cost Senate Scraper Bypass & Cloudflare Free-Tier Guard — MERGED & DEPLOYED PR #983 2026-07-27.** Implemented Hetzner runner microservice relay support (`SENATE_RELAY_URL`, `SENATE_PROXY_URL`, and `scripts/senate-relay.ts`) to bypass eFD anti-bot blocks using non-cloud egress at $0.00 cost. Added free-tier rate-limiting for Cloudflare Browser Rendering to guarantee zero overage risk.
 - **[Congress.Trade][AG] Dynamic Executive 278-T Ingestion & Multi-Index Support — MERGED & DEPLOYED PR #980 2026-07-27.** Expanded `ogeSource.ts` to dynamically parse and ingest all Executive Branch 278-T filings (Cabinet members and PAS appointees) without dropping non-presidential filers. Added multi-index URL support (`OGE_INDEX_URLS`) for polling multiple OGE Domino views. All 167 test files / 1,872 tests passed.
 - **[Congress.Trade][CURSOR] Enable latency probes + FMP/UW/QQ tunables — MERGED PR #967 2026-07-27.** Branch `cursor/enable-latency-tunables-b37c`.
 - **[Congress.Trade][CURSOR] Owner-decisions wave — IN PROGRESS 2026-07-24.** Branch `cursor/owner-decisions-wave-d376` / **PR #915 CI green**. Delivery gated UX landed; pin-check redesigned+passing.
