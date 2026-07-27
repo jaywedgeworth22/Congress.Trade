@@ -185,12 +185,15 @@ check_api_health "$ADMIN_BASE/api/health" "$ADMIN_BASE"
 echo "==> Served-HTML inline script parse smoke"
 check_dashboard_scripts "$ADMIN_BASE/"
 
-for arg in "${ADMIN_STEPS[@]}"; do
-  case "$arg" in
-    --enrich)   post enrich-photos ;;
-    --backfill) post backfill '{"chambers":["senate"],"limit":20000}' ;;
-    --house)    post house-backfill '{"fromYear":'"${HOUSE_FROM:-2024}"',"toYear":'"${HOUSE_TO:-2026}"',"maxFilings":'"${HOUSE_MAX:-500}"'}' ;;
-  esac
-done
+# Under `set -u`, empty arrays can throw "unbound variable" on some bash builds.
+if ((${#ADMIN_STEPS[@]} > 0)); then
+  for arg in "${ADMIN_STEPS[@]}"; do
+    case "$arg" in
+      --enrich)   post enrich-photos ;;
+      --backfill) post backfill '{"chambers":["senate"],"limit":20000}' ;;
+      --house)    post house-backfill '{"fromYear":'"${HOUSE_FROM:-2024}"',"toYear":'"${HOUSE_TO:-2026}"',"maxFilings":'"${HOUSE_MAX:-500}"'}' ;;
+    esac
+  done
+fi
 
 echo "==> Done."
