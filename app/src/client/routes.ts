@@ -108,7 +108,7 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
     }
     const list = await readClientTradeList(c.env, params);
     await spendRowBudget(c.env, ip, list.count);
-    return c.json({ ...list, nextPollAfterSec: 30 });
+    return c.json({ ...list, nextPollAfterSec: 60 });
   });
 
   r.get('/trade/:id', async (c) => {
