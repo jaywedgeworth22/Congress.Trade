@@ -1,0 +1,13 @@
+--- app/src/admin/routes.ts
++++ app/src/admin/routes.ts
+@@ -4426,6 +4426,11 @@
+       return c.json(extracted);
+     } catch (e) {
+       return c.json({ error: (e as Error).message });
+     }
+   });
++
++  r.get('/debug-members', async (c) => {
++    const members = await c.env.DB.prepare("SELECT id, name, chamber FROM members WHERE name LIKE '%Manual%' OR name LIKE '%manual%' LIMIT 10").all();
++    return c.json(members.results);
++  });
