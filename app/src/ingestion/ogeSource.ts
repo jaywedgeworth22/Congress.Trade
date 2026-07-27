@@ -282,16 +282,39 @@ export async function fetchOgeExecutiveFilings(
   const urls = await indexUrls(env);
   const allFilings: DiscoveredFiling[] = [];
   const seenDocIds = new Set<string>();
+  const relayUrl = env.OGE_RELAY_URL || env.INGEST_RELAY_URL;
 
   for (const url of urls) {
-    const res = await trackedFetch(url, {
-      headers: {
-        'user-agent': 'congress.trade/0.1 (+https://congress.trade)',
-        accept: 'text/html',
-      },
-    }, { service: 'filing-discovery', operation: 'fetch-executive-index', dynamicTarget: 'filing-source' }, fetchImpl);
-    if (!res.ok) throw new Error(`OGE index HTTP ${res.status}`);
-    const filings = parseOgeIndex(await res.text());
+    let htmlText: string | null = null;
+
+    if (relayUrl) {
+      try {
+        const relayRes = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-oge`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ url, responseType: 'text' }),
+        }, { service: 'filing-discovery', operation: 'fetch-executive-index-relay' }, fetchImpl);
+        if (relayRes.ok) {
+          const json = (await relayRes.json()) as { body?: string };
+          if (json.body) htmlText = json.body;
+        }
+      } catch {
+        /* Fall back to direct fetch if relay attempt fails */
+      }
+    }
+
+    if (!htmlText) {
+      const res = await trackedFetch(url, {
+        headers: {
+          'user-agent': 'congress.trade/0.1 (+https://congress.trade)',
+          accept: 'text/html',
+        },
+      }, { service: 'filing-discovery', operation: 'fetch-executive-index', dynamicTarget: 'filing-source' }, fetchImpl);
+      if (!res.ok) throw new Error(`OGE index HTTP ${res.status}`);
+      htmlText = await res.text();
+    }
+
+    const filings = parseOgeIndex(htmlText);
     for (const f of filings) {
       if (!seenDocIds.has(f.docId)) {
         seenDocIds.add(f.docId);
