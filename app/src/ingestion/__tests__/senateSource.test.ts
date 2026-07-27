@@ -242,4 +242,32 @@ describe('fetchSenatePtrFilings', () => {
     expect(lengths).toEqual(['2', '2']);
     expect(out.map((f) => f.pipelineDocId)).toEqual(['S-a', 'S-b', 'S-c']);
   });
+
+  it('routes requests to relayUrl microservice endpoint when provided', async () => {
+    const urls: string[] = [];
+    const bodies: any[] = [];
+    const fetchImpl = async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ): Promise<Response> => {
+      urls.push(String(input));
+      if (init?.body) bodies.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ data: [senateRow('relay-1')] }), {
+        headers: { 'content-type': 'application/json' },
+      });
+    };
+
+    const out = await fetchSenatePtrFilings(
+      {
+        relayUrl: 'https://hetzner-relay.example.com',
+        pageSize: 100,
+      },
+      fetchImpl,
+    );
+
+    expect(urls).toEqual(['https://hetzner-relay.example.com/fetch-ptr']);
+    expect(bodies[0].pageSize).toBe(100);
+    expect(out).toHaveLength(1);
+    expect(out[0].pipelineDocId).toBe('S-relay-1');
+  });
 });
