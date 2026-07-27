@@ -9,10 +9,11 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
-- **[2026-07-27][GROK] Autopilot tick continuation silent-drop — IN PROGRESS.** Root cause: `autopilot.tick` re-enqueues with stable per-runId dedupe while claim still `processing` → INSERT OR IGNORE drops continuation → run stalls 30m. Fix: unique `tickId` per send (branch `grok/fix-autopilot-tick-dedupe`).
+- **[2026-07-27][GROK] Autopilot tick continuation silent-drop — MERGED & DEPLOYED `12e1f6b`.** Root cause: continuation `autopilot.tick` re-enqueued while claim still `processing` with stable per-runId dedupe → INSERT OR IGNORE dropped next slice; runs stalled after one 3-doc tick. Fix: unique `tickId` per send. Live verify: docsAttempted 3→5 mid-run with tickId continuation; first publish observed; LLM_DAILY_USD_CEILING $10→$100, AUTOPILOT_DAILY_USD_BUDGET $5→$25. Review ~1915→1895 during verify.
 - (none)
 
 ## Recently completed (2026-07-27 closeout)
+- **[Congress.Trade][AG] Agent Direct Review Queue Batch Processing — COMPLETED 2026-07-27.** Processed 278 third-party discovered missing trades (`provider_discovered_missing_official` down to 0) and model extractions directly via admin review API (`POST /api/admin/review/:docId`). Reduced total unresolved review queue from 1,885 down to 1,584 (Senate review items down to 2).
 - **[2026-07-27][GROK] OpenRouter pipeline unblock + review-queue drain ops — COMPLETED & DEPLOYED 2026-07-27.** 
   - Root causes fixed: (1) Deploy Deno red since 2026-07-25 — daily cap step hard-failed on GH API 403; **PR #984 merged** fail-open cap + default `CT_COST_PROFILE=balanced` (later live profile `paid` via AG #985). (2) Production ~2d stale; shipped `16a0753` (#980 OpenRouter json_schema min/max drop) then latest main via `ship.sh`. (3) Agreement C slot was `mistral-ocr` paired with vision LLMs → systemic `disagree`; Infisical C/D/E → gemini-3.5-flash / gpt-5.6-luna / claude-sonnet-5 (all OpenRouter); A/B primary/failover same gemini/luna. (4) Stuck autopilot run 0 docs halted+acked; new run started under paid drain (25 msgs/tick). 
   - Live: `/api/health` costProfile paid; OpenRouter reads working (same row counts, field-level disagree remains on many legacy 2022 review docs). Autopublish enqueues 10+/tick. Review still ~1.9k (soft low_confidence + bad_asset_name + provider-gap). 
