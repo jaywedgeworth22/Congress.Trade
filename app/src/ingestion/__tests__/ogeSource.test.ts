@@ -17,19 +17,29 @@ const FIXTURE = `
 describe('parseOgeIndex', () => {
   const filings = parseOgeIndex(FIXTURE);
 
-  it('extracts only known-filer 278-T reports (no annuals, no other filers, deduped)', () => {
-    expect(filings).toHaveLength(4);
+  it('extracts all 278-T reports including dynamic filers (no annuals, deduped)', () => {
+    expect(filings).toHaveLength(5);
     expect(filings.every((f) => f.chamber === 'executive')).toBe(true);
-    expect(filings.every((f) => f.filerId === 'EXEC-DJT')).toBe(true);
-    expect(filings.every((f) => f.filerName === 'Donald J. Trump')).toBe(true);
+
+    const trumpFilings = filings.filter((f) => f.filerId === 'EXEC-DJT');
+    expect(trumpFilings).toHaveLength(4);
+    expect(trumpFilings.every((f) => f.filerName === 'Donald J. Trump')).toBe(true);
+
+    const lutnickFiling = filings.find((f) => f.filerName === 'Howard Lutnick');
+    expect(lutnickFiling).toBeDefined();
+    expect(lutnickFiling?.filerId).toBe('EXEC-HOWARD-LUTNICK');
+    expect(lutnickFiling?.party).toBeNull();
+    expect(lutnickFiling?.photoUrl).toBeNull();
+    expect(lutnickFiling?.filedDate).toBe('2025-06-17');
+
     const raw = JSON.stringify(filings);
-    expect(raw).not.toContain('Lutnick');
     expect(raw).not.toContain('Annual');
   });
 
-  it('carries curated party + official-portrait metadata for executive filers', () => {
-    expect(filings.every((f) => f.party === 'R')).toBe(true);
-    expect(filings.every((f) => f.photoUrl ===
+  it('carries curated party + official-portrait metadata for curated executive filers', () => {
+    const trumpFilings = filings.filter((f) => f.filerId === 'EXEC-DJT');
+    expect(trumpFilings.every((f) => f.party === 'R')).toBe(true);
+    expect(trumpFilings.every((f) => f.photoUrl ===
       'https://upload.wikimedia.org/wikipedia/commons/thumb/1/16/Official_Presidential_Portrait_of_President_Donald_J._Trump_%282025%29.jpg/500px-Official_Presidential_Portrait_of_President_Donald_J._Trump_%282025%29.jpg',
     )).toBe(true);
   });
