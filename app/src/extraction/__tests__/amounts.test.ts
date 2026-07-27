@@ -39,6 +39,7 @@ describe('parseAmountRange -> canonical bracket', () => {
 
   it('every canonical bracket round-trips to a valid bracket', () => {
     const samples: Array<[string, number, number | null]> = [
+      ['$0 - $1,000', 0, 1000],
       ['$1,001 - $15,000', 1001, 15000],
       ['$100,001 - $250,000', 100001, 250000],
       ['$1,000,001 - $5,000,000', 1000001, 5000000],
@@ -49,5 +50,13 @@ describe('parseAmountRange -> canonical bracket', () => {
       expect(r.max).toBe(max);
       expect(isValidBracket(r.min!, r.max)).toBe(true);
     }
+  });
+
+  it('snaps exact sub-$1,001 dollar amounts onto the $0–$1,000 tier', () => {
+    const r = parseAmountRange('$456.00');
+    expect(r).toMatchObject({ min: 0, max: 1000, exact: true });
+    expect(isValidBracket(r.min!, r.max)).toBe(true);
+    const r2 = parseAmountRange('$1,000');
+    expect(r2).toMatchObject({ min: 0, max: 1000, exact: true });
   });
 });
