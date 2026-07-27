@@ -9,11 +9,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
-<<<<<<< HEAD
 - **[Congress.Trade][CURSOR] Enable latency probes + FMP/UW/QQ tunables — PR #967 2026-07-27.** Branch `cursor/enable-latency-tunables-b37c`. Infisical knobs set live (`providers=fmp,unusual_whales,quiver`, limit 100, UW deep-match 8); Turso column ALTERs + candidate backfill applied; code fixes candidate writes + migrate ALTERs. Gates: typecheck + 1867 tests green. Blocker outside PR: FMP account suspended (403).
-=======
 - **[Congress.Trade][CURSOR] Review-queue autonomy restore — MERGED & DEPLOYED PR #964 2026-07-27.** Root cause: Infisical prod `AGREEMENT_AUTOPUBLISH_ENABLED=false` + Deno tick never called agreement/autopilot. Ops: re-enabled flag + legacy replay; ack’d Jul-21 OpenRouter-auth halt; soft-confirmed ~162 soft `low_confidence`. Code: wire autonomy into `runScheduledTick` + priority drain. Live: agreement.check processing, `agreement_attempted_at` advancing today. Rollout: `docs/rollouts/2026-07-27-review-queue-autonomy-restore.md`.
->>>>>>> origin/main
 
 - **[Congress.Trade][GROK] Free-tier live + deploy daily cap — MERGED PR #952 2026-07-25.** `CT_COST_PROFILE=free` set on Deno Deploy (DENO_* env keys rejected by platform). Health reports `costProfile`. Deploy workflow: no more hourly schedule; max 8 deploys/UTC day (`vars.DEPLOY_MAX_PER_DAY`); force via workflow_dispatch.
 - **[Congress.Trade][GROK] Minimize Deno Deploy usage for free-tier survival (Aug 1) — MERGED PR #949 2026-07-25.** Branch `grok/deno-deploy-cost-min` → main `8f0ad14`. Default `DENO_COST_PROFILE=free` (cron `*/5`, drain 3/claim 1, idle short-circuit); `POST /api/admin/runtime-tick` for Coolify-driven ticks; rollout `docs/rollouts/2026-07-25-deno-deploy-cost-min.md`. Gates: typecheck + vitest green; CI typecheck+test + gitleaks green. Follow-up: set profile free (default) before Aug 1; optional Coolify cron for HTTP-only Deno.
