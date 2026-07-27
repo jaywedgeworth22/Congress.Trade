@@ -9,7 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
-- **[Congress.Trade][CURSOR] Review-queue publish autonomy — IN PROGRESS 2026-07-27.** Branch `cursor/review-queue-publish-autonomy-b37c`. Era-first agreement/autopilot select (skip historical by default), soft-agree from stored extraction_runs, latency candidates on agreement/admin publish. Goal: publish timely filings efficiently/autonomously.
+- **[Congress.Trade][CURSOR] Review-queue publish autonomy — PR #979 2026-07-27.** Branch `cursor/review-queue-publish-autonomy-b37c`. Era-first agreement/autopilot select (skip historical by default), soft-agree from stored extraction_runs, latency candidates on agreement/admin publish. Gates: typecheck + 1878 tests green.
 - **[Congress.Trade][CURSOR] Enable latency probes + FMP/UW/QQ tunables — MERGED PR #967 2026-07-27.** Branch `cursor/enable-latency-tunables-b37c`.
 - **[Congress.Trade][CURSOR] Owner-decisions wave — IN PROGRESS 2026-07-24.** Branch `cursor/owner-decisions-wave-d376` / **PR #915 CI green**. Delivery gated UX landed; pin-check redesigned+passing.
 - **[Congress.Trade][CURSOR←CODEX] Deno live parity / official-source recovery — IN PROGRESS 2026-07-24.** R2 verified; Deno cron owns watcher.
