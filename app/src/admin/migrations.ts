@@ -546,6 +546,7 @@ export const TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS = [
      doc_id TEXT NOT NULL,
      provider TEXT NOT NULL DEFAULT 'fmp',
      chamber TEXT NOT NULL,
+     source_url TEXT,
      filed_date TEXT,
      filer_name TEXT,
      ticker TEXT,
@@ -585,6 +586,15 @@ export const TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS = [
      ON trade_provider_observations (provider, chamber, first_observed_at DESC)`,
   `DROP TABLE IF EXISTS disclosure_latency_candidates`,
   `DROP TABLE IF EXISTS disclosure_provider_observations`,
+] as const;
+
+/** Idempotent column adds for trade-latency tables created before source_url /
+ *  provider_published_at were part of CREATE TABLE (CREATE IF NOT EXISTS does
+ *  not alter an existing table). */
+export const TRADE_LATENCY_WATCH_COLUMN_FIX_SCHEMA_STATEMENTS = [
+  'ALTER TABLE trade_latency_candidates ADD COLUMN source_url TEXT',
+  'ALTER TABLE trade_latency_candidates ADD COLUMN provider_published_at TEXT',
+  'ALTER TABLE trade_provider_observations ADD COLUMN provider_published_at TEXT',
 ] as const;
 
 export const DENO_RUNTIME_KV_SCHEMA_STATEMENTS = [
@@ -665,6 +675,9 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...TURSO_QUERY_EFFICIENCY_SCHEMA_STATEMENTS,
   // 0059_trade_latency_watch.sql
   ...TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS,
+  // Idempotent ALTERs for trade-latency tables created before source_url /
+  // provider_published_at were present (CREATE IF NOT EXISTS does not alter).
+  ...TRADE_LATENCY_WATCH_COLUMN_FIX_SCHEMA_STATEMENTS,
   // 0060_deno_runtime_kv.sql
   ...DENO_RUNTIME_KV_SCHEMA_STATEMENTS,
   // 0061_clean_placeholder_tickers.sql
