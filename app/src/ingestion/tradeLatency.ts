@@ -10,7 +10,7 @@
  * cannot silently turn into a speed win.
  */
 
-import type { Env } from '../shared/types.ts';
+import type { Env, Transaction } from '../shared/types.ts';
 import { all, run, batch, get } from '../shared/db.ts';
 import type { SqlParam } from '../shared/db.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
@@ -311,11 +311,10 @@ function truthy(v: string | undefined): boolean {
 }
 
 async function enabled(env: EnvWithWatch): Promise<boolean> {
-  // wrangler.toml carries the literal fallback (DISCLOSURE_LATENCY_WATCH_ENABLED
-  // = "true" in production); resolveSecret already falls back to env[key] when
-  // Infisical has nothing configured for this name, so passing that same value
-  // via `?? env.DISCLOSURE_LATENCY_WATCH_ENABLED` keeps zero-Infisical-configured
-  // behavior identical while letting Infisical override it when set.
+  // wrangler.toml / Deno env may carry a literal fallback; resolveSecret already
+  // falls back to env[key] when Infisical has nothing configured for this name.
+  // Infisical override wins when set. Production should set the full latency
+  // knob set in Infisical (enabled/providers/limit + UW deep-match).
   const watchEnabled =
     (await resolveSecret(env, 'DISCLOSURE_LATENCY_WATCH_ENABLED')).value ?? env.DISCLOSURE_LATENCY_WATCH_ENABLED;
   const legacyEnabled =
@@ -485,13 +484,30 @@ export function extractLastName(name: string | null): string {
   return '';
 }
 
+/** Normalize CT `P`/`S`/`E` and provider buy/sell/purchase/sale strings. */
+export function normalizeTradeSide(type: string | null | undefined): 'buy' | 'sell' | 'exchange' {
+  const tyStr = (type || '').toLowerCase().trim();
+  if (!tyStr) return 'exchange';
+  if (tyStr === 'p' || tyStr.includes('buy') || tyStr.includes('purchase')) return 'buy';
+  if (tyStr === 's' || tyStr.includes('sell') || tyStr.includes('sale')) return 'sell';
+  if (tyStr === 'e' || tyStr.includes('exchange')) return 'exchange';
+  return 'exchange';
+}
+
 export function generateTradeHash(filerName: string | null, ticker: string | null, date: string | null, type: string | null): string {
   const ln = extractLastName(filerName);
   const tk = (ticker || '').toUpperCase();
   const dt = date || '';
-  const tyStr = (type || '').toLowerCase();
-  const ty = tyStr.includes('buy') || tyStr.includes('purchase') ? 'buy' : tyStr.includes('sell') || tyStr.includes('sale') ? 'sell' : 'exchange';
+  const ty = normalizeTradeSide(type);
   return `${ln}_${tk}_${dt}_${ty}`;
+}
+
+function chamberFromDocId(docId: string | null | undefined, fallback: Chamber = 'house'): Chamber {
+  const id = (docId || '').trim().toUpperCase();
+  if (id.startsWith('S-') || id.startsWith('SENATE-')) return 'senate';
+  if (id.startsWith('E-') || id.startsWith('EXEC') || id.startsWith('OGE-')) return 'executive';
+  if (id.startsWith('H-') || id.startsWith('HOUSE-')) return 'house';
+  return fallback;
 }
 
 function lastName(name: string | null): string | null {
@@ -816,39 +832,112 @@ export async function getDisclosureLatencyProviderStatuses(env: Env): Promise<Di
 }
 
 
-import type { Transaction } from '../shared/types.ts';
+interface TradeLatencyTxContext {
+  id: string;
+  doc_id: string;
+  ticker: string | null;
+  tx_date: string | null;
+  tx_type: string | null;
+  filed_date: string | null;
+  first_seen_at: string | null;
+  chamber: Chamber | null;
+  source_url: string | null;
+  filer_name: string | null;
+}
+
+/**
+ * Resolve filer name / chamber / source_url for trade-hash candidates.
+ * Transaction.owner is self/spouse/joint — never the politician name.
+ */
+async function loadTradeLatencyTxContexts(
+  env: Env,
+  transactions: Transaction[],
+): Promise<Map<string, TradeLatencyTxContext>> {
+  const byId = new Map<string, TradeLatencyTxContext>();
+  if (!transactions.length) return byId;
+  const ids = Array.from(new Set(transactions.map((tx) => tx.id)));
+  for (let i = 0; i < ids.length; i += SQL_IN_CHUNK) {
+    const chunk = ids.slice(i, i + SQL_IN_CHUNK);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const rows = await all<TradeLatencyTxContext>(
+      env.DB,
+      `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type,
+              COALESCE(t.filed_date, f.filed_date) AS filed_date,
+              COALESCE(t.first_seen_at, f.first_seen_at) AS first_seen_at,
+              f.chamber AS chamber,
+              f.source_url AS source_url,
+              fil.full_name AS filer_name
+         FROM transactions t
+         LEFT JOIN filings f ON f.doc_id = t.doc_id
+         LEFT JOIN filers fil ON fil.bioguide_id = COALESCE(t.filer_id, f.filer_id)
+        WHERE t.id IN (${placeholders})`,
+      chunk,
+    );
+    for (const row of rows) byId.set(row.id, row);
+  }
+  return byId;
+}
+
 export async function recordTradeLatencyCandidates(
   env: Env,
   transactions: Transaction[],
   nowIso: string,
 ): Promise<void> {
+  if (!transactions.length) return;
+  let contexts: Map<string, TradeLatencyTxContext>;
+  try {
+    contexts = await loadTradeLatencyTxContexts(env, transactions);
+  } catch (err) {
+    if (!storageMissing(err)) console.warn('trade latency context lookup failed:', (err as Error).message);
+    return;
+  }
+
   const updates: Array<[string, SqlParam[]]> = [];
   for (const provider of DIRECT_PROVIDER_IDS) {
     for (const tx of transactions) {
-      const trade_hash = generateTradeHash(tx.owner || '', tx.ticker || '', tx.txDate || '', tx.txType || '');
+      const ctx = contexts.get(tx.id);
+      const filerName = ctx?.filer_name || tx.fullName || null;
+      if (!filerName) continue;
+      const chamber = normalizeChamber(ctx?.chamber ?? null, chamberFromDocId(tx.docId));
+      const trade_hash = generateTradeHash(filerName, tx.ticker || ctx?.ticker || null, tx.txDate || ctx?.tx_date || null, tx.txType || ctx?.tx_type || null);
+      if (!trade_hash.split('_')[0]) continue;
       updates.push([
         `INSERT INTO trade_latency_candidates
            (trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
             congress_first_seen_at, status, attempts, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
          ON CONFLICT(trade_hash, provider) DO UPDATE SET
-           congress_first_seen_at = MIN(congress_first_seen_at, excluded.congress_first_seen_at),
+           doc_id = excluded.doc_id,
+           chamber = excluded.chamber,
+           source_url = COALESCE(trade_latency_candidates.source_url, excluded.source_url),
+           filed_date = COALESCE(trade_latency_candidates.filed_date, excluded.filed_date),
+           filer_name = COALESCE(trade_latency_candidates.filer_name, excluded.filer_name),
+           ticker = COALESCE(trade_latency_candidates.ticker, excluded.ticker),
+           tx_date = COALESCE(trade_latency_candidates.tx_date, excluded.tx_date),
+           tx_type = COALESCE(trade_latency_candidates.tx_type, excluded.tx_type),
+           congress_first_seen_at = CASE
+             WHEN trade_latency_candidates.congress_first_seen_at IS NULL
+               OR trade_latency_candidates.congress_first_seen_at = ''
+               OR excluded.congress_first_seen_at < trade_latency_candidates.congress_first_seen_at
+             THEN excluded.congress_first_seen_at
+             ELSE trade_latency_candidates.congress_first_seen_at
+           END,
            updated_at = excluded.updated_at`,
         [
           trade_hash,
           tx.docId,
           provider,
-          'house', // we'll use fallback, wait we need actual chamber
-          null, // source_url
-          tx.filedDate || null,
-          tx.owner || null,
-          tx.ticker || null,
-          tx.txDate || null,
-          tx.txType || null,
-          tx.firstSeenAt || nowIso,
+          chamber,
+          ctx?.source_url || tx.sourceUrl || null,
+          tx.filedDate || ctx?.filed_date || null,
+          filerName,
+          tx.ticker || ctx?.ticker || null,
+          tx.txDate || ctx?.tx_date || null,
+          tx.txType || ctx?.tx_type || null,
+          tx.firstSeenAt || ctx?.first_seen_at || nowIso,
           nowIso,
           nowIso,
-        ]
+        ],
       ]);
     }
   }
@@ -859,6 +948,74 @@ export async function recordTradeLatencyCandidates(
       if (!storageMissing(err)) console.warn('trade latency candidate write failed:', (err as Error).message);
     }
   }
+}
+
+/** Backfill trade-latency candidates from recent persisted transactions. */
+export async function backfillTradeLatencyCandidates(
+  env: Env,
+  opts: { limit?: number; days?: number } = {},
+): Promise<{ scanned: number; recorded: number }> {
+  const limit = Math.min(Math.max(opts.limit ?? 2000, 1), 10000);
+  const days = Math.min(Math.max(opts.days ?? 30, 1), 365);
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const rows = await all<{
+    id: string;
+    doc_id: string;
+    ticker: string | null;
+    tx_date: string | null;
+    tx_type: string | null;
+    filed_date: string | null;
+    first_seen_at: string | null;
+    full_name: string | null;
+    source_url: string | null;
+    chamber: string | null;
+  }>(
+    env.DB,
+    `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type,
+            COALESCE(t.filed_date, f.filed_date) AS filed_date,
+            COALESCE(t.first_seen_at, f.first_seen_at) AS first_seen_at,
+            fil.full_name AS full_name,
+            f.source_url AS source_url,
+            f.chamber AS chamber
+       FROM transactions t
+       LEFT JOIN filings f ON f.doc_id = t.doc_id
+       LEFT JOIN filers fil ON fil.bioguide_id = COALESCE(t.filer_id, f.filer_id)
+      WHERE t.deprecated_at IS NULL
+        AND t.ticker IS NOT NULL
+        AND t.tx_date IS NOT NULL
+        AND fil.full_name IS NOT NULL
+        AND COALESCE(t.first_seen_at, t.created_at, f.first_seen_at) >= ?
+      ORDER BY COALESCE(t.first_seen_at, t.created_at) DESC
+      LIMIT ?`,
+    [cutoff, limit],
+  );
+  const nowIso = new Date().toISOString();
+  const asTx: Transaction[] = rows.map((row) => ({
+    id: row.id,
+    docId: row.doc_id,
+    filerId: null,
+    txDate: row.tx_date,
+    owner: null,
+    assetName: '',
+    ticker: row.ticker,
+    assetType: null,
+    txType: (row.tx_type as Transaction['txType']) || 'E',
+    amountMin: null,
+    amountMax: null,
+    isOption: false,
+    capGainsOver200: false,
+    rawText: '',
+    confidence: 1,
+    source: 'primary',
+    createdAt: nowIso,
+    cursorSeq: 0,
+    fullName: row.full_name,
+    filedDate: row.filed_date,
+    firstSeenAt: row.first_seen_at,
+    sourceUrl: row.source_url,
+  }));
+  await recordTradeLatencyCandidates(env, asTx, nowIso);
+  return { scanned: rows.length, recorded: asTx.length };
 }
 
 
