@@ -677,7 +677,9 @@ export const MISTRAL_ANNOTATION_SCHEMA = {
             location: { type: ['string', 'null'] },
             description: { type: ['string', 'null'] },
             supplementalText: { type: ['string', 'null'] },
-            confidence: { type: 'number', minimum: 0, maximum: 1 },
+            // Anthropic-via-OpenRouter rejects min/max on number in strict
+            // json_schema; clamp confidence in the normalizer instead.
+            confidence: { type: 'number' },
           },
           required: [
             'assetName',
