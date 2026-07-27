@@ -153,6 +153,10 @@ export default function Dashboard() {
 
           const delta = await apiGet<ClientFeedResponse>(`/feed?${params.toString()}`);
 
+          if (delta.nextPollAfterSec && delta.nextPollAfterSec > 0) {
+            nextDelay = delta.nextPollAfterSec * 1000;
+          }
+
           if (!isCancelled && delta.items.length > 0) {
             const reversedNewItems = [...delta.items].reverse();
             void refreshFeed((prev) => {
@@ -176,7 +180,10 @@ export default function Dashboard() {
           // No rows yet (e.g. an empty ticker/member/amount filter): there is no
           // cursor to poll from, so revalidate the base snapshot instead — a
           // user watching an empty filter still sees the first match arrive.
-          await refreshFeed();
+          const res = await refreshFeed();
+          if (res?.nextPollAfterSec && res.nextPollAfterSec > 0) {
+            nextDelay = res.nextPollAfterSec * 1000;
+          }
         }
       } catch (error) {
         if (error instanceof ApiError && error.retryAfter) {
