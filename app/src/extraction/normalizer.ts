@@ -23,6 +23,7 @@ import { all, batch, fromBool, get, parseJson } from '../shared/db.ts';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets.ts';
 import { canonicalizeAssetType } from '../shared/assetTypes.ts';
 import { uuid } from '../shared/ids.ts';
+import { recordTradeLatencyCandidates } from '../ingestion/tradeLatency.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
 import {
   isPlaceholderTicker,
@@ -293,11 +294,21 @@ function buildTransaction(
   nowIso: string,
   rowIndex: number,
 ): FlaggedTx {
-  const cleanedAssetName = cleanAssetString(p.assetName, p.ticker);
+  const placeholders = new Set(['NONE', '--', 'N/A', 'NA', 'NULL', '—']);
+  let rawTicker = p.ticker;
+  if (rawTicker && placeholders.has(rawTicker.toUpperCase())) {
+    rawTicker = null;
+  }
+  let rawAssetName = p.assetName;
+  if (rawAssetName && placeholders.has(rawAssetName.toUpperCase())) {
+    rawAssetName = null;
+  }
+
+  const cleanedAssetName = cleanAssetString(rawAssetName, rawTicker);
   const s = scoreFields(
     p.confidence,
     {
-      ticker: p.ticker,
+      ticker: rawTicker,
       assetName: cleanedAssetName,
       amountMin: p.amountMin,
       amountMax: p.amountMax,
@@ -490,10 +501,29 @@ function looksLikeHeaderContaminatedAsset(assetName: string | null): boolean {
 
 export type TickerResolver = (ticker: string | null, assetName: string | null) => string | null;
 
-/** Load securities_master once and return an in-memory ticker resolver. */
+/** Process-local securities_master cache (Deno isolate / Worker reuse). */
+const RESOLVER_TTL_MS = 10 * 60 * 1000;
+let resolverCache: { loadedAt: number; resolver: TickerResolver } | null = null;
+
+/** Drop the in-process securities_master resolver cache (tests / admin reload). */
+export function clearResolverCache(): void {
+  resolverCache = null;
+}
+
+/**
+ * Load securities_master once (per isolate, TTL-bounded) and return an
+ * in-memory ticker resolver. The master table is ~10k rows and changes rarely;
+ * Turso was re-reading all of them on every normalize/agreement call.
+ */
 export async function loadResolver(env: Env): Promise<TickerResolver> {
+  const now = Date.now();
+  if (resolverCache && now - resolverCache.loadedAt < RESOLVER_TTL_MS) {
+    return resolverCache.resolver;
+  }
   const secRows = await all<SecRow>(env.DB, 'SELECT ticker, name, aliases FROM securities_master');
-  return buildResolver(secRows);
+  const resolver = buildResolver(secRows);
+  resolverCache = { loadedAt: now, resolver };
+  return resolver;
 }
 
 /**
@@ -893,7 +923,11 @@ export async function persistTransactions(env: Env, transactions: Transaction[])
     `SELECT id FROM transactions WHERE id IN (SELECT value FROM json_each(?))`,
     [proposedIdsJson],
   );
-  return inserted.map((row) => row.id);
+  const insertedIds = inserted.map((row) => row.id);
+  if (insertedIds.length > 0) {
+    await recordTradeLatencyCandidates(env, transactions.filter(t => insertedIds.includes(t.id)), new Date().toISOString());
+  }
+  return insertedIds;
 }
 
 /** Atomically persist review state, metadata, and its idempotent audit receipt. */

@@ -167,7 +167,7 @@ describe('runBulkSnapshot', () => {
     expect(pricePages[0]).toContain('ORDER BY ticker ASC, date ASC');
     expect(pricePages[0]).not.toContain('WHERE'); // first page has no cursor
     // Later pages carry the keyset cursor predicate.
-    expect(pricePages[1]).toContain('(ticker > ?) OR (ticker = ? AND date > ?)');
+    expect(pricePages[1]).toContain('(ticker, date) > (?, ?)');
   });
 
   it('uploads EQUAL-sized non-final multipart parts (R2 requirement) for a big table', async () => {

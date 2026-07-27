@@ -20,6 +20,7 @@ import {
   type PriceClose,
   type PriceSeries,
   type SecurityRefInput,
+  type TradeEventRow,
 } from '@jaywedgeworth22/congress-trading-shared';
 import type { SecurityRef } from '../enrichment/types.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
@@ -38,13 +39,14 @@ export interface PeerShareInput {
   refs?: SecurityRef[];
   prices?: PriceSeries[];
   spx?: PriceClose[];
+  trades?: TradeEventRow[];
 }
 
 export interface PeerShareResult {
   sent: boolean;
   reason?: string;
   status?: number;
-  counts?: { refs: number; prices: number; spx: number };
+  counts?: { refs: number; prices: number; spx: number; trades: number };
 }
 
 /** The REF fields App B's /securities/import consumes (mirrors its REF_KEYS). */
@@ -88,7 +90,8 @@ export async function shareWithPeer(
   const refs = input.refs ?? [];
   const prices = input.prices ?? [];
   const spx = input.spx ?? [];
-  if (refs.length === 0 && prices.length === 0 && spx.length === 0) {
+  const trades = input.trades ?? [];
+  if (refs.length === 0 && prices.length === 0 && spx.length === 0 && trades.length === 0) {
     return { sent: false, reason: 'nothing to share' };
   }
 
@@ -96,6 +99,7 @@ export async function shareWithPeer(
     refs: refs.map(toImportRef),
     prices,
     spx: spx.map((c) => ({ date: c.date, close: c.close })),
+    trades,
     origin: 'app-a',
   };
   const parsed = SharePayloadSchema.safeParse(payload);
@@ -122,7 +126,7 @@ export async function shareWithPeer(
       headers: { authorization: 'Bearer ' + token, 'content-type': 'application/json' },
       body,
     }, { service: 'peer-data-share', operation: 'push-market-data', dynamicTarget: 'peer-app' }, fetchImpl);
-    const counts = { refs: refs.length, prices: prices.length, spx: spx.length };
+    const counts = { refs: refs.length, prices: prices.length, spx: spx.length, trades: trades.length };
     if (!res.ok) {
       if (targetKey) await recordTargetFailure(env, targetKey, `HTTP ${res.status}`);
       return { sent: false, reason: 'peer import failed: HTTP ' + res.status, status: res.status, counts };

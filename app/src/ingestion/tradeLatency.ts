@@ -1,5 +1,5 @@
 /**
- * src/ingestion/fmpDisclosureLatency.ts
+ * src/ingestion/tradeLatency.ts
  * OWNER: ingestion
  *
  * Provider-latency monitor for congressional disclosures. Candidates are
@@ -10,7 +10,7 @@
  * cannot silently turn into a speed win.
  */
 
-import type { Env } from '../shared/types.ts';
+import type { Env, Transaction } from '../shared/types.ts';
 import { all, run, batch, get } from '../shared/db.ts';
 import type { SqlParam } from '../shared/db.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
@@ -43,12 +43,16 @@ type EnvWithWatch = Env & {
 };
 
 interface CandidateRow {
+  trade_hash: string;
   doc_id: string;
   provider: ProviderId;
   chamber: Chamber;
   source_url: string | null;
   filed_date: string | null;
   filer_name: string | null;
+  ticker: string | null;
+  tx_date: string | null;
+  tx_type: string | null;
   congress_first_seen_at: string;
   attempts: number;
 }
@@ -57,6 +61,7 @@ interface ProviderObservationRow {
   provider: ProviderId;
   chamber: Chamber;
   provider_key: string;
+  trade_hash: string;
   first_observed_at: string;
   last_observed_at: string;
   provider_published_at: string | null;
@@ -70,6 +75,7 @@ export interface DisclosureProviderRow {
   provider: ProviderId;
   chamber: Chamber;
   providerKey: string;
+  tradeHash: string;
   payload: Record<string, unknown>;
   sourceUrl: string | null;
   filedDate: string | null;
@@ -305,11 +311,10 @@ function truthy(v: string | undefined): boolean {
 }
 
 async function enabled(env: EnvWithWatch): Promise<boolean> {
-  // wrangler.toml carries the literal fallback (DISCLOSURE_LATENCY_WATCH_ENABLED
-  // = "true" in production); resolveSecret already falls back to env[key] when
-  // Infisical has nothing configured for this name, so passing that same value
-  // via `?? env.DISCLOSURE_LATENCY_WATCH_ENABLED` keeps zero-Infisical-configured
-  // behavior identical while letting Infisical override it when set.
+  // wrangler.toml / Deno env may carry a literal fallback; resolveSecret already
+  // falls back to env[key] when Infisical has nothing configured for this name.
+  // Infisical override wins when set. Production should set the full latency
+  // knob set in Infisical (enabled/providers/limit + UW deep-match).
   const watchEnabled =
     (await resolveSecret(env, 'DISCLOSURE_LATENCY_WATCH_ENABLED')).value ?? env.DISCLOSURE_LATENCY_WATCH_ENABLED;
   const legacyEnabled =
@@ -468,6 +473,43 @@ function tokensFromDoc(docId: string, sourceUrl: string | null): string[] {
   return Array.from(out).filter((t) => t.length >= 6);
 }
 
+
+export function extractLastName(name: string | null): string {
+  if (!name) return '';
+  const parts = name.split(',')[0].split(' ');
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i].toLowerCase().replace(/[^a-z]/g, '');
+    if (p && !['jr', 'sr', 'md', 'ii', 'iii', 'iv'].includes(p)) return p;
+  }
+  return '';
+}
+
+/** Normalize CT `P`/`S`/`E` and provider buy/sell/purchase/sale strings. */
+export function normalizeTradeSide(type: string | null | undefined): 'buy' | 'sell' | 'exchange' {
+  const tyStr = (type || '').toLowerCase().trim();
+  if (!tyStr) return 'exchange';
+  if (tyStr === 'p' || tyStr.includes('buy') || tyStr.includes('purchase')) return 'buy';
+  if (tyStr === 's' || tyStr.includes('sell') || tyStr.includes('sale')) return 'sell';
+  if (tyStr === 'e' || tyStr.includes('exchange')) return 'exchange';
+  return 'exchange';
+}
+
+export function generateTradeHash(filerName: string | null, ticker: string | null, date: string | null, type: string | null): string {
+  const ln = extractLastName(filerName);
+  const tk = (ticker || '').toUpperCase();
+  const dt = date || '';
+  const ty = normalizeTradeSide(type);
+  return `${ln}_${tk}_${dt}_${ty}`;
+}
+
+function chamberFromDocId(docId: string | null | undefined, fallback: Chamber = 'house'): Chamber {
+  const id = (docId || '').trim().toUpperCase();
+  if (id.startsWith('S-') || id.startsWith('SENATE-')) return 'senate';
+  if (id.startsWith('E-') || id.startsWith('EXEC') || id.startsWith('OGE-')) return 'executive';
+  if (id.startsWith('H-') || id.startsWith('HOUSE-')) return 'house';
+  return fallback;
+}
+
 function lastName(name: string | null): string | null {
   if (!name) return null;
   const clean = name.replace(/\s+/g, ' ').trim();
@@ -519,6 +561,7 @@ export function parseFmpDisclosureRows(chamber: Chamber, json: unknown): FmpDisc
       provider: 'fmp',
       chamber,
       providerKey,
+      tradeHash: generateTradeHash(fieldString(payload, ['representative', 'senator', 'filerName', 'name']), fieldString(payload, ['ticker', 'symbol']), fieldString(payload, ['transactionDate', 'txDate']), fieldString(payload, ['type', 'transactionType'])),
       payload,
       sourceUrl,
       filedDate: normalizeDate(fieldString(payload, ['filedDate', 'filingDate', 'disclosureDate', 'reportedDate'])),
@@ -543,6 +586,7 @@ export function parseUnusualWhalesDisclosureRows(json: unknown): DisclosureProvi
         'txn_type',
         'name',
       ]),
+      tradeHash: generateTradeHash(filerName, fieldString(payload, ['ticker', 'symbol']), fieldString(payload, ['transaction_date']), fieldString(payload, ['txn_type', 'type'])),
       payload,
       sourceUrl: firstUrl(payload),
       filedDate,
@@ -572,6 +616,7 @@ export function parseQuiverDisclosureRows(chamber: Chamber, json: unknown, defau
         'Traded',
         'Transaction',
       ]),
+      tradeHash: generateTradeHash(filerName, fieldString(payload, ['Ticker']), fieldString(payload, ['TransactionDate', 'Date']), fieldString(payload, ['Transaction'])),
       payload,
       sourceUrl: firstUrl(payload),
       filedDate,
@@ -582,27 +627,27 @@ export function parseQuiverDisclosureRows(chamber: Chamber, json: unknown, defau
 }
 
 export function matchDisclosureCandidate(
-  candidate: Pick<CandidateRow, 'doc_id' | 'source_url' | 'filed_date' | 'filer_name'>,
+  candidate: Pick<CandidateRow, 'trade_hash'>,
   row: DisclosureProviderRow,
 ): CandidateMatch | null {
-  const text = rowText(row.payload);
-  for (const token of tokensFromDoc(candidate.doc_id, candidate.source_url)) {
-    if (text.includes(token)) return { providerKey: row.providerKey, matchMethod: 'doc-token' };
+  if (candidate.trade_hash === row.tradeHash) {
+    return { providerKey: row.providerKey, matchMethod: 'trade-hash' };
   }
-  const filed = normalizeDate(candidate.filed_date);
-  const candidateLast = lastName(candidate.filer_name);
-  const rowLast = lastName(row.filerName);
-  if (filed && candidateLast && rowLast === candidateLast && row.filedDate === filed) {
-    return { providerKey: row.providerKey, matchMethod: 'filer-date' };
+
+  const cParts = candidate.trade_hash.split('_');
+  const rParts = row.tradeHash.split('_');
+  // Hash format: lastName_ticker_txDate_type
+  if (cParts.length >= 4 && rParts.length >= 4) {
+    if (cParts[0] === rParts[0] && cParts[2] === rParts[2] && cParts[3] === rParts[3]) {
+      return { providerKey: row.providerKey, matchMethod: 'fuzzy-no-ticker' };
+    }
   }
-  if (filed && candidateLast && text.includes(candidateLast) && dateVariants(filed).some((d) => text.includes(d))) {
-    return { providerKey: row.providerKey, matchMethod: 'probable-filer-date' };
-  }
+
   return null;
 }
 
 export function matchFmpDisclosureCandidate(
-  candidate: Pick<CandidateRow, 'doc_id' | 'source_url' | 'filed_date' | 'filer_name'>,
+  candidate: Pick<CandidateRow, 'trade_hash'>,
   row: FmpDisclosureRow,
 ): CandidateMatch | null {
   return matchDisclosureCandidate(candidate, row);
@@ -714,7 +759,7 @@ async function routeProviderOnlyObservationsToReview(
 
     const exists3 = await get<{ doc_id: string }>(
       env.DB,
-      `SELECT doc_id FROM disclosure_latency_candidates WHERE provider = ? AND provider_key = ? AND status = 'matched' LIMIT 1`,
+      `SELECT doc_id FROM trade_latency_candidates WHERE provider = ? AND provider_key = ? AND status = 'matched' LIMIT 1`,
       [provider, row.providerKey]
     );
     if (exists3) continue;
@@ -786,61 +831,214 @@ export async function getDisclosureLatencyProviderStatuses(env: Env): Promise<Di
   return statuses;
 }
 
-export async function recordDisclosureLatencyCandidate(
+
+interface TradeLatencyTxContext {
+  id: string;
+  doc_id: string;
+  ticker: string | null;
+  tx_date: string | null;
+  tx_type: string | null;
+  filed_date: string | null;
+  first_seen_at: string | null;
+  chamber: Chamber | null;
+  source_url: string | null;
+  filer_name: string | null;
+}
+
+/**
+ * Resolve filer name / chamber / source_url for trade-hash candidates.
+ * Transaction.owner is self/spouse/joint — never the politician name.
+ */
+async function loadTradeLatencyTxContexts(
   env: Env,
-  filing: DiscoveredFiling,
+  transactions: Transaction[],
+): Promise<Map<string, TradeLatencyTxContext>> {
+  const byId = new Map<string, TradeLatencyTxContext>();
+  if (!transactions.length) return byId;
+  const ids = Array.from(new Set(transactions.map((tx) => tx.id)));
+  for (let i = 0; i < ids.length; i += SQL_IN_CHUNK) {
+    const chunk = ids.slice(i, i + SQL_IN_CHUNK);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const rows = await all<TradeLatencyTxContext>(
+      env.DB,
+      `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type,
+              COALESCE(t.filed_date, f.filed_date) AS filed_date,
+              COALESCE(t.first_seen_at, f.first_seen_at) AS first_seen_at,
+              f.chamber AS chamber,
+              f.source_url AS source_url,
+              fil.full_name AS filer_name
+         FROM transactions t
+         LEFT JOIN filings f ON f.doc_id = t.doc_id
+         LEFT JOIN filers fil ON fil.bioguide_id = COALESCE(t.filer_id, f.filer_id)
+        WHERE t.id IN (${placeholders})`,
+      chunk,
+    );
+    for (const row of rows) byId.set(row.id, row);
+  }
+  return byId;
+}
+
+export async function recordTradeLatencyCandidates(
+  env: Env,
+  transactions: Transaction[],
   nowIso: string,
 ): Promise<void> {
+  if (!transactions.length) return;
+  let contexts: Map<string, TradeLatencyTxContext>;
+  try {
+    contexts = await loadTradeLatencyTxContexts(env, transactions);
+  } catch (err) {
+    if (!storageMissing(err)) console.warn('trade latency context lookup failed:', (err as Error).message);
+    return;
+  }
 
+  const updates: Array<[string, SqlParam[]]> = [];
   for (const provider of DIRECT_PROVIDER_IDS) {
-    try {
-      await run(
-        env.DB,
-        `INSERT INTO disclosure_latency_candidates
-           (doc_id, provider, chamber, source_url, filed_date, filer_name,
+    for (const tx of transactions) {
+      const ctx = contexts.get(tx.id);
+      const filerName = ctx?.filer_name || tx.fullName || null;
+      if (!filerName) continue;
+      const chamber = normalizeChamber(ctx?.chamber ?? null, chamberFromDocId(tx.docId));
+      const trade_hash = generateTradeHash(filerName, tx.ticker || ctx?.ticker || null, tx.txDate || ctx?.tx_date || null, tx.txType || ctx?.tx_type || null);
+      if (!trade_hash.split('_')[0]) continue;
+      updates.push([
+        `INSERT INTO trade_latency_candidates
+           (trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
             congress_first_seen_at, status, attempts, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
-         ON CONFLICT(doc_id, provider) DO UPDATE SET
-           filed_date = CASE WHEN filed_date = '' THEN excluded.filed_date ELSE filed_date END,
-           congress_first_seen_at = MIN(congress_first_seen_at, excluded.congress_first_seen_at),
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+         ON CONFLICT(trade_hash, provider) DO UPDATE SET
+           doc_id = excluded.doc_id,
+           chamber = excluded.chamber,
+           source_url = COALESCE(trade_latency_candidates.source_url, excluded.source_url),
+           filed_date = COALESCE(trade_latency_candidates.filed_date, excluded.filed_date),
+           filer_name = COALESCE(trade_latency_candidates.filer_name, excluded.filer_name),
+           ticker = COALESCE(trade_latency_candidates.ticker, excluded.ticker),
+           tx_date = COALESCE(trade_latency_candidates.tx_date, excluded.tx_date),
+           tx_type = COALESCE(trade_latency_candidates.tx_type, excluded.tx_type),
+           congress_first_seen_at = CASE
+             WHEN trade_latency_candidates.congress_first_seen_at IS NULL
+               OR trade_latency_candidates.congress_first_seen_at = ''
+               OR excluded.congress_first_seen_at < trade_latency_candidates.congress_first_seen_at
+             THEN excluded.congress_first_seen_at
+             ELSE trade_latency_candidates.congress_first_seen_at
+           END,
            updated_at = excluded.updated_at`,
         [
-          filing.docId,
+          trade_hash,
+          tx.docId,
           provider,
-          filing.chamber,
-          filing.sourceUrl,
-          normalizeDate(filing.filedDate),
-          filing.filerName ?? null,
-          nowIso,
+          chamber,
+          ctx?.source_url || tx.sourceUrl || null,
+          tx.filedDate || ctx?.filed_date || null,
+          filerName,
+          tx.ticker || ctx?.ticker || null,
+          tx.txDate || ctx?.tx_date || null,
+          tx.txType || ctx?.tx_type || null,
+          tx.firstSeenAt || ctx?.first_seen_at || nowIso,
           nowIso,
           nowIso,
         ],
-      );
+      ]);
+    }
+  }
+  if (updates.length > 0) {
+    try {
+      await batch(env.DB, updates);
     } catch (err) {
-      if (!storageMissing(err)) console.warn('disclosure latency candidate write failed:', (err as Error).message);
+      if (!storageMissing(err)) console.warn('trade latency candidate write failed:', (err as Error).message);
     }
   }
 }
+
+/** Backfill trade-latency candidates from recent persisted transactions. */
+export async function backfillTradeLatencyCandidates(
+  env: Env,
+  opts: { limit?: number; days?: number } = {},
+): Promise<{ scanned: number; recorded: number }> {
+  const limit = Math.min(Math.max(opts.limit ?? 2000, 1), 10000);
+  const days = Math.min(Math.max(opts.days ?? 30, 1), 365);
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const rows = await all<{
+    id: string;
+    doc_id: string;
+    ticker: string | null;
+    tx_date: string | null;
+    tx_type: string | null;
+    filed_date: string | null;
+    first_seen_at: string | null;
+    full_name: string | null;
+    source_url: string | null;
+    chamber: string | null;
+  }>(
+    env.DB,
+    `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type,
+            COALESCE(t.filed_date, f.filed_date) AS filed_date,
+            COALESCE(t.first_seen_at, f.first_seen_at) AS first_seen_at,
+            fil.full_name AS full_name,
+            f.source_url AS source_url,
+            f.chamber AS chamber
+       FROM transactions t
+       LEFT JOIN filings f ON f.doc_id = t.doc_id
+       LEFT JOIN filers fil ON fil.bioguide_id = COALESCE(t.filer_id, f.filer_id)
+      WHERE t.deprecated_at IS NULL
+        AND t.ticker IS NOT NULL
+        AND t.tx_date IS NOT NULL
+        AND fil.full_name IS NOT NULL
+        AND COALESCE(t.first_seen_at, t.created_at, f.first_seen_at) >= ?
+      ORDER BY COALESCE(t.first_seen_at, t.created_at) DESC
+      LIMIT ?`,
+    [cutoff, limit],
+  );
+  const nowIso = new Date().toISOString();
+  const asTx: Transaction[] = rows.map((row) => ({
+    id: row.id,
+    docId: row.doc_id,
+    filerId: null,
+    txDate: row.tx_date,
+    owner: null,
+    assetName: '',
+    ticker: row.ticker,
+    assetType: null,
+    txType: (row.tx_type as Transaction['txType']) || 'E',
+    amountMin: null,
+    amountMax: null,
+    isOption: false,
+    capGainsOver200: false,
+    rawText: '',
+    confidence: 1,
+    source: 'primary',
+    createdAt: nowIso,
+    cursorSeq: 0,
+    fullName: row.full_name,
+    filedDate: row.filed_date,
+    firstSeenAt: row.first_seen_at,
+    sourceUrl: row.source_url,
+  }));
+  await recordTradeLatencyCandidates(env, asTx, nowIso);
+  return { scanned: rows.length, recorded: asTx.length };
+}
+
 
 async function upsertProviderRows(env: Env, provider: ProviderId, rows: DisclosureProviderRow[], nowIso: string): Promise<void> {
   for (const row of rows) {
     await run(
       env.DB,
-      `INSERT INTO disclosure_provider_observations
-         (provider, chamber, provider_key, first_observed_at, last_observed_at,
+      `INSERT INTO trade_provider_observations
+         (provider, chamber, provider_key, trade_hash, first_observed_at, last_observed_at,
           provider_published_at, source_url, filed_date, filer_name, payload)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(provider, chamber, provider_key) DO UPDATE SET
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(provider, chamber, provider_key, trade_hash) DO UPDATE SET
          last_observed_at=excluded.last_observed_at,
-         provider_published_at=COALESCE(disclosure_provider_observations.provider_published_at, excluded.provider_published_at),
-         source_url=COALESCE(disclosure_provider_observations.source_url, excluded.source_url),
-         filed_date=COALESCE(disclosure_provider_observations.filed_date, excluded.filed_date),
-         filer_name=COALESCE(disclosure_provider_observations.filer_name, excluded.filer_name),
-         payload=COALESCE(disclosure_provider_observations.payload, excluded.payload)`,
+         provider_published_at=COALESCE(trade_provider_observations.provider_published_at, excluded.provider_published_at),
+         source_url=COALESCE(trade_provider_observations.source_url, excluded.source_url),
+         filed_date=COALESCE(trade_provider_observations.filed_date, excluded.filed_date),
+         filer_name=COALESCE(trade_provider_observations.filer_name, excluded.filer_name),
+         payload=COALESCE(trade_provider_observations.payload, excluded.payload)`,
       [
         provider,
         row.chamber,
         row.providerKey,
+        row.tradeHash,
         nowIso,
         nowIso,
         row.providerPublishedAt,
@@ -875,12 +1073,12 @@ async function alertMatch(env: Env, provider: ProviderDefinition, candidate: Can
       ? `\n${provider.label} provider timestamp: ${match.provider_published_at}`
       : '';
   await notifyAdmin(env, {
-    dedupeKey: `disclosure-latency:${provider.id}:${candidate.doc_id}`,
+    dedupeKey: `disclosure-latency:${provider.id}:${candidate.trade_hash}`,
     throttleSec: 30 * 24 * 60 * 60,
     subject: `Congress.Trade vs ${provider.label} disclosure latency`,
     text:
       `${direction}\n\n` +
-      `Doc: ${candidate.doc_id}\n` +
+      `Doc: ${candidate.trade_hash}\n` +
       `Chamber: ${candidate.chamber}\n` +
       `Congress.Trade first_seen_at: ${candidate.congress_first_seen_at}\n` +
       `${provider.label} monitor first_observed_at: ${match.first_observed_at}${published}\n` +
@@ -894,8 +1092,8 @@ async function loadProviderRows(env: Env, provider: ProviderId, now: Date): Prom
   return all<ProviderObservationRow>(
     env.DB,
     `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at, provider_published_at,
-            source_url, filed_date, filer_name, payload
-       FROM disclosure_provider_observations
+            trade_hash, source_url, filed_date, filer_name, payload
+       FROM trade_provider_observations
       WHERE provider = ? AND first_observed_at >= ?
       ORDER BY first_observed_at DESC
       LIMIT 1000`,
@@ -919,9 +1117,9 @@ async function matchAndUpdateCandidates(
   providerRows: ProviderObservationRow[],
   nowIso: string,
   errors: string[],
-): Promise<{ pending: number; matched: number; matchedDocIds: string[] }> {
+): Promise<{ pending: number; matched: number; matchedTradeHashes: string[] }> {
   let matched = 0;
-  const matchedDocIds: string[] = [];
+  const matchedTradeHashes: string[] = [];
   const updates: Array<[string, SqlParam[]]> = [];
   const alerts: Array<() => Promise<void>> = [];
 
@@ -935,6 +1133,7 @@ async function matchAndUpdateCandidates(
         provider: providerRow.provider,
         chamber: providerRow.chamber,
         providerKey: providerRow.provider_key,
+        tradeHash: providerRow.trade_hash,
         payload,
         sourceUrl: providerRow.source_url,
         filedDate: providerRow.filed_date,
@@ -951,7 +1150,7 @@ async function matchAndUpdateCandidates(
 
     if (match) {
       updates.push([
-        `UPDATE disclosure_latency_candidates
+        `UPDATE trade_latency_candidates
             SET status = 'matched',
                 provider_key = ?,
                 provider_first_seen_at = ?,
@@ -962,7 +1161,7 @@ async function matchAndUpdateCandidates(
                 last_checked_at = ?,
                 error = NULL,
                 updated_at = ?
-          WHERE doc_id = ? AND provider = ?`,
+          WHERE trade_hash = ? AND provider = ?`,
         [
           match.provider_key,
           match.first_observed_at,
@@ -971,20 +1170,20 @@ async function matchAndUpdateCandidates(
           match.payload,
           nowIso,
           nowIso,
-          candidate.doc_id,
+          candidate.trade_hash,
           provider.id,
         ],
       ]);
       matched++;
-      matchedDocIds.push(candidate.doc_id);
+      matchedTradeHashes.push(candidate.trade_hash);
       const m = match;
       alerts.push(() => alertMatch(env, provider, candidate, m));
     } else {
       updates.push([
-        `UPDATE disclosure_latency_candidates
+        `UPDATE trade_latency_candidates
             SET attempts = attempts + 1, last_checked_at = ?, updated_at = ?, error = ?
-          WHERE doc_id = ? AND provider = ?`,
-        [nowIso, nowIso, errors[0] ?? null, candidate.doc_id, provider.id],
+          WHERE trade_hash = ? AND provider = ?`,
+        [nowIso, nowIso, errors[0] ?? null, candidate.trade_hash, provider.id],
       ]);
     }
   }
@@ -996,7 +1195,7 @@ async function matchAndUpdateCandidates(
     await alertFn();
   }
 
-  return { pending: candidates.length, matched, matchedDocIds };
+  return { pending: candidates.length, matched, matchedTradeHashes };
 }
 
 async function matchPendingCandidates(
@@ -1005,12 +1204,12 @@ async function matchPendingCandidates(
   now: Date,
   nowIso: string,
   errors: string[],
-): Promise<{ pending: number; matched: number; examinedDocIds: string[]; matchedDocIds: string[] }> {
+): Promise<{ pending: number; matched: number; examinedTradeHashes: string[]; matchedTradeHashes: string[] }> {
   const candidates = await all<CandidateRow>(
     env.DB,
-    `SELECT doc_id, provider, chamber, source_url, filed_date, filer_name,
+    `SELECT trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
             congress_first_seen_at, attempts
-       FROM disclosure_latency_candidates
+       FROM trade_latency_candidates
       WHERE provider = ? AND status = 'pending'
       ORDER BY created_at DESC
       LIMIT 100`,
@@ -1018,7 +1217,7 @@ async function matchPendingCandidates(
   );
   const providerRows = await loadProviderRows(env, provider.id, now);
   const result = await matchAndUpdateCandidates(env, provider, candidates, providerRows, nowIso, errors);
-  return { ...result, examinedDocIds: candidates.map((c) => c.doc_id) };
+  return { ...result, examinedTradeHashes: candidates.map((c) => c.doc_id) };
 }
 
 /**
@@ -1074,7 +1273,7 @@ async function loadObservationRowsByKeys(
         env.DB,
         `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at, provider_published_at,
                 source_url, filed_date, filer_name, payload
-           FROM disclosure_provider_observations
+           FROM trade_provider_observations
           WHERE provider = ? AND provider_key IN (${placeholders})`,
         [provider, ...chunk],
       )),
@@ -1124,16 +1323,16 @@ async function runUnusualWhalesDeepMatch(
   matched: number;
   fetchedRows: number;
   errors: string[];
-  examinedDocIds: string[];
-  matchedDocIds: string[];
+  examinedTradeHashes: string[];
+  matchedTradeHashes: string[];
 }> {
   const empty = {
     pending: 0,
     matched: 0,
     fetchedRows: 0,
     errors: [] as string[],
-    examinedDocIds: [] as string[],
-    matchedDocIds: [] as string[],
+    examinedTradeHashes: [] as string[],
+    matchedTradeHashes: [] as string[],
   };
   const capPerRun = await uwDeepMatchDatesPerRun(env as EnvWithWatch);
   if (capPerRun <= 0) return empty;
@@ -1154,9 +1353,9 @@ async function runUnusualWhalesDeepMatch(
   // permanently starve every eligible candidate ranked behind them.
   const oldPending = await all<CandidateRow>(
     env.DB,
-    `SELECT doc_id, provider, chamber, source_url, filed_date, filer_name,
+    `SELECT trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
             congress_first_seen_at, attempts
-       FROM disclosure_latency_candidates c
+       FROM trade_latency_candidates c
       WHERE c.provider = ? AND c.status = 'pending' AND c.filed_date IS NOT NULL AND c.filed_date < ?
         AND EXISTS (SELECT 1 FROM transactions t
                      WHERE t.doc_id = c.doc_id AND t.tx_date IS NOT NULL AND t.deprecated_at IS NULL)
@@ -1184,7 +1383,7 @@ async function runUnusualWhalesDeepMatch(
     // wrong-date page. The candidate query's EXISTS clause already excludes
     // these; this in-loop skip is belt-and-suspenders for transactions
     // deprecated between the two queries.
-    const txDates = txDatesByDoc.get(candidate.doc_id) ?? [];
+    const txDates = txDatesByDoc.get(candidate.trade_hash) ?? [];
     if (!txDates.length) continue;
     for (const date of txDates) {
       if (targetDateSet.has(date) || targetDateSet.size >= capPerRun) continue;
@@ -1226,6 +1425,7 @@ async function runUnusualWhalesDeepMatch(
       provider: providerRow.provider,
       chamber: providerRow.chamber,
       providerKey: providerRow.provider_key,
+      tradeHash: providerRow.trade_hash,
       payload: providerRow.payload ? (JSON.parse(providerRow.payload) as Record<string, unknown>) : {},
       sourceUrl: providerRow.source_url,
       filedDate: providerRow.filed_date,
@@ -1234,7 +1434,7 @@ async function runUnusualWhalesDeepMatch(
     })),
     nowIso,
   );
-  return { ...result, fetchedRows, errors, examinedDocIds: targetCandidates.map((c) => c.doc_id) };
+  return { ...result, fetchedRows, errors, examinedTradeHashes: targetCandidates.map((c) => c.doc_id) };
 }
 
 async function runProviderProbe(
@@ -1342,8 +1542,8 @@ async function runProviderProbe(
       // summing the two per-pass pending counts would double-count. Count
       // each distinct examined candidate once and subtract everything
       // matched this run.
-      const examined = new Set([...matched.examinedDocIds, ...deep.examinedDocIds]);
-      const matchedIds = new Set([...matched.matchedDocIds, ...deep.matchedDocIds]);
+      const examined = new Set([...matched.examinedTradeHashes, ...deep.examinedTradeHashes]);
+      const matchedIds = new Set([...matched.matchedTradeHashes, ...deep.matchedTradeHashes]);
       totalPending = examined.size - matchedIds.size;
     }
 
@@ -1468,7 +1668,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     env.DB,
     `SELECT provider, status, chamber, provider_key, match_method, congress_first_seen_at,
             provider_first_seen_at, provider_published_at, created_at, updated_at
-       FROM disclosure_latency_candidates
+       FROM trade_latency_candidates
       WHERE updated_at >= ? OR congress_first_seen_at >= ?
       ORDER BY created_at DESC
       LIMIT 5000`,
@@ -1486,7 +1686,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     env.DB,
     `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at,
             provider_published_at, source_url, filed_date, filer_name, payload
-       FROM disclosure_provider_observations
+       FROM trade_provider_observations
       WHERE last_observed_at >= ?
       ORDER BY last_observed_at DESC
       LIMIT 10000`,
@@ -1504,7 +1704,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     // filings on the same day. Only exact document-token or exact filer/date
     // matches are eligible for a public timing comparison.
     const strongMatches = mine.filter(
-      (row) => row.status === 'matched' && (row.match_method === 'doc-token' || row.match_method === 'filer-date'),
+      (row) => row.status === 'matched' && (row.match_method === 'trade-hash' || row.match_method === 'fuzzy-no-ticker'),
     );
     const monitorDeltas = strongMatches
       .map((row) => deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at))
@@ -1530,7 +1730,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     ).length;
 
     const matchedMaturedCandidates = maturedCandidates.filter(
-      (row) => row.status === 'matched' && (row.match_method === 'doc-token' || row.match_method === 'filer-date'),
+      (row) => row.status === 'matched' && (row.match_method === 'trade-hash' || row.match_method === 'fuzzy-no-ticker'),
     ).length;
     const ctCoveragePct = maturedProviderObserved
       ? Math.round((maturedMatched / maturedProviderObserved) * 1000) / 10
@@ -1593,4 +1793,12 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     providerStatuses: statuses,
     publicSummary: { generatedAt, totals, providers },
   };
+}
+
+export async function recordDisclosureLatencyCandidate(
+  env: Env,
+  filing: any,
+  nowIso: string,
+): Promise<void> {
+  // Deprecated: Candidates are now tracked at the trade level inside normalizer.ts / backfill/seed.ts
 }

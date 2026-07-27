@@ -182,9 +182,13 @@ provenance on records you care about.
 npm run dev      # local worker + cron + queues
 npm run deploy   # wrangler deploy
 ```
-The cron trigger fires every minute; the watcher self-gates via `shouldPollNow`
-against `poll_config`, so polling cadence changes (admin panel) take effect
-within ~60s without a redeploy.
+The Deno Deploy cron is cost-profiled (default **`free`**: every 5 minutes,
+small queue claims, idle short-circuit). Set `CT_COST_PROFILE=paid` only while
+on Pro if you need every-minute ticks (use `CT_*` names — Deno rejects custom
+`DENO_*` env keys). Confirm with `GET /api/health` → `costProfile`. The watcher
+still self-gates via `shouldPollNow` against `poll_config`. See
+`docs/rollouts/2026-07-25-deno-deploy-cost-min.md` for free-tier knobs, the
+deploy daily-cap, and optional Coolify-driven `POST /api/admin/runtime-tick`.
 
 ## Endpoint reference
 Public API (`/api`):

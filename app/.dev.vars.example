@@ -171,6 +171,10 @@ DISCLOSURE_LATENCY_PROVIDERS="fmp,unusual_whales,quiver"
 DISCLOSURE_LATENCY_WATCH_LIMIT="100"
 FMP_DISCLOSURE_WATCH_ENABLED=""
 FMP_DISCLOSURE_WATCH_LIMIT="100"
+# Unusual Whales deep-match: how many distinct filed dates per probe run
+# (default 8; 0 disables). Explicit Infisical value keeps admin config-sources
+# from reporting "missing".
+UW_DEEP_MATCH_DATES_PER_RUN="8"
 # Optional provider credentials are resolved from .dev.vars or Worker secrets
 # when those providers are enabled: Unusual Whales, Quiver, and AInvest.
 

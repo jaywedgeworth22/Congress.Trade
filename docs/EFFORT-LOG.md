@@ -9,14 +9,24 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
-- **[Congress.Trade][CURSOR] Owner-decisions wave — IN PROGRESS 2026-07-24.** Branch `cursor/owner-decisions-wave-d376` / **PR #915 CI green** (typecheck+test, PWA, gitleaks, shared vendor pin). Delivery gated UX landed; pin-check redesigned+passing. Awaiting merge. Follow-ups after merge: promote pin-check to required branch protection; Executive agreement reprocess only with Jay spend OK.
-- **[Congress.Trade][CURSOR←CODEX] Deno live parity / official-source recovery — IN PROGRESS 2026-07-24 (CURSOR takeover authorized).** R2 verified; Deno cron owns watcher. Remaining: House/Executive live parity (exec review backlog), bounded official-source recovery without unapproved spend spikes.
+- **[Congress.Trade][CURSOR] Enable latency probes + FMP/UW/QQ tunables — MERGED PR #967 2026-07-27.** Branch `cursor/enable-latency-tunables-b37c`.
+- **[Congress.Trade][CURSOR] Owner-decisions wave — IN PROGRESS 2026-07-24.** Branch `cursor/owner-decisions-wave-d376` / **PR #915 CI green**. Delivery gated UX landed; pin-check redesigned+passing.
+- **[Congress.Trade][CURSOR←CODEX] Deno live parity / official-source recovery — IN PROGRESS 2026-07-24.** R2 verified; Deno cron owns watcher.
+- **[Congress.Trade][CURSOR] Review-queue autonomy restore — MERGED & DEPLOYED PR #964 2026-07-27.**
 
 ## Recently completed (verified merged on main; GitHub issues cleaned 2026-07-23)
-- **CURSOR full reconcile (sister cloud `bc-df4b4649`): Issues/boards synced 2026-07-24.** PR #898 classifier fix + PR #912 R2 proxy. Note: Planned owner-decision Issues (#156–#159 etc.) reopened from Planned section until this wave lands closes.
-- **[Congress.Trade][CURSOR] Owner decisions closed 2026-07-24:** analytics remain public (#158); Delivery requires signed-in Premium (#157, tab stays visible/gated); Stripe Wave 4 live (#159 ops); R2 ok; Sentry CONGRESS-TRADE-1 + CONGRESS-TRADE-19 resolved; PR #898 merged.
-- **[Congress.Trade][CURSOR] Effort-board hygiene + sync classifier fix — MERGED PR #898 2026-07-24.** Branch `cursor/effort-board-hygiene-d376`. Fixed heading classifier + orphan retirement.
-- **CURSOR 2026-07-23: GitHub Issues cleanup — all 110 stale `effort-board` issues closed.** The `effort-issues-sync.yml` workflow mirrored effort-log rows to issues but never auto-closed them after completion. Closed issues #227–#858 in this session. All known product code is landed on `main`; zero open product PRs at reconcile time.
+- **[Congress.Trade][GROK] Minimize Deno Deploy usage for free-tier survival (Aug 1) — MERGED PR #949 2026-07-25.** Branch `grok/deno-deploy-cost-min` → main `8f0ad14`. Default `DENO_COST_PROFILE=free` (cron `*/5`, drain 3/claim 1, idle short-circuit); `POST /api/admin/runtime-tick` for Coolify-driven ticks; rollout `docs/rollouts/2026-07-25-deno-deploy-cost-min.md`. Gates: typecheck + vitest green; CI typecheck+test + gitleaks green. Follow-up: set profile free (default) before Aug 1; optional Coolify cron for HTTP-only Deno.
+- **[Congress.Trade][AG] Latency comparison trade-by-trade rewrite — MERGED & DEPLOYED PR #933 2026-07-24.** Rewrote latency tracking to be deterministic based on trade hash instead of disclosure document ID. Validated logic, ran CI, deployed to Deno production.
+- **[Congress.Trade][GROK] Eagle brand logo + fly-in splash (web + iOS) — IN PROGRESS 2026-07-24.** Branch `grok/eagle-logo-install`. Installs owner SuperGrok Imagine eagle+money-bag assets into iOS AppIcon/BrandLogo, PWA icons, dashboard brand mark; loading splash flies eagle into header mark (website + iOS). Gates: typecheck + dashboardHtml tests green.
+_GitHub Issues: 0 open product PRs as of prior closeout; this is an ops/billing outage, not a code PR._
+
+## Recently completed (2026-07-24 CURSOR closeout)
+- **[Congress.Trade][AG] Ops: Cleaned up outdated AGENTS.md architecture references — COMPLETED 2026-07-24.** Removed legacy Cloudflare Workers/D1/Pages/KV/Queues references. Documented the current setup: Deno Deploy for the backend, Turso for the database (with a custom `deno_runtime_queue`), Cloudflare R2 for storage, Cloudflare DNS for routing, and Coolify for Next.js PWA hosting.
+- **[Congress.Trade][AG] Ops: Requeue failed ingestion outbox items — COMPLETED 2026-07-24.** Due to a prior R2 disconnection, 12 ingestion outbox rows had maxed out their 5 `dead_letter_cycles` and were stuck in a `failed` state. Recovered these items via production admin endpoint `POST /api/admin/ingest-requeue-failed`, which correctly reset them to `pending` and immediately re-enqueued them into the `deno_runtime_queue` for successful processing. The old `failed` rows in the runtime queue were left alone as historical audit logs.
+- **[Congress.Trade][CURSOR/AG] Turso query efficiency — MERGED & DEPLOYED PR #919 2026-07-24.** Branch `cursor/turso-query-opt-0900`. Cut hot-path rows-read: data-recovery status no longer full-scans `price_eod` (~2.3M); nested keyset feed/SSE; securities_master TTL cache; migrate EXISTS + partial indexes; claim ORDER BY covering indexes. AG reviewed, verified test suite, merged PR #919, and deployed to production. Rollout: `docs/rollouts/2026-07-24-turso-query-efficiency.md`.
+- **CURSOR full reconcile (this chat + sister cloud `bc-df4b4649`): all GitHub Issues closed, boards synced.** PR #898 fixed the effort-issues sync classifier (stops reopening finished rows). R2 proxy endpoint deployed via PR #912. Deno live ingestion parity handled. Owner-gated items (analytics, subscription login, R2 enablement, key ops, watcher-cron) resolved. Open GitHub issues went from ~130 → 0.
+- **[Congress.Trade][CURSOR] Effort-board hygiene + sync classifier fix — MERGED PR #898 2026-07-24.** Branch `cursor/effort-board-hygiene-d376`. Fixed heading classifier + orphan retirement; open effort-board Issues cut from ~130 → 10 real leftovers (CODEX Deno ops, owner-gated, planned owner decisions). Now all 0.
+>>>>>>> origin/main
 - **[Congress.Trade][AG] Resolve PR conflicts & land PR #862 — MERGED & DEPLOYED 2026-07-23.** Undrafted, merged PR #862 to `main`, and deployed to production via `ship.sh`. Reconciled OpenRouter rates (`terra`/`luna`), silenced expected webhook retry Sentry noise, and updated effort log. Live `/api/health` verified (`ok:true, db:true, schema:true`).
 - **[Congress.Trade][CURSOR] OpenRouter terra/luna rate-card dummy underpricing + webhook retry Sentry noise + board reconcile — MERGED & DEPLOYED PR #862 2026-07-23.** Branch `cursor/resolve-in-progress-ba51`. Same class of bug as merged #674: leftover `openrouter-dummy` rows for `openai/gpt-5.6-terra` / `openai/gpt-5.6-luna` shadowed verified OpenAI passthrough rates (luna output $2 vs $6). Also skip Sentry.captureException for expected `DeliveryRetryError`/`IngestRetryError` (CONGRESS-TRADE-J storm). Effort-log stale OPEN/IN PROGRESS rows closed after verifying merges on main. Gates: `deno check` clean; focused 44/44; full suite 165 files / 1,865 tests.
 - **[Congress.Trade][AG] Consolidate Enrichment, Market Prices, and Benchmark Catalog improvements — MERGED 2026-07-23.** PR #851. Branch: `antigravity/grok-consolidation-enrichment-benchmark`.
@@ -37,6 +47,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 - **Deferred audit High/Medium (batchExtract Promise.all uploads, visionLlm chunking, PWA touch targets) — ALREADY ON MAIN** (pMap concurrency 25; PR #541 massive-context skip; PR #419 a11y). Large `dashboardHtml.ts` → PWA migration remains a product program, not an open hotfix.
 
 ## Deployed
+- 2026-07-24 — **GROK** — **Completed (audit)** — **Review-queue publish blockers audit** — multi-agent. Prod review_queue unresolved **31** (27 agreement_cascade_unresolved; provider auth/credit failures dominate). House pipeline: 1342 new + 619 fetched + 470 error + 2000 runtime pending. Senate 1034 provider_seeded. GitHub PR merge queue not the blocker. Full issue list delivered in chat.
 - **[Congress.Trade][AG] UI Polish, ETF/REIT inclusion, Executive trades, & Latency logic — DEPLOYED 2026-07-23.** Removed ETF/REIT restrictions from ingestion, ensuring all ticker-bearing assets are included. Integrated Executive branch trades from QuiverQuant and FMP. Refactored latency scoreboard to align document-level counting metrics with industry standards. Polished Dashboard UI: unified party/chamber chips, removed redundant Timeframe/Refresh elements, smoothed drawer slide animations, and enabled persistent view state via `localStorage`. Production deployment successfully migrated from Cloudflare/Wrangler to Deno Deploy using `deployctl`.
 - **[Congress.Trade][AG] Consolidate Ingestion & Extraction improvements — MERGED 2026-07-23.** Confirmed Senate paper media OCR, R2 source_url fallback, empty extract hard-fail claim preservation, and residential scout ingest improvements on main.
 - **[Congress.Trade][GROK] Integration campaign land 2026-07-23.** Merged #775 (time filter + name normalization), #776 (usage-compliance), #778 (FMP recovery docs). Fixed fleet-blocking `llmSpend` day-pin test and PWA Next 15.5.21 audit pin. PR #777 closed after security items found already on main. PR #774 merged (audit fixes).
@@ -407,55 +418,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 - **PWA post-merge review follow-ups (CODEX) — COMPLETED / MERGED via PR #599 2026-07-18.** Branch `codex/pwa-post-merge-followups` rebased onto exact `origin/main`; profile response fields now match the public client API, including null-safe count/volume formatting. Arbitrary dynamic `[ticker]` and `[slug]` routes were incompatible with the configured static export, so search now links to encoded `/asset?ticker=...` and `/politician?slug=...` pages that resolve identifiers client-side under Suspense without build-time live-data enumeration. Cloudflare Wrangler also exposed an invalid merged `_routes.json`; the required explicit `exclude` array and regression coverage are included. PWA typecheck, 7 files / 31 tests, production static export, exported-page assertions, and diff check pass. Wrangler Pages 4.112.0 compiles the Functions bundle, serves encoded asset/politician URLs as HTTP 200, and redirects `/asset.html` to `/asset` with 308.
 - **Current-main iOS improvement roadmap (CODEX + expert reviewer, S) — COMPLETED / MERGED 2026-07-13 via PR #383 (`83cc5094`).** The code-backed roadmap covers truthful Executive filtering, lossless forward/older sync and tombstones, recoverable command retries, production auth, App Review commerce/privacy, push alerts, scoped state, trace-backed performance budgets, accessibility, observability, CI/TestFlight, and AG overlap sequencing. Generic simulator build, build-for-testing, and Release generic-device build passed; hosted CI/PWA/Security passed. Runtime tests/Instruments remain explicitly pending because no iOS Simulator runtime is installed on this Mac. Docs-only; no SwiftUI or production runtime mutation.
 - **[MONET] Diagnosed prod webhook-delivery 401 wall + Review Queue triage (troubleshoot-issues-3c86a2 session, 2026-07-17) — COMPLETED / FIXED (Socratic.Trade PR #1704).** Owner-requested triage on repeating `HTTP 401` webhook delivery failures. Root-caused to `congress.trade` signing `X-Signature: sha256=<hex>` while receiver-side (Socratic.Trade) expected bare hex with no prefix. Fix landed in Socratic.Trade (PR #1704; green gates: lint 0/tsc clean/build clean). Review Queue item `H-2026-20035003` verified as expected validator quarantine; no code change required in `congress.trade`.
-
-- **CURSOR 2026-07-24: Planned-section closeouts moved here** — bullets below were COMPLETED/MERGED under Planned but stayed open in the Issues mirror; relocated so sync closes them.
-- **Fix the production deploy health gate blocked by Cloudflare managed challenge (CURSOR, M) — COMPLETED 2026-07-06; COMMITTED 2026-07-08 via PR #237 (`cursor/rollouts-health-gate`).**
-  All 3 recent Deploy runs 403'd on `/api/health` from GH runners (challenge page, `cType`
-  `'managed'`); add a WAF skip/custom rule or secret-header bypass for `/api/health` (or fall back
-  to the `workers.dev` hostname), then rerun Deploy end-to-end. Why now: the browser-UA workaround
-  merged 7/2 (`e320b1a`) demonstrably failed on the 7/3 run — a UA string cannot pass a managed
-  challenge from datacenter IPs; until fixed, `ship.sh` exits before `POST /api/admin/migrate`, so
-  every CI deploy leaves prod schema unverified and Wave-4 go-live (which needs migrations) cannot
-  ship confidently.
-- **De-crash and de-challenge the Uptime Monitor workflow (CURSOR, S) — COMPLETED 2026-07-06.** `uptime-monitor.yml` does
-  a bare curl (no UA/bypass) so it fetches challenge HTML, then writes that body to
-  `GITHUB_OUTPUT` with a static `EOF` heredoc that crashes ("Matching delimiter not found"); use a
-  random delimiter + truncate/sanitize the body + apply the same health-check bypass as deploy. Why
-  now: every scheduled run today is red for the wrong reason — the monitor can't distinguish "site
-  down" from "monitor broken", which defeats its purpose and trains everyone to ignore red runs.
-- **Land cursor/assigned-tasks: commit, rebase onto main, drop already-merged hunks (CURSOR, M) — COMPLETED 2026-07-06.**
-  The branch is uncommitted in `/Users/jay/Code/Congress.Trade` on base `892b45e` (7 merges
-  behind); its task 7 (tokenless dep: `app/.npmrc` delete, `package.json` switch) and parts of the
-  CI cleanup duplicate merged PRs #139/#140 — commit, merge origin/main, drop redundant hunks, keep
-  the still-missing `PEER_REPO` fix (main still says `agentic-trading`), re-verify, open PR. Why
-  now: the board marks this Completed but there is no landing row; the genuinely-new work (ESLint
-  bootstrap, vitest config, PEER_REPO fix, tsconfig.ingestcheck removal) is stranded, and the dirty
-  primary checkout blocks anyone else using that worktree.
-- **Adopt the docs/rollouts/ note convention in Congress.Trade AGENTS.md (CURSOR, S) — COMPLETED 2026-07-06; COMMITTED 2026-07-08 via PR #237 (`cursor/rollouts-health-gate`).** Add the
-  Socratic.Trade-style `docs/rollouts/YYYY-MM-DD-slug.md` convention (summary/why/files/
-  verification/follow-ups) to AGENTS.md and seed the directory; STATUS.md stays the snapshot. Why
-  now: this repo's only paper trail is a single overwritten STATUS.md — the #139 tokenless-dep
-  work explicitly noted it had nowhere durable to record its proof; with 5 agent lanes and a
-  go-live approaching, chronological decision records are the cheapest coordination insurance and
-  match the fleet standard.
-- **Merge shared ag/client-and-ticker + release v1.3.1 so app PRs can pin a tag not a branch (AG, M) — COMPLETED 2026-07-11** — The shared repo's ag/client-and-ticker (commit 81b2fd3: CongressTradeClient + ticker rename/acquisition split) is unmerged and absent from v1.3.0. Every Congress.Trade PR #182-#187 fails check-pin because it must pin the branch. Merge the shared branch to shared main, cut v1.3.1, then repin app/package.json (and Socratic.Trade's peer) to that tag as a matched pair so check-pin goes green.
-- **Consolidate AG's six overlapping PRs #182-#187 into one stacked/sequenced landing plan (AG, L) — COMPLETED 2026-07-11.** — The six AG branches each re-include the same 231-line senateSource rewrite + tickerNormalize + eslint/vitest config, so parallel merges will conflict. Pick a single base branch, rebase the unique deltas (dashboardHtml, fmpDisclosureLatency, shared/types dedup, D1-batch/queue perf, senate KV caching) on top of it in order, and close the redundant duplicates — after the shared v1.3.1 tag exists so check-pin can pass.
-- **Remove stray patch.py scratch script from antigravity/performance-queues (#186) before it lands (AG, S) — COMPLETED 2026-07-11.** — PR #186 accidentally commits patch.py, a 47-line Python string-patcher for webhook.ts. Delete it so a dev-only artifact does not ship into the repo.
-- **Rescue CURSOR stash into a committed, pushed branch + PR (CURSOR, M) — MERGED 2026-07-08 via PR #211 (`ef732f3`).** PR #211 (`cursor/assigned-tasks-v2`). Stash@{1} rescued from base 892b45e onto current origin/main. Dropped already-merged hunks from #139/#140. Genuine work committed: tsconfig strict flags, tsconfig.ingestcheck deletion, ESLint deps + scripts, lockfile-based pin-check, AGENTS.md dedup, unused-code removal across 8 files, dashboard CSS cleanup. Gates: typecheck 0 errors, lint 0 errors, 672 tests pass.
-- **Add manual queue reprocess button to admin dashboard (AG, S) — COMPLETED 2026-07-06.** Added a UI widget to `dashboardHtml.ts` to trigger `POST /api/admin/reprocess` directly from the admin panel.
-
-- **CURSOR 2026-07-24: stale Planned rows verified already on main** — Senate scraper hardening, UI/UX batch, Architecture/shared `createCongressEvent`, and `sentry-ci-report.yml` were still under Planned; relocated after verifying code/workflows on main.
-- **Senate Scraper Hardening (AG, M) — 2026-07-05.** Overcome WAF IP blocks via residential scout proxying, implement content-based field extraction for DataTables, and cache session handshakes in KV. — COMPLETED / ON MAIN (board hygiene 2026-07-24).
-- **UI/UX Improvements (AG, M) — 2026-07-05.** Fix mobile tab grid spacing, hide mobile columns button, consolidate search/filters + add Max $, fix theme toggle labels, group pagination controls, sticky-lock columns, and add charts to Trends. — COMPLETED / ON MAIN (board hygiene 2026-07-24).
-- **Architecture & Shared Dependency (AG, M) — 2026-07-05.** Use `createCongressEvent` from shared package, promote duplicate types to `schemas.ts`, upgrade Socratic.Trade to validate HMAC `X-Signature`, and replace SSE D1-polling with a push mechanism. — COMPLETED / ON MAIN (board hygiene 2026-07-24).
-_2026-07-04 backlog exhaustiveness pass (CLAUDE, owner-directed). Tags: CURSOR = Cursor background
-agents (DeepSeek v4 Pro), CODEX = Codex, AG = Antigravity/Gemini, CLAUDE = Claude Code. Assignments
-are reservations, not locks — re-negotiate in #agent-sync._
-- **Sentry CI failure reporter (CLAUDE, S)** — copy the additive `sentry-ci-report.yml` fleet — COMPLETED / ON MAIN (board hygiene 2026-07-24).
-  standard from Socratic.Trade per AGENT-SYNC.md observability rules. **MONET (Claude seat) claimed
-  2026-07-05 → see In Progress; implemented + verified locally on `monet/sentry-ci-report`, awaiting
-  owner push/PR.**
-## Historical archive (closed — chronology only; prefer Active above)
+## In Progress
+- 2026-07-24 — **GROK** — In Progress — **Review/ingest backlog drain** — fix provider/lineup/autopilot blockers; bounded agreement-reprocess; requeue failed ingest; clean junk review rows.
 - **[Congress.Trade][CURSOR] Resolve stale In Progress + terra/luna rate-card + webhook Sentry noise — PR #862 OPEN 2026-07-23.** Branch `cursor/resolve-in-progress-ba51`. Gates: typecheck + 165/1,865 tests. See Active section at top of this file.
 - **[Congress.Trade][CODEX] Restore Deno live ingestion and data-completeness path — IN PROGRESS 2026-07-22.** Runtime recovery PRs #754/#756/#757 are merged and deployed from exact `main`; Coolify-hosted CI/deploy runners online; Garage smoke passes. Remaining: bounded official-source recovery, enrichment, House/Executive parity verification, safe worktree cleanup. Keep dirty root/CODEX worktrees untouched.
 - _(Historical In Progress rows from 2026-07-12…2026-07-22 below were left for chronology; many are long since merged. Prefer the Active section at the top of this file as the live board.)_
@@ -729,26 +693,60 @@ are reservations, not locks — re-negotiate in #agent-sync._
 - ~~**Owner decision: should public subscription creation require login?**~~ **DECIDED 2026-07-24:** yes — signed-in + Premium; Delivery tab visible but gated (PR `cursor/owner-decisions-wave-d376`).
 - ~~**Owner decision: should analytics routes become premium-only?**~~ **DECIDED 2026-07-24:** no — analytics stay free; only Delivery is Premium.
 - ~~**Wave 4 go-live: configure auth + Stripe paywall services**~~ **DONE 2026-07-24 (ops):** Google auth + live Stripe prices in Infisical; webhook endpoint + `STRIPE_WEBHOOK_SECRET` restored; `/billing/status` `checkoutConfigured:true`.
+
 ### 2026-07-05 next-wave (cycle 2)
-_Generated by CLAUDE next-wave pass. LOAD NOTES: CLAUDE lane free (merged #141, #162, no open
-branch). CODEX lane free as of #160's merge. CURSOR lane output-blocked (6 tasks done but
-uncommitted on `cursor/assigned-tasks` in the dirty primary checkout, 7 merges behind base —
-unusable for others until landed). MONET lane blocked on the owner twice over (unpushed
-`monet/sentry-ci-report` needs `SENTRY_FLEET_DSN`; shared-repo v1.3.0 unpushed/untagged). AG lane
-looks dead — both 2026-07-04 reservations show zero activity; if AG stays silent in #agent-sync,
-reassign per the rows below. OWNER is the true bottleneck: land the cursor branch, push two MONET
-branches, tag v1.3.0, set `STRIPE_*`/`SENTRY_FLEET_DSN` secrets, decide the Cloudflare health-check
-bypass, and adjudicate the two open product decisions above._
 - ~~**Audit production schema drift from the three failed Deploy runs (OWNER, S)**~~ **SUPERSEDED 2026-07-24:** prod is Deno Deploy + Turso (not D1 Worker migrate path). Owner #174 intent is Turso efficiency/performance (indexes already via #907/#911); no D1 ever again. Further Turso perf only if measured need.
+- **Fix the production deploy health gate blocked by Cloudflare managed challenge (CURSOR, M) — COMPLETED 2026-07-06; COMMITTED 2026-07-08 via PR #237 (`cursor/rollouts-health-gate`).**
+  All 3 recent Deploy runs 403'd on `/api/health` from GH runners (challenge page, `cType`
+  `'managed'`); add a WAF skip/custom rule or secret-header bypass for `/api/health` (or fall back
+  to the `workers.dev` hostname), then rerun Deploy end-to-end. Why now: the browser-UA workaround
+  merged 7/2 (`e320b1a`) demonstrably failed on the 7/3 run — a UA string cannot pass a managed
+  challenge from datacenter IPs; until fixed, `ship.sh` exits before `POST /api/admin/migrate`, so
+  every CI deploy leaves prod schema unverified and Wave-4 go-live (which needs migrations) cannot
+  ship confidently.
+- **De-crash and de-challenge the Uptime Monitor workflow (CURSOR, S) — COMPLETED 2026-07-06.** `uptime-monitor.yml` does
+  a bare curl (no UA/bypass) so it fetches challenge HTML, then writes that body to
+  `GITHUB_OUTPUT` with a static `EOF` heredoc that crashes ("Matching delimiter not found"); use a
+  random delimiter + truncate/sanitize the body + apply the same health-check bypass as deploy. Why
+  now: every scheduled run today is red for the wrong reason — the monitor can't distinguish "site
+  down" from "monitor broken", which defeats its purpose and trains everyone to ignore red runs.
+- **Audit production schema drift from the three failed Deploy runs (OWNER, S)** — Confirm whether
+  `POST /api/admin/migrate` ever ran after the 6/30, 7/2, 7/3 Worker uploads (deploy exits before
+  migrate on health failure); if behind, run the guarded `ship.sh` migrate path from the Mac. Why
+  now: prod is running version `eafb0a16` deployed 7/3 but the pipeline never reached the migrate
+  step in any recent run; if any of those merges included migrations (e.g. 0009_client_api.sql era
+  or later), prod code and schema may be silently divergent.
+- **Land cursor/assigned-tasks: commit, rebase onto main, drop already-merged hunks (CURSOR, M) — COMPLETED 2026-07-06.**
+  The branch is uncommitted in `/Users/jay/Code/Congress.Trade` on base `892b45e` (7 merges
+  behind); its task 7 (tokenless dep: `app/.npmrc` delete, `package.json` switch) and parts of the
+  CI cleanup duplicate merged PRs #139/#140 — commit, merge origin/main, drop redundant hunks, keep
+  the still-missing `PEER_REPO` fix (main still says `agentic-trading`), re-verify, open PR. Why
+  now: the board marks this Completed but there is no landing row; the genuinely-new work (ESLint
+  bootstrap, vitest config, PEER_REPO fix, tsconfig.ingestcheck removal) is stranded, and the dirty
+  primary checkout blocks anyone else using that worktree.
+- **Adopt the docs/rollouts/ note convention in Congress.Trade AGENTS.md (CURSOR, S) — COMPLETED 2026-07-06; COMMITTED 2026-07-08 via PR #237 (`cursor/rollouts-health-gate`).** Add the
+  Socratic.Trade-style `docs/rollouts/YYYY-MM-DD-slug.md` convention (summary/why/files/
+  verification/follow-ups) to AGENTS.md and seed the directory; STATUS.md stays the snapshot. Why
+  now: this repo's only paper trail is a single overwritten STATUS.md — the #139 tokenless-dep
+  work explicitly noted it had nowhere durable to record its proof; with 5 agent lanes and a
+  go-live approaching, chronological decision records are the cheapest coordination insurance and
+  match the fleet standard.
+>>>>>>> origin/main
 - **De-duplicate effort-issues sync when a row's first line changes (CLAUDE, S)** —
-  Partial: 2026-07-24 CURSOR fixed heading misclassification (`Recently closed`/`Historical archive`
-  no longer reopen as in-progress). Remaining: stable slug / fuzzy-prefix match so title edits
-  do not mint duplicate issues (#161 vs #146 class). Fleet-standard script lives in this repo
-  and congress-trading-shared.
+  `scripts/sync-effort-issues.py` keys issues on the row title line, so editing a row (e.g.
+  appending "IN PROGRESS 2026-07-04") minted a second issue — #161 duplicates #146 for the same
+  effort; match on a stable slug or fuzzy-prefix and close superseded twins. Why now: fresh
+  concrete failure visible on the board today; CLAUDE owns this fleet-standard script (just
+  hardened it in #162/#694) so the fix propagates to all four repos.
 ### 2026-07-05 audit cycle-3
 _Added by CLAUDE audit-c3 pass. Tags: CURSOR / CODEX / AG / MONET / CLAUDE / OWNER. Assignments are
 reservations, not locks — re-negotiate in #agent-sync. NEVER assign to CODEX (quota-capped to
 Jul 8 18:10 CT)._
+- **Merge shared ag/client-and-ticker + release v1.3.1 so app PRs can pin a tag not a branch (AG, M) — COMPLETED 2026-07-11** — The shared repo's ag/client-and-ticker (commit 81b2fd3: CongressTradeClient + ticker rename/acquisition split) is unmerged and absent from v1.3.0. Every Congress.Trade PR #182-#187 fails check-pin because it must pin the branch. Merge the shared branch to shared main, cut v1.3.1, then repin app/package.json (and Socratic.Trade's peer) to that tag as a matched pair so check-pin goes green.
+- **Consolidate AG's six overlapping PRs #182-#187 into one stacked/sequenced landing plan (AG, L) — COMPLETED 2026-07-11.** — The six AG branches each re-include the same 231-line senateSource rewrite + tickerNormalize + eslint/vitest config, so parallel merges will conflict. Pick a single base branch, rebase the unique deltas (dashboardHtml, fmpDisclosureLatency, shared/types dedup, D1-batch/queue perf, senate KV caching) on top of it in order, and close the redundant duplicates — after the shared v1.3.1 tag exists so check-pin can pass.
+- **Remove stray patch.py scratch script from antigravity/performance-queues (#186) before it lands (AG, S) — COMPLETED 2026-07-11.** — PR #186 accidentally commits patch.py, a 47-line Python string-patcher for webhook.ts. Delete it so a dev-only artifact does not ship into the repo.
+- **Rescue CURSOR stash into a committed, pushed branch + PR (CURSOR, M) — MERGED 2026-07-08 via PR #211 (`ef732f3`).** PR #211 (`cursor/assigned-tasks-v2`). Stash@{1} rescued from base 892b45e onto current origin/main. Dropped already-merged hunks from #139/#140. Genuine work committed: tsconfig strict flags, tsconfig.ingestcheck deletion, ESLint deps + scripts, lockfile-based pin-check, AGENTS.md dedup, unused-code removal across 8 files, dashboard CSS cleanup. Gates: typecheck 0 errors, lint 0 errors, 672 tests pass.
+- **Add manual queue reprocess button to admin dashboard (AG, S) — COMPLETED 2026-07-06.** Added a UI widget to `dashboardHtml.ts` to trigger `POST /api/admin/reprocess` directly from the admin panel.
 ## Changelog of this log
 - 2026-07-08 — CURSOR: PR #211 merged; PR #237 opened (rollouts convention + deploy health gate workers.dev fallback, previously stranded in stash@{1}).
 - 2026-07-06 — CURSOR: rescued stash@{1} → PR #211; fixed uptime-monitor.yml crash + CF challenge bypass; adopted rollouts convention; created Wave-4 smoke script; fixed deploy health gate (workers.dev fallback); noted patch.py on AG's PR #186.
@@ -828,3 +826,20 @@ Jul 8 18:10 CT)._
 - **Deno deploy config closeout (CODEX, 2026-07-22).** Corrected Deno Deploy runtime config to use `runtime.mode` and made the app deploy script non-interactive/JSON for CI deploy runners; local verification performed with Deno 2.9.3.
 - **2026-07-22** - `[Congress.Trade]`: Consolidation Audit of Grok Branches (AG, S) — COMPLETED 2026-07-22. Verified and audited unmerged grok branches (`grok/merge-main-pr665-b`, `grok/merge-main-pr664-b`, `grok/x-pr675`, `grok/close-pr639`). Confirmed all unique features (BroadcastChannel SSE delivery, bounded legacy-replay grace, ticker resolution alignment, iOS PoliticianDetailView & store) are already fully merged into `main` (PRs #665, #664, #675, #639). Full build and test suite verified clean (`npm run typecheck` and `npm test` 100% passing). Branch `antigravity/grok-consolidation-sse-agreement-ios`.
 - **2026-07-23** - `[Congress.Trade]`: Turso query optimization (AG) — COMPLETED. Converted Deno queue polling queries to use UNION ALL instead of OR clauses to allow SQLite to utilize specific indexes for each status branch. This resolves the Turso usage spike caused by full table/index scans on polling queries. All tests pass, PR #907 merged.
+- **2026-07-24** - `[Congress.Trade]`: Filer Deduplication, Data Hoarding, & Infrastructure Cleanup (AG) — COMPLETED. 
+  - Standardized filer names and parties across Turso database, merging duplicates (114 queries executed).
+  - Implemented Quiver Quant and Unusual Whales hoarding scripts (`hoard_quiver_quant.ts`, `hoard_unusual_whales.ts`) using efficient keyset pagination, bypassing API limits with local fallback JSONs, and streaming directly to `trade_provider_observations` table via the `backfill-observations` endpoint.
+  - Corrected `backfill-observations` endpoint to insert into `trade_provider_observations` (resolving 502/404 errors caused by previous dropped table migration) and pushed changes to production.
+  - Verified that raw data is successfully fetched and preserved locally due to lack of R2 enablement on the `admin@congress.trade` account (the user will need to explicitly enable R2 in the Cloudflare dashboard to move raw data out of the compute container).
+  - Removed old Cloudflare resources from `jaywedgeworth22@gmail.com` (deleted all queues, unlinked queue consumers, deleted `congress-trade` and `congress-trade-preview` workers, and verified no active KV namespaces remained).
+- **2026-07-24** - `[Congress.Trade]`: R2 Hoarding Upload (AG) — COMPLETED.
+  - Successfully fetched new Cloudflare R2 AWS S3 credentials from Infisical (configured by owner on new `admin@congress.trade` account).
+  - Executed a bulk upload script that pushed all locally cached Quiver Quant (`qq_bulk_congresstrading.json`, `qq_bulk_trumpstocktrades.json`) and Unusual Whales (`uw_recent_trades.json`, `uw_late_reports.json`, `uw_politicians.json`) historical JSON files (totalling ~850MB) to the `congress-trade-bucket`.
+  - Confirmed raw provider dumps are now durably archived on R2 under `competitors/quiverquant/` and `competitors/unusualwhales/`.
+- **2026-07-24** - `[Congress.Trade]`: Data Holes Backfill & Latency Update (AG) — COMPLETED. Backfilled 6,831 missing trades from competitor feeds directly into the production Turso database via a custom ingest script. Updated the `analyze_latency.ts` script to correctly distinguish between true `primary` official trades and backfilled competitor trades to prevent false positives when calculating latency. Generated updated latency scorecard showing 105 official trades in the last 14 days, with competitors missing almost all of them (FMP caught 6, UW 0, QQ 0).
+- **2026-07-24** - `[Congress.Trade]`: Add QQ, UW, and FMP Executive Polling to Scout (AG) — COMPLETED. Modified congress-scout.mjs to continuously poll Quiver Quant and Unusual Whales APIs, and added executive-latest to FMP's polling array. The scout now establishes baselines and logs first-seen timestamps for all competitors across both congressional and executive filings.
+- **2026-07-24** - `[Congress.Trade]`: Fix "None" trades and UI formatting (AG) — COMPLETED. Standardized company names (capitalized properly while preserving acronyms like ETF, INC., LLC, etc.). Capitalized "House", "Senate", and "Exec" across the PWA UI. Investigated the 1,645 "None" trades and determined they are competitor imports (`COMPETITOR-` doc_ids) with no PDF backend; as such, they cannot be re-extracted via the Vision LLM pipeline.
+- **2026-07-27** - `[Congress.Trade]`: UI Optimization and Deployment Fix (AG) — COMPLETED. Hooked up the Trends view to the PWA dashboard. Put most active politicians and top traded assets side-by-side on desktop, and consensus moves and sector flow side-by-side below it. Fixed a yaml indentation error in `.github/workflows/deploy-deno.yml` that was preventing the workflow from triggering. Bumped the deployment cap `DEPLOY_MAX_PER_DAY` to 50 to ensure all PRs deploy to production.
+- **2026-07-27** - `[Congress.Trade]`: Deployment Cost Optimization (AG) — COMPLETED. Modified `.github/workflows/deploy-deno.yml` to trigger deployments on a 3-hour cron schedule (`0 */3 * * *`) rather than on every `push`. This batches code changes together into fewer deployments to save Deno Deploy compute quota.
+- **2026-07-27** - `[Congress.Trade]`: Deployment Deduplication Fix (AG) — COMPLETED. Modified `.github/workflows/deploy-deno.yml`'s python pre-check script to interrogate the GitHub Actions API for the most recent successful run of the deploy workflow. If the `head_sha` of the last successful run identically matches the current `GITHUB_SHA` being triggered by the cron, the workflow exits early and skips deploying to Deno Deploy. This robustly ensures compute time is never burned if there are no code updates.
+- **2026-07-27** - `[Congress.Trade]`: Deno Deploy Free Tier Cost Profile Tuning (AG) — COMPLETED. Modified the `free` cost profile in `app/src/deno/costProfile.ts` to run `Deno.cron` every 15 minutes instead of every 5 minutes and reduced outbox limit to 10. This ensures maximum headroom under the Deno Deploy free tier usage caps.

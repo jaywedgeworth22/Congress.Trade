@@ -1,0 +1,18 @@
+--- app/src/admin/routes.ts
++++ app/src/admin/routes.ts
+@@ -4416,6 +4416,16 @@
+   //     review_queue row resolved. If it still fails, it's left in review.
+   // Body (all optional):
+   //   { chamber?: 'house'|'senate', limit?: number, dryRun?: boolean }
+ 
+   r.get('/debug-extract/:id', async (c) => {
+     try {
++      const filing = await loadFilingRow(c.env, c.req.param('id'));
++      if (!filing) return c.json({ error: "no filing" });
++      if (!filing.rawObjectKey) return c.json({ error: "no rawObjectKey", filing });
++      const obj = await c.env.RAW_FILES.get(filing.rawObjectKey);
++      if (!obj) return c.json({ error: "no r2 object", filing });
++
+       const extracted = await extractParsed(c.env, c.req.param('id'));
+       return c.json(extracted);
+     } catch (e) {

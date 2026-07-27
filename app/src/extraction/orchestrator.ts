@@ -23,6 +23,7 @@ import {
   type ExtractorUsage,
 } from '../extractors/types.ts';
 import { normalize } from './normalizer.ts';
+import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { enqueueAgreementCheck } from './agreement.ts';
 import { ensureDocClass } from './docClassifier.ts';
 import { reportAiUsage } from '../shared/telemetry.ts';
@@ -206,6 +207,7 @@ export async function extractParsed(
   env: Env,
   docId: string,
   lease?: DurableQueueLeaseContext,
+  options?: { forceVision?: boolean }
 ): Promise<ExtractedFiling | null> {
   await lease?.assertOwned();
   const row = await get<FilingRow>(
@@ -222,6 +224,9 @@ export async function extractParsed(
   }
 
   const filing = rowToFiling(row);
+  if (options?.forceVision) {
+    filing.docKind = 'scanned_pdf';
+  }
 
   if (!filing.rawObjectKey) {
     await markError(env, docId, 'orchestrator: missing raw_object_key', lease);
@@ -229,13 +234,33 @@ export async function extractParsed(
   }
 
   await lease?.assertOwned();
-  const obj = await env.RAW_FILES.get(filing.rawObjectKey);
+  let obj = await env.RAW_FILES.get(filing.rawObjectKey);
+  let bytes: ArrayBuffer;
   if (!obj) {
-    await markError(env, docId, `orchestrator: R2 object ${filing.rawObjectKey} not found`, lease);
-    return null;
+    if (filing.sourceUrl) {
+      console.warn(`orchestrator: R2 object not found, falling back to source_url: ${filing.sourceUrl}`);
+      const res = await trackedFetch(filing.sourceUrl, {
+        headers: { 'User-Agent': 'Congress.Trade/1.0 (+https://congress.trade)' }
+      }, {
+        service: 'disclosure-source',
+        operation: 'loaddocbytes.source_url_fallback',
+        dynamicTarget: 'filing-source'
+      }, fetch, { envOverride: env });
+      if (!res.ok) {
+        await markError(env, docId, `orchestrator: R2 object not found and fetch failed: HTTP ${res.status}`, lease);
+        return null;
+      }
+      bytes = await res.arrayBuffer();
+      // Cache it back to R2 for future runs
+      await env.RAW_FILES.put(filing.rawObjectKey, bytes);
+    } else {
+      await markError(env, docId, `orchestrator: R2 object ${filing.rawObjectKey} not found and no source_url`, lease);
+      return null;
+    }
+  } else {
+    bytes = await obj.arrayBuffer();
   }
 
-  const bytes = await obj.arrayBuffer();
   await lease?.assertOwned();
 
   // Complexity signal for cascade tiering: raw byte length. Recorded as soon as

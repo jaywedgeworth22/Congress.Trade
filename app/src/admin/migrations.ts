@@ -183,11 +183,15 @@ export const PRICE_BACKFILL_TERMINATION_SCHEMA_STATEMENTS = [
   'ALTER TABLE securities_ref ADD COLUMN price_checked_at TEXT',
   'ALTER TABLE securities_ref ADD COLUMN latest_price_date TEXT',
   'CREATE INDEX IF NOT EXISTS idx_secref_latest_price_date ON securities_ref (latest_price_date)',
+  // EXISTS guard: tickers with no price_eod rows would otherwise re-run a
+  // correlated MAX on every /migrate and rewrite NULL→NULL forever (~544
+  // un-priceable symbols). Skip them once priced tickers are seeded.
   `UPDATE securities_ref
    SET latest_price_date = (
      SELECT MAX(pe.date) FROM price_eod pe WHERE pe.ticker = securities_ref.ticker
    )
- WHERE latest_price_date IS NULL`,
+ WHERE latest_price_date IS NULL
+   AND EXISTS (SELECT 1 FROM price_eod pe WHERE pe.ticker = securities_ref.ticker)`,
   `UPDATE securities_ref
    SET current_price = (
          SELECT pe.close FROM price_eod pe
@@ -500,7 +504,120 @@ export const PERFORMANCE_INDEXES_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_transactions_cursor_asc ON transactions (cursor_seq ASC) WHERE deprecated_at IS NULL'
 ] as const;
 
+/**
+ * 0058_turso_query_efficiency.sql — claim-order covering indexes + migrate
+ * backfill partial indexes so replayed /migrate UPDATEs stop scanning the
+ * full transactions/securities_ref tables after anchors are filled. Also
+ * seeds a singleton price_eod_stats row so admin status receipts never
+ * COUNT(*) the ~2.3M-row price cache.
+ */
+export const TURSO_QUERY_EFFICIENCY_SCHEMA_STATEMENTS = [
+  // Prefer id-covering claim indexes; drop the narrower 0056 twins once the
+  // replacements exist (IF EXISTS keeps replay safe on fresh DBs).
+  'CREATE INDEX IF NOT EXISTS idx_deno_runtime_queue_pending_id ON deno_runtime_queue (queue_name, status, available_at, id)',
+  'CREATE INDEX IF NOT EXISTS idx_deno_runtime_queue_processing_id ON deno_runtime_queue (queue_name, status, lease_until, id)',
+  'DROP INDEX IF EXISTS idx_deno_runtime_queue_pending',
+  'DROP INDEX IF EXISTS idx_deno_runtime_queue_processing',
+  // Migrate backfill probes (disclosure anchors + latest_price_date seed).
+  `CREATE INDEX IF NOT EXISTS idx_tx_missing_disclosure_anchors
+     ON transactions (doc_id)
+     WHERE first_seen_at IS NULL OR filed_date IS NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_secref_missing_latest_price_date
+     ON securities_ref (ticker)
+     WHERE latest_price_date IS NULL`,
+  `CREATE TABLE IF NOT EXISTS price_eod_stats (
+     id INTEGER PRIMARY KEY CHECK (id = 1),
+     row_count INTEGER NOT NULL DEFAULT 0,
+     updated_at TEXT NOT NULL
+   )`,
+  `INSERT OR IGNORE INTO price_eod_stats (id, row_count, updated_at)
+     VALUES (1, 0, '1970-01-01T00:00:00.000Z')`,
+  // One-shot seed: COUNT(*) only while row_count is still 0. After the first
+  // successful seed, WHERE fails and SQLite does not evaluate the subquery.
+  `UPDATE price_eod_stats
+      SET row_count = (SELECT COUNT(*) FROM price_eod),
+          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    WHERE id = 1 AND row_count = 0`,
+] as const;
+
+export const TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS trade_latency_candidates (
+     trade_hash TEXT NOT NULL,
+     doc_id TEXT NOT NULL,
+     provider TEXT NOT NULL DEFAULT 'fmp',
+     chamber TEXT NOT NULL,
+     source_url TEXT,
+     filed_date TEXT,
+     filer_name TEXT,
+     ticker TEXT,
+     tx_date TEXT,
+     tx_type TEXT,
+     congress_first_seen_at TEXT NOT NULL,
+     provider_key TEXT,
+     provider_first_seen_at TEXT,
+     provider_published_at TEXT,
+     match_method TEXT,
+     status TEXT NOT NULL DEFAULT 'pending',
+     attempts INTEGER NOT NULL DEFAULT 0,
+     last_checked_at TEXT,
+     error TEXT,
+     payload TEXT,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL,
+     PRIMARY KEY (trade_hash, provider)
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_trade_latency_candidates_status
+     ON trade_latency_candidates (provider, status, created_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS trade_provider_observations (
+     provider TEXT NOT NULL,
+     chamber TEXT NOT NULL,
+     provider_key TEXT NOT NULL,
+     trade_hash TEXT NOT NULL,
+     first_observed_at TEXT NOT NULL,
+     last_observed_at TEXT NOT NULL,
+     provider_published_at TEXT,
+     source_url TEXT,
+     filed_date TEXT,
+     filer_name TEXT,
+     payload TEXT,
+     PRIMARY KEY (provider, chamber, provider_key, trade_hash)
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_trade_provider_seen
+     ON trade_provider_observations (provider, chamber, first_observed_at DESC)`,
+  `DROP TABLE IF EXISTS disclosure_latency_candidates`,
+  `DROP TABLE IF EXISTS disclosure_provider_observations`,
+] as const;
+
+/** Idempotent column adds for trade-latency tables created before source_url /
+ *  provider_published_at were part of CREATE TABLE (CREATE IF NOT EXISTS does
+ *  not alter an existing table). */
+export const TRADE_LATENCY_WATCH_COLUMN_FIX_SCHEMA_STATEMENTS = [
+  'ALTER TABLE trade_latency_candidates ADD COLUMN source_url TEXT',
+  'ALTER TABLE trade_latency_candidates ADD COLUMN provider_published_at TEXT',
+  'ALTER TABLE trade_provider_observations ADD COLUMN provider_published_at TEXT',
+] as const;
+
+export const DENO_RUNTIME_KV_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS deno_runtime_kv (
+    namespace TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT,
+    expires_at INTEGER,
+    PRIMARY KEY (namespace, key)
+  )`,
+] as const;
+
+export const CLEAN_PLACEHOLDER_TICKERS_SCHEMA_STATEMENTS = [
+  `UPDATE transactions SET ticker = NULL WHERE ticker IN ('NONE', '--', 'N/A', 'NA', 'NULL', '—')`,
+  `UPDATE transactions SET asset_name = '(unknown)' WHERE asset_name IN ('NONE', 'None', 'none', '--', 'N/A', 'NA', 'NULL', '—', '')`,
+] as const;
+
+export const FIX_DENO_RUNTIME_QUEUE_INDEX_SCHEMA_STATEMENTS = [
+  'DROP INDEX IF EXISTS idx_deno_runtime_queue_ready'
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
+
   // 0025_extraction_runs_usage.sql
   'ALTER TABLE extraction_runs ADD COLUMN usage_json TEXT',
   ...EST_VALUE_SCHEMA_STATEMENTS,
@@ -554,4 +671,17 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...QUERY_OPTIMIZATIONS_SCHEMA_STATEMENTS,
   // 0057_performance_indexes.sql
   ...PERFORMANCE_INDEXES_SCHEMA_STATEMENTS,
+  // 0058_turso_query_efficiency.sql
+  ...TURSO_QUERY_EFFICIENCY_SCHEMA_STATEMENTS,
+  // 0059_trade_latency_watch.sql
+  ...TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS,
+  // Idempotent ALTERs for trade-latency tables created before source_url /
+  // provider_published_at were present (CREATE IF NOT EXISTS does not alter).
+  ...TRADE_LATENCY_WATCH_COLUMN_FIX_SCHEMA_STATEMENTS,
+  // 0060_deno_runtime_kv.sql
+  ...DENO_RUNTIME_KV_SCHEMA_STATEMENTS,
+  // 0061_clean_placeholder_tickers.sql
+  ...CLEAN_PLACEHOLDER_TICKERS_SCHEMA_STATEMENTS,
+  // 0062_fix_deno_runtime_queue_index.sql
+  ...FIX_DENO_RUNTIME_QUEUE_INDEX_SCHEMA_STATEMENTS,
 ] as const;

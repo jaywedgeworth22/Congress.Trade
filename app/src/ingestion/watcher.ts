@@ -24,7 +24,7 @@ import {
 } from '../shared/config.ts';
 import { fetchHouseIndex, pollHouseLiveSearch } from './houseSource.ts';
 import { fetchSenatePtrFilings } from './senateSource.ts';
-import { recordDisclosureLatencyCandidate, storageMissing } from './fmpDisclosureLatency.ts';
+import { recordDisclosureLatencyCandidate, storageMissing } from './tradeLatency.ts';
 import { enqueueIngestionOutboxNow, ingestionOutboxInsertForDoc } from './outbox.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { pollOgeExecutive } from './ogeSource.ts';

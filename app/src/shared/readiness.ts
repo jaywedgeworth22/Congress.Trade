@@ -187,7 +187,8 @@ const REQUIRED_PROBES: Array<[string, string, boolean?]> = [
     'idx_benchmark_results_run_model',
     'idx_benchmark_results_model_run',
     'idx_usage_telemetry_fallback_events_updated',
-    'idx_deno_runtime_queue_ready',
+    'idx_deno_runtime_queue_pending_id',
+    'idx_deno_runtime_queue_processing_id',
     'idx_deno_runtime_queue_active_dedupe',
   ].map((name): [string, string, boolean] => [
     name,

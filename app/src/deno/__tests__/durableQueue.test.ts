@@ -182,6 +182,65 @@ describe('Deno durable queue', () => {
     }
   });
 
+  it('prefers agreement.check / autopilot.tick over usage.telemetry when draining', async () => {
+    const harness = await createHarness();
+    try {
+      const nowIso = harness.now().toISOString();
+      // Insert telemetry first (lower id / earlier) so FIFO would pick it unless
+      // priority ordering is active.
+      await harness.client.execute({
+        sql: `INSERT INTO deno_runtime_queue
+          (queue_name, payload, status, available_at, created_at, updated_at)
+          VALUES ('ingest', ?, 'pending', ?, ?, ?)`,
+        args: [
+          JSON.stringify({ type: 'usage.telemetry', event: { eventId: 'e1' } }),
+          nowIso, nowIso, nowIso,
+        ],
+      });
+      await harness.client.execute({
+        sql: `INSERT INTO deno_runtime_queue
+          (queue_name, payload, status, available_at, created_at, updated_at)
+          VALUES ('ingest', ?, 'pending', ?, ?, ?)`,
+        args: [
+          JSON.stringify({ type: 'filing.fetched', docId: 'doc-mid' }),
+          nowIso, nowIso, nowIso,
+        ],
+      });
+      await harness.client.execute({
+        sql: `INSERT INTO deno_runtime_queue
+          (queue_name, payload, status, available_at, created_at, updated_at)
+          VALUES ('ingest', ?, 'pending', ?, ?, ?)`,
+        args: [
+          JSON.stringify({
+            type: 'agreement.check',
+            docId: 'H-priority',
+            rawObjectKey: 'raw/H-priority',
+            escalationTier: 1,
+            claimToken: 'tok',
+          }),
+          nowIso, nowIso, nowIso,
+        ],
+      });
+
+      const seen: string[] = [];
+      const handlers = createHandlers({
+        handleIngestMessage: vi.fn(async (_env, message) => {
+          seen.push(message.type);
+        }),
+      });
+
+      await expect(drainDurableQueue(harness.env, 'ingest', handlers, {
+        now: harness.now,
+        limit: 2,
+        claimSize: 1,
+      })).resolves.toEqual({ claimed: 2, completed: 2, retried: 0, failed: 0 });
+
+      expect(seen).toEqual(['agreement.check', 'filing.fetched']);
+    } finally {
+      harness.client.close();
+    }
+  });
+
   it('retries handler failures with exponential availability backoff', async () => {
     const harness = await createHarness();
     try {

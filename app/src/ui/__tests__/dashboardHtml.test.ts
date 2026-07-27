@@ -1336,6 +1336,41 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('tc.scrollLeft = tc.scrollWidth');
   });
 
+  it('toggles Buys vs Sells Over Time between trade counts and dollar volume', () => {
+    expect(DASHBOARD_HTML).toContain('id="trTimeMetric"');
+    expect(DASHBOARD_HTML).toContain('function setTrTimeMetric(');
+    expect(DASHBOARD_HTML).toContain("onclick=\"setTrTimeMetric('count')\"");
+    expect(DASHBOARD_HTML).toContain("onclick=\"setTrTimeMetric('dollars')\"");
+    expect(DASHBOARD_HTML).toContain("timeChartHtml(s, null, trTimeMetric)");
+    expect(DASHBOARD_HTML).toContain("metric === 'count'");
+    expect(DASHBOARD_HTML).toContain("metric === 'dollars'");
+  });
+
+  it('fits the buys/sells time chart to the card width without horizontal scroll', () => {
+    expect(DASHBOARD_HTML).toContain('.tchart { display:flex; align-items:flex-end; gap:2px; height:180px; overflow-x:hidden;');
+    expect(DASHBOARD_HTML).toContain('.tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:1 1 0; min-width:0;');
+    expect(DASHBOARD_HTML).toContain('width:max(2px, calc(50% - 1px))');
+  });
+
+  it('keeps Trends section headings flush with card padding (no orphaned accent indent)', () => {
+    expect(DASHBOARD_HTML).not.toMatch(/\.section > h3[^}]*padding-left:\s*11px/);
+    expect(DASHBOARD_HTML).toContain('#view-trends .section > h3');
+    expect(DASHBOARD_HTML).toContain('padding-left: 0');
+    // Nested timeliness captions only — not Net Flow / Market Cap section titles.
+    expect(DASHBOARD_HTML).toContain('#view-trends .timeliness-panel > h3');
+    expect(DASHBOARD_HTML).not.toContain('#view-trends .trend-grid2 > div > h3');
+  });
+
+  it('stacks buys/win and trades/buy-sell under politician names for mobile room', () => {
+    expect(DASHBOARD_HTML).toContain('class="stack-under"');
+    expect(DASHBOARD_HTML).toContain('class="member-meta"');
+    expect(DASHBOARD_HTML).toContain('class="name-line"');
+    expect(DASHBOARD_HTML).toContain('.stack-under {');
+    expect(DASHBOARD_HTML).toContain('#view-trends .member-cell > .member-meta');
+    expect(DASHBOARD_HTML).toContain("'% win</span></div>'");
+    expect(DASHBOARD_HTML).toContain("' trades</span><span class=\"stack-split\">'");
+  });
+
   it('surfaces source error and stale status instead of showing only successful polls', () => {
     expect(DASHBOARD_HTML).toContain('<th>Status</th>');
     expect(DASHBOARD_HTML).toContain('s.lastError');
