@@ -387,13 +387,27 @@ async function claimMessages(
           updated_at = ?
       WHERE id IN (
         SELECT id FROM (
-          SELECT id, available_at FROM deno_runtime_queue
+          SELECT id, available_at, payload FROM deno_runtime_queue
           WHERE queue_name = ? AND status = 'pending' AND available_at <= ?
           UNION ALL
-          SELECT id, available_at FROM deno_runtime_queue
+          SELECT id, available_at, payload FROM deno_runtime_queue
           WHERE queue_name = ? AND status = 'processing' AND lease_until <= ?
         )
-        ORDER BY available_at ASC, id ASC
+        -- Prefer review-queue autonomy work over usage.telemetry spam on the
+        -- free-tier drain budget (3 msgs / 5 min). Telemetry still drains,
+        -- just after agreement/autopilot and normal ingest messages.
+        -- json_valid guards corrupt payloads (dead-letter resume tests / DLQ).
+        ORDER BY CASE
+                   WHEN json_valid(payload) THEN
+                     CASE json_extract(payload, '$.type')
+                       WHEN 'agreement.check' THEN 0
+                       WHEN 'autopilot.tick' THEN 0
+                       WHEN 'usage.telemetry' THEN 2
+                       ELSE 1
+                     END
+                   ELSE 1
+                 END,
+                 available_at ASC, id ASC
         LIMIT ?
       )
       RETURNING id, queue_name, payload, status, attempts, available_at,
