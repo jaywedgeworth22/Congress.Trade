@@ -1,5 +1,5 @@
 import { createClient } from '@libsql/client';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../shared/types.ts';
 import { D1DatabaseShim } from '../shims.ts';
 import {
@@ -9,6 +9,34 @@ import {
 } from '../scheduledTick.ts';
 import type { DenoCostProfile } from '../costProfile.ts';
 import type { DurableQueueHandlers } from '../durableQueue.ts';
+
+vi.mock('../../extraction/agreement.ts', () => ({
+  maybeRunAgreementAutopublish: vi.fn(async () => ({ attempted: 0, enqueued: 0, terminalized: 0 })),
+}));
+vi.mock('../../extraction/autopilot.ts', () => ({
+  maybeStartBacklogAutopilot: vi.fn(async () => ({ blocked: 'not_due' as const })),
+}));
+vi.mock('../../secrets/infisical.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../secrets/infisical.ts')>();
+  return {
+    ...actual,
+    refreshSecrets: vi.fn(async () => ({
+      enabled: false,
+      cacheReady: false,
+      cacheAgeSeconds: null,
+      cacheTtlSeconds: 0,
+      cacheExpiresInSeconds: null,
+      envFallbackAllowed: true,
+      lastRefreshAt: null,
+      errors: [],
+      sources: [],
+    })),
+  };
+});
+
+import { maybeRunAgreementAutopublish } from '../../extraction/agreement.ts';
+import { maybeStartBacklogAutopilot } from '../../extraction/autopilot.ts';
+import { refreshSecrets } from '../../secrets/infisical.ts';
 
 const FREE: DenoCostProfile = {
   name: 'free',
@@ -143,6 +171,12 @@ function testEnv(db: D1Database, extra: Record<string, unknown> = {}): Env {
 }
 
 describe('runScheduledTick idle short-circuit', () => {
+  beforeEach(() => {
+    vi.mocked(maybeRunAgreementAutopublish).mockClear();
+    vi.mocked(maybeStartBacklogAutopilot).mockClear();
+    vi.mocked(refreshSecrets).mockClear();
+  });
+
   it('skips drain path when idleShortCircuit and no pending work', async () => {
     const { db } = await makeDb();
     const handlers = emptyHandlers();
@@ -156,6 +190,12 @@ describe('runScheduledTick idle short-circuit', () => {
     expect(result.drained).toBeNull();
     expect(result.ingestionOutbox).toBeNull();
     expect(handlers.handleIngestMessage).not.toHaveBeenCalled();
+    // Autonomy lanes still run even when the drain short-circuits.
+    expect(refreshSecrets).toHaveBeenCalledOnce();
+    expect(maybeRunAgreementAutopublish).toHaveBeenCalledOnce();
+    expect(maybeStartBacklogAutopilot).toHaveBeenCalledOnce();
+    expect(result.agreementAutopublish).toEqual({ attempted: 0, enqueued: 0, terminalized: 0 });
+    expect(result.autopilot).toEqual({ blocked: 'not_due' });
   });
 
   it('does not skip when idleShortCircuit is off', async () => {
@@ -173,5 +213,38 @@ describe('runScheduledTick idle short-circuit', () => {
     expect(result.skippedDrain).toBe(false);
     expect(result.drained).not.toBeNull();
     expect(result.drained?.ingest.claimed).toBe(0);
+    expect(maybeRunAgreementAutopublish).toHaveBeenCalledOnce();
+    expect(maybeStartBacklogAutopilot).toHaveBeenCalledOnce();
+  });
+
+  it('drains after agreement enqueue even when the queue was empty at tick start', async () => {
+    const { client, db } = await makeDb();
+    const handlers = emptyHandlers();
+    const now = '2026-07-25T12:00:00.000Z';
+    vi.mocked(maybeRunAgreementAutopublish).mockImplementation(async () => {
+      // Simulate the enqueue side-effect of maybeRunAgreementAutopublish with a
+      // canonical ingest message (agreement.check also works; filing.fetched is
+      // enough to prove the post-enqueue drain probe sees new work).
+      await client.execute({
+        sql: `INSERT INTO deno_runtime_queue
+          (queue_name, payload, status, available_at, created_at, updated_at)
+          VALUES ('ingest', ?, 'pending', ?, ?, ?)`,
+        args: [JSON.stringify({ type: 'filing.fetched', docId: 'H-1' }), now, now, now],
+      });
+      return { attempted: 1, enqueued: 1, terminalized: 0 };
+    });
+    const result = await runScheduledTick(
+      testEnv(db, {
+        INGEST_QUEUE: { send: vi.fn(async () => {}) },
+        DELIVERY_QUEUE: { send: vi.fn(async () => {}) },
+      }),
+      handlers,
+      FREE,
+      new Date(now),
+    );
+    expect(result.skippedDrain).toBe(false);
+    expect(result.agreementAutopublish).toEqual({ attempted: 1, enqueued: 1, terminalized: 0 });
+    expect(result.drained?.ingest.claimed).toBe(1);
+    expect(handlers.handleIngestMessage).toHaveBeenCalledOnce();
   });
 });
