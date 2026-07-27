@@ -47,6 +47,10 @@
     "runtime": {
       "type": "dynamic",
       "entrypoint": "app/src/deno/main.ts"
-    }
+    },
+    "org": "congress-trade",
+    "app": "congress-trade"
   }
 }
+
+
