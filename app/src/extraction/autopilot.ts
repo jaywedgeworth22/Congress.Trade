@@ -732,7 +732,7 @@ export async function maybeStartBacklogAutopilot(
     return null;
   }
   try {
-    await env.INGEST_QUEUE.send({ type: 'autopilot.tick', runId });
+    await env.INGEST_QUEUE.send({ type: 'autopilot.tick', runId, tickId: uuid() });
   } catch (err) {
     console.warn('autopilot: tick enqueue failed:', runId, (err as Error).message);
     await markAutopilotRunHalted(env, runId, 'tick_enqueue_failed');
@@ -1234,7 +1234,9 @@ export async function handleAutopilotTick(
 
   if (!finished) {
     try {
-      await env.INGEST_QUEUE.send({ type: 'autopilot.tick', runId });
+      // Fresh tickId every continuation — see QueueMessage 'autopilot.tick'
+      // docs: re-enqueue happens while this claim is still `processing`.
+      await env.INGEST_QUEUE.send({ type: 'autopilot.tick', runId, tickId: uuid() });
     } catch (err) {
       deps.signal?.throwIfAborted();
       console.warn('autopilot: continuation enqueue failed:', runId, (err as Error).message);

@@ -492,7 +492,11 @@ describe('handleAutopilotTick — error-class kill-switch', () => {
     await handleAutopilotTick(env, 'run-1', { check: check as never });
 
     expect(check).toHaveBeenCalledTimes(3); // DOCS_PER_TICK slice
-    expect(send).toHaveBeenCalledWith({ type: 'autopilot.tick', runId: 'run-1' });
+    expect(send).toHaveBeenCalledTimes(1);
+    const continuation = send.mock.calls[0]?.[0] as { type: string; runId: string; tickId: string };
+    expect(continuation).toMatchObject({ type: 'autopilot.tick', runId: 'run-1' });
+    expect(typeof continuation.tickId).toBe('string');
+    expect(continuation.tickId.length).toBeGreaterThan(0);
   });
 });
 
@@ -692,7 +696,11 @@ describe('maybeStartBacklogAutopilot — gates', () => {
     const result = await maybeStartBacklogAutopilot(env);
     expect(result?.started?.trigger).toBe('daily');
     expect(state.runInserts).toHaveLength(1);
-    expect(send).toHaveBeenCalledWith({ type: 'autopilot.tick', runId: result!.started!.runId });
+    expect(send).toHaveBeenCalledTimes(1);
+    const tick = send.mock.calls[0]?.[0] as { type: string; runId: string; tickId: string };
+    expect(tick).toMatchObject({ type: 'autopilot.tick', runId: result!.started!.runId });
+    expect(typeof tick.tickId).toBe('string');
+    expect(tick.tickId.length).toBeGreaterThan(0);
     expect(kv.get('autopilot:lastday')).toBe(new Date().toISOString().slice(0, 10));
   });
 
