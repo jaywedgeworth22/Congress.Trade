@@ -14,7 +14,6 @@
     "npm:@vitest/coverage-v8@4.1.10": "4.1.10_vitest@4.1.10_@opentelemetry+api@1.9.1_@types+node@26.1.1_vite@8.1.5__@types+node@26.1.1__esbuild@0.28.1",
     "npm:cheerio@^1.2.0": "1.2.0",
     "npm:dotenv@*": "17.4.2",
-    "npm:eslint@^10.7.0": "10.7.0",
     "npm:fflate@~0.8.3": "0.8.3",
     "npm:hono@^4.12.31": "4.12.31",
     "npm:jsonrepair@^3.15.0": "3.15.0",
@@ -2234,7 +2233,7 @@
     ],
     "packageJson": {
       "dependencies": [
-        "npm:@aws-sdk/client-s3@3.1094.0",
+        "npm:@aws-sdk/client-s3@3.1095.0",
         "npm:@fontsource/zilla-slab@^5.3.0",
         "npm:@google/genai@^2.13.0",
         "npm:@libsql/client@~0.17.4",
@@ -2244,14 +2243,14 @@
         "npm:@typescript-eslint/parser@^8.62.1",
         "npm:@vitest/coverage-v8@4.1.10",
         "npm:cheerio@^1.2.0",
-        "npm:eslint@^10.7.0",
+        "npm:eslint@^10.8.0",
         "npm:fflate@~0.8.3",
-        "npm:hono@^4.12.31",
+        "npm:hono@^4.12.32",
         "npm:jsonrepair@^3.15.0",
         "npm:node-html-parser@9",
         "npm:pdf-lib@^1.17.1",
         "npm:typescript@^5.6.3",
-        "npm:unpdf@^1.6.2",
+        "npm:unpdf@^1.8.0",
         "npm:vitest@^4.1.10",
         "npm:zod@^4.4.3"
       ]
