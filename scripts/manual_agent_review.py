@@ -16,7 +16,6 @@ def parse_bracket(amount_str):
     if not amount_str:
         return 1001, 15000
     s = str(amount_str).replace(',', '')
-    # Match amounts like $2722.50 or $1,001-$15,000
     nums = [float(n) for n in re.findall(r'\$?(\d+(?:\.\d+)?)', s)]
     if len(nums) >= 2:
         return int(nums[0]), int(nums[1])
@@ -64,6 +63,7 @@ def process_item(item):
     reason = item.get("reason", "")
     revision = item.get("reviewRevision", 1)
     payload = item.get("payload") or {}
+    filed_date = payload.get("filedDate") or item.get("filedDate") or ""
 
     edits = []
 
@@ -85,9 +85,13 @@ def process_item(item):
         owner_raw = str(tx_data.get("issuer") or tx_data.get("Owner") or "self").lower()
         owner = owner_raw if owner_raw in ("self", "spouse", "joint", "dependent") else "self"
 
+        clean_tx_date = tx_date[:10]
+        if filed_date and clean_tx_date > filed_date[:10]:
+            clean_tx_date = filed_date[:10]
+
         edits.append({
             "txType": tx_type,
-            "txDate": tx_date[:10],
+            "txDate": clean_tx_date,
             "owner": owner,
             "ticker": ticker,
             "assetName": str(tx_data.get("Description") or tx_data.get("notes") or (f"{ticker} Stock" if ticker else "Securities"))[:500],
@@ -106,6 +110,11 @@ def process_item(item):
             if not tx_date or len(tx_date) < 10:
                 continue
 
+            clean_tx_date = tx_date[:10]
+            r_filed_date = r.get("filedDate") or filed_date
+            if r_filed_date and clean_tx_date > r_filed_date[:10]:
+                clean_tx_date = r_filed_date[:10]
+
             owner_raw = str(r.get("owner") or "self").lower()
             owner = owner_raw if owner_raw in ("self", "spouse", "joint", "dependent") else "self"
             raw_ticker = r.get("ticker")
@@ -121,7 +130,7 @@ def process_item(item):
 
             edits.append({
                 "txType": tx_type,
-                "txDate": tx_date[:10],
+                "txDate": clean_tx_date,
                 "owner": owner,
                 "ticker": ticker,
                 "assetName": asset_name[:500],
