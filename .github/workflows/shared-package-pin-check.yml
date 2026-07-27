@@ -1,0 +1,53 @@
+name: Shared package pin check
+
+# Vendor-era guard for @jaywedgeworth22/congress-trading-shared.
+# Congress.Trade consumes a checked-in vendor tree (VENDOR-PROVENANCE.md + Deno
+# import maps). Peer apps still npm-pin the git tag. This workflow replaces the
+# pre-Deno npm lockfile comparator deleted in #666.
+#
+# Local assertions always hard-fail. Peer lock comparison runs when
+# GH_PACKAGES_TOKEN (preferred) or GITHUB_TOKEN can read peer repos.
+# Keep ASCII-only (AGENTS.md).
+
+on:
+  pull_request:
+    paths:
+      - 'app/vendor/congress-trading-shared/**'
+      - 'deno.json'
+      - 'app/deno.json'
+      - 'package.json'
+      - 'app/package.json'
+      - 'scripts/check-shared-package-pin.mjs'
+      - '.github/workflows/shared-package-pin-check.yml'
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 13 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-pin:
+    name: shared vendor + peer pin
+    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Materialize the full repository checkout
+        run: |
+          git sparse-checkout disable || true
+          git reset --hard HEAD
+          test -f scripts/check-shared-package-pin.mjs
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Check shared vendor provenance and peer pins
+        env:
+          GH_PACKAGES_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/check-shared-package-pin.mjs

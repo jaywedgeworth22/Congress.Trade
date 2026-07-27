@@ -591,9 +591,10 @@ export default function Dashboard() {
       <section className="control-panel" id="controls" aria-label="Account controls">
         {isBootstrapLoading ? <div className="empty">Loading account...</div> : null}
         {!isBootstrapLoading && !user ? (
-          <section className="auth-gate">
-            <h2>Sign in to save account settings</h2>
-            <p>The feed is public. Watchlists and delivery credentials are account-owned and require a session.</p>
+          <section className="auth-gate" id="delivery">
+            <h2>Delivery</h2>
+            <p>Trends and the trade feed stay free. Delivery (webhook / SSE) requires a signed-in Premium account — this tab stays visible so you can see what Premium unlocks.</p>
+            <p>Sign in with Google to continue. After sign-in, start a Premium trial to activate Delivery creation.</p>
             <a className="primary-link" href="/auth/google/start">Sign in with Google</a>
           </section>
         ) : null}
@@ -624,23 +625,30 @@ export default function Dashboard() {
               <button type="submit" disabled={isPreferencesLoading || Boolean(preferencesError) || isSubmitting}>Save Watchlist</button>
             </form>
 
-            <form onSubmit={submitSubscription}>
+            <form onSubmit={submitSubscription} id="delivery">
               <h2>Delivery</h2>
-              <p>Create an SSE or webhook delivery through the command gateway.</p>
+              {!premium ? (
+                <p role="status">
+                  Signed in as Free. Delivery creation stays deactivated until Premium is active.
+                  {' '}<a className="primary-link" href="/?view=subs">Open Delivery / Premium</a>
+                </p>
+              ) : (
+                <p>Create an SSE or webhook delivery through the command gateway.</p>
+              )}
               <div className="segmented" aria-label="Delivery type">
-                <button type="button" aria-pressed={delivery === 'sse'} className={delivery === 'sse' ? 'active' : ''} onClick={() => setDelivery('sse')}>SSE</button>
-                <button type="button" aria-pressed={delivery === 'webhook'} className={delivery === 'webhook' ? 'active' : ''} onClick={() => setDelivery('webhook')}>Webhook</button>
+                <button type="button" aria-pressed={delivery === 'sse'} className={delivery === 'sse' ? 'active' : ''} onClick={() => setDelivery('sse')} disabled={!premium || isSubmitting}>SSE</button>
+                <button type="button" aria-pressed={delivery === 'webhook'} className={delivery === 'webhook' ? 'active' : ''} onClick={() => setDelivery('webhook')} disabled={!premium || isSubmitting}>Webhook</button>
               </div>
               {delivery === 'webhook' ? (
                 <input
                   type="url"
-                  required
+                  required={premium}
                   value={targetUrl}
                   onChange={(event) => setTargetUrl(event.target.value)}
                   placeholder="https://example.com/webhook"
                   aria-label="Webhook URL"
                   autoComplete="off"
-                  disabled={isSubmitting}
+                  disabled={!premium || isSubmitting}
                 />
               ) : null}
               <div className="delivery-scope" aria-live="polite">
@@ -654,7 +662,7 @@ export default function Dashboard() {
                 ) : null}
                 <p className="delivery-scope-helper">{deliveryScopeHelperText(watchlistTickers)}</p>
               </div>
-              <button type="submit" disabled={isSubmitting}>Create Delivery</button>
+              <button type="submit" disabled={!premium || isSubmitting}>Create Delivery</button>
             </form>
           </>
         ) : null}
