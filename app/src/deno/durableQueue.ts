@@ -205,7 +205,15 @@ function queueDedupeKey(
         : null;
     }
     case "autopilot.tick":
-      return typeof message.runId === "string" ? key(message.runId) : null;
+      // Per-tick uniqueness: continuation re-enqueues while the prior claim is
+      // still `processing`, so a stable runId-only key would collide.
+      return typeof message.runId === "string" &&
+          typeof (message as { tickId?: unknown }).tickId === "string"
+        ? key(message.runId, (message as { tickId: string }).tickId)
+        : typeof message.runId === "string"
+          // Legacy messages (pre-tickId) keep run-scoped dedupe.
+          ? key(message.runId)
+          : null;
     default:
       return null;
   }
@@ -272,6 +280,12 @@ export function assertCanonicalQueueMessage(
       return;
     case "autopilot.tick":
       requireString(message.runId, "runId", type);
+      // tickId is required for new enqueues (unique active-dedupe). Accept
+      // legacy in-flight messages that only carry runId so deploys don't
+      // dead-letter already-queued ticks.
+      if (message.tickId !== undefined) {
+        requireString(message.tickId, "tickId", type);
+      }
       return;
     case "usage.telemetry":
       if (!message.event || typeof message.event !== "object") {
