@@ -572,6 +572,12 @@ export interface Env {
   SENATE_MAX_LOOKBACK_DAYS?: string;
   /** Relay microservice URL (e.g. Hetzner Coolify host) for Senate eFD ingestion. */
   SENATE_RELAY_URL?: string;
+  /** Relay microservice URL (e.g. Hetzner Coolify host) for House Clerk ingestion. */
+  HOUSE_RELAY_URL?: string;
+  /** Relay microservice URL (e.g. Hetzner Coolify host) for Executive OGE ingestion. */
+  OGE_RELAY_URL?: string;
+  /** Shared fallback relay microservice URL for all ingestion sources. */
+  INGEST_RELAY_URL?: string;
   /** Proxy gateway URL for routing Senate eFD requests. */
   SENATE_PROXY_URL?: string;
   /** Enable Cloudflare Browser Rendering fallback (strictly capped to free tier). */

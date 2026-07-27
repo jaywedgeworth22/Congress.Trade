@@ -1,10 +1,11 @@
 /**
  * app/scripts/senate-relay.ts
  *
- * Lightweight Senate eFD Relay Microservice.
+ * Unified Ingestion Relay Microservice (Senate, House & Executive OGE).
  * Runs on the self-hosted Hetzner runner (coolify-hetzner-congress) or any
- * residential/VPS egress node. Proxying requests to efdsearch.senate.gov
- * bypasses cloud-provider IP blocks without incurring third-party costs ($0.00).
+ * residential/VPS egress node. Proxying requests to government disclosure portals
+ * (efdsearch.senate.gov, disclosures-clerk.house.gov, extapps2.oge.gov) bypasses
+ * cloud-provider IP blocks without incurring third-party costs ($0.00).
  *
  * Usage:
  *   deno run --allow-net --allow-env scripts/senate-relay.ts
@@ -13,7 +14,7 @@
  */
 
 const PORT = Number(Deno.env.get('PORT') || Deno.env.get('RELAY_PORT') || '8788');
-const RELAY_SECRET = Deno.env.get('SENATE_RELAY_SECRET') || '';
+const RELAY_SECRET = Deno.env.get('SENATE_RELAY_SECRET') || Deno.env.get('INGEST_RELAY_SECRET') || '';
 
 const SENATE_BASE = 'https://efdsearch.senate.gov';
 const SENATE_SEARCH = `${SENATE_BASE}/search/`;
@@ -39,7 +40,7 @@ async function handleRelayRequest(req: Request): Promise<Response> {
 
   // Health check
   if (req.method === 'GET' && url.pathname === '/health') {
-    return Response.json({ ok: true, service: 'senate-efd-relay', time: new Date().toISOString() });
+    return Response.json({ ok: true, service: 'ingestion-relay-microservice', time: new Date().toISOString() });
   }
 
   // Optional Secret Auth
@@ -50,6 +51,7 @@ async function handleRelayRequest(req: Request): Promise<Response> {
     }
   }
 
+  // SENATE eFD Handler
   if (req.method === 'POST' && url.pathname === '/fetch-ptr') {
     try {
       const body = (await req.json()) as {
@@ -155,10 +157,45 @@ async function handleRelayRequest(req: Request): Promise<Response> {
     }
   }
 
+  // HOUSE / OGE Generic Egress Passthrough
+  if (req.method === 'POST' && (url.pathname === '/fetch-house' || url.pathname === '/fetch-oge' || url.pathname === '/fetch-url')) {
+    try {
+      const body = (await req.json()) as { url?: string; responseType?: 'text' | 'json' | 'bytes' };
+      if (!body.url) {
+        return Response.json({ error: 'url parameter required' }, { status: 400 });
+      }
+
+      const targetUrl = body.url;
+      const res = await fetch(targetUrl, {
+        headers: {
+          ...BROWSER_HEADERS,
+          accept: '*/*',
+        },
+      });
+
+      if (!res.ok) {
+        return Response.json({ error: `Relay fetch failed for ${targetUrl}: HTTP ${res.status}` }, { status: res.status });
+      }
+
+      if (body.responseType === 'bytes') {
+        const buf = await res.arrayBuffer();
+        return new Response(buf, {
+          status: 200,
+          headers: { 'content-type': res.headers.get('content-type') || 'application/octet-stream' },
+        });
+      }
+
+      const text = await res.text();
+      return Response.json({ status: res.status, url: targetUrl, body: text });
+    } catch (err) {
+      return Response.json({ error: (err as Error).message }, { status: 500 });
+    }
+  }
+
   return Response.json({ error: 'Not found' }, { status: 404 });
 }
 
-console.log(`Senate eFD Relay Microservice listening on port ${PORT}`);
+console.log(`Ingestion Relay Microservice listening on port ${PORT}`);
 // @ts-ignore - Deno global
 if (typeof Deno !== 'undefined' && typeof Deno.serve === 'function') {
   // @ts-ignore
