@@ -162,7 +162,10 @@ export const OPENROUTER_EXTRACTION_RESPONSE_FORMAT = {
               location: { type: ['string', 'null'] },
               description: { type: ['string', 'null'] },
               supplementalText: { type: ['string', 'null'] },
-              confidence: { type: 'number', minimum: 0, maximum: 1 },
+              // Anthropic (via OpenRouter) rejects minimum/maximum on number
+              // types in strict json_schema ("For 'number' type, properties
+              // maximum, minimum are not supported"). Clamp in normalizer.
+              confidence: { type: 'number' },
             },
             required: [
               'assetName',

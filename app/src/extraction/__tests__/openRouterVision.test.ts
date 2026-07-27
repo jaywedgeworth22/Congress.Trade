@@ -450,6 +450,15 @@ describe('parseMaxPrice / isEngineOverrideRejection', () => {
 });
 
 describe('OpenRouterVisionExtractor OpenRouter features', () => {
+  
+  it('omits minimum/maximum on number fields (Anthropic-via-OpenRouter rejects them)', () => {
+    const conf = (OPENROUTER_EXTRACTION_RESPONSE_FORMAT as any).json_schema.schema
+      .properties.transactions.items.properties.confidence;
+    expect(conf).toEqual({ type: 'number' });
+    expect(conf).not.toHaveProperty('minimum');
+    expect(conf).not.toHaveProperty('maximum');
+  });
+
   it('sends strict json_schema + require_parameters + usage accounting for structured-output models', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(okPayload());
     vi.stubGlobal('fetch', fetchMock);
