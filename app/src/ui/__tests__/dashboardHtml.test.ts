@@ -1198,7 +1198,9 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function amountTier(');
     expect(DASHBOARD_HTML).toContain('function amountBarsHtml(');
     expect(DASHBOARD_HTML).toContain('function amountCellHtml(');
+    expect(DASHBOARD_HTML).toContain("label: 'Up to $1k'");
     expect(DASHBOARD_HTML).toContain("label: 'Up to $15k'");
+    expect(DASHBOARD_HTML).toContain('[0, 1000]');
     expect(DASHBOARD_HTML).toContain("label: 'Over $1M'");
     expect(DASHBOARD_HTML).toContain('class="amount-bars tier-');
     expect(DASHBOARD_HTML).toContain('class="amount-range fc-amt-val"');

@@ -4,9 +4,10 @@
  *
  * Amount-range parsing shared by the HTML / text-PDF extractors and the
  * normalizer. STOCK Act PTRs disclose value as a bracket string such as
- * "$1,001 - $15,000" or "$50,000,001 +". This converts such strings to a
- * numeric [min, max] pair and snaps it onto the canonical bracket set in
- * src/shared/brackets.ts when possible.
+ * "$1,001 - $15,000" or "$50,000,001 +", or as an exact dollar amount under
+ * $1,001 (e.g. "$456.00") which snaps onto the product $0–$1,000 tier. This
+ * converts such strings to a numeric [min, max] pair and snaps it onto the
+ * canonical bracket set in src/shared/brackets.ts when possible.
  */
 
 import { matchBracket, nearestBracket, STOCK_ACT_BRACKETS } from '../shared/brackets.ts';
