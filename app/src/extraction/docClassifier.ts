@@ -51,6 +51,16 @@ export const DOC_CLASS_ORDER_SQL = `CASE COALESCE(f.doc_class, '')
            WHEN 'hard_scan' THEN 4
            ELSE 5 END`;
 
+/**
+ * "Current era first": congressional terms begin January of odd years, so the
+ * current era starts Jan 1 of the most recent odd year. Shared by the
+ * agreement backstop and backlog autopilot selectors.
+ */
+export function currentEraStart(now = new Date()): string {
+  const year = now.getUTCFullYear();
+  return `${year - ((year - 1) % 2)}-01-01`;
+}
+
 // Deterministic thresholds (bytes-per-page as a cheap image-density proxy).
 const EMPTY_MAX_BYTES_PER_PAGE = 8 * 1024;
 const CLEAN_MAX_BYTES_PER_PAGE = 300 * 1024;

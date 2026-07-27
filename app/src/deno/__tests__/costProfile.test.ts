@@ -5,10 +5,10 @@ describe('resolveDenoCostProfile', () => {
   it('defaults to free (Aug free-tier survival)', () => {
     const p = resolveDenoCostProfile({});
     expect(p.name).toBe('free');
-    expect(p.cronSchedule).toBe('*/5 * * * *');
-    expect(p.drainLimit).toBe(3);
+    expect(p.cronSchedule).toBe('*/15 * * * *');
+    expect(p.drainLimit).toBe(2);
     expect(p.drainClaimSize).toBe(1);
-    expect(p.outboxLimit).toBe(20);
+    expect(p.outboxLimit).toBe(10);
     expect(p.disableInternalCron).toBe(false);
     expect(p.idleShortCircuit).toBe(true);
   });
@@ -65,11 +65,11 @@ describe('resolveDenoCostProfile', () => {
     });
     expect(p.drainLimit).toBe(100);
     expect(p.drainClaimSize).toBe(1);
-    expect(p.outboxLimit).toBe(20);
+    expect(p.outboxLimit).toBe(10); // invalid override → free-profile default
   });
 
   it('exposes a public summary without secrets', () => {
     const s = costProfilePublicSummary(resolveDenoCostProfile({ CT_COST_PROFILE: 'free' }));
-    expect(s).toMatchObject({ name: 'free', cronSchedule: '*/5 * * * *', drainLimit: 3 });
+    expect(s).toMatchObject({ name: 'free', cronSchedule: '*/15 * * * *', drainLimit: 2 });
   });
 });

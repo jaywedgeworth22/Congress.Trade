@@ -124,6 +124,7 @@ import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets,
 import {
   backfillTradeLatencyCandidates,
   getDisclosureLatencySummary,
+  recordTradeLatencyCandidates,
   runDisclosureLatencyProbe,
 } from '../ingestion/tradeLatency.ts';
 import { pollExecutive } from '../ingestion/watcher.ts';
@@ -2616,6 +2617,36 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       console.error('review confirm: audit receipt failed', docId, (err as Error).message);
     }
 
+    // Primary confirm publishes into the live feed — seed latency candidates
+    // the same way clean persistTransactions does for live ingest.
+    if (source === 'primary' && transactionIds.length > 0) {
+      const seedTxs = transactionIds.map((id) => ({
+        id,
+        docId,
+        filerId: filingFilerId,
+        txDate: null,
+        owner: null,
+        assetName: '',
+        ticker: null,
+        assetType: null,
+        txType: 'P' as const,
+        amountMin: null,
+        amountMax: null,
+        isOption: false,
+        capGainsOver200: false,
+        rawText: '',
+        confidence: 1,
+        source: 'primary' as const,
+        createdAt: nowIso,
+        cursorSeq: 0,
+        firstSeenAt: filing.first_seen_at ?? null,
+        filedDate: filing.filed_date ?? null,
+      }));
+      await recordTradeLatencyCandidates(c.env, seedTxs, nowIso).catch((err) => {
+        console.warn('review confirm: latency candidate seed failed', docId, (err as Error).message);
+      });
+    }
+
     return c.json({
       docId,
       decision,
@@ -3087,7 +3118,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         'OPENROUTER_MODEL', 'OPENROUTER_PDF_ENGINE_TEXT', 'OPENROUTER_PDF_ENGINE_SCANNED', 'OPENROUTER_MAX_PRICE',
         'AGREEMENT_AUTOPUBLISH_ENABLED', 'AGREEMENT_AUTOPUBLISH_LIMIT', 'AGREEMENT_MAX_ATTEMPTS', 'AGREEMENT_DAILY_LLM_BUDGET',
         'AGREEMENT_BIG_DOC_START_TIER2', 'AGREEMENT_BIG_DOC_PAGE_THRESHOLD', 'AGREEMENT_BIG_DOC_BYTES_THRESHOLD',
-        'AGREEMENT_TEXT_NORMALIZATION',
+        'AGREEMENT_TEXT_NORMALIZATION', 'AGREEMENT_INCLUDE_HISTORICAL', 'AGREEMENT_STORED_AGREE_ENABLED',
         'AGREEMENT_HOUSE_MODEL_A', 'AGREEMENT_HOUSE_MODEL_B', 'AGREEMENT_HOUSE_MODEL_C',
         'AGREEMENT_HOUSE_MODEL_D', 'AGREEMENT_HOUSE_MODEL_E',
         'AGREEMENT_SENATE_MODEL_A', 'AGREEMENT_SENATE_MODEL_B', 'AGREEMENT_SENATE_MODEL_C',
@@ -3101,6 +3132,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         'AUTOPILOT_ENABLED', 'AUTOPILOT_BACKLOG_THRESHOLD', 'AUTOPILOT_DAILY_USD_BUDGET',
         'AUTOPILOT_MAX_DOCS_PER_RUN', 'AUTOPILOT_ERROR_CLASS_HALT_THRESHOLD',
         'AUTOPILOT_MIN_INTERVAL_MINUTES', 'AUTOPILOT_BATCH_PRESEED',
+        'AUTOPILOT_LEGACY_REPLAY_ENABLED', 'AUTOPILOT_INCLUDE_HISTORICAL',
         'DOC_CLASSIFIER_ENABLED', 'DOC_CLASSIFIER_MODEL', 'DOC_CLASSIFIER_PARSE_ENGINE',
         'DOC_CLASS_EMPTY_SPOTCHECK_RATE',
         'ADMIN_OPEN_IN_DEV',

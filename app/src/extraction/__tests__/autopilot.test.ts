@@ -314,6 +314,28 @@ describe('currentEraStart', () => {
   });
 });
 
+describe('selectNextDoc era filter', () => {
+  it('hard-filters to current era by default (AUTOPILOT_INCLUDE_HISTORICAL unset)', async () => {
+    const state = makeState({ runRow: runRow(), docs: [doc('H-1')] });
+    const { env } = makeEnv(state);
+    const check = vi.fn(async () => ({ docId: 'H-1', outcome: 'published' as const, inserted: 1 }));
+    await handleAutopilotTick(env, 'run-1', { check: check as never });
+    const sql = state.selectionSqls.find((s) => /ORDER BY/i.test(s) && /doc_class/i.test(s)) ?? '';
+    expect(sql).toMatch(/COALESCE\(f\.filed_date, ''\) >= \?/);
+  });
+
+  it('allows historical when AUTOPILOT_INCLUDE_HISTORICAL=true', async () => {
+    const state = makeState({ runRow: runRow(), docs: [doc('H-1')] });
+    const { env } = makeEnv(state, { AUTOPILOT_INCLUDE_HISTORICAL: 'true' });
+    const check = vi.fn(async () => ({ docId: 'H-1', outcome: 'published' as const, inserted: 1 }));
+    await handleAutopilotTick(env, 'run-1', { check: check as never });
+    const sql = state.selectionSqls.find((s) => /ORDER BY/i.test(s) && /doc_class/i.test(s)) ?? '';
+    // era preference remains in ORDER BY, but the hard WHERE filter is absent
+    expect(sql).toMatch(/CASE WHEN COALESCE\(f\.filed_date/);
+    expect(sql).not.toMatch(/json_each\(\?\)\)\s+AND COALESCE\(f\.filed_date/);
+  });
+});
+
 describe('handleAutopilotTick — budget meter', () => {
   it('halts before any model call when the daily USD budget is exhausted', async () => {
     const state = makeState({ runRow: runRow(), docs: [doc('H-1')] });
@@ -506,8 +528,10 @@ describe('handleAutopilotTick — doc_class consumers', () => {
     expect(sql).toContain("WHEN 'typed' THEN 0");
     expect(sql).toContain("WHEN 'clean_scan' THEN 1");
     expect(sql).toContain("WHEN 'hard_scan' THEN 4");
-    // Class ordering comes BEFORE the current-era ordering.
-    expect(sql.indexOf("WHEN 'typed'")).toBeLessThan(sql.indexOf('filed_date'));
+    // Class ordering comes BEFORE the current-era ordering inside ORDER BY
+    // (filed_date may also appear earlier in a current-era WHERE filter).
+    const orderBy = sql.slice(sql.toUpperCase().indexOf('ORDER BY'));
+    expect(orderBy.indexOf("WHEN 'typed'")).toBeLessThan(orderBy.indexOf('filed_date'));
   });
 
   it('auto-resolves an empty doc as no-transactions with an audit row (no model spend)', async () => {

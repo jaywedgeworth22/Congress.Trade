@@ -33,6 +33,7 @@ function makeEnv(flag: string | undefined) {
   const attempted: string[] = [];
   const resolved: string[] = [];
   const sent: unknown[] = [];
+  const selectionSqls: string[] = [];
   const review = { resolved: 0, attempts: 0, tier: null as number | null, token: null as string | null, claimedAt: null as string | null, nextAttemptAt: null as string | null };
   const db = {
     prepare(sql: string) {
@@ -57,6 +58,7 @@ function makeEnv(flag: string | undefined) {
         },
         async all<T>() {
           if (/FROM review_queue rq JOIN filings/i.test(sql)) {
+            selectionSqls.push(sql);
             return { results: [{ doc_id: 'H-AP-1', raw_object_key: 'raw/H-AP-1' }] as T[] };
           }
           if (/FROM securities_master/i.test(sql)) return { results: [] as T[] };
@@ -138,7 +140,7 @@ function makeEnv(flag: string | undefined) {
     INGEST_QUEUE: { send: async (m: unknown) => { sent.push(m); } },
     DELIVERY_QUEUE: { send: async () => {}, sendBatch: async () => {} },
   } as never;
-  return { env, inserted, attempted, resolved, sent, review };
+  return { env, inserted, attempted, resolved, sent, review, selectionSqls };
 }
 
 function stubAgree(text: string) {
@@ -171,6 +173,15 @@ describe('maybeRunAgreementAutopublish (cron backstop)', () => {
     ]);
     expect(attempted).toContain('H-AP-1'); // attempt stamped so it won't re-enqueue
     expect(inserted).toHaveLength(0); // the cron itself publishes nothing
+  });
+
+  it('orders by doc_class + current-era and filters historical by default', async () => {
+    const { env, selectionSqls } = makeEnv('true');
+    await maybeRunAgreementAutopublish(env);
+    const seenSql = selectionSqls.find((sql) => /ORDER BY/i.test(sql)) ?? '';
+    expect(seenSql).toMatch(/WHEN 'typed' THEN 0/);
+    expect(seenSql).toMatch(/COALESCE\(f\.filed_date/);
+    expect(seenSql).toMatch(/COALESCE\(f\.filed_date, ''\) >= \?/);
   });
 
   it('atomically leases a doc so concurrent scheduler passes enqueue it once', async () => {

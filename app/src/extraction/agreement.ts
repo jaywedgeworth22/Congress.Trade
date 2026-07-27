@@ -77,6 +77,7 @@ import {
   type BakeoffCandidate,
   type CandidateDocResult,
   type CandidateInvocation,
+  type Provider,
 } from './bakeoff.ts';
 import { arbitrationRowKey } from '../extractors/types.ts';
 import {
@@ -96,6 +97,8 @@ import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
 import { getUnderlyingProvider } from '../benchmark/settings.ts';
 import { recordProviderHealth } from './providerHealth.ts';
+import { DOC_CLASS_ORDER_SQL, currentEraStart } from './docClassifier.ts';
+import { recordTradeLatencyCandidates } from '../ingestion/tradeLatency.ts';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -145,6 +148,11 @@ interface CascadeAudit {
   unanimous?: boolean;
   /** Per-field vote summary (tier-3 majority resolve); omitted for unanimous tiers. */
   votes?: unknown;
+  /**
+   * Distinguishes soft-publish from stored extraction_runs vs a live cascade
+   * resolve. Defaults to `agreement-cascade` in the audit row.
+   */
+  resolvedBy?: string;
 }
 
 /** Canonical comparison form for text-valued material fields. */
@@ -687,7 +695,7 @@ async function persistClaimedPublish(
       null,
       'model_agreement',
       JSON.stringify({
-        resolvedBy: 'agreement-cascade',
+        resolvedBy: audit.resolvedBy ?? 'agreement-cascade',
         tier: audit.tier,
         unanimous: audit.unanimous ?? undefined,
         rowCount: transactions.length,
@@ -857,6 +865,14 @@ async function finalizePublish(
     // The committed generic outbox rows remain pending for the reconciler.
     console.error('agreement publish: delivery outbox flush failed', docId, (err as Error).message);
   });
+  // Seed latency probes for agreement/soft publishes too — live ingest already
+  // does this in persistTransactions, but review-queue publishes skipped it.
+  const publishedTxs = txs.filter((tx) => insertedIds.includes(tx.id));
+  if (publishedTxs.length) {
+    await recordTradeLatencyCandidates(env, publishedTxs, new Date().toISOString()).catch((err) => {
+      console.warn('agreement publish: latency candidate seed failed', docId, (err as Error).message);
+    });
+  }
   return { docId, outcome: 'published', tier: audit.tier, inserted: insertedIds.length };
 }
 
@@ -1499,6 +1515,17 @@ export interface AgreementEnv {
   AGREEMENT_DAILY_LLM_BUDGET?: string;
   /** Kill switch for the free-text agreement comparator (default on; 'false' restores byte-strict). */
   AGREEMENT_TEXT_NORMALIZATION?: string;
+  /**
+   * Default-off. When true, the agreement cron/backstop may enqueue historical
+   * (pre-current-era) review docs. When false, only current-era filings are
+   * selected so free-tier budget stays on timely disclosures.
+   */
+  AGREEMENT_INCLUDE_HISTORICAL?: string;
+  /**
+   * Soft-publish from stored multi-vendor extraction_runs before spending LLM
+   * budget. Default on; set 'false' to disable.
+   */
+  AGREEMENT_STORED_AGREE_ENABLED?: string;
 }
 
 /**
@@ -1526,6 +1553,8 @@ export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
     'AGREEMENT_BIG_DOC_BYTES_THRESHOLD',
     'AGREEMENT_DAILY_LLM_BUDGET',
     'AGREEMENT_TEXT_NORMALIZATION',
+    'AGREEMENT_INCLUDE_HISTORICAL',
+    'AGREEMENT_STORED_AGREE_ENABLED',
   ])) as AgreementEnv;
 }
 
@@ -1762,6 +1791,120 @@ async function acquireAgreementLease(
 }
 
 /**
+ * Pick two cross-vendor stored reads that already materially agree. Latest ok
+ * run per underlying provider wins. Empty×empty is NOT agreement (matches the
+ * live cascade). Exported for unit tests.
+ */
+export function pickAgreeingStoredReads(
+  runs: Array<{ provider: string; model: string; rows: ParsedTx[] }>,
+  normalizeText = true,
+): CandidateDocResult[] | null {
+  const latestByUnderlying = new Map<string, CandidateDocResult>();
+  for (const run of runs) {
+    const provider = run.provider as Provider;
+    const candidate = { provider, model: run.model } as BakeoffCandidate;
+    const underlying = getUnderlyingProvider(candidate).trim().toLowerCase();
+    if (!underlying || latestByUnderlying.has(underlying)) continue;
+    const rows = run.rows ?? [];
+    if (rows.length === 0) continue;
+    latestByUnderlying.set(underlying, {
+      provider,
+      model: run.model,
+      docId: '',
+      ok: true,
+      latencyMs: 0,
+      rowCount: rows.length,
+      rowKeys: rows.map((tx) => arbitrationRowKey(tx)),
+      avgConfidence: rows.reduce((sum, tx) => sum + (tx.confidence ?? 0), 0) / rows.length,
+      rows,
+      cached: true,
+    });
+  }
+  const reads = [...latestByUnderlying.values()];
+  for (let i = 0; i < reads.length; i += 1) {
+    for (let j = i + 1; j < reads.length; j += 1) {
+      if (sameRowSet(reads[i], reads[j], normalizeText)) {
+        return [reads[i], reads[j]];
+      }
+    }
+  }
+  return null;
+}
+
+async function loadStoredExtractionRuns(
+  env: Env,
+  docId: string,
+): Promise<Array<{ provider: string; model: string; rows: ParsedTx[] }>> {
+  try {
+    const rows = await all<{ provider: string; model: string; result_json: string }>(
+      env.DB,
+      `SELECT provider, model, result_json
+         FROM extraction_runs
+        WHERE doc_id = ? AND ok = 1 AND result_json IS NOT NULL
+        ORDER BY created_at DESC
+        LIMIT 40`,
+      [docId],
+    );
+    const out: Array<{ provider: string; model: string; rows: ParsedTx[] }> = [];
+    for (const row of rows) {
+      try {
+        const parsed = JSON.parse(row.result_json) as ParsedTx[];
+        if (!Array.isArray(parsed)) continue;
+        out.push({ provider: row.provider, model: row.model, rows: parsed });
+      } catch {
+        /* skip corrupt stored run */
+      }
+    }
+    return out;
+  } catch (err) {
+    if (!/no such table|extraction_runs/i.test((err as Error).message)) {
+      console.warn('stored extraction_runs load failed:', docId, (err as Error).message);
+    }
+    return [];
+  }
+}
+
+/**
+ * Zero-LLM soft publish: when two distinct underlying vendors already left
+ * agreeing non-empty readings in extraction_runs, publish without spending
+ * cascade budget or an agreement attempt. Returns null when no soft path
+ * applies (caller continues to the live cascade).
+ */
+async function tryPublishFromStoredExtractions(
+  env: Env,
+  docId: string,
+  claimToken: string,
+  normalizeText: boolean,
+): Promise<AgreementDocResult | null> {
+  const stored = await loadStoredExtractionRuns(env, docId);
+  if (stored.length < 2) return null;
+  const agreed = pickAgreeingStoredReads(stored, normalizeText);
+  if (!agreed) return null;
+  const frow = await loadFilingRow(env, docId);
+  if (!frow) return null;
+  const models = Object.fromEntries(
+    agreed.map((r, i) => [String.fromCharCode(97 + i), `${r.provider}:${r.model}`]),
+  );
+  const res = await finalizePublish(
+    env,
+    frow,
+    docId,
+    resolveAgreedRows(agreed, normalizeText),
+    false,
+    {
+      tier: 1,
+      models,
+      claimToken,
+      unanimous: true,
+      resolvedBy: 'stored-extraction-agreement',
+    },
+  );
+  if (res.outcome === 'published' || res.outcome === 'skipped') return res;
+  // Hard-fail / other: leave for the live cascade rather than terminalizing.
+  return null;
+}
+
+/**
  * Consume a queue-message token exactly once while atomically incrementing the
  * attempt counter under its cap. Rotating the token makes concurrent delivery
  * of the same message lose the CAS; escalation sends the resulting owner token
@@ -1957,6 +2100,20 @@ export async function handleAgreementCheck(
     );
     await finishTerminalClaim(env, docId, queuedToken, max);
     return flagged;
+  }
+
+  // Zero-LLM soft path: reuse agreeing multi-vendor extraction_runs before
+  // spending an attempt or daily LLM budget. Default on.
+  if (e.AGREEMENT_STORED_AGREE_ENABLED !== 'false') {
+    const normalizeText = e.AGREEMENT_TEXT_NORMALIZATION !== 'false';
+    const soft = await tryPublishFromStoredExtractions(env, docId, queuedToken, normalizeText);
+    if (soft) {
+      console.log(
+        `agreement.check ${docId}: soft-publish from stored extractions → ${soft.outcome}`
+          + `${soft.inserted ? ` (+${soft.inserted} tx)` : ''}`,
+      );
+      return soft;
+    }
   }
 
   const claimed = await claimAgreementAttempt(env, docId, queuedToken, tier, max);
@@ -2155,6 +2312,11 @@ async function recoverExpiredCappedReviews(
  * review docs whose lease is free/expired and enqueue a fresh tier-1 check. The
  * enqueue helper repeats the same predicates in its guarded lease UPDATE, so
  * concurrent schedulers cannot both send the same document.
+ *
+ * Default selection is current-era + cheapest doc_class first (matching the
+ * backlog autopilot). Historical filings are skipped unless
+ * AGREEMENT_INCLUDE_HISTORICAL=true so free-tier ticks publish timely
+ * disclosures instead of re-burning 2022 backlog.
  */
 export async function maybeRunAgreementAutopublish(
   env: Env,
@@ -2165,10 +2327,13 @@ export async function maybeRunAgreementAutopublish(
   const max = maxAttempts(e);
   const now = new Date();
   const nowIso = now.toISOString();
+  const eraStart = currentEraStart(now);
+  const includeHistorical = e.AGREEMENT_INCLUDE_HISTORICAL === 'true';
   const terminalized = await recoverExpiredCappedReviews(env, max, limit);
 
   let docs: Array<{ doc_id: string; raw_object_key: string | null }>;
   try {
+    const eraFilter = includeHistorical ? '' : ' AND COALESCE(f.filed_date, \'\') >= ?';
     docs = await all<{ doc_id: string; raw_object_key: string | null }>(
       env.DB,
       `SELECT f.doc_id, f.raw_object_key
@@ -2186,8 +2351,14 @@ export async function maybeRunAgreementAutopublish(
              WHERE t.doc_id = rq.doc_id AND t.source IN ('primary', 'manual')
                AND t.deprecated_at IS NULL
           )
-        ORDER BY rq.created_at ASC LIMIT ?`,
-      [max, nowIso, leaseExpiredBefore(now), limit],
+          ${eraFilter}
+        ORDER BY ${DOC_CLASS_ORDER_SQL},
+                 CASE WHEN COALESCE(f.filed_date, '') >= ? THEN 0 ELSE 1 END,
+                 rq.created_at ASC
+        LIMIT ?`,
+      includeHistorical
+        ? [max, nowIso, leaseExpiredBefore(now), eraStart, limit]
+        : [max, nowIso, leaseExpiredBefore(now), eraStart, eraStart, limit],
     );
   } catch (err) {
     console.error('agreement autopublish selector failed:', (err as Error).message);

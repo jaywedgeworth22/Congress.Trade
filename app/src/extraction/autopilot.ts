@@ -65,7 +65,8 @@ import { estimateNominalReadCostUsd, priceBenchmarkUsage } from './benchmarkMetr
 import { meanConfidence, persistExtractionRun, type CandidateDocResult, type Provider } from './bakeoff.ts';
 import { arbitrationRowKey } from '../extractors/types.ts';
 import { pollBatch, submitBatch, type BatchChamber, type BatchDoc, type BatchProvider } from './batchExtract.ts';
-import { ensureDocClass, DOC_CLASS_ORDER_SQL, type DocClass } from './docClassifier.ts';
+import { ensureDocClass, DOC_CLASS_ORDER_SQL, currentEraStart, type DocClass } from './docClassifier.ts';
+export { currentEraStart } from './docClassifier.ts';
 import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
 import { allProvidersThrottled } from '../shared/monitorBudgetGate.ts';
 import { settleAutopilotBudgetReceipt } from '../shared/llmSpend.ts';
@@ -110,6 +111,13 @@ export interface AutopilotKnobs {
    * replayed. See selectLegacyReplayDoc for the exactly-once reset guard.
    */
   legacyReplayEnabled: boolean;
+  /**
+   * Default-off. When false (default), the selector only picks current-era
+   * filings so free-tier drain budget is not burned on 2022 historical
+   * backlog while newer disclosures wait. Set true to also process older
+   * eras (still era-ordered: current first).
+   */
+  includeHistorical: boolean;
 }
 
 interface AutopilotSecretEnv {
@@ -123,6 +131,7 @@ interface AutopilotSecretEnv {
   AUTOPILOT_BATCH_PRESEED?: string;
   DOC_CLASS_EMPTY_SPOTCHECK_RATE?: string;
   AUTOPILOT_LEGACY_REPLAY_ENABLED?: string;
+  AUTOPILOT_INCLUDE_HISTORICAL?: string;
 }
 
 function positiveNumber(raw: string | undefined, fallback: number): number {
@@ -149,6 +158,7 @@ export async function resolveAutopilotKnobs(env: Env): Promise<AutopilotKnobs> {
       'AUTOPILOT_BATCH_PRESEED',
       'DOC_CLASS_EMPTY_SPOTCHECK_RATE',
       'AUTOPILOT_LEGACY_REPLAY_ENABLED',
+      'AUTOPILOT_INCLUDE_HISTORICAL',
     ])) as AutopilotSecretEnv;
   } catch {
     // Resolver outage: fail closed (disabled) rather than run unconfigured.
@@ -162,6 +172,7 @@ export async function resolveAutopilotKnobs(env: Env): Promise<AutopilotKnobs> {
       preseedEnabled: false,
       emptySpotcheckRate: 0.1,
       legacyReplayEnabled: false,
+      includeHistorical: false,
     };
   }
   return {
@@ -177,17 +188,8 @@ export async function resolveAutopilotKnobs(env: Env): Promise<AutopilotKnobs> {
     preseedEnabled: secrets.AUTOPILOT_BATCH_PRESEED === 'true',
     emptySpotcheckRate: Math.min(positiveNumber(secrets.DOC_CLASS_EMPTY_SPOTCHECK_RATE, 0.1), 1),
     legacyReplayEnabled: secrets.AUTOPILOT_LEGACY_REPLAY_ENABLED === 'true',
+    includeHistorical: secrets.AUTOPILOT_INCLUDE_HISTORICAL === 'true',
   };
-}
-
-/**
- * "Current era first": congressional terms begin January of odd years, so the
- * current era starts Jan 1 of the most recent odd year. Era docs drain before
- * older filings; within an era, oldest review item first.
- */
-export function currentEraStart(now = new Date()): string {
-  const year = now.getUTCFullYear();
-  return `${year - ((year - 1) % 2)}-01-01`;
 }
 
 function budgetDay(now = new Date()): string {
@@ -587,23 +589,29 @@ async function selectNextDoc(
   eraStart: string,
   now: Date,
   legacyReplayEnabled = false,
+  includeHistorical = false,
 ): Promise<EligibleDoc | null> {
   const nowIso = now.toISOString();
   const leaseExpired = new Date(now.getTime() - AGREEMENT_CLAIM_LEASE_MS).toISOString();
   // Ordering: doc_class first (typed/clean/empty are the cheapest to resolve,
   // hard scans and quarantine candidates last), then current-era-first, then
-  // oldest review item. Cheapest wins.
+  // oldest review item. Cheapest wins. When includeHistorical is false, hard-
+  // filter to the current era so free-tier ticks don't burn on 2022 backlog.
+  const eraFilter = includeHistorical ? '' : ' AND COALESCE(f.filed_date, \'\') >= ?';
   const primary = await get<EligibleDoc>(
     env.DB,
     `SELECT f.doc_id, f.raw_object_key, f.chamber, f.page_count, f.doc_class
        FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id
       WHERE ${ELIGIBLE_PREDICATES}
         AND rq.doc_id NOT IN (SELECT value FROM json_each(?))
+        ${eraFilter}
       ORDER BY ${DOC_CLASS_ORDER_SQL},
                CASE WHEN COALESCE(f.filed_date, '') >= ? THEN 0 ELSE 1 END,
                rq.created_at ASC
       LIMIT 1`,
-    [attemptCap, nowIso, leaseExpired, JSON.stringify(excludeDocIds), eraStart],
+    includeHistorical
+      ? [attemptCap, nowIso, leaseExpired, JSON.stringify(excludeDocIds), eraStart]
+      : [attemptCap, nowIso, leaseExpired, JSON.stringify(excludeDocIds), eraStart, eraStart],
   );
   if (primary) return primary;
   // Only reached once the normal (attempts < cap) pool is empty, and only
@@ -941,7 +949,15 @@ export async function handleAutopilotTick(
 
     let doc: EligibleDoc | null;
     try {
-      doc = await selectNextDoc(env, attemptCap, seenDocIds, eraStart, new Date(), knobs.legacyReplayEnabled);
+      doc = await selectNextDoc(
+        env,
+        attemptCap,
+        seenDocIds,
+        eraStart,
+        new Date(),
+        knobs.legacyReplayEnabled,
+        knobs.includeHistorical,
+      );
     } catch (err) {
       console.warn('autopilot: doc selection failed:', (err as Error).message);
       await finalize('halted', 'selector_failed');
@@ -1617,6 +1633,7 @@ export async function getAutopilotStatus(env: Env, now = new Date()): Promise<{
       preseedEnabled: knobs.preseedEnabled,
       emptySpotcheckRate: knobs.emptySpotcheckRate,
       legacyReplayEnabled: knobs.legacyReplayEnabled,
+      includeHistorical: knobs.includeHistorical,
     },
     backlog: await countEligibleBacklog(env),
     today: {

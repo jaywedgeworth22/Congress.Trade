@@ -9,6 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **[Congress.Trade][CURSOR] Review-queue publish autonomy — IN PROGRESS 2026-07-27.** Branch `cursor/review-queue-publish-autonomy-b37c`. Era-first agreement/autopilot select (skip historical by default), soft-agree from stored extraction_runs, latency candidates on agreement/admin publish. Goal: publish timely filings efficiently/autonomously.
 - **[Congress.Trade][CURSOR] Enable latency probes + FMP/UW/QQ tunables — MERGED PR #967 2026-07-27.** Branch `cursor/enable-latency-tunables-b37c`.
 - **[Congress.Trade][CURSOR] Owner-decisions wave — IN PROGRESS 2026-07-24.** Branch `cursor/owner-decisions-wave-d376` / **PR #915 CI green**. Delivery gated UX landed; pin-check redesigned+passing.
 - **[Congress.Trade][CURSOR←CODEX] Deno live parity / official-source recovery — IN PROGRESS 2026-07-24.** R2 verified; Deno cron owns watcher.
@@ -26,7 +27,6 @@ _GitHub Issues: 0 open product PRs as of prior closeout; this is an ops/billing 
 - **[Congress.Trade][CURSOR/AG] Turso query efficiency — MERGED & DEPLOYED PR #919 2026-07-24.** Branch `cursor/turso-query-opt-0900`. Cut hot-path rows-read: data-recovery status no longer full-scans `price_eod` (~2.3M); nested keyset feed/SSE; securities_master TTL cache; migrate EXISTS + partial indexes; claim ORDER BY covering indexes. AG reviewed, verified test suite, merged PR #919, and deployed to production. Rollout: `docs/rollouts/2026-07-24-turso-query-efficiency.md`.
 - **CURSOR full reconcile (this chat + sister cloud `bc-df4b4649`): all GitHub Issues closed, boards synced.** PR #898 fixed the effort-issues sync classifier (stops reopening finished rows). R2 proxy endpoint deployed via PR #912. Deno live ingestion parity handled. Owner-gated items (analytics, subscription login, R2 enablement, key ops, watcher-cron) resolved. Open GitHub issues went from ~130 → 0.
 - **[Congress.Trade][CURSOR] Effort-board hygiene + sync classifier fix — MERGED PR #898 2026-07-24.** Branch `cursor/effort-board-hygiene-d376`. Fixed heading classifier + orphan retirement; open effort-board Issues cut from ~130 → 10 real leftovers (CODEX Deno ops, owner-gated, planned owner decisions). Now all 0.
->>>>>>> origin/main
 - **[Congress.Trade][AG] Resolve PR conflicts & land PR #862 — MERGED & DEPLOYED 2026-07-23.** Undrafted, merged PR #862 to `main`, and deployed to production via `ship.sh`. Reconciled OpenRouter rates (`terra`/`luna`), silenced expected webhook retry Sentry noise, and updated effort log. Live `/api/health` verified (`ok:true, db:true, schema:true`).
 - **[Congress.Trade][CURSOR] OpenRouter terra/luna rate-card dummy underpricing + webhook retry Sentry noise + board reconcile — MERGED & DEPLOYED PR #862 2026-07-23.** Branch `cursor/resolve-in-progress-ba51`. Same class of bug as merged #674: leftover `openrouter-dummy` rows for `openai/gpt-5.6-terra` / `openai/gpt-5.6-luna` shadowed verified OpenAI passthrough rates (luna output $2 vs $6). Also skip Sentry.captureException for expected `DeliveryRetryError`/`IngestRetryError` (CONGRESS-TRADE-J storm). Effort-log stale OPEN/IN PROGRESS rows closed after verifying merges on main. Gates: `deno check` clean; focused 44/44; full suite 165 files / 1,865 tests.
 - **[Congress.Trade][AG] Consolidate Enrichment, Market Prices, and Benchmark Catalog improvements — MERGED 2026-07-23.** PR #851. Branch: `antigravity/grok-consolidation-enrichment-benchmark`.
@@ -731,7 +731,6 @@ _GitHub Issues: 0 open product PRs as of prior closeout; this is an ops/billing 
   work explicitly noted it had nowhere durable to record its proof; with 5 agent lanes and a
   go-live approaching, chronological decision records are the cheapest coordination insurance and
   match the fleet standard.
->>>>>>> origin/main
 - **De-duplicate effort-issues sync when a row's first line changes (CLAUDE, S)** —
   `scripts/sync-effort-issues.py` keys issues on the row title line, so editing a row (e.g.
   appending "IN PROGRESS 2026-07-04") minted a second issue — #161 duplicates #146 for the same
