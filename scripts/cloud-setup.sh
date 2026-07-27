@@ -33,25 +33,9 @@ unset CT_LOCAL_BOOTSTRAP_TEST_DEV_VARS_FILE
 unset CT_LOCAL_BOOTSTRAP_TEST_GLOBAL_KEYS_FILE
 node "$SCRIPT_DIR/merge-local-dev-vars.mjs"
 
-# ---------------------------------------------------------------------------
-# @jaywedgeworth22/congress-trading-shared is published to GitHub Packages
-# (see app/.npmrc), which requires an authenticated npm request even for a
-# public read — an anonymous `npm ci` fails with 401. Mirror what CI does
-# (.github/workflows/ci.yml): write a token to a user-level .npmrc so the
-# scope resolves, without touching the committed app/.npmrc.
-# Set one of these as a cloud-environment variable — a classic PAT with
-# `read:packages` scope on the jaywedgeworth22 org is enough; a fine-grained
-# token needs read access to the congress-trading-shared package.
-NODE_AUTH_TOKEN="${NODE_AUTH_TOKEN:-${GH_PACKAGES_TOKEN:-${GH_PAT:-${GITHUB_TOKEN:-}}}}"
-if [ -n "$NODE_AUTH_TOKEN" ]; then
-  printf '//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" >> "$HOME/.npmrc"
-  echo "==> GitHub Packages: authenticated for @jaywedgeworth22 scope"
-else
-  echo "==> WARNING: no NODE_AUTH_TOKEN / GH_PACKAGES_TOKEN / GH_PAT / GITHUB_TOKEN set." >&2
-  echo "    npm ci will fail to fetch @jaywedgeworth22/congress-trading-shared (private GitHub Packages)." >&2
-  echo "    Set NODE_AUTH_TOKEN to a GitHub PAT with read:packages scope in the cloud environment's variables." >&2
-fi
-
+# @jaywedgeworth22/congress-trading-shared is a public repo consumed as a
+# tokenless git dependency. The vendored local copy at app/vendor/ is the
+# canonical resolution — no npm registry, no NODE_AUTH_TOKEN, no .npmrc entry.
 # Deterministic install from the committed lockfile (app/package-lock.json).
 # --include=dev forces devDependencies (wrangler, typescript, vitest) even when the
 # cloud env sets NODE_ENV=production — npm would otherwise omit them, breaking the
