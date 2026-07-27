@@ -904,6 +904,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
 
 // --- Market cache read helpers (cross-app sharing) ------------------------
 
+/** Valid MktCapBucket values — shared-schema parity enforced at delivery. */
+const VALID_MKT_CAP_BUCKETS = new Set(['mega', 'large', 'mid', 'small', 'micro', 'nano']);
+
 interface SecurityRefRow {
   ticker: string;
   company_name: string | null;
@@ -932,6 +935,15 @@ interface SecurityRefRow {
 
 /** Map a securities_ref row to the camelCase shape the import API accepts. */
 export function mapSecurityRef(row: SecurityRefRow) {
+  // Guard: clamp marketCapBucket to the shared 6-value enum so one bad row
+  // does not throw the entire getRefs batch (up to MAX_REFS_BATCH items).
+  const bucket = row.market_cap_bucket;
+  const safeBucket = bucket && VALID_MKT_CAP_BUCKETS.has(bucket) ? bucket : null;
+
+  // Guard: currentPriceDate must be YYYY-MM-DD (IsoDateSchema shape).
+  const priceDate = row.current_price_date;
+  const safePriceDate = priceDate && /^\d{4}-\d{2}-\d{2}$/.test(priceDate) ? priceDate : null;
+
   return {
     ticker: row.ticker,
     companyName: row.company_name,
@@ -947,7 +959,7 @@ export function mapSecurityRef(row: SecurityRefRow) {
     exchangeShort: row.exchange_short,
     currency: row.currency,
     marketCap: row.market_cap,
-    marketCapBucket: row.market_cap_bucket,
+    marketCapBucket: safeBucket,
     ipoDate: row.ipo_date,
     cik: row.cik,
     sicCode: row.sic_code,
@@ -955,7 +967,7 @@ export function mapSecurityRef(row: SecurityRefRow) {
     source: row.source,
     enrichedAt: row.enriched_at,
     currentPrice: row.current_price,
-    currentPriceDate: row.current_price_date,
+    currentPriceDate: safePriceDate,
   };
 }
 

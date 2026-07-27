@@ -34,6 +34,8 @@ export type ClientTrade = {
   };
   confidence: number;
   source: 'primary' | 'seed_dataset';
+  createdAt?: string;
+  cursorSeq?: number;
 };
 
 export type BootstrapResponse = {

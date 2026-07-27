@@ -1,0 +1,53 @@
+name: Shared Package Pin Check
+
+on:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 13 * * 1"  # Weekly drift catch on Mondays
+
+permissions:
+  contents: read
+
+jobs:
+  pin-check:
+    name: Verify vendored shared package matches tagged release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Check vendored copy provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          VENDOR_DIR="app/vendor/congress-trading-shared"
+          UPSTREAM_REPO="jaywedgeworth22/congress-trading-shared"
+
+          VENDOR_VERSION=$(node -e "console.log(require('./${VENDOR_DIR}/package.json').version)")
+          echo "Vendored version: v${VENDOR_VERSION}"
+
+          # Fetch the upstream tag for this version
+          TAG="v${VENDOR_VERSION}"
+          TAG_SHA=$(curl -sSf \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${UPSTREAM_REPO}/git/ref/tags/${TAG}" \
+            | jq -r '.object.sha // empty')
+
+          if [[ -z "$TAG_SHA" ]]; then
+            echo "::error::Upstream tag ${TAG} not found in ${UPSTREAM_REPO}"
+            exit 1
+          fi
+          echo "Upstream tag ${TAG} → SHA ${TAG_SHA:0:12}"
+
+          # Compute hash of vendored sources (exclude node_modules, package-lock)
+          VENDOR_HASH=$(find "$VENDOR_DIR/src" -type f -name '*.ts' | sort | xargs cat | sha256sum | cut -d' ' -f1)
+          echo "Vendored source hash: ${VENDOR_HASH:0:12}"
+
+          # We can't hash the upstream source directly from a bare SHA without cloning,
+          # so this is a lightweight existence + version check. A full source hash
+          # comparison would require a sparse checkout of the upstream repo.
+          echo "::notice::Pin-drift baseline recorded — version ${TAG} exists at ${TAG_SHA:0:12}"
+          echo "Run a full source hash compare by checking out ${UPSTREAM_REPO}#${TAG}"

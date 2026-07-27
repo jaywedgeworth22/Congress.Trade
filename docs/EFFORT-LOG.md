@@ -9,6 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **[Congress.Trade][CURSOR] Shared dependency consumer updates — IN PROGRESS 2026-07-27.** Branch `cursor/shared-dep-updates-685a`. Landing #163 (marketCapBucket/currentPriceDate validation), #164 (createdAt/cursorSeq on PWA ClientTrade), #166 (shared-package-pin-check workflow), #168 (cloud-setup NODE_AUTH_TOKEN removal). #171 (analytics schemas) — no active drift; PWA uses existing schemas. #237 (TICKER_ALIASES) — `resolveContinuousTicker` already used in `normalizer.ts`, `tickerNormalize.ts` re-exports, `pitScores.ts` has delisting metadata.
 - **[Congress.Trade][CURSOR] Review-queue autonomy restore — MERGED & DEPLOYED PR #964 2026-07-27.** Root cause: Infisical prod `AGREEMENT_AUTOPUBLISH_ENABLED=false` + Deno tick never called agreement/autopilot. Ops: re-enabled flag + legacy replay; ack’d Jul-21 OpenRouter-auth halt; soft-confirmed ~162 soft `low_confidence`. Code: wire autonomy into `runScheduledTick` + priority drain. Live: agreement.check processing, `agreement_attempted_at` advancing today. Rollout: `docs/rollouts/2026-07-27-review-queue-autonomy-restore.md`.
 
 - **[Congress.Trade][GROK] Free-tier live + deploy daily cap — MERGED PR #952 2026-07-25.** `CT_COST_PROFILE=free` set on Deno Deploy (DENO_* env keys rejected by platform). Health reports `costProfile`. Deploy workflow: no more hourly schedule; max 8 deploys/UTC day (`vars.DEPLOY_MAX_PER_DAY`); force via workflow_dispatch.
