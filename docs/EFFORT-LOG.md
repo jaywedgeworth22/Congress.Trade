@@ -9,6 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **[Congress.Trade][AG] Dynamic Executive 278-T Ingestion & Multi-Index Support — MERGED & DEPLOYED PR #980 2026-07-27.** Expanded `ogeSource.ts` to dynamically parse and ingest all Executive Branch 278-T filings (Cabinet members and PAS appointees) without dropping non-presidential filers. Added multi-index URL support (`OGE_INDEX_URLS`) for polling multiple OGE Domino views. All 167 test files / 1,872 tests passed.
 - **[Congress.Trade][CURSOR] Enable latency probes + FMP/UW/QQ tunables — MERGED PR #967 2026-07-27.** Branch `cursor/enable-latency-tunables-b37c`.
 - **[Congress.Trade][CURSOR] Owner-decisions wave — IN PROGRESS 2026-07-24.** Branch `cursor/owner-decisions-wave-d376` / **PR #915 CI green**. Delivery gated UX landed; pin-check redesigned+passing.
 - **[Congress.Trade][CURSOR←CODEX] Deno live parity / official-source recovery — IN PROGRESS 2026-07-24.** R2 verified; Deno cron owns watcher.

@@ -574,6 +574,8 @@ export interface Env {
   OGE_WATCH_ENABLED?: string;
   /** Override URL for the OGE President/VP filings index view. */
   OGE_INDEX_URL?: string;
+  /** CSV list of override URLs for OGE filings index views. */
+  OGE_INDEX_URLS?: string;
   /** Minimum seconds between OGE index polls (default 21600 = 6h). */
   OGE_POLL_INTERVAL_SEC?: string;
   /** Max raw PDF bytes sent to vision extraction for executive filings (default 6MB). */
