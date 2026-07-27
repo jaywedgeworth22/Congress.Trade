@@ -570,6 +570,12 @@ export interface Env {
   /** Widened Senate lookback (days) used for the daily deep sweep and outage
    *  catch-up (default 30; raise temporarily for one-off deep recovery). */
   SENATE_MAX_LOOKBACK_DAYS?: string;
+  /** Relay microservice URL (e.g. Hetzner Coolify host) for Senate eFD ingestion. */
+  SENATE_RELAY_URL?: string;
+  /** Proxy gateway URL for routing Senate eFD requests. */
+  SENATE_PROXY_URL?: string;
+  /** Enable Cloudflare Browser Rendering fallback (strictly capped to free tier). */
+  SENATE_USE_BROWSER_RENDERING?: string;
   /** Enables the OGE executive-branch (278-T) filings watcher. Infisical-tunable. */
   OGE_WATCH_ENABLED?: string;
   /** Override URL for the OGE President/VP filings index view. */
