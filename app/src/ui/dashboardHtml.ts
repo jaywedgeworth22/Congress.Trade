@@ -372,18 +372,20 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .amount-cell { display:flex; flex-direction:column; gap:2px; align-items:center; min-width:0; line-height:1.15; text-align:center; }
   .amount-tier-line { display:inline-flex; align-items:center; justify-content:center; color:var(--text); white-space:nowrap; }
   .amount-range { color:var(--text-dim); font-family:var(--mono); font-size:11px; font-weight:500; white-space:nowrap; }
-  .amount-bars { display:inline-flex; align-items:flex-end; gap:3px; height:17px; width:36px; }
+  .amount-bars { display:inline-flex; align-items:flex-end; gap:2px; height:17px; width:40px; }
   .amount-bars i { display:block; width:4px; border-radius:2px 2px 0 0; background:color-mix(in srgb, var(--text-dim) 24%, transparent); }
-  .amount-bars i:nth-child(1) { height:5px; }
-  .amount-bars i:nth-child(2) { height:8px; }
-  .amount-bars i:nth-child(3) { height:11px; }
-  .amount-bars i:nth-child(4) { height:14px; }
-  .amount-bars i:nth-child(5) { height:17px; }
+  .amount-bars i:nth-child(1) { height:4px; }
+  .amount-bars i:nth-child(2) { height:7px; }
+  .amount-bars i:nth-child(3) { height:10px; }
+  .amount-bars i:nth-child(4) { height:13px; }
+  .amount-bars i:nth-child(5) { height:15px; }
+  .amount-bars i:nth-child(6) { height:17px; }
   .amount-bars.tier-1 i:nth-child(-n+1),
   .amount-bars.tier-2 i:nth-child(-n+2),
   .amount-bars.tier-3 i:nth-child(-n+3),
   .amount-bars.tier-4 i:nth-child(-n+4),
-  .amount-bars.tier-5 i:nth-child(-n+5) { background:var(--accent); }
+  .amount-bars.tier-5 i:nth-child(-n+5),
+  .amount-bars.tier-6 i:nth-child(-n+6) { background:var(--accent); }
   .fc-amt .amount-cell { align-items:flex-end; text-align:right; }
   .btn { background: var(--accent); color: #fff; border: none; padding: 8px 14px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; }
   .btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
@@ -2687,15 +2689,17 @@ function amountTier(min, max) {
   if (min == null && max == null) return null;
   var basis = max == null ? Number(min) : Number(max);
   if (!Number.isFinite(basis)) return null;
-  if (basis <= 15000) return { tier: 1, label: 'Up to $15k', title: 'Trade size bracket: up to $15k' };
-  if (basis <= 50000) return { tier: 2, label: '$15k-$50k', title: 'Trade size bracket: $15k-$50k' };
-  if (basis <= 250000) return { tier: 3, label: '$50k-$250k', title: 'Trade size bracket: $50k-$250k' };
-  if (basis <= 1000000) return { tier: 4, label: '$250k-$1M', title: 'Trade size bracket: $250k-$1M' };
-  return { tier: 5, label: 'Over $1M', title: 'Trade size bracket: over $1M' };
+  if (basis <= 1000) return { tier: 1, label: 'Up to $1k', title: 'Trade size bracket: up to $1k' };
+  if (basis <= 15000) return { tier: 2, label: 'Up to $15k', title: 'Trade size bracket: up to $15k' };
+  if (basis <= 50000) return { tier: 3, label: '$15k-$50k', title: 'Trade size bracket: $15k-$50k' };
+  if (basis <= 250000) return { tier: 4, label: '$50k-$250k', title: 'Trade size bracket: $50k-$250k' };
+  if (basis <= 1000000) return { tier: 5, label: '$250k-$1M', title: 'Trade size bracket: $250k-$1M' };
+  return { tier: 6, label: 'Over $1M', title: 'Trade size bracket: over $1M' };
 }
 function amountBarsHtml(tier) {
   var bars = '';
-  for (var i = 0; i < 5; i++) bars += '<i></i>';
+  // Six visual bars so the $0–$1k product tier gets its own first step.
+  for (var i = 0; i < 6; i++) bars += '<i></i>';
   return '<span class="amount-bars tier-' + tier + '" aria-hidden="true">' + bars + '</span>';
 }
 function amountCellHtml(r) {
@@ -4167,9 +4171,10 @@ function selectedOption(v, current) { return String(v) === String(current) ? ' s
 function checkedAttr(v) { return v ? ' checked' : ''; }
 function valueAttr(v) { return esc(v == null ? '' : v); }
 /* Mirror src/shared/brackets.ts for the browser-only admin editor. These are
-   the canonical STOCK Act disclosure ranges used by both House and Senate PTRs. */
+   the canonical STOCK Act disclosure ranges used by both House and Senate PTRs,
+   plus the product $0–$1,000 tier for exact sub-$1,001 dollar amounts. */
 var REVIEW_AMOUNT_BRACKETS = [
-  [1001, 15000], [15001, 50000], [50001, 100000], [100001, 250000], [250001, 500000],
+  [0, 1000], [1001, 15000], [15001, 50000], [50001, 100000], [100001, 250000], [250001, 500000],
   [500001, 1000000], [1000001, 5000000], [5000001, 25000000], [25000001, 50000000], [50000001, null]
 ];
 function reviewMoney(n) {

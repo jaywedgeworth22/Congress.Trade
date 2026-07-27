@@ -7,10 +7,11 @@ import {
 } from "../brackets";
 
 describe("STOCK Act brackets helpers", () => {
-  it("defines the canonical 10 brackets in ascending order", () => {
-    expect(STOCK_ACT_BRACKETS).toHaveLength(10);
-    expect(STOCK_ACT_BRACKETS[0]).toEqual({ min: 1001, max: 15000 });
-    expect(STOCK_ACT_BRACKETS[9]).toEqual({ min: 50000001, max: null });
+  it("defines the canonical 11 brackets in ascending order (incl. $0–$1,000)", () => {
+    expect(STOCK_ACT_BRACKETS).toHaveLength(11);
+    expect(STOCK_ACT_BRACKETS[0]).toEqual({ min: 0, max: 1000 });
+    expect(STOCK_ACT_BRACKETS[1]).toEqual({ min: 1001, max: 15000 });
+    expect(STOCK_ACT_BRACKETS[10]).toEqual({ min: 50000001, max: null });
     expect(Object.isFrozen(STOCK_ACT_BRACKETS)).toBe(true);
     expect(STOCK_ACT_BRACKETS.every(Object.isFrozen)).toBe(true);
 
@@ -20,6 +21,7 @@ describe("STOCK Act brackets helpers", () => {
   });
 
   it("matches brackets exactly", () => {
+    expect(matchBracket(0, 1000)).toEqual({ min: 0, max: 1000 });
     expect(matchBracket(1001, 15000)).toEqual({ min: 1001, max: 15000 });
     expect(matchBracket(50000001, null)).toEqual({ min: 50000001, max: null });
     expect(matchBracket(1000, 15000)).toBeNull();
@@ -27,12 +29,17 @@ describe("STOCK Act brackets helpers", () => {
   });
 
   it("validates brackets", () => {
+    expect(isValidBracket(0, 1000)).toBe(true);
     expect(isValidBracket(1001, 15000)).toBe(true);
     expect(isValidBracket(50000001, null)).toBe(true);
     expect(isValidBracket(50000, 100000)).toBe(false);
   });
 
   it("finds the nearest containing bracket", () => {
+    // Sub-$1,001 exact dollar amounts (common on House PTRs)
+    expect(nearestBracket(0, 1000)).toEqual({ min: 0, max: 1000 });
+    expect(nearestBracket(456, 456)).toEqual({ min: 0, max: 1000 });
+    expect(nearestBracket(1, 999)).toEqual({ min: 0, max: 1000 });
     // Exact snap
     expect(nearestBracket(1001, 15000)).toEqual({ min: 1001, max: 15000 });
     // Arbitrary containing snap
@@ -43,8 +50,6 @@ describe("STOCK Act brackets helpers", () => {
     expect(nearestBracket(60000000, null)).toEqual({ min: 50000001, max: null });
     expect(nearestBracket(50000000, null)).toEqual({ min: 50000001, max: null });
     expect(nearestBracket(1001, null)).toBeNull();
-    // Out of bounds lo
-    expect(nearestBracket(0, 1000)).toBeNull();
     // Non-finite min
     expect(nearestBracket(NaN, 1000)).toBeNull();
     expect(nearestBracket(Number.POSITIVE_INFINITY, null)).toBeNull();
