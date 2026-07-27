@@ -121,20 +121,13 @@ import {
   PRICE_UNAVAILABLE_NOT_FOUND_FIRST,
 } from '../prices/service.ts';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets, updateSecret } from '../secrets/infisical.ts';
-import {
-  backfillTradeLatencyCandidates,
-  getDisclosureLatencySummary,
-  runDisclosureLatencyProbe,
-} from '../ingestion/tradeLatency.ts';
+import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/tradeLatency.ts';
 import { pollExecutive } from '../ingestion/watcher.ts';
 import { verifyRawFilesStorage } from './storageSmoke.ts';
 import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
 import { isValidBracket } from '../shared/brackets.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
-import { resolveDenoCostProfile } from '../deno/costProfile.ts';
-import { createRuntimeQueueHandlers } from '../deno/runtimeHandlers.ts';
-import { runScheduledTick } from '../deno/scheduledTick.ts';
 import { readTargetCircuits } from '../delivery/targetCircuit.ts';
 import { inspectLlmSpend } from '../shared/llmSpend.ts';
 import {
@@ -241,14 +234,7 @@ type EnvWithAdmin = Env & {
 /** The ONLY admin paths ADMIN_MAINTENANCE_TOKEN unlocks. Keep this list to
  * idempotent, non-destructive recovery operations — never migrations, review
  * resolution, config writes, or anything that changes published data. */
-const MAINTENANCE_PATH_SUFFIXES = [
-  '/ingest-requeue-failed',
-  '/ingest-retry-errored',
-  // External free-tier scheduler (Coolify/cron) may drive the same tick body as
-  // Deno.cron without holding full ADMIN_TOKEN. Worst case if leaked: someone
-  // advances the normal watcher/outbox/queue path (already idempotent / leased).
-  '/runtime-tick',
-];
+const MAINTENANCE_PATH_SUFFIXES = ['/ingest-requeue-failed', '/ingest-retry-errored'];
 
 const LATENCY_RESET_KEY = 'admin:source_health:latency_reset_at';
 
@@ -3028,24 +3014,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     return c.json({ ok: result.errors.length === 0, ...result });
   });
 
-  // --- POST /disclosure-latency/backfill-candidates -----------------------
-  // Seed trade_latency_candidates from recent persisted transactions so the
-  // FMP/UW/QQ race can score historical rows after schema/config repairs.
-  // Body (optional): { limit?: number, days?: number }
-  r.post('/disclosure-latency/backfill-candidates', async (c) => {
-    let body: { limit?: unknown; days?: unknown } = {};
-    try {
-      const text = await c.req.text();
-      if (text) body = JSON.parse(text) as { limit?: unknown; days?: unknown };
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-    const limit = typeof body.limit === 'number' ? body.limit : undefined;
-    const days = typeof body.days === 'number' ? body.days : undefined;
-    const result = await backfillTradeLatencyCandidates(c.env, { limit, days });
-    return c.json({ ok: true, ...result });
-  });
-
   // --- GET /config-sources --------------------------------------------------
   // Single-source-of-truth audit for the Infisical consolidation: for every
   // known config key/knob, report where its LIVE value currently comes from —
@@ -3131,25 +3099,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       bootstrap: BOOTSTRAP.map((key) => ({ key, configured: Boolean(envx[key]) })),
       note: 'Sources only, never values. infisical = live-editable there (wins over env); env = wrangler var / Worker secret fallback.',
     });
-  });
-
-  // --- POST /runtime-tick -------------------------------------------------
-  // Drive one watcher + outbox + durable-queue tick from outside Deno Deploy
-  // (Coolify cron / GitHub Actions). Used with DENO_DISABLE_INTERNAL_CRON=true
-  // so free-tier Deploy only serves HTTP. ADMIN_TOKEN or ADMIN_MAINTENANCE_TOKEN.
-  r.post('/runtime-tick', async (c) => {
-    const envx = c.env as Env & Record<string, string | undefined>;
-    // Prefer Deploy-safe CT_* names (DENO_* prefixes are rejected by Deno Deploy).
-    const profile = resolveDenoCostProfile(envx);
-    const result = await runScheduledTick(
-      c.env,
-      createRuntimeQueueHandlers(),
-      profile,
-    );
-    return c.json({
-      ok: result.errors.length === 0,
-      ...result,
-    }, result.errors.length === 0 ? 200 : 207);
   });
 
   // --- GET /diagnostics ---------------------------------------------------
@@ -4463,30 +4412,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   //   • stuck in review (no primary rows): if it now clears the bar, persist +
   //     deliver it (first-time delivery, which is correct) and mark its
   //     review_queue row resolved. If it still fails, it's left in review.
-  //   { chamber?: 'house'|'senate'|'executive', limit?: number, dryRun?: boolean }
-
-  r.get('/debug-extract/:id', async (c) => {
-    try {
-      const filing = await loadFilingRow(c.env, c.req.param("id"));
-      if (!filing) return c.json({ error: "no filing" });
-      if (!filing.raw_object_key) return c.json({ error: "no rawObjectKey", filing });
-      const obj = await c.env.RAW_FILES.get(filing.raw_object_key);
-      if (!obj) return c.json({ error: "no r2 object", filing });
-      const extracted = await extractParsed(c.env, c.req.param("id"));
-      return c.json(extracted);
-    } catch (e) {
-      return c.json({ error: (e as Error).message });
-    }
-  });
-
-  r.get('/debug-members', async (c) => {
-    try {
-      const members = await all(c.env.DB, "SELECT bioguide_id, full_name, chamber FROM filers WHERE full_name LIKE '%Manual%' OR full_name LIKE '%manual%' LIMIT 10", []);
-      return c.json(members);
-    } catch (e) {
-      return c.json({ error: (e as Error).message });
-    }
-  });
+  // Body (all optional):
+  //   { chamber?: 'house'|'senate', limit?: number, dryRun?: boolean }
   r.post('/reprocess', async (c) => {
     let body: Record<string, unknown> = {};
     try {
@@ -4497,11 +4424,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
 
     const chamber = body.chamber === undefined ? 'house' : body.chamber;
-    if (chamber !== 'house' && chamber !== 'senate' && chamber !== 'executive') {
-      return c.json({ error: "chamber must be 'house', 'senate', or 'executive'" }, 400);
+    if (chamber !== 'house' && chamber !== 'senate') {
+      return c.json({ error: "chamber must be 'house' or 'senate'" }, 400);
     }
     const dryRun = body.dryRun === true;
-    const forceVision = body.forceVision === true;
     let limit = typeof body.limit === 'number' && body.limit > 0 ? Math.floor(body.limit) : 500;
     if (limit > 2000) limit = 2000;
 
@@ -4524,7 +4450,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const summary = {
       chamber,
       dryRun,
-      forceVision,
       filingsScanned: 0,
       rowsUpdatedInPlace: 0, // already-in-feed rows whose confidence changed
       filingsPromoted: 0, //    review -> feed (now clears the bar)
@@ -4539,7 +4464,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       summary.filingsScanned += 1;
       let extracted;
       try {
-        extracted = await extractParsed(c.env, doc_id, undefined, { forceVision });
+        extracted = await extractParsed(c.env, doc_id);
       } catch (err) {
         summary.errors.push(`${doc_id}: extract failed: ${(err as Error).message}`);
         continue;
@@ -7374,22 +7299,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       resolvedModel: read.resolvedModel ?? null,
       providerRequestId: read.providerRequestId ?? null,
     });
-  });
-
-  // --- POST /debug-sql -----------------------------------------------------
-  // Development ONLY tool for running arbitrary sql queries to debug state
-  r.post('/debug-sql', async (c) => {
-    const { query, params = [] } = (await c.req.json().catch(() => ({}))) as { query?: string; params?: any[] };
-    if (!query) {
-      return c.json({ error: 'query is required' }, 400);
-    }
-    
-    try {
-      const results = await all(c.env.DB, query, params);
-      return c.json({ ok: true, results });
-    } catch (err: any) {
-      return c.json({ ok: false, error: err.message }, 500);
-    }
   });
 
   // --- POST /migrate ------------------------------------------------------

@@ -1,3 +1,18 @@
+# Current Handoff
+
+Last updated: 2026-07-24 (CURSOR)
+
+## 2026-07-24 — Owner decisions wave (CURSOR)
+
+- Analytics stay free; Delivery (webhook/SSE) is Premium and requires Google sign-in.
+- Stripe live: created prod webhook `https://congress.trade/billing/webhook`, wrote `STRIPE_WEBHOOK_SECRET` to Infisical; `/billing/status` → `checkoutConfigured:true`.
+- R2 `POST /api/admin/storage-smoke` all checks true. Sentry CONGRESS-TRADE-1/19 resolved.
+- Executive: 17 `needs_review` (`agreement_cascade_unresolved`), 0 txs — spend approval needed before agreement reprocess.
+- Deno parity (read-only 2026-07-24): health ok; public txs House 6076 / Senate 16809 / Executive 0; Deno.cron owns watcher; document proxy on main (#912).
+- Shared pin: CT/ST/Usage-Monitor all on `19a077a4` (v2.0.0); redesigned vendor pin-check workflow restored (promote to required after green main).
+- Branch `cursor/owner-decisions-wave-d376` / PR #915.
+- Rollout: `docs/rollouts/2026-07-24-owner-decisions-delivery-stripe.md`.
+
 ## 2026-07-24 — Fix executive latency candidate test (CURSOR)
 
 Main CI red after `5264fe9` allowed executive filings in latency candidates but left the skip test asserting the old behavior. Updated the test to expect INSERT. Branch `cursor/fix-exec-latency-test-14e5`.
