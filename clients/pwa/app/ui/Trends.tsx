@@ -31,12 +31,50 @@ interface VolumeOverTimeResponse {
   series: VolumeOverTimeItem[];
 }
 
+
+interface MemberLeaderboardItem {
+  filerId: string;
+  fullName: string | null;
+  party: string | null;
+  chamber: string | null;
+  state: string | null;
+  tradeCount: number;
+}
+
+interface ClusterBuysItem {
+  ticker: string;
+  name: string | null;
+  txType: string;
+  memberCount: number;
+}
+
+interface SectorFlowItem {
+  sector: string;
+  estNetFlowUsd: number;
+}
+
 export function Trends() {
   const [timeframe, setTimeframe] = useState<'30' | '90' | '365'>('30');
   const [rankBy, setRankBy] = useState<'volume' | 'trades'>('volume');
 
   const { data: leaderboard, error: lbError } = useSWR<TickerLeaderboardItem[]>(
     `/analytics/ticker-leaderboard?window=${timeframe}&rankBy=${rankBy}`,
+    fetcher
+  );
+
+  
+  const { data: memberLeaderboard, error: memError } = useSWR<{members: MemberLeaderboardItem[]}>(
+    `/analytics/member-leaderboard?window=${timeframe}`,
+    fetcher
+  );
+
+  const { data: clusterBuys, error: clusterError } = useSWR<{clusters: ClusterBuysItem[]}>(
+    `/analytics/cluster-buys?window=${timeframe}`,
+    fetcher
+  );
+
+  const { data: sectorFlow, error: sectorError } = useSWR<{sectors: SectorFlowItem[]}>(
+    `/analytics/sector-flow?window=${timeframe}`,
     fetcher
   );
 
@@ -198,47 +236,163 @@ export function Trends() {
         )}
       </div>
 
-      {/* Leaderboard Table */}
-      <div className="trend-section">
-        <h3>Top Traded Assets</h3>
-        {lbError && <div className="muted text-center py-4">Failed to load leaderboard</div>}
-        {!leaderboard && !lbError && <div className="muted text-center py-4">Loading leaderboard data...</div>}
-        {leaderboard && (
-          <div className="table-responsive-wrapper" style={{ boxShadow: 'none', background: 'transparent', border: 'none', margin: 0 }}>
-            <table className="trades-table">
-              <thead>
-                <tr>
-                  <th>Asset</th>
-                  <th>Sector</th>
-                  <th>Trades</th>
-                  <th>Est. Volume</th>
-                  <th>Net Flow</th>
-                </tr>
-              </thead>
-              <tbody>
-                {leaderboard.slice(0, 10).map((item) => (
-                  <tr key={item.ticker}>
-                    <td>
-                      <div className="asset-cell">
-                        <span className="asset-ticker">{item.ticker}</span>
-                        <span className="asset-name">{item.refCompanyName || 'Unknown'}</span>
-                      </div>
-                    </td>
-                    <td className="muted">{item.sector || '—'}</td>
-                    <td>{item.tradeCount}</td>
-                    <td style={{ fontWeight: 700 }}>{formatUsd(item.estVolumeUsd)}</td>
-                    <td className={item.netBuyVolUsd >= 0 ? 'text-buy' : 'text-sell'} style={{ fontWeight: 700 }}>
-                      {item.netBuyVolUsd >= 0 ? '+' : ''}{formatUsd(item.netBuyVolUsd)}
-                    </td>
+      
+      {/* Grid Layout for Desktop */}
+      <div className="trends-grid">
+        <div className="trend-section">
+          <h3>Most Active Politicians</h3>
+          {memError && <div className="muted text-center py-4">Failed to load politicians</div>}
+          {!memberLeaderboard && !memError && <div className="muted text-center py-4">Loading politicians...</div>}
+          {memberLeaderboard && (
+            <div className="table-responsive-wrapper" style={{ boxShadow: 'none', background: 'transparent', border: 'none', margin: 0 }}>
+              <table className="trades-table">
+                <thead>
+                  <tr>
+                    <th>Politician</th>
+                    <th>Trades</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody>
+                  {memberLeaderboard.members.slice(0, 10).map((item) => (
+                    <tr key={item.filerId}>
+                      <td>
+                        <div className="asset-cell">
+                          <span className="asset-ticker">{item.fullName || item.filerId}</span>
+                          <span className="asset-name">{[item.chamber, item.party, item.state].filter(Boolean).join(' · ')}</span>
+                        </div>
+                      </td>
+                      <td style={{ fontWeight: 700 }}>{item.tradeCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="trend-section">
+          <h3>Top Traded Assets</h3>
+          {lbError && <div className="muted text-center py-4">Failed to load leaderboard</div>}
+          {!leaderboard && !lbError && <div className="muted text-center py-4">Loading leaderboard data...</div>}
+          {leaderboard && (
+            <div className="table-responsive-wrapper" style={{ boxShadow: 'none', background: 'transparent', border: 'none', margin: 0 }}>
+              <table className="trades-table">
+                <thead>
+                  <tr>
+                    <th>Asset</th>
+                    <th>Trades</th>
+                    <th>Est. Volume</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leaderboard.slice(0, 10).map((item) => (
+                    <tr key={item.ticker}>
+                      <td>
+                        <div className="asset-cell">
+                          <span className="asset-ticker">{item.ticker}</span>
+                          <span className="asset-name">{item.refCompanyName || 'Unknown'}</span>
+                        </div>
+                      </td>
+                      <td>{item.tradeCount}</td>
+                      <td style={{ fontWeight: 700 }}>{formatUsd(item.estVolumeUsd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
 
+      <div className="trends-grid mt-4">
+        <div className="trend-section">
+          <h3>Consensus Moves</h3>
+          {clusterError && <div className="muted text-center py-4">Failed to load consensus</div>}
+          {!clusterBuys && !clusterError && <div className="muted text-center py-4">Loading consensus data...</div>}
+          {clusterBuys && (
+            <div className="table-responsive-wrapper" style={{ boxShadow: 'none', background: 'transparent', border: 'none', margin: 0 }}>
+              <table className="trades-table">
+                <thead>
+                  <tr>
+                    <th>Asset</th>
+                    <th>Direction</th>
+                    <th>Pols</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {clusterBuys.clusters.slice(0, 8).map((c) => (
+                    <tr key={c.ticker + c.txType}>
+                      <td>
+                        <div className="asset-cell">
+                          <span className="asset-ticker">{c.ticker}</span>
+                          <span className="asset-name">{c.name || 'Unknown'}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span style={{ 
+                          padding: '4px 8px', 
+                          borderRadius: '6px', 
+                          fontSize: '11px', 
+                          fontWeight: 700, 
+                          color: c.txType === 'P' ? '#000' : '#fff',
+                          background: c.txType === 'P' ? 'var(--buy)' : 'var(--sell)' 
+                        }}>
+                          {c.txType === 'P' ? 'Buy' : 'Sell'}
+                        </span>
+                      </td>
+                      <td style={{ fontWeight: 700 }}>{c.memberCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="trend-section">
+          <h3>Net Flow by Sector</h3>
+          {sectorError && <div className="muted text-center py-4">Failed to load sectors</div>}
+          {!sectorFlow && !sectorError && <div className="muted text-center py-4">Loading sector data...</div>}
+          {sectorFlow && (
+            <div className="table-responsive-wrapper" style={{ boxShadow: 'none', background: 'transparent', border: 'none', margin: 0 }}>
+              <table className="trades-table">
+                <thead>
+                  <tr>
+                    <th>Sector</th>
+                    <th>Net Flow</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sectorFlow.sectors.slice(0, 10).map((s) => (
+                    <tr key={s.sector}>
+                      <td style={{ fontWeight: 500 }}>{s.sector}</td>
+                      <td className={s.estNetFlowUsd >= 0 ? 'text-buy' : 'text-sell'} style={{ fontWeight: 700 }}>
+                        {s.estNetFlowUsd >= 0 ? '+' : ''}{formatUsd(s.estNetFlowUsd)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+
       <style jsx>{`
+
+        .trends-grid {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 16px;
+        }
+        @media (min-width: 768px) {
+          .trends-grid {
+            grid-template-columns: 1fr 1fr;
+          }
+        }
+        .mt-4 { margin-top: 16px; }
+
         .text-buy { color: var(--buy); }
         .text-sell { color: var(--sell); }
         .text-center { text-align: center; }

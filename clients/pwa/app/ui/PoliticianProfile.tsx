@@ -8,7 +8,7 @@ import { TradeCard } from './TradeCard';
 import { TradeTable } from './TradeTable';
 import { ColumnConfig } from './ColumnConfig';
 import { getOrderedColumns, loadHiddenCols, ColumnDef } from '../../lib/columns';
-import { formatChamber, formatSummaryCount, formatSummaryVolume } from '@/lib/formatters';
+import { formatChamber, formatSummaryCount, formatSummaryVolume } from '../../lib/formatters';
 
 export type PoliticianProfileResponse = ClientFeedResponse & {
   member: {

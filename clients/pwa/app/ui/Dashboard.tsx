@@ -25,6 +25,7 @@ import { TradeCard } from './TradeCard';
 import { ColumnConfig } from './ColumnConfig';
 import { SpeedScorecard } from './SpeedScorecard';
 import { TradeTable } from './TradeTable';
+import { Trends } from './Trends';
 import {
   ColumnDef,
   getOrderedColumns,
@@ -575,6 +576,11 @@ export default function Dashboard() {
         )}
       </section>
 
+      
+      <section className="feed-list" id="trends" aria-label="Market Trends">
+        <Trends />
+      </section>
+
       <section className="control-panel" id="controls" aria-label="Account controls">
         {isBootstrapLoading ? <div className="empty">Loading account...</div> : null}
         {!isBootstrapLoading && !user ? (
@@ -654,6 +660,7 @@ export default function Dashboard() {
 
       <nav className="bottom-nav" aria-label="Primary">
         <a href="#feed">Feed</a>
+        <a href="#trends">Trends</a>
         <a href="#controls">Controls</a>
         <a href="#account">Account</a>
       </nav>
