@@ -9,6 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **[2026-07-27][GROK] Autopilot tick continuation silent-drop — IN PROGRESS.** Root cause: `autopilot.tick` re-enqueues with stable per-runId dedupe while claim still `processing` → INSERT OR IGNORE drops continuation → run stalls 30m. Fix: unique `tickId` per send (branch `grok/fix-autopilot-tick-dedupe`).
 - (none)
 
 ## Recently completed (2026-07-27 closeout)
