@@ -1,0 +1,2203 @@
+{
+  "startedAt": "2026-07-25T02:54:17.136Z",
+  "baselineEstablishedAt": "2026-07-25T02:54:27.439Z",
+  "ourSeen": {
+    "H-2026-20034201": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034201.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033751": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033751.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033945": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033945.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034133": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034133.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034315": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034315.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034473": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034473.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034740": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034740.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034945": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034945.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034024": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034024.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034622": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034622.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034522": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034522.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20020055": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20020055.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034920": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034920.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034524": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034524.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033714": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033714.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033903": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033903.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034085": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034085.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034891": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034891.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033800": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033800.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033927": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033927.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034013": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034013.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034195": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034195.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034346": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034346.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034496": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034496.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034044": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034044.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034202": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034202.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034502": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034502.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034176": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034176.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034221": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034221.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034668": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034668.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033762": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033762.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033983": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033983.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034144": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034144.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034285": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034285.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034500": {
+      "at": "2026-07-25T02:54:27.433Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034500.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034713": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034713.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034906": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034906.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034892": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034892.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033754": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033754.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033813": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033813.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033889": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033889.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034119": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034119.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034167": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034167.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034368": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034368.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034452": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034452.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034589": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034589.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034796": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034796.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033840": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033840.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20035024": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20035024.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034223": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034223.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033737": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033737.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033921": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033921.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034159": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034159.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034299": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034299.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034487": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034487.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034718": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034718.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034932": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034932.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033766": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033766.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033835": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033835.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034155": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034155.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034400": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034400.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034466": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034466.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034615": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034615.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034727": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034727.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033744": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033744.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034035": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034035.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034416": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034416.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034702": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034702.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034960": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034960.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20035048": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20035048.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033713": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033713.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034132": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034132.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034292": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034292.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034486": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034486.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034712": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034712.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034923": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034923.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033747": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033747.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033780": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033780.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033981": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033981.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034134": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034134.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034297": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034297.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034478": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034478.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034968": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034968.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034114": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034114.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034815": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034815.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034379": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034379.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034556": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034556.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034851": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034851.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033732": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033732.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033858": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033858.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034018": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034018.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034179": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034179.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034295": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034295.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034357": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034357.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034591": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034591.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034800": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034800.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034894": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034894.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-8221321": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/8221321.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115704": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115704.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115821": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115821.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9116212": {
+      "at": "2026-07-25T02:54:27.434Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9116212.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034413": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034413.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033734": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033734.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033947": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033947.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034095": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034095.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034670": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034670.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034895": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034895.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034050": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034050.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034355": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034355.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034563": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034563.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033756": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033756.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033930": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033930.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034130": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034130.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034305": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034305.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034585": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034585.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034693": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034693.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034938": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034938.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033944": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033944.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115809": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115809.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115811": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115811.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115812": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115812.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115813": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115813.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115814": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115814.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115815": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115815.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115901": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115901.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033829": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033829.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034012": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034012.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034128": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034128.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034262": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034262.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034461": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034461.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034695": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034695.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20035013": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20035013.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033661": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033661.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20035047": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20035047.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034581": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034581.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033739": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033739.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033929": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033929.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034113": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034113.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034301": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034301.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034519": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034519.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034688": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034688.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034908": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034908.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034498": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034498.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034949": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034949.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034160": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034160.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033789": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033789.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034706": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034706.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033803": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033803.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033821": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033821.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034025": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034025.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034190": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034190.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034327": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034327.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034616": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034616.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034783": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034783.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20035003": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20035003.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033946": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033946.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034068": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034068.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034177": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034177.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034307": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034307.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034417": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034417.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033763": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033763.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033991": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033991.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034168": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034168.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034302": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034302.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034607": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034607.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034767": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034767.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034947": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034947.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-8221322": {
+      "at": "2026-07-25T02:54:27.435Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/8221322.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-8221358": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/8221358.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115726": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115726.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115822": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115822.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9116142": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9116142.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9116206": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9116206.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033814": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033814.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034351": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034351.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034977": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034977.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033857": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033857.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034401": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034401.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034726": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034726.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034694": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034694.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034552": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034552.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034790": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034790.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20030977": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20030977.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034106": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034106.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033738": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033738.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9116217": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9116217.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033695": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033695.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-8221326": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/8221326.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-8221359": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/8221359.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115728": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115728.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115820": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115820.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9116141": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9116141.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9116211": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9116211.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033736": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033736.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033964": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033964.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034105": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034105.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034311": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034311.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033648": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033648.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034542": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034542.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034954": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034954.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033956": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033956.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034521": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034521.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034748": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034748.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034942": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034942.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034099": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034099.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034016": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034016.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034158": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034158.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034359": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034359.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034547": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034547.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034774": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034774.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033881": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033881.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034247": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034247.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034419": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034419.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034651": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034651.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034869": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034869.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033746": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033746.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033856": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033856.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034034": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034034.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034217": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034217.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034424": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034424.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034587": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034587.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034721": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034721.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034952": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034952.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033830": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033830.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033928": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033928.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033989": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033989.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034056": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034056.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034082": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034082.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034102": {
+      "at": "2026-07-25T02:54:27.436Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034102.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034123": {
+      "at": "2026-07-25T02:54:27.437Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034123.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034156": {
+      "at": "2026-07-25T02:54:27.437Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034156.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034213": {
+      "at": "2026-07-25T02:54:27.437Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034213.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034300": {
+      "at": "2026-07-25T02:54:27.437Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034300.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034520": {
+      "at": "2026-07-25T02:54:27.437Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034520.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034806": {
+      "at": "2026-07-25T02:54:27.437Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034806.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033760": {
+      "at": "2026-07-25T02:54:27.437Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033760.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034129": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034129.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034274": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034274.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034749": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034749.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033654": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033654.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034998": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034998.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033725": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033725.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034836": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034836.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033815": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033815.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034010": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034010.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034178": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034178.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034342": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034342.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034579": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034579.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034784": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034784.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034911": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034911.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033804": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033804.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033920": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033920.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034054": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034054.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034348": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034348.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-8221332": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/8221332.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115711": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115711.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115762": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115762.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115808": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115808.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9116146": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9116146.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9116218": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9116218.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033758": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033758.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033759": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033759.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034375": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034375.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034528": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034528.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034762": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034762.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033993": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033993.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034479": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034479.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034709": {
+      "at": "2026-07-25T02:54:27.438Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034709.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034928": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034928.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033755": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033755.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20032279": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20032279.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9116197": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9116197.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033500": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033500.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034384": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034384.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033705": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033705.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033709": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033709.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034084": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034084.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034653": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034653.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20019182": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20019182.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034499": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034499.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034717": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034717.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034345": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034345.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034188": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034188.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034503": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034503.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034747": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034747.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033845": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033845.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033916": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033916.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033918": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033918.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034036": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034036.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034138": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034138.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034207": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034207.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034280": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034280.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034489": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034489.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034650": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034650.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034780": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034780.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034897": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034897.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20022577": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20022577.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20035042": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20035042.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034224": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034224.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034414": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034414.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034807": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034807.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033718": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033718.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034462": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034462.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034915": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034915.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034660": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034660.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034999": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034999.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034562": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034562.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-8221360": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/8221360.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-9115816": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/9115816.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20033783": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20033783.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034916": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034916.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034298": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034298.pdf",
+      "name": null,
+      "filedDate": null
+    },
+    "H-2026-20034984": {
+      "at": "2026-07-25T02:54:27.439Z",
+      "source": "house",
+      "link": "https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/2026/20034984.pdf",
+      "name": null,
+      "filedDate": null
+    }
+  },
+  "posted": {},
+  "fmpSeen": {},
+  "qqSeen": {},
+  "uwSeen": {},
+  "leadsLogged": {},
+  "houseMaxDocId": 20035048
+}

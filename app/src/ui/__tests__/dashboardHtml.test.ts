@@ -186,22 +186,21 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('loadTrends(); // Trends is the default landing view');
   });
 
-  it('exposes a public Alerts tab while keeping delivery MANAGEMENT admin-only', () => {
-    // The Alerts tab is public nav (education for signed-out visitors)…
-    expect(DASHBOARD_HTML).toMatch(/<button[^>]+data-view="subs"[^>]*>Alerts<\/button>/);
+  it('exposes a public Delivery tab with account-gated management', () => {
+    expect(DASHBOARD_HTML).toMatch(/<button[^>]+data-view="subs"[^>]*>Delivery<\/button>/);
+    expect(DASHBOARD_HTML).toMatch(/data-mobile="Delivery"/);
     expect(DASHBOARD_HTML).not.toMatch(/<button[^>]+data-view="subs"[^>]+data-admin-tab/);
-    // The management section inside it is now visible to all.
-    // Anon sees the table structure but gets a premium placeholder instead of data.
     expect(DASHBOARD_HTML).toContain('id="subsManage"');
-    expect(DASHBOARD_HTML).toContain("document.querySelectorAll('[data-admin-only]')");
-    expect(DASHBOARD_HTML).toContain('if (canUseAdmin()) loadSubs();');
-    expect(DASHBOARD_HTML).toMatch(/<button[^>]+data-view="admin"[^>]+data-admin-tab="true"[^>]+hidden[^>]*>Admin · Cadence<\/button>/);
-    expect(DASHBOARD_HTML).toContain('Developer Alert Delivery');
-    expect(DASHBOARD_HTML).toContain('No alert deliveries yet. Create one below.');
-    expect(DASHBOARD_HTML).not.toContain('>Subscriptions</button>');
-    expect(DASHBOARD_HTML).not.toContain('<h3>Delivery Subscriptions</h3>');
-    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/subscriptions', {");
-    expect(DASHBOARD_HTML).toContain("headers: adminHeaders({ 'content-type': 'application/json' })");
+    expect(DASHBOARD_HTML).toContain('id="subsGate"');
+    expect(DASHBOARD_HTML).toContain('<h3>Delivery</h3>');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/client/v1/subscriptions'");
+    expect(DASHBOARD_HTML).toContain("fetch('/api/client/v1/commands'");
+    expect(DASHBOARD_HTML).toContain("type: 'create_subscription'");
+    expect(DASHBOARD_HTML).toContain('Sign in with Google to use Delivery');
+    expect(DASHBOARD_HTML).toContain('updateDeliveryGate()');
+    expect(DASHBOARD_HTML).not.toContain('Developer Alert Delivery');
+    expect(DASHBOARD_HTML).not.toContain('>Alerts</button>');
+    expect(DASHBOARD_HTML).not.toContain("fetch('/api/admin/subscriptions', {");
   });
 
   it('teaches the two paid delivery methods to signed-out visitors', () => {
@@ -1905,7 +1904,7 @@ describe('dashboard truth + a11y fixes (app review backlog)', () => {
 
   // ---- 7. Canonical Premium pricing = $9/mo · $90/yr -----------------------
   it('shows $9/mo and $90/yr consistently across the dashboard pricing surfaces (alerts gate note + pricing modal)', () => {
-    expect(DASHBOARD_HTML).toContain('Alert Delivery is included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial');
+    expect(DASHBOARD_HTML).toContain('Delivery is included in Premium &middot; $9/mo or $90/yr &middot; 7-day free trial');
     expect(DASHBOARD_HTML).toContain('$9<span class="per">/mo</span>');
     expect(DASHBOARD_HTML).toContain('$90<span class="per">/yr</span>');
     expect(DASHBOARD_HTML).not.toContain('$15/mo');
