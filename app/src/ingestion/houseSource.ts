@@ -141,19 +141,45 @@ export function parseHouseIndexXml(xml: string, defaultYear: string): HouseFilin
  * Fetch the yearly ZIP, unzip it in-memory, locate `{YEAR}FD.xml`, and parse it.
  * Returns the full list of filings in the index (caller diffs against D1).
  */
-export async function fetchHouseIndex(year: number | string): Promise<HouseFiling[]> {
+export async function fetchHouseIndex(
+  year: number | string,
+  opts: { relayUrl?: string; fetchImpl?: typeof fetch } = {},
+): Promise<HouseFiling[]> {
   const url = houseBulkZipUrl(year);
-  const res = await trackedFetch(url, {
-    headers: {
-      // A plain UA avoids occasional WAF challenges on the Clerk host.
-      'user-agent': 'congress-feed/0.1 (+https://congress.trade)',
-      accept: 'application/zip,application/octet-stream,*/*',
-    },
-  }, { service: 'filing-discovery', operation: 'fetch-house-bulk-index' });
-  if (!res.ok) {
-    throw new Error(`house bulk zip ${url} -> HTTP ${res.status}`);
+  const fetcher = opts.fetchImpl ?? trackedFetch;
+  const relayUrl = opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.HOUSE_RELAY_URL || process.env?.INGEST_RELAY_URL : undefined);
+
+  let zipBytes: Uint8Array | null = null;
+
+  if (relayUrl) {
+    try {
+      const relayRes = await fetcher(`${relayUrl.replace(/\/$/, '')}/fetch-house`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url, responseType: 'bytes' }),
+      }, { service: 'filing-discovery', operation: 'fetch-house-bulk-index-relay' });
+      if (relayRes.ok) {
+        zipBytes = new Uint8Array(await relayRes.arrayBuffer());
+      }
+    } catch {
+      /* Fall back to direct fetch if relay attempt fails */
+    }
   }
-  const zipBytes = new Uint8Array(await res.arrayBuffer());
+
+  if (!zipBytes) {
+    const res = await fetcher(url, {
+      headers: {
+        // A plain UA avoids occasional WAF challenges on the Clerk host.
+        'user-agent': 'congress-feed/0.1 (+https://congress.trade)',
+        accept: 'application/zip,application/octet-stream,*/*',
+      },
+    }, { service: 'filing-discovery', operation: 'fetch-house-bulk-index' });
+    if (!res.ok) {
+      throw new Error(`house bulk zip ${url} -> HTTP ${res.status}`);
+    }
+    zipBytes = new Uint8Array(await res.arrayBuffer());
+  }
+
   const files = unzipSync(zipBytes);
 
   // The index file is `{YEAR}FD.xml`; fall back to the first *.xml entry.
