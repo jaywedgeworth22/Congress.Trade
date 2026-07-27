@@ -123,16 +123,39 @@ function d1Meta(result: {
 export class KVNamespaceShim {
   private kv: Deno.Kv;
   private prefix: string;
+  private getDb?: () => D1DatabaseShim | null;
 
-  constructor(kv: Deno.Kv, prefix: string = "kv") {
+  constructor(kv: Deno.Kv, prefix: string = "kv", getDb?: () => D1DatabaseShim | null) {
     this.kv = kv;
     this.prefix = prefix;
+    this.getDb = getDb;
+  }
+
+  private useTurso(key: string): D1DatabaseShim | null {
+    if (!this.getDb) return null;
+    const db = this.getDb();
+    if (!db) return null;
+    if (key.startsWith('session_') || key.startsWith('magic_') || key.startsWith('infisical:')) return null;
+    return db;
   }
 
   async get(
     key: string,
     type?: "text" | "json" | "arrayBuffer" | "stream",
   ): Promise<any> {
+    const db = this.useTurso(key);
+    if (db) {
+      const row = await db.prepare('SELECT value, expires_at FROM deno_runtime_kv WHERE namespace = ? AND key = ?').bind(this.prefix, key).first<{value: string, expires_at: number | null}>();
+      if (!row) return null;
+      if (row.expires_at !== null && row.expires_at < Math.floor(Date.now() / 1000)) {
+        // Lazy delete in background
+        db.prepare('DELETE FROM deno_runtime_kv WHERE namespace = ? AND key = ?').bind(this.prefix, key).run().catch(() => {});
+        return null;
+      }
+      if (type === "json") return JSON.parse(row.value);
+      return row.value;
+    }
+
     const res = await this.kv.get([this.prefix, key]);
     if (!res.value) return null;
     if (type === "json") {
@@ -150,6 +173,17 @@ export class KVNamespaceShim {
     if (typeof value !== "string" && !(value instanceof ArrayBuffer)) {
       throw new Error("Streams not supported in KVNamespaceShim yet");
     }
+
+    const db = this.useTurso(key);
+    if (db) {
+      if (typeof value !== "string") {
+        throw new Error("Only strings are supported for Turso-backed KV keys");
+      }
+      const expiresAt = options?.expirationTtl ? Math.floor(Date.now() / 1000) + options.expirationTtl : null;
+      await db.prepare('INSERT INTO deno_runtime_kv (namespace, key, value, expires_at) VALUES (?, ?, ?, ?) ON CONFLICT(namespace, key) DO UPDATE SET value=excluded.value, expires_at=excluded.expires_at').bind(this.prefix, key, value, expiresAt).run();
+      return;
+    }
+
     await this.kv.set(
       [this.prefix, key],
       valToStore,
@@ -160,6 +194,11 @@ export class KVNamespaceShim {
   }
 
   async delete(key: string): Promise<void> {
+    const db = this.useTurso(key);
+    if (db) {
+      await db.prepare('DELETE FROM deno_runtime_kv WHERE namespace = ? AND key = ?').bind(this.prefix, key).run();
+      return;
+    }
     await this.kv.delete([this.prefix, key]);
   }
 }

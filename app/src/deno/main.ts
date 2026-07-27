@@ -2,31 +2,23 @@
 import { createClient } from '@libsql/client/web';
 import { S3Client } from '@aws-sdk/client-s3';
 import { D1DatabaseShim, KVNamespaceShim, S3BucketShim } from './shims.ts';
-import { DurableQueueAdapter, drainDurableQueues, type DurableQueueHandlers } from './durableQueue.ts';
+import { DurableQueueAdapter } from './durableQueue.ts';
 import app from '../index.ts';
 import type { Env, QueueMessage } from '../shared/types.ts';
 import { resolveSecret, refreshSecrets } from '../secrets/infisical.ts';
-import {
-  handleCorruptDeadLetterMessage,
-  handleDeadLetterMessage,
-  handleDeliveryMessage,
-  handleIngestMessage,
-} from '../index.ts';
-import { flushD1Budget } from '../shared/d1Budget.ts';
-import { isTerminalUsageTelemetryDeliveryError } from '../shared/thirdPartyTelemetry.ts';
-import { maybeRunDailyJobs } from '../jobs.ts';
-import { runWatcher } from '../ingestion/watcher.ts';
-import { completeDeliveryOutbox, flushDeliveryOutbox } from '../delivery/outbox.ts';
-import { completeIngestionOutbox, flushIngestionOutbox } from '../ingestion/outbox.ts';
+import { resolveDenoCostProfile } from './costProfile.ts';
+import { createRuntimeQueueHandlers } from './runtimeHandlers.ts';
+import { runScheduledTick } from './scheduledTick.ts';
 
 // 1. Initialize the KV namespace used for configuration and Infisical caching.
 // Deno KV Connect does not support queues, so queue bindings are attached only
 // after the Turso database has been resolved below.
+let tursoDbShim: D1DatabaseShim | null = null;
 const kv = await Deno.openKv();
-const configKvShim = new KVNamespaceShim(kv, 'config');
+const configKvShim = new KVNamespaceShim(kv, 'config', () => tursoDbShim);
 
 function buildEnvironmentValues(): Record<string, string | undefined> {
-  const envObj: any = {};
+  const envObj: Record<string, string | undefined> = {};
   for (const key of Object.keys(Deno.env.toObject())) {
     envObj[key] = Deno.env.get(key);
   }
@@ -59,6 +51,7 @@ const libsqlClient = createClient({
   authToken: tursoToken,
 });
 const dbShim = new D1DatabaseShim(libsqlClient);
+tursoDbShim = dbShim;
 const durableQueueDb = dbShim as unknown as D1Database;
 const ingestQueueShim = new DurableQueueAdapter<QueueMessage>(durableQueueDb, 'ingest');
 const deliveryQueueShim = new DurableQueueAdapter<QueueMessage>(durableQueueDb, 'delivery');
@@ -117,58 +110,38 @@ function buildEnv(): Env {
   } as Env;
 }
 
-const durableQueueHandlers: DurableQueueHandlers = {
-  handleIngestMessage,
-  handleDeliveryMessage,
-  handleDeadLetterMessage,
-  handleCorruptDeadLetterMessage,
-  isTerminalDeadLetterError: (message, error) =>
-    message.type === 'usage.telemetry'
-    && isTerminalUsageTelemetryDeliveryError(error),
-  completeIngestionOutbox,
-  completeDeliveryOutbox,
-};
+const durableQueueHandlers = createRuntimeQueueHandlers();
+const costProfile = resolveDenoCostProfile(Deno.env);
 
 // Start Cron Tasks. Deno Deploy does not run the Cloudflare Worker
 // `scheduled()` entrypoint, so the live filing watcher and durable outbox
-// reconciliations must be wired here explicitly. Without this, Deno serves
-// the API and can execute daily enrichment while discovering no new filings.
-Deno.cron("Worker scheduled tasks", "* * * * *", async () => {
-  const env = buildEnv();
-  try {
-    const result = await runWatcher(env, new Date());
-    console.log('Deno watcher completed', result);
-  } catch (err) {
-    // A scheduler tick must not prevent outbox recovery or daily maintenance.
-    console.error('Deno watcher tick failed:', err);
-  }
-  try {
-    await flushIngestionOutbox(env, { limit: 100 });
-  } catch (err) {
-    console.error('Deno ingestion outbox flush failed:', err);
-  }
-  try {
-    await flushDeliveryOutbox(env, { limit: 100 });
-  } catch (err) {
-    console.error('Deno delivery outbox flush failed:', err);
-  }
-  try {
-    const drained = await drainDurableQueues(env, durableQueueHandlers);
-    if (drained.ingest.claimed > 0 || drained.delivery.claimed > 0) {
-      console.log('Deno durable queues drained', drained);
+// reconciliations must be wired here explicitly — unless an external
+// scheduler owns ticks (DENO_DISABLE_INTERNAL_CRON=true → Coolify/GH Actions
+// call POST /api/admin/runtime-tick). Default profile is free (every 5 min,
+// tiny drain batches) so we survive free-tier after Aug 1.
+if (!costProfile.disableInternalCron) {
+  console.log(
+    `Deno cost profile=${costProfile.name} cron="${costProfile.cronSchedule}" ` +
+      `drainLimit=${costProfile.drainLimit} claimSize=${costProfile.drainClaimSize}`,
+  );
+  Deno.cron('Worker scheduled tasks', costProfile.cronSchedule, async () => {
+    const env = buildEnv();
+    const result = await runScheduledTick(env, durableQueueHandlers, costProfile);
+    if (result.skippedDrain) {
+      console.log('Deno tick idle (skipped outbox/queue drain)', {
+        profile: result.profile,
+        watcher: result.watcher,
+      });
+    } else if (result.watcher) {
+      console.log('Deno watcher completed', result.watcher);
     }
-  } catch (err) {
-    // Queue-state SQL errors must surface. The next cron tick can reclaim a
-    // stale processing lease; producer INSERT failures already reject callers.
-    console.error('Deno durable queue drain failed:', err);
-  }
-  try {
-    await maybeRunDailyJobs(env);
-  } catch (err) {
-    console.error('Deno daily jobs failed:', err);
-  }
-  await flushD1Budget(env);
-});
+  });
+} else {
+  console.log(
+    'Deno internal cron disabled (DENO_DISABLE_INTERNAL_CRON); ' +
+      'drive background work via POST /api/admin/runtime-tick',
+  );
+}
 
 // Dummy context to satisfy Cloudflare signature
 const dummyCtx = {

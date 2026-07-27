@@ -49,6 +49,7 @@ final class ClientTrade: Decodable, Identifiable {
     enum Source: String, Codable {
         case primary
         case seedDataset = "seed_dataset"
+        case competitorBackfill = "competitor_backfill"
     }
 
     struct Member: Codable {

@@ -8,7 +8,7 @@ import { TradeCard } from './TradeCard';
 import { TradeTable } from './TradeTable';
 import { ColumnConfig } from './ColumnConfig';
 import { getOrderedColumns, loadHiddenCols, ColumnDef } from '../../lib/columns';
-import { formatSummaryCount, formatSummaryVolume } from '../../lib/formatters';
+import { formatChamber, formatSummaryCount, formatSummaryVolume } from '@/lib/formatters';
 
 export type PoliticianProfileResponse = ClientFeedResponse & {
   member: {
@@ -88,7 +88,7 @@ export default function PoliticianProfile({ slug }: { slug: string }) {
         <div className="profile-title">
           <h1>{member.name || slug}</h1>
           <p className="profile-subtitle">
-            {[member.chamber ? member.chamber.charAt(0).toUpperCase() + member.chamber.slice(1) : '', member.party, member.state]
+            {[formatChamber(member.chamber), member.party, member.state]
               .filter(Boolean)
               .join(' • ')}
           </p>

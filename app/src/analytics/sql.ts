@@ -155,7 +155,7 @@ export const PARTY_BUCKET_SQL =
   'ELSE NULL END)';
 
 /** A non-null, non-empty ticker (the analytics definition of "a resolved asset"). */
-export const TICKER_RESOLVED_SQL = "(t.ticker IS NOT NULL AND t.ticker <> '')";
+export const TICKER_RESOLVED_SQL = "(t.ticker IS NOT NULL AND t.ticker <> '' AND t.ticker NOT IN ('NONE', '--', 'N/A', 'NA', 'NULL', '—'))";
 
 /**
  * Standard FROM/JOIN for analytics queries. Always LEFT JOINs filers (party,

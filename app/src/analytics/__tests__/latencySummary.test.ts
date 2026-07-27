@@ -17,7 +17,7 @@ function fakeDb() {
           return this;
         },
         async all<T>() {
-          if (/FROM disclosure_latency_candidates/i.test(sql)) {
+          if (/FROM trade_latency_candidates/i.test(sql)) {
             return {
               results: [
                 {
@@ -26,7 +26,7 @@ function fakeDb() {
                   congress_first_seen_at: '2026-06-29T14:00:00.000Z',
                   provider_first_seen_at: '2026-06-29T15:30:00.000Z',
                   provider_published_at: null,
-                  match_method: 'doc-token',
+                  match_method: 'trade-hash',
                 },
                 {
                   provider: 'fmp',
@@ -34,7 +34,7 @@ function fakeDb() {
                   congress_first_seen_at: '2026-06-29T10:00:00.000Z',
                   provider_first_seen_at: '2026-06-29T10:30:00.000Z',
                   provider_published_at: null,
-                  match_method: 'filer-date',
+                  match_method: 'fuzzy-no-ticker',
                 },
                 {
                   provider: 'unusual_whales',
@@ -74,7 +74,7 @@ function fairnessEnv() {
     status: i < 10 ? 'matched' : 'pending',
     chamber: 'house',
     provider_key: i < 10 ? `fmp-key-${i}` : null,
-    match_method: i < 10 ? 'doc-token' : null,
+    match_method: i < 10 ? 'trade-hash' : null,
     congress_first_seen_at: old,
     provider_first_seen_at: old,
     provider_published_at: null,
@@ -101,8 +101,8 @@ function fairnessEnv() {
             return this;
           },
           async all<T>() {
-            if (/FROM disclosure_latency_candidates/i.test(sql)) return { results: candidates as T[] };
-            if (/FROM disclosure_provider_observations/i.test(sql)) return { results: observations as T[] };
+            if (/FROM trade_latency_candidates/i.test(sql)) return { results: candidates as T[] };
+            if (/FROM trade_provider_observations/i.test(sql)) return { results: observations as T[] };
             return { results: [] as T[] };
           },
           async first<T>() {
@@ -183,7 +183,7 @@ describe('GET /latency-summary (public speed scoreboard)', () => {
               return this;
             },
             async all() {
-              throw new Error('no such table: disclosure_latency_candidates');
+              throw new Error('no such table: trade_latency_candidates');
             },
             async first() {
               return null;

@@ -23,6 +23,7 @@ import { all, batch, fromBool, get, parseJson } from '../shared/db.ts';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets.ts';
 import { canonicalizeAssetType } from '../shared/assetTypes.ts';
 import { uuid } from '../shared/ids.ts';
+import { recordTradeLatencyCandidates } from '../ingestion/tradeLatency.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
 import {
   isPlaceholderTicker,
@@ -293,11 +294,21 @@ function buildTransaction(
   nowIso: string,
   rowIndex: number,
 ): FlaggedTx {
-  const cleanedAssetName = cleanAssetString(p.assetName, p.ticker);
+  const placeholders = new Set(['NONE', '--', 'N/A', 'NA', 'NULL', '—']);
+  let rawTicker = p.ticker;
+  if (rawTicker && placeholders.has(rawTicker.toUpperCase())) {
+    rawTicker = null;
+  }
+  let rawAssetName = p.assetName;
+  if (rawAssetName && placeholders.has(rawAssetName.toUpperCase())) {
+    rawAssetName = null;
+  }
+
+  const cleanedAssetName = cleanAssetString(rawAssetName, rawTicker);
   const s = scoreFields(
     p.confidence,
     {
-      ticker: p.ticker,
+      ticker: rawTicker,
       assetName: cleanedAssetName,
       amountMin: p.amountMin,
       amountMax: p.amountMax,
@@ -912,7 +923,11 @@ export async function persistTransactions(env: Env, transactions: Transaction[])
     `SELECT id FROM transactions WHERE id IN (SELECT value FROM json_each(?))`,
     [proposedIdsJson],
   );
-  return inserted.map((row) => row.id);
+  const insertedIds = inserted.map((row) => row.id);
+  if (insertedIds.length > 0) {
+    await recordTradeLatencyCandidates(env, transactions.filter(t => insertedIds.includes(t.id)), new Date().toISOString());
+  }
+  return insertedIds;
 }
 
 /** Atomically persist review state, metadata, and its idempotent audit receipt. */

@@ -2,6 +2,7 @@ import type { ClientTrade } from '../../lib/contracts';
 import {
   complianceInfo,
   formatAmount,
+  formatChamber,
   formatEstimatedValue,
   formatShortDate,
   reportingLagDays,
@@ -26,7 +27,7 @@ export function TradeCard({ item }: { item: ClientTrade }) {
         </span>
       </div>
       <div className="trade-member">
-        <small>{[item.member.chamber, item.member.state].filter(Boolean).join(' · ') || 'Congress'}</small>
+        <small>{[formatChamber(item.member.chamber), item.member.state].filter(Boolean).join(' · ') || 'Congress'}</small>
       </div>
       <dl className="trade-grid">
         <div><dt>Amount</dt><dd>{formatAmount(item.transaction.amountMin, item.transaction.amountMax)}</dd></div>
@@ -42,6 +43,16 @@ export function TradeCard({ item }: { item: ClientTrade }) {
           </dd>
         </div>
         <div><dt>Source</dt><dd>{item.source === 'primary' ? 'Live' : 'Historical'}</dd></div>
+        {item.filing.sourceUrl && (
+          <div>
+            <dt>Docs</dt>
+            <dd>
+              <a href={item.filing.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                📄 View PDF
+              </a>
+            </dd>
+          </div>
+        )}
       </dl>
     </article>
   );

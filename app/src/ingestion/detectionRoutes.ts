@@ -21,7 +21,7 @@ import { Hono } from 'hono';
 import type { Env } from '../shared/types.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { constantTimeEqual } from '../auth/tokens.ts';
-import { recordDisclosureLatencyCandidate } from './fmpDisclosureLatency.ts';
+import { recordDisclosureLatencyCandidate } from './tradeLatency.ts';
 import {
   enqueueFilingNew,
   insertFilingIfNew,

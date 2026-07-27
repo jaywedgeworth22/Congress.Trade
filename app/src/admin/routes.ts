@@ -121,13 +121,16 @@ import {
   PRICE_UNAVAILABLE_NOT_FOUND_FIRST,
 } from '../prices/service.ts';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets, updateSecret } from '../secrets/infisical.ts';
-import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/fmpDisclosureLatency.ts';
+import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/tradeLatency.ts';
 import { pollExecutive } from '../ingestion/watcher.ts';
 import { verifyRawFilesStorage } from './storageSmoke.ts';
 import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
 import { isValidBracket } from '../shared/brackets.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
+import { resolveDenoCostProfile } from '../deno/costProfile.ts';
+import { createRuntimeQueueHandlers } from '../deno/runtimeHandlers.ts';
+import { runScheduledTick } from '../deno/scheduledTick.ts';
 import { readTargetCircuits } from '../delivery/targetCircuit.ts';
 import { inspectLlmSpend } from '../shared/llmSpend.ts';
 import {
@@ -199,6 +202,7 @@ import {
   BASE_SCHEMA_STATEMENTS,
   DISCLOSURE_AVAILABLE_SCHEMA_STATEMENTS,
   POST_0024_SCHEMA_STATEMENTS,
+  CLEAN_PLACEHOLDER_TICKERS_SCHEMA_STATEMENTS,
 } from './migrations.ts';
 import { getQualityCrosscheck } from '../analytics/quality.ts';
 
@@ -233,7 +237,14 @@ type EnvWithAdmin = Env & {
 /** The ONLY admin paths ADMIN_MAINTENANCE_TOKEN unlocks. Keep this list to
  * idempotent, non-destructive recovery operations — never migrations, review
  * resolution, config writes, or anything that changes published data. */
-const MAINTENANCE_PATH_SUFFIXES = ['/ingest-requeue-failed', '/ingest-retry-errored'];
+const MAINTENANCE_PATH_SUFFIXES = [
+  '/ingest-requeue-failed',
+  '/ingest-retry-errored',
+  // External free-tier scheduler (Coolify/cron) may drive the same tick body as
+  // Deno.cron without holding full ADMIN_TOKEN. Worst case if leaked: someone
+  // advances the normal watcher/outbox/queue path (already idempotent / leased).
+  '/runtime-tick',
+];
 
 const LATENCY_RESET_KEY = 'admin:source_health:latency_reset_at';
 
@@ -2933,6 +2944,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const where = provider ? 'WHERE provider = ?' : '';
     const params: SqlParam[] = provider ? [provider, limit] : [limit];
     const rows = await optionalAll<{
+      trade_hash: string;
       doc_id: string;
       provider: string;
       chamber: string;
@@ -2952,17 +2964,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       updated_at: string;
     }>(
       c.env,
-      `SELECT doc_id, provider, chamber, source_url, filed_date, filer_name,
+      `SELECT trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name,
               congress_first_seen_at, provider_key, provider_first_seen_at, provider_published_at,
               match_method, status, attempts, last_checked_at, error,
               created_at, updated_at
-         FROM disclosure_latency_candidates
+         FROM trade_latency_candidates
         ${where}
         ORDER BY created_at DESC
         LIMIT ?`,
       params,
     );
     const items = rows.map((row) => ({
+      tradeHash: row.trade_hash,
       docId: row.doc_id,
       provider: row.provider,
       chamber: row.chamber,
@@ -3096,6 +3109,25 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       bootstrap: BOOTSTRAP.map((key) => ({ key, configured: Boolean(envx[key]) })),
       note: 'Sources only, never values. infisical = live-editable there (wins over env); env = wrangler var / Worker secret fallback.',
     });
+  });
+
+  // --- POST /runtime-tick -------------------------------------------------
+  // Drive one watcher + outbox + durable-queue tick from outside Deno Deploy
+  // (Coolify cron / GitHub Actions). Used with DENO_DISABLE_INTERNAL_CRON=true
+  // so free-tier Deploy only serves HTTP. ADMIN_TOKEN or ADMIN_MAINTENANCE_TOKEN.
+  r.post('/runtime-tick', async (c) => {
+    const envx = c.env as Env & Record<string, string | undefined>;
+    // Prefer Deploy-safe CT_* names (DENO_* prefixes are rejected by Deno Deploy).
+    const profile = resolveDenoCostProfile(envx);
+    const result = await runScheduledTick(
+      c.env,
+      createRuntimeQueueHandlers(),
+      profile,
+    );
+    return c.json({
+      ok: result.errors.length === 0,
+      ...result,
+    }, result.errors.length === 0 ? 200 : 207);
   });
 
   // --- GET /diagnostics ---------------------------------------------------
@@ -4411,6 +4443,30 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   //     review_queue row resolved. If it still fails, it's left in review.
   // Body (all optional):
   //   { chamber?: 'house'|'senate', limit?: number, dryRun?: boolean }
+
+  r.get('/debug-extract/:id', async (c) => {
+    try {
+      const filing = await loadFilingRow(c.env, c.req.param("id"));
+      if (!filing) return c.json({ error: "no filing" });
+      if (!filing.raw_object_key) return c.json({ error: "no rawObjectKey", filing });
+      const obj = await c.env.RAW_FILES.get(filing.raw_object_key);
+      if (!obj) return c.json({ error: "no r2 object", filing });
+      const extracted = await extractParsed(c.env, c.req.param("id"));
+      return c.json(extracted);
+    } catch (e) {
+      return c.json({ error: (e as Error).message });
+    }
+  });
+
+  r.get('/debug-members', async (c) => {
+    try {
+      const members = await all(c.env.DB, "SELECT bioguide_id, full_name, chamber FROM filers WHERE full_name LIKE '%Manual%' OR full_name LIKE '%manual%' LIMIT 10", []);
+      return c.json(members);
+    } catch (e) {
+      return c.json({ error: (e as Error).message });
+    }
+  });
+
   r.post('/reprocess', async (c) => {
     let body: Record<string, unknown> = {};
     try {
@@ -4425,22 +4481,30 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return c.json({ error: "chamber must be 'house' or 'senate'" }, 400);
     }
     const dryRun = body.dryRun === true;
+    const forceVision = body.forceVision === true;
     let limit = typeof body.limit === 'number' && body.limit > 0 ? Math.floor(body.limit) : 500;
     if (limit > 2000) limit = 2000;
 
     // Filings for this chamber that we can re-extract (have a raw R2 object).
-    const filings = await all<{ doc_id: string }>(
-      c.env.DB,
-      `SELECT doc_id FROM filings
-        WHERE chamber = ? AND raw_object_key IS NOT NULL
-        ORDER BY first_seen_at DESC
-        LIMIT ?`,
-      [chamber, limit],
-    );
+    let filings: Array<{ doc_id: string }>;
+    if (Array.isArray(body.docIds) && body.docIds.length > 0) {
+      const ids = body.docIds.filter((x): x is string => typeof x === 'string').slice(0, limit);
+      filings = ids.map(id => ({ doc_id: id }));
+    } else {
+      filings = await all<{ doc_id: string }>(
+        c.env.DB,
+        `SELECT doc_id FROM filings
+          WHERE chamber = ? AND raw_object_key IS NOT NULL
+          ORDER BY first_seen_at DESC
+          LIMIT ?`,
+        [chamber, limit],
+      );
+    }
 
     const summary = {
       chamber,
       dryRun,
+      forceVision,
       filingsScanned: 0,
       rowsUpdatedInPlace: 0, // already-in-feed rows whose confidence changed
       filingsPromoted: 0, //    review -> feed (now clears the bar)
@@ -4455,13 +4519,13 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       summary.filingsScanned += 1;
       let extracted;
       try {
-        extracted = await extractParsed(c.env, doc_id);
+        extracted = await extractParsed(c.env, doc_id, undefined, { forceVision });
       } catch (err) {
         summary.errors.push(`${doc_id}: extract failed: ${(err as Error).message}`);
         continue;
       }
       if (!extracted || extracted.transactions.length === 0) {
-        summary.skippedNoExtract += 1;
+        summary.skippedNoExtract += 1; summary.errors.push(`${doc_id}: no extract, extractor=${extracted?.extractor}, txCount=${extracted?.transactions?.length}`);
         continue;
       }
 
@@ -7292,6 +7356,22 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
+  // --- POST /debug-sql -----------------------------------------------------
+  // Development ONLY tool for running arbitrary sql queries to debug state
+  r.post('/debug-sql', async (c) => {
+    const { query, params = [] } = (await c.req.json().catch(() => ({}))) as { query?: string; params?: any[] };
+    if (!query) {
+      return c.json({ error: 'query is required' }, 400);
+    }
+    
+    try {
+      const results = await all(c.env.DB, query, params);
+      return c.json({ ok: true, results });
+    } catch (err: any) {
+      return c.json({ ok: false, error: err.message }, 500);
+    }
+  });
+
   // --- POST /migrate ------------------------------------------------------
   // Apply schema changes via the Worker's D1 binding (sidesteps the wrangler
   // CLI's --remote D1 auth issues). Idempotent: "duplicate column" is treated
@@ -7542,15 +7622,6 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
       // 0029-0039 — canonical value, reliability, Stripe, review, and benchmark tail.
       ...POST_0024_SCHEMA_STATEMENTS,
-      `UPDATE disclosure_latency_candidates
-       SET filed_date = (SELECT filed_date FROM filings WHERE filings.doc_id = disclosure_latency_candidates.doc_id)
-       WHERE (filed_date IS NULL OR filed_date = '') AND EXISTS (SELECT 1 FROM filings WHERE filings.doc_id = disclosure_latency_candidates.doc_id AND filings.filed_date IS NOT NULL)`,
-      // 0045_d1_budget.sql — atomic D1 usage counters.
-      `CREATE TABLE IF NOT EXISTS d1_budget (
-         day          TEXT PRIMARY KEY,
-         rows_read    INTEGER NOT NULL DEFAULT 0,
-         rows_written INTEGER NOT NULL DEFAULT 0
-       )`
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
@@ -8234,6 +8305,105 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       await batchPrepared(c.env.DB, chunk);
     }
     return c.json({ ok: true, scanned: rows.length, updated });
+  });
+
+  // --- POST /backfill-fmp-dumps ---------------------------------------------
+  r.post('/backfill-fmp-dumps', async (c) => {
+    let body: any = {};
+    try { body = await c.req.json(); } catch {}
+    const { chamber, data } = body;
+    if (!chamber || !Array.isArray(data)) return c.json({ error: 'invalid payload' }, 400);
+
+    let inserted = 0;
+    for (const item of data) {
+      try {
+        const payload = JSON.stringify(item);
+        const doc_id = item.doc_id || item.link || 'fmp_unknown';
+        
+        await c.env.DB.prepare(`
+          INSERT INTO disclosure_provider_observations
+          (provider, chamber, provider_key, first_observed_at, last_observed_at, source_url, filed_date, filer_name, payload)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(provider, chamber, provider_key) DO UPDATE SET
+            last_observed_at = excluded.last_observed_at,
+            payload = excluded.payload
+        `).bind(
+          'fmp',
+          chamber,
+          item.link || doc_id,
+          new Date().toISOString(),
+          new Date().toISOString(),
+          item.link || null,
+          item.disclosureDate || item.filed_date || null,
+          (item.firstName || '') + ' ' + (item.lastName || ''),
+          payload
+        ).run();
+        inserted++;
+      } catch (e) {
+        console.error('Failed to insert FMP observation:', e);
+      }
+    }
+    return c.json({ ok: true, inserted });
+  });
+
+  // --- POST /backfill-massive-tickers ---------------------------------------
+  r.post('/backfill-massive-tickers', async (c) => {
+    let data: any[] = [];
+    try { data = await c.req.json(); } catch {}
+    if (!Array.isArray(data)) return c.json({ error: 'invalid payload' }, 400);
+
+    let inserted = 0;
+    for (const item of data) {
+      try {
+        await c.env.DB.prepare(`
+          INSERT INTO securities_ref (ticker, company_name)
+          VALUES (?, ?)
+          ON CONFLICT(ticker) DO UPDATE SET company_name = excluded.company_name
+        `).bind(
+          item.ticker,
+          item.name
+        ).run();
+        inserted++;
+      } catch (e) {
+        console.error('Failed to insert massive ticker:', e);
+      }
+    }
+    return c.json({ ok: true, inserted });
+  });
+
+  // --- POST /backfill-observations ------------------------------------------
+  r.post('/backfill-observations', async (c) => {
+    let data: any[] = [];
+    try { data = await c.req.json(); } catch {}
+    if (!Array.isArray(data)) return c.json({ error: 'invalid payload' }, 400);
+
+    let inserted = 0;
+    for (const item of data) {
+      try {
+        await c.env.DB.prepare(`
+          INSERT INTO trade_provider_observations
+          (provider, chamber, trade_hash, first_observed_at, last_observed_at, source_url, filed_date, filer_name, payload)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(provider, chamber, trade_hash) DO UPDATE SET
+            last_observed_at = excluded.last_observed_at,
+            payload = excluded.payload
+        `).bind(
+          item.provider,
+          item.chamber,
+          item.provider_key,
+          item.first_observed_at || new Date().toISOString(),
+          item.last_observed_at || new Date().toISOString(),
+          item.source_url || null,
+          item.filed_date || null,
+          item.filer_name || null,
+          item.payload ? JSON.stringify(item.payload) : null
+        ).run();
+        inserted++;
+      } catch (e) {
+        console.error('Failed to insert observation:', e);
+      }
+    }
+    return c.json({ ok: true, inserted });
   });
 
   // Operator provisioning keeps explicit integration client ids; end-user

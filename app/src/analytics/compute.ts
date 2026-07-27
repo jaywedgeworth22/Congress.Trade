@@ -414,11 +414,11 @@ export function computeConvictionScore(i: ConvictionInput): ConvictionResult {
   const supportingFlow = dirSign * i.estNetFlowUsd;
   const fNetflow = clamp(supportingFlow / 5_000_000, 0, 1) * 100;
 
-  // Additive base — full vs data-gap fallback (drops skill, renormalizes to 0.90).
+  // Additive base — 100% aggregate Congressional market consensus
+  // (Breadth 35%, Party 25%, Skew 20%, Momentum 10%, Net Flow 10%).
+  // Member skill track record is preserved in `components.skill` for trade-level scoring.
   const fallback = fSkill == null;
-  const base = fallback
-    ? 0.3 * fBreadth + 0.225 * fParty + 0.15 * fSkew + 0.15 * fMomentum + 0.075 * fNetflow
-    : 0.24 * fBreadth + 0.18 * fParty + 0.18 * (fSkill as number) + 0.12 * fSkew + 0.12 * fMomentum + 0.06 * fNetflow;
+  const base = 0.35 * fBreadth + 0.25 * fParty + 0.20 * fSkew + 0.10 * fMomentum + 0.10 * fNetflow;
 
   // Multiplicative anti-gaming gates.
   const integrityMult = i.lateShare == null ? 0.9 : clamp(1 - 0.4 * i.lateShare, 0.6, 1);
@@ -431,8 +431,6 @@ export function computeConvictionScore(i: ConvictionInput): ConvictionResult {
 
   // Hard caps.
   if (i.memberCount < 2) raw = Math.min(raw, 25);
-  const totalScored = i.skill?.totalScoredCount ?? 0;
-  if (totalScored < 3) raw = Math.min(raw, 60);
   // No resolved BUY/SELL direction (no directional activity, or a perfectly
   // balanced ticker with no net flow) → cap hard: breadth/party/momentum must
   // not surface a directionless name as high conviction.

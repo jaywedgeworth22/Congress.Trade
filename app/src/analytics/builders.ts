@@ -491,8 +491,9 @@ export function buildMemberPerformanceLeaderboardQuery(
     ...where,
   ];
   const sql =
-    'SELECT t.filer_id AS filer_id, fl.full_name AS full_name, fl.party AS party, ' +
-    'fl.photo_url AS photo_url, ' +
+    'WITH sx AS MATERIALIZED (SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1) ' +
+    'SELECT t.filer_id AS filer_id, MAX(fl.full_name) AS full_name, MAX(fl.party) AS party, ' +
+    'MAX(fl.photo_url) AS photo_url, ' +
     'COUNT(*) AS trade_count, ' +
     `AVG(${ANNUALIZED_EXCESS}) AS avg_annualized_excess, ` +
     `AVG(${EXCESS}) AS avg_excess, ` +
@@ -503,7 +504,7 @@ export function buildMemberPerformanceLeaderboardQuery(
     'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
     'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
     'JOIN securities_ref sr ON sr.ticker = t.ticker ' +
-    'CROSS JOIN (SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1) sx ' +
+    'CROSS JOIN sx ' +
     whereSql(allWhere) +
     'GROUP BY t.filer_id ' +
     `HAVING trade_count >= ${minTrades} ` +
@@ -564,13 +565,14 @@ export function buildMemberSkillQuery(filerIds: string[], p: CommonFilters): Bui
   where.push(`t.filer_id IN (${filerIds.map(() => '?').join(', ')})`);
   for (const id of filerIds) params.push(id);
   const sql =
+    'WITH sx AS MATERIALIZED (SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1) ' +
     'SELECT t.filer_id AS filer_id, COUNT(*) AS scored, ' +
     `SUM(CASE WHEN ${EXCESS} > 0 THEN 1 ELSE 0 END) AS wins, ` +
     `AVG(${EXCESS}) AS avg_excess ` +
     'FROM transactions t ' +
     'JOIN tx_performance p ON p.tx_id = t.id ' +
     'JOIN securities_ref sr ON sr.ticker = t.ticker ' +
-    'CROSS JOIN (SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1) sx ' +
+    'CROSS JOIN sx ' +
     whereSql(where) +
     'GROUP BY t.filer_id ' +
     'HAVING scored >= 5';

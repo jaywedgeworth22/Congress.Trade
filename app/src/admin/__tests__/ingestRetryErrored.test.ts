@@ -106,6 +106,16 @@ describe('ADMIN_MAINTENANCE_TOKEN (scoped like INGEST_TOKEN)', () => {
       a.env,
     );
     expect(requeue.status).toBe(200);
+
+    // runtime-tick is on the maintenance allowlist so Coolify can drive
+    // background work without full ADMIN_TOKEN (free-tier Deno plan).
+    const tick = await app.request(
+      '/runtime-tick',
+      { method: 'POST', headers: MAINT, body: '{}' },
+      a.env,
+    );
+    // Must authenticate; body may still error on a minimal stub env.
+    expect(tick.status).not.toBe(401);
   });
 
   it('is rejected everywhere else and never escalates to full admin', async () => {

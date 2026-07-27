@@ -470,13 +470,49 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .mini-trade-stat { display:inline-grid; grid-template-columns:3ch 1ch minmax(5.5ch, auto); gap:6px; align-items:center; justify-content:end; }
   .mini-trade-stat .dot { text-align:center; opacity:.65; }
   /* time chart (CSS columns, no chart lib)
-     Columns flex to fill the container so the chart spans the full width; when
-     there are too many buckets to fit, each keeps a min width and the chart
-     scrolls instead of crushing the bars. */
-  .tchart { display:flex; align-items:flex-end; gap:3px; height:180px; overflow-x:auto; padding-top:6px; }
-  .tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:1 1 0; min-width:20px; transition: opacity 0.15s; outline: none; cursor: pointer; }
+     Columns always flex to the container width so the chart fits the card
+     (including phone screens) without horizontal scrolling. */
+  .tchart { display:flex; align-items:flex-end; gap:2px; height:180px; overflow-x:hidden; padding-top:6px; width:100%; max-width:100%; box-sizing:border-box; }
+  .tcol { display:flex; flex-direction:column; align-items:center; gap:4px; flex:1 1 0; min-width:0; transition: opacity 0.15s; outline: none; cursor: pointer; }
   .tcol:hover, .tcol:focus-visible { opacity: 0.8; }
-  .tbars { display:flex; align-items:flex-end; justify-content:center; gap:3px; height:150px; }
+  .tbars { display:flex; align-items:flex-end; justify-content:center; gap:2px; height:150px; width:100%; }
+  .tbars i { display:block; width:max(2px, calc(50% - 1px)); max-width:9px; border-radius:2px 2px 0 0; min-height:0; }
+  .tchart-head { display:flex; justify-content:space-between; align-items:flex-end; gap:10px; flex-wrap:wrap; }
+  .tchart-controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  /* Stacked metrics under the politician name — frees the side column so
+     names are not ellipsized on phones. .member-meta overrides the default
+     nowrap/ellipsis on .member-cell > div so the stack can actually wrap. */
+  #view-trends .member-cell { align-items: flex-start; }
+  #view-trends .member-cell > .member-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    min-width: 0;
+    flex: 1 1 auto;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: unset;
+  }
+  #view-trends .member-cell .name-line {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .stack-under {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.35;
+  }
+  .stack-under > span { white-space: nowrap; }
+  .stack-under .split-wrap { display: inline-flex; }
+  .stack-under .split { display: none; }
   
   .chart-tooltip {
     position: absolute; pointer-events: none; z-index: 100;
@@ -492,7 +528,6 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .chart-tooltip-row { display: flex; justify-content: space-between; gap: 16px; align-items: baseline; }
   .chart-tooltip-lbl { color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
   .chart-tooltip-val { font-variant-numeric: tabular-nums; font-weight: 500; }
-  .tbars i { display:block; width:9px; border-radius:2px 2px 0 0; min-height:0; }
   .tbars i.buy { background: var(--buy); } .tbars i.sell { background: var(--sell); }
   .tlbl { font-size:9px; color: var(--text-dim); font-family: var(--mono); white-space:nowrap; }
   .legend { display:flex; gap:14px; font-size:12px; color: var(--text-dim); margin-bottom:6px; }
@@ -947,6 +982,17 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        fit without horizontal scroll. */
     #view-trends .split { display: none; }
     #view-trends .split-wrap { gap: 0; }
+    /* Buys vs Sells chart: tighter bars/labels on phones. */
+    #view-trends .tchart { gap: 1px; height: 160px; }
+    #view-trends .tcol { gap: 2px; }
+    #view-trends .tbars { gap: 1px; height: 130px; }
+    #view-trends .tbars i { max-width: 5px; }
+    #view-trends .tlbl { font-size: 8px; max-width: 100%; overflow: hidden; }
+    #view-trends .tchart-head { flex-direction: column; align-items: stretch; gap: 8px; }
+    #view-trends .tchart-controls { justify-content: flex-start; }
+    #view-trends #trTimeMetric.seg button,
+    #view-trends #trTimeWin.seg button { padding: 5px 7px; font-size: 11px; }
+    #view-trends .stack-under { font-size: 11px; }
     #view-trends .asset-cell .muted { display: none; }
     #view-trends td:has(.asset-cell) { width: auto; max-width: none; }
     #view-trends .u-full { display: none; }
@@ -1052,20 +1098,19 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 @media (min-width: 721px) {
   #view-trends .section p.sub { max-width: none; }
 }
-/* Accent tick on every section-starting heading (direct child, plus the
-   one chart header nested in a .row-flex). */
+/* Section-starting headings (direct child, plus the chart header row). */
 #view-trends .section > h3,
+#view-trends .section > .tchart-head > h3,
 #view-trends .section > .row-flex > h3 {
   position: relative;
 }
 /* Nested "Lag Distribution" / "Slowest Filers" sub-headers are NOT section
-   starters: no tick, dim small-caps cadence so they read as captions. */
-#view-trends .trend-grid2 > div > h3 {
+   starters: dim small-caps cadence so they read as captions. */
+#view-trends .timeliness-panel > h3 {
   padding-left: 0;
   color: var(--text-dim);
   letter-spacing: .03em;
 }
-#view-trends .trend-grid2 > div > h3::before { display: none; }
 /* KPI-strip caption sits in the same rhythm. */
 #view-trends .tf-cap {
   font-size: 11px;
@@ -1250,17 +1295,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
 }
 
-/* ---- 10. Segmented control (scoped to #trTimeWin so .split .seg is safe) */
-#trTimeWin.seg { background: color-mix(in srgb, var(--panel-2) 60%, transparent); }
-#trTimeWin.seg button {
+/* ---- 10. Segmented control (scoped to chart segs so .split .seg is safe) */
+#trTimeWin.seg,
+#trTimeMetric.seg { background: color-mix(in srgb, var(--panel-2) 60%, transparent); }
+#trTimeWin.seg button,
+#trTimeMetric.seg button {
   letter-spacing: .02em;
   transition: color var(--tr-fast) var(--tr-ease), background-color var(--tr-fast) var(--tr-ease);
 }
-#trTimeWin.seg button.on {
+#trTimeWin.seg button.on,
+#trTimeMetric.seg button.on {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
 }
-#trTimeWin.seg button:focus-visible {
+#trTimeWin.seg button:focus-visible,
+#trTimeMetric.seg button:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
 }
@@ -1403,7 +1452,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #view-trends .split .seg,
   #view-trends .tcol,
   #view-trends .tbars i,
-  #view-trends #trTimeWin.seg button {
+  #view-trends #trTimeWin.seg button,
+  #view-trends #trTimeMetric.seg button {
     transition: none;
   }
   #view-trends .ccard.clickable:hover { transform: none; }
@@ -1418,8 +1468,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #view-trends .grid-cards .card::before { box-shadow: none; }
   #view-trends .ccard .chip,
   #view-trends h3 .chip { padding: 1px 6px; }
+  /* Headings stay flush with card padding (accent-tick indent was removed). */
   #view-trends .section > h3,
-  #view-trends .section > .row-flex > h3 { padding-left: 11px; }
+  #view-trends .section > .tchart-head > h3,
+  #view-trends .section > .row-flex > h3 { padding-left: 0; }
 }
 
   #view-trends .card .v .est-money,
@@ -1662,15 +1714,21 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Buys vs sells over time -->
     <div class="section">
-      <div class="row-flex" style="justify-content:space-between;align-items:flex-end;gap:10px">
-        <h3 style="margin:0">Buys vs Sells Over Time</h3>
-        <div class="seg" id="trTimeWin" role="group" aria-label="Chart time range">
-          <button type="button" data-w="365d" onclick="setTrTimeWin('365d')">1Y</button>
-          <button type="button" data-w="1095d" onclick="setTrTimeWin('1095d')">3Y</button>
-          <button type="button" data-w="1825d" class="on" onclick="setTrTimeWin('1825d')">5Y</button>
+      <div class="tchart-head">
+        <h3 class="tf-h" style="margin:0">Buys vs Sells Over Time</h3>
+        <div class="tchart-controls">
+          <div class="seg" id="trTimeMetric" role="group" aria-label="Chart metric">
+            <button type="button" data-m="count" class="on" onclick="setTrTimeMetric('count')"># Trades</button>
+            <button type="button" data-m="dollars" onclick="setTrTimeMetric('dollars')">$</button>
+          </div>
+          <div class="seg" id="trTimeWin" role="group" aria-label="Chart time range">
+            <button type="button" data-w="365d" onclick="setTrTimeWin('365d')">1Y</button>
+            <button type="button" data-w="1095d" onclick="setTrTimeWin('1095d')">3Y</button>
+            <button type="button" data-w="1825d" class="on" onclick="setTrTimeWin('1825d')">5Y</button>
+          </div>
         </div>
       </div>
-      <p class="sub">Trade counts bucketed by period (own time range, independent of the page window). The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.</p>
+      <p class="sub" id="trTimeSub">Trade counts bucketed by period (own time range, independent of the page window). The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.</p>
       <div class="legend"><span><span class="sw buy"></span>Buys</span><span><span class="sw sell"></span>Sells</span></div>
       <div id="trTime"></div>
     </div>
@@ -1691,7 +1749,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Top performers: realizable excess vs the S&P 500, anchored at filing date -->
     <div class="section">
-      <h3>Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out." title="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
+      <h3 class="tf-h">Top Performers <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em> <span class="info-tip" tabindex="0" aria-label="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out." title="Annualized performance vs the S&P 500 from each trade's public filing date. 0% means matched the S&P; +3% means about 3 percentage points better per year. Buys only, options excluded, politicians with few scored trades are filtered out.">ⓘ</span></h3>
       <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade became <em>public</em>, shown as an <strong>annualized</strong> relative return <strong>(0% means equal to the S&amp;P)</strong>. A descriptive, observational track record — <strong>not</strong> a forecast or recommendation.</p>
       <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
     </div>
@@ -1719,7 +1777,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
     <!-- Disclosure timeliness -->
     <div class="section">
-      <h3>Disclosure Timeliness <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
+      <h3 class="tf-h">Disclosure Timeliness <em class="tr-window-label" style="font-style:italic; font-weight:400; font-size:0.82em; color:var(--text-dim); margin-left:6px;">Past 3 Months</em></h3>
       <p class="sub">Days from trade to filing. The STOCK Act sets a 45-day deadline; this is a data-quality + accountability lens.</p>
       <div class="grid-cards" id="trLagKpis"></div>
       <div class="trend-grid2 timeliness-grid">
@@ -2127,6 +2185,12 @@ var NAME_SUFFIX = { 'jr': 'Jr', 'jr.': 'Jr', 'sr': 'Sr', 'sr.': 'Sr', 'ii': 'II'
 function fmtName(raw) {
   var s = String(raw == null ? '' : raw).trim();
   if (!s) return '';
+  if (s.toUpperCase().startsWith('MANUAL-')) {
+    s = s.substring(7);
+    if (s === s.toUpperCase()) {
+      s = s.split(' ').map(function(w) { return w.charAt(0) + w.slice(1).toLowerCase(); }).join(' ');
+    }
+  }
   s = s.replace(/\\s*\\(\\s*Senator\\s*\\)\\s*/gi, ' ');
   s = s.replace(/\\s*\\(\\s*\\)\\s*/g, ' ');
   while (s.indexOf('  ') >= 0) s = s.split('  ').join(' ');
@@ -2155,6 +2219,25 @@ function fmtName(raw) {
   var head = parts.slice(0, -1).join(' ');
   while (head.charAt(head.length - 1) === ',' || head.charAt(head.length - 1) === ' ') head = head.slice(0, -1);
   return head ? head + ', ' + suf : suf;
+}
+
+/* Format a company name for display, converting ALL CAPS to Title Case
+   and normalizing common suffixes (INC, LLC, ETF, etc). */
+function fmtCompany(raw) {
+  var s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  if (s === s.toUpperCase() || s === s.toLowerCase()) {
+    s = s.replace(/\w\S*/g, function(txt) {
+      return txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase();
+    });
+  }
+  s = s.replace(/\b(Llc|Inc|Corp|Etf|Lp|Plc|Us|Usa|Sa|Ag|Nv|Bv)\b/gi, function(match) {
+    return match.toUpperCase();
+  });
+  s = s.replace(/\b(And|Of|The|In|For|A|An|To|On)\b/gi, function(match) {
+    return match.toLowerCase();
+  });
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 /* "House"/"Senate" are proper nouns here — always capitalize the chamber. */
 function chamberLabel(c) {
@@ -2587,6 +2670,7 @@ function assetCellHtml(r) {
   // the ticker again (e.g. "FB" with no name) — uses the enriched ref company name.
   var nm = r.asset;
   if ((!nm || nm === r.ticker) && r.refCompanyName) nm = r.refCompanyName;
+  nm = fmtCompany(nm);
   if (!r.ticker && !nm) {
     return '<div class="asset-cell" title="Historical scanned filing needs official source backfill"><span class="muted">Unparsed Historical Filing</span></div>';
   }
@@ -6554,22 +6638,30 @@ function scrollToChart(id) {
     }, 1500);
   }
 }
-/* Mini CSS-column time chart of buys vs sells (no chart library). */
-function timeChartHtml(series, labelStep) {
-  var max = 1; 
-  series.forEach(function (p) { max = Math.max(max, p.estBuyVolUsd || 0, p.estSellVolUsd || 0); });
-  // If no volume data, fallback to transaction counts for height
-  var useVol = max > 1;
-  if (!useVol) { series.forEach(function (p) { max = Math.max(max, p.buys || 0, p.sells || 0); }); }
-  
+/* Mini CSS-column time chart of buys vs sells (no chart library).
+   metric: 'count' | 'dollars' | omitted (auto: dollars when volume exists). */
+function timeChartHtml(series, labelStep, metric) {
+  var useVol;
+  if (metric === 'count') useVol = false;
+  else if (metric === 'dollars') useVol = true;
+  else {
+    var volMax = 1;
+    series.forEach(function (p) { volMax = Math.max(volMax, p.estBuyVolUsd || 0, p.estSellVolUsd || 0); });
+    useVol = volMax > 1;
+  }
+  var max = 1;
+  series.forEach(function (p) {
+    max = Math.max(max, useVol ? (p.estBuyVolUsd || 0) : (p.buys || 0), useVol ? (p.estSellVolUsd || 0) : (p.sells || 0));
+  });
+
   var step = labelStep || Math.max(1, Math.ceil(series.length / 14));
-  return '<div class="tchart">' + series.map(function (p, i) {
+  return '<div class="tchart" data-metric="' + (useVol ? 'dollars' : 'count') + '">' + series.map(function (p, i) {
     var vB = useVol ? (p.estBuyVolUsd || 0) : (p.buys || 0);
     var vS = useVol ? (p.estSellVolUsd || 0) : (p.sells || 0);
     var bh = vB > 0 ? Math.max(3, Math.round(100 * vB / max)) : 0;
     var sh = vS > 0 ? Math.max(3, Math.round(100 * vS / max)) : 0;
     var lbl = (i % step === 0) ? esc(p.period || '') : '';
-    
+
     return '<div class="tcol" tabindex="0" data-period="'+esc(p.period||'')+'" ' +
       'data-b="'+(p.buys||0)+'" data-s="'+(p.sells||0)+'" ' +
       'data-bv="'+(p.estBuyVolUsd||0)+'" data-sv="'+(p.estSellVolUsd||0)+'">' +
@@ -6845,21 +6937,21 @@ function pctSigned(n) {
 }
 function loadTrPerformers() {
   var body = el('trPerformers');
-  body.innerHTML = skRows(5, 6);
+  body.innerHTML = skRows(3, 6);
   aGet('member-performance?' + trParams() + '&limit=15').then(function (d) {
     var rows = d.members || [];
-    if (!rows.length) { body.innerHTML = stateRow(5, 'Not enough priced, filing-anchored buys to rank yet — this fills in as the price cache backfills.'); return; }
+    if (!rows.length) { body.innerHTML = stateRow(3, 'Not enough priced, filing-anchored buys to rank yet — this fills in as the price cache backfills.'); return; }
     body.innerHTML = rows.map(function (r, i) {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.partyBucket) +
-          esc(name) + '</div></div></td>' +
-        '<td class="muted">' + r.tradeCount + ' buys</td>' +
-        '<td class="muted">' + Math.round(100 * (r.winRate || 0)) + '% win</td>' +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) +
+          '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) + esc(name) + '</span>' +
+          '<div class="stack-under"><span>' + r.tradeCount + ' buys</span><span>' + Math.round(100 * (r.winRate || 0)) + '% win</span></div>' +
+          '</div></div></td>' +
         '<td title="Annualized relative performance vs S&amp;P 500; 0% means matched the S&amp;P, +3% means about 3 percentage points better per year.">' + pctSigned(r.avgAnnualizedExcessReturn != null ? r.avgAnnualizedExcessReturn : r.avgExcessReturn) + '</td></tr>';
     }).join('');
-  }).catch(function (e) { body.innerHTML = stateRow(5, 'Could not load: ' + e.message); });
+  }).catch(function (e) { body.innerHTML = stateRow(3, 'Could not load: ' + e.message); });
 }
 
 function loadTrSummary() {
@@ -6902,8 +6994,8 @@ function loadTrTickers() {
     body.innerHTML = rows.map(function (r, i) {
       return '<tr class="row clickable" data-ticker="' + esc(r.ticker) + '">' +
         '<td class="rank">' + (i + 1) + '</td>' +
-        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' +
-          esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(r.name) + '</span>' : '') + '</div></div></td>' +
+        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' +
+          esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
         '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
         '<td class="muted">' + polCell(r.memberCount) + '</td>' +
         '<td class="est">' + estUsd(r.estVolumeUsd) + '</td>' +
@@ -6922,7 +7014,7 @@ function loadTrTrending() {
     if (!rows.length) { body.innerHTML = stateRow(4, 'Not enough history to rank momentum.'); return; }
     body.innerHTML = rows.map(function (r) {
       return '<tr class="row clickable" data-ticker="' + esc(r.ticker) + '">' +
-        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, r.name) + '<div><span class="tkr">' + esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(r.name) + '</span>' : '') + '</div></div></td>' +
+        '<td><div class="asset-cell">' + tickerLogoHtml(r.ticker, fmtCompany(r.name)) + '<div><span class="tkr">' + esc(r.ticker) + '</span>' + (r.name ? ' <span class="muted">' + esc(fmtCompany(r.name)) + '</span>' : '') + '</div></div></td>' +
         '<td class="muted">' + r.priorCount + ' → ' + r.recentCount + '</td>' +
         '<td class="net pos">▲ ' + r.deltaCount + '</td>' +
         '<td class="muted">' + polCell(r.recentMembers) + '</td></tr>';
@@ -6946,7 +7038,7 @@ function loadTrClusters() {
       // "— · " fragment rather than rendering a dangling dash next to the $ estimate.
       var range = c.minDate ? (compactDateText(c.minDate) + (c.minDate === c.maxDate ? '' : ' → ' + compactDateText(c.maxDate))) : '';
       return '<div class="ccard clickable" tabindex="0" role="button" aria-label="View trades for ' + esc(c.ticker) + '" data-ticker="' + esc(c.ticker) + '">' +
-        '<div class="chead">' + tickerLogoHtml(c.ticker, c.name) + '<span class="big">' + esc(c.ticker) +
+        '<div class="chead">' + tickerLogoHtml(c.ticker, fmtCompany(c.name)) + '<span class="big">' + esc(c.ticker) +
           '</span><span class="dirpill ' + esc(c.txType) + '">' + dir + '</span></div>' +
         '<div><strong>' + c.memberCount + '</strong> ' + (c.memberCount === 1 ? 'politician' : 'politicians') + ' · ' + c.tradeCount + ' trades' + bip + '</div>' +
         '<div class="muted" style="margin-top:2px">' + esc(parties) + '</div>' +
@@ -6960,11 +7052,27 @@ function loadTrClusters() {
    window — a multi-year shape is the point, while the page may be on "Past Month".
    chamber/party/source stay shared via trParams(); only the window is overridden. */
 var trTimeWindow = '1825d';
+var trTimeMetric = 'count';
+var TR_TIME_SUB = {
+  count: 'Trade counts bucketed by period (own time range, independent of the page window). The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.',
+  dollars: 'Estimated dollar volume (STOCK Act bracket midpoints) bucketed by period (own time range, independent of the page window). The <em>shape</em> — a surge of buying or selling — is the trend. Newest dates are at the right.'
+};
 function trTimeParams() { return trParams().replace(/window=[^&]*/, 'window=' + encodeURIComponent(trTimeWindow)); }
 function setTrTimeWin(w) {
   trTimeWindow = w;
   var btns = el('trTimeWin').querySelectorAll('button');
   for (var i = 0; i < btns.length; i++) btns[i].className = (btns[i].getAttribute('data-w') === w) ? 'on' : '';
+  loadTrTime();
+}
+function setTrTimeMetric(m) {
+  trTimeMetric = (m === 'dollars') ? 'dollars' : 'count';
+  var group = el('trTimeMetric');
+  if (group) {
+    var btns = group.querySelectorAll('button');
+    for (var i = 0; i < btns.length; i++) btns[i].className = (btns[i].getAttribute('data-m') === trTimeMetric) ? 'on' : '';
+  }
+  var sub = el('trTimeSub');
+  if (sub) sub.innerHTML = TR_TIME_SUB[trTimeMetric];
   loadTrTime();
 }
 /* If the series overflows, pin the scroll to the right so the MOST RECENT dates
@@ -6979,29 +7087,30 @@ function loadTrTime() {
   aGet('volume-over-time?' + trTimeParams()).then(function (d) {
     var s = d.series || [];
     if (!s.length) { box.innerHTML = '<div class="note">No dated trades in this range.</div>'; return; }
-    box.innerHTML = timeChartHtml(s);
+    box.innerHTML = timeChartHtml(s, null, trTimeMetric);
     anchorChartRight(box);
   }).catch(function (e) { box.innerHTML = '<div class="note">Could not load: ' + esc(e.message) + '</div>'; });
 }
 
 function loadTrMembers() {
   var body = el('trMembers');
-  body.innerHTML = skRows(5, 6);
+  body.innerHTML = skRows(3, 6);
   aGet('member-leaderboard?' + trParams() + '&limit=15').then(function (d) {
     var rows = d.members || [];
-    if (!rows.length) { body.innerHTML = stateRow(5, 'No politician activity in this window.'); return; }
+    if (!rows.length) { body.innerHTML = stateRow(3, 'No politician activity in this window.'); return; }
     body.innerHTML = rows.map(function (r, i) {
       var name = fmtName(r.fullName || r.filerId || 'Unknown');
       var metaBits = [chamberLabel(r.chamber), r.state].filter(Boolean).join(' · ');
       var memberAttr = r.filerId ? ' class="member-cell clickable" data-member="' + esc(r.filerId) + '"' : ' class="member-cell"';
       return '<tr class="row"><td class="rank">' + (i + 1) + '</td>' +
-        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) + '<div>' + pdot(r.partyBucket) +
-          esc(name) + (metaBits ? ' <span class="muted">· ' + esc(metaBits) + '</span>' : '') + '</div></div></td>' +
-        '<td class="muted">' + r.tradeCount + '</td>' +
-        '<td>' + splitBar(r.buyCount, r.sellCount) + '</td>' +
+        '<td><div' + memberAttr + '>' + memberAvatarHtml(name, r.photoUrl) +
+          '<div class="member-meta"><span class="name-line">' + pdot(r.partyBucket) +
+          esc(name) + (metaBits ? ' <span class="muted">· ' + esc(metaBits) + '</span>' : '') + '</span>' +
+          '<div class="stack-under"><span>' + r.tradeCount + ' trades</span><span class="stack-split">' + splitBar(r.buyCount, r.sellCount) + '</span></div>' +
+          '</div></div></td>' +
         '<td class="est">' + estUsd(r.estVolumeUsd) + '</td></tr>';
     }).join('');
-  }).catch(function (e) { body.innerHTML = stateRow(5, 'Could not load: ' + e.message); });
+  }).catch(function (e) { body.innerHTML = stateRow(3, 'Could not load: ' + e.message); });
 }
 
 function loadTrParties() {
@@ -7068,7 +7177,7 @@ function loadTrLag() {
       var metaStr = '';
       if (m.chamber || m.state) {
         var p = [];
-        if (m.chamber) p.push(esc(m.chamber));
+        if (m.chamber) p.push(esc(chamberLabel(m.chamber)));
         if (m.state) p.push(esc(m.state));
         metaStr = ' <span class="muted">· ' + p.join(' · ') + '</span>';
       }
@@ -7313,7 +7422,7 @@ function companySectionHtml(ref) {
 function drawerCompanyTitle(ticker, name) {
   // This is the drawer FOR this ticker — the title is not clickable (it would
   // just reopen the same drawer). Ticker and name are separated by a dot.
-  var label = name || ticker || 'Company';
+  var label = fmtCompany(name || ticker || 'Company');
   var sameAsTicker = label === ticker;
   return '<div class="drawer-company-title">' + tickerLogoHtml(ticker, label) + '<div><h2 class="drawer-title-line">' +
     (ticker ? '<span class="tkr">' + esc(ticker) + '</span>' : '') +
@@ -8275,12 +8384,20 @@ document.addEventListener('mouseover', function(e) {
   var s = Number(tcol.getAttribute('data-s') || 0);
   var bv = Number(tcol.getAttribute('data-bv') || 0);
   var sv = Number(tcol.getAttribute('data-sv') || 0);
-  
-  chartTt.innerHTML = 
+  var chart = tcol.closest('.tchart');
+  var dollars = chart && chart.getAttribute('data-metric') === 'dollars';
+  var buyVal = dollars
+    ? (estUsd(bv) + (b ? ' <span class="muted" style="font-size:11px">(' + b + ')</span>' : ''))
+    : (b + (bv ? ' <span class="muted" style="font-size:11px">(' + estUsd(bv) + ')</span>' : ''));
+  var sellVal = dollars
+    ? (estUsd(sv) + (s ? ' <span class="muted" style="font-size:11px">(' + s + ')</span>' : ''))
+    : (s + (sv ? ' <span class="muted" style="font-size:11px">(' + estUsd(sv) + ')</span>' : ''));
+
+  chartTt.innerHTML =
     '<div class="chart-tooltip-title">' + esc(p || '') + '</div>' +
-    '<div class="chart-tooltip-row"><span class="chart-tooltip-lbl"><span class="sw buy"></span>Buys</span><span class="chart-tooltip-val">' + b + (bv ? ' <span class="muted" style="font-size:11px">(' + estUsd(bv) + ')</span>' : '') + '</span></div>' +
-    '<div class="chart-tooltip-row"><span class="chart-tooltip-lbl"><span class="sw sell"></span>Sells</span><span class="chart-tooltip-val">' + s + (sv ? ' <span class="muted" style="font-size:11px">(' + estUsd(sv) + ')</span>' : '') + '</span></div>';
-  
+    '<div class="chart-tooltip-row"><span class="chart-tooltip-lbl"><span class="sw buy"></span>Buys</span><span class="chart-tooltip-val">' + buyVal + '</span></div>' +
+    '<div class="chart-tooltip-row"><span class="chart-tooltip-lbl"><span class="sw sell"></span>Sells</span><span class="chart-tooltip-val">' + sellVal + '</span></div>';
+
   chartTt.style.left = (r.left + r.width / 2) + 'px';
   chartTt.style.top = (window.scrollY + r.top) + 'px';
   chartTt.classList.add('visible');

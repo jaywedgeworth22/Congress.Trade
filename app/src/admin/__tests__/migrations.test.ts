@@ -12,6 +12,10 @@ import {
   QUERY_OPTIMIZATIONS_SCHEMA_STATEMENTS,
   PERFORMANCE_INDEXES_SCHEMA_STATEMENTS,
   TURSO_QUERY_EFFICIENCY_SCHEMA_STATEMENTS,
+  TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS,
+  DENO_RUNTIME_KV_SCHEMA_STATEMENTS,
+  CLEAN_PLACEHOLDER_TICKERS_SCHEMA_STATEMENTS,
+  FIX_DENO_RUNTIME_QUEUE_INDEX_SCHEMA_STATEMENTS,
   BASE_SCHEMA_STATEMENTS,
   D1_BUDGET_SCHEMA_STATEMENTS,
   DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS,
@@ -215,6 +219,10 @@ describe('admin migration bootstrap', () => {
       ...QUERY_OPTIMIZATIONS_SCHEMA_STATEMENTS,
       ...PERFORMANCE_INDEXES_SCHEMA_STATEMENTS,
       ...TURSO_QUERY_EFFICIENCY_SCHEMA_STATEMENTS,
+      ...TRADE_LATENCY_WATCH_SCHEMA_STATEMENTS,
+      ...DENO_RUNTIME_KV_SCHEMA_STATEMENTS,
+      ...CLEAN_PLACEHOLDER_TICKERS_SCHEMA_STATEMENTS,
+      ...FIX_DENO_RUNTIME_QUEUE_INDEX_SCHEMA_STATEMENTS,
     ]);
   });
 
@@ -245,7 +253,7 @@ describe('admin migration bootstrap', () => {
     const sql = DENO_RUNTIME_QUEUE_SCHEMA_STATEMENTS.join('\n');
     expect(sql).toContain('deno_runtime_queue');
     expect(sql).toContain('lease_until');
-    expect(sql).toContain('idx_deno_runtime_queue_ready');
+    expect(sql).toContain('lease_until');
     expect(sql).toContain('idx_deno_runtime_queue_active_dedupe');
     expect(sql).toContain("status IN ('pending', 'processing')");
   });

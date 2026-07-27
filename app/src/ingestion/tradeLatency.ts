@@ -1,5 +1,5 @@
 /**
- * src/ingestion/fmpDisclosureLatency.ts
+ * src/ingestion/tradeLatency.ts
  * OWNER: ingestion
  *
  * Provider-latency monitor for congressional disclosures. Candidates are
@@ -43,12 +43,16 @@ type EnvWithWatch = Env & {
 };
 
 interface CandidateRow {
+  trade_hash: string;
   doc_id: string;
   provider: ProviderId;
   chamber: Chamber;
   source_url: string | null;
   filed_date: string | null;
   filer_name: string | null;
+  ticker: string | null;
+  tx_date: string | null;
+  tx_type: string | null;
   congress_first_seen_at: string;
   attempts: number;
 }
@@ -57,6 +61,7 @@ interface ProviderObservationRow {
   provider: ProviderId;
   chamber: Chamber;
   provider_key: string;
+  trade_hash: string;
   first_observed_at: string;
   last_observed_at: string;
   provider_published_at: string | null;
@@ -70,6 +75,7 @@ export interface DisclosureProviderRow {
   provider: ProviderId;
   chamber: Chamber;
   providerKey: string;
+  tradeHash: string;
   payload: Record<string, unknown>;
   sourceUrl: string | null;
   filedDate: string | null;
@@ -468,6 +474,26 @@ function tokensFromDoc(docId: string, sourceUrl: string | null): string[] {
   return Array.from(out).filter((t) => t.length >= 6);
 }
 
+
+export function extractLastName(name: string | null): string {
+  if (!name) return '';
+  const parts = name.split(',')[0].split(' ');
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i].toLowerCase().replace(/[^a-z]/g, '');
+    if (p && !['jr', 'sr', 'md', 'ii', 'iii', 'iv'].includes(p)) return p;
+  }
+  return '';
+}
+
+export function generateTradeHash(filerName: string | null, ticker: string | null, date: string | null, type: string | null): string {
+  const ln = extractLastName(filerName);
+  const tk = (ticker || '').toUpperCase();
+  const dt = date || '';
+  const tyStr = (type || '').toLowerCase();
+  const ty = tyStr.includes('buy') || tyStr.includes('purchase') ? 'buy' : tyStr.includes('sell') || tyStr.includes('sale') ? 'sell' : 'exchange';
+  return `${ln}_${tk}_${dt}_${ty}`;
+}
+
 function lastName(name: string | null): string | null {
   if (!name) return null;
   const clean = name.replace(/\s+/g, ' ').trim();
@@ -519,6 +545,7 @@ export function parseFmpDisclosureRows(chamber: Chamber, json: unknown): FmpDisc
       provider: 'fmp',
       chamber,
       providerKey,
+      tradeHash: generateTradeHash(fieldString(payload, ['representative', 'senator', 'filerName', 'name']), fieldString(payload, ['ticker', 'symbol']), fieldString(payload, ['transactionDate', 'txDate']), fieldString(payload, ['type', 'transactionType'])),
       payload,
       sourceUrl,
       filedDate: normalizeDate(fieldString(payload, ['filedDate', 'filingDate', 'disclosureDate', 'reportedDate'])),
@@ -543,6 +570,7 @@ export function parseUnusualWhalesDisclosureRows(json: unknown): DisclosureProvi
         'txn_type',
         'name',
       ]),
+      tradeHash: generateTradeHash(filerName, fieldString(payload, ['ticker', 'symbol']), fieldString(payload, ['transaction_date']), fieldString(payload, ['txn_type', 'type'])),
       payload,
       sourceUrl: firstUrl(payload),
       filedDate,
@@ -572,6 +600,7 @@ export function parseQuiverDisclosureRows(chamber: Chamber, json: unknown, defau
         'Traded',
         'Transaction',
       ]),
+      tradeHash: generateTradeHash(filerName, fieldString(payload, ['Ticker']), fieldString(payload, ['TransactionDate', 'Date']), fieldString(payload, ['Transaction'])),
       payload,
       sourceUrl: firstUrl(payload),
       filedDate,
@@ -582,27 +611,27 @@ export function parseQuiverDisclosureRows(chamber: Chamber, json: unknown, defau
 }
 
 export function matchDisclosureCandidate(
-  candidate: Pick<CandidateRow, 'doc_id' | 'source_url' | 'filed_date' | 'filer_name'>,
+  candidate: Pick<CandidateRow, 'trade_hash'>,
   row: DisclosureProviderRow,
 ): CandidateMatch | null {
-  const text = rowText(row.payload);
-  for (const token of tokensFromDoc(candidate.doc_id, candidate.source_url)) {
-    if (text.includes(token)) return { providerKey: row.providerKey, matchMethod: 'doc-token' };
+  if (candidate.trade_hash === row.tradeHash) {
+    return { providerKey: row.providerKey, matchMethod: 'trade-hash' };
   }
-  const filed = normalizeDate(candidate.filed_date);
-  const candidateLast = lastName(candidate.filer_name);
-  const rowLast = lastName(row.filerName);
-  if (filed && candidateLast && rowLast === candidateLast && row.filedDate === filed) {
-    return { providerKey: row.providerKey, matchMethod: 'filer-date' };
+
+  const cParts = candidate.trade_hash.split('_');
+  const rParts = row.tradeHash.split('_');
+  // Hash format: lastName_ticker_txDate_type
+  if (cParts.length >= 4 && rParts.length >= 4) {
+    if (cParts[0] === rParts[0] && cParts[2] === rParts[2] && cParts[3] === rParts[3]) {
+      return { providerKey: row.providerKey, matchMethod: 'fuzzy-no-ticker' };
+    }
   }
-  if (filed && candidateLast && text.includes(candidateLast) && dateVariants(filed).some((d) => text.includes(d))) {
-    return { providerKey: row.providerKey, matchMethod: 'probable-filer-date' };
-  }
+
   return null;
 }
 
 export function matchFmpDisclosureCandidate(
-  candidate: Pick<CandidateRow, 'doc_id' | 'source_url' | 'filed_date' | 'filer_name'>,
+  candidate: Pick<CandidateRow, 'trade_hash'>,
   row: FmpDisclosureRow,
 ): CandidateMatch | null {
   return matchDisclosureCandidate(candidate, row);
@@ -714,7 +743,7 @@ async function routeProviderOnlyObservationsToReview(
 
     const exists3 = await get<{ doc_id: string }>(
       env.DB,
-      `SELECT doc_id FROM disclosure_latency_candidates WHERE provider = ? AND provider_key = ? AND status = 'matched' LIMIT 1`,
+      `SELECT doc_id FROM trade_latency_candidates WHERE provider = ? AND provider_key = ? AND status = 'matched' LIMIT 1`,
       [provider, row.providerKey]
     );
     if (exists3) continue;
@@ -786,61 +815,73 @@ export async function getDisclosureLatencyProviderStatuses(env: Env): Promise<Di
   return statuses;
 }
 
-export async function recordDisclosureLatencyCandidate(
+
+import type { Transaction } from '../shared/types.ts';
+export async function recordTradeLatencyCandidates(
   env: Env,
-  filing: DiscoveredFiling,
+  transactions: Transaction[],
   nowIso: string,
 ): Promise<void> {
-
+  const updates: Array<[string, SqlParam[]]> = [];
   for (const provider of DIRECT_PROVIDER_IDS) {
-    try {
-      await run(
-        env.DB,
-        `INSERT INTO disclosure_latency_candidates
-           (doc_id, provider, chamber, source_url, filed_date, filer_name,
+    for (const tx of transactions) {
+      const trade_hash = generateTradeHash(tx.owner || '', tx.ticker || '', tx.txDate || '', tx.txType || '');
+      updates.push([
+        `INSERT INTO trade_latency_candidates
+           (trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
             congress_first_seen_at, status, attempts, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
-         ON CONFLICT(doc_id, provider) DO UPDATE SET
-           filed_date = CASE WHEN filed_date = '' THEN excluded.filed_date ELSE filed_date END,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?)
+         ON CONFLICT(trade_hash, provider) DO UPDATE SET
            congress_first_seen_at = MIN(congress_first_seen_at, excluded.congress_first_seen_at),
            updated_at = excluded.updated_at`,
         [
-          filing.docId,
+          trade_hash,
+          tx.docId,
           provider,
-          filing.chamber,
-          filing.sourceUrl,
-          normalizeDate(filing.filedDate),
-          filing.filerName ?? null,
+          'house', // we'll use fallback, wait we need actual chamber
+          null, // source_url
+          tx.filedDate || null,
+          tx.owner || null,
+          tx.ticker || null,
+          tx.txDate || null,
+          tx.txType || null,
+          tx.firstSeenAt || nowIso,
           nowIso,
           nowIso,
-          nowIso,
-        ],
-      );
+        ]
+      ]);
+    }
+  }
+  if (updates.length > 0) {
+    try {
+      await batch(env.DB, updates);
     } catch (err) {
-      if (!storageMissing(err)) console.warn('disclosure latency candidate write failed:', (err as Error).message);
+      if (!storageMissing(err)) console.warn('trade latency candidate write failed:', (err as Error).message);
     }
   }
 }
+
 
 async function upsertProviderRows(env: Env, provider: ProviderId, rows: DisclosureProviderRow[], nowIso: string): Promise<void> {
   for (const row of rows) {
     await run(
       env.DB,
-      `INSERT INTO disclosure_provider_observations
-         (provider, chamber, provider_key, first_observed_at, last_observed_at,
+      `INSERT INTO trade_provider_observations
+         (provider, chamber, provider_key, trade_hash, first_observed_at, last_observed_at,
           provider_published_at, source_url, filed_date, filer_name, payload)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(provider, chamber, provider_key) DO UPDATE SET
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(provider, chamber, provider_key, trade_hash) DO UPDATE SET
          last_observed_at=excluded.last_observed_at,
-         provider_published_at=COALESCE(disclosure_provider_observations.provider_published_at, excluded.provider_published_at),
-         source_url=COALESCE(disclosure_provider_observations.source_url, excluded.source_url),
-         filed_date=COALESCE(disclosure_provider_observations.filed_date, excluded.filed_date),
-         filer_name=COALESCE(disclosure_provider_observations.filer_name, excluded.filer_name),
-         payload=COALESCE(disclosure_provider_observations.payload, excluded.payload)`,
+         provider_published_at=COALESCE(trade_provider_observations.provider_published_at, excluded.provider_published_at),
+         source_url=COALESCE(trade_provider_observations.source_url, excluded.source_url),
+         filed_date=COALESCE(trade_provider_observations.filed_date, excluded.filed_date),
+         filer_name=COALESCE(trade_provider_observations.filer_name, excluded.filer_name),
+         payload=COALESCE(trade_provider_observations.payload, excluded.payload)`,
       [
         provider,
         row.chamber,
         row.providerKey,
+        row.tradeHash,
         nowIso,
         nowIso,
         row.providerPublishedAt,
@@ -875,12 +916,12 @@ async function alertMatch(env: Env, provider: ProviderDefinition, candidate: Can
       ? `\n${provider.label} provider timestamp: ${match.provider_published_at}`
       : '';
   await notifyAdmin(env, {
-    dedupeKey: `disclosure-latency:${provider.id}:${candidate.doc_id}`,
+    dedupeKey: `disclosure-latency:${provider.id}:${candidate.trade_hash}`,
     throttleSec: 30 * 24 * 60 * 60,
     subject: `Congress.Trade vs ${provider.label} disclosure latency`,
     text:
       `${direction}\n\n` +
-      `Doc: ${candidate.doc_id}\n` +
+      `Doc: ${candidate.trade_hash}\n` +
       `Chamber: ${candidate.chamber}\n` +
       `Congress.Trade first_seen_at: ${candidate.congress_first_seen_at}\n` +
       `${provider.label} monitor first_observed_at: ${match.first_observed_at}${published}\n` +
@@ -894,8 +935,8 @@ async function loadProviderRows(env: Env, provider: ProviderId, now: Date): Prom
   return all<ProviderObservationRow>(
     env.DB,
     `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at, provider_published_at,
-            source_url, filed_date, filer_name, payload
-       FROM disclosure_provider_observations
+            trade_hash, source_url, filed_date, filer_name, payload
+       FROM trade_provider_observations
       WHERE provider = ? AND first_observed_at >= ?
       ORDER BY first_observed_at DESC
       LIMIT 1000`,
@@ -919,9 +960,9 @@ async function matchAndUpdateCandidates(
   providerRows: ProviderObservationRow[],
   nowIso: string,
   errors: string[],
-): Promise<{ pending: number; matched: number; matchedDocIds: string[] }> {
+): Promise<{ pending: number; matched: number; matchedTradeHashes: string[] }> {
   let matched = 0;
-  const matchedDocIds: string[] = [];
+  const matchedTradeHashes: string[] = [];
   const updates: Array<[string, SqlParam[]]> = [];
   const alerts: Array<() => Promise<void>> = [];
 
@@ -935,6 +976,7 @@ async function matchAndUpdateCandidates(
         provider: providerRow.provider,
         chamber: providerRow.chamber,
         providerKey: providerRow.provider_key,
+        tradeHash: providerRow.trade_hash,
         payload,
         sourceUrl: providerRow.source_url,
         filedDate: providerRow.filed_date,
@@ -951,7 +993,7 @@ async function matchAndUpdateCandidates(
 
     if (match) {
       updates.push([
-        `UPDATE disclosure_latency_candidates
+        `UPDATE trade_latency_candidates
             SET status = 'matched',
                 provider_key = ?,
                 provider_first_seen_at = ?,
@@ -962,7 +1004,7 @@ async function matchAndUpdateCandidates(
                 last_checked_at = ?,
                 error = NULL,
                 updated_at = ?
-          WHERE doc_id = ? AND provider = ?`,
+          WHERE trade_hash = ? AND provider = ?`,
         [
           match.provider_key,
           match.first_observed_at,
@@ -971,20 +1013,20 @@ async function matchAndUpdateCandidates(
           match.payload,
           nowIso,
           nowIso,
-          candidate.doc_id,
+          candidate.trade_hash,
           provider.id,
         ],
       ]);
       matched++;
-      matchedDocIds.push(candidate.doc_id);
+      matchedTradeHashes.push(candidate.trade_hash);
       const m = match;
       alerts.push(() => alertMatch(env, provider, candidate, m));
     } else {
       updates.push([
-        `UPDATE disclosure_latency_candidates
+        `UPDATE trade_latency_candidates
             SET attempts = attempts + 1, last_checked_at = ?, updated_at = ?, error = ?
-          WHERE doc_id = ? AND provider = ?`,
-        [nowIso, nowIso, errors[0] ?? null, candidate.doc_id, provider.id],
+          WHERE trade_hash = ? AND provider = ?`,
+        [nowIso, nowIso, errors[0] ?? null, candidate.trade_hash, provider.id],
       ]);
     }
   }
@@ -996,7 +1038,7 @@ async function matchAndUpdateCandidates(
     await alertFn();
   }
 
-  return { pending: candidates.length, matched, matchedDocIds };
+  return { pending: candidates.length, matched, matchedTradeHashes };
 }
 
 async function matchPendingCandidates(
@@ -1005,12 +1047,12 @@ async function matchPendingCandidates(
   now: Date,
   nowIso: string,
   errors: string[],
-): Promise<{ pending: number; matched: number; examinedDocIds: string[]; matchedDocIds: string[] }> {
+): Promise<{ pending: number; matched: number; examinedTradeHashes: string[]; matchedTradeHashes: string[] }> {
   const candidates = await all<CandidateRow>(
     env.DB,
-    `SELECT doc_id, provider, chamber, source_url, filed_date, filer_name,
+    `SELECT trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
             congress_first_seen_at, attempts
-       FROM disclosure_latency_candidates
+       FROM trade_latency_candidates
       WHERE provider = ? AND status = 'pending'
       ORDER BY created_at DESC
       LIMIT 100`,
@@ -1018,7 +1060,7 @@ async function matchPendingCandidates(
   );
   const providerRows = await loadProviderRows(env, provider.id, now);
   const result = await matchAndUpdateCandidates(env, provider, candidates, providerRows, nowIso, errors);
-  return { ...result, examinedDocIds: candidates.map((c) => c.doc_id) };
+  return { ...result, examinedTradeHashes: candidates.map((c) => c.doc_id) };
 }
 
 /**
@@ -1074,7 +1116,7 @@ async function loadObservationRowsByKeys(
         env.DB,
         `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at, provider_published_at,
                 source_url, filed_date, filer_name, payload
-           FROM disclosure_provider_observations
+           FROM trade_provider_observations
           WHERE provider = ? AND provider_key IN (${placeholders})`,
         [provider, ...chunk],
       )),
@@ -1124,16 +1166,16 @@ async function runUnusualWhalesDeepMatch(
   matched: number;
   fetchedRows: number;
   errors: string[];
-  examinedDocIds: string[];
-  matchedDocIds: string[];
+  examinedTradeHashes: string[];
+  matchedTradeHashes: string[];
 }> {
   const empty = {
     pending: 0,
     matched: 0,
     fetchedRows: 0,
     errors: [] as string[],
-    examinedDocIds: [] as string[],
-    matchedDocIds: [] as string[],
+    examinedTradeHashes: [] as string[],
+    matchedTradeHashes: [] as string[],
   };
   const capPerRun = await uwDeepMatchDatesPerRun(env as EnvWithWatch);
   if (capPerRun <= 0) return empty;
@@ -1154,9 +1196,9 @@ async function runUnusualWhalesDeepMatch(
   // permanently starve every eligible candidate ranked behind them.
   const oldPending = await all<CandidateRow>(
     env.DB,
-    `SELECT doc_id, provider, chamber, source_url, filed_date, filer_name,
+    `SELECT trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,
             congress_first_seen_at, attempts
-       FROM disclosure_latency_candidates c
+       FROM trade_latency_candidates c
       WHERE c.provider = ? AND c.status = 'pending' AND c.filed_date IS NOT NULL AND c.filed_date < ?
         AND EXISTS (SELECT 1 FROM transactions t
                      WHERE t.doc_id = c.doc_id AND t.tx_date IS NOT NULL AND t.deprecated_at IS NULL)
@@ -1184,7 +1226,7 @@ async function runUnusualWhalesDeepMatch(
     // wrong-date page. The candidate query's EXISTS clause already excludes
     // these; this in-loop skip is belt-and-suspenders for transactions
     // deprecated between the two queries.
-    const txDates = txDatesByDoc.get(candidate.doc_id) ?? [];
+    const txDates = txDatesByDoc.get(candidate.trade_hash) ?? [];
     if (!txDates.length) continue;
     for (const date of txDates) {
       if (targetDateSet.has(date) || targetDateSet.size >= capPerRun) continue;
@@ -1226,6 +1268,7 @@ async function runUnusualWhalesDeepMatch(
       provider: providerRow.provider,
       chamber: providerRow.chamber,
       providerKey: providerRow.provider_key,
+      tradeHash: providerRow.trade_hash,
       payload: providerRow.payload ? (JSON.parse(providerRow.payload) as Record<string, unknown>) : {},
       sourceUrl: providerRow.source_url,
       filedDate: providerRow.filed_date,
@@ -1234,7 +1277,7 @@ async function runUnusualWhalesDeepMatch(
     })),
     nowIso,
   );
-  return { ...result, fetchedRows, errors, examinedDocIds: targetCandidates.map((c) => c.doc_id) };
+  return { ...result, fetchedRows, errors, examinedTradeHashes: targetCandidates.map((c) => c.doc_id) };
 }
 
 async function runProviderProbe(
@@ -1342,8 +1385,8 @@ async function runProviderProbe(
       // summing the two per-pass pending counts would double-count. Count
       // each distinct examined candidate once and subtract everything
       // matched this run.
-      const examined = new Set([...matched.examinedDocIds, ...deep.examinedDocIds]);
-      const matchedIds = new Set([...matched.matchedDocIds, ...deep.matchedDocIds]);
+      const examined = new Set([...matched.examinedTradeHashes, ...deep.examinedTradeHashes]);
+      const matchedIds = new Set([...matched.matchedTradeHashes, ...deep.matchedTradeHashes]);
       totalPending = examined.size - matchedIds.size;
     }
 
@@ -1468,7 +1511,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     env.DB,
     `SELECT provider, status, chamber, provider_key, match_method, congress_first_seen_at,
             provider_first_seen_at, provider_published_at, created_at, updated_at
-       FROM disclosure_latency_candidates
+       FROM trade_latency_candidates
       WHERE updated_at >= ? OR congress_first_seen_at >= ?
       ORDER BY created_at DESC
       LIMIT 5000`,
@@ -1486,7 +1529,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     env.DB,
     `SELECT provider, chamber, provider_key, first_observed_at, last_observed_at,
             provider_published_at, source_url, filed_date, filer_name, payload
-       FROM disclosure_provider_observations
+       FROM trade_provider_observations
       WHERE last_observed_at >= ?
       ORDER BY last_observed_at DESC
       LIMIT 10000`,
@@ -1504,7 +1547,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     // filings on the same day. Only exact document-token or exact filer/date
     // matches are eligible for a public timing comparison.
     const strongMatches = mine.filter(
-      (row) => row.status === 'matched' && (row.match_method === 'doc-token' || row.match_method === 'filer-date'),
+      (row) => row.status === 'matched' && (row.match_method === 'trade-hash' || row.match_method === 'fuzzy-no-ticker'),
     );
     const monitorDeltas = strongMatches
       .map((row) => deltaSeconds(row.provider_first_seen_at, row.congress_first_seen_at))
@@ -1530,7 +1573,7 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     ).length;
 
     const matchedMaturedCandidates = maturedCandidates.filter(
-      (row) => row.status === 'matched' && (row.match_method === 'doc-token' || row.match_method === 'filer-date'),
+      (row) => row.status === 'matched' && (row.match_method === 'trade-hash' || row.match_method === 'fuzzy-no-ticker'),
     ).length;
     const ctCoveragePct = maturedProviderObserved
       ? Math.round((maturedMatched / maturedProviderObserved) * 1000) / 10
@@ -1593,4 +1636,12 @@ export async function getDisclosureLatencySummary(env: Env, now: Date = new Date
     providerStatuses: statuses,
     publicSummary: { generatedAt, totals, providers },
   };
+}
+
+export async function recordDisclosureLatencyCandidate(
+  env: Env,
+  filing: any,
+  nowIso: string,
+): Promise<void> {
+  // Deprecated: Candidates are now tracked at the trade level inside normalizer.ts / backfill/seed.ts
 }

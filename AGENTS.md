@@ -40,12 +40,10 @@ Effort logs are standardized across all apps: protocol at
 ## Current Shape
 
 - The runnable app is in `app/`, not the repository root.
-- `app/wrangler.toml` targets the real `congress.trade` Worker, custom domains,
-  D1 database, KV namespace, R2 bucket, and queues.
-- Current Cloudflare Worker service names are `congress-trade` for production
-  and `congress-trade-preview` for preview. Some backing resources still use
-  legacy `congress-feed-*` names; do not rename D1/R2/queues unless explicitly
-  coordinating a resource migration.
+- The backend app runs on **Deno Deploy**, connecting to a **Turso (LibSQL)** database.
+  File storage (PDFs) uses **Cloudflare R2** via an S3 shim, and **Cloudflare DNS** is used for routing.
+- Queues are emulated using a custom `deno_runtime_queue` table in Turso, polled via a Deno cron.
+- The Next.js PWA is hosted on **Coolify**.
 - Root files are supporting context:
   - `congress-trade-feed-design.md` is historical design/product context.
   - `congress_trade_watch.py` is a standalone local House PTR watcher prototype.
@@ -127,9 +125,8 @@ npm run typecheck
 npm test
 ```
 
-Use `npm run dev` for local Wrangler development. Treat `npm run deploy`,
-`npm run deploy:full`, `scripts/ship.sh`, `scripts/provision.sh`, and remote D1
-commands as production-affecting until proven otherwise.
+Treat `npm run deploy`, `npm run deploy:full`, and `scripts/ship.sh` as production-affecting until proven otherwise.
+Note that the backend deployment targets Deno Deploy.
 
 Preview deploys are the default review path after verified app changes. If
 `app/wrangler.preview.toml` exists, run `cd app && npm run preview:deploy` after
@@ -141,7 +138,7 @@ KV, R2, queues, custom domains, cron triggers, or `app/wrangler.toml` for
 preview work. Production deploys and merges still require explicit user
 approval.
 
-Backfill and ingestion commands can mutate queues, D1, KV, R2, or provider
+Backfill and ingestion commands can mutate queues, Turso database state, R2, or provider
 state. Do not run remote backfills, queue drains, production crawlers, or
 production ingestion jobs unless the user explicitly asks.
 
@@ -150,8 +147,8 @@ production ingestion jobs unless the user explicitly asks.
 - Local bootstrap values go in the gitignored `app/.dev.vars`; create or update
   it with `bash scripts/cloud-setup.sh`. `.dev.vars.example` is reference-only.
 - Never commit `.dev.vars`, real API keys, tokens, or generated local state.
-- Production provider/app secrets live in Infisical. Use `wrangler secret put`
-  only for the Infisical bootstrap identities (or a documented migration
+- Production provider/app secrets live in Infisical. Use the Deno Deploy dashboard or Infisical
+  only for the bootstrap identities (or a documented migration
   fallback), never to create a second provider-secret source of truth.
 - The admin API fails closed unless `ADMIN_TOKEN` or Cloudflare Access is
   configured. `ADMIN_OPEN_IN_DEV=true` is only for local development.
@@ -159,18 +156,12 @@ production ingestion jobs unless the user explicitly asks.
 ## Migrations & deploy (READ THIS — the remote path is a trap)
 
 **Production schema is applied via `POST /api/admin/migrate` (the idempotent
-statement list in `app/src/admin/routes.ts`), NOT via `wrangler d1 ... --remote`.**
-The wrangler remote-migration path is deliberately avoided on this account (OAuth
-issues), so the remote `d1_migrations` tracking log **intentionally lags** (it sits
-at an early migration while the real schema is far ahead). Running
-`wrangler d1 migrations apply DB --remote` therefore tries to re-add columns that
-already exist and dies with `duplicate column name: …` — this is expected, not a
-bug, and it is NOT a sign that prod schema is behind. Do not "reconcile" the remote
-log or force it; that fights the design.
+statement list in `app/src/admin/routes.ts`).**
+Do not use local SQLite migration commands against the production Turso database.
 
 **Canonical production deploy:** `bash app/scripts/ship.sh` — it runs `npm run deploy`
-(just `wrangler deploy`, no migrations) then `POST /api/admin/migrate` (idempotent;
-"duplicate column" is treated as already-applied) through the Worker's D1 binding.
+then `POST /api/admin/migrate` (idempotent;
+"duplicate column" is treated as already-applied) against the Turso database.
 `npm run deploy:full` now aliases `ship.sh`; `npm run migrate:remote` is intentionally
 disabled (it errors with guidance). `npm run migrate` (`--local`) is for local dev only.
 
@@ -179,7 +170,7 @@ If you add or change a migration:
 - Add the SQL file under `app/migrations/` (used by `npm run migrate` for LOCAL dev).
 - **Mirror the same change as an idempotent statement in `POST /api/admin/migrate`**
   (`app/src/admin/routes.ts`) — that list is the source of truth for PROD schema.
-- Deploy with `bash app/scripts/ship.sh`. Never `wrangler ... --remote` migrations.
+- Deploy with `bash app/scripts/ship.sh`.
 
 ## Implemented Safety Decisions
 
@@ -238,14 +229,11 @@ environment is ready; do not re-install deps to start services.
 
 Durable, non-obvious notes for running/testing locally (all from `app/`):
 
-- Local infrastructure emulation is keyless. `wrangler dev` (`npm run dev`,
-  serves on `http://localhost:8787`) emulates D1/R2/KV/Queues/cron in-process —
-  no Cloudflare login is needed to boot, typecheck, or test. Provider-backed
-  behavior resolves configuration and API keys from Infisical. Do not copy
-  `app/.dev.vars.example` or hardcode provider keys into `.dev.vars`; run
+- Local development serves on `http://localhost:8787` using Deno.
+  Provider-backed behavior resolves configuration and API keys from Infisical.
+  Do not copy `app/.dev.vars.example` or hardcode provider keys into `.dev.vars`; run
   `bash scripts/cloud-setup.sh` from the repository root.
-- `wrangler dev` reads `app/.dev.vars` (gitignored) and `[vars]` in
-  `wrangler.toml`, not the OS environment. `cloud-setup.sh` safely maps the
+- `cloud-setup.sh` safely maps the
   Infisical app/shared machine identities from explicit environment variables
   or the owner-only `$HOME/.secrets/global-api-keys` file. It also retains only
   the documented early-init/local overrides (`SENTRY_DSN`,
@@ -260,11 +248,10 @@ Durable, non-obvious notes for running/testing locally (all from `app/`):
   which mark the run as production and disable open-admin. To actually open admin
   locally, also override those two in `app/.dev.vars` (`.dev.vars` wins over
   `[vars]`), e.g. `SENTRY_ENVIRONMENT="development"` and
-  `USAGE_MONITOR_ENVIRONMENT="local"`. Confirm via the wrangler log line
-  `admin API is CLOSED` vs the absence of it (`admin API is OPEN`).
-- The cron `scheduled()` handler does NOT auto-fire in `wrangler dev`. Trigger
+  `USAGE_MONITOR_ENVIRONMENT="local"`. Confirm via the local server logs if the admin API is OPEN.
+- The cron handler does NOT auto-fire in local dev. Trigger
   it manually: `curl "http://localhost:8787/cdn-cgi/handler/scheduled"`.
-- Queue consumers run inside the same `wrangler dev` process. Ingest is async:
+- Queue consumers run inside the same local Deno process. Ingest is async:
   e.g. `POST /api/admin/backfill {"chambers":["senate"],"limit":N}` enqueues
   work; poll `GET /api/transactions` a few seconds later to see normalized rows.
   The seed sources need outbound network and are flaky: the House S3 default
@@ -275,14 +262,6 @@ Durable, non-obvious notes for running/testing locally (all from `app/`):
 
 Client apps (peer clients of the backend, not separate products):
 
-- `clients/pwa` is a Next.js client. Deps are a separate install (`npm ci` in
-  `clients/pwa`); typecheck with `npm run typecheck`, dev with `npm run dev`.
-  It calls the backend at `${NEXT_PUBLIC_API_BASE_URL}/api/client/v1/*` and the
-  backend sends NO CORS headers, so it is designed to run SAME-ORIGIN with the
-  Worker (leave `NEXT_PUBLIC_API_BASE_URL` blank → relative `/api/...`). Pointing
-  it cross-origin at `http://localhost:8787` fails in the browser with CORS. For
-  local dev with live data, front both behind one origin (a reverse proxy routing
-  `/api/*`→8787 and everything else→Next) and keep the base URL blank.
 - `clients/ios` is a SwiftUI app requiring Xcode/macOS; it cannot be built or run
   in this Linux cloud environment.
 
