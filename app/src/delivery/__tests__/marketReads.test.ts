@@ -73,4 +73,36 @@ describe('mapSecurityRef', () => {
     expect(ref.marketCap).toBe(3.2e12);
     expect(ref.currentPrice).toBe(210.1);
   });
+
+  it('clamps invalid marketCapBucket to null to protect getRefs batch', () => {
+    expect(mapSecurityRef(minimalRow({ market_cap_bucket: 'giant' })).marketCapBucket).toBeNull();
+    expect(mapSecurityRef(minimalRow({ market_cap_bucket: 'MEGA' })).marketCapBucket).toBeNull();
+    expect(mapSecurityRef(minimalRow({ market_cap_bucket: '' })).marketCapBucket).toBeNull();
+    expect(mapSecurityRef(minimalRow({ market_cap_bucket: null })).marketCapBucket).toBeNull();
+    expect(mapSecurityRef(minimalRow({ market_cap_bucket: undefined })).marketCapBucket).toBeNull();
+    expect(mapSecurityRef(minimalRow({ market_cap_bucket: 'mid' })).marketCapBucket).toBe('mid');
+    expect(mapSecurityRef(minimalRow({ market_cap_bucket: 'nano' })).marketCapBucket).toBe('nano');
+  });
+
+  it('clamps malformed currentPriceDate to null (YYYY-MM-DD guard)', () => {
+    expect(mapSecurityRef(minimalRow({ current_price_date: 'not-a-date' })).currentPriceDate).toBeNull();
+    expect(mapSecurityRef(minimalRow({ current_price_date: '2026/06/20' })).currentPriceDate).toBeNull();
+    expect(mapSecurityRef(minimalRow({ current_price_date: '' })).currentPriceDate).toBeNull();
+    expect(mapSecurityRef(minimalRow({ current_price_date: null })).currentPriceDate).toBeNull();
+    expect(mapSecurityRef(minimalRow({ current_price_date: '2026-06-20' })).currentPriceDate).toBe('2026-06-20');
+    expect(mapSecurityRef(minimalRow({ current_price_date: '2024-01-01' })).currentPriceDate).toBe('2024-01-01');
+  });
 });
+
+function minimalRow(overrides: Record<string, unknown> = {}) {
+  return {
+    ticker: 'AAA',
+    company_name: null, sector: null, industry: null, asset_class: null,
+    is_etf: 0, is_adr: 0, country: null, state_hq: null, state_of_incorp: null,
+    exchange: null, exchange_short: null, currency: null, market_cap: null,
+    market_cap_bucket: null, ipo_date: null, cik: null, sic_code: null,
+    sic_description: null, source: null, enriched_at: null,
+    current_price: null, current_price_date: null,
+    ...overrides,
+  } as Parameters<typeof mapSecurityRef>[0];
+}
