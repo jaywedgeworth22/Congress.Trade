@@ -5,27 +5,15 @@ name: Deploy Deno
 # hourly schedule alone was 24 deploys/day with no code change.
 #
 # Policy:
-#   - Deploy on push to main when app/backend paths change
+#   - Scheduled deploy once every 3 hours to batch updates and save compute time
 #   - Manual workflow_dispatch always allowed
-#   - Optional daily safety net (once/day) — not hourly
-#   - Hard daily cap (default 8 successful Deploy Deno runs/UTC day) so merge
-#     storms cannot burn the free quota; set DEPLOY_MAX_PER_DAY repo var to tune
+#   - Hard daily cap (default 8 successful Deploy Deno runs/UTC day) so we
+#     cannot burn the free quota; set DEPLOY_MAX_PER_DAY repo var to tune
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'deno.json'
-      - 'app/src/**'
-      - 'app/deno.json'
-      - 'app/package.json'
-      - 'app/package-lock.json'
-      - 'app/scripts/ship.sh'
-      - '.github/workflows/deploy-deno.yml'
   schedule:
-    # Daily safety net only (was hourly — 24 deploys/day of pure waste).
-    - cron: '17 6 * * *'
+    # Deploy once every 3 hours to batch deployments and save compute time.
+    - cron: '0 */3 * * *'
   workflow_dispatch:
     inputs:
       force:
