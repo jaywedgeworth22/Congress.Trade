@@ -418,9 +418,17 @@ export type QueueMessage =
        * One backlog-autopilot processing slice (a few docs); the consumer
        * re-enqueues itself until the run completes or halts. Runs in the
        * queue (generous per-message duration), never in the cron.
+       *
+       * `tickId` MUST be unique per send. Continuation ticks re-enqueue while
+       * the current claim is still `processing`, and the active-dedupe unique
+       * index is on (queue_name, dedupe_key) for pending/processing rows —
+       * a stable per-runId key would INSERT OR IGNORE and silently drop the
+       * next slice, stalling the run until the 30-minute stalled halt.
        */
       type: 'autopilot.tick';
       runId: string;
+      /** Unique id for this queue row (not the run). Fresh uuid on every send. */
+      tickId: string;
     };
 
 /**

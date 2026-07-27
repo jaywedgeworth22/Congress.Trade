@@ -182,6 +182,57 @@ describe('Deno durable queue', () => {
     }
   });
 
+  it('allows autopilot.tick continuation enqueue while prior claim is still processing', async () => {
+    // Regression: continuation used a stable per-runId dedupe key and was
+    // INSERT OR IGNOREd against the still-processing claim, stalling the run.
+    const harness = await createHarness();
+    try {
+      await harness.ingest.send({
+        type: 'autopilot.tick',
+        runId: 'run-1',
+        tickId: 'tick-1',
+      });
+      // Simulate the consumer having claimed the first tick (status=processing).
+      await harness.client.execute({
+        sql: `UPDATE deno_runtime_queue
+                 SET status = 'processing', lease_until = ?, lease_token = 'lease-1'
+               WHERE queue_name = 'ingest'`,
+        args: [new Date(harness.now().getTime() + 60_000).toISOString()],
+      });
+
+      await harness.ingest.send({
+        type: 'autopilot.tick',
+        runId: 'run-1',
+        tickId: 'tick-2',
+      });
+
+      const rows = await harness.rows();
+      expect(rows).toHaveLength(2);
+      const statuses = rows.map((r) => r.status).sort();
+      expect(statuses).toEqual(['pending', 'processing']);
+      const payloads = rows.map((r) => JSON.parse(String(r.payload)) as { tickId: string });
+      expect(payloads.map((p) => p.tickId).sort()).toEqual(['tick-1', 'tick-2']);
+    } finally {
+      harness.client.close();
+    }
+  });
+
+  it('drops a duplicate active autopilot.tick with the same tickId (true redelivery)', async () => {
+    const harness = await createHarness();
+    try {
+      const msg = {
+        type: 'autopilot.tick' as const,
+        runId: 'run-1',
+        tickId: 'tick-same',
+      };
+      await harness.ingest.send(msg);
+      await harness.ingest.send(msg); // same tickId while first is still pending
+      expect(await harness.rows()).toHaveLength(1);
+    } finally {
+      harness.client.close();
+    }
+  });
+
   it('prefers agreement.check / autopilot.tick over usage.telemetry when draining', async () => {
     const harness = await createHarness();
     try {
