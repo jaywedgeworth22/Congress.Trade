@@ -48,7 +48,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           # Repo variable optional; default 8 successful deploys per UTC day.
-          DEPLOY_MAX_PER_DAY: ${{ vars.DEPLOY_MAX_PER_DAY || '8' }}
+          DEPLOY_MAX_PER_DAY: ${{ vars.DEPLOY_MAX_PER_DAY || '50' }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || false }}
           REPO: ${{ github.repository }}
         run: |
