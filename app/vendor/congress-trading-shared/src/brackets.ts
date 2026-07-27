@@ -9,10 +9,13 @@ export interface AmountBracket {
 }
 
 /**
- * The canonical STOCK Act bracket set (ascending). The final tier ($50,000,001+)
- * is open-ended and represented with max === null.
+ * The canonical STOCK Act bracket set (ascending), plus a product-level
+ * `$0 – $1,000` tier for exact sub-$1,001 dollar amounts that appear on many
+ * House PTRs (partial sales / small lots). The final tier ($50,000,001+) is
+ * open-ended and represented with max === null.
  */
 export const STOCK_ACT_BRACKETS: readonly AmountBracket[] = Object.freeze([
+  Object.freeze({ min: 0, max: 1_000 }),
   Object.freeze({ min: 1_001, max: 15_000 }),
   Object.freeze({ min: 15_001, max: 50_000 }),
   Object.freeze({ min: 50_001, max: 100_000 }),
