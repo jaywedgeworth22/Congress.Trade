@@ -43,13 +43,13 @@ export interface DenoCostProfile {
 }
 
 const PROFILES: Record<DenoCostProfileName, Omit<DenoCostProfile, 'disableInternalCron'>> = {
-  // Survive free tier: ~8.6k cron ticks/mo, tiny per-tick extract budget.
+  // Survive free tier: ~2.9k cron ticks/mo, tiny per-tick extract budget.
   free: {
     name: 'free',
-    cronSchedule: '*/5 * * * *',
-    drainLimit: 3,
+    cronSchedule: '*/15 * * * *',
+    drainLimit: 2,
     drainClaimSize: 1,
-    outboxLimit: 20,
+    outboxLimit: 10,
     idleShortCircuit: true,
   },
   // Middle ground: ~21k ticks/mo, modest drain — good if Pro is temporary.

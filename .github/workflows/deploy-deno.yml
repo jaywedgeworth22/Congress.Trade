@@ -5,27 +5,15 @@ name: Deploy Deno
 # hourly schedule alone was 24 deploys/day with no code change.
 #
 # Policy:
-#   - Deploy on push to main when app/backend paths change
+#   - Scheduled deploy once every 3 hours to batch updates and save compute time
 #   - Manual workflow_dispatch always allowed
-#   - Optional daily safety net (once/day) — not hourly
-#   - Hard daily cap (default 8 successful Deploy Deno runs/UTC day) so merge
-#     storms cannot burn the free quota; set DEPLOY_MAX_PER_DAY repo var to tune
+#   - Hard daily cap (default 8 successful Deploy Deno runs/UTC day) so we
+#     cannot burn the free quota; set DEPLOY_MAX_PER_DAY repo var to tune
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'deno.json'
-      - 'app/src/**'
-      - 'app/deno.json'
-      - 'app/package.json'
-      - 'app/package-lock.json'
-      - 'app/scripts/ship.sh'
-      - '.github/workflows/deploy-deno.yml'
   schedule:
-    # Daily safety net only (was hourly — 24 deploys/day of pure waste).
-    - cron: '17 6 * * *'
+    # Deploy once every 3 hours to batch deployments and save compute time.
+    - cron: '0 */3 * * *'
   workflow_dispatch:
     inputs:
       force:
@@ -48,7 +36,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           # Repo variable optional; default 8 successful deploys per UTC day.
-          DEPLOY_MAX_PER_DAY: ${{ vars.DEPLOY_MAX_PER_DAY || '50' }}
+          DEPLOY_MAX_PER_DAY: ${{ vars.DEPLOY_MAX_PER_DAY || '8' }}
           FORCE: ${{ github.event_name == 'workflow_dispatch' && inputs.force || false }}
           REPO: ${{ github.repository }}
         run: |
@@ -62,25 +50,38 @@ jobs:
           # Use curl (gh CLI may be absent on self-hosted runners).
           since="$(date -u +%Y-%m-%dT00:00:00Z)"
           day="$(date -u +%Y-%m-%d)"
-          count="$(curl -fsS \
+          output="$(curl -fsS \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${REPO}/actions/workflows/deploy-deno.yml/runs?status=completed&per_page=100" \
           | python3 -c "
-          import json,sys
+          import json,sys,os
           day='${day}'
           data=json.load(sys.stdin)
           n=0
-          for r in data.get('workflow_runs',[]):
+          already_deployed='false'
+          current_sha=os.environ.get('GITHUB_SHA')
+          runs = data.get('workflow_runs',[])
+          for r in runs:
             if r.get('conclusion') not in ('success','skipped'): continue
             created=(r.get('created_at') or '')[:10]
             if created==day: n+=1
-          print(n)
+          for r in runs:
+            if r.get('conclusion') == 'success':
+              if r.get('head_sha') == current_sha:
+                already_deployed='true'
+              break
+          print(f'{n},{already_deployed}')
           ")"
+          count=$(echo "$output" | cut -d',' -f1)
+          already_deployed=$(echo "$output" | cut -d',' -f2)
           max="${DEPLOY_MAX_PER_DAY}"
           echo "Successful/skipped Deploy Deno runs on ${day} UTC: ${count} (cap ${max})"
-          if [ "${count}" -ge "${max}" ]; then
+          if [ "${already_deployed}" = "true" ]; then
+            echo "Commit ${GITHUB_SHA} was already successfully deployed. Skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ "${count}" -ge "${max}" ]; then
             echo "Daily deploy cap reached (${count} >= ${max}). Skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else

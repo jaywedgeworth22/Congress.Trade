@@ -11,6 +11,9 @@ import { maybeRunDailyJobs } from '../jobs.ts';
 import { runWatcher } from '../ingestion/watcher.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { flushIngestionOutbox } from '../ingestion/outbox.ts';
+import { maybeRunAgreementAutopublish } from '../extraction/agreement.ts';
+import { maybeStartBacklogAutopilot } from '../extraction/autopilot.ts';
+import { refreshSecrets } from '../secrets/infisical.ts';
 import {
   drainDurableQueues,
   type DurableQueueHandlers,
@@ -28,6 +31,10 @@ export interface ScheduledTickResult {
   profile: DenoCostProfile['name'];
   skippedDrain: boolean;
   watcher: Awaited<ReturnType<typeof runWatcher>> | null;
+  /** Per-tick agreement cron backstop (enqueue only). Null when disabled/errored. */
+  agreementAutopublish: Awaited<ReturnType<typeof maybeRunAgreementAutopublish>> | null;
+  /** Backlog autopilot gate (may start a run / report blocked). Null on error. */
+  autopilot: Awaited<ReturnType<typeof maybeStartBacklogAutopilot>> | null;
   ingestionOutbox: { claimed: number; enqueued: number; failed: number } | null;
   deliveryOutbox: { claimed: number; enqueued: number; failed: number } | null;
   drained: {
@@ -120,17 +127,46 @@ export async function runScheduledTick(
     profile: profile.name,
     skippedDrain: false,
     watcher: null,
+    agreementAutopublish: null,
+    autopilot: null,
     ingestionOutbox: null,
     deliveryOutbox: null,
     drained: null,
     errors,
   };
 
+  // Refresh Infisical before gated lanes so flag flips (e.g. AGREEMENT_AUTOPUBLISH)
+  // take effect without waiting for the cache TTL.
+  try {
+    await refreshSecrets(env);
+  } catch (err) {
+    errors.push(`secrets_refresh: ${errorText(err)}`);
+    console.error('Deno secrets refresh failed:', err);
+  }
+
   try {
     result.watcher = await runWatcher(env, now);
   } catch (err) {
     errors.push(`watcher: ${errorText(err)}`);
     console.error('Deno watcher tick failed:', err);
+  }
+
+  // Agreement / autopilot MUST run on Deno Deploy. The Workers scheduled handler
+  // used to own these lanes; omitting them here silently parked the entire
+  // review-queue autonomous publish path after the Deno migration.
+  // Run BEFORE the idle short-circuit so newly enqueued agreement.check /
+  // autopilot.tick messages are visible to the subsequent drain probe.
+  try {
+    result.agreementAutopublish = await maybeRunAgreementAutopublish(env);
+  } catch (err) {
+    errors.push(`agreement_autopublish: ${errorText(err)}`);
+    console.error('Deno agreement autopublish tick failed:', err);
+  }
+  try {
+    result.autopilot = await maybeStartBacklogAutopilot(env, now);
+  } catch (err) {
+    errors.push(`backlog_autopilot: ${errorText(err)}`);
+    console.error('Deno backlog autopilot tick failed:', err);
   }
 
   let shouldDrain = true;
