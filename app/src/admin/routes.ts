@@ -121,7 +121,11 @@ import {
   PRICE_UNAVAILABLE_NOT_FOUND_FIRST,
 } from '../prices/service.ts';
 import { getSecretResolverStatus, refreshSecrets, resolveSecret, resolveSecrets, updateSecret } from '../secrets/infisical.ts';
-import { getDisclosureLatencySummary, runDisclosureLatencyProbe } from '../ingestion/tradeLatency.ts';
+import {
+  backfillTradeLatencyCandidates,
+  getDisclosureLatencySummary,
+  runDisclosureLatencyProbe,
+} from '../ingestion/tradeLatency.ts';
 import { pollExecutive } from '../ingestion/watcher.ts';
 import { verifyRawFilesStorage } from './storageSmoke.ts';
 import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox.ts';
@@ -3022,6 +3026,24 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       .filter(Boolean);
     const result = await runDisclosureLatencyProbe(c.env, new Date(), fetch, { force: true, providers });
     return c.json({ ok: result.errors.length === 0, ...result });
+  });
+
+  // --- POST /disclosure-latency/backfill-candidates -----------------------
+  // Seed trade_latency_candidates from recent persisted transactions so the
+  // FMP/UW/QQ race can score historical rows after schema/config repairs.
+  // Body (optional): { limit?: number, days?: number }
+  r.post('/disclosure-latency/backfill-candidates', async (c) => {
+    let body: { limit?: unknown; days?: unknown } = {};
+    try {
+      const text = await c.req.text();
+      if (text) body = JSON.parse(text) as { limit?: unknown; days?: unknown };
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const limit = typeof body.limit === 'number' ? body.limit : undefined;
+    const days = typeof body.days === 'number' ? body.days : undefined;
+    const result = await backfillTradeLatencyCandidates(c.env, { limit, days });
+    return c.json({ ok: true, ...result });
   });
 
   // --- GET /config-sources --------------------------------------------------

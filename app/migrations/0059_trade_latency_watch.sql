@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS trade_latency_candidates (
   doc_id                 TEXT NOT NULL,
   provider               TEXT NOT NULL DEFAULT 'fmp',
   chamber                TEXT NOT NULL,
+  source_url             TEXT,
   filed_date             TEXT,
   filer_name             TEXT,
   ticker                 TEXT,
