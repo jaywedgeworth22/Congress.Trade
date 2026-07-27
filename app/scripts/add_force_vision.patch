@@ -1,0 +1,20 @@
+--- app/src/admin/routes.ts
++++ app/src/admin/routes.ts
+@@ -4467,7 +4467,10 @@
+       summary.filingsScanned += 1;
+       let extracted;
+       try {
+-        const filing = await loadFilingRow(c.env, doc_id);
++        let filing = await loadFilingRow(c.env, doc_id);
++        if (filing && body.forceVision) {
++           filing = { ...filing, docKind: 'scanned_pdf' }; // Force vision pipeline
++        }
+         if (!filing) return c.json({ error: "no filing" });
+         if (!filing.rawObjectKey) return c.json({ error: "no rawObjectKey", filing });
+         const obj = await c.env.RAW_FILES.get(filing.rawObjectKey);
+         if (!obj) return c.json({ error: "no r2 object", filing });
+-        extracted = await extractParsed(c.env, doc_id);
++        
++        // Wait, extractParsed reads the filing from DB again! 
++        // I should just add an option to extractParsed!
+       } catch (err) {

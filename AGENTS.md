@@ -174,9 +174,12 @@ If you add or change a migration:
 
 ## Implemented Safety Decisions
 
-- Public subscription listing is disabled. Public creation returns the generated
-  per-subscription secret once; `GET/PATCH /api/subscriptions/:id` and SSE
-  streams require that secret. Admin listing is `/api/admin/subscriptions`.
+- Public subscription listing is disabled. Delivery creation requires a
+  signed-in Premium account (`POST /api/subscriptions` and client
+  `create_subscription`); the generated per-subscription secret is returned
+  once. `GET/PATCH /api/subscriptions/:id` and SSE streams require that
+  secret. Admin listing is `/api/admin/subscriptions`. The Delivery tab stays
+  visible when logged out but stays deactivated until sign-in + Premium.
 - Live transaction persistence uses `transactions.row_key` plus a unique
   `(doc_id, source, row_key)` index. Retries should use `INSERT OR IGNORE` and
   enqueue delivery only for newly inserted rows.
@@ -196,10 +199,15 @@ If you add or change a migration:
 
 ## Open Decisions To Preserve
 
-- Analytics routes are public today. If analytics should become premium-only,
-  add entitlement middleware and update UI/tests/docs together.
-- Decide whether public subscription creation should eventually require a signed
-  in account rather than just returning a bearer secret.
+- ~~Analytics routes are public today. If analytics should become premium-only,
+  add entitlement middleware and update UI/tests/docs together.~~
+  **DECIDED 2026-07-24 (Jay):** analytics stay **public/free**. Only Delivery
+  (webhook and/or SSE) is Premium.
+- ~~Decide whether public subscription creation should eventually require a signed
+  in account rather than just returning a bearer secret.~~
+  **DECIDED 2026-07-24 (Jay):** Delivery requires a **signed-in** account;
+  create stays Premium-gated. The Delivery tab remains visible when logged out
+  but deactivated with clear messaging until sign-in (+ Premium to create).
 
 ## Verification Standard
 
