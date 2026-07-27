@@ -134,8 +134,51 @@ export function ogeDocId(filename: string): string {
 }
 
 /**
- * Parse the OGE index view HTML into DiscoveredFilings for known executive
- * filers' 278-T reports. Pure so it can be unit-tested against a fixture.
+ * Dynamic fallback for Executive filers not listed in EXECUTIVE_FILERS.
+ * Parses filer name from 278-T PDF filename and mints a stable synthetic ID.
+ */
+export function parseDynamicExecutiveFiler(filename: string): {
+  filerId: string;
+  fullName: string;
+  party: null;
+  photoUrl: null;
+} | null {
+  let clean = filename
+    .replace(/\.pdf$/i, '')
+    .replace(/278[\s-]?T/gi, '')
+    .replace(/(\d{1,2})[.\-](\d{1,2})[.\-](\d{4}|\d{2})/g, '')
+    .replace(/\(\d+\)/g, '')
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (clean.includes(',')) {
+    const parts = clean.split(',').map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 2) {
+      clean = `${parts[1]} ${parts[0]}`;
+    }
+  }
+
+  if (!clean || clean.length < 2) return null;
+
+  const slug = clean
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  if (!slug) return null;
+
+  return {
+    filerId: `EXEC-${slug.toUpperCase()}`,
+    fullName: clean,
+    party: null,
+    photoUrl: null,
+  };
+}
+
+/**
+ * Parse the OGE index view HTML into DiscoveredFilings for known and dynamic
+ * executive filers' 278-T reports. Pure so it can be unit-tested against a fixture.
  */
 export function parseOgeIndex(html: string): DiscoveredFiling[] {
   const out: DiscoveredFiling[] = [];
@@ -156,7 +199,11 @@ export function parseOgeIndex(html: string): DiscoveredFiling[] {
     }
     filename = filename.trim();
     if (!is278T(filename)) continue;
-    const filer = EXECUTIVE_FILERS.find((f) => f.pattern.test(filename));
+    const knownFiler = EXECUTIVE_FILERS.find((f) => f.pattern.test(filename));
+    const filer = knownFiler
+      ? { filerId: knownFiler.filerId, fullName: knownFiler.fullName, party: knownFiler.party, photoUrl: knownFiler.photoUrl }
+      : parseDynamicExecutiveFiler(filename);
+
     if (!filer) continue;
     const docId = ogeDocId(filename);
     if (seen.has(docId)) continue;
@@ -190,11 +237,17 @@ export async function ogeWatchEnabled(env: Env): Promise<boolean> {
   }
 }
 
-async function indexUrl(env: Env): Promise<string> {
+async function indexUrls(env: Env): Promise<string[]> {
   try {
-    return (await resolveSecret(env, 'OGE_INDEX_URL')).value || env.OGE_INDEX_URL || OGE_DEFAULT_INDEX_URL;
+    const raw = (await resolveSecret(env, 'OGE_INDEX_URLS')).value ||
+      (await resolveSecret(env, 'OGE_INDEX_URL')).value ||
+      env.OGE_INDEX_URLS ||
+      env.OGE_INDEX_URL ||
+      OGE_DEFAULT_INDEX_URL;
+    return raw.split(',').map((u) => u.trim()).filter(Boolean);
   } catch {
-    return env.OGE_INDEX_URL || OGE_DEFAULT_INDEX_URL;
+    const raw = env.OGE_INDEX_URLS || env.OGE_INDEX_URL || OGE_DEFAULT_INDEX_URL;
+    return raw.split(',').map((u) => u.trim()).filter(Boolean);
   }
 }
 
@@ -221,19 +274,33 @@ async function pollIntervalSec(env: Env): Promise<number> {
   }
 }
 
-/** Fetch + parse the OGE index. Throws on HTTP failure (caller guards). */
+/** Fetch + parse the OGE index(es). Throws on HTTP failure (caller guards). */
 export async function fetchOgeExecutiveFilings(
   env: Env,
   fetchImpl: typeof fetch = fetch,
 ): Promise<DiscoveredFiling[]> {
-  const res = await trackedFetch(await indexUrl(env), {
-    headers: {
-      'user-agent': 'congress.trade/0.1 (+https://congress.trade)',
-      accept: 'text/html',
-    },
-  }, { service: 'filing-discovery', operation: 'fetch-executive-index', dynamicTarget: 'filing-source' }, fetchImpl);
-  if (!res.ok) throw new Error(`OGE index HTTP ${res.status}`);
-  return parseOgeIndex(await res.text());
+  const urls = await indexUrls(env);
+  const allFilings: DiscoveredFiling[] = [];
+  const seenDocIds = new Set<string>();
+
+  for (const url of urls) {
+    const res = await trackedFetch(url, {
+      headers: {
+        'user-agent': 'congress.trade/0.1 (+https://congress.trade)',
+        accept: 'text/html',
+      },
+    }, { service: 'filing-discovery', operation: 'fetch-executive-index', dynamicTarget: 'filing-source' }, fetchImpl);
+    if (!res.ok) throw new Error(`OGE index HTTP ${res.status}`);
+    const filings = parseOgeIndex(await res.text());
+    for (const f of filings) {
+      if (!seenDocIds.has(f.docId)) {
+        seenDocIds.add(f.docId);
+        allFilings.push(f);
+      }
+    }
+  }
+
+  return allFilings;
 }
 
 /**
