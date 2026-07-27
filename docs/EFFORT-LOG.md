@@ -9,6 +9,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
+- **[Congress.Trade][CURSOR] Review-queue autonomy restore — IN PROGRESS 2026-07-27.** Root cause: (1) Infisical prod `AGREEMENT_AUTOPUBLISH_ENABLED=false` since cost-min era; (2) Deno `runScheduledTick` never called `maybeRunAgreementAutopublish` / `maybeStartBacklogAutopilot` (Workers-only lanes). Ops: re-enabled flag, acknowledged Jul-21 OpenRouter-auth autopilot halt, enabled `AUTOPILOT_LEGACY_REPLAY_ENABLED`. Code: wire autonomy into Deno tick + priority drain for agreement/autopilot over usage.telemetry. Branch `cursor/review-queue-autonomy-87f9`. Manual: soft-confirmed **81** soft `low_confidence` filings (2×H-2026 + 79× filed≥2024); 4 remaining H-2026 cascade docs empty/disagree (held). Unresolved 1836→1755.
+
 - **[Congress.Trade][CURSOR] Mobile Trends chart + top-performers layout — MERGED & DEPLOYED PR #954 2026-07-25.** `7033f86` on main; `bash app/scripts/ship.sh --deploy-only` → production `https://congress.trade` (live HTML has `trTimeMetric`/`stack-under`/`member-meta`). Chart fits phone width; # Trades/$ toggle; flush headings; stats under names. Gates: typecheck + 1865 tests + 390px visual QA.
 
 - **[Congress.Trade][GROK] Free-tier live + deploy daily cap — MERGED PR #952 2026-07-25.** `CT_COST_PROFILE=free` set on Deno Deploy (DENO_* env keys rejected by platform). Health reports `costProfile`. Deploy workflow: no more hourly schedule; max 8 deploys/UTC day (`vars.DEPLOY_MAX_PER_DAY`); force via workflow_dispatch.
