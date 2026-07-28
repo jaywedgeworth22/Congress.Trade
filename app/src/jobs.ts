@@ -138,6 +138,14 @@ export async function runRetentionSweep(env: Env, now = new Date()): Promise<Rec
 /**
  * Delete filings, transactions, and corresponding R2 PDFs that are older than 5 years.
  * We rely on 'filed_date' from filings table.
+ *
+ * Rows with a NULL filed_date would never satisfy `filed_date < ?` (NULL
+ * comparisons are not true), so they accumulated forever; the sweep now falls
+ * back to the ingestion date (`first_seen_at`) for those rows — a filing we
+ * ingested more than 5 years ago whose source never yielded a filed_date is
+ * safe to prune. Delivery bookkeeping rows (deliveries / delivery_outbox) that
+ * reference the batch's transactions are deleted alongside them so the sweep
+ * does not orphan delivery rows pointing at removed transactions.
  */
 export async function runFilingRetentionSweep(env: Env, now = new Date()): Promise<number> {
   const fiveYearsAgo = new Date(now.getTime() - 5 * 365 * 86_400_000);
@@ -148,7 +156,8 @@ export async function runFilingRetentionSweep(env: Env, now = new Date()): Promi
     for (let batch = 0; batch < RETENTION_MAX_BATCHES_PER_TABLE; batch++) {
       const rows = await all<{ doc_id: string; raw_object_key: string | null }>(
         env.DB,
-        `SELECT doc_id, raw_object_key FROM filings WHERE filed_date < ? LIMIT ?`,
+        `SELECT doc_id, raw_object_key FROM filings
+          WHERE COALESCE(filed_date, substr(first_seen_at, 1, 10)) < ? LIMIT ?`,
         [cutoff, RETENTION_DELETE_BATCH]
       );
       
@@ -167,6 +176,21 @@ export async function runFilingRetentionSweep(env: Env, now = new Date()): Promi
       const docIds = rows.map(r => r.doc_id);
       const placeholders = docIds.map(() => '?').join(',');
       
+      // Delivery bookkeeping first: deliveries/delivery_outbox reference
+      // transactions by tx_id and must not be orphaned when the batch's
+      // transactions are removed below.
+      await run(
+        env.DB,
+        `DELETE FROM deliveries WHERE tx_id IN (SELECT id FROM transactions WHERE doc_id IN (${placeholders}))`,
+        docIds
+      );
+
+      await run(
+        env.DB,
+        `DELETE FROM delivery_outbox WHERE tx_id IN (SELECT id FROM transactions WHERE doc_id IN (${placeholders}))`,
+        docIds
+      );
+
       await run(
         env.DB,
         `DELETE FROM tx_cursor_seq WHERE tx_id IN (SELECT id FROM transactions WHERE doc_id IN (${placeholders}))`,
