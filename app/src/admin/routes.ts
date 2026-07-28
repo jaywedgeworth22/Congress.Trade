@@ -7693,11 +7693,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         await run(c.env.DB, sql);
         applied.push(sql);
       } catch (err) {
-        const msg = (err as Error).message;
-        if (/duplicate column|already exists/i.test(msg)) {
+        const msg = (err as Error).message || String(err);
+        if (/duplicate column|already exists|duplicate key/i.test(msg)) {
           skipped.push(sql);
         } else {
-          return c.json({ error: msg, sql }, 500);
+          console.error(`[MIGRATE ERROR] ${msg} on statement: ${sql}`);
+          skipped.push(`${sql} -- ERROR: ${msg}`);
         }
       }
     }
