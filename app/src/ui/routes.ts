@@ -16,6 +16,20 @@ import type { Env } from '../shared/types.ts';
 import { DASHBOARD_HTML } from './dashboardHtml.ts';
 import { TOS_HTML, PRIVACY_HTML } from './legalHtml.ts';
 import { getLogoDisplay } from '../shared/settings.ts';
+import {
+  APPLE_TOUCH_ICON_PNG,
+  BRAND_LOGO_DARK_PNG,
+  BRAND_LOGO_LIGHT_PNG,
+  BRAND_LOGO_PNG,
+  EAGLE_SPLASH_PNG,
+  FAVICON_PNG,
+  ICON_192_PNG,
+  ICON_512_PNG,
+  OG_IMAGE_PNG,
+  SITE_WEBMANIFEST,
+  ZILLA_SLAB_WOFF2,
+  type StaticAsset,
+} from './assets.ts';
 
 const DEFAULT_GA_MEASUREMENT_ID = 'G-B3J0XHK0FX';
 
@@ -54,6 +68,32 @@ export function buildUiRouter(): Hono<{ Bindings: Env }> {
   // Dashboard SPA. Hono's c.html() sets `content-type: text/html; charset=UTF-8`.
   r.get('/', async (c) => c.html(await renderDashboard(c.env)));
   r.get('/admin', async (c) => c.html(await renderDashboard(c.env)));
+
+  // Binary assets extracted from the HTML document (fonts, brand images,
+  // icons, social card). Content is version-pinned to the deploy, so cache
+  // aggressively; the HTML revalidates and picks up new bytes on each deploy.
+  const serveAsset = (a: StaticAsset, cacheControl: string) => (c: any) =>
+    c.body(a.bytes, 200, {
+      'content-type': a.contentType,
+      'cache-control': cacheControl,
+    });
+  const IMMUTABLE = 'public, max-age=31536000, immutable';
+  const LONG = 'public, max-age=86400';
+  r.get('/assets/zilla-slab-700.woff2', serveAsset(ZILLA_SLAB_WOFF2, IMMUTABLE));
+  r.get('/assets/eagle-splash.png', serveAsset(EAGLE_SPLASH_PNG, IMMUTABLE));
+  r.get('/assets/brand-logo.png', serveAsset(BRAND_LOGO_PNG, IMMUTABLE));
+  r.get('/assets/brand-logo-dark.png', serveAsset(BRAND_LOGO_DARK_PNG, IMMUTABLE));
+  r.get('/assets/brand-logo-light.png', serveAsset(BRAND_LOGO_LIGHT_PNG, IMMUTABLE));
+  r.get('/og-image.png', serveAsset(OG_IMAGE_PNG, LONG));
+  r.get('/favicon.ico', serveAsset(FAVICON_PNG, LONG));
+  r.get('/icon-192.png', serveAsset(ICON_192_PNG, LONG));
+  r.get('/icon-512.png', serveAsset(ICON_512_PNG, LONG));
+  r.get('/apple-touch-icon.png', serveAsset(APPLE_TOUCH_ICON_PNG, LONG));
+  r.get('/site.webmanifest', (c) =>
+    c.body(SITE_WEBMANIFEST, 200, {
+      'content-type': 'application/manifest+json; charset=utf-8',
+      'cache-control': LONG,
+    }));
 
   // Static legal pages (required for Stripe Checkout: ToS + Privacy URLs).
   r.get('/terms-of-service', (c) => c.html(renderLegalHtml(TOS_HTML, c.env)));
