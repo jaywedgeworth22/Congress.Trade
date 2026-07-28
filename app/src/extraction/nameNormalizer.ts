@@ -37,14 +37,18 @@ export function cleanAssetString(name: string | null | undefined, ticker?: strin
     let wordIndex = 0;
     str = str.replace(/[A-Za-z0-9]+/g, (txt) => {
       const isFirstWord = wordIndex++ === 0;
-      // Small words that shouldn't be capitalized in standard title case (unless first word)
-      if (['THE', 'AND', 'FOR', 'OF', 'IN', 'ON', 'AT', 'TO'].includes(txt)) {
+      const upper = txt.toUpperCase();
+      if (upper === 'INC') return 'Inc.';
+      if (upper === 'COM') return 'com';
+      if (upper === 'CO') return 'Co.';
+      if (upper === 'LTD') return 'Ltd.';
+      if (upper === 'CORP') return 'Corp.';
+      if (['THE', 'AND', 'FOR', 'OF', 'IN', 'ON', 'AT', 'TO'].includes(upper)) {
         return isFirstWord ? txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase() : txt.toLowerCase();
       }
       
-      // If it's a short word with NO vowels, it's definitely an acronym (e.g., IBM, CBS).
-      // A simpler heuristic: keep <= 3 chars uppercase, except 'THE', 'AND', etc.
-      if (txt.length <= 3 && txt.toUpperCase() === txt) {
+      // Keep acronyms (e.g., IBM, CBS, LLC, ETF, USA) uppercase if 3 chars or fewer without vowels
+      if (txt.length <= 3 && txt.toUpperCase() === txt && !/[AEIOU]/i.test(txt)) {
         return txt;
       }
       return txt.charAt(0).toUpperCase() + txt.substring(1).toLowerCase();
@@ -53,6 +57,9 @@ export function cleanAssetString(name: string | null | undefined, ticker?: strin
 
   // 4. Entity normalizations (case-insensitive)
   str = str.replace(/(?:\s*(?:-)?\s*Common Stock\b)/ig, '');
+  str = str.replace(/\bAmazon\s+Com\s+Inc\.?\b/gi, 'Amazon.com, Inc.');
+  str = str.replace(/\bAmazon\.com\s+Inc\.?\b/gi, 'Amazon.com, Inc.');
+  str = str.replace(/\bMeta\s+Platforms\s+Inc\.?\b/gi, 'Meta Platforms, Inc.');
   str = str.replace(/\bINC(?:\.|\b)/gi, 'Inc.');
   str = str.replace(/\bL\.?L\.?C(?:\.|\b)/gi, 'LLC');
   str = str.replace(/\bL\.?P(?:\.|\b)/gi, 'LP');
