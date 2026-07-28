@@ -145,8 +145,10 @@ struct TrendsView: View {
                         }
                         .frame(height: 12)
                         Text("\(point.buys + point.sells)")
-                            .font(.caption2.weight(.semibold))
-                            .frame(width: 28, alignment: .trailing)
+                            .font(.caption2.weight(.semibold).monospacedDigit())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .frame(width: 50, alignment: .trailing)
                     }
                 }
             }
