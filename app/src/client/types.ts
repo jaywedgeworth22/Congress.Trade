@@ -12,7 +12,7 @@ export type ClientTradeListEnvelope = {
   count: number;
   /**
    * Omitted (not falsely reported as 0) on a zero-delta `?since=` poll — see
-   * `readClientTradeList` in `queries.ts`. Both the dashboard and PWA clients
+   * `readClientTradeList` in `queries.ts`. The dashboard client
    * already gate every read of `total`/`cursor` behind `items.length > 0` and
    * no-op otherwise, so a missing `total` on that response is never observed;
    * treat an absent/non-numeric `total` as "unchanged from your last known
