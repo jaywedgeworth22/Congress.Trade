@@ -17,10 +17,12 @@ import { DASHBOARD_HTML } from './dashboardHtml.ts';
 import { TOS_HTML, PRIVACY_HTML } from './legalHtml.ts';
 import { getLogoDisplay } from '../shared/settings.ts';
 
+const DEFAULT_GA_MEASUREMENT_ID = 'G-B3J0XHK0FX';
+
 function getGaScript(env: Env): string {
   const gaId = (env as any).GA_MEASUREMENT_ID
     || (typeof process !== 'undefined' ? process.env?.GA_MEASUREMENT_ID : undefined)
-    || '';
+    || DEFAULT_GA_MEASUREMENT_ID;
   if (!gaId || !gaId.trim()) return '';
   const trimmed = gaId.trim();
   return `<!-- Google Analytics (gtag.js) -->
