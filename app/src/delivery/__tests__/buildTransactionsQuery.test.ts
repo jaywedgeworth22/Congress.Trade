@@ -287,6 +287,14 @@ describe('buildTransactionsCountQuery', () => {
     // No cursor backstop in the count query.
     expect(q.params).toEqual(['2026-03-24', '2026-06-22']);
   });
+
+  it('uses the joins-lite FROM (no securities_ref join no filter ever reads)', () => {
+    const q = buildTransactionsCountQuery({ ticker: 'aapl', chamber: 'house', memberName: 'Pelo' });
+    expect(q.sql).not.toContain('securities_ref');
+    // Filers/filings stay: chamber + memberName filters resolve through them.
+    expect(q.sql).toContain('LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id');
+    expect(q.sql).toContain('LEFT JOIN filings f ON f.doc_id = t.doc_id');
+  });
 });
 
 describe('buildTransactionsTodayFilingsQuery', () => {
@@ -300,6 +308,12 @@ describe('buildTransactionsTodayFilingsQuery', () => {
     expect(q.sql).toContain('COALESCE(fl.chamber, f.chamber) = ?');
     expect(q.sql).toContain('substr(COALESCE(f.first_seen_at, t.created_at), 1, 10) = ?');
     expect(q.params).toEqual(['AAPL', 'house', '2026-06-24']);
+  });
+
+  it('uses the joins-lite FROM (no securities_ref join) like the COUNT companion', () => {
+    const q = buildTransactionsTodayFilingsQuery({ ticker: 'aapl' }, '2026-06-24');
+    expect(q.sql).not.toContain('securities_ref');
+    expect(q.sql).toContain('LEFT JOIN filings f ON f.doc_id = t.doc_id');
   });
 });
 

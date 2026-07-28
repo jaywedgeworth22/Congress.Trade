@@ -266,11 +266,11 @@ describe('subscription routes', () => {
     expect(body.streamUrl).toContain(`token=${encodeURIComponent(body.secret ?? '')}`);
   });
 
-  it('does not publicly list subscriptions', async () => {
+  it('does not publicly list subscriptions (403: forbidden for everyone, not an auth challenge)', async () => {
     const { env } = makeEnv();
     const app = buildRestRouter();
     const res = await app.request('http://localhost/subscriptions', {}, env);
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it('requires the subscription secret to read and redacts the secret in the response', async () => {
@@ -317,6 +317,35 @@ describe('subscription routes', () => {
       env,
     );
     expect(wrongChannel.status).toBe(409);
+  });
+
+  it('accepts the stream token via Authorization: Bearer (keeps it out of the URL)', async () => {
+    const { env } = makeEnv();
+    const sse = (await (await createSubscription(env)).json()) as { id: string; secret: string };
+    const app = buildRestRouter();
+    const url = `http://localhost/stream?subscription=${encodeURIComponent(sse.id)}`;
+
+    // A request whose token passes auth opens the stream (200); a missing or
+    // wrong token is rejected (401). 200-via-header proves the header transport.
+    const bearer = await app.request(
+      url,
+      { headers: { authorization: `Bearer ${sse.secret}` } },
+      env,
+    );
+    expect(bearer.status).toBe(200);
+    expect(bearer.headers.get('content-type')).toContain('text/event-stream');
+    await bearer.body?.cancel();
+
+    const headerSecret = await app.request(
+      url,
+      { headers: { 'x-subscription-secret': sse.secret } },
+      env,
+    );
+    expect(headerSecret.status).toBe(200);
+    await headerSecret.body?.cancel();
+
+    const noToken = await app.request(url, {}, env);
+    expect(noToken.status).toBe(401);
   });
 
   it('rejects non-HTTPS webhook target URLs outside localhost development', async () => {
