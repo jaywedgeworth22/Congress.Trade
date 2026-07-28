@@ -206,6 +206,10 @@ function queueDedupeKey(
         ? key(event.idempotencyKey)
         : null;
     }
+    case "command.execute":
+      // One active execution per command row; re-enqueues of the same
+      // command (stale reclaim, redelivery) dedupe while one is in flight.
+      return typeof message.commandId === "string" ? key(message.commandId) : null;
     case "autopilot.tick":
       // Per-tick uniqueness: continuation re-enqueues while the prior claim is
       // still `processing`, so a stable runId-only key would collide.
@@ -288,6 +292,10 @@ export function assertCanonicalQueueMessage(
       if (message.tickId !== undefined) {
         requireString(message.tickId, "tickId", type);
       }
+      return;
+    case "command.execute":
+      requireString(message.commandId, "commandId", type);
+      requireString(message.userId, "userId", type);
       return;
     case "usage.telemetry":
       if (!message.event || typeof message.event !== "object") {
