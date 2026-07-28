@@ -5,10 +5,16 @@
  * Server-Sent Events streaming for 'sse' subscriptions. Holds an open Response
  * stream and pushes new transactions (filtered per subscription) as they are
  * persisted, resuming from a client-supplied cursor (?since= or the standard
- * EventSource Last-Event-ID header; see resolveResumeCursor in rest.ts). Native
- * browser EventSource cannot send Authorization headers, so public clients pass
- * the per-subscription stream token in the query string and should reconnect
- * with a fresh URL when the server emits `event: reconnect`.
+ * EventSource Last-Event-ID header; see resolveResumeCursor in rest.ts).
+ *
+ * STREAM TOKEN TRANSPORT: the per-subscription stream token is accepted via
+ * `Authorization: Bearer <secret>` or `X-Subscription-Secret` (preferred —
+ * keeps the secret out of browser history, proxy logs, and Referer headers),
+ * falling back to the `?token=` query parameter. The query form exists only
+ * because native browser EventSource cannot set request headers; any client
+ * that CAN set headers (native apps, server-side consumers) should use the
+ * header and never put the token in the URL. Query-token auth remains
+ * supported for backward compatibility with existing streamUrls.
  *
  * BACKLOG / GAP-FREE RESUME:
  *   The catch-up replay reads straight from the `transactions` table (which is
@@ -69,6 +75,15 @@ export const SSE_IP_OPEN_RATE = 30;
 export const SSE_SLOW_READER_TIMEOUT_MS = 15_000;
 /** Leave time near the hard deadline for a resumable reconnect frame. */
 export const SSE_RECONNECT_GRACE_MS = 1_000;
+/**
+ * How often the live tail re-reads the durable backlog even when no gap is
+ * detected. BroadcastChannel is isolate-local (it does NOT span Deno Deploy
+ * regions), so a stream attached to an isolate that never ingests would
+ * otherwise starve silently until reconnect. This periodic drain is a cheap
+ * indexed `cursor_seq > ?` read and doubles as a reconciliation pass for any
+ * broadcast payloads dropped under backpressure.
+ */
+export const SSE_BACKLOG_DRAIN_INTERVAL_MS = 45_000;
 /** Page size when draining the catch-up / live backlog. */
 const PAGE_SIZE = 200;
 /** Bound D1 work per poll tick; later ticks continue from the returned HWM. */
@@ -195,6 +210,8 @@ export interface SseStreamTimingOptions {
   pollIntervalMs?: number;
   slowReaderTimeoutMs?: number;
   reconnectGraceMs?: number;
+  /** Cross-region safety-net drain cadence (see SSE_BACKLOG_DRAIN_INTERVAL_MS). */
+  backlogDrainIntervalMs?: number;
 }
 
 export async function openSseStream(
@@ -283,6 +300,10 @@ export async function openSseStream(
     positiveDuration(timingOptions.reconnectGraceMs, SSE_RECONNECT_GRACE_MS),
     maxStreamMs,
   );
+  const backlogDrainIntervalMs = positiveDuration(
+    timingOptions.backlogDrainIntervalMs,
+    SSE_BACKLOG_DRAIN_INTERVAL_MS,
+  );
   const startedAt = Date.now();
   const deadlineAt = startedAt + maxStreamMs;
   let cursor = Number.isFinite(since) ? Number(since) : 0;
@@ -357,6 +378,7 @@ export async function openSseStream(
 
     // Keep-alive loop + hard deadline checker
     let lastActiveCheck = Date.now();
+    let lastBacklogDrain = Date.now();
     while (!closed) {
       const remainingBeforeSleep = deadlineAt - Date.now();
       if (remainingBeforeSleep <= reconnectGraceMs) break;
@@ -373,6 +395,17 @@ export async function openSseStream(
           break;
         }
         lastActiveCheck = Date.now();
+      }
+
+      // Cross-region safety net: BroadcastChannel never reaches isolates in
+      // other Deno Deploy regions, so a stream whose isolate sees no ingests
+      // would starve on push alone. Re-drain the durable backlog on a slow
+      // cadence — an indexed `cursor_seq > ?` read that is a no-op when the
+      // push path is healthy (drainSseBacklog never re-emits below the HWM).
+      if (Date.now() - lastBacklogDrain >= backlogDrainIntervalMs) {
+        cursor = await drainSseBacklog(env, sub, cursor, send);
+        await flushD1Budget(env);
+        lastBacklogDrain = Date.now();
       }
 
       // Idle tick — heartbeat so intermediaries keep the socket open.
