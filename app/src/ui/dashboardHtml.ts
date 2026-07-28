@@ -3717,6 +3717,21 @@ function startStream() {
   }
 }
 
+/* Background tabs keep neither the SSE socket nor the 30s poll alive: suspend
+   on hidden, resume (with an immediate catch-up fetch) on visible. */
+var liveSuspended = false;
+document.addEventListener('visibilitychange', function () {
+  if (document.hidden) {
+    liveSuspended = !!(es || pollTimer);
+    stopStream();
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  } else if (liveSuspended) {
+    liveSuspended = false;
+    fetchUpdates();
+    startStream();
+  }
+});
+
 /* ============================ REVIEW ============================ */
 var REVIEW_RESOLVED = 0; // 0 = pending tab, 1 = reviewed/history tab
 function setReviewTab(resolved) {
