@@ -133,7 +133,10 @@ interface PublicSubscription extends Omit<Subscription, 'secret'> {
   hasSecret: boolean;
   /** Returned only once, on creation or explicit secret rotation. */
   secret?: string;
-  /** Browser EventSource helper for SSE subscriptions. Contains the one-time secret. */
+  /** Browser EventSource helper for SSE subscriptions. Contains the one-time
+   *  secret in the query string — clients that can set headers should discard
+   *  it and open /api/stream with `Authorization: Bearer <secret>` instead
+   *  (the token-in-URL form leaks into browser history and proxy logs). */
   streamUrl?: string;
 }
 
@@ -548,6 +551,11 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // carries id:<cursorSeq>). The backlog replay is sourced from the full
   // transactions table, so resume is gap-free regardless of how long the client
   // was disconnected.
+  //
+  // Token transport: prefer `Authorization: Bearer <secret>` (or
+  // X-Subscription-Secret) so the secret stays out of URLs (browser history,
+  // proxy logs, Referer). The ?token= query form remains only for native
+  // browser EventSource, which cannot set headers.
   r.get('/stream', async (c) => {
     const subscription = c.req.query('subscription');
     if (!subscription) {

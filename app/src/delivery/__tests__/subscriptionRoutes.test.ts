@@ -319,6 +319,39 @@ describe('subscription routes', () => {
     expect(wrongChannel.status).toBe(409);
   });
 
+  it('accepts the stream token via Authorization: Bearer (keeps it out of the URL)', async () => {
+    const { env, rows } = makeEnv();
+    // Inactive SSE subscription: a request whose token PASSES auth reaches the
+    // 409 inactive check, so 409 (not 401) proves the header token was read.
+    rows.set('sub_inactive', {
+      id: 'sub_inactive', client_id: 'client_1', delivery: 'sse', target_url: null,
+      secret: 'stream-secret-inactive', filters: '{}', cursor: 0, active: 0,
+      created_at: new Date().toISOString(),
+    });
+    const app = buildRestRouter();
+
+    const bearer = await app.request(
+      'http://localhost/stream?subscription=sub_inactive',
+      { headers: { authorization: 'Bearer stream-secret-inactive' } },
+      env,
+    );
+    expect(bearer.status).toBe(409); // token accepted -> reached the inactive check
+
+    const headerSecret = await app.request(
+      'http://localhost/stream?subscription=sub_inactive',
+      { headers: { 'x-subscription-secret': 'stream-secret-inactive' } },
+      env,
+    );
+    expect(headerSecret.status).toBe(409);
+
+    const noToken = await app.request(
+      'http://localhost/stream?subscription=sub_inactive',
+      {},
+      env,
+    );
+    expect(noToken.status).toBe(401); // without any token it never gets that far
+  });
+
   it('rejects non-HTTPS webhook target URLs outside localhost development', async () => {
     const { env } = makeEnv();
     const res = await createSubscription(env, {

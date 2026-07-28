@@ -5,10 +5,16 @@
  * Server-Sent Events streaming for 'sse' subscriptions. Holds an open Response
  * stream and pushes new transactions (filtered per subscription) as they are
  * persisted, resuming from a client-supplied cursor (?since= or the standard
- * EventSource Last-Event-ID header; see resolveResumeCursor in rest.ts). Native
- * browser EventSource cannot send Authorization headers, so public clients pass
- * the per-subscription stream token in the query string and should reconnect
- * with a fresh URL when the server emits `event: reconnect`.
+ * EventSource Last-Event-ID header; see resolveResumeCursor in rest.ts).
+ *
+ * STREAM TOKEN TRANSPORT: the per-subscription stream token is accepted via
+ * `Authorization: Bearer <secret>` or `X-Subscription-Secret` (preferred —
+ * keeps the secret out of browser history, proxy logs, and Referer headers),
+ * falling back to the `?token=` query parameter. The query form exists only
+ * because native browser EventSource cannot set request headers; any client
+ * that CAN set headers (native apps, server-side consumers) should use the
+ * header and never put the token in the URL. Query-token auth remains
+ * supported for backward compatibility with existing streamUrls.
  *
  * BACKLOG / GAP-FREE RESUME:
  *   The catch-up replay reads straight from the `transactions` table (which is
