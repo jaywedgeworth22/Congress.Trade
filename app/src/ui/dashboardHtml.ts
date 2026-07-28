@@ -1601,8 +1601,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <!-- ================= TRADES (LIVE FEED) ================= -->
   <section class="view" id="view-feed" role="tabpanel" aria-labelledby="tab-feed" aria-hidden="true">
     <div class="toolbar">
-      <input id="qMember" placeholder="Filter Politician…" oninput="handleFeedTextFilter()" />
-      <input id="qTicker" placeholder="Asset…" oninput="handleFeedTextFilter()" style="width:120px" />
+      <input id="qMember" placeholder="Filter Politician…" aria-label="Filter by politician" oninput="handleFeedTextFilter()" />
+      <input id="qTicker" placeholder="Asset…" aria-label="Filter by asset ticker" oninput="handleFeedTextFilter()" style="width:120px" />
       <select id="qType" onchange="resetFeedPage()">
         <option value="">All Types</option><option value="P">Purchase</option>
         <option value="S">Sale</option><option value="E">Exchange</option>
@@ -3000,7 +3000,6 @@ function panelIds() { return ['searchPanel', 'colChooser']; }
 function anyPanelOpen() {
   return panelIds().some(function (id) { var p = el(id); return !!(p && p.classList.contains('open')); });
 }
-function syncPanelBackdrop() {}
 function closePanels() {
   panelIds().forEach(function (id) {
     var p = el(id);
@@ -4328,7 +4327,7 @@ function resolveReview(docId, decision) {
     })
     .catch(function (e) {
       if (rowEl) rowEl.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
-      alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review action failed: ' + e.message));
+      showToast(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review action failed: ' + e.message), true);
     });
 }
 function retryReviewAuto(docId) {
@@ -4343,7 +4342,7 @@ function retryReviewAuto(docId) {
     .then(function () { loadReview(); loadDecisionHistory(); })
     .catch(function (e) {
       if (rowEl) rowEl.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
-      alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Auto retry failed: ' + e.message));
+      showToast(isAuthError(e) ? ADMIN_MOVED_MSG : ('Auto retry failed: ' + e.message), true);
     });
 }
 function selectedOption(v, current) { return String(v) === String(current) ? ' selected' : ''; }
@@ -4453,7 +4452,7 @@ function openQueuedReviewEditor(docId) {
 }
 function useModelRows(docId, idx) {
   var run = REVIEW_RUNS[docId] && REVIEW_RUNS[docId][idx];
-  if (!run || !run.rows || !run.rows.length) { alert('That model run has no rows to use.'); return; }
+  if (!run || !run.rows || !run.rows.length) { showToast('That model run has no rows to use.', true); return; }
   var item = reviewItemForDoc(docId);
   openReviewEditor(docId, run.rows, 'confirm', run.provider + ':' + run.model, item && item.chamber);
 }
@@ -4479,11 +4478,11 @@ function consensusApplyField(target, row, consensusField, editField, rowAuthorit
    - never inject a consensus-only partial row without queued audit metadata. */
 function useConsensusRows(docId) {
   var consensus = REVIEW_CONSENSUS[docId];
-  if (!consensus || !consensus.rows || !consensus.rows.length) { alert('No consensus rows available for this document.'); return; }
+  if (!consensus || !consensus.rows || !consensus.rows.length) { showToast('No consensus rows available for this document.', true); return; }
   var item = reviewItemForDoc(docId);
   var models = (consensus.summary && consensus.summary.models) || [];
   var rows = reviewPayloadTransactions(item && item.payload).map(function (t) { return Object.assign({}, t); });
-  if (!rows.length) { alert('Consensus cannot be applied safely because the queued review payload has no rows.'); return; }
+  if (!rows.length) { showToast('Consensus cannot be applied safely because the queued review payload has no rows.', true); return; }
   var queuedByKey = {};
   rows.forEach(function (t, index) {
     var key = consensusQueuedRowKey(t);
@@ -4627,9 +4626,9 @@ function meSubmit(docId) {
       confidence: conf === '' ? (decision === 'manual' ? 1 : null) : Number(conf)
     });
   });
-  if (edits.length === 0) { alert('Add at least one row (a symbol or asset name).'); return; }
+  if (edits.length === 0) { showToast('Add at least one row (a symbol or asset name).', true); return; }
   var incomplete = edits.findIndex(function (e) { return !e.txType || !e.txDate; });
-  if (incomplete >= 0) { alert('Row ' + (incomplete + 1) + ' needs an explicit transaction type and date.'); return; }
+  if (incomplete >= 0) { showToast('Row ' + (incomplete + 1) + ' needs an explicit transaction type and date.', true); return; }
   if (tr) tr.querySelectorAll('button,input,select').forEach(function (b) { b.disabled = true; });
   fetch('/api/admin/review/' + encodeURIComponent(docId), {
     method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
@@ -4643,7 +4642,7 @@ function meSubmit(docId) {
     .then(function () { loadReview(); loadFeed(); })
     .catch(function (e) {
       if (tr) tr.querySelectorAll('button,input,select').forEach(function (b) { b.disabled = false; });
-      alert(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review submit failed: ' + e.message));
+      showToast(isAuthError(e) ? ADMIN_MOVED_MSG : ('Review submit failed: ' + e.message), true);
     });
 }
 
@@ -4979,23 +4978,6 @@ function runHouseIndex(dryRun) {
         : ('Enqueued ' + (j.enqueued || 0) + ' new filing(s) from ' + (j.discovered || 0) + ' PTRs.' + (j.errors && j.errors.length ? ' Errors: ' + j.errors.join('; ') : ''));
     })
     .catch(function (e) { el('hiMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
-}
-
-function runOgeBackfill() {
-  // API HOOK: POST /api/admin/oge-backfill
-  el('ogeMsg').textContent = 'Running OGE backfill…';
-  fetch('/api/admin/oge-backfill', {
-    method: 'POST', headers: adminHeaders({ 'content-type': 'application/json' }),
-    body: '{}'
-  })
-    .then(function (r) {
-      if (r.status === 401 || r.status === 403) { var ae = new Error(ADMIN_MOVED_MSG); ae.isAuth = true; throw ae; }
-      return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status)); return j; });
-    })
-    .then(function (j) {
-      el('ogeMsg').textContent = 'Backfill complete. New filings: ' + (j.newFilings || 0) + '.';
-    })
-    .catch(function (e) { el('ogeMsg').textContent = isAuthError(e) ? ADMIN_MOVED_MSG : ('Failed: ' + e.message); });
 }
 
 function runQueueReprocess() {

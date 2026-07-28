@@ -1479,7 +1479,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
       'var ALERTS = [];',
       'var REVIEW_ITEM_FOR_TEST = null;',
       'var QUEUED_FOR_TEST = [];',
-      'function alert(msg) { ALERTS.push(msg); }',
+      'function showToast(msg) { ALERTS.push(msg); }',
       'function openReviewEditor(docId, rows, decision, label, chamber) { CAPTURED_EDITOR_CALL = { docId: docId, rows: rows, decision: decision, label: label, chamber: chamber }; }',
       'function reviewItemForDoc(docId) { return REVIEW_ITEM_FOR_TEST; }',
       'function reviewPayloadTransactions(payload) { return QUEUED_FOR_TEST; }',
