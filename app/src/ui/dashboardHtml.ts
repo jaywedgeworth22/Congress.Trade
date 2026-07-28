@@ -2299,12 +2299,22 @@ function fmtCompany(raw) {
       return txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase();
     });
   }
-  s = s.replace(/\b(Llc|Inc|Corp|Etf|Lp|Plc|Us|Usa|Sa|Ag|Nv|Bv)\b/gi, function(match) {
+  s = s.replace(/\b(Llc|Etf|Lp|Plc|Us|Usa|Sa|Ag|Nv|Bv)\b/gi, function(match) {
     return match.toUpperCase();
+  });
+  s = s.replace(/\b(Inc|Corp|Ltd|Co)\b/gi, function(match) {
+    var c = match.toLowerCase();
+    if (c === 'inc') return 'Inc.';
+    if (c === 'corp') return 'Corp.';
+    if (c === 'ltd') return 'Ltd.';
+    if (c === 'co') return 'Co.';
+    return match.charAt(0).toUpperCase() + match.slice(1).toLowerCase();
   });
   s = s.replace(/\b(And|Of|The|In|For|A|An|To|On)\b/gi, function(match) {
     return match.toLowerCase();
   });
+  // deduplicate periods
+  s = s.replace(/\.{2}/g, '.');
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 /* "House"/"Senate" are proper nouns here — always capitalize the chamber. */
