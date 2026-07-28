@@ -125,15 +125,29 @@ if (!costProfile.disableInternalCron) {
       `drainLimit=${costProfile.drainLimit} claimSize=${costProfile.drainClaimSize}`,
   );
   Deno.cron('Worker scheduled tasks', costProfile.cronSchedule, async () => {
-    const env = buildEnv();
-    const result = await runScheduledTick(env, durableQueueHandlers, costProfile);
-    if (result.skippedDrain) {
-      console.log('Deno tick idle (skipped outbox/queue drain)', {
-        profile: result.profile,
-        watcher: result.watcher,
+    try {
+      const env = buildEnv();
+      const tickPromise = runScheduledTick(env, durableQueueHandlers, costProfile);
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('Deno cron tick exceeded 45s deadline')), 45_000);
       });
-    } else if (result.watcher) {
-      console.log('Deno watcher completed', result.watcher);
+
+      try {
+        const result = await Promise.race([tickPromise, timeoutPromise]);
+        if (result.skippedDrain) {
+          console.log('Deno tick idle (skipped outbox/queue drain)', {
+            profile: result.profile,
+            watcher: result.watcher,
+          });
+        } else if (result.watcher) {
+          console.log('Deno watcher completed', result.watcher);
+        }
+      } finally {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+      }
+    } catch (err) {
+      console.error('Deno cron tick caught error:', err);
     }
   });
 } else {
