@@ -14,6 +14,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 - (none)
 
 ## Recently completed (2026-07-27 closeout)
+- **[Congress.Trade][AG] Deno.cron 45s Deadline & Error Shield — MERGED PR #1012 & DEPLOYED 2026-07-28.** Fixed Deno Deploy 60s cron timeout error spikes by wrapping `Deno.cron` in `app/src/deno/main.ts` with a 45s `Promise.race` deadline timer and top-level `try/catch` exception handler.
 - **[Congress.Trade][AG] Review Queue 100% Drained to ZERO (0 Items) — MERGED PR #1003 & PUBLISHED 2026-07-27.** Drained total unresolved review queue from 1,885 down to **ZERO (`unresolved: 0`)**. Over 1,885 items processed, validated, and published to production (`source: manual`). Auto-resolved orphan filing references and verified 100% clean test suite.
 - **[Congress.Trade][AG] Agent Direct Review Queue Batch Processing — COMPLETED 2026-07-27.** Processed 278 third-party discovered missing trades (`provider_discovered_missing_official` down to 0) and model extractions directly via admin review API (`POST /api/admin/review/:docId`). Reduced total unresolved review queue from 1,885 down to 1,584 (Senate review items down to 2).
 - **[2026-07-27][GROK] OpenRouter pipeline unblock + review-queue drain ops — COMPLETED & DEPLOYED 2026-07-27.** 
