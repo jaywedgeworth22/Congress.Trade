@@ -1,10 +1,15 @@
 import SwiftUI
 import SwiftData
+import FirebaseCore
 
 @main
 struct CongressTradeApp: App {
     @StateObject private var store = CongressTradeStore(api: CongressTradeAPIClient())
     @AppStorage("app_color_scheme") private var appColorScheme = "system"
+
+    init() {
+        FirebaseApp.configure()
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -28,34 +33,45 @@ struct CongressTradeApp: App {
 struct MainTabView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @Environment(\.modelContext) private var modelContext
+    @State private var showEagleSplash = true
 
     var body: some View {
-        TabView {
-            FeedDashboardView()
-                .tabItem {
-                    Label("Trades", systemImage: "list.bullet.rectangle")
-                }
+        ZStack {
+            TabView {
+                FeedDashboardView()
+                    .tabItem {
+                        Label("Trades", systemImage: "list.bullet.rectangle")
+                    }
 
-            TrendsView()
-                .tabItem {
-                    Label("Trends", systemImage: "chart.line.uptrend.xyaxis")
-                }
+                TrendsView()
+                    .tabItem {
+                        Label("Trends", systemImage: "chart.line.uptrend.xyaxis")
+                    }
 
-            DeliveryView()
-                .tabItem {
-                    Label("Alerts", systemImage: "bell.badge")
-                }
+                DeliveryView()
+                    .tabItem {
+                        Label("Alerts", systemImage: "bell.badge")
+                    }
 
-            SettingsView()
-                .tabItem {
-                    Label("Settings", systemImage: "gearshape")
+                SettingsView()
+                    .tabItem {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+            }
+            .tint(.blue)
+            .task {
+                store.modelContext = modelContext
+                if store.feed == nil {
+                    await store.refresh()
                 }
-        }
-        .tint(.blue)
-        .task {
-            store.modelContext = modelContext
-            if store.feed == nil {
-                await store.refresh()
+            }
+
+            if showEagleSplash {
+                EagleSplashView {
+                    showEagleSplash = false
+                }
+                .transition(.opacity)
+                .zIndex(10)
             }
         }
     }

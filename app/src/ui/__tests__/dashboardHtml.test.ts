@@ -252,6 +252,21 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('>Timeframe</label>');
     expect(DASHBOARD_HTML).not.toContain('↻ Refresh');
     expect(DASHBOARD_HTML).toContain('class="brand-logo"');
+    // SuperGrok Imagine horizontal lockup (mark + CONGRESS./TRADE type), not a tiny re-typeset wordmark.
+    expect(DASHBOARD_HTML).toMatch(/\.brand-logo \{ height:\d+px; width:auto/);
+    const brandLogoMatch = DASHBOARD_HTML.match(/class="brand-logo"[^>]*src="(data:image\/png;base64,[A-Za-z0-9+/=]+)"/);
+    expect(brandLogoMatch).toBeTruthy();
+    expect(brandLogoMatch![1].length).toBeGreaterThan(20_000);
+    // Lockup is the brand — no separate Zilla wordmark span next to it.
+    expect(DASHBOARD_HTML).not.toMatch(/class="brand-logo"[^>]*>\s*<span class="brand-text"/);
+    // Eagle flight splash (curved path + bank, not a mere scale tween).
+    expect(DASHBOARD_HTML).toContain('id="eagle-splash"');
+    expect(DASHBOARD_HTML).toContain('id="eagle-splash-mark"');
+    expect(DASHBOARD_HTML).toContain('runEagleSplash');
+    expect(DASHBOARD_HTML).toContain('bez3');
+    expect(DASHBOARD_HTML).toContain('data-src-light');
+    expect(DASHBOARD_HTML).toContain('data-src-dark');
+
   });
 
   it('renders the honest speed-vs-providers scoreboard on Trends', () => {
