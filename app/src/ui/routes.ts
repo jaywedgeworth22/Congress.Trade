@@ -17,14 +17,33 @@ import { DASHBOARD_HTML } from './dashboardHtml.ts';
 import { TOS_HTML, PRIVACY_HTML } from './legalHtml.ts';
 import { getLogoDisplay } from '../shared/settings.ts';
 
-/**
- * Render the dashboard, injecting the admin-controlled site-wide settings the
- * client needs at boot (currently the global logo style) so every visitor gets
- * the admin's choice with no extra request / no flash.
- */
+function getGaScript(env: Env): string {
+  const gaId = (env as any).GA_MEASUREMENT_ID
+    || (typeof process !== 'undefined' ? process.env?.GA_MEASUREMENT_ID : undefined)
+    || '';
+  if (!gaId || !gaId.trim()) return '';
+  const trimmed = gaId.trim();
+  return `<!-- Google Analytics (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=${trimmed}"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', '${trimmed}');
+</script>`;
+}
+
 async function renderDashboard(env: Env): Promise<string> {
   const logoDisplay = await getLogoDisplay(env);
-  return DASHBOARD_HTML.split('%LOGO_DISPLAY%').join(logoDisplay);
+  const gaScript = getGaScript(env);
+  return DASHBOARD_HTML
+    .split('%LOGO_DISPLAY%').join(logoDisplay)
+    .split('%GA_SCRIPT%').join(gaScript);
+}
+
+function renderLegalHtml(html: string, env: Env): string {
+  const gaScript = getGaScript(env);
+  return html.split('%GA_SCRIPT%').join(gaScript);
 }
 
 export function buildUiRouter(): Hono<{ Bindings: Env }> {
@@ -35,8 +54,8 @@ export function buildUiRouter(): Hono<{ Bindings: Env }> {
   r.get('/admin', async (c) => c.html(await renderDashboard(c.env)));
 
   // Static legal pages (required for Stripe Checkout: ToS + Privacy URLs).
-  r.get('/terms-of-service', (c) => c.html(TOS_HTML));
-  r.get('/privacy-policy', (c) => c.html(PRIVACY_HTML));
+  r.get('/terms-of-service', (c) => c.html(renderLegalHtml(TOS_HTML, c.env)));
+  r.get('/privacy-policy', (c) => c.html(renderLegalHtml(PRIVACY_HTML, c.env)));
 
   // robots.txt — allow search engines, block AI/LLM crawlers and scrapers.
   // Follows the same policy as capitoltrades.com/robots.txt.
