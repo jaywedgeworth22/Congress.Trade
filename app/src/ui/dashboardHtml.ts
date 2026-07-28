@@ -3526,6 +3526,7 @@ document.addEventListener('change', function(e) {
     document.querySelectorAll('.tr-window-select').forEach(function(s) {
       if (s !== e.target) s.value = val;
     });
+    syncFilterUrl();
     loadTrends();
   }
 });
@@ -3534,10 +3535,60 @@ function handleFeedTextFilter() {
   feedPage = 0;
   renderFeed();
   if (feedSearchTimer) clearTimeout(feedSearchTimer);
-  feedSearchTimer = setTimeout(function () { fetchPage(); }, 250);
+  feedSearchTimer = setTimeout(function () { fetchPage(); syncFilterUrl(); }, 250);
 }
 
-function resetFeedPage() { feedPage = 0; return fetchPage(); }
+/* Mirror the feed filters + Trends window into the URL so a refresh or a
+   shared link restores them. These params (ft/fm/fty/fch/fw) are deliberately
+   distinct from the deep-link params (?ticker=/?member=/?trade=), which open
+   drawers instead of setting filters. */
+function syncFilterUrl() {
+  try {
+    var u = new URL(window.location.href);
+    var pairs = [
+      ['ft', el('qTicker') ? el('qTicker').value.trim() : ''],
+      ['fm', el('qMember') ? el('qMember').value.trim() : ''],
+      ['fty', el('qType') ? el('qType').value : ''],
+      ['fch', chamberParam('qChamber')],
+      ['fw', getTrWindow()],
+    ];
+    pairs.forEach(function (kv) {
+      if (kv[1] && !(kv[0] === 'fw' && kv[1] === '90d')) u.searchParams.set(kv[0], kv[1]);
+      else u.searchParams.delete(kv[0]);
+    });
+    window.history.replaceState({}, '', u.pathname + u.search + u.hash);
+  } catch (e) {}
+}
+function restoreFiltersFromUrl() {
+  try {
+    var sp = new URLSearchParams(window.location.search);
+    if (sp.get('ft') && el('qTicker')) el('qTicker').value = sp.get('ft');
+    if (sp.get('fm') && el('qMember')) el('qMember').value = sp.get('fm');
+    if (sp.get('fty') && el('qType')) el('qType').value = sp.get('fty');
+    var fch = sp.get('fch');
+    if (fch) {
+      var sel = fch.split(',');
+      ['qChamber', 'trChamber'].forEach(function (gid) {
+        var g = el(gid); if (!g) return;
+        g.querySelectorAll('.branch-toggle').forEach(function (b) {
+          var on = sel.indexOf(b.getAttribute('data-ch')) >= 0;
+          b.classList.toggle('on', on);
+          b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        });
+      });
+    }
+    var fw = sp.get('fw');
+    if (fw) {
+      document.querySelectorAll('.tr-window-select').forEach(function (s) {
+        for (var i = 0; i < s.options.length; i++) {
+          if (s.options[i].value === fw) { s.value = fw; break; }
+        }
+      });
+    }
+  } catch (e) {}
+}
+
+function resetFeedPage() { feedPage = 0; syncFilterUrl(); return fetchPage(); }
 function prevFeedPage() { if (feedPage <= 0) return; feedPage -= 1; fetchPage(); }
 /* The server rejects public offsets beyond this depth (anti-scrape); deeper
    history is the Premium CSV export. Mirror it so the pager never 400s. */
@@ -8381,6 +8432,7 @@ function initChamberChips(groupId, storageKey, onChange, syncTarget) {
 }
 initChamberChips('qChamber', 'feed-chambers-v2', function () { resetFeedPage(); }, 'trChamber');
 initChamberChips('trChamber', 'trends-chambers-v2', function () { loadTrends(); }, 'qChamber');
+restoreFiltersFromUrl(); // URL-mirrored filters (ft/fm/fty/fch/fw) win over localStorage
 
 /* One grouped explainer per branch strip: hover opens it on pointer devices,
    tap/click toggles it everywhere (title attrs never show on touch). */
