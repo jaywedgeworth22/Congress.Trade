@@ -264,6 +264,10 @@ describe('processAgreementDoc extraction_runs persistence', () => {
       a: { provider: 'openai', model: 'gpt-5.6-terra' },
       b: { provider: 'openai', model: 'gpt-4.1' },
     };
+    const res = await processAgreementDoc(makeEnv().env, sameProvider, 'H-10', 'raw/H-10', false);
+    expect(res).toMatchObject({ outcome: 'skipped', reason: 'duplicate_provider_lineup' });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
   it('soft-deprecates predecessor filing transactions when an amended filing is published', async () => {
     let deprecatedSql = '';
     let params: unknown[] = [];
