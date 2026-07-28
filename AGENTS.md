@@ -43,15 +43,14 @@ Effort logs are standardized across all apps: protocol at
 - The backend app runs on **Deno Deploy**, connecting to a **Turso (LibSQL)** database.
   File storage (PDFs) uses **Cloudflare R2** via an S3 shim, and **Cloudflare DNS** is used for routing.
 - Queues are emulated using a custom `deno_runtime_queue` table in Turso, polled via a Deno cron.
-- The Next.js PWA is hosted on **Coolify**.
 - Root files are supporting context:
   - `congress-trade-feed-design.md` is historical design/product context.
   - `congress_trade_watch.py` is a standalone local House PTR watcher prototype.
   - `dashboard-design.html` is a historical/static design artifact.
 - Current app surfaces include ingestion, extraction, normalization, delivery,
   admin, auth, billing, analytics, enrichment, prices, backfill, and UI.
-- Planned client apps are a phone-first Next.js/PWA and a SwiftUI iPhone app.
-  Both must use the same backend-owned client API and command/status model.
+- Planned client apps are a SwiftUI iPhone app.
+  It must use the backend-owned client API and command/status model.
 
 ## Branch And Worktree Policy
 
@@ -186,13 +185,13 @@ If you add or change a migration:
 - Webhook delivery uses a unique `(subscription_id, tx_id)` row and claims a
   pending attempt before POSTing. Recipients must still dedupe on
   `X-Subscription-Id` + `X-Tx-Id` because external webhooks are at-least-once.
-- Backend remains the source of truth for all clients. Next.js/PWA and SwiftUI
-  work must share one `/api/client/v1/*` contract, one auth/session model, and one
+- Backend remains the source of truth for all clients. The SwiftUI app
+  work must use the `/api/client/v1/*` contract, auth/session model, and
   server-side command/status gateway. Do not put scraping, calculations,
-  provider secrets, admin tokens, or MCP orchestration in either client.
-- The phone-first Next.js/PWA and SwiftUI iPhone app are peer clients, not
-  separate products. Keep DTOs, command names, command statuses, entitlement
-  behavior, and account-owned alert semantics aligned across both.
+  provider secrets, admin tokens, or MCP orchestration in the client.
+- The SwiftUI iPhone app is a client of the backend API.
+  Keep DTOs, command names, command statuses, entitlement
+  behavior, and account-owned alert semantics aligned with the backend.
 - Keep `main` protected through GitHub branch protection or a ruleset: PRs
   required, `typecheck + test` required, stale reviews dismissed, no force push
   or deletion.
