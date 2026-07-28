@@ -2322,6 +2322,9 @@ function fmtCompany(raw) {
       return txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase();
     });
   }
+  s = s.replace(/\bAmazon\s+Com\s+Inc\.?\b/gi, 'Amazon.com, Inc.');
+  s = s.replace(/\bAmazon\.com\s+Inc\.?\b/gi, 'Amazon.com, Inc.');
+  s = s.replace(/\bMeta\s+Platforms\s+Inc\.?\b/gi, 'Meta Platforms, Inc.');
   s = s.replace(/\b(Llc|Etf|Lp|Plc|Us|Usa|Sa|Ag|Nv|Bv)\b/gi, function(match) {
     return match.toUpperCase();
   });
@@ -6803,10 +6806,10 @@ function aGet(path) {
 /* Compact USD: 1234567 -> $1.2M, 3.2e12 -> $3.2T. */
 function usdC(n) {
   n = Number(n || 0); var s = n < 0 ? '-' : ''; n = Math.abs(n); var o;
-  if (n >= 1e12) o = (n / 1e12).toFixed(1) + 'T';
-  else if (n >= 1e9) o = (n / 1e9).toFixed(1) + 'B';
-  else if (n >= 1e6) o = (n / 1e6).toFixed(1) + 'M';
-  else if (n >= 1e3) o = (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'K';
+  if (n >= 1e12) o = (n / 1e12).toFixed(1) + 't';
+  else if (n >= 1e9) o = (n / 1e9).toFixed(1) + 'b';
+  else if (n >= 1e6) o = (n / 1e6).toFixed(1) + 'm';
+  else if (n >= 1e3) o = (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + 'k';
   else o = String(Math.round(n));
   return s + '$' + o;
 }
