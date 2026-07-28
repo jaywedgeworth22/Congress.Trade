@@ -10,6 +10,7 @@ struct FeedDashboardView: View {
     @State private var selectedTrade: ClientTrade?
     @State private var selectedPoliticianId: String?
     @State private var selectedPoliticianName: String?
+    @State private var selectedTicker: String?
 
     /// Newest trade date first; cursor is only a tie-breaker so seed imports of
     /// old filings don't sit above recent activity just because they were
@@ -57,7 +58,11 @@ struct FeedDashboardView: View {
                 VStack(spacing: 12) {
                     FeedControlBar()
 
-                    SearchField(text: $searchText)
+                    SearchField(text: $searchText, onSubmit: {
+                        Task { await store.setSearch(searchText) }
+                    }, onClear: {
+                        Task { await store.setSearch(nil) }
+                    })
 
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {
@@ -68,6 +73,9 @@ struct FeedDashboardView: View {
                                 ) {
                                     toggleChamber(chamber)
                                 }
+                                // The chip glyph is a bare "H"/"S"/"P" — give
+                                // VoiceOver the full chamber name.
+                                .accessibilityLabel(chamber.label)
                             }
                         }
                     }
@@ -111,6 +119,8 @@ struct FeedDashboardView: View {
                                         selectedPoliticianName = trade.member.name
                                         selectedPoliticianId = memberId
                                     }
+                                }, onTickerTap: trade.asset.ticker.map { ticker in
+                                    { selectedTicker = ticker }
                                 })
                             }
                             .buttonStyle(.plain)
@@ -164,6 +174,17 @@ struct FeedDashboardView: View {
             )) {
                 if let memberId = selectedPoliticianId {
                     PoliticianDetailView(memberId: memberId, memberName: selectedPoliticianName ?? "Politician")
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
+                        .presentationCornerRadius(18)
+                }
+            }
+            .sheet(isPresented: Binding<Bool>(
+                get: { selectedTicker != nil },
+                set: { if !$0 { selectedTicker = nil } }
+            )) {
+                if let ticker = selectedTicker {
+                    TickerDetailView(ticker: ticker)
                         .presentationDetents([.medium, .large])
                         .presentationDragIndicator(.visible)
                         .presentationCornerRadius(18)
@@ -255,6 +276,8 @@ struct FilterChip: View {
 
 struct SearchField: View {
     @Binding var text: String
+    var onSubmit: () -> Void = {}
+    var onClear: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 10) {
@@ -263,9 +286,11 @@ struct SearchField: View {
             TextField("Search ticker, politician, or state", text: $text)
                 .neverAutocapitalized()
                 .autocorrectionDisabled()
+                .onSubmit(onSubmit)
             if !text.isEmpty {
                 Button {
                     withAnimation { text = "" }
+                    onClear()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
@@ -285,10 +310,18 @@ struct SearchField: View {
 struct TradeCard: View {
     let trade: ClientTrade
     var onPoliticianTap: (() -> Void)? = nil
+    var onTickerTap: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            AssetMark(symbol: assetTitle, isTicker: trade.asset.ticker != nil, size: 40)
+            Button {
+                onTickerTap?()
+            } label: {
+                AssetMark(symbol: assetTitle, isTicker: trade.asset.ticker != nil, size: 40)
+            }
+            .buttonStyle(.plain)
+            .disabled(onTickerTap == nil)
+            .accessibilityLabel(onTickerTap == nil ? assetTitle : "View \(assetTitle) trades")
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
