@@ -391,6 +391,17 @@ const TX_FROM_JOINS =
   'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
   'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ';
 
+/**
+ * Joins-lite FROM for the COUNT companions. No WHERE clause ever references
+ * `securities_ref` (see buildTxFilters), so joining it into count/today
+ * aggregates is a pure waste of Turso rows read on every non-incremental poll.
+ * Filers/filings stay: member/chamber/filedSince filters resolve through them.
+ */
+const TX_FROM_JOINS_LITE =
+  'FROM transactions t ' +
+  'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
+  'LEFT JOIN filings f ON f.doc_id = t.doc_id ';
+
 /** Cross-referenced asset fields (securities_ref) carried on each feed row. */
 const REF_SELECT =
   'sr.company_name AS ref_company_name, ' +
@@ -582,7 +593,7 @@ export function buildTransactionsCountQuery(
   const { where, params } = buildTxFilters(p, false);
   const sql =
     'SELECT COUNT(*) AS total ' +
-    TX_FROM_JOINS +
+    TX_FROM_JOINS_LITE +
     (where.length ? `WHERE ${where.join(' AND ')}` : '');
   return { sql, params };
 }
@@ -596,7 +607,7 @@ export function buildTransactionsTodayFilingsQuery(
   const allWhere = [...where, 'substr(COALESCE(f.first_seen_at, t.created_at), 1, 10) = ?'];
   const sql =
     'SELECT COUNT(DISTINCT t.doc_id) AS total ' +
-    TX_FROM_JOINS +
+    TX_FROM_JOINS_LITE +
     `WHERE ${allWhere.join(' AND ')}`;
   return { sql, params: [...params, todayIso.slice(0, 10)] };
 }
