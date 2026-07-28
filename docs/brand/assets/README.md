@@ -1,27 +1,25 @@
 # Congress.Trade brand assets (eagle)
 
-Owner sources (iCloud Downloads):
-- `IMG_0523.JPG` — horizontal lockup (circle mark + CONGRESS. / TRADE)
-- `IMG_0508.jpg` — stacked lockup (mark above wordmark)
-- `IMG_0592.JPG` — app-icon mockups (rounded square, navy fill) — **not** the site mark
+**Canonical masters = SuperGrok Imagine exports already in this folder** (not phone photos).
 
-## Site mark (canonical)
+| Master | What |
+|--------|------|
+| `eagle-lockup.png` | Full horizontal brand: circular mark + CONGRESS. / TRADE type (1792×1008) |
+| `eagle-app-icon-1024.png` | App-icon mockup (navy filled squircle) |
 
-**Circular ring + eagle + money bag, transparent outside and inside the ring.**
-No cream fill, no solid navy disc, no squircle mockup chrome.
+Phone snaps (`IMG_0508`, `IMG_0523`, `IMG_0592`) are **style reference only**.
+
+## Site header
+
+Uses `eagle-lockup-dark-ui.png` (Imagine lockup, page bg removed, navy wordmark lightened for dark UI) via `eagle-header-lockup-dark-120.png` embedded in `dashboardHtml.ts`. **Typography is baked into the Imagine asset** — do not re-typeset with Zilla Slab.
+
+## Other exports
 
 | File | Use |
 |------|-----|
-| `eagle-circle-{1024…32}.png` | Site / header / BrandLogo (transparent hollow circle) |
-| `eagle-app-icon-clean-{1024,512,192,180}.png` | iOS/PWA install icons (mark on solid navy square) |
-| `eagle-header-circle.png` | PWA header mark |
-| `eagle-lockup-transparent.png` | Full horizontal lockup, transparent page bg |
-| `eagle-stacked-transparent.png` | Full stacked lockup, transparent page bg |
+| `eagle-lockup-transparent.png` | Light-UI lockup (navy type) |
+| `eagle-lockup-dark-ui.png` | Dark-UI lockup (light type) |
+| `eagle-circle-*.png` | Hollow mark only (from Imagine lockup, full wings) |
+| `eagle-app-icon-clean-*.png` | Install icons from Imagine app-icon master |
 
-## Installed
-
-- Dashboard: `eagle-circle-128` data-URI, CSS `border-radius:50%`
-- PWA `congress-trade-logo.png` + icons
-- iOS AppIcon (navy square) + BrandLogo (hollow circle)
-
-Do not ship raw app-icon mockups as the website mark.
+Do not re-extract from phone screenshots for production marks.

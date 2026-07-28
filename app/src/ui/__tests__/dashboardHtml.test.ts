@@ -252,11 +252,13 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('>Timeframe</label>');
     expect(DASHBOARD_HTML).not.toContain('↻ Refresh');
     expect(DASHBOARD_HTML).toContain('class="brand-logo"');
-    // Circular eagle badge (transparent outside ring), not a photo of a squircle app icon.
-    expect(DASHBOARD_HTML).toContain('.brand-logo { width:28px; height:28px; border-radius:50%');
+    // SuperGrok Imagine horizontal lockup (mark + CONGRESS./TRADE type), not a tiny re-typeset wordmark.
+    expect(DASHBOARD_HTML).toMatch(/\.brand-logo \{ height:\d+px; width:auto/);
     const brandLogoMatch = DASHBOARD_HTML.match(/class="brand-logo" src="(data:image\/png;base64,[A-Za-z0-9+/=]+)"/);
     expect(brandLogoMatch).toBeTruthy();
-    expect(brandLogoMatch![1].length).toBeGreaterThan(10_000);
+    expect(brandLogoMatch![1].length).toBeGreaterThan(20_000);
+    // Lockup is the brand — no separate Zilla wordmark span next to it.
+    expect(DASHBOARD_HTML).not.toMatch(/class="brand-logo"[^>]*>\s*<span class="brand-text"/);
   });
 
   it('renders the honest speed-vs-providers scoreboard on Trends', () => {
