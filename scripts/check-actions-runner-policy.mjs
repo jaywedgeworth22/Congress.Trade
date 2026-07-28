@@ -11,6 +11,7 @@ const errors = [];
 const allowedRunners = new Set([
   "[self-hosted, congress-ci]",
   "[self-hosted, congress-deploy]",
+  "[self-hosted, oracle-ci]",
 ]);
 // The dynamic expression used when CT_CI_RUNNER variable controls runner selection.
 // Workflows may use this expression for hosted-runner fallback when the self-hosted
