@@ -110,6 +110,24 @@ let readinessCache: { at: number; result: ReadinessResult } | null = null;
 const PUBLIC_FEED_CACHE = 'public, s-maxage=15, stale-while-revalidate=45';
 const PUBLIC_STABLE_CACHE = 'public, s-maxage=300, stale-while-revalidate=600';
 
+/**
+ * Explicit CORS policy: only these public, read-only GET paths are cross-origin
+ * readable. Auth'd surfaces (subscriptions, SSE stream), mutations, and admin
+ * routes must never carry Access-Control-Allow-Origin. (Paths here are relative
+ * to the router mount point, /api.)
+ */
+function isPublicReadPath(path: string): boolean {
+  return path === '/transactions'
+    || path === '/members'
+    || path === '/health'
+    || path === '/feed.xml'
+    || path === '/export/transactions.csv'
+    || path === '/logos/ticker'
+    || path.startsWith('/market/')
+    || path.startsWith('/filings/')
+    || path.startsWith('/documents/');
+}
+
 interface PublicSubscription extends Omit<Subscription, 'secret'> {
   hasSecret: boolean;
   /** Returned only once, on creation or explicit secret rotation. */
@@ -226,6 +244,20 @@ export function csvCell(value: unknown): string {
 
 export function buildRestRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
+
+  // CORS: stamp Access-Control-Allow-Origin on public, read-only GET responses
+  // only (see isPublicReadPath). Vary: Origin keeps shared caches correct if
+  // the policy ever becomes origin-aware. Simple GETs need no preflight, so no
+  // OPTIONS handler is required for this policy.
+  r.use('*', async (c, next) => {
+    await next();
+    // The router is mounted under /api in production but bare in tests.
+    const path = new URL(c.req.url).pathname.replace(/^\/api(?=\/|$)/, '');
+    if (c.req.method === 'GET' && isPublicReadPath(path)) {
+      c.res.headers.set('Access-Control-Allow-Origin', '*');
+      c.res.headers.append('Vary', 'Origin');
+    }
+  });
 
   // --- GET /health --------------------------------------------------------
   // Deployment readiness: D1 must be reachable and the required schema current.
