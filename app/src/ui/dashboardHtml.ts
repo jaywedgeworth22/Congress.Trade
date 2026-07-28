@@ -1945,9 +1945,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         Sign in with Google to manage Delivery. Creating a delivery also requires Premium.
       </div>
       <table id="subsTable">
-        <thead><tr><th>Channel</th><th>Target</th><th>Filters</th><th>Status</th></tr></thead>
+        <thead><tr><th>Channel</th><th>Target</th><th>Filters</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody id="subsBody">
-          <tr class="row"><td colspan="4" class="state">Sign in to see your deliveries.</td></tr>
+          <tr class="row"><td colspan="5" class="state">Sign in to see your deliveries.</td></tr>
         </tbody>
       </table>
       <div class="row-flex" id="subsCreateRow" style="margin-top:14px">
@@ -1955,6 +1955,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
           <option value="sse">SSE</option><option value="webhook">webhook</option>
         </select>
         <input id="newTarget" placeholder="target URL (webhook only)" style="width:240px" disabled />
+        <input id="newTickers" placeholder="tickers (CSV, optional)" style="width:170px" disabled />
+        <select id="newChambers" disabled>
+          <option value="">all chambers</option>
+          <option value="house">House only</option>
+          <option value="senate">Senate only</option>
+          <option value="house,senate">House + Senate</option>
+          <option value="executive">Executive only</option>
+        </select>
         <button class="btn sm" id="subsCreateBtn" onclick="createSubscription()" disabled>+ New delivery</button>
         <div id="subsMsg" class="note subs-msg" aria-live="polite"></div>
       </div>
@@ -4578,19 +4586,23 @@ function updateDeliveryGate() {
   var createBtn = el('subsCreateBtn');
   var deliverySel = el('newDelivery');
   var target = el('newTarget');
+  var tickersIn = el('newTickers');
+  var chambersSel = el('newChambers');
   var body = el('subsBody');
   var signedIn = !!(ME.user && ME.user.id);
   var premium = isPremium();
   var canCreate = signedIn && premium;
   if (deliverySel) deliverySel.disabled = !canCreate;
   if (target) target.disabled = !canCreate;
+  if (tickersIn) tickersIn.disabled = !canCreate;
+  if (chambersSel) chambersSel.disabled = !canCreate;
   if (createBtn) createBtn.disabled = !canCreate;
   if (!gate) return;
   if (!signedIn) {
     gate.style.display = '';
     gate.innerHTML = 'Sign in with Google to use Delivery. Creating a webhook or SSE target requires a signed-in Premium account. '
       + '<button class="btn sm" onclick="openLogin()">Sign In</button>';
-    if (body) body.innerHTML = stateRow(4, 'Sign in to see your deliveries.');
+    if (body) body.innerHTML = stateRow(5, 'Sign in to see your deliveries.');
     return;
   }
   if (!premium) {
@@ -4599,7 +4611,7 @@ function updateDeliveryGate() {
       + (checkoutConfigured()
         ? '<button class="btn sm" onclick="openPricing(&quot;alerts&quot;)">Start Free Trial</button>'
         : '<span class="muted">Billing is not configured yet.</span>');
-    if (body) body.innerHTML = stateRow(4, 'Premium required to create Delivery targets.');
+    if (body) body.innerHTML = stateRow(5, 'Premium required to create Delivery targets.');
     return;
   }
   gate.style.display = 'none';
@@ -4619,13 +4631,13 @@ function loadSubs() {
     })
     .then(function (data) { renderSubs(data.subscriptions || []); })
     .catch(function (e) {
-      el('subsBody').innerHTML = stateRow(4, 'Could not load deliveries: ' + e.message);
+      el('subsBody').innerHTML = stateRow(5, 'Could not load deliveries: ' + e.message);
     });
 }
 function renderSubs(subs) {
   var body = el('subsBody');
   if (!body) return;
-  if (subs.length === 0) { body.innerHTML = stateRow(4, 'No deliveries yet. Create one below.'); return; }
+  if (subs.length === 0) { body.innerHTML = stateRow(5, 'No deliveries yet. Create one below.'); return; }
   body.innerHTML = subs.map(function (s) {
     var f = s.filters || {};
     var parts = [];
@@ -4637,9 +4649,34 @@ function renderSubs(subs) {
       '<td class="muted">' + esc(s.targetUrl || (s.delivery === 'sse' ? '/api/stream' : '—')) + '</td>' +
       '<td class="muted">' + esc(parts.join(' · ')) + '</td>' +
       '<td><span class="conf ' + (s.active ? 'hi' : 'mid') + '">' + (s.active ? 'active' : 'paused') + '</span></td>' +
+      '<td><button class="btn ghost sm" data-sub-toggle="' + esc(s.id) + '" data-sub-active="' + (s.active ? '1' : '0') + '">' + (s.active ? 'Pause' : 'Resume') + '</button></td>' +
     '</tr>';
   }).join('');
 }
+/* Pause/Resume a delivery through the session-based update_subscription command.
+   (There is no delete endpoint anywhere in the API — deactivation is the
+   supported lifecycle, and it frees the account's active-quota slot.) */
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-sub-toggle]') : null;
+  if (!b) return;
+  var id = b.getAttribute('data-sub-toggle');
+  var nextActive = b.getAttribute('data-sub-active') !== '1';
+  b.disabled = true;
+  var idem = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-upd-' + Date.now());
+  fetch('/api/client/v1/commands', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json', accept: 'application/json', 'Idempotency-Key': idem },
+    body: JSON.stringify({
+      type: 'update_subscription',
+      idempotencyKey: idem,
+      payload: { id: id, active: nextActive }
+    })
+  })
+    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status)); return j; }); })
+    .then(function () { showToast(nextActive ? 'Delivery resumed.' : 'Delivery paused.'); loadSubs(); })
+    .catch(function (err) { b.disabled = false; showToast('Update failed: ' + err.message, true); });
+});
 function createSubscription() {
   updateDeliveryGate();
   if (!(ME.user && ME.user.id)) { el('subsMsg').textContent = 'Sign in required.'; return; }
@@ -4647,6 +4684,11 @@ function createSubscription() {
   var delivery = el('newDelivery').value;
   var targetUrl = el('newTarget').value.trim();
   if (delivery === 'webhook' && !targetUrl) { el('subsMsg').textContent = 'webhook needs a target URL.'; return; }
+  var filters = {};
+  var tickersRaw = (el('newTickers') && el('newTickers').value || '').split(',').map(function (t) { return t.trim().toUpperCase(); }).filter(Boolean);
+  if (tickersRaw.length) filters.tickers = tickersRaw;
+  var chambersRaw = el('newChambers') ? el('newChambers').value : '';
+  if (chambersRaw) filters.chambers = chambersRaw.split(',');
   el('subsMsg').textContent = 'Creating…';
   var idem = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : ('sub-' + Date.now());
   fetch('/api/client/v1/commands', {
@@ -4656,7 +4698,7 @@ function createSubscription() {
     body: JSON.stringify({
       type: 'create_subscription',
       idempotencyKey: idem,
-      payload: { delivery: delivery, targetUrl: targetUrl || null, filters: {} }
+      payload: { delivery: delivery, targetUrl: targetUrl || null, filters: filters }
     })
   })
     .then(function (r) {
