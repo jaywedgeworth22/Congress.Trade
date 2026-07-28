@@ -1,2 +1,0 @@
-/asset/* /asset?ticker=:splat 302
-/politician/* /politician?slug=:splat 302
