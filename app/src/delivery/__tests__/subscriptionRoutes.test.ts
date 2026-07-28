@@ -266,11 +266,11 @@ describe('subscription routes', () => {
     expect(body.streamUrl).toContain(`token=${encodeURIComponent(body.secret ?? '')}`);
   });
 
-  it('does not publicly list subscriptions', async () => {
+  it('does not publicly list subscriptions (403: forbidden for everyone, not an auth challenge)', async () => {
     const { env } = makeEnv();
     const app = buildRestRouter();
     const res = await app.request('http://localhost/subscriptions', {}, env);
-    expect(res.status).toBe(401);
+    expect(res.status).toBe(403);
   });
 
   it('requires the subscription secret to read and redacts the secret in the response', async () => {

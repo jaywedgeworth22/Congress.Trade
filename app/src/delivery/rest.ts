@@ -831,10 +831,12 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /subscriptions -------------------------------------------------
+  // 403 (not 401): the route is forbidden for everyone, not an auth challenge
+  // — no credential would make public listing succeed.
   r.get('/subscriptions', async (c) => {
     return c.json(
       { error: 'public subscription listing is disabled; use /api/admin/subscriptions' },
-      401,
+      403,
     );
   });
 
