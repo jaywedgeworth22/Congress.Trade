@@ -9,6 +9,7 @@
  *
  * Routes (all relative to /api):
  *   GET   /transactions      cursor-paged transaction feed (reconciliation backstop)
+ *   GET   /feed.xml          RSS 2.0 feed of recent trades (same filters as /transactions)
  *   GET   /stream            SSE live stream (?since= or Last-Event-ID resume)
  *   GET   /filings/:docId    single filing (+ its transactions) for the dashboard
  *   GET   /members           distinct filers seen in transactions
@@ -200,6 +201,16 @@ function asTxType(v: string | undefined): TxType | undefined {
 /** `YYYY-MM-DD` for `days` ago (UTC), for the freemium recency gate. */
 function isoDateDaysAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** Escape a text node/attribute value for XML output (RSS feed). */
+export function xmlEscape(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
 /** Whitelist the sort direction; anything other than 'desc' falls back to asc. */
@@ -466,6 +477,67 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       headers: {
         'content-type': 'text/csv; charset=utf-8',
         'content-disposition': `attachment; filename="congress-trades-${isoDateDaysAgo(0)}.csv"`,
+      },
+    });
+  });
+
+  // --- GET /feed.xml ------------------------------------------------------
+  // RSS 2.0 over the same transactions query builder as /transactions: the
+  // most recent trades as items so IFTTT/Zapier/news readers can subscribe.
+  // Honors the same ticker/member/memberName/chamber/type filters as the JSON
+  // feed (e.g. /api/feed.xml?ticker=AAPL&chamber=senate).
+  r.get('/feed.xml', async (c) => {
+    const params: TxQueryParams = { ...filtersFromQuery(c.req.query()), order: 'desc', limit: 50 };
+    if (params.memberName && !params.member) {
+      const resolvedFilerId = await resolveMemberFilerId(c.env, params.memberName);
+      if (resolvedFilerId) {
+        params.member = resolvedFilerId;
+        params.memberName = undefined;
+      }
+    }
+    const built = buildTransactionsQuery(params);
+    const rows = await all<
+      FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null }
+    >(c.env.DB, built.sql, built.params);
+    const origin = new URL(c.req.url).origin;
+
+    const items = rows.map((row) => {
+      const tx = mapFeedTransaction(row);
+      const who = row.__member_name ?? tx.fullName ?? tx.filerId ?? 'Unknown filer';
+      const side = tx.txType === 'P' ? 'bought' : tx.txType === 'S' ? 'sold' : 'traded';
+      const what = tx.ticker ?? tx.assetName;
+      const title = `${who} ${side} ${what}`;
+      const link = tx.sourceUrl ?? `${origin}/api/filings/${encodeURIComponent(tx.docId)}`;
+      const pubSource = tx.firstSeenAt ?? tx.createdAt;
+      const pubDate = pubSource ? new Date(pubSource).toUTCString() : '';
+      const description = [
+        tx.txDate ? `Trade date: ${tx.txDate}` : '',
+        tx.filedDate ? `Filed: ${tx.filedDate}` : '',
+        tx.assetName ? `Asset: ${tx.assetName}` : '',
+        tx.amountMin != null || tx.amountMax != null
+          ? `Amount: ${tx.amountMin ?? '?'}–${tx.amountMax ?? '?'}`
+          : '',
+      ].filter(Boolean).join(' · ');
+      return '    <item>\n'
+        + `      <title>${xmlEscape(title)}</title>\n`
+        + `      <link>${xmlEscape(link)}</link>\n`
+        + `      <guid isPermaLink="false">${xmlEscape(tx.id)}</guid>\n`
+        + (pubDate ? `      <pubDate>${pubDate}</pubDate>\n` : '')
+        + `      <description>${xmlEscape(description)}</description>\n`
+        + '    </item>';
+    });
+
+    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+      + '<rss version="2.0">\n  <channel>\n'
+      + '    <title>Congress.Trade — Recent Congressional Trades</title>\n'
+      + `    <link>${xmlEscape(origin)}</link>\n`
+      + '    <description>The most recent U.S. congressional stock trades.</description>\n'
+      + items.join('\n')
+      + '\n  </channel>\n</rss>\n';
+    return new Response(xml, {
+      headers: {
+        'content-type': 'application/rss+xml; charset=utf-8',
+        'cache-control': PUBLIC_FEED_CACHE,
       },
     });
   });
