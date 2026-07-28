@@ -1647,12 +1647,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <button class="btn ghost sm" onclick="resetCols()">Reset</button>
     </dialog>
     <dialog class="search-panel" id="searchPanel" onclick="if(event.target === this) closePanels()">
-      <div class="panel-head"><span class="panel-title">Search</span><button class="panel-close" onclick="closePanels()" aria-label="Close search">×</button></div>
-      <span class="lbl">Search All</span>
+      <div class="panel-head"><span class="panel-title">Filter this page</span><button class="panel-close" onclick="closePanels()" aria-label="Close search">×</button></div>
+      <p class="note" style="margin:0 0 8px">Filters the rows already loaded on this page only. Use the Ticker / Politician toolbar fields to query the full feed.</p>
+      <span class="lbl">Search this page</span>
       <input id="qAll" placeholder="Politician, Asset, Symbol, Source…" style="min-width:240px;flex:1" oninput="renderFeed()" />
-      <span class="lbl">Min $</span>
+      <span class="lbl">Min $ (this page)</span>
       <input id="qMinAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderFeed()" />
-      <span class="lbl">Max $</span>
+      <span class="lbl">Max $ (this page)</span>
       <input id="qMaxAmt" type="number" min="0" placeholder="0" style="width:80px" oninput="renderFeed()" />
       <button class="btn ghost sm" onclick="clearSearch()">Clear</button>
     </dialog>
