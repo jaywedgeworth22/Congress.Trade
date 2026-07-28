@@ -616,6 +616,10 @@ export const FIX_DENO_RUNTIME_QUEUE_INDEX_SCHEMA_STATEMENTS = [
   'DROP INDEX IF EXISTS idx_deno_runtime_queue_ready'
 ] as const;
 
+export const FILINGS_FILED_DATE_INDEX_SCHEMA_STATEMENTS = [
+  'CREATE INDEX IF NOT EXISTS idx_filings_filed_date ON filings (filed_date)'
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -684,4 +688,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...CLEAN_PLACEHOLDER_TICKERS_SCHEMA_STATEMENTS,
   // 0062_fix_deno_runtime_queue_index.sql
   ...FIX_DENO_RUNTIME_QUEUE_INDEX_SCHEMA_STATEMENTS,
+  // 0063_filings_filed_date_index.sql
+  ...FILINGS_FILED_DATE_INDEX_SCHEMA_STATEMENTS,
 ] as const;

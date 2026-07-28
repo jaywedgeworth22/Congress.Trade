@@ -11,6 +11,7 @@
 import type {
   Chamber,
   DeliveryChannel,
+  Env,
   Filing,
   Owner,
   Subscription,
@@ -19,7 +20,7 @@ import type {
   TxSource,
   TxType,
 } from '../shared/types.ts';
-import { parseJson, toBool } from '../shared/db.ts';
+import { get, parseJson, toBool } from '../shared/db.ts';
 import { canonicalizeAssetType } from '../shared/assetTypes.ts';
 import { normalizeCompanyName } from '../shared/companyName.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
@@ -271,6 +272,30 @@ export function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
+/**
+ * Resolve a free-text member name to a `filers.bioguide_id` so the feed can
+ * filter on the indexed `transactions.filer_id` column instead of the
+ * un-indexed `LOWER(full_name) LIKE` full-corpus path (a raw memberName filter
+ * defeats the nested keyset in buildTransactionsQuery — see
+ * canNestTransactionKeyset). Exact match ranks first, then substring, mirroring
+ * the client API's resolveMember (src/client/queries.ts). Returns null when no
+ * filer matches; callers then keep the legacy LIKE fallback so transactions
+ * whose filer_id never resolved to a filers row stay reachable by name text.
+ */
+export async function resolveMemberFilerId(env: Env, memberName: string): Promise<string | null> {
+  const term = memberName.trim();
+  if (!term) return null;
+  const row = await get<{ bioguide_id: string }>(
+    env.DB,
+    `SELECT bioguide_id FROM filers
+      WHERE LOWER(full_name) = LOWER(?) OR LOWER(full_name) LIKE ? ESCAPE '\\'
+      ORDER BY CASE WHEN LOWER(full_name) = LOWER(?) THEN 0 ELSE 1 END, full_name
+      LIMIT 1`,
+    [term, `%${escapeLikePattern(term.toLowerCase())}%`, term],
+  );
+  return row?.bioguide_id ?? null;
+}
+
 // ---------------------------------------------------------------------------
 // Transactions query builder (the REST `?since=` cursor backstop)
 // ---------------------------------------------------------------------------
@@ -365,6 +390,17 @@ const TX_FROM_JOINS =
   'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
   'LEFT JOIN filings f ON f.doc_id = t.doc_id ' +
   'LEFT JOIN securities_ref sr ON sr.ticker = t.ticker ';
+
+/**
+ * Joins-lite FROM for the COUNT companions. No WHERE clause ever references
+ * `securities_ref` (see buildTxFilters), so joining it into count/today
+ * aggregates is a pure waste of Turso rows read on every non-incremental poll.
+ * Filers/filings stay: member/chamber/filedSince filters resolve through them.
+ */
+const TX_FROM_JOINS_LITE =
+  'FROM transactions t ' +
+  'LEFT JOIN filers fl ON fl.bioguide_id = t.filer_id ' +
+  'LEFT JOIN filings f ON f.doc_id = t.doc_id ';
 
 /** Cross-referenced asset fields (securities_ref) carried on each feed row. */
 const REF_SELECT =
@@ -557,7 +593,7 @@ export function buildTransactionsCountQuery(
   const { where, params } = buildTxFilters(p, false);
   const sql =
     'SELECT COUNT(*) AS total ' +
-    TX_FROM_JOINS +
+    TX_FROM_JOINS_LITE +
     (where.length ? `WHERE ${where.join(' AND ')}` : '');
   return { sql, params };
 }
@@ -571,7 +607,7 @@ export function buildTransactionsTodayFilingsQuery(
   const allWhere = [...where, 'substr(COALESCE(f.first_seen_at, t.created_at), 1, 10) = ?'];
   const sql =
     'SELECT COUNT(DISTINCT t.doc_id) AS total ' +
-    TX_FROM_JOINS +
+    TX_FROM_JOINS_LITE +
     `WHERE ${allWhere.join(' AND ')}`;
   return { sql, params: [...params, todayIso.slice(0, 10)] };
 }

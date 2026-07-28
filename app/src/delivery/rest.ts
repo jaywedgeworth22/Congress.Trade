@@ -9,6 +9,7 @@
  *
  * Routes (all relative to /api):
  *   GET   /transactions      cursor-paged transaction feed (reconciliation backstop)
+ *   GET   /feed.xml          RSS 2.0 feed of recent trades (same filters as /transactions)
  *   GET   /stream            SSE live stream (?since= or Last-Event-ID resume)
  *   GET   /filings/:docId    single filing (+ its transactions) for the dashboard
  *   GET   /members           distinct filers seen in transactions
@@ -31,6 +32,7 @@ import {
   mapFiling,
   mapTransaction,
   mapFeedTransaction,
+  resolveMemberFilerId,
   toPublicFiling,
   type FilingRow,
   type TransactionRow,
@@ -58,7 +60,7 @@ import { constantTimeEqual } from '../auth/tokens.ts';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget.ts';
 import { rateLimit, clientIp } from '../shared/rateLimit.ts';
 import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
-import { checkReadiness } from '../shared/readiness.ts';
+import { checkReadiness, type ReadinessResult } from '../shared/readiness.ts';
 import { costProfilePublicSummary, resolveDenoCostProfile } from '../deno/costProfile.ts';
 
 function parseIntOrUndef(v: string | undefined): number | undefined {
@@ -85,11 +87,56 @@ export function resolveResumeCursor(
 
 type RestContext = Context<{ Bindings: Env }>;
 
+/**
+ * In-isolate readiness cache for GET /health. The readiness probe runs ~50
+ * schema-introspection queries (shared/readiness.ts REQUIRED_PROBES); paying
+ * that per uptime-monitor hit is pure waste when the schema changes at most
+ * once per deploy. 60 s is fresh enough for a deploy gate and a stale-ok
+ * verdict still self-corrects on the next expiry. A static /health (no DB)
+ * exists in index.ts for monitors that only need liveness.
+ */
+const READINESS_CACHE_TTL_MS = 60_000;
+let readinessCache: { at: number; result: ReadinessResult } | null = null;
+
+/**
+ * Edge-cache policies for public, read-only GETs. These endpoints carry no
+ * Cache-Control today, so CDNs/browser shared caches cannot help even where
+ * the payload is already KV-cached server-side (e.g. /members). s-maxage
+ * targets shared caches only; stale-while-revalidate lets an edge serve the
+ * stale copy while revalidating instead of stampeding the origin.
+ * PUBLIC_FEED_CACHE is short because the live feed shifts with each ingest;
+ * PUBLIC_STABLE_CACHE suits daily-grain data (members roster, market EOD,
+ * filing detail).
+ */
+const PUBLIC_FEED_CACHE = 'public, s-maxage=15, stale-while-revalidate=45';
+const PUBLIC_STABLE_CACHE = 'public, s-maxage=300, stale-while-revalidate=600';
+
+/**
+ * Explicit CORS policy: only these public, read-only GET paths are cross-origin
+ * readable. Auth'd surfaces (subscriptions, SSE stream), mutations, and admin
+ * routes must never carry Access-Control-Allow-Origin. (Paths here are relative
+ * to the router mount point, /api.)
+ */
+function isPublicReadPath(path: string): boolean {
+  return path === '/transactions'
+    || path === '/members'
+    || path === '/health'
+    || path === '/feed.xml'
+    || path === '/export/transactions.csv'
+    || path === '/logos/ticker'
+    || path.startsWith('/market/')
+    || path.startsWith('/filings/')
+    || path.startsWith('/documents/');
+}
+
 interface PublicSubscription extends Omit<Subscription, 'secret'> {
   hasSecret: boolean;
   /** Returned only once, on creation or explicit secret rotation. */
   secret?: string;
-  /** Browser EventSource helper for SSE subscriptions. Contains the one-time secret. */
+  /** Browser EventSource helper for SSE subscriptions. Contains the one-time
+   *  secret in the query string — clients that can set headers should discard
+   *  it and open /api/stream with `Authorization: Bearer <secret>` instead
+   *  (the token-in-URL form leaks into browser history and proxy logs). */
   streamUrl?: string;
 }
 
@@ -159,6 +206,16 @@ function isoDateDaysAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 }
 
+/** Escape a text node/attribute value for XML output (RSS feed). */
+export function xmlEscape(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
 /** Whitelist the sort direction; anything other than 'desc' falls back to asc. */
 function asOrder(v: string | undefined): 'asc' | 'desc' | undefined {
   return v === 'desc' ? 'desc' : v === 'asc' ? 'asc' : undefined;
@@ -202,12 +259,30 @@ export function csvCell(value: unknown): string {
 export function buildRestRouter(): Hono<{ Bindings: Env }> {
   const r = new Hono<{ Bindings: Env }>();
 
+  // CORS: stamp Access-Control-Allow-Origin on public, read-only GET responses
+  // only (see isPublicReadPath). Vary: Origin keeps shared caches correct if
+  // the policy ever becomes origin-aware. Simple GETs need no preflight, so no
+  // OPTIONS handler is required for this policy.
+  r.use('*', async (c, next) => {
+    await next();
+    // The router is mounted under /api in production but bare in tests.
+    const path = new URL(c.req.url).pathname.replace(/^\/api(?=\/|$)/, '');
+    if (c.req.method === 'GET' && isPublicReadPath(path)) {
+      c.res.headers.set('Access-Control-Allow-Origin', '*');
+      c.res.headers.append('Vary', 'Origin');
+    }
+  });
+
   // --- GET /health --------------------------------------------------------
   // Deployment readiness: D1 must be reachable and the required schema current.
   // Also reports the active cost profile (public, no secrets) so free-tier
   // ops can confirm CT_COST_PROFILE without an admin token.
   r.get('/health', async (c) => {
-    const readiness = await checkReadiness(c.env.DB);
+    const now = Date.now();
+    if (!readinessCache || now - readinessCache.at >= READINESS_CACHE_TTL_MS) {
+      readinessCache = { at: now, result: await checkReadiness(c.env.DB) };
+    }
+    const readiness = readinessCache.result;
     const envx = c.env as Env & Record<string, string | undefined>;
     const costProfile = costProfilePublicSummary(resolveDenoCostProfile(envx));
     return c.json(
@@ -275,6 +350,17 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
         { 'Retry-After': String(budget.retryAfterSec) },
       );
     }
+    // A free-text memberName would force the un-indexed full-corpus LIKE path
+    // (canNestTransactionKeyset bails on it). Resolve the name to a filer_id
+    // first so the feed takes the indexed keyset path; an unresolved name keeps
+    // the legacy LIKE fallback (seed rows whose filer_id has no filers entry).
+    if (params.memberName && !params.member) {
+      const resolvedFilerId = await resolveMemberFilerId(c.env, params.memberName);
+      if (resolvedFilerId) {
+        params.member = resolvedFilerId;
+        params.memberName = undefined;
+      }
+    }
     const built = buildTransactionsQuery(params);
     // The query SELECTs the resolved chamber + politician name alongside the feed
     // columns via `__chamber` / `__member_name` (see buildTransactionsQuery).
@@ -318,6 +404,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // Count served rows against the caller's daily budget. Incremental polls
     // (the dashboard's steady state) return zero rows and skip the KV write.
     await spendRowBudget(c.env, ip, transactions.length);
+    c.header('Cache-Control', PUBLIC_FEED_CACHE);
     return c.json({
       transactions,
       cursor: maxCursor,
@@ -397,12 +484,78 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
+  // --- GET /feed.xml ------------------------------------------------------
+  // RSS 2.0 over the same transactions query builder as /transactions: the
+  // most recent trades as items so IFTTT/Zapier/news readers can subscribe.
+  // Honors the same ticker/member/memberName/chamber/type filters as the JSON
+  // feed (e.g. /api/feed.xml?ticker=AAPL&chamber=senate).
+  r.get('/feed.xml', async (c) => {
+    const params: TxQueryParams = { ...filtersFromQuery(c.req.query()), order: 'desc', limit: 50 };
+    if (params.memberName && !params.member) {
+      const resolvedFilerId = await resolveMemberFilerId(c.env, params.memberName);
+      if (resolvedFilerId) {
+        params.member = resolvedFilerId;
+        params.memberName = undefined;
+      }
+    }
+    const built = buildTransactionsQuery(params);
+    const rows = await all<
+      FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null }
+    >(c.env.DB, built.sql, built.params);
+    const origin = new URL(c.req.url).origin;
+
+    const items = rows.map((row) => {
+      const tx = mapFeedTransaction(row);
+      const who = row.__member_name ?? tx.fullName ?? tx.filerId ?? 'Unknown filer';
+      const side = tx.txType === 'P' ? 'bought' : tx.txType === 'S' ? 'sold' : 'traded';
+      const what = tx.ticker ?? tx.assetName;
+      const title = `${who} ${side} ${what}`;
+      const link = tx.sourceUrl ?? `${origin}/api/filings/${encodeURIComponent(tx.docId)}`;
+      const pubSource = tx.firstSeenAt ?? tx.createdAt;
+      const pubDate = pubSource ? new Date(pubSource).toUTCString() : '';
+      const description = [
+        tx.txDate ? `Trade date: ${tx.txDate}` : '',
+        tx.filedDate ? `Filed: ${tx.filedDate}` : '',
+        tx.assetName ? `Asset: ${tx.assetName}` : '',
+        tx.amountMin != null || tx.amountMax != null
+          ? `Amount: ${tx.amountMin ?? '?'}–${tx.amountMax ?? '?'}`
+          : '',
+      ].filter(Boolean).join(' · ');
+      return '    <item>\n'
+        + `      <title>${xmlEscape(title)}</title>\n`
+        + `      <link>${xmlEscape(link)}</link>\n`
+        + `      <guid isPermaLink="false">${xmlEscape(tx.id)}</guid>\n`
+        + (pubDate ? `      <pubDate>${pubDate}</pubDate>\n` : '')
+        + `      <description>${xmlEscape(description)}</description>\n`
+        + '    </item>';
+    });
+
+    const xml = '<?xml version="1.0" encoding="UTF-8"?>\n'
+      + '<rss version="2.0">\n  <channel>\n'
+      + '    <title>Congress.Trade — Recent Congressional Trades</title>\n'
+      + `    <link>${xmlEscape(origin)}</link>\n`
+      + '    <description>The most recent U.S. congressional stock trades.</description>\n'
+      + items.join('\n')
+      + '\n  </channel>\n</rss>\n';
+    return new Response(xml, {
+      headers: {
+        'content-type': 'application/rss+xml; charset=utf-8',
+        'cache-control': PUBLIC_FEED_CACHE,
+      },
+    });
+  });
+
   // --- GET /stream --------------------------------------------------------
   // SSE live stream. Resume point comes from ?since=<cursor_seq> or, on an
   // automatic EventSource reconnect, the Last-Event-ID header (each trade event
   // carries id:<cursorSeq>). The backlog replay is sourced from the full
   // transactions table, so resume is gap-free regardless of how long the client
   // was disconnected.
+  //
+  // Token transport: prefer `Authorization: Bearer <secret>` (or
+  // X-Subscription-Secret) so the secret stays out of URLs (browser history,
+  // proxy logs, Referer). The ?token= query form remains only for native
+  // browser EventSource, which cannot set headers.
   r.get('/stream', async (c) => {
     const subscription = c.req.query('subscription');
     if (!subscription) {
@@ -449,6 +602,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       [docId],
     );
     await spendRowBudget(c.env, ip, txRows.length);
+    c.header('Cache-Control', PUBLIC_STABLE_CACHE);
     return c.json({
       filing: toPublicFiling(mapFiling(filingRow)),
       transactions: txRows.map(mapTransaction),
@@ -494,6 +648,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       headers: {
         'content-type': contentType,
         'content-disposition': 'inline', // Attempt to display in browser instead of auto-download
+        // Fetched PDFs are immutable once stored (keyed by doc_id).
+        'cache-control': 'public, max-age=86400, immutable',
       },
     });
   });
@@ -503,6 +659,19 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // let a sibling app reuse the FMP-derived data App A has already pulled
   // (cache-aside) instead of spending its own FMP quota. Shapes mirror the
   // POST /api/admin/securities/import payload, so the two apps are symmetric.
+
+  // Daily-grain public reads: let shared/edge caches absorb repeat traffic.
+  r.use('/market/*', async (c, next) => {
+    await next();
+    if (c.req.method === 'GET' && c.res.status === 200) {
+      c.res.headers.set('Cache-Control', PUBLIC_STABLE_CACHE);
+    }
+  });
+
+  // All series reads below are bounded: `?limit=` (default DEFAULT_MARKET_LIMIT,
+  // hard cap MAX_MARKET_LIMIT) returns the LATEST N rows inside the from/to
+  // window, re-sorted ascending for charting. Pass a tighter ?from= for older
+  // history instead of raising the cap.
 
   // GET /market/ref/:ticker -> the cached securities_ref row (or 404).
   r.get('/market/ref/:ticker', async (c) => {
@@ -533,11 +702,17 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     return c.json({ refs: rows.map(mapSecurityRef) });
   });
 
-  // GET /market/prices/:ticker?from=YYYY-MM-DD&to=YYYY-MM-DD
+  // GET /market/prices/:ticker?from=YYYY-MM-DD&to=YYYY-MM-DD&limit=N
   //   -> { ticker, closes:[{date,close}], currentPrice, currentPriceDate }.
   r.get('/market/prices/:ticker', async (c) => {
     const ticker = c.req.param('ticker').toUpperCase();
-    const { sql, params } = priceRangeQuery('price_eod', ticker, c.req.query('from'), c.req.query('to'));
+    const { sql, params } = priceRangeQuery(
+      'price_eod',
+      ticker,
+      c.req.query('from'),
+      c.req.query('to'),
+      marketLimit(c.req.query('limit')),
+    );
     const closes = await all<{ date: string; close: number; volume?: number | null }>(c.env.DB, sql, params);
     const ref = await get<{ current_price: number | null; current_price_date: string | null }>(
       c.env.DB,
@@ -552,7 +727,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
-  // GET /market/insider/:ticker?from=&to= -> insider (Form 4) daily aggregates.
+  // GET /market/insider/:ticker?from=&to=&limit= -> insider (Form 4) daily aggregates.
   r.get('/market/insider/:ticker', async (c) => {
     const ticker = c.req.param('ticker').toUpperCase();
     const where = ['ticker = ?'];
@@ -561,6 +736,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const to = c.req.query('to');
     if (from) { where.push('date >= ?'); params.push(from.slice(0, 10)); }
     if (to) { where.push('date <= ?'); params.push(to.slice(0, 10)); }
+    const limit = marketLimit(c.req.query('limit'));
     const rows = await all<{
       date: string; sentiment: number | null; buy_filings: number | null;
       sell_filings: number | null; buy_shares: number | null; sell_shares: number | null;
@@ -568,7 +744,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     }>(
       c.env.DB,
       `SELECT date, sentiment, buy_filings, sell_filings, buy_shares, sell_shares, owners
-         FROM insider_eod WHERE ${where.join(' AND ')} ORDER BY date ASC`,
+         FROM (SELECT date, sentiment, buy_filings, sell_filings, buy_shares, sell_shares, owners
+                 FROM insider_eod WHERE ${where.join(' AND ')} ORDER BY date DESC LIMIT ${limit})
+        ORDER BY date ASC`,
       params,
     );
     return c.json({
@@ -585,7 +763,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
-  // GET /market/fundamentals/:ticker?from=&to= -> cached fundamentals (P/E, EPS,
+  // GET /market/fundamentals/:ticker?from=&to=&limit= -> cached fundamentals (P/E, EPS,
   // beta, 52w, FCF yield, debt/equity, EPS growth, dividend yield). Lets a sibling
   // app read back the fundamentals it (or our enrichment) already stored instead of
   // re-paying a provider — see docs/fmp-data-sharing.md.
@@ -597,6 +775,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const to = c.req.query('to');
     if (from) { where.push('date >= ?'); params.push(from.slice(0, 10)); }
     if (to) { where.push('date <= ?'); params.push(to.slice(0, 10)); }
+    const limit = marketLimit(c.req.query('limit'));
     const rows = await all<{
       date: string; pe_ratio: number | null; eps: number | null; beta: number | null;
       dividend_yield: number | null; week52_high: number | null; week52_low: number | null;
@@ -606,7 +785,10 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       c.env.DB,
       `SELECT date, pe_ratio, eps, beta, dividend_yield, week52_high, week52_low,
               fcf_yield, debt_to_equity, eps_growth, source, updated_at
-         FROM fundamentals_eod WHERE ${where.join(' AND ')} ORDER BY date ASC`,
+         FROM (SELECT date, pe_ratio, eps, beta, dividend_yield, week52_high, week52_low,
+                      fcf_yield, debt_to_equity, eps_growth, source, updated_at
+                 FROM fundamentals_eod WHERE ${where.join(' AND ')} ORDER BY date DESC LIMIT ${limit})
+        ORDER BY date ASC`,
       params,
     );
     return c.json({
@@ -620,7 +802,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
-  // GET /market/analyst/:ticker?from=&to= -> cached analyst consensus + targets.
+  // GET /market/analyst/:ticker?from=&to=&limit= -> cached analyst consensus + targets.
   r.get('/market/analyst/:ticker', async (c) => {
     const ticker = c.req.param('ticker').toUpperCase();
     const where = ['ticker = ?'];
@@ -629,6 +811,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const to = c.req.query('to');
     if (from) { where.push('date >= ?'); params.push(from.slice(0, 10)); }
     if (to) { where.push('date <= ?'); params.push(to.slice(0, 10)); }
+    const limit = marketLimit(c.req.query('limit'));
     const rows = await all<{
       date: string; rating: string | null; target_mean: number | null; target_high: number | null;
       target_low: number | null; target_median: number | null; analyst_count: number | null;
@@ -638,7 +821,10 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       c.env.DB,
       `SELECT date, rating, target_mean, target_high, target_low, target_median, analyst_count,
               strong_buy, buy, hold, sell, strong_sell, source, updated_at
-         FROM analyst_consensus WHERE ${where.join(' AND ')} ORDER BY date ASC`,
+         FROM (SELECT date, rating, target_mean, target_high, target_low, target_median, analyst_count,
+                      strong_buy, buy, hold, sell, strong_sell, source, updated_at
+                 FROM analyst_consensus WHERE ${where.join(' AND ')} ORDER BY date DESC LIMIT ${limit})
+        ORDER BY date ASC`,
       params,
     );
     return c.json({
@@ -652,7 +838,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
-  // GET /market/short-volume/:ticker?from=&to= -> FINRA short-volume daily.
+  // GET /market/short-volume/:ticker?from=&to=&limit= -> FINRA short-volume daily.
   r.get('/market/short-volume/:ticker', async (c) => {
     const ticker = c.req.param('ticker').toUpperCase();
     const where = ['ticker = ?'];
@@ -661,10 +847,13 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const to = c.req.query('to');
     if (from) { where.push('date >= ?'); params.push(from.slice(0, 10)); }
     if (to) { where.push('date <= ?'); params.push(to.slice(0, 10)); }
+    const limit = marketLimit(c.req.query('limit'));
     const rows = await all<{ date: string; short_volume_ratio: number | null; elevated: number }>(
       c.env.DB,
-      `SELECT date, short_volume_ratio, elevated FROM short_volume_eod
-        WHERE ${where.join(' AND ')} ORDER BY date ASC`,
+      `SELECT date, short_volume_ratio, elevated
+         FROM (SELECT date, short_volume_ratio, elevated FROM short_volume_eod
+                WHERE ${where.join(' AND ')} ORDER BY date DESC LIMIT ${limit})
+        ORDER BY date ASC`,
       params,
     );
     return c.json({
@@ -673,22 +862,29 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
-  // GET /market/spx?from=YYYY-MM-DD&to=YYYY-MM-DD -> S&P 500 cached closes.
+  // GET /market/spx?from=YYYY-MM-DD&to=YYYY-MM-DD&limit=N -> S&P 500 cached closes.
   r.get('/market/spx', async (c) => {
-    const { sql, params } = priceRangeQuery('spx_eod', null, c.req.query('from'), c.req.query('to'));
+    const { sql, params } = priceRangeQuery(
+      'spx_eod',
+      null,
+      c.req.query('from'),
+      c.req.query('to'),
+      marketLimit(c.req.query('limit')),
+    );
     const closes = await all<{ date: string; close: number }>(c.env.DB, sql, params);
     return c.json({ closes });
   });
 
-  // GET /market/bundle/:ticker?from=&to= -> ref + prices + spx in one call.
+  // GET /market/bundle/:ticker?from=&to=&limit= -> ref + prices + spx in one call.
   r.get('/market/bundle/:ticker', async (c) => {
     const ticker = c.req.param('ticker').toUpperCase();
     const from = c.req.query('from');
     const to = c.req.query('to');
+    const limit = marketLimit(c.req.query('limit'));
     const refRow = await get<SecurityRefRow>(c.env.DB, 'SELECT * FROM securities_ref WHERE ticker = ?', [ticker]);
-    const pq = priceRangeQuery('price_eod', ticker, from, to);
+    const pq = priceRangeQuery('price_eod', ticker, from, to, limit);
     const closes = await all<{ date: string; close: number; volume?: number | null }>(c.env.DB, pq.sql, pq.params);
-    const sq = priceRangeQuery('spx_eod', null, from, to);
+    const sq = priceRangeQuery('spx_eod', null, from, to, limit);
     const spx = await all<{ date: string; close: number }>(c.env.DB, sq.sql, sq.params);
     return c.json({
       ticker,
@@ -745,6 +941,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       }));
       return { members, count: members.length };
     });
+    c.header('Cache-Control', PUBLIC_STABLE_CACHE);
     return c.json(payload);
   });
 
@@ -804,10 +1001,12 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- GET /subscriptions -------------------------------------------------
+  // 403 (not 401): the route is forbidden for everyone, not an auth challenge
+  // — no credential would make public listing succeed.
   r.get('/subscriptions', async (c) => {
     return c.json(
       { error: 'public subscription listing is disabled; use /api/admin/subscriptions' },
-      401,
+      403,
     );
   });
 
@@ -971,15 +1170,35 @@ export function mapSecurityRef(row: SecurityRefRow) {
   };
 }
 
+/** Default and hard-cap row limits for /market/* series reads (`?limit=`). */
+export const DEFAULT_MARKET_LIMIT = 1000;
+export const MAX_MARKET_LIMIT = 5000;
+
+/**
+ * Clamp the /market/* `?limit=` param to a safe integer. The result is
+ * interpolated into SQL (D1/SQLite has no bound-parameter LIMIT), so it must
+ * never be fractional, non-finite, or above the hard cap.
+ */
+export function marketLimit(value: string | undefined): number {
+  let n = Number.isFinite(Number(value)) && value !== undefined && value !== ''
+    ? Math.floor(Number(value))
+    : DEFAULT_MARKET_LIMIT;
+  if (n <= 0) n = DEFAULT_MARKET_LIMIT;
+  return Math.min(n, MAX_MARKET_LIMIT);
+}
+
 /**
  * Build an ascending close-series query for price_eod (needs a ticker) or
- * spx_eod (no ticker), with optional inclusive from/to date bounds.
+ * spx_eod (no ticker), with optional inclusive from/to date bounds. Bounded by
+ * `limit`: the LATEST `limit` rows inside the window are returned, re-sorted
+ * ascending for charting (pass a tighter `from` for older history).
  */
 export function priceRangeQuery(
   table: 'price_eod' | 'spx_eod',
   ticker: string | null,
   from?: string,
   to?: string,
+  limit: number = DEFAULT_MARKET_LIMIT,
 ): { sql: string; params: (string | number)[] } {
   const where: string[] = [];
   const params: (string | number)[] = [];
@@ -998,15 +1217,11 @@ export function priceRangeQuery(
   const clause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
   // price_eod carries a daily volume column; spx_eod does not.
   const cols = table === 'price_eod' ? 'date, close, volume' : 'date, close';
-  if (!from && !to) {
-    // No window: cap at the LATEST 1000 rows (not the oldest), re-sorted
-    // ascending for charting.
-    return {
-      sql: `SELECT ${cols} FROM (SELECT ${cols} FROM ${table}${clause} ORDER BY date DESC LIMIT 1000) ORDER BY date ASC`,
-      params,
-    };
-  }
-  return { sql: `SELECT ${cols} FROM ${table}${clause} ORDER BY date ASC`, params };
+  const n = marketLimit(String(limit));
+  return {
+    sql: `SELECT ${cols} FROM (SELECT ${cols} FROM ${table}${clause} ORDER BY date DESC LIMIT ${n}) ORDER BY date ASC`,
+    params,
+  };
 }
 
 /** JSON.parse that returns null instead of throwing. */
