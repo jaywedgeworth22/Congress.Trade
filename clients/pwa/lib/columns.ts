@@ -11,14 +11,14 @@ export interface ColumnDef {
 
 
 export const ALL_COLUMNS: ColumnDef[] = [
-  { id: 'traded', label: 'Traded', def: true, tip: 'Date the trade was executed.', sort: 'txdate' },
+  { id: 'traded', label: 'Date Traded', def: true, tip: 'Date the trade was executed.', sort: 'txdate' },
   { id: 'type', label: 'Type', def: true, tip: 'Reported transaction type.', sort: 'type' },
   { id: 'member', label: 'Politician', def: true, tip: 'Politician who filed the disclosure.', sort: 'member' },
-  { id: 'asset', label: 'Asset', def: true, tip: 'Asset name as reported.', sort: 'asset' },
+  { id: 'asset', label: 'Asset Type', def: true, tip: 'Asset name as reported.', sort: 'asset' },
   { id: 'amount', label: 'Amount', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', sort: 'min' },
   { id: 'sector', label: 'Sector', def: false, tip: 'Cross-referenced sector (FMP / SEC EDGAR).', sort: 'refSector' },
-  { id: 'marketcap', label: 'Cap', def: true, tip: 'Market-cap size tier from enriched reference data.', sort: 'refMarketCap' },
-  { id: 'country', label: '🌎', def: true, tip: 'Country of issue from enriched reference data.', sort: 'refCountry' },
+  { id: 'marketcap', label: 'Market Cap', def: true, tip: 'Market-cap size tier from enriched reference data.', sort: 'refMarketCap' },
+  { id: 'country', label: 'Country', def: true, tip: 'Country of issue from enriched reference data.', sort: 'refCountry' },
   { id: 'published', label: 'Published', def: false, tip: 'When Congress.Trade first saw or imported the filing.', sort: 'published' },
   { id: 'lag', label: 'Lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', sort: 'lag' },
   { id: 'filed', label: 'Official Filed', def: false, tip: 'Official disclosure/report date.', sort: 'filed' },
@@ -28,7 +28,7 @@ export const ALL_COLUMNS: ColumnDef[] = [
   { id: 'owner', label: 'Owner', def: false, tip: 'Beneficial owner code reported on the filing.', sort: 'owner' },
   { id: 'chamber', label: 'Chamber', def: false, tip: 'House or Senate source chamber.', sort: 'chamber' },
   { id: 'source', label: 'Source', def: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', sort: 'source' },
-  { id: 'docs', label: 'Docs', def: true, tip: 'Original PDF filing or source document.', sort: null },
+  { id: 'docs', label: 'Documents', def: true, tip: 'Original PDF filing or source document.', sort: null },
 ];
 
 const COL_HIDDEN_KEY = 'feed-cols-hidden-v3';
