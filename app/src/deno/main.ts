@@ -119,23 +119,52 @@ const costProfile = resolveDenoCostProfile(Deno.env);
 // scheduler owns ticks (DENO_DISABLE_INTERNAL_CRON=true → Coolify/GH Actions
 // call POST /api/admin/runtime-tick). Default profile is free (every 5 min,
 // tiny drain batches) so we survive free-tier after Aug 1.
+// In-isolate overlap guard: Deno.cron does not wait for a slow previous tick,
+// so without this a >5-minute tick would stack watcher/outbox work in the same
+// isolate. Cross-isolate overlap (cron vs POST /api/admin/runtime-tick) is
+// covered by the DB-backed singleton inside runScheduledTick.
+let tickInFlight = false;
+
 if (!costProfile.disableInternalCron) {
   console.log(
     `Deno cost profile=${costProfile.name} cron="${costProfile.cronSchedule}" ` +
       `drainLimit=${costProfile.drainLimit} claimSize=${costProfile.drainClaimSize}`,
   );
   Deno.cron('Worker scheduled tasks', costProfile.cronSchedule, async () => {
+    if (tickInFlight) {
+      console.warn('Deno cron tick skipped: previous tick still running');
+      return;
+    }
+    tickInFlight = true;
+    // The 45s deadline now aborts the tick pipeline instead of abandoning it:
+    // lanes stop at the next boundary and the queue drain stops claiming.
+    const tickAbort = new AbortController();
     try {
       const env = buildEnv();
-      const tickPromise = runScheduledTick(env, durableQueueHandlers, costProfile);
+      const tickPromise = runScheduledTick(
+        env,
+        durableQueueHandlers,
+        costProfile,
+        new Date(),
+        { signal: tickAbort.signal },
+      );
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error('Deno cron tick exceeded 45s deadline')), 45_000);
+        timeoutId = setTimeout(() => {
+          tickAbort.abort(new Error('Deno cron tick exceeded 45s deadline'));
+          reject(new Error('Deno cron tick exceeded 45s deadline'));
+        }, 45_000);
       });
 
       try {
         const result = await Promise.race([tickPromise, timeoutPromise]);
-        if (result.skippedDrain) {
+        if (result.skippedOverlap) {
+          console.log('Deno tick skipped: another tick holds the singleton lock');
+        } else if (result.aborted) {
+          console.warn('Deno tick aborted before completing all lanes', {
+            errors: result.errors,
+          });
+        } else if (result.skippedDrain) {
           console.log('Deno tick idle (skipped outbox/queue drain)', {
             profile: result.profile,
             watcher: result.watcher,
@@ -148,6 +177,8 @@ if (!costProfile.disableInternalCron) {
       }
     } catch (err) {
       console.error('Deno cron tick caught error:', err);
+    } finally {
+      tickInFlight = false;
     }
   });
 } else {

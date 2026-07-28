@@ -66,6 +66,8 @@ export interface DurableQueueDrainOptions {
   leaseMs?: number;
   maxAttempts?: number;
   now?: () => Date;
+  /** Stops claiming/handling new messages when aborted (caller deadline). */
+  signal?: AbortSignal;
 }
 
 export interface DurableQueueDrainResult {
@@ -864,6 +866,7 @@ export async function drainDurableQueue(
   };
 
   while (result.claimed < limit) {
+    if (options.signal?.aborted) break;
     const remaining = limit - result.claimed;
     const rows = await claimMessages(
       env.DB,
@@ -876,6 +879,7 @@ export async function drainDurableQueue(
     result.claimed += rows.length;
 
     for (const row of rows) {
+      if (options.signal?.aborted) break;
       const attempts = Number(row.attempts);
       let parsed: unknown;
       let canonicalMessage: QueueMessage | null = null;
