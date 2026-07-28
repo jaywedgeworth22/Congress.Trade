@@ -50,7 +50,7 @@ tags:
   - name: Auth
     description: End-user authentication (Google OAuth + magic link)
   - name: Client
-    description: Backend-owned mobile/PWA contract (/api/client/v1)
+    description: Backend-owned mobile contract (/api/client/v1)
 paths:
   /health:
     get:

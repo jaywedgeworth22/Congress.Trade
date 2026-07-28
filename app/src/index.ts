@@ -97,7 +97,7 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
     console.warn('analytics/routes router not mounted:', (err as Error).message);
   }
   try {
-    // Shared backend-owned contract for the phone-first PWA and SwiftUI app.
+    // Shared backend-owned contract for the phone-first SwiftUI app.
     root.route('/api/client/v1', buildClientRouter());
   } catch (err) {
     console.warn('client/routes router not mounted:', (err as Error).message);

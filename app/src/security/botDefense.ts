@@ -11,7 +11,7 @@
  *   1. User-agent blocklist — scraping libraries, headless browsers, and the
  *      AI/LLM crawlers already disallowed by robots.txt get 403 on data APIs.
  *      Empty/missing user agents are refused too: every legitimate consumer
- *      (browsers, the PWA, EventSource, iOS URLSession/CFNetwork) sends one.
+ *      (browsers, EventSource, iOS URLSession/CFNetwork) sends one.
  *   2. Per-IP request budget across all public data endpoints — generous for
  *      humans driving the dashboard, throttling for scripted walkers.
  *   3. Per-IP daily ROW budget on the corpus pagers (/api/transactions and
