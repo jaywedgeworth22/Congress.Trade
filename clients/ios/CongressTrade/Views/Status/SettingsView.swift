@@ -17,6 +17,7 @@ struct SettingsView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @AppStorage("app_color_scheme") private var appColorScheme = "system"
     @State private var isAuthenticating = false
+    @State private var magicEmail = ""
 
     var body: some View {
         NavigationStack {
@@ -101,11 +102,52 @@ struct SettingsView: View {
                             .fontWeight(.medium)
                         }
                         .disabled(isAuthenticating)
+
+                        HStack {
+                            TextField("you@example.com", text: $magicEmail)
+                                .urlKeyboard()
+                                .neverAutocapitalized()
+                                .autocorrectionDisabled()
+                            Button {
+                                Task { await store.requestMagicLink(email: magicEmail) }
+                            } label: {
+                                Label("Email Link", systemImage: "envelope")
+                            }
+                            .disabled(magicEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
                     }
                 } header: {
                     Text("Account")
                 } footer: {
                     Text("Sign in to manage delivery alerts and a saved watchlist. Preferences sync to the Congress.Trade backend — this app never holds provider keys or admin tokens.")
+                }
+
+                if store.signedIn {
+                    Section("Recent Activity") {
+                        if store.commands.isEmpty {
+                            Text("No recent commands.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(store.commands) { command in
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(command.type.replacingOccurrences(of: "_", with: " ").capitalized)
+                                            .font(.subheadline.weight(.medium))
+                                        Text(Optional(command.createdAt).shortDate)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    StatusPill(
+                                        text: command.status.rawValue.capitalized,
+                                        color: command.status.tint,
+                                        compact: true
+                                    )
+                                }
+                                .accessibilityElement(children: .combine)
+                            }
+                        }
+                    }
                 }
 
                 if let notice = store.watchlistNotice, !notice.isEmpty {
@@ -124,9 +166,16 @@ struct SettingsView: View {
 
     private func startGoogleSignIn() {
         guard !isAuthenticating else { return }
-        isAuthenticating = true
 
-        let authURL = URL(string: "https://congress.trade/auth/google/start?client=ios")!
+        // Honor the configured API base URL (CONGRESS_TRADE_API_BASE_URL) so
+        // non-prod backends get the OAuth round trip too.
+        var components = URLComponents(
+            url: store.api.origin.appendingPathComponent("auth/google/start"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [URLQueryItem(name: "client", value: "ios")]
+        guard let authURL = components?.url else { return }
+        isAuthenticating = true
         let scheme = "congresstrade"
 
         let session = ASWebAuthenticationSession(url: authURL, callbackURLScheme: scheme) { callbackURL, error in

@@ -66,6 +66,21 @@ struct TradeDetailView: View {
                             DetailRow("Market Cap", trade.asset.marketCapBucket?.capitalized ?? "Not Enriched Yet")
                         }
 
+                        if let pdfURL = store.api.documentPDFURL(docId: trade.docId) {
+                            Button {
+                                openURL(pdfURL)
+                            } label: {
+                                Label("View Filing PDF", systemImage: "doc.richtext")
+                                    .font(.headline)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(chamberGradient)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                            .padding(.top, 8)
+                        }
+
                         if let sourceURL = trade.filing.sourceUrl,
                            let url = URL(string: sourceURL),
                            url.scheme == "https" || url.scheme == "http" {
@@ -90,6 +105,14 @@ struct TradeDetailView: View {
             .navigationTitle("Trade Detail")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                if let shareURL = store.api.shareURL(queryItem: URLQueryItem(name: "trade", value: trade.id)) {
+                    ToolbarItem(placement: AppToolbarPlacement.trailing) {
+                        ShareLink(item: shareURL) {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .accessibilityLabel("Share trade")
+                    }
+                }
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {
                     Button {
                         dismiss()

@@ -165,35 +165,6 @@ enum CompactFormat {
     }
 }
 
-struct DateChip: View {
-    let title: String
-    let value: String
-    var icon: String? = nil
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                if let icon {
-                    Image(systemName: icon)
-                        .font(.caption2)
-                }
-                Text(title)
-            }
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.secondary)
-            
-            Text(value)
-                .font(.caption.weight(.bold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
-    }
-}
-
 struct DetailSection<Content: View>: View {
     let title: String
     let content: Content

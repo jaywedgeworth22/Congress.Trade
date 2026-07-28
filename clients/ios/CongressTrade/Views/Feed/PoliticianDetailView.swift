@@ -103,6 +103,14 @@ struct PoliticianDetailView: View {
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {
+                    if let shareURL = store.api.shareURL(queryItem: URLQueryItem(name: "member", value: memberId)) {
+                        ShareLink(item: shareURL) {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .accessibilityLabel("Share politician")
+                    }
+                }
+                ToolbarItem(placement: AppToolbarPlacement.trailing) {
                     Button("Done") {
                         dismiss()
                     }
