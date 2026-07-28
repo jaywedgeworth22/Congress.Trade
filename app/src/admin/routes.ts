@@ -2397,7 +2397,10 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       'SELECT filer_id, first_seen_at, filed_date FROM filings WHERE doc_id = ?',
       [docId],
     );
-    if (!filing) return c.json({ error: 'filing not found' }, 404);
+    if (!filing) {
+      await run(c.env.DB, `UPDATE review_queue SET resolved = 1, reason = 'orphan_filing_deleted' WHERE doc_id = ? AND resolved = 0`, [docId]);
+      return c.json({ docId, decision: 'orphan_resolved', resolved: true });
+    }
     const filingFilerId = filing?.filer_id ?? null;
     const validated = validateReviewEdits(rawEdits, filing.filed_date);
     if ('error' in validated) return c.json({ error: validated.error }, 400);
