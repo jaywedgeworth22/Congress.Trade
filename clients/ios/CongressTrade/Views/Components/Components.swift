@@ -153,14 +153,17 @@ enum CompactFormat {
         guard let value else { return "—" }
         let absV = abs(value)
         let sign = value < 0 ? "-" : ""
-        if absV >= 1_000_000_000 { return "\(sign)$\(String(format: "%.1f", absV / 1_000_000_000))B" }
-        if absV >= 1_000_000 { return "\(sign)$\(String(format: "%.1f", absV / 1_000_000))M" }
+        if absV >= 1_000_000_000 { return "\(sign)$\(String(format: "%.1f", absV / 1_000_000_000))b" }
+        if absV >= 1_000_000 { return "\(sign)$\(String(format: "%.1f", absV / 1_000_000))m" }
         if absV >= 1_000 { return "\(sign)$\(String(format: "%.0f", absV / 1_000))k" }
         return "\(sign)$\(String(format: "%.0f", absV))"
     }
 
     static func count(_ value: Int?) -> String {
         guard let value else { return "—" }
+        let absV = abs(Double(value))
+        if absV >= 1_000_000 { return "\(String(format: "%.1f", Double(value) / 1_000_000.0))m" }
+        if absV >= 10_000 { return "\(String(format: "%.1f", Double(value) / 1_000.0))k" }
         return value.formatted(.number.grouping(.automatic))
     }
 }
