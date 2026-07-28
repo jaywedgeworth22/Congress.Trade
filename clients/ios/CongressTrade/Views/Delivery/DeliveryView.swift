@@ -5,43 +5,168 @@ struct DeliveryView: View {
     @EnvironmentObject private var store: CongressTradeStore
     @State private var deliveryMode: DeliveryMode = .sse
     @State private var webhookURL = ""
+    @State private var filterChambers: Set<ChamberFilter> = []
+    @State private var membersText = ""
+    @State private var watchlistDraft: [String] = []
+    @State private var newTicker = ""
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Create Delivery") {
-                    Picker("Mode", selection: $deliveryMode) {
-                        ForEach(DeliveryMode.allCases) { mode in
-                            Text(mode.rawValue).tag(mode)
+                    if !store.signedIn {
+                        Text("Sign in to create delivery alerts.")
+                            .foregroundStyle(.secondary)
+                    } else if !store.isPremium {
+                        // Delivery creation is Premium-gated server-side; show
+                        // the paywall up front instead of letting free users
+                        // hit a raw 403 from `create_subscription`.
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label("Premium Feature", systemImage: "star.fill")
+                                .font(.headline)
+                                .foregroundStyle(.orange)
+                            Text("Delivery alerts push new filings to your devices the moment Congress.Trade sees them. Upgrade to Premium to create SSE or webhook deliveries.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            if let url = store.api.upgradeURL {
+                                Link(destination: url) {
+                                    Label("Upgrade on congress.trade", systemImage: "safari")
+                                        .font(.subheadline.weight(.semibold))
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 10)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
+                            }
                         }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.vertical, 4)
+                        .padding(.vertical, 4)
+                    } else {
+                        Picker("Mode", selection: $deliveryMode) {
+                            ForEach(DeliveryMode.allCases) { mode in
+                                Text(mode.rawValue).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.vertical, 4)
 
-                    if deliveryMode == .webhook {
-                        TextField("https://example.com/webhook", text: $webhookURL)
-                            .urlKeyboard()
+                        if deliveryMode == .webhook {
+                            TextField("https://example.com/webhook", text: $webhookURL)
+                                .urlKeyboard()
+                                .neverAutocapitalized()
+                                .autocorrectionDisabled()
+                        }
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Chambers")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            HStack(spacing: 8) {
+                                ForEach(ChamberFilter.allCases) { chamber in
+                                    FilterChip(
+                                        title: chamber.shortLabel,
+                                        isSelected: filterChambers.contains(chamber)
+                                    ) {
+                                        if filterChambers.contains(chamber) {
+                                            filterChambers.remove(chamber)
+                                        } else {
+                                            filterChambers.insert(chamber)
+                                        }
+                                    }
+                                    .accessibilityLabel(chamber.label)
+                                }
+                            }
+                            Text("No selection delivers all chambers.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+
+                        TextField("Members (comma separated, optional)", text: $membersText)
                             .neverAutocapitalized()
                             .autocorrectionDisabled()
+
+                        Button {
+                            Task {
+                                await store.createDelivery(
+                                    mode: deliveryMode,
+                                    webhookURL: webhookURL,
+                                    chambers: filterChambers,
+                                    members: Self.parseMembers(membersText)
+                                )
+                            }
+                        } label: {
+                            if store.isCreatingDelivery {
+                                ProgressView()
+                            } else {
+                                Label("Create Delivery", systemImage: "paperplane.fill")
+                                    .fontWeight(.medium)
+                            }
+                        }
+                        .disabled(store.isCreatingDelivery)
                     }
 
-                    Button {
-                        Task { await store.createDelivery(mode: deliveryMode, webhookURL: webhookURL) }
-                    } label: {
-                        if store.isCreatingDelivery {
-                            ProgressView()
-                        } else {
-                            Label("Create Delivery", systemImage: "paperplane.fill")
-                                .fontWeight(.medium)
-                        }
-                    }
-                    .disabled(!store.signedIn || store.isCreatingDelivery)
-                    
                     if let notice = store.deliveryNotice {
                         NoticeView(message: notice)
                             .listRowInsets(EdgeInsets())
                             .listRowBackground(Color.clear)
                     }
+                }
+
+                Section {
+                    if !store.signedIn {
+                        Text("Sign in to manage your watchlist.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        if watchlistDraft.isEmpty {
+                            Text("No tickers yet. An empty watchlist delivers everything.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        ForEach(watchlistDraft, id: \.self) { ticker in
+                            HStack {
+                                Text(ticker)
+                                    .font(.body.weight(.semibold).monospaced())
+                                Spacer()
+                                Button(role: .destructive) {
+                                    watchlistDraft.removeAll { $0 == ticker }
+                                } label: {
+                                    Image(systemName: "minus.circle.fill")
+                                        .foregroundStyle(.red)
+                                }
+                                .accessibilityLabel("Remove \(ticker)")
+                            }
+                        }
+                        HStack {
+                            TextField("Add ticker (e.g. NVDA)", text: $newTicker)
+                                .tickerAutocapitalized()
+                                .autocorrectionDisabled()
+                            Button("Add") {
+                                let parsed = CongressTradeStore.parseTickers(newTicker)
+                                for ticker in parsed where !watchlistDraft.contains(ticker) {
+                                    watchlistDraft.append(ticker)
+                                }
+                                newTicker = ""
+                            }
+                            .disabled(CongressTradeStore.parseTickers(newTicker).isEmpty)
+                        }
+                        if watchlistDraft != store.watchlist {
+                            Button {
+                                Task { await store.saveWatchlist(watchlistDraft.joined(separator: ",")) }
+                            } label: {
+                                if store.isSavingWatchlist {
+                                    ProgressView()
+                                } else {
+                                    Label("Save Watchlist", systemImage: "checkmark.circle")
+                                        .fontWeight(.medium)
+                                }
+                            }
+                            .disabled(store.isSavingWatchlist)
+                        }
+                    }
+                } header: {
+                    Text("Watchlist")
+                } footer: {
+                    Text("New deliveries filter to these tickers. The watchlist syncs to your Congress.Trade account.")
                 }
 
                 Section("Existing Subscriptions") {
@@ -75,7 +200,19 @@ struct DeliveryView: View {
             .sheet(item: $store.pendingDeliveryCredential) { credential in
                 DeliveryCredentialView(credential: credential)
             }
+            .onAppear { watchlistDraft = store.watchlist }
+            .onChange(of: store.watchlist) { _, newValue in
+                watchlistDraft = newValue
+            }
         }
+    }
+
+    /// Members are free-text names (not symbols), so no uppercasing.
+    private static func parseMembers(_ text: String) -> [String] {
+        text
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 }
 

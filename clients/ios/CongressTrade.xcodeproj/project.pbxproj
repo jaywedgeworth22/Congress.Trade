@@ -22,6 +22,7 @@
 		84B1172A9A825959879AF9C7 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = "TEMP_112A12D1-8E91-47FF-B1BF-335718EE5B9C" /* FirebaseAnalytics */; };
 		99FB23CA880192F5E6AEE2E4 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = D393BCADDE65FDBCE013FBDF /* FirebaseCore */; };
 		9CDCA9446C95EB22EBF95E7D /* CongressTrade/Views/Feed/PoliticianDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56597C8F55B7C2A205D5D929 /* CongressTrade/Views/Feed/PoliticianDetailView.swift */; };
+		9CDCA9446C95EB22EBF95E80 /* CongressTrade/Views/Feed/TickerDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56597C8F55B7C2A205D5D930 /* CongressTrade/Views/Feed/TickerDetailView.swift */; };
 		D1A2B3C4D5E6F7A8B9C0D1E3 /* TrendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1A2B3C4D5E6F7A8B9C0D1E2 /* TrendsView.swift */; };
 		D97BA8AD8D1DEC8739A64139 /* TradeDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAE8298BB5DA3E0CAA6DE8AF /* TradeDetailView.swift */; };
 		F1163B5C8A0355331FEBA19F /* FeedDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E27BB7081F81F5E987131893 /* FeedDashboardView.swift */; };
@@ -40,6 +41,7 @@
 /* Begin PBXFileReference section */
 		2C19828CDAFE62F809DF6C27 /* App.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
 		56597C8F55B7C2A205D5D929 /* CongressTrade/Views/Feed/PoliticianDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CongressTrade/Views/Feed/PoliticianDetailView.swift; sourceTree = SOURCE_ROOT; };
+		56597C8F55B7C2A205D5D930 /* CongressTrade/Views/Feed/TickerDetailView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CongressTrade/Views/Feed/TickerDetailView.swift; sourceTree = SOURCE_ROOT; };
 		5A1000010000000000000010 /* CongressTrade.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CongressTrade.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5A1000010000000000000012 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		5A1000010000000000000013 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -169,6 +171,7 @@
 				E27BB7081F81F5E987131893 /* FeedDashboardView.swift */,
 				EAE8298BB5DA3E0CAA6DE8AF /* TradeDetailView.swift */,
 				56597C8F55B7C2A205D5D929 /* CongressTrade/Views/Feed/PoliticianDetailView.swift */,
+				56597C8F55B7C2A205D5D930 /* CongressTrade/Views/Feed/TickerDetailView.swift */,
 			);
 			name = Feed;
 			sourceTree = "<group>";
@@ -296,6 +299,7 @@
 				46330F4471E179775BED47C5 /* SettingsView.swift in Sources */,
 				82C7B94377C5B67C4AC86A35 /* Components.swift in Sources */,
 				9CDCA9446C95EB22EBF95E7D /* CongressTrade/Views/Feed/PoliticianDetailView.swift in Sources */,
+				9CDCA9446C95EB22EBF95E80 /* CongressTrade/Views/Feed/TickerDetailView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -441,14 +445,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = CC8UTF7ATG;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Congress.Trade;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
-				INFOPLIST_KEY_UIAppFonts = "ZillaSlab-Regular.ttf ZillaSlab-Bold.ttf";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CongressTrade/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.6;
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = trade.congress.ios;
@@ -470,14 +468,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = CC8UTF7ATG;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Congress.Trade;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.finance";
-				INFOPLIST_KEY_UIAppFonts = "ZillaSlab-Regular.ttf ZillaSlab-Bold.ttf";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UIStatusBarStyle = UIStatusBarStyleLightContent;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CongressTrade/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.6;
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = trade.congress.ios;
