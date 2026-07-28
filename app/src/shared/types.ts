@@ -409,6 +409,16 @@ export type QueueMessage =
       afterSubscriptionId?: string;
     }
   | {
+      /**
+       * Async execution of one client command. POST /api/client/v1/commands
+       * persists the row, enqueues this message, and returns 202; the worker
+       * runs the command and clients poll GET /commands/:id for status.
+       */
+      type: 'command.execute';
+      commandId: string;
+      userId: string;
+    }
+  | {
       /** Durable hand-off for one secret-safe external API usage event. */
       type: 'usage.telemetry';
       event: ThirdPartyUsageTelemetryEvent;

@@ -9,11 +9,14 @@ import type { Env } from '../shared/types.ts';
 import { flushD1Budget } from '../shared/d1Budget.ts';
 import { maybeRunDailyJobs } from '../jobs.ts';
 import { runWatcher } from '../ingestion/watcher.ts';
+import { runDisclosureLatencyProbe } from '../ingestion/tradeLatency.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
+import { flushParkedDeliveries } from '../delivery/targetCircuit.ts';
 import { flushIngestionOutbox } from '../ingestion/outbox.ts';
 import { maybeRunAgreementAutopublish } from '../extraction/agreement.ts';
 import { maybeStartBacklogAutopilot } from '../extraction/autopilot.ts';
 import { refreshSecrets } from '../secrets/infisical.ts';
+import { flushUsageTelemetryFallback } from '../shared/thirdPartyTelemetry.ts';
 import {
   drainDurableQueues,
   type DurableQueueHandlers,
@@ -30,6 +33,10 @@ export interface PendingWorkProbe {
 export interface ScheduledTickResult {
   profile: DenoCostProfile['name'];
   skippedDrain: boolean;
+  /** True when another live tick holds the singleton lock; no lanes ran. */
+  skippedOverlap: boolean;
+  /** True when the AbortSignal stopped the pipeline between lanes. */
+  aborted: boolean;
   watcher: Awaited<ReturnType<typeof runWatcher>> | null;
   /** Per-tick agreement cron backstop (enqueue only). Null when disabled/errored. */
   agreementAutopublish: Awaited<ReturnType<typeof maybeRunAgreementAutopublish>> | null;
@@ -116,16 +123,225 @@ export function hasDrainableWork(probe: PendingWorkProbe): boolean {
     || probe.ingestionOutbox || probe.deliveryOutbox;
 }
 
+export interface ScheduledTickOptions {
+  /** Cancels the tick between lanes and stops the durable-queue drain. */
+  signal?: AbortSignal;
+  /** Singleton-lock TTL; bounds how long a crashed tick blocks successors. */
+  lockTtlMs?: number;
+}
+
+interface TickSingletonLock {
+  token: string;
+  release(): Promise<void>;
+}
+
+const TICK_LOCK_NAMESPACE = 'locks';
+const TICK_LOCK_KEY = 'scheduled-tick';
+const TICK_LOCK_DEFAULT_TTL_MS = 2 * 60_000;
+
+/**
+ * DB-backed per-tick singleton over deno_runtime_kv so overlapping Deno.cron
+ * invocations and POST /api/admin/runtime-tick calls (possibly in different
+ * isolates) cannot run watcher/outbox/drain concurrently. The claim is one
+ * atomic insert-or-replace-if-expired statement; release is token-guarded so a
+ * slow tick never deletes its successor's lock.
+ */
+async function acquireTickSingleton(
+  env: Env,
+  now: Date,
+  ttlMs: number,
+): Promise<TickSingletonLock | null> {
+  const token = crypto.randomUUID();
+  const nowMs = now.getTime();
+  const claimed = await env.DB.prepare(`
+    INSERT INTO deno_runtime_kv (namespace, key, value, expires_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(namespace, key) DO UPDATE
+      SET value = excluded.value, expires_at = excluded.expires_at
+      WHERE deno_runtime_kv.expires_at IS NULL
+         OR deno_runtime_kv.expires_at <= ?
+  `).bind(TICK_LOCK_NAMESPACE, TICK_LOCK_KEY, token, nowMs + ttlMs, nowMs).run();
+  if ((claimed.meta.changes ?? 0) !== 1) return null;
+  return {
+    token,
+    release: async () => {
+      await env.DB.prepare(`
+        DELETE FROM deno_runtime_kv
+        WHERE namespace = ? AND key = ? AND value = ?
+      `).bind(TICK_LOCK_NAMESPACE, TICK_LOCK_KEY, token).run();
+    },
+  };
+}
+
+function tickAbortError(): Error {
+  const error = new Error('scheduled tick aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+function isTickAbort(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
+export type MaintenanceLane =
+  | 'secrets_refresh'
+  | 'watcher'
+  | 'agreement_autopublish'
+  | 'backlog_autopilot'
+  | 'ingestion_outbox'
+  | 'delivery_outbox'
+  | 'durable_queue'
+  | 'parked_deliveries'
+  | 'usage_telemetry'
+  | 'disclosure_latency'
+  | 'daily_jobs'
+  | 'd1_budget';
+
+export interface MaintenancePipelineOptions {
+  outboxLimit: number;
+  /** When set, re-dispatch circuit-parked deliveries (Workers cron lane). */
+  parkedDeliveryLimit?: number;
+  /** When set, drain the usage-telemetry fallback outbox (Workers cron lane). */
+  usageTelemetryLimit?: number;
+  /** When true, run the disclosure-latency probe (Workers cron lane). */
+  disclosureLatency?: boolean;
+  now?: Date;
+  signal?: AbortSignal;
+  /** Gate for the two outbox lanes (Deno idle short-circuit). Default: run. */
+  beforeOutboxFlush?: () => Promise<boolean>;
+  /** Runs right after the outbox lanes when they are not gated off (Deno drain). */
+  afterOutboxFlush?: () => Promise<unknown>;
+  /** Per-lane observability wrapper (Workers cron uses Sentry monitors). */
+  observeLane?: (
+    lane: MaintenanceLane,
+    run: () => Promise<unknown>,
+  ) => Promise<unknown>;
+}
+
+export interface MaintenancePipelineResult {
+  skippedOutboxFlush: boolean;
+  aborted: boolean;
+  watcher: Awaited<ReturnType<typeof runWatcher>> | null;
+  agreementAutopublish: Awaited<ReturnType<typeof maybeRunAgreementAutopublish>> | null;
+  autopilot: Awaited<ReturnType<typeof maybeStartBacklogAutopilot>> | null;
+  ingestionOutbox: { claimed: number; enqueued: number; failed: number } | null;
+  deliveryOutbox: { claimed: number; enqueued: number; failed: number } | null;
+  errors: string[];
+}
+
+/**
+ * The single maintenance-lane orchestration shared by the Workers scheduled()
+ * handler (index.ts) and the Deno scheduled tick. Lane order and per-lane
+ * error isolation live here so the two cron paths cannot drift — they already
+ * did once, when the Workers path silently dropped the agreement/autopilot
+ * lanes after the Deno migration. Runtime-specific lanes are parameterized
+ * (limits, opt-in lanes, hooks), not forked.
+ */
+export async function runMaintenancePipeline(
+  env: Env,
+  options: MaintenancePipelineOptions,
+): Promise<MaintenancePipelineResult> {
+  const now = options.now ?? new Date();
+  const errors: string[] = [];
+  const result: MaintenancePipelineResult = {
+    skippedOutboxFlush: false,
+    aborted: false,
+    watcher: null,
+    agreementAutopublish: null,
+    autopilot: null,
+    ingestionOutbox: null,
+    deliveryOutbox: null,
+    errors,
+  };
+  const throwIfAborted = () => {
+    if (options.signal?.aborted) throw tickAbortError();
+  };
+  const runLane = async <T>(
+    lane: MaintenanceLane,
+    run: () => Promise<T>,
+  ): Promise<T | null> => {
+    try {
+      throwIfAborted();
+      const observed = options.observeLane ? options.observeLane(lane, run) : run();
+      return (await observed) as T;
+    } catch (err) {
+      if (isTickAbort(err)) throw err;
+      errors.push(`${lane}: ${errorText(err)}`);
+      console.error(`maintenance lane ${lane} failed:`, err);
+      return null;
+    }
+  };
+
+  try {
+    await runLane('secrets_refresh', () => refreshSecrets(env));
+    result.watcher = await runLane('watcher', () => runWatcher(env, now));
+    // Autonomy lanes run before the outbox gate so newly enqueued
+    // agreement.check / autopilot.tick messages are visible to the gate probe.
+    result.agreementAutopublish = await runLane(
+      'agreement_autopublish',
+      () => maybeRunAgreementAutopublish(env),
+    );
+    result.autopilot = await runLane(
+      'backlog_autopilot',
+      () => maybeStartBacklogAutopilot(env, now),
+    );
+
+    throwIfAborted();
+    const flushOutboxes = options.beforeOutboxFlush
+      ? await options.beforeOutboxFlush()
+      : true;
+    if (!flushOutboxes) result.skippedOutboxFlush = true;
+
+    if (flushOutboxes) {
+      result.ingestionOutbox = await runLane(
+        'ingestion_outbox',
+        () => flushIngestionOutbox(env, { limit: options.outboxLimit, now }),
+      );
+      result.deliveryOutbox = await runLane(
+        'delivery_outbox',
+        () => flushDeliveryOutbox(env, { limit: options.outboxLimit, now }),
+      );
+      if (options.afterOutboxFlush) {
+        await runLane('durable_queue', options.afterOutboxFlush);
+      }
+    }
+    if (options.parkedDeliveryLimit !== undefined) {
+      const limit = options.parkedDeliveryLimit;
+      await runLane('parked_deliveries', () => flushParkedDeliveries(env, { limit }));
+    }
+    if (options.usageTelemetryLimit !== undefined) {
+      const limit = options.usageTelemetryLimit;
+      await runLane(
+        'usage_telemetry',
+        () => flushUsageTelemetryFallback(env, { limit }),
+      );
+    }
+    if (options.disclosureLatency) {
+      await runLane('disclosure_latency', () => runDisclosureLatencyProbe(env));
+    }
+    await runLane('daily_jobs', () => maybeRunDailyJobs(env, now));
+    await runLane('d1_budget', () => flushD1Budget(env, now));
+  } catch (err) {
+    if (!isTickAbort(err)) throw err;
+    result.aborted = true;
+    errors.push('tick: aborted');
+  }
+  return result;
+}
+
 export async function runScheduledTick(
   env: Env,
   handlers: DurableQueueHandlers,
   profile: DenoCostProfile,
   now = new Date(),
+  options: ScheduledTickOptions = {},
 ): Promise<ScheduledTickResult> {
   const errors: string[] = [];
   const result: ScheduledTickResult = {
     profile: profile.name,
     skippedDrain: false,
+    skippedOverlap: false,
+    aborted: false,
     watcher: null,
     agreementAutopublish: null,
     autopilot: null,
@@ -135,95 +351,78 @@ export async function runScheduledTick(
     errors,
   };
 
-  // Refresh Infisical before gated lanes so flag flips (e.g. AGREEMENT_AUTOPUBLISH)
-  // take effect without waiting for the cache TTL.
+  // Singleton guard: a second tick (cron overlap or admin runtime-tick) exits
+  // immediately instead of racing watcher/outbox writes. Fail-open when the
+  // lock statement itself errors so a KV-table problem cannot park all
+  // background work.
+  let lock: TickSingletonLock | null = null;
   try {
-    await refreshSecrets(env);
+    lock = await acquireTickSingleton(
+      env,
+      now,
+      Math.max(1_000, options.lockTtlMs ?? TICK_LOCK_DEFAULT_TTL_MS),
+    );
   } catch (err) {
-    errors.push(`secrets_refresh: ${errorText(err)}`);
-    console.error('Deno secrets refresh failed:', err);
+    errors.push(`tick_singleton_unavailable: ${errorText(err)}`);
+    console.error('Deno tick singleton lock unavailable; running unguarded:', err);
+  }
+  if (!lock && !errors.some((entry) => entry.startsWith('tick_singleton_unavailable'))) {
+    result.skippedOverlap = true;
+    return result;
   }
 
-  try {
-    result.watcher = await runWatcher(env, now);
-  } catch (err) {
-    errors.push(`watcher: ${errorText(err)}`);
-    console.error('Deno watcher tick failed:', err);
-  }
+  const signal = options.signal;
+  const throwIfAborted = () => {
+    if (signal?.aborted) throw tickAbortError();
+  };
 
-  // Agreement / autopilot MUST run on Deno Deploy. The Workers scheduled handler
-  // used to own these lanes; omitting them here silently parked the entire
-  // review-queue autonomous publish path after the Deno migration.
-  // Run BEFORE the idle short-circuit so newly enqueued agreement.check /
-  // autopilot.tick messages are visible to the subsequent drain probe.
   try {
-    result.agreementAutopublish = await maybeRunAgreementAutopublish(env);
+    const pipeline = await runMaintenancePipeline(env, {
+      outboxLimit: profile.outboxLimit,
+      now,
+      signal,
+      // Idle short-circuit: skip multi-statement outbox flushes and the empty
+      // claim loop when nothing is drainable. Runs after the autonomy lanes
+      // so their enqueues are visible to the probe.
+      beforeOutboxFlush: async () => {
+        if (!profile.idleShortCircuit) return true;
+        const probe = await probePendingWork(env, now);
+        return hasDrainableWork(probe);
+      },
+      afterOutboxFlush: async () => {
+        const drained = await drainDurableQueues(env, handlers, {
+          limit: profile.drainLimit,
+          claimSize: profile.drainClaimSize,
+          signal,
+        });
+        result.drained = drained;
+        if (drained.ingest.claimed > 0 || drained.delivery.claimed > 0) {
+          console.log('Deno durable queues drained', drained);
+        }
+      },
+    });
+    errors.push(...pipeline.errors);
+    result.watcher = pipeline.watcher;
+    result.agreementAutopublish = pipeline.agreementAutopublish;
+    result.autopilot = pipeline.autopilot;
+    result.ingestionOutbox = pipeline.ingestionOutbox;
+    result.deliveryOutbox = pipeline.deliveryOutbox;
+    result.skippedDrain = pipeline.skippedOutboxFlush;
+    result.aborted = pipeline.aborted;
+    return result;
   } catch (err) {
-    errors.push(`agreement_autopublish: ${errorText(err)}`);
-    console.error('Deno agreement autopublish tick failed:', err);
-  }
-  try {
-    result.autopilot = await maybeStartBacklogAutopilot(env, now);
-  } catch (err) {
-    errors.push(`backlog_autopilot: ${errorText(err)}`);
-    console.error('Deno backlog autopilot tick failed:', err);
-  }
-
-  let shouldDrain = true;
-  if (profile.idleShortCircuit) {
-    const probe = await probePendingWork(env, now);
-    shouldDrain = hasDrainableWork(probe);
-    if (!shouldDrain) {
-      result.skippedDrain = true;
-    }
-  }
-
-  if (shouldDrain) {
-    try {
-      result.ingestionOutbox = await flushIngestionOutbox(env, {
-        limit: profile.outboxLimit,
-        now,
-      });
-    } catch (err) {
-      errors.push(`ingestion_outbox: ${errorText(err)}`);
-      console.error('Deno ingestion outbox flush failed:', err);
-    }
-    try {
-      result.deliveryOutbox = await flushDeliveryOutbox(env, {
-        limit: profile.outboxLimit,
-        now,
-      });
-    } catch (err) {
-      errors.push(`delivery_outbox: ${errorText(err)}`);
-      console.error('Deno delivery outbox flush failed:', err);
-    }
-    try {
-      result.drained = await drainDurableQueues(env, handlers, {
-        limit: profile.drainLimit,
-        claimSize: profile.drainClaimSize,
-      });
-      const drained = result.drained;
-      if (drained.ingest.claimed > 0 || drained.delivery.claimed > 0) {
-        console.log('Deno durable queues drained', drained);
+    if (!isTickAbort(err)) throw err;
+    result.aborted = true;
+    errors.push('tick: aborted');
+    return result;
+  } finally {
+    if (lock) {
+      try {
+        await lock.release();
+      } catch (err) {
+        errors.push(`tick_singleton_release: ${errorText(err)}`);
+        console.error('Deno tick singleton lock release failed:', err);
       }
-    } catch (err) {
-      errors.push(`durable_queue: ${errorText(err)}`);
-      console.error('Deno durable queue drain failed:', err);
     }
   }
-
-  try {
-    await maybeRunDailyJobs(env, now);
-  } catch (err) {
-    errors.push(`daily_jobs: ${errorText(err)}`);
-    console.error('Deno daily jobs failed:', err);
-  }
-
-  try {
-    await flushD1Budget(env, now);
-  } catch (err) {
-    errors.push(`d1_budget: ${errorText(err)}`);
-  }
-
-  return result;
 }

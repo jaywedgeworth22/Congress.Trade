@@ -21,7 +21,6 @@ import type { Env, QueueMessage } from './shared/types.ts';
 import type { DurableQueueLeaseContext } from './deno/durableQueue.ts';
 
 // Stage handlers owned by their feature modules.
-import { runWatcher } from './ingestion/watcher.ts';
 import { classifyTransientIngestError, fetchFiling, IngestRetryError } from './ingestion/fetcher.ts';
 import { classifyFiling } from './ingestion/classifier.ts';
 import { extractAndNormalize } from './extraction/orchestrator.ts';
@@ -35,33 +34,26 @@ import { buildBillingRouter } from './billing/routes.ts';
 import { buildClientRouter } from './client/routes.ts';
 import { buildExportRouter } from './export/routes.ts';
 import { buildUiRouter } from './ui/routes.ts';
-import { maybeRunDailyJobs } from './jobs.ts';
 import { flushD1Budget } from './shared/d1Budget.ts';
-import { maybeRunAgreementAutopublish, handleAgreementCheck } from './extraction/agreement.ts';
+import { runMaintenancePipeline } from './deno/scheduledTick.ts';
+import { handleAgreementCheck } from './extraction/agreement.ts';
 import {
   handleAutopilotTick,
   markAutopilotRunHalted,
-  maybeStartBacklogAutopilot,
 } from './extraction/autopilot.ts';
-import { refreshSecrets } from './secrets/infisical.ts';
-import { runDisclosureLatencyProbe } from './ingestion/tradeLatency.ts';
 import { buildDetectionRouter } from './ingestion/detectionRoutes.ts';
 import { browserSecurityHeadersMiddleware } from './security/headers.ts';
 import { publicApiGuard } from './security/botDefense.ts';
 import {
   completeDeliveryOutbox,
-  flushDeliveryOutbox,
   reconnectDeadLetteredOutbox,
 } from './delivery/outbox.ts';
-import { flushParkedDeliveries } from './delivery/targetCircuit.ts';
 import {
   completeIngestionOutbox,
-  flushIngestionOutbox,
   reconnectDeadLetteredIngestionOutbox,
 } from './ingestion/outbox.ts';
 import {
   deliverUsageTelemetryEvent,
-  flushUsageTelemetryFallback,
   isUsageTelemetryCircuitOpen,
   isTerminalUsageTelemetryDeliveryError,
   persistUsageTelemetryFallback,
@@ -495,120 +487,78 @@ const requestAndScheduledWorker = Sentry.withSentry(
     },
 
     /** Cron entrypoint — runs every minute; watcher self-gates via shouldPollNow.
-     *  Daily enrichment + price refresh self-gate via a KV date stamp. */
+     *  Daily enrichment + price refresh self-gate via a KV date stamp.
+     *  Lane orchestration is shared with the Deno tick (runMaintenancePipeline)
+     *  so the two cron paths cannot drift; this wrapper only adds Sentry
+     *  monitors/capture per lane and registers the pipeline with waitUntil. */
     async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
       return withThirdPartyTelemetry(env, async () => {
-      // Register independent maintenance first. A watcher/config failure must
-      // never prevent durable outboxes, secrets, or daily jobs from running.
-      // `track` also collects each task so the D1 row meter flushes once, after
-      // all of them settle (the heavy D1 work runs inside these tasks).
-      const tasks: Promise<unknown>[] = [];
-      const track = (p: Promise<unknown>): void => {
-        tasks.push(p);
-        ctx.waitUntil(p);
-      };
-      track(
-        Sentry.withMonitor('delivery-outbox-cron', () =>
-          flushDeliveryOutbox(env, { limit: 100 }),
-        ).catch((err: unknown) =>
-          Sentry.captureException(err, { tags: { cron: 'delivery-outbox' } }),
-        ),
-      );
-      track(
-        Sentry.withMonitor('ingestion-outbox-cron', () =>
-          flushIngestionOutbox(env, { limit: 100 }),
-        ).catch((err: unknown) =>
-          Sentry.captureException(err, { tags: { cron: 'ingestion-outbox' } }),
-        ),
-      );
-      // GOVERNOR 3: re-dispatch deliveries parked behind per-target circuit
-      // breakers — full release when the target's circuit closed, one hourly
-      // probe candidate while it is recovering.
-      track(
-        Sentry.withMonitor('parked-deliveries-cron', () =>
-          flushParkedDeliveries(env, { limit: 50 }),
-        ).catch((err: unknown) =>
-          Sentry.captureException(err, { tags: { cron: 'parked-deliveries' } }),
-        ),
-      );
-      track(
-        flushUsageTelemetryFallback(env, { limit: 25 })
-          .then((result: any) => {
-            if (result.failed > 0) {
-              // console.log is intentionally outside the Sentry warn/error log
-              // integration: receiver outages must not create new envelopes.
-              console.log('usage telemetry fallback remains pending', result);
-            }
-          })
-          .catch((err: unknown) => {
-            console.log('usage telemetry fallback drain unavailable', {
-              errorType: err instanceof Error ? err.name : 'unknown',
-            });
-          }),
-      );
-      track(
-        Sentry.withMonitor('secrets-refresh-cron', () =>
-          refreshSecrets(env),
-        ).catch((err: unknown) =>
-          Sentry.captureException(err, { tags: { cron: 'secrets-refresh' } }),
-        ),
-      );
-      track(
-        Sentry.withMonitor('disclosure-latency-cron', () =>
-          runDisclosureLatencyProbe(env),
-        ).catch((err: unknown) =>
-          Sentry.captureException(err, { tags: { cron: 'disclosure-latency' } }),
-        ),
-      );
-      track(
-        Sentry.withMonitor('daily-jobs-cron', () =>
-          maybeRunDailyJobs(env),
-        ).catch((err: unknown) =>
-          Sentry.captureException(err, { tags: { cron: 'daily-jobs' } }),
-        ),
-      );
-      // Backlog autopilot gate: decides whether a bulk drain run is due
-      // (daily, or backlog over threshold) and enqueues the first
-      // autopilot.tick — the actual model work runs in the queue consumer.
-      track(
-        Sentry.withMonitor('backlog-autopilot-cron', () =>
-          maybeStartBacklogAutopilot(env),
-        ).catch((err: unknown) =>
-          Sentry.captureException(err, { tags: { cron: 'backlog-autopilot' } }),
-        ),
-      );
-      track(
-        Sentry.withMonitor(
-          'agreement-autopublish-cron',
-          () => maybeRunAgreementAutopublish(env),
-          {
-            schedule: { type: 'crontab', value: '* * * * *' },
-            checkinMargin: 2,
-            maxRuntime: 2,
-            timezone: 'UTC',
-          },
-        ).catch((err: unknown) =>
-          Sentry.captureException(err, { tags: { cron: 'agreement-autopublish' } }),
-        ),
-      );
-      // Sentry Crons: alerts if the per-minute watcher tick stops checking in or
-      // starts overrunning, independent of whether shouldPollNow decides to poll.
-      track(
-        Sentry.withMonitor(
-          'watcher-cron',
-          () => runWatcher(env, new Date()),
-          {
+      const cronMonitor: Record<string, { monitor: string; tag: string; options?: Record<string, unknown> }> = {
+        secrets_refresh: { monitor: 'secrets-refresh-cron', tag: 'secrets-refresh' },
+        watcher: {
+          monitor: 'watcher-cron',
+          tag: 'watcher',
+          options: {
             schedule: { type: 'crontab', value: '* * * * *' },
             checkinMargin: 2,
             maxRuntime: 5,
             timezone: 'UTC',
           },
-        ).catch((err: unknown) =>
-          Sentry.captureException(err, { tags: { cron: 'watcher' } }),
-        ),
-      );
-      // Flush the isolate's metered D1 rows once all cron work settles.
-      ctx.waitUntil(Promise.allSettled(tasks).then(() => flushD1Budget(env)));
+        },
+        agreement_autopublish: {
+          monitor: 'agreement-autopublish-cron',
+          tag: 'agreement-autopublish',
+          options: {
+            schedule: { type: 'crontab', value: '* * * * *' },
+            checkinMargin: 2,
+            maxRuntime: 2,
+            timezone: 'UTC',
+          },
+        },
+        backlog_autopilot: { monitor: 'backlog-autopilot-cron', tag: 'backlog-autopilot' },
+        ingestion_outbox: { monitor: 'ingestion-outbox-cron', tag: 'ingestion-outbox' },
+        delivery_outbox: { monitor: 'delivery-outbox-cron', tag: 'delivery-outbox' },
+        parked_deliveries: { monitor: 'parked-deliveries-cron', tag: 'parked-deliveries' },
+        disclosure_latency: { monitor: 'disclosure-latency-cron', tag: 'disclosure-latency' },
+        daily_jobs: { monitor: 'daily-jobs-cron', tag: 'daily-jobs' },
+      };
+      const pipelinePromise = runMaintenancePipeline(env, {
+        outboxLimit: 100,
+        // GOVERNOR 3: re-dispatch deliveries parked behind per-target circuit
+        // breakers — full release when the target's circuit closed, one hourly
+        // probe candidate while it is recovering.
+        parkedDeliveryLimit: 50,
+        usageTelemetryLimit: 25,
+        disclosureLatency: true,
+        observeLane: (lane, run) => {
+          // Receiver outages must not create Sentry envelopes, which would
+          // create another Usage Monitor event and amplify; keep this lane
+          // monitor-free and log-only.
+          if (lane === 'usage_telemetry') {
+            return run()
+              .then((result: any) => {
+                if (result?.failed > 0) {
+                  // console.log is intentionally outside the Sentry warn/error
+                  // log integration for the same amplification reason.
+                  console.log('usage telemetry fallback remains pending', result);
+                }
+              })
+              .catch((err: unknown) => {
+                console.log('usage telemetry fallback drain unavailable', {
+                  errorType: err instanceof Error ? err.name : 'unknown',
+                });
+              });
+          }
+          const meta = cronMonitor[lane] ?? { monitor: `${lane}-cron`, tag: lane };
+          return Sentry.withMonitor(meta.monitor, run, meta.options as never)
+            .catch((err: unknown) =>
+              Sentry.captureException(err, { tags: { cron: meta.tag } }),
+            );
+        },
+      });
+      // Register with waitUntil so the isolate stays alive until every lane
+      // settles; the pipeline isolates per-lane failures internally.
+      ctx.waitUntil(pipelinePromise.then(() => undefined));
       });
     },
   },

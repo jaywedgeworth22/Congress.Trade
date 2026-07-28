@@ -90,6 +90,15 @@ async function makeDb() {
       last_error TEXT
     )
   `);
+  await client.execute(`
+    CREATE TABLE deno_runtime_kv (
+      namespace TEXT NOT NULL,
+      key TEXT NOT NULL,
+      value TEXT,
+      expires_at INTEGER,
+      PRIMARY KEY (namespace, key)
+    )
+  `);
   const db = new D1DatabaseShim(client as never) as unknown as D1Database;
   return { client, db };
 }
@@ -246,5 +255,72 @@ describe('runScheduledTick idle short-circuit', () => {
     expect(result.agreementAutopublish).toEqual({ attempted: 1, enqueued: 1, terminalized: 0 });
     expect(result.drained?.ingest.claimed).toBe(1);
     expect(handlers.handleIngestMessage).toHaveBeenCalledOnce();
+  });
+});
+
+describe('runScheduledTick singleton + abort', () => {
+  beforeEach(() => {
+    vi.mocked(maybeRunAgreementAutopublish).mockClear();
+    vi.mocked(maybeStartBacklogAutopilot).mockClear();
+    vi.mocked(refreshSecrets).mockClear();
+  });
+
+  it('skips the tick when another live tick holds the singleton lock', async () => {
+    const { client, db } = await makeDb();
+    const now = new Date('2026-07-25T12:00:00.000Z');
+    await client.execute({
+      sql: `INSERT INTO deno_runtime_kv (namespace, key, value, expires_at)
+        VALUES ('locks', 'scheduled-tick', 'other-tick', ?)`,
+      args: [now.getTime() + 60_000],
+    });
+
+    const result = await runScheduledTick(testEnv(db), emptyHandlers(), FREE, now);
+    expect(result.skippedOverlap).toBe(true);
+    expect(result.aborted).toBe(false);
+    expect(result.errors).toEqual([]);
+    // No lanes ran while the lock was contended.
+    expect(refreshSecrets).not.toHaveBeenCalled();
+    expect(maybeRunAgreementAutopublish).not.toHaveBeenCalled();
+    // The contender's lock is left untouched.
+    const rows = await client.execute(
+      `SELECT value FROM deno_runtime_kv WHERE namespace = 'locks' AND key = 'scheduled-tick'`,
+    );
+    expect(rows.rows[0].value).toBe('other-tick');
+  });
+
+  it('takes over an expired singleton lock and releases it after the tick', async () => {
+    const { client, db } = await makeDb();
+    const now = new Date('2026-07-25T12:00:00.000Z');
+    await client.execute({
+      sql: `INSERT INTO deno_runtime_kv (namespace, key, value, expires_at)
+        VALUES ('locks', 'scheduled-tick', 'crashed-tick', ?)`,
+      args: [now.getTime() - 1_000],
+    });
+
+    const result = await runScheduledTick(testEnv(db), emptyHandlers(), FREE, now);
+    expect(result.skippedOverlap).toBe(false);
+    expect(refreshSecrets).toHaveBeenCalledOnce();
+    const rows = await client.execute(
+      `SELECT value FROM deno_runtime_kv WHERE namespace = 'locks' AND key = 'scheduled-tick'`,
+    );
+    expect(rows.rows).toHaveLength(0);
+  });
+
+  it('stops between lanes when the abort signal fires', async () => {
+    const { db } = await makeDb();
+    const controller = new AbortController();
+    controller.abort(new Error('deadline'));
+    const result = await runScheduledTick(
+      testEnv(db),
+      emptyHandlers(),
+      FREE,
+      new Date('2026-07-25T12:00:00.000Z'),
+      { signal: controller.signal },
+    );
+    expect(result.aborted).toBe(true);
+    expect(result.skippedOverlap).toBe(false);
+    expect(result.errors).toContain('tick: aborted');
+    expect(refreshSecrets).not.toHaveBeenCalled();
+    expect(maybeRunAgreementAutopublish).not.toHaveBeenCalled();
   });
 });
