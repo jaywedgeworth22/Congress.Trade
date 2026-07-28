@@ -80,7 +80,7 @@ jobs:
       github.event.workflow_run.conclusion == 'timed_out' ||
       github.event.workflow_run.conclusion == 'startup_failure' ||
       github.event.workflow_run.event == 'schedule'
-    runs-on: ${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}
+    runs-on: [self-hosted, congress-ci]
     timeout-minutes: 5
     steps:
       - name: Checkout (for the reporter script only; does not touch observed workflows)
