@@ -38,7 +38,7 @@ The codebase is unusually defensive (leases, outboxes, circuit breakers, migrati
 
 | Priority | Finding | Evidence | Fix |
 |---|---|---|---|
-| HIGH | No OpenAPI spec for the app's own API; repo-root `deno_openapi.json` is *Deno Deploy's* API, easy to mistake for app docs | `deno_openapi.json` (title "Deno Deploy API"); only `app/docs/client-mobile-api.md` exists | Generate/hand-maintain `openapi.yaml` for public routes; move/rename `deno_openapi.json` |
+| HIGH | No OpenAPI spec for the app's own API; `deno_openapi.json` is *Deno Deploy's* API, easy to mistake for app docs | `deno_openapi.json` (title "Deno Deploy API"; moved to `docs/vendor/deno-deploy-openapi.json`); only `app/docs/client-mobile-api.md` exists | Generate/hand-maintain `openapi.yaml` for public routes (done: `app/docs/openapi.yaml`); move/rename `deno_openapi.json` (done) |
 | HIGH | Third-party consumption blocked by design: UA blocklist 403s all conventional HTTP clients, no API keys, zero CORS | `security/botDefense.ts:71-81`; auth is human-OAuth only `auth/session.ts:168-200`; no `Access-Control` headers anywhere | Per-user/integration API keys (`Bearer ct_…`) bypassing UA layer but keeping row budgets; explicit CORS policy on read-only GETs |
 | MEDIUM | Versioning inconsistent: only `/api/client/v1` is versioned | `index.ts:90-109` | Freeze current shapes as implicit v1 (document); prefix future surfaces |
 | MEDIUM | Pagination conventions diverge; `/api/market/*` endpoints unbounded | `delivery/rest.ts:234-330`, `:538-704`; fake list envelope `client/routes.ts:129-136` | Add `limit`/default windows; document cursor contract; drop synthetic envelope in v2 |

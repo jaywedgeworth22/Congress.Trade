@@ -1,0 +1,1553 @@
+openapi: 3.0.3
+info:
+  title: Congress.Trade API
+  version: "1.0.0"
+  description: |
+    Public and client-facing API for the Congress.Trade backend (Deno + Hono).
+
+    **Versioning convention:** the current response shapes across `/api/*` and
+    `/auth/*` are frozen as an implicit v1 — additive fields may appear, but
+    existing fields will not change meaning or be removed in place. Only
+    `/api/client/v1` carries an explicit version prefix today. Any future
+    breaking surface will be introduced under a new version prefix (e.g.
+    `/api/client/v2`) rather than mutating the routes documented here.
+
+    **Auth model, per surface:**
+    - Public read endpoints (`/api/transactions`, `/api/members`,
+      `/api/analytics/*`, `/api/market/*`, `/api/health`, client feed/detail
+      reads) need no credentials. They are guarded by an anti-scrape layer
+      (user-agent blocklist → 403, shared per-IP daily served-row budget → 429
+      with `Retry-After`) when `SCRAPE_GUARD_ENABLED`.
+    - End-user identity uses opaque sessions: an HTTP-only session cookie for
+      browsers, or `Authorization: Bearer <session-token>` for native clients
+      (the token is delivered via the auth redirect for iOS). Sessions come
+      from Google OAuth or email magic link under `/auth/*`.
+    - Subscription management (`GET/PATCH /api/subscriptions/:id`) uses the
+      per-subscription bearer secret returned once at creation.
+    - Creating subscriptions and keeping delivery active requires a signed-in
+      **Premium** account (402 `upgradeRequired` otherwise).
+
+    **Notes:**
+    - `chamber` filters accept a CSV of `house`, `senate`, `executive`. When
+      absent, executive (Presidential OGE 278-T) rows are excluded.
+    - Zero-delta incremental polls (`since` cursor with no new rows) omit
+      aggregate fields like `total` rather than reporting `0`.
+    - Dollar figures are ESTIMATES from STOCK Act bracket midpoints.
+    - Transaction `type` may be `null` when the disclosed side did not parse;
+      treat it as "unknown", never as a purchase.
+servers:
+  - url: https://congress.trade
+    description: Production
+tags:
+  - name: Feed
+    description: Public transaction feed, filings, members
+  - name: Delivery
+    description: Alert subscriptions (webhook / SSE)
+  - name: Analytics
+    description: Read-only trend analytics over the trade corpus
+  - name: Market
+    description: Cached market/enrichment data (cross-app sharing)
+  - name: Auth
+    description: End-user authentication (Google OAuth + magic link)
+  - name: Client
+    description: Backend-owned mobile/PWA contract (/api/client/v1)
+paths:
+  /health:
+    get:
+      tags: [Feed]
+      summary: Liveness check
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+  /api/health:
+    get:
+      tags: [Feed]
+      summary: Deployment readiness (DB + schema + cost profile)
+      operationId: getApiHealth
+      responses:
+        "200":
+          description: Ready — database reachable and schema current.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  db: { type: boolean }
+                  costProfile: { type: object }
+                  time: { type: string, format: date-time }
+        "503":
+          description: Not ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthStatus" }
+  /api/transactions:
+    get:
+      tags: [Feed]
+      summary: Cursor-paged public transaction feed
+      description: |
+        Reconciliation backstop over the full corpus. Default order is
+        `cursor_seq` ascending so consumers can poll forward by feeding the
+        returned `cursor` back as `since`. Public, but shares a per-IP daily
+        served-row budget with the client feed (429 + `Retry-After` when
+        exhausted). Offsets beyond a fixed public cap are rejected (400).
+      operationId: listTransactions
+      parameters:
+        - { $ref: "#/components/parameters/since" }
+        - { $ref: "#/components/parameters/offset" }
+        - { $ref: "#/components/parameters/limit" }
+        - { $ref: "#/components/parameters/ticker" }
+        - { $ref: "#/components/parameters/member" }
+        - { $ref: "#/components/parameters/memberName" }
+        - { $ref: "#/components/parameters/chamber" }
+        - { $ref: "#/components/parameters/txType" }
+        - { $ref: "#/components/parameters/from" }
+        - { $ref: "#/components/parameters/to" }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: asc }
+          description: "`desc` is a newest-first snapshot, not a resumable pager."
+        - name: sort
+          in: query
+          schema: { type: string, enum: [cursor, tx_date, published] }
+      responses:
+        "200":
+          description: Page of transactions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  transactions:
+                    type: array
+                    items: { $ref: "#/components/schemas/FeedTransaction" }
+                  cursor: { type: integer, description: Max cursor_seq in this page; feed back as `since`. }
+                  count: { type: integer }
+                  total:
+                    type: integer
+                    description: Total rows matching filters (omitted on zero-delta `since` polls — treat as unchanged, not 0).
+                  filingsImportedToday:
+                    type: integer
+                    description: Omitted on zero-delta `since` polls.
+                  limit: { type: integer }
+                  offset: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/BlockedAgent" }
+        "429": { $ref: "#/components/responses/RowBudgetExceeded" }
+  /api/export/transactions.csv:
+    get:
+      tags: [Feed]
+      summary: Full-history CSV export (free, rate-limited per IP)
+      operationId: exportTransactionsCsv
+      parameters:
+        - { $ref: "#/components/parameters/ticker" }
+        - { $ref: "#/components/parameters/member" }
+        - { $ref: "#/components/parameters/memberName" }
+        - { $ref: "#/components/parameters/chamber" }
+        - { $ref: "#/components/parameters/txType" }
+        - { $ref: "#/components/parameters/from" }
+        - { $ref: "#/components/parameters/to" }
+      responses:
+        "200":
+          description: CSV attachment (RFC 4180 escaped, formula-injection neutralized).
+          content:
+            text/csv: {}
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /api/stream:
+    get:
+      tags: [Delivery]
+      summary: SSE live stream for a subscription
+      description: |
+        Server-Sent Events stream of `trade.new` events. Resume via `?since=`
+        (cursor_seq) or the standard `Last-Event-ID` header; replay is
+        gap-free from the full transactions table. Requires the subscription
+        secret — as `Authorization: Bearer`, `X-Subscription-Secret`, or the
+        `token` query parameter (the query form exists for browser
+        EventSource, which cannot set headers).
+      operationId: openStream
+      parameters:
+        - name: subscription
+          in: query
+          required: true
+          schema: { type: string }
+        - name: since
+          in: query
+          schema: { type: integer }
+        - name: token
+          in: query
+          schema: { type: string }
+          description: Subscription secret (EventSource fallback).
+      responses:
+        "200":
+          description: text/event-stream of trade.new events (id = cursor_seq).
+          content:
+            text/event-stream: {}
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/SecretRequired" }
+  /api/filings/{docId}:
+    get:
+      tags: [Feed]
+      summary: Single filing plus its transactions
+      operationId: getFiling
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Filing detail (internal fields stripped).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  filing: { $ref: "#/components/schemas/PublicFiling" }
+                  transactions:
+                    type: array
+                    items: { $ref: "#/components/schemas/FeedTransaction" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RowBudgetExceeded" }
+  /api/documents/{docId}/pdf:
+    get:
+      tags: [Feed]
+      summary: Raw filing PDF from storage (or 302 to the source)
+      operationId: getDocumentPdf
+      parameters:
+        - name: docId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: PDF bytes (content-disposition inline).
+          content:
+            application/pdf: {}
+        "302": { description: Redirect to the original disclosure source when the PDF was not fetched. }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/logos/ticker:
+    get:
+      tags: [Feed]
+      summary: Cached company logo proxy
+      operationId: getTickerLogo
+      parameters:
+        - name: symbol
+          in: query
+          required: true
+          schema: { type: string, example: AAPL }
+      responses:
+        "200":
+          description: Logo image bytes (edge-cached).
+          content:
+            image/*: {}
+        "404": { description: No logo available; clients should fall back to a monogram. }
+  /api/members:
+    get:
+      tags: [Feed]
+      summary: Distinct filers present in the transaction feed
+      description: Full roster is KV-cached (~30 min TTL); it shifts only with daily ingest bursts.
+      operationId: listMembers
+      responses:
+        "200":
+          description: Members ordered by transaction count descending.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items: { $ref: "#/components/schemas/MemberRosterEntry" }
+                  count: { type: integer }
+  /api/subscriptions:
+    post:
+      tags: [Delivery]
+      summary: Create a delivery subscription (signed-in Premium required)
+      description: |
+        Creates a webhook or SSE alert subscription owned by the signed-in
+        user. The per-subscription secret is returned **once** in this
+        response (and for SSE, a ready-made `streamUrl` containing it).
+      operationId: createSubscription
+      security: [{ sessionCookie: [] }, { bearerSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [delivery]
+              properties:
+                delivery: { type: string, enum: [webhook, sse] }
+                targetUrl:
+                  type: string
+                  nullable: true
+                  description: Required for webhook delivery; must pass public-target validation (SSRF guard).
+                secret:
+                  type: string
+                  description: Optional caller-chosen secret; a strong one is generated when omitted.
+                filters: { $ref: "#/components/schemas/SubscriptionFilters" }
+      responses:
+        "201":
+          description: Created; includes the one-time secret.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicSubscription" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/AuthRequired" }
+        "402": { $ref: "#/components/responses/PremiumRequired" }
+        "409": { description: Subscription quota reached. }
+        "429": { $ref: "#/components/responses/RateLimited" }
+    get:
+      tags: [Delivery]
+      summary: Disabled publicly
+      operationId: listSubscriptionsDisabled
+      responses:
+        "401":
+          description: Public listing is disabled; operators use /api/admin/subscriptions.
+  /api/subscriptions/{id}:
+    get:
+      tags: [Delivery]
+      summary: Fetch one subscription (bearer secret required)
+      operationId: getSubscription
+      security: [{ subscriptionSecret: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/subscriptionId" }
+      responses:
+        "200":
+          description: The subscription (secret never included; see `hasSecret`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicSubscription" }
+        "401": { $ref: "#/components/responses/SecretRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Delivery]
+      summary: Update filters / target / active / secret (bearer secret required)
+      description: |
+        Premium gating is anchored to the subscription OWNER: continuing or
+        changing delivery on a user-owned row requires the owning account to
+        still be Premium (402 otherwise). Re-activating re-checks quota (409).
+        Supplying a new `secret` rotates it and returns the new value once.
+      operationId: updateSubscription
+      security: [{ subscriptionSecret: [] }]
+      parameters:
+        - { $ref: "#/components/parameters/subscriptionId" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filters: { $ref: "#/components/schemas/SubscriptionFilters" }
+                targetUrl: { type: string, nullable: true }
+                secret: { type: string, description: Rotate the secret; cannot be cleared (null → 400). }
+                active: { type: boolean }
+                cursor: { type: integer }
+      responses:
+        "200":
+          description: Updated subscription.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicSubscription" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/SecretRequired" }
+        "402": { $ref: "#/components/responses/PremiumRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { description: Subscription quota reached. }
+  /api/analytics/summary:
+    get:
+      tags: [Analytics]
+      summary: Corpus summary for a window
+      operationId: analyticsSummary
+      parameters: [{ $ref: "#/components/parameters/window" }, { $ref: "#/components/parameters/chamber" }, { $ref: "#/components/parameters/party" }, { $ref: "#/components/parameters/source" }, { $ref: "#/components/parameters/minConf" }, { $ref: "#/components/parameters/excludeOptions" }]
+      responses:
+        "200":
+          description: Totals, buy/sell/exchange counts, estimated volume/net flow, net sentiment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AnalyticsEnvelope" }
+  /api/analytics/ticker-leaderboard:
+    get:
+      tags: [Analytics]
+      summary: Most-traded tickers
+      operationId: analyticsTickerLeaderboard
+      parameters:
+        - { $ref: "#/components/parameters/window" }
+        - { $ref: "#/components/parameters/chamber" }
+        - { $ref: "#/components/parameters/party" }
+        - { $ref: "#/components/parameters/source" }
+        - { $ref: "#/components/parameters/minConf" }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [trades, volume, netflow, members] }
+        - { $ref: "#/components/parameters/limit" }
+      responses:
+        "200": { description: Ranked tickers with counts and estimated flow., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/member-leaderboard:
+    get:
+      tags: [Analytics]
+      summary: Most-active members
+      operationId: analyticsMemberLeaderboard
+      parameters:
+        - { $ref: "#/components/parameters/window" }
+        - { $ref: "#/components/parameters/chamber" }
+        - { $ref: "#/components/parameters/party" }
+        - { $ref: "#/components/parameters/source" }
+        - { $ref: "#/components/parameters/minConf" }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [trades, volume, netflow] }
+        - { $ref: "#/components/parameters/limit" }
+      responses:
+        "200": { description: Ranked members with trade stats., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/conviction:
+    get:
+      tags: [Analytics]
+      summary: Composite 0-100 "congressional conviction" score per ticker
+      description: Directional (P/S), common-stock-only consensus ranking with anti-gaming gates.
+      operationId: analyticsConviction
+      parameters: [{ $ref: "#/components/parameters/window" }, { $ref: "#/components/parameters/chamber" }, { $ref: "#/components/parameters/party" }, { $ref: "#/components/parameters/source" }, { $ref: "#/components/parameters/limit" }]
+      responses:
+        "200": { description: Scored tickers with component breakdown., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/cluster-buys:
+    get:
+      tags: [Analytics]
+      summary: Consensus ("cluster") buys — multiple members buying the same ticker
+      operationId: analyticsClusterBuys
+      parameters:
+        - { $ref: "#/components/parameters/window" }
+        - { $ref: "#/components/parameters/chamber" }
+        - { $ref: "#/components/parameters/party" }
+        - { $ref: "#/components/parameters/source" }
+        - name: minMembers
+          in: query
+          schema: { type: integer, minimum: 2 }
+        - { $ref: "#/components/parameters/limit" }
+      responses:
+        "200": { description: Tickers with member clusters., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/trending:
+    get:
+      tags: [Analytics]
+      summary: Momentum — tickers with accelerating recent activity
+      operationId: analyticsTrending
+      parameters: [{ $ref: "#/components/parameters/window" }, { $ref: "#/components/parameters/chamber" }, { $ref: "#/components/parameters/party" }, { $ref: "#/components/parameters/source" }, { $ref: "#/components/parameters/limit" }]
+      responses:
+        "200": { description: Trending tickers., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/volume-over-time:
+    get:
+      tags: [Analytics]
+      summary: Trade volume time series
+      operationId: analyticsVolumeOverTime
+      parameters: [{ $ref: "#/components/parameters/window" }, { $ref: "#/components/parameters/chamber" }, { $ref: "#/components/parameters/party" }, { $ref: "#/components/parameters/source" }, { $ref: "#/components/parameters/granularity" }]
+      responses:
+        "200": { description: Bucketed counts/volume series., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/party-split:
+    get:
+      tags: [Analytics]
+      summary: Buy/sell split by party
+      operationId: analyticsPartySplit
+      parameters: [{ $ref: "#/components/parameters/window" }, { $ref: "#/components/parameters/chamber" }, { $ref: "#/components/parameters/source" }, { $ref: "#/components/parameters/granularity" }]
+      responses:
+        "200": { description: Per-party aggregates (and over time)., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/sector-breakdown:
+    get:
+      tags: [Analytics]
+      summary: Trade mix by sector
+      operationId: analyticsSectorBreakdown
+      parameters: [{ $ref: "#/components/parameters/window" }, { $ref: "#/components/parameters/chamber" }, { $ref: "#/components/parameters/party" }, { $ref: "#/components/parameters/source" }]
+      responses:
+        "200": { description: Sector buckets with counts/flow., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/sector-flow:
+    get:
+      tags: [Analytics]
+      summary: Estimated net dollar flow by sector
+      operationId: analyticsSectorFlow
+      parameters: [{ $ref: "#/components/parameters/window" }, { $ref: "#/components/parameters/chamber" }, { $ref: "#/components/parameters/party" }, { $ref: "#/components/parameters/source" }]
+      responses:
+        "200": { description: Sector net-flow ranking., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/market-cap-breakdown:
+    get:
+      tags: [Analytics]
+      summary: Trade mix by market-cap bucket
+      operationId: analyticsMarketCapBreakdown
+      parameters: [{ $ref: "#/components/parameters/window" }, { $ref: "#/components/parameters/chamber" }, { $ref: "#/components/parameters/party" }, { $ref: "#/components/parameters/source" }]
+      responses:
+        "200": { description: "Buckets: mega/large/mid/small/micro/nano.", content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/member-performance:
+    get:
+      tags: [Analytics]
+      summary: Member performance leaderboard (price-based)
+      operationId: analyticsMemberPerformanceLeaderboard
+      parameters: [{ $ref: "#/components/parameters/window" }, { $ref: "#/components/parameters/chamber" }, { $ref: "#/components/parameters/party" }, { $ref: "#/components/parameters/limit" }]
+      responses:
+        "200": { description: Members ranked by estimated trade performance., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/filing-lag:
+    get:
+      tags: [Analytics]
+      summary: Disclosure timeliness (trade date → filing date lag)
+      operationId: analyticsFilingLag
+      parameters: [{ $ref: "#/components/parameters/window" }, { $ref: "#/components/parameters/chamber" }, { $ref: "#/components/parameters/party" }]
+      responses:
+        "200": { description: Lag histogram + late filers., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/conflicts:
+    get:
+      tags: [Analytics]
+      summary: Potential committee-conflict flags
+      operationId: analyticsConflicts
+      parameters: [{ $ref: "#/components/parameters/window" }, { $ref: "#/components/parameters/chamber" }, { $ref: "#/components/parameters/party" }, { $ref: "#/components/parameters/limit" }]
+      responses:
+        "200": { description: Member/ticker pairs overlapping committee jurisdictions., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/latency-summary:
+    get:
+      tags: [Analytics]
+      summary: Disclosure-latency probe summary (ingestion pipeline health)
+      operationId: analyticsLatencySummary
+      responses:
+        "200": { description: Latency probe aggregates., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/ticker/{ticker}:
+    get:
+      tags: [Analytics]
+      summary: Per-ticker deep dive (summary, time series, top traders, recent trades)
+      operationId: analyticsTickerDetail
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Z0-9._^-]{1,20}$" }
+        - { $ref: "#/components/parameters/window" }
+        - { $ref: "#/components/parameters/chamber" }
+        - { $ref: "#/components/parameters/party" }
+        - { $ref: "#/components/parameters/granularity" }
+      responses:
+        "200": { description: Ticker analytics bundle., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/ticker/{ticker}/backtest:
+    get:
+      tags: [Analytics]
+      summary: Cohort backtest of congressional trades in a ticker
+      operationId: analyticsTickerBacktest
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[A-Z0-9._^-]{1,20}$" }
+        - { $ref: "#/components/parameters/window" }
+      responses:
+        "200": { description: Forward-return cohorts vs SPX., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/analytics/performance/{txId}:
+    get:
+      tags: [Analytics]
+      summary: Price performance of a single transaction since trade date
+      operationId: analyticsTransactionPerformance
+      parameters:
+        - name: txId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Price-at-trade vs current, vs SPX., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/analytics/member/{filerId}:
+    get:
+      tags: [Analytics]
+      summary: Per-member deep dive (stats, top tickers, recent trades)
+      operationId: analyticsMemberDetail
+      parameters:
+        - name: filerId
+          in: path
+          required: true
+          schema: { type: string, description: Bioguide-style filer id. }
+        - { $ref: "#/components/parameters/window" }
+      responses:
+        "200": { description: Member analytics bundle., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/analytics/member/{filerId}/performance:
+    get:
+      tags: [Analytics]
+      summary: Per-member estimated trade performance
+      operationId: analyticsMemberPerformance
+      parameters:
+        - name: filerId
+          in: path
+          required: true
+          schema: { type: string }
+        - { $ref: "#/components/parameters/window" }
+      responses:
+        "200": { description: Aggregated performance vs SPX., content: { application/json: { schema: { $ref: "#/components/schemas/AnalyticsEnvelope" } } } }
+  /api/market/ref/{ticker}:
+    get:
+      tags: [Market]
+      summary: Cached securities_ref row for one ticker
+      operationId: marketRef
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: CamelCase reference record (company name, sector, exchange, market cap, current price).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ref: { $ref: "#/components/schemas/SecurityRef" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/market/refs:
+    get:
+      tags: [Market]
+      summary: Cached refs for many tickers (batch)
+      operationId: marketRefs
+      parameters:
+        - name: tickers
+          in: query
+          required: true
+          schema: { type: string, example: "AAPL,MSFT" }
+          description: CSV of tickers; truncated to the shared batch cap.
+      responses:
+        "200":
+          description: Matching refs (missing tickers omitted).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  refs:
+                    type: array
+                    items: { $ref: "#/components/schemas/SecurityRef" }
+  /api/market/prices/{ticker}:
+    get:
+      tags: [Market]
+      summary: Cached EOD close series for a ticker
+      operationId: marketPrices
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: { type: string }
+        - { $ref: "#/components/parameters/from" }
+        - { $ref: "#/components/parameters/to" }
+      responses:
+        "200":
+          description: Ascending closes plus current price snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticker: { type: string }
+                  closes:
+                    type: array
+                    items: { $ref: "#/components/schemas/PriceClose" }
+                  currentPrice: { type: number, nullable: true }
+                  currentPriceDate: { type: string, format: date, nullable: true }
+  /api/market/insider/{ticker}:
+    get:
+      tags: [Market]
+      summary: Cached insider (Form 4) daily aggregates
+      operationId: marketInsider
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: { type: string }
+        - { $ref: "#/components/parameters/from" }
+        - { $ref: "#/components/parameters/to" }
+      responses:
+        "200": { description: Daily sentiment, filing and share aggregates., content: { application/json: { schema: { type: object } } } }
+  /api/market/fundamentals/{ticker}:
+    get:
+      tags: [Market]
+      summary: Cached fundamentals (P/E, EPS, beta, 52w, yields)
+      operationId: marketFundamentals
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: { type: string }
+        - { $ref: "#/components/parameters/from" }
+        - { $ref: "#/components/parameters/to" }
+      responses:
+        "200": { description: Daily fundamentals rows., content: { application/json: { schema: { type: object } } } }
+  /api/market/analyst/{ticker}:
+    get:
+      tags: [Market]
+      summary: Cached analyst consensus and price targets
+      operationId: marketAnalyst
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: { type: string }
+        - { $ref: "#/components/parameters/from" }
+        - { $ref: "#/components/parameters/to" }
+      responses:
+        "200": { description: Daily consensus rows., content: { application/json: { schema: { type: object } } } }
+  /api/market/short-volume/{ticker}:
+    get:
+      tags: [Market]
+      summary: Cached FINRA short-volume daily ratio
+      operationId: marketShortVolume
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: { type: string }
+        - { $ref: "#/components/parameters/from" }
+        - { $ref: "#/components/parameters/to" }
+      responses:
+        "200": { description: Daily short-volume ratio + elevated flag., content: { application/json: { schema: { type: object } } } }
+  /api/market/spx:
+    get:
+      tags: [Market]
+      summary: Cached S&P 500 EOD closes
+      operationId: marketSpx
+      parameters:
+        - { $ref: "#/components/parameters/from" }
+        - { $ref: "#/components/parameters/to" }
+      responses:
+        "200":
+          description: Ascending closes.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  closes:
+                    type: array
+                    items: { $ref: "#/components/schemas/PriceClose" }
+  /api/market/bundle/{ticker}:
+    get:
+      tags: [Market]
+      summary: Ref + prices + SPX in one call
+      operationId: marketBundle
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: { type: string }
+        - { $ref: "#/components/parameters/from" }
+        - { $ref: "#/components/parameters/to" }
+      responses:
+        "200": { description: Bundled ref, price series, and SPX series., content: { application/json: { schema: { type: object } } } }
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current identity + derived access level
+      operationId: authMe
+      responses:
+        "200":
+          description: User (or null), entitlement, admin capability, billing capability.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: "#/components/schemas/PublicUser" }
+                  entitlement: { type: string, enum: [free, premium] }
+                  admin:
+                    type: object
+                    properties:
+                      allowed: { type: boolean }
+                  billing: { type: object }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Destroy session(s) and clear the cookie
+      operationId: authLogout
+      responses:
+        "200":
+          description: Logged out.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+  /auth/google/start:
+    get:
+      tags: [Auth]
+      summary: Begin Google OAuth (redirects to consent screen)
+      operationId: authGoogleStart
+      parameters:
+        - name: client
+          in: query
+          schema: { type: string, enum: [ios] }
+          description: "`ios` makes the final callback redirect to the congresstrade:// custom scheme."
+      responses:
+        "302": { description: Redirect to Google consent (or canonical host). }
+        "503": { description: Google login not configured. }
+  /auth/google/callback:
+    get:
+      tags: [Auth]
+      summary: Google OAuth callback — creates session, redirects home
+      operationId: authGoogleCallback
+      parameters:
+        - { name: code, in: query, schema: { type: string } }
+        - { name: state, in: query, schema: { type: string } }
+      responses:
+        "302":
+          description: |
+            Redirect to the initiating origin with `?login=ok|error|unverified`.
+            For the iOS client, redirects to `congresstrade://auth?token=<session-token>`.
+  /auth/magic/request:
+    post:
+      tags: [Auth]
+      summary: Email a single-use sign-in link
+      description: "Always returns `ok: true` (no account enumeration); rate-limited per IP and per email."
+      operationId: authMagicRequest
+      parameters:
+        - name: client
+          in: query
+          schema: { type: string, enum: [ios] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "200":
+          description: Request accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  sent: { type: boolean, description: False when delivery failed. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+  /auth/magic/verify:
+    get:
+      tags: [Auth]
+      summary: Consume magic token — creates session, redirects home
+      operationId: authMagicVerify
+      parameters:
+        - { name: token, in: query, required: true, schema: { type: string } }
+        - { name: origin, in: query, schema: { type: string } }
+      responses:
+        "302":
+          description: |
+            Redirect with `?login=ok` (or `?login=expired` on a bad token).
+            For the iOS origin, redirects to `congresstrade://auth?token=<session-token>`.
+  /api/client/v1/bootstrap:
+    get:
+      tags: [Client]
+      summary: Client bootstrap — time, auth state, capabilities, endpoint map
+      operationId: clientBootstrap
+      responses:
+        "200":
+          description: Bootstrap payload. `auth.user` is null when logged out; capabilities degrade accordingly.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  serverTime: { type: string, format: date-time }
+                  auth:
+                    type: object
+                    properties:
+                      user: { $ref: "#/components/schemas/PublicUser" }
+                      entitlement: { type: string, enum: [free, premium] }
+                  capabilities:
+                    type: object
+                    properties:
+                      feed: { type: boolean }
+                      sse: { type: boolean }
+                      webhooks: { type: boolean }
+                      commands: { type: boolean }
+                      preferences: { type: boolean }
+                  endpoints:
+                    type: object
+                    additionalProperties: { type: string }
+  /api/client/v1/me:
+    get:
+      tags: [Client]
+      summary: Current user + entitlement
+      operationId: clientMe
+      responses:
+        "200":
+          description: "Response is `{ user, entitlement }` — user is null when logged out."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: "#/components/schemas/PublicUser" }
+                  entitlement: { type: string, enum: [free, premium] }
+  /api/client/v1/feed:
+    get:
+      tags: [Client]
+      summary: Client trade feed (ClientTrade DTOs)
+      description: |
+        Same corpus and per-IP daily row budget as `/api/transactions`. Poll
+        forward with the returned `cursor` as the next `since`. Zero-delta
+        polls omit `total` (treat as unchanged). Suggested poll interval is in
+        `nextPollAfterSec`.
+      operationId: clientFeed
+      parameters:
+        - { $ref: "#/components/parameters/since" }
+        - { $ref: "#/components/parameters/ticker" }
+        - { $ref: "#/components/parameters/member" }
+        - { $ref: "#/components/parameters/chamber" }
+        - { $ref: "#/components/parameters/txType" }
+        - { $ref: "#/components/parameters/from" }
+        - { $ref: "#/components/parameters/to" }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc] }
+        - { $ref: "#/components/parameters/limit" }
+      responses:
+        "200":
+          description: Feed page.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ClientTrade" }
+                  cursor: { type: integer }
+                  count: { type: integer }
+                  total: { type: integer, description: Omitted on zero-delta `since` polls. }
+                  limit: { type: integer }
+                  nextPollAfterSec: { type: integer, example: 60 }
+        "403": { $ref: "#/components/responses/BlockedAgent" }
+        "429": { $ref: "#/components/responses/RowBudgetExceeded" }
+  /api/client/v1/trade/{id}:
+    get:
+      tags: [Client]
+      summary: Single trade detail (ClientTrade DTO)
+      operationId: clientTradeDetail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: "Response is `{ item, items: [item], cursor, count: 1, total: 1, limit: 1 }`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  item: { $ref: "#/components/schemas/ClientTrade" }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ClientTrade" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RowBudgetExceeded" }
+  /api/client/v1/ticker/{ticker}:
+    get:
+      tags: [Client]
+      summary: Ticker detail — asset ref, summary aggregates, recent trades
+      operationId: clientTickerDetail
+      parameters:
+        - name: ticker
+          in: path
+          required: true
+          schema: { type: string }
+        - { $ref: "#/components/parameters/limit" }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        "200":
+          description: Ticker bundle (feed-style envelope fields included).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ticker: { type: string }
+                  asset: { $ref: "#/components/schemas/ClientAsset" }
+                  summary: { $ref: "#/components/schemas/TradeSummary" }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ClientTrade" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "429": { $ref: "#/components/responses/RowBudgetExceeded" }
+  /api/client/v1/member/{memberIdOrName}:
+    get:
+      tags: [Client]
+      summary: Member detail — profile, summary + performance, recent trades
+      operationId: clientMemberDetail
+      parameters:
+        - name: memberIdOrName
+          in: path
+          required: true
+          schema: { type: string, maxLength: 120 }
+        - { $ref: "#/components/parameters/limit" }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        "200":
+          description: Member bundle.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  member: { $ref: "#/components/schemas/MemberProfile" }
+                  summary: { $ref: "#/components/schemas/TradeSummary" }
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ClientTrade" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RowBudgetExceeded" }
+  /api/client/v1/preferences:
+    get:
+      tags: [Client]
+      summary: Account preferences (auth required)
+      operationId: clientGetPreferences
+      security: [{ sessionCookie: [] }, { bearerSession: [] }]
+      responses:
+        "200":
+          description: Preferences record.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  preferences: { $ref: "#/components/schemas/ClientPreferences" }
+        "401": { $ref: "#/components/responses/AuthRequired" }
+    put:
+      tags: [Client]
+      summary: Upsert account preferences (auth required)
+      operationId: clientPutPreferences
+      security: [{ sessionCookie: [] }, { bearerSession: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClientPreferencesPatch" }
+      responses:
+        "200":
+          description: Updated preferences.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  preferences: { $ref: "#/components/schemas/ClientPreferences" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/AuthRequired" }
+  /api/client/v1/subscriptions:
+    get:
+      tags: [Client]
+      summary: List the signed-in account's delivery subscriptions
+      operationId: clientListSubscriptions
+      security: [{ sessionCookie: [] }, { bearerSession: [] }]
+      responses:
+        "200":
+          description: Account-owned subscriptions (secrets never included).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscriptions:
+                    type: array
+                    items: { $ref: "#/components/schemas/PublicSubscription" }
+        "401": { $ref: "#/components/responses/AuthRequired" }
+  /api/client/v1/commands:
+    post:
+      tags: [Client]
+      summary: Submit a mutation command (idempotent, auth required)
+      description: |
+        Client mutations go through backend commands. Idempotency key comes
+        from the body's `idempotencyKey` or the `Idempotency-Key` header.
+        A duplicate submission replays the winning row (`replayed: true`,
+        200); a stale in-flight row (owner presumed dead, >2 min) is reclaimed
+        and re-run. Implemented types: `update_preferences`,
+        `create_subscription`, `update_subscription`. `start_checkout` and
+        `request_export` are defined but currently return 501.
+      operationId: clientSubmitCommand
+      security: [{ sessionCookie: [] }, { bearerSession: [] }]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type]
+              properties:
+                type:
+                  type: string
+                  enum: [update_preferences, create_subscription, update_subscription, start_checkout, request_export]
+                payload: { type: object }
+                idempotencyKey: { type: string }
+      responses:
+        "200":
+          description: Idempotent replay of an existing command.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "201":
+          description: Command executed successfully.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CommandResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/AuthRequired" }
+        "402": { $ref: "#/components/responses/PremiumRequired" }
+        "409": { description: A duplicate command is in flight; retry shortly. }
+        "501": { description: Command type defined but not yet implemented. }
+    get:
+      tags: [Client]
+      summary: Recent commands for the signed-in account
+      operationId: clientListCommands
+      security: [{ sessionCookie: [] }, { bearerSession: [] }]
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20 }
+      responses:
+        "200":
+          description: Most recent commands first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  commands:
+                    type: array
+                    items: { $ref: "#/components/schemas/ClientCommand" }
+        "401": { $ref: "#/components/responses/AuthRequired" }
+  /api/client/v1/commands/{id}:
+    get:
+      tags: [Client]
+      summary: Command status (poll this; no streaming endpoint exists yet)
+      operationId: clientGetCommand
+      security: [{ sessionCookie: [] }, { bearerSession: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Command with status, result, error, and timestamps.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  command: { $ref: "#/components/schemas/ClientCommand" }
+        "401": { $ref: "#/components/responses/AuthRequired" }
+        "404": { $ref: "#/components/responses/NotFound" }
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: ct_session
+      description: HTTP-only opaque session cookie set by /auth/* flows.
+    bearerSession:
+      type: http
+      scheme: bearer
+      description: Opaque session token (native clients; obtained from the auth redirect).
+    subscriptionSecret:
+      type: http
+      scheme: bearer
+      description: Per-subscription secret (also accepted as X-Subscription-Secret header; as ?token= on /api/stream only).
+  parameters:
+    since:
+      name: since
+      in: query
+      schema: { type: integer }
+      description: Cursor (cursor_seq) — return rows after this point.
+    offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0 }
+      description: Public feed caps deep offsets; use the CSV export for bulk history.
+    limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1 }
+    ticker:
+      name: ticker
+      in: query
+      schema: { type: string }
+    member:
+      name: member
+      in: query
+      schema: { type: string }
+      description: Filer id.
+    memberName:
+      name: memberName
+      in: query
+      schema: { type: string }
+      description: Filer display-name match.
+    chamber:
+      name: chamber
+      in: query
+      schema: { type: string, example: "house,senate" }
+      description: CSV of house|senate|executive. Absent = default congressional view (executive excluded).
+    txType:
+      name: type
+      in: query
+      schema: { type: string, enum: [P, S, E] }
+      description: Purchase / Sale / Exchange.
+    from:
+      name: from
+      in: query
+      schema: { type: string, format: date }
+      description: "Inclusive lower trade-date bound (aliases: txDateMin)."
+    to:
+      name: to
+      in: query
+      schema: { type: string, format: date }
+      description: "Inclusive upper trade-date bound (aliases: txDateMax)."
+    subscriptionId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    window:
+      name: window
+      in: query
+      schema: { type: string, example: "90d", default: "90d" }
+      description: "`all` or `<N>d` (e.g. 7d, 30d, 90d, 365d)."
+    party:
+      name: party
+      in: query
+      schema: { type: string, enum: [D, R, I] }
+      description: Party bucket filter.
+    source:
+      name: source
+      in: query
+      schema: { type: string, default: all }
+      description: Ingest source filter.
+    minConf:
+      name: minConf
+      in: query
+      schema: { type: number, minimum: 0, maximum: 1 }
+      description: Minimum extraction confidence.
+    excludeOptions:
+      name: excludeOptions
+      in: query
+      schema: { type: boolean }
+      description: Exclude option transactions.
+    granularity:
+      name: granularity
+      in: query
+      schema: { type: string, enum: [day, week, month] }
+      description: Bucket size; auto-derived from window when omitted.
+  responses:
+    BadRequest:
+      description: Invalid parameters or body.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    AuthRequired:
+      description: Signed-in session required.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    SecretRequired:
+      description: Valid subscription secret required.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PremiumRequired:
+      description: Premium entitlement required.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Error"
+              - type: object
+                properties:
+                  upgradeRequired: { type: boolean, example: true }
+                  feature: { type: string, example: alerts }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: Rate limit hit; honor Retry-After.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RowBudgetExceeded:
+      description: Per-IP daily served-row budget exhausted (anti-scrape guard); honor Retry-After and back off.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BlockedAgent:
+      description: Known scraper/AI-crawler user agent rejected (browser, EventSource, and iOS CFNetwork/URLSession agents are unaffected).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        hint: { type: string }
+    HealthStatus:
+      type: object
+      properties:
+        ok: { type: boolean }
+        db: { type: boolean }
+        time: { type: string, format: date-time }
+    PublicUser:
+      type: object
+      nullable: true
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        name: { type: string, nullable: true }
+        picture: { type: string, nullable: true }
+    FeedTransaction:
+      type: object
+      description: One normalized disclosure row in the public feed.
+      properties:
+        id: { type: string }
+        docId: { type: string }
+        filerId: { type: string, nullable: true }
+        fullName: { type: string, nullable: true }
+        memberName: { type: string, nullable: true, description: Resolved politician display name. }
+        chamber: { type: string, enum: [house, senate, executive], nullable: true }
+        state: { type: string, nullable: true }
+        photoUrl: { type: string, nullable: true }
+        ticker: { type: string, nullable: true }
+        assetName: { type: string, nullable: true }
+        txType: { type: string, enum: [P, S, E], nullable: true, description: "null = disclosed side did not parse; render as unknown." }
+        txDate: { type: string, format: date, nullable: true }
+        amountMin: { type: number, nullable: true }
+        amountMax: { type: number, nullable: true }
+        owner: { type: string, nullable: true }
+        source: { type: string }
+        confidence: { type: number }
+        cursorSeq: { type: integer }
+        createdAt: { type: string, format: date-time }
+    PublicFiling:
+      type: object
+      properties:
+        docId: { type: string }
+        filerId: { type: string, nullable: true }
+        fullName: { type: string, nullable: true }
+        chamber: { type: string, nullable: true }
+        filedAt: { type: string, nullable: true }
+        sourceUrl: { type: string, nullable: true }
+        status: { type: string }
+    MemberRosterEntry:
+      type: object
+      properties:
+        filerId: { type: string }
+        fullName: { type: string, nullable: true }
+        chamber: { type: string, nullable: true }
+        party: { type: string, nullable: true }
+        state: { type: string, nullable: true }
+        district: { type: string, nullable: true }
+        txCount: { type: integer }
+    SubscriptionFilters:
+      type: object
+      properties:
+        members:
+          type: array
+          items: { type: string }
+          description: Filer ids (max 50).
+        tickers:
+          type: array
+          items: { type: string }
+          description: Uppercased on save (max 50).
+        chambers:
+          type: array
+          items: { type: string, enum: [house, senate, executive] }
+        minAmount: { type: number, minimum: 0 }
+        maxAmount: { type: number, minimum: 0 }
+        sides:
+          type: array
+          items: { type: string, enum: [P, S, E] }
+        sectors:
+          type: array
+          items: { type: string }
+        marketCapBuckets:
+          type: array
+          items: { type: string, enum: [mega, large, mid, small, micro, nano] }
+    PublicSubscription:
+      type: object
+      properties:
+        id: { type: string }
+        clientId: { type: string, description: "`user:<id>` for account-owned rows." }
+        delivery: { type: string, enum: [webhook, sse] }
+        targetUrl: { type: string, nullable: true }
+        filters: { $ref: "#/components/schemas/SubscriptionFilters" }
+        cursor: { type: integer }
+        active: { type: boolean }
+        createdAt: { type: string }
+        hasSecret: { type: boolean }
+        secret: { type: string, description: Returned only once, at creation or rotation. }
+        streamUrl: { type: string, description: SSE helper URL containing the one-time secret; only at creation for sse delivery. }
+    SecurityRef:
+      type: object
+      properties:
+        ticker: { type: string }
+        companyName: { type: string, nullable: true }
+        sector: { type: string, nullable: true }
+        industry: { type: string, nullable: true }
+        assetClass: { type: string, nullable: true }
+        isEtf: { type: boolean }
+        isAdr: { type: boolean }
+        country: { type: string, nullable: true }
+        exchange: { type: string, nullable: true }
+        currency: { type: string, nullable: true }
+        marketCap: { type: number, nullable: true }
+        marketCapBucket: { type: string, enum: [mega, large, mid, small, micro, nano], nullable: true }
+        ipoDate: { type: string, nullable: true }
+        cik: { type: string, nullable: true }
+        source: { type: string, nullable: true }
+        enrichedAt: { type: string, nullable: true }
+        currentPrice: { type: number, nullable: true }
+        currentPriceDate: { type: string, format: date, nullable: true }
+    PriceClose:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        close: { type: number }
+        volume: { type: number, nullable: true, description: Present for ticker prices, absent for SPX. }
+    AnalyticsEnvelope:
+      type: object
+      description: |
+        Every analytics response carries this metadata plus endpoint-specific
+        payload fields; endpoints degrade to a valid empty envelope on no data.
+      properties:
+        window: { type: string }
+        chamber: { type: string, nullable: true }
+        party: { type: string, nullable: true }
+        source: { type: string }
+        estimatedAmounts: { type: boolean, example: true, description: Dollar figures are STOCK Act bracket-midpoint estimates. }
+        asOf: { type: string, format: date-time }
+    ClientAsset:
+      type: object
+      properties:
+        name: { type: string, nullable: true, description: Disclosed asset text. }
+        ticker: { type: string, nullable: true }
+        type: { type: string, nullable: true, description: Raw disclosure type. }
+        typeName: { type: string, nullable: true }
+        typeCategory: { type: string, nullable: true }
+        typeCategoryLabel: { type: string, nullable: true }
+        sector: { type: string, nullable: true }
+        marketCapBucket: { type: string, nullable: true }
+        companyName: { type: string, nullable: true, description: Canonical name from securities_ref; null until enriched. }
+        logoUrl: { type: string, nullable: true, description: "Same-origin cached logo proxy path, e.g. /api/logos/ticker?symbol=AAPL." }
+    ClientTrade:
+      type: object
+      properties:
+        id: { type: string }
+        docId: { type: string }
+        cursor: { type: integer }
+        asset: { $ref: "#/components/schemas/ClientAsset" }
+        member: { $ref: "#/components/schemas/MemberProfile" }
+        transaction:
+          type: object
+          properties:
+            type: { type: string, enum: [P, S, E], nullable: true, description: "null = unknown side; do not render as Purchase." }
+            date: { type: string, format: date, nullable: true }
+            amountMin: { type: number, nullable: true }
+            amountMax: { type: number, nullable: true }
+            owner: { type: string, nullable: true }
+        source: { type: string }
+        confidence: { type: number }
+        filedAt: { type: string, nullable: true }
+    MemberProfile:
+      type: object
+      nullable: true
+      properties:
+        id: { type: string }
+        name: { type: string, nullable: true }
+        chamber: { type: string, nullable: true, description: house | senate | executive. }
+        party: { type: string, nullable: true }
+        state: { type: string, nullable: true }
+        district: { type: string, nullable: true }
+        photoUrl: { type: string, nullable: true }
+    TradeSummary:
+      type: object
+      properties:
+        tradeCount: { type: integer }
+        buyCount: { type: integer }
+        sellCount: { type: integer }
+        exchangeCount: { type: integer }
+        estimatedNetFlowUsd: { type: number, description: Bracket-midpoint estimate; null/unknown-side rows excluded from every bucket. }
+        memberCount: { type: integer, description: Ticker detail only. }
+        uniqueTickers: { type: integer, description: Member detail only. }
+        uniqueAssets: { type: integer, description: Member detail only. }
+        performance: { type: object, description: Member detail only — aggregated price-based performance vs SPX. }
+    ClientPreferences:
+      type: object
+      properties:
+        userId: { type: string }
+        savedFilters: { type: object }
+        watchlist:
+          type: array
+          items: { type: string }
+        notificationSettings: { type: object }
+        defaultWindow: { type: string, nullable: true }
+        updatedAt: { type: string }
+    ClientPreferencesPatch:
+      type: object
+      properties:
+        savedFilters: { type: object }
+        watchlist:
+          type: array
+          items: { type: string }
+        notificationSettings: { type: object }
+        defaultWindow: { type: string, nullable: true }
+    ClientCommand:
+      type: object
+      properties:
+        id: { type: string }
+        userId: { type: string }
+        type:
+          type: string
+          enum: [update_preferences, create_subscription, update_subscription, start_checkout, request_export]
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed, canceled]
+        idempotencyKey: { type: string, nullable: true }
+        payload: {}
+        result: { nullable: true }
+        error: { type: string, nullable: true }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+        startedAt: { type: string, nullable: true }
+        finishedAt: { type: string, nullable: true }
+    CommandResponse:
+      type: object
+      properties:
+        command: { $ref: "#/components/schemas/ClientCommand" }
+        result: { description: Present on fresh successful execution. }
+        replayed: { type: boolean, description: True on idempotent replay. }
+        error: { type: string, description: Present on failure. }
