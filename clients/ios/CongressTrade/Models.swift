@@ -27,29 +27,35 @@ struct Entitlement: Decodable {
 
 struct ClientFeedResponse: Decodable {
     let items: [ClientTrade]
-    let cursor: Int
-    let count: Int
-    let total: Int
-    let limit: Int
-    let nextPollAfterSec: Int
+    let cursor: Int?
+    let count: Int?
+    let total: Int?
+    let limit: Int?
+    let nextPollAfterSec: Int?
 }
 
 @Model
 final class ClientTrade: Decodable, Identifiable {
     @Attribute(.unique) var id: String
-    var cursor: Int
-    var docId: String
+    var cursor: Int?
+    var docId: String?
     var member: Member
     var asset: Asset
     var transaction: Transaction
     var filing: Filing
-    var confidence: Double
-    var source: Source
+    var confidence: Double?
+    var source: Source?
 
     enum Source: String, Codable {
         case primary
         case seedDataset = "seed_dataset"
         case competitorBackfill = "competitor_backfill"
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            let raw = (try? container.decode(String.self)) ?? ""
+            self = Source(rawValue: raw) ?? .primary
+        }
     }
 
     struct Member: Codable {
@@ -62,7 +68,7 @@ final class ClientTrade: Decodable, Identifiable {
     }
 
     struct Asset: Codable {
-        var name: String
+        var name: String?
         var ticker: String?
         var type: String?
         var sector: String?
@@ -75,7 +81,7 @@ final class ClientTrade: Decodable, Identifiable {
         var owner: String?
         var amountMin: Int?
         var amountMax: Int?
-        var isOption: Bool
+        var isOption: Bool?
     }
 
     struct Filing: Codable {
@@ -99,14 +105,14 @@ final class ClientTrade: Decodable, Identifiable {
     required init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try container.decode(String.self, forKey: .id)
-        self.cursor = try container.decode(Int.self, forKey: .cursor)
-        self.docId = try container.decode(String.self, forKey: .docId)
-        self.member = try container.decode(Member.self, forKey: .member)
-        self.asset = try container.decode(Asset.self, forKey: .asset)
-        self.transaction = try container.decode(Transaction.self, forKey: .transaction)
-        self.filing = try container.decode(Filing.self, forKey: .filing)
-        self.confidence = try container.decode(Double.self, forKey: .confidence)
-        self.source = try container.decode(Source.self, forKey: .source)
+        self.cursor = try container.decodeIfPresent(Int.self, forKey: .cursor)
+        self.docId = try container.decodeIfPresent(String.self, forKey: .docId) ?? ""
+        self.member = try container.decodeIfPresent(Member.self, forKey: .member) ?? Member()
+        self.asset = try container.decodeIfPresent(Asset.self, forKey: .asset) ?? Asset()
+        self.transaction = try container.decodeIfPresent(Transaction.self, forKey: .transaction) ?? Transaction(type: "P")
+        self.filing = try container.decodeIfPresent(Filing.self, forKey: .filing) ?? Filing()
+        self.confidence = try container.decodeIfPresent(Double.self, forKey: .confidence) ?? 1.0
+        self.source = try container.decodeIfPresent(Source.self, forKey: .source) ?? .primary
     }
 
     enum CodingKeys: String, CodingKey {
