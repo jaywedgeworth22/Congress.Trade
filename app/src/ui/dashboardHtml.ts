@@ -6809,10 +6809,25 @@ function stampWindowChips() {
     el.textContent = lblText;
   });
 }
+/* Small TTL memo cache over the analytics endpoints (same TTL+dedupe idiom as
+   fetchLatencySummary below): a Trends window change fires ~12 parallel aGet
+   calls and re-opening a drawer used to refetch everything. 60 s is well
+   inside the feed's own cadence, so nothing here goes visibly stale. */
+var AGET_CACHE = {};
+var AGET_TTL_MS = 60000;
 function aGet(path) {
-  return fetch('/api/analytics/' + path).then(function (r) {
-    if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
-  });
+  var now = Date.now();
+  var hit = AGET_CACHE[path];
+  if (hit && hit.data !== undefined && now - hit.at < AGET_TTL_MS) return Promise.resolve(hit.data);
+  if (hit && hit.promise) return hit.promise;
+  var entry = AGET_CACHE[path] = { data: undefined, at: 0, promise: null };
+  entry.promise = fetch('/api/analytics/' + path)
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
+    })
+    .then(function (d) { entry.data = d; entry.at = Date.now(); entry.promise = null; return d; })
+    .catch(function (e) { delete AGET_CACHE[path]; throw e; });
+  return entry.promise;
 }
 /* Compact USD: 1234567 -> $1.2M, 3.2e12 -> $3.2T. */
 function usdC(n) {
@@ -8748,7 +8763,7 @@ document.addEventListener('mouseover', function(e) {
   }
 
   try {
-    if (sessionStorage.getItem('ct-eagle-splash') === '1') {
+    if (localStorage.getItem('ct-eagle-splash') === '1') {
       revealBrand();
       if (splash.parentNode) splash.parentNode.removeChild(splash);
       return;
@@ -8807,7 +8822,7 @@ document.addEventListener('mouseover', function(e) {
   var p2 = { x: W * 0.38, y: H * 0.48 };
   var p3 = { x: nestX, y: nestY };
 
-  var duration = 2100; // ms full flight
+  var duration = 1400; // ms full flight
   var start = null;
   mark.style.opacity = '1';
   if (shadow) shadow.style.opacity = '0.55';
@@ -8857,7 +8872,7 @@ document.addEventListener('mouseover', function(e) {
       mark.style.transition = 'opacity .28s ease';
       mark.style.opacity = '0';
       if (shadow) shadow.style.opacity = '0';
-      try { sessionStorage.setItem('ct-eagle-splash', '1'); } catch (e) {}
+      try { localStorage.setItem('ct-eagle-splash', '1'); } catch (e) {}
       setTimeout(finish, 260);
     }
   }
