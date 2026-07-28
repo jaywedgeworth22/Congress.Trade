@@ -14,7 +14,8 @@ import { runScheduledTick } from './scheduledTick.ts';
 // Deno KV Connect does not support queues, so queue bindings are attached only
 // after the Turso database has been resolved below.
 let tursoDbShim: D1DatabaseShim | null = null;
-const kv = await Deno.openKv();
+const kvPath = Deno.env.get('DENO_KV_PATH') || undefined;
+const kv = await Deno.openKv(kvPath);
 const configKvShim = new KVNamespaceShim(kv, 'config', () => tursoDbShim);
 
 function buildEnvironmentValues(): Record<string, string | undefined> {
@@ -197,7 +198,9 @@ const dummyCtx = {
 };
 
 // Start HTTP Server
-Deno.serve(async (req) => {
+const portStr = Deno.env.get('PORT');
+const port = portStr ? parseInt(portStr, 10) : 8000;
+Deno.serve({ port }, async (req) => {
   const env = buildEnv();
   return app.fetch(req, env, dummyCtx as any);
 });
