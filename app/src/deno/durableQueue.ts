@@ -66,6 +66,8 @@ export interface DurableQueueDrainOptions {
   leaseMs?: number;
   maxAttempts?: number;
   now?: () => Date;
+  /** Stops claiming/handling new messages when aborted (caller deadline). */
+  signal?: AbortSignal;
 }
 
 export interface DurableQueueDrainResult {
@@ -204,6 +206,10 @@ function queueDedupeKey(
         ? key(event.idempotencyKey)
         : null;
     }
+    case "command.execute":
+      // One active execution per command row; re-enqueues of the same
+      // command (stale reclaim, redelivery) dedupe while one is in flight.
+      return typeof message.commandId === "string" ? key(message.commandId) : null;
     case "autopilot.tick":
       // Per-tick uniqueness: continuation re-enqueues while the prior claim is
       // still `processing`, so a stable runId-only key would collide.
@@ -286,6 +292,10 @@ export function assertCanonicalQueueMessage(
       if (message.tickId !== undefined) {
         requireString(message.tickId, "tickId", type);
       }
+      return;
+    case "command.execute":
+      requireString(message.commandId, "commandId", type);
+      requireString(message.userId, "userId", type);
       return;
     case "usage.telemetry":
       if (!message.event || typeof message.event !== "object") {
@@ -454,6 +464,7 @@ class ClaimedLeaseContext implements DurableQueueLeaseContext {
   readonly signal: AbortSignal;
   private readonly abortController = new AbortController();
   private lostError: Error | null = null;
+  private lastVerifiedMs: number | null = null;
 
   constructor(
     private readonly db: D1Database,
@@ -464,18 +475,39 @@ class ClaimedLeaseContext implements DurableQueueLeaseContext {
     this.signal = this.abortController.signal;
   }
 
+  /**
+   * Successful ownership checks stay fresh for a short window so the
+   * lease-fencing proxies do not pay a Turso round trip per statement. The
+   * window is bounded well below the heartbeat interval (leaseMs / 3): a lost
+   * lease is still surfaced by the next renew(), which records the loss and
+   * fails every subsequent assert immediately. A successful assert/renew also
+   * proves ownership until `lease_until`, so reuse inside the window cannot
+   * let a stale owner write after another worker reclaimed the row.
+   */
+  private ownershipFreshMs(): number {
+    return Math.max(1_000, Math.floor(this.leaseMs / 6));
+  }
+
   private markLost(error: unknown): never {
     const normalized = error instanceof DurableQueueLeaseLostError
       ? error
       : new DurableQueueLeaseLostError(errorText(error));
     this.lostError = normalized;
+    this.lastVerifiedMs = null;
     this.abortController.abort(normalized);
     throw normalized;
   }
 
   async assertOwned(): Promise<void> {
     if (this.lostError) throw this.lostError;
-    const current = this.now().toISOString();
+    const nowMs = this.now().getTime();
+    if (
+      this.lastVerifiedMs !== null &&
+      nowMs - this.lastVerifiedMs < this.ownershipFreshMs()
+    ) {
+      return;
+    }
+    const current = new Date(nowMs).toISOString();
     try {
       const rows = await allOrThrow<{ id: number | string }>(
         this.db.prepare(`
@@ -488,6 +520,7 @@ class ClaimedLeaseContext implements DurableQueueLeaseContext {
         `verify durable queue lease ${this.row.id}`,
       );
       if (rows.length !== 1) this.markLost(new DurableQueueLeaseLostError());
+      this.lastVerifiedMs = nowMs;
     } catch (error) {
       this.markLost(error);
     }
@@ -516,6 +549,9 @@ class ClaimedLeaseContext implements DurableQueueLeaseContext {
         `renew durable queue lease ${this.row.id}`,
       );
       if (rows.length !== 1) this.markLost(new DurableQueueLeaseLostError());
+      // A successful renew is proof of ownership; seed the assertOwned()
+      // freshness cache so the hot path skips redundant verification queries.
+      this.lastVerifiedMs = current.getTime();
     } catch (error) {
       this.markLost(error);
     }
@@ -838,6 +874,7 @@ export async function drainDurableQueue(
   };
 
   while (result.claimed < limit) {
+    if (options.signal?.aborted) break;
     const remaining = limit - result.claimed;
     const rows = await claimMessages(
       env.DB,
@@ -850,6 +887,7 @@ export async function drainDurableQueue(
     result.claimed += rows.length;
 
     for (const row of rows) {
+      if (options.signal?.aborted) break;
       const attempts = Number(row.attempts);
       let parsed: unknown;
       let canonicalMessage: QueueMessage | null = null;

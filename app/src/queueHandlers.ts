@@ -14,6 +14,8 @@ import {
 import { persistUsageTelemetryFallback } from './shared/thirdPartyTelemetry.ts';
 import { completeDeliveryOutbox } from './delivery/outbox.ts';
 import { completeIngestionOutbox } from './ingestion/outbox.ts';
+import { executeQueuedCommand } from './client/commands.ts';
+import { updateCommandStatus } from './client/state.ts';
 
 export async function handleIngestMessage(
   env: Env,
@@ -37,6 +39,9 @@ export async function handleIngestMessage(
       return;
     case 'tx.persisted':
       await env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId: msg.txId });
+      return;
+    case 'command.execute':
+      await executeQueuedCommand(env, msg.commandId, msg.userId);
       return;
     case 'agreement.check':
       if (lease) {
@@ -126,6 +131,14 @@ export async function handleDeadLetterMessage(
     if (msg.type !== 'delivery.dispatch') throw new Error('delivery DLQ message has no transaction identity');
     await completeDeliveryOutbox(env, msg.txId);
   } else {
+    if (msg.type === 'command.execute') {
+      // Retry budget exhausted: terminalize the command row so clients
+      // polling GET /commands/:id see a failure instead of a stuck status.
+      await updateCommandStatus(env, msg.userId, msg.commandId, 'failed', {
+        error: recoveryError.message,
+      });
+      return;
+    }
     if (msg.type !== 'filing.new') throw new Error('ingest DLQ message has no doc_id');
     await completeIngestionOutbox(env, msg.docId);
   }
