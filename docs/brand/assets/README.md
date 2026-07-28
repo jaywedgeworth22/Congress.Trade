@@ -1,36 +1,27 @@
 # Congress.Trade brand assets (eagle)
 
-Source: SuperGrok Imagine eagle + money bag. Owner reference sheet:
-`~/Library/Mobile Documents/com~apple~CloudDocs/Downloads/IMG_0592.JPG`
-(lockup + large app-icon mockup on light ground).
+Owner sources (iCloud Downloads):
+- `IMG_0523.JPG` — horizontal lockup (circle mark + CONGRESS. / TRADE)
+- `IMG_0508.jpg` — stacked lockup (mark above wordmark)
+- `IMG_0592.JPG` — app-icon mockups (rounded square, navy fill) — **not** the site mark
 
-**Site mark (2026-07-28 GROK clean pass):** circular badge with **transparent
-outside the gold ring** — not a photo of a rounded-square app icon. Outer
-navy mockup chrome / soft white drop-shadow stripped. Interior navy of the
-circle stays (badge fill).
+## Site mark (canonical)
 
-## Canonical clean exports
+**Circular ring + eagle + money bag, transparent outside and inside the ring.**
+No cream fill, no solid navy disc, no squircle mockup chrome.
 
 | File | Use |
 |------|-----|
-| `eagle-circle-{1024,512,256,128,64,32}.png` | **Site / header mark** — circle, transparent outside |
-| `eagle-app-icon-clean-{1024,512,192,180}.png` | **App / PWA icons** — full-bleed navy square + circle |
-| `eagle-header-circle.png` | PWA header mark (160 circular) |
+| `eagle-circle-{1024…32}.png` | Site / header / BrandLogo (transparent hollow circle) |
+| `eagle-app-icon-clean-{1024,512,192,180}.png` | iOS/PWA install icons (mark on solid navy square) |
+| `eagle-header-circle.png` | PWA header mark |
+| `eagle-lockup-transparent.png` | Full horizontal lockup, transparent page bg |
+| `eagle-stacked-transparent.png` | Full stacked lockup, transparent page bg |
 
-## Archived originals (mockup chrome — do not ship raw)
+## Installed
 
-| File | Notes |
-|------|-------|
-| `eagle-app-icon-1024.png` etc. | Phone/mockup exports with squircle + shadow |
-| `eagle-lockup.png` | Light-ground wordmark lockup reference |
-| `eagle-header-lockup-dark.png` | Earlier dark strip lockup (superseded by circle + CSS wordmark) |
+- Dashboard: `eagle-circle-128` data-URI, CSS `border-radius:50%`
+- PWA `congress-trade-logo.png` + icons
+- iOS AppIcon (navy square) + BrandLogo (hollow circle)
 
-## Installed into
-
-- Dashboard brand mark: `eagle-circle-128.png` data-URI; CSS `border-radius:50%`
-- `clients/pwa/public/congress-trade-logo.png` ← circle transparent
-- `clients/pwa/public/icon-{192,512}.png`, `apple-touch-icon.png` ← clean app icons
-- `clients/ios/.../AppIcon.png` ← clean 1024 app icon
-- `clients/ios/.../BrandLogo.png` ← circle (header / splash)
-
-Do not re-ship the raw mockup PNGs as the site mark.
+Do not ship raw app-icon mockups as the website mark.
