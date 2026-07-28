@@ -291,7 +291,7 @@ final class CongressTradeStore: ObservableObject {
     private func replaceCache(with response: ClientFeedResponse) throws {
         guard let context = modelContext else { return }
         let existing = try context.fetch(FetchDescriptor<ClientTrade>())
-        var byID = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let byID = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var seen = Set<String>()
         for item in response.items {
             seen.insert(item.id)

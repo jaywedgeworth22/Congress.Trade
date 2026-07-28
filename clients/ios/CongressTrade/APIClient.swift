@@ -131,6 +131,15 @@ final class CongressTradeAPIClient {
         return URL(string: "/api/documents/\(encoded)/pdf", relativeTo: originURL)?.absoluteURL
     }
 
+    /// Web dashboard URL for the Premium upgrade flow. Checkout itself is
+    /// cookie-session based (`POST /billing/checkout` in
+    /// `app/src/billing/routes.ts` reads the web session cookie, not the
+    /// bearer token), so the app links out to the site's pricing modal
+    /// instead of replaying that call.
+    var upgradeURL: URL? {
+        URL(string: "/", relativeTo: originURL)?.absoluteURL
+    }
+
     /// Web dashboard URL for sharing/deep-link parity (`?trade=` / `?member=`).
     func shareURL(queryItem: URLQueryItem) -> URL? {
         var components = URLComponents(url: originURL, resolvingAgainstBaseURL: false)
