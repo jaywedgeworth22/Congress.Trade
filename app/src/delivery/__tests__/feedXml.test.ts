@@ -79,9 +79,10 @@ describe('GET /feed.xml', () => {
     expect(body).toContain('<title>Nancy Pelosi bought ACME</title>');
     expect(body).toContain('<guid isPermaLink="false">tx_1</guid>');
     expect(body).toContain('<pubDate>');
-    // Asset name carries XML metacharacters — must be escaped.
-    expect(body).toContain('Acme &amp; Sons &lt;Corp.&gt;');
-    expect(body).not.toContain('Acme & Sons <Corp>');
+    // Asset name carries XML metacharacters — must be escaped (the company-name
+    // normalizer also title-cases it to 'ACME ... Corp.' on the way out).
+    expect(body).toContain('ACME &amp; Sons &lt;Corp.&gt;');
+    expect(body).not.toContain('ACME & Sons <Corp>');
     // Newest-first snapshot over the shared builder.
     expect(sql()).toContain('ORDER BY t.cursor_seq DESC');
   });
