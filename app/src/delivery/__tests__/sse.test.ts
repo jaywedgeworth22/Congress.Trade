@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { formatTradeEvent } from '../sse.ts';
-import type { Transaction } from '../../shared/types.ts';
+import { formatTradeEvent, openSseStream, SSE_BACKLOG_DRAIN_INTERVAL_MS } from '../sse.ts';
+import type { Env, Transaction } from '../../shared/types.ts';
+import type { SubscriptionRow } from '../rows.ts';
 
 /**
  * Cross-app contract guard. Agentic Trading's stream consumer
@@ -38,5 +39,81 @@ describe('formatTradeEvent (SSE cross-app contract)', () => {
   it('carries cursorSeq as the SSE id for Last-Event-ID resume', () => {
     expect(frame.startsWith('id: 42\n')).toBe(true);
     expect(frame.endsWith('\n\n')).toBe(true);
+  });
+});
+
+describe('openSseStream live-tail backlog drain (cross-region safety net)', () => {
+  const subRow: SubscriptionRow = {
+    id: 'sub_1',
+    client_id: 'ops-integration', // not user:* so the entitlement re-check passes
+    delivery: 'sse',
+    target_url: null,
+    secret: 'stream-secret',
+    filters: '{}',
+    cursor: 0,
+    active: 1,
+    created_at: '2026-01-01T00:00:00.000Z',
+  };
+
+  function makeEnv(counter: { backlogReads: number }): Env {
+    const prepare = (sql: string) => ({
+      params: [] as unknown[],
+      bind(...params: unknown[]) {
+        this.params = params;
+        return this;
+      },
+      async first<T>() {
+        if (/FROM subscriptions WHERE id = \?/i.test(sql)) return subRow as T;
+        if (/SELECT active FROM subscriptions/i.test(sql)) return { active: 1 } as T;
+        return null as T | null;
+      },
+      async all<T>() {
+        if (/idx_tx_cursor/i.test(sql)) {
+          counter.backlogReads += 1;
+          return { results: [] as T[] };
+        }
+        return { results: [] as T[] };
+      },
+      async run() {
+        return { success: true, meta: { changes: 1 } };
+      },
+    });
+    // No CONFIG_KV: rate limiting fails open, D1-budget flush is a no-op.
+    return { DB: { prepare } as unknown as D1Database } as unknown as Env;
+  }
+
+  async function readToClose(res: Response): Promise<string> {
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+    return text;
+  }
+
+  it('re-drains the durable backlog on the drain interval, not only on broadcast gaps', async () => {
+    const counter = { backlogReads: 0 };
+    const res = await openSseStream(makeEnv(counter), 'sub_1', 0, 'stream-secret', '127.0.0.1', {
+      maxStreamMs: 260,
+      pollIntervalMs: 15,
+      backlogDrainIntervalMs: 40,
+      reconnectGraceMs: 10,
+    });
+    expect(res.status).toBe(200);
+    const body = await readToClose(res);
+    // Initial catch-up replay = 1 read; the live tail must keep draining on the
+    // interval (≈6 ticks of 40ms in 260ms) even though no BroadcastChannel
+    // message ever arrives in this isolate.
+    expect(counter.backlogReads).toBeGreaterThanOrEqual(4);
+    expect(body).toContain('event: ping');
+    expect(body).toContain('event: reconnect');
+  });
+
+  it('exposes a sane default drain cadence (30-60s per the cross-region fix)', () => {
+    expect(SSE_BACKLOG_DRAIN_INTERVAL_MS).toBeGreaterThanOrEqual(30_000);
+    expect(SSE_BACKLOG_DRAIN_INTERVAL_MS).toBeLessThanOrEqual(60_000);
   });
 });

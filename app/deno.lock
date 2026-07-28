@@ -8,7 +8,6 @@
     "npm:@libsql/client@*": "0.17.4",
     "npm:@libsql/client@~0.17.4": "0.17.4",
     "npm:@sentry/cloudflare@^10.66.0": "10.66.0_@cloudflare+workers-types@4.20260702.1",
-    "npm:@types/node@26.1.1": "26.1.1",
     "npm:@typescript-eslint/eslint-plugin@^8.64.0": "8.64.0_@typescript-eslint+parser@8.64.0__eslint@10.7.0__typescript@5.9.3_eslint@10.7.0_typescript@5.9.3",
     "npm:@typescript-eslint/parser@^8.62.1": "8.64.0_eslint@10.7.0_typescript@5.9.3",
     "npm:@vitest/coverage-v8@4.1.10": "4.1.10_vitest@4.1.10_@opentelemetry+api@1.9.1_@types+node@26.1.1_vite@8.1.5__@types+node@26.1.1__esbuild@0.28.1",
@@ -2233,12 +2232,12 @@
     ],
     "packageJson": {
       "dependencies": [
-        "npm:@aws-sdk/client-s3@3.1095.0",
+        "npm:@aws-sdk/client-s3@3.1096.0",
         "npm:@fontsource/zilla-slab@^5.3.0",
         "npm:@google/genai@^2.13.0",
         "npm:@libsql/client@~0.17.4",
         "npm:@sentry/cli@^3.6.2",
-        "npm:@types/node@26.1.1",
+        "npm:@types/node@26.1.2",
         "npm:@typescript-eslint/eslint-plugin@^8.64.0",
         "npm:@typescript-eslint/parser@^8.62.1",
         "npm:@vitest/coverage-v8@4.1.10",
