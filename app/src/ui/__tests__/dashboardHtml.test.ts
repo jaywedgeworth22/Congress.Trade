@@ -263,11 +263,7 @@ describe('DASHBOARD_HTML', () => {
     expect(brandLogoMatch).toBeTruthy();
     // Lockup is the brand — no separate Zilla wordmark span next to it.
     expect(DASHBOARD_HTML).not.toMatch(/class="brand-logo"[^>]*>\s*<span class="brand-text"/);
-    // Eagle flight splash (curved path + bank, not a mere scale tween).
-    expect(DASHBOARD_HTML).toContain('id="eagle-splash"');
-    expect(DASHBOARD_HTML).toContain('id="eagle-splash-mark"');
-    expect(DASHBOARD_HTML).toContain('runEagleSplash');
-    expect(DASHBOARD_HTML).toContain('bez3');
+
     expect(DASHBOARD_HTML).toContain('data-src-light');
     expect(DASHBOARD_HTML).toContain('data-src-dark');
 

@@ -83,7 +83,7 @@ export async function readClientTradeList(env: Env, params: TxQueryParams): Prom
 
   // Zero-delta incremental poll: a `?since=` cursor that comes back with no
   // new rows is the steady-state case for both known clients (the dashboard's
-  // fetchUpdates() and the PWA's poll() both bail out — `if (!txs.length)
+  // fetchUpdates() and the web app's poll() both bail out — `if (!txs.length)
   // return` / `if (delta.items.length > 0)` — before ever reading `total` on
   // an empty delta). Skip the full unindexed COUNT(*) scan entirely rather
   // than paying D1 read cost for a number no conforming client observes.

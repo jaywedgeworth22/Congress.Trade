@@ -1,7 +1,7 @@
 /**
  * src/client/state.ts
  *
- * D1 helpers for the shared mobile/PWA client API. The backend owns this state:
+ * D1 helpers for the shared mobile client API. The backend owns this state:
  * clients submit commands and read status, but do not perform provider work.
  */
 
