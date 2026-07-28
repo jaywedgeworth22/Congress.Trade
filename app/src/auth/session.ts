@@ -174,7 +174,7 @@ function bearerSessionToken(c: Context): string | undefined {
 }
 
 /** Resolve a session from the httpOnly cookie first, then a bearer token.
- * Native clients use the bearer path; browser/PWA clients keep the cookie path. */
+ * Native clients use the bearer path; browser clients keep the cookie path. */
 export function getSessionTokenFromRequest(c: Context): string | undefined {
   return getSessionTokensFromRequest(c)[0];
 }

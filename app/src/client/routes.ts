@@ -1,7 +1,7 @@
 /**
  * src/client/routes.ts
  *
- * Shared backend-owned API for the phone-first PWA and SwiftUI app.
+ * Shared backend-owned API for the phone-first SwiftUI app.
  * Mounted at /api/client/v1. Public reads stay public; preferences and commands
  * require the existing opaque session via cookie or Authorization bearer.
  */

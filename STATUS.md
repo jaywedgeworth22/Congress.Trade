@@ -173,7 +173,7 @@ Last updated: 2026-07-24 (CURSOR)
   rejected as `Matching delimiter not found`. The workflow now forces the terminator onto its own
   line. The older dynamic-delimiter fix still prevents body content from colliding with the marker.
 - Verification passed: app lint (0 errors / 100 inherited warnings), typecheck, 106 files / 940
-  tests; PWA typecheck, 3 files / 13 tests, and production build; workflow YAML parse and
+  tests; web app typecheck, 3 files / 13 tests, and production build; workflow YAML parse and
   compact-JSON framing harness. Ready closeout PR #297 is recorded in
   `docs/rollouts/2026-07-11-shared-v150-closeout.md`.
 
@@ -181,7 +181,7 @@ Last updated: 2026-07-24 (CURSOR)
 
 - PR #284 (`codex/app-hardening-integration`) merged to `main` as
   `8a855cbac5a1ae6e088e4aa380fc6bdbd233eecb`, landing the completed backend
-  reliability, billing/security, PWA, and iOS audit follow-through. Independent
+  reliability, billing/security, web app, and iOS audit follow-through. Independent
   semantic and schema reviews pass.
 - Isolated preview Worker version `85417928-cae4-4bb6-8706-96c739846533` is
   healthy at `https://congress-trade-preview.jaywedgeworth22.workers.dev` with
@@ -190,7 +190,7 @@ Last updated: 2026-07-24 (CURSOR)
   duplicate-key verification.
 - Final app gate: typecheck; 95 files / 808 tests; coverage
   67.90/60.14/71.91/70.15; lint 0 errors; npm audit 0; fresh 28-migration D1;
-  production and preview Wrangler dry-runs. Final client gate: PWA typecheck,
+  production and preview Wrangler dry-runs. Final client gate: web app typecheck,
   3 files / 13 tests, production build, audit 0, desktop/mobile rendered QA;
   iOS generic Simulator build and build-for-testing; XCTest execution still
   needs an installed concrete Simulator runtime.
@@ -201,7 +201,7 @@ Last updated: 2026-07-24 (CURSOR)
   ship-and-migrate path restored readiness by 16:13. That version is the
   immutable code-release receipt; later docs-only `main` pushes may create
   newer no-code Worker versions. No ingestion, queue drain, backfill, or billing
-  activation ran. The PWA and iOS prototypes still have no standalone
+  activation ran. The web app and iOS prototypes still have no standalone
   production host/App Store release target.
 
 ## 2026-07-11 (CODEX) — Review Queue autonomy production release
@@ -233,7 +233,7 @@ Last updated: 2026-07-24 (CURSOR)
   monotonic review revisions, fail-closed reviewer consensus, atomic
   row+filing+audit+generic-outbox commits, durable holds, live-only identity,
   and consistent `est_value` materialization. Gate: typecheck, 104 files / 908
-  tests, lint 0 errors, hosted CI/PWA/gitleaks green, and two quiet post-retry
+  tests, lint 0 errors, hosted CI/web app/gitleaks green, and two quiet post-retry
   samples. Next high-value work is chamber/content-aware Anthropic input
   handling and bounded JSON repair/output-size handling before retrying the 20.
   See `docs/rollouts/2026-07-11-review-queue-autonomy-hardening.md`.
@@ -318,7 +318,7 @@ challenge, so `POST /api/admin/migrate` never ran). Refreshing below:
   Antigravity, or other coordinated branches. Before editing, run the AGENTS.md
   preflight commands and inspect open PR changed files/checks for overlap.
 - Current product direction: mobile dashboard polish plus a phone-first
-  Next.js/PWA and SwiftUI iPhone app that share one backend-owned
+  SwiftUI iPhone app that share one backend-owned
   `/api/client/v1/*` contract and command/status model.
 
 ## Decisions Now Implemented
@@ -332,11 +332,11 @@ challenge, so `POST /api/admin/migrate` never ran). Refreshing below:
 - Webhook delivery claims a unique `(subscription_id, tx_id)` row before POSTing.
 - Stripe Managed Payments support is present but off by default through
   `STRIPE_MANAGED_PAYMENTS = "false"`.
-- Backend is the source of truth for future clients. The phone-first Next.js/PWA
+- Backend is the source of truth for future clients. The phone-first SwiftUI
   and SwiftUI iPhone app now start from one backend `/api/client/v1/*` contract
   and one server-side command/status model.
 - Migration `0009_client_api.sql` adds `user_preferences` and
-  `client_commands` for the shared PWA/Swift command gateway.
+  `client_commands` for the shared Swift command gateway.
 - Client apps must not own scraping, calculations, provider credentials, admin
   tokens, migrations, backfills, billing secrets, or MCP/tool orchestration.
 - Client writes should flow through server-side commands with idempotency,

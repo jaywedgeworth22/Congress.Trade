@@ -265,7 +265,7 @@ export interface ReviewItem {
 }
 
 // ---------------------------------------------------------------------------
-// Client API contracts (shared PWA + SwiftUI backend surface)
+// Client API contracts (shared web app + SwiftUI backend surface)
 // ---------------------------------------------------------------------------
 
 

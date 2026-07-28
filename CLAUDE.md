@@ -18,7 +18,7 @@ Key reminders:
   cannot reach the canonical board under `/Users/jay/apps/`; the repo mirror
   is their source of truth, so keeping it current is not optional.
 - Work from `app/` for the Cloudflare Worker application.
-- Treat the backend as the source of truth. The planned Next.js/PWA and SwiftUI
+- Treat the backend as the source of truth. The planned SwiftUI
   clients must share one `/api/client/v1/*` contract and one server-side
   command/status model; do not create client-only scraping, provider-secret, or
   MCP orchestration paths.
@@ -51,6 +51,6 @@ Key reminders:
   `POST /api/admin/migrate` in `app/src/admin/routes.ts`, and note the
   migration in the PR body.
 - Run `cd app && npm run typecheck && npm test` before handing back code changes.
-- For mobile/PWA/Swift work, keep `app/docs/client-mobile-api.md` and
+- For mobile/Swift work, keep `app/docs/client-mobile-api.md` and
   `app/docs/mobile-app-roadmap.md` aligned with any `/api/client/v1/*` contract,
   command/status, auth/session, or account-alert changes.
