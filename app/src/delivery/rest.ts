@@ -31,6 +31,7 @@ import {
   mapFiling,
   mapTransaction,
   mapFeedTransaction,
+  resolveMemberFilerId,
   toPublicFiling,
   type FilingRow,
   type TransactionRow,
@@ -274,6 +275,17 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
         429,
         { 'Retry-After': String(budget.retryAfterSec) },
       );
+    }
+    // A free-text memberName would force the un-indexed full-corpus LIKE path
+    // (canNestTransactionKeyset bails on it). Resolve the name to a filer_id
+    // first so the feed takes the indexed keyset path; an unresolved name keeps
+    // the legacy LIKE fallback (seed rows whose filer_id has no filers entry).
+    if (params.memberName && !params.member) {
+      const resolvedFilerId = await resolveMemberFilerId(c.env, params.memberName);
+      if (resolvedFilerId) {
+        params.member = resolvedFilerId;
+        params.memberName = undefined;
+      }
     }
     const built = buildTransactionsQuery(params);
     // The query SELECTs the resolved chamber + politician name alongside the feed

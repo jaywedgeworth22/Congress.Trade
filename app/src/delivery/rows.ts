@@ -11,6 +11,7 @@
 import type {
   Chamber,
   DeliveryChannel,
+  Env,
   Filing,
   Owner,
   Subscription,
@@ -19,7 +20,7 @@ import type {
   TxSource,
   TxType,
 } from '../shared/types.ts';
-import { parseJson, toBool } from '../shared/db.ts';
+import { get, parseJson, toBool } from '../shared/db.ts';
 import { canonicalizeAssetType } from '../shared/assetTypes.ts';
 import { normalizeCompanyName } from '../shared/companyName.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
@@ -269,6 +270,30 @@ export function toPublicFiling(filing: Filing): PublicFiling {
  */
 export function escapeLikePattern(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+/**
+ * Resolve a free-text member name to a `filers.bioguide_id` so the feed can
+ * filter on the indexed `transactions.filer_id` column instead of the
+ * un-indexed `LOWER(full_name) LIKE` full-corpus path (a raw memberName filter
+ * defeats the nested keyset in buildTransactionsQuery — see
+ * canNestTransactionKeyset). Exact match ranks first, then substring, mirroring
+ * the client API's resolveMember (src/client/queries.ts). Returns null when no
+ * filer matches; callers then keep the legacy LIKE fallback so transactions
+ * whose filer_id never resolved to a filers row stay reachable by name text.
+ */
+export async function resolveMemberFilerId(env: Env, memberName: string): Promise<string | null> {
+  const term = memberName.trim();
+  if (!term) return null;
+  const row = await get<{ bioguide_id: string }>(
+    env.DB,
+    `SELECT bioguide_id FROM filers
+      WHERE LOWER(full_name) = LOWER(?) OR LOWER(full_name) LIKE ? ESCAPE '\\'
+      ORDER BY CASE WHEN LOWER(full_name) = LOWER(?) THEN 0 ELSE 1 END, full_name
+      LIMIT 1`,
+    [term, `%${escapeLikePattern(term.toLowerCase())}%`, term],
+  );
+  return row?.bioguide_id ?? null;
 }
 
 // ---------------------------------------------------------------------------
