@@ -140,6 +140,10 @@ async function hashIdentifier(identifier: string): Promise<string> {
 /**
  * Returns ok=false when `identifier` has already made `limit` requests in the
  * current `windowSec` window for `bucket`. Counting increments only when ok.
+ *
+ * Scope note: KV-backed buckets approximate a global cap (one counter per
+ * window, fail-open on KV errors). The `pub-api` bucket is the documented
+ * exception — it is enforced per-isolate only, never globally (see below).
  */
 export async function rateLimit(
   env: KvEnv,
@@ -172,7 +176,11 @@ export async function rateLimit(
   }
 
   // To save Deno KV write quota on highly-polled public feeds, pub-api is
-  // exclusively enforced in-memory per-isolate.
+  // exclusively enforced in-memory per-isolate. There is deliberately NO
+  // global counter for this bucket: the effective ceiling is `limit` requests
+  // per window PER ISOLATE, so the true cross-region cap is up to
+  // limit × (active isolates). Callers must not document or rely on `limit`
+  // as a global cap for pub-api — it is a per-isolate approximation.
   if (bucket === 'pub-api') {
     return { ok: true, remaining: limit - 1, retryAfterSec: 0 };
   }
