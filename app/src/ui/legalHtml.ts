@@ -17,6 +17,7 @@ function shell(title: string, body: string): string {
   return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
+%GA_SCRIPT%
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${title} · Congress.Trade</title>
