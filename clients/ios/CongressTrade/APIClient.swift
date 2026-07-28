@@ -112,7 +112,31 @@ final class CongressTradeAPIClient {
            let url = URL(string: raw) {
             return url
         }
+        // Compile-time constant; a malformed override above falls through here.
         return URL(string: "https://congress.trade/api/client/v1")!
+    }
+
+    /// Site origin (scheme + host) with the `/api/client/v1` path stripped.
+    /// Auth (`/auth/*`), document (`/api/documents/*`), and logo endpoints live
+    /// at the origin, not under the client API prefix.
+    var origin: URL {
+        originURL
+    }
+
+    /// URL for the filing PDF served from R2 (or redirected to the source).
+    /// Mirrors `GET /api/documents/:docId/pdf` in `app/src/delivery/rest.ts`.
+    func documentPDFURL(docId: String) -> URL? {
+        guard !docId.isEmpty else { return nil }
+        let encoded = docId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? docId
+        return URL(string: "/api/documents/\(encoded)/pdf", relativeTo: originURL)?.absoluteURL
+    }
+
+    /// Web dashboard URL for sharing/deep-link parity (`?trade=` / `?member=`).
+    func shareURL(queryItem: URLQueryItem) -> URL? {
+        var components = URLComponents(url: originURL, resolvingAgainstBaseURL: false)
+        components?.path = "/"
+        components?.queryItems = [queryItem]
+        return components?.url
     }
 
     func bootstrap() async throws -> BootstrapResponse {
@@ -120,13 +144,45 @@ final class CongressTradeAPIClient {
     }
 
     func feed(query: FeedQuery = .init()) async throws -> ClientFeedResponse {
-        var components = URLComponents(url: endpointURL("feed"), resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: endpointURL("feed"), resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidResponse
+        }
         components.queryItems = query.queryItems
-        return try await request(components.url!)
+        guard let url = components.url else { throw APIError.invalidResponse }
+        return try await request(url)
     }
 
     func member(id: String) async throws -> ClientMemberResponse {
         try await get("member/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)")
+    }
+
+    func ticker(_ ticker: String) async throws -> ClientTickerResponse {
+        let encoded = ticker.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ticker
+        return try await get("ticker/\(encoded)")
+    }
+
+    /// Sends a magic-link sign-in email. The `client=ios` query makes the
+    /// backend build a `congresstrade://auth` verify redirect
+    /// (`app/src/auth/routes.ts` POST /auth/magic/request). Always resolves on
+    /// the backend's anti-enumeration `ok:true` response.
+    func requestMagicLink(email: String) async throws {
+        guard var components = URLComponents(
+            url: originURL.appendingPathComponent("auth/magic/request"),
+            resolvingAgainstBaseURL: false
+        ) else { throw APIError.invalidResponse }
+        components.queryItems = [URLQueryItem(name: "client", value: "ios")]
+        guard let url = components.url else { throw APIError.invalidResponse }
+        var request = try makeRequest(url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "content-type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["email": email], options: [])
+        let (data, response) = try await perform(request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            let error = try? decoder.decode(APIErrorResponse.self, from: data)
+            let retryAfter = (http.value(forHTTPHeaderField: "Retry-After")).flatMap { Int($0) }
+            throw APIError.server(status: http.statusCode, message: error?.error ?? "Could not send sign-in link", retryAfterSeconds: retryAfter)
+        }
     }
 
     func subscriptions() async throws -> SubscriptionListResponse {
@@ -172,18 +228,22 @@ final class CongressTradeAPIClient {
     }
 
     private func analyticsGet<T: Decodable>(_ path: String, query: [URLQueryItem] = []) async throws -> T {
-        var components = URLComponents(
+        guard var components = URLComponents(
             url: originURL.appendingPathComponent("api/analytics/\(path)"),
             resolvingAgainstBaseURL: false
-        )!
+        ) else { throw APIError.invalidResponse }
         if !query.isEmpty { components.queryItems = query }
-        return try await request(components.url!)
+        guard let url = components.url else { throw APIError.invalidResponse }
+        return try await request(url)
     }
 
     func commands(limit: Int = 20) async throws -> CommandListResponse {
-        var components = URLComponents(url: endpointURL("commands"), resolvingAgainstBaseURL: false)!
+        guard var components = URLComponents(url: endpointURL("commands"), resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidResponse
+        }
         components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
-        return try await request(components.url!)
+        guard let url = components.url else { throw APIError.invalidResponse }
+        return try await request(url)
     }
 
     func command(id: String) async throws -> ClientCommandResponse<JSONValue> {
@@ -215,7 +275,7 @@ final class CongressTradeAPIClient {
     private struct Ack: Decodable {}
 
     func createSSESubscription(
-        tickers: [String],
+        filters: SubscriptionFilters,
         idempotencyKey: String
     ) async throws -> ClientCommandResponse<SubscriptionCommandResult> {
         try await postCommand(
@@ -224,7 +284,7 @@ final class CongressTradeAPIClient {
                 "type": "create_subscription",
                 "payload": [
                     "delivery": "sse",
-                    "filters": ["tickers": tickers]
+                    "filters": filters.commandPayload
                 ]
             ]
         )
@@ -232,7 +292,7 @@ final class CongressTradeAPIClient {
 
     func createWebhookSubscription(
         targetURL: String,
-        tickers: [String],
+        filters: SubscriptionFilters,
         idempotencyKey: String
     ) async throws -> ClientCommandResponse<SubscriptionCommandResult> {
         try await postCommand(
@@ -242,7 +302,7 @@ final class CongressTradeAPIClient {
                 "payload": [
                     "delivery": "webhook",
                     "targetUrl": targetURL,
-                    "filters": ["tickers": tickers]
+                    "filters": filters.commandPayload
                 ]
             ]
         )
@@ -298,11 +358,14 @@ final class CongressTradeAPIClient {
     }
 
     private var originURL: URL {
-        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
-        components.path = ""
-        components.query = nil
-        components.fragment = nil
-        return components.url!
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.path = ""
+        components?.query = nil
+        components?.fragment = nil
+        // baseURL is validated at init (default or env-provided absolute URL),
+        // so stripping the path always yields a valid origin; fall back to the
+        // base itself rather than trapping if a future caller violates that.
+        return components?.url ?? baseURL
     }
 
     private func endpointURL(_ path: String) -> URL {
