@@ -59,7 +59,7 @@ import { constantTimeEqual } from '../auth/tokens.ts';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from './webhookTarget.ts';
 import { rateLimit, clientIp } from '../shared/rateLimit.ts';
 import { checkRowBudget, spendRowBudget, MAX_PUBLIC_TX_OFFSET } from '../security/botDefense.ts';
-import { checkReadiness } from '../shared/readiness.ts';
+import { checkReadiness, type ReadinessResult } from '../shared/readiness.ts';
 import { costProfilePublicSummary, resolveDenoCostProfile } from '../deno/costProfile.ts';
 
 function parseIntOrUndef(v: string | undefined): number | undefined {
@@ -85,6 +85,17 @@ export function resolveResumeCursor(
 }
 
 type RestContext = Context<{ Bindings: Env }>;
+
+/**
+ * In-isolate readiness cache for GET /health. The readiness probe runs ~50
+ * schema-introspection queries (shared/readiness.ts REQUIRED_PROBES); paying
+ * that per uptime-monitor hit is pure waste when the schema changes at most
+ * once per deploy. 60 s is fresh enough for a deploy gate and a stale-ok
+ * verdict still self-corrects on the next expiry. A static /health (no DB)
+ * exists in index.ts for monitors that only need liveness.
+ */
+const READINESS_CACHE_TTL_MS = 60_000;
+let readinessCache: { at: number; result: ReadinessResult } | null = null;
 
 interface PublicSubscription extends Omit<Subscription, 'secret'> {
   hasSecret: boolean;
@@ -208,7 +219,11 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // Also reports the active cost profile (public, no secrets) so free-tier
   // ops can confirm CT_COST_PROFILE without an admin token.
   r.get('/health', async (c) => {
-    const readiness = await checkReadiness(c.env.DB);
+    const now = Date.now();
+    if (!readinessCache || now - readinessCache.at >= READINESS_CACHE_TTL_MS) {
+      readinessCache = { at: now, result: await checkReadiness(c.env.DB) };
+    }
+    const readiness = readinessCache.result;
     const envx = c.env as Env & Record<string, string | undefined>;
     const costProfile = costProfilePublicSummary(resolveDenoCostProfile(envx));
     return c.json(
