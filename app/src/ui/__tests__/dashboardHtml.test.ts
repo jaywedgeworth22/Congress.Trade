@@ -252,7 +252,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('>Timeframe</label>');
     expect(DASHBOARD_HTML).not.toContain('↻ Refresh');
     expect(DASHBOARD_HTML).toContain('class="brand-logo"');
-    // Eagle brand mark (owner SuperGrok Imagine) embedded as PNG data-URI — not the old chart placeholder.
+    // Circular eagle badge (transparent outside ring), not a photo of a squircle app icon.
+    expect(DASHBOARD_HTML).toContain('.brand-logo { width:28px; height:28px; border-radius:50%');
     const brandLogoMatch = DASHBOARD_HTML.match(/class="brand-logo" src="(data:image\/png;base64,[A-Za-z0-9+/=]+)"/);
     expect(brandLogoMatch).toBeTruthy();
     expect(brandLogoMatch![1].length).toBeGreaterThan(10_000);
