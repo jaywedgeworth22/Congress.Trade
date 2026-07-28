@@ -702,6 +702,48 @@ _GitHub Issues: 0 open product PRs as of prior closeout; this is an ops/billing 
   committed, not product code) that must be removed before it lands. action=reclaim-and-finish.
   [AG -> AG].
 ## Planned / Reserved
+### 2026-07-28 KIMI full-stack improvement analysis — evidence: docs/analysis/2026-07-28-full-stack-improvement-analysis.md
+_Proposed by KIMI (Kimi Code CLI) after a read-only backend+web+iOS audit. All rows unassigned unless claimed in #agent-sync._
+- **iOS: register `congresstrade://` URL scheme — sign-in callback broken (unassigned, S).**
+  Google OAuth redirects to `congresstrade://auth?token=` (app/src/auth/routes.ts:176-178, SettingsView.swift:130) but the Xcode project has no CFBundleURLTypes (project.pbxproj:444-452), so ASWebAuthenticationSession cannot deliver the callback. Add the scheme + a contract test for the auth round trip.
+- **Backend: SSE live-tail cross-region fallback (unassigned, S).**
+  delivery/sse.ts:311-386 relies on BroadcastChannel, which does not span Deno Deploy regions; Premium subscribers in the wrong region get no trades until the 25-min reconnect with no error. Add a periodic drainSseBacklog (30-60s) inside the keep-alive loop.
+- **Backend: coalesce lease.assertOwned round trips on queue hot path (unassigned, M).**
+  Every proxied statement in deno/durableQueue.ts:571-657 awaits a lease-assert DB query, doubling Turso round trips (~60 for a 30-statement handler). Cache ownership within a freshness window / assert at handler boundaries.
+- **Web: OG/Twitter/meta tags + favicon/manifest (unassigned, S).**
+  dashboardHtml.ts:31-46 has zero OG/Twitter/description tags, no favicon, no manifest — every shared link unfurls blank. Add meta set, static 1200x630 image (docs/brand/assets/ exists), and serve the orphaned icon set from clients/pwa/out/.
+- **Web: deep links (?trade/?ticker/?member) + copy-link buttons (unassigned, M).**
+  Only ?view= is parsed (dashboardHtml.ts:8483); openTradeById silently no-ops for unknown IDs (:8370-8375). Handle entity params on boot (data endpoints exist) and add Copy-link per drawer. Prerequisite for iOS universal links.
+- **Owner decision: CSV export gate vs copy contradiction (unassigned, S).**
+  UI copy says CSV export is Premium (dashboardHtml.ts:1651, :3514) but GET /api/export/transactions.csv was deliberately ungated in #558 (delivery/rest.ts:335-347). Decide, then align copy or restore the entitlement gate.
+- **iOS: premium gating + upgrade path on Alerts tab (unassigned, M).**
+  DeliveryView.swift:38 only checks signedIn; free users hit a raw server error with no CTA. Entitlement is already decoded (Models.swift:22-26). Add Premium explainer + checkout path mirroring the web pricing modal.
+- **iOS: watchlist editor UI (or decouple from delivery filter) (unassigned, M).**
+  saveWatchlist/updatePreferences exist (CongressTradeStore.swift:311-334) but no WatchlistView is in the target; createDelivery silently uses the invisible watchlist as the ticker filter (:341,353,364).
+- **iOS: ticker detail screen + filing PDF viewer (unassigned, M).**
+  Backend GET /client/v1/ticker/:ticker exists (client/routes.ts:139-170) but APIClient has no ticker() and tapping tickers does nothing; docId is in models but only external sourceUrl is offered. Add TickerDetailView + /api/client/v1/documents/:docId/pdf viewing.
+- **Web: delivery pause/resume/delete + filter editing (unassigned, M).**
+  dashboardHtml.ts:4605-4634 hardcodes filters:{} at creation and renders a "paused" state users can never produce; PATCH /api/subscriptions/:id exists (delivery/rest.ts:825). Add filter form + per-row actions.
+- **Web: extract base64 assets from the 833KB dashboardHtml.ts (unassigned, M).**
+  Single-file SPA (8,706 lines) inlines font + 2 PNGs as data URIs (:127,:1557,:1561), re-downloaded per request, defeating cache/compression/CSP. Extract to hashed static assets; target <100KB compressed HTML.
+- **iOS: replaceCache -> transactional upsert (unassigned, S).**
+  CongressTradeStore.swift:232-243 deletes all + re-inserts on every refresh (non-transactional, main-actor). Upsert by id in one context.save() on a background ModelActor.
+- **Both clients: server-side search wiring (unassigned, M).**
+  iOS searches only the local <=200-row cache while FeedQuery already supports server-side ticker/member/type (APIClient.swift:42-46); web "Search All"/min/max-$ only filters the current page (dashboardHtml.ts:3061-3068). Route both through server params.
+- **Backend: query optimizations batch (unassigned, M).**
+  memberName filter forces un-indexed full-corpus path (delivery/rows.ts:409-467) — add lowercase name column+index or resolve to filer_id first; COUNT queries join securities_ref needlessly (:554-577); add index on filings.filed_date for the retention sweep (jobs.ts:148-153, mirror in admin/migrations.ts).
+- **Backend: consolidate cron orchestrations + AbortSignal + async commands (unassigned, M).**
+  Two divergent tick pipelines (index.ts:499-613 vs deno/scheduledTick.ts:119-229, already drifted once); 45s cron race abandons ticks without cancellation (deno/main.ts:130-148); POST /api/client/v1/commands executes synchronously in-request (client/routes.ts:345-355) — enqueue + return 202.
+- **Web UX batch: splash persistence, visibility-aware polling, URL-synced filters, a11y (unassigned, M).**
+  Eagle splash replays every session (sessionStorage, dashboardHtml.ts:8584); no visibilitychange handler so hidden tabs poll forever (:3563-3584); filter state not in URL (:8483-8496); placeholder-only labels, missing aria-sort/alt (:1579-1580,:1738-1742,:1561).
+- **Push notifications end-to-end (unassigned, XL).**
+  The "Alerts" tab has no push: no APNs entitlement, no backend device-registration endpoint, no alert-rules UI. This is the Premium promise ("the filing the moment we see it"). Needs backend route + entitlement + client UI; decide free-vs-Premium policy first (owner question in the analysis doc).
+- **Interop package: API keys + OpenAPI + CORS + RSS (unassigned, L).**
+  Third-party consumption is blocked by design: UA blocklist 403s conventional HTTP clients (botDefense.ts:71-81), auth requires human OAuth, zero CORS, no spec for public routes (deno_openapi.json is Deno Deploy's API — rename it). Add per-user API keys (Bearer ct_...) keeping row budgets, openapi.yaml, CORS on read-only GETs, and GET /feed.xml over the existing query builder. Owner decision needed: is blocking third parties deliberate policy?
+- **iOS release-readiness: universal links, ShareLink, Sign in with Apple, magic link, widgets (unassigned, L).**
+  No onOpenURL/ShareLink/AppIntents anywhere; Sign in with Apple is an App Review requirement alongside Google; magic link is supported backend-side (?client=ios) but not in the app. Sequence after web deep links land (shared URL contract).
+- **Housekeeping sweep (unassigned, S).**
+  Delete app/src/admin/routes.ts.orig (merge artifact), ~20 root/app scratch fix_*.py/test_*.ts files, stale clients/pwa/.next (179MB, app deleted from git), duplicate runOgeBackfill (dashboardHtml.ts:4850 vs :4889), iOS dead code (DateChip, refreshLatencySummary, unused FeedQuery params), and decide: wire Firebase Crashlytics or remove the unused Firebase dependency (privacy-manifest liability).
 - **Post-Codex Activation: PWA/iOS deploy targets, billing config, ingestion and queue drain (AG, XL) — 2026-07-11.** Take over execution from Codex, define production hosting for PWA/iOS, configure billing portal, and execute backlog ingestion/backfill.
 - **Senate Scraper Hardening (AG, M) — 2026-07-05.** Overcome WAF IP blocks via residential scout proxying, implement content-based field extraction for DataTables, and cache session handshakes in KV.
 - **UI/UX Improvements (AG, M) — 2026-07-05.** Fix mobile tab grid spacing, hide mobile columns button, consolidate search/filters + add Max $, fix theme toggle labels, group pagination controls, sticky-lock columns, and add charts to Trends.
@@ -782,6 +824,7 @@ Jul 8 18:10 CT)._
 - **Rescue CURSOR stash into a committed, pushed branch + PR (CURSOR, M) — MERGED 2026-07-08 via PR #211 (`ef732f3`).** PR #211 (`cursor/assigned-tasks-v2`). Stash@{1} rescued from base 892b45e onto current origin/main. Dropped already-merged hunks from #139/#140. Genuine work committed: tsconfig strict flags, tsconfig.ingestcheck deletion, ESLint deps + scripts, lockfile-based pin-check, AGENTS.md dedup, unused-code removal across 8 files, dashboard CSS cleanup. Gates: typecheck 0 errors, lint 0 errors, 672 tests pass.
 - **Add manual queue reprocess button to admin dashboard (AG, S) — COMPLETED 2026-07-06.** Added a UI widget to `dashboardHtml.ts` to trigger `POST /api/admin/reprocess` directly from the admin panel.
 ## Changelog of this log
+- 2026-07-28 (KIMI, Kimi Code CLI — new seat, announced in #agent-sync): added 20 Planned rows from a read-only full-stack improvement audit (backend/web/iOS); evidence doc at docs/analysis/2026-07-28-full-stack-improvement-analysis.md on branch kimi/full-stack-improvement-analysis.
 - 2026-07-08 — CURSOR: PR #211 merged; PR #237 opened (rollouts convention + deploy health gate workers.dev fallback, previously stranded in stash@{1}).
 - 2026-07-06 — CURSOR: rescued stash@{1} → PR #211; fixed uptime-monitor.yml crash + CF challenge bypass; adopted rollouts convention; created Wave-4 smoke script; fixed deploy health gate (workers.dev fallback); noted patch.py on AG's PR #186.
 - 2026-07-05 — CLAUDE next-wave (cycle 2): stale-row corrections (tokenless-dep switch and
