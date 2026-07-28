@@ -7665,7 +7665,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           AND EXISTS (
             SELECT 1 FROM transactions WHERE doc_id = 'E-2025-donald-j-trump-08-12-2025-278t-2-amended' AND deprecated_at IS NULL
           )`,
-      // 0026_retroactive_amendment_deprecation_sweep.sql — soft-deprecate all historical predecessor filing transactions superseded by amended filings across all chambers (bounded to 100 per run to ensure sub-second migration response).
+      `CREATE INDEX IF NOT EXISTS idx_filings_filer_amend ON filings(filer_id, ingest_status, filed_date)`,
+      // 0026_retroactive_amendment_deprecation_sweep.sql — soft-deprecate all historical predecessor filing transactions superseded by amended filings across all chambers (indexed and bounded to 50 per run for instant response).
       `UPDATE transactions
           SET deprecated_at = '2026-07-28T17:15:00.000Z',
               deprecated_reason = 'retroactive amendment cleanup: superseded by newer amended filing'
@@ -7675,14 +7676,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
               FROM filings f_amend
               JOIN filings f_orig
                 ON f_amend.filer_id = f_orig.filer_id
+               AND f_amend.filed_date = f_orig.filed_date
                AND f_amend.doc_id <> f_orig.doc_id
              WHERE f_amend.ingest_status = 'persisted'
                AND f_orig.ingest_status = 'persisted'
-               AND (
-                 (f_amend.doc_id LIKE 'E-%' AND SUBSTR(f_amend.doc_id, 1, 35) = SUBSTR(f_orig.doc_id, 1, 35) AND (f_amend.doc_id LIKE '%amend%' OR f_amend.source_url LIKE '%amend%'))
-                 OR (f_amend.filed_date IS NOT NULL AND f_amend.filed_date = f_orig.filed_date AND (f_amend.filing_status = 'Amended' OR f_amend.doc_id LIKE '%amend%' OR f_amend.source_url LIKE '%amend%'))
-               )
-             LIMIT 100
+               AND (f_amend.filing_status = 'Amended' OR f_amend.doc_id LIKE '%amend%' OR f_amend.source_url LIKE '%amend%')
+             LIMIT 50
           )`,
       // 0029-0039 — canonical value, reliability, Stripe, review, and benchmark tail.
       ...POST_0024_SCHEMA_STATEMENTS,
