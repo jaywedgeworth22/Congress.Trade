@@ -3776,6 +3776,9 @@ function decisionReasonText(d) {
   if (reason) bits.push(reason.replace(/_/g, ' '));
   if (payload && typeof payload.minConfidence === 'number') bits.push('conf ' + Math.round(payload.minConfidence * 100) + '%');
   if (payload && typeof payload.inserted === 'number') bits.push('inserted ' + payload.inserted);
+  if (payload && typeof payload.deprecatedPredecessors === 'number' && payload.deprecatedPredecessors > 0) {
+    bits.push('superseded ' + payload.deprecatedPredecessors + ' original');
+  }
   if (payload && typeof payload.deprecatedTransactions === 'number') bits.push('retracted ' + payload.deprecatedTransactions);
   return bits.join(' · ') || '—';
 }
