@@ -259,6 +259,11 @@ describe('DASHBOARD_HTML', () => {
     expect(brandLogoMatch![1].length).toBeGreaterThan(20_000);
     // Lockup is the brand — no separate Zilla wordmark span next to it.
     expect(DASHBOARD_HTML).not.toMatch(/class="brand-logo"[^>]*>\s*<span class="brand-text"/);
+    // Eagle fly-in splash (large → recedes into header brand).
+    expect(DASHBOARD_HTML).toContain('id="eagle-splash"');
+    expect(DASHBOARD_HTML).toContain('id="eagle-splash-mark"');
+    expect(DASHBOARD_HTML).toContain('runEagleSplash');
+
   });
 
   it('renders the honest speed-vs-providers scoreboard on Trends', () => {

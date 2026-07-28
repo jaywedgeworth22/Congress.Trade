@@ -197,11 +197,11 @@ struct FeedDashboardView: View {
 struct BrandTitle: View {
     var body: some View {
         HStack(spacing: 8) {
+            // Settle target for EagleSplashView (~32pt).
             Image("BrandLogo")
                 .resizable()
                 .scaledToFit()
-                .frame(width: 28, height: 28)
-                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .frame(width: 32, height: 32)
             Text("Congress.Trade")
                 .font(.custom("ZillaSlab-Bold", size: 18, relativeTo: .headline))
                 .foregroundStyle(.primary)
