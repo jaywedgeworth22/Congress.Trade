@@ -48,7 +48,7 @@ import {
   resolveMember,
   tickerSummarySql,
 } from './queries.ts';
-import { commandType, executeCommand, normalizePreferencePatch, persistedCommandResult } from './commands.ts';
+import { commandType, normalizePreferencePatch } from './commands.ts';
 import { checkRowBudget, spendRowBudget } from '../security/botDefense.ts';
 import { clientIp } from '../shared/rateLimit.ts';
 import { get, all } from '../shared/db.ts';
@@ -300,19 +300,17 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
 
     // Replay by idempotency key. A terminal (succeeded/failed/canceled) row is
     // always a valid, permanent replay target. A queued/running row is only
-    // replayed while it's plausibly still being executed by whichever request
-    // created it (isStaleInFlightCommand — see state.ts); once it's sat past
-    // that TTL with no terminal status, the owning request is presumed dead
-    // and we fall through to reclaim + re-run the same row below instead of
-    // replaying a status that can never change.
+    // replayed while it's plausibly still being executed (isStaleInFlightCommand
+    // — see state.ts); once it's sat past that TTL with no terminal status, the
+    // owning request/worker is presumed dead and we fall through to reclaim +
+    // re-enqueue the same row below instead of replaying a status that can
+    // never change.
     const existing = await findCommandByIdempotencyKey(c.env, user.id, idempotencyKey);
     if (existing && !isStaleInFlightCommand(existing)) {
       return c.json({ command: existing, replayed: true }, 200);
     }
 
     let command: ClientCommand;
-    let executionType = type;
-    let executionPayload: unknown = payload;
     if (existing) {
       const reclaimed = await reclaimStaleInFlightCommand(c.env, user.id, existing.id);
       if (!reclaimed) {
@@ -321,8 +319,6 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
         return c.json({ error: 'a duplicate command is already in flight; retry shortly' }, 409);
       }
       command = reclaimed;
-      executionType = command.type;
-      executionPayload = command.payload;
     } else {
       try {
         command = await createCommand(c.env, { userId: user.id, type, payload, idempotencyKey });
@@ -339,20 +335,25 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
         }
         throw err;
       }
-      command = await updateCommandStatus(c.env, user.id, command.id, 'running');
     }
 
+    // Execute asynchronously on the durable queue (202 Accepted); clients poll
+    // GET /commands/:id for the terminal status. The queue dedupes on
+    // commandId, so reclaim re-enqueues and redeliveries stay idempotent.
     try {
-      const result = await executeCommand(c.env, user, executionType, executionPayload, { commandId: command.id });
-      const done = await updateCommandStatus(c.env, user.id, command.id, 'succeeded', {
-        result: persistedCommandResult(executionType, result),
+      await c.env.INGEST_QUEUE.send({
+        type: 'command.execute',
+        commandId: command.id,
+        userId: user.id,
       });
-      return c.json({ command: done, result }, 201);
     } catch (err) {
-      const e = err as ClientInputError;
-      const failed = await updateCommandStatus(c.env, user.id, command.id, 'failed', { error: e.message });
-      return c.json({ command: failed, error: e.message }, errorStatus(e));
+      const message = err instanceof Error ? err.message : String(err);
+      const failed = await updateCommandStatus(c.env, user.id, command.id, 'failed', {
+        error: `command enqueue failed: ${message}`,
+      });
+      return c.json({ command: failed, error: 'command enqueue failed' }, 503);
     }
+    return c.json({ command }, 202);
   });
 
   return r;

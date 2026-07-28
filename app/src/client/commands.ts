@@ -9,7 +9,8 @@ import {
 } from '../delivery/subscriptions.ts';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget.ts';
 import { rateLimit } from '../shared/rateLimit.ts';
-import { upsertPreferences } from './state.ts';
+import { getCommand, updateCommandStatus, upsertPreferences } from './state.ts';
+import { getUserById } from '../auth/users.ts';
 import {
   asDelivery,
   ClientInputError,
@@ -162,4 +163,41 @@ export async function executeCommand(
     }
   }
   throw new ClientInputError(`${type} is not implemented yet`, 501);
+}
+
+/**
+ * Queue-worker entrypoint for `command.execute` messages (POST
+ * /api/client/v1/commands enqueues and returns 202; this runs the command).
+ * Idempotent on redelivery: terminal rows are left untouched. Deterministic
+ * input/entitlement failures are recorded as `failed` and acknowledged;
+ * unexpected errors are rethrown so the queue retry/backoff applies.
+ */
+export async function executeQueuedCommand(
+  env: Env,
+  commandId: string,
+  userId: string,
+): Promise<void> {
+  const command = await getCommand(env, userId, commandId);
+  if (!command) return;
+  if (command.status !== 'queued' && command.status !== 'running') return;
+  const user = await getUserById(env, userId);
+  if (!user) {
+    await updateCommandStatus(env, userId, commandId, 'failed', {
+      error: 'command owner not found',
+    });
+    return;
+  }
+  await updateCommandStatus(env, userId, commandId, 'running');
+  try {
+    const result = await executeCommand(env, user, command.type, command.payload, { commandId });
+    // Persist the full result: with async execution the polled command row is
+    // the only delivery channel, so the one-time create_subscription secret
+    // must survive to the owner-authenticated GET /commands/:id response.
+    // (The secret already lives at rest in the subscriptions table.)
+    await updateCommandStatus(env, userId, commandId, 'succeeded', { result });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    await updateCommandStatus(env, userId, commandId, 'failed', { error: message });
+    if (!(err instanceof ClientInputError)) throw err;
+  }
 }

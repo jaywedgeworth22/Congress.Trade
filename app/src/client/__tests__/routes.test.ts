@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildClientRouter } from '../routes.ts';
+import { executeQueuedCommand } from '../commands.ts';
 import { createSession } from '../../auth/session.ts';
 import { spendRowBudget, DAILY_ROW_BUDGET } from '../../security/botDefense.ts';
 import type { Env, QueueMessage } from '../../shared/types.ts';
@@ -372,6 +373,7 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
     },
   });
 
+  const queuedMessages: QueueMessage[] = [];
   const env = {
     DB: { prepare } as unknown as D1Database,
     CONFIG_KV: {
@@ -383,11 +385,25 @@ function makeEnv(opts: { quotaRace?: boolean; duplicateCommandRace?: boolean; st
         kv.delete(k);
       },
     },
-    INGEST_QUEUE: { send: async (_msg: QueueMessage) => {}, sendBatch: async () => {} },
+    INGEST_QUEUE: {
+      send: async (msg: QueueMessage) => {
+        queuedMessages.push(msg);
+      },
+      sendBatch: async () => {},
+    },
     DELIVERY_QUEUE: { send: async (_msg: QueueMessage) => {}, sendBatch: async () => {} },
   } as unknown as Env;
 
-  return { env, subscriptions, commands, preferences, filers, securities, feedRows };
+  return { env, subscriptions, commands, preferences, filers, securities, feedRows, queuedMessages };
+}
+
+/** Simulate the queue worker: run every captured command.execute message. */
+async function drainQueuedCommands(env: Env, queuedMessages: QueueMessage[]): Promise<void> {
+  for (const msg of queuedMessages.splice(0)) {
+    if (msg.type === 'command.execute') {
+      await executeQueuedCommand(env, msg.commandId, msg.userId);
+    }
+  }
 }
 
 async function bearer(env: Env): Promise<string> {
@@ -905,7 +921,7 @@ describe('client API routes', () => {
   });
 
   it('updates preferences through an authenticated command', async () => {
-    const { env, preferences } = makeEnv();
+    const { env, preferences, commands, queuedMessages } = makeEnv();
     const app = buildClientRouter();
     const res = await app.request(
       'http://localhost/commands',
@@ -920,15 +936,22 @@ describe('client API routes', () => {
       },
       env,
     );
-    expect(res.status).toBe(201);
+    // Commands are accepted for async execution on the durable queue; the
+    // worker (simulated by drainQueuedCommands) performs the write.
+    expect(res.status).toBe(202);
     expect((await res.json()) as { command: { status: string } }).toMatchObject({
-      command: { status: 'succeeded' },
+      command: { status: 'queued' },
     });
+    expect(queuedMessages).toHaveLength(1);
+    expect(queuedMessages[0]).toMatchObject({ type: 'command.execute', userId: 'user_1' });
+
+    await drainQueuedCommands(env, queuedMessages);
     expect(JSON.parse(preferences.get('user_1')?.watchlist ?? '[]')).toEqual(['AAPL', 'MSFT']);
+    expect(Array.from(commands.values())[0].status).toBe('succeeded');
   });
 
   it('creates an SSE subscription command and replays by idempotency key', async () => {
-    const { env, subscriptions, commands } = makeEnv();
+    const { env, subscriptions, commands, queuedMessages } = makeEnv();
     const app = buildClientRouter();
     const auth = await bearer(env);
     const req = {
@@ -941,43 +964,39 @@ describe('client API routes', () => {
     };
 
     const first = await app.request('http://localhost/commands', req, env);
-    expect(first.status).toBe(201);
-    const body = (await first.json()) as {
-      command: { result: { subscription: { secret?: string; streamUrl?: string; hasSecret: boolean } } };
-      result: { subscription: { secret: string; streamUrl: string } };
-    };
-    expect(body.result.subscription.secret).toMatch(/^whsec_/);
-    expect(body.result.subscription.streamUrl).toContain('/api/stream?subscription=');
-    expect(body.command.result.subscription.hasSecret).toBe(true);
-    expect(body.command.result.subscription.secret).toBeUndefined();
-    expect(body.command.result.subscription.streamUrl).toBeUndefined();
+    expect(first.status).toBe(202);
+    const accepted = (await first.json()) as { command: { id: string; status: string } };
+    expect(accepted.command.status).toBe('queued');
+    expect(subscriptions.size).toBe(0);
+
+    await drainQueuedCommands(env, queuedMessages);
     expect(subscriptions.size).toBe(1);
     expect(commands.size).toBe(1);
+    // The polled command row is the credential channel under async execution:
+    // the one-time secret rides the owner-authenticated GET /commands/:id.
     const persisted = JSON.parse(Array.from(commands.values())[0].result ?? '{}') as {
-      subscription: { secret?: string; streamUrl?: string; hasSecret: boolean };
+      subscription: { secret?: string; streamUrl?: string };
     };
-    expect(persisted.subscription.hasSecret).toBe(true);
-    expect(persisted.subscription.secret).toBeUndefined();
-    expect(persisted.subscription.streamUrl).toBeUndefined();
-    expect(JSON.stringify(persisted)).not.toContain(body.result.subscription.secret);
+    expect(persisted.subscription.secret).toMatch(/^whsec_/);
+    expect(persisted.subscription.streamUrl).toContain('/api/stream?subscription=');
 
     const replay = await app.request('http://localhost/commands', req, env);
     expect(replay.status).toBe(200);
     const replayBody = (await replay.json()) as {
       replayed: boolean;
-      command: { result: { subscription: { secret?: string; streamUrl?: string; hasSecret: boolean } } };
+      command: { status: string; result: { subscription: { secret?: string } } };
     };
     expect(replayBody.replayed).toBe(true);
-    expect(replayBody.command.result.subscription.hasSecret).toBe(true);
-    expect(replayBody.command.result.subscription.secret).toBeUndefined();
-    expect(replayBody.command.result.subscription.streamUrl).toBeUndefined();
-    expect(JSON.stringify(replayBody)).not.toContain(body.result.subscription.secret);
+    expect(replayBody.command.status).toBe('succeeded');
+    expect(replayBody.command.result.subscription.secret)
+      .toBe(persisted.subscription.secret);
     expect(subscriptions.size).toBe(1);
     expect(commands.size).toBe(1);
+    expect(queuedMessages).toHaveLength(0);
   });
 
   it('enforces the same durable quota and bounded filters on client commands', async () => {
-    const { env, subscriptions } = makeEnv();
+    const { env, subscriptions, commands, queuedMessages } = makeEnv();
     for (let i = 0; i < 20; i += 1) {
       subscriptions.set(`sub_${i}`, {
         id: `sub_${i}`, client_id: 'user:user_1', delivery: 'sse', target_url: null,
@@ -991,18 +1010,25 @@ describe('client API routes', () => {
       method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'create_subscription', payload: { delivery: 'sse', filters: {} } }),
     }, env);
-    expect(limited.status).toBe(409);
+    // Validation/entitlement failures surface on the command row, not the POST.
+    expect(limited.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    expect(Array.from(commands.values()).at(-1)?.status).toBe('failed');
+    expect(Array.from(commands.values()).at(-1)?.error).toContain('subscription');
 
     subscriptions.clear();
     const invalid = await app.request('http://localhost/commands', {
       method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'create_subscription', payload: { delivery: 'sse', filters: { tickers: Array(51).fill('A') } } }),
     }, env);
-    expect(invalid.status).toBe(400);
+    expect(invalid.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    expect(Array.from(commands.values()).at(-1)?.status).toBe('failed');
+    expect(Array.from(commands.values()).at(-1)?.error).toBeTruthy();
   });
 
   it('rejects oversized webhook targets in client create and update commands', async () => {
-    const { env, subscriptions } = makeEnv();
+    const { env, subscriptions, commands, queuedMessages } = makeEnv();
     const app = buildClientRouter();
     const auth = await bearer(env);
     const oversized = `https://example.com/${'x'.repeat(2049)}`;
@@ -1010,7 +1036,10 @@ describe('client API routes', () => {
       method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'create_subscription', payload: { delivery: 'webhook', targetUrl: oversized, filters: {} } }),
     }, env);
-    expect(create.status).toBe(400);
+    expect(create.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    expect(Array.from(commands.values()).at(-1)?.status).toBe('failed');
+    expect(Array.from(commands.values()).at(-1)?.error).toBeTruthy();
 
     subscriptions.set('sub_webhook', {
       id: 'sub_webhook', client_id: 'user:user_1', delivery: 'webhook', target_url: 'https://example.com/hook',
@@ -1020,11 +1049,14 @@ describe('client API routes', () => {
       method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' },
       body: JSON.stringify({ type: 'update_subscription', payload: { id: 'sub_webhook', targetUrl: oversized } }),
     }, env);
-    expect(update.status).toBe(400);
+    expect(update.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    expect(Array.from(commands.values()).at(-1)?.status).toBe('failed');
+    expect(Array.from(commands.values()).at(-1)?.error).toBeTruthy();
   });
 
-  it('returns 409 when the active-quota trigger wins a client update race', async () => {
-    const { env, subscriptions } = makeEnv({ quotaRace: true });
+  it('records the failure when the active-quota trigger wins a client update race', async () => {
+    const { env, subscriptions, commands, queuedMessages } = makeEnv({ quotaRace: true });
     subscriptions.set('sub_inactive', {
       id: 'sub_inactive', client_id: 'user:user_1', delivery: 'sse', target_url: null,
       secret: 'secret', filters: '{}', cursor: 0, active: 0,
@@ -1039,12 +1071,15 @@ describe('client API routes', () => {
         payload: { id: 'sub_inactive', active: true },
       }),
     }, env);
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as { error: string }).error).toContain('active subscription limit');
+    expect(res.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    const command = Array.from(commands.values()).at(-1);
+    expect(command?.status).toBe('failed');
+    expect(command?.error).toContain('active subscription limit');
   });
 
-  it('rejects unsupported client command types with 501', async () => {
-    const { env } = makeEnv();
+  it('fails unsupported client command types on the command row', async () => {
+    const { env, commands, queuedMessages } = makeEnv();
     const app = buildClientRouter();
     const res = await app.request(
       'http://localhost/commands',
@@ -1059,10 +1094,11 @@ describe('client API routes', () => {
       },
       env,
     );
-    expect(res.status).toBe(501);
-    expect((await res.json()) as { error: string }).toMatchObject({
-      error: 'start_checkout is not implemented yet',
-    });
+    expect(res.status).toBe(202);
+    await drainQueuedCommands(env, queuedMessages);
+    const command = Array.from(commands.values()).at(-1);
+    expect(command?.status).toBe('failed');
+    expect(command?.error).toBe('start_checkout is not implemented yet');
   });
 
   it('replays the winning row instead of 500ing when a concurrent duplicate command wins the idempotency race', async () => {
@@ -1087,7 +1123,7 @@ describe('client API routes', () => {
   });
 
   it('reclaims and re-runs a stale running command instead of replaying a dead status forever', async () => {
-    const { env, commands } = makeEnv();
+    const { env, commands, queuedMessages } = makeEnv();
     commands.set('cmd_stale', {
       id: 'cmd_stale',
       user_id: 'user_1',
@@ -1112,13 +1148,14 @@ describe('client API routes', () => {
       },
       env,
     );
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(202);
     const body = (await res.json()) as { replayed?: boolean; command: { id: string; status: string } };
     expect(body.command.id).toBe('cmd_stale');
-    expect(body.command.status).toBe('succeeded');
     expect(body.replayed).toBeUndefined();
     // The same row was reused (reclaimed), not duplicated.
     expect(commands.size).toBe(1);
+    await drainQueuedCommands(env, queuedMessages);
+    expect(commands.get('cmd_stale')?.status).toBe('succeeded');
   });
 
   it('replays the winner when a concurrent retry already reclaimed a stale command', async () => {
@@ -1156,7 +1193,7 @@ describe('client API routes', () => {
   });
 
   it('replays an already-created subscription when a stale command is retried after side effects landed', async () => {
-    const { env, commands, subscriptions } = makeEnv();
+    const { env, commands, subscriptions, queuedMessages } = makeEnv();
     commands.set('cmd_recover_sub', {
       id: 'cmd_recover_sub',
       user_id: 'user_1',
@@ -1192,17 +1229,20 @@ describe('client API routes', () => {
       },
       env,
     );
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as {
-      result: { subscription: { id: string; secret?: string; filters: { tickers?: string[] } } };
-      command: { status: string; result: { subscription: { hasSecret: boolean; secret?: string } } };
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { command: { id: string; status: string } };
+    expect(body.command.id).toBe('cmd_recover_sub');
+    // The reclaim re-enqueues the same row; the worker re-runs it and the
+    // create path reconciles with the subscription that already landed.
+    await drainQueuedCommands(env, queuedMessages);
+    const done = commands.get('cmd_recover_sub');
+    expect(done?.status).toBe('succeeded');
+    const result = JSON.parse(done?.result ?? '{}') as {
+      subscription: { id: string; secret?: string; filters: { tickers?: string[] } };
     };
-    expect(body.result.subscription.id).toBe('sub_recover_sub');
-    expect(body.result.subscription.secret).toBe('whsec_existing');
-    expect(body.result.subscription.filters.tickers).toEqual(['AAPL']);
-    expect(body.command.status).toBe('succeeded');
-    expect(body.command.result.subscription.hasSecret).toBe(true);
-    expect(body.command.result.subscription.secret).toBeUndefined();
+    expect(result.subscription.id).toBe('sub_recover_sub');
+    expect(result.subscription.secret).toBe('whsec_existing');
+    expect(result.subscription.filters.tickers).toEqual(['AAPL']);
     expect(subscriptions.size).toBe(1);
   });
 

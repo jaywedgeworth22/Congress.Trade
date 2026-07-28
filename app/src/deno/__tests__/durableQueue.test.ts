@@ -4,6 +4,7 @@ import type { Env, QueueMessage } from '../../shared/types.ts';
 import {
   drainDurableQueue,
   DurableQueueAdapter,
+  DurableQueueLeaseLostError,
   type DurableQueueHandlers,
 } from '../durableQueue.ts';
 import { D1DatabaseShim } from '../shims.ts';
@@ -502,6 +503,9 @@ describe('Deno durable queue', () => {
                lease_until = '2026-07-22T16:20:00.000Z'
          WHERE id = 1
       `);
+      // Move past the assertOwned() freshness cache so the next guarded write
+      // re-verifies ownership against the stolen row instead of the cache.
+      harness.setNow(new Date(harness.now().getTime() + 101_000));
       releaseHandler();
 
       await expect(drain).resolves.toEqual({
@@ -550,6 +554,9 @@ describe('Deno durable queue', () => {
                    lease_until = '2026-07-22T16:20:00.000Z'
              WHERE id = 1
           `);
+          // Expire the assertOwned() freshness cache so the guarded write
+          // below re-verifies ownership against the stolen row.
+          harness.setNow(new Date(harness.now().getTime() + 101_000));
           await settleLlmSpend(guardedEnv, {
             provider: 'openai',
             requestedModel: 'gpt-5.6-terra',
@@ -607,6 +614,9 @@ describe('Deno durable queue', () => {
                    lease_until = '2026-07-22T16:20:00.000Z'
              WHERE id = 1
           `);
+          // Expire the assertOwned() freshness cache so reading the object
+          // body re-verifies ownership against the stolen row.
+          harness.setNow(new Date(harness.now().getTime() + 101_000));
           await object?.arrayBuffer();
         }),
       });
@@ -926,6 +936,76 @@ describe('Deno durable queue', () => {
       expect((await harness.rows())[0]).toMatchObject({
         status: 'failed',
         dead_letter_pending: 0,
+      });
+    } finally {
+      harness.client.close();
+    }
+  });
+
+  it('caches lease ownership checks across proxied handler statements', async () => {
+    const harness = await createHarness();
+    try {
+      await harness.ingest.send({ type: 'filing.fetched', docId: 'doc-cache' });
+      const executeSpy = vi.spyOn(harness.client, 'execute');
+      const leaseVerifyQueries = () =>
+        executeSpy.mock.calls.filter(([statement]) => {
+          const sql = typeof statement === 'string' ? statement : statement?.sql;
+          return typeof sql === 'string' && sql.trimStart().startsWith('SELECT id');
+        }).length;
+      const handlers = createHandlers({
+        handleIngestMessage: async (env) => {
+          for (let i = 0; i < 5; i += 1) {
+            await env.DB.prepare('SELECT 1 AS ok').all();
+          }
+        },
+      });
+
+      expect(await drainDurableQueue(harness.env, 'ingest', handlers, {
+        now: harness.now,
+      })).toEqual({ claimed: 1, completed: 1, retried: 0, failed: 0 });
+      // The claim-time renew() seeds the freshness cache, so every proxied
+      // statement plus the dispatch-boundary asserts reuse it: zero ownership
+      // verification queries on the hot path.
+      expect(leaseVerifyQueries()).toBe(0);
+    } finally {
+      harness.client.close();
+    }
+  });
+
+  it('re-verifies ownership after the freshness window and fails writes on a lost lease', async () => {
+    const harness = await createHarness();
+    try {
+      await harness.ingest.send({ type: 'filing.fetched', docId: 'doc-stolen' });
+      let observed: unknown = null;
+      const handlers = createHandlers({
+        handleIngestMessage: async (env) => {
+          await env.DB.prepare('SELECT 1 AS ok').all();
+          // Simulate another worker reclaiming the row while this handler runs.
+          await harness.client.execute(`
+            UPDATE deno_runtime_queue
+            SET lease_token = 'other-worker', lease_until = '2999-01-01T00:00:00.000Z'
+            WHERE status = 'processing'
+          `);
+          // Move past the freshness window (leaseMs / 6 = 10s here) so the next
+          // guarded statement must hit the database instead of the cache.
+          harness.setNow(new Date(harness.now().getTime() + 11_000));
+          try {
+            await env.DB.prepare('SELECT 1 AS ok').all();
+          } catch (error) {
+            observed = error;
+            throw error;
+          }
+        },
+      });
+
+      expect(await drainDurableQueue(harness.env, 'ingest', handlers, {
+        now: harness.now,
+        leaseMs: 60_000,
+      })).toEqual({ claimed: 1, completed: 0, retried: 0, failed: 0 });
+      expect(observed).toBeInstanceOf(DurableQueueLeaseLostError);
+      // The losing worker must not complete or retry the stolen row.
+      expect((await harness.rows())[0]).toMatchObject({
+        status: 'processing',
       });
     } finally {
       harness.client.close();
