@@ -112,6 +112,20 @@ final class ClientTrade: Decodable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id, cursor, docId, member, asset, transaction, filing, confidence, source
     }
+
+    /// Copies a freshly decoded snapshot over this cached row (upsert path in
+    /// `replaceCache`), so unchanged trades aren't deleted and re-inserted on
+    /// every poll.
+    func apply(_ item: ClientTrade) {
+        cursor = item.cursor
+        docId = item.docId
+        member = item.member
+        asset = item.asset
+        transaction = item.transaction
+        filing = item.filing
+        confidence = item.confidence
+        source = item.source
+    }
 }
 
 struct ClientMemberResponse: Decodable {
@@ -184,6 +198,59 @@ struct SubscriptionFilters: Codable, Hashable {
     var sectors: [String]?
     /// Market-cap buckets to include (mega...nano, securities_ref.market_cap_bucket).
     var marketCapBuckets: [String]?
+
+    /// JSON object for `create_subscription` payloads, omitting unset fields
+    /// (undefined = "all" on the backend, so keys must not be sent empty).
+    var commandPayload: [String: Any] {
+        var payload: [String: Any] = [:]
+        if let members, !members.isEmpty { payload["members"] = members }
+        if let tickers, !tickers.isEmpty { payload["tickers"] = tickers }
+        if let chambers, !chambers.isEmpty { payload["chambers"] = chambers }
+        if let minAmount { payload["minAmount"] = minAmount }
+        if let maxAmount { payload["maxAmount"] = maxAmount }
+        if let sides, !sides.isEmpty { payload["sides"] = sides }
+        if let sectors, !sectors.isEmpty { payload["sectors"] = sectors }
+        if let marketCapBuckets, !marketCapBuckets.isEmpty { payload["marketCapBuckets"] = marketCapBuckets }
+        return payload
+    }
+}
+
+/// Mirrors `GET /api/client/v1/ticker/:ticker` (`app/src/client/routes.ts`):
+/// security-ref asset profile + aggregate summary + the trade page.
+struct ClientTickerResponse: Decodable {
+    let ticker: String
+    let asset: TickerAsset
+    let summary: TickerSummary
+    let items: [ClientTrade]
+    let cursor: Int
+    let count: Int
+    let total: Int
+
+    struct TickerAsset: Decodable {
+        let ticker: String
+        let companyName: String?
+        let logoUrl: String?
+        let sector: String?
+        let industry: String?
+        let assetClass: String?
+        let exchangeShort: String?
+        let currency: String?
+        let marketCap: Double?
+        let marketCapBucket: String?
+        let currentPrice: Double?
+    }
+
+    struct TickerSummary: Decodable {
+        let totalTrades: Int?
+        let buyCount: Int?
+        let sellCount: Int?
+        let exchangeCount: Int?
+        let estimatedVolumeUsd: Double?
+        let estimatedNetFlowUsd: Double?
+        let firstTrade: String?
+        let lastTrade: String?
+        let memberCount: Int?
+    }
 }
 
 /// Canonical chamber chip selection. One set drives both the visible chips

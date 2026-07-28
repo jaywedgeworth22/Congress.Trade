@@ -65,6 +65,14 @@ final class CongressTradeStore: ObservableObject {
     /// user toggles chambers mid catch-up). The in-flight refresh re-runs once
     /// against the latest selection when it finishes.
     private var refreshQueued = false
+    /// Foreground poll timer driven by the feed's `nextPollAfterSec`
+    /// (`ClientFeedResponse`). Cancelled while the app is backgrounded.
+    private var autoRefreshTask: Task<Void, Never>?
+    private var autoRefreshPaused = false
+    /// Server-side search term applied on submit (`ticker=` when it looks like
+    /// a symbol, otherwise `member=`). Local debounced filtering of the loaded
+    /// cache is unchanged and happens in the view layer.
+    private var searchTerm: String?
 
     /// Soft cap on local cache rows (newest by trade date). Avoids multi-thousand
     /// seed crawls while still supporting offline read-back of the last window.
@@ -100,8 +108,12 @@ final class CongressTradeStore: ObservableObject {
         bootstrap?.auth.user
     }
 
+    var isPremium: Bool {
+        bootstrap?.auth.entitlement.premium == true
+    }
+
     var entitlementLabel: String {
-        bootstrap?.auth.entitlement.premium == true ? "Premium" : "Free"
+        isPremium ? "Premium" : "Free"
     }
 
     static func parseTickers(_ text: String) -> [String] {
@@ -125,6 +137,48 @@ final class CongressTradeStore: ObservableObject {
         await refresh()
     }
 
+    /// Applies a server-side search filter (submit path; typing alone keeps
+    /// using the local debounced cache filter). `nil`/empty clears it.
+    func setSearch(_ term: String?) async {
+        let trimmed = (term ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let next = trimmed.isEmpty ? nil : trimmed
+        guard next != searchTerm else { return }
+        searchTerm = next
+        await refresh()
+    }
+
+    /// Short all-caps tokens are treated as ticker symbols (`ticker=`);
+    /// anything longer or with spaces goes to the member filter (`member=`).
+    private static func looksLikeTicker(_ term: String) -> Bool {
+        term.range(of: #"^[A-Za-z]{1,5}(\.[A-Za-z]{1,2})?$"#, options: .regularExpression) != nil
+    }
+
+    /// Pauses/resumes the foreground poll timer (backgrounded scenes must not
+    /// keep polling). Resuming schedules from the last feed's
+    /// `nextPollAfterSec`; the next successful refresh re-arms it anyway.
+    func setAutoRefreshPaused(_ paused: Bool) {
+        autoRefreshPaused = paused
+        if paused {
+            autoRefreshTask?.cancel()
+            autoRefreshTask = nil
+        } else {
+            scheduleAutoRefresh()
+        }
+    }
+
+    private func scheduleAutoRefresh() {
+        autoRefreshTask?.cancel()
+        autoRefreshTask = nil
+        guard !autoRefreshPaused, let delay = feed?.nextPollAfterSec else { return }
+        // Clamp so a bad server value can neither spin nor stall the loop.
+        let seconds = min(max(delay, 15), 300)
+        autoRefreshTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+            guard !Task.isCancelled, let self else { return }
+            await self.refresh()
+        }
+    }
+
     func refresh() async {
         guard !isRefreshing else {
             refreshQueued = true
@@ -135,6 +189,7 @@ final class CongressTradeStore: ObservableObject {
         let chambers = selectedChambers
         let chamberParam = Self.chamberQueryValue(for: chambers)
         let from = selectedTimeRange.fromDateISO
+        let search = searchTerm
         do {
             async let bootstrapTask = api.bootstrap()
             // Single newest-first snapshot for the visible window — not a
@@ -144,6 +199,8 @@ final class CongressTradeStore: ObservableObject {
                 FeedQuery(
                     limit: pageLimit,
                     since: nil,
+                    ticker: search.flatMap { Self.looksLikeTicker($0) ? $0.uppercased() : nil },
+                    member: search.flatMap { Self.looksLikeTicker($0) ? nil : $0 },
                     chamber: chamberParam,
                     from: from,
                     sort: "tx_date",
@@ -177,6 +234,9 @@ final class CongressTradeStore: ObservableObject {
             refreshQueued = false
             await refresh()
         }
+        // Arm the next foreground poll from this feed's cadence hint. A queued
+        // re-refresh above re-enters and re-arms, so this is at most one timer.
+        scheduleAutoRefresh()
     }
 
     func refreshTrends() async {
@@ -208,10 +268,6 @@ final class CongressTradeStore: ObservableObject {
         isLoadingTrends = false
     }
 
-    func refreshLatencySummary() async {
-        await refreshTrends()
-    }
-
     private func fetchPageWithRetry(_ query: FeedQuery) async throws -> ClientFeedResponse {
         var attempt = 0
         while true {
@@ -229,16 +285,28 @@ final class CongressTradeStore: ObservableObject {
 
     /// Replace the local cache with the snapshot we just fetched so the list
     /// matches the active window/sort instead of mixing in stale all-time rows.
+    /// Upserts by `id` inside a single `save()` instead of the old
+    /// delete-everything/re-insert churn (which rewrote every row on every
+    /// poll and left the store empty between the delete and the insert).
     private func replaceCache(with response: ClientFeedResponse) throws {
         guard let context = modelContext else { return }
         let existing = try context.fetch(FetchDescriptor<ClientTrade>())
-        for trade in existing {
+        let byID = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var seen = Set<String>()
+        for item in response.items {
+            seen.insert(item.id)
+            if let cached = byID[item.id] {
+                cached.apply(item)
+            } else {
+                context.insert(item)
+            }
+        }
+        for trade in existing where !seen.contains(trade.id) {
             context.delete(trade)
         }
-        for item in response.items {
-            context.insert(item)
+        if context.hasChanges {
+            try context.save()
         }
-        try context.save()
         try trimCache(in: context)
     }
 
@@ -333,12 +401,17 @@ final class CongressTradeStore: ObservableObject {
         isSavingWatchlist = false
     }
 
-    func createDelivery(mode: DeliveryMode, webhookURL: String) async {
+    func createDelivery(mode: DeliveryMode, webhookURL: String, chambers: Set<ChamberFilter> = [], members: [String] = []) async {
         let normalizedURL = webhookURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filters = SubscriptionFilters(
+            members: members.isEmpty ? nil : members,
+            tickers: watchlist.isEmpty ? nil : watchlist,
+            chambers: chambers.isEmpty ? nil : chambers.map(\.rawValue).sorted()
+        )
         let mutation = PendingDeliveryMutation(
             mode: mode,
             webhookURL: normalizedURL,
-            tickers: watchlist,
+            filters: filters,
             idempotencyKey: UUID().uuidString
         )
         let request = pendingDeliveryMutation?.matches(mutation) == true ? pendingDeliveryMutation! : mutation
@@ -350,7 +423,7 @@ final class CongressTradeStore: ObservableObject {
             switch mode {
             case .sse:
                 response = try await api.createSSESubscription(
-                    tickers: watchlist,
+                    filters: filters,
                     idempotencyKey: request.idempotencyKey
                 )
             case .webhook:
@@ -361,7 +434,7 @@ final class CongressTradeStore: ObservableObject {
                 }
                 response = try await api.createWebhookSubscription(
                     targetURL: normalizedURL,
-                    tickers: watchlist,
+                    filters: filters,
                     idempotencyKey: request.idempotencyKey
                 )
             }
@@ -440,6 +513,23 @@ final class CongressTradeStore: ObservableObject {
         }
     }
 
+    /// Sends a magic-link sign-in email (`POST /auth/magic/request?client=ios`).
+    /// The emailed link deep-links back into the app as
+    /// `congresstrade://auth?token=…` (handled by `onOpenURL` in the app root).
+    func requestMagicLink(email: String) async {
+        let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else {
+            watchlistNotice = "Enter your email address."
+            return
+        }
+        do {
+            try await api.requestMagicLink(email: trimmed)
+            watchlistNotice = "If that email is registered, a sign-in link is on its way."
+        } catch {
+            watchlistNotice = error.localizedDescription
+        }
+    }
+
     func signOut() async {
         guard hasStoredSessionToken, !isLoggingOut else { return }
         isLoggingOut = true
@@ -484,11 +574,11 @@ private struct PendingWatchlistMutation {
 private struct PendingDeliveryMutation {
     let mode: DeliveryMode
     let webhookURL: String
-    let tickers: [String]
+    let filters: SubscriptionFilters
     let idempotencyKey: String
 
     func matches(_ other: PendingDeliveryMutation) -> Bool {
-        mode == other.mode && webhookURL == other.webhookURL && tickers == other.tickers
+        mode == other.mode && webhookURL == other.webhookURL && filters == other.filters
     }
 }
 
