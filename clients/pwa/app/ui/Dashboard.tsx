@@ -309,12 +309,18 @@ export default function Dashboard() {
       <header className="topbar" id="account">
         <div>
           <p className="eyebrow">Live Control Surface</p>
-          <img 
-            src="/congress-trade-logo.png" 
-            alt="Congress.Trade" 
-            className="h-10 w-auto" 
-            style={{ maxWidth: '320px' }}
-          />
+          <div className="flex items-center gap-2.5 min-w-0" aria-label="Congress.Trade">
+            <img
+              src="/congress-trade-logo.png"
+              alt=""
+              width={40}
+              height={40}
+              className="h-10 w-10 rounded-full object-contain shrink-0"
+            />
+            <span className="text-lg font-bold tracking-tight truncate" style={{ fontFamily: "'Zilla Slab', 'American Typewriter', Rockwell, serif" }}>
+              Congress<span style={{ color: 'var(--accent, #34d399)' }}>.</span>Trade
+            </span>
+          </div>
         </div>
         <button
           className="icon-button"
