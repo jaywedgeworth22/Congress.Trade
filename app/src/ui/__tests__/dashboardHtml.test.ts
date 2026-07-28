@@ -83,13 +83,18 @@ function loadBenchmarkPresentationHelpers() {
 }
 
 describe('DASHBOARD_HTML', () => {
-  it('uses the concise product name as the document title', () => {
-    expect(DASHBOARD_HTML).toContain('<title>Congress.Trade</title>');
-    expect(DASHBOARD_HTML).not.toContain('<title>Congress.Trade — Congress Trade Feed</title>');
+  it('uses the descriptive product name as the document title', () => {
+    expect(DASHBOARD_HTML).toContain(
+      '<title>Congress.Trade — Live STOCK Act disclosures from the House &amp; Senate</title>',
+    );
+    expect(DASHBOARD_HTML).toContain('name="description"');
+    expect(DASHBOARD_HTML).toContain('property="og:image" content="https://congress.trade/og-image.png"');
+    expect(DASHBOARD_HTML).toContain('name="twitter:card" content="summary_large_image"');
   });
 
-  it('self-hosts the Zilla Slab wordmark face as an inline data-URI subset', () => {
-    expect(DASHBOARD_HTML).toContain('data:font/woff2;base64,');
+  it('self-hosts the Zilla Slab wordmark face as a cached static asset', () => {
+    expect(DASHBOARD_HTML).toContain('src:url(/assets/zilla-slab-700.woff2)');
+    expect(DASHBOARD_HTML).not.toContain('data:font/woff2;base64,');
     expect(DASHBOARD_HTML).toContain("'Zilla Slab'");
   });
 
@@ -254,9 +259,8 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('class="brand-logo"');
     // SuperGrok Imagine horizontal lockup (mark + CONGRESS./TRADE type), not a tiny re-typeset wordmark.
     expect(DASHBOARD_HTML).toMatch(/\.brand-logo \{ height:\d+px; width:auto/);
-    const brandLogoMatch = DASHBOARD_HTML.match(/class="brand-logo"[^>]*src="(data:image\/png;base64,[A-Za-z0-9+/=]+)"/);
+    const brandLogoMatch = DASHBOARD_HTML.match(/class="brand-logo"[^>]*src="(\/assets\/brand-logo\.png)"/);
     expect(brandLogoMatch).toBeTruthy();
-    expect(brandLogoMatch![1].length).toBeGreaterThan(20_000);
     // Lockup is the brand — no separate Zilla wordmark span next to it.
     expect(DASHBOARD_HTML).not.toMatch(/class="brand-logo"[^>]*>\s*<span class="brand-text"/);
     // Eagle flight splash (curved path + bank, not a mere scale tween).
@@ -1475,7 +1479,7 @@ describe('consensus grid + Use Consensus prefill (executed)', () => {
       'var ALERTS = [];',
       'var REVIEW_ITEM_FOR_TEST = null;',
       'var QUEUED_FOR_TEST = [];',
-      'function alert(msg) { ALERTS.push(msg); }',
+      'function showToast(msg) { ALERTS.push(msg); }',
       'function openReviewEditor(docId, rows, decision, label, chamber) { CAPTURED_EDITOR_CALL = { docId: docId, rows: rows, decision: decision, label: label, chamber: chamber }; }',
       'function reviewItemForDoc(docId) { return REVIEW_ITEM_FOR_TEST; }',
       'function reviewPayloadTransactions(payload) { return QUEUED_FOR_TEST; }',
