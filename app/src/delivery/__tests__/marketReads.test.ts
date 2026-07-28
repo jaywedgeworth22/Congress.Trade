@@ -5,7 +5,13 @@
  * cross-app sharing): SQL range building and securities_ref row mapping.
  */
 import { describe, it, expect } from 'vitest';
-import { priceRangeQuery, mapSecurityRef } from '../rest.ts';
+import {
+  priceRangeQuery,
+  mapSecurityRef,
+  marketLimit,
+  DEFAULT_MARKET_LIMIT,
+  MAX_MARKET_LIMIT,
+} from '../rest.ts';
 
 describe('priceRangeQuery', () => {
   it('price_eod without bounds caps at the LATEST 1000 rows, re-sorted ascending', () => {
@@ -24,18 +30,44 @@ describe('priceRangeQuery', () => {
     expect(q.params).toEqual([]);
   });
 
-  it('applies inclusive from/to bounds (date-only) for a ticker', () => {
+  it('applies inclusive from/to bounds (date-only) for a ticker, capped at the latest default rows', () => {
     const q = priceRangeQuery('price_eod', 'MSFT', '2025-01-01T00:00:00Z', '2025-06-30');
     expect(q.sql).toBe(
-      'SELECT date, close, volume FROM price_eod WHERE ticker = ? AND date >= ? AND date <= ? ORDER BY date ASC',
+      'SELECT date, close, volume FROM (SELECT date, close, volume FROM price_eod WHERE ticker = ? AND date >= ? AND date <= ? ORDER BY date DESC LIMIT 1000) ORDER BY date ASC',
     );
     expect(q.params).toEqual(['MSFT', '2025-01-01', '2025-06-30']);
   });
 
   it('spx_eod has no ticker predicate and no volume column', () => {
     const q = priceRangeQuery('spx_eod', null, '2025-01-01');
-    expect(q.sql).toBe('SELECT date, close FROM spx_eod WHERE date >= ? ORDER BY date ASC');
+    expect(q.sql).toBe(
+      'SELECT date, close FROM (SELECT date, close FROM spx_eod WHERE date >= ? ORDER BY date DESC LIMIT 1000) ORDER BY date ASC',
+    );
     expect(q.params).toEqual(['2025-01-01']);
+  });
+
+  it('honors an explicit limit and hard-caps it (interpolated LIMIT must stay a safe integer)', () => {
+    expect(priceRangeQuery('spx_eod', null, undefined, undefined, 250).sql).toContain('LIMIT 250');
+    expect(priceRangeQuery('spx_eod', null, undefined, undefined, 999_999).sql).toContain(
+      `LIMIT ${MAX_MARKET_LIMIT}`,
+    );
+    expect(priceRangeQuery('spx_eod', null, undefined, undefined, 250.9).sql).toContain('LIMIT 250');
+    expect(priceRangeQuery('spx_eod', null, undefined, undefined, 250.9).sql).not.toContain('250.9');
+    expect(priceRangeQuery('spx_eod', null, undefined, undefined, -5).sql).toContain(
+      `LIMIT ${DEFAULT_MARKET_LIMIT}`,
+    );
+  });
+});
+
+describe('marketLimit', () => {
+  it('defaults, floors, and caps the /market ?limit= param', () => {
+    expect(marketLimit(undefined)).toBe(DEFAULT_MARKET_LIMIT);
+    expect(marketLimit('')).toBe(DEFAULT_MARKET_LIMIT);
+    expect(marketLimit('abc')).toBe(DEFAULT_MARKET_LIMIT);
+    expect(marketLimit('0')).toBe(DEFAULT_MARKET_LIMIT);
+    expect(marketLimit('42')).toBe(42);
+    expect(marketLimit('42.9')).toBe(42);
+    expect(marketLimit('100000')).toBe(MAX_MARKET_LIMIT);
   });
 });
 

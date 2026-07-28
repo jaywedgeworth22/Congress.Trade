@@ -556,6 +556,11 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     }
   });
 
+  // All series reads below are bounded: `?limit=` (default DEFAULT_MARKET_LIMIT,
+  // hard cap MAX_MARKET_LIMIT) returns the LATEST N rows inside the from/to
+  // window, re-sorted ascending for charting. Pass a tighter ?from= for older
+  // history instead of raising the cap.
+
   // GET /market/ref/:ticker -> the cached securities_ref row (or 404).
   r.get('/market/ref/:ticker', async (c) => {
     const ticker = c.req.param('ticker').toUpperCase();
@@ -585,11 +590,17 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     return c.json({ refs: rows.map(mapSecurityRef) });
   });
 
-  // GET /market/prices/:ticker?from=YYYY-MM-DD&to=YYYY-MM-DD
+  // GET /market/prices/:ticker?from=YYYY-MM-DD&to=YYYY-MM-DD&limit=N
   //   -> { ticker, closes:[{date,close}], currentPrice, currentPriceDate }.
   r.get('/market/prices/:ticker', async (c) => {
     const ticker = c.req.param('ticker').toUpperCase();
-    const { sql, params } = priceRangeQuery('price_eod', ticker, c.req.query('from'), c.req.query('to'));
+    const { sql, params } = priceRangeQuery(
+      'price_eod',
+      ticker,
+      c.req.query('from'),
+      c.req.query('to'),
+      marketLimit(c.req.query('limit')),
+    );
     const closes = await all<{ date: string; close: number; volume?: number | null }>(c.env.DB, sql, params);
     const ref = await get<{ current_price: number | null; current_price_date: string | null }>(
       c.env.DB,
@@ -604,7 +615,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
-  // GET /market/insider/:ticker?from=&to= -> insider (Form 4) daily aggregates.
+  // GET /market/insider/:ticker?from=&to=&limit= -> insider (Form 4) daily aggregates.
   r.get('/market/insider/:ticker', async (c) => {
     const ticker = c.req.param('ticker').toUpperCase();
     const where = ['ticker = ?'];
@@ -613,6 +624,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const to = c.req.query('to');
     if (from) { where.push('date >= ?'); params.push(from.slice(0, 10)); }
     if (to) { where.push('date <= ?'); params.push(to.slice(0, 10)); }
+    const limit = marketLimit(c.req.query('limit'));
     const rows = await all<{
       date: string; sentiment: number | null; buy_filings: number | null;
       sell_filings: number | null; buy_shares: number | null; sell_shares: number | null;
@@ -620,7 +632,9 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     }>(
       c.env.DB,
       `SELECT date, sentiment, buy_filings, sell_filings, buy_shares, sell_shares, owners
-         FROM insider_eod WHERE ${where.join(' AND ')} ORDER BY date ASC`,
+         FROM (SELECT date, sentiment, buy_filings, sell_filings, buy_shares, sell_shares, owners
+                 FROM insider_eod WHERE ${where.join(' AND ')} ORDER BY date DESC LIMIT ${limit})
+        ORDER BY date ASC`,
       params,
     );
     return c.json({
@@ -637,7 +651,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
-  // GET /market/fundamentals/:ticker?from=&to= -> cached fundamentals (P/E, EPS,
+  // GET /market/fundamentals/:ticker?from=&to=&limit= -> cached fundamentals (P/E, EPS,
   // beta, 52w, FCF yield, debt/equity, EPS growth, dividend yield). Lets a sibling
   // app read back the fundamentals it (or our enrichment) already stored instead of
   // re-paying a provider — see docs/fmp-data-sharing.md.
@@ -649,6 +663,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const to = c.req.query('to');
     if (from) { where.push('date >= ?'); params.push(from.slice(0, 10)); }
     if (to) { where.push('date <= ?'); params.push(to.slice(0, 10)); }
+    const limit = marketLimit(c.req.query('limit'));
     const rows = await all<{
       date: string; pe_ratio: number | null; eps: number | null; beta: number | null;
       dividend_yield: number | null; week52_high: number | null; week52_low: number | null;
@@ -658,7 +673,10 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       c.env.DB,
       `SELECT date, pe_ratio, eps, beta, dividend_yield, week52_high, week52_low,
               fcf_yield, debt_to_equity, eps_growth, source, updated_at
-         FROM fundamentals_eod WHERE ${where.join(' AND ')} ORDER BY date ASC`,
+         FROM (SELECT date, pe_ratio, eps, beta, dividend_yield, week52_high, week52_low,
+                      fcf_yield, debt_to_equity, eps_growth, source, updated_at
+                 FROM fundamentals_eod WHERE ${where.join(' AND ')} ORDER BY date DESC LIMIT ${limit})
+        ORDER BY date ASC`,
       params,
     );
     return c.json({
@@ -672,7 +690,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
-  // GET /market/analyst/:ticker?from=&to= -> cached analyst consensus + targets.
+  // GET /market/analyst/:ticker?from=&to=&limit= -> cached analyst consensus + targets.
   r.get('/market/analyst/:ticker', async (c) => {
     const ticker = c.req.param('ticker').toUpperCase();
     const where = ['ticker = ?'];
@@ -681,6 +699,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const to = c.req.query('to');
     if (from) { where.push('date >= ?'); params.push(from.slice(0, 10)); }
     if (to) { where.push('date <= ?'); params.push(to.slice(0, 10)); }
+    const limit = marketLimit(c.req.query('limit'));
     const rows = await all<{
       date: string; rating: string | null; target_mean: number | null; target_high: number | null;
       target_low: number | null; target_median: number | null; analyst_count: number | null;
@@ -690,7 +709,10 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       c.env.DB,
       `SELECT date, rating, target_mean, target_high, target_low, target_median, analyst_count,
               strong_buy, buy, hold, sell, strong_sell, source, updated_at
-         FROM analyst_consensus WHERE ${where.join(' AND ')} ORDER BY date ASC`,
+         FROM (SELECT date, rating, target_mean, target_high, target_low, target_median, analyst_count,
+                      strong_buy, buy, hold, sell, strong_sell, source, updated_at
+                 FROM analyst_consensus WHERE ${where.join(' AND ')} ORDER BY date DESC LIMIT ${limit})
+        ORDER BY date ASC`,
       params,
     );
     return c.json({
@@ -704,7 +726,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
-  // GET /market/short-volume/:ticker?from=&to= -> FINRA short-volume daily.
+  // GET /market/short-volume/:ticker?from=&to=&limit= -> FINRA short-volume daily.
   r.get('/market/short-volume/:ticker', async (c) => {
     const ticker = c.req.param('ticker').toUpperCase();
     const where = ['ticker = ?'];
@@ -713,10 +735,13 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     const to = c.req.query('to');
     if (from) { where.push('date >= ?'); params.push(from.slice(0, 10)); }
     if (to) { where.push('date <= ?'); params.push(to.slice(0, 10)); }
+    const limit = marketLimit(c.req.query('limit'));
     const rows = await all<{ date: string; short_volume_ratio: number | null; elevated: number }>(
       c.env.DB,
-      `SELECT date, short_volume_ratio, elevated FROM short_volume_eod
-        WHERE ${where.join(' AND ')} ORDER BY date ASC`,
+      `SELECT date, short_volume_ratio, elevated
+         FROM (SELECT date, short_volume_ratio, elevated FROM short_volume_eod
+                WHERE ${where.join(' AND ')} ORDER BY date DESC LIMIT ${limit})
+        ORDER BY date ASC`,
       params,
     );
     return c.json({
@@ -725,22 +750,29 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     });
   });
 
-  // GET /market/spx?from=YYYY-MM-DD&to=YYYY-MM-DD -> S&P 500 cached closes.
+  // GET /market/spx?from=YYYY-MM-DD&to=YYYY-MM-DD&limit=N -> S&P 500 cached closes.
   r.get('/market/spx', async (c) => {
-    const { sql, params } = priceRangeQuery('spx_eod', null, c.req.query('from'), c.req.query('to'));
+    const { sql, params } = priceRangeQuery(
+      'spx_eod',
+      null,
+      c.req.query('from'),
+      c.req.query('to'),
+      marketLimit(c.req.query('limit')),
+    );
     const closes = await all<{ date: string; close: number }>(c.env.DB, sql, params);
     return c.json({ closes });
   });
 
-  // GET /market/bundle/:ticker?from=&to= -> ref + prices + spx in one call.
+  // GET /market/bundle/:ticker?from=&to=&limit= -> ref + prices + spx in one call.
   r.get('/market/bundle/:ticker', async (c) => {
     const ticker = c.req.param('ticker').toUpperCase();
     const from = c.req.query('from');
     const to = c.req.query('to');
+    const limit = marketLimit(c.req.query('limit'));
     const refRow = await get<SecurityRefRow>(c.env.DB, 'SELECT * FROM securities_ref WHERE ticker = ?', [ticker]);
-    const pq = priceRangeQuery('price_eod', ticker, from, to);
+    const pq = priceRangeQuery('price_eod', ticker, from, to, limit);
     const closes = await all<{ date: string; close: number; volume?: number | null }>(c.env.DB, pq.sql, pq.params);
-    const sq = priceRangeQuery('spx_eod', null, from, to);
+    const sq = priceRangeQuery('spx_eod', null, from, to, limit);
     const spx = await all<{ date: string; close: number }>(c.env.DB, sq.sql, sq.params);
     return c.json({
       ticker,
@@ -1026,15 +1058,35 @@ export function mapSecurityRef(row: SecurityRefRow) {
   };
 }
 
+/** Default and hard-cap row limits for /market/* series reads (`?limit=`). */
+export const DEFAULT_MARKET_LIMIT = 1000;
+export const MAX_MARKET_LIMIT = 5000;
+
+/**
+ * Clamp the /market/* `?limit=` param to a safe integer. The result is
+ * interpolated into SQL (D1/SQLite has no bound-parameter LIMIT), so it must
+ * never be fractional, non-finite, or above the hard cap.
+ */
+export function marketLimit(value: string | undefined): number {
+  let n = Number.isFinite(Number(value)) && value !== undefined && value !== ''
+    ? Math.floor(Number(value))
+    : DEFAULT_MARKET_LIMIT;
+  if (n <= 0) n = DEFAULT_MARKET_LIMIT;
+  return Math.min(n, MAX_MARKET_LIMIT);
+}
+
 /**
  * Build an ascending close-series query for price_eod (needs a ticker) or
- * spx_eod (no ticker), with optional inclusive from/to date bounds.
+ * spx_eod (no ticker), with optional inclusive from/to date bounds. Bounded by
+ * `limit`: the LATEST `limit` rows inside the window are returned, re-sorted
+ * ascending for charting (pass a tighter `from` for older history).
  */
 export function priceRangeQuery(
   table: 'price_eod' | 'spx_eod',
   ticker: string | null,
   from?: string,
   to?: string,
+  limit: number = DEFAULT_MARKET_LIMIT,
 ): { sql: string; params: (string | number)[] } {
   const where: string[] = [];
   const params: (string | number)[] = [];
@@ -1053,15 +1105,11 @@ export function priceRangeQuery(
   const clause = where.length ? ` WHERE ${where.join(' AND ')}` : '';
   // price_eod carries a daily volume column; spx_eod does not.
   const cols = table === 'price_eod' ? 'date, close, volume' : 'date, close';
-  if (!from && !to) {
-    // No window: cap at the LATEST 1000 rows (not the oldest), re-sorted
-    // ascending for charting.
-    return {
-      sql: `SELECT ${cols} FROM (SELECT ${cols} FROM ${table}${clause} ORDER BY date DESC LIMIT 1000) ORDER BY date ASC`,
-      params,
-    };
-  }
-  return { sql: `SELECT ${cols} FROM ${table}${clause} ORDER BY date ASC`, params };
+  const n = marketLimit(String(limit));
+  return {
+    sql: `SELECT ${cols} FROM (SELECT ${cols} FROM ${table}${clause} ORDER BY date DESC LIMIT ${n}) ORDER BY date ASC`,
+    params,
+  };
 }
 
 /** JSON.parse that returns null instead of throwing. */
