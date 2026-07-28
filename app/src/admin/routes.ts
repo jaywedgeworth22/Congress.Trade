@@ -7670,19 +7670,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           SET deprecated_at = '2026-07-28T17:15:00.000Z',
               deprecated_reason = 'retroactive amendment cleanup: superseded by newer amended filing'
         WHERE deprecated_at IS NULL
-          AND EXISTS (
-            SELECT 1
+          AND doc_id IN (
+            SELECT f_orig.doc_id
               FROM filings f_amend
               JOIN filings f_orig
                 ON f_amend.filer_id = f_orig.filer_id
                AND f_amend.doc_id <> f_orig.doc_id
-               AND f_amend.ingest_status = 'persisted'
+             WHERE f_amend.ingest_status = 'persisted'
                AND f_orig.ingest_status = 'persisted'
                AND (
                  (f_amend.doc_id LIKE 'E-%' AND SUBSTR(f_amend.doc_id, 1, 35) = SUBSTR(f_orig.doc_id, 1, 35) AND (f_amend.doc_id LIKE '%amend%' OR f_amend.source_url LIKE '%amend%'))
                  OR (f_amend.filed_date IS NOT NULL AND f_amend.filed_date = f_orig.filed_date AND (f_amend.filing_status = 'Amended' OR f_amend.doc_id LIKE '%amend%' OR f_amend.source_url LIKE '%amend%'))
                )
-             WHERE f_orig.doc_id = transactions.doc_id
           )`,
       // 0029-0039 — canonical value, reliability, Stripe, review, and benchmark tail.
       ...POST_0024_SCHEMA_STATEMENTS,
