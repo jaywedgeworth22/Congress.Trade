@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
-import { processAgreementDoc, type AgreementModels } from '../agreement.ts';
+import { deprecatePredecessorFilingTransactions, processAgreementDoc, type AgreementModels } from '../agreement.ts';
 import { clearResolverCache } from '../normalizer.ts';
 
 beforeEach(() => {
@@ -267,5 +267,36 @@ describe('processAgreementDoc extraction_runs persistence', () => {
     const res = await processAgreementDoc(makeEnv().env, sameProvider, 'H-10', 'raw/H-10', false);
     expect(res).toMatchObject({ outcome: 'skipped', reason: 'duplicate_provider_lineup' });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+  it('soft-deprecates predecessor filing transactions when an amended filing is published', async () => {
+    let deprecatedSql = '';
+    let params: unknown[] = [];
+    const mockDb = {
+      prepare(sql: string) {
+        return {
+          bind(...p: unknown[]) {
+            deprecatedSql = sql;
+            params = p;
+            return this;
+          },
+          async run() {
+            return { meta: { changes: 3 } };
+          },
+        };
+      },
+    } as any;
+
+    const count = await deprecatePredecessorFilingTransactions(
+      mockDb,
+      'E-2025-donald-j-trump-08-12-2025-278t-2-amended',
+      'EXEC-DONALD-J-TRUMP',
+      '2025-08-12',
+    );
+
+    expect(count).toBe(3);
+    expect(deprecatedSql).toMatch(/UPDATE transactions/i);
+    expect(deprecatedSql).toMatch(/deprecated_at = \?/i);
+    expect(params[1]).toContain('superseded by amendment E-2025-donald-j-trump-08-12-2025-278t-2-amended');
+    expect(params[2]).toBe('EXEC-DONALD-J-TRUMP');
   });
 });
