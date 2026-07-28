@@ -7645,6 +7645,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
       // 0029-0039 — canonical value, reliability, Stripe, review, and benchmark tail.
       ...POST_0024_SCHEMA_STATEMENTS,
+      // 0063_filings_filed_date_index.sql — range-scan index for the 5-year
+      // filing retention sweep's `filed_date < ?` batch select.
+      'CREATE INDEX IF NOT EXISTS idx_filings_filed_date ON filings (filed_date)',
     ];
     const applied: string[] = [];
     const skipped: string[] = [];
