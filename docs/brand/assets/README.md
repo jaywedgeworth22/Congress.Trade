@@ -1,24 +1,25 @@
 # Congress.Trade brand assets (eagle)
 
-Source: SuperGrok Imagine lockup / app-icon mockups provided by the owner
-(eagle clutching a money bag, dark navy ground, metallic silver eagle).
+**Canonical masters = SuperGrok Imagine exports already in this folder** (not phone photos).
 
-## Files
+| Master | What |
+|--------|------|
+| `eagle-lockup.png` | Full horizontal brand: circular mark + CONGRESS. / TRADE type (1792×1008) |
+| `eagle-app-icon-1024.png` | App-icon mockup (navy filled squircle) |
+
+Phone snaps (`IMG_0508`, `IMG_0523`, `IMG_0592`) are **style reference only**.
+
+## Site header
+
+Uses `eagle-lockup-dark-ui.png` (Imagine lockup, page bg removed, navy wordmark lightened for dark UI) via `eagle-header-lockup-dark-120.png` embedded in `dashboardHtml.ts`. **Typography is baked into the Imagine asset** — do not re-typeset with Zilla Slab.
+
+## Other exports
 
 | File | Use |
 |------|-----|
-| `eagle-app-icon-1024.png` | iOS AppIcon master |
-| `eagle-app-icon-512.png` / `192.png` | PWA icons |
-| `eagle-apple-touch-180.png` | PWA apple-touch-icon |
-| `eagle-emblem-512.png` / `256.png` | Square emblem exports |
-| `eagle-mark-128.png` / `64.png` / `32.png` | Header / favicon-scale marks |
-| `eagle-lockup.png` | Full wordmark+eagle lockup reference |
+| `eagle-lockup-transparent.png` | Light-UI lockup (navy type) |
+| `eagle-lockup-dark-ui.png` | Dark-UI lockup (light type) |
+| `eagle-circle-*.png` | Hollow mark only (from Imagine lockup, full wings) |
+| `eagle-app-icon-clean-*.png` | Install icons from Imagine app-icon master |
 
-Installed into:
-
-- `clients/ios/.../AppIcon.appiconset/AppIcon.png`
-- `clients/ios/.../BrandLogo.imageset/BrandLogo.png`
-- `clients/pwa/public/{icon-192,icon-512,apple-touch-icon,congress-trade-logo}.png`
-- Dashboard brand mark: embedded data-URI from `eagle-mark-128.png` in `app/src/ui/dashboardHtml.ts`
-
-Do not regenerate with a new model run — use these bytes.
+Do not re-extract from phone screenshots for production marks.

@@ -146,18 +146,17 @@ export async function fetchHouseIndex(
   opts: { relayUrl?: string; fetchImpl?: typeof fetch } = {},
 ): Promise<HouseFiling[]> {
   const url = houseBulkZipUrl(year);
-  const fetcher = opts.fetchImpl ?? trackedFetch;
   const relayUrl = opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.HOUSE_RELAY_URL || process.env?.INGEST_RELAY_URL : undefined);
 
   let zipBytes: Uint8Array | null = null;
 
   if (relayUrl) {
     try {
-      const relayRes = await fetcher(`${relayUrl.replace(/\/$/, '')}/fetch-house`, {
+      const relayRes = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-house`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ url, responseType: 'bytes' }),
-      }, { service: 'filing-discovery', operation: 'fetch-house-bulk-index-relay' });
+      }, { service: 'filing-discovery', operation: 'fetch-house-bulk-index-relay' }, opts.fetchImpl);
       if (relayRes.ok) {
         zipBytes = new Uint8Array(await relayRes.arrayBuffer());
       }
@@ -167,13 +166,13 @@ export async function fetchHouseIndex(
   }
 
   if (!zipBytes) {
-    const res = await fetcher(url, {
+    const res = await trackedFetch(url, {
       headers: {
         // A plain UA avoids occasional WAF challenges on the Clerk host.
         'user-agent': 'congress-feed/0.1 (+https://congress.trade)',
         accept: 'application/zip,application/octet-stream,*/*',
       },
-    }, { service: 'filing-discovery', operation: 'fetch-house-bulk-index' });
+    }, { service: 'filing-discovery', operation: 'fetch-house-bulk-index' }, opts.fetchImpl);
     if (!res.ok) {
       throw new Error(`house bulk zip ${url} -> HTTP ${res.status}`);
     }
