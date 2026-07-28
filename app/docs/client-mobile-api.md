@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-19
 
-This is the working coordination note for the phone-first Next.js/PWA and the
+This is the working coordination note for the phone-first SwiftUI and the
 SwiftUI iPhone app. Keep it aligned with `app/docs/mobile-app-roadmap.md` and
 the implementation mounted at `/api/client/v1/*`.
 
@@ -11,7 +11,7 @@ the implementation mounted at `/api/client/v1/*`.
 - The Cloudflare Worker backend owns data access, calculations, entitlement,
   billing state, scraping, extraction, enrichment, prices, delivery, backfills,
   provider secrets, admin tokens, and MCP/tool orchestration.
-- Next.js/PWA and SwiftUI are peer clients over the same backend-owned API.
+- SwiftUI are peer clients over the same backend-owned API.
 - Do not add client-only scraping, calculation, provider-secret, admin, MCP, or
   migration paths.
 
@@ -21,7 +21,7 @@ the implementation mounted at `/api/client/v1/*`.
   to internal web, admin, ingestion, or provider routes.
 - Keep TypeScript DTOs and Swift `Codable` models equivalent.
 - Preserve one auth/session model across clients: secure HTTP-only cookies for
-  the PWA, Keychain refresh sessions for iOS, and backend token validation.
+  Keychain refresh sessions for iOS, and backend token validation.
 - Account alerts and developer delivery settings should be account-owned
   resources, not bearer-secret-only objects in mobile UI.
 
@@ -126,7 +126,7 @@ shared type set but still return `501`.
 
 ## Production Boundaries
 
-- Mobile/PWA work must not require production deploys, remote D1 migrations,
+- Mobile/web app work must not require production deploys, remote D1 migrations,
   queue drains, production crawlers, or backfills unless Jay explicitly asks.
 - If a contract change needs a migration or production backfill, document that
   in the PR and keep the code path safe before the production step runs.

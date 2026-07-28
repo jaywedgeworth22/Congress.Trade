@@ -1,4 +1,4 @@
-# Mobile Client Roadmap: Next.js/PWA + SwiftUI
+# Mobile Client Roadmap: SwiftUI + SwiftUI
 
 Last checked: 2026-06-23
 
@@ -7,7 +7,7 @@ Last checked: 2026-06-23
 Keep the backend as the source of truth and build two peer client surfaces over
 the same deliberately designed backend API:
 
-- a responsive Next.js/PWA experience for all phones and browsers.
+- a responsive SwiftUI experience for all phones and browsers.
 - a native SwiftUI iPhone app for the best iOS experience.
 
 Both clients should use the same API shapes, auth/session model, command
@@ -15,22 +15,22 @@ gateway, status stream, and account-owned alert resources. Do not put scraping,
 calculations, provider credentials, admin tokens, Stripe keys, or MCP
 orchestration in either client.
 
-The current public backend is enough for a read-only web/PWA/iOS MVP. Production
+The current public backend is enough for a read-only web/iOS MVP. Production
 client apps need a shared client API, auth/session layer, account-owned alerts,
 push notifications, and a server-side command gateway before either surface
 manages webhooks/SSE or premium features.
 
 ## Target Architecture
 
-- **Next.js/PWA:** responsive phone-first app with `Dashboard`, `Feed`,
+- **SwiftUI:** responsive phone-first app with `Dashboard`, `Feed`,
   `TickerDetail`, `MemberDetail`, `Alerts`, `Developer`, and `Account` views.
 - **SwiftUI app:** native iPhone app with the same product model and API DTOs as
-  the PWA, using SwiftUI navigation and native push.
+  using SwiftUI navigation and native push.
 - **Shared API client contract:** TypeScript client generated or typed from the
   same DTO contract used by Swift `Codable` models.
-- **Client persistence:** IndexedDB/Cache Storage for the PWA; SwiftData or Core
+- **Client persistence:** IndexedDB/Cache Storage for the web app; SwiftData or Core
   Data for iOS. Both caches should key feed progress by `cursorSeq`.
-- **Session storage:** secure HTTP-only cookies for the PWA; Keychain-stored
+- **Session storage:** secure HTTP-only cookies for the web app; Keychain-stored
   refresh tokens and short-lived access tokens for iOS.
 - **Backend client API:** purpose-built `/api/client/v1/*` endpoints that return
   stable DTOs for both clients instead of exposing every web/admin route
@@ -45,7 +45,7 @@ manages webhooks/SSE or premium features.
 
 ## Current Backend Fit
 
-Usable today for a read-only PWA/iOS MVP:
+Usable today for a read-only iOS MVP:
 
 - `GET /api/transactions?since=&limit=&ticker=&member=&chamber=&type=&from=&to=`
 - `GET /api/filings/:docId`
@@ -66,7 +66,7 @@ Not ready as production client primitives:
 - Delivery subscriptions are bearer-secret objects, not account-owned alert
   resources.
 - SSE browser support uses query tokens because native `EventSource` cannot set
-  auth headers. The PWA can use authenticated fetch polling or a WebSocket/SSE
+  auth headers. The web app can use authenticated fetch polling or a WebSocket/SSE
   token exchange; iOS should use `URLSession` streaming with headers, polling,
   and APNs.
 
@@ -121,7 +121,7 @@ Advanced developer delivery:
 
 ## Command And Status Model
 
-Use the same command lifecycle for the PWA and SwiftUI app.
+Use the same command lifecycle for the SwiftUI app.
 
 Statuses:
 
@@ -167,9 +167,9 @@ Policy:
 - Current clients should poll because the command stream route is not
   implemented yet.
 
-## PWA UX Direction
+## web app UX Direction
 
-Build the PWA phone-first, not as a desktop dashboard squeezed down.
+Build the web app phone-first, not as a desktop dashboard squeezed down.
 
 - Bottom tab bar: Feed, Trends, Alerts, Developer, Account.
 - Card feed on phones; dense table can remain desktop/tablet only.
@@ -187,7 +187,7 @@ Build the PWA phone-first, not as a desktop dashboard squeezed down.
 
 The SwiftUI app should feel native while sharing the same product model.
 
-- Tabs mirror the PWA: Feed, Trends, Alerts, Developer, Account.
+- Tabs mirror the web app: Feed, Trends, Alerts, Developer, Account.
 - Use `NavigationStack`, searchable feed filters, native sheets, and APNs.
 - Use `URLSession` + `Codable` over the shared DTO contract.
 - Cache feed progress and common details with SwiftData or Core Data.
@@ -206,7 +206,7 @@ Auth should support both clients through the backend:
   Guidelines section 4.8.
 - Backend verifies Apple/Google identity tokens and issues app-specific access
   and refresh tokens.
-- Store PWA sessions in secure HTTP-only cookies.
+- Store web app sessions in secure HTTP-only cookies.
 - Store iOS refresh tokens in Keychain; never store provider secrets on-device.
 
 Billing requires an App Store decision:
@@ -253,7 +253,7 @@ Security requirements before broad mobile exposure:
 1. **Shared client contract**
    - Define `/api/client/v1/*` DTOs, command statuses, idempotency rules, and typed
      clients for TypeScript and Swift.
-2. **Phone-first Next.js/PWA**
+2. **Phone-first SwiftUI**
    - Feed, search/filter, ticker/politician details, analytics summary, offline
      shell, installable manifest, and foreground polling.
 3. **SwiftUI read-only MVP**

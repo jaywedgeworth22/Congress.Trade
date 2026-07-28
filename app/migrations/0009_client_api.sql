@@ -1,5 +1,5 @@
 -- 0009_client_api.sql
--- Backend-owned state for the shared PWA / SwiftUI client API.
+-- Backend-owned state for the shared SwiftUI client API.
 
 CREATE TABLE IF NOT EXISTS user_preferences (
   user_id               TEXT PRIMARY KEY,
