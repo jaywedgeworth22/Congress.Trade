@@ -7460,6 +7460,18 @@ function closeDrawer() {
   el('detailDrawer').classList.remove('open');
   if (wasOpen) releaseFocusTrap();
 }
+/* Deep links: every drawer gets a shareable URL (?ticker= / ?member= / ?trade=)
+   via a "Copy link" action; openDeepLink() below restores the drawer on boot. */
+function copyLinkHtml(param, value, label) {
+  return '<a class="drawer-all-link clickable" data-copy-param="' + esc(param) + '" data-copy-value="' + esc(value) + '">🔗 ' + esc(label) + '</a>';
+}
+document.addEventListener('click', function (e) {
+  var b = e.target && e.target.closest ? e.target.closest('[data-copy-param]') : null;
+  if (!b) return;
+  var u = new URL(window.location.origin + '/');
+  u.searchParams.set(b.getAttribute('data-copy-param'), b.getAttribute('data-copy-value') || '');
+  copyText(u.toString());
+});
 var PERF_GATE = '<div class="tier-gate-note">📈 Price &amp; performance vs the S&amp;P 500 will appear here once a market-data API key is configured.</div>';
 var PROFILE_GATE = '<div class="tier-gate-note">🏢 Company details (sector, market cap, country, exchange) will appear here once a market-data API key is configured.</div>';
 var OPTION_PERF_NOTE = '<div class="tier-gate-note">Performance isn\\'t shown for options — the return depends on strike, expiry, and exercise, which the filing doesn\\'t disclose.</div>';
@@ -7703,7 +7715,8 @@ function openAsset(ticker) {
       '<div class="drawer-stack-grid"><div class="drawer-section"><h3>Top Buyers</h3>' + traderList(d.topBuyers, 'buyers') + '</div>' +
         '<div class="drawer-section"><h3>Top Sellers</h3>' + traderList(d.topSellers, 'sellers') + '</div></div>' +
       '<div class="drawer-section"><h3>Recent Trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
-        (recent || '<tr><td class="state" colspan="4">No recent trades.</td></tr>') + '</tbody></table></div></div>'
+        (recent || '<tr><td class="state" colspan="4">No recent trades.</td></tr>') + '</tbody></table></div></div>' +
+      '<div class="drawer-section">' + copyLinkHtml('ticker', d.ticker, 'Copy link to ' + d.ticker) + '</div>'
     );
   }).catch(function (e) { openDrawer('<div class="note">Could not load ' + esc(ticker) + ': ' + esc(e.message) + '</div>'); });
 }
@@ -7757,7 +7770,8 @@ function openMember(filerId) {
       '<div class="drawer-section"><h3>Performance vs S&amp;P 500</h3>' + PERF_GATE + '</div>' +
       '<div class="drawer-section"><h3>Most-Traded</h3>' + top + '</div>' +
       '<div class="drawer-section"><h3>Recent Trades</h3><div class="table-wrap"><table class="mini-tbl"><tbody>' +
-        (recent || '<tr><td class="state" colspan="4">No trades.</td></tr>') + '</tbody></table></div></div>'
+        (recent || '<tr><td class="state" colspan="4">No trades.</td></tr>') + '</tbody></table></div></div>' +
+      '<div class="drawer-section">' + copyLinkHtml('member', filerId, 'Copy link to ' + name) + '</div>'
     );
   }).catch(function (e) { openDrawer('<div class="note">Could not load politician: ' + esc(e.message) + '</div>'); });
 }
@@ -7814,6 +7828,7 @@ function openTrade(row) {
   var links = '<div class="drawer-section">' +
     (row.ticker ? '<a class="drawer-all-link clickable" data-asset="' + esc(row.ticker) + '">View All Trades of ' + esc(row.ticker) + ' →</a>' : '') +
     (row.filerId ? '<a class="drawer-all-link clickable" data-member="' + esc(row.filerId) + '">View All Trades by ' + esc(fmtName(row.member)) + ' →</a>' : '') +
+    (row.id ? copyLinkHtml('trade', row.id, 'Copy link to this trade') : '') +
     '</div>';
   openDrawer(head + summary + perf + profile + notes + links);
   // Lazy-load the performance line (FMP-gated; "—"/note when unavailable).
@@ -8398,6 +8413,23 @@ function openTradeById(id) {
     if (TRADES[i].id === id) { openTrade(TRADES[i]); return; }
   }
 }
+/* Restore a shared deep link (?ticker= / ?member= / ?trade=) once the first
+   feed page is in memory. Trades only resolve against loaded rows — there is
+   no by-id endpoint — so an unknown id gets an explanatory drawer instead. */
+function openDeepLink() {
+  try {
+    var sp = new URLSearchParams(window.location.search);
+    var ticker = sp.get('ticker');
+    var member = sp.get('member');
+    var trade = sp.get('trade');
+    if (ticker) { openAsset(ticker); return; }
+    if (member) { openMember(member); return; }
+    if (trade) {
+      if (TRADE_BY_ID[trade] || TRADES.some(function (t) { return t.id === trade; })) openTradeById(trade);
+      else openDrawer('<div class="note">That trade is not in the currently loaded feed window. Load more rows in the Trades tab, or check the link.</div>');
+    }
+  } catch (e) {}
+}
 function handleFeedOpenEvent(e) {
   if (!e.target.closest) return;
   if (e.target.closest('a[href]')) return;
@@ -8543,7 +8575,7 @@ loadMe().then(function () {
 });
 
 handleAuthQueryParams(); // toast + scrub ?login= / ?checkout= after redirects
-loadFeed().then(function () { startStream(); }); // warm the Trades feed + live SSE pill
+loadFeed().then(function () { startStream(); openDeepLink(); }); // warm the Trades feed + live SSE pill
 loadPollConfig();  // for the poll-mode KPI
 
 /* Global interactive chart tooltip */
