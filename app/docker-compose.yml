@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  congress-app:
+    build: .
+    container_name: congress-app
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - /data/congress-trade:/data/congress-trade
+    env_file:
+      - .env
+    environment:
+      - DENO_KV_PATH=/data/congress-trade/kv.sqlite
+      - PORT=5000
