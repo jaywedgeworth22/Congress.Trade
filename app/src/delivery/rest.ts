@@ -97,6 +97,19 @@ type RestContext = Context<{ Bindings: Env }>;
 const READINESS_CACHE_TTL_MS = 60_000;
 let readinessCache: { at: number; result: ReadinessResult } | null = null;
 
+/**
+ * Edge-cache policies for public, read-only GETs. These endpoints carry no
+ * Cache-Control today, so CDNs/browser shared caches cannot help even where
+ * the payload is already KV-cached server-side (e.g. /members). s-maxage
+ * targets shared caches only; stale-while-revalidate lets an edge serve the
+ * stale copy while revalidating instead of stampeding the origin.
+ * PUBLIC_FEED_CACHE is short because the live feed shifts with each ingest;
+ * PUBLIC_STABLE_CACHE suits daily-grain data (members roster, market EOD,
+ * filing detail).
+ */
+const PUBLIC_FEED_CACHE = 'public, s-maxage=15, stale-while-revalidate=45';
+const PUBLIC_STABLE_CACHE = 'public, s-maxage=300, stale-while-revalidate=600';
+
 interface PublicSubscription extends Omit<Subscription, 'secret'> {
   hasSecret: boolean;
   /** Returned only once, on creation or explicit secret rotation. */
@@ -345,6 +358,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
     // Count served rows against the caller's daily budget. Incremental polls
     // (the dashboard's steady state) return zero rows and skip the KV write.
     await spendRowBudget(c.env, ip, transactions.length);
+    c.header('Cache-Control', PUBLIC_FEED_CACHE);
     return c.json({
       transactions,
       cursor: maxCursor,
@@ -476,6 +490,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       [docId],
     );
     await spendRowBudget(c.env, ip, txRows.length);
+    c.header('Cache-Control', PUBLIC_STABLE_CACHE);
     return c.json({
       filing: toPublicFiling(mapFiling(filingRow)),
       transactions: txRows.map(mapTransaction),
@@ -521,6 +536,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       headers: {
         'content-type': contentType,
         'content-disposition': 'inline', // Attempt to display in browser instead of auto-download
+        // Fetched PDFs are immutable once stored (keyed by doc_id).
+        'cache-control': 'public, max-age=86400, immutable',
       },
     });
   });
@@ -530,6 +547,14 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // let a sibling app reuse the FMP-derived data App A has already pulled
   // (cache-aside) instead of spending its own FMP quota. Shapes mirror the
   // POST /api/admin/securities/import payload, so the two apps are symmetric.
+
+  // Daily-grain public reads: let shared/edge caches absorb repeat traffic.
+  r.use('/market/*', async (c, next) => {
+    await next();
+    if (c.req.method === 'GET' && c.res.status === 200) {
+      c.res.headers.set('Cache-Control', PUBLIC_STABLE_CACHE);
+    }
+  });
 
   // GET /market/ref/:ticker -> the cached securities_ref row (or 404).
   r.get('/market/ref/:ticker', async (c) => {
@@ -772,6 +797,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       }));
       return { members, count: members.length };
     });
+    c.header('Cache-Control', PUBLIC_STABLE_CACHE);
     return c.json(payload);
   });
 
