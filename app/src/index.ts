@@ -326,7 +326,9 @@ const requestAndScheduledWorker = Sentry.withSentry(
       const response = withThirdPartyTelemetry(env, () => app.fetch(request, env, ctx));
       // Flush this request's metered D1 rows after the response settles — the
       // read path is where analytics/scraper scans accrue. Best-effort, never blocks.
-      ctx.waitUntil(Promise.resolve(response).catch(() => undefined).then(() => flushD1Budget(env)));
+      if (ctx?.waitUntil) {
+        ctx.waitUntil(Promise.resolve(response).catch(() => undefined).then(() => flushD1Budget(env)));
+      }
       return response;
     },
 
