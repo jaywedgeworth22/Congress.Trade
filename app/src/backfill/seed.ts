@@ -30,6 +30,7 @@ import { nearestBracket } from '../shared/brackets.ts';
 import { HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes.ts';
 import { sanitizeAssetName } from '../shared/text.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
+import { computeDisclosureLagDays, computeStockActStatus } from '../shared/stockAct.ts';
 import { scoreFields, loadResolver, type TickerResolver } from '../extraction/normalizer.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
@@ -474,8 +475,8 @@ function buildSeedTxStatement(tx: Transaction): SqlStatement {
        id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
        asset_type_name, tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
        raw_text, description, supplemental_text, confidence, source, created_at, cursor_seq,
-       first_seen_at, filed_date, est_value
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'seed_dataset', ?, NULL, ?, ?, ?)
+       first_seen_at, filed_date, est_value, disclosure_lag_days, stock_act_status
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'seed_dataset', ?, NULL, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        asset_name = excluded.asset_name,
        ticker = excluded.ticker,
@@ -491,7 +492,9 @@ function buildSeedTxStatement(tx: Transaction): SqlStatement {
        confidence = excluded.confidence,
        first_seen_at = excluded.first_seen_at,
        filed_date = excluded.filed_date,
-       est_value = excluded.est_value
+       est_value = excluded.est_value,
+       disclosure_lag_days = excluded.disclosure_lag_days,
+       stock_act_status = excluded.stock_act_status
      WHERE transactions.source = 'seed_dataset'`,
     [
       tx.id,
@@ -516,6 +519,8 @@ function buildSeedTxStatement(tx: Transaction): SqlStatement {
       tx.firstSeenAt ?? null,
       tx.filedDate ?? null,
       estimateTransactionValue(tx.amountMin, tx.amountMax),
+      computeDisclosureLagDays(tx.txDate, tx.filedDate),
+      computeStockActStatus(tx.txDate, tx.filedDate),
     ],
   ];
 }
