@@ -10,15 +10,9 @@ const errors = [];
 // Allowed literal runner labels and the dynamic fallback expression.
 const allowedRunners = new Set([
   "ubuntu-latest",
-  "[self-hosted, congress-ci]",
-  "[self-hosted, congress-deploy]",
-  "[self-hosted, oracle-ci]",
 ]);
-// The dynamic expression used when CT_CI_RUNNER variable controls runner selection.
-// Workflows may use this expression for hosted-runner fallback when the self-hosted
-// runner is unavailable. The policy accepts it as a known-safe pattern.
-const allowedRunnerExpression =
-  "${{ (github.actor != 'dependabot[bot]' && vars.CT_CI_RUNNER) || 'ubuntu-latest' }}";
+// Dynamic expressions retired with the self-hosted fleet (2026-07-29).
+const allowedRunnerExpression = "";
 
 const fullCommitSha = /^[0-9a-f]{40}$/;
 
