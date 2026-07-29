@@ -1,4 +1,4 @@
-const ADMIN_TOKEN = "56c11f2e0c7fa4d019d379fd0b8676199ad1186ad8b09fe5be6a7b2ecbf05060";
+const ADMIN_TOKEN = "***REMOVED***";
 const URL = "https://congress.trade/api/admin/debug-sql";
 
 async function runSql(query: string, params: any[] = []): Promise<any[]> {

@@ -5,7 +5,7 @@ import urllib.parse
 import sys
 import re
 
-ADMIN_TOKEN = "56c11f2e0c7fa4d019d379fd0b8676199ad1186ad8b09fe5be6a7b2ecbf05060"
+ADMIN_TOKEN = "***REMOVED***"
 BASE_URL = "https://congress.trade/api/admin"
 HEADERS = {
     "Authorization": f"Bearer {ADMIN_TOKEN}",

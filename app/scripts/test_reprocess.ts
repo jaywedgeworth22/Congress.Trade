@@ -1,5 +1,5 @@
 async function main() {
-  const adminToken = "56c11f2e0c7fa4d019d379fd0b8676199ad1186ad8b09fe5be6a7b2ecbf05060";
+  const adminToken = "***REMOVED***";
   const docs = JSON.parse(Deno.readTextFileSync("./bad_docs.json")) as string[];
   const chunk = docs.slice(0, 1);
     

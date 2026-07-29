@@ -3,7 +3,7 @@ import "npm:dotenv/config";
 import { readFileSync } from "node:fs";
 
 async function run() {
-  const adminToken = "56c11f2e0c7fa4d019d379fd0b8676199ad1186ad8b09fe5be6a7b2ecbf05060";
+  const adminToken = "***REMOVED***";
   const res = await fetch("https://congress.trade/api/health");
   console.log(await res.json());
 

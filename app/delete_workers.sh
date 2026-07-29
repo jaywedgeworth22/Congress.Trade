@@ -1,5 +1,5 @@
 #!/bin/bash
-TOKEN="cfat_9jfGV7vxCTyeCo2eY80ltfx446Y4wBBApoQdnEFBc28f874d"
+TOKEN="***REMOVED***"
 ACCOUNT="254301ba6b6323381932ddbca9608c73"
 API="https://api.cloudflare.com/client/v4/accounts/$ACCOUNT"
 

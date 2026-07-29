@@ -3,7 +3,7 @@ import urllib.parse
 import json
 import re
 
-token = "ddo_6NiSHTuvWxj9sbqfIVBjbPa0SHxVtN2anc3l"
+token = "***REMOVED***"
 app_id = "14ccfb84-7722-4ee3-99d9-c72565b07335"
 
 url = f"https://api.deno.com/v2/apps/{app_id}/revisions?limit=100"
