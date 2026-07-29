@@ -1,5 +1,24 @@
+export function isJunkAssetString(s: string | null | undefined): boolean {
+  if (!s) return true;
+  const str = String(s).trim();
+  if (!str) return true;
+  const lower = str.toLowerCase();
+  if (
+    lower.includes('unparsed historical filing') ||
+    lower.includes('this filing was disclosed via scanned pdf') ||
+    lower.includes('use link in ptr_link column to view the pdf') ||
+    lower.includes('pdf disclosed filing')
+  ) {
+    return true;
+  }
+  const stripped = str.replace(/[\.\s\-\_\:\;\,\?\!]/g, '');
+  if (stripped.length === 0) return true;
+  if (/[\.\_\-]{2,}/.test(str) && stripped.length <= 2) return true;
+  return false;
+}
+
 export function cleanAssetString(name: string | null | undefined, ticker?: string | null): string {
-  if (!name) return '';
+  if (!name || isJunkAssetString(name)) return '';
   let str = name.trim();
 
   // If the name is exactly the ticker, return the uppercase ticker
