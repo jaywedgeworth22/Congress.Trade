@@ -3808,11 +3808,9 @@ function decisionReasonText(d) {
 }
 function decisionDocHtml(d) {
   var docId = d.docId || '';
-  var url = '';
-  if (docId.slice(0, 2) === 'S-' || docId.slice(0, 2) === 'H-') {
-    url = '/api/client/v1/documents/' + encodeURIComponent(docId) + '/pdf';
-  } else {
-    url = safeDocUrl(d.pdfUrl || d.sourceUrl);
+  var url = d.pdfUrl || safeDocUrl(d.sourceUrl);
+  if (!url && docId) {
+    url = '/api/documents/' + encodeURIComponent(docId) + '/pdf';
   }
   if (!url) return '<span class="tkr">' + esc(docId) + '</span>';
   return '<a class="tkr" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" title="Open source filing">' + esc(docId) + '</a>';
