@@ -1,25 +1,27 @@
-# Congress.Trade brand assets (eagle)
+# Congress.Trade brand assets
 
-**Canonical masters = SuperGrok Imagine exports already in this folder** (not phone photos).
+**Source of truth:** SuperGrok Imagine `eagle-lockup.png` (light cream page art).
 
-| Master | What |
-|--------|------|
-| `eagle-lockup.png` | Full horizontal brand: circular mark + CONGRESS. / TRADE type (1792×1008) |
-| `eagle-app-icon-1024.png` | App-icon mockup (navy filled squircle) |
+## Rules (owner)
 
-Phone snaps (`IMG_0508`, `IMG_0523`, `IMG_0592`) are **style reference only**.
+- **Never** ship the navy-filled badge as the product mark or website logo.
+- **Website:** transparent lockup/mark only (no cream fill) — the UI supplies the background.
+- **App icon:** light cream full-bleed (`eagle-app-icon-light-1024.png`) so iOS has an opaque plate.
 
-## Site header
-
-Uses `eagle-lockup-dark-ui.png` (Imagine lockup, page bg removed, navy wordmark lightened for dark UI) via `eagle-header-lockup-dark-120.png` embedded in `dashboardHtml.ts`. **Typography is baked into the Imagine asset** — do not re-typeset with Zilla Slab.
-
-## Other exports
+## Files
 
 | File | Use |
 |------|-----|
-| `eagle-lockup-transparent.png` | Light-UI lockup (navy type) |
-| `eagle-lockup-dark-ui.png` | Dark-UI lockup (light type) |
-| `eagle-circle-*.png` | Hollow mark only (from Imagine lockup, full wings) |
-| `eagle-app-icon-clean-*.png` | Install icons from Imagine app-icon master |
+| `eagle-lockup.png` | Original Imagine lockup master |
+| `eagle-lockup-transparent.png` | Website light type (navy text), transparent |
+| `eagle-lockup-dark-ui.png` | Website dark type (light text), transparent |
+| `eagle-header-lockup-{light,dark}-240.png` | High-DPI header embeds |
+| `eagle-circle-*.png` | Transparent hollow mark (splash / BrandLogo) |
+| `eagle-app-icon-light-*.png` | iOS / install icons (cream plate) |
+| `eagle-app-icon-1024.png` | Archived navy mockup — **do not use** |
 
-Do not re-extract from phone screenshots for production marks.
+## Installed
+
+- iOS `AppIcon` ← light cream 1024
+- iOS `BrandLogo` ← transparent circle mark
+- Dashboard header ← 240px transparent lockups (theme swap)
