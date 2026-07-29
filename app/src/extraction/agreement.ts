@@ -91,6 +91,7 @@ import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
 import { buildConsensusRows, type AmountBracket, type ConsensusResult } from './consensus.ts';
 import { uuid } from '../shared/ids.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
+import { computeDisclosureLagDays, computeStockActStatus } from '../shared/stockAct.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
@@ -561,7 +562,7 @@ const CONDITIONAL_BULK_INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
   tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
   raw_text, asset_type_name, filing_status, subholding, location, description,
   supplemental_text, row_key, confidence, source, created_at, cursor_seq,
-  first_seen_at, filed_date, est_value
+  first_seen_at, filed_date, est_value, disclosure_lag_days, stock_act_status
 ) SELECT
   json_extract(value, '$.id'), json_extract(value, '$.docId'),
   json_extract(value, '$.filerId'), json_extract(value, '$.txDate'),
@@ -576,7 +577,8 @@ const CONDITIONAL_BULK_INSERT_TX_SQL = `INSERT OR IGNORE INTO transactions (
   json_extract(value, '$.rowKey'), json_extract(value, '$.confidence'),
   json_extract(value, '$.source'), json_extract(value, '$.createdAt'), NULL,
   json_extract(value, '$.firstSeenAt'), json_extract(value, '$.filedDate'),
-  json_extract(value, '$.estValue')
+  json_extract(value, '$.estValue'), json_extract(value, '$.disclosureLagDays'),
+  json_extract(value, '$.stockActStatus')
   FROM json_each(?)
    WHERE EXISTS (
       SELECT 1 FROM review_queue
@@ -662,6 +664,8 @@ async function persistClaimedPublish(
     firstSeenAt: tx.firstSeenAt ?? null,
     filedDate: tx.filedDate ?? null,
     estValue: estimateTransactionValue(tx.amountMin, tx.amountMax),
+    disclosureLagDays: computeDisclosureLagDays(tx.txDate, tx.filedDate),
+    stockActStatus: computeStockActStatus(tx.txDate, tx.filedDate),
   })));
   const exactLiveSetPredicate = `(SELECT COUNT(*) FROM transactions
       WHERE doc_id = ? AND source IN ('primary', 'manual')
