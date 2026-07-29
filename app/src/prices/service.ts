@@ -23,7 +23,7 @@ import { buildFallbackPriceClient } from './fallback.ts';
 import type { Close } from './compute.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
 
-const DEFAULT_DAILY_CAP = 5000;
+const DEFAULT_DAILY_CAP = 230;
 /**
  * How long a ticker stays negative-cached after a SECOND (or later) consecutive
  * empty EOD-history fetch before we retry it. Bounds the "delisted/foreign/
