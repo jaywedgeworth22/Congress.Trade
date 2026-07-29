@@ -80,7 +80,7 @@ function parsePositiveInt(raw: string | undefined, fallback: number, max: number
 }
 
 function parseProfileName(raw: string | undefined): DenoCostProfileName {
-  const v = (raw ?? 'free').trim().toLowerCase();
+  const v = (raw ?? 'paid').trim().toLowerCase();
   if (v === 'paid' || v === 'pro' || v === 'full') return 'paid';
   if (v === 'balanced' || v === 'default' || v === 'medium') return 'balanced';
   return 'free';
