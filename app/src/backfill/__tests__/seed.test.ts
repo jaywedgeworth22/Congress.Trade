@@ -304,7 +304,7 @@ describe('runSeedBackfill batched writes (subrequest cap)', () => {
     expect(transactionSql).toHaveLength(120);
     expect(transactionSql.every((sql) => /filed_date, est_value/i.test(sql))).toBe(true);
     expect(transactionSql.every((sql) => /est_value = excluded\.est_value/i.test(sql))).toBe(true);
-    expect(transactionBinds.every((params) => params.at(-1) === 375000.5)).toBe(true);
+    expect(transactionBinds.every((params) => params.at(-3) === 375000.5)).toBe(true);
   });
 
   it('materializes est_value on insert and refreshes it during seed reconciliation', async () => {
@@ -346,6 +346,7 @@ describe('runSeedBackfill batched writes (subrequest cap)', () => {
     expect(txUpsert).toBeDefined();
     expect(txUpsert?.sql).toContain('first_seen_at, filed_date, est_value');
     expect(txUpsert?.sql).toContain('est_value = excluded.est_value');
-    expect(txUpsert?.params.at(-1)).toBe((250001 + 500000) / 2);
+    // est_value is followed by disclosure_lag_days + stock_act_status (0065).
+    expect(txUpsert?.params.at(-3)).toBe((250001 + 500000) / 2);
   });
 });
