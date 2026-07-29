@@ -309,114 +309,119 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // ?from= to bound the window); DESC is a snapshot, not a resumable forward
   // pager, so incremental-sync consumers should keep the asc default.
   r.get('/transactions', async (c) => {
-    const q = c.req.query();
-    // The live feed is fully public — it's the site's SEO/discovery hook. The
-    // freemium boundary is premium-only *full-history export* (see
-    // /export/transactions.csv), not hiding feed rows or public analytics.
-    // (Earlier this gated the
-    // feed to a short recent window for logged-out visitors, which emptied the page
-    // on datasets without recent filings.)
-    const params: TxQueryParams = {
-      since: parseIntOrUndef(q.since),
-      offset: parseIntOrUndef(q.offset),
-      ticker: q.ticker || undefined,
-      member: q.member || undefined,
-      memberName: q.memberName || undefined,
-      chambers: asChambers(q.chamber),
-      type: asTxType(q.type),
-      stockAct: asStockActStatus(q.stockAct),
-      txDateMin: q.from || q.txDateMin || undefined,
-      txDateMax: q.to || q.txDateMax || undefined,
-      order: asOrder(q.order),
-      sort: asTxSort(q.sort),
-      limit: parseIntOrUndef(q.limit),
-    };
-    // Anti-scrape guards (src/security/botDefense.ts). The pager stays public
-    // for humans; depth + daily row budgets make walking the whole corpus via
-    // offset/since the job of the Premium CSV export / token-gated bulk
-    // snapshot instead. Both checks no-op unless SCRAPE_GUARD_ENABLED.
-    if ((params.offset ?? 0) > MAX_PUBLIC_TX_OFFSET) {
-      return c.json(
-        {
-          error: `offset beyond ${MAX_PUBLIC_TX_OFFSET} is not available on the public feed`,
-          hint: 'Use the Premium CSV export for full history.',
-        },
-        400,
-      );
-    }
-    const ip = clientIp(c.req.raw);
-    const budget = await checkRowBudget(c.env, ip);
-    if (!budget.ok) {
-      return c.json(
-        { error: 'daily feed row budget reached', hint: 'Use the Premium CSV export for bulk access.' },
-        429,
-        { 'Retry-After': String(budget.retryAfterSec) },
-      );
-    }
-    // A free-text memberName would force the un-indexed full-corpus LIKE path
-    // (canNestTransactionKeyset bails on it). Resolve the name to a filer_id
-    // first so the feed takes the indexed keyset path; an unresolved name keeps
-    // the legacy LIKE fallback (seed rows whose filer_id has no filers entry).
-    if (params.memberName && !params.member) {
-      const resolvedFilerId = await resolveMemberFilerId(c.env, params.memberName);
-      if (resolvedFilerId) {
-        params.member = resolvedFilerId;
-        params.memberName = undefined;
+    try {
+      const q = c.req.query();
+      // The live feed is fully public — it's the site's SEO/discovery hook. The
+      // freemium boundary is premium-only *full-history export* (see
+      // /export/transactions.csv), not hiding feed rows or public analytics.
+      // (Earlier this gated the
+      // feed to a short recent window for logged-out visitors, which emptied the page
+      // on datasets without recent filings.)
+      const params: TxQueryParams = {
+        since: parseIntOrUndef(q.since),
+        offset: parseIntOrUndef(q.offset),
+        ticker: q.ticker || undefined,
+        member: q.member || undefined,
+        memberName: q.memberName || undefined,
+        chambers: asChambers(q.chamber),
+        type: asTxType(q.type),
+        stockAct: asStockActStatus(q.stockAct),
+        txDateMin: q.from || q.txDateMin || undefined,
+        txDateMax: q.to || q.txDateMax || undefined,
+        order: asOrder(q.order),
+        sort: asTxSort(q.sort),
+        limit: parseIntOrUndef(q.limit),
+      };
+      // Anti-scrape guards (src/security/botDefense.ts). The pager stays public
+      // for humans; depth + daily row budgets make walking the whole corpus via
+      // offset/since the job of the Premium CSV export / token-gated bulk
+      // snapshot instead. Both checks no-op unless SCRAPE_GUARD_ENABLED.
+      if ((params.offset ?? 0) > MAX_PUBLIC_TX_OFFSET) {
+        return c.json(
+          {
+            error: `offset beyond ${MAX_PUBLIC_TX_OFFSET} is not available on the public feed`,
+            hint: 'Use the Premium CSV export for full history.',
+          },
+          400,
+        );
       }
+      const ip = clientIp(c.req.raw);
+      const budget = await checkRowBudget(c.env, ip);
+      if (!budget.ok) {
+        return c.json(
+          { error: 'daily feed row budget reached', hint: 'Use the Premium CSV export for bulk access.' },
+          429,
+          { 'Retry-After': String(budget.retryAfterSec) },
+        );
+      }
+      // A free-text memberName would force the un-indexed full-corpus LIKE path
+      // (canNestTransactionKeyset bails on it). Resolve the name to a filer_id
+      // first so the feed takes the indexed keyset path; an unresolved name keeps
+      // the legacy LIKE fallback (seed rows whose filer_id has no filers entry).
+      if (params.memberName && !params.member) {
+        const resolvedFilerId = await resolveMemberFilerId(c.env, params.memberName);
+        if (resolvedFilerId) {
+          params.member = resolvedFilerId;
+          params.memberName = undefined;
+        }
+      }
+      const built = buildTransactionsQuery(params);
+      // The query SELECTs the resolved chamber + politician name alongside the feed
+      // columns via `__chamber` / `__member_name` (see buildTransactionsQuery).
+      // mapFeedTransaction maps the filer/filing columns (fullName, state,
+      // photoUrl, dates); we then attach the resolved `chamber` / `memberName`,
+      // which aren't part of the base Transaction type.
+      const rows = await all<
+        FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null }
+      >(c.env.DB, built.sql, built.params);
+      const transactions = rows.map((row) => ({
+        ...mapFeedTransaction(row),
+        chamber: (row.__chamber as Chamber | null) ?? null,
+        memberName: row.__member_name ?? null,
+      }));
+      const maxCursor = transactions.reduce(
+        (m, t) => (t.cursorSeq > m ? t.cursorSeq : m),
+        params.since ?? 0,
+      );
+      // Zero-delta incremental poll: a `?since=` cursor with no new rows is the
+      // dashboard's steady state (its fetchUpdates() bails out on an empty
+      // delta before ever reading `total`/`filingsImportedToday`), so skip the
+      // full unindexed COUNT(*) scan AND the today-filings aggregate entirely
+      // rather than paying D1 read cost every ~poll interval for numbers nobody
+      // reads. Both fields are omitted (not falsely reported as 0) so a
+      // reconciliation consumer that DOES want a fresh total on every poll can
+      // tell "not computed this round" apart from "actually zero".
+      const isIncrementalNoOp = params.since !== undefined && transactions.length === 0;
+      let total: number | undefined;
+      let filingsImportedToday: number | undefined;
+      if (!isIncrementalNoOp) {
+        // Total = ALL rows matching the same ticker/member/type/chamber filters,
+        // ignoring the cursor backstop (so the UI can show "showing X of N").
+        const countQuery = buildTransactionsCountQuery(params);
+        const countRow = await first<{ total: number }>(c.env.DB, countQuery.sql, countQuery.params);
+        total = countRow?.total ?? transactions.length;
+        const today = new Date().toISOString().slice(0, 10);
+        const todayQuery = buildTransactionsTodayFilingsQuery(params, today);
+        const todayRow = await first<{ total: number }>(c.env.DB, todayQuery.sql, todayQuery.params);
+        filingsImportedToday = todayRow?.total ?? 0;
+      }
+      // Count served rows against the caller's daily budget. Incremental polls
+      // (the dashboard's steady state) return zero rows and skip the KV write.
+      await spendRowBudget(c.env, ip, transactions.length);
+      c.header('Cache-Control', PUBLIC_FEED_CACHE);
+      return c.json({
+        transactions,
+        cursor: maxCursor,
+        count: transactions.length,
+        total,
+        filingsImportedToday,
+        limit: built.limit,
+        offset: built.offset,
+      });
+    } catch (err) {
+      console.error('GET /transactions failed:', err);
+      return c.json({ error: (err as Error).stack || (err as Error).message }, 500);
     }
-    const built = buildTransactionsQuery(params);
-    // The query SELECTs the resolved chamber + politician name alongside the feed
-    // columns via `__chamber` / `__member_name` (see buildTransactionsQuery).
-    // mapFeedTransaction maps the filer/filing columns (fullName, state,
-    // photoUrl, dates); we then attach the resolved `chamber` / `memberName`,
-    // which aren't part of the base Transaction type.
-    const rows = await all<
-      FeedTransactionRow & { __chamber?: string | null; __member_name?: string | null }
-    >(c.env.DB, built.sql, built.params);
-    const transactions = rows.map((row) => ({
-      ...mapFeedTransaction(row),
-      chamber: (row.__chamber as Chamber | null) ?? null,
-      memberName: row.__member_name ?? null,
-    }));
-    const maxCursor = transactions.reduce(
-      (m, t) => (t.cursorSeq > m ? t.cursorSeq : m),
-      params.since ?? 0,
-    );
-    // Zero-delta incremental poll: a `?since=` cursor with no new rows is the
-    // dashboard's steady state (its fetchUpdates() bails out on an empty
-    // delta before ever reading `total`/`filingsImportedToday`), so skip the
-    // full unindexed COUNT(*) scan AND the today-filings aggregate entirely
-    // rather than paying D1 read cost every ~poll interval for numbers nobody
-    // reads. Both fields are omitted (not falsely reported as 0) so a
-    // reconciliation consumer that DOES want a fresh total on every poll can
-    // tell "not computed this round" apart from "actually zero".
-    const isIncrementalNoOp = params.since !== undefined && transactions.length === 0;
-    let total: number | undefined;
-    let filingsImportedToday: number | undefined;
-    if (!isIncrementalNoOp) {
-      // Total = ALL rows matching the same ticker/member/type/chamber filters,
-      // ignoring the cursor backstop (so the UI can show "showing X of N").
-      const countQuery = buildTransactionsCountQuery(params);
-      const countRow = await first<{ total: number }>(c.env.DB, countQuery.sql, countQuery.params);
-      total = countRow?.total ?? transactions.length;
-      const today = new Date().toISOString().slice(0, 10);
-      const todayQuery = buildTransactionsTodayFilingsQuery(params, today);
-      const todayRow = await first<{ total: number }>(c.env.DB, todayQuery.sql, todayQuery.params);
-      filingsImportedToday = todayRow?.total ?? 0;
-    }
-    // Count served rows against the caller's daily budget. Incremental polls
-    // (the dashboard's steady state) return zero rows and skip the KV write.
-    await spendRowBudget(c.env, ip, transactions.length);
-    c.header('Cache-Control', PUBLIC_FEED_CACHE);
-    return c.json({
-      transactions,
-      cursor: maxCursor,
-      count: transactions.length,
-      total,
-      filingsImportedToday,
-      limit: built.limit,
-      offset: built.offset,
-    });
   });
 
   // --- GET /export/transactions.csv ---------------------------------------
