@@ -153,7 +153,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Wordmark face (owner-chosen typewriter slab), self-hosted Zilla Slab first
      with a local typewriter-slab fallback stack. */
   .brand { display:inline-flex; align-items:center; gap:0; min-width:0; flex:0 1 auto; }
-  .brand-logo { height:38px; width:auto; max-width:min(320px, 60vw); object-fit:contain; flex:0 0 auto; display:block; background:transparent; border-radius:0; box-shadow:none; }
+  .brand-logo { height:40px; width:auto; max-width:min(360px, 62vw); object-fit:contain; flex:0 0 auto; display:block; background:transparent; border-radius:0; box-shadow:none; }
   .brand-text { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .brand .dot { color: var(--accent); }
   .pill { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-dim); }
@@ -1592,7 +1592,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 
 <header class="top">
   <div class="brand" aria-label="Congress.Trade" style="position: relative;">
-    <div id="eagle-intro" aria-hidden="true"></div><img class="brand-logo" id="brandLogo" src="/assets/brand-logo.png" data-src-dark="/assets/brand-logo-dark.png" data-src-light="/assets/brand-logo-light.png" alt="Congress.Trade" height="38" decoding="async" /></div>
+    <div id="eagle-intro" aria-hidden="true"></div><img class="brand-logo" id="brandLogo" src="/assets/brand-logo.png" data-src-dark="/assets/brand-logo-dark.png" data-src-light="/assets/brand-logo-light.png" alt="Congress.Trade" height="40" decoding="async" /></div>
   <span class="pill off" id="livePill" role="status" aria-live="polite" title="Live feed connection status">Connecting&hellip;</span>
   <nav class="tabs" role="tablist" aria-label="Primary views">
     <button data-view="trends" data-mobile="Trends" data-icon="⌁" class="active" id="tab-trends" role="tab" aria-selected="true" aria-controls="view-trends">Trends</button>
