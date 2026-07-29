@@ -63,6 +63,11 @@ import {
 
 const app = new Hono<{ Bindings: Env }>();
 
+app.onError((err, c) => {
+  console.error('Unhandled app error:', err);
+  return c.json({ error: err.message, stack: err.stack }, 500);
+});
+
 // Attach defense-in-depth browser headers to every Worker-generated response,
 // including error and redirect responses. HSTS is added only for HTTPS.
 app.use('*', browserSecurityHeadersMiddleware);
