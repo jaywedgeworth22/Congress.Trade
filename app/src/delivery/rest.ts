@@ -21,7 +21,7 @@
 
 import { Hono, type Context } from 'hono';
 import { MAX_REFS_BATCH } from '@jaywedgeworth22/congress-trading-shared';
-import type { Chamber, Env, Subscription, TxType } from '../shared/types.ts';
+import type { Chamber, Env, Owner, Subscription, TxType } from '../shared/types.ts';
 import { all, first, get } from '../shared/db.ts';
 import { asStockActStatus } from '../shared/stockAct.ts';
 import { cached } from '../shared/kvCache.ts';
@@ -202,6 +202,11 @@ function asTxType(v: string | undefined): TxType | undefined {
   return v === 'P' || v === 'S' || v === 'E' ? v : undefined;
 }
 
+/** Closed enum for the public `?owner=` feed filter (canonical insert-time set). */
+function asOwner(v: string | undefined): Owner | undefined {
+  return v === 'self' || v === 'spouse' || v === 'joint' || v === 'dependent' ? v : undefined;
+}
+
 /** `YYYY-MM-DD` for `days` ago (UTC), for the freemium recency gate. */
 function isoDateDaysAgo(days: number): string {
   return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
@@ -235,6 +240,7 @@ function filtersFromQuery(q: Record<string, string>): TxQueryParams {
     chambers: asChambers(q.chamber),
     type: asTxType(q.type),
     stockAct: asStockActStatus(q.stockAct),
+    owner: asOwner(q.owner),
     txDateMin: q.from || q.txDateMin || undefined,
     txDateMax: q.to || q.txDateMax || undefined,
   };
@@ -325,6 +331,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       chambers: asChambers(q.chamber),
       type: asTxType(q.type),
       stockAct: asStockActStatus(q.stockAct),
+      owner: asOwner(q.owner),
       txDateMin: q.from || q.txDateMin || undefined,
       txDateMax: q.to || q.txDateMax || undefined,
       order: asOrder(q.order),
