@@ -149,12 +149,12 @@ jobs:
               profile=balanced
               ;;
           esac
-          if ! deno deploy env update-value CT_COST_PROFILE paid \
+          if ! deno deploy env update-value CT_COST_PROFILE "$profile" \
               --org=congress-trade --app=congress-trade --non-interactive; then
-            deno deploy env add CT_COST_PROFILE paid \
+            deno deploy env add CT_COST_PROFILE "$profile" \
               --org=congress-trade --app=congress-trade --non-interactive
           fi
-          echo "CT_COST_PROFILE=paid set on Deno Deploy app"
+          echo "CT_COST_PROFILE=$profile set on Deno Deploy app"
 
       - name: Deploy to Deno Deploy and verify
         if: steps.cap.outputs.skip != 'true'

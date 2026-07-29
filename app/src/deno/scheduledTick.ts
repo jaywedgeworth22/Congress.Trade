@@ -199,11 +199,11 @@ export type MaintenanceLane =
 
 export interface MaintenancePipelineOptions {
   outboxLimit: number;
-  /** When set, re-dispatch circuit-parked deliveries (Workers cron lane). */
+  /** When set, re-dispatch circuit-parked deliveries. */
   parkedDeliveryLimit?: number;
-  /** When set, drain the usage-telemetry fallback outbox (Workers cron lane). */
+  /** When set, drain the usage-telemetry fallback outbox. */
   usageTelemetryLimit?: number;
-  /** When true, run the disclosure-latency probe (Workers cron lane). */
+  /** When true, run the disclosure-latency (missed-filing) probe. */
   disclosureLatency?: boolean;
   now?: Date;
   signal?: AbortSignal;
@@ -379,6 +379,13 @@ export async function runScheduledTick(
   try {
     const pipeline = await runMaintenancePipeline(env, {
       outboxLimit: profile.outboxLimit,
+      // Re-dispatch deliveries parked behind per-target circuit breakers,
+      // drain the usage-telemetry fallback outbox, and run the
+      // missed-filing disclosure-latency probe. These lanes were previously
+      // only enabled on the legacy Workers cron path; Deno Deploy is prod.
+      parkedDeliveryLimit: 50,
+      usageTelemetryLimit: 25,
+      disclosureLatency: true,
       now,
       signal,
       // Idle short-circuit: skip multi-statement outbox flushes and the empty

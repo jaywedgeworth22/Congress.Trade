@@ -139,179 +139,23 @@ function mountApiRouters(root: Hono<{ Bindings: Env }>): void {
 
 mountApiRouters(app);
 
-// --- INGEST queue routing -----------------------------------------------------
-export async function handleIngestMessage(
-  env: Env,
-  msg: QueueMessage,
-  queueAttempt = 1,
-  lease?: DurableQueueLeaseContext,
-): Promise<void> {
-  await lease?.assertOwned();
-  switch (msg.type) {
-    case 'filing.new':
-      if (lease) await fetchFiling(env, msg.docId, queueAttempt, lease);
-      else await fetchFiling(env, msg.docId, queueAttempt);
-      return;
-    case 'filing.fetched':
-      if (lease) await classifyFiling(env, msg.docId, lease);
-      else await classifyFiling(env, msg.docId);
-      return;
-    case 'filing.extracted':
-      // Run the extractor pipeline + normalizer for this classified filing.
-      // normalize() persists transactions (or routes to review) and enqueues
-      // delivery.dispatch for each published row.
-      if (lease) await extractAndNormalize(env, msg.docId, lease);
-      else await extractAndNormalize(env, msg.docId);
-      return;
-    case 'tx.persisted':
-      // Enqueue delivery fan-out for the newly persisted transaction.
-      await env.DELIVERY_QUEUE.send({ type: 'delivery.dispatch', txId: msg.txId });
-      return;
-    case 'agreement.check':
-      // Slow cross-vendor agreement read + auto-publish for one review doc. Runs
-      // here (generous per-message duration) rather than in the cron, whose
-      // scheduled-handler waitUntil cancels long model work.
-      if (lease) {
-        await handleAgreementCheck(
-          env,
-          msg.docId,
-          msg.rawObjectKey,
-          msg.escalationTier,
-          msg.claimToken,
-          lease.signal,
-        );
-      } else {
-        await handleAgreementCheck(
-          env,
-          msg.docId,
-          msg.rawObjectKey,
-          msg.escalationTier,
-          msg.claimToken,
-        );
-      }
-      return;
-    case 'autopilot.tick':
-      // One backlog-autopilot slice (a few docs through the same cascade
-      // machinery); the handler re-enqueues itself until the run finishes.
-      if (lease) {
-        await handleAutopilotTick(env, msg.runId, { signal: lease.signal });
-      } else {
-        await handleAutopilotTick(env, msg.runId);
-      }
-      return;
-    case 'usage.telemetry':
-      // While the circuit breaker is open (receiver known-down), skip the live
-      // delivery attempt entirely and go straight to the R2 outbox. Acking
-      // here (instead of throwing so the queue retries) is what stops a dead
-      // receiver from being hammered by this message's own retry/backoff
-      // cadence on top of every other in-flight event doing the same thing.
-      if (await isUsageTelemetryCircuitOpen(env)) {
-        await persistUsageTelemetryFallback(env, msg.event, { throwOnFailure: true });
-        return;
-      }
-      if (lease) await deliverUsageTelemetryEvent(env, msg.event, lease.signal);
-      else await deliverUsageTelemetryEvent(env, msg.event);
-      return;
-    default:
-      console.warn('INGEST_QUEUE: unexpected message type', (msg as { type?: string }).type);
-  }
-}
+// --- Queue message handlers ---------------------------------------------------
+// Single source of truth lives in queueHandlers.ts (used by the Deno durable
+// queue via deno/runtimeHandlers.ts). Imported here for the Workers consumer
+// path and re-exported so the two copies cannot diverge again.
+import {
+  handleCorruptDeadLetterMessage,
+  handleDeadLetterMessage,
+  handleDeliveryMessage,
+  handleIngestMessage,
+} from './queueHandlers.ts';
 
-// --- DELIVERY queue routing ---------------------------------------------------
-export async function handleDeliveryMessage(
-  env: Env,
-  msg: QueueMessage,
-  lease?: DurableQueueLeaseContext,
-): Promise<boolean> {
-  await lease?.assertOwned();
-  switch (msg.type) {
-    case 'delivery.dispatch': {
-      const result = lease
-        ? await dispatchWebhook(env, msg, lease)
-        : await dispatchWebhook(env, msg);
-      return result.outboxComplete;
-    }
-    default:
-      console.warn('DELIVERY_QUEUE: unexpected message type', (msg as { type?: string }).type);
-      return false;
-  }
-}
-
-/** Authoritative terminal recovery path for the configured Queue DLQs. */
-export async function handleDeadLetterMessage(
-  env: Env,
-  queue: string,
-  msg: QueueMessage,
-  attempts: number,
-  lease?: DurableQueueLeaseContext,
-): Promise<void> {
-  await lease?.assertOwned();
-  const recoveryError = new Error(`consumer retry budget exhausted; received by ${queue}`);
-  if (msg.type === 'usage.telemetry') {
-    // The ingest DLQ has a much larger retry budget (up to 100 retries), which
-    // is exactly the amplification surface a dead receiver hit during the
-    // incident this circuit breaker guards against. Respect it here too:
-    // while open, persist to the R2 outbox and stop, instead of continuing to
-    // attempt the exact same idempotent event on every DLQ redelivery.
-    if (await isUsageTelemetryCircuitOpen(env)) {
-      await persistUsageTelemetryFallback(env, msg.event, { throwOnFailure: true });
-      return;
-    }
-    if (lease) await deliverUsageTelemetryEvent(env, msg.event, lease.signal);
-    else await deliverUsageTelemetryEvent(env, msg.event);
-    return;
-  }
-  await recordDeadLetterDurable(env, queue, msg, attempts, recoveryError);
-
-  if (msg.type === 'autopilot.tick') {
-    // A dead-lettered autopilot slice means the run's consumer kept failing:
-    // surface it as a halt requiring acknowledgment, never silently drop it.
-    await markAutopilotRunHalted(env, msg.runId, 'tick_dead_lettered');
-    return;
-  }
-
-  if (queue.includes('delivery')) {
-    if (msg.type !== 'delivery.dispatch') throw new Error('delivery DLQ message has no transaction identity');
-    const recovered = await reconnectDeadLetteredOutbox(env, msg.txId, recoveryError.message);
-    if (recovered.status === 'missing') {
-      console.warn(`delivery outbox missing for ${msg.txId}`);
-      return;
-    }
-    return;
-  }
-
-  if (!('docId' in msg) || !msg.docId) throw new Error('ingest DLQ message has no filing identity');
-  const recovered = await reconnectDeadLetteredIngestionOutbox(
-    env,
-    msg.docId,
-    recoveryError.message,
-    new Date(),
-    { reopenCompleted: msg.type !== 'filing.new' },
-  );
-  if (recovered.status === 'missing') {
-    console.warn(`ingestion outbox missing for ${msg.docId}`);
-    return;
-  }
-}
-
-/** Durable receipt for legacy/corrupt payloads that cannot drive outbox recovery. */
-export async function handleCorruptDeadLetterMessage(
-  env: Env,
-  queue: string,
-  msg: unknown,
-  attempts: number,
-  error: string,
-  lease?: DurableQueueLeaseContext,
-): Promise<void> {
-  await lease?.assertOwned();
-  await recordDeadLetterDurable(
-    env,
-    queue,
-    msg,
-    attempts,
-    new Error(`invalid durable queue payload: ${error}`),
-  );
-}
+export {
+  handleCorruptDeadLetterMessage,
+  handleDeadLetterMessage,
+  handleDeliveryMessage,
+  handleIngestMessage,
+};
 
 const SENTRY_FILTERED_VALUE = '[Filtered]';
 const SENTRY_CREDENTIAL_KEYS = new Set([
