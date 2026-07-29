@@ -9,7 +9,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
-- **[2026-07-28][GROK] Install owner eagle logo on site + PWA + iOS icons — MERGED PR #1008 & DEPLOYED `cf1c206`.** Masters under `docs/brand/assets/` (SuperGrok Imagine eagle+money-bag) were never installed; prior #932 claim was false. Live: iOS AppIcon/BrandLogo, PWA icons+dark header lockup, dashboard brand-logo data-URI (verified MD5 match on https://congress.trade). Gates: typecheck + dashboardHtml 105/105 + CI gitleaks/typecheck+test. iOS home-screen icon needs rebuild/TestFlight. Rollout: `docs/rollouts/2026-07-28-eagle-logo-install.md`.
+- **[2026-07-28][AG] Resolve all open PRs (#1112, #1096) and land fixes — IN PROGRESS.**
 - **[2026-07-27][GROK] Autopilot tick continuation silent-drop — MERGED & DEPLOYED `12e1f6b`.** Root cause: continuation `autopilot.tick` re-enqueued while claim still `processing` with stable per-runId dedupe → INSERT OR IGNORE dropped next slice; runs stalled after one 3-doc tick. Fix: unique `tickId` per send. Live verify: docsAttempted 3→5 mid-run with tickId continuation; first publish observed; LLM_DAILY_USD_CEILING $10→$100, AUTOPILOT_DAILY_USD_BUDGET $5→$25. Review ~1915→1895 during verify.
 
 
