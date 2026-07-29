@@ -9,6 +9,7 @@ const workflowNames = (await readdir(workflowsDir))
 const errors = [];
 // Allowed literal runner labels and the dynamic fallback expression.
 const allowedRunners = new Set([
+  "ubuntu-latest",
   "[self-hosted, congress-ci]",
   "[self-hosted, congress-deploy]",
   "[self-hosted, oracle-ci]",
