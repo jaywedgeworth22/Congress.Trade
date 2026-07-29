@@ -620,6 +620,10 @@ export const FILINGS_FILED_DATE_INDEX_SCHEMA_STATEMENTS = [
   'CREATE INDEX IF NOT EXISTS idx_filings_filed_date ON filings (filed_date)'
 ] as const;
 
+export const DENO_RUNTIME_QUEUE_DEAD_LETTER_CYCLES_SCHEMA_STATEMENTS = [
+  'ALTER TABLE deno_runtime_queue ADD COLUMN dead_letter_cycles INTEGER NOT NULL DEFAULT 0'
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -690,4 +694,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...FIX_DENO_RUNTIME_QUEUE_INDEX_SCHEMA_STATEMENTS,
   // 0063_filings_filed_date_index.sql
   ...FILINGS_FILED_DATE_INDEX_SCHEMA_STATEMENTS,
+  // 0064_deno_runtime_queue_dead_letter_cycles.sql
+  ...DENO_RUNTIME_QUEUE_DEAD_LETTER_CYCLES_SCHEMA_STATEMENTS,
 ] as const;

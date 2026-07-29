@@ -58,6 +58,7 @@ async function makeDb() {
       status TEXT NOT NULL,
       attempts INTEGER NOT NULL DEFAULT 0,
       dead_letter_pending INTEGER NOT NULL DEFAULT 0,
+      dead_letter_cycles INTEGER NOT NULL DEFAULT 0,
       available_at TEXT NOT NULL,
       lease_until TEXT,
       lease_token TEXT,

@@ -25,6 +25,12 @@ ptr_state/
 .env
 .env.local
 *.local
+*.env
+!*.env.example
+!*.env.sample
+!*.env.template
+.env.prod
+prod.env
 
 # Temp / scratch
 *.tmp.json
