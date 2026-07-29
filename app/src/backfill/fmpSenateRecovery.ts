@@ -14,6 +14,7 @@ import type { Env, Transaction } from '../shared/types.ts';
 import { batch } from '../shared/db.ts';
 import { loadResolver, type TickerResolver } from '../extraction/normalizer.ts';
 import { estimateTransactionValue } from '../shared/transactionValue.ts';
+import { computeDisclosureLagDays, computeStockActStatus } from '../shared/stockAct.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
 import { getSharedFmpPacer } from '../shared/pace.ts';
@@ -249,10 +250,10 @@ function transactionStatement(row: MappedFmpSenateRecord): SqlStatement {
        id, doc_id, filer_id, tx_date, owner, asset_name, ticker, asset_type,
        tx_type, amount_min, amount_max, is_option, cap_gains_over_200,
        raw_text, confidence, source, row_key, created_at, cursor_seq,
-       first_seen_at, filed_date, est_value
+       first_seen_at, filed_date, est_value, disclosure_lag_days, stock_act_status
      )
      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'seed_dataset',
-            ?, ?, NULL, ?, ?, ?
+            ?, ?, NULL, ?, ?, ?, ?, ?
       WHERE NOT EXISTS (
         SELECT 1 FROM transactions
          WHERE doc_id = ? AND source IN ('primary', 'manual')
@@ -279,6 +280,8 @@ function transactionStatement(row: MappedFmpSenateRecord): SqlStatement {
       tx.firstSeenAt ?? null,
       tx.filedDate ?? null,
       estimateTransactionValue(tx.amountMin, tx.amountMax),
+      computeDisclosureLagDays(tx.txDate, tx.filedDate),
+      computeStockActStatus(tx.txDate, tx.filedDate),
       tx.docId,
     ],
   ];

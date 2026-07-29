@@ -197,7 +197,7 @@ async function integrationCapabilities(env: ExportEnv): Promise<Record<string, u
         shortVolume: { method: 'GET', path: '/api/market/short-volume/:ticker?from=&to=' },
         fundamentals: { method: 'GET', path: '/api/market/fundamentals/:ticker?from=&to=' },
         analyst: { method: 'GET', path: '/api/market/analyst/:ticker?from=&to=' },
-        transactions: { method: 'GET', path: '/api/transactions?cursor=&limit=&member=&ticker=&type=&chamber=' },
+        transactions: { method: 'GET', path: '/api/transactions?cursor=&limit=&member=&ticker=&type=&chamber=&stockAct=' },
       },
       analytics: {
         tickerLeaderboard: { method: 'GET', path: '/api/analytics/ticker-leaderboard?window=&rankBy=' },
