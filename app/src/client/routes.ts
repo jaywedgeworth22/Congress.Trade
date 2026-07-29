@@ -12,6 +12,7 @@ import type { ClientCommand, Env, User, ClientCommandType } from '../shared/type
 import { getCurrentUserFromRequest } from '../auth/session.ts';
 import { entitlementOf } from '../billing/entitlement.ts';
 import { normalizeTickerLogoSymbol } from '../ui/tickerLogos.ts';
+import { serveDocumentPdf } from '../delivery/rest.ts';
 import {
   createCommand,
   DuplicateCommandError,
@@ -89,6 +90,8 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       },
     });
   });
+
+  r.get('/documents/:docId/pdf', serveDocumentPdf);
 
   r.get('/me', async (c) => {
     const user = await getCurrentUserFromRequest(c);
