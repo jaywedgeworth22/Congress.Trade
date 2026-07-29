@@ -349,4 +349,57 @@ describe('runSeedBackfill batched writes (subrequest cap)', () => {
     // est_value is followed by disclosure_lag_days + stock_act_status (0065).
     expect(txUpsert?.params.at(-3)).toBe((250001 + 500000) / 2);
   });
+
+  it('archives the verbatim seed payload to R2 before processing rows', async () => {
+    const { db } = fakeDb();
+    const puts: Array<{ key: string; body: string }> = [];
+    const env = {
+      DB: db,
+      RAW_FILES: {
+        async put(key: string, body: string) {
+          puts.push({ key, body });
+        },
+      },
+    } as unknown as Env;
+    const payload = JSON.stringify([SENATE_REC]);
+    const fetchImpl = (async () =>
+      new Response(payload, {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as unknown as typeof fetch;
+
+    const res = await runSeedBackfill(env, { chambers: ['senate'], fetchImpl });
+
+    expect(res.errors).toEqual([]);
+    expect(puts).toHaveLength(1);
+    expect(puts[0].key).toMatch(/^seed\/senate\/.+\.json$/);
+    expect(puts[0].body).toBe(payload); // byte-verbatim archive
+    expect(res.artifacts?.senate).toBe(puts[0].key);
+  });
+
+  it('skips the artifact archive in dryRun and never lets an R2 failure block the run', async () => {
+    const { db } = fakeDb();
+    const failingEnv = {
+      DB: db,
+      RAW_FILES: {
+        async put() {
+          throw new Error('r2 down');
+        },
+      },
+    } as unknown as Env;
+    const fetchImpl = (async () =>
+      new Response(JSON.stringify([SENATE_REC]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as unknown as typeof fetch;
+
+    const dry = await runSeedBackfill(failingEnv, { chambers: ['senate'], fetchImpl, dryRun: true });
+    expect(dry.errors).toEqual([]);
+    expect(dry.artifacts).toBeUndefined();
+
+    const res = await runSeedBackfill(failingEnv, { chambers: ['senate'], fetchImpl });
+    expect(res.inserted).toBe(1);
+    expect(res.artifacts).toBeUndefined();
+    expect(res.errors).toEqual(['senate artifact persist: r2 down']);
+  });
 });

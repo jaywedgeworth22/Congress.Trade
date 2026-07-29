@@ -12,8 +12,12 @@
  *
  * This is deliberately the LOW-FIDELITY half of a two-part strategy:
  *   - seed_dataset (here): instant, broad history, coarse provenance. No raw
- *     document, no per-row OCR confidence, no review gating. We do NOT enqueue
- *     delivery for these rows — they are reference/history only.
+ *     disclosure document per row and no per-row OCR confidence or review
+ *     gating — but the verbatim aggregate payload IS archived to R2
+ *     (`seed/{chamber}/{timestamp}.json`, see seedArtifactKeyFor) before any
+ *     row is processed, so a run stays re-auditable after the upstream mirror
+ *     mutates or disappears. We do NOT enqueue delivery for these rows — they
+ *     are reference/history only.
  *   - primary (watcher -> fetcher -> classifier -> extractor -> normalizer):
  *     the PRIMARY, low-latency half. It carries true provenance (rawObjectKey,
  *     extractor, confidence) and later UPGRADES a seed row's provenance when it
@@ -128,6 +132,12 @@ export interface SeedBackfillResult {
   bySource: Record<string, number>;
   /** Soft, per-source errors. The run continues past any single failure. */
   errors: string[];
+  /**
+   * R2 keys of the archived raw seed payloads, one per chamber successfully
+   * fetched this run. Absent in dryRun or when the RAW_FILES binding is
+   * unavailable (e.g. bare-env unit tests).
+   */
+  artifacts?: Partial<Record<SeedChamber, string>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -530,7 +540,7 @@ async function fetchChamberRecords(
   chamber: 'house' | 'senate',
   fetchImpl: typeof fetch,
   urlOverride?: string,
-): Promise<RawWatcherRecord[]> {
+): Promise<{ records: RawWatcherRecord[]; rawText: string }> {
   const url = urlOverride || SEED_SOURCES[chamber].url;
   const res = await trackedFetch(url, {
     headers: {
@@ -539,11 +549,23 @@ async function fetchChamberRecords(
     },
   }, { service: 'backfill', operation: 'fetch-seed-dataset', dynamicTarget: 'seed-source' }, fetchImpl);
   if (!res.ok) throw new Error(`${chamber} seed GET ${url} -> HTTP ${res.status}`);
-  const json = (await res.json()) as unknown;
+  const rawText = await res.text();
+  const json = JSON.parse(rawText) as unknown;
   if (!Array.isArray(json)) {
     throw new Error(`${chamber} seed payload was not a JSON array`);
   }
-  return json as RawWatcherRecord[];
+  return { records: json as RawWatcherRecord[], rawText };
+}
+
+/**
+ * R2 object key for a seed run's archived source payload. One object per
+ * chamber per run (full timestamp), so re-runs never overwrite an earlier
+ * capture and the exact bytes a batch of seed rows was derived from stay
+ * re-inspectable after the upstream mirror mutates or disappears (the House
+ * default already 403s; the Senate mirror intermittently 429s).
+ */
+export function seedArtifactKeyFor(chamber: SeedChamber, nowIso: string): string {
+  return `seed/${chamber}/${nowIso.replace(/[:.]/g, '-')}.json`;
 }
 
 // ---------------------------------------------------------------------------
@@ -615,7 +637,23 @@ export async function runSeedBackfill(
     result.bySource[chamber] = result.bySource[chamber] ?? 0;
     let records: RawWatcherRecord[];
     try {
-      records = await fetchChamberRecords(chamber, fetchImpl, opts.sourceUrls?.[chamber]);
+      const fetched = await fetchChamberRecords(chamber, fetchImpl, opts.sourceUrls?.[chamber]);
+      records = fetched.records;
+      // Archive the verbatim source payload BEFORE processing a single row, so
+      // the exact bytes this batch was derived from survive upstream mutation
+      // or takedown. Non-fatal: a missing/failing R2 binding never blocks the
+      // backfill itself.
+      if (!opts.dryRun && env.RAW_FILES) {
+        try {
+          const key = seedArtifactKeyFor(chamber, nowIso);
+          await env.RAW_FILES.put(key, fetched.rawText, {
+            httpMetadata: { contentType: 'application/json' },
+          });
+          (result.artifacts ??= {})[chamber] = key;
+        } catch (err) {
+          result.errors.push(`${chamber} artifact persist: ${(err as Error).message}`);
+        }
+      }
     } catch (err) {
       result.errors.push(`${chamber}: ${(err as Error).message}`);
       continue; // fail soft — move to the next chamber.
