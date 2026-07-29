@@ -494,10 +494,23 @@ export function normalizeTradeSide(type: string | null | undefined): 'buy' | 'se
   return 'exchange';
 }
 
+export function normalizeDateStr(d: string | null | undefined): string {
+  if (!d) return '';
+  const str = d.trim();
+  const isoMatch = /^(\d{4}-\d{2}-\d{2})/.exec(str);
+  if (isoMatch) return isoMatch[1];
+  const usMatch = /^(\d{1,2})\/(\d{1,2})\/(\d{4})/.exec(str);
+  if (usMatch) {
+    const [, m, day, y] = usMatch;
+    return `${y}-${m.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+  return str.slice(0, 10);
+}
+
 export function generateTradeHash(filerName: string | null, ticker: string | null, date: string | null, type: string | null): string {
   const ln = extractLastName(filerName);
-  const tk = (ticker || '').toUpperCase();
-  const dt = date || '';
+  const tk = (ticker || '').toUpperCase().trim();
+  const dt = normalizeDateStr(date);
   const ty = normalizeTradeSide(type);
   return `${ln}_${tk}_${dt}_${ty}`;
 }
@@ -545,7 +558,42 @@ function extractRows(json: unknown): Record<string, unknown>[] {
   return [];
 }
 
-function rowKeyFromFields(provider: ProviderId, payload: Record<string, unknown>, fields: string[]): string {
+export function matchDisclosureCandidate(
+  candidate: Pick<CandidateRow, 'trade_hash'>,
+  row: DisclosureProviderRow,
+): CandidateMatch | null {
+  if (candidate.trade_hash === row.tradeHash) {
+    return { providerKey: row.providerKey, matchMethod: 'trade-hash' };
+  }
+
+  const cParts = candidate.trade_hash.split('_');
+  const rParts = row.tradeHash.split('_');
+  // Hash format: lastName_ticker_txDate_type
+  if (cParts.length >= 4 && rParts.length >= 4) {
+    const [cLast, cTk, cDate, cType] = cParts;
+    const [rLast, rTk, rDate, rType] = rParts;
+
+    if (cLast && cLast === rLast && cType === rType) {
+      // 1. Matching ticker (or missing ticker) + matching date
+      if ((!cTk || !rTk || cTk === rTk) && cDate === rDate) {
+        return { providerKey: row.providerKey, matchMethod: 'fuzzy-no-ticker' };
+      }
+      // 2. Matching ticker + date within +/- 2 days
+      if (cTk && rTk && cTk === rTk && cDate && rDate) {
+        const cTime = new Date(cDate).getTime();
+        const rTime = new Date(rDate).getTime();
+        if (Number.isFinite(cTime) && Number.isFinite(rTime)) {
+          const diffDays = Math.abs(cTime - rTime) / 86400000;
+          if (diffDays <= 2) {
+            return { providerKey: row.providerKey, matchMethod: 'fuzzy-date-window' };
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}function rowKeyFromFields(provider: ProviderId, payload: Record<string, unknown>, fields: string[]): string {
   const parts = fields.map((field) => fieldString(payload, [field]) ?? '').filter(Boolean);
   const basis = parts.length ? parts.join('|') : rowText(payload);
   return `${provider}:${simpleHash(basis)}`;
@@ -624,26 +672,6 @@ export function parseQuiverDisclosureRows(chamber: Chamber, json: unknown, defau
       providerPublishedAt: normalizeTimestamp(fieldString(payload, ['Quiver_Upload_Time'])),
     };
   });
-}
-
-export function matchDisclosureCandidate(
-  candidate: Pick<CandidateRow, 'trade_hash'>,
-  row: DisclosureProviderRow,
-): CandidateMatch | null {
-  if (candidate.trade_hash === row.tradeHash) {
-    return { providerKey: row.providerKey, matchMethod: 'trade-hash' };
-  }
-
-  const cParts = candidate.trade_hash.split('_');
-  const rParts = row.tradeHash.split('_');
-  // Hash format: lastName_ticker_txDate_type
-  if (cParts.length >= 4 && rParts.length >= 4) {
-    if (cParts[0] === rParts[0] && cParts[2] === rParts[2] && cParts[3] === rParts[3]) {
-      return { providerKey: row.providerKey, matchMethod: 'fuzzy-no-ticker' };
-    }
-  }
-
-  return null;
 }
 
 export function matchFmpDisclosureCandidate(
