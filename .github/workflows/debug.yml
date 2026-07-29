@@ -1,8 +1,11 @@
 name: Debug
-on: [workflow_dispatch]
+on: [push]
 jobs:
   debug:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, oracle-ci]
     steps:
-      - run: docker logs congress-app --tail 200
-      - run: docker logs congress-sqlite-web --tail 200
+      - run: docker logs oracle-caddy-1 --tail 100
+      - run: docker inspect oracle-caddy-1 -f '{{json .NetworkSettings.Networks}}'
+      - run: docker inspect congress-app -f '{{json .NetworkSettings.Networks}}'
+      - run: docker exec oracle-caddy-1 ping -c 1 congress-app || true
+      - run: docker exec oracle-caddy-1 wget -qO- http://congress-app:5000/api/health || true
