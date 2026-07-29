@@ -12,8 +12,8 @@ import {
   deliverUsageTelemetryEvent,
 } from './shared/thirdPartyTelemetry.ts';
 import { persistUsageTelemetryFallback } from './shared/thirdPartyTelemetry.ts';
-import { completeDeliveryOutbox } from './delivery/outbox.ts';
-import { completeIngestionOutbox } from './ingestion/outbox.ts';
+import { reconnectDeadLetteredOutbox } from './delivery/outbox.ts';
+import { reconnectDeadLetteredIngestionOutbox } from './ingestion/outbox.ts';
 import { executeQueuedCommand } from './client/commands.ts';
 import { updateCommandStatus } from './client/state.ts';
 
@@ -102,6 +102,9 @@ export async function handleDeliveryMessage(
   }
 }
 
+/** Authoritative terminal recovery path for queue dead letters (single source
+ * of truth — index.ts re-exports this so the Workers and Deno paths cannot
+ * diverge again). */
 export async function handleDeadLetterMessage(
   env: Env,
   queue: string,
@@ -112,6 +115,11 @@ export async function handleDeadLetterMessage(
   await lease?.assertOwned();
   const recoveryError = new Error(`consumer retry budget exhausted; received by ${queue}`);
   if (msg.type === 'usage.telemetry') {
+    // The ingest DLQ has a much larger retry budget (up to 100 retries), which
+    // is exactly the amplification surface a dead receiver hit during the
+    // incident this circuit breaker guards against. Respect it here too:
+    // while open, persist to the R2 outbox and stop, instead of continuing to
+    // attempt the exact same idempotent event on every DLQ redelivery.
     if (await isUsageTelemetryCircuitOpen(env)) {
       await persistUsageTelemetryFallback(env, msg.event, { throwOnFailure: true });
       return;
@@ -123,24 +131,42 @@ export async function handleDeadLetterMessage(
   await recordDeadLetterDurable(env, queue, msg, attempts, recoveryError);
 
   if (msg.type === 'autopilot.tick') {
+    // A dead-lettered autopilot slice means the run's consumer kept failing:
+    // surface it as a halt requiring acknowledgment, never silently drop it.
     await markAutopilotRunHalted(env, msg.runId, 'tick_dead_lettered');
     return;
   }
 
   if (queue.includes('delivery')) {
     if (msg.type !== 'delivery.dispatch') throw new Error('delivery DLQ message has no transaction identity');
-    await completeDeliveryOutbox(env, msg.txId);
-  } else {
-    if (msg.type === 'command.execute') {
-      // Retry budget exhausted: terminalize the command row so clients
-      // polling GET /commands/:id see a failure instead of a stuck status.
-      await updateCommandStatus(env, msg.userId, msg.commandId, 'failed', {
-        error: recoveryError.message,
-      });
-      return;
+    // Re-open the outbox row with bounded backoff cycles instead of marking
+    // it completed — completing here permanently abandons the webhook.
+    const recovered = await reconnectDeadLetteredOutbox(env, msg.txId, recoveryError.message);
+    if (recovered.status === 'missing') {
+      console.warn(`delivery outbox missing for ${msg.txId}`);
     }
-    if (msg.type !== 'filing.new') throw new Error('ingest DLQ message has no doc_id');
-    await completeIngestionOutbox(env, msg.docId);
+    return;
+  }
+
+  if (msg.type === 'command.execute') {
+    // Retry budget exhausted: terminalize the command row so clients
+    // polling GET /commands/:id see a failure instead of a stuck status.
+    await updateCommandStatus(env, msg.userId, msg.commandId, 'failed', {
+      error: recoveryError.message,
+    });
+    return;
+  }
+
+  if (!('docId' in msg) || !msg.docId) throw new Error('ingest DLQ message has no filing identity');
+  const recovered = await reconnectDeadLetteredIngestionOutbox(
+    env,
+    msg.docId,
+    recoveryError.message,
+    new Date(),
+    { reopenCompleted: msg.type !== 'filing.new' },
+  );
+  if (recovered.status === 'missing') {
+    console.warn(`ingestion outbox missing for ${msg.docId}`);
   }
 }
 

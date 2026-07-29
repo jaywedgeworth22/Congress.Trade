@@ -3,10 +3,17 @@ import * as fs from "node:fs/promises";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { resolveSecret } from "../src/secrets/infisical.ts";
 
-const API_KEY = "5ac2bdd0-3eb7-466c-8f64-1281315935d1";
 const BASE_URL = "https://api.unusualwhales.com/api";
 const SCRATCH_DIR = "/Users/jay/.gemini/antigravity/brain/46787371-bd2d-4703-a05d-cf01380534f5/scratch";
 const BUCKET = "congress-trade-bucket";
+
+// Provider key lives in Infisical (UNUSUAL_WHALES_API_KEY) — never commit it.
+async function getApiKey(): Promise<string> {
+  const res = await resolveSecret(Deno.env.toObject() as any, "UNUSUAL_WHALES_API_KEY");
+  const key = res.value || Deno.env.get("UNUSUAL_WHALES_API_KEY");
+  if (!key) throw new Error("Missing UNUSUAL_WHALES_API_KEY (set it in Infisical or the environment)");
+  return key;
+}
 
 async function getS3() {
   const s3EpRes = await resolveSecret(Deno.env.toObject() as any, "CF_R2_S3_ENDPOINT");
@@ -32,7 +39,7 @@ async function fetchPage(endpoint: string, page: number = 1, limit: number = 100
   url.searchParams.set("limit", String(limit));
   
   const res = await fetch(url.toString(), {
-    headers: { "Authorization": `Bearer ${API_KEY}` }
+    headers: { "Authorization": `Bearer ${await getApiKey()}` }
   });
   
   if (!res.ok) {
