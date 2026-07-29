@@ -20,7 +20,7 @@ struct FeedDashboardView: View {
             let ld = lhs.transaction.date ?? ""
             let rd = rhs.transaction.date ?? ""
             if ld != rd { return ld > rd }
-            return lhs.cursor > rhs.cursor
+            return (lhs.cursor ?? 0) > (rhs.cursor ?? 0)
         }
     }
 
