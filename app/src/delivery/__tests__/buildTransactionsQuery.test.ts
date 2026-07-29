@@ -128,6 +128,7 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain('fl.full_name AS filer_full_name');
     expect(q.sql).toContain('fl.state AS filer_state');
     expect(q.sql).toContain('fl.photo_url AS filer_photo_url');
+    expect(q.sql).toContain('fl.resolved_bioguide_id AS filer_bioguide_id');
     expect(q.sql).toContain('f.source_url AS filing_source_url');
   });
 
@@ -363,6 +364,7 @@ describe('mapFeedTransaction', () => {
       filer_full_name: 'Nancy Pelosi',
       filer_state: 'CA',
       filer_photo_url: 'https://unitedstates.github.io/images/congress/225x275/P000197.jpg',
+      filer_bioguide_id: 'P000197',
       filing_filed_date: '2024-01-01',
       filing_first_seen_at: '2024-01-02T12:00:00Z',
       filing_source_url: 'https://disclosures.example/doc.pdf',
@@ -375,6 +377,8 @@ describe('mapFeedTransaction', () => {
     expect(tx.fullName).toBe('Nancy Pelosi');
     expect(tx.state).toBe('CA');
     expect(tx.photoUrl).toContain('P000197.jpg');
+    // resolved Bioguide identity (migration 0066)
+    expect(tx.bioguideId).toBe('P000197');
     // filing timestamps for the per-row latency column
     expect(tx.filedDate).toBe('2024-01-01');
     expect(tx.firstSeenAt).toBe('2024-01-02T12:00:00Z');

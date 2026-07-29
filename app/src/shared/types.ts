@@ -152,6 +152,13 @@ export interface Transaction {
   state?: string | null;
   /** Filer's headshot URL (unitedstates/images CDN); null = show initials. */
   photoUrl?: string | null;
+  /**
+   * Filer's official Bioguide ID matched by member enrichment
+   * (filers.resolved_bioguide_id, migration 0066). Feed only; null until the
+   * enrichment job matches the filer's name against congress-legislators.
+   * Distinct from `filerId`, which holds a source-specific synthetic slug.
+   */
+  bioguideId?: string | null;
   /** Self-hosted URL for the raw document PDF (present if we fetched it). */
   pdfUrl?: string;
   /** Filing's official disclosure date (date-only) from the source. Feed only. */
