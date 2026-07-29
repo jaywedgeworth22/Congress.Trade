@@ -27,4 +27,4 @@ services:
       - .env
     environment:
       - SQLITE_WEB_PASSWORD=${SQLITE_WEB_PASSWORD:-admin}
-    command: -x --password -H 0.0.0.0 /data/congress-trade/db.sqlite
+    command: sqlite_web -x --password -H 0.0.0.0 /data/congress-trade/db.sqlite
