@@ -2856,6 +2856,10 @@ function feedCardHtml(r) {
   if (chamber) bits.push(esc(chamber));
   bits.push('Traded ' + esc(traded));
   if (lag && lag !== 'Unavailable') bits.push('Lag ' + esc(lag));
+  if (r.stockActStatus === 'late' || r.stockActStatus === 'severely_late') {
+    bits.push('<span style="color:var(--sell)" title="Disclosed after the STOCK Act 45-day deadline">' +
+      (r.stockActStatus === 'severely_late' ? 'Severely late filing' : 'Late filing') + '</span>');
+  }
   return '<article class="feed-card clickable" tabindex="0" role="button" data-txid="' + esc(r.id) + '" aria-label="Open trade details for ' + esc((r.ticker || r.asset) + ' by ' + member) + '">' +
     '<div class="fc-main">' +
       '<div class="fc-row1">' + assetCellHtml(r) +
@@ -3404,6 +3408,8 @@ function txToRow(tx) {
     firstSeenAt: tx.firstSeenAt || '',
     imported: tx.createdAt || '',
     cursorSeq: tx.cursorSeq || 0,
+    disclosureLagDays: typeof tx.disclosureLagDays === 'number' ? tx.disclosureLagDays : null,
+    stockActStatus: tx.stockActStatus || '',
     // identifiers for the detail drawers (trade / asset / politician)
     id: tx.id || '',
     docId: tx.docId || '',
@@ -7779,6 +7785,8 @@ function analyticsTradeRow(t, ctx) {
     filedDate: t.filedDate || '',
     firstSeenAt: t.firstSeenAt || '',
     imported: t.createdAt || '',
+    disclosureLagDays: typeof t.disclosureLagDays === 'number' ? t.disclosureLagDays : null,
+    stockActStatus: t.stockActStatus || '',
     id: t.id || '',
     docId: t.docId || '',
     filerId: ctx.filerId || t.filerId || '',
