@@ -11,6 +11,10 @@ export const DURABLE_QUEUE_DEFAULT_LIMIT = 25;
 export const DURABLE_QUEUE_DEFAULT_CLAIM_SIZE = 10;
 export const DURABLE_QUEUE_DEFAULT_LEASE_MS = 10 * 60_000;
 export const DURABLE_QUEUE_DEFAULT_MAX_ATTEMPTS = 8;
+/** Terminal cap on dead-letter recovery cycles. Without this, a DLQ receipt
+ * whose recovery handler keeps throwing non-terminally loops forever —
+ * stealing drain budget and spamming dead_letter_events on every cycle. */
+export const DURABLE_QUEUE_MAX_DEAD_LETTER_CYCLES = 8;
 export const DURABLE_QUEUE_RETRY_BASE_MS = 30_000;
 export const DURABLE_QUEUE_RETRY_MAX_MS = 30 * 60_000;
 
@@ -97,6 +101,9 @@ interface DurableQueueRow {
   status: string;
   attempts: number | string;
   dead_letter_pending: number | string;
+  /** Recovery cycles completed for a dead-lettered receipt (migration 0064;
+   * absent on pre-migration schemas, hence optional). */
+  dead_letter_cycles?: number | string;
   available_at: string;
   lease_until: string | null;
   lease_token: string | null;
@@ -435,8 +442,8 @@ async function claimMessages(
         LIMIT ?
       )
       RETURNING id, queue_name, payload, status, attempts, available_at,
-                dead_letter_pending, lease_until, lease_token, last_error,
-                created_at, updated_at
+                dead_letter_pending, dead_letter_cycles, lease_until,
+                lease_token, last_error, created_at, updated_at
     `).bind(leaseUntil, leaseToken, nowIso, queueName, nowIso, queueName, nowIso, limit),
     `claim ${queueName} queue messages`,
   );
@@ -789,8 +796,10 @@ async function retryDeadLetterClaim(
     db,
     row,
     `UPDATE deno_runtime_queue
-     SET status = 'pending', dead_letter_pending = 1, available_at = ?,
-         lease_until = NULL, lease_token = NULL, last_error = ?, updated_at = ?
+     SET status = 'pending', dead_letter_pending = 1,
+         dead_letter_cycles = COALESCE(dead_letter_cycles, 0) + 1,
+         available_at = ?, lease_until = NULL, lease_token = NULL,
+         last_error = ?, updated_at = ?
      WHERE lease_until > ? AND id = ? AND status = 'processing' AND lease_token = ?`,
     [availableAt, errorText(error), now.toISOString(), now.toISOString()],
     `retry durable dead-letter receipt ${row.id}`,
@@ -965,6 +974,26 @@ export async function drainDurableQueue(
                 row,
                 now(),
                 deadLetterError,
+              )
+            ) {
+              result.failed += 1;
+            }
+            continue;
+          }
+          if (
+            Number(row.dead_letter_cycles ?? 0) >=
+            DURABLE_QUEUE_MAX_DEAD_LETTER_CYCLES
+          ) {
+            // Recovery budget exhausted: go terminal instead of looping the
+            // poison receipt forever.
+            if (
+              await failClaim(
+                env.DB,
+                row,
+                now(),
+                new Error(
+                  `dead-letter recovery budget exhausted (${DURABLE_QUEUE_MAX_DEAD_LETTER_CYCLES} cycles): ${errorText(deadLetterError)}`,
+                ),
               )
             ) {
               result.failed += 1;
