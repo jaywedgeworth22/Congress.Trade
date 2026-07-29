@@ -21,6 +21,7 @@ import type {
   TxType,
 } from '../shared/types.ts';
 import { get, parseJson, toBool } from '../shared/db.ts';
+import type { StockActStatus } from '../shared/stockAct.ts';
 import { canonicalizeAssetType } from '../shared/assetTypes.ts';
 import { normalizeCompanyName } from '../shared/companyName.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
@@ -57,6 +58,8 @@ export interface TransactionRow {
   created_at: string | null;
   cursor_seq: number | null;
   est_value: number | null;
+  disclosure_lag_days?: number | null;
+  stock_act_status?: string | null;
 }
 
 /**
@@ -160,6 +163,8 @@ export function mapTransaction(row: TransactionRow): Transaction {
     rowKey: row.row_key ?? null,
     createdAt: row.created_at ?? '',
     cursorSeq: row.cursor_seq ?? 0,
+    disclosureLagDays: row.disclosure_lag_days ?? null,
+    stockActStatus: (row.stock_act_status as StockActStatus | null) ?? null,
   };
   return transaction;
 }
@@ -315,6 +320,12 @@ export interface TxQueryParams {
    */
   chambers?: Chamber[];
   type?: TxType;
+  /**
+   * STOCK Act 45-day classification filter (`transactions.stock_act_status`,
+   * stored by migration 0065). Exposed on the public feed as `?stockAct=late`
+   * etc. Rows with unknown dates (NULL status) are excluded when set.
+   */
+  stockAct?: StockActStatus;
   /** Inclusive filter on the disclosed bracket floor (`amount_min`). */
   minAmount?: number;
   /** Inclusive filter on the disclosed bracket floor (`amount_min`). */
@@ -449,6 +460,10 @@ function buildTxFilters(
   if (p.type) {
     where.push('t.tx_type = ?');
     params.push(p.type);
+  }
+  if (p.stockAct) {
+    where.push('t.stock_act_status = ?');
+    params.push(p.stockAct);
   }
   if (p.chambers && p.chambers.length) {
     where.push(`${CHAMBER_EXPR} IN (${p.chambers.map(() => '?').join(', ')})`);

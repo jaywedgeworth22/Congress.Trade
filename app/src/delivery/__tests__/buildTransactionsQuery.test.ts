@@ -71,6 +71,17 @@ describe('buildTransactionsQuery', () => {
     expect(q.params).toEqual([0, 'S']);
   });
 
+  it('filters by STOCK Act status on the stored transactions column (keyset-eligible)', () => {
+    const q = buildTransactionsQuery({ stockAct: 'late' });
+    expect(q.sql).toContain('t.stock_act_status = ?');
+    expect(q.params).toEqual([0, 'late']);
+    // transactions-only filter: stays on the nested keyset path (no early joins).
+    expect(q.sql).toContain('SELECT t.* FROM transactions t');
+    const count = buildTransactionsCountQuery({ stockAct: 'severely_late' });
+    expect(count.sql).toContain('t.stock_act_status = ?');
+    expect(count.params).toEqual(['severely_late']);
+  });
+
   it('resolves chamber via the filers table (authoritative for seed data)', () => {
     const q = buildTransactionsQuery({ chamber: 'senate' });
     // Chamber filters need the join BEFORE limit, so this path stays flat.

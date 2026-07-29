@@ -8,6 +8,7 @@
  */
 
 import type { AssetTypeCategory } from './assetTypes.ts';
+import type { StockActStatus } from './stockAct.ts';
 import type {
   Chamber,
   Owner,
@@ -159,6 +160,14 @@ export interface Transaction {
   firstSeenAt?: string | null;
   /** Original public disclosure document URL. Feed only. */
   sourceUrl?: string | null;
+  /**
+   * Stored STOCK Act disclosure lag: whole days from trade date to official
+   * filing date (migration 0065; computed at insert + backfilled). NULL when
+   * either date is unknown. See shared/stockAct.ts.
+   */
+  disclosureLagDays?: number | null;
+  /** STOCK Act 45-day classification of the disclosure lag; null = unknown. */
+  stockActStatus?: StockActStatus | null;
   // --- Optional cross-referenced asset data (securities_ref; feed only) ------
   // Populated when the ticker has been enriched; null/absent otherwise.
   refCompanyName?: string | null;

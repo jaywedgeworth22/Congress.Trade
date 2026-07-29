@@ -23,6 +23,7 @@ import { Hono, type Context } from 'hono';
 import { MAX_REFS_BATCH } from '@jaywedgeworth22/congress-trading-shared';
 import type { Chamber, Env, Subscription, TxType } from '../shared/types.ts';
 import { all, first, get } from '../shared/db.ts';
+import { asStockActStatus } from '../shared/stockAct.ts';
 import { cached } from '../shared/kvCache.ts';
 import {
   buildTransactionsQuery,
@@ -233,6 +234,7 @@ function filtersFromQuery(q: Record<string, string>): TxQueryParams {
     memberName: q.memberName || undefined,
     chambers: asChambers(q.chamber),
     type: asTxType(q.type),
+    stockAct: asStockActStatus(q.stockAct),
     txDateMin: q.from || q.txDateMin || undefined,
     txDateMax: q.to || q.txDateMax || undefined,
   };
@@ -322,6 +324,7 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       memberName: q.memberName || undefined,
       chambers: asChambers(q.chamber),
       type: asTxType(q.type),
+      stockAct: asStockActStatus(q.stockAct),
       txDateMin: q.from || q.txDateMin || undefined,
       txDateMax: q.to || q.txDateMax || undefined,
       order: asOrder(q.order),
