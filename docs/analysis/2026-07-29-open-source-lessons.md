@@ -144,3 +144,51 @@ delivery reliability, not the raw feed.
 | abdkhan-git/StockInsightsTracker | ~22 | Single-member alert clone (anti-pattern) |
 | johnisanerd/Apify-Congressional-Trading-Data-Scraper | n/a | MCP distribution pattern |
 | Apify actors (johnvc, inexhaustible_glass) | n/a | Market-validated PTR schema conventions |
+
+---
+
+## 6. Implementation results (2026-07-29)
+
+Owner directive: "implement all lessons/improvements that we can". All four
+actionable items landed as chunked PRs (CI green on each; full suite 1926/1926
+at closeout):
+
+1. **STOCK Act late-disclosure flag — DONE (PR #1130).** Migration 0065 adds
+   `transactions.disclosure_lag_days` + `stock_act_status` (`on_time` ≤45d,
+   `late` 46–120, `severely_late` >120; NULL dates → NULL, never guessed),
+   computed at insert on all four tx write paths and backfilled; mirrored as
+   idempotent prod statements in `POST /api/admin/migrate`. New
+   `?stockAct=` feed filter; dashboard shows late-filing chips;
+   `disclosureLagDays`/`stockActStatus` on the Transaction API type.
+2. **Bioguide-keyed member identity — DONE (PR #1137).** Investigation found
+   the `filers` PK stores source-specific synthetic slugs, so a corpus-wide PK
+   migration was rejected (it would rewrite every `filings.filer_id` /
+   `transactions.filer_id` in production). Additive path instead: migration
+   0066 adds `filers.resolved_bioguide_id`; the existing member enrichment job
+   (`runPhotoEnrichment`, cron + `POST /api/admin/enrich-photos`) now also
+   stores the matched official Bioguide ID (COALESCE-preserve); feed/export
+   rows expose `bioguideId`. Follow-up: the client DTO lives in the external
+   `congress-trading-shared` package — exposing it there needs a package bump.
+3. **Ingestion immutable-artifact audit — DONE (PR #1139).** Verdict: the live
+   pipeline already archives raw disclosure bytes verbatim to R2
+   (`raw/{docId}`) *before* the parse stage is enqueued, retries re-put the
+   same key (idempotent), and the Senate agreement-wall page is sniffed and
+   never persisted; `houseCrawler` flows through the same path; FMP
+   `provider_seeded` rows carry `raw_object_key = NULL` by documented design
+   with an atomic upgrade path. One real gap fixed: the seed-dataset backfill
+   never persisted the upstream aggregate payload — it now archives the
+   byte-verbatim JSON to `seed/{chamber}/{timestamp}.json` before processing
+   any row (skipped in dryRun, non-fatal without RAW_FILES).
+4. **Owner-attribution as first-class filter — DONE (PR #1136).** `?owner=`
+   closed-enum (`self/spouse/joint/dependent`) feed filter; owner was already
+   normalized at extraction, so this was a read-path surfacing.
+5. **Public data repo — DEFERRED.** Externally visible product/packaging
+   decision (what to publish, update cadence, license, SEO strategy) — needs
+   an owner call, not a code change.
+6. **MCP exposure — DEFERRED.** Exploratory distribution bet; worth a small
+   dedicated design pass (auth model, tool surface, rate limits) rather than
+   riding this backlog.
+
+Production note: migrations 0065/0066 apply via the idempotent
+`POST /api/admin/migrate` list on the next `bash app/scripts/ship.sh` deploy
+(the AGENTS.md-canonical path; no local SQLite migration against prod).
