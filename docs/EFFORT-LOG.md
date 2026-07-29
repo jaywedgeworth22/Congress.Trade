@@ -14,6 +14,7 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 
 
 ## Recently completed (2026-07-28 closeout)
+- **[2026-07-28][AG] Clean up OCR dot leaders and unparsed asset labels without LLM calls — MERGED & DEPLOYED PR #1114 2026-07-28.** Added deterministic isJunkAssetString normalizer to strip OCR fill dots (e.g. .....s, ......A, ..o, ..........0) and scanned PDF placeholders across client UI (cleanAsset, assetCellHtml, openTrade) and backend (cleanAssetString). Replaced unparsed string labels with clean — indicators.
 - **[2026-07-28][AG] Resolve all open PRs (#1112, #1096) and land fixes — MERGED PR #1112 & #1096 2026-07-28.** Fixed SyntaxError in rest.ts for serveDocumentPdf route, updated deploy-oracle.yml for Node 22 + Infisical secrets, merged main into both PR branches, verified test suite (174 test files, 1,909 tests pass), landed PR #1112 & PR #1096.
 - **[2026-07-28][AG] Fix Oracle Monolith workflow npm PATH resolution — MERGED & DEPLOYED PR #1108 2026-07-28.** Added `actions/setup-node@v4` step to `.github/workflows/deploy-oracle.yml` to resolve Node/npm on the `oracle-ci` runner for automated Docker Compose monolith deployment.
 - **[2026-07-28][AG] Double site side buffers/margins and card/section spacing — MERGED & DEPLOYED PR #1107 2026-07-28.** Scaled outer site side buffers (header, main, footer side padding 22px → 35px) and card/section spacing (+60% baseline) for desktop views while preserving original compact spacing on mobile website views (@media max-width: 720px) across dashboardHtml.ts and legalHtml.ts.
