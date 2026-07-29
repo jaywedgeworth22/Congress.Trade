@@ -142,7 +142,8 @@ describe('DASHBOARD_HTML', () => {
     expect(m).not.toBeNull();
     // isScannedPdfPlaceholder is called by cleanAsset — stub it for isolation.
     const cleanAsset = new Function(
-      'function isScannedPdfPlaceholder() { return false; }\n' +
+      'function isJunkAssetString() { return false; }\n' +
+        'function isScannedPdfPlaceholder() { return false; }\n' +
         m![0] +
         '\nreturn cleanAsset;',
     )() as (s: string) => string;
@@ -535,7 +536,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('minmax(260px, .72fr)');
     expect(DASHBOARD_HTML).toContain('buySellText(');
     expect(DASHBOARD_HTML).toContain('0% means matched the S&P');
-    expect(DASHBOARD_HTML).toContain('Unparsed Historical Filing');
+    expect(DASHBOARD_HTML).toContain('isJunkAssetString');
   });
 
   it('makes review documents linkable without showing false confidence for empty reads', () => {

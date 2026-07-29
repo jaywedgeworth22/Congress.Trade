@@ -2599,11 +2599,26 @@ function clipTextHtml(value, fallback, title) {
 
 /* Strip stray HTML/entities some upstream datasets embed in asset descriptions
    (e.g. "<div class=text-muted><em>Rate/Coupon:</em> 3.875%<br>…</div>"). */
+function isJunkAssetString(s) {
+  if (!s) return true;
+  var str = String(s).trim();
+  if (!str) return true;
+  var lower = str.toLowerCase();
+  if (
+    lower.indexOf('unparsed historical filing') >= 0 ||
+    lower.indexOf('this filing was disclosed via scanned pdf') >= 0 ||
+    lower.indexOf('use link in ptr_link column to view the pdf') >= 0 ||
+    lower.indexOf('pdf disclosed filing') >= 0
+  ) {
+    return true;
+  }
+  var stripped = str.replace(/[\\.\\s\\-\\_\\:\\;\\,\\?\\!]/g, '');
+  if (stripped.length === 0) return true;
+  if (/[\\.\\_\\-]{2,}/.test(str) && stripped.length <= 2) return true;
+  return false;
+}
 function isScannedPdfPlaceholder(s) {
-  var text = String(s || '').replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim().toLowerCase();
-  return text.indexOf('this filing was disclosed via scanned pdf') >= 0 ||
-    text.indexOf('use link in ptr_link column to view the pdf') >= 0 ||
-    text.indexOf('pdf disclosed filing') >= 0;
+  return isJunkAssetString(s);
 }
 function cleanAsset(s) {
   if (s == null) return '';
@@ -2612,7 +2627,7 @@ function cleanAsset(s) {
        .replace(/&gt;/gi, '>').replace(/&#0*39;|&apos;/gi, "'").replace(/&quot;/gi, '"');
   t = t.replace(/\\s+/g, ' ').trim();
 
-  if (isScannedPdfPlaceholder(t)) return '';
+  if (isJunkAssetString(t)) return '';
 
   t = t.replace(/[\\/\\-\\s]+$/, '');
   t = t.replace(/\\s*\\(\\s*(?:NASDAQ|NYSE|AMEX|OTC|BATS|ARCA|ASX|LSE|TSX)[^)]*\\)\\s*$/i, '');
@@ -2802,10 +2817,11 @@ function assetCellHtml(r) {
   // Prefer a real company name when the reported asset text is missing or is just
   // the ticker again (e.g. "FB" with no name) — uses the enriched ref company name.
   var nm = r.asset;
+  if (isJunkAssetString(nm)) nm = '';
   if ((!nm || nm === r.ticker) && r.refCompanyName) nm = r.refCompanyName;
   nm = fmtCompany(nm);
   if (!r.ticker && !nm) {
-    return '<div class="asset-cell" title="Historical scanned filing needs official source backfill"><span class="muted">Unparsed Historical Filing</span></div>';
+    return '<div class="asset-cell"><span class="muted">—</span></div>';
   }
   var inner = '<div title="' + esc((r.ticker ? r.ticker + ' · ' : '') + (nm || '')) + '">' +
     (r.ticker ? '<span class="tkr">' + esc(r.ticker) + '</span><span class="tkr-gap"></span>' : '') +
@@ -7927,7 +7943,7 @@ function openTrade(row) {
     : '';
   var personCard = '<div class="drawer-trade-party"><span class="eyebrow">Politician</span><div class="member-cell">' +
     memberAvatarHtml(fmtName(row.member), row.photoUrl) + '<div>' + memberVal + '</div></div></div>';
-  var assetLabel = displayAsset || displayTicker || 'Unparsed Historical Filing';
+  var assetLabel = displayAsset || displayTicker || '—';
   var assetCard = '<div class="drawer-trade-party"><span class="eyebrow">Asset</span><div class="asset-cell">' +
     tickerLogoHtml(displayTicker, assetLabel) + '<div title="' + esc((displayTicker ? displayTicker + ' · ' : '') + assetLabel) + '">' +
     (displayTicker ? '<span class="tkr">' + esc(displayTicker) + '</span><span class="tkr-gap"></span>' : '') +
