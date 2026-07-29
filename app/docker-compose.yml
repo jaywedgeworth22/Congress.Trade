@@ -9,9 +9,7 @@ services:
       - "127.0.0.1:5000:5000"
     volumes:
       - /data/congress-trade:/data/congress-trade
-    environment:
-      - SQLITE_WEB_PASSWORD=${SQLITE_WEB_PASSWORD:-admin}
-    command: -x --password -H 0.0.0.0 /data/congress-trade/db.sqlite
+    env_file:
       - .env
     environment:
       - DENO_KV_PATH=/data/congress-trade/kv.sqlite
@@ -25,3 +23,8 @@ services:
       - "100.97.154.2:8080:8080"
     volumes:
       - /data/congress-trade:/data/congress-trade
+    env_file:
+      - .env
+    environment:
+      - SQLITE_WEB_PASSWORD=${SQLITE_WEB_PASSWORD:-admin}
+    command: -x --password -H 0.0.0.0 /data/congress-trade/db.sqlite
