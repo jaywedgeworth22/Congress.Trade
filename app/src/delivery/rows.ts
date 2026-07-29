@@ -326,6 +326,12 @@ export interface TxQueryParams {
    * etc. Rows with unknown dates (NULL status) are excluded when set.
    */
   stockAct?: StockActStatus;
+  /**
+   * Beneficial-owner filter (`transactions.owner`, canonicalized at insert to
+   * self/spouse/joint/dependent). Exposed on the public feed as `?owner=spouse`
+   * etc. Rows with unknown owner (NULL) are excluded when set.
+   */
+  owner?: Owner;
   /** Inclusive filter on the disclosed bracket floor (`amount_min`). */
   minAmount?: number;
   /** Inclusive filter on the disclosed bracket floor (`amount_min`). */
@@ -464,6 +470,10 @@ function buildTxFilters(
   if (p.stockAct) {
     where.push('t.stock_act_status = ?');
     params.push(p.stockAct);
+  }
+  if (p.owner) {
+    where.push('t.owner = ?');
+    params.push(p.owner);
   }
   if (p.chambers && p.chambers.length) {
     where.push(`${CHAMBER_EXPR} IN (${p.chambers.map(() => '?').join(', ')})`);
