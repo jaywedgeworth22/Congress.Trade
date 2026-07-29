@@ -26,11 +26,11 @@ function shell(title: string, body: string): string {
   *{box-sizing:border-box}
   body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,var(--bg2),var(--bg));color:var(--text);
        font:15px/1.65 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
-  header{display:flex;align-items:center;gap:14px;padding:16px 22px;border-bottom:1px solid var(--border);
+  header{display:flex;align-items:center;gap:14px;padding:16px 35px;border-bottom:1px solid var(--border);
          background:rgba(10,16,30,.6);position:sticky;top:0;backdrop-filter:blur(8px)}
   .brand{font-weight:700;font-size:16px}.brand .dot{color:var(--accent)}
   a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
-  main{max-width:820px;margin:0 auto;padding:32px 22px 64px}
+  main{max-width:820px;margin:0 auto;padding:32px 35px 64px}
   h1{font-size:26px;margin:0 0 4px}.eff{color:var(--dim);font-size:13px;margin:0 0 28px}
   h2{font-size:17px;margin:30px 0 8px;border-top:1px solid var(--border);padding-top:22px}
   p,li{color:#cdd8ea}strong{color:var(--text)}
@@ -38,8 +38,9 @@ function shell(title: string, body: string): string {
   .callout{border:1px solid color-mix(in srgb,var(--warn) 45%,transparent);
            background:color-mix(in srgb,var(--warn) 9%,transparent);border-radius:10px;padding:14px 16px;margin:18px 0}
   .callout strong{color:var(--warn)}
-  footer{color:var(--dim);font-size:12px;border-top:1px solid var(--border);padding:22px;text-align:center}
+  footer{color:var(--dim);font-size:12px;border-top:1px solid var(--border);padding:22px 35px;text-align:center}
   code{background:var(--bg);padding:1px 6px;border-radius:5px;font-size:13px;color:var(--accent)}
+  @media (max-width:720px){header{padding:16px 22px}main{padding:32px 22px 64px}footer{padding:22px}}
 </style>
 </head>
 <body>
