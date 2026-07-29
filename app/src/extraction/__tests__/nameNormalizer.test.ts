@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cleanFilerName } from '../nameNormalizer.ts';
+import { cleanAssetString, cleanFilerName, isJunkAssetString } from '../nameNormalizer.ts';
 
 describe('cleanFilerName', () => {
   it('removes embedded honorifics without joining adjacent words', () => {
@@ -13,5 +13,26 @@ describe('cleanFilerName', () => {
   it('does not remove title-like substrings from ordinary names', () => {
     expect(cleanFilerName('Drake')).toBe('Drake');
     expect(cleanFilerName('Senatorial')).toBe('Senatorial');
+  });
+});
+
+describe('isJunkAssetString & cleanAssetString', () => {
+  it('identifies dot leaders and OCR junk strings as junk asset strings', () => {
+    expect(isJunkAssetString('........................................')).toBe(true);
+    expect(isJunkAssetString('......s')).toBe(true);
+    expect(isJunkAssetString('..........A')).toBe(true);
+    expect(isJunkAssetString('........')).toBe(true);
+    expect(isJunkAssetString('..o')).toBe(true);
+    expect(isJunkAssetString('...................0')).toBe(true);
+    expect(isJunkAssetString('Unparsed Historical Filing')).toBe(true);
+  });
+
+  it('preserves valid asset names and tickers', () => {
+    expect(isJunkAssetString('Apple Inc.')).toBe(false);
+    expect(isJunkAssetString('AT&T')).toBe(false);
+    expect(isJunkAssetString('3M')).toBe(false);
+    expect(cleanAssetString('Apple Inc.')).toBe('Apple Inc.');
+    expect(cleanAssetString('........................................')).toBe('');
+    expect(cleanAssetString('......s')).toBe('');
   });
 });
