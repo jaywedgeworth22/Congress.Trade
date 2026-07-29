@@ -1319,7 +1319,10 @@ describe('DASHBOARD_HTML', () => {
   it('gives AAPL a themeable glyph logo and reconstructs House filing links', () => {
     expect(DASHBOARD_HTML).toContain('CUSTOM_GLYPH');
     expect(DASHBOARD_HTML).toContain('function reconstructFilingUrl(');
-    expect(DASHBOARD_HTML).toContain('/api/client/v1/documents/');
+    // Filing PDFs are served by GET /api/documents/:docId/pdf (delivery/rest.ts);
+    // /api/client/v1/documents/... does not exist and 404s.
+    expect(DASHBOARD_HTML).toContain("'/api/documents/' + encodeURIComponent(s) + '/pdf'");
+    expect(DASHBOARD_HTML).not.toContain('/api/client/v1/documents/');
   });
 
   it('labels every analytics section with its timeframe', () => {

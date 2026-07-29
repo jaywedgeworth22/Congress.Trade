@@ -3984,7 +3984,7 @@ function reviewDocHtml(r) {
   var docId = r.docId || '';
   var url = '';
   if (docId.slice(0, 2) === 'S-' || docId.slice(0, 2) === 'H-') {
-    url = '/api/client/v1/documents/' + encodeURIComponent(docId) + '/pdf';
+    url = '/api/documents/' + encodeURIComponent(docId) + '/pdf';
   } else {
     url = safeDocUrl(r.pdfUrl || r.sourceUrl);
   }
@@ -7999,7 +7999,7 @@ function openTrade(row) {
 function reconstructFilingUrl(docId) {
   var s = String(docId || '');
   if (s.slice(0, 2) === 'S-' || s.slice(0, 2) === 'H-') {
-    return '/api/client/v1/documents/' + encodeURIComponent(s) + '/pdf';
+    return '/api/documents/' + encodeURIComponent(s) + '/pdf';
   }
   return '';
 }
