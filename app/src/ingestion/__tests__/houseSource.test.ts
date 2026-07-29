@@ -170,6 +170,23 @@ describe('pollHouseLiveSearch', () => {
 
     expect(rows.map((row) => row.pipelineDocId)).toEqual(['H-2026-20026001', 'H-2026-20026002']);
   });
+
+  it('automatically falls back to public proxy relays on attempt 2 when direct fetch fails', async () => {
+    let callCount = 0;
+    const fetchMock = vi.fn(async (url: RequestInfo | URL) => {
+      callCount++;
+      const urlStr = String(url);
+      if (callCount <= 2) {
+        return new Response('403 Forbidden', { status: 403 });
+      }
+      expect(urlStr).toContain('api.allorigins.win/raw?url=');
+      return new Response(SEARCH_HTML, { status: 200, headers: { 'content-type': 'text/html' } });
+    });
+
+    const rows = await pollHouseLiveSearch(2026, fetchMock as unknown as typeof fetch, { delayMs: 0 });
+    expect(rows.map((row) => row.pipelineDocId)).toEqual(['H-2026-20026001', 'H-2026-20026002']);
+    expect(callCount).toBe(4);
+  });
 });
 
 describe('house url builders', () => {
