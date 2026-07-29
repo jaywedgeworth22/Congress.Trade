@@ -8,32 +8,66 @@ on:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, oracle-ci]
+    # GitHub-hosted only (2026-07-29). Self-hosted Oracle Actions runners retired.
+    # Deploys over SSH into the Oracle prod host rather than running compose on the runner.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-
-      - name: Setup Environment and Secrets
+      - name: Require Oracle SSH secret
         env:
+          ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "${ORACLE_SSH_PRIVATE_KEY:-}" ]; then
+            echo "::error::ORACLE_SSH_PRIVATE_KEY secret is required now that Actions runners no longer live on the Oracle host."
+            echo "Add a private key that can SSH as ubuntu@141.148.182.224, then re-run."
+            exit 1
+          fi
+
+      - name: Deploy via SSH to Oracle host
+        env:
+          ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+          ORACLE_SSH_HOST: 141.148.182.224
+          ORACLE_SSH_USER: ubuntu
           INFISICAL_CT_CLIENT_ID: ${{ secrets.INFISICAL_CT_CLIENT_ID }}
           INFISICAL_CT_CLIENT_SECRET: ${{ secrets.INFISICAL_CT_CLIENT_SECRET }}
         run: |
-          bash scripts/cloud-setup.sh
-          touch app/.dev.vars
-          cp app/.dev.vars app/.env
-          # Ensure CT_COST_PROFILE=paid is set for the monolith!
-          echo "CT_COST_PROFILE=paid" >> app/.env
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$ORACLE_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$ORACLE_SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 
-      - name: Build and Deploy via Docker Compose
-        run: |
-          cd app
-          # Make sure the data directory exists
+          REMOTE_DIR="/tmp/congress-trade-deploy-${GITHUB_SHA}"
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude 'node_modules' \
+            --exclude 'app/node_modules' \
+            ./ "${ORACLE_SSH_USER}@${ORACLE_SSH_HOST}:${REMOTE_DIR}/"
+
+          ssh -o BatchMode=yes "${ORACLE_SSH_USER}@${ORACLE_SSH_HOST}" \
+            env REMOTE_DIR="$REMOTE_DIR" \
+                INFISICAL_CT_CLIENT_ID="${INFISICAL_CT_CLIENT_ID:-}" \
+                INFISICAL_CT_CLIENT_SECRET="${INFISICAL_CT_CLIENT_SECRET:-}" \
+                bash -s <<'REMOTE'
+          set -euo pipefail
+          cd "$REMOTE_DIR"
+          if [ -x scripts/cloud-setup.sh ] && [ -n "${INFISICAL_CT_CLIENT_ID:-}" ]; then
+            bash scripts/cloud-setup.sh || true
+          fi
+          touch app/.dev.vars 2>/dev/null || true
+          if [ -f app/.dev.vars ]; then
+            cp app/.dev.vars app/.env
+          else
+            touch app/.env
+          fi
+          if ! grep -q '^CT_COST_PROFILE=' app/.env 2>/dev/null; then
+            echo "CT_COST_PROFILE=paid" >> app/.env
+          fi
           sudo mkdir -p /data/congress-trade
-          sudo chown -R $USER:$USER /data/congress-trade
-          
-          # Deploy
+          sudo chown -R "$USER:$USER" /data/congress-trade || true
+          cd app
           docker compose up -d --build
+          echo "Deploy finished on $(hostname)"
+REMOTE
