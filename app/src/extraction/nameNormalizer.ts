@@ -11,8 +11,9 @@ export function isJunkAssetString(s: string | null | undefined): boolean {
   ) {
     return true;
   }
-  const stripped = str.replace(/[\.\s\-\_\:\;\,\?\!]/g, '');
+  const stripped = str.replace(/[\.\s\-\_\:\;\,\?\!\[\]\(\)]/g, '');
   if (stripped.length === 0) return true;
+  if (/^[\.\_\-\s\]\)]+[a-z]?$/i.test(str)) return true;
   if (/[\.\_\-]{2,}/.test(str) && stripped.length <= 2) return true;
   return false;
 }
@@ -21,7 +22,12 @@ export function cleanAssetString(name: string | null | undefined, ticker?: strin
   if (!name || isJunkAssetString(name)) return '';
   let str = name.trim();
 
-  // If the name is exactly the ticker, return the uppercase ticker
+  // Strip leading/trailing dot-leaders, brackets, and orphan OCR trailing noise (e.g. "ARCC ..", ".....]", "....k")
+  str = str.replace(/(?:\s*[\.]{2,}[a-z0-9\]\)]*|\s*\]+)$/i, '');
+  str = str.replace(/^[.\s\]\)\-]+/, '');
+  str = str.replace(/\s*\.{2,}\s*/g, ' ');
+
+  // If the name is produced as exactly the ticker, return the uppercase ticker
   if (ticker && str.toLowerCase() === ticker.trim().toLowerCase()) {
     return ticker.toUpperCase();
   }
