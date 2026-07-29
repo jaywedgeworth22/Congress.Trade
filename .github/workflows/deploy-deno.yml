@@ -30,7 +30,7 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, congress-deploy]
+    runs-on: ubuntu-latest
     steps:
       - name: Enforce daily deploy cap
         id: cap
