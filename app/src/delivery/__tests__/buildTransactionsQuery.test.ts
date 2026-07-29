@@ -82,6 +82,16 @@ describe('buildTransactionsQuery', () => {
     expect(count.params).toEqual(['severely_late']);
   });
 
+  it('filters by beneficial owner on the canonical transactions column (keyset-eligible)', () => {
+    const q = buildTransactionsQuery({ owner: 'spouse' });
+    expect(q.sql).toContain('t.owner = ?');
+    expect(q.params).toEqual([0, 'spouse']);
+    expect(q.sql).toContain('SELECT t.* FROM transactions t');
+    const count = buildTransactionsCountQuery({ owner: 'joint' });
+    expect(count.sql).toContain('t.owner = ?');
+    expect(count.params).toEqual(['joint']);
+  });
+
   it('resolves chamber via the filers table (authoritative for seed data)', () => {
     const q = buildTransactionsQuery({ chamber: 'senate' });
     // Chamber filters need the join BEFORE limit, so this path stays flat.
