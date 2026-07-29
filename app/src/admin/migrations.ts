@@ -645,6 +645,14 @@ export const DENO_RUNTIME_QUEUE_DEAD_LETTER_CYCLES_SCHEMA_STATEMENTS = [
   'ALTER TABLE deno_runtime_queue ADD COLUMN dead_letter_cycles INTEGER NOT NULL DEFAULT 0'
 ] as const;
 
+// 0066_filer_bioguide_resolution.sql — resolved Bioguide identity on filers.
+// The filers PK stores source-specific synthetic slugs; resolved_bioguide_id
+// holds the official Bioguide ID matched by member enrichment (congress-legislators).
+export const FILER_BIOGUIDE_RESOLUTION_SCHEMA_STATEMENTS = [
+  'ALTER TABLE filers ADD COLUMN resolved_bioguide_id TEXT',
+  'CREATE INDEX IF NOT EXISTS idx_filers_resolved_bioguide ON filers (resolved_bioguide_id)',
+] as const;
+
 export const POST_0024_SCHEMA_STATEMENTS = [
 
   // 0025_extraction_runs_usage.sql
@@ -719,4 +727,6 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...DENO_RUNTIME_QUEUE_DEAD_LETTER_CYCLES_SCHEMA_STATEMENTS,
   // 0065_stock_act_status.sql
   ...STOCK_ACT_STATUS_SCHEMA_STATEMENTS,
+  // 0066_filer_bioguide_resolution.sql
+  ...FILER_BIOGUIDE_RESOLUTION_SCHEMA_STATEMENTS,
 ] as const;
