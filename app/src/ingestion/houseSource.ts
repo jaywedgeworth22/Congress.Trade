@@ -346,38 +346,57 @@ export async function pollHouseLiveSearch(
   year: number | string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<HouseFiling[]> {
-  const jar = new CookieJar();
+  let lastError: Error | null = null;
+  const maxAttempts = 3;
 
-  // Browser-like headers (shared with the Senate eFD flow): the interactive
-  // search sits behind an anti-bot layer that quietly refuses obvious
-  // non-browser clients from datacenter egress IPs. Production discovered ZERO
-  // filings intraday with the bare "congress-feed/0.1" UA (every first_seen
-  // clustered in the daily bulk-XML window), while the endpoint answers the
-  // same request off-network. The bulk ZIP fetch intentionally KEEPS its plain
-  // UA — that path is WAF-tolerated as-is.
-  // 1) GET the search page to pick up any session cookie the result POST needs.
-  const landing = await trackedFetch(`${HOUSE_FD_BASE}/ViewSearch`, {
-    headers: { ...BROWSER_HEADERS, accept: 'text/html,*/*' },
-  }, { service: 'filing-discovery', operation: 'open-house-search-session' }, fetchImpl);
-  if (landing.ok) jar.absorb(landing);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const jar = new CookieJar();
 
-  await delay(HOUSE_POLITE_DELAY_MS);
+      // Rotate user-agent slightly on retry attempts if blocked
+      const userAgent = attempt === 1
+        ? BROWSER_HEADERS['user-agent']
+        : 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15';
 
-  // 2) POST the member search; the response is an HTML results table.
-  const res = await trackedFetch(HOUSE_SEARCH_RESULT, {
-    method: 'POST',
-    headers: {
-      ...BROWSER_HEADERS,
-      'content-type': 'application/x-www-form-urlencoded',
-      accept: 'text/html,application/xhtml+xml,*/*',
-      referer: `${HOUSE_FD_BASE}/ViewSearch`,
-      origin: 'https://disclosures-clerk.house.gov',
-      'x-requested-with': 'XMLHttpRequest',
-      ...(jar.header() ? { cookie: jar.header() } : {}),
-    },
-    body: buildHouseSearchBody(year).toString(),
-  }, { service: 'filing-discovery', operation: 'search-house-filings' }, fetchImpl);
-  if (!res.ok) throw new Error(`house live search -> HTTP ${res.status}`);
-  const html = await res.text();
-  return parseHouseSearchHtml(html, String(year));
+      const landing = await trackedFetch(`${HOUSE_FD_BASE}/ViewSearch`, {
+        headers: {
+          ...BROWSER_HEADERS,
+          'user-agent': userAgent,
+          accept: 'text/html,*/*',
+        },
+      }, { service: 'filing-discovery', operation: 'open-house-search-session' }, fetchImpl);
+      if (landing.ok) jar.absorb(landing);
+
+      await delay(HOUSE_POLITE_DELAY_MS * attempt);
+
+      const res = await trackedFetch(HOUSE_SEARCH_RESULT, {
+        method: 'POST',
+        headers: {
+          ...BROWSER_HEADERS,
+          'user-agent': userAgent,
+          'content-type': 'application/x-www-form-urlencoded',
+          accept: 'text/html,application/xhtml+xml,*/*',
+          referer: `${HOUSE_FD_BASE}/ViewSearch`,
+          origin: 'https://disclosures-clerk.house.gov',
+          'x-requested-with': 'XMLHttpRequest',
+          ...(jar.header() ? { cookie: jar.header() } : {}),
+        },
+        body: buildHouseSearchBody(year).toString(),
+      }, { service: 'filing-discovery', operation: 'search-house-filings' }, fetchImpl);
+
+      if (!res.ok) {
+        throw new Error(`house live search -> HTTP ${res.status}`);
+      }
+
+      const html = await res.text();
+      return parseHouseSearchHtml(html, String(year));
+    } catch (err) {
+      lastError = err as Error;
+      if (attempt < maxAttempts) {
+        await delay(1000 * attempt);
+      }
+    }
+  }
+
+  throw lastError ?? new Error('house live search failed after retries');
 }
