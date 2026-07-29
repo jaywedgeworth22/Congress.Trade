@@ -25,6 +25,7 @@
 import { unzipSync } from 'fflate';
 import { BROWSER_HEADERS, CookieJar, delay } from './senateSource.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
+import { resolveSecret } from '../secrets/infisical.ts';
 
 /** A single filing row parsed out of the House yearly index XML. */
 export interface HouseFiling {
@@ -342,42 +343,118 @@ export function buildHouseSearchBody(year: number | string): URLSearchParams {
  * form. Throws on transport/HTTP failure so the watcher's per-source guard can
  * fail soft (the bulk XML diff remains authoritative).
  */
+export interface PollHouseLiveSearchOptions {
+  /** Optional residential proxy URL for routing House Clerk live search requests. */
+  proxyUrl?: string;
+  /** Optional residential proxy URL (alias). */
+  residentialProxyUrl?: string;
+  /** Custom delay in ms between retries (defaults to HOUSE_POLITE_DELAY_MS, 0 for tests). */
+  delayMs?: number;
+  /** Env object for secret resolution. */
+  env?: any;
+}
+
+/**
+ * Poll the House live member search for same-day PTRs. Mirrors fetchHouseIndex's
+ * HouseFiling[] shape so the watcher can treat both sources uniformly.
+ *
+ * Establishes a session cookie via a GET to the search page, then POSTs the
+ * form. Retries up to 3 times per poll tick with rotated User-Agents. Does NOT
+ * lock out or disable subsequent ticks if a single poll tick fails.
+ */
 export async function pollHouseLiveSearch(
   year: number | string,
   fetchImpl: typeof fetch = fetch,
+  opts: PollHouseLiveSearchOptions = {},
 ): Promise<HouseFiling[]> {
-  const jar = new CookieJar();
+  let lastError: Error | null = null;
+  const maxAttempts = 3;
 
-  // Browser-like headers (shared with the Senate eFD flow): the interactive
-  // search sits behind an anti-bot layer that quietly refuses obvious
-  // non-browser clients from datacenter egress IPs. Production discovered ZERO
-  // filings intraday with the bare "congress-feed/0.1" UA (every first_seen
-  // clustered in the daily bulk-XML window), while the endpoint answers the
-  // same request off-network. The bulk ZIP fetch intentionally KEEPS its plain
-  // UA — that path is WAF-tolerated as-is.
-  // 1) GET the search page to pick up any session cookie the result POST needs.
-  const landing = await trackedFetch(`${HOUSE_FD_BASE}/ViewSearch`, {
-    headers: { ...BROWSER_HEADERS, accept: 'text/html,*/*' },
-  }, { service: 'filing-discovery', operation: 'open-house-search-session' }, fetchImpl);
-  if (landing.ok) jar.absorb(landing);
+  // Resolve residential proxy URL from options, Infisical, or environment
+  let effectiveProxyUrl = opts.proxyUrl || opts.residentialProxyUrl;
+  if (!effectiveProxyUrl && opts.env) {
+    try {
+      const p1 = (await resolveSecret(opts.env, 'HOUSE_PROXY_URL' as any)).value;
+      const p2 = (await resolveSecret(opts.env, 'RESIDENTIAL_PROXY_URL' as any)).value;
+      effectiveProxyUrl = p1 || p2 || opts.env.HOUSE_PROXY_URL || opts.env.RESIDENTIAL_PROXY_URL;
+    } catch {
+      effectiveProxyUrl = opts.env.HOUSE_PROXY_URL || opts.env.RESIDENTIAL_PROXY_URL;
+    }
+  }
 
-  await delay(HOUSE_POLITE_DELAY_MS);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const jar = new CookieJar();
 
-  // 2) POST the member search; the response is an HTML results table.
-  const res = await trackedFetch(HOUSE_SEARCH_RESULT, {
-    method: 'POST',
-    headers: {
-      ...BROWSER_HEADERS,
-      'content-type': 'application/x-www-form-urlencoded',
-      accept: 'text/html,application/xhtml+xml,*/*',
-      referer: `${HOUSE_FD_BASE}/ViewSearch`,
-      origin: 'https://disclosures-clerk.house.gov',
-      'x-requested-with': 'XMLHttpRequest',
-      ...(jar.header() ? { cookie: jar.header() } : {}),
-    },
-    body: buildHouseSearchBody(year).toString(),
-  }, { service: 'filing-discovery', operation: 'search-house-filings' }, fetchImpl);
-  if (!res.ok) throw new Error(`house live search -> HTTP ${res.status}`);
-  const html = await res.text();
-  return parseHouseSearchHtml(html, String(year));
+      // Rotate user-agent slightly on retry attempts if blocked
+      const userAgent = attempt === 1
+        ? BROWSER_HEADERS['user-agent']
+        : 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15';
+
+      const customHeaders: Record<string, string> = {
+        ...BROWSER_HEADERS,
+        'user-agent': userAgent,
+        accept: 'text/html,*/*',
+      };
+
+      if (effectiveProxyUrl) {
+        customHeaders['x-residential-proxy-url'] = effectiveProxyUrl;
+      }
+
+      // 1) GET landing page
+      const targetLandingUrl = effectiveProxyUrl && effectiveProxyUrl.startsWith('http') && effectiveProxyUrl.includes('/relay')
+        ? `${effectiveProxyUrl}?url=${encodeURIComponent(`${HOUSE_FD_BASE}/ViewSearch`)}`
+        : `${HOUSE_FD_BASE}/ViewSearch`;
+
+      const landing = await trackedFetch(targetLandingUrl, {
+        headers: customHeaders,
+      }, { service: 'filing-discovery', operation: 'open-house-search-session' }, fetchImpl);
+      if (landing.ok) jar.absorb(landing);
+
+      const baseDelay = opts.delayMs ?? HOUSE_POLITE_DELAY_MS;
+      if (baseDelay > 0) {
+        await delay(baseDelay * attempt);
+      }
+
+      // 2) POST search form
+      const postHeaders: Record<string, string> = {
+        ...BROWSER_HEADERS,
+        'user-agent': userAgent,
+        'content-type': 'application/x-www-form-urlencoded',
+        accept: 'text/html,application/xhtml+xml,*/*',
+        referer: `${HOUSE_FD_BASE}/ViewSearch`,
+        origin: 'https://disclosures-clerk.house.gov',
+        'x-requested-with': 'XMLHttpRequest',
+        ...(jar.header() ? { cookie: jar.header() } : {}),
+      };
+
+      if (effectiveProxyUrl) {
+        postHeaders['x-residential-proxy-url'] = effectiveProxyUrl;
+      }
+
+      const targetPostUrl = effectiveProxyUrl && effectiveProxyUrl.startsWith('http') && effectiveProxyUrl.includes('/relay')
+        ? `${effectiveProxyUrl}?url=${encodeURIComponent(HOUSE_SEARCH_RESULT)}`
+        : HOUSE_SEARCH_RESULT;
+
+      const res = await trackedFetch(targetPostUrl, {
+        method: 'POST',
+        headers: postHeaders,
+        body: buildHouseSearchBody(year).toString(),
+      }, { service: 'filing-discovery', operation: 'search-house-filings' }, fetchImpl);
+
+      if (!res.ok) {
+        throw new Error(`house live search -> HTTP ${res.status}`);
+      }
+
+      const html = await res.text();
+      return parseHouseSearchHtml(html, String(year));
+    } catch (err) {
+      lastError = err as Error;
+      if (attempt < maxAttempts) {
+        await delay(1000 * attempt);
+      }
+    }
+  }
+
+  throw lastError ?? new Error('house live search failed after retries');
 }

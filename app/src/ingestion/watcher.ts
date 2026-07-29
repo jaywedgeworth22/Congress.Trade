@@ -485,7 +485,7 @@ async function pollHouse(env: Env, now: Date): Promise<number> {
   if (await houseLiveSearchEnabled(env)) {
     let liveErr: Error | null = null;
     try {
-      const live = await pollHouseLiveSearch(year);
+      const live = await pollHouseLiveSearch(year, fetch, { env });
       for (const f of live) {
         if (!byDoc.has(f.pipelineDocId)) {
           byDoc.set(f.pipelineDocId, houseDiscovery(f));

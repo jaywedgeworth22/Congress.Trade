@@ -170,6 +170,25 @@ describe('pollHouseLiveSearch', () => {
 
     expect(rows.map((row) => row.pipelineDocId)).toEqual(['H-2026-20026001', 'H-2026-20026002']);
   });
+
+  it('retries up to 3 times on HTTP errors and allows subsequent calls to succeed independently', async () => {
+    let callCount = 0;
+    const fetchMock = vi.fn(async () => {
+      callCount++;
+      if (callCount <= 6) {
+        return new Response('403 Forbidden', { status: 403 });
+      }
+      return new Response(SEARCH_HTML, { status: 200, headers: { 'content-type': 'text/html' } });
+    });
+
+    // 1st call fails 3 attempts (6 fetches)
+    await expect(pollHouseLiveSearch(2026, fetchMock as unknown as typeof fetch, { delayMs: 0 })).rejects.toThrow('HTTP 403');
+    expect(callCount).toBe(6);
+
+    // 2nd call (next tick) runs fresh attempts without persistent lockout
+    const rows = await pollHouseLiveSearch(2026, fetchMock as unknown as typeof fetch, { delayMs: 0 });
+    expect(rows.map((row) => row.pipelineDocId)).toEqual(['H-2026-20026001', 'H-2026-20026002']);
+  });
 });
 
 describe('house url builders', () => {
