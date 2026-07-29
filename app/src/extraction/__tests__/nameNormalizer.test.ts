@@ -34,5 +34,10 @@ describe('isJunkAssetString & cleanAssetString', () => {
     expect(cleanAssetString('Apple Inc.')).toBe('Apple Inc.');
     expect(cleanAssetString('........................................')).toBe('');
     expect(cleanAssetString('......s')).toBe('');
+    expect(cleanAssetString('ARCC ..', 'ARCC')).toBe('ARCC');
+    expect(cleanAssetString('ARCC ................................', 'ARCC')).toBe('ARCC');
+    expect(cleanAssetString('.....]')).toBe('');
+    expect(cleanAssetString('XOM ....k', 'XOM')).toBe('XOM');
+    expect(cleanAssetString('...................e')).toBe('');
   });
 });
