@@ -9,7 +9,8 @@ as open `state:planned` even though all six are done. A mirror-sync commit lands
 #155/#161.
 
 ## Active / In Progress
-- **[2026-07-28][AG] Resolve all open PRs (#1112, #1096) and land fixes — IN PROGRESS.**
+- **[2026-07-29][KIMI] Open-source lessons research note — IN PROGRESS.** Owner asked which open-source repos Congress.Trade can learn from; findings delivered in chat (timothycarambat/senate-stock-watcher-data, unitedstates/congress + congress-legislators, openstates-scrapers, govtrack, Apify actor schemas). Writing durable note `docs/analysis/2026-07-29-open-source-lessons.md` with backlog candidates on branch `kimi/open-source-lessons`. Docs-only; no app code, no deploy needed.
+- **[2026-07-28][AG] Resolve all open PRs (#1112, #1096) and land fixes — MERGED 2026-07-28 per live board (KIMI 2026-07-29 mirror correction; duplicate of the closeout row below).**
 - **[2026-07-27][GROK] Autopilot tick continuation silent-drop — MERGED & DEPLOYED `12e1f6b`.** Root cause: continuation `autopilot.tick` re-enqueued while claim still `processing` with stable per-runId dedupe → INSERT OR IGNORE dropped next slice; runs stalled after one 3-doc tick. Fix: unique `tickId` per send. Live verify: docsAttempted 3→5 mid-run with tickId continuation; first publish observed; LLM_DAILY_USD_CEILING $10→$100, AUTOPILOT_DAILY_USD_BUDGET $5→$25. Review ~1915→1895 during verify.
 
 
