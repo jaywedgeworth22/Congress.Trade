@@ -209,13 +209,13 @@ final class CongressTradeStore: ObservableObject {
             )
             try replaceCache(with: response)
             feed = response
-            tradeTotal = response.total
+            if let total = response.total { tradeTotal = total }
             bootstrap = try await bootstrapTask
             lastSuccessfulRefresh = Date()
             isOffline = false
             // Forward watermark only (for optional background catch-up of brand-new rows).
             let filterKey = Self.syncFilterKey(chambers: chambers, range: selectedTimeRange)
-            cursorStore.setCursor(response.cursor, for: filterKey)
+            if let cursor = response.cursor { cursorStore.setCursor(cursor, for: filterKey) }
             if signedIn {
                 await refreshSignedInState()
             } else {
