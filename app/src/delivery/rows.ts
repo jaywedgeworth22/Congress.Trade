@@ -72,6 +72,10 @@ export interface FeedTransactionRow extends TransactionRow {
   filer_full_name: string | null;
   filer_state: string | null;
   filer_photo_url: string | null;
+  // Official Bioguide ID matched by member enrichment (migration 0066); null
+  // until the enrichment job matches the filer name. Optional so tests building
+  // a feed row needn't supply it.
+  filer_bioguide_id?: string | null;
   filing_filed_date: string | null;
   filing_first_seen_at: string | null;
   filing_source_url?: string | null;
@@ -198,6 +202,7 @@ export function mapFeedTransaction(row: FeedTransactionRow): Transaction {
     fullName: row.filer_full_name ? (cleanFilerName(row.filer_full_name) || row.filer_full_name) : null,
     state: row.filer_state,
     photoUrl: row.filer_photo_url,
+    bioguideId: row.filer_bioguide_id ?? null,
     filedDate: row.filing_filed_date,
     firstSeenAt: row.filing_first_seen_at,
     sourceUrl: row.filing_source_url ?? undefined,
@@ -571,7 +576,7 @@ export function buildTransactionsQuery(p: TxQueryParams): BuiltQuery {
   const selectList =
     `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, fl.party AS __party, ` +
     'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
-    'fl.photo_url AS filer_photo_url, ' +
+    'fl.photo_url AS filer_photo_url, fl.resolved_bioguide_id AS filer_bioguide_id, ' +
     REF_SELECT +
     'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url, f.raw_object_key AS filing_raw_object_key ';
 
@@ -657,7 +662,7 @@ export function buildTransactionsExportQuery(
   const sql =
     `SELECT t.*, ${CHAMBER_EXPR} AS __chamber, fl.full_name AS __member_name, fl.party AS __party, ` +
     'fl.full_name AS filer_full_name, fl.state AS filer_state, ' +
-    'fl.photo_url AS filer_photo_url, ' +
+    'fl.photo_url AS filer_photo_url, fl.resolved_bioguide_id AS filer_bioguide_id, ' +
     REF_SELECT +
     'f.filed_date AS filing_filed_date, f.first_seen_at AS filing_first_seen_at, f.source_url AS filing_source_url ' +
     TX_FROM_JOINS +

@@ -1189,6 +1189,11 @@ function normalizeStoredTxType(value: string | null): TxType {
  * value is never overwritten). Pure data fill, safe to re-run; unmatched filers
  * stay null (the UI falls back to initials). Shared by POST /enrich-photos and the
  * daily cron so photos/party fill in automatically, not just on a manual call.
+ *
+ * Also stores the matched official Bioguide ID in filers.resolved_bioguide_id
+ * (migration 0066). The filers PK (bioguide_id) holds source-specific synthetic
+ * slugs and cannot join Bioguide-keyed external datasets; the resolved column
+ * can. COALESCE-preserve here too, so a manually corrected value wins.
  */
 export async function runPhotoEnrichment(
   env: Env,
@@ -1206,8 +1211,8 @@ export async function runPhotoEnrichment(
     matched++;
     updates.push(
       env.DB
-        .prepare("UPDATE filers SET photo_url = ?, party = COALESCE(NULLIF(party, ''), ?), state = COALESCE(NULLIF(state, ''), ?), district = COALESCE(NULLIF(district, ''), ?) WHERE bioguide_id = ?")
-        .bind(photoUrlFor(match.bioguide), match.party, match.state, match.district, f.bioguide_id),
+        .prepare("UPDATE filers SET photo_url = ?, party = COALESCE(NULLIF(party, ''), ?), state = COALESCE(NULLIF(state, ''), ?), district = COALESCE(NULLIF(district, ''), ?), resolved_bioguide_id = COALESCE(NULLIF(resolved_bioguide_id, ''), ?) WHERE bioguide_id = ?")
+        .bind(photoUrlFor(match.bioguide), match.party, match.state, match.district, match.bioguide, f.bioguide_id),
     );
   }
   for (let i = 0; i < updates.length; i += 50) {
