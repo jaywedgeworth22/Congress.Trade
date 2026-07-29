@@ -20,7 +20,7 @@ struct TradeDetailView: View {
                         Text(trade.asset.ticker ?? "Asset")
                             .font(.largeTitle.weight(.heavy))
                         
-                        Text(trade.asset.name)
+                        Text(trade.asset.name ?? "Unknown asset")
                             .font(.title3.weight(.medium))
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -52,7 +52,7 @@ struct TradeDetailView: View {
                             
                             DetailRow("Amount", trade.amountLabel)
                             DetailRow("Owner", trade.transaction.owner?.capitalized ?? "Unavailable")
-                            DetailRow("Confidence", "\(Int((trade.confidence * 100).rounded()))%")
+                            DetailRow("Confidence", "\(Int(((trade.confidence ?? 1.0) * 100).rounded()))%")
                         }
 
                         DetailSection("Timeline") {
@@ -66,7 +66,7 @@ struct TradeDetailView: View {
                             DetailRow("Market Cap", trade.asset.marketCapBucket?.capitalized ?? "Not Enriched Yet")
                         }
 
-                        if let pdfURL = store.api.documentPDFURL(docId: trade.docId) {
+                        if let docId = trade.docId, !docId.isEmpty, let pdfURL = store.api.documentPDFURL(docId: docId) {
                             Button {
                                 openURL(pdfURL)
                             } label: {
