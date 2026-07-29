@@ -612,47 +612,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // --- GET /documents/:docId/pdf ------------------------------------------
   // Serves the raw PDF (if we fetched it) directly from R2, bypassing rate
   // limits/walls on original sources.
-  r.get('/documents/:docId/pdf', async (c) => {
-    const docId = c.req.param('docId');
-    const filingRow = await get<FilingRow>(
-      c.env.DB,
-      'SELECT raw_object_key, source_url FROM filings WHERE doc_id = ?',
-      [docId],
-    );
-
-    let fallbackUrl = filingRow?.source_url;
-    if (!fallbackUrl) {
-      const s = String(docId || '');
-      if (s.startsWith('S-')) {
-        fallbackUrl = 'https://efdsearch.senate.gov/search/view/ptr/' + encodeURIComponent(s.slice(2)) + '/';
-      } else {
-        const m = /^H-(\d{4})-(\d+)$/.exec(s);
-        if (m) fallbackUrl = 'https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/' + m[1] + '/' + m[2] + '.pdf';
-      }
-    }
-
-    if (!filingRow || !filingRow.raw_object_key) {
-      if (fallbackUrl) return c.redirect(fallbackUrl, 302);
-      return c.json({ error: 'document not found or not fetched' }, 404);
-    }
-    const obj = await c.env.RAW_FILES.get(filingRow.raw_object_key);
-    if (!obj) {
-      if (fallbackUrl) return c.redirect(fallbackUrl, 302);
-      return c.json({ error: 'document not found in storage' }, 404);
-    }
-    
-    // We expect PDFs, but let's be safe and use the stored content type if available,
-    // or fallback to application/pdf.
-    const contentType = obj.httpMetadata?.contentType || 'application/pdf';
-    return new Response(obj.body, {
-      headers: {
-        'content-type': contentType,
-        'content-disposition': 'inline', // Attempt to display in browser instead of auto-download
-        // Fetched PDFs are immutable once stored (keyed by doc_id).
-        'cache-control': 'public, max-age=86400, immutable',
-      },
-    });
-  });
+  r.get('/documents/:docId/pdf', serveDocumentPdf);
+  r.get('/api/documents/:docId/pdf', serveDocumentPdf);
 
   // --- Market cache reads (cross-app sharing, reverse direction) ----------
   // App A is the always-on system of record; these public, read-only endpoints
@@ -1099,6 +1060,52 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   });
 
   return r;
+}
+
+export async function serveDocumentPdf(c: Context<{ Bindings: Env }>) {
+  const docId = c.req.param('docId');
+  const filingRow = await get<FilingRow>(
+    c.env.DB,
+    'SELECT raw_object_key, source_url FROM filings WHERE doc_id = ?',
+    [docId],
+  );
+
+  let fallbackUrl = filingRow?.source_url;
+  if (!fallbackUrl) {
+    const s = String(docId || '');
+    if (s.startsWith('S-')) {
+      fallbackUrl = 'https://efdsearch.senate.gov/search/view/ptr/' + encodeURIComponent(s.slice(2)) + '/';
+    } else {
+      const m = /^H-(\d{4})-(\d+)$/.exec(s);
+      if (m) {
+        const num = parseInt(m[2], 10);
+        if (num >= 20000000 && num < 30000000) {
+          fallbackUrl = `https://disclosures-clerk.house.gov/public_disc/financial-pdfs/${m[1]}/${m[2]}.pdf`;
+        } else {
+          fallbackUrl = `https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/${m[1]}/${m[2]}.pdf`;
+        }
+      }
+    }
+  }
+
+  if (!filingRow || !filingRow.raw_object_key) {
+    if (fallbackUrl) return c.redirect(fallbackUrl, 302);
+    return c.json({ error: 'document not found or not fetched' }, 404);
+  }
+  const obj = await c.env.RAW_FILES.get(filingRow.raw_object_key);
+  if (!obj) {
+    if (fallbackUrl) return c.redirect(fallbackUrl, 302);
+    return c.json({ error: 'document not found in storage' }, 404);
+  }
+
+  const contentType = obj.httpMetadata?.contentType || 'application/pdf';
+  return new Response(obj.body, {
+    headers: {
+      'content-type': contentType,
+      'content-disposition': 'inline',
+      'cache-control': 'public, max-age=86400, immutable',
+    },
+  });
 }
 
 // --- Market cache read helpers (cross-app sharing) ------------------------
