@@ -73,6 +73,19 @@ final class ClientTrade: Decodable, Identifiable {
         var type: String?
         var sector: String?
         var marketCapBucket: String?
+
+        var displayName: String {
+            if let ticker = ticker?.trimmingCharacters(in: .whitespacesAndNewlines), !ticker.isEmpty {
+                return ticker
+            }
+            if let name = name?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty {
+                return name
+            }
+            if let type = type?.trimmingCharacters(in: .whitespacesAndNewlines), !type.isEmpty {
+                return type.capitalized
+            }
+            return "Asset"
+        }
     }
 
     struct Transaction: Codable {
