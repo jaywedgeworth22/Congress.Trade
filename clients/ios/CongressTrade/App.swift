@@ -1,15 +1,10 @@
 import SwiftUI
 import SwiftData
-import FirebaseCore
 
 @main
 struct CongressTradeApp: App {
     @StateObject private var store = CongressTradeStore(api: CongressTradeAPIClient())
     @AppStorage("app_color_scheme") private var appColorScheme = "system"
-
-    init() {
-        FirebaseApp.configure()
-    }
 
     var body: some Scene {
         WindowGroup {

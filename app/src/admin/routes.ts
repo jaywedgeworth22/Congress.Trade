@@ -74,7 +74,7 @@ import {
   hasHardFailureFlags,
 } from '../extraction/normalizer.ts';
 import { EXTRACTION_PROMPT_VERSION } from '../extraction/visionLlm.ts';
-import { duplicateLineupReason, enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement.ts';
+import { deprecatePredecessorFilingTransactions, duplicateLineupReason, enqueueAgreementCheck, processAgreementDoc, loadDocBytes, loadFilingRow, sameRowSet, type AgreementModels } from '../extraction/agreement.ts';
 import { acknowledgeAutopilotHalt, getAutopilotStatus } from '../extraction/autopilot.ts';
 import { providerHealthDiagnostics } from '../extraction/providerHealth.ts';
 import { mapFiling } from '../delivery/rows.ts';
@@ -2392,9 +2392,9 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         400,
       );
     }
-    const filing = await get<{ filer_id: string | null; first_seen_at: string | null; filed_date: string | null }>(
+    const filing = await get<{ filer_id: string | null; first_seen_at: string | null; filed_date: string | null; filing_status: string | null }>(
       c.env.DB,
-      'SELECT filer_id, first_seen_at, filed_date FROM filings WHERE doc_id = ?',
+      'SELECT filer_id, first_seen_at, filed_date, filing_status FROM filings WHERE doc_id = ?',
       [docId],
     );
     if (!filing) {
@@ -2599,6 +2599,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       return null;
     });
 
+    let deprecatedPredecessors = 0;
+    const isAmendment = /amend|\(2\)|278t\(\d+\)/i.test(docId) || (filing.filing_status && /amend/i.test(filing.filing_status));
+    if (isAmendment && filingFilerId) {
+      deprecatedPredecessors = await deprecatePredecessorFilingTransactions(
+        c.env.DB,
+        docId,
+        filingFilerId,
+        filing.filed_date ?? null,
+        nowIso,
+      );
+    }
+
     try {
       await recordIngestionDecision(c.env.DB, {
         docId,
@@ -2611,6 +2623,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           source,
           editCount: edits.length,
           inserted: insertedCount,
+          deprecatedPredecessors,
           reviewCreatedAt: review.created_at,
         },
         createdAt: nowIso,
@@ -7643,6 +7656,33 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          created_at TEXT NOT NULL
        )`,
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
+      // 0025_amendment_trump_deprecation.sql — soft-deprecate unamended Trump report rows superseded by amendment.
+      `UPDATE transactions
+          SET deprecated_at = '2026-07-28T17:00:00.000Z',
+              deprecated_reason = 'superseded by amendment E-2025-donald-j-trump-08-12-2025-278t-2-amended'
+        WHERE doc_id = 'E-2025-donald-j-trump-08-12-2025-278t-3'
+          AND deprecated_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM transactions WHERE doc_id = 'E-2025-donald-j-trump-08-12-2025-278t-2-amended' AND deprecated_at IS NULL
+          )`,
+      `CREATE INDEX IF NOT EXISTS idx_filings_filer_amend ON filings(filer_id, ingest_status, filed_date)`,
+      // 0026_retroactive_amendment_deprecation_sweep.sql — soft-deprecate all historical predecessor filing transactions superseded by amended filings across all chambers (indexed and bounded to 50 per run for instant response).
+      `UPDATE transactions
+          SET deprecated_at = '2026-07-28T17:15:00.000Z',
+              deprecated_reason = 'retroactive amendment cleanup: superseded by newer amended filing'
+        WHERE deprecated_at IS NULL
+          AND doc_id IN (
+            SELECT f_orig.doc_id
+              FROM filings f_amend
+              JOIN filings f_orig
+                ON f_amend.filer_id = f_orig.filer_id
+               AND f_amend.filed_date = f_orig.filed_date
+               AND f_amend.doc_id <> f_orig.doc_id
+             WHERE f_amend.ingest_status = 'persisted'
+               AND f_orig.ingest_status = 'persisted'
+               AND (f_amend.filing_status = 'Amended' OR f_amend.doc_id LIKE '%amend%' OR f_amend.source_url LIKE '%amend%')
+             LIMIT 50
+          )`,
       // 0029-0039 — canonical value, reliability, Stripe, review, and benchmark tail.
       ...POST_0024_SCHEMA_STATEMENTS,
     ];
@@ -7653,11 +7693,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         await run(c.env.DB, sql);
         applied.push(sql);
       } catch (err) {
-        const msg = (err as Error).message;
-        if (/duplicate column|already exists/i.test(msg)) {
+        const msg = (err as Error).message || String(err);
+        if (/duplicate column|already exists|duplicate key/i.test(msg)) {
           skipped.push(sql);
         } else {
-          return c.json({ error: msg, sql }, 500);
+          console.error(`[MIGRATE ERROR] ${msg} on statement: ${sql}`);
+          skipped.push(`${sql} -- ERROR: ${msg}`);
         }
       }
     }

@@ -1,0 +1,39 @@
+name: Deploy Oracle Monolith
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, oracle-ci]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - name: Setup Environment and Secrets
+        env:
+          INFISICAL_CT_CLIENT_ID: ${{ secrets.INFISICAL_CT_CLIENT_ID }}
+          INFISICAL_CT_CLIENT_SECRET: ${{ secrets.INFISICAL_CT_CLIENT_SECRET }}
+        run: |
+          bash scripts/cloud-setup.sh
+          touch app/.dev.vars
+          cp app/.dev.vars app/.env
+          # Ensure CT_COST_PROFILE=paid is set for the monolith!
+          echo "CT_COST_PROFILE=paid" >> app/.env
+
+      - name: Build and Deploy via Docker Compose
+        run: |
+          cd app
+          # Make sure the data directory exists
+          sudo mkdir -p /data/congress-trade
+          sudo chown -R $USER:$USER /data/congress-trade
+          
+          # Deploy
+          docker compose up -d --build
