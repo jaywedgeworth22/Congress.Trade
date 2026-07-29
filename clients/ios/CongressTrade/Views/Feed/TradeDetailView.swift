@@ -13,17 +13,20 @@ struct TradeDetailView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     // Hero Header
                     VStack(alignment: .center, spacing: 12) {
-                        AssetMark(symbol: trade.asset.ticker ?? trade.asset.type ?? "A", isTicker: trade.asset.ticker != nil)
+                        AssetMark(symbol: trade.asset.displayName, isTicker: trade.asset.ticker != nil && !(trade.asset.ticker?.isEmpty ?? true))
                             .scaleEffect(1.3)
                             .padding(.bottom, 8)
                         
-                        Text(trade.asset.ticker ?? "Asset")
+                        Text(trade.asset.displayName)
                             .font(.largeTitle.weight(.heavy))
-                        
-                        Text(trade.asset.name ?? "Unknown asset")
-                            .font(.title3.weight(.medium))
-                            .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
+                        
+                        if trade.asset.ticker != nil && !(trade.asset.ticker?.isEmpty ?? true), let name = trade.asset.name, !name.isEmpty, name != trade.asset.ticker {
+                            Text(name)
+                                .font(.title3.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
                         
                         StatusPill(
                             text: trade.transaction.type.label,

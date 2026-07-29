@@ -20,6 +20,9 @@ struct FeedDashboardView: View {
             let ld = lhs.transaction.date ?? ""
             let rd = rhs.transaction.date ?? ""
             if ld != rd { return ld > rd }
+            let lf = lhs.filing.filedDate ?? ""
+            let rf = rhs.filing.filedDate ?? ""
+            if lf != rf { return lf > rf }
             return (lhs.cursor ?? 0) > (rhs.cursor ?? 0)
         }
     }
@@ -140,12 +143,18 @@ struct FeedDashboardView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
-                        Picker("Timeframe", selection: Binding(
-                            get: { store.selectedTimeRange },
-                            set: { newValue in Task { await store.setTimeRange(newValue) } }
-                        )) {
-                            ForEach(TimeRange.allCases) { range in
-                                Text(range.label).tag(range)
+                        ForEach(TimeRange.allCases) { range in
+                            Button {
+                                Task {
+                                    await store.setTimeRange(range)
+                                }
+                            } label: {
+                                HStack {
+                                    Text(range.label)
+                                    if store.selectedTimeRange == range {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
                             }
                         }
                     } label: {
@@ -371,7 +380,7 @@ struct TradeCard: View {
     }
 
     private var assetTitle: String {
-        trade.asset.ticker ?? trade.asset.type ?? "Asset"
+        trade.asset.displayName
     }
 
     private var shortTypeLabel: String {
