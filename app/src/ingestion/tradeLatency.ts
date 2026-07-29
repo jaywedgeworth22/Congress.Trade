@@ -217,7 +217,7 @@ const UW_DEEP_MATCH_CANDIDATE_LIMIT = 500;
  *  statement; stay comfortably under it). */
 const SQL_IN_CHUNK = 50;
 /** Mirrors DEFAULT_DAILY_CAP in enrichment/service.ts (free-tier fallback). */
-const FMP_DEFAULT_DAILY_CAP = 5000;
+const FMP_DEFAULT_DAILY_CAP = 230;
 /**
  * FMP HTTP requests one probe run fires (house-latest + senate-latest, in
  * parallel via fetchFmpRows). The daily-cap guard reserves room for the WHOLE

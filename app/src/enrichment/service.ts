@@ -31,7 +31,7 @@ import { resolveSecrets } from '../secrets/infisical.ts';
 
 /** Exported so jobs.ts can reserve a price-refresh budget floor against the
  *  same default the FMP daily-call-cap parsing falls back to here. */
-export const DEFAULT_DAILY_CAP = 5000;
+export const DEFAULT_DAILY_CAP = 230;
 
 type EnvX = Env & {
   FMP_API_KEY?: string;
