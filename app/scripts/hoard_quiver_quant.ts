@@ -3,10 +3,17 @@ import * as fs from "node:fs/promises";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { resolveSecret } from "../src/secrets/infisical.ts";
 
-const API_KEY = "***REMOVED***";
 const BASE_URL = "https://api.quiverquant.com/beta";
 const SCRATCH_DIR = "/Users/jay/.gemini/antigravity/brain/46787371-bd2d-4703-a05d-cf01380534f5/scratch";
 const BUCKET = "congress-trade-bucket";
+
+// Provider key lives in Infisical (QUIVER_QUANT_API_KEY) — never commit it.
+async function getApiKey(): Promise<string> {
+  const res = await resolveSecret(Deno.env.toObject() as any, "QUIVER_QUANT_API_KEY");
+  const key = res.value || Deno.env.get("QUIVER_QUANT_API_KEY");
+  if (!key) throw new Error("Missing QUIVER_QUANT_API_KEY (set it in Infisical or the environment)");
+  return key;
+}
 
 async function getS3() {
   const s3EpRes = await resolveSecret(Deno.env.toObject() as any, "CF_R2_S3_ENDPOINT");
@@ -35,7 +42,7 @@ async function fetchPage(endpoint: string, page: number = 1, limit: number = 500
   }
   
   const res = await fetch(url.toString(), {
-    headers: { "Authorization": `Token ${API_KEY}` }
+    headers: { "Authorization": `Token ${await getApiKey()}` }
   });
   
   if (!res.ok) {

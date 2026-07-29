@@ -5,6 +5,7 @@ import {
   drainDurableQueue,
   DurableQueueAdapter,
   DurableQueueLeaseLostError,
+  DURABLE_QUEUE_MAX_DEAD_LETTER_CYCLES,
   type DurableQueueHandlers,
 } from '../durableQueue.ts';
 import { D1DatabaseShim } from '../shims.ts';
@@ -23,6 +24,7 @@ async function createHarness() {
       status TEXT NOT NULL,
       attempts INTEGER NOT NULL DEFAULT 0,
       dead_letter_pending INTEGER NOT NULL DEFAULT 0,
+      dead_letter_cycles INTEGER NOT NULL DEFAULT 0,
       available_at TEXT NOT NULL,
       lease_until TEXT,
       lease_token TEXT,
@@ -770,6 +772,49 @@ describe('Deno durable queue', () => {
         dead_letter_pending: 0,
         attempts: 2,
       });
+    } finally {
+      harness.client.close();
+    }
+  });
+
+  it('terminalizes a poison dead-letter receipt after the recovery cycle cap', async () => {
+    const harness = await createHarness();
+    try {
+      await harness.ingest.send({ type: 'filing.fetched', docId: 'dlq-cap' });
+      const primary = vi.fn(async () => {
+        throw new Error('primary poison');
+      });
+      const deadLetter = vi.fn(async () => {
+        throw new Error('receipt permanently unavailable');
+      });
+      const handlers = createHandlers({
+        handleIngestMessage: primary,
+        handleDeadLetterMessage: deadLetter,
+      });
+
+      // Primary exhausts its budget -> durable dead-letter receipt.
+      expect(await drainDurableQueue(harness.env, 'ingest', handlers, {
+        now: harness.now,
+        maxAttempts: 1,
+      })).toEqual({ claimed: 1, completed: 0, retried: 1, failed: 0 });
+
+      // Simulate a receipt that has already burned its recovery cycles.
+      await harness.client.execute(
+        `UPDATE deno_runtime_queue SET dead_letter_cycles = ${DURABLE_QUEUE_MAX_DEAD_LETTER_CYCLES}`,
+      );
+
+      harness.setNow(new Date('2026-07-22T16:00:30.000Z'));
+      expect(await drainDurableQueue(harness.env, 'ingest', handlers, {
+        now: harness.now,
+        maxAttempts: 1,
+      })).toEqual({ claimed: 1, completed: 0, retried: 0, failed: 1 });
+      expect(primary).toHaveBeenCalledOnce();
+      // Once in the initial dead-lettering drain, once in the resumed receipt
+      // drain that hits the cycle cap.
+      expect(deadLetter).toHaveBeenCalledTimes(2);
+      const row = (await harness.rows())[0];
+      expect(row).toMatchObject({ status: 'failed', dead_letter_pending: 0 });
+      expect(String(row.last_error)).toContain('dead-letter recovery budget exhausted');
     } finally {
       harness.client.close();
     }
