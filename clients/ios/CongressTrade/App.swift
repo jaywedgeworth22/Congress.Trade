@@ -3,13 +3,16 @@ import SwiftData
 
 @main
 struct CongressTradeApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = CongressTradeStore(api: CongressTradeAPIClient())
+    @StateObject private var pushManager = PushNotificationManager.shared
     @AppStorage("app_color_scheme") private var appColorScheme = "system"
 
     var body: some Scene {
         WindowGroup {
             MainTabView()
                 .environmentObject(store)
+                .environmentObject(pushManager)
                 .preferredColorScheme(colorScheme)
                 .font(.custom("ZillaSlab-Regular", size: 17, relativeTo: .body))
         }

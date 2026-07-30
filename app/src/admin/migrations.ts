@@ -679,6 +679,22 @@ export const CLEAN_OCR_DOT_LEADERS_SCHEMA_STATEMENTS = [
           asset_name = NULL
     WHERE (asset_name LIKE '...%' OR asset_name LIKE '%...' OR asset_name LIKE '%....%')
       AND cleaning_note IS NULL`,
+  `UPDATE transactions
+      SET deprecated_at = CURRENT_TIMESTAMP,
+          deprecated_reason = 'synthetic_provider_missing_placeholder'
+    WHERE doc_id LIKE 'provider-missing-%'
+      AND deprecated_at IS NULL`,
+  `UPDATE review_queue
+      SET resolved = 1
+    WHERE reason = 'provider_discovered_missing_official'
+      AND resolved = 0`,
+  `UPDATE transactions
+      SET asset_name = (SELECT sr.company_name FROM securities_ref sr WHERE sr.ticker = transactions.ticker),
+          cleaning_note = COALESCE(cleaning_note, 'Populated official company name from securities_ref')
+    WHERE ticker IS NOT NULL
+      AND ticker != ''
+      AND EXISTS (SELECT 1 FROM securities_ref sr WHERE sr.ticker = transactions.ticker AND sr.company_name IS NOT NULL AND sr.company_name != '')
+      AND (asset_name IS NULL OR asset_name = '' OR asset_name = '(unknown)' OR asset_name = ticker OR asset_name LIKE '%..%')`,
 ] as const;
 
 export const POST_0024_SCHEMA_STATEMENTS = [

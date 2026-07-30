@@ -589,11 +589,25 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
   // rows) and never hands back internal fields — see toPublicFiling.
   r.get('/filings/:docId', async (c) => {
     const docId = c.req.param('docId');
-    const filingRow = await get<FilingRow>(
+    let filingRow = await get<FilingRow>(
       c.env.DB,
       'SELECT * FROM filings WHERE doc_id = ?',
       [docId],
     );
+    if (!filingRow) {
+      const matched = await get<{ doc_id: string }>(
+        c.env.DB,
+        'SELECT t2.doc_id FROM transactions t1 JOIN transactions t2 ON t1.filer_id = t2.filer_id AND t1.tx_date = t2.tx_date AND (t1.ticker IS t2.ticker OR t1.ticker IS NULL) AND t2.source = "primary" WHERE t1.doc_id = ? OR t1.id = ? LIMIT 1',
+        [docId, docId],
+      );
+      if (matched?.doc_id) {
+        filingRow = await get<FilingRow>(
+          c.env.DB,
+          'SELECT * FROM filings WHERE doc_id = ?',
+          [matched.doc_id],
+        );
+      }
+    }
     if (!filingRow) return c.json({ error: 'filing not found' }, 404);
 
     const ip = clientIp(c.req.raw);
