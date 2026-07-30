@@ -476,10 +476,11 @@ function tokensFromDoc(docId: string, sourceUrl: string | null): string[] {
 
 export function extractLastName(name: string | null): string {
   if (!name) return '';
-  const parts = name.split(',')[0].split(' ');
+  const clean = name.replace(/\b[A-Za-z]\.\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  const parts = clean.split(',')[0].split(' ');
   for (let i = parts.length - 1; i >= 0; i--) {
     const p = parts[i].toLowerCase().replace(/[^a-z]/g, '');
-    if (p && !['jr', 'sr', 'md', 'ii', 'iii', 'iv'].includes(p)) return p;
+    if (p && p.length > 1 && !['jr', 'sr', 'md', 'ii', 'iii', 'iv', 'v'].includes(p)) return p;
   }
   return '';
 }
@@ -496,8 +497,8 @@ export function normalizeTradeSide(type: string | null | undefined): 'buy' | 'se
 
 export function generateTradeHash(filerName: string | null, ticker: string | null, date: string | null, type: string | null): string {
   const ln = extractLastName(filerName);
-  const tk = (ticker || '').toUpperCase();
-  const dt = date || '';
+  const tk = (ticker || '').toUpperCase().trim().replace(/[\.\/]/g, '-');
+  const dt = (date || '').slice(0, 10);
   const ty = normalizeTradeSide(type);
   return `${ln}_${tk}_${dt}_${ty}`;
 }
